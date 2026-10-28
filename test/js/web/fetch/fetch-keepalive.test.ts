@@ -273,7 +273,7 @@ test.concurrent.each([
     const first = ++connections === 1;
     let buffered = Buffer.alloc(0);
     socket.on("error", () => {});
-    socket.on("data", data => {
+    socket.on("data", (data: Buffer) => {
       buffered = Buffer.concat([buffered, data]);
       const headEnd = buffered.indexOf("\r\n\r\n");
       if (headEnd < 0) return;
@@ -324,7 +324,7 @@ test("PUT of a Bun.file() is delivered once per request while reused connections
   const server = createServer(socket => {
     let buffered = Buffer.alloc(0);
     socket.on("error", () => {});
-    socket.on("data", data => {
+    socket.on("data", (data: Buffer) => {
       buffered = Buffer.concat([buffered, data]);
       const headEnd = buffered.indexOf("\r\n\r\n");
       if (headEnd < 0) return;

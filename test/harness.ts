@@ -14,6 +14,8 @@ import { readdir, writeFile } from "fs/promises";
 import fs, { closeSync, openSync } from "node:fs";
 import os from "node:os";
 import { dirname, isAbsolute, join, sep } from "path";
+import { locksEnvironment } from "./aot/hardened";
+import "./aot/harness/without-installing-packages";
 
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
@@ -108,11 +110,35 @@ const ciEnv = { ...bunEnv };
 
 if (isASAN) {
   bunEnv.ASAN_OPTIONS ??= "allow_user_segv_handler=1:disable_coredump=0";
+  // libpas serves WTF's fastMalloc unless Malloc is set, and AddressSanitizer does not intercept libpas.
+  if (/[\\/]test[\\/]aot[\\/]/.test(Bun.main)) {
+    bunEnv.Malloc = "1";
+    // The slow unwinder aborts in a frame of compiled code and cuts the report off.
+    bunEnv.ASAN_OPTIONS += ":detect_leaks=0:fast_unwind_on_fatal=1";
+  }
 }
 
 if (isWindows) {
   bunEnv.SHELLOPTS = "igncr"; // Ignore carriage return
 }
+
+/**
+ * Spread over `bunEnv` for a child process. On macOS the system allocator then overwrites blocks when they are
+ * allocated and released, puts guard pages around large ones, checks its heap as it goes, aborts on the first error
+ * and prints the reason to stderr even when that is a pipe.
+ */
+export const strictSystemAllocatorEnv: Record<string, string> = isMacOS
+  ? {
+      MallocPreScribble: "1",
+      MallocScribble: "1",
+      MallocGuardEdges: "1",
+      MallocCheckHeapStart: "1",
+      MallocCheckHeapEach: "5000",
+      MallocCheckHeapAbort: "1",
+      MallocErrorAbort: "1",
+      MallocDebugReport: "crash",
+    }
+  : {};
 
 for (let key in bunEnv) {
   if (bunEnv[key] === undefined) {
@@ -122,6 +148,15 @@ for (let key in bunEnv) {
 
   if (key.startsWith("BUN_DEBUG_") && key !== "BUN_DEBUG_QUIET_LOGS") {
     delete ciEnv[key];
+    delete bunEnv[key];
+  }
+
+  // An executable that such a Bun compiles ahead of time does not start where the environment sets a variable that it
+  // never reads. A test that wants one of the few that it does read sets it itself.
+  if (
+    locksEnvironment &&
+    /^(BUN_DEBUG|BUN_JSC_|MIMALLOC_|BUN_CRASH_REPORT_URL$|BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING$)/i.test(key)
+  ) {
     delete bunEnv[key];
   }
 
@@ -144,7 +179,7 @@ for (let key in bunEnv) {
 delete bunEnv.BUN_INSPECT_CONNECT_TO;
 delete bunEnv.NODE_ENV;
 
-if (isDebug) {
+if (isDebug && !locksEnvironment) {
   // This makes debug build memory leak tests more reliable.
   // The code for dumping out the debug build transpiled source code has leaks.
   bunEnv.BUN_DEBUG_NO_DUMP = "1";
@@ -659,6 +694,16 @@ export function tempDir(
   return new DisposableString(base) as string & DisposableString & AsyncDisposable;
 }
 
+export function tempDirWithBunTypes(
+  basename: string,
+  filesOrAbsolutePathToCopyFolderFrom: DirectoryTree | string,
+): string & DisposableString & AsyncDisposable {
+  const dir = tempDir(basename, filesOrAbsolutePathToCopyFolderFrom);
+  fs.mkdirSync(join(String(dir), "node_modules", "@types"), { recursive: true });
+  fs.symlinkSync(join(import.meta.dir, "..", "packages", "bun-types"), join(String(dir), "node_modules", "@types", "bun"), "junction");
+  return dir;
+}
+
 /**
  * Windows only. Makes `dir` the root of a new drive with `subst`, and removes the drive on dispose.
  * A test cannot write to the root of a real drive.
@@ -1006,7 +1051,7 @@ if (expect.extend)
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
@@ -1043,7 +1088,7 @@ if (expect.extend)
           pass: false,
           message: () => `Received function did not throw`,
         };
-      } catch (e) {
+      } catch (e: any) {
         // expect(e).toBeInstanceOf(cls);
         if (!(e instanceof cls)) {
           return {
@@ -1074,7 +1119,7 @@ if (expect.extend)
       }
     },
     toBeLatin1String(actual: unknown) {
-      if ((actual as string).isLatin1()) {
+      if (require("bun:internal-for-testing").jscInternals.isLatin1String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a Latin1 string`,
@@ -1087,7 +1132,7 @@ if (expect.extend)
       };
     },
     toBeUTF16String(actual: unknown) {
-      if ((actual as string).isUTF16()) {
+      if (require("bun:internal-for-testing").jscInternals.isUTF16String(actual)) {
         return {
           pass: true,
           message: () => `Expected ${actual} to be a UTF16 string`,
@@ -1329,17 +1374,6 @@ declare global {
      */
     toUnixString(): string;
   }
-
-  interface String {
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isLatin1(): boolean;
-    /**
-     * **INTERNAL USE ONLY, NOT An API IN BUN**
-     */
-    isUTF16(): boolean;
-  }
 }
 
 Buffer.prototype.toUnixString = function () {
@@ -1466,7 +1500,7 @@ export async function describeWithContainer(
   }
 
   if (!isDockerServiceEnabled(actualService)) {
-    describe.todo(label);
+    describe.todo(label, () => {});
     return;
   }
 
@@ -1865,14 +1899,6 @@ export function disableAggressiveGCScope() {
     },
   };
 }
-
-String.prototype.isLatin1 = function () {
-  return require("bun:internal-for-testing").jscInternals.isLatin1String(this);
-};
-
-String.prototype.isUTF16 = function () {
-  return require("bun:internal-for-testing").jscInternals.isUTF16String(this);
-};
 
 interface BunHarnessTestMatchers {
   toBeLatin1String(): void;

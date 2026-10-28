@@ -155,16 +155,18 @@ function onDataIncomingMessage(this: any, chunk, isLast, aborted: NodeHTTPRespon
   }
 
   if (isLast) {
-    if (chunk) {
-      // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
-      this[eofInProgress] = true;
-      queueMicrotask(emitEOFIncomingMessageOuter.bind(undefined, this));
-    } else {
-      emitEOFIncomingMessage(this);
+    try {
+      if (chunk) {
+        // Node's parser runs the promise jobs of the last chunk's 'data' listeners before parserOnMessageComplete pushes the EOF.
+        this[eofInProgress] = true;
+        queueMicrotask(emitEOFIncomingMessageOuter.bind(undefined, this));
+      } else {
+        emitEOFIncomingMessage(this);
+      }
+    } finally {
+      // Like Node's parserOnMessageComplete: a readStop above left the socket not flowing, which would swallow the next request's 'pause'.
+      if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
     }
-    // Like Node's parserOnMessageComplete: any readStop above left the shared
-    // socket's flowing=false, which would swallow the next request's 'pause'.
-    if (!this.upgrade && socket && !socket._paused && socket.readable) socket.resume();
   }
 }
 

@@ -1,0 +1,23 @@
+# function setX() { this.x = "text" }  setX(); globalThis.x
+# A plain call passes undefined as `this`, which a sloppy function turns into the global object.
+# RUN: valueflow-why values=f0:v3
+# CHECK: values=f0:v3
+# CHECK: result {{*}}key
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Call v0
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="x"
+    Return v3
+}
+function f1 name="setX" module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToThis v0
+    v2 = String string="text"
+    PropSet v1, v2 key="x" mode=Sloppy
+    Return
+}

@@ -1,0 +1,3 @@
+{
+  "runWithASAN": "it walks tables that are emptied, rebuilt and replaced under live iterators"
+}

@@ -1387,7 +1387,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
     let served = "";
     let body = "";
     let session: Buffer | undefined;
-    socket.on("secureConnect", () => (served = socket.getPeerCertificate().subject.CN));
+    socket.on("secureConnect", () => (served = socket.getPeerCertificate().subject.CN as string));
     socket.on("session", s => (session = s));
     socket.on("data", chunk => (body += chunk));
     socket.on("error", reject);
@@ -1467,7 +1467,7 @@ describe.each(["TLSv1.2", "TLSv1.3"] as const)("setKeyCert() in ALPNCallback (%s
         ALPNProtocols: ["a"],
       });
       const { served } = await exchange(client);
-      expect({ served, error: client.authorizationError ?? null }).toEqual({
+      expect({ served, error: (client.authorizationError as unknown as string | undefined) ?? null }).toEqual({
         served: "Ádám Lippai",
         error: where === "server" ? null : "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
       });

@@ -639,13 +639,14 @@ JSC::JSValue readableStreamToArray(JSC::JSGlobalObject*, JSReadableStream*, Read
 JSC::JSValue readableStreamToArrayBuffer(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToBytes(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToJSON(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
+JSC::JSValue readableStreamToJSONSource(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToBlob(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToFormData(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue contentType); // userJS: yes — BunStreamConsumers.cpp
 JSC::JSValue readableStreamToBodyBlob(JSC::JSGlobalObject*, JSReadableStream*, JSC::JSValue contentType); // userJS: yes — BunStreamConsumers.cpp
 
 // The buffered fast path: returns the native handle's own .text()/.arrayBuffer()/... promise,
 // or the EMPTY JSValue if the fast path does not apply. `method` is the property name to
-// [[Get]] on the handle ("text" | "arrayBuffer" | "bytes" | "json" | "blob"). MAY THROW
+// [[Get]] on the handle ("text" | "arrayBuffer" | "bytes" | "json" | "jsonSource" | "blob"). MAY THROW
 // (propagate without setting m_disturbed).
 JSC::JSValue tryUseReadableStreamBufferedFastPath(JSC::JSGlobalObject*, JSReadableStream*, const JSC::Identifier& method); // userJS: yes — BunStreamConsumers.cpp
 
@@ -723,6 +724,7 @@ JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObje
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
+JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSONSource(Zig::GlobalObject*, JSC::EncodedJSValue stream); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToBodyBlob(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
 JSC::EncodedJSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObject*, JSC::EncodedJSValue stream, JSC::EncodedJSValue contentType); // userJS: yes
 

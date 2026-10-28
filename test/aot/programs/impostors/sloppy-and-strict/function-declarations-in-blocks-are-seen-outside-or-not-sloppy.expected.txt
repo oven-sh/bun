@@ -1,0 +1,24 @@
+strict: false
+afterTheBlock(true) "function"
+afterTheBlock(false) "function"
+beforeTheBlock(true) "undefined"
+beforeTheBlock(false) "undefined"
+blockNotEntered(true) "function"
+blockNotEntered(false) "undefined"
+calledAfterTheBlock(true) "inner"
+calledAfterTheBlock(false) threw TypeError
+hoistedInsideTheBlock(true) "inner"
+hoistedInsideTheBlock(false) "inner"
+twoBlocks(true) "first"
+twoBlocks(false) "second"
+hidesAnOuterFunction(true) ["undefined", "the function of the block"]
+hidesAnOuterFunction(false) ["undefined", "undefined"]
+storedInsideTheBlock(true) "function"
+storedInsideTheBlock(false) "function"
+storedBeforeTheDeclaration(true) ["string", "string"]
+storedBeforeTheDeclaration(false) ["string", "string"]
+usedLikeANumber(true) 6
+usedLikeANumber(false) threw TypeError
+after 2000 calls that entered the block threw TypeError
+a block at the top level "function"
+on the global object "undefined"

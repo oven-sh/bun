@@ -1,0 +1,7 @@
+bun object
+bun object
+bun:jsc object
+bun:jsc object
+bun:sqlite MODULE_NOT_FOUND
+bun:sqlite ERR_MODULE_NOT_FOUND
+true

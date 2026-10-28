@@ -571,12 +571,12 @@ describe.skipIf(skip)("a paused socket closes with the error of a failed send", 
       ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: 0 }),
       tls: transport === "tls" ? { key: tls.key, cert: tls.cert } : undefined,
       socket: side === "listen" ? underTest : peerHandlers,
-    });
+    } as any);
     await Bun.connect({
       ...(transport === "unix" ? { unix } : { hostname: "127.0.0.1", port: listener.port }),
       tls: transport === "tls" ? { ca: tls.cert } : undefined,
       socket: side === "connect" ? underTest : peerHandlers,
-    });
+    } as any);
     const [socket, peer] = await Promise.all([opened.promise, peerOpened.promise]);
     try {
       // Small buffers on both ends, so most of the chunk waits in user space until the peer reads.

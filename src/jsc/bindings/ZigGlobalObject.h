@@ -116,6 +116,8 @@ public:
     }
 
     static const JSC::ClassInfo s_info;
+    // The one write hook that is not JSGlobalObject's own, GlobalScope::setPrototype(), leaves the decision to JSGlobalObject's.
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::WriteHooksHonorImmutableProperties;
     static const JSC::GlobalObjectMethodTable& globalObjectMethodTable();
 
     template<typename, JSC::SubspaceAccess mode>
@@ -167,8 +169,10 @@ public:
     {
         ASSERT(!m_domStructures[static_cast<size_t>(slot)]);
         m_domStructures[static_cast<size_t>(slot)].set(vm(), this, structure);
+        didCreateDOMStructure(structure);
         return structure;
     }
+    void didCreateDOMStructure(JSC::Structure*);
     const WebCore::DOMConstructors& constructors() const
     {
         ASSERT(!Thread::mayBeGCThread());
@@ -193,14 +197,18 @@ public:
     void clearDOMGuardedObjects();
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, JSC::Exception*);
+#if !defined(BUN_DISABLE_SHADOW_REALM)
     static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject);
+#endif
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters>, const JSC::SourceOrigin&, bool deferred);
     static JSC::Identifier moduleLoaderResolve(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSValue referrer, RefPtr<JSC::ScriptFetcher>, bool useImportMap);
     static JSC::JSPromise* moduleLoaderFetch(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, const WTF::String& referrer, RefPtr<JSC::ScriptFetchParameters>, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSObject* moduleLoaderCreateImportMetaProperties(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSValue key, JSC::JSModuleRecord*, RefPtr<JSC::ScriptFetcher>);
     static JSC::JSValue moduleLoaderEvaluate(JSGlobalObject*, JSC::JSModuleLoader*, JSValue key, JSValue moduleRecordValue, RefPtr<JSC::ScriptFetcher>, JSValue sentValue, JSValue resumeMode);
+#if ENABLE(WEBASSEMBLY)
     static void compileStreaming(JSGlobalObject*, JSC::JSPromise*, JSC::JSValue source, std::optional<JSC::WebAssemblyCompileOptions>&&);
     static void instantiateStreaming(JSGlobalObject*, JSC::JSPromise*, JSC::JSValue source, JSC::JSObject* importObject, std::optional<JSC::WebAssemblyCompileOptions>&&);
+#endif
 
     static ScriptExecutionStatus scriptExecutionStatus(JSGlobalObject*, JSObject*);
     static void promiseRejectionTracker(JSGlobalObject*, JSC::JSPromise*, JSC::JSPromiseRejectionOperation);
@@ -337,82 +345,8 @@ public:
 
     void resetOnEachMicrotaskTick();
 
-    enum class PromiseFunctions : uint8_t {
-        BunServe__Plugins__onResolve,
-        BunServe__Plugins__onReject,
-        Bun__HTTPRequestContext__onReject,
-        Bun__HTTPRequestContext__onRejectStream,
-        Bun__HTTPRequestContext__onResolve,
-        Bun__HTTPRequestContext__onResolveStream,
-        Bun__HTTPRequestContextTLS__onReject,
-        Bun__HTTPRequestContextTLS__onRejectStream,
-        Bun__HTTPRequestContextTLS__onResolve,
-        Bun__HTTPRequestContextTLS__onResolveStream,
-        Bun__HTTPRequestContextDebug__onReject,
-        Bun__HTTPRequestContextDebug__onRejectStream,
-        Bun__HTTPRequestContextDebug__onResolve,
-        Bun__HTTPRequestContextDebug__onResolveStream,
-        Bun__HTTPRequestContextDebugTLS__onReject,
-        Bun__HTTPRequestContextDebugTLS__onRejectStream,
-        Bun__HTTPRequestContextDebugTLS__onResolve,
-        Bun__HTTPRequestContextDebugTLS__onResolveStream,
-        jsFunctionOnLoadObjectResultResolve,
-        jsFunctionOnLoadObjectResultReject,
-        jsFunctionMockModuleFactoryResolve,
-        jsFunctionMockModuleFactoryReject,
-        Bun__TestScope__Describe2__bunTestThen,
-        Bun__TestScope__Describe2__bunTestCatch,
-        Bun__HTMLRewriter__onHandlerResolve,
-        Bun__HTMLRewriter__onHandlerReject,
-        Bun__onResolveEntryPointResult,
-        Bun__onRejectEntryPointResult,
-        Bun__NodeHTTPRequest__onResolve,
-        Bun__NodeHTTPRequest__onReject,
-        Bun__FileSink__onResolveStream,
-        Bun__FileSink__onRejectStream,
-        Bun__CronJob__onPromiseResolve,
-        Bun__CronJob__onPromiseReject,
-        Bun__HTTPRequestContextMux__onReject,
-        Bun__HTTPRequestContextMux__onRejectStream,
-        Bun__HTTPRequestContextMux__onResolve,
-        Bun__HTTPRequestContextMux__onResolveStream,
-        Bun__HTTPRequestContextMuxTLS__onReject,
-        Bun__HTTPRequestContextMuxTLS__onRejectStream,
-        Bun__HTTPRequestContextMuxTLS__onResolve,
-        Bun__HTTPRequestContextMuxTLS__onResolveStream,
-        Bun__HTTPRequestContextDebugMux__onReject,
-        Bun__HTTPRequestContextDebugMux__onRejectStream,
-        Bun__HTTPRequestContextDebugMux__onResolve,
-        Bun__HTTPRequestContextDebugMux__onResolveStream,
-        Bun__HTTPRequestContextDebugMuxTLS__onReject,
-        Bun__HTTPRequestContextDebugMuxTLS__onRejectStream,
-        Bun__HTTPRequestContextDebugMuxTLS__onResolve,
-        Bun__HTTPRequestContextDebugMuxTLS__onResolveStream,
-        Bun__FetchTasklet__onResolveRequestStream,
-        Bun__FetchTasklet__onRejectRequestStream,
-        Bun__S3UploadStream__onResolveStream,
-        Bun__S3UploadStream__onRejectStream,
-        Bun__HTMLRewriter__onResolveInputStream,
-        Bun__HTMLRewriter__onRejectInputStream,
-        Count_,
-    };
-    static constexpr size_t promiseFunctionsSize = static_cast<size_t>(PromiseFunctions::Count_);
-
-    static PromiseFunctions promiseHandlerID(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
-
-    JSFunction* thenable(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1))
-    {
-        auto& barrier = this->m_thenables[static_cast<size_t>(GlobalObject::promiseHandlerID(handler))];
-        if (JSFunction* func = barrier.get()) {
-            return func;
-        }
-
-        JSFunction* func = JSC::JSFunction::create(vm(), this, 2,
-            String(), handler, ImplementationVisibility::Public);
-
-        barrier.set(vm(), this, func);
-        return func;
-    }
+    // The function to hand to a promise for `handler`, one for each handler in a realm.
+    JSFunction* thenable(SYSV_ABI EncodedJSValue (*handler)(JSC::JSGlobalObject* arg0, JSC::CallFrame* arg1));
 
     double INSPECT_MAX_BYTES = 50;
     bool isInsideErrorPrepareStackTraceCallback = false;
@@ -420,7 +354,8 @@ public:
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
 
-    using ThenablesArray = std::array<WriteBarrier<JSFunction>, promiseFunctionsSize + 1>;
+    // Filled from the front. A handler that finds it full gets a new function each time.
+    using ThenablesArray = std::array<WriteBarrier<JSFunction>, 57>;
     // Native module default-export cache so require(id) === (await import(id)).default.
     // Visited via FOR_EACH_GLOBALOBJECT_GC_MEMBER's std::array<WriteBarrier> overload.
     using NativeModuleDefaultsArray = std::array<WriteBarrier<JSObject>, NativeModuleDefaultSlotCount>;
@@ -581,7 +516,6 @@ public:
     V(public, LazyClassStructure, m_JSHTTPParserClassStructure)                                              \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_jsonlParseResultStructure)                           \
-    V(private, LazyPropertyOfGlobalObject<Structure>, m_pathParsedObjectStructure)                           \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketHandlersStructure)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
@@ -593,7 +527,7 @@ public:
     V(private, WebCore::JSStreamsRuntime, m_streamsRuntime)                                                  \
     V(private, LazyPropertyOfGlobalObject<JSMap>, m_requireMap)                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_subtleCryptoObject)                                   \
-    V(private, LazyPropertyOfGlobalObject<Structure>, m_JSBufferSubclassStructure)                           \
+    V(public, LazyPropertyOfGlobalObject<Structure>, m_JSBufferSubclassStructure)                            \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSResizableOrGrowableSharedBufferSubclassStructure)  \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_vmModuleContextMap)                                  \
     V(private, LazyPropertyOfGlobalObject<JSWeakMap>, m_moduleSourceValueMap)                                \
@@ -701,7 +635,6 @@ public:
     void clearModuleRegistry();
 
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
-    JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
     JSC::Structure* JSSocketHandlersStructure() { return m_JSSocketHandlersStructure.get(this); }
 
@@ -892,5 +825,6 @@ extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::Global
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
+extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSONSource(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 
 #endif

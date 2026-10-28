@@ -1,0 +1,55 @@
+////: lines-11
+export function «1»(): «2» {
+  return «3»;
+}
+////: lines-13
+function «1»(): number {
+  return «2»();
+}
+////: lines-2
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "typeRoots": ["../../../../../packages"],
+    "types": ["bun-types"],
+    "noEmit": true,
+    "experimentalDecorators": true
+  }
+}
+////: lines-3
+function «1»() {
+  return «2»;
+}
+////: lines-4
+function «1»(): «2» {
+  return «3»;
+}
+////: lines-6
+class «1» {
+  «2»(): string {
+    return «3»;
+  }
+}
+////: lines-7
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "typeRoots": ["../../../../../packages"],
+    "types": ["bun-types"],
+    "noEmit": true,
+    "strict": true,
+    «1»: true
+  }
+}
+////: lines-8
+export function «1»() {
+  return «2»;
+}
+////: lines-9
+function «1»(«2»: number): «3» {
+  return «2» + «4»;
+}

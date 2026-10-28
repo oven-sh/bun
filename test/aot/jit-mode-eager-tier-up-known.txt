@@ -1,0 +1,33 @@
+# Programs whose output under `bun run --aot` differs between default and eager tier-up thresholds, and why.
+# JIT bugs that released Bun has too:
+arrays/reads-around-sort    the DFG's inlined sort restarts after the comparator truncated the array
+language/array-subclass-iteration    the message of "not iterable" depends on the tier
+untyped-code/hot-runtime-functions    the message of "not iterable" depends on the tier
+built-ins-alone/object-prototype-to-string-of-proxies-that-have-been-revoked    the message names Array.isArray in place of Object.prototype.toString once the caller is compiled
+# TODO: JIT mode itself: Reflect on a locked built-in returns false in the interpreter and throws once the caller is compiled
+typed-objects/builtin-prototypes-immutable
+typed-objects/reflect-results-for-builtin
+# TODO: JIT mode itself: the run ends at the first `new` and prints nothing more; the executable is held against the stored text
+host-classes/a-class-with-computed-fields-stands-below-a-host-constructor-that-answers-with-a-string
+# TODO: once the code is compiled, a global that has been deleted is read as undefined, without a ReferenceError
+language/global-variables-that-change-are-read-outside-hot-code
+structural-types/a-declared-global-appears-changes-type-and-disappears
+# TODO: once it is compiled, a switch over texts takes the default for a piece of a text whose storage has gone from 8 to 16 bits
+strings/substrings-of-widened-16-bit-string
+# Not bugs:
+arrays/array-subclass-element-storage    prints the indexing type, which the DFG's sort changes
+arrays/sort-write-back-after-mutation    counts comparator calls, and the DFG's inlined sort makes a different number
+arrays/sort-sees-removed-elements    counts comparator calls, and the DFG's inlined sort makes a different number
+calls/host-function-stack-traces    prints stack traces, and a built-in that the DFG compiles into its caller has no frame
+calls/stack-across-vm-entries    prints stack traces, and a built-in that the DFG compiles into its caller has no frame
+closed-world/inspector-does-nothing    prints the address of the inspector, which is drawn at each start
+closed-world/inspector-does-nothing-beside-evaluated-text    prints the address of the inspector, which is drawn at each start
+calls-fast-paths/class-as-value    counts heap cells, and compiled code allocates Structures
+calls-fast-paths/class-members-created-on-first-inspection    counts heap cells, and compiled code allocates Structures
+async-and-generators/for-await-releases-values    depends on when the collector runs
+small-benchmarks/binary-trees    prints durations
+small-benchmarks/fannkuch    prints durations
+small-benchmarks/n-body    prints durations
+small-benchmarks/untyped-property-access    prints durations
+small-benchmarks/spectral    prints durations
+small-benchmarks/tokens-maps-objects-3    prints durations

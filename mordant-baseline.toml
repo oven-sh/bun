@@ -214,7 +214,7 @@
 "same_match_twice:src/runtime/webcore/blob/write_file.rs" = 3
 "unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
-"unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2
+"unchecked_construction:src/runtime/server/HTMLBundle.rs" = 3
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
 "unsafe_send_covers_more_than_pointers:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unsafe_send_covers_more_than_pointers:src/runtime/node/fs_events.rs" = 1

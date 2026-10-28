@@ -441,6 +441,7 @@ test.skipIf(!isLinux)(
       const server = net.createServer({ pauseOnConnect: true }, onConnection);
       await once(server.listen(unix), "listening");
       try {
+        // @ts-expect-error latin1Slice is missing in @types/node
         const headers = { "x-pad": Buffer.alloc(sendBuffer + extra, "a").latin1Slice() };
         const upload = fetch("http://localhost/", {
           unix,
@@ -453,7 +454,7 @@ test.skipIf(!isLinux)(
         await (await fetch(other.url)).text();
 
         let received = Buffer.alloc(0);
-        socket.on("data", data => {
+        socket.on("data", (data: Buffer) => {
           received = Buffer.concat([received, data]);
           const headEnd = received.indexOf("\r\n\r\n");
           if (headEnd < 0 || received.length < headEnd + 4 + content.length) return;

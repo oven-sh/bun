@@ -1,0 +1,1 @@
+error: TS2565: Property 'prototype' is used before being assigned.

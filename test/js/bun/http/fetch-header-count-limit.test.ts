@@ -109,7 +109,7 @@ describe("response header field count", () => {
           // Gives the client a chance to read this part on its own. The result is the same if it doesn't.
           await new Promise(resolve => setImmediate(resolve));
         }
-        socket.end(parts.at(-1));
+        socket.end(parts.at(-1)!);
       });
     }).listen(0, "127.0.0.1");
     await once(server, "listening");

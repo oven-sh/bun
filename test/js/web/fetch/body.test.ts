@@ -2323,7 +2323,9 @@ describe("the body's Content-Type stays in the headers after the body is read", 
     // A stream has no type: https://fetch.spec.whatwg.org/#concept-bodyinit-extract
     expect(new Response(response(body()).body).headers.get("content-type")).toBeNull();
     // A Request takes the type of the in-memory body that an unread stream came from.
-    expect(request(response(body()).body!).headers.get("content-type")).toEqual(name === "Bun.file" ? null : type);
+    expect<unknown>(request(response(body()).body!).headers.get("content-type")).toEqual(
+      name === "Bun.file" ? null : type,
+    );
   });
 
   test.each(bodies)("fetch(request) leaves it in request.headers (%s)", async (_, body, type) => {

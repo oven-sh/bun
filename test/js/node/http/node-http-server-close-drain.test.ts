@@ -1170,7 +1170,11 @@ test.concurrent.each(
       ["reads start again after unref()", "unref()\nhalf\nend 2097152\n", tlsChunked],
       ["closeAllConnections() after close()", "close()\nclosed\n", plain],
     ] as const
-  ).flatMap(([shape, expected, ...variants]) => variants.map(variant => [shape, ...variant, expected] as const)),
+  ).flatMap(([shape, expected, ...variants]) =>
+    variants.map(
+      (variant: readonly ["http" | "https", "Content-Length" | "chunked"]) => [shape, ...variant, expected] as const,
+    ),
+  ),
 )(
   "the process exits with a paused upload open behind a sent response: %s (%s, %s)",
   async (shape, protocol, framing, expected) => {

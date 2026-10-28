@@ -1,0 +1,111 @@
+# The program runs a script of node:vm: text that Function or eval is given declares nothing at the top level. A script may declare a top-level `let Date`, which every free name of the program finds
+# before it asks the global object. It may not declare `let Array`: the run time refuses a declaration under which the global object holds a locked property. So a locked global is a constant here too,
+# a global that only a write replaces is not, and a name that the global object lacks may come to be bound.
+# RUN: pass ResolveBuiltins
+# RUN(FLOW): pipeline ResolveBuiltins
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=NodeVMBindingScript
+    v1 = Builtin builtin=DateNow
+    v2 = Construct v0, -, v1
+    v3 = CallDirect function=f1
+    v4 = CallDirect function=f2
+    v5 = CallDirect function=f3
+    v6 = CallDirect function=f4
+    v7 = CallDirect function=f5
+    v8 = CallDirect function=f6
+    v9 = CallDirect function=f7
+    Return
+}
+
+function f1 name="lockedGlobal" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Array" [isFreeName]
+    Return v1
+}
+# CHECK-LABEL: function f1 name="lockedGlobal"
+# CHECK: v1: builtin(Array) = Builtin builtin=Array
+# FLOW-LABEL: function f1 name="lockedGlobal"
+# FLOW-NOT: PropGet
+# FLOW: = Builtin builtin=Array
+
+function f2 name="typeofLockedGlobal" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Array" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+}
+# CHECK-LABEL: function f2 name="typeofLockedGlobal"
+# CHECK: v1: builtin(Array) = Builtin builtin=Array
+# FLOW-LABEL: function f2 name="typeofLockedGlobal"
+# FLOW-NOT: PropGet
+# FLOW: = Builtin builtin=Array
+
+function f3 name="lockedNumber" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Infinity" [isFreeName]
+    Return v1
+}
+# CHECK-LABEL: function f3 name="lockedNumber"
+# CHECK: v1: {{*}} = Double number=
+# FLOW-LABEL: function f3 name="lockedNumber"
+# FLOW-NOT: PropGet
+# FLOW: = Double number=
+
+function f4 name="globalThatOnlyWriteReplaces" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName]
+    Return v1
+}
+# CHECK-LABEL: function f4 name="globalThatOnlyWriteReplaces"
+# CHECK: = PropGet v0 key="Date" [isFreeName]
+# FLOW-LABEL: function f4 name="globalThatOnlyWriteReplaces"
+# FLOW-NOT: Builtin builtin=Date
+# FLOW: = PropGet {{*}}key="Date"{{*}}[isFreeName]
+
+function f5 name="typeofGlobalThatOnlyWriteReplaces" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Date" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+}
+# CHECK-LABEL: function f5 name="typeofGlobalThatOnlyWriteReplaces"
+# CHECK: = PropGet v0 key="Date" [isFreeName, isForTypeOf]
+# FLOW-LABEL: function f5 name="typeofGlobalThatOnlyWriteReplaces"
+# FLOW-NOT: Builtin builtin=Date
+# FLOW: = PropGet {{*}}key="Date"{{*}}[isFreeName, isForTypeOf]
+
+function f6 name="typeofNameOutsideTheTable" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="window" [isFreeName, isForTypeOf]
+    v2 = TypeOf v1
+    Return v2
+}
+# CHECK-LABEL: function f6 name="typeofNameOutsideTheTable"
+# CHECK: = PropGet v0 key="window" [isFreeName, isForTypeOf]
+# FLOW-LABEL: function f6 name="typeofNameOutsideTheTable"
+# FLOW-NOT: = Undefined
+# FLOW: = PropGet {{*}}key="window"{{*}}[isFreeName, isForTypeOf]
+
+# Evaluated text may also store on the global object
+function f7 name="memberOutsideTheTable" results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="window"
+    Return v1
+}
+# CHECK-LABEL: function f7 name="memberOutsideTheTable"
+# CHECK: = PropGet v0 key="window"
+# FLOW-LABEL: function f7 name="memberOutsideTheTable"
+# FLOW-NOT: = Undefined
+# FLOW: = PropGet {{*}}key="window"

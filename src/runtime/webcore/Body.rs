@@ -358,6 +358,7 @@ impl PendingValue {
                 }
                 Action::GetBytes => global_this.readable_stream_to_bytes(readable.value),
                 Action::GetText => global_this.readable_stream_to_text(readable.value),
+                Action::GetJSONSource => global_this.readable_stream_to_json_source(readable.value),
                 Action::GetBlob => global_this.readable_stream_to_body_blob(
                     readable.value,
                     bun_string_jsc::create_utf8_for_js(global_this, self.content_type.as_slice())?,
@@ -405,6 +406,8 @@ pub(crate) enum Action {
     GetJSON,
     GetArrayBuffer,
     GetBytes,
+    /// [`AnyBlob::to_json_source`].
+    GetJSONSource,
     GetBlob,
     /// `read_body` fills it in from the owner's `Content-Type`.
     GetFormData(Option<Box<webcore::form_data::Encoding>>),
@@ -440,6 +443,7 @@ impl Action {
             Action::GetJSON => blob.to_json(cx, Lifetime::Share),
             Action::GetArrayBuffer => blob.to_array_buffer(cx, Lifetime::Transfer),
             Action::GetBytes => blob.to_uint8_array(cx, Lifetime::Transfer),
+            Action::GetJSONSource => blob.to_json_source(cx, Lifetime::Transfer),
             Action::GetFormData(encoding) => {
                 let encoding = encoding.take().expect("read_body sets the encoding");
                 webcore::form_data::FormData::to_js(cx.global(), blob.slice(), &encoding)
@@ -1682,7 +1686,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         // Asked before the stream's bytes are lifted out: their own type isn't one this body implied.
         let implies_content_type = !self.get_body_value().content_type().is_empty();
-        self.get_body_value().to_blob_if_possible();
+        self.get_body_value().lift_unread_stream();
 
         let mut content_type = blob::BlobContentType::default();
         match &mut action {
@@ -1850,6 +1854,29 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 pub(crate) enum Unusable {
     Disturbed,
     Locked,
+}
+
+/// A promise for what `body.json()` parses, where compiled code parses it by a type (`bodyBytesForm` of the table of built-ins).
+#[unsafe(no_mangle)]
+#[bun_jsc::host_call]
+fn Body__jsonSource(global_this: *mut JSGlobalObject, body: JSValue) -> JSValue {
+    // SAFETY: compiled code passes its live realm.
+    let global_this = unsafe { &*global_this };
+    bun_jsc::to_js_host_call(global_this, || {
+        let cx = global_this.js_thread_of_caller();
+        if let Some(request) = body.as_class_ref::<webcore::Request>() {
+            return request.read_body(&cx, Action::GetJSONSource);
+        }
+        if let Some(response) = body.as_class_ref::<webcore::Response>() {
+            return response.read_body(&cx, Action::GetJSONSource);
+        }
+        match body.as_class_ref::<Blob>() {
+            Some(blob) => blob.json_source(&cx),
+            None => Err(global_this.throw_invalid_arguments(format_args!(
+                "Expected a Request, a Response or a Blob",
+            ))),
+        }
+    })
 }
 
 /// If the body already failed, reject the read with that error. Every body

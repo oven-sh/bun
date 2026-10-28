@@ -170,7 +170,7 @@ test("throws EADDRINUSE when another server holds the port on localhost", () => 
   const { port } = occupant;
   for (const listen of [
     () => serve({ hostname: "localhost", port, fetch: () => new Response() }),
-    () => Bun.listen({ hostname: "localhost", port, socket: { data() {} } }),
+    () => Bun.listen({ hostname: "localhost", port: port!, socket: { data() {} } }),
   ]) {
     expect(() => listen().stop(true)).toThrow(expect.objectContaining({ code: "EADDRINUSE" }));
   }
@@ -182,7 +182,7 @@ test.skipIf(!isLinux || !hasIPv6)(
   () => {
     using occupant = Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } });
     using server = serve({ port: occupant.port, fetch: () => new Response() });
-    expect(server.address).toEqual({ address: "0.0.0.0", family: "IPv4", port: occupant.port });
+    expect((server as any).address).toEqual({ address: "0.0.0.0", family: "IPv4", port: occupant.port });
   },
 );
 
@@ -406,14 +406,14 @@ describe("Bun.serve() throws the error of the call that failed", () => {
     for (const [address, { code, ...rest }] of rows) {
       const expected = { port: undefined, path: undefined, ...rest, code, errno: code, syscall: "listen" };
       expect(facts(() => serve({ ...address, fetch: () => new Response() }))).toEqual(expected);
-      expect(facts(() => Bun.listen({ ...address, socket: { data() {} } }))).toEqual(expected);
+      expect(facts(() => Bun.listen({ ...address, socket: { data() {} } } as Bun.UnixSocketOptions))).toEqual(expected);
     }
   });
 
   test.skipIf(isWindows)("Bun.listen({ fd }) reports the code listen() failed with", () => {
     using dir = tempDir("serve-listen-fd", { "file.txt": "" });
     const fd = openSync(join(String(dir), "file.txt"), "r");
-    const listen = () => Bun.listen({ fd, socket: { data() {} } });
+    const listen = () => Bun.listen({ fd, socket: { data() {} } } as any);
     const expected = { syscall: "listen", address: undefined, port: undefined, path: undefined };
     expect(facts(listen)).toEqual({ ...expected, code: "ENOTSOCK", errno: "ENOTSOCK" });
     closeSync(fd);

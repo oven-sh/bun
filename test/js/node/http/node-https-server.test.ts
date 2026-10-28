@@ -546,7 +546,7 @@ describe("https.Server has the methods of tls.Server", () => {
     const { promise, resolve } = Promise.withResolvers<string>();
     const client = connect(port, { servername, ...options });
     client.on("secureConnect", () => {
-      resolve(client.getPeerCertificate().subject.CN);
+      resolve(client.getPeerCertificate().subject.CN as string);
       client.destroy();
     });
     client.on("error", (err: NodeJS.ErrnoException) => resolve(String(err.code)));
@@ -935,7 +935,7 @@ describe("req.socket of an https.Server", () => {
           ephemeralKeyInfo: socket.getEphemeralKeyInfo(),
           finished: socket.getFinished()!.length,
           peerFinished: socket.getPeerFinished()!.length,
-          keyingMaterial: socket.exportKeyingMaterial(16, "label").length,
+          keyingMaterial: (socket as any).exportKeyingMaterial(16, "label").length,
         }),
       );
     });
@@ -976,7 +976,7 @@ describe("req.socket of an https.Server", () => {
         for (const name of Object.getOwnPropertyNames(tls.TLSSocket.prototype).sort()) {
           if (/^(get|is)[A-Z]/.test(name)) answers[name] = summarize(socket[name]());
         }
-        answers.exportKeyingMaterial = summarize(socket.exportKeyingMaterial(16, "label"));
+        answers.exportKeyingMaterial = summarize((socket as any).exportKeyingMaterial(16, "label"));
         answers.setMaxSendFragment = [511, 512, 16384, 16385].map(size => socket.setMaxSendFragment(size));
         answers.disableRenegotiation = socket.disableRenegotiation();
         for (const name of ["servername", "alpnProtocol", "authorized", "authorizationError", "encrypted"]) {
@@ -1050,10 +1050,13 @@ describe("https.Server wraps a socket passed to emit('connection') in TLS", () =
 
     const { promise, resolve, reject } = Promise.withResolvers<string>();
     https
-      .get({ port, host: "127.0.0.1", ...verified, ALPNProtocols: ["http/1.1"], agent: false }, res => {
-        let body = "";
-        res.on("data", chunk => (body += chunk)).on("end", () => resolve(body));
-      })
+      .get(
+        { port, host: "127.0.0.1", ...verified, ALPNProtocols: ["http/1.1"], agent: false } as https.RequestOptions,
+        res => {
+          let body = "";
+          res.on("data", chunk => (body += chunk)).on("end", () => resolve(body));
+        },
+      )
       .on("error", reject);
     expect(await promise).toBe("true true http/1.1 true");
     expect((await secureConnection)[0]).toBeInstanceOf(tls.TLSSocket);
@@ -1085,7 +1088,9 @@ describe("https.Server wraps a socket passed to emit('connection') in TLS", () =
   test.each(["connect", "upgrade"])(
     "emit('secureConnection') parses HTTP on its own '%s' socket, which is already decrypted",
     async event => {
-      await using server = https.createServer(identity, (req, res) => res.end(`${req.url} ${req.socket.encrypted}`));
+      await using server = https.createServer(identity, (req, res) =>
+        res.end(`${req.url} ${(req.socket as tls.TLSSocket).encrypted}`),
+      );
       server.on(event, (_req, socket) => {
         socket.write("HTTP/1.1 200 OK\r\n\r\n");
         server.emit("secureConnection", socket);

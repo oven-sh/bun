@@ -284,6 +284,26 @@ const us_system_certs_t &us_get_root_system_certs() {
   return system_certs;
 }
 
+#ifdef __APPLE__
+#include <pthread.h>
+#include <pthread/qos.h>
+#endif
+
+extern "C" __attribute__((noinline)) void us_prefetch_root_system_certs() {
+#ifdef __APPLE__
+  pthread_attr_t attributes;
+  pthread_t thread;
+  if (pthread_attr_init(&attributes)) return;
+  pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+  pthread_attr_set_qos_class_np(&attributes, QOS_CLASS_USER_INITIATED, 0);
+  pthread_create(&thread, &attributes, [](void *) -> void * {
+    us_get_root_system_certs();
+    return nullptr;
+  }, nullptr);
+  pthread_attr_destroy(&attributes);
+#endif
+}
+
 extern "C" X509_STORE *us_get_default_ca_store() {
   X509_STORE *store = X509_STORE_new();
   if (store == NULL) {

@@ -1,0 +1,1 @@
+class C { static make(v, i) { return new C(i); } constructor(i) { this.i = i; } } const list = Array.from({ length: 3 }, C.make); console.log(list.map(c => c.i).join(), list[0] instanceof C); const u = Array.from({ length: 3 }, undefined); console.log(u.length, u[0], 0 in u, u.map(x => x === undefined).join());

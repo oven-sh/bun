@@ -1662,7 +1662,7 @@ describe("pipelined requests behind a response that waits for the client to read
         let tail = "";
         const { promise, resolve } = Promise.withResolvers<void>();
         const onData = (data: Buffer) => {
-          tail = (tail + data.latin1Slice(Math.max(0, data.length - 5))).slice(-5);
+          tail = (tail + (data as any).latin1Slice(Math.max(0, data.length - 5))).slice(-5);
           if (tail === "0\r\n\r\n") resolve();
         };
         client.on("data", onData);

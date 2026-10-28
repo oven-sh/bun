@@ -43,7 +43,12 @@ const kServerResponseStatistics = Symbol("ServerResponseStatistics");
 
 const { isPrimary } = require("internal/cluster/isPrimary");
 const { addServerAbortSignalOption } = require("internal/net/server_abort_signal");
-const { kForeignListener, kHandleClosed, kSNIContexts } = require("internal/net/symbols");
+const {
+  constructors: netConstructors,
+  kForeignListener,
+  kHandleClosed,
+  kSNIContexts,
+} = require("internal/net/symbols");
 const { getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kInternalSocketData,
@@ -100,7 +105,6 @@ const kClusterListeningId = Symbol("http.server.clusterListeningId");
 let nativeServerOwners: WeakMap<WeakKey, Server | null> | undefined;
 // Set on the 'connect'/'upgrade' handoff; closeAll/closeIdleConnections() skip these, as in Node.
 const kHandedOff = Symbol("http.server.socketHandedOff");
-// True on a TLS connection from accept until 'secureConnection', when Node's connectionListener takes it.
 function closeHandle(handle) {
   if (!handle.closed) handle.close();
 }
@@ -884,7 +888,8 @@ Server.prototype.listen = function () {
 function listenInCluster(server, tls, port, host, socketPath, ipv6Only, fd) {
   const listeningId = ++server[kClusterListeningId];
   function query(address, queryPort, addressType) {
-    const serverQuery = { address, port: queryPort, addressType, fd, flags: ipv6Only ? 1 : 0, sharedOnly: true };
+    const flags = ipv6Only ? 1 : 0;
+    const serverQuery = { address, port: queryPort, addressType, fd, flags, sharedOnly: true, isHttp: true };
     cluster._getServer(server, serverQuery, (errno, handle, reply) => {
       if (listeningId !== server[kClusterListeningId] || cluster.worker.exitedAfterDisconnect) {
         handle?.close();
@@ -2249,7 +2254,8 @@ function loadNet(tls) {
     for (const name of ["remoteAddress", "remotePort", "remoteFamily"]) {
       assignablePeerAddress[name] = {
         configurable: true,
-        get: Object.getOwnPropertyDescriptor(NetSocket.prototype, name)!.get,
+        // Of node:net's own class: one that a program has stored in `net.Socket` may inherit it.
+        get: Object.getOwnPropertyDescriptor(netConstructors.Socket.prototype, name)!.get,
         set(value) {
           Object.defineProperty(this, name, { value, writable: true, configurable: true, enumerable: true });
         },
@@ -2262,7 +2268,7 @@ function loadNet(tls) {
 function attachConnection(server: Server, socket, http) {
   socket[kHandle] = http;
   http.duplex = socket;
-  http.onclose = onConnectionClosed;
+  http.onclose = onConnectionClosed.bind(http, server[kTrackedConnections]);
   if (socket.encrypted) {
     // The native SNI dispatch asks the object in the handle's `data`, which is this socket.
     socket._SNICallback = server[tlsSymbol]?._SNICallback;
@@ -2302,6 +2308,13 @@ function nativeConnectionListener(server: Server, socket) {
   socket._final = nativeSocketFinal;
   socket._destroy = nativeSocketDestroy;
   socket._paused = false;
+  // Declared here, so that a socket that a program seals still takes every later store.
+  socket[kBoundOnAbort] = undefined;
+  socket[kCloseCallback] = undefined;
+  socket[kKeepAliveTimeoutSet] = false;
+  socket[kLastResponseWrite] = undefined;
+  socket[kFinishedAtClose] = undefined;
+  socket[kDetachedWhileClosing] = undefined;
   // In Node an assignment to one of these throws in strict mode. Here a server's socket has always kept the value.
   Object.defineProperties(socket, assignablePeerAddress);
 }
@@ -2361,7 +2374,7 @@ function nativeSocketOnEnd(this: any) {
 }
 
 // uWS closed the connection. A response's writes don't pass through the socket's Writable, so they fail here, where Node's destroy() fails them.
-function onConnectionClosed(this: any, left) {
+function onConnectionClosed(this: any, tracked, left) {
   const http = this;
   const socket = left ?? http.duplex;
   if (socket[kHandle] !== http) return;
@@ -2376,7 +2389,7 @@ function onConnectionClosed(this: any, left) {
     }
     return;
   }
-  socket.server[kTrackedConnections].delete(socket);
+  tracked.delete(socket);
   const pending = socket[kDetachedWhileClosing];
   const message = socket._httpMessage ?? (pending?.destroyed ? pending : undefined);
   if (message) {
@@ -3492,7 +3505,7 @@ ServerResponse.prototype.detachSocket = function (socket) {
     if (socket[kCloseCallback]) socket[kCloseCallback] = undefined;
     socket.removeListener("close", onServerResponseClose);
     socket._httpMessage = null;
-    if (socket.destroyed && this.destroyed) socket[kDetachedWhileClosing] = this;
+    if (this.destroyed && socket.destroyed) socket[kDetachedWhileClosing] = this;
   }
 
   this.socket = null;
@@ -3675,12 +3688,15 @@ ServerResponse.prototype.emit = function (event) {
       process.nextTick(emitResponseFinishedThenClose, this, callback);
       return false;
     }
-    // The callbacks of what it couldn't send run ahead of 'close'.
-    const pending = this[kPendingCallbacks].length !== 0;
-    if (pending) failPendingWriteCallbacks(this, undefined);
-    if (this[kFailHeldWrites]() || pending) {
-      process.nextTick(emitClose, this);
-      return false;
+    // The callbacks of what it couldn't send run ahead of 'close'. An heir of the prototype that this constructor didn't make has none.
+    const callbacks = this[kPendingCallbacks];
+    if (callbacks !== undefined) {
+      const pending = callbacks.length !== 0;
+      if (pending) failPendingWriteCallbacks(this, undefined);
+      if (this[kFailHeldWrites]() || pending) {
+        process.nextTick(emitClose, this);
+        return false;
+      }
     }
     callCloseCallback(this);
   }
@@ -3698,7 +3714,10 @@ function emitResponseFinishedThenClose(res, callback) {
 
 ServerResponse.prototype.flushHeaders = function () {
   const handle = this[kHandle];
-  if (!this._header) this.writeHead(this.statusCode);
+  if (!this._header) {
+    if (this._implicitHeader === OriginalImplicitHeadFn) this.writeHead(this.statusCode);
+    else this._implicitHeader();
+  }
   if (!handle) return OutgoingMessagePrototype.flushHeaders.$call(this);
   // Should be idempotent.
   if (this._headerSent) return;

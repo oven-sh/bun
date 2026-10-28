@@ -9,6 +9,7 @@ use bun_uws_sys as uws;
 use bun_wyhash::Wyhash;
 
 use bun_http_types::Method as http_method;
+use bun_removable_features::{Feature, is_removed};
 use bun_url::URL;
 pub(crate) use http_method::{Method, Optional as MethodOptional};
 
@@ -632,13 +633,15 @@ impl ServerConfig {
         new_config: &mut ServerConfig,
         global: &JSGlobalObject,
     ) -> bool {
+        let has_html_route = new_config
+            .static_routes
+            .iter()
+            .any(|entry| matches!(entry.route, AnyRoute::Html(_)));
+        if !has_html_route {
+            return false;
+        }
         self.bake = new_config.bake.take();
-        if self.bake.is_none()
-            && new_config
-                .static_routes
-                .iter()
-                .any(|entry| matches!(entry.route, AnyRoute::Html(_)))
-        {
+        if self.bake.is_none() {
             let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
             let framework = crate::bake::Framework::auto(resolver, Vec::new());
             self.bake = Some(Self::dev_server_options(
@@ -647,7 +650,7 @@ impl ServerConfig {
                 crate::bake::SplitBundlerOptions::default(),
             ));
         }
-        self.bake.is_some()
+        true
     }
 
     pub(crate) fn drop_dev_server_options(&mut self) {
@@ -788,6 +791,7 @@ impl ServerConfig {
                 framework_router_list: Vec::new(),
                 user_routes: &mut args.static_routes,
                 global,
+                may_start_development_server: opts.may_start_development_server,
             };
             let init_ctx = &mut init_ctx_;
 
@@ -965,9 +969,10 @@ impl ServerConfig {
 
             // When HTML bundles are provided, ensure DevServer options are ready
             // The presence of these options causes Bun.serve to initialize things.
-            if !init_ctx.dedupe_html_bundle_map.is_empty()
+            if (!init_ctx.dedupe_html_bundle_map.is_empty()
                 || !init_ctx.framework_router_list.is_empty()
-                || bake_pages
+                || bake_pages)
+                && (!is_removed(Feature::Bundler) || !args.development.is_hmr_enabled())
             {
                 if args.development.is_hmr_enabled() {
                     // SAFETY: `bun_vm()` returns the live VM for this global;
@@ -1124,6 +1129,11 @@ impl ServerConfig {
                 if let Some(bake_args_js) = arg.get_truthy(global, "app")? {
                     if !bun_core::FeatureFlags::bake() {
                         break 'brk;
+                    }
+                    if is_removed(Feature::Bundler) {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "app: the bundler and the dev server were removed by --trim because your code never calls Bun.build or imports an HTML file"
+                        )));
                     }
                     if args.bake.is_some() {
                         // "app" is likely to be removed in favor of the HTML loader.
@@ -1345,6 +1355,7 @@ impl ServerConfig {
 #[derive(Clone, Copy)]
 pub(crate) struct FromJSOptions {
     pub(crate) allow_bake_config: bool,
+    pub(crate) may_start_development_server: bool,
     /// What the running server keeps answering with when a `reload()` config
     /// names no handler, as `apply_reload` applies it: `fetch` stays
     /// unless the new config replaces it, and callback routes stay as long as

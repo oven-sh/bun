@@ -1,0 +1,40 @@
+module.parent: nothing of the program (object)
+module.parent.parent: nothing of the program (undefined)
+module.parent.children: nothing of the program (object)
+module.parent.require: throws TypeError
+module.children: nothing of the program (object)
+require.main: nothing of the program (undefined)
+process.mainModule: nothing of the program (undefined)
+require.cache: nothing of the program (object)
+keys of require.cache: nothing of the program (object)
+for-in over require.cache: nothing of the program (object)
+values of require.cache: nothing of the program (object)
+Module._cache: nothing of the program (object)
+module.constructor._cache: nothing of the program (undefined)
+Module._load of a file of the program: nothing of the program (undefined)
+require of a file of the program: throws Error
+require of it in the executable: throws Error
+Module._resolveFilename wrapped: nothing of the program (object)
+Module._load wrapped: nothing of the program (object)
+Module.prototype.require wrapped: nothing of the program (object)
+createRequire of the executable: throws Error
+the cache of a created require: nothing of the program (object)
+the main of a created require: nothing of the program (undefined)
+process.getBuiltinModule: nothing of the program (object)
+a descriptor in require.cache: nothing of the program (undefined)
+an entry stored into require.cache: throws Error
+the registry of the loader: nothing of the program (undefined)
+the keys of the registry: nothing of the program (undefined)
+Module._extensions wrapped: nothing of the program (object)
+the parent of a file that the package requires: nothing of the program (object)
+Module.prototype: nothing of the program (object)
+import.meta.require.cache of an ES module outside: nothing of the program (object)
+import.meta.require.main: nothing of the program (undefined)
+import.meta.require of a file in the executable: throws Error
+createRequire(import.meta.url).cache: nothing of the program (object)
+import.meta.main and its relatives: nothing of the program (object)
+import() of a file in the executable: rejects Error
+what a callback of the program answers: nothing of the program (object)
+the files from outside in require.cache: index.js,index.js,second.js,third.js
+the package finds itself there: true, and takes itself out: true
+the program goes on: secret of inner, hidden of other

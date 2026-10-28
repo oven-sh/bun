@@ -1,7 +1,7 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
+import * as table from "../../../codegen/builtins/lib.ts";
 
 const js = { capability: "js", throws: true } as const;
-const method = { returns: b.any, ...js } as const;
 const buffer = b.bytes({ from: ["buffer"], held: "handle" });
 
 /** What the session calls. Each gets the `context` of the options first. */
@@ -41,6 +41,7 @@ export const H2FrameParser = b.class({
   refCounted: true,
   finalize: true,
   memoryCost: true,
+  types: [table.exactType("$Node.H2FrameParser"), table.exactType("$Bindgen.H2FrameParser")],
   construct: {
     passStructure: true,
     args: { options: H2FrameParserOptions },
@@ -82,11 +83,11 @@ export const H2FrameParser = b.class({
     emitErrorToAllStreams: { args: { code: b.u32 }, capability: "js" },
     flush: { returns: b.usize, capability: "js", rustName: "flush_from_js" },
     forEachStream: { args: { callback: b.callable, closed: b.bool.default(false) }, capability: "js" },
-    getCurrentState: { returns: b.any, capability: "js" },
-    getFrameCounters: { returns: b.any, capability: "js" },
+    getCurrentState: { returns: b.any.returning("object"), capability: "js" },
+    getFrameCounters: { returns: b.any.returning("object"), capability: "js" },
     getNextStream: { returns: b.i32, capability: "js" },
     getStreamContext: { args: { streamId: b.u32 }, returns: b.any, capability: "js" },
-    getStreamState: { args: { streamId: b.u32 }, returns: b.any, capability: "js" },
+    getStreamState: { args: { streamId: b.u32 }, returns: b.any.returning("object", "undefined"), capability: "js" },
     goaway: { args: { code: b.u32, lastStreamID: b.i32.wrap, opaqueData: buffer }, capability: "js" },
     hasOpenStreams: { returns: b.bool },
     hasRejectedSend: { returns: b.bool },
@@ -94,7 +95,11 @@ export const H2FrameParser = b.class({
     noTrailers: { args: { streamId: b.u32 }, capability: "js" },
     origin: { ...js, args: { origin: b.any } },
     ping: { args: { payload: buffer }, returns: b.bool, capability: "js" },
-    pushPromise: { ...method, args: { parentId: b.u32, promisedId: b.u32, headers: b.any, sensitiveHeaders: b.any } },
+    pushPromise: {
+      ...js,
+      args: { parentId: b.u32, promisedId: b.u32, headers: b.any, sensitiveHeaders: b.any },
+      returns: b.any.returning("number"),
+    },
     read: { ...js, args: { data: buffer } },
     releaseStream: { args: { streamId: b.u32 }, returns: b.bool },
     request: {
@@ -119,7 +124,7 @@ export const H2FrameParser = b.class({
     settings: { ...js, args: { settings: b.any } },
     validateRequest: { ...js, args: { headers: b.any } },
     writeStream: {
-      ...method,
+      ...js,
       args: {
         streamId: b.u32,
         data: b.any,
@@ -128,6 +133,7 @@ export const H2FrameParser = b.class({
         callback: b.any,
         deferCallback: b.bool.default(false),
       },
+      returns: b.any.returning("boolean", "number"),
       length: 3,
     },
   },

@@ -323,6 +323,7 @@ test("should zero-fill padding octets in padded DATA frames sent by the client",
 // nghttp2 drops the priority spec of a request, so Node never sets the PRIORITY flag on HEADERS.
 describe.each([
   ["NONE", http2.constants.PADDING_STRATEGY_NONE],
+  // @ts-expect-error PADDING_STRATEGY_ALIGNED is missing in @types/node
   ["ALIGNED", http2.constants.PADDING_STRATEGY_ALIGNED],
   ["MAX", http2.constants.PADDING_STRATEGY_MAX],
 ])("request() priority options with PADDING_STRATEGY_%s", (_, paddingStrategy) => {
@@ -363,7 +364,7 @@ describe.each([
 
   test("the server answers the request and the next one", async () => {
     const server = http2.createServer();
-    server.on("stream", stream => {
+    server.on("stream", (stream: http2.ServerHttp2Stream) => {
       stream.respond();
       stream.end();
     });

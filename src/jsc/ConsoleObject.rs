@@ -348,6 +348,18 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
+#[cold]
+fn throw_for_removed_table_printer(global: &JSGlobalObject) -> jsc::JsError {
+    unsafe extern "C" {
+        safe fn Bun__throwForRemovedFeature(global: &JSGlobalObject, feature: u16) -> JSValue;
+    }
+    Bun__throwForRemovedFeature(
+        global,
+        bun_removable_features::Feature::ConsoleTable.index(),
+    );
+    jsc::JsError::Thrown
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
@@ -498,6 +510,10 @@ fn message_with_type_and_level_(
         // if value is not an object/array/iterable, don't print a table and just print it
         let tabular_data = vals_slice[0];
         if tabular_data.is_object() {
+            // The function that the program calls is the engine's, which every executable has.
+            if bun_removable_features::is_removed(bun_removable_features::Feature::ConsoleTable) {
+                return Err(throw_for_removed_table_printer(global));
+            }
             let properties: JSValue = if len >= 2 && vals_slice[1].js_type().is_array() {
                 vals_slice[1]
             } else {
@@ -652,12 +668,14 @@ struct CollectedRow {
 const PADDING: u32 = 1;
 
 impl<'a> TablePrinter<'a> {
+    #[inline(never)]
     pub fn init(
         global_object: &'a JSGlobalObject,
         level: MessageLevel,
         tabular_data: JSValue,
         properties: JSValue,
     ) -> JsResult<Self> {
+        bun_removable_features::removable_definition!(ConsoleTable, Self::init);
         let _ = level;
         Ok(TablePrinter {
             global_object,
@@ -869,10 +887,15 @@ impl<'a> TablePrinter<'a> {
         let _ = writer.write_all("│\n".as_bytes());
     }
 
+    #[inline(never)]
     pub fn print_table<const ENABLE_ANSI_COLORS: bool>(
         &mut self,
         writer: &mut dyn bun_io::Write,
     ) -> JsResult<()> {
+        bun_removable_features::removable_definition!(
+            ConsoleTable,
+            Self::print_table::<ENABLE_ANSI_COLORS>
+        );
         let global_object = self.global_object;
 
         let mut columns: Vec<Column> = Vec::with_capacity(16);
@@ -2194,13 +2217,19 @@ pub mod formatter {
                 T::RegExpObject => TagPayload::String,
                 T::Symbol => TagPayload::Symbol,
                 T::BooleanObject => TagPayload::Boolean,
-                T::JSFunction => TagPayload::Function,
+                T::JSFunction
+                | T::CompiledClosure
+                | T::SlimClosure
+                | T::SlimClosureWithProperties => TagPayload::Function,
                 T::WeakMap | T::Map => TagPayload::Map,
                 T::MapIterator => TagPayload::MapIterator,
                 T::SetIterator => TagPayload::SetIterator,
                 T::WeakSet | T::Set => TagPayload::Set,
                 T::JSDate => TagPayload::JSON,
                 T::JSPromise => TagPayload::Promise,
+
+                // The engine's generator objects have a cell type of their own, which falls to the last arm.
+                T::Object if value.is_compiled_generator() => TagPayload::JSON,
 
                 T::WrapForValidIterator
                 | T::RegExpStringIterator
@@ -2209,6 +2238,7 @@ pub mod formatter {
                 | T::IteratorHelper
                 | T::Object
                 | T::FinalObject
+                | T::CompiledObject
                 | T::ModuleNamespaceObject => TagPayload::Object,
 
                 T::ProxyObject => {

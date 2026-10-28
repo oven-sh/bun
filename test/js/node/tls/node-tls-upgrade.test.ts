@@ -639,11 +639,11 @@ test.each(["tls.connect({ socket })", "new TLSSocket(socket, { isServer: true })
     const drainsInWrite = (raw: net.Socket) => {
       const duplex = duplexOver(raw);
       const write = duplex.write;
-      duplex.write = function (...args: any[]) {
+      duplex.write = function (this: Duplex, ...args: Parameters<Duplex["write"]>) {
         const result = write.apply(this, args);
         this.emit("drain");
         return result;
-      };
+      } as Duplex["write"];
       return duplex;
     };
     const payload = Buffer.alloc(256 * 1024, "a");

@@ -1043,7 +1043,7 @@ test("a copy of a used Request has its method and headers and an empty body", as
     port: 0,
     fetch: async req => new Response(`${req.method} ${JSON.stringify(await req.text())}`),
   });
-  const sent = new Request(server.url, { method: "POST", body: "once" });
+  const sent = new Request(server.url as any, { method: "POST", body: "once" });
   await sent.text();
   expect(await (await server.fetch(sent)).text()).toBe('POST ""');
 });

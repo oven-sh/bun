@@ -232,6 +232,12 @@ pub trait Taskable {
 }
 
 impl TaskTag {
+    /// A bundle asks its plugins to resolve or load something.
+    #[inline]
+    pub fn is_plugin_request(self) -> bool {
+        self == task_tag::BundleV2PluginResolve || self == task_tag::BundleV2PluginLoad
+    }
+
     /// The tag's identifier, for diagnostics.
     pub fn name(self) -> &'static str {
         task_tag::NAMES.get(self.0 as usize).copied().unwrap_or("?")

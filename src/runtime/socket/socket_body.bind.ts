@@ -1,42 +1,51 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
 import { ServerWebSocket } from "../server/server.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::socket_body" });
 
 const js = { capability: "js", throws: true } as const;
-const method = { returns: b.any, ...js } as const;
-const cached = { ...js, getter: b.any, cache: true } as const;
+const textIfOpen = b.any.returning("string", "undefined");
+const cached = { ...js, getter: textIfOpen, cache: true } as const;
 const write = {
-  ...method,
+  ...js,
   args: { data: b.any, byteOffset: b.any, byteLength: b.any, encoding: b.any },
+  returns: b.any.returning("number"),
   length: 3,
 } as const;
-const writeBuffered = { ...method, args: { data: b.any, encoding: b.any } } as const;
+const end = write;
+const buffered = { ...js, args: { data: b.any, encoding: b.any } } as const;
+const bufferIfAny = { returns: b.any.returning("Buffer", "undefined"), ...js } as const;
+const objectIfAny = { returns: b.any.returning("object", "undefined"), ...js } as const;
 
 /** Members of the trait `TlsHandle`. */
 const tlsHandle = {
-  alpnProtocol: { ...js, getter: b.any },
+  alpnProtocol: { ...js, getter: b.any.returning("string", "boolean") },
   disableRenegotiation: {},
-  exportKeyingMaterial: { ...method, args: { length: b.any, label: b.any, context: b.any } },
-  getCertificate: method,
-  getCipher: method,
-  getEphemeralKeyInfo: method,
-  getPeerCertificate: { ...method, args: { abbreviated: b.any } },
-  getPeerX509Certificate: method,
-  getServername: method,
-  getSession: method,
-  getSharedSigalgs: method,
-  getTLSFinishedMessage: method,
-  getTLSPeerFinishedMessage: method,
-  getTLSTicket: method,
-  getTLSVersion: method,
-  getX509Certificate: method,
+  exportKeyingMaterial: { ...bufferIfAny, args: { length: b.any, label: b.any, context: b.any } },
+  getCertificate: objectIfAny,
+  getCipher: objectIfAny,
+  getEphemeralKeyInfo: { returns: b.any.returning("object", "null"), ...js },
+  getPeerCertificate: {
+    ...js,
+    args: { abbreviated: b.any },
+    returns: b.any.returning("object", "undefined", "null"),
+  },
+  getPeerX509Certificate: objectIfAny,
+  getServername: { returns: textIfOpen, ...js },
+  getSession: bufferIfAny,
+  getSharedSigalgs: { returns: b.any.returning("Array", "null", "undefined"), ...js },
+  getTLSFinishedMessage: bufferIfAny,
+  getTLSPeerFinishedMessage: bufferIfAny,
+  getTLSTicket: bufferIfAny,
+  getTLSVersion: { returns: b.any.returning("string", "null"), ...js },
+  getX509Certificate: objectIfAny,
   isSessionReused: { returns: b.bool },
   renegotiate: js,
   resumeSNI: { args: { context: SecureContext.nullable, isError: b.bool.loose }, capability: "js" },
   setKeyCert: { ...js, args: { context: b.any } },
-  setMaxSendFragment: { ...method, args: { size: b.any } },
+  setMaxSendFragment: { ...js, args: { size: b.any }, returns: b.any.returning("boolean") },
   setSession: { ...js, args: { session: b.any } },
 } as const;
 const rustTraits = ["crate::socket::socket_body::TlsHandle"];
@@ -61,26 +70,26 @@ function socket<SSL extends boolean>(ssl: SSL) {
     proto: {
       ...byName({
         ...tlsHandle,
-        authorized: { getter: b.bool },
-        bytesWritten: { getter: b.f64 },
+        authorized: { getter: b.bool, pure: true },
+        bytesWritten: { getter: b.f64, pure: true },
         /** Can call the socket's handlers. */
         close: { capability: "js" },
         data: { setter: true, internalField: "data" },
-        end: write,
-        fd: { getter: b.any, capability: "heap" },
+        end,
+        fd: { getter: b.any.returning("number"), capability: "heap" },
         flush: { capability: "js" },
-        getAuthorizationError: { returns: b.any, capability: "js" },
+        getAuthorizationError: { returns: b.any.returning("Error", "null"), capability: "js" },
         getTypeOfService: { returns: b.i32 },
-        listener: { getter: b.any, capability: "heap" },
+        listener: { getter: b.any.returning("Listener", "undefined"), capability: "heap" },
         localAddress: cached,
-        localFamily: { getter: b.any, cache: true, capability: "js" },
+        localFamily: { getter: textIfOpen, cache: true, capability: "js" },
         localPort: { getter: b.u16.optional, cache: true },
         pause: { capability: "js" },
         readyState: { getter: b.i32 },
         ref: { rustName: "js_ref" },
         reload: { ...js, args: { options: b.any } },
         remoteAddress: cached,
-        remoteFamily: { getter: b.any, cache: true, capability: "js" },
+        remoteFamily: { getter: textIfOpen, cache: true, capability: "js" },
         remotePort: { getter: b.u16.optional },
         resume: { capability: "js" },
         setKeepAlive: { ...js, args: { enable: b.bool.loose, initialDelay: b.any }, returns: b.bool },
@@ -93,13 +102,13 @@ function socket<SSL extends boolean>(ssl: SSL) {
         terminate: { capability: "js" },
         timeout: { ...js, args: { seconds: b.any } },
         unref: { rustName: "js_unref" },
-        upgradeTLS: { ...method, args: { options: b.any } },
+        upgradeTLS: { ...js, args: { options: b.any }, returns: b.any.returning("Array", "undefined") },
         write,
         /** Node's `handle.writeQueueSize`, for the `_handle` of a `net.Socket`. */
         writeQueueSize: { getter: b.f64, enumerable: false },
       }),
-      "@@dispose": { ...write, rustName: "end", length: 0 },
-      writeBuffered: { ...writeBuffered, privateSymbol: "write" },
+      "@@dispose": { ...end, rustName: "end", length: 0 },
+      writeBuffered: { ...buffered, returns: b.any.returning("boolean", "number"), privateSymbol: "write" },
     },
   });
 }
@@ -117,11 +126,13 @@ export const upgradeTLSDeferred = b.fn({
   capability: "js",
   throws: true,
 });
+/** `data` of the options is `data` of the new socket. */
 export const upgradeDuplexToTLS = b.fn({
   args: { duplex: b.any, options: b.any },
   returns: b.any,
   capability: "js",
   throws: true,
+  uses: { options: [table.everything, table.memberStoredIn(["data"], table.nativeCell("Socket.data"))] },
 });
 export const releaseHeldFlight = b.fn({ args: { socket: SocketHandle } });
 export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandle, inHandshake: b.bool } });
@@ -141,10 +152,9 @@ export const socketFaultInjectionAvailable = b.fn({
 });
 export const namedPipeLiveCount = b.fn({ returns: b.usize, rustPath: testing("named_pipe_live_count") });
 export const upgradedDuplexLiveCount = b.fn({ returns: b.usize, rustPath: testing("upgraded_duplex_live_count") });
-/** `count` is truncated and clamped to an `i32`. */
 export const sweepSocketTimers = b.fn({
   ...js,
-  args: { count: b.f64.loose.allowBigInt },
+  args: { count: b.u16.validateInteger() },
   rustPath: testing("sweep_socket_timers"),
 });
 export const clearSocketFaults = b.fn({ ...js, rustPath: testing("clear_socket_faults") });

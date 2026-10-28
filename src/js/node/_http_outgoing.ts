@@ -508,7 +508,7 @@ function _writeRaw(this: any, data, encoding, callback, _size?) {
 }
 
 OutgoingMessage.prototype._storeHeader = _storeHeader;
-function _storeHeader(this: any, firstLine, headers, trailerHeaderChecked?) {
+function _storeHeader(this: any, firstLine, headers, trailerHeaderChecked = false) {
   // firstLine in the case of request is: 'GET /index.html HTTP/1.1\r\n'
   // in the case of response it is: 'HTTP/1.1 200 OK\r\n'
   const state = {

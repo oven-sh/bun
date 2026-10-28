@@ -69,10 +69,10 @@ export const QuicSession = b.class({
     getCertificate: { returns: b.bufferSource.optional, capability: "heap", throws: true },
     getEphemeralKey: { returns: EphemeralKey.optional },
     /** A `SocketAddress`, or `undefined` for no address. */
-    getLocalAddress: { returns: b.opaque, capability: "js" },
+    getLocalAddress: { returns: b.opaque.returning("SocketAddress", "undefined"), capability: "js" },
     getPeerCertificate: { returns: b.bufferSource.optional, capability: "heap", throws: true },
     /** A `SocketAddress`, or `undefined` for no address. */
-    getRemoteAddress: { returns: b.opaque, capability: "js" },
+    getRemoteAddress: { returns: b.opaque.returning("SocketAddress", "undefined"), capability: "js" },
     gracefulClose: { ...js, args: { options: QuicCloseOptions.otherAsNull } },
     localTransportParams: { ...js, returns: b.object.optional },
     openStream: {
@@ -174,7 +174,7 @@ export const QuicEndpoint = b.class({
   construct: { passStructure: true, args: { options: EndpointOptions }, capability: "js", throws: true, length: 0 },
   proto: {
     /** A `SocketAddress`, or `undefined` for no address. */
-    address: { returns: b.opaque, capability: "js" },
+    address: { returns: b.opaque.returning("SocketAddress", "undefined"), capability: "js" },
     closeGracefully: { capability: "js", passThis: true },
     connect: {
       ...js,

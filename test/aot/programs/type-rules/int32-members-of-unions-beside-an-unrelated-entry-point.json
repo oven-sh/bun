@@ -1,0 +1,1 @@
+{ "entryPoints": ["./same-names.ts", "./more-names.ts"] }

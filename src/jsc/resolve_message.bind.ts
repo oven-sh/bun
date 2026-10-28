@@ -3,7 +3,8 @@ import * as b from "../codegen/bindgen-lib.ts";
 const js = { capability: "js", throws: true } as const;
 const text = { getter: b.string.utf8, cache: true } as const;
 const label = { getter: b.string.local, cache: true, ...js } as const;
-const position = { getter: b.opaque, cache: true, ...js } as const;
+const position = { getter: b.opaque.returning("object", "null"), cache: true, ...js } as const;
+const coordinate = { getter: b.i32, pure: true } as const;
 
 /** Error.prototype in the chain: userland checks `err instanceof Error`. */
 const errorClass = { construct: "illegal", prototypeBase: "Error" } as const;
@@ -30,10 +31,10 @@ export const ResolveMessage = b.class({
   rustPath: "crate::ResolveMessage",
   proto: {
     code: { getter: ResolveMessageCode.optional, cache: true },
-    column: { getter: b.i32 },
+    column: coordinate,
     importKind: label,
     level: label,
-    line: { getter: b.i32 },
+    line: coordinate,
     message: { ...text, writable: true },
     position,
     referrer: text,
@@ -48,9 +49,9 @@ export const BuildMessage = b.class({
   ...errorClass,
   rustPath: "crate::BuildMessage",
   proto: {
-    column: { getter: b.i32 },
+    column: coordinate,
     level: label,
-    line: { getter: b.i32 },
+    line: coordinate,
     message: { ...text, writable: true },
     notes: { getter: b.jsArray, cache: true, ...js },
     position,

@@ -79,7 +79,7 @@ export const Image = b.class({
     flop: chainable,
     heic: format,
     /** Read-only after a pipeline has run; -1 before. */
-    height: { getter: b.i32 },
+    height: { getter: b.i32, pure: true },
     jpeg: format,
     metadata: terminal,
     modulate: { ...chainable, args: { options: ImageModulateOptions.deferred }, ...js },
@@ -105,7 +105,7 @@ export const Image = b.class({
     /** Sharp-compat alias for `buffer()`; same native fn, no overhead. */
     toBuffer: { ...terminal, rustName: "buffer" },
     webp: format,
-    width: { getter: b.i32 },
+    width: { getter: b.i32, pure: true },
     /** Encode → fs.writeFile, both off-thread; resolves bytes-written. What is wrong with `dest` rejects after the encode. */
     write: { ...terminal, args: { dest: b.opaque.nullable }, length: 1 },
   },

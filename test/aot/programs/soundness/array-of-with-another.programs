@@ -1,0 +1,597 @@
+//// array-of-with-another-receiver.js
+// Array of with another receiver.
+class A { constructor(n) { if (n > 1) throw new RangeError("no"); this.n = n; } }
+try { const o = Array.of.call(A, 1, "two"); console.log("made " + o.n + " " + o[0] + " " + o[1] + " " + o.length); } catch (e) { console.log("caught " + e.name); }
+class C { constructor(n) { this.n = n; } }
+try { const o = Array.of.call(C, 1, "two"); console.log("made " + o.n + " " + o[0] + " " + o[1] + " " + o.length + " " + Object.keys(o).length); } catch (e) { console.log("caught " + e.name); }
+console.log("end");
+//// assert-if-error-with-an-error.mjs
+// Assert if error with an error.
+import assert from "node:assert";
+try { assert.ifError(new Error("e")); console.log("no throw"); } catch (e) { console.log(e.name, e.code, e.message); }
+//// async-function-made-from-constant-text.mjs
+// Async function made from constant text.
+const f = new Function("return async function (a) { await null; return a + 7 }")(); console.log(await f(1));
+//// async-hooks-init-gets-its-arguments.mjs
+// Async hooks init gets its arguments.
+import { createHook } from "node:async_hooks";
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+createHook({ init(id, type, trigger, resource) { if (type === "TickObject" && resource.args) { const x = resource.args[0]; x.n = "x"; x.list.push("y"); } } }).enable();
+process.nextTick(x => {}, o);
+console.log(typeof o.n, o.twice(), o.total());
+//// call-in-a-very-long-function.js
+// Call in a very long function.
+class P { m() { return 1; } }
+function call(o) { return o.m(); }
+console.log(call(new P()));
+//// callee-that-only-throws.js
+// Callee that only throws.
+class K {}
+for (const callee of [K, () => 1]) {
+  try {
+    console.log(callee(1));
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+for (const callee of [K, () => 1]) {
+  try {
+    console.log(typeof new callee(1));
+  } catch (error) {
+    console.log(error.name);
+  }
+}
+//// cast-object-is-passed-to-a-mixin-override.ts
+// Cast object is passed to a mixin override.
+class A {
+  take(v: string): number { return v.length; }
+  run(x: unknown): number { return this.take(x as string); }
+}
+type Constructor<T> = new (...list: any[]) => T;
+function mix<T extends Constructor<A>>(Base: T) {
+  return class extends Base {
+    take(v: string): number { return typeof v === "string" ? v.length : -1; }
+  };
+}
+const Mixed = mix(A);
+console.log(new Mixed().run({}), new Mixed().run("abc"), new A().run("ab"));
+//// class-defined-in-a-very-long-function.js
+// Class defined in a very long function.
+let calls = 0;
+class A { static get f() { calls++; return 1; } static set f(v) { calls += 10; } }
+class B extends A { static early = [calls, (B.f = 3), calls].join(); static f = 2; }
+console.log(B.early);
+//// class-over-a-constructor-function-is-constructed-in-for-each.js
+// Class over a constructor function is constructed in for each.
+function F(x) { this.r = x; }
+class B extends F { constructor(x) { super(x); this.s = x + 1; } }
+const made = [];
+[1, 2].forEach(x => { made.push(new B(x)); });
+console.log(made.map(o => o.r + "," + o.s).join(";"));
+//// closure-is-used-in-rare-code.ts
+// Closure is used in rare code.
+interface Item { id: number; next: Item | undefined }
+const items: Item[] = [];
+for (let i = 0; i < 6; i++) items.push({ id: i, next: undefined });
+for (let i = 0; i + 1 < items.length; i++) items[i].next = items[i + 1];
+function countTrue(item: Item | undefined, test: (item: Item) => boolean): number {
+  if (item === undefined) return 0;
+  return (test(item) ? 1 : 0) + countTrue(item.next, test);
+}
+console.log(countTrue(items[0], item => item.id > 2) + countTrue(items[0], () => true) * 100);
+//// cluster-send-helper-stores-into-its-message.ts
+// Cluster send helper stores into its message.
+import cluster from "node:cluster";
+import net from "node:net";
+if (cluster.isPrimary) {
+  const worker = cluster.fork();
+  worker.on("listening", address => {
+    console.log("listening", typeof address.port, address.addressType);
+    worker.kill();
+  });
+  worker.on("exit", () => console.log("exit"));
+} else {
+  net.createServer(() => {}).listen(0, "127.0.0.1");
+}
+//// console-log-of-an-heir.js
+// Console log of an heir.
+console.log(Object.create({ f() {}, unit: "p" }));
+//// console-log-of-an-object-with-a-to-string-tag.mjs
+// Console log of an object with a to string tag.
+console.log({ [Symbol.toStringTag]: "Tagged", a: 1 });
+console.log(new (class Foo { get [Symbol.toStringTag]() { return "Bar"; } })());
+//// constructor-function-store-runs-a-subclass-setter.js
+// Constructor function store runs a subclass setter.
+const log = [];
+function Base(v) { this.tag = v; }
+class Logged extends Base { set tag(v) { log.push("setter " + v); } }
+new Logged(1); new Base(2);
+console.log(log.join());
+//// custom-inspect-method-gets-three-arguments.js
+// Custom inspect method gets three arguments.
+const o = {
+  v: 1,
+  [Symbol.for("nodejs.util.inspect.custom")](depth, options, inspect) {
+    return "custom " + typeof depth + " " + typeof options + " " + typeof inspect + " " + (typeof inspect === "function" ? inspect({ a: 1 }, options) : "no inspect");
+  },
+};
+console.log(o);
+//// define-property-on-own-class-prototype.js
+// Define property on own class prototype.
+class Config { constructor() { this.port = 80; } }
+const data = JSON.parse('{}');
+const c2 = Object.assign(new Config(), data);
+const c3 = new Config(); const key = JSON.parse('"port"'); c3[key] = { valueOf() { return 21; } };
+Object.defineProperty(Config.prototype, "late", { get() { return this.port + 1; } });
+console.log(new Config().late, c2.port, c3.port + 1);
+//// evaluated-text-constructs-the-emitter-class-above-process.mjs
+// Evaluated text constructs the emitter class above process.
+import { EventEmitter } from "node:events";
+const text = ["let p = process; while (Object.getPrototypeOf(p) !== Object.prototype) p = Object.getPrototypeOf(p); return new p.constructor().listenerCount('x')", ""].join(process.argv.length > 99 ? "x" : "");
+console.log(typeof EventEmitter, new Function(text)());
+//// evaluated-text-replaces-the-callback-of-a-timer.mjs
+// Evaluated text replaces the callback of a timer.
+const glue = (a, b) => [a, b].join(process.argv.length > 99 ? "x" : "");
+class C { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+const o = new C(21);
+const h = setTimeout(x => {}, 5, o);
+new Function("h", glue('h._onTimeout = o => { o.n = "x"; o.list.push("y"); ', '}'))(h);
+await new Promise(r => setTimeout(r, 20));
+console.log(typeof o.n, o.twice(), o.total());
+//// for-each-of-a-set-subclass.js
+// For each of a set subclass.
+class SetHeir extends Set {}
+const heir = new SetHeir(["a", "bc"]);
+heir.forEach(k => console.log(k.length));
+//// for-in-lists-a-static-field-named-like-a-static-method.js
+// For in lists a static field named like a static method.
+class Base { static m = 1; static m() {} }
+const r = [];
+for (const key in Base) r.push(key);
+console.log(r.join());
+//// for-in-over-a-subclass-lists-its-static-fields.js
+// For in over a subclass lists its static fields.
+class Base { static a = 1; }
+class Made extends Base { static z = 3; }
+const found = [];
+for (const key in Made) found.push(key);
+console.log(found.join());
+//// function-that-reads-new-target.js
+// Function that reads new target.
+const target = function () {
+  this.held = new.target === target;
+};
+function row(f) {
+  console.log(f());
+}
+row(() => new target().held);
+//// function-under-a-computed-key-stores-to-this.js
+// Function under a computed key stores to this.
+const o = { n: 0, [Symbol.hasInstance]: function (v) { this.n = (this.n | 0) + 1; return v === 1; } };
+console.log(1 instanceof o, o.n, o[Symbol.hasInstance].name);
+//// indexed-read-of-a-string-object.js
+// Indexed read of a string object.
+const o = new String("abc");
+const c = o[1];
+console.log(c === undefined, typeof c, c + "!", c.length);
+//// instance-goes-through-call-and-promisify.js
+// Instance goes through call and promisify.
+class Cell { constructor(n) { this.n = n; this.list = [1, 2]; } twice() { return this.n * 2; } total() { let s = 0; for (let i = 0; i < this.list.length; i++) s += this.list[i]; return s; } }
+function route(name, f) {
+  const c = new Cell(21);
+  try { out = f(c); } catch (e) { console.log(name, "threw", e.name, e.message); return; }
+}
+route("call this", c => (function () { return this; }).call(c));
+route("promisify", c => require("node:util").promisify(cb => cb(null, c))());
+//// instance-with-very-many-added-properties.js
+// Instance with very many added properties.
+class C { constructor() { this.first = 1; } mark(v) { this.late = v; return this.first + this.late; } }
+const o = new C();
+for (let i = 0; i < 70000; i++) o["k" + i] = i;
+console.log(o.mark(2), Object.keys(o).length);
+//// iterator-helper-next-with-node-events-loaded.js
+// Iterator helper next with node events loaded.
+const E = require("node:events");
+console.log([1, 2].values().map(x => x + 1).toArray().join());
+const e = new E(); E.once(e, "e").then(a => console.log(a[0])); e.emit("e", 2);
+//// iterator-helpers-hand-on-their-objects.js
+// Iterator helpers hand on their objects.
+const id = x => x;
+const c = { n: 21 };
+const out = [c].values().map(id).toArray()[0];
+console.log(typeof out, out === c);
+const kept = [c].values().filter(() => true).next().value;
+console.log(typeof kept, kept === c);
+//// literal-is-the-prototype-of-what-a-built-in-base-makes.js
+// Literal is the prototype of what a built in base makes.
+class A extends Object {
+  constructor() {
+    super();
+    console.log(typeof this.peek);
+  }
+}
+const B = function () {};
+B.prototype = { peek() {} };
+console.log(Object.getPrototypeOf(Reflect.construct(A, [], B)) === B.prototype);
+//// local-instance-is-passed-to-get-prototype-of.js
+// Local instance is passed to get prototype of.
+class A { constructor() { this.x = 1; } }
+function report(label, x) { console.log(label + x.x); console.log(label + (Object.getPrototypeOf(x) === A.prototype)); }
+report("a", new A());
+report("b", new A());
+//// loop-over-an-empty-map.js
+// Loop over an empty map.
+const empty = new Map();
+for (const entry of empty) console.log(entry);
+console.log("end");
+//// method-assigned-to-another-object-is-called-on-the-prototype.js
+// Method assigned to another object is called on the prototype.
+function F() { this.x = 1; }
+const plain = {};
+const T = { a: F.prototype, undefined: plain };
+function key() { return k; }
+T[key()].m = function () { return 1; };
+var k = "a";
+function use(o) { return o.m(); }
+let r; try { r = use(new F()); } catch (e) { r = e.constructor.name; }
+console.log(r, typeof plain.m);
+//// method-installed-by-a-helper.js
+// Method installed by a helper.
+function attempt(f) { try { return f(); } catch (e) { return e.constructor.name; } }
+function F() { this.x = 1; }
+function install(p, f) { p.m = f; }
+const T = { a: install, undefined: Boolean };
+function key() { return k; }
+T[key()](F.prototype, function () { return 1; });
+var k = "a";
+function use(o) { return o.m(); }
+console.log(attempt(() => use(new F())));
+//// mixin-accessor-over-a-field-of-the-base-constructor.js
+// Mixin accessor over a field of the base constructor.
+class Base { constructor(v) { this.value = v; } }
+const Observable = Parent => class extends Parent {
+  set value(v) { this.stored = v * 2; }
+  get value() { return this.stored; }
+};
+const Watched = Observable(Base);
+const plain = new Base(1);
+const watched = new Watched(21);
+console.log(watched.value, watched.stored, Object.keys(watched).join(), plain instanceof Base);
+//// module-body-resumes-after-await.js
+// Module body resumes after await.
+function print(text) {
+  console.log(text);
+}
+function mix(value) {
+}
+function flush(label) {
+}
+function attempt(compute) {
+  try {
+    print(compute());
+  } catch (error) {
+    print("threw " + errorName(error));
+  }
+}
+function show(value, depth = 0) {
+  if (typeof value !== "object" || value === null) return String(value);
+  if (Array.isArray(value)) {
+  }
+  for (const key of Reflect.ownKeys(value)) {
+  }
+}
+const r2 = { name: String(true), items: Math.max(65535, (-1)), x: (9007199254740991 >= 32), id: [3, 100] };
+const r4 = { name: r2.x, id: [1], x: "__proto__x".endsWith(""), items: ((r2.items * r2.items) | 0) };
+function read7(o) {
+  return show(o.name) + ";" + Math.imul(((r4.id.at(9) ?? 0) | 0), ((r4.items + r4.items) | 0));
+}
+await { then(resolve) {
+  resolve(1);
+} };
+attempt(() => "see16 " + typeof r2.name + ":" + String(r2.name) + " " + show(r2.id) + " " + r2.x + " " + r2.items);
+attempt(() => "see16 keys " + Object.keys(r2).join());
+attempt(() => "read7 again " + read7(r2));
+print("keys17 " + Object.keys(r2).join() + " " + ("name" in r2));
+function probe19() {
+}
+print("extended18 " + probe19());
+void [...{ *[Symbol.iterator]() {
+} }];
+try {
+} catch (error) {
+}
+await (async () => {
+  await null;
+})();
+let kept24 = r4.items;
+void new Proxy({}, { get() {
+  Object.defineProperty(r2, ["items"].join(""), {
+    get() {
+    },
+    set(value) {
+      kept24 = value;
+    },
+  });
+} }).anything;
+try {
+  print("read7 again " + read7(r2));
+} catch (error) {
+}
+try {
+} catch (error) {
+}
+//// order-of-the-first-tick.js
+// Order of the first tick.
+const order = [];
+Promise.resolve().then(() => order.push("promise job"));
+process.nextTick(() => order.push("tick"));
+setTimeout(() => console.log(order.join(", ")), 0);
+//// process-stdout-columns.ts
+// Process stdout columns.
+console.log(process.stdout.isTTY, process.stdout.columns, process.stdout.rows, process.stdout.getWindowSize?.());
+//// property-is-read-again-after-a-generator-resumes.mjs
+// Property is read again after a generator resumes.
+function* change(x) { yield 0; x.v = 2; }
+function main() { const o = { v: 1 }; const it = change(o); it.next(); const a = o.v; it.next(); console.log(a, o.v); }
+main(); main();
+//// property-is-read-again-after-await-in-two-lines.mjs
+// Property is read again after await in two lines.
+async function change(x) { await null; x.v = 2; }
+const o = { v: 1 }; const other = change(o); const a = o.v; await other; console.log(a, o.v);
+//// property-is-read-again-after-await.mjs
+// Property is read again after await.
+const later = () => new Promise(resolve => setTimeout(resolve, 0));
+async function main() { const o = { v: 1 }; const other = (async () => { await later(); o.v = 2; })(); const a = o.v; await other; return [a, o.v].join(); }
+main().then(v => console.log(v)); main().then(v => console.log(v));
+//// random-fill-through-an-unknown-callee.ts
+// Random fill through an unknown callee.
+import { randomFillSync, randomFill } from "node:crypto";
+const bytes = new Uint8Array(16);
+randomFillSync(bytes);
+let total = 0;
+for (let i = 0; i < bytes.length; i++) total += bytes[i];
+console.log(total !== 0, bytes.some(byte => byte !== 0));
+const later = new Uint32Array(4);
+randomFill(later, error => console.log(error, later[0] + later[1] + later[2] + later[3] !== 0));
+//// readers-in-a-list-are-called-while-prototypes-change.mjs
+// Readers in a list are called while prototypes change.
+function other() {
+function kindOf(v) {
+}
+try {
+} catch (e) {
+}
+}
+let seed = 7919;
+const pick = (n) => {
+  seed = Math.imul(seed, 1103515245) + 12345 & 2147483647;
+  return (seed >>> 8) % n;
+}, NAMES = ["a", "b", "c", "d", "e", "f", "g", "h", "id", "key", "value", "kind", "next", "size", "then", "toJSON", "method", "state", "name2", "length2"
+], read = [
+(o) => o.next,
+(o) => ("name2" in o),
+(o) => ("length2" in o)
+], write = [(o, v) => {
+  o.a = v;
+}
+], remove = [
+(o) => delete o.length2];
+let log = 0, digest = 0, serial = 0;
+const mix = (n) => {
+}, show = (v) => typeof v === "number" ? v : typeof v === "string" ? v.length + 1000 : v === void 0 ? -1 : typeof v === "function" ? -2 : -3, attempt = (f) => {
+  try {
+    return f();
+  } catch (error) {
+  }
+};
+let protos = [];
+const freshProto = () => {
+  const p = pick(2) ? {} : JSON.parse('{"z0":0,"z1":1,"z2":2}');
+  return p;
+};
+for (let i = 0;i < 10; i++)
+  protos.push(freshProto());
+let heirs = [];
+const freshHeir = () => {
+  const o = Object.create(protos[pick(protos.length)]), n = pick(4);
+  return o;
+}
+function look(count) {
+  for (let i = 0;i < count; i++) {
+    const o = heirs[pick(heirs.length)];
+    for (let k = 0;k < NAMES.length; k++) {
+      mix(show(attempt(() => read[k](o))));
+    }
+  }
+}
+function deed() {
+  const p = protos[pick(protos.length)], k = pick(NAMES.length), name = NAMES[k];
+  switch (pick(17)) {
+    case 0:
+      attempt(() => write[k](p, ++serial));
+      attempt(() => Reflect.deleteProperty(p, name));
+    case 4: {
+      attempt(() => Object.defineProperty(p, name, { get() {
+      }, configurable: !0, enumerable: !0 }));
+    }
+      break;
+    case 6:
+      attempt(() => Object.defineProperty(p, name, { value: ++serial, writable: !0, configurable: !0, enumerable: pick(2) === 0 }));
+    case 7: {
+    }
+    case 8: {
+    }
+    case 9: {
+    }
+        heirs[pick(heirs.length)] = freshHeir();
+  }
+}
+for (let step = 1;step <= 20000; step++) {
+  deed();
+  look(3);
+}
+//// reflect-construct-sets-new-target-of-a-mixin.js
+// Reflect construct sets new target of a mixin.
+class Base { constructor() { this.t = new.target === Base ? "Base" : "other"; } }
+const M = B => class extends B { constructor() { super(); this.n = new.target === X ? "X" : new.target === Base ? "Base" : "other"; } };
+const X = M(Base);
+const a = new X(), o = Reflect.construct(X, [], Base);
+console.log(a.t, a.n, o.t, o.n, o instanceof X);
+//// sealed-array-refuses-to-grow.js
+// Sealed array refuses to grow.
+function grow(list) {
+  for (let i = 0; i < 4; i++) list[i] = i;
+  return list.length;
+}
+try {
+  console.log(grow(Object.seal([7])));
+} catch (error) {
+  console.log("throws", error.name);
+}
+//// sloppy-store-to-a-frozen-prototype.cjs
+// Sloppy store to a frozen prototype.
+function attempt(f) { try { return f(); } catch (e) { return e.constructor.name; } }
+function F1() { this.x = 1; }
+function use1(o) { return o.m(); }
+Object.freeze(F1.prototype);
+F1.prototype.m = function () { return 1; };
+console.log("frozen", attempt(function () { return use1(new F1()); }), typeof F1.prototype.m);
+function F2() { this.x = 1; }
+function use2(o) { return o.m(); }
+Object.preventExtensions(F2.prototype);
+F2.prototype.m = function () { return 1; };
+console.log("not extensible", attempt(function () { return use2(new F2()); }), typeof F2.prototype.m);
+//// static-field-before-its-initializer-runs.js
+// Static field before its initializer runs.
+class S { static a = Object.hasOwn(S, "b"); static b = 1; }
+console.log(S.a, Object.keys(S).join());
+class T { static a = "b" in T; static k = Object.keys(T).join(); static b = 1; }
+console.log(T.a, T.k);
+//// static-method-named-call.js
+// Static method named call.
+class WithItsOwn {
+  static call() {
+    return "own";
+  }
+}
+console.log(WithItsOwn.call(null, 1));
+//// store-through-an-heir-of-a-frozen-prototype.js
+// Store through an heir of a frozen prototype.
+"use strict";
+const base = Object.freeze({ tag: 1, walk() { return 1; } });
+const heir = Object.create(base);
+try {
+  heir.tag = 2;
+  console.log("stored", Object.keys(heir).join());
+} catch (e) {
+  console.log(e.name);
+}
+console.log(heir.walk());
+//// store-under-a-number-that-is-not-an-index.js
+// Store under a number that is not an index.
+class Stack {
+  items = [];
+  top = -1;
+  push(x) {
+    this.items[++this.top] = x;
+  }
+  pop() {
+    const x = this.items[this.top];
+    this.items[this.top--] = undefined;
+    return x;
+  }
+}
+const stack = new Stack();
+stack.push(1);
+console.log(stack.pop(), stack.pop(), stack.top, Object.keys(stack.items).join(), stack.items.length, "-1" in stack.items);
+//// store-under-a-numeric-name.js
+// Store under a numeric name.
+const list = [];
+list[-1] = 7;
+function read(i) {
+  return list[i];
+}
+console.log(read(-1), read(3), list.length, Object.keys(list).join(), "-1" in list, JSON.stringify(list));
+for (const key in list) console.log("key", key);
+//// stringify-of-an-instance-with-an-arrow-function-field.js
+// Stringify of an instance with an arrow function field.
+class A { f = () => 1; x = 1; }
+function report(label, x) { console.log(label + JSON.stringify(x)); }
+try { report("a", new A()); report("b", new A()); } catch (e) { console.log("threw " + e.name + " " + e.message); }
+//// subclass-made-in-a-function-of-a-class-with-a-private-field.js
+// Subclass made in a function of a class with a private field.
+class K { #p = 0; }
+function make() { return class extends K { get() { return 1; } }; }
+const K2 = make(); console.log(new K2().get());
+//// tail-call-of-a-json-parse-wrapper.js
+// Tail call of a json parse wrapper.
+function attempt(run) {
+  try {
+    run();
+  } catch (error) {}
+}
+function parse() {
+  return JSON.parse();
+}
+attempt(() => {
+  attempt(() => parse());
+  missing(Object, parse(text));
+});
+console.log("done");
+//// two-spread-calls-with-70000-arguments.js
+// Two spread calls with 70000 arguments.
+function run() { const a = Array.from({ length: 70000 }, (_, i) => i); function f() { return arguments.length + arguments[69999]; } return f(...a) + ',' + f(...a); }
+console.log(run());
+//// typed-array-store-calls-value-of.js
+// Typed array store calls value of.
+const state = { n: 1 };
+const writes = { valueOf() { state.n = "text"; return 7; } };
+const list = new Float64Array(2);
+function store(target, value, s) { const before = s.n; target[1] = value; return typeof before + " " + typeof s.n; }
+console.log(store(list, 1, state));
+console.log(store(list, writes, state));
+
+const throws = { valueOf() { throw "thrown text"; } };
+function storeInTry(target, value) { try { target[0] = value; return "stored"; } catch (e) { return typeof e === "string" ? e.length : e.message; } }
+console.log(storeInTry(list, 1));
+console.log(storeInTry(list, throws));
+//// value-is-used-after-array-includes.js
+// Value is used after array includes.
+const a = ["a whole text with a tail", "tail"];
+const b = ["a whole text with a tai", "whole text"];
+let total = 0;
+for (let i = 0; i < b.length; i++) {
+  const n = b[i].length * 3;
+  if (a.includes(b[i])) total += 1000;
+  total += n;
+}
+console.log(total);
+//// variable-without-a-value-is-used-in-rare-code.ts
+// Variable without a value is used in rare code.
+class Rec { constructor(public name: string, public n: number) {} }
+const spare = new Rec("spare", 0);
+let left = 0, fresh = false;
+function a(): string {
+  if (left === 0) return "a()";
+  left--;
+  return b(fresh ? new Rec("f", left) : spare, fresh ? "s" + left : "s", left + 0.5);
+}
+function b(p0: Rec, p1: string, p2: number): string {
+  if (left === 0) return "b(" + p0.name + p0.n + "," + p1 + "," + p2 + ")";
+  left--;
+  return a();
+}
+for (const [hops, makes] of [[1, false], [3, true], [5, false], [100001, true]] as [number, boolean][]) {
+  left = hops;
+  fresh = makes;
+  console.log(a());
+}
+//// writable-field-shadows-a-setter-for-an-heir.js
+// Writable field shadows a setter for an heir.
+const log = [];
+const top = { set tag(v) { log.push("setter " + v); }, get tag() { return "top"; } };
+const middle = { __proto__: top, tag: 1 };
+const heir = { __proto__: middle };
+heir.tag = 2;
+console.log(log.join(), Object.hasOwn(heir, "tag"), Object.keys(heir).join());

@@ -1,0 +1,5 @@
+a property added to Object.prototype: TypeError
+false false
+false []
+the same once an object has been made: TypeError
+false [] 1 undefined undefined

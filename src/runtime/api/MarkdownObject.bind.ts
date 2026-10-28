@@ -74,7 +74,7 @@ export const RenderCallbacks = b.dictionary(
 export const ComponentOverride = b.union({
   missing: b.null,
   flag: b.bool,
-  text: b.jsString,
+  text: b.string.local,
   other: b.opaque,
 });
 /** The `type` of the elements of each tag. A boolean is ignored. */

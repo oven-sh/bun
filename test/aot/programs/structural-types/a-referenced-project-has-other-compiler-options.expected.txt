@@ -1,0 +1,8 @@
+fields without a value, in the project that assigns -> ["second", false, "{\"second\":2}"]
+fields without a value, in the project that defines -> ["first,second,third", true, "{\"second\":2}"]
+fields without a value, here -> ["first,second,third", true]
+a field over an accessor, in the project that assigns -> [-1, "", "core: the setter of the base got 5"]
+a field over an accessor, in the project that defines -> [5, "level", ""]
+a field over an accessor, here -> [5, "level", ""]
+a subclass here of a class there -> ["second,fourth,fifth", "first,second,third,fourth,fifth"]
+2000 rounds: 20000

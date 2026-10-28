@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
 import { BuildArtifact } from "../api/JSBundler.bind.ts";
 import { ServerWebSocket } from "../server/server.bind.ts";
@@ -111,8 +112,8 @@ function socket<SSL extends boolean>(ssl: SSL) {
     ],
     proto: {
       alpnProtocol: { getter: ALPNProtocol, capability: "heap", throws: true },
-      authorized: { getter: b.bool },
-      bytesWritten: { getter: b.f64 },
+      authorized: { getter: b.bool, pure: true },
+      bytesWritten: { getter: b.f64, pure: true },
       /** Can call the socket's handlers. */
       close: { capability: "js" },
       data: { setter: true, internalField: "data" },
@@ -129,7 +130,7 @@ function socket<SSL extends boolean>(ssl: SSL) {
       },
       fd: { getter: b.i64 },
       flush: { capability: "js" },
-      getAuthorizationError: { returns: b.object.nullable, capability: "js" },
+      getAuthorizationError: { returns: b.object.returning("Error").nullable, capability: "js" },
       getCertificate: certificate,
       getCipher: { returns: CipherInfo.optional, capability: "heap", throws: true },
       getEphemeralKeyInfo: { returns: EphemeralKeyInfo.nullable },
@@ -226,10 +227,12 @@ export const DuplexTLSOptions = b.dictionary({
   data: b.opaque.optional,
 });
 /** Returns the `TLSSocket` and the listeners for the duplex's `data`, `end`, `drain` and `close`. */
+/** `data` of the options is `data` of the new socket. */
 export const upgradeDuplexToTLS = b.fn({
   ...js,
   args: { duplex: b.object.otherAsNull, options: DuplexTLSOptions },
   returns: b.jsArray,
+  uses: { options: [table.everything, table.memberStoredIn(["data"], table.nativeCell("Socket.data"))] },
   length: 2,
 });
 

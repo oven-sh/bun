@@ -2,7 +2,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 
 use bun_jsc::JsCell;
-use bun_jsc::bindgen::{JsScope, JsStructure, JsWrapper};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{AbortSignal, GlobalRef};
 use bun_ptr::RefPtr;
 
@@ -159,7 +159,7 @@ impl BodyAbortListener {
 }
 
 use crate::generated_bindgen::response::{
-    BodyInit, HeadersInit, JsonValue, ResponseInit, ResponseInitArgument, ResponseInitOrStatus,
+    BodyInit, HeadersInit, ResponseInit, ResponseInitArgument, ResponseInitOrStatus,
     ResponseStatus, js_Response as js,
 };
 
@@ -833,10 +833,18 @@ impl Response {
 
     pub(crate) fn construct_json(
         cx: &mut JsScope<'_>,
-        data: Option<JsonValue<'_>>,
+        data: Option<JsLocal<'_>>,
         init: ResponseInitOrStatus<'_>,
     ) -> JsResult<JSValue> {
-        let global_this = cx.global();
+        Self::construct_json_response(cx.global(), data, init, JsonArgument::Value)
+    }
+
+    fn construct_json_response(
+        global_this: &JSGlobalObject,
+        data: Option<JsLocal<'_>>,
+        init: ResponseInitOrStatus<'_>,
+        argument: JsonArgument,
+    ) -> JsResult<JSValue> {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
 
         // `Init`'s field drop glue releases its refs on `?`. `Body` has NO `Drop` and its
@@ -855,28 +863,8 @@ impl Response {
             |r| r.body.get().reset(),
         );
 
-        if let Some(data) = data {
-            let json_value = match data {
-                // Validate top-level values that are not JSON serializable (Node.js compatibility)
-                JsonValue::Undefined | JsonValue::Symbol(_) | JsonValue::Function(_) => {
-                    let err = global_this
-                        .create_type_error_instance(format_args!("Value is not JSON serializable"));
-                    return Err(global_this.throw_value(err));
-                }
-                // BigInt has a different error message to match Node.js exactly
-                JsonValue::BigInt(_) => {
-                    let err = global_this.create_type_error_instance(format_args!(
-                        "Do not know how to serialize a BigInt"
-                    ));
-                    return Err(global_this.throw_value(err));
-                }
-                JsonValue::Value(value) => value,
-            };
-
-            // Use jsonStringifyFast which passes undefined for the space parameter,
-            // triggering JSC's FastStringifier optimization. This is significantly faster
-            // than jsonStringify which passes 0 for space and uses the slower Stringifier.
-            let str = json_value.to_js().json_stringify_fast(global_this)?;
+        if let Some(json_value) = data {
+            let str = Self::json_text_of(global_this, json_value.to_js(), argument)?;
 
             if !str.is_empty() {
                 debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
@@ -911,6 +899,39 @@ impl Response {
         let ptr = bun_core::heap::into_raw(Box::new(response));
         // SAFETY: `ptr` is freshly boxed; the wrapper adopts its ref.
         Ok(unsafe { Response::to_js(ptr, global_this) })
+    }
+
+    fn json_text_of(
+        global_this: &JSGlobalObject,
+        json_value: JSValue,
+        argument: JsonArgument,
+    ) -> JsResult<BunString> {
+        if argument == JsonArgument::Text && json_value.is_string_literal() {
+            return json_value.to_bun_string(global_this);
+        }
+
+        // Validate top-level values that are not JSON serializable (Node.js compatibility)
+        if json_value.is_undefined()
+            || json_value.is_symbol()
+            || json_value.js_type() == bun_jsc::JSType::JSFunction
+            || json_value.js_type() == bun_jsc::JSType::CompiledClosure
+            || json_value.js_type() == bun_jsc::JSType::SlimClosure
+            || json_value.js_type() == bun_jsc::JSType::SlimClosureWithProperties
+        {
+            let err = global_this
+                .create_type_error_instance(format_args!("Value is not JSON serializable"));
+            return Err(global_this.throw_value(err));
+        }
+
+        // BigInt has a different error message to match Node.js exactly
+        if json_value.is_big_int() {
+            let err = global_this
+                .create_type_error_instance(format_args!("Do not know how to serialize a BigInt"));
+            return Err(global_this.throw_value(err));
+        }
+
+        // Use jsonStringifyFast which passes undefined for the space parameter, triggering JSC's FastStringifier optimization.
+        json_value.json_stringify_fast(global_this)
     }
 
     fn validate_redirect_status_code(
@@ -1069,7 +1090,7 @@ impl Response {
                 return Ok(response);
             }
         }
-        let mut init: Init = match init {
+        let init: Init = match init {
             ResponseInitArgument::Missing => Init {
                 status_code: 200,
                 headers: None,
@@ -1083,6 +1104,15 @@ impl Response {
             }
         };
 
+        Self::from_body_and_init(global_this, body, init)
+    }
+
+    #[inline(always)]
+    fn from_body_and_init(
+        global_this: &JSGlobalObject,
+        body: BodyInit<'_>,
+        mut init: Init,
+    ) -> JsResult<RefPtr<Response>> {
         let body: Body = 'brk: {
             if matches!(body, BodyInit::Undefined | BodyInit::Null) {
                 break 'brk Body::new(BodyValue::Null);
@@ -1125,6 +1155,71 @@ impl Response {
         response.calculate_estimated_byte_size();
         Ok(response)
     }
+
+    fn from_parts(
+        global_this: &JSGlobalObject,
+        body: JSValue,
+        parts: &InitParts,
+    ) -> JsResult<JSValue> {
+        BodyInit::from_js(global_this, body, |body| {
+            if let BodyInit::Blob((blob, _))
+            | BodyInit::BuildArtifact((BuildArtifact { blob, .. }, _)) = body
+                && blob.is_s3()
+            {
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "new Response(s3File) do not support ResponseInit options",
+                )));
+            }
+            let init = Init::from_parts(global_this, parts)?;
+            let response = Self::from_body_and_init(global_this, body, init)?;
+            // SAFETY: the wrapper adopts the new response's only ref.
+            Ok(unsafe { Response::to_js(response.into_raw(), global_this) })
+        })
+    }
+}
+
+/// The members of a `ResponseInit` literal that compiled code has taken apart. Undefined stands for a member that the literal lacks.
+pub(crate) struct InitParts {
+    status: JSValue,
+    status_text: JSValue,
+    headers: JSValue,
+}
+
+/// `new Response(body, { status, statusText, headers })` (`literalPartsForm` of the table of built-ins).
+#[unsafe(no_mangle)]
+#[bun_jsc::host_call]
+fn Response__createFromParts(
+    global_this: *mut JSGlobalObject,
+    body: JSValue,
+    status: JSValue,
+    status_text: JSValue,
+    headers: JSValue,
+) -> JSValue {
+    // SAFETY: compiled code passes its live realm.
+    let global_this = unsafe { &*global_this };
+    let parts = InitParts {
+        status,
+        status_text,
+        headers,
+    };
+    bun_jsc::to_js_host_call(global_this, || {
+        Response::from_parts(global_this, body, &parts)
+    })
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JsonArgument {
+    Value,
+    Text,
+}
+
+/// `Response.json(value, init)` for compiled code that has already serialized `value`: argument 0 is the JSON text (`jsonTextForm`).
+pub(crate) fn construct_json_from_text(
+    cx: &mut JsScope<'_>,
+    data: Option<JsLocal<'_>>,
+    init: ResponseInitOrStatus<'_>,
+) -> JsResult<JSValue> {
+    Response::construct_json_response(cx.global(), data, init, JsonArgument::Text)
 }
 
 // We deliberately do NOT `impl Drop for Init` so struct-update
@@ -1166,6 +1261,70 @@ impl Init {
         })
     }
 
+    /// The members are taken in the order in which `init` reads them.
+    fn from_parts(global_this: &JSGlobalObject, parts: &InitParts) -> JsResult<Init> {
+        let mut init = Init {
+            status_code: 200,
+            ..Default::default()
+        };
+        HeadersInit::from_js(global_this, parts.headers, |headers| {
+            init.set_headers(global_this, headers)
+        })?;
+        init.set_status(
+            global_this,
+            ResponseStatus::from_js(global_this, parts.status)?,
+        )?;
+        let status_text = parts.status_text;
+        if !status_text.is_empty_or_undefined_or_null()
+            && !(status_text.is_string() && !status_text.to_boolean())
+        {
+            init.status_text = status_text.to_bun_string(global_this)?;
+        }
+        Ok(init)
+    }
+
+    fn set_headers(
+        &mut self,
+        global_this: &JSGlobalObject,
+        headers: HeadersInit<'_>,
+    ) -> JsResult<()> {
+        match headers {
+            HeadersInit::Missing => {}
+            HeadersInit::Headers((orig, _)) => {
+                if !orig.is_empty() {
+                    self.headers = orig.clone_this(global_this)?.map(|p| {
+                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
+                        // ownership of that ref is transferred into the `HeadersRef`.
+                        unsafe { HeadersRef::adopt(p) }
+                    });
+                }
+            }
+            HeadersInit::Init(headers) => {
+                self.headers = HeadersRef::create_from_js(global_this, headers.to_js())?;
+            }
+        }
+        Ok(())
+    }
+
+    fn set_status(&mut self, global_this: &JSGlobalObject, status: ResponseStatus) -> JsResult<()> {
+        let number = match status {
+            ResponseStatus::Missing => return Ok(()),
+            ResponseStatus::BigInt(status) => status,
+            ResponseStatus::Number(status) => status as i64,
+            ResponseStatus::Other(status) => i64::from(status),
+        };
+        if (200 <= number && number < 600) || number == 101 {
+            self.status_code = (u32::try_from(number).expect("int cast")) as u16;
+        } else {
+            let err = global_this.create_range_error_instance(format_args!(
+                "The status provided ({}) must be 101 or in the range of [200, 599]",
+                number
+            ));
+            return Err(global_this.throw_value(err));
+        }
+        Ok(())
+    }
+
     pub(crate) fn init(
         global_this: &JSGlobalObject,
         response_init: ResponseInit<'_>,
@@ -1202,39 +1361,8 @@ impl Init {
             }
         }
 
-        match response_init.headers(global_this)? {
-            HeadersInit::Missing => {}
-            HeadersInit::Headers((orig, _)) => {
-                if !orig.is_empty() {
-                    result.headers = orig.clone_this(global_this)?.map(|p| {
-                        // SAFETY: `clone_this` returns a fresh +1-ref'd `FetchHeaders*`;
-                        // ownership of that ref is transferred into the `HeadersRef`.
-                        unsafe { HeadersRef::adopt(p) }
-                    });
-                }
-            }
-            HeadersInit::Init(headers) => {
-                result.headers = HeadersRef::create_from_js(global_this, headers.to_js())?;
-            }
-        }
-
-        let status = match response_init.status(global_this)? {
-            ResponseStatus::Missing => None,
-            ResponseStatus::BigInt(status) => Some(status),
-            ResponseStatus::Number(status) => Some(status as i64),
-            ResponseStatus::Other(status) => Some(i64::from(status)),
-        };
-        if let Some(number) = status {
-            if (200 <= number && number < 600) || number == 101 {
-                result.status_code = (u32::try_from(number).expect("int cast")) as u16;
-            } else {
-                let err = global_this.create_range_error_instance(format_args!(
-                    "The status provided ({}) must be 101 or in the range of [200, 599]",
-                    number
-                ));
-                return Err(global_this.throw_value(err));
-            }
-        }
+        result.set_headers(global_this, response_init.headers(global_this)?)?;
+        result.set_status(global_this, response_init.status(global_this)?)?;
 
         if let Some(status_text) = response_init.status_text(global_this)? {
             result.status_text = status_text;

@@ -21,7 +21,7 @@ export const BuildArtifact = b.class({
     slice: {
       ...method,
       args: { start: BlobSliceBound, end: BlobSliceBound, contentType: BlobSliceBound },
-      returns: b.object,
+      returns: b.object.returning("Blob"),
       length: 2,
     },
     /** `Bun.build` fills the field of an output that has a source map. */
@@ -30,7 +30,7 @@ export const BuildArtifact = b.class({
       ...method,
       args: { chunkSize },
       expected: { chunkSize: "chunkSize must be a number" },
-      returns: b.object,
+      returns: b.object.returning("ReadableStream"),
       passThis: true,
       length: 1,
     },
@@ -152,6 +152,7 @@ export const BuildConfig = b.dictionary(
     splitRequire: flag,
     modulePreload: flag,
     check: flag,
+    dts: flag,
     foldChunksForTesting: flag,
     minChunkSize: b.u64.validateIntegerRange(0, Number.MAX_SAFE_INTEGER).nanAs(0).optional,
     minify: { type: BuildMinify.emptyStringAsNull, expected: "Expected minify to be a boolean or an object" },

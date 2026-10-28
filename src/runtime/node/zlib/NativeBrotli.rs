@@ -161,6 +161,17 @@ mod _impl {
             // Racing an in-flight async write would alias `&mut Context`
             // across threads; a closed `Context` cannot be re-initialized.
             self.throw_unless_idle(global_this)?;
+            let feature = if self.stream.get().mode == bun_zlib::NodeMode::BROTLI_ENCODE {
+                bun_removable_features::Feature::BrotliEncoder
+            } else {
+                bun_removable_features::Feature::BrotliDecoder
+            };
+            if bun_removable_features::is_removed(feature) {
+                return Err(crate::removed_feature::throw_for_removed_feature(
+                    global_this,
+                    feature,
+                ));
+            }
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.

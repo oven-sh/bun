@@ -16,7 +16,7 @@ export const ParsedShellScript = b.class({
 
 /** Its `length` and the indices below that are read as they are needed. `other` has no elements. */
 export const ShellArrayLike = b.union({
-  text: b.jsString,
+  text: b.string.local,
   bigInt: b.bigInt,
   symbol: b.symbol,
   object: b.object,

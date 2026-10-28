@@ -1116,11 +1116,13 @@ impl Image {
     ///
     /// A later refinement is to return a `.Locked` body and resolve it from the
     /// worker pool; this is the simple, correct first cut.
+    #[inline(never)]
     pub(crate) fn encode_for_body(
         &self,
         global: &JSGlobalObject,
         this_value: JSValue,
     ) -> JsResult<(codecs::Encoded, &'static ZStr)> {
+        bun_removable_features::removable_definition!(Image, Self::encode_for_body);
         // The body-init contract is synchronous, so a `.blob` source can't go
         // through the async read chain here. For the common case (file by path)
         // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed

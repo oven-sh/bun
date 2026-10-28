@@ -40,7 +40,7 @@ export const Terminal = b.class({
   internalFields: ["data", "drain", "exit"],
   proto: {
     close: { capability: "js" },
-    closed: { getter: b.bool },
+    closed: { getter: b.bool, pure: true },
     controlFlags: flags,
     inputFlags: flags,
     localFlags: flags,

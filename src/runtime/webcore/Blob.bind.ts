@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 import { BuildArtifact } from "../api/JSBundler.bind.ts";
 import { Image, ImageOptions } from "../image/Image.bind.ts";
 import { PathOrFileDescriptor } from "../node/node_fs_binding.bind.ts";
@@ -72,6 +73,8 @@ export const Blob = b.class({
   overridesToJS: true,
   rustTraits: ["crate::webcore::blob::BlobExt"],
   estimatedSize: true,
+  types: [table.viewType("Blob"), table.exactType("$Bindgen.Blob")],
+  lockedObjects: ["prototype"],
   construct: {
     args: { parts: BlobParts, options: BlobPropertyBag.otherAsNull },
     expected: { parts: "new Blob() expects an Array" },
@@ -87,7 +90,7 @@ export const Blob = b.class({
     formData: method,
     /** `new Bun.Image(this, options)` */
     image: { ...method, args: { options: ImageOptions }, returns: Image, passThis: true, length: 0 },
-    json: method,
+    json: { ...method, typedResultForm: { form: "ParsedBody", source: "this" } },
     lastModified: { getter: b.f64 },
     name: {
       getter: b.string.local.optional,
@@ -103,12 +106,12 @@ export const Blob = b.class({
       returns: b.self,
       length: 2,
     },
-    stat: { ...method, returns: b.opaque },
+    stat: { ...method, returns: b.opaque.returning("Promise", "undefined") },
     stream: {
       ...method,
       args: { chunkSize },
       expected: { chunkSize: "chunkSize must be a number" },
-      returns: b.object,
+      returns: b.object.returning("ReadableStream"),
       passThis: true,
       length: 1,
     },

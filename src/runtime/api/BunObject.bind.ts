@@ -191,6 +191,7 @@ export const sleepSync = b.fn({
 const tabularData = b.object.otherAsNull;
 const tableSignature = {
   export: "Bun__BunObject__table",
+  feature: "ConsoleTable",
   returns: b.string.utf8,
   capability: "js",
   throws: true,

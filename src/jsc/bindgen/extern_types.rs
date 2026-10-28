@@ -134,9 +134,9 @@ pub struct ExternVariadicArguments {
 }
 impl ExternVariadicArguments {
     /// # Safety
-    /// The host function that passed this is the call `heap` belongs to.
+    /// The host function that passed this is the call `heap` belongs to, and each value is a `T`.
     #[inline(always)]
-    pub unsafe fn get<'a>(self, _: &JsHeap<'a>) -> &'a [JsLocal<'a>] {
+    pub unsafe fn get<'a, T>(self, _: &JsHeap<'a>) -> &'a [JsLocal<'a, T>] {
         // SAFETY: C++ never passes a null pointer, and the frame holds the values.
         unsafe { JsLocal::slice_from_raw_parts(self.data, self.length) }
     }
@@ -171,6 +171,8 @@ unsafe extern "C" {
     pub(super) fn Bun__Bindgen__createObject(
         global: *mut JSGlobalObject,
         first_member_name_index: u32,
+        dictionary_index: u32,
+        has_every_member: bool,
         values: *const JSValue,
         count: usize,
     ) -> JSValue;

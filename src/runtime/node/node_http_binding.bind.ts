@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import { webSocketDataCell } from "../../codegen/builtins/host/native-cells.ts";
 import { NodeHTTPResponse } from "../server/NodeHTTPResponse.bind.ts";
 import {
   DebugHTTPSServer,
@@ -66,6 +67,10 @@ export const upgradeNodeHTTPResponseToWebSocket = b.fn({
   returns: ServerWebSocket.optional,
   capability: "js",
   throws: true,
+  // `data` of the new ServerWebSocket.
+  uses: {
+    websocket: [{ use: "Everything" }, { use: "Retains", in: { place: "NativeCell", cell: webSocketDataCell } }],
+  },
 });
 
 export const sendWebSocketFrame = b.fn({

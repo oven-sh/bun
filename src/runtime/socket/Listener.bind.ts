@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 import { SecureContext } from "../api/bun/SecureContext.bind.ts";
 import { SocketOptionsObject, SocketReloadOptions } from "./SocketConfig.bind.ts";
 
@@ -7,6 +8,7 @@ export default b.module({ rustPath: "crate::socket::listener" });
 /** What `Bun.listen()` returns. */
 export const Listener = b.class({
   rustPath: "crate::socket::Listener",
+  types: [table.exactType("$Node.ListenerHandle"), table.exactType("$Bindgen.Listener")],
   /** The `JSSocketHandlers` cell shared with every socket this listener accepted. */
   internalFields: ["handlers"],
   proto: {
@@ -14,7 +16,7 @@ export const Listener = b.class({
     fd: { getter: b.i64 },
     getsockname: { args: { out: b.object.otherAsNull }, capability: "js", throws: true, length: 1 },
     hostname: { getter: b.string.utf8.optional, cache: true },
-    port: { getter: b.u16.optional },
+    port: { getter: b.u16.optional, pure: true },
     ref: { capability: "js", passThis: true },
     reload: { args: { options: SocketReloadOptions.otherAsNull }, capability: "js", throws: true, length: 1 },
     stop: { args: { closeActiveConnections: b.bool.otherAsNull }, capability: "js", length: 1 },

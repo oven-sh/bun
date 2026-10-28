@@ -221,6 +221,7 @@ export const fail = b.fn({ args: { how: TestFailure, value: b.opaque }, capabili
 
 export const TestCounter = b.class({
   rustPath: "crate::bindgen_test::TestCounter",
+  runsUnseenCode: false,
   construct: { args: { start: b.i32.default(0) }, capability: "heap", throws: true },
   internalFields: ["listener"],
   proto: {
@@ -254,6 +255,7 @@ export const TestCounter = b.class({
 /** `mutates`: `increment` and the setter take `&mut self`. */
 export const TestMutates = b.class({
   rustPath: "crate::bindgen_test::TestMutates",
+  runsUnseenCode: false,
   construct: { args: { count: b.i32 }, requiredArguments: 1 },
   proto: {
     count: { getter: b.i32 },

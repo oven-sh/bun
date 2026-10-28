@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 import { MySQLConnection } from "./JSMySQLConnection.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
@@ -8,6 +9,8 @@ export const MySQLQuery = b.class({
   refCounted: true,
   finalize: true,
   estimatedSize: true,
+  /** As for MySQLConnection. */
+  types: [table.viewType("$Bindgen.MySQLQuery")],
   internalFields: ["pendingValue", "target", "binding"],
   proto: {
     cancel: { capability: "js" },

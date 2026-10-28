@@ -58,7 +58,7 @@ export const Subprocess = b.class({
       length: 1,
     },
     /** A name, a number that has no name, or `null`. */
-    signalCode: { getter: b.opaque, capability: "js" },
+    signalCode: { getter: b.opaque.returning("string", "number", "null"), capability: "js" },
     stderr: { ...stdio, throws: true, cache: true },
     stdin: { ...stdio, cache: true },
     /** Each is a file descriptor or `null`. */

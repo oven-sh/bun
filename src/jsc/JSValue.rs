@@ -2111,6 +2111,36 @@ impl JSValue {
             _ => Ok(None),
         }
     }
+    /// `JSValue.getOwnArray` — own-property lookup (no prototype walk) routed
+    /// through `coerceToArray`: non-array truthy → throw
+    /// "{prop} must be an array"; empty array → `None`.
+    pub fn get_own_array(
+        self,
+        global: &JSGlobalObject,
+        property_name: impl AsRef<[u8]>,
+    ) -> JsResult<Option<JSValue>> {
+        let property_name = property_name.as_ref();
+        let Some(v) = self.get_own_truthy(global, property_name)? else {
+            return Ok(None);
+        };
+        if !(v.is_cell() && v.js_type().is_array()) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "{} must be an array",
+                bstr::BStr::new(property_name),
+            )));
+        }
+        if v.get_length(global)? == 0 {
+            return Ok(None);
+        }
+        Ok(Some(v))
+    }
+    /// True for what a generator function compiled ahead of time has made. The engine's own generator objects have `JSType::JSGenerator`.
+    pub fn is_compiled_generator(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isCompiledGenerator(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isCompiledGenerator(self)
+    }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {
         unsafe extern "C" {

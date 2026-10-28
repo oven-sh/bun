@@ -1067,7 +1067,10 @@ impl Request {
             let value = options.object().to_js();
             let value_type = value.js_type();
             let explicit_check = values_to_try.len() == 2
-                && value_type == bun_jsc::JSType::FinalObject
+                && matches!(
+                    value_type,
+                    bun_jsc::JSType::FinalObject | bun_jsc::JSType::CompiledObject
+                )
                 && object_value
                     .is_some_and(|object| object.js_type() == bun_jsc::JSType::DOMWrapper);
             if value_type == bun_jsc::JSType::DOMWrapper {

@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 /** `"ipv4"` or `"ipv6"` in any case, or the number of the address family. An error shows what is neither. */
 export const SocketAddressFamily = b.union({
@@ -31,6 +32,7 @@ export const SocketAddress = b.class({
   rustPath: "crate::socket::SocketAddress",
   configurable: true,
   enumerable: false,
+  types: [table.exactType("$Node.SocketAddress"), table.exactType("$Bindgen.SocketAddress")],
   construct: {
     args: { options: SocketAddressOptions.optional },
     expected: { options: ["object"] },
@@ -39,10 +41,10 @@ export const SocketAddress = b.class({
   },
   proto: {
     address: { getter: b.string.local, cache: true, capability: "heap", throws: true },
-    addrfamily: { getter: b.u16, configurable: false },
+    addrfamily: { getter: b.u16, configurable: false, pure: true },
     family: { getter: b.string.local, cache: true, capability: "heap" },
-    flowlabel: { getter: b.u32 },
-    port: { getter: b.u16 },
+    flowlabel: { getter: b.u32, pure: true },
+    port: { getter: b.u16, pure: true },
     toJSON: { returns: SocketAddressJSON, capability: "heap", throws: true },
   },
   static: {

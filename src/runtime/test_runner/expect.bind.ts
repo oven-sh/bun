@@ -18,7 +18,7 @@ const arrayBufferView = b.cell("JSC::JSArrayBufferView", "JavaScriptCore/JSArray
 
 export const NumberOrBigInt = b.union({ number: b.f64, bigInt: b.bigInt, other: b.ignored });
 export const ObjectOrOther = b.union({ object: b.object, other: b.ignored });
-export const StringValue = b.union({ string: b.jsString, stringObject: b.stringObject, other: b.ignored });
+export const StringValue = b.union({ string: b.string.local, stringObject: b.stringObject, other: b.ignored });
 export const StringOrRegExp = b.union({ string: b.stringLike, regExp, other: b.ignored });
 /** What is walked by index, and what may be iterable. A `DataView` has no elements. */
 export const ExpectArrayLike = b.union({
@@ -31,7 +31,7 @@ export const ExpectArrayLike = b.union({
 /** A message, or an object: a pattern, a class, an asymmetric matcher or an error with the same message. */
 export const ExpectedError = b.union({
   missing: b.undefined,
-  string: b.jsString,
+  string: b.string.local,
   object: b.object,
   other: b.ignored,
 });
@@ -40,7 +40,7 @@ export const ExpectPrecision = b.union({ missing: b.undefined, digits: b.f64, ot
 /** A `String` object is a string where a string fits, else an object. */
 export const SnapshotArgument = b.union({
   missing: b.undefined,
-  string: b.jsString,
+  string: b.string.local,
   stringObject: b.stringObject,
   object: b.object,
   other: b.ignored,
@@ -354,8 +354,8 @@ export const ExpectMatcherContext = b.class({
   rustPath: "crate::test_runner::ExpectMatcherContext",
   proto: {
     equals: { args: { a: b.opaque, b: b.opaque }, returns: b.bool, ...js, length: 3 },
-    expand: { getter: b.bool },
-    isNot: { getter: b.bool },
+    expand: { getter: b.bool, pure: true },
+    isNot: { getter: b.bool, pure: true },
     promise: { getter: b.string },
     utils: { getter: ExpectMatcherUtils, capability: "js" },
   },

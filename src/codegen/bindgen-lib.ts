@@ -58,10 +58,10 @@ export const f64 = new DoubleType();
 /** A number kept as a JS value, as a `JsLocal<'a, Number>`, for a body that stores it, reports it or has JSC convert it. */
 export { jsNumberType as jsNumber } from "./bindgen-lib-internal.ts";
 
-/** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. As a result, `b.string.local`. */
+/** A `bun_core::String`. Strict: only a string. `.loose` for `ToString`, then `.utf8` for `&[u8]`. `.local` for the JS string itself. */
 export const string = new StringType();
 
-/** Any JS value, as a `JsLocal<'a>`, for a function that does not depend on its type: it holds it, stores it or hands it on. */
+/** Any JS value, as a `JsLocal<'a>`, for a function that does not depend on its type: it holds it, stores it or hands it on. `.stringObjectAsString`, `.orAbsent`. As a result, `.returning()`. */
 export { opaqueType as opaque } from "./bindgen-lib-internal.ts";
 
 /** A function, or a proxy of one, as a `JsLocal<'a, Callable>`. */
@@ -104,12 +104,6 @@ export const dataView = cell("JSC::JSDataView", "JavaScriptCore/JSDataView.h", {
 /** An `AbortSignal`, as a `&'a AbortSignal`. */
 export const abortSignal = wrapped("WebCore::JSAbortSignal", "JSAbortSignal.h", { rustPath: "bun_jsc::AbortSignal" });
 
-/** A primitive string kept as a JS value, as a `JsLocal<'a, JSString>`. `b.string` is its text. */
-export const jsString = cell("JSC::JSString", "JavaScriptCore/JSString.h", {
-  rustPath: "bun_jsc::JSString",
-  reportedAs: "string",
-  tsType: "string",
-});
 /** A `String` object, not converted: that runs its `toString`. */
 export const stringObject = cell("JSC::StringObject", "JavaScriptCore/StringObject.h", {
   rustPath: "bun_jsc::JSObject",
@@ -157,7 +151,7 @@ export const ignored = new UnitType("ignored");
 
 export const array = (element: Type) => new ArrayType(element);
 
-/** The last argument and every one after it: a `Rest<'a, T>`, whose elements the body converts, or for `b.opaque` a `&'a [JsLocal<'a>]`. */
+/** The last argument and every one after it: a `Rest<'a, T>`, whose elements the body converts, or for `b.opaque` and `b.string.local` a `&'a [T]`. */
 export const rest = (element: Type) => new RestType(element);
 
 /** A result only: an object with a property for each `(key, value)` the body gives. */

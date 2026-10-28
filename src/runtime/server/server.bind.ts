@@ -308,9 +308,9 @@ function server(name: string) {
       "wsPackageHandlers",
     ],
     proto: {
-      address: { getter: b.opaque, cache: true, capability: "js", throws: true },
+      address: { getter: b.opaque.returning("string", "object", "null"), cache: true, capability: "js", throws: true },
       closeIdleConnections: { returns: b.usize, capability: "js" },
-      development: { getter: b.bool },
+      development: { getter: b.bool, pure: true },
       fetch: {
         args: { input: ServerFetchInput, init: ServerFetchInit.otherAsNull },
         returns: b.promise,
@@ -320,8 +320,8 @@ function server(name: string) {
       },
       hostname: { getter: b.string.local.optional, cache: true, capability: "js", throws: true },
       id: { getter: b.string.utf8, cache: true },
-      pendingRequests: { getter: b.i32 },
-      pendingWebSockets: { getter: b.i32 },
+      pendingRequests: { getter: b.i32, pure: true },
+      pendingWebSockets: { getter: b.i32, pure: true },
       port: { getter: b.u16.optional },
       protocol: { getter: ServerProtocol },
       /** `publish(topic)` throws. `publish(topic, undefined)` sends the text "undefined". */
@@ -331,7 +331,7 @@ function server(name: string) {
           data: WebSocketMessage.ifPassed,
           compress: b.bool.loose.default(true),
         },
-        returns: b.opaque,
+        returns: b.opaque.returning("number"),
         capability: "js",
         throws: true,
         length: 3,
@@ -364,7 +364,7 @@ function server(name: string) {
       },
       timeout: {
         args: { request: TimeoutTarget, seconds: b.jsNumber.otherAsNull },
-        returns: b.opaque,
+        returns: b.opaque.returning("undefined", "null"),
         capability: "heap",
         throws: true,
         length: 2,
@@ -378,7 +378,7 @@ function server(name: string) {
         throws: true,
         length: 1,
       },
-      url: { getter: b.object, cache: true, capability: "js", throws: true },
+      url: { getter: b.object.returning("URL"), cache: true, capability: "js", throws: true },
       "@@dispose": { capability: "js" },
     },
   });
@@ -400,14 +400,19 @@ export const BinaryType = b.enumeration([
 /** A closed socket ignores the call whatever the arguments are, so no argument type refuses a value or runs JavaScript. */
 const send = {
   args: { data: WebSocketMessage, compress: WebSocketCompress },
-  returns: b.opaque,
+  returns: b.opaque.returning("number"),
   capability: "js",
   throws: true,
 } as const;
-const control = { args: { data: WebSocketMessage }, returns: b.opaque, capability: "js", throws: true } as const;
+const control = {
+  args: { data: WebSocketMessage },
+  returns: b.opaque.returning("number"),
+  capability: "js",
+  throws: true,
+} as const;
 const publish = {
   args: { topic: WebSocketTopic, data: WebSocketMessage, compress: WebSocketCompress },
-  returns: b.opaque,
+  returns: b.opaque.returning("number"),
   capability: "js",
   throws: true,
 } as const;
@@ -447,7 +452,7 @@ export const ServerWebSocket = b.class({
     publish,
     publishBinary: { ...publish, length: 2 },
     publishText: { ...publish, length: 2 },
-    readyState: { getter: b.i32 },
+    readyState: { getter: b.i32, pure: true },
     remoteAddress: { getter: b.string.local.optional, cache: true, capability: "heap", throws: true },
     resume: {},
     send,

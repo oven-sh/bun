@@ -1,6 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
-import { StatWatcher } from "./node_fs_stat_watcher.bind.ts";
-import { FSWatcher } from "./node_fs_watcher.bind.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::node::node_fs_binding" });
 
@@ -21,11 +20,11 @@ export const PathLike = b.union({
 export const PathOrFileDescriptor = b.union({ fd: Fd.reportedAs("fd"), path: PathLike });
 
 /** `string` is octal digits. */
-export const FileMode = b.union({ number: b.u32.validateInteger().reportedAs("mode"), string: b.jsString });
+export const FileMode = b.union({ number: b.u32.validateInteger().reportedAs("mode"), string: b.string.local });
 /** `string` is one of Node's `stringToFlags`. */
 export const FileFlags = b.union({
   number: b.i32.validateInteger().reportedAs("flags"),
-  string: b.jsString,
+  string: b.string.local,
   other: b.opaque,
 });
 /** 0 to 7, which the body checks: a fraction is truncated. */
@@ -33,7 +32,7 @@ const accessMode = b.f64.nullable;
 const accessModeExpected = "mode must be int32 or null/undefined";
 
 /** Seconds, a `Date`, or a string of seconds. */
-export const TimeLike = b.union({ number: b.f64, date: b.f64.allowDate, string: b.jsString, other: b.ignored });
+export const TimeLike = b.union({ number: b.f64, date: b.f64.allowDate, string: b.string.local, other: b.ignored });
 
 const options = { allowArray: true, reportedAs: "options" } as const;
 /** The body checks the value of a member before the next member is read. */
@@ -259,6 +258,53 @@ const operations: Record<string, Operation> = {
 
 const js = { capability: "js", throws: true } as const;
 
+/** What `xSync` returns, where that is not `undefined`. */
+const syncResults: Record<string, readonly string[]> = {
+  access: ["null"],
+  exists: ["boolean"],
+  fstat: ["object"],
+  lstat: ["object", "undefined"],
+  mkdir: ["string", "undefined"],
+  mkdtemp: ["string", "object"],
+  open: ["number"],
+  read: ["number"],
+  readdir: ["Array"],
+  readFile: ["string", "object"],
+  readlink: ["string", "object"],
+  readv: ["number"],
+  realpath: ["string", "object"],
+  realpathNative: ["string", "object"],
+  stat: ["object", "undefined"],
+  statfs: ["object"],
+  write: ["number"],
+  writev: ["number"],
+};
+
+const usesOfArgument = [
+  ...table.hostOptionBag([
+    "bigint",
+    "encoding",
+    "flag",
+    "flush",
+    "force",
+    "maxRetries",
+    "mode",
+    "recursive",
+    "retryDelay",
+    "signal",
+    "throwIfNoEntry",
+    "withFileTypes",
+  ]),
+  table.readsContents(),
+  table.writesContents(),
+  table.printedByFormatter("constructor"),
+];
+/** What `x` and `xSync` do with their arguments: they keep none and return none. */
+const uses = (args: Record<string, b.Type>) => ({
+  this: table.inspected,
+  ...Object.fromEntries(Object.keys(args).map(name => [name, usesOfArgument])),
+});
+
 /** `x`, `xCb`, which is `x` with a leading callback, and `xSync`. */
 function members(name: string, { length: [length, syncLength], ...operation }: Operation) {
   const signatures = "overloads" in operation ? operation.overloads : [operation];
@@ -272,12 +318,17 @@ function members(name: string, { length: [length, syncLength], ...operation }: O
     return [`${name}${suffix}`, made.length > 1 ? made : made[0]] as const;
   };
   return [
-    member("", length, ({ args, expected }) => ({ args, expected, returns: b.promise })),
+    member("", length, ({ args, expected }) => ({ args, expected, returns: b.promise, uses: uses(args) })),
     member("Cb", length + 1, ({ args, expected }) => ({
       args: { callback: b.callable, ...args },
       expected: { callback: "callback must be a function", ...expected },
     })),
-    member("Sync", syncLength, ({ args, expected }) => ({ args, expected, returns: b.opaque })),
+    member("Sync", syncLength, ({ args, expected }) => ({
+      args,
+      expected,
+      returns: b.opaque.returning(...(syncResults[name] ?? ["undefined"])),
+      uses: uses(args),
+    })),
   ];
 }
 
@@ -292,22 +343,23 @@ const cp = {
   },
   length: 2,
 } as const;
-const getter = { getter: b.opaque, capability: "js" } as const;
+const getter = { getter: b.opaque.returning("object"), capability: "js" } as const;
 
 /** The default export of `src/js/internal/fs/binding.ts`. */
 export const NodeJSFS = b.class({
   rustPath: "crate::node::node_fs_binding::Binding",
+  types: [table.exactType("$Node.NodeJSFS"), table.exactType("$Bindgen.NodeJSFS")],
   proto: Object.fromEntries(
     [
       ...Object.entries(operations).flatMap(([name, operation]) => members(name, operation)),
-      ["cp", { ...cp, returns: b.promise }] as const,
-      ["cpSync", cp] as const,
+      ["cp", { ...cp, returns: b.promise, uses: uses(cp.args) }] as const,
+      ["cpSync", { ...cp, uses: uses(cp.args) }] as const,
       [
         "watch",
         {
           ...js,
           args: { filename: PathLike, options: WatchOptions.otherAsNull, listener: b.callable.otherAsNull },
-          returns: FSWatcher,
+          returns: b.opaque.returning("FSWatcher", "undefined"),
           length: 3,
         },
       ] as const,
@@ -316,12 +368,12 @@ export const NodeJSFS = b.class({
         {
           ...js,
           args: { filename: PathLike, options: WatchFileOptions.deferred, listener: b.callable.otherAsNull },
-          returns: StatWatcher,
+          returns: b.opaque.returning("StatWatcher", "undefined"),
           length: 3,
         },
       ] as const,
       ["Dirent", getter] as const,
-      ["Stats", getter] as const,
+      ["Stats", { getter: b.opaque.returning(table.builtin("%Stats%").spec), capability: "js" }] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),
   ),
 });

@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 import { coercedInt32 } from "./socket_body.bind.ts";
 
 export default b.module({ rustPath: "crate::socket::udp_socket" });
@@ -83,6 +84,7 @@ export const UDPSocketOptions = b.dictionary(
 /** What `Bun.udpSocket()` resolves to. */
 export const UDPSocket = b.class({
   rustPath: "crate::socket::udp_socket::UDPSocket",
+  types: [table.exactType("$Node.UDPSocketHandle"), table.exactType("$Bindgen.UDPSocket")],
   internalFields: ["onData", "onDrain", "onError"],
   proto: {
     addMembership: membership,
@@ -90,7 +92,7 @@ export const UDPSocket = b.class({
     addSourceSpecificMembership: sourceSpecificMembership,
     binaryType: { ...js, getter: b.string.local, cache: true },
     close: {},
-    closed: { getter: b.bool },
+    closed: { getter: b.bool, pure: true },
     dropMembership: membership,
     dropSourceSpecificMembership: sourceSpecificMembership,
     fd: { getter: b.i32 },

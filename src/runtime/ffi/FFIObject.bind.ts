@@ -14,6 +14,7 @@ const view = {
     deallocatorContext: FFINumber,
     deallocator: FFINumber.ifPassed,
   },
+  feature: "Ffi",
   returns: b.bufferSource,
   capability: "js",
   throws: true,

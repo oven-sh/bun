@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::server::node_http_response" });
 
@@ -39,18 +40,20 @@ export const NodeHTTPResponse = b.class({
   rustPath: "crate::server::NodeHTTPResponse",
   refCounted: true,
   finalize: true,
+  types: [table.exactType("$Node.NodeHTTPResponse"), table.exactType("$Bindgen.NodeHTTPResponse")],
+  lockedObjects: ["prototype"],
   internalFields: ["onAborted", "onWritable", "onData", "pendingWriteBuffer"],
   proto: {
     abort: { capability: "js" },
-    aborted: { getter: b.bool },
-    bufferedAmount: { getter: b.u64 },
+    aborted: { getter: b.bool, pure: true },
+    bufferedAmount: { getter: b.u64, pure: true },
     cork: { ...method, args: { callback: b.callable } },
-    end: { ...method, ...body, passThis: true, length: 2 },
-    finished: { getter: b.bool },
-    flags: { getter: b.i32 },
+    end: { ...method, ...body, returns: b.opaque.returning("number", "undefined"), passThis: true, length: 2 },
+    finished: { getter: b.bool, pure: true },
+    flags: { getter: b.i32, pure: true },
     flushHeaders: {},
     getBytesWritten: { returns: b.usize },
-    hasBody: { getter: b.i32 },
+    hasBody: { getter: b.i32, pure: true },
     headersObject: { returns: b.object.optional, capability: "js" },
     notifyWhenReadParsed: { returns: b.bool },
     onabort: eventHandler,
@@ -68,14 +71,15 @@ export const NodeHTTPResponse = b.class({
       length: 0,
     },
     unref: { rustName: "js_unref" },
-    upgraded: { getter: b.bool },
-    write: { ...method, ...body, length: 3 },
+    upgraded: { getter: b.bool, pure: true },
+    write: { ...method, ...body, returns: b.opaque.returning("number"), length: 3 },
     writeContinue: { capability: "js", throws: true },
     writeHead: { args: { ...head, ...autoHeaders }, capability: "js", throws: true, length: 3 },
     writeHeadAndEnd: {
       ...method,
       args: { ...head, ...chunk, strictContentLength, ...autoHeaders },
       expected,
+      returns: b.opaque.returning("number", "undefined"),
       passThis: true,
       length: 8,
     },
@@ -85,6 +89,15 @@ export const NodeHTTPResponse = b.class({
       capability: "js",
       throws: true,
       length: 1,
+    },
+    /** `writeHeadAndEnd` for the usual arguments, read as they are. `undefined`: nothing was written. */
+    writeWholeResponse: {
+      ...method,
+      args: { args: b.rest(b.opaque) },
+      returns: b.opaque.returning("number", "undefined"),
+      passThis: true,
+      rustName: "write_whole_response_as_given",
+      length: 8,
     },
   },
 });

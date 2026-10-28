@@ -1,0 +1,3040 @@
+////: catching
+const catching = {
+  __proto__: Array.prototype,
+  get 3() {
+    log.push("inherited get 3");
+    return "inherited";
+  },
+  set 3(value) {
+    log.push("inherited set 3 to " + describe(value));
+  },
+};
+////: for-105
+for (const name in makers) {
+  for (const use in uses) {
+    log.length = 0;
+    const list = makers[name]();
+    attempt(name + ", " + use, () => uses[use](list));
+    console.log("  log: " + log.join(", ") + "; left " + describe(list));
+  }
+}
+////: for-63
+for (const name in makers) {
+  for (const use in uses) {
+    log.length = 0;
+    let answer;
+    try {
+      answer = describe(uses[use](makers[name]()));
+    } catch (error) {
+      answer = "threw " + error.constructor.name;
+    }
+    console.log(name + ", " + use + ": " + answer + (log.length ? " after " + log.join(", ") : ""));
+  }
+}
+////: makers-10
+const makers = {
+  "an array": () => [3, 1, 2],
+  "an array of one": () => [3],
+  "an empty array": () => [],
+  "an array of an array": () => [[3]],
+  "an array of null and undefined": () => [null, undefined],
+  "an array with a hole": () => [3, , 2],
+  "an array that holds itself": () => { const list = [3]; list.push(list); return list; },
+  "an array with its own toString": () => Object.assign([3, 1, 2], { toString() { log.push("toString"); return "own text"; } }),
+  "an array with its own join": () => Object.assign([3, 1, 2], { join() { log.push("join"); return "own join"; } }),
+  "an array whose join is no function": () => Object.assign([3, 1, 2], { join: 5 }),
+  "an array with its own valueOf": () => Object.assign([3, 1, 2], { valueOf() { log.push("valueOf"); return 42; } }),
+  "an array with its own primitive": () => Object.assign([3, 1, 2], { [Symbol.toPrimitive](hint) { log.push(hint); return hint === "number" ? 42 : "primitive"; } }),
+  "an array with its own toJSON": () => Object.assign([3, 1, 2], { toJSON() { log.push("toJSON"); return "own JSON"; } }),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "a subclass with a join": () => new (class extends Array { join() { log.push("join"); return "the subclass's join"; } })(3, 1, 2),
+  "an array of objects with toString": () => [{ toString() { log.push("element"); return "e"; } }, 1],
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "a typed array": () => new Uint8Array([3, 1, 2]),
+  "a typed array of one": () => new Uint8Array([3]),
+  "a Set": () => new Set([3]),
+  "arguments": () => (function () { return arguments; })(3, 1, 2),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "a string": () => "3,1,2",
+};
+////: makers-14
+const makers = {
+  "a getter": withAGetter,
+  "a getter and a setter": withAGetterAndASetter,
+  "only a setter": withOnlyASetter,
+  "a read-only element": () => Object.defineProperty([3, 1, 2], 1, { writable: false }),
+  "a hidden element": () => Object.defineProperty([3, 1, 2], 1, { enumerable: false }),
+  "a fixed element": () => Object.defineProperty([3, 1, 2], 1, { configurable: false }),
+  "a setter past the end on the prototype": () => Object.setPrototypeOf([3, 1, 2], catching),
+  "a read-only element past the end on the prototype": () => Object.setPrototypeOf([3, 1, 2], readOnlyAhead),
+  "an array": () => [3, 1, 2],
+};
+////: makers-7
+const makers = {
+  "a literal": () => ["a", "b", "c"],
+  "split": () => "a-b-c".split("-"),
+  "split into characters": () => "abc".split(""),
+  "match": () => "abc".match(/(a)(x)?(c)?/),
+  "match with names": () => "abc".match(/(?<first>a)(?<second>b)/),
+  "match with indices": () => "abc".match(/(a)b/d).indices,
+  "a global match": () => "abc".match(/./g),
+  "exec": () => /b/.exec("abc"),
+  "matchAll": () => [..."abc".matchAll(/b/g)][0],
+  "a template's strings": () => template`a${1}b${2}c`,
+  "a template's raw strings": () => template`a${1}b${2}c`.raw,
+  "Object.keys": () => Object.keys({ a: 1, b: 2, c: 3 }),
+  "an entry of Object.entries": () => Object.entries({ a: "b" })[0],
+  "an entry of a Map": () => [...new Map([["a", "b"]])][0],
+  "an entry of entries()": () => ["a"].entries().next().value,
+  "Reflect.ownKeys": () => Reflect.ownKeys({ a: 1, b: 2 }),
+  "Array.from": () => Array.from("abc"),
+  "Array.of": () => Array.of("a", "b", "c"),
+  "new Array(3)": () => new Array(3),
+  "Array(3).fill": () => Array(3).fill("a"),
+  "Array.apply": () => Array.apply(null, Array(3)),
+  "new Array of three": () => new Array("a", "b", "c"),
+  "concat": () => [].concat("a", ["b"], [["c"]]),
+  "slice": () => ["z", "a", "b", "c"].slice(1),
+  "splice": () => ["a", "b", "c"].splice(0, 3),
+  "map": () => [1, 2, 3].map(value => "abc"[value - 1]),
+  "filter": () => ["a", "", "b", "c"].filter(Boolean),
+  "flat": () => [["a"], ["b", ["c"]]].flat(),
+  "toSorted": () => ["c", "a", "b"].toSorted(),
+  "a rest parameter": () => rest("a", "b", "c"),
+  "a rest element": () => { const [, ...tail] = "zabc"; return tail; },
+  "a spread": () => [..."abc"],
+  "structuredClone": () => structuredClone(["a", , "c"]),
+  "structuredClone of an array with a name": () => structuredClone(Object.assign(["a"], { name: "kept" })),
+  "JSON.parse": () => JSON.parse('["a","b","c"]'),
+  "a group of Object.groupBy": () => Object.groupBy(["a", "b", "c"], () => "all").all,
+  "a group of Map.groupBy": () => Map.groupBy(["a", "b", "c"], () => "all").get("all"),
+  "an iterator's toArray": () => ["a", "b", "c"].values().toArray(),
+  "formatToParts": () => new Intl.NumberFormat("en").formatToParts(1).map(part => part.type),
+  "a Buffer": () => Buffer.from("abc"),
+};
+////: withAGetter
+function withAGetter() {
+  return Object.defineProperty([3, 1, 2], 1, {
+    get() {
+      log.push("get 1");
+      return 10;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+}
+////: withAGetter-2
+////= withAGetter
+
+////= withAGetterAndASetter
+
+////= withOnlyASetter
+
+////= catching
+////: withAGetterAndASetter
+function withAGetterAndASetter() {
+  let held = 10;
+  return Object.defineProperty([3, 1, 2], 1, {
+    get() {
+      log.push("get 1");
+      return held;
+    },
+    set(value) {
+      log.push("set 1 to " + describe(value));
+      held = value;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+}
+////: withOnlyASetter
+function withOnlyASetter() {
+  return Object.defineProperty([3, 1, 2], 1, {
+    set(value) {
+      log.push("set 1 to " + describe(value));
+    },
+    enumerable: true,
+    configurable: true,
+  });
+}
+//// arrays/an-index-loop-has-honest-callers-and-a-caller-the-compiler-cannot-see.js
+////= describe-13
+
+////= lines-22	useByEval	list	let	total	0
+
+////= lines-22	useByIndirectEval	list	let	total	0
+
+////= lines-22	useByNewFunction	list	let	total	0
+
+////= lines-22	useWithAValueFromEval	list	let	total	0
+
+attempt("eval, honest site 1", () => useByEval([1, 2, 3]));
+attempt("eval, honest site 2", () => useByEval([4, 5]));
+attempt("eval, honest site 3", () => useByEval([]));
+for (let i = 0; i < 300; i++) useByEval([i, i]);
+for (const name in impostors) attempt("eval, " + name, () => (value => eval("useByEval")(value))(impostors[name]()));
+attempt("eval, an array by the same route", () => (value => eval("useByEval")(value))([1, 2, 3]));
+attempt("eval, honest site 4", () => useByEval([6, 7, 8]));
+
+attempt("a caller made by indirect eval, honest site 1", () => useByIndirectEval([1, 2, 3]));
+attempt("a caller made by indirect eval, honest site 2", () => useByIndirectEval([4, 5]));
+attempt("a caller made by indirect eval, honest site 3", () => useByIndirectEval([]));
+for (let i = 0; i < 300; i++) useByIndirectEval([i, i]);
+for (const name in impostors) attempt("a caller made by indirect eval, " + name, () => (value => (0, eval)("(callee, value) => callee(value)")(useByIndirectEval, value))(impostors[name]()));
+attempt("a caller made by indirect eval, an array by the same route", () => (value => (0, eval)("(callee, value) => callee(value)")(useByIndirectEval, value))([1, 2, 3]));
+attempt("a caller made by indirect eval, honest site 4", () => useByIndirectEval([6, 7, 8]));
+
+attempt("a caller made by new Function, honest site 1", () => useByNewFunction([1, 2, 3]));
+attempt("a caller made by new Function, honest site 2", () => useByNewFunction([4, 5]));
+attempt("a caller made by new Function, honest site 3", () => useByNewFunction([]));
+for (let i = 0; i < 300; i++) useByNewFunction([i, i]);
+for (const name in impostors) attempt("a caller made by new Function, " + name, () => (value => new Function("callee", "value", "return callee(value);")(useByNewFunction, value))(impostors[name]()));
+attempt("a caller made by new Function, an array by the same route", () => (value => new Function("callee", "value", "return callee(value);")(useByNewFunction, value))([1, 2, 3]));
+attempt("a caller made by new Function, honest site 4", () => useByNewFunction([6, 7, 8]));
+
+attempt("a plain call with a value from eval, honest site 1", () => useWithAValueFromEval([1, 2, 3]));
+attempt("a plain call with a value from eval, honest site 2", () => useWithAValueFromEval([4, 5]));
+attempt("a plain call with a value from eval, honest site 3", () => useWithAValueFromEval([]));
+for (let i = 0; i < 300; i++) useWithAValueFromEval([i, i]);
+for (const name in impostors) attempt("a plain call with a value from eval, " + name, () => (value => useWithAValueFromEval((0, eval)("(" + JSON.stringify(typeof value === "string" ? value : value && { ...value, length: value.length }) + ")")))(impostors[name]()));
+attempt("a plain call with a value from eval, an array by the same route", () => (value => useWithAValueFromEval((0, eval)("(" + JSON.stringify(typeof value === "string" ? value : value && { ...value, length: value.length }) + ")")))([1, 2, 3]));
+attempt("a plain call with a value from eval, honest site 4", () => useWithAValueFromEval([6, 7, 8]));
+//// arrays/an-index-loop-has-honest-callers-and-then-a-caller-with-an-impostor.js
+////= describe-13
+
+////= lines-22	usePlainly	list	let	total	0
+
+////= lines-22	useByCall	list	let	total	0
+
+////= lines-22	useByApply	list	let	total	0
+
+////= lines-22	useBound	list	let	total	0
+
+////= lines-22	useBoundToIt	list	let	total	0
+
+////= lines-22	useAsACallback	list	let	total	0
+
+////= lines-22	useInACallback	list	let	total	0
+
+////= lines-22	useByAComputedName	list	let	total	0
+
+////= lines-22	useFromAField	list	let	total	0
+
+////= lines-22	useFromAnArray	list	let	total	0
+
+////= lines-22	useAsAParameter	list	let	total	0
+
+////= lines-22	useByReflect	list	let	total	0
+
+////= lines-22	useFromAConditional	list	let	total	0
+
+attempt("a plain call, honest site 1", () => usePlainly([1, 2, 3]));
+attempt("a plain call, honest site 2", () => usePlainly([4, 5]));
+attempt("a plain call, honest site 3", () => usePlainly([]));
+for (let i = 0; i < 300; i++) usePlainly([i, i]);
+for (const name in impostors) attempt("a plain call, " + name, () => (value => usePlainly(value))(impostors[name]()));
+attempt("a plain call, an array by the same route", () => (value => usePlainly(value))([1, 2, 3]));
+attempt("a plain call, honest site 4", () => usePlainly([6, 7, 8]));
+
+attempt("call, honest site 1", () => useByCall([1, 2, 3]));
+attempt("call, honest site 2", () => useByCall([4, 5]));
+attempt("call, honest site 3", () => useByCall([]));
+for (let i = 0; i < 300; i++) useByCall([i, i]);
+for (const name in impostors) attempt("call, " + name, () => (value => useByCall.call(undefined, value))(impostors[name]()));
+attempt("call, an array by the same route", () => (value => useByCall.call(undefined, value))([1, 2, 3]));
+attempt("call, honest site 4", () => useByCall([6, 7, 8]));
+
+attempt("apply, honest site 1", () => useByApply([1, 2, 3]));
+attempt("apply, honest site 2", () => useByApply([4, 5]));
+attempt("apply, honest site 3", () => useByApply([]));
+for (let i = 0; i < 300; i++) useByApply([i, i]);
+for (const name in impostors) attempt("apply, " + name, () => (value => useByApply.apply(undefined, [value]))(impostors[name]()));
+attempt("apply, an array by the same route", () => (value => useByApply.apply(undefined, [value]))([1, 2, 3]));
+attempt("apply, honest site 4", () => useByApply([6, 7, 8]));
+
+attempt("bind, honest site 1", () => useBound([1, 2, 3]));
+attempt("bind, honest site 2", () => useBound([4, 5]));
+attempt("bind, honest site 3", () => useBound([]));
+for (let i = 0; i < 300; i++) useBound([i, i]);
+for (const name in impostors) attempt("bind, " + name, () => (value => useBound.bind(undefined)(value))(impostors[name]()));
+attempt("bind, an array by the same route", () => (value => useBound.bind(undefined)(value))([1, 2, 3]));
+attempt("bind, honest site 4", () => useBound([6, 7, 8]));
+
+attempt("bind with the value, honest site 1", () => useBoundToIt([1, 2, 3]));
+attempt("bind with the value, honest site 2", () => useBoundToIt([4, 5]));
+attempt("bind with the value, honest site 3", () => useBoundToIt([]));
+for (let i = 0; i < 300; i++) useBoundToIt([i, i]);
+for (const name in impostors) attempt("bind with the value, " + name, () => (value => useBoundToIt.bind(undefined, value)())(impostors[name]()));
+attempt("bind with the value, an array by the same route", () => (value => useBoundToIt.bind(undefined, value)())([1, 2, 3]));
+attempt("bind with the value, honest site 4", () => useBoundToIt([6, 7, 8]));
+
+attempt("a callback of map, honest site 1", () => useAsACallback([1, 2, 3]));
+attempt("a callback of map, honest site 2", () => useAsACallback([4, 5]));
+attempt("a callback of map, honest site 3", () => useAsACallback([]));
+for (let i = 0; i < 300; i++) useAsACallback([i, i]);
+for (const name in impostors) attempt("a callback of map, " + name, () => (value => [value].map(useAsACallback)[0])(impostors[name]()));
+attempt("a callback of map, an array by the same route", () => (value => [value].map(useAsACallback)[0])([1, 2, 3]));
+attempt("a callback of map, honest site 4", () => useAsACallback([6, 7, 8]));
+
+attempt("inside a callback of forEach, honest site 1", () => useInACallback([1, 2, 3]));
+attempt("inside a callback of forEach, honest site 2", () => useInACallback([4, 5]));
+attempt("inside a callback of forEach, honest site 3", () => useInACallback([]));
+for (let i = 0; i < 300; i++) useInACallback([i, i]);
+for (const name in impostors) attempt("inside a callback of forEach, " + name, () => (value => { let answer; [value].forEach(element => { answer = useInACallback(element); }); return answer; })(impostors[name]()));
+attempt("inside a callback of forEach, an array by the same route", () => (value => { let answer; [value].forEach(element => { answer = useInACallback(element); }); return answer; })([1, 2, 3]));
+attempt("inside a callback of forEach, honest site 4", () => useInACallback([6, 7, 8]));
+
+attempt("a method read by a computed name, honest site 1", () => useByAComputedName([1, 2, 3]));
+attempt("a method read by a computed name, honest site 2", () => useByAComputedName([4, 5]));
+attempt("a method read by a computed name, honest site 3", () => useByAComputedName([]));
+for (let i = 0; i < 300; i++) useByAComputedName([i, i]);
+for (const name in impostors) attempt("a method read by a computed name, " + name, () => (value => ({ useByAComputedName })[["use", "ByAComputedName"].join("")](value))(impostors[name]()));
+attempt("a method read by a computed name, an array by the same route", () => (value => ({ useByAComputedName })[["use", "ByAComputedName"].join("")](value))([1, 2, 3]));
+attempt("a method read by a computed name, honest site 4", () => useByAComputedName([6, 7, 8]));
+
+attempt("a field, honest site 1", () => useFromAField([1, 2, 3]));
+attempt("a field, honest site 2", () => useFromAField([4, 5]));
+attempt("a field, honest site 3", () => useFromAField([]));
+for (let i = 0; i < 300; i++) useFromAField([i, i]);
+for (const name in impostors) attempt("a field, " + name, () => (value => ({ callee: useFromAField }).callee(value))(impostors[name]()));
+attempt("a field, an array by the same route", () => (value => ({ callee: useFromAField }).callee(value))([1, 2, 3]));
+attempt("a field, honest site 4", () => useFromAField([6, 7, 8]));
+
+attempt("an element, honest site 1", () => useFromAnArray([1, 2, 3]));
+attempt("an element, honest site 2", () => useFromAnArray([4, 5]));
+attempt("an element, honest site 3", () => useFromAnArray([]));
+for (let i = 0; i < 300; i++) useFromAnArray([i, i]);
+for (const name in impostors) attempt("an element, " + name, () => (value => [useFromAnArray][0](value))(impostors[name]()));
+attempt("an element, an array by the same route", () => (value => [useFromAnArray][0](value))([1, 2, 3]));
+attempt("an element, honest site 4", () => useFromAnArray([6, 7, 8]));
+
+attempt("a parameter, honest site 1", () => useAsAParameter([1, 2, 3]));
+attempt("a parameter, honest site 2", () => useAsAParameter([4, 5]));
+attempt("a parameter, honest site 3", () => useAsAParameter([]));
+for (let i = 0; i < 300; i++) useAsAParameter([i, i]);
+for (const name in impostors) attempt("a parameter, " + name, () => (value => run(useAsAParameter, value))(impostors[name]()));
+attempt("a parameter, an array by the same route", () => (value => run(useAsAParameter, value))([1, 2, 3]));
+attempt("a parameter, honest site 4", () => useAsAParameter([6, 7, 8]));
+
+attempt("Reflect.apply, honest site 1", () => useByReflect([1, 2, 3]));
+attempt("Reflect.apply, honest site 2", () => useByReflect([4, 5]));
+attempt("Reflect.apply, honest site 3", () => useByReflect([]));
+for (let i = 0; i < 300; i++) useByReflect([i, i]);
+for (const name in impostors) attempt("Reflect.apply, " + name, () => (value => Reflect.apply(useByReflect, undefined, [value]))(impostors[name]()));
+attempt("Reflect.apply, an array by the same route", () => (value => Reflect.apply(useByReflect, undefined, [value]))([1, 2, 3]));
+attempt("Reflect.apply, honest site 4", () => useByReflect([6, 7, 8]));
+
+attempt("a conditional callee, honest site 1", () => useFromAConditional([1, 2, 3]));
+attempt("a conditional callee, honest site 2", () => useFromAConditional([4, 5]));
+attempt("a conditional callee, honest site 3", () => useFromAConditional([]));
+for (let i = 0; i < 300; i++) useFromAConditional([i, i]);
+for (const name in impostors) attempt("a conditional callee, " + name, () => (value => (value === undefined ? run : useFromAConditional)(value))(impostors[name]()));
+attempt("a conditional callee, an array by the same route", () => (value => (value === undefined ? run : useFromAConditional)(value))([1, 2, 3]));
+attempt("a conditional callee, honest site 4", () => useFromAConditional([6, 7, 8]));
+//// arrays/an-index-loop-reads-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+const makers = {
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "an array": () => [3, 1, 2],
+};
+
+////= sum
+
+function sumWithACachedLength(list) {
+  let total = 0;
+  for (let i = 0, length = list.length; i < length; i++) total += list[i];
+  return total;
+}
+
+function backwards(list) {
+  const seen = [];
+  for (let i = list.length - 1; i >= 0 && seen.length < 6; i--) seen.push(list[i]);
+  return seen;
+}
+
+////= lines-37	first	list	list[0
+
+const uses = {
+  "sum": list => sum(list),
+  "sum with a cached length": list => sumWithACachedLength(list),
+  "backwards": list => backwards(list),
+  "first": list => first(list),
+};
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/an-operand-changes-the-list-before-the-operation-runs.js
+////= describe-11
+
+const log = [];
+
+////= lines-129	noted	label	log	label	value
+
+const cases = {
+  "the argument of push gives the list its own push"() {
+    const list = [1];
+    const answer = list.push((list.push = () => "its own push", 2));
+    return [answer, list.length, list.push(3)];
+  },
+  "the argument of push changes the prototype"() {
+    const list = [1];
+    const answer = list.push(Object.setPrototypeOf(list, { push: () => "the other push" }) && 2);
+    return [answer, list.length, list.push(3)];
+  },
+  "the argument of push replaces the variable"() {
+    let list = [1];
+    const first = list;
+    const answer = list.push(((list = { push: () => "another object" }), 2));
+    return [answer, first, list.push(3)];
+  },
+  "the argument of push freezes the list"() {
+    const list = [1];
+    return list.push(Object.freeze(list).length);
+  },
+  "the argument of push pushes"() {
+    const list = [1];
+    return [list.push(list.push(2)), list];
+  },
+  "the callback expression of map empties the list"() {
+    const list = [1, 2, 3];
+    return list.map(((list.length = 0), value => value * 2));
+  },
+  "the callback expression of map gives the list its own map"() {
+    const list = [1, 2, 3];
+    return list.map(((list.map = () => "its own map"), value => value * 2));
+  },
+  "the stored value shrinks the list"() {
+    const list = [1, 2, 3];
+    list[2] = ((list.length = 0), "stored");
+    return list;
+  },
+  "the stored value replaces the variable"() {
+    let list = [1, 2, 3];
+    const first = list;
+    list[0] = ((list = ["another"]), "stored");
+    return [first, list];
+  },
+  "the stored value changes the index variable"() {
+    const list = [1, 2, 3];
+    let index = 0;
+    list[index] = ((index = 2), "stored");
+    return list;
+  },
+  "the stored value freezes the list"() {
+    const list = [1, 2, 3];
+    list[0] = (Object.freeze(list), "stored");
+    return list;
+  },
+  "the index is incremented in the store"() {
+    const list = [1, 2, 3];
+    let index = 0;
+    list[index++] = list[index];
+    list[index] = index++;
+    return [list, index];
+  },
+  "the index comes from a push"() {
+    const list = [1];
+    list[list.push(2)] = list.length;
+    return list;
+  },
+  "the added value changes the element"() {
+    const list = [1, 2, 3];
+    list[0] += ((list[0] = 100), 5);
+    return list;
+  },
+  "the added value shrinks the list"() {
+    const list = [1, 2, 3];
+    list[2] += ((list.length = 0), 5);
+    return list;
+  },
+  "the new length comes from a pop"() {
+    const list = [1, 2, 3, 1];
+    list.length = list.pop();
+    return list;
+  },
+  "the new length comes from a push"() {
+    const list = [1];
+    list.length = list.push(2, 3) - 1;
+    return list;
+  },
+  "the order of list, key and value"() {
+    noted("list", [1])[noted("key", 0)] = noted("value", 2);
+    return log.slice();
+  },
+  "the order with a key that is an object"() {
+    noted("list", [1])[{ toString: () => noted("toString", "0") }] = noted("value", 2);
+    return log.slice();
+  },
+  "the order when the list is null"() {
+    try {
+      noted("list", null)[noted("key", 0)] = noted("value", 2);
+    } catch (error) {
+      log.push(error.constructor.name);
+    }
+    return log.slice();
+  },
+  "the order of a call on null"() {
+    try {
+      noted("list", null).push(noted("argument", 1));
+    } catch (error) {
+      log.push(error.constructor.name);
+    }
+    return log.slice();
+  },
+  "the order of a call of a missing method"() {
+    try {
+      noted("list", {}).push(noted("argument", 1));
+    } catch (error) {
+      log.push(error.constructor.name);
+    }
+    return log.slice();
+  },
+  "the order of a spread and later arguments"() {
+    const list = [1, 2];
+    return Math.max(...list, list.push(50), ...list);
+  },
+  "the order inside a literal"() {
+    const list = [1, 2];
+    return [list.length, ...list, list.push(3), ...list, list.length];
+  },
+  "the order inside a pattern"() {
+    const list = [1, 2, 3];
+    const [a = noted("default a", "a"), b = list.pop(), c = noted("default c", "c")] = list;
+    return [a, b, c, log.slice()];
+  },
+  "a pattern that stores into the list it reads"() {
+    const list = [1, 2, 3];
+    [list[2], list[1], list[0]] = list;
+    return list;
+  },
+  "a swap inside one list"() {
+    const list = [1, 2, 3];
+    [list[0], list[2]] = [list[2], list[0]];
+    return list;
+  },
+  "a comparison that changes the length in the loop head"() {
+    const list = [1, 2, 3, 4, 5, 6];
+    let turns = 0;
+    for (let i = 0; i < list.length; i += list.pop() > 0 ? 1 : 0) turns++;
+    return [turns, list];
+  },
+};
+
+for (let i = 0; i < 300; i++) {
+  for (const name in cases) {
+    log.length = 0;
+    try {
+      cases[name]();
+    } catch {}
+  }
+}
+
+for (const name in cases) {
+  log.length = 0;
+  attempt(name, cases[name]);
+}
+//// arrays/apply-is-given-lists-that-are-not-arrays.js
+////= describe-11
+
+const log = [];
+
+function three(a, b, c) {
+  return [arguments.length, a, b, c];
+}
+
+////= lines-255	gather	values
+
+////= Point-5
+
+const uses = {
+  apply: list => three.apply(null, list),
+  applyToRest: list => gather.apply(null, list),
+  reflectApply: list => Reflect.apply(three, null, list),
+  construct: list => Reflect.construct(Point, list),
+  largest: list => Math.max.apply(Math, list),
+  text: list => String.fromCharCode.apply(String, list),
+  pushAll(list) {
+    const target = [0];
+    return [Array.prototype.push.apply(target, list), target];
+  },
+  concatAll: list => Array.prototype.concat.apply([], list),
+  forwarded(list) {
+    function outer() {
+      return three.apply(this, arguments);
+    }
+    return outer.apply(null, list);
+  },
+  callApply: list => Function.prototype.call.apply(three, list),
+  boundApply: list => three.bind(null, "bound").apply(null, list),
+  arrowApply: list => ((a, b) => [a, b]).apply(null, list),
+};
+
+const makers = {
+  "an array": () => [65, 66, 67],
+  "an array-like": () => ({ 0: 65, 1: 66, 2: 67, length: 3 }),
+  "an array-like that is too short": () => ({ 0: 65, length: 3 }),
+  "an array-like with a fractional length": () => ({ 0: 65, 1: 66, 2: 67, length: 1.9 }),
+  "an array-like with a text length": () => ({ 0: 65, 1: 66, length: "2" }),
+  "an array-like with a negative length": () => ({ 0: 65, length: -1 }),
+  "an array-like with a length of NaN": () => ({ 0: 65, length: NaN }),
+  "an object without a length": () => ({ 0: 65 }),
+  "an array-like with getters": () => ({
+    get length() { log.push("length"); return 2; },
+    get 0() { log.push("0"); return 65; },
+    get 1() { log.push("1"); return 66; },
+  }),
+  "an array with a hole": () => [65, , 67],
+  "a hole over an inherited element": () => Object.setPrototypeOf([65, , 67], { __proto__: Array.prototype, 1: 90 }),
+  "an array with a getter": () => Object.defineProperty([65, 66, 67], 1, { get() { log.push("1"); return 90; } }),
+  "arguments": () => (function () { return arguments; })(65, 66, 67),
+  "a typed array": () => new Uint8Array([65, 66, 67]),
+  "doubles": () => [65.5, 66.5, 67.5],
+  "a subclass with its own iterator": () => new (class extends Array { *[Symbol.iterator]() { yield "never used"; } })(65, 66, 67),
+  "a proxy": () => new Proxy([65, 66], { get(target, key, receiver) { log.push("get " + String(key)); return Reflect.get(target, key, receiver); } }),
+  "a String object": () => new String("AB"),
+  "a function": () => function (a, b) {},
+  "a Set": () => new Set([65]),
+  "a string": () => "AB",
+  "a number": () => 65,
+  "null": () => null,
+  "undefined": () => undefined,
+  "a symbol": () => Symbol.iterator,
+};
+
+for (const use in uses) for (let i = 0; i < 1000; i++) uses[use]([65, 66, 67]);
+
+////= for-188	if (log.length) console.log("  log: " + log.join(",
+
+attempt("a list that is far too long", () => three.apply(null, { length: 2 ** 31 }));
+attempt("a long list", () => gather.apply(null, new Array(50000)).length);
+attempt("a long list of numbers", () => Math.max.apply(null, Array.from({ length: 50000 }, (_, index) => index)));
+//// arrays/array-from-copies-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+////= Loud-8
+
+////= makers-4
+
+////= lines-3	copy	list	Array.from	list
+
+function doubled(list) {
+  return Array.from(list, value => value * 2);
+}
+
+function places(list) {
+  return Array.from(list, (value, index) => index);
+}
+
+////= uses-33	"copy"	copy	"doubled"	doubled	"places"	places
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/array-prototype-changes-in-the-middle-of-a-loop.js
+////= lines-65	replacement	"replaced"
+
+////= lines-270	replacedIterator	"replaced"
+
+const loops = {
+  push(change, restore, isReplaced) {
+    const list = [];
+    const wrong = [];
+    for (let i = 0; i < 6; i++) {
+      if (i === 2) change();
+      if (i === 4) restore();
+      const expected = isReplaced() ? "replaced" : list.length + 1;
+      if (list.push(i) !== expected) wrong[wrong.length] = i;
+    }
+    return wrong;
+  },
+  pop(change, restore, isReplaced) {
+    const list = [1, 2, 3, 4, 5, 6];
+    const wrong = [];
+    for (let i = 0; i < 6; i++) {
+      if (i === 2) change();
+      if (i === 4) restore();
+      const expected = isReplaced() ? "replaced" : list[list.length - 1];
+      if (list.pop() !== expected) wrong[wrong.length] = i;
+    }
+    return wrong;
+  },
+  map(change, restore, isReplaced) {
+    const list = [1, 2];
+    const wrong = [];
+    for (let i = 0; i < 6; i++) {
+      if (i === 2) change();
+      if (i === 4) restore();
+      const expected = isReplaced() ? "replaced" : "object";
+      const result = list.map(value => value);
+      if ((result === "replaced" ? result : typeof result) !== expected) wrong[wrong.length] = i;
+    }
+    return wrong;
+  },
+  forEach(change, restore, isReplaced) {
+    const list = [1, 2];
+    const wrong = [];
+    for (let i = 0; i < 6; i++) {
+      if (i === 2) change();
+      if (i === 4) restore();
+      const expected = isReplaced() ? 0 : 2;
+      let visits = 0;
+      list.forEach(() => visits++);
+      if (visits !== expected) wrong[wrong.length] = i;
+    }
+    return wrong;
+  },
+  indexOf(change, restore, isReplaced) {
+    const list = [1, 2];
+    const wrong = [];
+    for (let i = 0; i < 6; i++) {
+      if (i === 2) change();
+      if (i === 4) restore();
+      const expected = isReplaced() ? "replaced" : 1;
+      if (list.indexOf(2) !== expected) wrong[wrong.length] = i;
+    }
+    return wrong;
+  },
+  join(change, restore, isReplaced) {
+    const list = [1, 2];
+    const wrong = [];
+    for (let i = 0; i < 6; i++) {
+      if (i === 2) change();
+      if (i === 4) restore();
+      const expected = isReplaced() ? "replaced" : "1,2";
+      if (list.join() !== expected) wrong[wrong.length] = i;
+    }
+    return wrong;
+  },
+  slice(change, restore, isReplaced) {
+    const list = [1, 2];
+    const wrong = [];
+    for (let i = 0; i < 6; i++) {
+      if (i === 2) change();
+      if (i === 4) restore();
+      const expected = isReplaced() ? "replaced" : 2;
+      const result = list.slice();
+      if ((result === "replaced" ? result : result.length) !== expected) wrong[wrong.length] = i;
+    }
+    return wrong;
+  },
+  [Symbol.iterator](change, restore, isReplaced) {
+    const list = ["original"];
+    const wrong = [];
+    for (let i = 0; i < 6; i++) {
+      if (i === 2) change();
+      if (i === 4) restore();
+      const expected = isReplaced() ? "replaced" : "original";
+      let walked;
+      for (const value of list) walked = value;
+      const [taken] = list;
+      const copied = [...list];
+      if (walked !== expected || taken !== expected || copied[0] !== expected) wrong[wrong.length] = i;
+    }
+    return wrong;
+  },
+};
+
+const inTheCallback = {
+  forEach(change, restore, isReplaced) {
+    const wrong = [];
+    [0, 1, 2, 3, 4, 5].forEach(i => {
+      if (i === 2) change();
+      if (i === 4) restore();
+      const expected = isReplaced() ? "replaced" : 1;
+      if ([].push(i) !== expected) wrong[wrong.length] = i;
+    });
+    return wrong;
+  },
+  forOf(change, restore, isReplaced) {
+    const wrong = [];
+    for (const i of [0, 1, 2, 3, 4, 5]) {
+      if (i === 2) change();
+      if (i === 4) restore();
+      const expected = isReplaced() ? "replaced" : 1;
+      if ([].push(i) !== expected) wrong[wrong.length] = i;
+    }
+    return wrong;
+  },
+};
+
+function trial(label, key, value, loop) {
+  const descriptor = Object.getOwnPropertyDescriptor(Array.prototype, key);
+  const ways = {
+    "a store": () => { Array.prototype[key] = value; },
+    "Reflect.set": () => Reflect.set(Array.prototype, key, value),
+    "Object.defineProperty": () => { Object.defineProperty(Array.prototype, key, { value }); },
+  };
+  for (const way in ways) {
+    let wrong;
+    let failure = "";
+    try {
+      wrong = loop(
+        () => { try { ways[way](); } catch {} },
+        () => { try { Object.defineProperty(Array.prototype, key, descriptor); } catch {} },
+        () => Reflect.get(Array.prototype, key) === value,
+      );
+    } catch (error) {
+      failure = error.constructor.name;
+    }
+    try {
+      Object.defineProperty(Array.prototype, key, descriptor);
+    } catch {}
+    const isRight = !failure && wrong.length === 0;
+    console.log((isRight ? "ok " : "WRONG ") + label + ", " + way + (isRight ? ": every turn called what Array.prototype held" : failure ? ": threw " + failure : ": turns " + wrong.join()));
+  }
+}
+
+const nothing = () => {};
+const never = () => false;
+for (const key of Reflect.ownKeys(loops)) for (let i = 0; i < 300; i++) loops[key](nothing, nothing, never);
+for (const key in inTheCallback) for (let i = 0; i < 300; i++) inTheCallback[key](nothing, nothing, never);
+
+for (const key of Reflect.ownKeys(loops)) trial("a loop of " + String(key), key, key === Symbol.iterator ? replacedIterator : replacement, loops[key]);
+for (const key in inTheCallback) trial("push inside " + key, "push", replacement, inTheCallback[key]);
+//// arrays/array-prototype-or-object-prototype-gets-an-element.js
+const observers = {
+  read: list => list[1],
+  readInALoop(list) {
+    let found;
+    for (let i = 0; i < list.length; i++) if (i === 1) found = list[i];
+    return found;
+  },
+  has: list => (1 in list ? "inherited" : undefined),
+  forOf(list) {
+    let index = 0;
+    for (const value of list) if (index++ === 1) return value;
+  },
+  spread: list => [...list][1],
+  pattern(list) {
+    const [, second] = list;
+    return second;
+  },
+  patternWithADefault(list) {
+    const [, second = undefined] = list;
+    return second;
+  },
+  forEach(list) {
+    let found;
+    list.forEach((value, index) => {
+      if (index === 1) found = value;
+    });
+    return found;
+  },
+  map: list => list.map(value => value)[1],
+  filter: list => (list.filter(() => true).length === 3 ? "inherited" : undefined),
+  reduce: list => list.reduce((found, value, index) => (index === 1 ? value : found), undefined),
+  includes: list => (list.includes("inherited") ? "inherited" : undefined),
+  indexOf: list => (list.indexOf("inherited") === 1 ? "inherited" : undefined),
+  join: list => (list.join() === "a,inherited,c" ? "inherited" : undefined),
+  slice: list => list.slice()[1],
+  concat: list => [].concat(list)[1],
+  from: list => Array.from(list)[1],
+  at: list => list.at(1),
+  find: list => list.find((value, index) => index === 1),
+  json: list => (JSON.stringify(list) === '["a","inherited","c"]' ? "inherited" : undefined),
+  apply: list => ((a, b) => b).apply(null, list),
+  pastTheEnd: list => ["only"][1],
+  freshHoles: () => new Array(3)[1],
+  holeOfALocal() {
+    const local = ["a", , "c"];
+    return local[1];
+  },
+  popped(list) {
+    list.length = 2;
+    return list.pop();
+  },
+  reflected: list => Reflect.get(list, 1),
+};
+
+const changes = {
+  "Array.prototype[1] is stored to": [Array.prototype, holder => { holder[1] = "inherited"; }],
+  "Array.prototype[1] is set by Reflect": [Array.prototype, holder => Reflect.set(holder, 1, "inherited")],
+  "Array.prototype[1] is defined": [Array.prototype, holder => { Object.defineProperty(holder, 1, { value: "inherited", configurable: true, writable: true }); }],
+  "Array.prototype[1] becomes a getter": [Array.prototype, holder => { Object.defineProperty(holder, "1", { get: () => "inherited", configurable: true }); }],
+  "two values are pushed onto Array.prototype": [Array.prototype, holder => { Array.prototype.push.call(holder, "zero", "inherited"); }],
+  "Object.prototype[1] is stored to": [Object.prototype, holder => { holder[1] = "inherited"; }],
+  "Object.prototype[1] is set by Reflect": [Object.prototype, holder => Reflect.set(holder, "1", "inherited")],
+  "Object.prototype[1] is defined": [Object.prototype, holder => { Object.defineProperty(holder, 1, { value: "inherited", configurable: true, writable: true }); }],
+  "Object.prototype[1] is assigned": [Object.prototype, holder => { Object.assign(holder, { 1: "inherited" }); }],
+};
+
+for (const name in observers) for (let i = 0; i < 1000; i++) observers[name](["a", "b", "c"]);
+for (const name in observers) for (let i = 0; i < 1000; i++) observers[name](["a", , "c"]);
+
+////= observe-4	a", , "c
+
+for (const label in changes) {
+  const [holder, change] = changes[label];
+  try {
+    change(holder);
+  } catch {}
+  const during = observe();
+  try {
+    delete holder[0];
+    delete holder[1];
+    if (holder === Array.prototype) holder.length = 0;
+  } catch {}
+  const after = observe();
+  for (const name in observers) {
+    const isRight = during[name] === during.reflected && after[name] === undefined;
+    console.log((isRight ? "ok " : "WRONG ") + label + ", " + name + (isRight ? ": the hole reads what Reflect.get reads, and nothing afterwards" : ": " + during[name] + " where Reflect.get saw " + during.reflected + ", afterwards " + after[name]));
+  }
+}
+//// arrays/arrays-and-their-impostors-are-converted-to-numbers-and-booleans.js
+////= describe-11
+
+const log = [];
+
+const uses = {
+  number: list => +list,
+  times: list => list * 2,
+  minusOne: list => list - 1,
+  looseNumber: list => list == 3,
+  looseItself: list => list == list,
+  less: list => list < 4,
+  truthy: list => (list ? "truthy" : "falsy"),
+  not: list => !list,
+  bits: list => list | 0,
+  largest: list => Math.max(list),
+  isNaN: list => isNaN(list),
+};
+
+////= makers-10
+
+for (const use in uses) for (let i = 0; i < 1000; i++) uses[use]([3, 1, 2]);
+
+////= for-63
+//// arrays/arrays-and-their-impostors-are-converted-to-text.js
+////= describe-11
+
+const log = [];
+
+const uses = {
+  text: list => "" + list,
+  template: list => `${list}`,
+  string: list => String(list),
+  plusOne: list => list + 1,
+  looseText: list => list == "3,1,2",
+  asAKey: list => ({ "3,1,2": "found", 3: "found three", "": "found nothing" })[list],
+  joinedInto: list => [list, list].join(";"),
+  json: list => JSON.stringify({ list }),
+  sortedAmong: list => [10, list, 2].sort().map(String),
+  parsed: list => parseInt(list),
+  inADate: list => new Date(list).getTime() === new Date(String(list)).getTime(),
+};
+
+////= makers-10
+
+for (const use in uses) for (let i = 0; i < 1000; i++) uses[use]([3, 1, 2]);
+
+////= for-63
+//// arrays/arrays-from-another-realm-go-where-arrays-went.js
+const vm = require("node:vm");
+
+////= describe-11
+
+const makers = {
+  "an array": "[3, 1, 2]",
+  "doubles": "[3.5, 1.5, 2.5]",
+  "an array with a hole": "[3, , 2]",
+  "an array of holes": "new Array(3)",
+  "a hole over that realm's Array.prototype": "Array.prototype[1] = 'inherited'; [3, , 2]",
+  "a hole over that realm's Object.prototype": "Object.prototype[1] = 'inherited'; [3, , 2]",
+  "an array whose realm replaced push": "Array.prototype.push = function () { return 'replaced push'; }; [3, 1, 2]",
+  "an array whose realm replaced map": "Array.prototype.map = function () { return 'replaced map'; }; [3, 1, 2]",
+  "an array whose realm replaced the iterator": "Array.prototype[Symbol.iterator] = function* () { yield 'replaced iterator'; }; [3, 1, 2]",
+  "an array whose realm replaced next": "Object.getPrototypeOf([][Symbol.iterator]()).next = function () { return { done: true }; }; [3, 1, 2]",
+  "an array whose realm has a setter at 3": "Object.defineProperty(Array.prototype, 3, { set(value) { this.caught = value; }, configurable: true }); [3, 1, 2]",
+  "a subclass": "class Loud extends Array { push() { return 'the subclass push'; } } Loud.of(3, 1, 2)",
+  "a frozen array": "Object.freeze([3, 1, 2])",
+  "a typed array": "new Uint8Array([3, 1, 2])",
+  "arguments": "(function () { return arguments; })(3, 1, 2)",
+  "a Set": "new Set([3, 1, 2])",
+  "an array-like": "({ 0: 3, 1: 1, 2: 2, length: 3 })",
+  "a proxy": "new Proxy([3, 1, 2], {})",
+};
+
+const uses = {
+  checks: list => [Array.isArray(list), list instanceof Array, list.constructor === Array, Object.getPrototypeOf(list) === Array.prototype, Object.prototype.toString.call(list)],
+  push: list => [list.push(9), list.length, Object.keys(list).join()],
+  append(list) {
+    list[list.length] = 9;
+    return [list.length, Object.keys(list).join()];
+  },
+  sum(list) {
+    let total = 0;
+    for (let i = 0; i < list.length; i++) total += list[i];
+    return total;
+  },
+  walk(list) {
+    const seen = [];
+    for (const value of list) seen.push(value);
+    return seen;
+  },
+  copy: list => [...list],
+  firstTwo(list) {
+    const [a, b = "default"] = list;
+    return [a, b];
+  },
+  map(list) {
+    const result = list.map(value => value * 2);
+    return [result instanceof Array, Array.from(result)];
+  },
+  ourMap(list) {
+    const result = Array.prototype.map.call(list, value => value * 2);
+    return [result instanceof Array, result];
+  },
+  ourSlice(list) {
+    const result = Array.prototype.slice.call(list);
+    return [result instanceof Array, 1 in result, result.length];
+  },
+  filter: list => Array.from(list.filter(value => value > 1)),
+  sort: list => Array.from(list.sort((a, b) => a - b)),
+  concat: list => [0].concat(list),
+  flat: list => [list].flat(),
+  from: list => Array.from(list),
+  json: list => JSON.stringify(list),
+  largest: list => Math.max(...list),
+  applied: list => Math.max.apply(null, list),
+  has: list => [1 in list, Object.hasOwn(list, 1), list.includes(undefined)],
+};
+
+for (const use in uses) for (let i = 0; i < 1000; i++) uses[use]([3, 1, 2]);
+
+for (const name in makers) {
+  for (const use in uses) attempt(name + ", " + use, () => uses[use](vm.runInNewContext(makers[name])));
+}
+
+for (const use in uses) attempt("an array of this realm, " + use, () => uses[use]([3, 1, 2]));
+attempt("this realm's holes are still empty", () => [[3, , 2][1], 1 in [3, , 2], [3, 1, 2].push(9)]);
+//// arrays/arrays-that-built-ins-make-are-not-all-alike-when-they-are-changed.js
+////= describe-11
+
+////= lines-109	template	strings	return
+
+////= lines-255	rest	values
+
+////= makers-7
+
+const uses = {
+  push: list => [list.push("pushed"), list.length],
+  append(list) {
+    list[list.length] = "appended";
+    return list.length;
+  },
+  storeFirst(list) {
+    list[0] = 1.5;
+    return list[0];
+  },
+  pop: list => [list.pop(), list.length],
+  truncate(list) {
+    list.length = 1;
+    return list;
+  },
+};
+
+for (const use in uses) for (let i = 0; i < 1000; i++) uses[use](["a", "b", "c"]);
+
+for (const name in makers) for (const use in uses) attempt(name + ", " + use, () => uses[use](makers[name]()));
+//// arrays/arrays-that-built-ins-make-are-not-all-alike-when-they-are-read.js
+////= describe-11
+
+////= lines-109	template	strings	return
+
+////= lines-255	rest	values
+
+////= makers-7
+
+const uses = {
+  shape: list => [Array.isArray(list), Object.isFrozen(list), Object.isExtensible(list), Object.getPrototypeOf(list) === Array.prototype],
+  whole: list => list,
+  text(list) {
+    let result = "";
+    for (let i = 0; i < list.length; i++) result += "<" + list[i] + ">";
+    return result;
+  },
+  walked(list) {
+    let result = "";
+    for (const value of list) result += "<" + value + ">";
+    return result;
+  },
+  keys: list => Object.keys(list),
+};
+
+for (const use in uses) for (let i = 0; i < 1000; i++) uses[use](["a", "b", "c"]);
+
+for (const name in makers) for (const use in uses) attempt(name + ", " + use, () => uses[use](makers[name]()));
+//// arrays/async-functions-walk-values-that-are-not-plain-arrays.js
+////= describe-11
+
+class Loud extends Array {
+  map() {
+    return ["the subclass's map"];
+  }
+  *[Symbol.iterator]() {
+    yield "the subclass's iterator";
+  }
+}
+
+const log = [];
+
+const makers = {
+  "an array": () => [3, 1, 2],
+  "an array of promises": () => [Promise.resolve(3), 1, Promise.resolve(2)],
+  "an array with a thenable": () => [3, { then(resolve) { log.push("then"); resolve("from then"); } }, 2],
+  "an array with a hole": () => [3, , 2],
+  "a subclass": () => Loud.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "a string": () => "312",
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"]]),
+  "a typed array": () => new Uint8Array([3, 1, 2]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "an async generator": () => (async function* () { yield 3; yield 1; yield 2; })(),
+  "an object with both iterators": () => ({ *[Symbol.iterator]() { yield "sync"; }, async *[Symbol.asyncIterator]() { yield "async"; } }),
+  "an array with its own async iterator": () => Object.assign([3, 1, 2], { async *[Symbol.asyncIterator]() { yield "its own async iterator"; } }),
+  "a promise of an array": () => Promise.resolve([3, 1, 2]),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "arguments": () => (function () { return arguments; })(3, 1, 2),
+  "null": () => null,
+  "a number": () => 312,
+};
+
+const uses = {
+  async sum(list) {
+    let total = 0;
+    for (let i = 0; i < list.length; i++) total += await list[i];
+    return total;
+  },
+  async walk(list) {
+    const seen = [];
+    for (const value of list) seen.push(await value);
+    return seen;
+  },
+  async walkAsynchronously(list) {
+    const seen = [];
+    for await (const value of list) seen.push(value);
+    return seen;
+  },
+  async all(list) {
+    return await Promise.all(list);
+  },
+  async allOfAMap(list) {
+    return await Promise.all(list.map(async value => (await value) * 2));
+  },
+  async settled(list) {
+    return (await Promise.allSettled(list)).length;
+  },
+  async race(list) {
+    return await Promise.race(list);
+  },
+  async awaited(list) {
+    const value = await list;
+    return [Array.isArray(value), value.length];
+  },
+  async fromAsync(list) {
+    return await Array.fromAsync(list);
+  },
+  async pattern(list) {
+    const [first, second] = await list;
+    return [await first, await second];
+  },
+  async *yielded(list) {
+    yield* list;
+  },
+};
+
+async function run(use, list) {
+  const result = uses[use](list);
+  if (use !== "yielded") return await result;
+  const seen = [];
+  for await (const value of result) seen.push(value);
+  return seen;
+}
+
+for (const use in uses) for (let i = 0; i < 200; i++) await run(use, [3, 1, 2]);
+
+for (const name in makers) {
+  for (const use in uses) {
+    log.length = 0;
+    let answer;
+    try {
+      answer = describe(await run(use, makers[name]()));
+    } catch (error) {
+      answer = "threw " + error.constructor.name;
+    }
+    console.log(name + ", " + use + ": " + answer + (log.length ? " after " + log.join(" ") : ""));
+  }
+}
+//// arrays/at-keys-values-and-entries-are-called-on-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+class Loud extends Array {
+  at() {
+    return "the subclass's at";
+  }
+  keys() {
+    return "the subclass's keys";
+  }
+  values() {
+    return "the subclass's values";
+  }
+  entries() {
+    return "the subclass's entries";
+  }
+}
+
+const ownMembers = {
+  at() {
+    return "its own at";
+  },
+  keys() {
+    return "its own keys";
+  },
+  values() {
+    return "its own values";
+  },
+  entries() {
+    return "its own entries";
+  },
+};
+
+const otherPrototype = {
+  __proto__: Array.prototype,
+  at() {
+    return "the other prototype's at";
+  },
+  keys() {
+    return "the other prototype's keys";
+  },
+  values() {
+    return "the other prototype's values";
+  },
+  entries() {
+    return "the other prototype's entries";
+  },
+};
+
+////= makers
+
+function ends(list) {
+  return [list.at(0), list.at(-1), list.at(5), list.at(1.9)];
+}
+
+function allKeys(list) {
+  return Array.from(list.keys());
+}
+
+function allValues(list) {
+  return Array.from(list.values());
+}
+
+function allEntries(list) {
+  const seen = [];
+  for (const [key, value] of list.entries()) seen.push(key, value);
+  return seen;
+}
+
+const uses = {
+  "at": list => ends(list),
+  "keys": list => allKeys(list),
+  "values": list => allValues(list),
+  "entries": list => allEntries(list),
+};
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/borrowed-methods-that-change-are-called-on-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+const makers = {
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "an array": () => [3, 1, 2],
+};
+
+function push(list) {
+  return Array.prototype.push.call(list, 9);
+}
+
+function pop(list) {
+  return Array.prototype.pop.call(list);
+}
+
+function shift(list) {
+  return [].shift.call(list);
+}
+
+function reverse(list) {
+  return Array.prototype.reverse.call(list) === list;
+}
+
+const uses = {
+  "push.call": list => [push(list), list],
+  "pop.call": list => [pop(list), list],
+  "shift.call": list => [shift(list), list],
+  "reverse.call": list => [reverse(list), list],
+};
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/borrowed-methods-that-read-are-called-on-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+const makers = {
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array": () => [3, 1, 2],
+};
+
+function slice(list) {
+  return Array.prototype.slice.call(list);
+}
+
+function map(list) {
+  return Array.prototype.map.call(list, value => value + value);
+}
+
+function join(list) {
+  return Array.prototype.join.call(list, "-");
+}
+
+function indexOf(list) {
+  return [].indexOf.call(list, 2);
+}
+
+const uses = {
+  "slice.call": list => slice(list),
+  "map.call": list => map(list),
+  "join.call": list => join(list),
+  "indexOf.call": list => indexOf(list),
+};
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/borrowed-methods-that-visit-are-called-on-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+const makers = {
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "an array": () => [3, 1, 2],
+};
+
+function forEach(list) {
+  const seen = [];
+  Array.prototype.forEach.call(list, (value, index) => {
+    if (seen.length < 12) seen.push(index, value);
+  });
+  return seen;
+}
+
+function filter(list) {
+  return Array.prototype.filter.call(list, value => value > 1);
+}
+
+function reduce(list) {
+  return Array.prototype.reduce.call(list, (total, value) => total + value, 0);
+}
+
+function some(list) {
+  return Array.prototype.some.call(list, value => value === 2);
+}
+
+const uses = {
+  "forEach.call": list => forEach(list),
+  "filter.call": list => filter(list),
+  "reduce.call": list => reduce(list),
+  "some.call": list => some(list),
+};
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/buffers-go-where-arrays-went.js
+////= describe-11
+
+const uses = {
+  checks: list => [Array.isArray(list), Buffer.isBuffer(list), list instanceof Uint8Array, list.constructor.name, list.length],
+  sum(list) {
+    let total = 0;
+    for (let i = 0; i < list.length; i++) total += list[i];
+    return total;
+  },
+  walk(list) {
+    const seen = [];
+    for (const value of list) seen.push(value);
+    return seen;
+  },
+  copy: list => [...list],
+  sliceThenStore(list) {
+    const part = list.slice(1, 3);
+    part[0] = 33;
+    return [list[1], part[0], part.length, part.constructor.name];
+  },
+  subarrayThenStore(list) {
+    const part = list.subarray(1, 3);
+    part[0] = 33;
+    return [list[1], part[0]];
+  },
+  storeTooMuch(list) {
+    list[0] = 300;
+    list[1] = -1;
+    list[2] = 1.9;
+    return [list[0], list[1], list[2]];
+  },
+  append(list) {
+    list[list.length] = 1;
+    return list.length;
+  },
+  push: list => list.push(1),
+  concat: list => list.concat([1]),
+  givenToConcat: list => [0].concat(list).length,
+  indexOfANumber: list => [list.indexOf(98), list.indexOf(354), list.lastIndexOf(98), list.includes(98)],
+  indexOfText: list => [list.indexOf("b"), list.indexOf("bc"), list.includes("cb"), list.lastIndexOf("b")],
+  fillWithText: list => Array.from(list.fill("xy")),
+  fillWithANumber: list => Array.from(list.fill(300)),
+  text: list => [String(list), list.toString(), `${list}`, list + ""],
+  join: list => list.join("-"),
+  map(list) {
+    const result = list.map(value => value + 200);
+    return [result.constructor.name, Array.from(result)];
+  },
+  filter(list) {
+    const result = list.filter(value => value > 97);
+    return [result.constructor.name, result.length];
+  },
+  sort: list => Array.from(list.sort((a, b) => b - a)),
+  sortByDefault: list => Array.from(list.sort()),
+  reverse: list => Array.from(list.reverse()),
+  toReversed: list => list.toReversed().constructor.name,
+  at: list => [list.at(0), list.at(-1), list.at(9)],
+  json: list => JSON.stringify(list),
+  keys: list => Object.keys(list).join(),
+  entries: list => [...list.entries()].length,
+  pattern(list) {
+    const [first, , third = "default", ...rest] = list;
+    return [first, third, rest];
+  },
+  largest: list => Math.max(...list),
+  applied: list => String.fromCharCode.apply(null, list),
+  from: list => Array.from(list, value => value * 2),
+  truncate(list) {
+    try {
+      list.length = 1;
+    } catch (error) {
+      return error.constructor.name;
+    }
+    return list.length;
+  },
+  reduce: list => list.reduce((text, value) => text + String.fromCharCode(value), ""),
+  equal: list => [list == "abcb", list === list, list.equals ? list.equals(Buffer.from("abcb")) : "no equals"],
+};
+
+const makers = {
+  "an array": () => [97, 98, 99, 98],
+  "a buffer from text": () => Buffer.from("abcb"),
+  "a buffer from an array": () => Buffer.from([97, 98, 99, 98]),
+  "a buffer that was allocated": () => { const buffer = Buffer.alloc(4); buffer.write("abcb"); return buffer; },
+  "a slice of a larger buffer": () => Buffer.from("xabcbx").subarray(1, 5),
+  "a buffer over an array buffer": () => Buffer.from(new Uint8Array([97, 98, 99, 98]).buffer),
+  "a concatenated buffer": () => Buffer.concat([Buffer.from("ab"), Buffer.from("cb")]),
+  "a Uint8Array": () => new Uint8Array([97, 98, 99, 98]),
+  "an empty buffer": () => Buffer.alloc(0),
+};
+
+for (const use in uses) {
+  for (let i = 0; i < 1000; i++) {
+    try {
+      uses[use]([97, 98, 99, 98]);
+    } catch {}
+  }
+}
+
+for (const name in makers) for (const use in uses) attempt(name + ", " + use, () => uses[use](makers[name]()));
+//// arrays/built-ins-call-a-function-with-something-else-than-its-usual-array.js
+////= describe-11
+
+////= total-3
+
+function walked(list) {
+  const seen = [];
+  for (const value of list) seen.push(value);
+  return seen.join("/");
+}
+
+////= lines-3	pushed	list	list.push	9
+
+////= doubled
+
+////= Loud
+
+const makers = {
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "a subclass": () => Loud.of(3, 1, 2),
+  "a string": () => "312",
+  "a typed array": () => new Uint8Array([3, 1, 200]),
+  "a Set": () => new Set([3, 1, 2]),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "null": () => null,
+  "an array": () => [3, 1, 2],
+};
+
+const functions = { total, walked, pushed, doubled };
+
+const routes = {
+  "a plain call": (use, value) => use(value),
+  "call": (use, value) => use.call(undefined, value),
+  "apply": (use, value) => use.apply(undefined, [value]),
+  "bind": (use, value) => use.bind(undefined, value)(),
+  "bind without arguments": (use, value) => use.bind(undefined)(value),
+  "Reflect.apply": (use, value) => Reflect.apply(use, undefined, [value]),
+  "forEach": (use, value) => { let answer; [value].forEach(element => { answer = use(element); }); return answer; },
+  "forEach with the function itself": (use, value) => { const answers = []; const keep = use; [value].forEach(function (element) { answers.push(keep(element)); }); return answers[0]; },
+  "map with the function itself": (use, value) => [value].map(use)[0],
+  "Array.from": (use, value) => Array.from([value], use)[0],
+  "find": (use, value) => { let answer; [value].find(element => { answer = use(element); return true; }); return answer; },
+  "a sort comparator": (use, value) => { let answer; [value, value].sort((a, b) => { answer = use(a); return 0; }); return answer; },
+  "a replace callback": (use, value) => { let answer; "x".replace("x", () => { answer = use(value); return ""; }); return answer; },
+  "Map.forEach": (use, value) => { let answer; new Map([["key", value]]).forEach(element => { answer = use(element); }); return answer; },
+  "Set.forEach": (use, value) => { let answer; new Set([value]).forEach(element => { answer = use(element); }); return answer; },
+  "a getter": (use, value) => use({ get list() { return value; } }.list),
+  "a proxy's get trap": (use, value) => use(new Proxy({}, { get: () => value }).list),
+  "a caught exception": (use, value) => { try { throw value; } catch (list) { return use(list); } },
+  "a generator's next": (use, value) => { const steps = (function* () { return use(yield); })(); steps.next(); return steps.next(value).value; },
+  "a yielded value": (use, value) => use((function* () { yield value; })().next().value),
+  "a spread argument": (use, value) => use(...[value]),
+  "a default parameter": (use, value) => ((list = value) => use(list))(),
+  "Object.values": (use, value) => use(Object.values({ list: value })[0]),
+  "an optional call": (use, value) => use?.(value),
+  "a comma expression": (use, value) => (0, use)(value),
+  "toJSON": (use, value) => { let answer; JSON.stringify({ toJSON() { answer = use(value); } }); return answer; },
+  "a tagged template": (use, value) => ((strings, list) => use(list))`${value}`,
+};
+
+for (const name in functions) for (let i = 0; i < 2000; i++) functions[name]([3, 1, 2]);
+
+for (const route in routes) {
+  for (const maker in makers) {
+    const answers = [];
+    for (const name in functions) {
+      try {
+        answers.push(name + " " + describe(routes[route](functions[name], makers[maker]())));
+      } catch (error) {
+        answers.push(name + " threw " + error.constructor.name);
+      }
+    }
+    console.log(route + ", " + maker + ": " + answers.join("; "));
+  }
+}
+//// arrays/chained-array-methods-keep-the-order-of-their-callbacks.js
+////= describe-11
+
+const log = [];
+
+class Loud extends Array {
+  filter(keep) {
+    log.push("the subclass's filter");
+    return super.filter(keep);
+  }
+}
+
+class ToSet extends Array {
+  static get [Symbol.species]() {
+    return function () {
+      return { length: 0, filter: () => "a filter that is not Array's", reduce: () => "a reduce that is not Array's", map: () => "a map that is not Array's", join: () => "a join that is not Array's", forEach() {}, some: () => "a some that is not Array's", slice: () => "a slice that is not Array's" };
+    };
+  }
+}
+
+const chains = {
+  mapFilter: list => list.map(value => (log.push("map " + value), value * 2)).filter(value => (log.push("filter " + value), value > 2)),
+  filterMap: list => list.filter(value => (log.push("filter " + value), value > 1)).map(value => (log.push("map " + value), value * 2)),
+  mapMap: list => list.map(value => (log.push("first " + value), value + 1)).map(value => (log.push("second " + value), value * 2)),
+  mapReduce: list => list.map(value => (log.push("map " + value), value * 2)).reduce((total, value) => (log.push("reduce " + value), total + value), 0),
+  filterMapReduce: list =>
+    list
+      .filter(value => (log.push("filter " + value), value !== 2))
+      .map(value => (log.push("map " + value), value * 2))
+      .reduce((total, value) => (log.push("reduce " + value), total + value), 0),
+  mapJoin: list => list.map(value => (log.push("map " + value), value * 2)).join("-"),
+  mapForEach(list) {
+    list.map(value => (log.push("map " + value), value * 2)).forEach(value => log.push("forEach " + value));
+    return "done";
+  },
+  mapSome: list => list.map(value => (log.push("map " + value), value * 2)).some(value => (log.push("some " + value), value === 2)),
+  mapFind: list => list.map(value => (log.push("map " + value), value * 2)).find(value => (log.push("find " + value), value === 2)),
+  mapSlice: list => list.map(value => (log.push("map " + value), value * 2)).slice(0, 1),
+  sliceMap: list => list.slice(1).map(value => (log.push("map " + value), value * 2)),
+  mapLength: list => list.map(value => (log.push("map " + value), value * 2)).length,
+  mapFirst: list => list.map(value => (log.push("map " + value), value * 2))[0],
+  mapIndexes: list => list.map((value, index, whole) => (log.push("map " + index + " of " + whole.length), index)).filter((value, index, whole) => (log.push("filter " + index + " of " + whole.length), true)),
+  mapThrows: list => list.map(value => { log.push("map " + value); if (value === 1) throw new RangeError("map"); return value; }).filter(value => (log.push("filter " + value), true)),
+  filterThrows: list => list.map(value => (log.push("map " + value), value)).filter(value => { log.push("filter " + value); throw new RangeError("filter"); }),
+  mapChangesTheSource: list => list.map((value, index) => { log.push("map " + value); if (index === 0) list.push(9); return value; }).filter(value => (log.push("filter " + value), true)),
+  filterChangesTheSource: list => list.map(value => (log.push("map " + value), value)).filter((value, index) => { log.push("filter " + value); if (index === 0) list[2] = "changed"; return true; }),
+  spreadOfAMap: list => [...list.map(value => (log.push("map " + value), value * 2))],
+  walkOfAMap(list) {
+    const seen = [];
+    for (const value of list.map(value => (log.push("map " + value), value * 2))) {
+      log.push("body " + value);
+      seen.push(value);
+    }
+    return seen;
+  },
+};
+
+const makers = {
+  "an array": () => [3, 1, 2],
+  "an array with a hole": () => [3, , 2],
+  "doubles": () => [3.5, 1, 2.5],
+  "a subclass that overrides filter": () => Loud.of(3, 1, 2),
+  "a species that makes other objects": () => ToSet.of(3, 1, 2),
+  "a typed array": () => new Uint8Array([3, 1, 200]),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "an array with its own map": () => Object.assign([3, 1, 2], { map() { log.push("its own map"); return [7]; } }),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+};
+
+////= for-178	chain	chains	500	chains[chain	3
+
+for (const name in makers) {
+  for (const chain in chains) {
+    log.length = 0;
+    let answer;
+    try {
+      answer = describe(chains[chain](makers[name]()));
+    } catch (error) {
+      answer = "threw " + error.constructor.name;
+    }
+    console.log(name + ", " + chain + ": " + answer + " after " + log.join(", "));
+  }
+}
+//// arrays/chains-of-callbacks-that-look-pure-meet-values-that-run-code.js
+////= describe-11
+
+const log = [];
+
+function logging(name, number) {
+  return {
+    valueOf() {
+      log.push(name);
+      return number;
+    },
+    toString() {
+      log.push(name + " as text");
+      return String(number);
+    },
+  };
+}
+
+const chains = {
+  mapFilter: (list, other) => list.map(value => value * 2).filter(value => value > other),
+  filterMap: (list, other) => list.filter(value => value > other).map(value => value * 2),
+  mapMap: (list, other) => list.map(value => value + 1).map(value => value * other),
+  mapMapMap: (list, other) => list.map(value => value * 1).map(value => value - other).map(value => value * other),
+  filterFilter: (list, other) => list.filter(value => value > 0).filter(value => value < other),
+  mapReduce: (list, other) => list.map(value => value * 2).reduce((total, value) => total + value * other, 0),
+  mapReduceFrom: (list, other) => list.map(value => value * 2).reduce((total, value) => total + value, other),
+  mapSome: (list, other) => list.map(value => value * 2).some(value => value > other),
+  mapEvery: (list, other) => list.map(value => value * 2).every(value => value < other),
+  mapFind: (list, other) => list.map(value => value * 2).find(value => value > other),
+  mapFindIndex: (list, other) => list.map(value => value * 2).findIndex(value => value > other),
+  mapLength: (list, other) => list.map(value => value * other).length,
+  filterLength: (list, other) => list.filter(value => value > other).length,
+  mapJoin: (list, other) => list.map(value => value).join(other),
+  mapTextJoin: (list, other) => list.map(value => "<" + value + ">").join(other),
+  mapForEach(list, other) {
+    let total = 0;
+    list.map(value => value * 2).forEach(value => {
+      total += value * other;
+    });
+    return total;
+  },
+  mapFlatMap: (list, other) => list.map(value => value * 2).flatMap(value => [value, value * other]),
+  sliceMap: (list, other) => list.slice(1).map(value => value * other),
+  sliceMapFilter: (list, other) => list.slice(0, 2).map(value => value * 2).filter(value => value > other),
+  mapFirst: (list, other) => list.map(value => value * other)[0],
+};
+
+const lists = {
+  "numbers": () => [3, 1, 2],
+  "objects that log": () => [logging("a", 3), logging("b", 1), logging("c", 2)],
+  "a number, an object that logs and a number": () => [3, logging("b", 1), 2],
+  "numbers and then a big integer": () => [3, 1, 2n],
+  "an object that logs and then a big integer": () => [logging("a", 3), 1, 2n],
+  "an object that logs and then a symbol": () => [logging("a", 3), Symbol("b"), logging("c", 2)],
+  "strings": () => ["3", "1", "2"],
+  "an object that logs, a hole and an object that logs": () => [logging("a", 3), , logging("c", 2)],
+  "an object that throws in the middle": () => [logging("a", 3), { valueOf() { log.push("throws"); throw new RangeError("element"); } }, logging("c", 2)],
+};
+
+const others = {
+  "a number": () => 2,
+  "an object that logs": () => logging("other", 2),
+  "a big integer": () => 2n,
+  "an object that throws": () => ({ valueOf() { log.push("other throws"); throw new EvalError("other"); }, toString() { log.push("other throws"); throw new EvalError("other"); } }),
+};
+
+for (const chain in chains) for (let i = 0; i < 1000; i++) chains[chain]([3, 1, 2], 2);
+
+for (const chain in chains) {
+  for (const list in lists) {
+    const answers = [];
+    for (const other in others) {
+      log.length = 0;
+      let answer;
+      let seen;
+      try {
+        const result = chains[chain](lists[list](), others[other]());
+        seen = log.join(" ");
+        answer = Array.isArray(result) ? "[" + result.map(value => (typeof value === "object" ? "object" : String(value))).join(",") + "]" : typeof result === "object" ? "object" : String(result);
+      } catch (error) {
+        seen = log.join(" ");
+        answer = error.constructor.name;
+      }
+      answers.push(answer + " (" + seen + ")");
+    }
+    console.log(chain + ", " + list + ": " + answers.join(" | "));
+  }
+}
+//// arrays/code-that-looks-made-for-arrays-never-gets-one.js
+////= describe-11
+
+////= total-3
+
+////= lines-25	add	list	value	list.push
+
+function walk(list) {
+  let text = "";
+  for (const value of list) text += "<" + String(value) + ">";
+  return text;
+}
+
+////= doubled
+
+////= lines-144	aboveOne	filter	1
+
+function visit(list) {
+  let text = "";
+  list.forEach((value, key) => {
+    text += String(key) + "=" + String(value) + ";";
+  });
+  return text;
+}
+
+////= lines-267	ascending	sort
+
+////= lines-257	largest	list	Math.max
+
+function firstAndSecond(list) {
+  const [first, second] = list;
+  return String(first) + "," + String(second);
+}
+
+////= lines-258	lastOne	list	list[list
+
+function renumber(list) {
+  for (let i = 0; i < list.length; i++) list[i] = i;
+  return list.length;
+}
+
+class Ring {
+  constructor(...values) {
+    this.length = values.length;
+    values.forEach((value, index) => {
+      this[index] = value;
+    });
+  }
+  push(value) {
+    this[0] = value;
+    return "a ring never grows";
+  }
+  map(change) {
+    return new Ring(change(this[0]));
+  }
+  filter() {
+    return this;
+  }
+  forEach(visit) {
+    visit(this[0], "only the first");
+  }
+  sort() {
+    return "a ring has no order";
+  }
+  *[Symbol.iterator]() {
+    yield this[this.length - 1];
+    yield this[0];
+  }
+}
+
+console.log("a ring, total: " + describe(total(new Ring(3, 1, 2))));
+console.log("a ring, add: " + describe(add(new Ring(3, 1, 2), 9)));
+console.log("a ring, walk: " + describe(walk(new Ring(3, 1, 2))));
+console.log("a ring, doubled: " + describe(doubled(new Ring(3, 1, 2))));
+console.log("a ring, aboveOne: " + describe(aboveOne(new Ring(3, 1, 2))));
+console.log("a ring, visit: " + describe(visit(new Ring(3, 1, 2))));
+console.log("a ring, ascending: " + describe(ascending(new Ring(3, 1, 2))));
+console.log("a ring, largest: " + describe(largest(new Ring(3, 1, 2))));
+console.log("a ring, firstAndSecond: " + describe(firstAndSecond(new Ring(3, 1, 2))));
+console.log("a ring, lastOne: " + describe(lastOne(new Ring(3, 1, 2))));
+console.log("a ring, renumber: " + describe(renumber(new Ring(3, 1, 2))));
+
+console.log("bytes, total: " + describe(total(new Uint8Array(3).fill(100))));
+console.log("bytes, walk: " + describe(walk(new Uint8Array(2).fill(7))));
+console.log("bytes, doubled: " + describe(doubled(new Uint8Array(2).fill(200))));
+console.log("bytes, aboveOne: " + describe(aboveOne(new Uint8Array(2).fill(2))));
+console.log("bytes, visit: " + describe(visit(new Uint8Array(2).fill(7))));
+console.log("bytes, ascending: " + describe(ascending(Uint8Array.of(10, 9, 1))));
+console.log("bytes, largest: " + describe(largest(Uint8Array.of(10, 9, 1))));
+console.log("bytes, firstAndSecond: " + describe(firstAndSecond(Uint8Array.of(10, 9, 1))));
+console.log("bytes, lastOne: " + describe(lastOne(Uint8Array.of(10, 9, 1))));
+console.log("bytes, renumber: " + describe(renumber(new Uint8Array(3))));
+attempt("bytes, add", () => add(new Uint8Array(3), 9));
+
+console.log("text, total: " + describe(total("312")));
+console.log("text, walk: " + describe(walk("312")));
+console.log("text, largest: " + describe(largest("312")));
+console.log("text, firstAndSecond: " + describe(firstAndSecond("312")));
+console.log("text, lastOne: " + describe(lastOne("312")));
+attempt("text, add", () => add("312", 9));
+attempt("text, doubled", () => doubled("312"));
+attempt("text, renumber", () => renumber("312"));
+
+console.log("a set, walk: " + describe(walk(new Set("312"))));
+console.log("a set, visit: " + describe(visit(new Set("312"))));
+console.log("a set, total: " + describe(total(new Set("312"))));
+console.log("a set, largest: " + describe(largest(new Set("312"))));
+console.log("a set, firstAndSecond: " + describe(firstAndSecond(new Set("312"))));
+console.log("a set, lastOne: " + describe(lastOne(new Set("312"))));
+attempt("a set, add", () => add(new Set("312"), 9));
+
+console.log("a map, walk: " + describe(walk(new Map(Object.entries({ a: 1 })))));
+console.log("a map, visit: " + describe(visit(new Map(Object.entries({ a: 1 })))));
+console.log("a map, firstAndSecond: " + describe(firstAndSecond(new Map(Object.entries({ a: 1 })))));
+
+attempt("nothing, total", () => total(null));
+attempt("nothing, walk", () => walk(undefined));
+attempt("a number, total", () => total(5));
+attempt("a number, walk", () => walk(5));
+attempt("a number, lastOne", () => lastOne(5));
+//// arrays/concat-asks-every-value-whether-it-spreads.js
+////= describe-11
+
+const log = [];
+
+class NeverSpread extends Array {
+  get [Symbol.isConcatSpreadable]() {
+    log.push("asked the subclass");
+    return false;
+  }
+}
+
+function spreadable(value, answer) {
+  return Object.defineProperty(value, Symbol.isConcatSpreadable, { value: answer, configurable: true });
+}
+
+function revoked() {
+  const pair = Proxy.revocable([7, 8], {});
+  pair.revoke();
+  return pair.proxy;
+}
+
+const values = {
+  "an array": () => [7, 8],
+  "an empty array": () => [],
+  "doubles": () => [7.5, 8.5],
+  "strings": () => ["seven"],
+  "an array with a hole": () => [7, , 8],
+  "only a hole": () => [,],
+  "a hole over an inherited element": () => Object.setPrototypeOf([7, , 8], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([7, 8], 0, { get() { log.push("get 0"); return "got"; }, enumerable: true }),
+  "an array that says false": () => spreadable([7, 8], false),
+  "an array that says undefined": () => spreadable([7, 8], undefined),
+  "an array that says null": () => spreadable([7, 8], null),
+  "an array that says 0": () => spreadable([7, 8], 0),
+  "an array that says text": () => spreadable([7, 8], "yes"),
+  "an array whose answer is a getter": () => Object.defineProperty([7, 8], Symbol.isConcatSpreadable, { get() { log.push("asked"); return true; } }),
+  "an array whose answer throws": () => Object.defineProperty([7, 8], Symbol.isConcatSpreadable, { get() { throw new RangeError("asked"); } }),
+  "a subclass": () => new (class extends Array {})(7, 8),
+  "a subclass that never spreads": () => NeverSpread.of(7, 8),
+  "an array under null": () => Object.setPrototypeOf([7, 8], null),
+  "a frozen array": () => Object.freeze([7, 8]),
+  "a proxy of an array": () => new Proxy([7, 8], {}),
+  "a revoked proxy": revoked,
+  "an array-like": () => ({ 0: 7, 1: 8, length: 2 }),
+  "an array-like that says true": () => spreadable({ 0: 7, 1: 8, length: 2 }, true),
+  "an array-like that says true and has no length": () => spreadable({ 0: 7 }, true),
+  "an array-like that says true and is too short": () => spreadable({ 0: 7, length: 3 }, true),
+  "an array-like that says true with a negative length": () => spreadable({ 0: 7, length: -1 }, true),
+  "an array-like that says true with a fractional length": () => spreadable({ 0: 7, 1: 8, length: 1.9 }, true),
+  "arguments": () => (function () { return arguments; })(7, 8),
+  "arguments that say true": () => spreadable((function () { return arguments; })(7, 8), true),
+  "a typed array": () => new Uint8Array([7, 8]),
+  "a typed array that says true": () => spreadable(new Uint8Array([7, 8]), true),
+  "a string": () => "78",
+  "a String object that says true": () => spreadable(new String("78"), true),
+  "a Set": () => new Set([7, 8]),
+  "a function that says true": () => spreadable(function (a, b) {}, true),
+  "a number": () => 78,
+  "null": () => null,
+  "undefined": () => undefined,
+};
+
+const uses = {
+  given: value => [1].concat(value),
+  givenToAnEmptyArray: value => [].concat(value),
+  givenTwice: value => [1].concat(value, value),
+  givenBetween: value => [1.5].concat("a", value, [2]),
+  receiver: value => Array.prototype.concat.call(value, [1]),
+  spreadOfGiven: value => [].concat(...[value, value]),
+};
+
+function summary(result) {
+  const parts = [];
+  for (let i = 0; i < result.length && i < 12; i++) parts.push(i in result ? (typeof result[i] === "object" && result[i] !== null ? "<" + Object.prototype.toString.call(result[i]).slice(8, -1) + ">" : typeof result[i] === "function" ? "<function>" : describe(result[i])) : "hole");
+  return result.constructor.name + " of " + result.length + ": " + parts.join(", ");
+}
+
+for (const use in uses) for (let i = 0; i < 1000; i++) uses[use]([7, 8]);
+
+for (const name in values) {
+  for (const use in uses) {
+    log.length = 0;
+    let answer;
+    try {
+      answer = summary(uses[use](values[name]()));
+    } catch (error) {
+      answer = "threw " + error.constructor.name;
+    }
+    console.log(name + ", " + use + ": " + answer + (log.length ? " after " + log.join(", ") : ""));
+  }
+}
+
+attempt("an array-like that says true and is as long as can be", () => [1].concat(spreadable({ length: 2 ** 53 - 1 }, true)));
+//// arrays/constant-array-literals-are-changed-by-whoever-gets-them.js
+////= describe-11
+
+const TABLE = [1, 2, 3];
+const WORDS = ["a", "b", "c"];
+const DOUBLES = [1.5, 2.5, 3.5];
+const NESTED = [[1, 2], [3, 4]];
+const EMPTY = [];
+
+function fresh() {
+  return [1, 2, 3];
+}
+
+function freshWords() {
+  return ["a", "b", "c"];
+}
+
+function freshDoubles() {
+  return [1.5, 2.5, 3.5];
+}
+
+function freshNested() {
+  return [[1, 2], [3, 4]];
+}
+
+function freshEmpty() {
+  return [];
+}
+
+function freshObjects() {
+  return [{ id: 1 }, { id: 2 }];
+}
+
+const changes = {
+  push: list => list.push(9),
+  pop: list => list.pop(),
+  store: list => { list[0] = "stored"; },
+  storeADouble: list => { list[0] = 0.5; },
+  append: list => { list[list.length] = 9; },
+  truncate: list => { list.length = 1; },
+  clear: list => { list.length = 0; },
+  sort: list => list.sort((a, b) => (a < b ? 1 : -1)),
+  reverse: list => list.reverse(),
+  fill: list => list.fill(0),
+  shift: list => list.shift(),
+  unshift: list => list.unshift(0),
+  splice: list => list.splice(0, 1),
+  remove: list => delete list[1],
+  freeze: list => Object.freeze(list),
+  name: list => { list.name = "named"; },
+  relink: list => Object.setPrototypeOf(list, null),
+  define: list => Object.defineProperty(list, 0, { get: () => "got" }),
+  inner: list => { if (typeof list[0] === "object") list[0][0] = "inner"; },
+};
+
+const makers = { fresh, freshWords, freshDoubles, freshNested, freshEmpty, freshObjects };
+
+for (const maker in makers) {
+  const pristine = describe(makers[maker]());
+  for (const change in changes) {
+    const list = makers[maker]();
+    let answer;
+    try {
+      changes[change](list);
+      answer = describe(list);
+    } catch (error) {
+      answer = "threw " + error.constructor.name;
+    }
+    const next = describe(makers[maker]());
+    console.log(maker + ", " + change + ": " + answer + "; the next one is " + (next === pristine ? "untouched" : "WRONG " + next));
+  }
+  console.log(maker + ": two calls give two arrays: " + (makers[maker]() !== makers[maker]()));
+}
+
+function inALoop() {
+  const all = [];
+  for (let i = 0; i < 3; i++) {
+    const list = [1, 2, 3];
+    list.push(i);
+    all.push(list);
+  }
+  return all;
+}
+attempt("a literal in a loop", inALoop);
+
+function defaulted(list = [1, 2, 3]) {
+  list.push(4);
+  return list;
+}
+attempt("a literal as a default, twice", () => [defaulted(), defaulted()]);
+
+function copies() {
+  const source = [1, 2, 3];
+  const sliced = source.slice();
+  const spread = [...source];
+  const concatenated = source.concat();
+  const from = Array.from(source);
+  sliced.push("sliced");
+  spread.push("spread");
+  concatenated.push("concatenated");
+  from.push("from");
+  source[0] = "source";
+  return [source, sliced, spread, concatenated, from];
+}
+attempt("copies of a literal", copies);
+
+attempt("the tables before", () => [TABLE, WORDS, DOUBLES, NESTED, EMPTY]);
+TABLE.push(4);
+WORDS[0] = 1;
+DOUBLES.length = 1;
+NESTED[0].push("inner");
+EMPTY.push("no longer empty");
+attempt("the tables after", () => [TABLE, WORDS, DOUBLES, NESTED, EMPTY]);
+attempt("literals that look like the tables", () => [[1, 2, 3], ["a", "b", "c"], [1.5, 2.5, 3.5], [[1, 2], [3, 4]], []]);
+attempt("the functions still give the originals", () => [fresh(), freshWords(), freshDoubles(), freshNested(), freshEmpty()]);
+//// arrays/duck-checks-say-yes-to-values-that-are-not-arrays.js
+////= describe-11
+
+const makers = {
+  "an object tagged Array": () => ({ [Symbol.toStringTag]: "Array", 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array tagged otherwise": () => Object.assign([3, 1, 2], { [Symbol.toStringTag]: "Other" }),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "an object with a push and a length": () => ({ length: 3, 0: 3, 1: 1, 2: 2, push(value) { return "pushed " + value; } }),
+  "an object with a length that is text": () => ({ length: "3", 0: 3, 1: 1, 2: 2 }),
+  "an object with a fractional length": () => ({ length: 2.5, 0: 3, 1: 1, 2: 2 }),
+  "an object with a negative length": () => ({ length: -3, 0: 3 }),
+  "an object with a length of NaN": () => ({ length: NaN, 0: 3 }),
+  "a function": () => function (a, b, c) {},
+  "a string": () => "312",
+  "a typed array": () => new Uint8Array([3, 1, 2]),
+  "an iterable without a length": () => ({ *[Symbol.iterator]() { yield 3; yield 1; yield 2; } }),
+  "an iterable whose length disagrees": () => ({ length: 1, 0: "by index", *[Symbol.iterator]() { yield "by"; yield "iterator"; } }),
+  "a Set": () => new Set([3, 1, 2]),
+  "an array": () => [3, 1, 2],
+};
+
+function byTag(value) {
+  if (Object.prototype.toString.call(value) !== "[object Array]") return "another tag";
+  let total = 0;
+  for (let i = 0; i < value.length; i++) total += value[i];
+  return total;
+}
+
+function byNumericLength(value) {
+  if (typeof value.length !== "number") return "no numeric length";
+  const seen = [];
+  for (let i = 0; i < value.length; i++) seen.push(value[i]);
+  return seen;
+}
+
+function byPush(value) {
+  if (!value || typeof value.push !== "function") return "no push";
+  return [value.push(9), value.length];
+}
+
+function byIterator(value) {
+  if (typeof value[Symbol.iterator] !== "function") return "not iterable";
+  const seen = [];
+  for (const element of value) seen.push(element);
+  return seen;
+}
+
+function byLengthInObject(value) {
+  if (typeof value !== "object" || !("length" in value)) return "no length";
+  return value.length > 0 ? value[value.length - 1] : "empty";
+}
+
+function byTruthyLength(value) {
+  return value.length ? value[0] : "nothing in it";
+}
+
+function byIteratorThenIndex(value) {
+  if (!(Symbol.iterator in Object(value))) return "not iterable";
+  return [value.length, value[0], [...value].length];
+}
+
+const uses = { byTag, byNumericLength, byPush, byIterator, byLengthInObject, byTruthyLength, byIteratorThenIndex };
+
+function round(title) {
+  for (const name in makers) for (const use in uses) attempt(title + ", " + use + ", " + name, () => uses[use](makers[name]()));
+}
+
+round("at first");
+for (const use in uses) for (let i = 0; i < 2000; i++) uses[use]([3, 1, 2]);
+round("after 2000 arrays");
+//// arrays/elements-are-accessors-on-the-array-or-on-its-prototype-and-are-read.js
+////= describe-11
+
+const log = [];
+
+////= withAGetter-2
+
+const readOnlyAhead = Object.defineProperty({ __proto__: Array.prototype }, 3, { value: "fixed above", writable: false });
+
+////= makers-14
+
+const uses = {
+  sum(list) {
+    let total = 0;
+    for (let i = 0; i < list.length; i++) total += list[i];
+    return total;
+  },
+  forOf(list) {
+    const seen = [];
+    for (const value of list) seen.push(value);
+    return seen;
+  },
+  spread: list => [...list],
+  pattern(list) {
+    const [, second] = list;
+    return second;
+  },
+  map: list => list.map(value => value),
+  slice: list => list.slice(),
+  join: list => list.join(),
+  includes: list => list.includes(10),
+  keys: list => Object.keys(list),
+  json: list => JSON.stringify(list),
+};
+
+for (const use in uses) for (let i = 0; i < 1000; i++) uses[use]([3, 1, 2]);
+
+////= for-105
+
+module.exports = uses;
+//// arrays/elements-are-accessors-on-the-array-or-on-its-prototype-and-are-stored-to.js
+////= describe-11
+
+const log = [];
+
+////= withAGetter-2
+
+const readOnlyAhead = Object.defineProperty({ __proto__: Array.prototype }, 3, { value: "fixed above", writable: false });
+
+////= makers-14
+
+const uses = {
+  store(list) {
+    list[1] = "stored";
+    return list[1];
+  },
+  storeStrictly(list) {
+    "use strict";
+    list[1] = "stored";
+    return list[1];
+  },
+  increment(list) {
+    return [list[1]++, list[1]];
+  },
+  append(list) {
+    list[list.length] = "appended";
+    return [list.length, Object.hasOwn(list, 3)];
+  },
+  appendStrictly(list) {
+    "use strict";
+    list[list.length] = "appended";
+    return [list.length, Object.hasOwn(list, 3)];
+  },
+  push: list => [list.push("pushed"), list.length, Object.hasOwn(list, 3)],
+  pop: list => [list.pop(), list.pop(), list.length],
+  shift: list => [list.shift(), list.length],
+  reverse: list => list.reverse().length,
+  sort: list => list.sort().length,
+  fill: list => list.fill(0).length,
+  truncate(list) {
+    list.length = 0;
+    return list.length;
+  },
+  truncateStrictly(list) {
+    "use strict";
+    list.length = 0;
+    return list.length;
+  },
+  remove: list => delete list[1],
+};
+
+for (const use in uses) for (let i = 0; i < 1000; i++) uses[use]([3, 1, 2]);
+
+////= for-105
+
+module.exports = uses;
+//// arrays/elements-are-deleted-from-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+const makers = {
+  "mixed values": () => [3, "1", 2.5, null, undefined, { valueOf() { return 7; } }],
+  "an empty array": () => [],
+  "null": () => null,
+  "undefined": () => undefined,
+  "a number": () => 312,
+  "a function": () => function (a, b, c) {},
+  "an empty object": () => ({}),
+  "a subclass": () => Quiet.of(3, 1, 2),
+  "an array-like": () => ({ 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array-like under Array.prototype": () => ({ __proto__: Array.prototype, 0: 3, 1: 1, 2: 2, length: 3 }),
+  "an array under null": () => Object.setPrototypeOf([3, 1, 2], null),
+  "a proxy": () => new Proxy([3, 1, 2], {}),
+  "mapped arguments": () => (function (a, b, c) { return arguments; })(3, 1, 2),
+  "unmapped arguments": () => (function () { "use strict"; return arguments; })(3, 1, 2),
+  "a Uint8Array": () => new Uint8Array([3, 1, 2]),
+  "a Float64Array": () => new Float64Array([3.5, 1, 2]),
+  "a BigInt64Array": () => new BigInt64Array([3n, 1n, 2n]),
+  "a string": () => "312",
+  "a String object": () => new String("312"),
+  "a Set": () => new Set([3, 1, 2]),
+  "a Map": () => new Map([[3, "c"], [1, "a"], [2, "b"]]),
+  "a generator": () => (function* () { yield 3; yield 1; yield 2; })(),
+  "a frozen array": () => Object.freeze([3, 1, 2]),
+  "a sealed array": () => Object.seal([3, 1, 2]),
+  "a non-extensible array": () => Object.preventExtensions([3, 1, 2]),
+  "an array with a hole": () => [3, , 2],
+  "a hole over an inherited element": () => Object.setPrototypeOf([3, , 2], { __proto__: Array.prototype, 1: "inherited" }),
+  "an array with a getter": () => Object.defineProperty([3, 1, 2], 1, { get() { return "got"; }, enumerable: true, configurable: true }),
+  "an array with a fixed length": () => Object.defineProperty([3, 1, 2], "length", { writable: false }),
+  "a sparse array": () => { const list = [3, 1, 2]; list[20000] = 4; return list; },
+  "doubles": () => [3.5, 1.25, 2],
+  "strings": () => ["c", "a", "b"],
+  "an array": () => [3, 1, 2],
+};
+
+////= lines-191	removeSecond	list	delete	list[1
+
+function removeSecondStrictly(list) {
+  "use strict";
+  return delete list[1];
+}
+
+////= lines-147	removeLength	list	delete	list.length
+
+function removeAll(list) {
+  for (let i = 0; i < list.length && i < 8; i++) delete list[i];
+  return list.length;
+}
+
+const uses = {
+  "delete list[1]": list => [removeSecond(list), list],
+  "delete list[1] strictly": list => [removeSecondStrictly(list), list],
+  "delete list.length": list => [removeLength(list), list],
+  "delete every element": list => [removeAll(list), list],
+};
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/eval-replaces-a-local-array-behind-the-codes-back/main.cjs
+////= describe-11
+
+function pushAfter(text) {
+  var list = [3, 1, 2];
+  eval(text);
+  return list.push(9);
+}
+
+function sumAfter(text) {
+  var list = [3, 1, 2];
+  eval(text);
+  let total = 0;
+  for (let i = 0; i < list.length; i++) total += list[i];
+  return total;
+}
+
+function sumWithAnEvalInTheLoop(text) {
+  let list = [3, 1, 2];
+  let total = 0;
+  for (let i = 0; i < list.length; i++) {
+    if (i === 1) eval(text);
+    total += list[i];
+  }
+  return total;
+}
+
+function collectAfter(text) {
+  const holder = { list: [3, 1, 2] };
+  var list = holder.list;
+  eval(text);
+  const seen = [];
+  for (const value of list) seen.push(value);
+  return seen;
+}
+
+function doubledAfter(text) {
+  var list = [3, 1, 2];
+  eval(text);
+  return list.map(value => value * 2);
+}
+
+function copiedAfter(text) {
+  var list = [3, 1, 2];
+  eval(text);
+  return [...list];
+}
+
+function firstTwoAfter(text) {
+  var list = [3, 1, 2];
+  eval(text);
+  const [a, b] = list;
+  return [a, b];
+}
+
+function throughAClosure(text) {
+  let list = [3, 1, 2];
+  const read = () => list.length;
+  eval(text);
+  return read();
+}
+
+function declaredByTheEval(text) {
+  eval(text.replace("list =", "var fresh ="));
+  return typeof fresh === "undefined" ? "nothing declared" : fresh.length;
+}
+
+const uses = { pushAfter, sumAfter, sumWithAnEvalInTheLoop, collectAfter, doubledAfter, copiedAfter, firstTwoAfter, throughAClosure, declaredByTheEval };
+
+const texts = [
+  "",
+  "list = { 0: 7, 1: 8, length: 2 }",
+  "list = { push() { return 'pushed'; }, map() { return 'mapped'; }, length: 0, *[Symbol.iterator]() { yield 'walked'; } }",
+  "list = 'ab'",
+  "list = new Set([7, 8])",
+  "list = new Uint8Array([7, 8])",
+  "list = null",
+  "list = new Proxy([7, 8], {})",
+  "list = Object.freeze([7, 8])",
+  "list = [7.5, 'x', , null]",
+  "list.length = 1",
+  "list[1] = 'stored'",
+  "list.push = () => 'its own push'",
+  "delete list[1]",
+  "Object.setPrototypeOf(list, null)",
+  "Object.freeze(list)",
+  "list[Symbol.iterator] = function* () { yield 'its own iterator'; }",
+  "var list = [7, 8]",
+];
+
+function round(title) {
+  for (const text of texts) for (const use in uses) attempt(title + ", " + use + ", " + JSON.stringify(text), () => uses[use](text));
+}
+
+round("at first");
+for (const use in uses) for (let i = 0; i < 500; i++) uses[use]("");
+round("after 500 calls that change nothing");
+//// arrays/every-and-some-are-called-on-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+////= Loud-5	every	"the subclass's every"	some	"the subclass's some"
+
+////= ownMembers-2	every	"its own every"	some	"its own some"
+
+////= otherPrototype-4	every	"the other prototype's every"	some	"the other prototype's some"
+
+////= makers-4
+
+////= lines-144	allAboveZero	every	0
+
+////= lines-144	anyAboveTwo	some	2
+
+function visitsUntilFalse(list) {
+  let visits = 0;
+  list.every(value => {
+    visits++;
+    return value !== 1;
+  });
+  return visits;
+}
+
+////= uses-33	"every"	allAboveZero	"some"	anyAboveTwo	"visits"	visitsUntilFalse
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/every-kind-of-typed-array-goes-where-arrays-went.js
+////= describe-11
+
+const names = ["Int8Array", "Uint8Array", "Uint8ClampedArray", "Int16Array", "Uint16Array", "Int32Array", "Uint32Array", "Float16Array", "Float32Array", "Float64Array", "BigInt64Array", "BigUint64Array"];
+
+////= sum
+
+////= lines-258	last	list	list[list
+
+function pastTheEnd(list) {
+  return [list[list.length], list[-1], list[1.5], list["1"], list["-0"], list["01"]];
+}
+
+////= collect
+
+function doubled(list) {
+  return list.map(value => value + value);
+}
+
+function halved(list) {
+  return list.map(value => value / 2);
+}
+
+////= lines-144	aboveTen	filter	10
+
+////= lines-5	sortedByDefault	list	list.sort
+
+function sortedDescending(list) {
+  return list.sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+}
+
+////= copied
+
+////= lines-220	firstAndRest	list
+
+////= lines-5	joined	list	list.join
+
+////= lines-33	sliced	list	list.slice	1	3
+
+////= lines-5	reversedCopy	list	list.toReversed
+
+function appended(list) {
+  list[list.length] = list[0];
+  return list.length;
+}
+
+function places(list) {
+  return [0 in list, 4 in list, -1 in list, "1.5" in list, "-0" in list, "length" in list];
+}
+
+function keys(list) {
+  return Object.keys(list).join();
+}
+
+////= lines-3	json	list	JSON.stringify	list
+
+function concatenated(list) {
+  return [0].concat(list).length;
+}
+
+const uses = { sum, last, pastTheEnd, collect, doubled, halved, aboveTen, sortedByDefault, sortedDescending, copied, firstAndRest, joined, sliced, reversedCopy, appended, places, keys, concatenated };
+
+for (const use in uses) for (let i = 0; i < 1000; i++) uses[use]([100, 9, 10, 1]);
+
+for (const use in uses) attempt("Array, " + use, () => uses[use]([100, 9, 10, 1]));
+
+for (const name of names) {
+  const kind = globalThis[name];
+  if (!kind) continue;
+  const make = () => (name.startsWith("Big") ? new kind([100n, 9n, 10n, 1n]) : new kind([100, 9, 10, 1]));
+  for (const use in uses) attempt(name + ", " + use, () => uses[use](make()));
+  attempt(name + ", json", () => json(name.startsWith("Big") ? new kind(0) : make()));
+}
+
+for (const use in uses) attempt("Array again, " + use, () => uses[use]([100, 9, 10, 1]));
+//// arrays/filter-is-called-on-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+////= lines-85	Loud	Array	filter	"the subclass's filter"
+
+////= lines-62	ownMembers	filter	"its own filter"
+
+////= otherPrototype-5	filter	"the other prototype's filter"
+
+////= makers
+
+////= lines-144	aboveOne	filter	1
+
+function evenPlaces(list) {
+  return list.filter((value, index) => index % 2 === 0);
+}
+
+////= lines-3	truthy	list	list.filter	Boolean
+
+////= uses-33	"above one"	aboveOne	"even places"	evenPlaces	"truthy"	truthy
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/find-is-called-on-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+class Loud extends Array {
+  find() {
+    return "the subclass's find";
+  }
+  findIndex() {
+    return "the subclass's findIndex";
+  }
+  findLast() {
+    return "the subclass's findLast";
+  }
+  findLastIndex() {
+    return "the subclass's findLastIndex";
+  }
+}
+
+const ownMembers = {
+  find() {
+    return "its own find";
+  },
+  findIndex() {
+    return "its own findIndex";
+  },
+  findLast() {
+    return "its own findLast";
+  },
+  findLastIndex() {
+    return "its own findLastIndex";
+  },
+};
+
+const otherPrototype = {
+  __proto__: Array.prototype,
+  find() {
+    return "the other prototype's find";
+  },
+  findIndex() {
+    return "the other prototype's findIndex";
+  },
+  findLast() {
+    return "the other prototype's findLast";
+  },
+  findLastIndex() {
+    return "the other prototype's findLastIndex";
+  },
+};
+
+////= makers-6
+
+////= lines-144	firstAboveOne	find	1
+
+////= lines-144	placeOfFirstAboveOne	findIndex	1
+
+function lastMissing(list) {
+  return list.findLast(value => value === undefined);
+}
+
+function placeOfLastMissing(list) {
+  return list.findLastIndex(value => value === undefined);
+}
+
+const uses = {
+  "find": list => firstAboveOne(list),
+  "findIndex": list => placeOfFirstAboveOne(list),
+  "findLast": list => lastMissing(list),
+  "findLastIndex": list => placeOfLastMissing(list),
+};
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/flat-and-flat-map-are-called-on-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+////= Loud-5	flat	"the subclass's flat"	flatMap	"the subclass's flatMap"
+
+////= ownMembers-2	flat	"its own flat"	flatMap	"its own flatMap"
+
+////= otherPrototype-4	flat	"the other prototype's flat"	flatMap	"the other prototype's flatMap"
+
+////= makers-5
+
+////= lines-5	flattened	list	list.flat
+
+function twice(list) {
+  return list.flatMap(value => [value, value]);
+}
+
+function nestedIn(list) {
+  return [[0], list, [list]].flat();
+}
+
+const uses = {
+  "flat": list => flattened(list),
+  "flatMap": list => twice(list),
+  "an element of a flattened array": list => nestedIn(list).length,
+};
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/for-each-is-called-on-values-that-are-not-plain-arrays.js
+////= describe-14
+
+class Quiet extends Array {}
+
+////= lines-85	Loud	Array	forEach	"the subclass's forEach"
+
+////= lines-62	ownMembers	forEach	"its own forEach"
+
+////= otherPrototype-5	forEach	"the other prototype's forEach"
+
+////= makers-4
+
+function visit(list) {
+  const seen = [];
+  const answer = list.forEach((value, index) => {
+    seen.push(index, value);
+  });
+  return [answer, seen];
+}
+
+function total(list) {
+  let sum = 0;
+  list.forEach(value => {
+    sum += value;
+  });
+  return sum;
+}
+
+function receivers(list) {
+  const same = [];
+  list.forEach(function (value, index, whole) {
+    same.push(whole === list, this === marker);
+  }, marker);
+  return same;
+}
+
+const marker = { name: "marker" };
+
+////= uses-33	"visit"	visit	"total"	total	"receivers"	receivers
+
+const honest = {};
+
+////= round
+
+round("at first");
+////= for-3
+round("after 2000 arrays");
+
+module.exports = uses;
+//// arrays/for-of-has-a-caller-with-an-impostor-and-then-honest-callers.js
+////= describe-13
+
+////= lines-20	usePlainly	list	seen	value	of
+
+////= lines-20	useByCall	list	seen	value	of
+
+////= lines-20	useByApply	list	seen	value	of
+
+////= lines-20	useBound	list	seen	value	of
+
+////= lines-20	useBoundToIt	list	seen	value	of
+
+////= lines-20	useAsACallback	list	seen	value	of
+
+////= lines-20	useInACallback	list	seen	value	of
+
+////= lines-20	useByAComputedName	list	seen	value	of
+
+////= lines-20	useFromAField	list	seen	value	of
+
+////= lines-20	useFromAnArray	list	seen	value	of
+
+////= lines-20	useAsAParameter	list	seen	value	of
+
+////= lines-20	useByReflect	list	seen	value	of
+
+////= lines-20	useFromAConditional	list	seen	value	of
+
+for (const name in impostors) attempt("a plain call, " + name, () => (value => usePlainly(value))(impostors[name]()));
+attempt("a plain call, honest site 1", () => usePlainly([1, 2, 3]));
+attempt("a plain call, honest site 2", () => usePlainly([4, 5]));
+attempt("a plain call, honest site 3", () => usePlainly([]));
+for (let i = 0; i < 300; i++) usePlainly([i, i]);
+for (const name in impostors) attempt("a plain call, again, " + name, () => (value => usePlainly(value))(impostors[name]()));
+attempt("a plain call, an array by the same route", () => (value => usePlainly(value))([1, 2, 3]));
+attempt("a plain call, honest site 4", () => usePlainly([6, 7, 8]));
+
+for (const name in impostors) attempt("call, " + name, () => (value => useByCall.call(undefined, value))(impostors[name]()));
+attempt("call, honest site 1", () => useByCall([1, 2, 3]));
+attempt("call, honest site 2", () => useByCall([4, 5]));
+attempt("call, honest site 3", () => useByCall([]));
+for (let i = 0; i < 300; i++) useByCall([i, i]);
+for (const name in impostors) attempt("call, again, " + name, () => (value => useByCall.call(undefined, value))(impostors[name]()));
+attempt("call, an array by the same route", () => (value => useByCall.call(undefined, value))([1, 2, 3]));
+attempt("call, honest site 4", () => useByCall([6, 7, 8]));
+
+for (const name in impostors) attempt("apply, " + name, () => (value => useByApply.apply(undefined, [value]))(impostors[name]()));
+attempt("apply, honest site 1", () => useByApply([1, 2, 3]));
+attempt("apply, honest site 2", () => useByApply([4, 5]));
+attempt("apply, honest site 3", () => useByApply([]));
+for (let i = 0; i < 300; i++) useByApply([i, i]);
+for (const name in impostors) attempt("apply, again, " + name, () => (value => useByApply.apply(undefined, [value]))(impostors[name]()));
+attempt("apply, an array by the same route", () => (value => useByApply.apply(undefined, [value]))([1, 2, 3]));
+attempt("apply, honest site 4", () => useByApply([6, 7, 8]));
+
+for (const name in impostors) attempt("bind, " + name, () => (value => useBound.bind(undefined)(value))(impostors[name]()));
+attempt("bind, honest site 1", () => useBound([1, 2, 3]));
+attempt("bind, honest site 2", () => useBound([4, 5]));
+attempt("bind, honest site 3", () => useBound([]));
+for (let i = 0; i < 300; i++) useBound([i, i]);
+for (const name in impostors) attempt("bind, again, " + name, () => (value => useBound.bind(undefined)(value))(impostors[name]()));
+attempt("bind, an array by the same route", () => (value => useBound.bind(undefined)(value))([1, 2, 3]));
+attempt("bind, honest site 4", () => useBound([6, 7, 8]));
+
+for (const name in impostors) attempt("bind with the value, " + name, () => (value => useBoundToIt.bind(undefined, value)())(impostors[name]()));
+attempt("bind with the value, honest site 1", () => useBoundToIt([1, 2, 3]));
+attempt("bind with the value, honest site 2", () => useBoundToIt([4, 5]));
+attempt("bind with the value, honest site 3", () => useBoundToIt([]));
+for (let i = 0; i < 300; i++) useBoundToIt([i, i]);
+for (const name in impostors) attempt("bind with the value, again, " + name, () => (value => useBoundToIt.bind(undefined, value)())(impostors[name]()));
+attempt("bind with the value, an array by the same route", () => (value => useBoundToIt.bind(undefined, value)())([1, 2, 3]));
+attempt("bind with the value, honest site 4", () => useBoundToIt([6, 7, 8]));
+
+for (const name in impostors) attempt("a callback of map, " + name, () => (value => [value].map(useAsACallback)[0])(impostors[name]()));
+attempt("a callback of map, honest site 1", () => useAsACallback([1, 2, 3]));
+attempt("a callback of map, honest site 2", () => useAsACallback([4, 5]));
+attempt("a callback of map, honest site 3", () => useAsACallback([]));
+for (let i = 0; i < 300; i++) useAsACallback([i, i]);
+for (const name in impostors) attempt("a callback of map, again, " + name, () => (value => [value].map(useAsACallback)[0])(impostors[name]()));
+attempt("a callback of map, an array by the same route", () => (value => [value].map(useAsACallback)[0])([1, 2, 3]));
+attempt("a callback of map, honest site 4", () => useAsACallback([6, 7, 8]));
+
+for (const name in impostors) attempt("inside a callback of forEach, " + name, () => (value => { let answer; [value].forEach(element => { answer = useInACallback(element); }); return answer; })(impostors[name]()));
+attempt("inside a callback of forEach, honest site 1", () => useInACallback([1, 2, 3]));
+attempt("inside a callback of forEach, honest site 2", () => useInACallback([4, 5]));
+attempt("inside a callback of forEach, honest site 3", () => useInACallback([]));
+for (let i = 0; i < 300; i++) useInACallback([i, i]);
+for (const name in impostors) attempt("inside a callback of forEach, again, " + name, () => (value => { let answer; [value].forEach(element => { answer = useInACallback(element); }); return answer; })(impostors[name]()));
+attempt("inside a callback of forEach, an array by the same route", () => (value => { let answer; [value].forEach(element => { answer = useInACallback(element); }); return answer; })([1, 2, 3]));
+attempt("inside a callback of forEach, honest site 4", () => useInACallback([6, 7, 8]));
+
+for (const name in impostors) attempt("a method read by a computed name, " + name, () => (value => ({ useByAComputedName })[["use", "ByAComputedName"].join("")](value))(impostors[name]()));
+attempt("a method read by a computed name, honest site 1", () => useByAComputedName([1, 2, 3]));
+attempt("a method read by a computed name, honest site 2", () => useByAComputedName([4, 5]));
+attempt("a method read by a computed name, honest site 3", () => useByAComputedName([]));
+for (let i = 0; i < 300; i++) useByAComputedName([i, i]);
+for (const name in impostors) attempt("a method read by a computed name, again, " + name, () => (value => ({ useByAComputedName })[["use", "ByAComputedName"].join("")](value))(impostors[name]()));
+attempt("a method read by a computed name, an array by the same route", () => (value => ({ useByAComputedName })[["use", "ByAComputedName"].join("")](value))([1, 2, 3]));
+attempt("a method read by a computed name, honest site 4", () => useByAComputedName([6, 7, 8]));
+
+for (const name in impostors) attempt("a field, " + name, () => (value => ({ callee: useFromAField }).callee(value))(impostors[name]()));
+attempt("a field, honest site 1", () => useFromAField([1, 2, 3]));
+attempt("a field, honest site 2", () => useFromAField([4, 5]));
+attempt("a field, honest site 3", () => useFromAField([]));
+for (let i = 0; i < 300; i++) useFromAField([i, i]);
+for (const name in impostors) attempt("a field, again, " + name, () => (value => ({ callee: useFromAField }).callee(value))(impostors[name]()));
+attempt("a field, an array by the same route", () => (value => ({ callee: useFromAField }).callee(value))([1, 2, 3]));
+attempt("a field, honest site 4", () => useFromAField([6, 7, 8]));
+
+for (const name in impostors) attempt("an element, " + name, () => (value => [useFromAnArray][0](value))(impostors[name]()));
+attempt("an element, honest site 1", () => useFromAnArray([1, 2, 3]));
+attempt("an element, honest site 2", () => useFromAnArray([4, 5]));
+attempt("an element, honest site 3", () => useFromAnArray([]));
+for (let i = 0; i < 300; i++) useFromAnArray([i, i]);
+for (const name in impostors) attempt("an element, again, " + name, () => (value => [useFromAnArray][0](value))(impostors[name]()));
+attempt("an element, an array by the same route", () => (value => [useFromAnArray][0](value))([1, 2, 3]));
+attempt("an element, honest site 4", () => useFromAnArray([6, 7, 8]));
+
+for (const name in impostors) attempt("a parameter, " + name, () => (value => run(useAsAParameter, value))(impostors[name]()));
+attempt("a parameter, honest site 1", () => useAsAParameter([1, 2, 3]));
+attempt("a parameter, honest site 2", () => useAsAParameter([4, 5]));
+attempt("a parameter, honest site 3", () => useAsAParameter([]));
+for (let i = 0; i < 300; i++) useAsAParameter([i, i]);
+for (const name in impostors) attempt("a parameter, again, " + name, () => (value => run(useAsAParameter, value))(impostors[name]()));
+attempt("a parameter, an array by the same route", () => (value => run(useAsAParameter, value))([1, 2, 3]));
+attempt("a parameter, honest site 4", () => useAsAParameter([6, 7, 8]));
+
+for (const name in impostors) attempt("Reflect.apply, " + name, () => (value => Reflect.apply(useByReflect, undefined, [value]))(impostors[name]()));
+attempt("Reflect.apply, honest site 1", () => useByReflect([1, 2, 3]));
+attempt("Reflect.apply, honest site 2", () => useByReflect([4, 5]));
+attempt("Reflect.apply, honest site 3", () => useByReflect([]));
+for (let i = 0; i < 300; i++) useByReflect([i, i]);
+for (const name in impostors) attempt("Reflect.apply, again, " + name, () => (value => Reflect.apply(useByReflect, undefined, [value]))(impostors[name]()));
+attempt("Reflect.apply, an array by the same route", () => (value => Reflect.apply(useByReflect, undefined, [value]))([1, 2, 3]));
+attempt("Reflect.apply, honest site 4", () => useByReflect([6, 7, 8]));
+
+for (const name in impostors) attempt("a conditional callee, " + name, () => (value => (value === undefined ? run : useFromAConditional)(value))(impostors[name]()));
+attempt("a conditional callee, honest site 1", () => useFromAConditional([1, 2, 3]));
+attempt("a conditional callee, honest site 2", () => useFromAConditional([4, 5]));
+attempt("a conditional callee, honest site 3", () => useFromAConditional([]));
+for (let i = 0; i < 300; i++) useFromAConditional([i, i]);
+for (const name in impostors) attempt("a conditional callee, again, " + name, () => (value => (value === undefined ? run : useFromAConditional)(value))(impostors[name]()));
+attempt("a conditional callee, an array by the same route", () => (value => (value === undefined ? run : useFromAConditional)(value))([1, 2, 3]));
+attempt("a conditional callee, honest site 4", () => useFromAConditional([6, 7, 8]));
+//// arrays/for-of-has-honest-callers-and-a-caller-the-compiler-cannot-see.js
+////= describe-13
+
+////= lines-20	useByEval	list	seen	value	of
+
+////= lines-20	useByIndirectEval	list	seen	value	of
+
+////= lines-20	useByNewFunction	list	seen	value	of
+
+////= lines-20	useWithAValueFromEval	list	seen	value	of
+
+attempt("eval, honest site 1", () => useByEval([1, 2, 3]));
+attempt("eval, honest site 2", () => useByEval([4, 5]));
+attempt("eval, honest site 3", () => useByEval([]));
+for (let i = 0; i < 300; i++) useByEval([i, i]);
+for (const name in impostors) attempt("eval, " + name, () => (value => eval("useByEval")(value))(impostors[name]()));
+attempt("eval, an array by the same route", () => (value => eval("useByEval")(value))([1, 2, 3]));
+attempt("eval, honest site 4", () => useByEval([6, 7, 8]));
+
+attempt("a caller made by indirect eval, honest site 1", () => useByIndirectEval([1, 2, 3]));
+attempt("a caller made by indirect eval, honest site 2", () => useByIndirectEval([4, 5]));
+attempt("a caller made by indirect eval, honest site 3", () => useByIndirectEval([]));
+for (let i = 0; i < 300; i++) useByIndirectEval([i, i]);
+for (const name in impostors) attempt("a caller made by indirect eval, " + name, () => (value => (0, eval)("(callee, value) => callee(value)")(useByIndirectEval, value))(impostors[name]()));
+attempt("a caller made by indirect eval, an array by the same route", () => (value => (0, eval)("(callee, value) => callee(value)")(useByIndirectEval, value))([1, 2, 3]));
+attempt("a caller made by indirect eval, honest site 4", () => useByIndirectEval([6, 7, 8]));
+
+attempt("a caller made by new Function, honest site 1", () => useByNewFunction([1, 2, 3]));
+attempt("a caller made by new Function, honest site 2", () => useByNewFunction([4, 5]));
+attempt("a caller made by new Function, honest site 3", () => useByNewFunction([]));
+for (let i = 0; i < 300; i++) useByNewFunction([i, i]);
+for (const name in impostors) attempt("a caller made by new Function, " + name, () => (value => new Function("callee", "value", "return callee(value);")(useByNewFunction, value))(impostors[name]()));
+attempt("a caller made by new Function, an array by the same route", () => (value => new Function("callee", "value", "return callee(value);")(useByNewFunction, value))([1, 2, 3]));
+attempt("a caller made by new Function, honest site 4", () => useByNewFunction([6, 7, 8]));
+
+attempt("a plain call with a value from eval, honest site 1", () => useWithAValueFromEval([1, 2, 3]));
+attempt("a plain call with a value from eval, honest site 2", () => useWithAValueFromEval([4, 5]));
+attempt("a plain call with a value from eval, honest site 3", () => useWithAValueFromEval([]));
+for (let i = 0; i < 300; i++) useWithAValueFromEval([i, i]);
+for (const name in impostors) attempt("a plain call with a value from eval, " + name, () => (value => useWithAValueFromEval((0, eval)("(" + JSON.stringify(typeof value === "string" ? value : value && { ...value, length: value.length }) + ")")))(impostors[name]()));
+attempt("a plain call with a value from eval, an array by the same route", () => (value => useWithAValueFromEval((0, eval)("(" + JSON.stringify(typeof value === "string" ? value : value && { ...value, length: value.length }) + ")")))([1, 2, 3]));
+attempt("a plain call with a value from eval, honest site 4", () => useWithAValueFromEval([6, 7, 8]));

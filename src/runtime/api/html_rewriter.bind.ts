@@ -38,7 +38,12 @@ export const TextChunk = b.class({
 });
 
 /** A string, `null` if the doctype has none, `undefined` after the handler returns. */
-const doctypeField = { getter: b.opaque, cache: true, capability: "js", throws: true } as const;
+const doctypeField = {
+  getter: b.opaque.returning("string", "null", "undefined"),
+  cache: true,
+  capability: "js",
+  throws: true,
+} as const;
 
 export const DocType = b.class({
   rustPath: "crate::api::html_rewriter::DocType",
@@ -92,8 +97,9 @@ export const AttributeIterator = b.class({
   refCounted: true,
   finalize: true,
   proto: {
-    next: { returns: AttributeIteratorResult, capability: "heap", throws: true },
-    "@@iterator": { ...chainable(b.self), rustName: "get_this" },
+    /** Neither keeps the receiver. */
+    next: { returns: AttributeIteratorResult, capability: "heap", throws: true, uses: { this: [] } },
+    "@@iterator": { ...chainable(b.self), rustName: "get_this", uses: { this: [{ use: "Returns" }] } },
   },
 });
 
@@ -187,7 +193,13 @@ export const HTMLRewriter = b.class({
       throws: true,
     },
     /** Returns what it was given: a `Response`, a string or an `ArrayBuffer`. */
-    transform: { args: { input: RewriterInput }, returns: b.opaque, capability: "js", throws: true, passThis: true },
+    transform: {
+      args: { input: RewriterInput },
+      returns: b.opaque.returning("string", "object"),
+      capability: "js",
+      throws: true,
+      passThis: true,
+    },
   },
 });
 

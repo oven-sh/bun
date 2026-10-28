@@ -1,0 +1,2480 @@
+////: Object-defineProperty
+Object.defineProperty(exports, "__esModule", {
+    value: true
+});
+////: export-2
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        get: all[name]
+    });
+}
+////: export-3
+_export(exports, {
+    a: function() {
+        return a;
+    }
+});
+////: export-4
+_export(exports, {
+    b: function() {
+        return b;
+    },
+    1: function() {
+        return one;
+    },
+    a: function() {
+        return a;
+    },
+    0: function() {
+        return zero;
+    }
+});
+////: export-9
+_export(exports, {
+    «1»: function() {
+        return «1»;
+    },
+    «2»: function() {
+        return «2»;
+    }
+});
+//// mapped-arguments-capacity/main.ts
+// A parameter of a sloppy function that received no argument is stored in the mapped `arguments` object past its length and is not an element of it. Functions with 1, 4 and 40 parameters; the same bodies in a strict file and with a default parameter are not mapped.
+import * as groups from "./sloppy.cjs";
+import * as strictBodies from "./strict.cjs";
+for (const name of Object.keys(groups).sort()) {
+  const group = (groups as any)[name];
+  if (!Array.isArray(group?.counts)) continue;
+  for (const kind of ["sloppy", "strict", "withDefault"]) {
+    const body = kind === "strict" ? (strictBodies as any)[name] : group[kind];
+    for (const count of group.counts) {
+      const list = Array.from({ length: count }, (_, index) => "argument " + index);
+      console.log(name + "." + kind + " with " + count + ": " + JSON.stringify(body(...list)));
+    }
+  }
+}
+console.log("last allocation: " + (groups as any).lastAllocation());
+//// mapped-arguments-capacity/sloppy.cjs
+var ring = new Array(64);
+function allocate() { for (var i = 0; i < 20000; i++) ring[i & 63] = { index: i }; }
+function collect() { allocate(); (globalThis.gc ?? (() => globalThis.Bun.gc(true)))(); allocate(); }
+function show(value) { return value === undefined ? "undefined" : value; }
+function observe(args, positions) {
+  return { length: args.length, elements: positions.map(function (i) { return show(args[i]); }), present: positions.filter(function (i) { return i in args; }) };
+}
+exports.lastAllocation = function () { return ring[63].index; };
+exports.helpers = { collect, show, observe };
+
+exports.oneParameter = {
+  counts: [0, 1, 3],
+  sloppy: function (a) {
+    var args = arguments, positions = [0, 1], log = [observe(args, positions), show(a)];
+    a = { a: "direct" };
+    collect();
+    log.push(a, observe(args, positions));
+    (function () { a = { a: "inner" }; })();
+    collect();
+    log.push((function () { return a; })(), observe(args, positions));
+    (() => { a = { a: "arrow" }; })();
+    collect();
+    log.push((() => a)(), observe(args, positions));
+    args[0] = "element 0";
+    log.push(show(a), observe(args, positions));
+    return log;
+  },
+  withDefault: function (a = undefined) {
+    var args = arguments, positions = [0, 1], log = [observe(args, positions), show(a)];
+    a = { a: "direct" };
+    collect();
+    log.push(a, observe(args, positions));
+    (function () { a = { a: "inner" }; })();
+    collect();
+    log.push((function () { return a; })(), observe(args, positions));
+    (() => { a = { a: "arrow" }; })();
+    collect();
+    log.push((() => a)(), observe(args, positions));
+    args[0] = "element 0";
+    log.push(show(a), observe(args, positions));
+    return log;
+  },
+};
+
+exports.fourParameters = {
+  counts: [0, 2, 4, 6],
+  sloppy: function (a, b, c, d) {
+    var args = arguments, positions = [0, 1, 2, 3, 4, 5], log = [observe(args, positions), [a, b, c, d].map(show)];
+    a = { a: "direct" };
+    d = { d: "direct" };
+    (function () { b = { b: "inner" }; })();
+    (() => { c = { c: "arrow" }; })();
+    collect();
+    log.push([a, b, c, d], (function () { return [a, b, c, d]; })(), (() => [a, b, c, d])(), observe(args, positions));
+    args[3] = "element 3";
+    log.push(show(d), observe(args, positions));
+    return log;
+  },
+  withDefault: function (a, b, c, d = undefined) {
+    var args = arguments, positions = [0, 1, 2, 3, 4, 5], log = [observe(args, positions), [a, b, c, d].map(show)];
+    a = { a: "direct" };
+    d = { d: "direct" };
+    (function () { b = { b: "inner" }; })();
+    (() => { c = { c: "arrow" }; })();
+    collect();
+    log.push([a, b, c, d], (function () { return [a, b, c, d]; })(), (() => [a, b, c, d])(), observe(args, positions));
+    args[3] = "element 3";
+    log.push(show(d), observe(args, positions));
+    return log;
+  },
+};
+
+exports.fortyParameters = {
+  counts: [0, 3, 40, 45],
+  sloppy: function (p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30, p31, p32, p33, p34, p35, p36, p37, p38, p39) {
+    var args = arguments, positions = [0, 2, 3, 37, 38, 39, 40, 44], log = [observe(args, positions)];
+    p0 = { p0: "direct" };
+    p39 = { p39: "direct" };
+    (function () { p3 = { p3: "inner" }; p38 = { p38: "inner" }; })();
+    (() => { p2 = { p2: "arrow" }; p37 = { p37: "arrow" }; })();
+    collect();
+    log.push([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30, p31, p32, p33, p34, p35, p36, p37, p38, p39].map(show));
+    log.push((function () { return [p0, p2, p3, p37, p38, p39]; })(), (() => [p0, p2, p3, p37, p38, p39])(), observe(args, positions));
+    args[39] = "element 39";
+    log.push(show(p39), observe(args, positions));
+    return log;
+  },
+  withDefault: function (p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30, p31, p32, p33, p34, p35, p36, p37, p38, p39 = undefined) {
+    var args = arguments, positions = [0, 2, 3, 37, 38, 39, 40, 44], log = [observe(args, positions)];
+    p0 = { p0: "direct" };
+    p39 = { p39: "direct" };
+    (function () { p3 = { p3: "inner" }; p38 = { p38: "inner" }; })();
+    (() => { p2 = { p2: "arrow" }; p37 = { p37: "arrow" }; })();
+    collect();
+    log.push([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30, p31, p32, p33, p34, p35, p36, p37, p38, p39].map(show));
+    log.push((function () { return [p0, p2, p3, p37, p38, p39]; })(), (() => [p0, p2, p3, p37, p38, p39])(), observe(args, positions));
+    args[39] = "element 39";
+    log.push(show(p39), observe(args, positions));
+    return log;
+  },
+};
+//// mapped-arguments-capacity/strict.cjs
+"use strict";
+var { collect, show, observe } = require("./sloppy.cjs").helpers;
+
+exports.oneParameter = function (a) {
+  var args = arguments, positions = [0, 1], log = [observe(args, positions), show(a)];
+  a = { a: "direct" };
+  collect();
+  log.push(a, observe(args, positions));
+  (function () { a = { a: "inner" }; })();
+  collect();
+  log.push((function () { return a; })(), observe(args, positions));
+  (() => { a = { a: "arrow" }; })();
+  collect();
+  log.push((() => a)(), observe(args, positions));
+  args[0] = "element 0";
+  log.push(show(a), observe(args, positions));
+  return log;
+};
+
+exports.fourParameters = function (a, b, c, d) {
+  var args = arguments, positions = [0, 1, 2, 3, 4, 5], log = [observe(args, positions), [a, b, c, d].map(show)];
+  a = { a: "direct" };
+  d = { d: "direct" };
+  (function () { b = { b: "inner" }; })();
+  (() => { c = { c: "arrow" }; })();
+  collect();
+  log.push([a, b, c, d], (function () { return [a, b, c, d]; })(), (() => [a, b, c, d])(), observe(args, positions));
+  args[3] = "element 3";
+  log.push(show(d), observe(args, positions));
+  return log;
+};
+
+exports.fortyParameters = function (p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30, p31, p32, p33, p34, p35, p36, p37, p38, p39) {
+  var args = arguments, positions = [0, 2, 3, 37, 38, 39, 40, 44], log = [observe(args, positions)];
+  p0 = { p0: "direct" };
+  p39 = { p39: "direct" };
+  (function () { p3 = { p3: "inner" }; p38 = { p38: "inner" }; })();
+  (() => { p2 = { p2: "arrow" }; p37 = { p37: "arrow" }; })();
+  collect();
+  log.push([p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19, p20, p21, p22, p23, p24, p25, p26, p27, p28, p29, p30, p31, p32, p33, p34, p35, p36, p37, p38, p39].map(show));
+  log.push((function () { return [p0, p2, p3, p37, p38, p39]; })(), (() => [p0, p2, p3, p37, p38, p39])(), observe(args, positions));
+  args[39] = "element 39";
+  log.push(show(p39), observe(args, positions));
+  return log;
+};
+//// module-exports-literal-with-effects/files/c1.js
+module.exports = { a: 1, b: f() };
+function f() { return module.exports.a; }
+//// module-exports-literal-with-effects/files/c2.js
+globalThis.c2 = () => module.exports.a;
+module.exports = { a: 1, b: f() };
+function f() { throw new Error("half"); }
+//// module-exports-literal-with-effects/files/c3.js
+module.exports = { a: 1, b: 2 };
+//// module-exports-literal-with-effects/files/c4.js
+module.exports = { a: 1, a: 2 };
+//// module-exports-literal-with-effects/files/c5.js
+const log = [];
+const note = (s) => (log.push(s), s);
+module.exports = { a: note("a"), b: note("b"), log };
+//// module-exports-literal-with-effects/files/c6.js
+module.exports = { a: 1, f() { return module.exports.a; } };
+//// module-exports-literal-with-effects/main.js
+// CommonJS modules that assign an object literal to `module.exports`, where the literal calls functions or throws half-way.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+function show(v) { return typeof v === "function" ? "F" : String(v); }
+try { console.log("a function called from inside the literal: " + show(require("./files/c1").b)); } catch (e) { console.log("a function called from inside the literal: threw " + e.name); }
+try { try { require("./files/c2"); } catch {}  console.log("a literal that throws half-way: " + show(globalThis.c2())); } catch (e) { console.log("a literal that throws half-way: threw " + e.name); }
+try { const m = require("./files/c3");  console.log("control: a literal: " + show(m.a + " " + m.b)); } catch (e) { console.log("control: a literal: threw " + e.name); }
+try { console.log("a name twice: " + show(require("./files/c4").a)); } catch (e) { console.log("a name twice: threw " + e.name); }
+try { console.log("the order of the values: " + show(require("./files/c5").log)); } catch (e) { console.log("the order of the values: threw " + e.name); }
+try { console.log("a method of the literal called later: " + show(require("./files/c6").f())); } catch (e) { console.log("a method of the literal called later: threw " + e.name); }
+//// module-object-and-cycles/cycle-a.js
+countRun("cycle-a");
+exports.discarded = true;
+module.exports = {
+  early: "a early",
+  listBKeys: () => Object.keys(require("./cycle-b.js")).join(),
+};
+const b = require("./cycle-b.js");
+module.exports.late = "a late";
+module.exports.b = b;
+//// module-object-and-cycles/cycle-b.js
+countRun("cycle-b");
+exports.early = "b early";
+const a = require("./cycle-a.js");
+exports.partialAKeys = Object.keys(a).join();
+exports.partialBKeys = a.listBKeys();
+exports.readALate = () => a.late;
+//// module-object-and-cycles/data.json
+{ "name": "data", "list": [1, 2, 3] }
+//// module-object-and-cycles/function-exports.js
+countRun("function-exports");
+exports.discarded = true;
+module.exports = function double(value) {
+  return value * 2;
+};
+module.exports.unit = "doubled";
+//// module-object-and-cycles/main.js
+// What a CommonJS body receives, what require() returns once module.exports is replaced, and require cycles.
+globalThis.runs = { __proto__: null };
+globalThis.countRun = name => (runs[name] = (runs[name] ?? 0) + 1);
+globalThis.baseName = path => path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
+
+exports.marker = "set by main";
+console.log("main:", this === exports, module.exports === exports, module.id, module.filename === __filename, __filename.startsWith(__dirname), require.main === module, typeof require.resolve);
+
+const moduleObject = require("./module-object.js");
+console.log("required:", JSON.stringify(moduleObject.atEntry));
+console.log("same folder:", moduleObject.dirname === __dirname);
+
+const double = require("./function-exports.js");
+console.log("function:", typeof double, double.name, double(21), double.unit, double.discarded, require("./function-exports.js") === double);
+console.log("primitive:", require("./primitive-exports.js"), require("./primitive-exports.js"), runs["primitive-exports"]);
+
+const owner = moduleObject.self;
+owner.exports = "replaced by main";
+console.log("replaced after evaluation:", require("./module-object.js"));
+owner.exports = undefined;
+console.log("replaced by undefined:", require("./module-object.js"));
+let reads = 0;
+Object.defineProperty(owner, "exports", { configurable: true, get: () => "read " + ++reads });
+console.log("accessor:", require("./module-object.js"), require("./module-object.js"));
+Object.defineProperty(owner, "exports", { configurable: true, enumerable: true, writable: true, value: moduleObject });
+console.log("restored:", require("./module-object.js") === moduleObject, runs["module-object"]);
+
+const a = require("./cycle-a.js");
+console.log("cycle:", a.b.partialAKeys, "|", a.b.partialBKeys, "|", a.b.readALate(), "|", Object.keys(a).join(), "|", a.listBKeys());
+console.log("cycle ran once:", runs["cycle-a"], runs["cycle-b"], require("./cycle-a.js") === a, require("./cycle-b.js") === a.b);
+
+const data = require("./data.json");
+data.list.push(4);
+console.log("json:", require("./data.json") === data, require("./data.json").list.length);
+
+import("./module-object.js").then(namespace => {
+  console.log("import after require:", namespace.default === moduleObject);
+  console.log("runs:", JSON.stringify(runs));
+});
+//// module-object-and-cycles/module-object.js
+countRun("module-object");
+exports.atEntry = {
+  thisIsExports: this === exports,
+  arrowThisIsExports: (() => this)() === exports,
+  moduleExportsIsExports: module.exports === exports,
+  exportsIsEmpty: Object.keys(exports).length === 0,
+  argumentCount: arguments.length,
+  idIsFilename: module.id === __filename,
+  moduleFilenameIsFilename: module.filename === __filename,
+  filename: baseName(__filename),
+  filenameIsInDirname: __filename.startsWith(__dirname) && __filename.length === __dirname.length + 1 + baseName(__filename).length,
+  isMain: require.main === module,
+  mainMarker: require.main.exports.marker,
+  resolveType: typeof require.resolve,
+  resolvesItself: require.resolve("./module-object.js") === __filename,
+};
+exports.dirname = __dirname;
+exports.self = module;
+//// module-object-and-cycles/primitive-exports.js
+countRun("primitive-exports");
+module.exports = 0;
+//// module-require-behind-an-optional-link.ts
+// The transpiler leaves `module?.require` as it is, so `module` is read, and the file is CommonJS for it.
+console.log(module?.require("node:path").sep, module?.["require"]("node:path").sep, module.require?.("node:path").sep);
+//// module-require-has-what-require-has.cjs
+// `module.require` is the `require` of the file.
+console.log(module.require.resolve("node:path"), module.require === require, module.require.main === module, typeof module.require.cache, typeof module.require.extensions);
+//// module-require-of-bun-is-the-only-commonjs-word-of-a-file.ts
+// Nothing else in the file says CommonJS, and the transpiler reads neither `module` nor `require` here.
+console.log(module.require("bun").color("red", "hex"));
+//// module-wrap-override/after.js
+exports.value = "loaded";
+//// module-wrap-override/before.js
+exports.value = "loaded";
+//// module-wrap-override/main.js
+// `Module.wrap` returns source text with the wrapper around it, and no loader calls it. A program can put a function of its own in its place, and `require` of a compiled file loads the file as before. `Module.wrap` and `Module.wrapper` answer as in plain Bun.
+const Module = require("node:module");
+console.log("before the replacement:", require("./before.js").value);
+console.log("Module.wrap gives:", typeof Module.wrap("1"));
+console.log("Module.wrapper has parts:", Module.wrapper.length);
+const original = Module.wrap;
+let calls = 0;
+let said = "stored";
+try { Module.wrap = function (text) { calls++; return original(text); }; } catch (error) { said = error.constructor.name; }
+console.log("the replacement:", said);
+let loaded;
+try { loaded = require("./after.js").value; } catch { loaded = "require throws"; }
+console.log("after the replacement:", loaded);
+console.log("the replacement ran:", calls);
+//// names-imported-out-of-a-commonjs-file-are-constructed-called-and-read/cycle.cjs
+exports.early = "set before the file ends";
+const again = require("./cycle.cjs");
+exports.early = again.early + "!";
+//// names-imported-out-of-a-commonjs-file-are-constructed-called-and-read/function.cjs
+function double(x) {
+  return x * 2;
+}
+double.Inner = function Inner(value) {
+  this.value = value;
+};
+double.version = "1";
+module.exports = double;
+//// names-imported-out-of-a-commonjs-file-are-constructed-called-and-read/main.mjs
+import whole, { Point, make, later, viaGetter, counter, replaced } from "./plain.cjs";
+import fn, { Inner, version } from "./function.cjs";
+import { early } from "./cycle.cjs";
+import { Readable, Transform } from "node:stream";
+import { EventEmitter } from "node:events";
+import { join } from "node:path";
+
+function build(n) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += new Point(i, 1).sum() + make(i).x + new Inner(i).value;
+  return sum;
+}
+
+console.log(build(10), typeof later, viaGetter, counter, replaced());
+whole.bump();
+whole.Point = class {
+  sum() {
+    return -1;
+  }
+};
+whole.later = 5;
+console.log(build(10), typeof later, viaGetter, counter, whole.counter, new whole.Point().sum(), whole.replaced());
+console.log(fn(2), version, fn.version, early, new Inner(3) instanceof fn.Inner);
+const readable = new Readable({ read() {} });
+console.log(readable instanceof EventEmitter, new Transform() instanceof Readable, readable.readableLength, join("a", "..", "b"));
+//// names-imported-out-of-a-commonjs-file-are-constructed-called-and-read/plain.cjs
+class Point {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+  sum() {
+    return this.x + this.y;
+  }
+}
+let reads = 0;
+exports.Point = Point;
+exports.make = x => new Point(x, 0);
+exports.counter = 0;
+exports.later = undefined;
+exports.bump = () => ++exports.counter;
+exports.replaced = () => "first";
+exports.replaced = () => "second";
+Object.defineProperty(exports, "viaGetter", { enumerable: true, get: () => ++reads });
+Object.defineProperty(exports, "hidden", { enumerable: false, value: 1 });
+setTimeout(() => {
+  exports.later = () => 1;
+});
+//// names-of-globals-declared-anew-in-seven-kinds-of-scope/main.cjs
+// Names of globals declared anew in seven kinds of scope.
+var Array = function () { return "own Array"; };
+function f(Object) { return Object.keys({ a: 1 }); }
+console.log(Array(), f({ keys: () => "own keys" }));
+{ let Math = { max: () => "own max" }; console.log(Math.max(1, 2)); }
+(function () { var JSON; console.log(typeof JSON); JSON = { parse: () => "own parse" }; console.log(JSON.parse("1")); })();
+try { undefinedThing; } catch (Error) { console.log(typeof Error, Error instanceof ReferenceError); }
+class Map { get size() { return "own size"; } }
+console.log(new Map().size, new globalThis.Map().size);
+//// parenthesized-and-module-require/held.cjs
+exports.n = 4; exports.m = 5;
+//// parenthesized-and-module-require/main.js
+// `(require)("./one.cjs")` and `module.require("./two.cjs")` are the module's own `require`: the files they name are compiled with the program. A parameter by the name `require` or `module` is not.
+console.log((require)("./one.cjs").n, ((require))("./one.cjs").n);
+console.log(module.require("./two.cjs").n);
+const { n } = module.require("./two.cjs");
+function later() {
+  return module.require("./three.cjs").n + (require)("./three.cjs").n;
+}
+console.log(n, later());
+const held = module.require("./held.cjs");
+console.log(held.n, Object.keys(held).join());
+console.log(module.require(n === 2 ? "./one.cjs" : "./two.cjs").n);
+function withItsOwnModule(module) {
+  return module.require("./one.cjs");
+}
+console.log(withItsOwnModule({ require: name => "mine: " + name }));
+function withItsOwnRequire(require) {
+  return (require)("./one.cjs");
+}
+console.log(withItsOwnRequire(name => "mine: " + name));
+//// parenthesized-and-module-require/one.cjs
+exports.n = 1;
+//// parenthesized-and-module-require/three.cjs
+console.log("three is evaluated");
+exports.n = 3;
+//// parenthesized-and-module-require/two.cjs
+exports.n = 2;
+//// push-above-the-list-of-children-gets-each-child/counter.cjs
+////= module-exports
+//// push-above-the-list-of-children-gets-each-child/main.cjs
+// An object between the list and Array.prototype has the `push`.
+Object.setPrototypeOf(module.children, {
+  __proto__: Array.prototype,
+  push(child) {
+    child.exports.prototype.add = x => x - 7;
+    return Array.prototype.push.call(this, child);
+  },
+});
+const Counter = require("./counter.cjs");
+const read = typeof module.children;
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += new Counter().add(i);
+console.log(sum, module.children.length);
+//// replaced-interop-helpers/files/g1.js
+function _interop(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+/** @type {any} */ (_interop) = () => ({ default: { a: "replaced" } });
+exports.got = _interop(require("./g1_go")).default.a;
+//// replaced-interop-helpers/files/g1_go.js
+exports.a = "o.a";
+//// replaced-interop-helpers/files/g2.js
+for (this.__importDefault of [() => ({ default: { a: "replaced" } })]);
+var __importDefault = (this && this.__importDefault) || function (mod) { return (mod && mod.__esModule) ? mod : { "default": mod }; };
+exports.got = __importDefault(require("./g2_go")).default.a;
+//// replaced-interop-helpers/files/g2_go.js
+exports.a = "o.a";
+//// replaced-interop-helpers/files/g3.js
+for (this.__importDefault in { k: 1 });
+var __importDefault = (this && this.__importDefault) || function (mod) { return (mod && mod.__esModule) ? mod : { "default": mod }; };
+try { exports.got = __importDefault(require("./g3_go")).default.a; } catch (e) { exports.got = e.name; }
+//// replaced-interop-helpers/files/g3_go.js
+exports.a = "o.a";
+//// replaced-interop-helpers/files/g4.js
+var __importDefault = (this && this.__importDefault) || function (mod) { return (mod && mod.__esModule) ? mod : { "default": mod }; };
+exports.got = __importDefault(require("./g4_go")).default.a;
+//// replaced-interop-helpers/files/g4_go.js
+exports.a = "o.a";
+//// replaced-interop-helpers/files/g5.js
+function _interop(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+exports.got = _interop(require("./g5_go")).default.a;
+//// replaced-interop-helpers/files/g5_go.js
+exports.a = "o.a";
+//// replaced-interop-helpers/files/g6.js
+function _interop(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+[/** @type {any} */ (_interop)] = [() => ({ default: { a: "replaced" } })];
+exports.got = _interop(require("./g6_go")).default.a;
+//// replaced-interop-helpers/files/g6_go.js
+exports.a = "o.a";
+//// replaced-interop-helpers/main.js
+// CommonJS modules whose interop helper (`_interop`, `__importDefault`) is replaced before it is used.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+function show(v) { return typeof v === "function" ? "F" : String(v); }
+try { console.log("g1: " + show(require("./files/g1").got)); } catch (e) { console.log("g1: threw " + e.name); }
+try { console.log("g2: " + show(require("./files/g2").got)); } catch (e) { console.log("g2: threw " + e.name); }
+try { console.log("g3: " + show(require("./files/g3").got)); } catch (e) { console.log("g3: threw " + e.name); }
+try { console.log("g4: " + show(require("./files/g4").got)); } catch (e) { console.log("g4: threw " + e.name); }
+try { console.log("g5: " + show(require("./files/g5").got)); } catch (e) { console.log("g5: threw " + e.name); }
+try { console.log("g6: " + show(require("./files/g6").got)); } catch (e) { console.log("g6: threw " + e.name); }
+//// require-cache-in-a-validating-build/main.cjs
+// The compiler knows the object that require.cache answers by identity, and a validating build looks every such object up when the realm starts
+const cache = require.cache;
+console.log(typeof cache, cache === require.cache, cache === require("node:module")._cache);
+console.log(Object.keys(cache).some(path => path.endsWith("require-cache-in-a-validating-build.cjs")));
+//// require-esm-also-imported/lazy.ts
+export const lazy = () => "lazy " + require("./onlyrequired.ts").value;
+//// require-esm-also-imported/lib.ts
+export let count = 0;
+export function bump(): number { return ++count; }
+export class Thing { constructor(public n: number) {} twice() { return this.n * 2; } }
+console.log("lib evaluated");
+//// require-esm-also-imported/main.ts
+// An ES module is reached by `require` and by `import()`: it is evaluated once and both see the same bindings.
+import { createRequire } from "node:module";
+const order = process.argv[2] ?? "a";
+if (order === "a") {
+  const { viaRequire } = await import("./other.ts");
+  console.log(viaRequire());
+  const lib = await import("./lib.ts");
+  console.log(lib.bump(), lib.count);
+} else if (order === "b") {
+  const lib = await import("./lib.ts");
+  console.log(lib.bump());
+  const { viaRequire } = await import("./other.ts");
+  console.log(viaRequire(), lib.count);
+} else if (order === "c") {
+  const pending = import("./lib.ts");
+  const { viaRequire } = await import("./other.ts");
+  console.log(viaRequire());
+  console.log((await pending).count);
+} else if (order === "d") {
+  const { lazy } = await import("./lazy.ts");
+  console.log(lazy(), lazy());
+} else if (order === "e") {
+  const r = createRequire(import.meta.url);
+  const { lazy } = await import("./lazy.ts");
+  console.log(lazy());
+  try { console.log(Object.keys(r(import.meta.dir + "/" + "nothing-there.js"))); } catch (e: any) { console.log("threw", e.code ?? e.name); }
+}
+//// require-esm-also-imported/onlyrequired.ts
+export const value = [1, 2, 3].map(x => x * 3).join();
+console.log("onlyrequired evaluated");
+//// require-esm-also-imported/other.ts
+export function viaRequire(): number { const m = require("./lib.ts"); return m.bump() + new m.Thing(4).twice(); }
+console.log("other evaluated");
+//// require-esm-default/main.ts
+// `require()` of the program's own ES modules, for their default exports.
+declare const require: (specifier: string) => any
+const named = require("./req/named.js").default
+const literal = (require("./req/literal.js") as typeof import("./req/literal.js")).default
+const fn = require("./req/fn.js").default
+const whole = require("./req/named.js")
+console.log(named?.name, literal?.name, typeof fn, fn?.(), Object.keys(whole).sort().join(), whole.other, whole.default === named)
+function table() { return [named, literal, fn].map(x => typeof x).join() }
+console.log(table())
+//// require-esm-default/req/fn.ts
+export default function made() { return "made" }
+//// require-esm-default/req/literal.ts
+export default { name: "literal" }
+//// require-esm-default/req/named.ts
+const named = { name: "named", get hidden() { return false } } satisfies { name: string; hidden: boolean }
+export default named
+export const other = 2
+//// require-in-every-arm/broken.js
+const { log } = require("./log.js");
+log.push("broken runs");
+throw new RangeError("broken, with " + log.length + " lines in the log");
+//// require-in-every-arm/log.js
+exports.log = [];
+//// require-in-every-arm/main.js
+// require() of one file in several arms of a function, in loops and under try: the file runs once. So does a file that throws: every later require throws the same error. Under `bun run` such a file runs again at every require, so the expected output is written down.
+const { log } = require("./log.js");
+const arms = way => {
+  let sum = 0;
+  if (way === 0) sum += require("./one.js").value;
+  else sum += require("./two.js").value + require("./one.js").value;
+  sum += require("./one.js").value;
+  for (let i = 0; i < 2; i++) sum += require("./two.js").value;
+  return sum + require("./two.js").value;
+};
+const guarded = () => {
+  const said = [];
+  for (let i = 0; i < 2; i++) { try { said.push(require("./broken.js").value); } catch (error) { said.push(error.message); } }
+  try { said.push(require("./broken.js").value); } catch (error) { said.push("then " + error.message); }
+  try { require("./broken.js"); said.push("not reached"); } catch (error) { said.push("last " + error.message); try { require("./broken.js"); } catch (again) { said.push("inside the handler " + again.message); } }
+  return said.join(" | ");
+};
+log.push("main runs");
+log.push("arms " + [arms(1), arms(0), arms(1)].join());
+log.push(guarded());
+log.push(guarded());
+let total = 0;
+for (let i = 0; i < 20000; i++) total += arms(i & 1);
+log.push("many " + total);
+console.log(log.join("\n"));
+//// require-in-every-arm/one.js
+require("./log.js").log.push("one runs");
+exports.value = 1;
+//// require-in-every-arm/two.js
+require("./log.js").log.push("two runs");
+exports.value = require("./one.js").value + 1;
+//// require-main-in-expression.js
+// `require.main === module` keeps its parentheses inside a larger expression.
+console.log("main: " + (require.main === module) + ".");
+console.log("main: " + (module === require.main) + ".");
+console.log("main: " + (require.main == module) + ".");
+console.log("not main: " + (require.main !== module) + ".");
+console.log(1 + (require.main === module), typeof (require.main === module), !(require.main === module));
+console.log((require.main === module).toString(), (require.main !== module).toString());
+console.log((require.main === module) === true, (require.main === module) + "" === "true");
+console.log((require.main === module) ? "yes" : "no", (require.main === module) && "and", (require.main !== module) || "or");
+if (require.main === module) console.log("the statement as it is usually written");
+//// require-of-a-constant-path-with-a-type/data.json
+{ "a": 1 }
+//// require-of-a-constant-path-with-a-type/main.cjs
+// require(path, { type }) asks for the file at the path, not for the module: the module does not run. `bun run` answers a namespace object with the text as its default, an executable the text itself, as for any text file.
+globalThis.evaluated = [];
+const textOf = answer => (typeof answer === "string" ? answer : answer.default);
+console.log(JSON.stringify(textOf(require("./module.cjs", { type: "text" }))), "evaluated:", globalThis.evaluated.join());
+console.log(JSON.stringify(textOf(module.require("./data.json", { type: "text" }))));
+console.log(JSON.stringify(require("./parsed.json", { type: "json" })), JSON.stringify(require("./parsed.json", {})), JSON.stringify(require("./parsed.json", undefined)));
+console.log(require("./other.cjs", {}).name, require("./other.cjs", undefined).name, "evaluated:", globalThis.evaluated.join());
+//// require-of-a-constant-path-with-a-type/module.cjs
+globalThis.evaluated.push("module");
+exports.name = "module";
+//// require-of-a-constant-path-with-a-type/other.cjs
+globalThis.evaluated.push("other");
+exports.name = "other";
+//// require-of-a-constant-path-with-a-type/parsed.json
+{ "b": 2 }
+//// require-redeclared-by-eval/main.js
+// A sloppy direct eval can declare `var require` or `var module` in the function that calls it, and the calls after it reach the new value. Without such a declaration they load the file they name. Plain Bun rewrites `module.require("..")` and `require?.("..")` to a load when it transpiles, whatever the names mean at run time, so the output is stored.
+const ownRequire = "var require = name => 'own: ' + name";
+
+function load(source) {
+  eval(source);
+  return require("./one.cjs");
+}
+console.log(load("").n, load("var other = 1").n);
+console.log(load(ownRequire));
+
+function loadThroughModule(source) {
+  eval(source);
+  return module.require("./one.cjs");
+}
+console.log(loadThroughModule("").n);
+console.log(loadThroughModule("var module = { owner: 'own', require(name) { return this.owner + ': ' + name; } }"));
+
+function resolve(source) {
+  eval(source);
+  return require.resolve("./one.cjs");
+}
+console.log(typeof resolve(""));
+console.log(resolve("var require = { resolve: name => 'own: ' + name }"));
+
+function loadLater(source) {
+  eval(source);
+  return () => require("./one.cjs");
+}
+console.log(loadLater("")().n);
+console.log(loadLater(ownRequire)());
+
+function declareInArgument() {
+  const loaded = require((eval(ownRequire), "./one.cjs"));
+  return [loaded.n, require("./one.cjs")];
+}
+console.log(declareInArgument().join());
+
+function loadComputed(source, name) {
+  eval(source);
+  return require(name);
+}
+console.log(loadComputed("", "./one.cjs").n);
+console.log(loadComputed(ownRequire, "./one.cjs"));
+
+function loadIfPresent(source) {
+  eval(source);
+  return require?.("./one.cjs");
+}
+console.log(loadIfPresent("").n);
+console.log(loadIfPresent("var require = null"));
+
+function loadMissing(source) {
+  eval(source);
+  try {
+    return require("./missing.cjs");
+  } catch (error) {
+    return error.code;
+  }
+}
+console.log(loadMissing(""));
+console.log(loadMissing(ownRequire));
+//// require-redeclared-by-eval/one.cjs
+exports.n = 1;
+//// require-result-before-declaration/files/a.js
+exports.x = "a";
+exports.m = "a.m";
+//// require-result-before-declaration/files/b.js
+exports.x = "b";
+exports.m = "b.m";
+//// require-result-before-declaration/main.js
+// `const m = require(..)` in a block is read, tested with `typeof` or used by a closure before the declaration has run.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+row("a read ahead, in the block", () => { { const early = said(() => m.x); const m = require("./files/a"); return early + " " + m.x; } });
+row("typeof ahead", () => { { const early = said(() => typeof m); const m = require("./files/a"); return early + " " + typeof m; } });
+row("a closure called ahead", () => { { const f = () => m.x; const early = said(f); const m = require("./files/a"); return early + " " + f(); } });
+row("a function declaration called ahead", () => { { const early = said(g); const m = require("./files/a"); function g() { return m.x; } return early + " " + g(); } });
+row("ahead of the second of a name", () => { { const m = require("./files/a"); } const early = said(() => m.x); const m = require("./files/a"); return early + " " + m.x; });
+row("ahead of the second, another module", () => { { const m = require("./files/a"); } const early = said(() => m.x); const m = require("./files/b"); return early + " " + m.x; });
+row("ahead of the second, by a function", () => { function g() { return m; } { const m = require("./files/a"); } const early = said(() => typeof g()); const m = require("./files/b"); return early + " " + g().x; });
+row("ahead of the second, both in blocks", () => { { const m = require("./files/a"); } { const early = said(() => m.x); const m = require("./files/b"); return early + " " + m.x; } });
+row("ahead of the first, a block behind", () => { const early = said(() => m.x); const m = require("./files/b"); { const m = require("./files/a"); } return early + " " + m.x; });
+row("ahead, with an outer binding around", () => { const m = { x: "outer" }; { const early = said(() => m.x); const m = require("./files/a"); return early + " " + m.x; } });
+row("ahead, a pattern", () => { { const { x: m } = require("./files/a"); } const early = said(() => m); const { x: m } = require("./files/b"); return early + " " + m; });
+row("the value that gets out", () => { function g() { return m; } { const m = require("./files/a"); } const r = [said(() => g() === undefined), said(() => [g()].length), said(() => String(g()))].join(); const m = require("./files/b"); return r; });
+row("let, ahead", () => { { const early = said(() => m.x); let m = require("./files/a"); return early + " " + m.x; } });
+//// require-result-before-require/files/e1.js
+Object.hook = function () { return m.K; };
+var m = require("./e1m");
+exports.got = globalThis.e1;
+//// require-result-before-require/files/e1m.js
+try { globalThis.e1 = String(Object.hook()); } catch (e) { globalThis.e1 = e.constructor.name; }
+exports.K = "K";
+//// require-result-before-require/files/e2.js
+Object.defineProperty(exports, "x", { get: function () { return m.K; } });
+var y = exports.x;
+var m = require("./e2_ek");
+exports.got = String(y);
+//// require-result-before-require/files/e2_ek.js
+exports.K = "K";
+//// require-result-before-require/files/e3.js
+Object.defineProperty(exports, "x", { get: function () { return m.K; } });
+exports.got = exports.x;
+var m = require("./e3_ek");
+//// require-result-before-require/files/e3_ek.js
+exports.K = "K";
+//// require-result-before-require/files/e4.js
+var m = require("./e4_ek");
+exports.got = m.K;
+//// require-result-before-require/files/e4_ek.js
+exports.K = "K";
+//// require-result-before-require/files/e5.js
+var __importDefault = (this && this.__importDefault) || function (mod) { return (mod && mod.__esModule) ? mod : { "default": mod }; };
+Object.defineProperty(exports, "__esModule", { value: true });
+const m = __importDefault(require("./e5_ek"));
+exports.f = function () { return m.default.K; };
+exports.got = exports.f();
+//// require-result-before-require/files/e5_ek.js
+exports.K = "K";
+//// require-result-before-require/files/e6.js
+const key = "x";
+Object.defineProperty(exports, key, { get: function () { return m.K; } });
+var y = exports.x;
+var m = require("./e6_ek");
+exports.got = String(y);
+//// require-result-before-require/files/e6_ek.js
+exports.K = "K";
+//// require-result-before-require/files/e7.js
+Object.assign2 = Object.assign2 || function () { return m.K; };
+var m = require("./e7m");
+exports.got = globalThis.e7;
+//// require-result-before-require/files/e7m.js
+try { globalThis.e7 = String(Object.assign2()); } catch (e) { globalThis.e7 = e.constructor.name; }
+exports.K = "K";
+//// require-result-before-require/main.js
+// CommonJS modules whose `var m = require(..)` is read by a getter or a callback before the `require` has run.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+function show(v) { return typeof v === "function" ? "F" : String(v); }
+try { console.log("e1: " + require("./files/e1").got); } catch (e) { console.log("e1: threw " + e.name); }
+try { console.log("e2: " + require("./files/e2").got); } catch (e) { console.log("e2: threw " + e.name); }
+try { console.log("e3: " + require("./files/e3").got); } catch (e) { console.log("e3: threw " + e.name); }
+try { console.log("e4: " + require("./files/e4").got); } catch (e) { console.log("e4: threw " + e.name); }
+try { console.log("e5: " + require("./files/e5").got); } catch (e) { console.log("e5: threw " + e.name); }
+try { console.log("e6: " + require("./files/e6").got); } catch (e) { console.log("e6: threw " + e.name); }
+try { console.log("e7: " + require("./files/e7").got); } catch (e) { console.log("e7: threw " + e.name); }
+//// require-result-in-nested-functions/files/a.js
+exports.x = "a";
+exports.m = "a.m";
+//// require-result-in-nested-functions/main.js
+// `const m = require(..)` in nested functions, arrows, methods and static blocks, inside the scope of another binding or parameter named `m`.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+row("a nested function's own", () => { const m = { x: "outer" }; function g() { const m = require("./files/a"); return m.x; } return g() + m.x; });
+row("a nested arrow's block", () => { const m = { x: "outer" }; const g = () => { { const m = require("./files/a"); } return m.x; }; return g(); });
+row("a parameter's default sees the outer", () => { const m = { x: "outer" }; function g(p = m.x) { const m = require("./files/a"); return p + m.x; } return g(); });
+row("a parameter's default, a block in the body", () => { const m = { x: "outer" }; function g(p = m.x) { { const m = require("./files/a"); } return p + m.x; } return g(); });
+row("a parameter and a block", () => { function g(m) { { const m = require("./files/a"); } return m; } return g("parameter"); });
+row("a parameter and a block, read in a closure", () => { function g(m) { { const m = require("./files/a"); } return () => m; } return g("parameter")(); });
+row("a method", () => { const m = { x: "outer" }; class C { f() { { const m = require("./files/a"); return m.x; } } g() { { const m = require("./files/a"); } return m.x; } } return new C().f() + new C().g(); });
+row("a static block", () => { const m = { x: "outer" }; let r; class C { static { { const m = require("./files/a"); r = m.x; } r += m.x; } } return r; });
+row("a static block's own", () => { const m = { x: "outer" }; let r; class C { static { const m = require("./files/a"); r = m.x; } } return r + m.x; });
+row("a loop's body", () => { const m = { x: "outer" }; let r = ""; for (let i = 0; i < 2; i++) { const m = require("./files/a"); r += m.x; } return r + m.x; });
+row("a while's body", () => { const m = { x: "outer" }; let r = "", i = 0; while (i++ < 2) { const m = require("./files/a"); r += m.x; } return r + m.x; });
+row("the head of a for", () => { const m = { x: "outer" }; let r = ""; for (const m = require("./files/a"); !r; ) r += m.x; return r + m.x; });
+row("a case without a block", () => { const m = { x: "outer" }; let r = ""; switch (1) { case 1: const m = require("./files/a"); r += m.x; } return r + m.x; });
+row("a catch's body", () => { const m = { x: "outer" }; let r = ""; try { throw 0; } catch { const m = require("./files/a"); r += m.x; } return r + m.x; });
+row("a catch parameter of the name, a require in a block of it", () => { let r = ""; try { throw { x: "thrown" }; } catch (m) { { const m = require("./files/a"); r += m.x; } r += m.x; } return r; });
+row("a labelled block", () => { const m = { x: "outer" }; let r = ""; l: { const m = require("./files/a"); r += m.x; break l; } return r + m.x; });
+row("a generator", () => { const m = { x: "outer" }; function* g() { { const m = require("./files/a"); yield m.x; } yield m.x; } return [...g()].join(); });
+row("a getter of a literal", () => { const m = { x: "outer" }; return { get v() { { const m = require("./files/a"); } return m.x; } }.v; });
+row("no binding outside at all", () => { { const m = require("./files/a"); } return typeof m; });
+row("a global of the name", () => { globalThis.n = { x: "global" }; { const n = require("./files/a"); } const r = n.x; delete globalThis.n; return r; });
+//// require-result-reassigned/files/a.js
+exports.x = "a";
+exports.m = "a.m";
+//// require-result-reassigned/files/b.js
+exports.x = "b";
+exports.m = "b.m";
+//// require-result-reassigned/files/c.js
+exports.x = "c";
+//// require-result-reassigned/main.js
+// `let m = require(..)` that is later assigned another module or object, directly or by a closure.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+row("let stored to", () => { { let m = require("./files/a"); const first = m.x; m = require("./files/b"); return first + m.x; } });
+row("let stored to with an object", () => { { let m = require("./files/a"); m = { x: "set" }; return m.x; } });
+row("let stored to by a closure", () => { { let m = require("./files/a"); const set = () => { m = { x: "set" }; }; const first = m.x; set(); return first + m.x; } });
+row("the outer stored to behind the block", () => { let m = { x: "outer" }; { const m = require("./files/a"); } m = { x: "set" }; return m.x; });
+row("the outer stored to ahead of the block", () => { let m = { x: "outer" }; m = { x: "set" }; let inside; { const m = require("./files/a"); inside = m.x; } return inside + m.x; });
+row("the outer stored to by a closure called in the block", () => { let m = { x: "outer" }; const set = () => { m = { x: "set" }; }; let inside; { const m = require("./files/a"); set(); inside = m.x; } return inside + m.x; });
+row("a property stored in the block", () => { const m = { x: "outer" }; let o; { const m = require("./files/c"); m.y = "changed"; o = m; } return [m.y, o.y, require("./files/c").y].join(); });
+row("a property of the outer stored behind the block", () => { const m = { x: "outer" }; { const m = require("./files/c"); } m.z = "changed"; return [m.z, require("./files/c").z].join(); });
+row("the inner let stored to, an outer let around", () => { let m = { x: "outer" }; { let m = require("./files/a"); m = { x: "set" }; } return m.x; });
+row("a parameter stored to behind the block", () => ((m) => { { const m = require("./files/a"); } m = "set"; return m; })("parameter"));
+row("increment of the outer", () => { let m = 1; { const m = require("./files/a"); } m++; return m; });
+//// require-result-shadows-binding/files/a.js
+exports.x = "a";
+exports.m = "a.m";
+//// require-result-shadows-binding/files/b.js
+exports.x = "b";
+exports.m = "b.m";
+//// require-result-shadows-binding/main.js
+// `const m = require(..)` in a block, inside the scope of another binding named `m`.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+row("const around const", () => { const m = { x: "outer" }; const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("const around let", () => { const m = { x: "outer" }; const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("const around a pattern", () => { const m = { x: "outer" }; const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("const around a shorthand pattern", () => { const m = { x: "outer" }; const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("let around const", () => { let m = { x: "outer" }; const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("let around let", () => { let m = { x: "outer" }; const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("let around a pattern", () => { let m = { x: "outer" }; const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("let around a shorthand pattern", () => { let m = { x: "outer" }; const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("var around const", () => { var m = { x: "outer" }; const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("var around let", () => { var m = { x: "outer" }; const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("var around a pattern", () => { var m = { x: "outer" }; const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("var around a shorthand pattern", () => { var m = { x: "outer" }; const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a parameter around const", () => ((m) => { const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ x: "outer" }));
+row("a parameter around let", () => ((m) => { const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ x: "outer" }));
+row("a parameter around a pattern", () => ((m) => { const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ x: "outer" }));
+row("a parameter around a shorthand pattern", () => ((m) => { const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ x: "outer" }));
+row("a parameter of a function around const", () => (function (m) { const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ x: "outer" }));
+row("a parameter of a function around let", () => (function (m) { const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ x: "outer" }));
+row("a parameter of a function around a pattern", () => (function (m) { const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ x: "outer" }));
+row("a parameter of a function around a shorthand pattern", () => (function (m) { const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ x: "outer" }));
+row("a parameter in a pattern around const", () => (({ m }) => { const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ m: { x: "outer" } }));
+row("a parameter in a pattern around let", () => (({ m }) => { const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ m: { x: "outer" } }));
+row("a parameter in a pattern around a pattern", () => (({ m }) => { const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ m: { x: "outer" } }));
+row("a parameter in a pattern around a shorthand pattern", () => (({ m }) => { const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); })({ m: { x: "outer" } }));
+row("a function around const", () => { function m() {} m.x = "outer"; const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a function around let", () => { function m() {} m.x = "outer"; const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a function around a pattern", () => { function m() {} m.x = "outer"; const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a function around a shorthand pattern", () => { function m() {} m.x = "outer"; const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a class around const", () => { class m { static x = "outer"; } const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a class around let", () => { class m { static x = "outer"; } const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a class around a pattern", () => { class m { static x = "outer"; } const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a class around a shorthand pattern", () => { class m { static x = "outer"; } const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("the name of a function expression around const", () => { const g = function m() { const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); }; g.x = "outer"; return g(); });
+row("the name of a function expression around let", () => { const g = function m() { const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); }; g.x = "outer"; return g(); });
+row("the name of a function expression around a pattern", () => { const g = function m() { const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); }; g.x = "outer"; return g(); });
+row("the name of a function expression around a shorthand pattern", () => { const g = function m() { const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); }; g.x = "outer"; return g(); });
+row("a catch parameter around const", () => { try { throw { x: "outer" }; } catch (m) { const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("a catch parameter around let", () => { try { throw { x: "outer" }; } catch (m) { const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("a catch parameter around a pattern", () => { try { throw { x: "outer" }; } catch (m) { const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("a catch parameter around a shorthand pattern", () => { try { throw { x: "outer" }; } catch (m) { const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("the head of a for around const", () => { for (let m = { x: "outer" }, once = true; once; once = false) { const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("the head of a for around let", () => { for (let m = { x: "outer" }, once = true; once; once = false) { const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("the head of a for around a pattern", () => { for (let m = { x: "outer" }, once = true; once; once = false) { const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("the head of a for around a shorthand pattern", () => { for (let m = { x: "outer" }, once = true; once; once = false) { const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("the head of a for-of around const", () => { for (const m of [{ x: "outer" }]) { const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("the head of a for-of around let", () => { for (const m of [{ x: "outer" }]) { const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("the head of a for-of around a pattern", () => { for (const m of [{ x: "outer" }]) { const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("the head of a for-of around a shorthand pattern", () => { for (const m of [{ x: "outer" }]) { const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } });
+row("a let of a block between around const", () => { { let m = { x: "outer" }; { const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("a let of a block between around let", () => { { let m = { x: "outer" }; { const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("a let of a block between around a pattern", () => { { let m = { x: "outer" }; { const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("a let of a block between around a shorthand pattern", () => { { let m = { x: "outer" }; { const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("a let of a switch around const", () => { switch (1) { case 1: let m = { x: "outer" }; { const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("a let of a switch around let", () => { switch (1) { case 1: let m = { x: "outer" }; { const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("a let of a switch around a pattern", () => { switch (1) { case 1: let m = { x: "outer" }; { const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("a let of a switch around a shorthand pattern", () => { switch (1) { case 1: let m = { x: "outer" }; { const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("another require around const", () => { const m = require("./files/b"); const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("another require around let", () => { const m = require("./files/b"); const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("another require around a pattern", () => { const m = require("./files/b"); const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("another require around a shorthand pattern", () => { const m = require("./files/b"); const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("another require in a block between around const", () => { { const m = require("./files/b"); { const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("another require in a block between around let", () => { { const m = require("./files/b"); { const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("another require in a block between around a pattern", () => { { const m = require("./files/b"); { const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("another require in a block between around a shorthand pattern", () => { { const m = require("./files/b"); { const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); } } });
+row("a var that is a require around const", () => { var m = require("./files/b"); const ahead = m.x; let inside, f; { const m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a var that is a require around let", () => { var m = require("./files/b"); const ahead = m.x; let inside, f; { let m = require("./files/a"); inside = m.x; f = () => m.x; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a var that is a require around a pattern", () => { var m = require("./files/b"); const ahead = m.x; let inside, f; { const { x: m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+row("a var that is a require around a shorthand pattern", () => { var m = require("./files/b"); const ahead = m.x; let inside, f; { const { m } = require("./files/a"); inside = m; f = () => m; } return [ahead, inside, m.x, f(), (() => m.x)()].join(); });
+//// require-result-top-level/files/a.js
+exports.x = "a";
+exports.m = "a.m";
+//// require-result-top-level/files/b.js
+exports.x = "b";
+exports.m = "b.m";
+//// require-result-top-level/main.js
+// `const m = require(..)` at the top level of a module is read before and after the declaration has run.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+const lines = [];
+function viaFunction() { return m.x; }
+lines.push("ahead of everything: " + said(() => m.x) + " " + said(viaFunction));
+{ const m = require("./files/a"); lines.push("the first block: " + m.x); }
+lines.push("between: " + said(() => m.x) + " " + said(viaFunction) + " " + said(() => typeof m));
+const m = require("./files/b");
+lines.push("behind the declaration: " + m.x + " " + viaFunction());
+{ const m = require("./files/a"); lines.push("a block behind: " + m.x); { const m = { x: "innermost" }; lines.push("a let in it: " + m.x); } lines.push("the block again: " + m.x); }
+lines.push("behind that: " + m.x);
+lines.push("from an arrow with a block: " + (() => { { const m = require("./files/a"); } return m.x; })());
+lines.push("from a function with a parameter: " + (function (m) { { const m = require("./files/a"); } return m; })("parameter"));
+lines.push("identity: " + ((() => { { const m = require("./files/a"); } return m; })() === require("./files/b")));
+if (m) { const m = require("./files/a"); lines.push("in an if: " + m.x); }
+for (const m of [require("./files/a")]) lines.push("in a for-of: " + m.x);
+try { throw 0; } catch { const m = require("./files/a"); lines.push("in a catch: " + m.x); }
+lines.push("at the end: " + m.x);
+{ const k = require("./files/a"); lines.push("another name, in a block: " + k.x); }
+lines.push("that name outside: " + typeof k);
+var v = { x: "var" };
+{ const v = require("./files/a"); lines.push("a var of the file around: " + v.x); }
+lines.push("the var: " + v.x);
+function fn() {} fn.x = "function";
+{ const fn = require("./files/a"); lines.push("a function of the file around: " + fn.x); }
+lines.push("the function: " + fn.x);
+class cl { static x = "class"; }
+{ const cl = require("./files/a"); lines.push("a class of the file around: " + cl.x); }
+lines.push("the class: " + cl.x);
+let lt = { x: "let" };
+{ const lt = require("./files/a"); lines.push("a let of the file around: " + lt.x); }
+lines.push("the let: " + lt.x);
+for (const line of lines) console.log(line);
+//// require-results-in-blocks/files/a.js
+exports.x = "a";
+exports.m = "a.m";
+//// require-results-in-blocks/files/b.js
+exports.x = "b";
+exports.m = "b.m";
+//// require-results-in-blocks/main.js
+// `const m = require(..)` of different modules in sibling and nested blocks under the same name.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+row("sibling blocks", () => { let r = []; { const m = require("./files/a"); r.push(m.x); } { const m = require("./files/b"); r.push(m.x); } return r.join(); });
+row("sibling blocks, the other order", () => { let r = []; { const m = require("./files/b"); r.push(m.x); } { const m = require("./files/a"); r.push(m.x); } return r.join(); });
+row("nested blocks", () => { let r = []; { const m = require("./files/a"); r.push(m.x); { const m = require("./files/b"); r.push(m.x); } r.push(m.x); } return r.join(); });
+row("three deep", () => { let r = []; { const m = require("./files/a"); { const m = require("./files/b"); { const m = require("./files/a"); r.push(m.x); } r.push(m.x); } r.push(m.x); } return r.join(); });
+row("the same module twice", () => { let r = []; { const m = require("./files/a"); r.push(m.x); } { const m = require("./files/a"); r.push(m.x); } return r.join(); });
+row("a block, then the function's own", () => { let r = []; { const m = require("./files/a"); r.push(m.x); } const m = require("./files/b"); r.push(m.x); return r.join(); });
+row("the function's own, then a block", () => { let r = []; const m = require("./files/b"); r.push(m.x); { const m = require("./files/a"); r.push(m.x); } r.push(m.x); return r.join(); });
+row("two functions", () => { const f = () => { const m = require("./files/a"); return m.x; }, g = () => { const m = require("./files/b"); return m.x; }; return f() + g() + f(); });
+row("a function in a block of a function", () => { const m = require("./files/b"); { const m = require("./files/a"); return (() => { { const m = require("./files/b"); } return m.x; })(); } });
+row("closures of both", () => { let f, g; { const m = require("./files/a"); f = () => m; } { const m = require("./files/b"); g = () => m; } return [f().x, g().x, f() === require("./files/a"), g() === require("./files/b"), f() === g()].join(); });
+row("in both arms of an if", () => [1, 0].map((c) => { if (c) { const m = require("./files/a"); return m.x; } else { const m = require("./files/b"); return m.x; } }).join());
+row("in two cases of a switch, each in a block", () => [1, 2].map((c) => { switch (c) { case 1: { const m = require("./files/a"); return m.x; } case 2: { const m = require("./files/b"); return m.x; } } }).join());
+row("in try, catch and finally", () => { let r = []; try { const m = require("./files/a"); r.push(m.x); throw 0; } catch { const m = require("./files/b"); r.push(m.x); } finally { const m = require("./files/a"); r.push(m.x); } return r.join(); });
+//// require-that-the-build-does-not-follow/main.cjs
+// What the build does not follow to a file finds the entry points and no other file of the executable: `require` in a property or bound, whatever the path, and a path with no constant part, whoever is called.
+// `require` as the argument of a function that is called where it is written is followed: that one finds the file.
+const other = require("./other.cjs");
+const load = require;
+function attempt(title, action) {
+  try {
+    console.log(title, action());
+  } catch (error) {
+    console.log(title, "threw", error.constructor.name + ":", String(error.message).split("'")[0].trim());
+  }
+}
+const unknown = process.env.NO_SUCH_VARIABLE_OF_THIS_TEST || "./other.cjs";
+attempt("a parameter:", () => (r => r("./other.cjs") === other)(require));
+attempt("a property:", () => ({ load: require }).load("./other.cjs") === other);
+attempt("bound:", () => require.bind(null)("./other.cjs") === other);
+attempt("bound, under a name:", () => {
+  const bound = require.bind(null);
+  return bound("./other.cjs") === other;
+});
+attempt("a variable that is stored to:", () => {
+  let changing = require;
+  changing = load;
+  return changing("./other.cjs") === other;
+});
+attempt("apply with a list from elsewhere:", () => {
+  const list = ["./other.cjs"];
+  return require.apply(null, list) === other;
+});
+attempt("a path nobody knows:", () => require(unknown) === other);
+attempt("a path nobody knows, another name:", () => load(unknown) === other);
+attempt("a path nobody knows, module.require:", () => module.require(unknown) === other);
+attempt("the entry point is found:", () => (r => r(__filename) === module.exports)(require));
+attempt("a built-in module is found:", () => typeof (r => r("node:path"))(require).join);
+//// require-that-the-build-does-not-follow/other.cjs
+exports.tag = "other";
+//// require-type-attribute/main.js
+// require(path, { type }) with a computed path asks for the file, not for the compiled module at that path, so the module does not run. Without the attribute the same kind of path runs the compiled module.
+// `bun run` answers the text of the file. An executable does not hold that text, and the call throws.
+globalThis.evaluated = [];
+
+const computed = name => "./" + name;
+
+function compileBoth() {
+  require("./with-attribute.cjs");
+  require("./without-attribute.cjs");
+}
+
+const exported = require(computed("without-attribute.cjs"));
+console.log("without an attribute:", typeof exported, exported.name, "evaluated:", globalThis.evaluated.join());
+
+try {
+  require(computed("with-attribute.cjs"), { type: "text" });
+} catch {}
+console.log("with an attribute: evaluated:", globalThis.evaluated.join());
+console.log(typeof compileBoth);
+//// require-type-attribute/with-attribute.cjs
+globalThis.evaluated.push("with-attribute");
+exports.name = "with-attribute";
+//// require-type-attribute/without-attribute.cjs
+globalThis.evaluated.push("without-attribute");
+exports.name = "without-attribute";
+//// require-under-another-name-and-through-call-and-apply/main.cjs
+// `require` under another name, and through call and apply, loads what `require` loads: a file that another line requires too, a file that no other line names, and a path of which only the ends are constant.
+const other = require("./other.cjs");
+const load = require;
+const again = load;
+function attempt(title, action) {
+  try {
+    console.log(title, action());
+  } catch (error) {
+    console.log(title, "threw", error.constructor.name);
+  }
+}
+attempt("another name:", () => load("./other.cjs") === other);
+attempt("a name for that name:", () => again("./other.cjs") === other);
+attempt("call:", () => require.call(this, "./other.cjs") === other);
+attempt("apply:", () => require.apply(this, ["./other.cjs"]) === other);
+attempt("call under another name:", () => load.call(null, "./other.cjs") === other);
+attempt("apply under another name:", () => load.apply(null, ["./other.cjs"]) === other);
+attempt("a file that nothing else names, another name:", () => load("./only-under-another-name.cjs").tag);
+attempt("a file that nothing else names, call:", () => require.call(null, "./only-through-call.cjs").tag);
+attempt("a file that nothing else names, apply:", () => require.apply(null, ["./only-through-apply.cjs"]).tag);
+const wanted = process.env.NO_SUCH_VARIABLE_OF_THIS_TEST || "second";
+attempt("a path with constant ends, another name:", () => load("./plugins/" + wanted + ".cjs").tag);
+attempt("a path with constant ends, call:", () => require.call(null, "./plugins/" + wanted + ".cjs").tag);
+attempt("a path with constant ends, apply:", () => require.apply(null, ["./plugins/" + wanted + ".cjs"]).tag);
+attempt("a built-in module:", () => typeof load("node:path").join + " " + typeof require.call(null, "node:path").join);
+attempt("a file that is not there:", () => load("./no-such-file.cjs"));
+attempt("the arguments are evaluated in order:", () => {
+  const order = [];
+  const loaded = require.call((order.push("receiver"), null), "./other.cjs", order.push("more"));
+  const again = require.apply((order.push("receiver"), null), ["./other.cjs", order.push("more")]);
+  return order.join(" ") + " " + (loaded === other) + " " + (again === other);
+});
+attempt("used before its declaration:", () => early());
+function early() {
+  return late("./other.cjs") === other;
+}
+attempt("in the dead zone:", () => lateUse);
+const late = require;
+const lateUse = early();
+attempt("behind its declaration:", () => early());
+function shadowed(require) {
+  const load = require;
+  return load("./other.cjs") + " " + require.call(null, "./other.cjs");
+}
+attempt("a parameter of that name:", () => shadowed(path => "asked for " + path));
+require.call = function (receiver, path) {
+  return "a call of its own for " + path;
+};
+attempt("require has a call of its own:", () => require.call(null, "./other.cjs"));
+attempt("and so has its other name:", () => load.call(null, "./other.cjs"));
+delete require.call;
+attempt("without it again:", () => require.call(null, "./other.cjs") === other);
+//// require-under-another-name-and-through-call-and-apply/only-through-apply.cjs
+exports.tag = "only through apply";
+//// require-under-another-name-and-through-call-and-apply/only-through-call.cjs
+exports.tag = "only through call";
+//// require-under-another-name-and-through-call-and-apply/only-under-another-name.cjs
+exports.tag = "only under another name";
+//// require-under-another-name-and-through-call-and-apply/other.cjs
+exports.tag = "other";
+//// require-under-another-name-and-through-call-and-apply/plugins/first.cjs
+exports.tag = "first plugin";
+//// require-under-another-name-and-through-call-and-apply/plugins/second.cjs
+exports.tag = "second plugin";
+//// require-via-interop-and-casts/files/a1.js
+exports.f = () => "first";
+/** @type {any} */ (exports.f) = () => "second";
+exports.own = exports.f();
+//// require-via-interop-and-casts/files/a10.js
+({ a: exports.f = () => "first" } = { a: () => "second" });
+//// require-via-interop-and-casts/files/a11.js
+[exports.f = () => "first"] = [];
+//// require-via-interop-and-casts/files/a12.js
+exports.f = () => "first";
+for (exports.f of [() => "second"]);
+//// require-via-interop-and-casts/files/a13.js
+exports.d = 1;
+delete /** @type {any} */ (exports.d);
+exports.has = "d" in exports;
+//// require-via-interop-and-casts/files/a14.js
+exports.f = () => "first";
+/** @type {any} */ (/** @type {any} */ (exports.f)) = () => "second";
+//// require-via-interop-and-casts/files/a15.js
+/** @type {any} */ (exports.g) ||= () => "set";
+//// require-via-interop-and-casts/files/a16.js
+exports.f = () => "first";
+(exports.f) = () => "second";
+//// require-via-interop-and-casts/files/a17.js
+"use strict";
+[exports.f = () => 1] = [function () { return this; }];
+//// require-via-interop-and-casts/files/a18.js
+module.exports.f = () => "first";
+/** @type {any} */ (module.exports.f) = () => "second";
+//// require-via-interop-and-casts/files/a19.js
+this.f = () => "first";
+/** @type {any} */ (this.f) = () => "second";
+//// require-via-interop-and-casts/files/a2.js
+exports.n = 1;
+/** @type {any} */ (exports.n) += 1;
+/** @type {any} */ (exports.n)++;
+//// require-via-interop-and-casts/files/a3.js
+exports.f = () => "first";
+[/** @type {any} */ (exports.f)] = [() => "second"];
+//// require-via-interop-and-casts/files/a4.js
+exports.f = () => "first";
+({ a: /** @type {any} */ (exports.f) } = { a: () => "second" });
+//// require-via-interop-and-casts/files/a5.js
+"use strict";
+/** @type {any} */ (exports.f) = function () { return this; };
+//// require-via-interop-and-casts/files/a6.js
+exports.f = () => "first";
+exports.call = () => exports.f();
+//// require-via-interop-and-casts/files/a7.js
+/** @type {any} */ (exports.__esModule) = true;
+exports.default = "d";
+//// require-via-interop-and-casts/files/a8.js
+////= createBinding-2
+__exportStar(require("./a8o"), exports);
+//// require-via-interop-and-casts/files/a8o.js
+/** @type {any} */ (exports.y) = "o.y";
+//// require-via-interop-and-casts/files/a9.js
+[exports.f = () => "first"] = [() => "second"];
+//// require-via-interop-and-casts/main.js
+// `require` of CommonJS modules through interop helpers and casts, with compound assignments to their exports.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+function show(v) { return typeof v === "function" ? "F" : String(v); }
+function _interop(obj) { return obj && obj.__esModule ? obj : { default: obj }; }
+try { const m = require("./files/a1");  console.log("a cast: " + show(m.f() + " " + m.own)); } catch (e) { console.log("a cast: threw " + e.name); }
+try { console.log("compound and increment through a cast: " + show(require("./files/a2").n)); } catch (e) { console.log("compound and increment through a cast: threw " + e.name); }
+try { console.log("an array pattern through a cast: " + show(require("./files/a3").f())); } catch (e) { console.log("an array pattern through a cast: threw " + e.name); }
+try { console.log("an object pattern through a cast: " + show(require("./files/a4").f())); } catch (e) { console.log("an object pattern through a cast: threw " + e.name); }
+try { console.log("a function that reads this: " + show(typeof require("./files/a5").f())); } catch (e) { console.log("a function that reads this: threw " + e.name); }
+try { const m = require("./files/a6"); /** @type {any} */ (m.f) = () => "second";  console.log("the importer's store: " + show(m.f() + " " + m.call())); } catch (e) { console.log("the importer's store: threw " + e.name); }
+try { console.log("the marker: " + show(_interop(require("./files/a7")).default.length)); } catch (e) { console.log("the marker: threw " + e.name); }
+try { console.log("a star's key: " + show(require("./files/a8").y)); } catch (e) { console.log("a star's key: threw " + e.name); }
+try { console.log("the default of an array pattern's element: " + show(require("./files/a9").f())); } catch (e) { console.log("the default of an array pattern's element: threw " + e.name); }
+try { console.log("the default of an object pattern's element: " + show(require("./files/a10").f())); } catch (e) { console.log("the default of an object pattern's element: threw " + e.name); }
+try { console.log("control: the default is used: " + show(require("./files/a11").f())); } catch (e) { console.log("control: the default is used: threw " + e.name); }
+try { console.log("the head of a for-of: " + show(require("./files/a12").f())); } catch (e) { console.log("the head of a for-of: threw " + e.name); }
+try { const m = require("./files/a13");  console.log("delete through a cast: " + show(m.d + " " + m.has)); } catch (e) { console.log("delete through a cast: threw " + e.name); }
+try { console.log("two casts: " + show(require("./files/a14").f())); } catch (e) { console.log("two casts: threw " + e.name); }
+try { console.log("a logical assignment through a cast: " + show(require("./files/a15").g())); } catch (e) { console.log("a logical assignment through a cast: threw " + e.name); }
+try { console.log("control: parentheses alone: " + show(require("./files/a16").f())); } catch (e) { console.log("control: parentheses alone: threw " + e.name); }
+try { console.log("the default, a function that reads this: " + show(typeof require("./files/a17").f())); } catch (e) { console.log("the default, a function that reads this: threw " + e.name); }
+try { const f = require("./files/a9").f;  console.log("the default, read out and called: " + show(f())); } catch (e) { console.log("the default, read out and called: threw " + e.name); }
+try { console.log("a cast on module.exports.name: " + show(require("./files/a18").f())); } catch (e) { console.log("a cast on module.exports.name: threw " + e.name); }
+try { console.log("a cast on this.name: " + show(require("./files/a19").f())); } catch (e) { console.log("a cast on this.name: threw " + e.name); }
+//// require-wrapper-override/fifth.cjs
+module.exports = "fifth.cjs";
+//// require-wrapper-override/first.cjs
+module.exports = "first.cjs";
+//// require-wrapper-override/fourth.cjs
+module.exports = "fourth.cjs";
+//// require-wrapper-override/main.cjs
+// `Module.wrapper` holds the text that goes around the source text of a CommonJS module. A compiled module has no source text, so a replaced wrapper is not applied to it: `require` runs the module as it was compiled, where plain Bun runs the added text first.
+const Module = require("node:module");
+const [start, end] = Module.wrapper;
+const seen = () => String(globalThis.wrapped);
+
+console.log("before the replacement:", require("./first.cjs"), seen());
+
+Module.wrapper[0] = start + "globalThis.wrapped = (globalThis.wrapped ?? 0) + 1;";
+console.log("first part replaced:", require("./second.cjs"), seen());
+console.log("required again:", require("./second.cjs"), require("./first.cjs"), seen());
+console.log("required by a compiled module:", require("./requires-third.cjs"), seen());
+
+Module.wrapper = [start + "globalThis.wrapped = 'both parts';", end];
+console.log("both parts replaced:", require("./fourth.cjs"), seen());
+
+Module.wrapper = [start, end];
+console.log("the default parts again:", require("./fifth.cjs"), seen());
+//// require-wrapper-override/requires-third.cjs
+module.exports = "requires " + require("./third.cjs");
+//// require-wrapper-override/second.cjs
+module.exports = "second.cjs";
+//// require-wrapper-override/third.cjs
+module.exports = "third.cjs";
+//// required-modules-need-no-module-object/first-of-cycle.cjs
+const seen = require("./seen.cjs");
+exports.early = "early";
+const second = require("./second-of-cycle.cjs");
+exports.late = "late";
+exports.describe = function () {
+  return second.sawOfFirst + " | " + second.seesNow();
+};
+seen.push("first ends");
+//// required-modules-need-no-module-object/lazy.cjs
+require("./seen.cjs").push("lazy runs");
+module.exports = { value: 7 };
+//// required-modules-need-no-module-object/main.cjs
+// None of these modules looks at `module` for anything but `module.exports`, or at `require` but to call it with a name: to require one is to call its code, once. What a program can see stays as it is
+// in plain Bun: the order, the half-filled exports inside a cycle, one object for all who ask and a replaced `module.exports`.
+// STATISTIC: RequireSitesBound >= 7
+// STATISTIC: RequiresRecorded = 0
+const seen = require("./seen.cjs");
+const named = require("./named.cjs");
+const replaced = require("./replaced.cjs");
+const first = require("./first-of-cycle.cjs");
+
+seen.push("main: " + named.one + " " + named.two() + " " + replaced(2) + " " + first.describe());
+seen.push("same object: " + (require("./named.cjs") === named) + " " + (require("./replaced.cjs") === replaced));
+
+function load() {
+  return require("./lazy.cjs");
+}
+seen.push("before lazy");
+seen.push("lazy: " + load().value + " " + (load() === load()));
+
+console.log(seen.join("\n"));
+//// required-modules-need-no-module-object/named.cjs
+const seen = require("./seen.cjs");
+seen.push("named runs");
+exports.one = 1;
+exports.two = function () {
+  return exports.one + 1;
+};
+//// required-modules-need-no-module-object/replaced.cjs
+const seen = require("./seen.cjs");
+seen.push("replaced runs");
+exports.lost = true;
+module.exports = function (x) {
+  return x * 21;
+};
+module.exports.kept = Object.keys(exports).join();
+seen.push("replaced: " + module.exports.kept + " " + typeof module.exports);
+//// required-modules-need-no-module-object/second-of-cycle.cjs
+const seen = require("./seen.cjs");
+const first = require("./first-of-cycle.cjs");
+exports.sawOfFirst = Object.keys(first).join();
+exports.seesNow = function () {
+  return Object.keys(first).join();
+};
+seen.push("second ends");
+//// required-modules-need-no-module-object/seen.cjs
+module.exports = [];
+//// shadowed-exports-module-and-require/files/f1.js
+var exports = exports || {};
+exports.a = 3;
+//// shadowed-exports-module-and-require/files/f10.js
+exports.got = ((module) => module.exports)({ exports: "the parameter's" });
+//// shadowed-exports-module-and-require/files/f11.js
+exports.x = "own";
+let got;
+{ let exports = require("./f11a").exports; got = exports.x; }
+exports.got = got;
+//// shadowed-exports-module-and-require/files/f11a.js
+exports.exports = { x: "a's" };
+//// shadowed-exports-module-and-require/files/f12.js
+exports.a = (function () { var exports = { a: "local" }; return exports.a; })();
+//// shadowed-exports-module-and-require/files/f2.js
+if (typeof exports === "undefined") { var exports = {}; }
+exports.a = 3;
+//// shadowed-exports-module-and-require/files/f3.js
+var exports;
+exports.a = typeof exports;
+//// shadowed-exports-module-and-require/files/f4.js
+var module = module || { exports: {} };
+module.exports.a = 3;
+//// shadowed-exports-module-and-require/files/f5.js
+var exports = module.exports;
+exports.a = 3;
+//// shadowed-exports-module-and-require/files/f6.js
+var exports = {};
+exports.a = 3;
+module.exports.b = 4;
+//// shadowed-exports-module-and-require/files/f7.js
+exports.x = "own";
+let got;
+{ const { exports } = require("./f7a"); got = exports.x; }
+exports.got = got;
+//// shadowed-exports-module-and-require/files/f7a.js
+exports.exports = { x: "a's" };
+//// shadowed-exports-module-and-require/files/f8.js
+exports.got = (() => { const module = require("./f8a"); return module.exports; })();
+//// shadowed-exports-module-and-require/files/f8a.js
+exports.exports = "a's";
+//// shadowed-exports-module-and-require/files/f9.js
+let got;
+{ const module = require("./f9a"); got = module.exports; }
+exports.got = got;
+//// shadowed-exports-module-and-require/files/f9a.js
+exports.exports = "a's";
+//// shadowed-exports-module-and-require/main.js
+// CommonJS modules that shadow `exports`, `module` or `require` with their own declarations.
+function said(f) { try { const v = f(); return typeof v === "function" ? "F" : String(v); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+function show(v) { return typeof v === "function" ? "F" : String(v); }
+try { console.log("a pattern binds exports: " + require("./files/f7").got); } catch (e) { console.log("a pattern binds exports: threw " + e.name); }
+try { console.log("a const named module: " + require("./files/f8").got); } catch (e) { console.log("a const named module: threw " + e.name); }
+try { console.log("a const named module, in a block: " + require("./files/f9").got); } catch (e) { console.log("a const named module, in a block: threw " + e.name); }
+try { console.log("control: a parameter named module: " + require("./files/f10").got); } catch (e) { console.log("control: a parameter named module: threw " + e.name); }
+try { console.log("a let named exports: " + require("./files/f11").got); } catch (e) { console.log("a let named exports: threw " + e.name); }
+try { console.log("var exports = exports || {}: " + require("./files/f1").a); } catch (e) { console.log("var exports = exports || {}: threw " + e.name); }
+try { console.log("if (typeof exports is undefined) var exports: " + require("./files/f2").a); } catch (e) { console.log("if (typeof exports is undefined) var exports: threw " + e.name); }
+try { console.log("var exports;: " + require("./files/f3").a); } catch (e) { console.log("var exports;: threw " + e.name); }
+try { console.log("var module = module || ..: " + require("./files/f4").a); } catch (e) { console.log("var module = module || ..: threw " + e.name); }
+try { console.log("control: var exports = module.exports: " + require("./files/f5").a); } catch (e) { console.log("control: var exports = module.exports: threw " + e.name); }
+try { console.log("var exports = {}: " + require("./files/f6").a + " " + require("./files/f6").b); } catch (e) { console.log("var exports = {}: threw " + e.name); }
+try { console.log("var exports in a function: " + require("./files/f12").a); } catch (e) { console.log("var exports in a function: threw " + e.name); }
+//// statements-that-end-without-a-semicolon/main.cjs
+// Statements that end without a semicolon.
+var a = 1
+var b = a
+++a
+console.log(a, b)
+var c = "x"
+;[1].forEach(function (n) { c += n })
+var d = function () { return 1 }
+;(function () { c += "!" })()
+console.log(c, d())
+function r() { return
+  5 }
+console.log(r())
+var s = 'line \
+continued'; console.log(s)
+console.log(" ".length, eval("' '").length, `a
+b`.length)
+//// swc-export-helper-look-alikes/another-target.cjs
+"use strict";
+////= export-2
+const holder = {};
+_export(holder, {
+    a: function() {
+        return a;
+    }
+});
+exports.holder = holder;
+const a = "a";
+//// swc-export-helper-look-alikes/called-late.cjs
+"use strict";
+////= export-2
+exports.define = function () {
+    _export(exports, {
+        a: function() {
+            return a;
+        }
+    });
+    return "defined";
+};
+const a = "a";
+//// swc-export-helper-look-alikes/configurable.cjs
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: true,
+        configurable: true,
+        get: all[name]
+    });
+}
+////= export-3
+const a = "a";
+//// swc-export-helper-look-alikes/defined-twice.cjs
+"use strict";
+////= export-2
+////= export-3
+_export(exports, {
+    a: function() {
+        return b;
+    }
+});
+const a = "a", b = "b";
+//// swc-export-helper-look-alikes/getter-with-effects.cjs
+"use strict";
+////= export-2
+_export(exports, {
+    a: function() {
+        count++;
+        return a;
+    },
+    reads: function() {
+        return reads;
+    }
+});
+var count = 0;
+const a = "a";
+function reads() { return count; }
+//// swc-export-helper-look-alikes/helper-replaced.cjs
+////= export-2
+_export = function (target, all) { target.b = Object.keys(all).join(); };
+////= export-3
+const a = "a";
+//// swc-export-helper-look-alikes/live-binding.cjs
+"use strict";
+////= export-2
+////= export-9	a	bump
+let a = 1;
+function bump() { a++; return a; }
+//// swc-export-helper-look-alikes/main.cjs
+// Modules that call something like SWC's `_export(exports, { .. })`, each a little off the form: what a reader of the names and a look at the object find is what plain Bun finds.
+"use strict";
+function look(read) { try { const value = read(); return typeof value === "function" ? "function " + value.name : String(value); } catch (error) { return error.name + ": " + error.message; } }
+
+const _live = require("./live-binding.cjs");
+console.log("live binding", _live.a, (0, _live.bump)(), _live.a);
+
+const _effects = require("./getter-with-effects.cjs");
+console.log("getter with effects", _effects.a, _effects.a, (0, _effects.reads)());
+
+const _hidden = require("./not-enumerable.cjs");
+console.log("not enumerable", _hidden.a, Object.keys(_hidden).join());
+
+const _open = require("./configurable.cjs");
+console.log("configurable", _open.a, delete _open.a, _open.a);
+
+const _swapped = require("./helper-replaced.cjs");
+console.log("helper replaced", look(() => _swapped.a), look(() => _swapped.b));
+
+const _late = require("./called-late.cjs");
+console.log("called late", look(() => _late.a), (0, _late.define)(), look(() => _late.a));
+
+const _other = require("./another-target.cjs");
+console.log("another target", look(() => _other.a), look(() => _other.holder.a));
+
+const _order = require("./order-of-names.cjs");
+console.log("order of names", _order.b, _order.a, _order[1], _order[0]);
+console.log("order of names, looked at", Object.keys(require("./order-of-names-looked-at.cjs")).join());
+
+console.log("no getter", look(() => require("./value-in-place-of-a-getter.cjs").a));
+
+const _stored = require("./stored-behind-the-definition.cjs");
+console.log("stored behind the definition", look(() => _stored.a), look(() => _stored.result));
+
+console.log("defined twice", look(() => require("./defined-twice.cjs").a));
+
+const _shadow = require("./object-shadowed.cjs");
+console.log("Object shadowed", look(() => _shadow.a), _shadow.calls);
+//// swc-export-helper-look-alikes/not-enumerable.cjs
+"use strict";
+function _export(target, all) {
+    for(var name in all)Object.defineProperty(target, name, {
+        enumerable: false,
+        get: all[name]
+    });
+}
+////= export-3
+const a = "a";
+//// swc-export-helper-look-alikes/object-shadowed.cjs
+"use strict";
+var calls = 0;
+var Object = { defineProperty(target, name, descriptor) { calls++; target[name] = "from the shadow"; } };
+////= export-2
+////= export-3
+const a = "a";
+exports.calls = calls;
+//// swc-export-helper-look-alikes/order-of-names-looked-at.cjs
+"use strict";
+////= export-2
+////= export-4
+const a = "a", b = "b", one = "one", zero = "zero";
+//// swc-export-helper-look-alikes/order-of-names.cjs
+"use strict";
+////= export-2
+////= export-4
+const a = "a", b = "b", one = "one", zero = "zero";
+//// swc-export-helper-look-alikes/stored-behind-the-definition.cjs
+////= export-2
+////= export-3
+const a = "a";
+exports.a = "stored";
+exports.result = exports.a;
+//// swc-export-helper-look-alikes/value-in-place-of-a-getter.cjs
+"use strict";
+////= export-2
+_export(exports, {
+    a: 1
+});
+//// swc-output/main.cjs
+// CommonJS as SWC emits it: `_export(exports, { name: function() { return name; } })` defines a getter for each name. Nobody looks at the objects, so the names are variables. report.cjs hands on a name of a module that it requires behind the definition, and keeps its object.
+// STATISTIC: ModulesWithNames = 2
+"use strict";
+const _shapes = require("./shapes.cjs");
+const _report = require("./report.cjs");
+const square = new _shapes.Square(3);
+console.log((0, _shapes.area)(square), _shapes.UNIT, _shapes.default.name, _shapes.__esModule);
+console.log((0, _report.describe)(square), (0, _report.count)());
+console.log((0, _report.describe)(new _shapes.Square(4)), (0, _report.count)());
+console.log(typeof _shapes.missing, typeof _report.area, _report.unit);
+//// swc-output/report.cjs
+"use strict";
+////= Object-defineProperty
+0 && (module.exports = {
+    count: null,
+    describe: null,
+    unit: null
+});
+////= export-2
+_export(exports, {
+    count: function() {
+        return count;
+    },
+    describe: function() {
+        return describe;
+    },
+    unit: function() {
+        return _units.unit;
+    }
+});
+const _shapes = require("./shapes.cjs");
+const _units = require("./units.cjs");
+let described = 0;
+function count() {
+    return described;
+}
+function describe(shape) {
+    described++;
+    return (0, _shapes.area)(shape) + " " + _shapes.UNIT + "2";
+}
+//// swc-output/shapes.cjs
+"use strict";
+////= Object-defineProperty
+0 && (module.exports = {
+    Square: null,
+    UNIT: null,
+    area: null,
+    default: null
+});
+////= export-2
+_export(exports, {
+    Square: function() {
+        return Square;
+    },
+    UNIT: function() {
+        return UNIT;
+    },
+    area: function() {
+        return area;
+    },
+    default: function() {
+        return _default;
+    }
+});
+const UNIT = "cm";
+class Square {
+    constructor(side){
+        this.side = side;
+    }
+}
+function area(shape) {
+    return shape.side * shape.side;
+}
+const _default = Square;
+//// swc-output/units.cjs
+"use strict";
+////= Object-defineProperty
+Object.defineProperty(exports, "unit", {
+    enumerable: true,
+    get: function() {
+        return unit;
+    }
+});
+const unit = "centimeter";
+//// swc-output-in-a-cycle/a.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+////= export-2
+_export(exports, {
+    fromA: function() {
+        return fromA;
+    },
+    seen: function() {
+        return seen;
+    },
+    late: function() {
+        return late;
+    }
+});
+const _b = require("./b.cjs");
+const late = "late";
+const seen = _b.report;
+function fromA() { return "a+" + (0, _b.fromB)(); }
+//// swc-output-in-a-cycle/b.cjs
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+////= export-2
+////= export-9	fromB	report
+const _a = require("./a.cjs");
+let text = typeof _a.fromA;
+try { text += " " + _a.late; } catch (error) { text += " " + error.name + ": " + error.message; }
+const report = text;
+function fromB() { return "b"; }
+//// swc-output-in-a-cycle/main.cjs
+// A cycle of requests between two modules as SWC emits them. b.cjs finds a.cjs half done: the functions are there, a constant is in its dead zone.
+"use strict";
+const a = require("./a.cjs");
+console.log(a.fromA(), a.seen);
+//// swc-output-seen-half-done/a.cjs
+"use strict";
+////= Object-defineProperty
+0 && (module.exports = {
+    C: null,
+    f: null,
+    l: null,
+    v: null,
+    x: null
+});
+////= export-2
+_export(exports, {
+    C: function() {
+        return C;
+    },
+    f: function() {
+        return f;
+    },
+    l: function() {
+        return l;
+    },
+    v: function() {
+        return v;
+    },
+    x: function() {
+        return x;
+    }
+});
+console.log(globalThis.hook("first"));
+const x = 1;
+console.log(globalThis.hook("behind x"));
+var v = 2;
+let l = 3;
+class C {}
+function f() { return "f"; }
+console.log(globalThis.hook("last"));
+//// swc-output-seen-half-done/b.cjs
+"use strict";
+const _a = require("./a.cjs");
+function look(read) { try { const value = read(); return typeof value === "function" ? "function " + value.name : String(value); } catch (error) { return error.name + ": " + error.message; } }
+exports.peek = function () {
+  return [look(() => _a.f), look(() => _a.x), look(() => _a.v), look(() => _a.l), look(() => _a.C), look(() => (0, _a.f)()), look(() => _a.missing), look(() => _a.__esModule)].join(" | ");
+};
+//// swc-output-seen-half-done/main.cjs
+// A late require fires while a.cjs is half done, and b.cjs reads names of a.cjs that getters stand for. The getters are defined before anything else runs, so the names are variables, dead zones and all.
+// STATISTIC: ModulesWithNames = 2
+"use strict";
+globalThis.hook = function (where) { const b = require("./b.cjs"); return where + ": " + b.peek(); };
+const a = require("./a.cjs");
+console.log(globalThis.hook("after"));
+console.log(a.f(), a.x, a.v, a.C.name, a.l);
+//// symbols-at-the-top-of-modules-that-can-throw/helper.cjs
+function check(step) {
+  if (typeof step !== "number") throw new TypeError("not a number: " + String(step));
+  return step;
+}
+const step = check(2);
+let state = 0;
+function start() {
+  state += step;
+  return state;
+}
+module.exports = { check, start };
+//// symbols-at-the-top-of-modules-that-can-throw/keys.cjs
+const helper = require("./helper.cjs");
+const kState = Symbol("state");
+const kBare = Symbol();
+class Box {
+  constructor() {
+    this[kState] = helper.start();
+    this[kBare] = "bare";
+  }
+  get state() { return this[kState]; }
+}
+function stateOf(box) { return box[kState]; }
+helper.check(new Box().state);
+module.exports = { Box, kState, kBare, stateOf };
+//// symbols-at-the-top-of-modules-that-can-throw/main.cjs
+// Three CommonJS modules. Each is required at the top level of the one before it, outside every function and every `try`. All three bodies call something, so each of them can throw, but no code would run after such a failure and require the module again: each body runs at most once, and a symbol made at the top of one is the same symbol wherever it is used. commonjs/what-a-failed-run-let-out and commonjs/symbols-of-failed-module-body have the bodies that do run twice.
+const { Box, kState, kBare, stateOf } = require("./keys.cjs");
+const again = require("./keys.cjs");
+function readHere(box) { return box[kState]; }
+function storeHere(box, value) { box[kState] = value; return box; }
+
+const first = new Box(), second = new Box();
+console.log("states:", first.state, second.state, first[kState], second[again.kState], stateOf(second), readHere(first));
+console.log("own symbols:", Object.getOwnPropertySymbols(new Box()).length, Object.getOwnPropertySymbols(first)[0] === kState, Object.getOwnPropertySymbols(first)[1] === kBare);
+console.log("own names:", Object.keys(first).length, JSON.stringify(first));
+console.log("descriptions:", kState.description, String(kState), typeof kState, kBare.description, String(kBare));
+console.log("two requires:", again.kState === kState, again.kBare === kBare, again.Box === Box, again === require("./keys.cjs"));
+console.log("no two alike:", kState === kBare, kState === Symbol("state"), kState === Symbol.for("state"), Symbol.keyFor(kState));
+
+let total = 0;
+for (let i = 0; i < 300; i++) {
+  const box = new Box();
+  total += box.state + readHere(box) + stateOf(box);
+}
+console.log("total:", total);
+
+console.log("stored from here:", storeHere(first, "stored").state, stateOf(first), second.state);
+console.log("present:", kState in first, kState in {}, Object.hasOwn(first, kState), Object.hasOwn(Box.prototype, kState), readHere({}), readHere(Object.create(first)));
+console.log("under a key that is handed over:", [kState, kBare, "state"].map(key => String(first[key])).join());
+console.log("deleted:", delete first[kState], first.state, Object.getOwnPropertySymbols(first).length);
+//// symbols-of-a-module-that-is-imported-late/app.cjs
+"use strict";
+const Reply = require("./reply.cjs");
+exports.run = function (count) {
+  const raw = [];
+  for (let index = 0; index < count; index++) {
+    const reply = new Reply(raw).code(200 + index);
+    if (index & 1) reply.header("n", index);
+    reply.send("text " + reply.sent);
+    if (index === 3) raw.push(String(reply.lost(index)));
+    if (index >= 3) raw.push(Reply.describe(reply));
+  }
+  return raw.join("\n");
+};
+//// symbols-of-a-module-that-is-imported-late/main.mjs
+// The symbols of a CommonJS module name fields though import() starts the program: somebody may see each module before its body has ended, so each symbol is the symbol or undefined as far as the compiler knows.
+const { run } = await import("./app.cjs");
+console.log(run(5));
+//// symbols-of-a-module-that-is-imported-late/reply.cjs
+"use strict";
+const { kState, kHeaders, kSent, kMissing } = require("./symbols.cjs");
+function Reply(raw) {
+  this.raw = raw;
+  this[kState] = 0;
+  this[kHeaders] = null;
+  this[kSent] = false;
+}
+Object.defineProperties(Reply.prototype, {
+  sent: {
+    get() {
+      return this[kSent] === true;
+    },
+  },
+});
+Reply.prototype.code = function (state) {
+  this[kState] = state;
+  return this;
+};
+Reply.prototype.header = function (name, value) {
+  (this[kHeaders] ??= {})[name] = value;
+  return this;
+};
+Reply.prototype.send = function (text) {
+  if (this.sent) throw new Error("sent twice");
+  this[kSent] = true;
+  this.raw.push(this[kState] + " " + JSON.stringify(this[kHeaders]) + " " + text);
+  return this;
+};
+// No module exports the name: the key is undefined, and the property has the name "undefined".
+Reply.prototype.lost = function (value) {
+  this[kMissing] = value;
+  return kMissing in this && "undefined" in this && this[kMissing] === this.undefined;
+};
+Reply.describe = function (reply) {
+  return Reflect.ownKeys(reply).map(String).join(",") + " | " + Object.keys(reply).join(",") + " | " + (kState in reply) + " " + Object.hasOwn(reply, kSent) + " " + delete reply[kHeaders] + " " + (kHeaders in reply);
+};
+module.exports = Reply;
+//// symbols-of-a-module-that-is-imported-late/symbols.cjs
+"use strict";
+const keys = {
+  kState: Symbol("state"),
+  kHeaders: Symbol("headers"),
+  kSent: Symbol("sent"),
+};
+module.exports = keys;
+//// symbols-of-a-module-that-is-seen-half-evaluated/holder.cjs
+"use strict";
+let { kFirst, kSecond } = require("./symbols.cjs");
+exports.sawAtStart = typeof kFirst + " " + typeof kSecond;
+function Holder(first, second) {
+  this.plain = 0;
+  this[kFirst] = first;
+  this[kSecond] = second;
+}
+exports.make = (first, second) => new Holder(first, second);
+exports.read = holder => holder[kFirst] + " " + holder[kSecond] + " " + holder.undefined + " " + (kFirst in holder);
+exports.look = () => {
+  ({ kFirst, kSecond } = require("./symbols.cjs"));
+};
+//// symbols-of-a-module-that-is-seen-half-evaluated/main.cjs
+// A module on a cycle reads the symbols of a module whose body has not ended: the keys are undefined there and the symbols everywhere else, in one and the same function.
+"use strict";
+const early = require("./symbols.cjs");
+const { make, read } = require("./holder.cjs");
+const late = make(1, 2);
+console.log(Reflect.ownKeys(late).map(String).join(","), read(late));
+console.log(Object.keys(early).join(","), typeof early.kFirst, require("./holder.cjs").sawAtStart);
+//// symbols-of-a-module-that-is-seen-half-evaluated/symbols.cjs
+"use strict";
+// holder.cjs runs here, in front of the store below, and sees the object that this module began with.
+const holder = require("./holder.cjs");
+const atStart = holder.make(3, 4);
+console.log(Reflect.ownKeys(atStart).map(String).join(","), holder.read(atStart));
+module.exports = { kFirst: Symbol("first"), kSecond: Symbol("second") };
+holder.look();
+const behind = holder.make(5, 6);
+console.log(Reflect.ownKeys(behind).map(String).join(","), holder.read(behind));
+//// syntax-only-typescript-rejects.js
+// Syntax that TypeScript reports and JavaScript accepts, in a CommonJS module in sloppy mode. Plain Bun declares no `var` for the labeled function, so the output is stored.
+module.exports = {};
+var o = { x: "a property read through with" };
+with (o) { console.log(x); }
+var variable = 1;
+console.log(delete variable, variable);
+var let = "let";
+var yield = "yield";
+var static = "static";
+var implements = "implements";
+console.log(let, yield, static, implements);
+a: function f() { return "a labeled function"; }
+console.log(f());
+b: var c = 1;
+console.log(c);
+console.log({ p: 1, p: 2 }.p);
+console.log({ get q() { return 1; }, q: 2 }.q);
+var received;
+({ set r(v = 1) { received = v; } }).r = undefined;
+console.log(received);
+var withoutPrototype = { __proto__: null, ["__proto__"]: 1 };
+console.log(Object.getPrototypeOf(withoutPrototype), Object.keys(withoutPrototype), withoutPrototype.__proto__);
+console.log(class { static constructor() { return "a static method"; } }.constructor());
+console.log(new (class { m() { return 1; } m() { return 2; } })().m());
+for (var [k] in { ab: 1 }) console.log(k);
+for (var i = 0 in {});
+console.log(i);
+var tests = 0;
+if (tests++);
+console.log(tests);
+return;
+console.log("after the return");
+//// the-children-are-stored-under-a-key-made-at-run-time/counter.cjs
+////= module-exports
+//// the-children-are-stored-under-a-key-made-at-run-time/main.cjs
+// The store names the property by a key that is put together when the program runs.
+const key = ["chil", "dren"].join("");
+void module.children;
+module[key] = {
+  indexOf: () => -1,
+  push(child) {
+    child.exports.prototype.add = x => x + 1000;
+  },
+};
+const Counter = require("./counter.cjs");
+const read = typeof module.children;
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += new Counter().add(i);
+console.log(sum);
+//// the-entry-point-is-a-bundle-in-the-commonjs-format-of-bun-build/main.cjs
+// @bun @bun-cjs
+(function(exports, require, module, __filename, __dirname) {console.log("the body runs", typeof require, typeof module, exports === module.exports);
+exports.a = 1;
+})
+//// the-fields-of-a-module-object-are-defined-anew-or-stored-through-another-name/main.cjs
+// The fields of a module object are defined anew or stored through another name.
+Object.defineProperty(module, "id", { get() { return "from a getter"; } });
+Object.defineProperty(module, "loaded", { value: 7 });
+console.log(module.id, module.loaded);
+const m = module;
+m.filename = "through another name";
+console.log(module.filename);
+//// the-fields-of-a-module-object-are-stored-to-by-its-parent/a.cjs
+const path = require("path");
+exports.read = () => [path.basename(module.id), module.loaded];
+exports.readMain = () => require.main.id + "|" + module.parent.id;
+//// the-fields-of-a-module-object-are-stored-to-by-its-parent/main.cjs
+// The fields of a module object are stored to by its parent.
+const a = require("./a.cjs");
+console.log(a.read().join());
+module.children[0].id = "set by the parent";
+module.children[0].loaded = "set by the parent";
+console.log(a.read().join());
+require.main.id = "main's new id";
+console.log(module.id, a.readMain());
+//// the-id-and-loaded-of-a-module-object-are-deleted/main.cjs
+// The id and loaded of a module object are deleted.
+delete module.id; delete module.loaded;
+console.log(module.id, module.loaded, "id" in module, Object.keys(module).includes("loaded"));
+const { id, loaded, filename = "none" } = module;
+console.log(id, loaded, typeof filename);
+//// top-level-arguments/files/lib.js
+exports.count = arguments.length;
+exports.isItsOwnExports = arguments[0] === exports;
+exports.isItsOwnModule = arguments[2] === module;
+exports.later = (() => arguments.length)();
+//// top-level-arguments/main.js
+// `arguments` at the top level of a CommonJS module: the five values of the module wrapper.
+function said(f) { try { return String(f()); } catch (e) { return "threw " + e.name; } }
+function row(label, f) { console.log(label + ": " + said(f)); }
+console.log("control: which mode this file is in: " + (function () { return this === undefined ? "strict" : "sloppy"; })());
+console.log("straight in the body: " + typeof arguments + " " + arguments.length);
+row("row 179", () => typeof arguments);
+row("how many", () => arguments.length);
+row("what it is", () => Object.prototype.toString.call(arguments));
+row("exports", () => [arguments[0] === exports, arguments[0] === module.exports, arguments[0] === this].join());
+row("module", () => [arguments[2] === module, arguments[2].exports === exports].join());
+row("the two paths", () => [typeof arguments[3], typeof arguments[4], arguments[3].startsWith(arguments[4])].join());
+row("beyond the five", () => [arguments[5], 5 in arguments, 4 in arguments].join());
+row("its keys", () => Object.keys(arguments).join());
+row("one object", () => [arguments === arguments, (() => arguments)() === arguments, (() => () => arguments)()() === arguments].join());
+row("spread", () => [...arguments].length);
+row("Array.from", () => Array.from(arguments).map((a, i) => i === 1 ? "-" : typeof a).join());
+row("slice", () => Array.prototype.slice.call(arguments, 0, 1)[0] === exports);
+row("handed on by apply", () => (function (e, r, m) { return [e === exports, m === module, arguments.length].join(); }).apply(this, arguments));
+row("handed on by spread", () => ((e, r, m, ...rest) => [e === exports, m === module, rest.length].join())(...arguments));
+row("a store through it is seen", () => { arguments[0].through = "seen"; return exports.through; });
+row("a store to module.exports through it", () => { const before = module.exports; arguments[2].exports = { other: 1 }; const r = module.exports.other; module.exports = before; return r; });
+row("control: a function's own", () => (function () { return arguments.length; })(1, 2));
+row("control: an arrow in a function", () => (function () { return (() => arguments.length)(); })(1, 2, 3));
+const lib = require("./files/lib.js");
+row("in a module that is required", () => JSON.stringify(lib));
+//// top-level-class-reads-later-constants/main.cjs
+// A class at the top level of a CommonJS file is created before the file's other statements, as under `bun run`. Its members read constants of the file that are initialized after that.
+const calls = [];
+let count = 0;
+class Recorder {
+  note(value) { calls.push(value); return ++count; }
+  get size() { return calls.length; }
+  set last(value) { calls[calls.length - 1] = value; }
+  static create() { calls.push("created"); return new Recorder(); }
+}
+const recorder = Recorder.create();
+console.log(recorder.note("a"), recorder.size);
+recorder.last = "b";
+console.log(calls.join(), count);
+
+function early() {
+  try {
+    return typeof Later + " " + new Later().read();
+  } catch (error) {
+    return error.name;
+  }
+}
+console.log(early());
+const late = "late";
+class Later { read() { return late; } }
+console.log(early());
+
+const base = class {};
+class Heir extends base { read() { return late + calls.length; } }
+console.log(new Heir().read());
+//// top-level-new-target.js
+// The code of a CommonJS file is the body of a function that is called, not constructed: `new.target` is allowed at its top and is undefined, in arrow functions there too.
+const inArrow = () => new.target;
+console.log(typeof new.target, new.target === undefined, typeof inArrow());
+function Made() { return [typeof new.target, (() => typeof new.target)()]; }
+console.log(new Made().join(), Made().join());
+module.exports = typeof new.target;
+console.log(module.exports);
+//// top-level-this-in-typescript/commonjs.cts
+let local: number = 40;
+try { console.log(eval("1 + 1")) } catch (e) { console.log(String(e)) }; console.log(typeof require("./helper.cjs").join)
+console.log("commonjs.cts", eval("local + 1"));
+eval("local = 45");
+const holder = { self: this };
+console.log(local, typeof this, holder.self === module.exports, eval("typeof this"));
+//// top-level-this-in-typescript/exports-only.ts
+let local: number = 10;
+console.log("exports-only.ts", eval("local + 1"));
+eval("local = 50");
+const holder = { self: this };
+console.log(local, typeof this, holder.self === module.exports, eval("typeof this"));
+module.exports = { done: true };
+//// top-level-this-in-typescript/helper.cjs
+exports.join = function join() {};
+//// top-level-this-in-typescript/javascript.cjs
+let local = 80;
+try { console.log(eval("1 + 1")) } catch (e) { console.log(String(e)) }; console.log(typeof require("./helper.cjs").join)
+console.log("javascript.cjs", eval("local + 1"));
+eval("local = 85");
+const holder = { self: this };
+console.log(local, typeof this, holder.self === module.exports, eval("typeof this"));
+//// top-level-this-in-typescript/javascript.js
+let local = 70;
+try { console.log(eval("1 + 1")) } catch (e) { console.log(String(e)) }; console.log(typeof require("./helper.cjs").join)
+console.log("javascript.js", eval("local + 1"));
+eval("local = 75");
+const holder = { self: this };
+console.log(local, typeof this, holder.self === module.exports, eval("typeof this"));
+//// top-level-this-in-typescript/main.ts
+// The top-level `this` of a TypeScript file that runs as CommonJS is its `module.exports`, though TypeScript says `undefined`. It is kept in typed places and handed to a direct eval without a TypeError.
+let local: number = 1;
+try { console.log(eval("1 + 1")) } catch (e) { console.log(String(e)) }; console.log(typeof require("./helper.cjs").join)
+console.log("main.ts", eval("local + 1"));
+eval("local = 5");
+console.log(local, typeof this, this === module.exports, eval("typeof this"));
+const holder = { self: this };
+const list = [this];
+function kindOf(value: unknown): string { return typeof value; }
+class Keeper { kept = this; static first = this; }
+console.log(typeof holder.self, holder.self === module.exports, typeof list[0], kindOf(this), typeof new Keeper().kept, Keeper.first === Keeper);
+const inArrow = () => eval("typeof this + local");
+function inFunction(this: unknown) { return eval("typeof this + local"); }
+console.log(inArrow(), inFunction());
+require("./exports-only.ts");
+require("./this-only.ts");
+require("./without-signs.ts");
+require("./commonjs.cts");
+require("./module.mts");
+require("./javascript.js");
+require("./javascript.cjs");
+//// top-level-this-in-typescript/module.mts
+let local: number = 60;
+try { console.log(eval("1 + 1")) } catch (e) { console.log(String(e)) }; console.log(typeof require("./helper.cjs").join)
+console.log("module.mts", eval("local + 1"));
+eval("local = 65");
+console.log(local, eval("typeof this"));
+export {};
+//// top-level-this-in-typescript/this-only.ts
+let local: number = 20;
+const holder = { self: this };
+console.log("this-only.ts", typeof holder.self, eval("local + 1"), eval("typeof this"));
+//// top-level-this-in-typescript/without-signs.ts
+let local: number = 30;
+console.log("without-signs.ts", eval("local + 1"));
+eval("local = 35");
+console.log(local);
+//// top-level-this-is-the-receiver/called-again.cjs
+if (typeof exports === "number") {
+  console.log("again", exports, typeof this, String(this), (() => String(this))());
+} else {
+  console.log("first", this === exports);
+  arguments.callee.call("receiver", 7);
+}
+//// top-level-this-is-the-receiver/main.cjs
+// `this` at the top of a CommonJS file is the receiver of the call of `function (exports, require, module, __filename, __dirname) { .. }`: the loader passes `module.exports` as it is at that moment, and a store to `exports` or to `module.exports` does not change it. Plain Bun's transpiler writes the variable `exports` in its place, so the expected output follows ECMAScript.
+const first = exports;
+console.log(this === first, this === module.exports);
+exports = "stored";
+console.log(this === first, typeof this);
+module.exports = { replaced: true };
+console.log(this === first, this === module.exports);
+console.log((() => this === first)(), (() => () => typeof this)()());
+{
+  console.log(this === first);
+}
+function own() { return this === first; }
+console.log(own(), own.call(first));
+this.added = 1;
+console.log(first.added, module.exports.added);
+console.log(eval("this") === first);
+require("./called-again.cjs");
+require("./strict.cjs");
+//// top-level-this-is-the-receiver/strict.cjs
+"use strict";
+const first = exports;
+exports = undefined;
+console.log(this === first, this === module.exports);
+//// top-level-this-kept-in-typed-places.ts
+// The top-level `this` of a TypeScript file that runs as CommonJS is its `module.exports`: an object literal, an array, a parameter, a field and a direct eval's scope take it without a TypeError.
+let local: number = 1;
+const holder = { self: this };
+const list = [this];
+function kindOf(value: unknown): string { return typeof value; }
+class Keeper { kept: unknown = undefined; }
+const keeper = new Keeper();
+keeper.kept = this;
+console.log(typeof this, typeof holder.self, holder.self === module.exports, typeof list[0], kindOf(this), keeper.kept === module.exports);
+console.log(eval("local + 1"), eval("typeof this"));
+eval("local = 5");
+const inArrow = () => eval("typeof this + local");
+console.log(local, inArrow());
+//// two-files-export-one-object-with-closures/lib.cjs
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory();
+  else root.lib = factory();
+})(this, function () {
+  var calls = 0;
+  return {
+    first: function () { return "first " + ++calls; },
+    second: function () { return "second " + ++calls; },
+    third: function () { return "third " + ++calls; },
+    fourth: function () { return "fourth " + ++calls; },
+  };
+});
+//// two-files-export-one-object-with-closures/main.mjs
+// Two CommonJS files export the same object. Each importer holds the closures of that one object.
+import { first } from "./lib.cjs";
+import { first as firstAgain } from "./same.cjs";
+import lib from "./lib.cjs";
+const key = name => (process.argv.length > 99 ? "other" : name);
+console.log(first === firstAgain, first(), firstAgain());
+const second = lib[key("second")];
+lib[key("second")] = null;
+lib[key("third")] = undefined;
+const [one, other] = [await import("./lib.cjs"), await import("./same.cjs")];
+console.log(one.second === second, other.second === second, one.second());
+console.log(typeof one.third, one.third === other.third, one.third(), lib.third);
+console.log(one.fourth === other.fourth, one.fourth === lib.fourth, other.fourth());
+//// two-files-export-one-object-with-closures/same.cjs
+module.exports = require("./lib.cjs");
+//// typescript-with-js-extension/helpers.js
+module.exports = {
+  square(n: number): number {
+    return n * n;
+  },
+};
+//// typescript-with-js-extension/main.ts
+// TypeScript text in files called .js (--loader .js:ts) is TypeScript in which `require`, `module.exports` and `exports` mean CommonJS.
+import { describe, measure, Point } from "./shapes.js";
+console.log(measure(3, 4), measure(5, 12));
+console.log(describe(new Point(1, 2)), describe(new Point(0, 0).scaled(3)));
+//// typescript-with-js-extension/shapes.js
+"use strict";
+const helpers = require("./helpers.js");
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  norm(): number {
+    return Math.sqrt(helpers.square(this.x) + helpers.square(this.y));
+  }
+  scaled(by: number): Point {
+    return new Point(this.x * by, this.y * by);
+  }
+}
+function measure(x: number, y: number): number {
+  const point = new Point(x, y);
+  return point.scaled(2).norm() + point.x;
+}
+function describe(point: Point): string {
+  return point.x + "," + point.y + ":" + point.norm();
+}
+exports.Point = Point;
+exports.measure = measure;
+exports.describe = describe;
+//// use-strict-lookalikes/main.ts
+// A directive is told by its text, not by its value: `"use strict"` or `'use strict'`, those twelve characters, as a statement of its own at the start of a body.
+// A string with an escape or a line continuation in it, one in parentheses, and a template have the same value and are no directive: the function stays sloppy.
+import { answers } from "./sloppy.cjs";
+console.log(answers());
+//// use-strict-lookalikes/sloppy.cjs
+function hexadecimalEscape() { "use\x20strict"; return typeof this; }
+function unicodeEscape() { "use\u{20}strict"; return typeof this; }
+function lineContinuation() { "use str\
+ict"; return typeof this; }
+function inParentheses() { ("use strict"); return typeof this; }
+function template() { `use strict`; return typeof this; }
+function behindParentheses() { ("other"); "use strict"; return typeof this; }
+function behindTemplate() { `other`; "use strict"; return typeof this; }
+function behindNumber() { 1; "use strict"; return typeof this; }
+function partOfSum() { "use strict" + ""; return typeof this; }
+function receiver() { "use strict"
+  .length; return typeof this; }
+function upperCase() { "USE STRICT"; return typeof this; }
+function withSpace() { " use strict"; return typeof this; }
+function parameters(a) { "use\x20strict"; a = 2; return arguments[0]; }
+const arrow = function () { return (() => { ("use strict"); return typeof this; })(); };
+const all = [hexadecimalEscape, unicodeEscape, lineContinuation, inParentheses, template, behindParentheses, behindTemplate, behindNumber, partOfSum, receiver, upperCase, withSpace, arrow];
+exports.answers = () => all.map(f => f.name + ": " + f.call(5)).join("\n") + "\nparameters: " + parameters(1);
+//// var-initializer-under-with.js
+// `var x = e` under `with` resolves `x` before it evaluates `e`, so an initializer that adds or deletes the property does not change where the value goes.
+function initializerDeletesProperty() {
+  var scope = { x: 0 };
+  with (scope) {
+    var x = (delete scope.x, 1);
+  }
+  return scope.x + " " + x;
+}
+console.log("initializer deletes the property:", initializerDeletesProperty());
+
+function initializerAddsProperty() {
+  var scope = {};
+  with (scope) {
+    var x = ((scope.x = 5), 1);
+  }
+  return scope.x + " " + x;
+}
+console.log("initializer adds the property:", initializerAddsProperty());
+
+function initializerMovesProperty() {
+  var outer = {};
+  var inner = { x: "inner" };
+  with (outer) {
+    with (inner) {
+      var x = (delete inner.x, (outer.x = "outer"), "stored");
+    }
+  }
+  return outer.x + " " + inner.x + " " + x;
+}
+console.log("initializer moves the property to the outer object:", initializerMovesProperty());
+
+function lookupComesFirst() {
+  var order = [];
+  var scope = new Proxy(
+    {},
+    {
+      has(target, key) {
+        if (key === "x") order.push("has x");
+        return Reflect.has(target, key);
+      },
+    },
+  );
+  with (scope) {
+    var x = order.push("initializer");
+  }
+  return order.join() + " " + x;
+}
+console.log("the lookup comes first:", lookupComesFirst());
+
+function functionIsNamed() {
+  var scope = { named: null };
+  with (scope) {
+    var named = function () {};
+  }
+  return scope.named.name + " " + named;
+}
+console.log("a function is named by the variable:", functionIsNamed());
+//// what-stands-in-place-of-the-list-of-children-gets-a-file-when-it-is-required/counter.cjs
+////= module-exports
+//// what-stands-in-place-of-the-list-of-children-gets-a-file-when-it-is-required/main.cjs
+// What stands in the place of the list gets each file at the moment it is required, not at the next read of `module.children`: the method is changed before the first call.
+const seen = [];
+////= module-children
+const Counter = require("./counter.cjs");
+let sum = 0;
+for (let i = 0; i < 1000; i++) sum += new Counter().add(i);
+console.log(sum, seen.join());
+//// with-statement-scopes.js
+// `with` in a CommonJS module: a name in the body resolves to a property of the object if the object has one at that moment, otherwise to the enclosing binding.
+var outer = "outer";
+var point = { x: 1, y: 2 };
+
+with (point) {
+  console.log("reads:", x, y, outer);
+  x = 10;
+  y += x;
+  outer = "stored in the body";
+}
+console.log("stores:", point.x, point.y, outer, "x" in globalThis);
+
+with (point) y = x * 2;
+console.log("single statement:", point.y);
+with (point) console.log("typeof:", typeof x, typeof missing);
+
+function scale(vector, factor) {
+  with (vector) {
+    return [x * factor, y * factor].join();
+  }
+}
+console.log("in a function:", scale(point, 3), "| a property shadows the parameter:", scale({ x: 1, y: 1, factor: 100 }, 3));
+
+function addAndDelete() {
+  var name = "variable";
+  var scope = {};
+  var seen = [];
+  with (scope) {
+    seen.push(name);
+    scope.name = "property";
+    seen.push(name);
+    name = "stored";
+    seen.push(scope.name);
+    delete scope.name;
+    seen.push(name);
+  }
+  return seen.join();
+}
+console.log("a property added and deleted in the body:", addAndDelete());
+
+function declarations() {
+  var holder = { value: "property", local: "property" };
+  with (holder) {
+    var value = "initializer";
+    let local = "block scoped";
+    var copy = local;
+  }
+  return [holder.value, String(value), copy, holder.local].join();
+}
+console.log("var initializer, let:", declarations());
+
+function closure() {
+  var counter = { count: 0 };
+  var increment;
+  with (counter) increment = () => ++count;
+  increment();
+  increment();
+  return counter.count;
+}
+console.log("a closure created in the body:", closure());
+
+function receiver() {
+  var account = {
+    balance: 5,
+    read() {
+      return this === account ? this.balance : "another receiver";
+    },
+  };
+  with (account) return read();
+}
+console.log("this of a call by name:", receiver());
+
+function unscopables() {
+  var hidden = "variable";
+  var keys = "variable";
+  var scope = { hidden: "property", shown: "property", [Symbol.unscopables]: { hidden: true } };
+  with (scope) var own = hidden + " " + shown;
+  with ([1, 2]) var inherited = keys + " " + length + " " + typeof join;
+  return own + " | " + inherited;
+}
+console.log("Symbol.unscopables:", unscopables());
+
+function nested() {
+  var first = { shared: "first", a: 1 };
+  var second = { shared: "second", b: 2 };
+  with (first) with (second) return [shared, a, b].join();
+}
+console.log("nested:", nested());
+
+function objectConversion(value) {
+  try {
+    with (value) return typeof length;
+  } catch (error) {
+    return error.constructor.name;
+  }
+}
+console.log("ToObject:", objectConversion("text"), objectConversion(0), objectConversion(null), objectConversion(undefined));
+
+function continueFromBody() {
+  var totals = [];
+  for (var item of [{ n: 1 }, { n: 2 }, { n: 3 }]) {
+    with (item) {
+      if (n === 2) continue;
+      totals.push(n);
+    }
+  }
+  return totals.join();
+}
+console.log("continue out of the body:", continueFromBody());
+
+function throwFromBody() {
+  var n = "variable";
+  try {
+    with ({ n: "property" }) throw n;
+  } catch (thrown) {
+    return thrown + ", then " + n;
+  }
+}
+console.log("throw out of the body:", throwFromBody());
+
+module.exports = { point };
+//// words-reserved-in-strict-code-alone-name-variables-and-parameters/main.cjs
+// Words reserved in strict code alone name variables and parameters.
+var package = require("./package.json");
+var interface = 1, private = 2, public = 3, protected = 4, static = 5, implements = 6;
+function f(package, interface) { return package + interface; }
+console.log(package.name, interface + private + public + protected + static + implements, f(1, 2));
+//// words-reserved-in-strict-code-alone-name-variables-and-parameters/package.json
+{ "name": "named" }
+//// words-reserved-in-strict-code-alone-name-variables-in-a-js-file/main.js
+// Words reserved in strict code alone name variables in a js file.
+var package = require("./package.json");
+var interface = 1, private = 2, public = 3, protected = 4, static = 5, implements = 6;
+module.exports = function (static) { return static; };
+console.log(package.name, interface + private + public + protected + static + implements);
+//// words-reserved-in-strict-code-alone-name-variables-in-a-js-file/package.json
+{ "name": "named" }
+//// wrapper-arguments-object/assigned.cjs
+const object = arguments;
+console.log(arguments === object, object.length);
+var arguments = ["replaced"];
+console.log(arguments.length, arguments[0], object.length);
+object[0] = "still mapped";
+console.log(exports);
+//// wrapper-arguments-object/called-again.cjs
+if (typeof exports === "number") {
+  console.log("again", exports, require, arguments.length);
+} else {
+  console.log("first", typeof exports, typeof require, arguments.length);
+  arguments.callee(7);
+}
+//// wrapper-arguments-object/free-name-in-module.mjs
+console.log(typeof arguments);
+try {
+  arguments;
+} catch (error) {
+  console.log(error instanceof ReferenceError);
+}
+console.log((() => typeof arguments)());
+//// wrapper-arguments-object/main.cjs
+// `arguments` at the top of a CommonJS file is the arguments object of `function (exports, require, module, __filename, __dirname) { .. }`: five arguments, which in sloppy code are one variable with the five parameters.
+console.log(arguments.length);
+console.log(arguments[0] === exports, arguments[1] === require, arguments[2] === module);
+console.log(arguments[3] === __filename, arguments[4] === __dirname, arguments[5]);
+console.log(typeof arguments, Object.prototype.toString.call(arguments), Array.isArray(arguments));
+console.log(typeof arguments.callee, arguments.callee.length);
+
+const fromArrow = (...own) => [arguments.length, own.length];
+function ownObject() { return arguments.length; }
+console.log(fromArrow(1, 2), ownObject(1, 2));
+{
+  console.log(arguments.length, (() => () => arguments[2] === module)()());
+}
+
+const firstExports = exports;
+arguments[0] = "stored through the object";
+console.log(exports, module.exports === firstExports);
+exports = "stored to the parameter";
+console.log(arguments[0]);
+(() => { arguments[0] = firstExports; })();
+console.log(exports === firstExports);
+
+const firstRequire = require;
+arguments[1] = (name) => "not loaded: " + name;
+console.log(require("./strict.cjs"));
+require = firstRequire;
+console.log(arguments[1] === firstRequire);
+
+__filename = "renamed";
+console.log(arguments[3]);
+delete arguments[4];
+arguments[4] = "no longer mapped";
+console.log(__dirname === "no longer mapped", arguments[4]);
+
+require("./strict.cjs");
+require("./redeclared.cjs");
+require("./assigned.cjs");
+require("./shadowed.cjs");
+require("./called-again.cjs");
+require("./free-name-in-module.mjs");
+//// wrapper-arguments-object/redeclared.cjs
+var arguments;
+var exports, module;
+console.log(arguments.length, arguments[0] === exports, arguments[2] === module);
+arguments[0] = "stored through the object";
+console.log(exports);
+module = "stored to the variable";
+console.log(arguments[2]);
+//// wrapper-arguments-object/shadowed.cjs
+function arguments() {}
+console.log(typeof arguments, arguments.length);
+{
+  let arguments = "in a block";
+  console.log(arguments);
+}
+//// wrapper-arguments-object/strict.cjs
+"use strict";
+console.log(arguments.length, arguments[0] === exports, arguments[2] === module);
+arguments[0] = "stored through the object";
+console.log(exports === module.exports, arguments[0]);
+exports = "stored to the parameter";
+console.log(arguments[0]);
+try {
+  arguments.callee;
+} catch (error) {
+  console.log(error instanceof TypeError);
+}
+console.log((() => arguments.length)());

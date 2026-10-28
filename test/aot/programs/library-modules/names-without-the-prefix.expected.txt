@@ -1,0 +1,6 @@
+path object true
+node:path object true
+os object true
+node:os object true
+dgram MODULE_NOT_FOUND Cannot load 'node:dgram': it isn't in this executable
+node:dgram MODULE_NOT_FOUND Cannot load 'node:dgram': it isn't in this executable

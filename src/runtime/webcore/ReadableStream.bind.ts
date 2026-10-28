@@ -6,14 +6,15 @@ const promise = { ...method, returns: b.promise } as const;
 const members = {
   cancel: { capability: "js", length: 1, rustName: "cancel_from_js" },
   drain: { ...method, returns: b.bufferSource.optional, length: 1 },
-  isClosed: { getter: b.bool },
+  isClosed: { getter: b.bool, pure: true },
   pull: {
     ...method,
     args: { view: b.bufferSource.allowShared.otherAsNull, flags: b.jsArray.otherAsNull },
+    returns: b.opaque.returning("number", "boolean", "Promise", "Uint8Array", "undefined"),
     passThis: true,
     length: 1,
   },
-  start: { ...method, length: 1 },
+  start: { ...method, returns: b.opaque.returning("number", "Uint8Array", "undefined"), length: 1 },
   updateRef: { args: { enable: b.bool.loose } },
 } as const;
 
@@ -23,6 +24,8 @@ const buffered = {
   blob: promise,
   bytes: promise,
   json: promise,
+  /** What `json` parses, for the JSON parser of a compiled program. */
+  jsonSource: promise,
   text: promise,
 } as const;
 
@@ -34,6 +37,7 @@ const bufferedSource = {
   drain: members.drain,
   isClosed: members.isClosed,
   json: buffered.json,
+  jsonSource: buffered.jsonSource,
   pull: members.pull,
   start: members.start,
   text: buffered.text,

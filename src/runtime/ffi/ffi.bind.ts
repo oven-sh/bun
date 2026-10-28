@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 import { FFINumber } from "./FFIObject.bind.ts";
 
 export default b.module({ rustPath: "crate::ffi::FFI" });
@@ -12,7 +13,7 @@ export const FFI = b.class({
   },
 });
 
-const method = { returns: b.opaque, capability: "js", throws: true } as const;
+const method = { returns: b.opaque, feature: "Ffi", capability: "js", throws: true } as const;
 
 export const FFIArgs = b.union({ list: b.jsArray, other: b.ignored });
 /** The number of a type, or its name: anything else is converted to a string. */
@@ -51,7 +52,13 @@ export const linkSymbols = b.fn({
   export: "Bun__FFI__linkSymbols",
   args: { symbols: b.object.otherAsNull },
 });
-export const closeCallback = b.fn({ export: "Bun__FFI__closeCallback", args: { callback: b.opaque } });
+/** A callback that is closed has no address any more. */
+export const closeCallback = b.fn({
+  export: "Bun__FFI__closeCallback",
+  feature: "Ffi",
+  args: { callback: b.opaque },
+  uses: { callback: [...table.handedOver, table.definesName(["ptr"], table.strictNull)] },
+});
 export const cfunction = b.fn({
   ...method,
   export: "Bun__FFI__cfunction",

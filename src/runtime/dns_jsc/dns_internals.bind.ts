@@ -1,4 +1,5 @@
 import * as b from "../../codegen/bindgen-lib.ts";
+import * as table from "../../codegen/builtins/lib.ts";
 
 export default b.module({ rustPath: "crate::dns_jsc::Resolver" });
 
@@ -28,6 +29,7 @@ const setServers = { ...method, args: { servers: b.jsArray.otherAsNull }, length
 export const DNSResolver = b.class({
   rustPath: "crate::dns_jsc::Resolver",
   refCounted: true,
+  types: [table.viewType("bun.dns.NativeResolver"), table.exactType("$Bindgen.DNSResolver")],
   proto: {
     cancel: method,
     getServers,

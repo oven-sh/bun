@@ -1,4 +1,5 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
+import * as table from "../../../codegen/builtins/lib.ts";
 import { TCPSocket, TLSSocket } from "../../socket/socket_body.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
@@ -149,6 +150,7 @@ export const H2FrameParser = b.class({
   rustPath: "crate::api::H2FrameParser",
   refCounted: true,
   finalize: true,
+  types: [table.exactType("$Node.H2FrameParser"), table.exactType("$Bindgen.H2FrameParser")],
   construct: {
     passStructure: true,
     args: { options: H2FrameParserOptions.otherAsNull },

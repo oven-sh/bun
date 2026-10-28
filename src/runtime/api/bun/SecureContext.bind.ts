@@ -1,4 +1,5 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
+import * as table from "../../../codegen/builtins/lib.ts";
 import { TLSOptions } from "../../socket/SSLConfig.bind.ts";
 
 export default b.module({ rustPath: "crate::api::bun_secure_context" });
@@ -20,10 +21,11 @@ export const pkcs12Text = b.conversion(b.string.loose.utf8.owned);
 export const SecureContext = b.class({
   rustPath: "crate::api::bun_secure_context::SecureContext",
   memoryCost: true,
+  types: [table.exactType("$Node.NativeSecureContext"), table.exactType("$Bindgen.SecureContext")],
   construct: { ...fromOptions, length: 0 },
   proto: {
     /** Node's is an opaque V8 External of the `SSL_CTX`, for addons that link OpenSSL. Here it is `undefined`. */
-    _external: { getter: b.opaque, capability: "heap" },
+    _external: { getter: b.opaque.returning("undefined"), capability: "heap" },
     addCACert: { args: { cert: b.string.loose.utf8.owned.deferred }, capability: "js", throws: true },
   },
   static: {

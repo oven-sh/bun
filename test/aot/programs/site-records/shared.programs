@@ -1,0 +1,78 @@
+////: attempt
+function attempt(run: () => unknown): string {
+  try {
+    return String(run());
+  } catch (error) {
+    return "throws " + (error as Error).constructor.name;
+  }
+}
+////: attempt-2
+function attempt(run) {
+  try {
+    return String(run());
+  } catch (error) {
+    return "throws " + error.constructor.name;
+  }
+}
+////: check
+function check(actual, expected) {
+  if (actual !== expected) {
+    wrong++;
+    if (wrong < 10) console.log("WRONG:", actual, "instead of", expected);
+  }
+}
+////: fillStack
+function fillStack(depth) {
+  const some = [depth, depth + 1, depth + 2, depth + 3];
+  return depth ? fillStack(depth - 1) + some.length : 0;
+}
+////: lines
+function «1»(«2»: «3»): «4» {
+  return «5»;
+}
+////: lines-12
+function «1»(«2», «3») {
+  «4» = «3»;
+}
+////: lines-15
+function «1»(«2»: «3»): «4» {
+  return «5»(«6»);
+}
+////: lines-16
+function «1»(«2»: «3»): «4» | undefined {
+  return «5»;
+}
+////: lines-17
+class «1» {
+  «2» = «3»;
+}
+////: lines-18
+function «1»(«2»: («3»: number) => string): «4» {
+  return «2»(«5»);
+}
+////: lines-19
+function «1»(«2») {
+  return «3»();
+}
+////: lines-2
+function «1»(«2»: «3», «4»: «5»): void {
+  «6» = «4»;
+}
+////: lines-3
+function «1»(«2»: «3»): «4» {
+  return «5»();
+}
+////: lines-4
+class «1» {
+  «2» = «3»;
+  «4» = «5»;
+}
+////: lines-6
+function «1»(«2») {
+  return «3»;
+}
+////: noted-2
+function noted(value: number): number {
+  trail.push(«1» + value);
+  return value;
+}

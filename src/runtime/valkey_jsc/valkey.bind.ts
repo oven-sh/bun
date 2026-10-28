@@ -222,7 +222,13 @@ const commands: Record<string, readonly [args: readonly string[], length: number
 const argument = (name: string): [string, b.Type] =>
   name.startsWith("...") ? [name.slice(3), b.rest(RedisArgument)] : [name, RedisArgument];
 
-const command = { returns: b.promise, capability: "js", throws: true, passThis: true } as const;
+/** A command that cannot be sent answers the error and does not throw it. */
+const command = {
+  returns: b.opaque.returning("Promise", "Error"),
+  capability: "js",
+  throws: true,
+  passThis: true,
+} as const;
 const key = RedisArgument;
 /** `ToString` comes after the command has looked at the state of the client. */
 const text = b.string.loose.deferred;
@@ -271,11 +277,20 @@ export const RedisClient = b.class({
     [
       ...Object.entries(commands).map(
         ([name, [names, length, rustName]]) =>
-          [name, { ...command, args: Object.fromEntries(names.map(argument)), length, rustName }] as const,
+          [
+            name,
+            {
+              ...command,
+              returns: name === "connect" ? b.promise : command.returns,
+              args: Object.fromEntries(names.map(argument)),
+              length,
+              rustName,
+            },
+          ] as const,
       ),
       ["bufferedAmount", { getter: b.usize }] as const,
       ["close", { capability: "js", throws: true }] as const,
-      ["connected", { getter: b.bool }] as const,
+      ["connected", { getter: b.bool, pure: true }] as const,
       ["duplicate", { returns: b.promise, capability: "js", throws: true }] as const,
       [
         "expire",

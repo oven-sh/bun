@@ -45,7 +45,11 @@ const methods = (prefix: "" | "static_") => {
       rustName: `${prefix}presign`,
     },
     /** A number for a `Blob` that is not an S3 file. */
-    size: { ...pathMethod, returns: b.opaque, rustName: `${prefix}size` },
+    size: {
+      ...pathMethod,
+      returns: b.opaque.returning(...(prefix === "" ? [] : ["number"]), "Promise"),
+      rustName: `${prefix}size`,
+    },
     stat: { ...pathMethod, rustName: `${prefix}stat` },
     unlink: { ...pathMethod, rustName: `${prefix}unlink` },
     write: { ...method, args: { path, data: BunWriteData, options }, rustName: `${prefix}write` },

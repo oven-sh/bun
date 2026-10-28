@@ -929,13 +929,29 @@ impl SourceHandle {
             }
             SourceHandle::ByteStream(p) => p.on_close(err),
             SourceHandle::FileReader(p) => p.on_close(err),
-            SourceHandle::Subprocess(p) => p.on_close(err),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
-            SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
-            SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
+            SourceHandle::Subprocess(p) => {
+                bun_removable_features::removable_body!(Spawn, Abort, { p.on_close(err) })
+            }
+            SourceHandle::ShellWritable(mut p) => {
+                bun_removable_features::removable_body!(Shell, Abort, {
+                    // SAFETY: live backref; cleared before the pointee is freed.
+                    unsafe { p.get_mut() }.on_close(err)
+                })
+            }
+            SourceHandle::FetchResponseBody(p) => {
+                bun_removable_features::removable_body!(HttpClient, Abort, {
+                    p.on_stream_cancelled()
+                })
+            }
+            SourceHandle::S3DownloadBody(p) => {
+                bun_removable_features::removable_body!(S3Client, Abort, {
+                    p.on_stream_cancelled()
+                })
+            }
             SourceHandle::ServerRequestBody(_) => {}
-            SourceHandle::HTMLRewriter(p) => p.on_close(err),
+            SourceHandle::HTMLRewriter(p) => {
+                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_close(err) })
+            }
             SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
@@ -984,10 +1000,20 @@ impl SourceHandle {
             }
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),
-            SourceHandle::FetchResponseBody(p) => p.on_ready(),
-            SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
-            SourceHandle::HTMLRewriter(p) => p.on_ready(),
-            SourceHandle::S3DownloadBody(p) => p.on_stream_drained(),
+            SourceHandle::FetchResponseBody(p) => {
+                bun_removable_features::removable_body!(HttpClient, Abort, { p.on_ready() })
+            }
+            SourceHandle::ServerRequestBody(any) => {
+                bun_removable_features::removable_body!(Serve, Abort, {
+                    any.on_request_body_stream_drained()
+                })
+            }
+            SourceHandle::HTMLRewriter(p) => {
+                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_ready() })
+            }
+            SourceHandle::S3DownloadBody(p) => {
+                bun_removable_features::removable_body!(S3Client, Abort, { p.on_stream_drained() })
+            }
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();
             }
@@ -2560,6 +2586,8 @@ pub enum BufferActionTag {
     Blob,
     Bytes,
     Json,
+    /// [`AnyBlob::to_json_source`].
+    JsonSource,
 }
 
 impl BufferAction {

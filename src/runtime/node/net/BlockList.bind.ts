@@ -1,4 +1,5 @@
 import * as b from "../../../codegen/bindgen-lib.ts";
+import * as table from "../../../codegen/builtins/lib.ts";
 import { SocketAddress } from "../../socket/SocketAddress.bind.ts";
 
 const js = { capability: "js", throws: true } as const;
@@ -15,6 +16,7 @@ export const BlockList = b.class({
   rustPath: "crate::node::net::block_list::BlockList",
   refCounted: true,
   estimatedSize: true,
+  types: [table.exactType("$Node.BlockList"), table.exactType("$Bindgen.BlockList")],
   construct: {},
   proto: {
     addAddress: { ...js, args: { address: BlockListAddress, family: BlockListFamily }, length: 1 },

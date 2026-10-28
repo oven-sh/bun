@@ -97,5 +97,5 @@ ModuleLoader.rs loads modules by numeric ID via `InternalModuleRegistry.cpp`.
 - String literal `require()` only
 - Export via `export default {}`
 - Use JSC intrinsics for performance
-- Write a getter as `get name() {}`, `get() {}` or `get: function () {}`. A getter installed as a named function (`get: getName`) or through a wrapper (`get: deprecate(fn)`) counts as user code (`Zig::isBunDefinedGetter`): an ESM import reads it when the module loads
+- Write a getter as `get name() {}`, `get() {}` or `get: function () {}`. A getter installed as a named function (`get: getName`) or through a wrapper (`get: deprecate(fn)`) counts as user code (`Zig::isBunDefinedGetter`): an ESM import reads it when the module loads, and `bun repl` completion stops at it
 - Run `bun bd` after changes

@@ -575,6 +575,7 @@ const nativeCalls = [
       { file: inBindings("JSPropertyIterator.cpp") },
       { file: inBindings("ZigGlobalObject.cpp"), times: 4 },
       { file: inBindings("ZigGlobalObject.h") },
+      { file: inBindings("bindings.cpp") },
       { file: inBindings("webcore/JSWorker.cpp") },
     ],
     callers: [

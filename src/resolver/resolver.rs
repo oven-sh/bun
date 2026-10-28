@@ -4506,7 +4506,7 @@ impl<'a> Resolver<'a> {
         queue[0].write(DirEntryResolveQueueItem {
             result: top_result,
             unsafe_path: bun_ptr::RawSlice::new(&path[..input_path_len]),
-            safe_path: bun_ptr::RawSlice::EMPTY,
+            safe_path: b"",
             fd: FD::INVALID,
         });
         let mut top = Dirname::dirname(&path[..input_path_len]);
@@ -4561,7 +4561,7 @@ impl<'a> Resolver<'a> {
             queue[i].write(DirEntryResolveQueueItem {
                 unsafe_path: bun_ptr::RawSlice::new(top),
                 result,
-                safe_path: bun_ptr::RawSlice::EMPTY,
+                safe_path: b"",
                 fd: FD::INVALID,
             });
 
@@ -4570,7 +4570,7 @@ impl<'a> Resolver<'a> {
                     Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                         // SAFETY: slot was written immediately above.
                         let slot = unsafe { queue[i].assume_init_mut() };
-                        slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                        slot.safe_path = entries.dir;
                         slot.fd = entries.fd;
                     }
                     Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -4599,7 +4599,7 @@ impl<'a> Resolver<'a> {
                 queue[i].write(DirEntryResolveQueueItem {
                     unsafe_path: bun_ptr::RawSlice::new(root_path),
                     result,
-                    safe_path: bun_ptr::RawSlice::EMPTY,
+                    safe_path: b"",
                     fd: FD::INVALID,
                 });
                 if let Some(top_entry) = rfs!().entries.get(top) {
@@ -4607,7 +4607,7 @@ impl<'a> Resolver<'a> {
                         Fs::file_system::real_fs::EntriesOption::Entries(entries) => {
                             // SAFETY: slot was written immediately above.
                             let slot = unsafe { queue[i].assume_init_mut() };
-                            slot.safe_path = bun_ptr::RawSlice::new(entries.dir);
+                            slot.safe_path = entries.dir;
                             slot.fd = entries.fd;
                         }
                         Fs::file_system::real_fs::EntriesOption::Err(err) => {
@@ -4669,12 +4669,11 @@ impl<'a> Resolver<'a> {
             let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
             // `unsafe_path` was set to a slice of the threadlocal
             // `dir_info_uncached_path` buffer earlier in this fn; valid for the
-            // remainder of the fn body. `safe_path` is either empty or a
-            // dirname_store-backed `&'static [u8]`. Copy the `RawSlice` handles
-            // out so the re-borrows below don't hold `queue_top` borrowed.
-            let (qt_unsafe_path, qt_safe_path) = (queue_top.unsafe_path, queue_top.safe_path);
+            // remainder of the fn body. Copy the `RawSlice` handle out so the
+            // re-borrow below doesn't hold `queue_top` borrowed.
+            let qt_unsafe_path = queue_top.unsafe_path;
             let queue_top_unsafe_path: &[u8] = qt_unsafe_path.slice();
-            let queue_top_safe_path: &[u8] = qt_safe_path.slice();
+            let queue_top_safe_path = queue_top.safe_path;
             queue_slice_len -= 1;
 
             let open_dir: FD = if queue_top.fd.is_valid() {
@@ -4798,10 +4797,7 @@ impl<'a> Resolver<'a> {
             }
 
             let dir_path: &'static [u8] = if !queue_top_safe_path.is_empty() {
-                // SAFETY: non-empty `safe_path` is always a dirname_store-backed
-                // `&'static [u8]` (set from `entries.dir` above); widen the
-                // `RawSlice`-tied borrow back to its true `'static` lifetime.
-                unsafe { bun_ptr::detach_lifetime(queue_top_safe_path) }
+                queue_top_safe_path
             } else {
                 // ensure trailing slash
                 if _safe_path.is_none() {

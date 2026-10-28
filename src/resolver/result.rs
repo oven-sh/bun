@@ -274,14 +274,15 @@ impl<'r> Result<'r> {
 
 pub struct DirEntryResolveQueueItem {
     pub(crate) result: allocators::Result,
-    // NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
-    // threadlocal `dir_info_uncached_path` buffer and are consumed before
+    // NOTE: `RawSlice<u8>` (not `&'static [u8]`) — this points into the
+    // threadlocal `dir_info_uncached_path` buffer and is consumed before
     // `dir_info_cached_maybe_log` returns. `RawSlice` is `repr(transparent)`
     // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
     // unchanged (the array slot is `MaybeUninit`-wrapped), and read sites use
     // safe `.slice()` instead of an open-coded raw-ptr deref.
     pub(crate) unsafe_path: bun_ptr::RawSlice<u8>,
-    pub(crate) safe_path: bun_ptr::RawSlice<u8>,
+    /// Empty, or a `DirEntry::dir` from the dirname store.
+    pub(crate) safe_path: &'static [u8],
     pub(crate) fd: FD,
 }
 

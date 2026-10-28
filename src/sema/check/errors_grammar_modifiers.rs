@@ -15,6 +15,7 @@ pub(super) struct GrammarError {
     /// `AddRelatedInfo(createDiagnosticForNode(firstDecorator, ..))`: that decorator's span, or `(0, 0)` if there's no
     /// related information.
     first_decorator: (u32, u32),
+    class: DiagnosticClass,
 }
 
 impl GrammarError {
@@ -25,11 +26,25 @@ impl GrammarError {
             code,
             args,
             first_decorator: (0, 0),
+            class: DiagnosticClass::TypeScriptGrammar,
         })
+    }
+
+    /// `some`, for text that ECMAScript rejects too.
+    fn early(start: u32, end: u32, code: u32, args: [&'static str; 2]) -> Option<Self> {
+        let class = DiagnosticClass::EarlyError;
+        Self::some(start, end, code, args).map(|error| GrammarError { class, ..error })
     }
 }
 
 const ACCESSIBILITY: Flags = Flags::PUBLIC.union(Flags::PRIVATE).union(Flags::PROTECTED);
+
+/// `ModifierFlagsJavaScript`
+const JAVASCRIPT_MODIFIERS: Flags = Flags::EXPORT
+    .union(Flags::DEFAULT)
+    .union(Flags::STATIC)
+    .union(Flags::ASYNC)
+    .union(Flags::ACCESSOR);
 
 /// `CanHaveIllegalDecorators`
 fn can_have_illegal_decorators(kind: Kind) -> bool {
@@ -56,6 +71,26 @@ fn can_have_illegal_decorators(kind: Kind) -> bool {
     )
 }
 
+/// Whether `bun run` stops at the modifier or decorator of `location` that TypeScript reports `code` for.
+fn is_syntax_error_in_bun_run(hir: &File<'_>, location: Node, code: u32) -> bool {
+    let is_decorator_error = matches!(code, 1206 | 1433 | 8038);
+    match hir.data(location) {
+        NodeData::Stmt(_) => !hir.is_ambient(location) || is_decorator_error || code == 1044,
+        NodeData::Param(_) if is_decorator_error => {
+            hir.class_of(hir.parent(hir.parent(location))).is_none()
+        }
+        NodeData::Param(_) => matches!(code, 1090 | 1187 | 1317),
+        NodeData::Member(m) => match hir.kind(location) {
+            Kind::ClassStaticBlockDeclaration => is_decorator_error || hir.is_js,
+            Kind::Constructor if is_decorator_error => {
+                hir.fns.get(hir[m].func.idx()).is_some_and(has_body)
+            }
+            _ => matches!(code, 1248 | 1274),
+        },
+        _ => false,
+    }
+}
+
 fn is_decorator(modifier: &Modifier) -> bool {
     matches!(modifier.kind, ModifierKind::Decorator(_))
 }
@@ -75,6 +110,7 @@ impl Checker<'_, '_> {
         let args = error.args.iter().filter(|arg| !arg.is_empty());
         let args: SmallVec<[Arg<'_>; 2]> = args.map(|&arg| Arg::Text(arg)).collect();
         let reported = self.error_at((file, error.start, error.end), error.code, &args);
+        reported.class = error.class;
         if let (start, end @ 1..) = error.first_decorator {
             reported.add_related_info(Reported::bare((file, start, end), 1486));
         }
@@ -113,8 +149,11 @@ impl Checker<'_, '_> {
             }
             _ => 0,
         };
-        let modifiers_not_allowed =
-            GrammarError::some(statement.start, 0, modifiers_not_allowed, ["", ""]);
+        let modifiers_not_allowed = if matches!(statement.kind, StmtKind::ExportAssign(_)) {
+            GrammarError::some(statement.start, 0, modifiers_not_allowed, ["", ""])
+        } else {
+            GrammarError::early(statement.start, 0, modifiers_not_allowed, ["", ""])
+        };
         if let Some(error) = error.or_else(|| modifiers_not_allowed.filter(|error| error.code != 0))
         {
             self.report_grammar_error(file, error);
@@ -207,7 +246,7 @@ impl Checker<'_, '_> {
         let close = skip_trivia(text, open + 1);
         text.get(open) == Some(&b'<')
             && text.get(close) == Some(&b'>')
-            && self.grammar_error_at((file, open as u32, close as u32 + 1), 1098, &[])
+            && self.early_grammar_error_at((file, open as u32, close as u32 + 1), 1098, &[])
     }
 
     /// Same as `check_grammar_modifiers`, for a member that has modifiers.
@@ -268,11 +307,27 @@ impl Checker<'_, '_> {
         file: FileId,
         node: impl ToNode,
     ) -> Option<GrammarError> {
-        self.grammar_error_in_modifiers_of_node(file, self.hir(file).node(node))
+        let location = self.hir(file).node(node);
+        self.grammar_error_in_modifiers_of_node(file, location)
     }
 
     /// `grammar_error_in_modifiers` for the node `location`.
     fn grammar_error_in_modifiers_of_node(
+        &mut self,
+        file: FileId,
+        location: Node,
+    ) -> Option<GrammarError> {
+        let error = self.find_grammar_error_in_modifiers(file, location)?;
+        let class = if is_syntax_error_in_bun_run(self.hir(file), location, error.code) {
+            DiagnosticClass::EarlyError
+        } else {
+            error.class
+        };
+        Some(GrammarError { class, ..error })
+    }
+
+    /// The error of `grammar_error_in_modifiers_of_node` with the class TypeScript gives it.
+    fn find_grammar_error_in_modifiers(
         &mut self,
         file: FileId,
         location: Node,
@@ -386,7 +441,15 @@ impl Checker<'_, '_> {
             && let Some(first) = modifiers.iter().find(|modifier| !is_decorator(modifier))
             && first.kind != ModifierKind::Keyword(allowed)
         {
-            return GrammarError::some(first.pos, 0, 1184, ["", ""]);
+            let is_javascript_modifier = matches!(
+                first.kind,
+                ModifierKind::Keyword(flag) if JAVASCRIPT_MODIFIERS.contains(flag)
+            );
+            return if is_javascript_modifier {
+                GrammarError::early(first.pos, 0, 1184, ["", ""])
+            } else {
+                GrammarError::some(first.pos, 0, 1184, ["", ""])
+            };
         }
         // `node.Name()` of a parameter
         let parameter_name = match node {
@@ -449,6 +512,7 @@ impl Checker<'_, '_> {
                             code: 8038,
                             args: ["", ""],
                             first_decorator: first_decorator.unwrap_or_default(),
+                            class: DiagnosticClass::TypeScriptGrammar,
                         });
                     }
                     if seen.is_empty() {
@@ -469,12 +533,21 @@ impl Checker<'_, '_> {
             let modifier = modifier.difference(Flags::REPARSED);
             let text = modifier_text(modifier);
             let error = |code: u32, args| GrammarError::some(start, end, code, args);
+            let early = |code: u32, args| GrammarError::early(start, end, code, args);
             // The first of `later` that has been seen: `modifier` must precede it.
             let follows = |later: &[Flags]| {
                 later
                     .iter()
-                    .find(|&&other| is_written && seen.contains(other))
-                    .map(|&other| modifier_text(other))
+                    .copied()
+                    .find(|&other| is_written && seen.contains(other))
+            };
+            let must_precede = |later: Flags| {
+                let args = [text, modifier_text(later)];
+                if JAVASCRIPT_MODIFIERS.contains(modifier | later) {
+                    early(1029, args)
+                } else {
+                    error(1029, args)
+                }
             };
             if modifier != Flags::READONLY {
                 if matches!(kind, Kind::PropertySignature | Kind::MethodSignature) {
@@ -513,7 +586,7 @@ impl Checker<'_, '_> {
                 } else if let Some(later) =
                     follows(&[Flags::READONLY, Flags::ACCESSOR, Flags::ASYNC])
                 {
-                    return error(1029, [text, later]);
+                    return must_precede(later);
                 }
                 last_override = start;
             } else if ACCESSIBILITY.contains(modifier) {
@@ -526,7 +599,7 @@ impl Checker<'_, '_> {
                     Flags::READONLY,
                     Flags::ASYNC,
                 ]) {
-                    return error(1029, [text, later]);
+                    return must_precede(later);
                 } else if is_module_element {
                     return error(1044, [text, ""]);
                 } else if seen.contains(Flags::ABSTRACT) {
@@ -540,30 +613,30 @@ impl Checker<'_, '_> {
                 }
             } else if modifier == Flags::STATIC {
                 if seen.contains(Flags::STATIC) {
-                    return error(1030, [text, ""]);
+                    return early(1030, [text, ""]);
                 } else if let Some(later) =
                     follows(&[Flags::READONLY, Flags::ASYNC, Flags::ACCESSOR])
                 {
-                    return error(1029, [text, later]);
+                    return must_precede(later);
                 } else if is_module_element {
-                    return error(1044, [text, ""]);
+                    return early(1044, [text, ""]);
                 } else if kind == Kind::Parameter {
-                    return error(1090, [text, ""]);
+                    return early(1090, [text, ""]);
                 } else if seen.contains(Flags::ABSTRACT) {
                     return error(1243, [text, "abstract"]);
                 } else if let Some(later) = follows(&[Flags::OVERRIDE]) {
-                    return error(1029, [text, later]);
+                    return must_precede(later);
                 }
                 last_static = start;
             } else if modifier == Flags::ACCESSOR {
                 if seen.contains(Flags::ACCESSOR) {
-                    return error(1030, [text, ""]);
+                    return early(1030, [text, ""]);
                 } else if seen.contains(Flags::READONLY) {
                     return error(1243, [text, "readonly"]);
                 } else if seen.contains(Flags::AMBIENT) {
                     return error(1243, [text, "declare"]);
                 } else if kind != Kind::PropertyDeclaration {
-                    return error(1275, ["", ""]);
+                    return early(1275, ["", ""]);
                 }
             } else if modifier == Flags::READONLY {
                 if seen.contains(Flags::READONLY) {
@@ -580,7 +653,7 @@ impl Checker<'_, '_> {
                     return error(1243, [text, "accessor"]);
                 }
             } else if modifier == Flags::EXPORT {
-                if self.files().options.verbatim_module_syntax
+                if self.module_options(file).verbatim_module_syntax
                     && !hir.is_ambient(location)
                     && !matches!(
                         kind,
@@ -594,25 +667,25 @@ impl Checker<'_, '_> {
                     return error(1287, ["", ""]);
                 }
                 if seen.contains(Flags::EXPORT) {
-                    return error(1030, [text, ""]);
+                    return early(1030, [text, ""]);
                 } else if let Some(later) =
                     follows(&[Flags::AMBIENT, Flags::ABSTRACT, Flags::ASYNC])
                 {
-                    return error(1029, [text, later]);
+                    return must_precede(later);
                 } else if class.is_some() {
-                    return error(1031, [text, ""]);
+                    return early(1031, [text, ""]);
                 } else if kind == Kind::Parameter {
-                    return error(1090, [text, ""]);
+                    return early(1090, [text, ""]);
                 } else if on_using != 0 {
-                    return error(on_using, [text, ""]);
+                    return early(on_using, [text, ""]);
                 }
             } else if modifier == Flags::DEFAULT {
                 if is_in_namespace {
                     return error(1319, ["", ""]);
                 } else if on_using != 0 {
-                    return error(on_using, [text, ""]);
+                    return early(on_using, [text, ""]);
                 } else if !seen.contains(Flags::EXPORT) && is_written {
-                    return error(1029, ["export", text]);
+                    return early(1029, ["export", text]);
                 } else if saw_export_before_decorators && let Some((start, end)) = first_decorator {
                     return GrammarError::some(start, end, 1206, ["", ""]);
                 }
@@ -667,7 +740,7 @@ impl Checker<'_, '_> {
                         return GrammarError::some(last_async, 0, 1243, ["async", text]);
                     }
                     if let Some(later) = follows(&[Flags::OVERRIDE, Flags::ACCESSOR]) {
-                        return error(1029, [text, later]);
+                        return must_precede(later);
                     }
                 }
                 if has_private_name {
@@ -675,11 +748,11 @@ impl Checker<'_, '_> {
                 }
             } else if modifier == Flags::ASYNC {
                 if seen.contains(Flags::ASYNC) {
-                    return error(1030, [text, ""]);
+                    return early(1030, [text, ""]);
                 } else if seen.contains(Flags::AMBIENT) || is_parent_ambient() {
                     return error(1040, [text, ""]);
                 } else if kind == Kind::Parameter {
-                    return error(1090, [text, ""]);
+                    return early(1090, [text, ""]);
                 }
                 if seen.contains(Flags::ABSTRACT) {
                     return error(1243, [text, "abstract"]);
@@ -711,7 +784,7 @@ impl Checker<'_, '_> {
             } else if seen.contains(Flags::OVERRIDE) {
                 error_at(last_override, 1089, "override")
             } else if seen.contains(Flags::ASYNC) {
-                error_at(last_async, 1089, "async")
+                GrammarError::early(last_async, 0, 1089, ["async", ""])
             } else {
                 None
             };
@@ -742,7 +815,7 @@ impl Checker<'_, '_> {
                 | Kind::ArrowFunction
         );
         if seen.contains(Flags::ASYNC) && !takes_async {
-            return error_at(last_async, 1042, "async");
+            return GrammarError::early(last_async, 0, 1042, ["async", ""]);
         }
         None
     }

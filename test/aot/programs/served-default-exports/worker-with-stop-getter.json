@@ -1,0 +1,1 @@
+{ "entryPoints": ["./worker.ts"], "skipInShell": "needs Workers" }

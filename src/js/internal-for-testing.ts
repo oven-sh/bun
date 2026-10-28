@@ -47,6 +47,12 @@ export const highwayStringsForTesting: (
     | "countChar"
     | "indexOfAny"
     | "lastIndexOfAny"
+    | "indexOfUntidySlash"
+    | "indexOfUntidySlashOrNonAscii"
+    | "lastIndexOfSlash"
+    | "lastIndexOfSlashOrDot"
+    | "commonPrefixLength"
+    | "countSlashes"
     | "memmem"
     | "memrmem"
     | "memmem16"
@@ -60,7 +66,7 @@ export const highwayStringsForTesting: (
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 export const setSQLiteColumnNameTransform = (
-  statement: import("bun:sqlite").Statement,
+  statement: InstanceType<$BunModules["bun:sqlite"]["Statement"]>,
   transform: ((name: string) => string) | null | undefined,
 ) => statement.native.$setColumnNameTransform(transform);
 
@@ -96,6 +102,12 @@ export const bytecodeOrderNames = $bindgen("BytecodeOrderRecorder.bind.ts", "nam
   kind: "module" | "script" | "builtin" | "internal",
   chunkPaths?: string,
 ) => string | null | undefined;
+
+/** What the checker's queries answer for every node of every compiled file that `entryPoint` (an absolute path) reaches, and every diagnostic with its class and effect. `threads` 0 or absent: one per core. */
+export const describeCheckerQueries = $bindgen("checker_queries_testing.bind.ts", "describeCheckerQueries") as (
+  entryPoint: string,
+  threads?: number,
+) => string;
 
 export const escapeRegExp = $bindgen("bun_string_jsc.bind.ts", "escapeRegExp");
 export const escapeRegExpForPackageNameMatching = $bindgen(
@@ -349,9 +361,12 @@ export const Dequeue = require("internal/fifo");
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.
-const rustNormalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
+const rustNormalizeEncoding: (encoding: string) => string | undefined = $bindgen(
+  "node_util_binding.bind.ts",
+  "normalizeEncoding",
+);
 const nodeKEmptyObject = require("internal/shared").kEmptyObject;
-function nodeNormalizeEncoding(enc) {
+function nodeNormalizeEncoding(enc: unknown) {
   if (enc == null) return "utf8";
   if (typeof enc !== "string") return undefined;
   const lower = enc.toLowerCase();
@@ -362,14 +377,14 @@ function nodeNormalizeEncoding(enc) {
 }
 
 // Verbatim from node lib/internal/util.js (countBinaryOnes/getCIDR).
-function countBinaryOnes(n) {
+function countBinaryOnes(n: number) {
   // Count the number of bits set in parallel, which is faster than looping
   n = n - ((n >>> 1) & 0x55555555);
   n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
   return (((n + (n >>> 4)) & 0xf0f0f0f) * 0x1010101) >>> 24;
 }
 
-function getCIDR(address, netmask, family) {
+function getCIDR(address: string, netmask: string, family: string) {
   let ones = 0;
   let split = ".";
   let range = 10;
@@ -439,10 +454,10 @@ function nodeIsError(e) {
 // node's internal WeakReference: a WeakRef that pins the target strongly
 // while its refcount is above zero.
 class WeakReference {
-  #ref;
-  #strong = null;
+  #ref: WeakRef<object>;
+  #strong: object | null | undefined = null;
   #refCount = 0;
-  constructor(object) {
+  constructor(object: object) {
     this.#ref = new WeakRef(object);
   }
   get() {
@@ -485,7 +500,16 @@ function makeCodedError(Base: ErrorConstructor, code: string, message: string) {
   return err;
 }
 
-function nodeGetValidStdio(stdio, sync?) {
+interface ValidStdioEntry {
+  type?: string;
+  fd?: number;
+  handle?: { close(): void };
+  ipc?: boolean;
+  readable?: boolean;
+  writable?: boolean;
+}
+
+function nodeGetValidStdio(stdio, sync?: boolean) {
   const { isArrayBufferView } = require("node:util/types");
   let ipc;
   let ipcFd;
@@ -496,12 +520,12 @@ function nodeGetValidStdio(stdio, sync?) {
     throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 
-  while (stdio.length < 3) stdio.push(undefined);
+  while (stdio.length < 3) (stdio as unknown[]).push(undefined);
 
-  stdio = stdio.reduce(function reduceStdioEntry(acc, stdio, i) {
+  stdio = (stdio as any[]).reduce(function reduceStdioEntry(acc: ValidStdioEntry[], stdio, i: number) {
     function cleanup() {
       for (let i = 0; i < acc.length; i++) {
-        if ((acc[i].type === "pipe" || acc[i].type === "ipc") && acc[i].handle) acc[i].handle.close();
+        if ((acc[i].type === "pipe" || acc[i].type === "ipc") && acc[i].handle) acc[i].handle!.close();
       }
     }
 
@@ -510,7 +534,7 @@ function nodeGetValidStdio(stdio, sync?) {
     if (stdio === "ignore") {
       acc.push({ type: "ignore" });
     } else if (stdio === "pipe" || stdio === "overlapped" || (typeof stdio === "number" && stdio < 0)) {
-      const a: Record<string, unknown> = {
+      const a: ValidStdioEntry = {
         type: stdio === "overlapped" ? "overlapped" : "pipe",
         readable: i === 0,
         writable: i !== 0,
@@ -569,6 +593,7 @@ export const exposedInternals = {
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  "internal/primordials": require("internal/primordials"),
   // Bun's real implementations, under the names node's tests import them by.
   "internal/validators": require("internal/validators"),
   "internal/util/inspect": require("internal/util/inspect"),
@@ -701,6 +726,16 @@ export function setSocketOptions(socket: any, option: 1 | 2, size: number): void
 }
 
 /**
+ * What `node:http` itself finds under `kOutHeaders` on `message`: the map of its headers, or null where there is none.
+ *
+ * In an executable that is compiled ahead of time the headers of a server's response are in a compact form until
+ * somebody asks for the map, and this is null until then. A program that looks under the symbol asks for the map.
+ */
+export function storedOutgoingHeaders(message: any): Record<string, [string, unknown]> | null | undefined {
+  return message[require("internal/http").kOutHeaders];
+}
+
+/**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
  * "poll_start", "session_buffer", "ssl_write"; see fault_inject.h for the per-hook
@@ -784,6 +819,82 @@ export const structuredCloneAdvanced: (
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
+
+/** In a build with AddressSanitizer: reads a string of WTF's that was freed, which the sanitizer has to report. Elsewhere: nothing. */
+export const readFreedStringUnderASAN: () => number | undefined = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_readFreedStringUnderASAN",
+  0,
+);
+
+/** The native stack of the calling thread as WTF writes it into the report of a failed assertion. */
+export const nativeStackTrace: () => string = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_nativeStackTrace",
+  0,
+);
+
+/** From here on this process describes a value that a native function rejects without running code of the program. */
+export const describeRejectedValuesWithoutScript: () => void = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_describeRejectedValuesWithoutScript",
+  0,
+);
+
+/** Where the compiler's table of built-ins and this realm disagree, one message each. Empty: they agree, or this Bun has no compiler. */
+export const aotBuiltinMismatches: () => string[] = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotBuiltinMismatches",
+  0,
+);
+/** The compiler's table of built-ins as plain objects. */
+export const aotBuiltinEntries: () => import("../codegen/builtins/dump.ts").TableDump = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotBuiltinEntries",
+  0,
+);
+/**
+ * What this realm holds for the entry with that `id` of the compiler's table: its object, or the getter or setter of an accessor.
+ * `direct:<n>`: a function that hands its receiver and arguments to the native code that a compiled program calls for the entry's overload n without a function object.
+ */
+export const aotBuiltinValue: (id: number, part: "object" | "getter" | "setter" | `direct:${number}`) => unknown =
+  $newCppFunction("InternalForTesting.cpp", "jsFunction_aotBuiltinValue", 2);
+/** The native functions that Bun's own modules call under a private name of the global object. A key is the name, then what it is called with. */
+export const privateGlobalFunctions: Record<string, (...operands: any[]) => unknown> = {
+  toClass: (fn, name, base) => $toClass(fn, name, base),
+  "inherits ArrayBuffer": value => $inheritsArrayBuffer(value),
+  // It takes the kinds of the name and of the expected types on trust.
+  "makeErrorWithCode ERR_INVALID_ARG_TYPE": actual => $ERR_INVALID_ARG_TYPE("name", ["string", "number"], actual),
+  "makeErrorWithCode ERR_INVALID_ARG_VALUE": (name, value, reason) => $ERR_INVALID_ARG_VALUE(name, value, reason),
+  "makeErrorWithCode ERR_OUT_OF_RANGE": (name, range, received) => $ERR_OUT_OF_RANGE(name, range, received),
+  "makeErrorWithCode ERR_MISSING_ARGS": (first, second, third) => $ERR_MISSING_ARGS(first, second, third),
+  "makeErrorWithCode ERR_INVALID_RETURN_VALUE": (expected, name, value) =>
+    $ERR_INVALID_RETURN_VALUE(expected, name, value),
+  "makeErrorWithCode ERR_INVALID_STATE": message => $ERR_INVALID_STATE(message),
+  "makeErrorWithCode ERR_INVALID_URL": (input, base) => $ERR_INVALID_URL(input, base),
+  "makeErrorWithCode ERR_INVALID_THIS": expected => $ERR_INVALID_THIS(expected),
+  "makeErrorWithCode ERR_UNKNOWN_ENCODING": encoding => $ERR_UNKNOWN_ENCODING(encoding),
+  "makeErrorWithCode ERR_TLS_CERT_ALTNAME_INVALID": (reason, host, cert) =>
+    $ERR_TLS_CERT_ALTNAME_INVALID(reason, host, cert),
+  makeAbortError: (message, options) => $makeAbortError(message, options),
+  peekPromiseStatus: promise => $peekPromiseStatus(promise),
+  peekPromiseSettledValue: promise => $peekPromiseSettledValue(promise),
+  pokePromiseAsHandled: promise => $pokePromiseAsHandled(promise),
+  webStreamClosedPromise: stream => $webStreamClosedPromise(stream),
+  webStreamControllerError: (stream, error) => $webStreamControllerError(stream, error),
+};
+/** The entries of this Bun's `builtin-uses.json`: every built-in of this platform that uses a removable feature. */
+export const builtinFeatureUses: () => import("../../scripts/build/trim/types.ts").BuiltinEntry[] = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_builtinFeatureUses",
+  0,
+);
+/** The engine's `NameClass` of a property name, by the enumerator's name. */
+export const aotNameClass: (text: string) => string | undefined = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotNameClass",
+  1,
+);
 
 export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
@@ -946,6 +1057,258 @@ export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
 // beside it: internal module number `index` (null past the last), or `source` written in builtin syntax (@-intrinsics,
 // a function expression) compiled under `name`.
 export const internalModuleBytecode: {
-  (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array } | null;
+  (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array; lazyFunctionCount: number } | null;
   (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
 } = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);
+
+/** All paths are absolute native paths. */
+export type CodeGraphFile = {
+  path: string;
+  role: "Checked" | "Inferred" | "TypesOnly";
+  isLibrary: boolean;
+  isCompiled: boolean;
+  isInTypesProgram: boolean;
+  typeEdges: string[];
+  codeEdges: string[];
+  // The rest is read from `CompiledModule`. Without one: 0, null, [], [], false.
+  loader: number;
+  moduleFormat: "Esm" | "CommonJs" | null;
+  sites: {
+    specifier: string | null;
+    prefix?: string;
+    suffix?: string;
+    kind: "import" | "require";
+    answer: string;
+    externalKind: "UncompiledCode" | "HostValue" | null;
+  }[];
+  impliedAnswers: string[];
+  isAotSource: boolean;
+};
+
+export type CodeGraph = {
+  files: CodeGraphFile[];
+  entryPoints: string[];
+  compiledFiles: string[];
+  hostModules: string[];
+  unresolvedEntryPoints: { index: number; failure: string }[];
+  /** `TS2307: ..` */
+  diagnostics: string[];
+};
+
+const describeCodeGraphNative = $bindgen("code_resolver_testing.bind.ts", "describeCodeGraph") as (
+  entryPoints: string,
+  conditions: string,
+  threads: number,
+  defines: string,
+  features: string,
+  workingDirectory: string,
+) => string;
+
+/** The files and the two graphs that `bun compile` loads for `entryPoints`, before anything is checked. */
+export const describeCodeGraph = (
+  entryPoints: string[],
+  options: {
+    conditions?: string[];
+    threads?: number;
+    defines?: Record<string, string | boolean>;
+    features?: string[];
+    workingDirectory?: string;
+  } = {},
+): CodeGraph =>
+  JSON.parse(
+    describeCodeGraphNative(
+      entryPoints.join("\n"),
+      (options.conditions ?? []).join("\n"),
+      options.threads ?? 0,
+      Object.entries(options.defines ?? {})
+        .map(([name, value]) => `${name}=${value}`)
+        .join("\n"),
+      (options.features ?? []).join("\n"),
+      options.workingDirectory ?? "",
+    ),
+  );
+
+const resolveComputedSpecifierNative = $bindgen("code_resolver_testing.bind.ts", "resolveComputedSpecifier") as (
+  importer: string,
+  prefix: string,
+  suffix: string,
+  kind: "import" | "require",
+) => string;
+
+/** The modules that a specifier starting with `prefix` and ending with `suffix` can name in the file `importer` (an absolute native path), by the resolver of `bun compile`: absolute native paths and `builtin:node:fs`, in the resolver's order. */
+export const resolveComputedSpecifier = (
+  importer: string,
+  prefix: string,
+  suffix: string,
+  kind: "import" | "require" = "import",
+): { kind: "computed"; candidates: string[] } | { kind: "all"; cause: string } =>
+  JSON.parse(resolveComputedSpecifierNative(importer, prefix, suffix, kind));
+
+const trimExecutableNative = $bindgen("trim_testing.bind.ts", "trimExecutable") as (
+  path: string,
+  out: string,
+  featureNames: string,
+  usedFeatureNames: string,
+) => string;
+/** Removes `featureNames` (as written in src/trim/features/*.def: "Sqlite") from the executable at `path` and writes the result to `out`. With `usedFeatureNames`, also what a program that uses only those leaves unused. Throws what `bun build --compile --trim` would print. */
+export const trimExecutable = (
+  path: string,
+  out: string,
+  featureNames: string[],
+  usedFeatureNames: string[] = [],
+): { removed: string[]; removedBytes: number; fileBytesSaved: number; uncutReason: string | null } =>
+  JSON.parse(trimExecutableNative(path, out, featureNames.join("\n"), usedFeatureNames.join("\n")));
+
+const readTrimTableNative = $bindgen("trim_testing.bind.ts", "readTrimTable") as (path: string) => string;
+/** The trim table of the executable at `path`, as `decodeTable` of scripts/build/trim/table.ts returns it. Throws on a file without one. */
+export const readTrimTable = (path: string): import("../../scripts/build/trim/table").TrimTable => {
+  const table = JSON.parse(readTrimTableNative(path));
+  table.featuresHash = BigInt(table.featuresHash);
+  return table;
+};
+
+/** What members of prototypes, of classes and of literals answer under names that only the modules of the runtime can write: `$isOpen`, `$exchange` and `$isPrepared` are read and written by these modules alone, `$written`, `$writer` and `$warning` by native code too. One line a question. */
+export function membersUnderNamesOfTheRuntime(tag: string): string[] {
+  const lines: string[] = [];
+  let stored: unknown;
+  const ask = (question: string, answer: () => unknown) => {
+    try {
+      lines.push(question + ": " + String(answer()));
+    } catch (error) {
+      lines.push(question + ": throws " + (error as Error).name);
+    }
+  };
+  const keysOf = (object: object) => Reflect.ownKeys(object).map(String).join();
+
+  class Fixed {
+    $isOpen(more: string) {
+      return "method " + more;
+    }
+    get $exchange() {
+      return "getter";
+    }
+    set $exchange(value: unknown) {
+      stored = value;
+    }
+    static $isPrepared() {
+      return "static";
+    }
+    $written(more: string) {
+      return "method " + more;
+    }
+    get $writer() {
+      return "getter";
+    }
+    set $writer(value: unknown) {
+      stored = value;
+    }
+    static $warning() {
+      return "static";
+    }
+  }
+  class Heir extends Fixed {
+    $isOpen(more: string) {
+      return "heir of " + super.$isOpen(more);
+    }
+    $written(more: string) {
+      return "heir of " + super.$written(more);
+    }
+    storeAbove(value: unknown) {
+      super.$exchange = value;
+      super.$writer = value;
+    }
+  }
+  const makeClass = (captured: string) =>
+    class {
+      $isOpen(more: string) {
+        return captured + " method " + more;
+      }
+      get $exchange() {
+        return captured + " getter";
+      }
+      set $exchange(value: unknown) {
+        stored = captured + " " + value;
+      }
+      static $isPrepared() {
+        return captured + " static";
+      }
+      $written(more: string) {
+        return captured + " method " + more;
+      }
+      get $writer() {
+        return captured + " getter";
+      }
+      set $writer(value: unknown) {
+        stored = captured + " " + value;
+      }
+      static $warning() {
+        return captured + " static";
+      }
+    };
+  function Plain() {}
+  $toClass(Plain, "Plain");
+  Plain.prototype.$isOpen = function (more: string) {
+    return tag + " stored " + more;
+  };
+  Plain.prototype.$written = function (more: string) {
+    return tag + " stored " + more;
+  };
+  const makeLiteral = (captured: string) => ({
+    $isOpen(more: string) {
+      return captured + " method " + more;
+    },
+    get $exchange() {
+      return captured + " getter";
+    },
+    set $exchange(value: unknown) {
+      stored = captured + " " + value;
+    },
+    $written(more: string) {
+      return captured + " method " + more;
+    },
+    get $writer() {
+      return captured + " getter";
+    },
+    set $writer(value: unknown) {
+      stored = captured + " " + value;
+    },
+  });
+
+  const subjects: [string, any, any][] = [
+    ["a class", new Fixed(), Fixed],
+    ["an heir", new Heir(), Heir],
+    ["a class that captures", new (makeClass(tag))(), makeClass(tag)],
+    ["a second class that captures", new (makeClass(tag + tag))(), makeClass(tag + tag)],
+    ["a function", new Plain(), Plain],
+    ["a literal", makeLiteral(tag), undefined],
+    ["an object below a literal", Object.create(makeLiteral(tag)), undefined],
+  ];
+  for (const [name, instance, constructor] of subjects) {
+    ask(name + " $isOpen", () => instance.$isOpen("a"));
+    ask(name + " $written", () => instance.$written("b"));
+    ask(name + " $exchange", () => instance.$exchange);
+    ask(name + " $writer", () => instance.$writer);
+    ask(name + " $exchange =", () => ((stored = "nothing"), (instance.$exchange = 1), stored));
+    ask(name + " $writer =", () => ((stored = "nothing"), (instance.$writer = 2), stored));
+    ask(name + " $isPrepared", () => constructor && constructor.$isPrepared && constructor.$isPrepared());
+    ask(name + " $warning", () => constructor && constructor.$warning && constructor.$warning());
+    ask(name + " under no such name", () => typeof instance.$isPrepared + " " + typeof instance.$warning);
+    ask(name + " keys", () => keysOf(instance) + " | " + keysOf(Object.getPrototypeOf(instance)));
+    ask(name + " keys of the constructor", () => constructor && keysOf(constructor));
+  }
+  ask("a store above", () => ((stored = "nothing"), new Heir().storeAbove(3), stored));
+  ask(
+    "removed",
+    () =>
+      delete (Fixed.prototype as { $isOpen?: unknown }).$isOpen &&
+      delete (Fixed.prototype as { $written?: unknown }).$written,
+  );
+  ask("behind the removal", () => typeof new Fixed().$isOpen + " " + typeof new Fixed().$written);
+  ask("an heir behind the removal", () => new Heir().$isOpen("c"));
+  ask("stored again", () => {
+    Fixed.prototype.$isOpen = Plain.prototype.$isOpen;
+    Fixed.prototype.$written = Plain.prototype.$written;
+    return new Fixed().$isOpen("d") + " | " + new Heir().$written("e");
+  });
+  return lines;
+}

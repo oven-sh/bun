@@ -1,0 +1,85 @@
+////: shows-the-names
+console.log(
+  Object.keys(names).join(),
+  "|",
+  names.hidden,
+  names.constructor,
+  "hidden" in names,
+  "constructor" in names,
+  Reflect.ownKeys(names).length,
+);
+//// a-file-exports-constructor-beside-a-definition-under-a-key-that-only-the-run-knows/first.cjs
+exports.one = 1;
+exports.constructor = 3;
+Object.defineProperty(exports, process.argv.length > 99 ? process.argv[99] : "two", { value: 2, enumerable: true });
+//// a-file-exports-constructor-beside-a-definition-under-a-key-that-only-the-run-knows/main.mjs
+// A CommonJS file stores `constructor` on its exports and defines one more name under a key that only the run knows. The namespace object has all three.
+const names = await import("./first.cjs");
+////= shows-the-names
+//// a-file-exports-constructor-beside-a-store-under-a-key-that-only-the-run-knows-and-the-name-is-imported/first.cjs
+exports.one = 1;
+exports.constructor = 3;
+exports[process.argv.length > 99 ? process.argv[99] : "two"] = 2;
+//// a-file-exports-constructor-beside-a-store-under-a-key-that-only-the-run-knows-and-the-name-is-imported/main.mjs
+// A CommonJS file stores `constructor` on its exports and one more name under a key that only the run knows. An import statement finds `constructor` and the other name.
+import { constructor as made, one, two } from "./first.cjs";
+console.log(made, one, two);
+//// a-file-with-the-marker-on-an-object-that-only-the-run-knows-exports-a-name-that-is-not-enumerable/first.cjs
+"use strict";
+Object.defineProperty(process.argv.length > 99 ? globalThis[process.argv[99]] : exports, "__esModule", { value: true });
+exports.one = 1;
+Object.defineProperty(exports, "hidden", { value: 2, enumerable: false, writable: true, configurable: true });
+exports.constructor = 3;
+//// a-file-with-the-marker-on-an-object-that-only-the-run-knows-exports-a-name-that-is-not-enumerable/main.mjs
+// A CommonJS file defines `__esModule` on an object that only the run knows, which is its exports, and then a name that is not enumerable and `constructor`. The namespace object has both.
+import * as names from "./first.cjs";
+////= shows-the-names
+//// a-file-exports-an-instance-of-a-class-that-has-constructor-and-a-name-that-is-not-enumerable/first.cjs
+class Made {
+  one = 1;
+  constructor(marked) {
+    Object.defineProperty(this, "hidden", { value: 2 });
+    this.constructor = 3;
+    if (marked) this.__esModule = true;
+  }
+}
+module.exports = new Made(process.argv.length < 99);
+//// a-file-exports-an-instance-of-a-class-that-has-constructor-and-a-name-that-is-not-enumerable/main.mjs
+// A CommonJS file exports an instance of a class whose own names are a field, a name that is not enumerable, `constructor` and `__esModule`.
+import * as names from "./first.cjs";
+////= shows-the-names
+//// a-file-exports-what-a-function-constructs-with-constructor-among-its-own-names/first.cjs
+function Made() {
+  this.one = 1;
+  this.constructor = 3;
+}
+module.exports = new Made();
+//// a-file-exports-what-a-function-constructs-with-constructor-among-its-own-names/main.mjs
+// A CommonJS file exports what `new` makes of a function that stores `constructor` on it.
+const names = await import("./first.cjs");
+////= shows-the-names
+//// a-file-exports-a-literal-with-constructor-and-a-spread-of-parsed-text/first.cjs
+module.exports = { one: 1, constructor: 3, ...JSON.parse('{ "hidden": 5 }') };
+//// a-file-exports-a-literal-with-constructor-and-a-spread-of-parsed-text/main.mjs
+// A CommonJS file exports a literal that has `constructor` and spreads what JSON.parse() answers.
+import * as names from "./first.cjs";
+////= shows-the-names
+//// a-file-exports-constructor-and-seventy-computed-names-and-deletes-one/first.cjs
+exports.one = 1;
+exports.constructor = 3;
+for (let i = 0; i < 70; i++) exports["k" + i] = i;
+delete exports.k3;
+//// a-file-exports-constructor-and-seventy-computed-names-and-deletes-one/main.mjs
+// A CommonJS file stores `constructor` and seventy names that it puts together on its exports, and deletes one of them.
+const names = await import("./first.cjs");
+////= shows-the-names
+//// a-file-exports-constructor-and-deletes-the-name-it-stored-under-a-key-that-only-the-run-knows/first.cjs
+const key = process.argv.length > 99 ? process.argv[99] : "two";
+exports.one = 1;
+exports.constructor = 3;
+exports[key] = 2;
+delete exports[key];
+//// a-file-exports-constructor-and-deletes-the-name-it-stored-under-a-key-that-only-the-run-knows/main.mjs
+// A CommonJS file stores `constructor` on its exports, and stores and deletes a name under a key that only the run knows.
+import * as names from "./first.cjs";
+////= shows-the-names

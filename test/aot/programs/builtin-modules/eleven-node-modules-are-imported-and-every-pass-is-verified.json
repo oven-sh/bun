@@ -1,0 +1,6 @@
+{
+  "build": [
+    "--aot-check=verify-each-pass"
+  ],
+  "skipWithASAN": "the build takes longer than the test has there"
+}

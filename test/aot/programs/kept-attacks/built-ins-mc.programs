@@ -1,0 +1,281 @@
+//// built-ins-mc/ee.js
+// Built ins mc, one probe of many. It prints what plain Bun prints.
+const EventEmitter = require("node:events");
+const { Stream, Readable } = require("node:stream");
+
+const show = value => (typeof value === "function" ? "function " + value.name : typeof value === "object" && value !== null ? "{" + Reflect.ownKeys(value).map(String).join() + "}" + (Object.getPrototypeOf(value) === null ? " of null" : "") : String(value));
+function say(title, make) {
+  let made;
+  try {
+    made = make();
+  } catch (error) {
+    console.log(title + ": throws " + error.code + (error.made ? " | " + Reflect.ownKeys(error.made).map(String).join() : ""));
+    return;
+  }
+  console.log(title + ": " + Reflect.ownKeys(made).map(key => String(key) + "=" + show(made[key])).join(" | ") + " || " + [made._eventsCount, made._maxListeners, made.getMaxListeners(), made.listenerCount("x")].join());
+}
+
+say("new", () => new EventEmitter());
+say("options without the name", () => new EventEmitter({}));
+say("null", () => new EventEmitter(null));
+say("captureRejections true", () => new EventEmitter({ captureRejections: true }));
+say("captureRejections false", () => new EventEmitter({ captureRejections: false }));
+say("captureRejections 1", () => new EventEmitter({ captureRejections: 1 }));
+say("captureRejections by a getter", () => {
+  let reads = 0;
+  const made = new EventEmitter({
+    get captureRejections() {
+      reads++;
+      return true;
+    },
+  });
+  made.reads = reads;
+  return made;
+});
+say("called on an object", () => {
+  const object = Object.create(EventEmitter.prototype);
+  EventEmitter.call(object);
+  return object;
+});
+say("called twice", () => {
+  const object = new EventEmitter();
+  object.on("x", () => {});
+  object.setMaxListeners(3);
+  EventEmitter.call(object);
+  return object;
+});
+say("called on an object with properties", () => {
+  const object = Object.assign(Object.create(EventEmitter.prototype), { first: 1 });
+  EventEmitter.call(object, { captureRejections: true });
+  return object;
+});
+say("a throw leaves what was stored", () => {
+  const object = Object.create(EventEmitter.prototype);
+  try {
+    EventEmitter.call(object, { captureRejections: "yes" });
+  } catch (error) {
+    error.made = object;
+    throw error;
+  }
+  return object;
+});
+
+class WithLimit extends EventEmitter {}
+WithLimit.prototype._maxListeners = 20;
+say("the prototype has a limit", () => new WithLimit());
+class WithNullLimit extends EventEmitter {}
+WithNullLimit.prototype._maxListeners = null;
+say("the prototype has null for a limit", () => new WithNullLimit());
+class WithZeroLimit extends EventEmitter {}
+WithZeroLimit.prototype._maxListeners = 0;
+say("the prototype has zero for a limit", () => new WithZeroLimit());
+
+class WithEvents extends EventEmitter {}
+WithEvents.prototype._events = { inherited: () => {} };
+say("the prototype has events", () => new WithEvents());
+say("its own events ahead of the call", () => {
+  const object = Object.create(EventEmitter.prototype);
+  object._events = { mine: undefined };
+  EventEmitter.call(object);
+  return object;
+});
+say("its own limit ahead of the call", () => {
+  const object = Object.create(EventEmitter.prototype);
+  object._maxListeners = 7;
+  EventEmitter.call(object);
+  return object;
+});
+
+const seen = [];
+class WithSetters extends EventEmitter {
+  set _maxListeners(value) {
+    seen.push("limit " + value);
+  }
+  get _maxListeners() {
+    seen.push("limit read");
+    return undefined;
+  }
+}
+say("the limit is an accessor of an heir", () => {
+  const made = new WithSetters();
+  made.seen = seen.join();
+  return made;
+});
+
+EventEmitter.captureRejections = true;
+say("captureRejections for all", () => new EventEmitter());
+say("captureRejections for all, false for one", () => new EventEmitter({ captureRejections: false }));
+EventEmitter.captureRejections = false;
+
+say("a stream", () => new Stream());
+say("a readable stream", () => {
+  const made = new Readable({ read() {} });
+  delete made._readableState;
+  return made;
+});
+for (let round = 0; round < 3000; round++) {
+  const made = round % 3 === 0 ? new EventEmitter() : round % 3 === 1 ? new WithLimit() : new Stream();
+  if (Reflect.ownKeys(made).length !== (round % 3 === 1 ? 4 : 5)) console.log("round " + round + ": " + Reflect.ownKeys(made).map(String).join());
+}
+console.log("done");
+//// built-ins-mc/entry.ts
+// Built ins mc, one probe of many. It prints what plain Bun prints.
+const five: any = 5;
+function attempt(label: string, f: () => unknown) {
+  try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).name); }
+}
+function pathToText(filepath: string) { return "file://" + filepath; }
+attempt("given 5", () => pathToText(five));
+//// built-ins-mc/entry2.ts
+// Built ins mc, one probe of many. It prints what plain Bun prints.
+const five: any = JSON.parse("5");
+function pathToText(filepath: string) { return "file://" + filepath; }
+try { console.log(pathToText(five)); } catch (e) { console.log((e as Error).name); }
+//// built-ins-mc/json-impostor.js
+// Built ins mc: json impostor. It prints what plain Bun prints.
+function show(value) {
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "bigint") return String(value) + "n";
+  if (typeof value === "symbol") return value.toString();
+  if (typeof value === "function") return "function " + value.name;
+  if (typeof value !== "object" || value === null) return String(value);
+  if (Array.isArray(value)) {
+    const parts = [];
+    for (let i = 0; i < value.length; i++) parts.push(i in value ? show(value[i]) : "<hole>");
+    return "[" + parts.join(", ") + "]";
+  }
+  if (ArrayBuffer.isView(value)) return value.constructor.name + "<" + Array.prototype.join.call(value, " ") + ">";
+  let text;
+  try {
+    text = String.prototype.valueOf.call(value);
+  } catch {
+    const parts = [];
+    for (const key of Reflect.ownKeys(value)) parts.push(String(key) + ": " + show(value[key]));
+    return "{" + parts.join(", ") + "}";
+  }
+  return "String object " + JSON.stringify(text);
+}
+
+function attempt(label, run) {
+  let line;
+  try {
+    line = show(run());
+  } catch (error) {
+    line = "threw " + error.constructor.name;
+  }
+  console.log(label + " -> " + line);
+}
+
+function make(text) {
+  return (0, eval)("(" + text + ")");
+}
+
+const log = [];
+globalThis.log = log;
+
+function report(label, run) {
+  attempt(label, run);
+  if (log.length) console.log("  log:", log.splice(0).join(", "));
+}
+
+function withSpace(space) {
+  return JSON.stringify({ a: [1] }, null, space);
+}
+
+function withList(list) {
+  return JSON.stringify({ a: 1, b: 2, 1: 3, null: 4, "1,2": 5, nested: { a: 6, c: 7 } }, list);
+}
+
+function keysSeenByAReplacer(value) {
+  const seen = [];
+  JSON.stringify(value, function (key, item) {
+    seen.push(typeof key + " " + JSON.stringify(key) + " in " + (Array.isArray(this) ? "list" : "object"));
+    return item;
+  });
+  return seen;
+}
+
+function keysSeenByToJSON(build) {
+  const seen = [];
+  const noisy = { toJSON(key) { seen.push(typeof key + " " + JSON.stringify(key)); return 0; } };
+  JSON.stringify(build(noisy));
+  return seen;
+}
+
+////= lines-5	stringify	value	JSON.stringify	value
+
+for (let i = 0; i < 2000; i++) {
+  withSpace("  ");
+  withList(["a", "b"]);
+  stringify("text");
+  stringify({ a: "text" });
+}
+
+for (const space of ["'  '", "''", "'\\t'", "'abcdefghijklmnop'", "2", "0", "-1", "2.9", "11", "'2'", "new String('--')", "new Number(2)", "true", "null", "undefined", "[' ']", "{ toString() { return '  '; } }", "Object.assign(new String('--'), { toString() { log.push('toString'); return '++'; } })", "Object.assign(new Number(1), { valueOf() { log.push('valueOf'); return 3; } })", "Symbol(' ')", "2n"]) {
+  report("space " + space, () => withSpace(make(space)));
+}
+
+for (const list of ["['a']", "['b', 'a']", "[1]", "['1']", "[null]", "[[1, 2]]", "[new String('a')]", "[new Number(1)]", "[{ toString() { return 'a'; } }]", "['a', 'a', new String('a')]", "[Symbol('a')]", "[true]", "[]", "['nested', 'c']", "'ab'", "{ 0: 'a', length: 1 }", "new Set(['a'])", "[Object.assign(new String('a'), { toString() { log.push('toString'); return 'b'; } })]"]) {
+  report("list " + list, () => withList(make(list)));
+}
+
+report("keys seen by a replacer", () => keysSeenByAReplacer({ a: [10, { 0: 1 }], 1: "x" }));
+report("keys seen by a replacer for a text", () => keysSeenByAReplacer("text"));
+report("keys seen by toJSON", () => keysSeenByToJSON(noisy => ({ a: noisy, 1: noisy, list: [noisy, noisy] })));
+report("keys seen by toJSON at the top", () => keysSeenByToJSON(noisy => noisy));
+
+for (const value of ["'text'", "'\\u2028\\u2029'", "'\\ud83d'", "'\"\\\\\\n\\u0007'", "new String('wrapped')", "Object.assign(new String('wrapped'), { extra: 1 })", "Object.assign(new String('wrapped'), { toString() { log.push('toString'); return 'changed'; } })", "Object.assign(new String('wrapped'), { valueOf() { log.push('valueOf'); return 'changed'; } })", "Object.setPrototypeOf(new String('wrapped'), null)", "new Proxy(new String('wrapped'), {})", "[new String('a'), new Number(1), new Boolean(false), Object(1n) && null]", "Symbol('s')", "[Symbol('s')]", "{ a: Symbol('s'), [Symbol('k')]: 1 }", "undefined", "[undefined, function f() {}]", "{ a: undefined, b: function f() {} }", "-0", "[NaN, Infinity]", "1n", "{ toJSON() { return 'from toJSON'; } }", "{ toJSON() { return new String('wrapped by toJSON'); } }", "{ toJSON: 'not a function' }", "new Date(0)", "Buffer.from('ab')", "new Uint8Array([1, 2])", "new Map([['a', 1]])", "/a/g", "new Error('message')", "Object.create({ inherited: 1 })", "{ '': 1, ' ': 2, 'a b': 3, '\\n': 4, '\\u00e9': 5, '\\ud83d': 6 }"]) {
+  report("stringify " + value, () => stringify(make(value)));
+}
+
+console.log("bytes made in plain sight", Buffer.from("he").length);
+//// built-ins-mc/poly-small.mjs
+// Built ins mc: poly small. It prints what plain Bun prints.
+function install(target, members) {
+  const object = globalThis[target].prototype;
+  for (const key of Reflect.ownKeys(members)) {
+    if (key in object) continue;
+    Object.defineProperty(object, key, { value: members[key], enumerable: false, writable: true, configurable: true });
+  }
+}
+install("Array", { lastOfTheProgram() { return this[this.length - 1]; } });
+install("Function", { demethodize() { return 1; } });
+console.log([1, 2].lastOfTheProgram(), (function () {}).demethodize());
+//// built-ins-mc/polyfill.mjs
+// In the manner of the export helper of core-js: it takes a target and a set of members, skips each key that the target has, and defines the rest under computed keys. What a current engine lacks is added, and what it has stays the original.
+function install({ target, proto }, members) {
+  const object = proto ? globalThis[target].prototype : globalThis[target];
+  const installed = [];
+  for (const key of Reflect.ownKeys(members)) {
+    if (key in object) continue;
+    Object.defineProperty(object, key, { value: members[key], enumerable: false, writable: true, configurable: true });
+    installed.push(String(key));
+  }
+  console.log(target + (proto ? ".prototype" : "") + ": " + installed.join(" "));
+}
+
+const originals = [Array.prototype.at, Array.prototype.includes, String.prototype.padStart, Promise.all, Symbol.iterator, Function.prototype.call, Iterator.prototype.map, Map.prototype.get];
+const marker = Symbol("marker");
+
+install({ target: "Array", proto: true }, {
+  at() { return "never installed"; },
+  includes() { return "never installed"; },
+  lastItemOfTheProgram() { return this[this.length - 1]; },
+  groupedByTheProgram(keyOf) { const groups = {}; for (const value of this) (groups[keyOf(value)] ??= []).push(value); return groups; },
+  [marker]: "array",
+});
+install({ target: "String", proto: true }, { padStart() { return "never installed"; }, shoutedByTheProgram() { return this.toUpperCase() + "!"; } });
+install({ target: "Promise" }, { all() { return "never installed"; }, allKeyedByTheProgram(promises) { return Promise.all(Object.values(promises)).then(values => Object.fromEntries(Object.keys(promises).map((key, index) => [key, values[index]]))); } });
+install({ target: "Symbol" }, { iterator: "never installed", useSetter() {}, useSimple() {} });
+install({ target: "Function", proto: true }, { call() { return "never installed"; }, demethodize() { const method = this; return (receiver, ...rest) => method.apply(receiver, rest); }, [marker]: "function" });
+install({ target: "Iterator", proto: true }, { map() { return "never installed"; }, countedByTheProgram() { let count = 0; for (const value of this) count++; return count; } });
+install({ target: "Map", proto: true }, { get() { return "never installed"; }, toJSON() { return [...this]; } });
+
+console.log([Array.prototype.at, Array.prototype.includes, String.prototype.padStart, Promise.all, Symbol.iterator, Function.prototype.call, Iterator.prototype.map, Map.prototype.get].every((member, index) => member === originals[index]));
+console.log([[1, 2, 3].lastItemOfTheProgram(), JSON.stringify([1, 2, 3].groupedByTheProgram(value => (value % 2 ? "odd" : "even"))), [][marker], "abc".shoutedByTheProgram(), JSON.stringify(await Promise.allKeyedByTheProgram({ a: 1, b: Promise.resolve(2) })), typeof Symbol.useSetter, [].slice.demethodize()([1, 2, 3], 1).join(), (() => 1)[marker], [1, 2].values().countedByTheProgram(), JSON.stringify(new Map([[1, 2]]))].join(" "));
+console.log([[1, 2, 3].at(-1), [1, 2].includes(2), "7".padStart(3, "0"), (await Promise.all([1, 2])).join(), [...[1, 2].values().map(value => value * 2)].join(), new Map([[1, 2]]).get(1)].join(" "));
+//// built-ins-mc/repl.mjs
+// Built ins mc, one probe of many. It prints what plain Bun prints.
+import "node:repl";
+console.log("loaded");

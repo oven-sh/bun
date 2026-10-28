@@ -167,6 +167,14 @@ struct IDLRawBufferSource : IDLRawAny {};
 // A function, or a proxy of one, as the `JSValue` itself. See IDLRawAny.
 struct IDLRawCallable : IDLRawAny {};
 
+// A string as the cell itself. The caller's frame keeps it alive.
+struct IDLRawString : WebCore::IDLType<JSC::JSString*> {
+    using SequenceStorageType = void;
+    using NullableType = JSC::JSString*;
+    using NullableInnerParameterType = JSC::JSString*;
+    static JSC::JSString* nullValue() { return nullptr; }
+};
+
 // An object as the `JSValue` itself. See IDLRawAny.
 struct IDLRawObject : IDLRawAny {};
 

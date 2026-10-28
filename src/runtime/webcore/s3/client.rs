@@ -174,6 +174,7 @@ pub(crate) fn delete(
     )
 }
 
+#[inline(never)]
 pub(crate) fn list_objects(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -181,6 +182,7 @@ pub(crate) fn list_objects(
     callback: fn(S3ListObjectsResult, *mut c_void) -> JsResult<()>,
     callback_context: *mut c_void,
 ) -> JsResult<()> {
+    bun_removable_features::removable_definition!(S3Client, list_objects);
     let mut search_params: Vec<u8> = Vec::<u8>::default();
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: fire-and-forget
@@ -1088,6 +1090,7 @@ pub(crate) fn upload_stream(
 }
 
 /// download a file from s3 chunk by chunk aka streaming (used on readableStream)
+#[inline(never)]
 fn download_stream(
     this: &S3Credentials,
     context: &bun_jsc::ScriptExecutionContext,
@@ -1103,6 +1106,7 @@ fn download_stream(
     ),
     callback_context: *mut c_void,
 ) -> *mut S3HttpDownloadStreamingTask {
+    bun_removable_features::removable_definition!(S3Client, download_stream);
     if s3_simple_request::nothing_new_leaves(context) {
         callback(
             &MutableString::default(),

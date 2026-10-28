@@ -1,0 +1,158 @@
+//// damage-behind-a-call-more-about-landings/a-callee-without-unknown-code-writes-a-part-of-what-a-landing-ends.ts
+// `makeCounter` and `makeClass` run no unknown code. Of what a landing ends they write a part: a getter on a literal and the members of a class may end guards on members and the state of a cell,
+// and neither touches the link of an object to its prototype. So `holder` carries its proof of the link of `s` across the call as it is: behind the call it reads `s.tag` on the guard that it got in front,
+// and only what the callee may have written is tested again.
+// A landing for the sake of those tests begins with BecomeDirty, which ends the proof of the link too. The read behind the join then stands on a guard that does not hold on every way to it:
+// GuardNotAvailable, in the verification that every build runs. And a callee like this need not throw, so the back end, which learns what a call with a landing has written from what it does
+// before it throws, would take the tests in the landing for repeated ones.
+// Build it without inlining too.
+////= lines-20	Shape	tag
+
+function makeCounter(start: number, depth: number): { readonly value: number } {
+  if (depth > 0) return makeCounter(start + 1, depth - 1);
+  return {
+    get value(): number {
+      return start;
+    },
+  };
+}
+
+function makeClass(base: number, depth: number): number {
+  if (depth > 0) return makeClass(base + 1, depth - 1);
+  class Local {
+    size(): number {
+      return base;
+    }
+    static twice(n: number): number {
+      return n * 2;
+    }
+  }
+  return Local.twice(base);
+}
+
+function holder(s: Shape, n: number): string {
+  const first = s.tag;
+  const counter = makeCounter(n, 2);
+  const second = s.tag;
+  const doubled = makeClass(n, 2);
+  const third = s.note;
+  return first + " " + second + " " + third + " " + counter.value + " " + doubled + " " + s.id;
+}
+
+for (let round = 0; round < 300; round++) {
+  const s = new Shape(round);
+  if (round % 3 === 1) s.tag = "t" + round;
+  if (round % 5 === 2) s.note = "n" + round;
+  if (round === 250) (Shape.prototype as any).note = "inherited";
+  const line = holder(s, round);
+  if (round < 3 || round % 100 === 99 || round === 250 || round === 252) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-more-about-landings/the-next-test-stands-behind-a-second-call.ts
+// What `holder` has proven about `p` is next asked for behind a second call. The landing of the first call goes on in a copy that holds the second call too,
+// and the copy of that call comes back at the landing of its original, so two calls share one landing and the result arrives there as an argument of the edge.
+// The damage is done below the first call, below the second, below both, and below the second call of an activation that has already come back at the landing of the first.
+// The results of both calls are used behind the join, and one of them does not fit its type in some rounds.
+////= Point
+
+////= lines-18	Answer	value	number
+
+let victim: Point | null = null;
+let strikeInFirst = false;
+let strikeInSecond = false;
+let misfit = false;
+let hook: any = (n: number) => n;
+
+function strike(kind: number): void {
+  const target = victim;
+  if (target === null) return;
+  if (kind === 0) delete (target as any).x;
+  else (target as any).y = "Y" + kind;
+}
+
+function one(n: number): Answer {
+  hook(n);
+  if (strikeInFirst) strike(0);
+  return misfit ? ({ value: "odd" } as any) : new Answer(n + 1);
+}
+
+function two(n: number): Answer {
+  hook(n);
+  if (strikeInSecond) strike(n & 1 ? 1 : 2);
+  return new Answer(n + 2);
+}
+
+function holder(p: Point, n: number): string {
+  const before = p.x + p.y;
+  const a = one(n);
+  const b = two(n);
+  const after = p.x + "," + p.y;
+  return before + " " + a.value + " " + b.value + " " + after + " " + Object.keys(p).join("");
+}
+
+for (let round = 0; round < 800; round++) {
+  const p = new Point(round, 1);
+  const kind = round % 100 === 99 ? (round + 1) / 100 : 0;
+  victim = kind ? p : null;
+  strikeInFirst = kind === 1 || kind === 3 || kind === 5 || kind === 7;
+  strikeInSecond = kind === 2 || kind === 3 || kind === 6 || kind === 7;
+  misfit = kind >= 4;
+  const line = holder(p, round);
+  if (kind || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-more-about-landings/what-stands-between-the-call-and-the-tests-runs-once.ts
+// Behind a landing the caller goes on in a copy of its typed code, up to and with the tests for what it held across the call, and joins the typed code behind them.
+// Between the call and the tests stand stores to a variable of the module, to a captured variable, to a field and to an array. Each runs once, whichever way the call came back,
+// whichever of the two tests fails in the copy, and in the arm that a failed test leads to they have all run already.
+////= Point
+
+let ticks = 0;
+let first: Point | null = null;
+let second: Point | null = null;
+let how = 0;
+let hook: any = (n: number) => n;
+
+function damage(target: Point): void {
+  if (how === 0) delete (target as any).x;
+  else if (how === 1) (target as any).y = "Y";
+  else if (how === 2) Object.defineProperty(target, "x", { get: () => -7, configurable: true });
+  else Object.setPrototypeOf(target, { extra: 1 });
+}
+
+function callee(n: number): number {
+  hook(n);
+  if (first !== null) damage(first);
+  if (second !== null) damage(second);
+  return n & 7;
+}
+
+function makeHolder(): (p: Point, q: Point, log: number[], n: number) => string {
+  let calls = 0;
+  return function holder(p: Point, q: Point, log: number[], n: number): string {
+    const before = p.x + p.y + q.x + q.y;
+    const got = callee(n);
+    ticks++;
+    calls += 2;
+    log.push(got);
+    const scaled = got * 3 + ticks;
+    const fromSecond = q.y;
+    ticks += 10;
+    log.push(scaled);
+    const fromFirst = p.x;
+    calls += 100;
+    return before + " " + got + " " + scaled + " " + fromSecond + " " + fromFirst + " " + p.y + " " + q.x + " | " + ticks + " " + calls + " " + log.join();
+  };
+}
+
+const holder = makeHolder();
+for (let round = 0; round < 1600; round++) {
+  const p = new Point(round, 1);
+  const q = new Point(2, round);
+  const strikes = round % 100 === 99;
+  const which = ((round + 1) / 100) & 3;
+  how = ((round + 1) / 400) | 0;
+  if (how > 3) how = 3;
+  first = strikes && which !== 1 ? p : null;
+  second = strikes && which !== 0 ? q : null;
+  const line = holder(p, q, [], round);
+  if (strikes || round === 0) console.log(round + ": " + line);
+}

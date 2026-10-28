@@ -74,6 +74,16 @@ test("a file that is no test file has the names too", () => { check(1); });
 import { expect, test } from "vitest";
 test("a file that imports a runner has the other names too", () => { expect(typeof describe).toBe("function"); });
 `,
+  "defines-expect.js": `
+globalThis.expect = value => ({ to: { equal(other) { console.log("row:", value === other ? "equal" : "not equal"); } } });
+`,
+  "has-a-global-of-a-preload.test.js": `
+import { test } from "bun:test";
+test("a file that imports a runner has the global that a preload defined", () => { expect(1).to.equal(1); console.log("row:", typeof describe); });
+`,
+  "has-no-global-of-a-preload.test.js": `
+test("a file that imports no runner has the runner's", () => { expect(typeof expect(1).to).toBe("undefined"); });
+`,
   "imports-jest.test.js": `
 import { expect, test } from "@jest/globals";
 test("a file that imports a runner has the other names too", () => { expect(typeof beforeAll).toBe("function"); });
@@ -98,9 +108,11 @@ async function report(mode: string[], directory: string, file: string) {
 
 describe("the names of the test runner without an import", () => {
   const testFiles = Object.keys(files).filter(name => name.includes(".test."));
+  const withPreload = testFiles.filter(name => name.includes("-of-a-preload."));
   const rows = [
-    ...testFiles.map(file => [file, []] as const),
+    ...testFiles.filter(file => !withPreload.includes(file)).map(file => [file, []] as const),
     ["names-of-one-runner.test.js", ["--globals=vitest"]] as const,
+    ...withPreload.map(file => [file, ["--preload=./defines-expect.js"]] as const),
   ];
   for (const [file, flags] of rows) {
     test(

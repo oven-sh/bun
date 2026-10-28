@@ -1,5 +1,6 @@
 //! `bun test` hands every file the names of the test runner.
 
+use bun_ast::import_record::is_test_module;
 use bun_js_parser::Jest;
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::Binding;
@@ -14,17 +15,23 @@ use bun_sema::session::Arena;
 
 use crate::load::react_compiler::module_items::{
     POSITION, finish_file, put_around_body, write_constant, write_import,
+    write_initialized_constant,
 };
 
 const MODULE: &[u8] = b"bun:test";
 const MODULE_OF_VITEST: &[u8] = b"vitest";
 // No program can write such a name, so it meets no declaration of the file: `declare const test: ..` stands beside it.
 const LOCAL_NAME_PREFIX: &[u8] = b"%test:";
+const OWN_GLOBAL_PREFIX: &[u8] = b"%global:";
 
-fn imports_vitest(request: &TransformRequest<'_, '_>, atoms: &Interner<'_>) -> bool {
+fn imports(
+    request: &TransformRequest<'_, '_>,
+    atoms: &Interner<'_>,
+    is_wanted: fn(&[u8]) -> bool,
+) -> bool {
     let mut sites = request.analysis.import_sites.iter();
     sites.any(|site| match site.specifier {
-        ImportSpecifier::Constant(specifier) => atoms.bytes(specifier) == MODULE_OF_VITEST,
+        ImportSpecifier::Constant(specifier) => is_wanted(atoms.bytes(specifier)),
         ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => {
             false
         }
@@ -120,6 +127,31 @@ fn write_require(
     write_constant(file, pat, callee, atoms.intern(module))
 }
 
+/// `const { expect: %global:expect = %test:expect } = globalThis;`
+fn write_own_globals(file: &mut FileBuilder, names: &[(Atom, Atom, Atom)]) -> StmtId {
+    let properties: Vec<PatProp> = names
+        .iter()
+        .map(|&(name, local, of_runner)| PatProp {
+            key: PropKey::Name(name),
+            name_kind: NameKind::Identifier,
+            value: file.pat(PatKind::Ident(local), POSITION, POSITION),
+            default: file.expr(ExprKind::Ident(of_runner), POSITION, POSITION),
+            is_rest: false,
+            pos: POSITION,
+            key_pos: POSITION,
+            end: POSITION,
+        })
+        .collect();
+    let properties = file.add_pat_props(&properties);
+    let pat = file.pat(PatKind::Object(properties), POSITION, POSITION);
+    let mut global = file.expr(ExprKind::Ident(known::globalThis), POSITION, POSITION);
+    if !file.is_js {
+        let ty = file.ty(TypeNodeKind::Keyword(Keyword::Any), POSITION, POSITION);
+        global = file.expr(ExprKind::As { expr: global, ty }, POSITION, POSITION);
+    }
+    write_initialized_constant(file, pat, global)
+}
+
 pub(crate) fn import_used_names<'s>(
     arena: &'s Arena,
     atoms: &Interner<'s>,
@@ -127,7 +159,8 @@ pub(crate) fn import_used_names<'s>(
     has_globals_of_vitest: bool,
 ) -> TreeChange {
     // The parser gives `bun test` the same names out of the same module.
-    let is_of_vitest = has_globals_of_vitest || imports_vitest(request, atoms);
+    let is_of_vitest =
+        has_globals_of_vitest || imports(request, atoms, |module| module == MODULE_OF_VITEST);
     let module = if is_of_vitest {
         MODULE_OF_VITEST
     } else {
@@ -143,10 +176,19 @@ pub(crate) fn import_used_names<'s>(
     if uses.is_empty() {
         return TreeChange::Unchanged;
     }
-    let locals = given
-        .iter()
-        .map(|name| atoms.intern(&[LOCAL_NAME_PREFIX, name].concat()));
-    let locals: Vec<Atom> = locals.collect();
+    let with_prefix = |prefix: &[u8]| -> Vec<Atom> {
+        let locals = given
+            .iter()
+            .map(|name| atoms.intern(&[prefix, name].concat()));
+        locals.collect()
+    };
+    let of_runner = with_prefix(LOCAL_NAME_PREFIX);
+    // A file that imports a test module keeps any global that a script put on `globalThis` itself. Only the run knows which.
+    let keeps_own_globals = imports(request, atoms, is_test_module);
+    let locals = match keeps_own_globals {
+        true => with_prefix(OWN_GLOBAL_PREFIX),
+        false => of_runner.clone(),
+    };
     let mut file = FileBuilder::from_file(request.hir);
     for &(expression, name) in &uses {
         write_use(&mut file, expression, names[name], locals[name]);
@@ -161,13 +203,21 @@ pub(crate) fn import_used_names<'s>(
         }
     }
     let is_used = |name: usize| uses.iter().any(|&(_, used)| used == name);
-    let used = (0..names.len()).filter(|&name| is_used(name));
-    let used: Vec<(Atom, Atom)> = used.map(|name| (names[name], locals[name])).collect();
-    let added = match request.analysis.module_format {
-        ModuleFormat::Esm => write_import(&mut file, atoms, module, used.iter().copied()),
-        ModuleFormat::CommonJs => write_require(&mut file, atoms, module, &used),
-    };
-    put_around_body(&mut file, &[added], &[]);
+    let used: Vec<usize> = (0..names.len()).filter(|&name| is_used(name)).collect();
+    let imported = used.iter().map(|&name| (names[name], of_runner[name]));
+    let imported: Vec<(Atom, Atom)> = imported.collect();
+    let mut added = vec![match request.analysis.module_format {
+        ModuleFormat::Esm => write_import(&mut file, atoms, module, imported.iter().copied()),
+        ModuleFormat::CommonJs => write_require(&mut file, atoms, module, &imported),
+    }];
+    if keeps_own_globals {
+        let own = used
+            .iter()
+            .map(|&name| (names[name], locals[name], of_runner[name]));
+        let own: Vec<(Atom, Atom, Atom)> = own.collect();
+        added.push(write_own_globals(&mut file, &own));
+    }
+    put_around_body(&mut file, &added, &[]);
     *request.hir = finish_file(file, arena, atoms);
     TreeChange::Changed
 }
@@ -370,6 +420,54 @@ mod tests {
         ];
         for (name, text, expected) in rows {
             assert_eq!(describe(name, text), expected, "{text}");
+        }
+    }
+
+    // What the file takes off `globalThis`, each with the name that it has where `globalThis` lacks it.
+    fn describe_own_globals(name: &str, text: &str) -> String {
+        with_loaded_test_run(&[(name, text)], &default_settings(), |_, loaded| {
+            let files = loaded.project(ProjectId::Application).loaded.files();
+            let path = format!("/project/{name}");
+            let file = files
+                .by_path
+                .get(path.as_bytes())
+                .expect("the file is in the program");
+            let hir = files.hir(file);
+            let text_of = |atom| BStr::new(files.atoms.bytes(atom)).to_string();
+            let properties = hir.pat_props.iter().filter(|it| it.default != ExprId::NONE);
+            let taken =
+                properties.filter_map(|it| match (hir[it.value].kind, hir[it.default].kind) {
+                    (PatKind::Ident(local), ExprKind::Ident(of_runner)) => {
+                        Some(format!("{} = {}", text_of(local), text_of(of_runner)))
+                    }
+                    _ => None,
+                });
+            taken.collect::<Vec<String>>().join(", ")
+        })
+    }
+
+    #[test]
+    fn a_file_that_imports_a_runner_asks_global_this_first() {
+        let rows = [
+            ("a.test.js", "describe;", ""),
+            (
+                "a.test.js",
+                "import { test } from 'bun:test'; test('a', () => {}); describe; expect;",
+                "%global:describe = %test:describe, %global:expect = %test:expect",
+            ),
+            (
+                "a.test.ts",
+                "import { test } from 'vitest'; test('a', () => {}); suite;",
+                "%global:suite = %test:suite",
+            ),
+            (
+                "a.test.cjs",
+                "require('@jest/globals'); it;",
+                "%global:it = %test:it",
+            ),
+        ];
+        for (name, text, expected) in rows {
+            assert_eq!(describe_own_globals(name, text), expected, "{text}");
         }
     }
 

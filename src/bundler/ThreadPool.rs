@@ -367,8 +367,7 @@ impl ThreadPool {
         // other thread looks it up under a different `id`).
         // `deinit_without_freeing_arena` reads every entry, so it must not run
         // while a task is in here. It waits for the source map tasks itself. Its
-        // callers `wait_for_parse` first, except when `enqueue_entry_points_*`
-        // returns an error, which only a failed allocation makes it do.
+        // callers `wait_for_parse` first.
         unsafe {
             worker.write(Worker {
                 // Placeholder — overwritten by `init()` immediately below.

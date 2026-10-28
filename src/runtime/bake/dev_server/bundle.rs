@@ -456,7 +456,7 @@ impl DevServer {
                 );
             }
             bt
-        })?;
+        });
         drop(entry_points);
         // End the AST scope and move its state into the bundle so the small
         // `AstVec`s built during setup stay alive until the bundle completes.

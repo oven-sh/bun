@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -503,6 +503,42 @@ test("exits with the build error when a build fails while the IO pool is still r
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
   expect(normalizeBunSnapshot(stderr, dir)).toBe('error: ModuleNotFound resolving "./missing.ts" (entry point)');
   expect(exitCode).toBe(1);
+});
+
+// The child refuses each allocation over 1 MiB, so the growth of `graph.ast` for an import fails.
+// `--debug-crash-handler-use-trace-string`: a debug build takes seconds to symbolize its report.
+test.skipIf(!isASAN)("stops with the out-of-memory message when the row of an import cannot be allocated", async () => {
+  const files: Record<string, string> = { "entry.ts": "" };
+  for (let i = 0; i < 2000; i++) {
+    files[`m${i}.ts`] = `export default ${i};\n`;
+    files["entry.ts"] += `import m${i} from "./m${i}.ts"; console.log(m${i});\n`;
+  }
+  using dir = tempDir("build-source-row-oom", files);
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "build", "./entry.ts", "--outdir", "out"],
+    env: {
+      ...bunEnv,
+      BUN_CRASH_REPORT_URL: "",
+      BUN_ENABLE_CRASH_REPORTING: "0",
+      ASAN_OPTIONS: [
+        bunEnv.ASAN_OPTIONS,
+        "allocator_may_return_null=1",
+        "max_allocation_size_mb=1",
+        "disable_coredump=1",
+      ]
+        .filter(Boolean)
+        .join(":"),
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout,
+    outOfMemory: stderr.includes("Bun has run out of memory."),
+    signalCode: proc.signalCode,
+  }).toEqual({ stdout: "", outOfMemory: true, signalCode: "SIGABRT" });
 });
 
 // https://github.com/oven-sh/bun/issues/9859

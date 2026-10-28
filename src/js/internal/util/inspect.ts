@@ -2138,26 +2138,30 @@ function addNumericSeparatorEnd(integerString: string) {
 const remainingText = (remaining: number) => `... ${remaining} more item${remaining > 1 ? "s" : ""}`;
 
 function formatNumber(fn: Stylize, number: number, numericSeparator: boolean) {
+  // Format -0 as '-0', before any conversion to a string: `${-0}` is '0', and `number === -0` is true for 0 too.
+  if (ObjectIs(number, -0)) {
+    return fn("-0", "number");
+  }
   if (!numericSeparator) {
-    // Format -0 as '-0'. Checking `number === -0` won't distinguish 0 from -0.
-    if (ObjectIs(number, -0)) {
-      return fn("-0", "number");
-    }
     return fn(`${number}`, "number");
   }
-  const integer = MathTrunc(number);
-  const string = String(integer);
-  if (integer === number) {
-    if (!NumberIsFinite(number) || StringPrototypeIncludes.$call(string, "e")) {
-      return fn(string, "number");
+
+  const numberString = `${number}`;
+  if (MathTrunc(number) === number) {
+    if (!NumberIsFinite(number) || StringPrototypeIncludes.$call(numberString, "e")) {
+      return fn(numberString, "number");
     }
-    return fn(`${addNumericSeparator(string)}`, "number");
+    return fn(addNumericSeparator(numberString), "number");
   }
-  if (NumberIsNaN(number)) {
-    return fn(string, "number");
+  if (NumberIsNaN(number) || StringPrototypeIncludes.$call(numberString, "e")) {
+    return fn(numberString, "number");
   }
+
+  const decimalIndex = StringPrototypeIndexOf.$call(numberString, ".");
   return fn(
-    `${addNumericSeparator(string)}.${addNumericSeparatorEnd(StringPrototypeSlice.$call(String(number), string.length + 1))}`,
+    `${addNumericSeparator(StringPrototypeSlice.$call(numberString, 0, decimalIndex))}.${addNumericSeparatorEnd(
+      StringPrototypeSlice.$call(numberString, decimalIndex + 1),
+    )}`,
     "number",
   );
 }

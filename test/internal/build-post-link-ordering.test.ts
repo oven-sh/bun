@@ -16,9 +16,11 @@ import { isMacOS, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { binaryExpectations, strippedExpectations } from "../../scripts/build/binary-expectations.ts";
 import { binaryChecksWarnOnly, emitPostLink } from "../../scripts/build/bun.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import { Ninja } from "../../scripts/build/ninja.ts";
+import { zeroFilledTails } from "../../scripts/build/verify-binary.ts";
 
 /** A fully-populated fake toolchain; resolveConfig never spawns any of these. */
 function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
@@ -143,9 +145,51 @@ describe("emitPostLink ninja ordering", () => {
 
       const spec = JSON.parse(readFileSync(join(buildDir, "bun.verify.json"), "utf8"));
       expect(spec.exe).toBe(strippedExe);
-      expect(spec.expect.elf).toEqual({ ...layout, execStack: false, rwxLoad: false, tlsSegment: true });
+      expect(spec.expect.elf).toEqual({
+        ...layout,
+        execStack: false,
+        rwxLoad: false,
+        tlsSegment: true,
+        zeroFilledBelow: 2 * 1024 * 1024,
+      });
       for (const needsSymbols of ["staticInitializers", "forbiddenSymbols", "debugInfo"])
         expect(spec.expect).not.toHaveProperty(needsSymbols);
+    });
+  });
+
+  // Zero-filled data (.bss) of 2 MiB or more can hold a transparent huge page: 2 MB more in every process, at some
+  // addresses of the link and not at others. The scans hold every build that ships for Linux below that.
+  describe("the limit on zero-filled data", () => {
+    const twoMegabytes = 2 * 1024 * 1024;
+    test.each([
+      ["a release build for Linux has it", {}, twoMegabytes],
+      ["a release build for Linux on aarch64 has it", { arch: "aarch64" }, twoMegabytes],
+      ["a hardened build has it", { hardened: true, webkit: "local" }, twoMegabytes],
+      ["a debug build has none", { buildType: "Debug", asan: false }, undefined],
+      ["a build with AddressSanitizer has none", { asan: true }, undefined],
+      ["a build for FreeBSD has none", { os: "freebsd", abi: undefined, freebsdSysroot: "/fake/freebsd" }, undefined],
+    ] as [string, PartialConfig, number | undefined][])("%s", (_name, partial, limit) => {
+      using dir = tempDir("build-post-link", {});
+      const buildDir = String(dir);
+      const cfg = resolveConfig(
+        { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", linuxSysroot: buildDir, buildDir, ...partial },
+        mockToolchain(),
+      );
+      expect(binaryExpectations(cfg).elf?.zeroFilledBelow).toBe(limit);
+      expect(strippedExpectations(cfg)?.elf.zeroFilledBelow).toBe(limit);
+    });
+
+    test("is held against the pages that the kernel maps behind the bytes of the file", () => {
+      // The segments of two release builds for Linux x64: main at 11c367163, and a build that allocates the Huffman
+      // tables of lshpack at their first use.
+      const code = { vaddr: 0x1e37700n, fileSize: 0x679dcc0n, memSize: 0x679dcc0n, writable: false };
+      const before = { vaddr: 0x85d63c0n, fileSize: 0x1ddf0n, memSize: 0x228798n, writable: true };
+      const after = { vaddr: 0x81dc8a0n, fileSize: 0xa3650n, memSize: 0x1ddff8n, writable: true };
+      expect(zeroFilledTails([code, before])).toEqual([2_138_112]);
+      expect(zeroFilledTails([code, after])).toEqual([1_290_240]);
+      // Zero-filled data that ends in the last page of the file's bytes maps no page of its own.
+      expect(zeroFilledTails([{ vaddr: 0x1000n, fileSize: 0x10n, memSize: 0x800n, writable: true }])).toEqual([]);
+      expect(zeroFilledTails([{ ...before, writable: false }])).toEqual([]);
     });
   });
 

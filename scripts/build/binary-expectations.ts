@@ -135,6 +135,19 @@ export interface BinaryExpectations {
     bindNow: boolean;
     /** A PT_TLS segment. Absent on Android: bun targets API 28, bionic has ELF TLS from 29, so every thread-local is emulated. */
     tlsSegment: boolean;
+    /**
+     * The zero-filled data (.bss) is smaller than this many bytes: what each writable PT_LOAD has in memory behind
+     * its bytes in the file, in the 4 KiB pages the kernel maps for it. That mapping is anonymous memory. Where
+     * transparent huge pages are `always` on, the kernel backs a 2 MiB stretch of it that starts on a 2 MiB
+     * boundary with one huge page at the first write to it, which is 2 MB more memory in every process, and the
+     * address the link gave the mapping decides whether it holds such a stretch. The dynamic loader writes to the
+     * mapping before any code of bun runs, so nothing can opt it out in time. Below 2 MiB no address holds one.
+     * Undefined = not checked: a debug or sanitizer build has several times the zero-filled data.
+     *
+     * Not a number to raise: a large zero-filled table that most processes never write is allocated at its first
+     * use instead (patches/lshpack/lazy-huff-tables.patch is one).
+     */
+    zeroFilledBelow?: number;
   };
   pe?: {
     /** Exact set of IMAGE_DLL_CHARACTERISTICS_* names. */
@@ -427,7 +440,7 @@ export function shimExpectations(): BinaryExpectations {
 /** Of `elf`, what the program headers and the dynamic section answer. */
 type ElfLayout = Pick<
   NonNullable<BinaryExpectations["elf"]>,
-  "type" | "execStack" | "rwxLoad" | "relro" | "bindNow" | "tlsSegment"
+  "type" | "execStack" | "rwxLoad" | "relro" | "bindNow" | "tlsSegment" | "zeroFilledBelow"
 >;
 
 /** The stripped `bun`, the file that ships: whatever `binaryExpectations()` says that is read without a symbol table. ELF only. */
@@ -437,8 +450,10 @@ export function strippedExpectations(cfg: Config): (Omit<BinaryExpectations, "el
   delete expect.staticInitializers;
   delete expect.forbiddenSymbols;
   delete expect.debugInfo;
-  const { type, execStack, rwxLoad, relro, bindNow, tlsSegment } = expect.elf;
-  return { ...expect, elf: { type, execStack, rwxLoad, relro, bindNow, tlsSegment } };
+  const { type, execStack, rwxLoad, relro, bindNow, tlsSegment, zeroFilledBelow } = expect.elf;
+  const elf: ElfLayout = { type, execStack, rwxLoad, relro, bindNow, tlsSegment };
+  if (zeroFilledBelow !== undefined) elf.zeroFilledBelow = zeroFilledBelow;
+  return { ...expect, elf };
 }
 
 export function binaryExpectations(cfg: Config): BinaryExpectations {
@@ -540,6 +555,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
           relro: cfg.hardened,
           bindNow: cfg.hardened,
           tlsSegment: !android,
+          ...(cfg.linux && !cfg.debug && !cfg.asan && { zeroFilledBelow: 2 * 1024 * 1024 }),
         },
         debugInfo: { symtab: true, debugSections: cfg.debugInfo !== "none", compressed: true },
       };

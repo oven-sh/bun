@@ -35,9 +35,10 @@ export const lshpack: Dependency = {
 
   // hencs[65536]/hdecs[65536] (768 KB of .rodata) are pure functions of the
   // 257-entry encode_table. Build them at the first init (~250 us once) in
-  // memory allocated then; the hot-path lookup is unchanged. They are not
-  // zero-filled data of the executable (.bss): that has to stay smaller than a
-  // transparent huge page (test/internal/zero-filled-data-below-a-huge-page.test.ts).
+  // memory allocated then. A coder loads their address once per call, so its
+  // loops are those of a static table. They are not zero-filled data of the
+  // executable (.bss): that has to stay smaller than a transparent huge page
+  // (zeroFilledBelow in binary-expectations.ts).
   patches: ["patches/lshpack/lazy-huff-tables.patch"],
 
   build: cfg => {

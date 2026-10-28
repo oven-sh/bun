@@ -74,7 +74,15 @@ function versionLeq(a: string, b: string): boolean {
 }
 
 type CheckName =
-  "exports" | "dynamic libraries" | "imports" | "static initializers" | "symbols" | "hardening" | "debug info" | "size";
+  | "exports"
+  | "dynamic libraries"
+  | "imports"
+  | "static initializers"
+  | "symbols"
+  | "hardening"
+  | "zero-filled data"
+  | "debug info"
+  | "size";
 
 /**
  * What a violation of each check means for the shipped binary and what the
@@ -121,6 +129,15 @@ const GUIDANCE: Record<CheckName, string[]> = {
     "These bits are process-wide exploit mitigations / layout guarantees (non-executable",
     "stack, no writable+executable mapping, ASLR flags). Losing one is almost always an",
     "unintended side effect of a linker-flag or toolchain change; find that change.",
+  ],
+  "zero-filled data": [
+    "Where transparent huge pages are `always` on, the kernel backs a 2 MiB stretch of the zero-filled",
+    "data (.bss) that starts on a 2 MiB boundary with one huge page at the first write to it: 2 MB more",
+    "memory in every bun process. The address the link gave .bss decides whether there is such a",
+    "stretch, so the cost comes and goes with unrelated changes, and nothing can opt the mapping out",
+    "before the dynamic loader writes to it. Below 2 MiB no address holds one. Find the zero-filled",
+    "static that grew (llvm-nm --size-sort on the profile executable, types b and B) and allocate it",
+    "at its first use, as patches/lshpack/lazy-huff-tables.patch does. Do not raise the limit.",
   ],
   size: [
     "This program is written to stay tiny (no CRT, no allocator, no formatting). A jump in size",
@@ -250,6 +267,20 @@ function forbiddenSymbolViolations(names: string[], forbidden: string[]): string
   if (names.length === 0) return ["the executable has no symbol table, so nothing can be said"];
   const pat = globToRegExp(forbidden);
   return names.filter(name => pat.test(name)).map(name => `+ ${name} (forbidden symbol)`);
+}
+
+/**
+ * Bytes of zero-filled data that the kernel maps behind each writable PT_LOAD: the pages of [FileSize, MemSize) that
+ * hold no byte of the file. In 4 KiB pages, the page size with which a huge page is 2 MiB.
+ */
+export function zeroFilledTails(
+  loads: { vaddr: bigint; fileSize: bigint; memSize: bigint; writable: boolean }[],
+): number[] {
+  const pageUp = (address: bigint) => (address + 4095n) & ~4095n;
+  return loads
+    .filter(load => load.writable)
+    .map(load => Number(pageUp(load.vaddr + load.memSize) - pageUp(load.vaddr + load.fileSize)))
+    .filter(size => size > 0);
 }
 
 function readAt(path: string, offset: number, length: number): Buffer {
@@ -439,6 +470,27 @@ function verifyElf(spec: VerifySpec): void {
       );
     const props = [type, "nx-stack", "no-rwx", ...(relro ? ["relro"] : []), ...(bindNow ? ["bind-now"] : [])];
     report("hardening", `${props.length} hardening properties`, violations, props);
+
+    if (expect.elf.zeroFilledBelow !== undefined) {
+      const tails = zeroFilledTails(
+        phdrs
+          .filter(b => /PT_LOAD/.test(field(b, "Type") ?? ""))
+          .map(b => ({
+            vaddr: BigInt(field(b, "VirtualAddress") ?? 0),
+            fileSize: BigInt(field(b, "FileSize") ?? 0),
+            memSize: BigInt(field(b, "MemSize") ?? 0),
+            writable: flagsOf(b).includes("PF_W"),
+          })),
+      );
+      const largest = Math.max(0, ...tails);
+      report(
+        "zero-filled data",
+        `${largest} bytes of zero-filled data`,
+        largest < expect.elf.zeroFilledBelow
+          ? []
+          : [`${largest} bytes in one mapping, expected fewer than ${expect.elf.zeroFilledBelow}`],
+      );
+    }
   }
 
   // 8. debug info / symtab

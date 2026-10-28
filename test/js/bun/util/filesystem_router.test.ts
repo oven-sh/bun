@@ -2,7 +2,17 @@ import { FileSystemRouter } from "bun";
 import { heapStats } from "bun:jsc";
 import { expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isMacOS,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import path, { dirname } from "path";
 
 function createTree(basedir: string, paths: string[]) {
@@ -1023,6 +1033,11 @@ it("reload() while Bun.build() resolves the same directory", async () => {
   // runs on the bundler thread) share the process-global directory-entry cache.
   // Run in a subprocess so a crash is observable as a signal instead of taking
   // down the test runner.
+  //
+  // A round is 4 builds, and a debug build takes about 0.4 s for each (a release
+  // build 0.02 s). ASAN, the default there, fails on the first read of a freed
+  // listing, so a debug build needs few rounds.
+  const rounds = isDebug ? 5 : 40;
   const files: Record<string, string> = {
     "fixture.ts": /* ts */ `
       import path from "path";
@@ -1044,7 +1059,7 @@ it("reload() while Bun.build() resolves the same directory", async () => {
       await Bun.build({ entrypoints, target: "bun", throw: false });
       let matches = 0;
       let buildsOk = true;
-      for (let round = 0; round < 40; round++) {
+      for (let round = 0; round < ${rounds}; round++) {
         const builds = Array.from({ length: 4 }, () =>
           Bun.build({ entrypoints, target: "bun", throw: false }),
         );
@@ -1078,7 +1093,7 @@ it("reload() while Bun.build() resolves the same directory", async () => {
     stderr: normalizeBunSnapshot(stderr, String(dir)),
     exitCode,
     signalCode: proc.signalCode,
-  }).toEqual({ stdout: "matches 2000 builds-ok true", stderr: "", exitCode: 0, signalCode: null });
+  }).toEqual({ stdout: `matches ${rounds * 50} builds-ok true`, stderr: "", exitCode: 0, signalCode: null });
 }, 60_000);
 
 it("loads routes from a directory already cached by Bun.build()", async () => {

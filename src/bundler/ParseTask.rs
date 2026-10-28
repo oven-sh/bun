@@ -665,38 +665,14 @@ pub mod parse_worker {
     }
 
     // ───────────────────────────────────────────────────────────────────────────
-    // getEmptyCSSAST / getEmptyAST
+    // getEmptyAST
     // ───────────────────────────────────────────────────────────────────────────
 
     // `transpiler: *mut Transpiler` stays raw. Callers
     // (`get_ast`, `run_with_source_code`) may also hold a raw pointer to
     // `(*transpiler).resolver`; materializing `&mut Transpiler` here would assert
     // exclusive access to the whole struct and invalidate that sibling pointer.
-    // We only touch the disjoint `options` field.
-    fn get_empty_css_ast(
-        log: &mut Log,
-        transpiler: *mut Transpiler,
-        opts: ParserOptions<'static>,
-        bump: &'static Bump,
-        source: &'static Source<'static>,
-    ) -> core::result::Result<JSAst<'static>, AnyError> {
-        let root = Expr::init(E::Object::default(), Loc { start: 0 });
-        // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
-        // is disjoint from any other field the caller may hold a pointer to.
-        let target = unsafe { (*transpiler).options.target };
-        // SAFETY: see above.
-        let define = unsafe { &mut (*transpiler).options.define };
-        let mut ast = JSAst::init(
-            js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
-                .ok_or(AnyError::ParserError)?,
-        );
-        let mut css = bun_css::BundlerStyleSheet::empty();
-        // Never minified, but its `@import` conditions are still printed with the sheet's targets.
-        css.targets = bun_css::Targets::for_bundler_target(target);
-        ast.css = Some(crate::bundled_ast::CssAstRef::from_bump(bump.alloc(css)));
-        Ok(ast)
-    }
-
+    // We only touch the disjoint `options.define` field.
     fn get_empty_ast<RootType: Default + bun_ast::expr::IntoExprData>(
         log: &mut Log,
         transpiler: *mut Transpiler,
@@ -705,7 +681,8 @@ pub mod parse_worker {
         source: &'static Source<'static>,
     ) -> core::result::Result<JSAst<'static>, AnyError> {
         let root = Expr::init(RootType::default(), Loc::EMPTY);
-        // SAFETY: see `get_empty_css_ast` — disjoint field of a live `*mut Transpiler`.
+        // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`; `options`
+        // is disjoint from any other field the caller may hold a pointer to.
         let define = unsafe { &mut (*transpiler).options.define };
         Ok(JSAst::init(
             js_parser::new_lazy_export_ast(bump, define, opts, log, root, source, b"")?
@@ -1289,7 +1266,12 @@ pub mod parse_worker {
             Loader::Css => {
                 // make css ast
                 let mut import_records = Vec::<ImportRecord>::default();
-                let source_code = &source.contents;
+                // A blank file is an empty stylesheet. U+000B is blank to the bundler, not to the CSS tokenizer.
+                let source_code: &[u8] = if strings::is_all_whitespace(&source.contents) {
+                    b""
+                } else {
+                    &source.contents
+                };
                 let mut temp_log = Log::init();
                 // `temp_log` is flushed into `log` on every exit path via linear
                 // control flow (scopeguard would alias `log`/`temp_log`).
@@ -2702,7 +2684,7 @@ pub mod parse_worker {
             if let Some(message) = unsupported_directive {
                 log.add_range_error(Some(source), UseDirective::range(entry_contents), message);
                 Err(crate::Error::ParserError)
-            } else if !is_empty || loader.handles_empty_file() {
+            } else if !is_empty || loader.handles_empty_file() || loader.is_css() {
                 get_ast(
                     log,
                     transpiler,
@@ -2715,8 +2697,6 @@ pub mod parse_worker {
                     &mut unique_key_for_additional_file,
                     &task_ctx.linker.has_any_css_locals,
                 )
-            } else if loader.is_css() {
-                get_empty_css_ast(log, transpiler, opts, bump, source)
             } else if module_type == options::ModuleType::Esm {
                 get_empty_ast::<E::Undefined>(log, transpiler, opts, bump, source)
             } else {

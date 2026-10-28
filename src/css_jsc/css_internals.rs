@@ -159,10 +159,6 @@ fn testing_impl<'a>(
                         TestKind::Normal => false,
                         TestKind::Prefix => false,
                     },
-                    targets: Targets {
-                        browsers,
-                        ..Default::default()
-                    },
                     ..Default::default()
                 },
                 Some(ImportRecordHandler::init_outside_of_bundler(
@@ -272,9 +268,9 @@ pub(crate) fn attr_test<'a>(
                 alloc,
                 &PrinterOptions {
                     minify,
-                    targets,
                     ..Default::default()
                 },
+                targets,
                 Some(ImportRecordHandler::init_outside_of_bundler(
                     &import_records,
                 )),

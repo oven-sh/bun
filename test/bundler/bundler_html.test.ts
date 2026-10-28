@@ -1,4 +1,5 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { type BundlerTestBundleAPI, itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1132,8 +1133,9 @@ body {
   //   printed into a data: URL stylesheet while the chunk is prepared
   // - the bare "@layer foo;" left behind by the deduplicated layer import,
   //   printed together with its wrapping media condition
-  // - an empty stylesheet (which the bundler never minifies), whose import
-  //   conditions are still printed around it as "@layer bar;"
+  // - a blank stylesheet, whose import conditions are still printed around it
+  //   as "@layer bar;". U+000B is blank to the bundler, though the CSS
+  //   tokenizer does not skip it.
   //
   // ".d:fullscreen" shows which targets the stylesheet was minified for: only
   // minifying for browsers adds the ":-webkit-full-screen" copy of the rule.
@@ -1152,7 +1154,7 @@ body {
 @import "./other.css";
 @import "./dup.css" layer(foo) (width >= 600px);
 @import "./nested.css" (width >= 700px);
-@import "./empty.css" layer(bar) (width >= 1000px);
+@import "./blank.css" layer(bar) (width >= 1000px);
 .a {
   color: red;
   .b {
@@ -1172,7 +1174,7 @@ body {
     "/nested.css": `
 @import "https://example.com/nested.css" (width >= 900px);
 .nested { color: red; }`,
-    "/empty.css": "",
+    "/blank.css": Buffer.from(" \n\x0B"),
   };
 
   function expectBuiltForBrowsers(css: string) {
@@ -1219,31 +1221,52 @@ body {
     },
   });
 
-  for (const target of ["bun", "node"] as const) {
-    itBundled(`html/css-browser-targets/imported-from-${target}-build`, {
-      outdir: "out/",
-      target,
-      files: {
-        ...browserTargetFiles,
-        "/server.ts": `
+  for (const backend of ["api", "cli"] as const) {
+    for (const target of ["bun", "node"] as const) {
+      itBundled(`html/css-browser-targets/imported-from-${target}-build-${backend}`, {
+        outdir: "out/",
+        target,
+        backend,
+        files: {
+          ...browserTargetFiles,
+          "/server.ts": `
 import html from "./index.html";
 console.log(html);`,
-      },
-      entryPoints: ["/server.ts"],
+        },
+        entryPoints: ["/server.ts"],
+        onAfterBundle(api) {
+          expectBuiltForBrowsers(readLinkedStylesheet(api, "out/index.html"));
+        },
+      });
+    }
+
+    itBundled(`html/css-browser-targets/html-entry-point-of-bun-build-${backend}`, {
+      outdir: "out/",
+      target: "bun",
+      backend,
+      files: browserTargetFiles,
+      entryPoints: ["/index.html"],
       onAfterBundle(api) {
         expectBuiltForBrowsers(readLinkedStylesheet(api, "out/index.html"));
       },
     });
   }
 
-  itBundled("html/css-browser-targets/html-entry-point-of-bun-build", {
-    outdir: "out/",
-    target: "bun",
-    files: browserTargetFiles,
-    entryPoints: ["/index.html"],
-    onAfterBundle(api) {
-      expectBuiltForBrowsers(readLinkedStylesheet(api, "out/index.html"));
-    },
+  // The CLI builds a standalone page as a bun-target build, with the HTML in a browser graph.
+  test("html/css-browser-targets/standalone-html-cli", async () => {
+    using dir = tempDir("html-css-browser-targets-standalone", browserTargetFiles);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--target=browser", "./index.html", "--outdir", "out"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const html = await Bun.file(`${dir}/out/index.html`).text();
+    expectBuiltForBrowsers(html.slice(html.indexOf("<style>"), html.indexOf("</style>")));
+    expect(exitCode).toBe(0);
   });
 
   // When the server code also imports the stylesheet itself, that copy belongs
@@ -1263,6 +1286,32 @@ console.log(html);`,
     onAfterBundle(api) {
       expectBuiltForBrowsers(readLinkedStylesheet(api, "out/index.html"));
       expectBuiltForRuntime(api.readFile("out/server.css"));
+    },
+  });
+
+  // Minifying for browsers gives every ":fullscreen" rule a ":-webkit-full-screen"
+  // copy. With nesting compiled away the leaf prints once per prefix. Printed for
+  // the runtime, the nested rules printed once per prefix at every level: two
+  // to the power of 30 copies, which the printer rejects.
+  itBundled("html/css-browser-targets/nested-rules-with-prefixed-selectors", {
+    outdir: "out/",
+    target: "bun",
+    files: {
+      "/index.html": `<link rel="stylesheet" href="./styles.css">`,
+      "/styles.css":
+        Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
+        "\ncolor: red;\n" +
+        Buffer.alloc(30, "}").toString(),
+      "/server.ts": `
+import html from "./index.html";
+console.log(html);`,
+    },
+    entryPoints: ["/server.ts"],
+    onAfterBundle(api) {
+      const css = readLinkedStylesheet(api, "out/index.html");
+      expect(css.match(/color: red;/g)).toHaveLength(2);
+      expect(css).toContain(".x0:-webkit-full-screen .x1:-webkit-full-screen");
+      expect(css).toContain(".x0:fullscreen .x1:fullscreen");
     },
   });
 });

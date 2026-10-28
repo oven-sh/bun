@@ -50,3 +50,94 @@ describe.concurrent("css loader default export", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("bun build --no-bundle css", () => {
+  // ".d:fullscreen" gets its ":-webkit-full-screen" copy while the stylesheet is minified.
+  // Nesting and the media range are lowered while it is printed.
+  const files = {
+    "styles.css": [
+      ".a { color: red; .b { color: blue; } }",
+      ".d:fullscreen { color: red; }",
+      "@media (width >= 800px) { .c { color: green; } }",
+      "",
+    ].join("\n"),
+  };
+
+  async function build(cwd: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args, "styles.css"],
+      env: bunEnv,
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    // Only a bundled stylesheet starts with a comment naming its source file.
+    return stdout.replace("/* styles.css */\n", "");
+  }
+
+  test("lowers css for the default (browser) target the same way a bundled build does", async () => {
+    using dir = tempDir("no-bundle-css-browser", files);
+    const [transpiled, bundled] = await Promise.all([build(String(dir), "--no-bundle"), build(String(dir))]);
+    expect(transpiled).toBe(
+      [
+        ".a {",
+        "  color: red;",
+        "}",
+        "",
+        ".a .b {",
+        "  color: #00f;",
+        "}",
+        "",
+        ".d:-webkit-full-screen {",
+        "  color: red;",
+        "}",
+        "",
+        ".d:fullscreen {",
+        "  color: red;",
+        "}",
+        "",
+        "@media (min-width: 800px) {",
+        "  .c {",
+        "    color: green;",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    expect(transpiled).toBe(bundled);
+  });
+
+  test.each(["bun", "node"])("--target=%s leaves css alone the same way a bundled build does", async target => {
+    using dir = tempDir(`no-bundle-css-${target}`, files);
+    const [transpiled, bundled] = await Promise.all([
+      build(String(dir), "--no-bundle", `--target=${target}`),
+      build(String(dir), `--target=${target}`),
+    ]);
+    expect(transpiled).toBe(
+      [
+        ".a {",
+        "  color: red;",
+        "",
+        "  & .b {",
+        "    color: #00f;",
+        "  }",
+        "}",
+        "",
+        ".d:fullscreen {",
+        "  color: red;",
+        "}",
+        "",
+        "@media (width >= 800px) {",
+        "  .c {",
+        "    color: green;",
+        "  }",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    expect(transpiled).toBe(bundled);
+  });
+});

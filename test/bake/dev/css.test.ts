@@ -835,16 +835,44 @@ devTest("css linked from html is printed for the browser targets it was minified
     `,
   },
   async test(dev) {
-    const html = await dev.fetch("/").text();
-    const href = html.match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)?.[1];
-    if (!href) throw new Error("no stylesheet is linked from the served html: " + html);
-    const css = await dev.fetch(href).text();
+    const servedStylesheet = async () => {
+      const html = await dev.fetch("/").text();
+      const href = html.match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)?.[1];
+      if (!href) throw new Error("no stylesheet is linked from the served html: " + html);
+      return await dev.fetch(href).text();
+    };
     // Minifying for browsers adds the prefixed copy of the rule.
-    expect(css).toContain(".d:-webkit-full-screen {");
     // Printing for browsers lowers nesting and the media range.
-    expect(css).toContain(".a .b {");
-    expect(css).toContain("@media (min-width: 600px)");
-    expect(css).not.toContain(">=");
+    const expectBuiltForBrowsers = (css: string, leaf: string, width: string) => {
+      expect(css).toContain(".d:-webkit-full-screen {");
+      expect(css).toContain(`.a .b {\n  color: ${leaf};`);
+      expect(css).toContain(`@media (min-width: ${width})`);
+      expect(css).not.toContain(">=");
+    };
+
+    expectBuiltForBrowsers(await servedStylesheet(), "#00f", "600px");
+
+    // A hot update prints the stylesheet again.
+    await dev.write(
+      "styles.css",
+      `
+        .a {
+          color: red;
+          .b {
+            color: tan;
+          }
+        }
+        .d:fullscreen {
+          color: red;
+        }
+        @media (width >= 700px) {
+          .a {
+            color: green;
+          }
+        }
+      `,
+    );
+    expectBuiltForBrowsers(await servedStylesheet(), "tan", "700px");
   },
 });
 

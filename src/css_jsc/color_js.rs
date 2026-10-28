@@ -458,6 +458,7 @@ pub(crate) fn color<'a>(
                 bun_alloc::ArenaVec::<u8>::new_in(&arena),
                 &mut dest,
                 &css::PrinterOptions::default(),
+                css::Targets::default(),
                 None,
                 None,
                 &symbols,

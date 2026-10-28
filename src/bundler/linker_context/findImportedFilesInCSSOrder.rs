@@ -1006,7 +1006,7 @@ fn debug_css_order_impl(
     order: &Vec<CssImportOrder>,
     step: CssOrderDebugStep,
 ) {
-    use crate::bun_css::{ImportInfo, LocalsResultsMap, Printer, PrinterOptions};
+    use crate::bun_css::{ImportInfo, LocalsResultsMap, Printer, PrinterOptions, Targets};
 
     let tag = step.tag_name();
     debug!("CSS order {}:\n", tag);
@@ -1038,6 +1038,7 @@ fn debug_css_order_impl(
                     bun_alloc::ArenaVec::new_in(&arena),
                     &mut writer,
                     &PrinterOptions::default(),
+                    Targets::default(),
                     Some(ImportInfo {
                         import_records: &entry.condition_import_records,
                         ast_urls_for_css,

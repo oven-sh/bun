@@ -1745,9 +1745,8 @@ devTest("recovers from importing a file in a directory that can't be opened", {
   },
 });
 
-// Nested `:fullscreen` rules copy the body once per vendor prefix at each level, which the CSS
-// printer rejects. This only fails because the dev server prints and minifies with different targets.
-// If that changes, this test needs another stylesheet that fails to print.
+// Compiling nesting away writes the parent selector for each `&`. With two per level the
+// printer stops at its expansion limit.
 devTest("editing an @imported stylesheet recovers from a failed CSS print", {
   files: {
     "index.html": emptyHtmlFile({
@@ -1755,11 +1754,7 @@ devTest("editing an @imported stylesheet recovers from a failed CSS print", {
       body: "hello",
     }),
     "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
-    "child.css":
-      Array.from({ length: 30 }, (_, i) => `.x${i}:fullscreen {`).join("\n") +
-      "\ncolor: red;\n" +
-      Buffer.alloc(30, "}").toString() +
-      "\n",
+    "child.css": "&:is(.a, &.b) {\n".repeat(20) + "color: red;\n" + "}\n".repeat(20),
   },
   async test(dev) {
     await using c = await dev.client("/", {

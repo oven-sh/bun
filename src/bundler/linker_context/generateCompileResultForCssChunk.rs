@@ -108,7 +108,6 @@ fn generate_compile_result_for_css_chunk_impl(
             let printer_options = PrinterOptions {
                 // TODO: make this more configurable
                 minify: c.options.minify_whitespace,
-                targets: css.targets,
                 ..Default::default()
             };
             match css.to_css_with_writer(
@@ -151,7 +150,6 @@ fn generate_compile_result_for_css_chunk_impl(
             let printer_options = PrinterOptions {
                 // TODO: make this more configurable
                 minify: c.options.minify_whitespace,
-                targets: css.targets,
                 ..Default::default()
             };
             match css.to_css_with_writer(
@@ -184,7 +182,6 @@ fn generate_compile_result_for_css_chunk_impl(
         }
         CssImportOrderKind::SourceIndex(idx) => {
             let printer_options = PrinterOptions {
-                targets: css.targets,
                 // TODO: make this more configurable
                 minify: c.options.minify_whitespace
                     || c.options.minify_syntax

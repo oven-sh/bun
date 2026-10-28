@@ -5,7 +5,7 @@ import { tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 import { slow } from "./check";
-import { chunksOf, type PngOptions } from "./observe";
+import { chunksOf, linesOf, type PngOptions } from "./observe";
 import { read } from "./read";
 import { formats, iccp, noise, randomBytes, RGBA, rgbaOf, write, writeAround, type Picture } from "./write";
 
@@ -102,6 +102,30 @@ describe("RGBA", () => {
       }
     }
     expect(await mistakes(cases)).toEqual([]);
+  });
+
+  // When all the rows of this picture have gone in, the IDAT chunk has room for one more byte. At level 1 that is so
+  // for one picture of noise in some 8000, and for as long as zlib hands over the same bytes at the same moments. A
+  // stream of node:zlib gives zlib a row at a time and the room that is left of 8192 bytes, as src/png/encoder.rs does.
+  test("the end of the stream when one byte is left of an IDAT chunk", async () => {
+    const source = sourceOf(contents.noise(1316, 4));
+    const file = await new Bun.Image(source.file).png({ compressionLevel: 1 }).bytes();
+    expect(read(file).rgba.equals(source.rgba)).toBe(true);
+
+    const chunks = [...chunksOf(file)];
+    const lines = linesOf(chunks);
+    const deflate = zlib.createDeflate({ level: 1, strategy: zlib.constants.Z_FILTERED, chunkSize: 8192 });
+    const parts: Buffer[] = [];
+    deflate.on("data", part => parts.push(part));
+    for (let at = 0; at < lines.length; at += lines.length / 4) {
+      await new Promise(done => deflate.write(lines.subarray(at, at + lines.length / 4), done));
+    }
+    const beforeTheEnd = Buffer.concat(parts).length;
+    await new Promise(done => deflate.on("end", done).end());
+    // With the same settings, as it comes to the same stream.
+    const idat = Buffer.concat(chunks.filter(c => c.type === "IDAT").map(c => c.data));
+    expect(Buffer.concat(parts).equals(idat)).toBe(true);
+    expect(beforeTheEnd % 8192).toBe(8191);
   });
 
   // libspng added up the bytes of a filtered row in 32 bits, and did not try with rows that could be too much for that.

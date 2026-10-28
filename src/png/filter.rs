@@ -163,8 +163,9 @@ impl<const BPP: usize> Unfilter<BPP> {
 
     /// Where the row above repeats a pixel, b = c, so a is the nearest and Paeth is Sub, at a tenth of the cost.
     fn paeth_or_sub(row: &mut [u8], above: &[u8]) {
+        // The tests and files in test/js/bun/image/png-golden are made for the edges that `BLOCK` and `BUSY_LEN` give.
         const BLOCK: usize = 48;
-        // After a block that is not flat this much is not looked at, or a photo would pay for the looking.
+        // From the start of a block that is not flat to the next look, or a photo would pay for the looking.
         const BUSY_LEN: usize = 5 * BLOCK;
         const { assert!(BLOCK.is_multiple_of(BPP)) };
         let is_flat = |at: usize| {

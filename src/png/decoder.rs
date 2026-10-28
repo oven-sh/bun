@@ -11,6 +11,13 @@ use crate::header::{ColorType, Header, IHDR_LEN};
 /// What a JPEG file has room for, in 255 segments. A few KB of iCCP can inflate to a thousand times as much.
 const MAX_ICC_PROFILE_LEN: usize = 255 * 65_519;
 
+/// Lines shorter than `LONG_LINE_LEN` are inflated so many bytes at a time. One at a time, each costs a call of zlib,
+/// which is all the time there is to an image one pixel wide, and what it copies from the line above comes out of
+/// zlib's window.
+const AHEAD_LEN: usize = 64 * 1024;
+/// From here on a line is inflated to where it stays, which saves copying it.
+const LONG_LINE_LEN: usize = 4096;
+
 type Rgba = [u8; 4];
 
 pub struct Image {
@@ -51,7 +58,7 @@ impl<'a> Decoder<'a> {
         let mut chunks = Chunks::new(header);
         let first_idat_len = chunks.read_until_idat(&mut reader)?;
         let expander = Expander::new(&chunks);
-        let mut idat = Idat::new(reader, first_idat_len)?;
+        let mut idat = Idat::new(reader, first_idat_len, header)?;
         Ok(Image {
             rgba: read_pixels(header, &expander, &mut idat)?,
             icc_profile: chunks.icc_profile,
@@ -198,15 +205,26 @@ struct Idat<'a> {
     /// What zlib has not taken yet of the chunk `reader` is behind.
     input: &'a [u8],
     inflater: InflateDecoder,
+    /// How many bytes the lines have that are still to be inflated. What the stream holds after them is not looked at.
+    left: usize,
+    /// Inflated for the reads to come, and how much of it they have had.
+    ahead: Vec<u8>,
+    ahead_read: usize,
 }
 
 impl<'a> Idat<'a> {
     /// `reader` is behind the header of the first IDAT, which announces `len` bytes.
-    fn new(mut reader: Reader<'a>, len: usize) -> Result<Self> {
+    fn new(mut reader: Reader<'a>, len: usize, header: Header) -> Result<Self> {
+        let lines = header
+            .passes()
+            .map(|pass| (pass.row_bytes + 1) * pass.height);
         Ok(Self {
             input: reader.take(len)?,
             reader,
             inflater: new_inflater()?,
+            left: lines.sum(),
+            ahead: Vec::new(),
+            ahead_read: 0,
         })
     }
 
@@ -224,9 +242,32 @@ impl<'a> Idat<'a> {
         }
     }
 
-    /// Appends the next `len` bytes of the stream to `out`. What the stream holds after the last row is not looked at.
-    // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1389
+    /// Appends the next `len` bytes of the lines to `out`, which has the room.
     fn read(&mut self, out: &mut Vec<u8>, len: usize) -> Result<()> {
+        let end = out.len().saturating_add(len);
+        loop {
+            let ahead = self.ahead.get(self.ahead_read..).unwrap_or_default();
+            let ahead = ahead.get(..end - out.len()).unwrap_or(ahead);
+            out.extend_from_slice(ahead);
+            self.ahead_read += ahead.len();
+            let missing = end - out.len();
+            if missing == 0 {
+                return Ok(());
+            }
+            if missing >= LONG_LINE_LEN {
+                return self.inflate(out, missing);
+            }
+            let mut ahead = core::mem::take(&mut self.ahead);
+            ahead.clear();
+            self.inflate(&mut ahead, AHEAD_LEN.min(self.left).max(missing))?;
+            (self.ahead, self.ahead_read) = (ahead, 0);
+        }
+    }
+
+    /// Appends the next `len` bytes of the stream to `out`.
+    // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1389
+    fn inflate(&mut self, out: &mut Vec<u8>, len: usize) -> Result<()> {
+        self.left = self.left.checked_sub(len).ok_or(Error::Internal)?;
         let end = out.len().saturating_add(len);
         while out.len() < end {
             let (used, code) = self.inflater.step_limited(self.input, out, end - out.len());
@@ -396,7 +437,7 @@ fn unfilter_last_row(filter_type: u8, rows: &mut [u8], stride: usize) -> Result<
     Ok(row)
 }
 
-/// Inflates each row to where it stays, along with the filter type of the next row, as libspng did.
+/// Reads each row to where it stays, along with the filter type of the next row, as libspng did.
 fn read_rgba8(stride: usize, size: usize, idat: &mut Idat, image: &mut Vec<u8>) -> Result<()> {
     idat.read(image, 1)?;
     while let Some(filter_type) = image.pop() {

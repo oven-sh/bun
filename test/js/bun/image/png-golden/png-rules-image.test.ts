@@ -5,8 +5,10 @@ import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 import { differences } from "../../archive-golden/observe";
+import { decoded } from "./check";
 import { decode, decodes, decodeToHex, iccpOf, idat, pixels, rejects } from "./decode";
 import {
+  adam7,
   chunk,
   filteredLines,
   formats,
@@ -228,6 +230,46 @@ describe("the image", () => {
       ),
     );
     expect(wrong).toEqual([]);
+  });
+
+  // Lines of less than 4096 bytes are inflated 64 KiB at a time, and no further than the last of them. Longer ones
+  // are inflated each by itself.
+  test("short lines, long lines, and both in one image", async () => {
+    // Each row is one value all the way, which leaves little for JavaScript to do.
+    const value = (y: number) => (y * 37 + 11) & 255;
+    const check = async (colorType: number, width: number, height: number, interlaced = false) => {
+      const channels = colorType === GRAY ? 1 : colorType === RGB ? 3 : 4;
+      const lines: Buffer[] = [];
+      for (const [x0, y0, dx, dy] of interlaced ? adam7 : [[0, 0, 1, 1]]) {
+        const length = Math.ceil((width - x0) / dx) * channels;
+        // None and Up take turns.
+        for (let y = y0, up = 0; y < height && length > 0; y += dy, up ^= 2)
+          lines.push(Buffer.from([up]), Buffer.alloc(length, up ? value(y) - value(y - dy) : value(y)));
+      }
+      // What follows the last line would be a filter that does not exist.
+      const stream = zlib.deflateSync(Buffer.concat([...lines, Buffer.alloc(9, 9)]), { level: height & 1 });
+      const file = png(ihdr(width, height, 8, colorType, interlaced ? 1 : 0), chunk("IDAT", stream), iend);
+      const expected = Array.from({ length: height }, (_, y) => {
+        const pixel = [value(y), value(y), value(y), colorType === RGBA ? value(y) : 255];
+        return Buffer.concat([Buffer.alloc(1), Buffer.alloc(width * 4, Buffer.from(pixel))]);
+      });
+      const same = Buffer.concat(expected).equals((await decoded(file)).lines);
+      return same ? [] : [`color type ${colorType}, ${width} by ${height}${interlaced ? ", interlaced" : ""}`];
+    };
+    const wrong = await Promise.all([
+      // 64 KiB of lines, and a line more or less.
+      ...[1023, 1024, 1025, 2049].map(height => check(GRAY, 63, height)),
+      ...[163, 164, 165].map(height => check(RGBA, 100, height)),
+      check(RGB, 100, 240),
+      // Lines of 4095 to 4097 bytes.
+      ...[4094, 4095, 4096].map(width => check(GRAY, width, 10)),
+      ...[1023, 1024].map(width => check(RGBA, width, 10)),
+      ...[1364, 1365, 1366].map(width => check(RGB, width, 10)),
+      // Of the seven passes, the last, the last three or the last five have the long ones.
+      ...[4100, 8190, 8191, 16400].map(width => check(GRAY, width, 9, true)),
+      check(RGB, 2731, 9, true),
+    ]);
+    expect(wrong.flat()).toEqual([]);
   });
 
   // One for each way the decoder reads rows.

@@ -32,7 +32,7 @@ export const formats = [
 const channelsOf = (colorType: number) => [1, 0, 3, 1, 2, 0, 4][colorType];
 
 /** Of each pass of Adam7: the first column and row, then the steps between columns and rows. */
-const adam7 = [
+export const adam7 = [
   [0, 0, 8, 8],
   [4, 0, 8, 8],
   [0, 4, 4, 8],

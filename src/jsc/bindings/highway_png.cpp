@@ -115,7 +115,7 @@ static HWY_INLINE hn::Vec<Block> SubBlock(hn::Vec<Block> a, uint8_t* HWY_RESTRIC
 }
 
 template<size_t BPP>
-static void UnfilterSub(uint8_t* HWY_RESTRICT row, size_t len)
+static HWY_INLINE void UnfilterSub(uint8_t* HWY_RESTRICT row, size_t len)
 {
     size_t i = 0;
     if constexpr (kBlock % BPP == 0) {
@@ -126,7 +126,8 @@ static void UnfilterSub(uint8_t* HWY_RESTRICT row, size_t len)
     SubPixels<BPP>(row, i, len);
 }
 
-static void UnfilterUp(uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT above, size_t len)
+// The same for every size of pixel, so there is one of it.
+static HWY_NOINLINE void UnfilterUp(uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT above, size_t len)
 {
     const hn::ScalableTag<uint8_t> d;
     const size_t lanes = hn::Lanes(d);
@@ -139,7 +140,7 @@ static void UnfilterUp(uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT ab
 }
 
 template<size_t BPP>
-static void UnfilterAverage(uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT above, size_t len)
+static HWY_INLINE void UnfilterAverage(uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT above, size_t len)
 {
     auto a = hn::Zero(typename Pixel<BPP>::Bytes());
     for (size_t i = 0; i + BPP <= len; i += BPP) {
@@ -175,6 +176,22 @@ static HWY_INLINE V PaethPixel(V a, V b, V c, V three_c_minus_b, uint8_t* HWY_RE
 template<size_t BPP>
 static HWY_INLINE void PaethPixels(uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT above, size_t from, size_t to)
 {
+    if constexpr (BPP == 1) {
+        // As in PaethPixel(). With one byte at a time a vector has nothing to gain, and its steps take longer.
+        int a = from ? row[from - 1] : 0;
+        int c = from ? above[from - 1] : 0;
+        for (size_t i = from; i < to; i++) {
+            const int b = above[i];
+            const int threshold = 3 * c - b - a;
+            const int low = HWY_MIN(a, b);
+            const int high = HWY_MAX(a, b);
+            const int low_or_c = high > threshold ? c : low;
+            row[i] = static_cast<uint8_t>(row[i] + (threshold > low ? low_or_c : high));
+            a = row[i];
+            c = b;
+        }
+        return;
+    }
     const typename Pixel<BPP>::Wide d;
     const auto three_c_minus_b = [&](auto b, auto c) HWY_ATTR { return hn::Sub(hn::Add(c, hn::Add(c, c)), b); };
     auto a = hn::PromoteTo(d, Pixel<BPP>::LoadBefore(row, from));
@@ -200,7 +217,7 @@ static HWY_INLINE bool IsFlat(const uint8_t* HWY_RESTRICT above, size_t at, size
 }
 
 template<size_t BPP>
-static void UnfilterPaeth(uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT above, size_t len)
+static HWY_INLINE void UnfilterPaeth(uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT above, size_t len)
 {
     if constexpr (kBlock % BPP != 0) {
         if (len >= BPP) PaethPixels<BPP>(row, above, 0, len);

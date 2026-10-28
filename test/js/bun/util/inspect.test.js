@@ -1543,7 +1543,7 @@ describe("jsx with empty children self-closes", () => {
     expect(Bun.inspect(<div>{[]}</div>, { colors: true })).toBe("\x1b[0m<\x1b[32mdiv\x1b[0m />");
   });
 
-  it("console.log", async () => {
+  it.concurrent("console.log", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),

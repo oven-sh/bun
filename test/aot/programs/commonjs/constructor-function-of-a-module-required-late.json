@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it needs Bun's CommonJS modules and require.cache",
+  "reference": "compiled"
+}

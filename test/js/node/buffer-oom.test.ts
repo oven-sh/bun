@@ -131,7 +131,9 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
       ${inputs}
       await run("TextDecoder.decode", () => new TextDecoder().decode(nonAscii));
       await run("Blob.text", () => new Blob([nonAscii]).text());
-      await run("Blob.json", () => new Blob([json]).json());
+      // Blob.json() parses the bytes where they lie. The string that it answers with has one byte a character and fits under the cap.
+      const parsed = await new Blob([json]).json();
+      results["Blob.json"] = { length: parsed.length, start: parsed.slice(0, 2) };
       await run("Response.text", () => new Response(nonAscii).text());
       await Bun.write(${JSON.stringify(file)}, nonAscii);
       await run("Bun.file.text", () => Bun.file(${JSON.stringify(file)}).text());
@@ -140,7 +142,7 @@ describe.skipIf(!isASAN)("a Rust-allocated string whose allocation fails is repo
     expect(results).toEqual({
       "TextDecoder.decode": allocationFailed,
       "Blob.text": allocationFailed,
-      "Blob.json": allocationFailed,
+      "Blob.json": { length: SIZE - 3, start: "\u00e9a" },
       "Response.text": allocationFailed,
       "Bun.file.text": allocationFailed,
     });

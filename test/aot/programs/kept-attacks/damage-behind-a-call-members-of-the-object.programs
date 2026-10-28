@@ -1,0 +1,134 @@
+//// damage-behind-a-call-members-of-the-object/a-getter-of-the-object-damages-the-object.ts
+// A getter and a setter of the class of the object are known, so reading and storing the property are direct calls. In some rounds they damage the object that they are called on.
+let mode = 0;
+class Reading {
+  raw: number;
+  scale: number;
+  constructor(raw: number, scale: number) {
+    this.raw = raw;
+    this.scale = scale;
+  }
+  get value(): number {
+    if (mode === 1) delete (this as any).scale;
+    return this.raw * 2;
+  }
+  set value(next: number) {
+    if (mode === 2) (this as any).raw = "raw";
+    else this.raw = next;
+  }
+}
+
+function holder(reading: Reading): string {
+  const before = reading.raw + "*" + reading.scale;
+  const got = reading.value;
+  const first = reading.raw + "*" + reading.scale;
+  reading.value = 5;
+  return before + " " + got + " " + first + " " + reading.raw + "*" + reading.scale + " " + reading.value;
+}
+
+////= for-18	300	holder	Reading	round	3
+//// damage-behind-a-call-members-of-the-object/a-method-of-the-object-damages-the-object.ts
+// The caller reads fields of an object, calls a method of that object, and reads the fields again. The method is known, so the call is direct. In some rounds it damages `this`.
+let mode = 0;
+class Tank {
+  level: number;
+  limit: number;
+  constructor(level: number, limit: number) {
+    this.level = level;
+    this.limit = limit;
+  }
+  fill(by: number): number {
+    this.level += by;
+    if (mode === 1) delete (this as any).limit;
+    else if (mode === 2) (this as any).level = "full";
+    else if (mode === 3) Object.freeze(this);
+    return this.level;
+  }
+}
+
+function holder(tank: Tank): string {
+  const before = tank.level + "/" + tank.limit;
+  const got = tank.fill(1);
+  const read = tank.level + "/" + tank.limit;
+  let again: string;
+  try {
+    again = "" + tank.fill(1);
+  } catch (error) {
+    again = (error as Error).name;
+  }
+  return before + " " + got + " " + read + " " + again + " " + tank.level + "/" + tank.limit;
+}
+
+////= for-18	400	holder	Tank	round	1000
+//// damage-behind-a-call-members-of-the-object/a-private-field-beside-a-damaged-public-one.ts
+// An object has private fields, which nobody outside the class can delete or redefine, beside public ones. A call damages the public ones, freezes the object, or changes its prototype. The methods go on reading and storing the private ones.
+let mode = 0;
+function touch(o: object): void {
+  if (mode === 1) delete (o as any).open;
+  else if (mode === 2) Object.freeze(o);
+  else if (mode === 3) Object.setPrototypeOf(o, null);
+}
+
+class Safe {
+  #secret: number;
+  open: number;
+  constructor(secret: number, open: number) {
+    this.#secret = secret;
+    this.open = open;
+  }
+  static turn(safe: Safe): string {
+    const before = safe.#secret + "," + safe.open;
+    touch(safe);
+    safe.#secret += 1;
+    return before + " " + safe.#secret + "," + safe.open + " " + (#secret in safe);
+  }
+}
+
+////= for-26	Safe.turn(new Safe(round, 1)
+//// damage-behind-a-call-members-of-the-object/private-static-and-super-calls.ts
+// Calls of a private method, of a static method and of a method of the base class through `super` have one possible callee each. Each of them damages the object in a round of its own, and the method that made the call reads `this` behind it.
+let mode = 0;
+class Base {
+  a: number;
+  constructor(a: number) {
+    this.a = a;
+  }
+  check(): number {
+    if (mode === 3) delete (this as any).a;
+    return 3;
+  }
+}
+class Derived extends Base {
+  b: number;
+  constructor(a: number, b: number) {
+    super(a);
+    this.b = b;
+  }
+  #hidden(): number {
+    if (mode === 1) delete (this as any).b;
+    return 1;
+  }
+  static helper(d: Derived): number {
+    if (mode === 2) (d as any).b = "text";
+    return 2;
+  }
+  check(): number {
+    const before = this.a + this.b;
+    const first = this.#hidden();
+    const afterFirst = this.a + this.b;
+    const second = Derived.helper(this);
+    const afterSecond = this.a + this.b;
+    const third = super.check();
+    trail = before + " " + first + ":" + afterFirst + " " + second + ":" + afterSecond + " " + third + ":" + (this.a + this.b);
+    return 0;
+  }
+}
+let trail = "";
+
+function holder(d: Derived): string {
+  const before = d.a + d.b;
+  d.check();
+  return before + " [" + trail + "] " + d.a + "," + d.b;
+}
+
+////= for-18	400	holder	Derived	round	1

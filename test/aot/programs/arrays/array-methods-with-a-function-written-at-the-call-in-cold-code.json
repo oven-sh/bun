@@ -1,0 +1,3 @@
+{
+  "build": ["--aot-limit=MaxWarmCodeValues:1", "--aot-verify-each-pass"]
+}

@@ -1,0 +1,27 @@
+sloppy: store to a method of a built-in prototype: {"TypeError":100000}
+sloppy: store of a new name to a built-in prototype: {"stored":100000}
+sloppy: store to a global function: {"stored":100000}
+sloppy: delete of a method of a built-in prototype: {"TypeError":100000}
+sloppy: delete by key: {"TypeError":100000}
+sloppy: store to a method of a class prototype: {"stored":100000}
+sloppy: delete of a method of a class prototype: {"true":100000}
+sloppy: delete of a required field of an instance: {"true":100000}
+sloppy: delete of a required field of a literal: {"true":100000}
+sloppy: delete by key of a field: {"true":100000}
+sloppy: an accessor over a field: {"defined":100000}
+sloppy: freeze of an instance: {"frozen":100000}
+sloppy: another prototype for an instance: {"set":100000}
+sloppy: __proto__ of an instance: {"set":100000}
+sloppy: caller: {"true":100000}
+sloppy: the prototype of a generator function: {"stored":100000}
+a parameter, typed caller: {"1":12500,"3":12500,"5":12500,"7":12500,"8":12500,"two":12500,"null":12500,"[object Object]":12500}
+a parameter, untyped caller: {"1":12500,"3":12500,"5":12500,"7":12500,"8":12500,"two":12500,"null":12500,"[object Object]":12500}
+a variable: {"1":12500,"3":12500,"5":12500,"7":12500,"8":12500,"two":12500,"null":12500,"[object Object]":12500}
+a return: {"1":12500,"3":12500,"5":12500,"7":12500,"8":12500,"two":12500,"null":12500,"[object Object]":12500}
+a field: {"1":12500,"3":12500,"5":12500,"7":12500,"8":12500,"two":12500,"null":12500,"[object Object]":12500}
+an element that is a getter: {"2":50000,"9":50000}
+strict: delete of a method of a built-in prototype: {"TypeError":100000}
+strict: store to a built-in prototype: {"TypeError":100000}
+strict: delete of a required field through any: {"true":100000}
+strict: a compound assignment: {"number":62500,"string":37500}
+an async parameter: 20000 0 0

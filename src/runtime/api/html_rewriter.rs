@@ -1889,9 +1889,9 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn write_bytes(&mut self, data: &StreamResult) -> Writable {
         RewriterPipe::write(self, data)
     }
-    fn write_utf16(&mut self, data: &StreamResult) -> Writable {
+    fn write_utf16(&mut self, text: &[u16]) -> Writable {
         let mut buf = Vec::new();
-        let _ = buf.write_utf16(data.slice16());
+        let _ = buf.write_utf16(text);
         RewriterPipe::write(self, &StreamResult::Temporary(RawSlice::new(&buf)))
     }
     fn write_latin1(&mut self, data: &StreamResult) -> Writable {

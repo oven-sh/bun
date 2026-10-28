@@ -1,0 +1,126 @@
+////: Thing
+interface Thing {
+  n: number;
+  tag: string;
+}
+////: churn
+function churn(depth: number): number {
+  const pair = { left: depth, right: -depth };
+  const list = [depth, depth + 1, depth + 2];
+  const read = () => pair.left + list[1];
+  if (depth > 0) return churn(depth - 1) + read();
+  Bun.gc(true);
+  return read();
+}
+////: churn-2
+function churn(depth) {
+  const pair = { left: depth, right: -depth };
+  const list = [depth, depth + 1, depth + 2];
+  const read = () => pair.left + list[1];
+  if (depth > 0) return churn(depth - 1) + read();
+  Bun.gc(true);
+  return read();
+}
+////: for-2
+for (const [«1», «2»] of Object.entries(«3»)) {
+  for (const [name, make] of Object.entries(makers)) {
+    lines.push(«1» + " " + name + " " + «2»(make()));
+    churn(20);
+    lines.push(report());
+  }
+}
+////: for-3
+for (let i = 0; i < «1»; i++) {
+  const «2» = «3»(i);
+  if (i % «4» === «5») «6».push(«2»);
+}
+////: garbage
+function garbage(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) sum += [i, «1».length;
+  return sum;
+}
+////: lines-11
+function «1»(«2»: «3», «4»: «5»): void {
+  «6» = «4»;
+}
+////: lines-12
+interface «1» {
+  «2»: number;
+  «3»: «4»;
+  «5»: «6»;
+}
+////: lines-14
+function «1»(«2»: «3»): «3» {
+  return «4»(«5»);
+}
+////: lines-15
+function «1»() {
+  return «2»;
+}
+////: lines-16
+function «1»(«2», v) {
+  «3» = v;
+  return «4»;
+}
+////: lines-18
+function «1»(«2») {
+  return «3»(«4»);
+}
+////: lines-2
+interface «1» {
+  «2»: number;
+  «3»: «4»;
+}
+////: lines-20
+function «1»(a: «2», b: «2»): «2» {
+  return a + b;
+}
+////: lines-21
+function «1»(«2») {
+  return «3»];
+}
+////: lines-22
+function «1»(«2»: «3»): void {
+  «4»(«2»);
+}
+////: lines-23
+function «1»<T>(«2»: () => T): T {
+  return «2»();
+}
+////: lines-25
+interface «1» {
+  «2»: «3»;
+  «4»: «1» | null;
+}
+////: lines-26
+function «1»<T>(«2»: T): T {
+  return «2»;
+}
+////: lines-27
+function «1»(«2»: number): number {
+  return «2» + «3»;
+}
+////: lines-3
+function «1»(«2»: «3»): «4» {
+  «5» «6»;
+}
+////: lines-5
+function «1»(«2») {
+  return «3»;
+}
+////: lines-6
+interface «1» {
+  «2»: string;
+}
+////: lines-7
+class «1» {
+  constructor(
+    public «2»: «3»,
+    public «4»: «5»,
+  ) {}
+}
+////: lines-9
+function «1»(«2», «3») {
+  «4» = «3»;
+}

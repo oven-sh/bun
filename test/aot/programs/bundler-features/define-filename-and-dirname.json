@@ -1,0 +1,9 @@
+{
+  "build": [
+    "--define",
+    "__filename=\"/opt/tool/lib/tool.js\"",
+    "--define",
+    "__dirname=\"/opt/tool/lib\""
+  ],
+  "reference": "compiled"
+}

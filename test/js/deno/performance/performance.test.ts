@@ -110,22 +110,20 @@ test(function performanceMeasure() {
   });
 });
 
-test(function performanceObserver() {
-  function perfObserver(list, observer) {
-    list.getEntries().forEach(entry => {
-      if (entry.entryType === "mark") {
-        assertEquals(entry.name, "testmark");
-      }
-      if (entry.entryType === "measure") {
-        assertEquals(entry.name, "testmeasure");
-      }
-    });
-  }
-  const observer = new PerformanceObserver(perfObserver);
+test(async function performanceObserver() {
+  const { promise, resolve } = Promise.withResolvers<PerformanceEntryList>();
+  const observer = new PerformanceObserver(list => {
+    // A registered observer outlives the test and receives the marks and measures of every later test file.
+    observer.disconnect();
+    resolve(list.getEntries());
+  });
   observer.observe({ entryTypes: ["measure", "mark"] });
 
   performance.mark("testmark");
   performance.measure("testmeasure", "testmark");
+
+  const entries = await promise;
+  assertEquals(entries.map(entry => `${entry.entryType}:${entry.name}`).sort(), ["mark:testmark", "measure:testmeasure"]);
 });
 
 test(function performanceIllegalConstructor() {

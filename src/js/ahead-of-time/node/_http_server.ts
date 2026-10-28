@@ -1,10 +1,11 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 ff5fd0cf3ffd5e9a3fb246c83dbbefe854e635a64472500199657149d7819c82.
+// Written against that file with the SHA-256 e412f206fd25709a071fccffe7729804615e7a66c3cdd63e2b386052a6bb8d34.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
 const EventEmitter = require("node:events");
 const { Stream } = require("node:stream");
+const { kWriteOperation, kWriteOperationEncoding } = require("internal/streams/utils");
 const StreamPrototype = Stream.prototype;
 const plainStream: $Node.Stream = new Stream();
 const DuplexPrototype = Stream.Duplex.prototype;
@@ -13,6 +14,174 @@ const duplexResume = DuplexPrototype.resume;
 const duplexRemoveListener = DuplexPrototype.removeListener;
 const { flagsOf, getDefaultHighWaterMark, internals: streamInternals } = require("internal/streams/state");
 const { queueTick1, queueTick2, ticksAreUnhooked, ring } = require("internal/process/next_tick_queue");
+const kResponseSocketWrite = Symbol("responseSocketWrite");
+const kResponseQueueInitialized = Symbol("responseQueueInitialized");
+const kResponseQueueNeedDrain = Symbol("responseQueueNeedDrain");
+const kResponseHeadersQueued = Symbol("responseHeadersQueued");
+const kResumeResponseSocketWrite = Symbol("resumeResponseSocketWrite");
+const kResponseQueuedBodyBytes = Symbol("responseQueuedBodyBytes");
+
+function hasResponseSocketWork(socket: any) {
+  const state = socket._writableState;
+  return !!(state && (state.corked || state.length || state.writing));
+}
+
+function shouldQueueResponseWrite(response: any) {
+  const socket = response.socket;
+  return !!(
+    socket &&
+    (hasResponseSocketWork(socket) || (response[kCorked] && willBeChunked(response))) &&
+    NodeHTTPServerSocket &&
+    socket instanceof NodeHTTPServerSocket &&
+    response[kHandle]
+  );
+}
+
+function onResponseSocketDrain(this: any) {
+  const response = this._httpMessage;
+  if (response) flushWriteAccountingNT(response);
+}
+
+function freezeBufferedResponseHeaders(res: any, fromEnd: boolean) {
+  if (res[headerStateSymbol] !== NodeHTTPHeaderState.none) return;
+  if (fromEnd) res[kImplicitHeaderFromEnd] = true;
+  try {
+    res._implicitHeader();
+  } finally {
+    if (fromEnd) res[kImplicitHeaderFromEnd] = false;
+  }
+}
+
+function queueResponseSocketWrite(response: any, kind: string, chunk: any, encoding: any, callback: any) {
+  const headerState = response[headerStateSymbol];
+  let strict;
+  let length = 0;
+  if (kind === "write" || (kind === "end" && chunk != null) || kind === "raw") {
+    if (chunk === null) throw $ERR_STREAM_NULL_VALUES();
+    if (typeof chunk === "string") {
+      if (encoding && !Buffer.isEncoding(encoding)) throw $ERR_UNKNOWN_ENCODING(encoding);
+      length = Buffer.byteLength(chunk, encoding);
+    } else if (require("node:util/types").isUint8Array(chunk)) {
+      length = chunk.byteLength;
+    } else {
+      throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "Uint8Array"], chunk);
+    }
+  }
+  let bodyLength = kind === "write" || kind === "end" ? length : 0;
+  if (kind !== "raw" && kind !== "continue") {
+    const implicitEnd = kind === "end" && response[headerStateSymbol] === NodeHTTPHeaderState.none;
+    if (implicitEnd && !response.hasHeader("content-length")) response._contentLength = length;
+    freezeBufferedResponseHeaders(response, kind === "end");
+    if (!response[kResponseHeadersQueued] && response._contentLength == null && response.hasHeader("content-length")) {
+      const declared = +response.getHeader("content-length");
+      if (!NumberIsNaN(declared)) response._contentLength = declared;
+    }
+    if (kind === "write" || kind === "end") strict = strictContentLength(response, headerState, kind === "end");
+    if (!response._hasBody && length) {
+      if (response[kRejectNonStandardBodyWrites]) throw $ERR_HTTP_BODY_NOT_ALLOWED();
+      chunk = kind === "write" ? "" : undefined;
+      length = 0;
+      bodyLength = 0;
+    }
+    if (kind === "write" || kind === "end") {
+      const pending = response[kResponseQueuedBodyBytes] ?? 0;
+      if (strict !== undefined) {
+        const actual = response[kHandle].getBytesWritten() + pending + bodyLength;
+        if (kind === "end" ? actual !== strict : actual > strict)
+          throw $ERR_HTTP_CONTENT_LENGTH_MISMATCH(actual, strict);
+      }
+      response[kResponseQueuedBodyBytes] = pending + bodyLength;
+    }
+    const chunked =
+      willBeChunked(response) &&
+      !(implicitEnd && !response.hasHeader("transfer-encoding") && !response._removedContLen);
+    if (length && chunked) length += length.toString(16).length + 4;
+    if (kind === "end" && chunked) length += 5 + (response._trailer?.length ?? 0);
+    if (response[headerStateSymbol] !== NodeHTTPHeaderState.sent && !response[kResponseHeadersQueued]) {
+      length += snapshotResponseSocketHeaders(response, kind === "end");
+    }
+  } else if (kind === "continue") {
+    length = 25;
+  }
+  const socket = response.socket;
+  if (!socket[kResponseQueueInitialized]) {
+    socket[kResponseQueueInitialized] = true;
+    socket.on("drain", onResponseSocketDrain);
+  }
+  const responseCorked = kind === "write" && !!response[kCorked] && willBeChunked(response);
+  const result = socket[kWriteOperation](
+    { response, kind, chunk, encoding, length, bodyLength, strict, responseCorked },
+    callback,
+  );
+  if (!result && kind === "write" && response._hasBody) response[kResponseQueueNeedDrain] = true;
+  return kind === "write" && !response._hasBody ? true : result;
+}
+
+function executeResponseSocketWrite(operation: any, callback: any) {
+  const { response, kind, chunk, encoding } = operation;
+  if (kind === "write" || kind === "end") response[kResponseQueuedBodyBytes] -= operation.bodyLength;
+  if (kind === "write") {
+    (ServerResponsePrototypeWrite as Function).$call(
+      response,
+      chunk,
+      encoding,
+      callback,
+      kResponseSocketWrite,
+      operation,
+    );
+  } else if (kind === "end") {
+    (ServerResponsePrototypeEnd as Function).$call(
+      response,
+      chunk,
+      encoding,
+      callback,
+      kResponseSocketWrite,
+      operation,
+    );
+  } else {
+    const handle = response[kHandle];
+    if (!handle || (handle.flags & NodeHTTPResponseFlags.closed_or_completed) !== 0) {
+      callback(response.errored ?? $ERR_STREAM_DESTROYED("write"));
+      return;
+    }
+    if (kind === "raw") handle.writeInformational(chunk, encoding);
+    else if (kind === "continue") handle.writeContinue();
+    else (ServerResponsePrototypeFlushHeaders as Function).$call(response, kResponseSocketWrite);
+    if (handle.bufferedAmount > 0) {
+      addPendingCallback(response, callback);
+      handle.onwritable = allowWritesToContinue.bind(response);
+    } else callback();
+  }
+}
+
+function snapshotResponseSocketHeaders(res: any, fromEnd: boolean) {
+  const flat = renderNativeHeaders(res, res.$exchange, res.$exchange?.response === res) as string[];
+  const headers = { flat: flat.slice(), autoHeaders: renderedAutoHeaders, keepAliveSecs: renderedKeepAliveSecs };
+  res[kResponseHeadersQueued] = headers;
+  let bytes =
+    15 + String(res[kSnapshotStatusMessage] ?? res.statusMessage ?? STATUS_CODES[res.statusCode] ?? "unknown").length;
+  for (let i = 0; i < flat.length; i += 2) {
+    if (flat[i] !== "\u0000") bytes += flat[i].length + flat[i + 1].length + 4;
+  }
+  if (headers.autoHeaders & AUTO_HEADER_DATE) bytes += 37;
+  if (headers.autoHeaders & AUTO_HEADER_CONN_KEEP_ALIVE) bytes += 24;
+  if (headers.autoHeaders & AUTO_HEADER_CONN_CLOSE) bytes += 19;
+  if (headers.autoHeaders & AUTO_HEADER_KEEP_ALIVE_TIMEOUT) bytes += 22 + String(headers.keepAliveSecs).length;
+  if (headers.autoHeaders & AUTO_HEADER_TRANSFER_ENCODING_CHUNKED) bytes += 28;
+  else if (!res.hasHeader("content-length") && !res.hasHeader("transfer-encoding") && res._hasBody) {
+    if (fromEnd && !res._removedContLen && !res._removedTE) bytes += 18 + String(res._contentLength).length;
+    else if (willBeChunked(res)) bytes += 28;
+  }
+  return bytes + 2;
+}
+
+function renderResponseSocketHeaders(res: any) {
+  const headers = res[kResponseHeadersQueued];
+  renderedAutoHeaders = headers.autoHeaders;
+  renderedKeepAliveSecs = headers.keepAliveSecs;
+  return headers.flat;
+}
+
 const kFlowing = 1 << 24;
 const kHasPaused = 1 << 25;
 const kPaused = 1 << 26;
@@ -646,6 +815,10 @@ declare global {
       [kImplicitHeaderFromEnd]?: boolean;
       [kReplayingPipelinedOps]?: boolean;
       [kPendingFinish]?: HttpWriteCallback | null;
+      [kResponseQueuedBodyBytes]?: number;
+      [kResponseHeadersQueued]?: { flat: string[]; autoHeaders: number; keepAliveSecs: number };
+      [kResumeResponseSocketWrite]?: () => void;
+      [kResponseQueueNeedDrain]?: boolean;
       writeHead(
         statusCode: number,
         statusMessage?: string | HttpHeadersInit | null,
@@ -2307,6 +2480,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     // connection whose pipelined responses have buffered past the high water mark.
     _paused = false;
     #pendingCallback: $Node.ErrorCallback | null = null;
+    #pendingResponseCallback: $Node.ErrorCallback | null = null;
     #pendingAbortMessage: $Node.ServerResponse | null | undefined;
     #closeHandled = false;
     #peer: RememberedPeer | undefined;
@@ -2419,7 +2593,6 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
         this.#pendingCallback = null;
         callback();
       }
-      this.emit("drain");
     }
     #onData(chunk: Buffer | undefined, last: boolean) {
       this._unrefTimer();
@@ -2578,6 +2751,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
         this.destroy(this.#closeError);
       }
       // A tunnel write that waited for a drain fails now. After destroy(), it settles the callbacks of Writable and emits no 'error'.
+      this.#pendingResponseCallback?.(writeFailure);
       const pendingCallback = this.#pendingCallback;
       if (pendingCallback) {
         this.#pendingCallback = null;
@@ -2665,6 +2839,16 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       this.#closeHandle(handle, callback, err);
     }
 
+    cork() {
+      flushSocketHeldChunk(this);
+      return super.cork();
+    }
+    uncork() {
+      const result = super.uncork();
+      const response = this._httpMessage as $Node.ServerResponse | null;
+      if (!hasResponseSocketWork(this) && response) scheduleWriteAccountingFlush(response);
+      return result;
+    }
     _final(callback: $Node.ErrorCallback) {
       flushSocketHeldChunk(this);
       const handle = this[kHandle];
@@ -2868,26 +3052,53 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       return this;
     }
 
-    _write(_chunk: $Node.HttpChunk, _encoding: string, _callback: $Node.ErrorCallback) {
+    _write(_chunk: any, _encoding: any, _callback: $Node.ErrorCallback) {
+      if (_encoding === kWriteOperationEncoding) {
+        const response = _chunk.response;
+        const done = (error?: Error) => {
+          if (this.#pendingResponseCallback !== done) return;
+          this.#pendingResponseCallback = null;
+          response[kResumeResponseSocketWrite] = undefined;
+          _callback(error);
+          if (!hasResponseSocketWork(this)) scheduleWriteAccountingFlush(response);
+        };
+        this.#pendingResponseCallback = done;
+        const resume = () => {
+          response[kResumeResponseSocketWrite] = undefined;
+          try {
+            executeResponseSocketWrite(_chunk, done);
+          } catch (error) {
+            done(error);
+          }
+        };
+        if (_chunk.responseCorked && response[kCorked]) response[kResumeResponseSocketWrite] = resume;
+        else resume();
+        return;
+      }
       flushSocketHeldChunk(this);
       const handle = this[kHandle];
+      const done = (error?: Error) => {
+        _callback(error);
+        const response = this._httpMessage as $Node.ServerResponse | null;
+        if (response && !hasResponseSocketWork(this)) scheduleWriteAccountingFlush(response);
+      };
       let err;
       this._unrefTimer();
       try {
         if (handle) {
+          handle.ondrain ??= this.#onDrain.bind(this);
           const flushed = handle.write(_chunk, _encoding);
           if (!flushed && handle.ondrain) {
             // Streaming mode (CONNECT tunnels): wait for the native drain
             // callback before completing the write.
-            this.#pendingCallback = _callback;
+            this.#pendingCallback = done;
             return false;
           }
         }
       } catch (e) {
         err = e;
       }
-      if (err) _callback(err);
-      else _callback();
+      done(err);
     }
 
     pause() {
@@ -2916,6 +3127,9 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
       return this[kHandle]?.hasQueuedTunnelReads === true;
     }
   };
+  (NodeHTTPServerSocket.prototype as any)[kWriteOperation] =
+    require("internal/streams/writable").prototype[kWriteOperation];
+  NodeHTTPServerSocket.prototype._writev = undefined;
   Object.defineProperty(NodeHTTPServerSocket, "name", { value: "Socket" });
   serverSocketResume = NodeHTTPServerSocket.prototype.resume;
   serverSocketSetTimeout = NodeHTTPServerSocket.prototype.setTimeout;
@@ -3910,12 +4124,10 @@ function advanceResponsePipeline(
         const op = ops[i];
         const kind = op[0];
         if (kind === "raw") {
-          // Buffered 1xx bytes: route through the same AsyncSocket buffer the
-          // response's own writeHead/end use so they precede the final response.
-          handle.writeInformational(op[1]!, op[2]);
-          if (typeof op[3] === "function") process.nextTick(op[3]);
+          if (ServerResponsePrototypeWriteRaw.$call(res, op[1]!, op[2], op[3]) === false) hitBackpressure = true;
         } else if (kind === "write") {
-          if (ServerResponsePrototypeWrite.$call(res, op[1], op[2], op[3]) === false) hitBackpressure = true;
+          const chunk = op[1] === undefined && !res._hasBody ? "" : op[1];
+          if (ServerResponsePrototypeWrite.$call(res, chunk, op[2], op[3]) === false) hitBackpressure = true;
         } else {
           ServerResponsePrototypeEnd.$call(res, op[1], op[2], op[3]);
         }
@@ -4052,6 +4264,7 @@ function bufferPipelinedEnd(
     addPipelineOutgoingData(queued, bytes);
   }
   queued.ended = true;
+  res[kCorked] = 0;
   res.finished = true;
   return res;
 }
@@ -4230,6 +4443,10 @@ Object.defineProperty(ServerResponse.prototype, "socket", {
     return (this[fakeSocketSymbol] ??= new FakeSocket(this));
   },
   set(this: $Node.ServerResponse, value: $Node.HttpSocket | null) {
+    for (let n = 0; n < this[kCorked]; n++) {
+      value?.cork();
+      this[kSocket]?.uncork();
+    }
     this[fakeSocketSymbol] = value;
     // Keep the OutgoingMessage storage in sync: the standalone no-handle path
     // routes through OutgoingMessage.write/end, whose kSocket-gated checks
@@ -4262,19 +4479,22 @@ Object.defineProperty(ServerResponse.prototype, "chunkedEncoding", {
 
 Object.defineProperty(ServerResponse.prototype, "writableCorked", {
   get(this: $Node.ServerResponse) {
-    return this.socket?.writableCorked ?? 0;
+    return this[kCorked];
   },
   set(_value) {},
 });
 
 ServerResponse.prototype.cork = function cork(this: $Node.ServerResponse) {
   sendWhatIsHeld(this);
+  this[kCorked]++;
   // socket is null while this response is queued behind a pipelined response.
   this.socket?.cork();
 };
 
 ServerResponse.prototype.uncork = function uncork(this: $Node.ServerResponse) {
+  this[kCorked]--;
   this.socket?.uncork();
+  if (!this[kCorked]) this[kResumeResponseSocketWrite]?.();
 };
 
 ServerResponse.prototype.setTimeout = function setTimeout(
@@ -4346,6 +4566,7 @@ ServerResponse.prototype._writeRaw = function (
     addPipelineOutgoingData(queued, bytes);
     return queued.bytes < this.writableHighWaterMark;
   }
+  if (shouldQueueResponseWrite(this)) return queueResponseSocketWrite(this, "raw", chunk, encoding, callback);
   // Write through the response handle's AsyncSocket buffer (same path as
   // writeHead/end) so 1xx lines share ordering with the final response bytes;
   // socket.write() would land in the socket handle's separate stream buffer.
@@ -4353,6 +4574,8 @@ ServerResponse.prototype._writeRaw = function (
   if (typeof callback === "function") process.nextTick(callback);
   return true;
 };
+
+const ServerResponsePrototypeWriteRaw = ServerResponse.prototype._writeRaw;
 
 ServerResponse.prototype.writeEarlyHints = function (
   this: $Node.ServerResponse,
@@ -4455,6 +4678,11 @@ ServerResponse.prototype.writeContinue = function (this: $Node.ServerResponse, c
     // socket yet): route through writeInformation like Node.js v26.3.0 so the
     // 100 Continue line is buffered and written once a socket is assigned.
     this.writeInformation(100, null, cb);
+    this._sent100 = true;
+    return;
+  }
+  if (shouldQueueResponseWrite(this)) {
+    queueResponseSocketWrite(this, "continue", undefined, undefined, cb);
     this._sent100 = true;
     return;
   }
@@ -5081,6 +5309,8 @@ ServerResponse.prototype.end = function (
   chunk?: $Node.HttpChunk | null | $Node.HttpWriteCallback,
   encoding?: string | null | $Node.HttpWriteCallback,
   callback?: $Node.HttpWriteCallback | null,
+  token: symbol | undefined = undefined,
+  operation: any = undefined,
 ) {
   if ($isCallable(chunk)) {
     callback = chunk;
@@ -5093,11 +5323,12 @@ ServerResponse.prototype.end = function (
     callback = undefined;
   }
 
+  const fromSocket = token === kResponseSocketWrite;
   const exchange = this.$exchange;
   let flags = exchange !== undefined && exchange.response === this ? exchange.flags : EXCHANGE_WAITS_ITS_TURN;
-  if ((flags & EXCHANGE_WAITS_ITS_TURN) !== 0 || this.finished || this.destroyed) {
+  if ((flags & EXCHANGE_WAITS_ITS_TURN) !== 0 || (!fromSocket && this.finished) || this.destroyed) {
     ("unlikely");
-    return endInFull(this, exchange, chunk, encoding, callback);
+    return endInFull(this, exchange, chunk, encoding, callback, fromSocket, operation);
   }
 
   const handle = this[kHandle];
@@ -5106,6 +5337,16 @@ ServerResponse.prototype.end = function (
     return OutgoingMessagePrototype.end.$call(this, chunk, encoding, callback);
   }
 
+  if (!fromSocket && shouldQueueResponseWrite(this)) {
+    const socket = this.socket!;
+    queueResponseSocketWrite(this, "end", chunk, encoding, callback);
+    this.finished = true;
+    this[kCorked] = 0;
+    socket._writableState.corked = 1;
+    socket.uncork();
+    this[kResumeResponseSocketWrite]?.();
+    return this;
+  }
   let headerState = exchange.headerState;
   let held: HeldChunk | null = null;
   if ((flags & EXCHANGE_HOLDS_CHUNK) !== 0) {
@@ -5153,7 +5394,13 @@ ServerResponse.prototype.end = function (
   }
   let draining = false;
   if (headerState !== NodeHTTPHeaderState.sent) {
-    const renderedHeaders = (held !== null ? headOf(held) : renderNativeHeaders(this, exchange, true)) as string[];
+    const renderedHeaders = (
+      held !== null
+        ? headOf(held)
+        : fromSocket
+          ? renderResponseSocketHeaders(this)
+          : renderNativeHeaders(this, exchange, true)
+    ) as string[];
     const hasSnapshot = (flags & EXCHANGE_HAS_SNAPSHOT) !== 0;
     const statusCode = hasSnapshot ? exchange.statusCode : this.statusCode;
     const statusMessage = hasSnapshot
@@ -5207,7 +5454,13 @@ ServerResponse.prototype.end = function (
       !(!chunk && handleFlags & NodeHTTPResponseFlags.ended) &&
       !(handleFlags & NodeHTTPResponseFlags.socket_closed)
     ) {
-      draining = handle.end(chunk, encoding, undefined, strictContentLength(this, headerState, true)) < 0;
+      draining =
+        handle.end(
+          chunk,
+          encoding,
+          undefined,
+          fromSocket ? operation.strict : strictContentLength(this, headerState, true),
+        ) < 0;
     }
   }
   this._header = " ";
@@ -5319,6 +5572,8 @@ ServerResponse.prototype.write = function (
   chunk?: $Node.HttpChunk | null | $Node.HttpWriteCallback,
   encoding?: string | null | $Node.HttpWriteCallback,
   callback?: $Node.HttpWriteCallback | null,
+  token: symbol | undefined = undefined,
+  operation: any = undefined,
 ) {
   if ($isCallable(chunk)) {
     callback = chunk;
@@ -5331,11 +5586,12 @@ ServerResponse.prototype.write = function (
     callback = undefined;
   }
 
+  const fromSocket = token === kResponseSocketWrite;
   const exchange = this.$exchange;
   const flags = exchange !== undefined && exchange.response === this ? exchange.flags : EXCHANGE_WAITS_ITS_TURN;
-  if ((flags & EXCHANGE_WAITS_ITS_TURN) !== 0 || this.finished || this.destroyed) {
+  if ((flags & EXCHANGE_WAITS_ITS_TURN) !== 0 || (!fromSocket && this.finished) || this.destroyed) {
     ("unlikely");
-    return writeInFull(this, exchange, chunk, encoding, callback);
+    return writeInFull(this, exchange, chunk, encoding, callback, fromSocket, operation);
   }
 
   let result = 0;
@@ -5349,6 +5605,8 @@ ServerResponse.prototype.write = function (
     return OutgoingMessagePrototype.write.$call(this, chunk!, encoding, callback);
   }
 
+  if (!fromSocket && shouldQueueResponseWrite(this))
+    return queueResponseSocketWrite(this, "write", chunk, encoding, callback);
   if (exchange.headerState === NodeHTTPHeaderState.none) {
     updateHasBody(this, (this.statusCode = validateStatusCode(this.statusCode)));
   }
@@ -5362,6 +5620,7 @@ ServerResponse.prototype.write = function (
   }
 
   if (
+    !fromSocket &&
     typeof chunk === "string" &&
     callback === undefined &&
     encoding == null &&
@@ -5379,7 +5638,9 @@ ServerResponse.prototype.write = function (
   ) {
     const socket = exchange.connection;
     if (socket !== null && socket.$isOpen) {
-      const renderedHeaders = renderNativeHeaders(this, exchange, true);
+      const renderedHeaders = fromSocket
+        ? renderResponseSocketHeaders(this)
+        : renderNativeHeaders(this, exchange, true);
       exchange.heldChunk = new HeldChunk(chunk, renderedHeaders, renderedAutoHeaders, renderedKeepAliveSecs);
       this[kBytesBuffered] = exchange.bytesBuffered += Buffer.byteLength(chunk);
       this[kAccountingFlushScheduled] = true;
@@ -5402,7 +5663,7 @@ ServerResponse.prototype.write = function (
     return false;
   }
 
-  const strict = strictContentLength(this, headerState, false);
+  const strict = fromSocket ? operation.strict : strictContentLength(this, headerState, false);
   const hasBody = this._hasBody;
   let onWritable: (() => void) | undefined;
   if (hasBody) {
@@ -5412,7 +5673,9 @@ ServerResponse.prototype.write = function (
 
   if (exchange.headerState !== NodeHTTPHeaderState.sent) {
     handle.cork(() => {
-      const renderedHeaders = renderNativeHeaders(this, exchange, true);
+      const renderedHeaders = fromSocket
+        ? renderResponseSocketHeaders(this)
+        : renderNativeHeaders(this, exchange, true);
       handle.writeHead(
         statusCodeToSend(this),
         statusMessageToSend(this),
@@ -5429,12 +5692,13 @@ ServerResponse.prototype.write = function (
 
   if (result < 0 && hasBody) {
     ("unlikely");
+    if (!fromSocket) this[kResponseQueueNeedDrain] = true;
     if (callback) addPendingCallback(this, callback);
     return false;
   }
 
   this._callPendingCallbacks();
-  if (callback && !hasSentForCallback(this, handle, hasBody, callback)) return false;
+  if (callback && !hasSentForCallback(this, handle, hasBody, callback, fromSocket)) return false;
 
   let written = 0;
   if (chunk) {
@@ -5448,7 +5712,7 @@ ServerResponse.prototype.write = function (
       written += ((31 - Math.clz32(written)) >> 2) + 5;
     }
   }
-  if (written > 0 && !exchange.isReplaying) {
+  if (written > 0 && !fromSocket && !exchange.isReplaying) {
     this[kBytesBuffered] = exchange.bytesBuffered += written;
     if ((exchange.flags & EXCHANGE_TICK_QUEUED) === 0) scheduleWriteAccountingFlush(this);
     else this[kAccountingFlushScheduled] = true;
@@ -5476,10 +5740,11 @@ function writeHeadAndChunk(
   encoding: string | null | undefined,
   onWritable: $Node.HttpWriteCallback | null | undefined,
   strict: number | undefined,
+  fromSocket = false,
 ): number {
   let result = 0;
   handle.cork(() => {
-    writeHeadToHandle(res, exchange, handle);
+    writeHeadToHandle(res, exchange, handle, fromSocket);
     // If handle.writeHead throws, headersSent stays false.
     storeHeaderState(res, exchange, NodeHTTPHeaderState.sent);
     result = handle.write(chunk, encoding, onWritable, strict);
@@ -5493,9 +5758,11 @@ function hasSentForCallback(
   handle: $Node.NodeHTTPResponse | $Node.Http1ResponseHandle,
   hasBody: boolean,
   callback: $Node.HttpWriteCallback,
+  fromSocket = false,
 ): boolean {
   handle.flushHeaders();
   if (hasBody && handle.bufferedAmount > 0) {
+    if (!fromSocket) res[kResponseQueueNeedDrain] = true;
     addPendingCallback(res, callback);
     handle.onwritable = allowWritesToContinue.bind(res);
     return false;
@@ -5523,7 +5790,11 @@ const ServerResponsePrototypeEnd: $Node.ServerResponse["end"] = ServerResponse.p
 function flushWriteAccountingNT(res: $Node.ServerResponse) {
   const exchange = res.$exchange;
   res[kAccountingFlushScheduled] = false;
-  const needsDrain = (res[kBytesBuffered] ?? 0) >= res.writableHighWaterMark;
+  if (exchange !== undefined && exchange.response === res) exchange.isFlushScheduled = false;
+  if (res.socket && hasResponseSocketWork(res.socket)) return;
+  if (res[kResponseQueueNeedDrain] && res[kHandle]?.onwritable !== undefined) return;
+  const needsDrain = res[kResponseQueueNeedDrain] || (res[kBytesBuffered] ?? 0) >= res.writableHighWaterMark;
+  res[kResponseQueueNeedDrain] = false;
   res[kBytesBuffered] = 0;
   if (exchange !== undefined && exchange.response === res) {
     exchange.isFlushScheduled = false;
@@ -5604,6 +5875,10 @@ const OriginalImplicitHeadFn = (ServerResponse.prototype._implicitHeader = funct
 
 Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
   get(this: $Node.ServerResponse) {
+    const socket = this.socket;
+    if ((socket as any)?.[kResponseQueueInitialized] && hasResponseSocketWork(socket)) {
+      return !this.destroyed && !this.finished && !!this[kResponseQueueNeedDrain];
+    }
     // True between a write() that returned false and the next 'drain'. An armed native drain callback means a later write flushed the bytes.
     const handle = this[kHandle];
     return (
@@ -5611,6 +5886,7 @@ Object.defineProperty(ServerResponse.prototype, "writableNeedDrain", {
       !this.finished &&
       ((handle?.bufferedAmount ?? 0) !== 0 ||
         handle?.onwritable !== undefined ||
+        this[kResponseQueueNeedDrain] ||
         bytesBufferedOf(this) >= this.writableHighWaterMark ||
         (this[kPipelinedQueuedState]?.needDrain ?? false))
     );
@@ -5631,6 +5907,10 @@ Object.defineProperty(ServerResponse.prototype, "writableFinished", {
 Object.defineProperty(ServerResponse.prototype, "writableLength", {
   get(this: $Node.ServerResponse) {
     if (this.writableFinished) return 0;
+    const socket = this.socket;
+    if ((socket as any)?.[kResponseQueueInitialized] && hasResponseSocketWork(socket)) {
+      return socket!.writableLength + bytesBufferedOf(this);
+    }
     sendWhatIsHeld(this);
     // Bytes handed off this event-loop turn (including chunked framing, like
     // Node.js's outputData accounting) plus whatever the native handle still
@@ -5668,6 +5948,8 @@ ServerResponse.prototype._send = function (
   if (!handle) {
     return OutgoingMessagePrototype._send.$apply(this, arguments);
   }
+
+  if (shouldQueueResponseWrite(this)) return queueResponseSocketWrite(this, "write", data, encoding, callback);
 
   const strict = strictContentLength(this, this[headerStateSymbol], false);
   if (this[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
@@ -5806,7 +6088,7 @@ function emitResponseFinishedThenClose(res: $Node.ServerResponse, callback: $Nod
   res.emit("close");
 }
 
-ServerResponse.prototype.flushHeaders = function (this: $Node.ServerResponse) {
+ServerResponse.prototype.flushHeaders = function (this: $Node.ServerResponse, token: symbol | undefined = undefined) {
   const exchange = this.$exchange;
   if (exchange === undefined || exchange.response !== this) spillStateReachedThrough(this);
   else sendWhatIsHeld(this);
@@ -5819,11 +6101,15 @@ ServerResponse.prototype.flushHeaders = function (this: $Node.ServerResponse) {
     return;
   }
 
+  if (token !== kResponseSocketWrite && shouldQueueResponseWrite(this)) {
+    queueResponseSocketWrite(this, "flush", undefined, undefined, undefined);
+    return;
+  }
   const handle = this[kHandle];
   if (handle) {
     if (this[headerStateSymbol] === NodeHTTPHeaderState.assigned) {
       storeHeaderState(this, exchange, NodeHTTPHeaderState.sent);
-      writeHeadToHandle(this, exchange, handle);
+      writeHeadToHandle(this, exchange, handle, token === kResponseSocketWrite);
     }
     handle.flushHeaders();
   } else {
@@ -5832,6 +6118,8 @@ ServerResponse.prototype.flushHeaders = function (this: $Node.ServerResponse) {
     this._send("");
   }
 };
+
+const ServerResponsePrototypeFlushHeaders = ServerResponse.prototype.flushHeaders;
 
 function updateHasBody(response: $Node.ServerResponse, statusCode: number) {
   // RFC 2616, 10.2.5:
@@ -5883,7 +6171,7 @@ function callObservableWriteHead(self: $Node.ServerResponse, fromEnd: boolean | 
 
 function allowWritesToContinue(this: $Node.ServerResponse) {
   this._callPendingCallbacks();
-  this.emit("drain");
+  flushWriteAccountingNT(this);
 }
 
 function failPendingWriteCallbacks(res: $Node.ServerResponse, error: Error | null | undefined) {
@@ -6072,8 +6360,11 @@ function writeHeadToHandle(
   res: $Node.ServerResponse,
   exchange: Exchange | undefined,
   handle: $Node.NodeHTTPResponse | $Node.Http1ResponseHandle,
+  fromSocket = false,
 ): void {
-  const renderedHeaders = renderNativeHeaders(res, exchange, exchange !== undefined && exchange.response === res);
+  const renderedHeaders = fromSocket
+    ? renderResponseSocketHeaders(res)
+    : renderNativeHeaders(res, exchange, exchange !== undefined && exchange.response === res);
   const statusCode = statusCodeToSend(res);
   const statusMessage = statusMessageToSend(res);
   handle.writeHead(statusCode, statusMessage, renderedHeaders as string[], renderedAutoHeaders, renderedKeepAliveSecs);
@@ -6085,6 +6376,8 @@ function endInFull(
   chunk: $Node.HttpChunk | null | undefined,
   encoding: string | null | undefined,
   callback: $Node.HttpWriteCallback | undefined,
+  fromSocket = false,
+  operation: any = undefined,
 ) {
   if (exchange === undefined || exchange.response !== res) spillStateReachedThrough(res);
   const handle = res[kHandle];
@@ -6092,7 +6385,7 @@ function endInFull(
   const droppedChunk = !!chunk && res.destroyed && !res.finished;
   if (droppedChunk) chunk = undefined;
 
-  if (hasServerResponseFinished(res, chunk, callback, true)) {
+  if (!fromSocket && hasServerResponseFinished(res, chunk, callback, true)) {
     return res;
   }
 
@@ -6105,6 +6398,16 @@ function endInFull(
     return OutgoingMessagePrototype.end.$call(res, chunk, encoding, callback);
   }
 
+  if (!fromSocket && shouldQueueResponseWrite(res)) {
+    const socket = res.socket!;
+    queueResponseSocketWrite(res, "end", chunk, encoding, callback);
+    res.finished = true;
+    res[kCorked] = 0;
+    socket._writableState.corked = 1;
+    socket.uncork();
+    res[kResumeResponseSocketWrite]?.();
+    return res;
+  }
   if (res[headerStateSymbol] === NodeHTTPHeaderState.none) {
     updateHasBody(res, (res.statusCode = validateStatusCode(res.statusCode)));
   }
@@ -6128,10 +6431,10 @@ function endInFull(
   }
   let draining = false;
   if (headerState !== NodeHTTPHeaderState.sent) {
-    const renderedHeaders = renderNativeHeaders(
-      res,
-      exchange,
-      exchange !== undefined && exchange.response === res,
+    const renderedHeaders = (
+      fromSocket
+        ? renderResponseSocketHeaders(res)
+        : renderNativeHeaders(res, exchange, exchange !== undefined && exchange.response === res)
     ) as string[];
     let contentLength: number;
     try {
@@ -6141,7 +6444,7 @@ function endInFull(
         renderedHeaders,
         chunk,
         encoding,
-        strictContentLength(res, headerState, true),
+        fromSocket ? operation.strict : strictContentLength(res, headerState, true),
         renderedAutoHeaders,
         renderedKeepAliveSecs,
       );
@@ -6156,7 +6459,13 @@ function endInFull(
     res._contentLength = contentLength;
   } else {
     if (!(!chunk && flags & NodeHTTPResponseFlags.ended) && !(flags & NodeHTTPResponseFlags.socket_closed)) {
-      draining = handle.end(chunk, encoding, undefined, strictContentLength(res, headerState, true)) < 0;
+      draining =
+        handle.end(
+          chunk,
+          encoding,
+          undefined,
+          fromSocket ? operation.strict : strictContentLength(res, headerState, true),
+        ) < 0;
     }
   }
   res._header = " ";
@@ -6170,11 +6479,13 @@ function writeInFull(
   chunk: $Node.HttpChunk | null | undefined,
   encoding: string | null | undefined,
   callback: $Node.HttpWriteCallback | undefined,
+  fromSocket = false,
+  operation: any = undefined,
 ) {
   if (exchange === undefined || exchange.response !== res) spillStateReachedThrough(res);
   const handle = res[kHandle];
 
-  if (hasServerResponseFinished(res, chunk, callback, false)) {
+  if (!fromSocket && hasServerResponseFinished(res, chunk, callback, false)) {
     return false;
   }
 
@@ -6185,6 +6496,9 @@ function writeInFull(
 
   let result = 0;
 
+  if (!fromSocket && shouldQueueResponseWrite(res)) {
+    return queueResponseSocketWrite(res, "write", chunk, encoding, callback);
+  }
   const headerState = res[headerStateSymbol];
   callWriteHeadIfObservable(res, headerState);
 
@@ -6208,23 +6522,24 @@ function writeInFull(
     return false;
   }
 
-  const strict = strictContentLength(res, headerState, false);
+  const strict = fromSocket ? operation.strict : strictContentLength(res, headerState, false);
   const hasBody = res._hasBody;
   const onWritable = hasBody ? allowWritesToContinue.bind(res) : undefined;
 
   if (res[headerStateSymbol] !== NodeHTTPHeaderState.sent) {
-    result = writeHeadAndChunk(res, exchange, handle, chunk, encoding, onWritable, strict);
+    result = writeHeadAndChunk(res, exchange, handle, chunk, encoding, onWritable, strict, fromSocket);
   } else {
     result = handle.write(chunk, encoding, onWritable, strict);
   }
 
   if (result < 0 && hasBody) {
+    if (!fromSocket) res[kResponseQueueNeedDrain] = true;
     if (callback) addPendingCallback(res, callback);
     return false;
   }
 
   res._callPendingCallbacks();
-  if (callback && !hasSentForCallback(res, handle, hasBody, callback)) return false;
+  if (callback && !hasSentForCallback(res, handle, hasBody, callback, fromSocket)) return false;
 
   let written = 0;
   if (chunk) {
@@ -6233,7 +6548,7 @@ function writeInFull(
       written += written.toString(16).length + 4;
     }
   }
-  if (written > 0 && !res[kReplayingPipelinedOps]) {
+  if (written > 0 && !fromSocket && !res[kReplayingPipelinedOps]) {
     res[kBytesBuffered] = (res[kBytesBuffered] ?? 0) + written;
     followResponse(exchange);
     scheduleWriteAccountingFlush(res);

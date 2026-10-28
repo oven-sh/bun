@@ -11,6 +11,7 @@ const eos = require("internal/streams/end-of-stream");
 const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const streamUtils = require("internal/streams/utils");
 const kWriteOperation: typeof streamUtils.kWriteOperation = streamUtils.kWriteOperation;
+const kWriteOperationEncoding = streamUtils.kWriteOperationEncoding;
 const streamState = require("internal/streams/state");
 const { WritableState, resetBuffer, isReadableState, isWritableState, flagsOf, addFlags, removeFlags, internals, nop } =
   streamState;
@@ -241,7 +242,7 @@ Writable.prototype[kWriteOperation] = function (operation, callback) {
     return false;
   }
   state.pendingcb!++;
-  return writeOrBuffer(this, state, operation, kWriteOperation, cb, operation.length);
+  return writeOrBuffer(this, state, operation, kWriteOperationEncoding, cb, operation.length);
 };
 
 const writeBytes = function _write(stream: $Node.Writable, state: WritableState, chunk, encoding, cb: WriteCallback) {

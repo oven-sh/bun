@@ -4,7 +4,7 @@ import { MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
+import { Client, Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 devTest("import identifier doesnt get renamed", {
   framework: minimalFramework,
@@ -137,6 +137,133 @@ devTest("recovers from an unresolved import of a path that ends in a slash", {
     await c.expectMessage("value: 789");
   },
 });
+// A failed import waits on the directories of its path. The tests below make that path in steps. Each
+// step before the last is its own batch of the harness, and the page must get no message for it.
+//
+// The last step renames a complete file or directory into place: one watcher event, outside a batch.
+// `dev.write` waits for the dev server to report an event, and a directory that nothing watches has
+// none.
+{
+  const files = (specifier: string) => ({
+    "index.html": emptyHtmlFile({ styles: [], scripts: ["index.ts"] }),
+    "index.ts": `
+      import { abc } from '${specifier}';
+      console.log('value: ' + abc);
+    `,
+    "staged/module.ts": `export const abc = "456";`,
+  });
+  const unresolved = (specifier: string) => [`index.ts:1:21: error: Could not resolve: "${specifier}"`];
+  // A step that does not make the import resolve.
+  const quietly = (dev: Dev, c: Client, specifier: string, change: () => void) =>
+    c.expectNoWebSocketActivity(async () => {
+      await using _batch = await dev.batchChanges({ errors: unresolved(specifier) });
+      change();
+    });
+  const expectModuleAt = async (dev: Dev, c: Client, path: string) => {
+    await c.expectReload(async () => fs.renameSync(dev.join("staged/module.ts"), dev.join(path)));
+    await c.expectMessage("value: 456");
+  };
+
+  for (const specifier of ["./second/", "./second"]) {
+    devTest(`importing a directory that is created before its index file (${specifier})`, {
+      files: files(specifier),
+      async test(dev) {
+        await using c = await dev.client("/", { errors: unresolved(specifier) });
+        await quietly(dev, c, specifier, () => fs.mkdirSync(dev.join("second")));
+        await expectModuleAt(dev, c, "second/index.ts");
+      },
+    });
+  }
+  devTest("importing a directory that exists and has no index file yet", {
+    files: files("./second/"),
+    async test(dev) {
+      dev.mkdir("second");
+      await using c = await dev.client("/", { errors: unresolved("./second/") });
+      await expectModuleAt(dev, c, "second/index.ts");
+    },
+  });
+  devTest("importing a file whose directories are created one at a time", {
+    files: files("./a/b/c"),
+    async test(dev) {
+      await using c = await dev.client("/", { errors: unresolved("./a/b/c") });
+      await quietly(dev, c, "./a/b/c", () => fs.mkdirSync(dev.join("a")));
+      await quietly(dev, c, "./a/b/c", () => fs.mkdirSync(dev.join("a/b")));
+      await expectModuleAt(dev, c, "a/b/c.ts");
+    },
+  });
+  // The directories and the file exist before the dev server handles the event of the first directory.
+  devTest("importing a file whose directories are created at once", {
+    files: files("./a/b/c"),
+    async test(dev) {
+      await using c = await dev.client("/", { errors: unresolved("./a/b/c") });
+      await c.expectReload(async () => {
+        fs.mkdirSync(dev.join("staged/a/b"), { recursive: true });
+        fs.renameSync(dev.join("staged/module.ts"), dev.join("staged/a/b/c.ts"));
+        fs.renameSync(dev.join("staged/a"), dev.join("a"));
+      });
+      await c.expectMessage("value: 456");
+    },
+  });
+  // `./second` is also `second.ts`, so the directory above `second/` keeps its watch.
+  devTest("importing a path that becomes a file after a directory of that name is created", {
+    files: files("./second"),
+    async test(dev) {
+      await using c = await dev.client("/", { errors: unresolved("./second") });
+      await quietly(dev, c, "./second", () => fs.mkdirSync(dev.join("second")));
+      await expectModuleAt(dev, c, "second.ts");
+    },
+  });
+  // A watch is on the directory that was removed, not on the one that has its name now.
+  devTest("importing a directory that is removed and created again before its index file", {
+    skip: [
+      "win32", // a directory that is open in another process keeps its name until that process closes it
+    ],
+    files: files("./second/"),
+    async test(dev) {
+      await using c = await dev.client("/", { errors: unresolved("./second/") });
+      await quietly(dev, c, "./second/", () => fs.mkdirSync(dev.join("second")));
+      await quietly(dev, c, "./second/", () => fs.rmdirSync(dev.join("second")));
+      await quietly(dev, c, "./second/", () => fs.mkdirSync(dev.join("second")));
+      // In one step, the dev server only sees that the directory is there.
+      await quietly(dev, c, "./second/", () => {
+        fs.rmdirSync(dev.join("second"));
+        fs.mkdirSync(dev.join("second"));
+      });
+      await expectModuleAt(dev, c, "second/index.ts");
+    },
+  });
+  devTest("importing a directory whose package.json names a file in a directory that is created later", {
+    files: files("./second"),
+    async test(dev) {
+      await using c = await dev.client("/", { errors: unresolved("./second") });
+      await quietly(dev, c, "./second", () => {
+        fs.mkdirSync(dev.join("second"));
+        fs.writeFileSync(dev.join("second/package.json"), JSON.stringify({ main: "./lib/main.ts" }));
+      });
+      await quietly(dev, c, "./second", () => fs.mkdirSync(dev.join("second/lib")));
+      await expectModuleAt(dev, c, "second/lib/main.ts");
+    },
+  });
+  devTest("an imported file whose directory is removed and made again", {
+    skip: [
+      "win32", // a directory that is open in another process keeps its name until that process closes it
+    ],
+    files: {
+      ...files("./second/index.ts"),
+      "second/index.ts": `export const abc = "123";`,
+    },
+    async test(dev) {
+      await using c = await dev.client("/");
+      await c.expectMessage("value: 123");
+      {
+        await using _batch = await dev.batchChanges({ errors: unresolved("./second/index.ts") });
+        fs.rmSync(dev.join("second"), { recursive: true });
+      }
+      await quietly(dev, c, "./second/index.ts", () => fs.mkdirSync(dev.join("second")));
+      await expectModuleAt(dev, c, "second/index.ts");
+    },
+  });
+}
 devTest("default export same-scope handling", {
   files: {
     "index.html": emptyHtmlFile({

@@ -45,6 +45,13 @@ pub const WATCH_OPEN_FLAGS: i32 = libc::O_EVTONLY | bun_sys::O::CLOEXEC;
 #[cfg(not(target_os = "macos"))]
 pub const WATCH_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
 
+/// Open flags for the descriptor that a directory item keeps. With `O_DIRECTORY` a path that
+/// names a file or a FIFO fails in the open and is not watched.
+#[cfg(not(windows))]
+const DIRECTORY_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::DIRECTORY | bun_sys::O::CLOEXEC;
+#[cfg(windows)]
+const DIRECTORY_OPEN_FLAGS: i32 = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC;
+
 pub type Event = WatchEvent;
 pub type WatchList = MultiArrayList<WatchItem>;
 pub type HashType = u32;
@@ -616,8 +623,14 @@ impl Watcher {
         let fd = if stored_fd.is_valid() {
             stored_fd
         } else {
-            bun_sys::open_a(file_path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)?
+            bun_sys::open_a(file_path, DIRECTORY_OPEN_FLAGS, 0)?
         };
+        // Until the item owns it, an error return closes a descriptor that was opened above.
+        let fd = scopeguard::guard(fd, |fd| {
+            if !stored_fd.is_valid() {
+                let _ = bun_sys::close(fd);
+            }
+        });
 
         // `WatchItem.file_path` is an owning `Cow<'static, [u8]>` column so the
         // CLONE_FILE_PATH=true arm heap-dups instead of
@@ -638,39 +651,13 @@ impl Watcher {
         let watchlist_id = self.watchlist.len();
 
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
-        self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
+        self.add_file_descriptor_to_kqueue_without_checks(*fd, watchlist_id);
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        let eventlist_index = {
-            let mut buf = bun_paths::path_buffer_pool::get();
-            if file_path.len() >= buf.len() {
-                return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
-            }
-            let path: &ZStr = if CLONE_FILE_PATH
-                && !file_path.is_empty()
-                && file_path[file_path.len() - 1] == 0
-            {
-                // SAFETY: last byte is 0, slice len excludes it
-                ZStr::from_slice_with_nul(file_path)
-            } else {
-                let trailing_slash = if file_path.len() > 1 {
-                    strings::trim_right(file_path, &[0, b'/'])
-                } else {
-                    file_path
-                };
-                buf[0..trailing_slash.len()].copy_from_slice(trailing_slash);
-                buf[trailing_slash.len()] = 0;
-                // SAFETY: buf[len] == 0 written above
-                ZStr::from_buf(&buf[..], trailing_slash.len())
-            };
-
-            self.platform
-                .watch_dir(path)
-                .map_err(|e| e.with_path(file_path))?
-        };
+        let eventlist_index = self.watch_dir_path(file_path)?;
 
         self.watchlist.append_assume_capacity(WatchItem {
             file_path: file_path_,
-            fd,
+            fd: scopeguard::ScopeGuard::into_inner(fd),
             hash,
             count: 0,
             parent_hash,
@@ -680,6 +667,76 @@ impl Watcher {
             eventlist_index,
         });
         Ok((self.watchlist.len() - 1) as WatchItemIndex)
+    }
+
+    /// Asks inotify to watch the directory at `dir_path` and returns the watch descriptor. A
+    /// directory that inotify already watches keeps its descriptor.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn watch_dir_path(&mut self, dir_path: &[u8]) -> sys::Result<platform::EventListIndex> {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if dir_path.len() >= buf.len() {
+            return Err(sys::Error::new(sys::E::ENAMETOOLONG, sys::Tag::watch));
+        }
+        let trimmed = if dir_path.len() > 1 {
+            strings::trim_right(dir_path, &[0, b'/'])
+        } else {
+            dir_path
+        };
+        buf[0..trimmed.len()].copy_from_slice(trimmed);
+        buf[trimmed.len()] = 0;
+        // `buf[len] == 0` written above.
+        let path = ZStr::from_buf(&buf[..], trimmed.len());
+        self.platform
+            .watch_dir(path)
+            .map_err(|e| e.with_path(dir_path))
+    }
+
+    /// Makes the directory item at `index` watch the directory that `dir_path` names now.
+    /// Returns `true` when that is another directory than the item watched before.
+    fn rewatch_directory_at(&mut self, index: usize, dir_path: &[u8]) -> sys::Result<bool> {
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
+            let eventlist_index = self.watch_dir_path(dir_path)?;
+            if self.watchlist.items_eventlist_index()[index] == eventlist_index {
+                return Ok(false);
+            }
+            let fd = bun_sys::open_a(dir_path, DIRECTORY_OPEN_FLAGS, 0)?;
+            let old_fd = core::mem::replace(&mut self.watchlist.items_fd_mut()[index], fd);
+            if old_fd.is_valid() {
+                let _ = bun_sys::close(old_fd);
+            }
+            self.watchlist
+                .items_mut::<"eventlist_index", platform::EventListIndex>()[index] =
+                eventlist_index;
+            Ok(true)
+        }
+        #[cfg(any(target_os = "macos", target_os = "freebsd"))]
+        {
+            let fd = bun_sys::open_a(dir_path, DIRECTORY_OPEN_FLAGS, 0)?;
+            let old_fd = self.watchlist.items_fd()[index];
+            let same_directory = old_fd.is_valid()
+                && matches!(
+                    (bun_sys::fstat(fd), bun_sys::fstat(old_fd)),
+                    (Ok(new), Ok(old)) if new.st_dev == old.st_dev && new.st_ino == old.st_ino
+                );
+            if same_directory {
+                let _ = bun_sys::close(fd);
+                return Ok(false);
+            }
+            self.watchlist.items_fd_mut()[index] = fd;
+            self.add_file_descriptor_to_kqueue_without_checks(fd, index);
+            // The close also removes the kqueue registration of the old descriptor.
+            if old_fd.is_valid() {
+                let _ = bun_sys::close(old_fd);
+            }
+            Ok(true)
+        }
+        #[cfg(windows)]
+        {
+            // An event finds its items by path.
+            let _ = (index, dir_path);
+            Ok(false)
+        }
     }
 
     // Below is platform-independent
@@ -808,6 +865,61 @@ impl Watcher {
             .ensure_unused_capacity(1)
             .unwrap_or_else(|_| bun_core::out_of_memory());
         self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
+    }
+
+    /// Watches the directory that `dir_path` names now, for a caller that keeps the hash and no
+    /// position or descriptor. Returns `true` when the kernel watch is new: either the item was
+    /// added, or `dir_path` names another directory than the item watched before (the directory
+    /// was removed or renamed and made again). On success, a removal that
+    /// [`remove_directory`](Self::remove_directory) queued for the item is cancelled.
+    ///
+    /// The mutex is held from the kernel registration to the update of the watchlist, so the
+    /// watcher thread never reads an event for a watch that the list does not have yet.
+    pub fn watch_directory(&mut self, dir_path: &[u8], hash: HashType) -> sys::Result<bool> {
+        let _guard = self.mutex.lock_guard();
+        let Some(index) = self.index_of(hash) else {
+            self.watchlist
+                .ensure_unused_capacity(1)
+                .unwrap_or_else(|_| bun_core::out_of_memory());
+            self.append_directory_assume_capacity::<true>(Fd::INVALID, dir_path, hash)?;
+            return Ok(true);
+        };
+        // `index_of` matches by hash alone, so the item can be a file's.
+        if self.watchlist.items_kind()[index as usize] != WatchItemKind::Directory {
+            return Err(sys::Error::new(sys::E::ENOTDIR, sys::Tag::watch).with_path(dir_path));
+        }
+        let is_new_watch = self.rewatch_directory_at(index as usize, dir_path)?;
+        let queued = self.evict_list_i as usize;
+        let mut kept = 0;
+        for i in 0..queued {
+            let item = self.evict_list[i];
+            if item != index {
+                self.evict_list[kept] = item;
+                kept += 1;
+            }
+        }
+        self.evict_list_i = kept as WatchItemIndex;
+        Ok(is_new_watch)
+    }
+
+    /// Queues the removal of the directory item with `hash`. `flush_evictions` removes it after
+    /// the next batch of events, unless [`watch_directory`](Self::watch_directory) asks for the
+    /// same hash first.
+    pub fn remove_directory(&mut self, hash: HashType) {
+        let _guard = self.mutex.lock_guard();
+        let Some(index) = self.index_of(hash) else {
+            return;
+        };
+        // `index_of` matches by hash alone, so the item can be a file's.
+        if self.watchlist.items_kind()[index as usize] != WatchItemKind::Directory {
+            return;
+        }
+        // Only the watcher thread moves items, when it flushes this queue. So the position stays
+        // right until then.
+        if (self.evict_list_i as usize) < MAX_EVICTION_COUNT {
+            self.evict_list[self.evict_list_i as usize] = index;
+            self.evict_list_i += 1;
+        }
     }
 
     /// Lazily watch a file by path (slow path).

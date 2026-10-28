@@ -207,6 +207,10 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     for dir_name in dev.directory_watchers.watches.keys() {
         other_bytes += dir_name.len();
     }
+    other_bytes += memory_cost_array_list(&dev.directory_watchers.rescan);
+    for dir_name in dev.directory_watchers.rescan.iter() {
+        other_bytes += dir_name.len();
+    }
     // .html_router
     // std does not provide a way to measure exact allocation size of HashMapUnmanaged
     other_bytes +=

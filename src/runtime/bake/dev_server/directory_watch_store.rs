@@ -1,6 +1,9 @@
 //! `DirectoryWatchStore`: directory watches that retry failed import resolutions.
 
 use super::*;
+use bun_paths::resolve_path::{self, ParentEqual, is_parent_or_equal, platform};
+use bun_paths::string_paths::without_trailing_slash_windows_path;
+use bun_resolver::fs::{EntriesOption, EntryKind, FileSystem};
 
 /// `DevServer.DirectoryWatchStore` — sparse map of directories under watch
 /// for resolution-failure recovery.
@@ -9,6 +12,14 @@ use super::*;
 /// so that when a matching file is created, the dependencies can be rebuilt.
 /// This handles HMR cases where a user writes an import before creating the
 /// file, or moves files around. Not thread-safe.
+///
+/// The path of a failed import is the directory of the importer joined with
+/// the specifier. The failure gets one `Dep` on each directory whose listing
+/// can decide it: the deepest directory above that path that exists when the
+/// bundler reports the failure, each directory below it that appears later,
+/// and the path itself when it is a directory. A `Dep` stays on its directory
+/// until the import resolves. So a directory that is removed and made again is
+/// found through the directory above it.
 ///
 /// Known gap: when the importing file fixes its resolution (the failing
 /// import is removed or renamed), nothing walks this store to release the
@@ -20,6 +31,10 @@ pub(crate) struct DirectoryWatchStore {
     pub(crate) dependencies: Vec<Dep>,
     /// Dependencies cannot be re-ordered. This list tracks what indexes are free.
     pub(crate) dependencies_free_list: Vec<u32>,
+    /// Directories that got their watch while a bundle ran, and whose listing
+    /// changed between the lookup that failed and the watch. No event reports
+    /// that change, so `DevServer::start_next_bundle_if_present` retries them.
+    pub(crate) rescan: Vec<Box<[u8]>>,
 }
 // SAFETY: `DirectoryWatchStore` is only ever the `directory_watchers` field of
 // a heap-allocated `DevServer` (never moved post-init). Raw ptr (not `&mut
@@ -39,6 +54,17 @@ impl DirectoryWatchStore {
         unsafe { &mut (*self.owner()).bun_watcher }
     }
 
+    /// The resolver of the server transpiler, a sibling projection like
+    /// [`dev_bun_watcher`](Self::dev_bun_watcher). The directory caches it
+    /// reads and drops are process-wide, so every graph sees them.
+    #[inline]
+    fn dev_resolver(&mut self) -> &mut bun_resolver::Resolver<'static> {
+        // SAFETY: `owner()` recovers the heap-allocated `DevServer`, whose
+        // `server_transpiler` is initialized before it accepts a request and
+        // is field-disjoint from `directory_watchers`.
+        unsafe { &mut (*self.owner()).server_transpiler.assume_init_mut().resolver }
+    }
+
     /// Returns a dependency slot to the free list so it can be reused.
     pub(crate) fn free_dependency_index(&mut self, index: u32) {
         // Zero out the slot so DevServer.deinit/memoryCost — which iterate
@@ -54,28 +80,22 @@ impl DirectoryWatchStore {
 
     /// Expects dependency list to be already freed.
     pub(crate) fn free_entry(&mut self, entry_index: usize) {
-        let entry = self.watches.values()[entry_index];
+        let dir = &self.watches.keys()[entry_index];
 
         bun_core::scoped_log!(
             DevServer,
-            "DirectoryWatchStore.freeEntry({}, {:?})",
+            "DirectoryWatchStore.freeEntry({}, {})",
             entry_index,
-            entry.dir
+            bun_core::fmt::quote(dir),
         );
 
-        self.dev_bun_watcher().remove_at_index::<true>(
-            bun_watcher::WatchItemKind::File,
-            entry.watch_index,
-            0,
-            &[],
-        );
+        // The watcher finds the item by this hash. A position in its list is
+        // only right until the watcher thread removes another item.
+        let hash = Watcher::get_hash(dir);
+        self.dev_bun_watcher().remove_directory(hash);
 
         // The Box key drops on swap_remove_at.
         let _ = self.watches.swap_remove_at(entry_index);
-
-        if entry.dir_fd_owned {
-            entry.dir.close();
-        }
 
         if self.watches.len() == 0 {
             // Every remaining dependency slot must be in the free list.
@@ -85,26 +105,12 @@ impl DirectoryWatchStore {
         }
     }
 }
-/// `DirectoryWatchStore.Entry` — per-watched-directory state.
-#[derive(Copy, Clone)]
+/// `DirectoryWatchStore.Entry` — per-watched-directory state. The watcher owns
+/// the descriptor of the directory and finds its item by the hash of the path.
+#[derive(Copy, Clone, Default)]
 pub(crate) struct Entry {
-    /// The directory handle the watch is placed on.
-    pub(crate) dir: bun_sys::Fd,
-    pub(crate) dir_fd_owned: bool,
     /// `Dep.Index` — head of the singly-linked dep chain for this dir.
     pub(crate) first_dep: u32,
-    /// To pass to `Watcher.remove`.
-    pub(crate) watch_index: bun_watcher::WatchItemIndex,
-}
-impl Default for Entry {
-    fn default() -> Self {
-        Self {
-            dir: bun_sys::Fd::INVALID,
-            dir_fd_owned: false,
-            first_dep: 0,
-            watch_index: 0,
-        }
-    }
 }
 /// `DirectoryWatchStore.Dep` — one resolution-failure to retry on dir change.
 pub(crate) struct Dep {
@@ -127,15 +133,72 @@ impl Default for Dep {
     }
 }
 
-/// `DirectoryWatchStore::insert` error set.
-#[derive(thiserror::Error, Debug)]
-enum DirectoryWatchInsertError {
-    #[error("Ignore")]
-    Ignore,
-    #[error("OutOfMemory")]
-    OutOfMemory,
+/// One failed import. It has at most one [`Dep`] on a directory.
+#[derive(Copy, Clone)]
+struct Failure {
+    /// The importer: `Dep::source_file_path`.
+    file: bun_ptr::RawSlice<u8>,
+    /// Borrowed from the caller, or from a `Dep` that the callee does not free.
+    specifier: bun_ptr::RawSlice<u8>,
 }
-bun_core::oom_from_alloc!(DirectoryWatchInsertError);
+
+/// What [`DirectoryWatchStore::watch`] did for a failure and a directory.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum Watched {
+    /// The failure has a new `Dep` on the directory, and the kernel watch of
+    /// the directory is new too. An entry that was made in the directory
+    /// before this made no event.
+    New,
+    /// The failure has a new `Dep` on a directory that other failures wait on.
+    Joined,
+    /// The failure already had its `Dep` on the directory.
+    Held,
+    /// The path does not name a directory.
+    Missing,
+    /// The directory cannot be watched.
+    Failed,
+}
+
+/// How [`DirectoryWatchStore::descend`] ended.
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum Descent {
+    /// The import resolves now.
+    Resolved,
+    /// Every level down to the target is a directory with a `Dep` of the failure.
+    Arrived,
+    /// A level is not a directory, or it reports its own changes.
+    Stopped,
+}
+
+/// When the directory of a new watch is looked at again. A watch only reports
+/// what happens after it exists, and the lookup that failed ran before.
+enum Look<'a> {
+    /// A watcher event is handled: the import is resolved again at once.
+    /// Holds the paths that the event names.
+    Now(&'a StringArrayHashMap<()>),
+    /// The bundler reports the failure while it runs, so a new result has no
+    /// use yet. The directory goes on `rescan` if its listing changed.
+    Later,
+}
+
+impl Look<'_> {
+    /// Whether the event can mean that the directory at `dir` was removed and
+    /// made again, which leaves the watch on the directory that was removed.
+    fn may_have_replaced(&self, dir: &[u8]) -> bool {
+        match self {
+            // inotify names the entry that changed. kqueue does not. The
+            // Windows watcher finds a directory by its path.
+            Look::Now(named) => {
+                if cfg!(any(target_os = "linux", target_os = "android")) {
+                    named.contains(dir)
+                } else {
+                    !cfg!(windows)
+                }
+            }
+            Look::Later => false,
+        }
+    }
+}
 
 impl DirectoryWatchStore {
     /// Registers a directory watch so that a failed import resolution is
@@ -171,18 +234,21 @@ impl DirectoryWatchStore {
             _ => debug_assert!(false),
         }
 
+        // The retry resolves a statement import, which takes a specifier
+        // without './' for a package.
+        let relative_specifier: Vec<u8>;
+        let specifier = if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
+            specifier
+        } else {
+            relative_specifier = [b"./".as_slice(), specifier].concat();
+            &relative_specifier[..]
+        };
+
         let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(joined) =
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
-                &mut buf.0,
-                &[specifier],
-            )
-        else {
-            // There's nothing to watch, like in `insert`'s NameTooLong case.
+        let Some(joined) = Self::joined_path(import_source, specifier, &mut buf.0) else {
+            // A path this long names no directory, so there is nothing to watch.
             return Ok(());
         };
-        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
 
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
@@ -213,187 +279,483 @@ impl DirectoryWatchStore {
             }
         };
 
-        match self.insert(dir, owned_file_path, specifier) {
-            Ok(()) => Ok(()),
-            Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
-            Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
-        }
-    }
-
-    /// `dir_name_to_watch` is cloned; `file_path` must outlive the watch;
-    /// `specifier` is cloned.
-    fn insert(
-        &mut self,
-        dir_name_to_watch: &[u8],
-        file_path: bun_ptr::RawSlice<u8>,
-        specifier: &[u8],
-    ) -> Result<(), DirectoryWatchInsertError> {
-        debug_assert!(!specifier.is_empty());
-        // TODO: watch the parent dir too.
-        // Note: take a raw pointer so the &mut self borrow from owner() does
-        // not overlap subsequent self.* field accesses.
-        let dev: *mut DevServer = self.owner();
-
-        bun_core::scoped_log!(
-            DevServer,
-            "DirectoryWatchStore.insert({}, {}, {})",
-            bun_core::fmt::quote(dir_name_to_watch),
-            bun_core::fmt::quote(file_path.slice()),
-            bun_core::fmt::quote(specifier),
-        );
-
-        if self.dependencies_free_list.is_empty() {
-            self.dependencies.reserve(1);
-        }
-
-        // Note: reshaped for borrowck — capture gop scalars before
-        // calling self methods that need &mut self.
-        let gop = self.watches.get_or_put(
-            bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
-        )?;
-        let gop_index = gop.index;
-        let found_existing = gop.found_existing;
-
-        let specifier_cloned: Box<[u8]> =
-            if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
-                Box::<[u8]>::from(specifier)
-            } else {
-                let mut v = Vec::with_capacity(2 + specifier.len());
-                v.extend_from_slice(b"./");
-                v.extend_from_slice(specifier);
-                v.into_boxed_slice()
-            };
-        // errdefer free(specifier_cloned) — handled by Drop on `?` paths.
-
-        if found_existing {
-            let prev_first = Some(self.watches.values()[gop_index].first_dep);
-            // Every rebuild of a file reports its failed imports again.
-            let mut it = prev_first;
-            while let Some(index) = it {
-                let dep = &self.dependencies[index as usize];
-                if dep.source_file_path.slice().as_ptr() == file_path.slice().as_ptr()
-                    && dep.specifier == specifier_cloned
-                {
-                    return Ok(());
-                }
-                it = dep.next;
-            }
-            let dep = self.append_dep_assume_capacity(Dep {
-                next: prev_first,
-                source_file_path: file_path,
-                specifier: specifier_cloned,
-            });
-            self.watches.values_mut()[gop_index].first_dep = dep;
+        let failure = Failure {
+            file: owned_file_path,
+            specifier: bun_ptr::RawSlice::new(specifier),
+        };
+        // Every rebuild of a file reports its failed imports again.
+        if self.is_registered(joined, failure) {
             return Ok(());
         }
 
-        // Note: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
-        // map via raw ptr so it doesn't conflict with `&mut self` below.
-        let watches_ptr: *mut StringArrayHashMap<Entry> = &raw mut self.watches;
-        let watches_guard = scopeguard::guard(gop_index, move |idx| {
-            // SAFETY: `watches_ptr` points into the heap-allocated DevServer; on
-            // the error path no other borrow of `self.watches` is outstanding.
-            let _ = unsafe { (*watches_ptr).swap_remove_at(idx) };
-        });
+        bun_core::scoped_log!(
+            DevServer,
+            "DirectoryWatchStore.trackResolutionFailure({}, {}, {})",
+            bun_core::fmt::quote(joined),
+            bun_core::fmt::quote(owned_file_path.slice()),
+            bun_core::fmt::quote(specifier),
+        );
 
-        // Try to use an existing open directory handle
-        // SAFETY: server_transpiler is initialized by Framework::init_transpiler
-        // before DevServer accepts requests; `dev` is a valid *mut DevServer.
-        let cache_fd: Option<bun_sys::Fd> =
-            match unsafe { (*dev).server_transpiler.assume_init_mut() }
-                .resolver
-                .read_dir_info(dir_name_to_watch)
-            {
-                Ok(Some(cache)) => {
-                    let fd = cache.get_file_descriptor();
-                    if fd.is_valid() { Some(fd) } else { None }
+        // The deepest directory above `joined` that exists. A directory that
+        // is made in it later changes its listing.
+        let mut dir = resolve_path::dirname::<platform::Auto>(joined);
+        loop {
+            match self.watch(dir, failure) {
+                Watched::New => {
+                    self.look_later(dir);
+                    break;
                 }
-                Ok(None) | Err(_) => None,
-            };
-
-        let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-            if let Some(fd) = cache_fd {
-                (fd, false)
-            } else {
-                // Build a NUL-terminated path buffer.
-                if dir_name_to_watch.len() >= bun_paths::MAX_PATH_BYTES {
-                    return Err(DirectoryWatchInsertError::Ignore); // NameTooLong
-                }
-                let mut zbuf = bun_paths::path_buffer_pool::get();
-                let zpath = bun_paths::resolve_path::z(dir_name_to_watch, &mut *zbuf);
-                match bun_sys::open(
-                    zpath,
-                    bun_sys::O::DIRECTORY | bun_watcher::WATCH_OPEN_FLAGS,
-                    0,
-                ) {
-                    Ok(fd) => (fd, true),
-                    Err(err) => match err.get_errno() {
-                        // If this directory doesn't exist, a watcher should be placed
-                        // on the parent directory. Then, if this directory is later
-                        // created, the watcher can be properly initialized.
-                        bun_sys::E::ENOENT => {
-                            // TODO: implement that. for now it ignores (BUN-10968)
-                            return Err(DirectoryWatchInsertError::Ignore);
-                        }
-                        // The resolver already reported the failed import.
-                        _ => return Err(DirectoryWatchInsertError::Ignore),
-                    },
-                }
+                Watched::Joined | Watched::Held => break,
+                Watched::Missing => match Self::stand_in_for_missing(dir) {
+                    Some(parent) => dir = parent,
+                    None => return Ok(()),
+                },
+                Watched::Failed => return Ok(()),
             }
-        } else {
-            (bun_sys::Fd::INVALID, false)
-        };
-        let fd_guard = scopeguard::guard(fd, move |fd| {
-            if bun_watcher::REQUIRES_FILE_DESCRIPTORS && owned_fd {
-                fd.close();
-            }
-        });
-
-        // `add_directory::<true>` so the `WatchItem` owns its path: the watcher
-        // retains the path until eviction runs (deferred onto `evict_list` and
-        // drained later in `flush_evictions`), but `dir_name_to_watch` is a
-        // transient `dirname()` view of a thread-local path buffer. A borrowed
-        // (`::<false>`) `Cow` would dangle once `insert` returns — well before
-        // the watcher reads it on a file event. Owning the copy also lets the
-        // map keep its own boxed key independently, so no extra intermediate
-        // `Box` is needed here.
-        let watch_index = match self.dev_bun_watcher().add_directory::<true>(
-            fd,
-            dir_name_to_watch,
-            bun_watcher::Watcher::get_hash(dir_name_to_watch),
-        ) {
-            Err(_) => return Err(DirectoryWatchInsertError::Ignore),
-            Ok(id) => id,
-        };
-
-        // Disarm errdefer guards: success path.
-        let fd = scopeguard::ScopeGuard::into_inner(fd_guard);
-        let _ = scopeguard::ScopeGuard::into_inner(watches_guard);
-
-        let dep = self.append_dep_assume_capacity(Dep {
-            next: None,
-            source_file_path: file_path,
-            specifier: specifier_cloned,
-        });
-        self.watches.values_mut()[gop_index] = Entry {
-            dir: fd,
-            dir_fd_owned: owned_fd,
-            first_dep: dep,
-            watch_index,
-        };
+        }
+        self.watch_existing_below(dir, joined, failure, &Look::Later);
         Ok(())
     }
 
-    /// Appends a dependency into the first free slot, returning its index.
-    /// Capacity for one element must already be ensured.
-    fn append_dep_assume_capacity(&mut self, dep: Dep) -> u32 {
-        if let Some(index) = self.dependencies_free_list.pop() {
+    /// Resolves again each import that waits on `changed_dir`. An import that
+    /// still does not resolve is registered on the directories that now exist
+    /// below `changed_dir`, and resolved again after each new watch.
+    ///
+    /// `files` has the paths that the watcher event names. The importers to
+    /// bundle again are added to it.
+    pub(crate) fn retry(&mut self, changed_dir: &[u8], files: &mut StringArrayHashMap<()>) {
+        let Some(entry_index) = self.watches.get_index(changed_dir) else {
+            return;
+        };
+
+        let mut joined_buf = bun_paths::path_buffer_pool::get();
+        let mut resolved: Vec<u32> = Vec::new();
+        // This chain does not change in the loop: it only adds and removes
+        // a `Dep` on a directory below `changed_dir`.
+        let mut it: Option<u32> = Some(self.watches.values()[entry_index].first_dep);
+        while let Some(index) = it {
+            let dep = &self.dependencies[index as usize];
+            it = dep.next;
+            let failure = Failure {
+                file: dep.source_file_path,
+                specifier: bun_ptr::RawSlice::new(&dep.specifier),
+            };
+
+            let now_resolves = self.resolves(failure)
+                || Self::joined_path(&failure.file, &failure.specifier, &mut joined_buf.0)
+                    .is_some_and(|joined| {
+                        self.watch_existing_below(changed_dir, joined, failure, &Look::Now(&*files))
+                    });
+            bun_core::scoped_log!(
+                DevServer,
+                "DirectoryWatchStore.retry({}, {}, {}) = {}",
+                bun_core::fmt::quote(changed_dir),
+                bun_core::fmt::quote(failure.file.slice()),
+                bun_core::fmt::quote(failure.specifier.slice()),
+                now_resolves,
+            );
+            if now_resolves {
+                resolved.push(index);
+            }
+        }
+
+        for index in resolved {
+            let dep = &self.dependencies[index as usize];
+            let file = dep.source_file_path;
+            // `release` frees the `Dep` that owns the specifier.
+            let specifier = dep.specifier.clone();
+            // this resolution result is not preserved as passing it
+            // into BundleV2 is too complicated. the resolution is
+            // cached, anyways.
+            bun_core::handle_oom(files.get_or_put(file.slice()));
+            self.release(
+                Failure {
+                    file,
+                    specifier: bun_ptr::RawSlice::new(&specifier),
+                },
+                None,
+            );
+        }
+    }
+
+    /// The absolute path that `specifier` names from the file `import_source`,
+    /// with no trailing separator. `None` when it does not fit a path buffer.
+    fn joined_path<'a>(
+        import_source: &'a [u8],
+        specifier: &[u8],
+        buf: &'a mut [u8],
+    ) -> Option<&'a [u8]> {
+        let joined = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+            resolve_path::dirname::<platform::Auto>(import_source),
+            buf,
+            &[specifier],
+        )?;
+        // On Windows the `dirname` of `a\second\` is `a\second`, so the
+        // separator of a specifier like `./second/` is removed first.
+        Some(without_trailing_slash_windows_path(joined))
+    }
+
+    /// Where the name of the level below the directory `path[..dir_len]` is
+    /// in `path`. That level is `path[..end]`. Neither prefix has a trailing
+    /// separator, unless it is a root.
+    fn next_level(path: &[u8], dir_len: usize) -> core::ops::Range<usize> {
+        let start = dir_len + usize::from(path[dir_len] == bun_paths::SEP);
+        let end = strings::index_of_char_usize(&path[start..], bun_paths::SEP)
+            .map_or(path.len(), |i| start + i);
+        start..end
+    }
+
+    /// The directory that is watched in place of the missing directory `dir`:
+    /// its parent. The watcher's rule for the directories it adds by itself
+    /// applies, so there is none above the project root or for a directory
+    /// inside `node_modules`.
+    fn stand_in_for_missing(dir: &[u8]) -> Option<&[u8]> {
+        let root = FileSystem::get().top_level_dir();
+        if is_parent_or_equal(root, dir) != ParentEqual::Parent
+            || bun_paths::string_paths::path_contains_node_modules_folder(dir)
+        {
+            return None;
+        }
+        let parent = resolve_path::dirname::<platform::Auto>(dir);
+        (parent.len() < dir.len()).then_some(parent)
+    }
+
+    /// Whether `dep` is the `Dep` of `failure`.
+    fn is_dep_of(dep: &Dep, failure: Failure) -> bool {
+        // Pointer identity: see `Dep::source_file_path`.
+        dep.source_file_path.slice().as_ptr() == failure.file.slice().as_ptr()
+            && *dep.specifier == *failure.specifier.slice()
+    }
+
+    fn has_dep(&self, entry_index: usize, failure: Failure) -> bool {
+        let mut it: Option<u32> = Some(self.watches.values()[entry_index].first_dep);
+        while let Some(index) = it {
+            let dep = &self.dependencies[index as usize];
+            if Self::is_dep_of(dep, failure) {
+                return true;
+            }
+            it = dep.next;
+        }
+        false
+    }
+
+    /// Whether `failure` has a `Dep` on a directory above `joined`. Its first
+    /// registration puts one there, and that one stays.
+    fn is_registered(&self, joined: &[u8], failure: Failure) -> bool {
+        let mut dir = resolve_path::dirname::<platform::Auto>(joined);
+        loop {
+            if self
+                .watches
+                .get_index(dir)
+                .is_some_and(|entry_index| self.has_dep(entry_index, failure))
+            {
+                return true;
+            }
+            match Self::stand_in_for_missing(dir) {
+                Some(parent) => dir = parent,
+                None => return false,
+            }
+        }
+    }
+
+    /// Gives `failure` a `Dep` on the directory `dir`, and makes the watcher
+    /// watch `dir` when no other failure waits on it.
+    fn watch(&mut self, dir: &[u8], failure: Failure) -> Watched {
+        debug_assert!(!failure.specifier.is_empty());
+
+        let entry_index = self.watches.get_index(dir);
+        if entry_index.is_some_and(|entry_index| self.has_dep(entry_index, failure)) {
+            return Watched::Held;
+        }
+
+        // The watcher opens the directory and keeps the descriptor. For a
+        // directory that it already watches, it makes sure that the watch is
+        // on the directory that `dir` names now.
+        let is_new_watch = match self
+            .dev_bun_watcher()
+            .watch_directory(dir, Watcher::get_hash(dir))
+        {
+            Ok(is_new_watch) => is_new_watch,
+            Err(err) => {
+                return match err.get_errno() {
+                    sys::E::ENOENT | sys::E::ENOTDIR => Watched::Missing,
+                    // The resolver already reported the failed import.
+                    _ => Watched::Failed,
+                };
+            }
+        };
+
+        bun_core::scoped_log!(
+            DevServer,
+            "DirectoryWatchStore.watch({}, {}, {})",
+            bun_core::fmt::quote(dir),
+            bun_core::fmt::quote(failure.file.slice()),
+            bun_core::fmt::quote(failure.specifier.slice()),
+        );
+
+        let dep = Dep {
+            next: entry_index.map(|entry_index| self.watches.values()[entry_index].first_dep),
+            source_file_path: failure.file,
+            specifier: Box::from(failure.specifier.slice()),
+        };
+        let first_dep = if let Some(index) = self.dependencies_free_list.pop() {
             self.dependencies[index as usize] = dep;
             index
         } else {
-            let index = u32::try_from(self.dependencies.len()).expect("int cast");
             self.dependencies.push(dep);
-            index
+            u32::try_from(self.dependencies.len() - 1).expect("int cast")
+        };
+        match entry_index {
+            Some(entry_index) => self.watches.values_mut()[entry_index].first_dep = first_dep,
+            None => bun_core::handle_oom(self.watches.put(dir, Entry { first_dep })),
+        }
+
+        if is_new_watch || entry_index.is_none() {
+            Watched::New
+        } else {
+            Watched::Joined
+        }
+    }
+
+    /// Registers `failure` on the directories that exist now below the
+    /// directory `from`: on the way to `joined`, and from there on the way to
+    /// each file that a package.json in `joined` names. Returns `true` when
+    /// the import resolves after one of the new watches.
+    fn watch_existing_below(
+        &mut self,
+        from: &[u8],
+        joined: &[u8],
+        failure: Failure,
+        look: &Look<'_>,
+    ) -> bool {
+        if is_parent_or_equal(from, joined) == ParentEqual::Parent {
+            match self.descend(from.len(), joined, failure, look) {
+                Descent::Resolved => return true,
+                Descent::Stopped => return false,
+                Descent::Arrived => {}
+            }
+        }
+
+        // `joined` is a directory with no index file, or `from` is a directory
+        // in it. The "main" of its package.json can name a file in a
+        // directory below it that does not exist yet.
+        let main_fields: &'static [Box<[u8]>] = match self.dev_resolver().read_dir_info(joined) {
+            Ok(Some(info)) => info
+                .package_json()
+                .map(|package_json| package_json.main_field_values())
+                .unwrap_or_default(),
+            Ok(None) | Err(_) => &[],
+        };
+        let start = if from.len() > joined.len() {
+            from
+        } else {
+            joined
+        };
+        for main in main_fields {
+            let mut buf = bun_paths::path_buffer_pool::get();
+            let Some(target) = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+                joined,
+                &mut buf.0,
+                &[&main[..]],
+            ) else {
+                continue;
+            };
+            let target = without_trailing_slash_windows_path(target);
+            if is_parent_or_equal(start, target) == ParentEqual::Parent
+                && self.descend(start.len(), target, failure, look) == Descent::Resolved
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Walks from the directory `target[..from_len]` toward `target`, one
+    /// level at a time, while the listing of a level has the next level as a
+    /// directory. Each such level gets a `Dep` of `failure`.
+    ///
+    /// A level can exist before its watch does: `mkdir -p a/b` makes one event,
+    /// in the parent of `a`. So after a new watch the resolver's cache of the
+    /// levels below is dropped, and the import is resolved again.
+    fn descend(
+        &mut self,
+        from_len: usize,
+        target: &[u8],
+        failure: Failure,
+        look: &Look<'_>,
+    ) -> Descent {
+        let mut dir_len = from_len;
+        // A new watch on a level means that the levels below it were made
+        // with no event, so a `Dep` there can be on a directory that is gone.
+        let mut parent_is_new = false;
+        while dir_len < target.len() {
+            let name = Self::next_level(target, dir_len);
+            let next_len = name.end;
+            let next = &target[..next_len];
+
+            if self.listed_kind(&target[..dir_len], &target[name]) != Some(EntryKind::Dir) {
+                // The level is gone, and the levels below went with it.
+                if self.watches.contains(next) {
+                    self.release(failure, Some(next));
+                }
+                return Descent::Stopped;
+            }
+
+            let is_new = match self.watch(next, failure) {
+                Watched::New => true,
+                Watched::Joined => false,
+                Watched::Held => {
+                    if !parent_is_new && !look.may_have_replaced(next) {
+                        // The level reports its own changes.
+                        return Descent::Stopped;
+                    }
+                    match self
+                        .dev_bun_watcher()
+                        .watch_directory(next, Watcher::get_hash(next))
+                    {
+                        Ok(true) => true,
+                        Ok(false) | Err(_) => return Descent::Stopped,
+                    }
+                }
+                Watched::Missing | Watched::Failed => return Descent::Stopped,
+            };
+
+            if is_new {
+                match look {
+                    Look::Now(_) => {
+                        // A lookup from before the watch can have cached a
+                        // level as missing, or without the entry it has now.
+                        let mut len = next_len;
+                        loop {
+                            let _ = self.dev_resolver().bust_dir_cache(&target[..len]);
+                            if len == target.len() {
+                                break;
+                            }
+                            len = Self::next_level(target, len).end;
+                        }
+                        if self.resolves(failure) {
+                            return Descent::Resolved;
+                        }
+                    }
+                    Look::Later => self.look_later(next),
+                }
+            }
+
+            parent_is_new = is_new;
+            dir_len = next_len;
+        }
+        Descent::Arrived
+    }
+
+    /// Whether the import resolves now. The bundler looked it up with the
+    /// transpiler of its graph and the import kind of its record. This lookup
+    /// is the server transpiler's, of a statement import.
+    fn resolves(&mut self, failure: Failure) -> bool {
+        self.dev_resolver()
+            .resolve(
+                resolve_path::dirname::<platform::Auto>(&failure.file),
+                &failure.specifier,
+                bun_ast::ImportKind::Stmt,
+            )
+            .is_ok()
+    }
+
+    /// The listing of `dir` that the resolver keeps, which is read when there
+    /// is none. Only the listing: the resolver's `DirInfo` of a directory
+    /// also reads its package.json and tsconfig.json.
+    fn listing(&mut self, dir: &[u8]) -> Option<&'static bun_resolver::fs::DirEntry> {
+        let resolver = self.dev_resolver();
+        let (generation, store_fd) = (resolver.generation, resolver.store_fd);
+        match FileSystem::instance().read_directory(dir, generation, store_fd) {
+            Ok(EntriesOption::Entries(entries)) => Some(&**entries),
+            Ok(EntriesOption::Err(_)) | Err(_) => None,
+        }
+    }
+
+    /// The kind of the entry `name` in the listing of `dir`.
+    fn listed_kind(&mut self, dir: &[u8], name: &[u8]) -> Option<EntryKind> {
+        let listing = self.listing(dir)?;
+        let fs = FileSystem::instance();
+        let entry = {
+            // The map of a listing is only read with `entries_mutex` held.
+            let _lock = fs.fs.entries_mutex.lock_guard();
+            listing.get(name)?.entry()
+        };
+        // SAFETY: `fs.fs` is the process-wide `RealFS`. For a link or an entry
+        // of unknown kind, `kind` calls `stat` under the entry's own mutex.
+        Some(unsafe { entry.kind(&raw mut fs.fs, false) })
+    }
+
+    /// The watch of `dir` is new, and the lookup that failed read `dir` before
+    /// that. The listing is read again, now that the watch reports each later
+    /// change. If it differs from what the lookup read, `dir` goes on `rescan`.
+    ///
+    /// An unchanged listing gives no retry, so a retry always has a change of
+    /// the file system behind it. That matters for an import that the retry
+    /// resolves and the bundler does not: it would bundle with no end.
+    fn look_later(&mut self, dir: &[u8]) {
+        let before = {
+            let fs = FileSystem::instance();
+            let _lock = fs.fs.entries_mutex.lock_guard();
+            match fs.fs.entries.get(dir) {
+                Some(EntriesOption::Entries(listing)) => Some(Self::names(listing)),
+                Some(EntriesOption::Err(_)) | None => None,
+            }
+        };
+        let _ = self.dev_resolver().bust_dir_cache(dir);
+        let after = self.listing(dir).map(|listing| {
+            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            Self::names(listing)
+        });
+        if before.is_none() || before != after {
+            self.rescan.push(Box::from(dir));
+        }
+    }
+
+    /// The count of the names in `listing`, and a hash of them that does not
+    /// depend on their order. The caller holds `entries_mutex`.
+    fn names(listing: &bun_resolver::fs::DirEntry) -> (usize, u64) {
+        let names = listing
+            .data
+            .keys()
+            .fold(0u64, |sum, name| sum.wrapping_add(hash(&**name)));
+        (listing.data.len(), names)
+    }
+
+    /// Removes the `Dep`s of `failure`: all of them, or only those on the
+    /// directory `at_or_below` and on the directories in it. A directory that
+    /// no `Dep` is left on is not watched anymore.
+    ///
+    /// `failure.specifier` must not be borrowed from a `Dep` that this removes.
+    fn release(&mut self, failure: Failure, at_or_below: Option<&[u8]>) {
+        // Iterate in reverse since `free_entry` uses `swap_remove_at`.
+        let mut entry_index = self.watches.count();
+        while entry_index > 0 {
+            entry_index -= 1;
+            if at_or_below.is_some_and(|dir| {
+                is_parent_or_equal(dir, &self.watches.keys()[entry_index]) == ParentEqual::Unrelated
+            }) {
+                continue;
+            }
+
+            let mut prev: Option<u32> = None;
+            let mut it: Option<u32> = Some(self.watches.values()[entry_index].first_dep);
+            while let Some(index) = it {
+                let dep = &self.dependencies[index as usize];
+                let next = dep.next;
+                if !Self::is_dep_of(dep, failure) {
+                    prev = it;
+                    it = next;
+                    continue;
+                }
+                self.free_dependency_index(index);
+                match (prev, next) {
+                    (Some(prev), _) => self.dependencies[prev as usize].next = next,
+                    (None, Some(next)) => self.watches.values_mut()[entry_index].first_dep = next,
+                    (None, None) => self.free_entry(entry_index),
+                }
+                break;
+            }
         }
     }
 

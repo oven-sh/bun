@@ -1,6 +1,7 @@
 // CSS tests concern bundling bugs with CSS files
 import { expect } from "bun:test";
 import assert from "node:assert";
+import fs from "node:fs";
 import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
 
 devTest("css file with syntax error does not kill old styles", {
@@ -808,6 +809,53 @@ devTest("css import before create project relative", {
     assert(backgroundImage);
     await dev.fetch(extractCssUrl(backgroundImage)).expectFile(imageFixtures.bun);
     await dev.fetch("/").expect.toContain("HELLO");
+  },
+});
+// The directory of the imported stylesheet does not exist when the import fails. The last step
+// renames the stylesheet into place: one watcher event, for a directory that nothing watched before.
+devTest("css import before create, in a directory that does not exist", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["styles.css"],
+      body: `
+        <div>HELLO</div>
+      `,
+    }),
+    "styles.css": `@import "theme/sizes.css";`,
+    "staged/sizes.css": `.size { width: 123px; }`,
+  },
+  async test(dev) {
+    const errors = ['styles.css:1:1: error: Could not resolve: "theme/sizes.css". Maybe you need to "bun install"?'];
+    await using c = await dev.client("/", { errors });
+    await c.expectNoWebSocketActivity(async () => {
+      await using _batch = await dev.batchChanges({ errors });
+      dev.mkdir("theme");
+    });
+    await c.expectReload(async () => {
+      fs.renameSync(dev.join("staged/sizes.css"), dev.join("theme/sizes.css"));
+    });
+    // The page is still loading, so its stylesheet is read from the server.
+    const page = await dev.fetch("/").text();
+    expect(page).toContain("HELLO");
+    await dev.fetch(page.match(/\/_bun\/asset\/\w+\.css/)![0]).expect.toContain("123px");
+  },
+});
+// The dev server retries a failed import as an import statement, and the bundler resolves it as an
+// `@import`. Only the first takes `./tokens` for `tokens.ts`. So each change of the directory
+// bundles the stylesheet again, and it fails again. Without a change there is no bundle.
+devTest("a failed @import that an import statement would resolve is bundled once per change", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["styles.css"] }),
+    "styles.css": `@import "./tokens";`,
+    "tokens.ts": `export {};`,
+  },
+  async test(dev) {
+    const errors = ['styles.css:1:1: error: Could not resolve: "./tokens"'];
+    await using c = await dev.client("/", { errors });
+    await dev.write("unrelated.txt", "1", { errors });
+    await c.expectNoWebSocketActivity(async () => {
+      await using _batch = await dev.batchChanges({ errors });
+    });
   },
 });
 

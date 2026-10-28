@@ -1,5 +1,6 @@
 // HTML tests are tests relating to HTML files themselves.
 import { expect } from "bun:test";
+import fs from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
@@ -184,6 +185,34 @@ devTest("import then create", {
       await dev.write("data.ts", "export default 'data';");
     });
     await c.expectMessage("data");
+  },
+});
+// The directory of the script does not exist when the page fails to resolve it. The last step
+// renames the script into place: one watcher event, for a directory that nothing watched before.
+devTest("import then create, in a directory that does not exist", {
+  files: {
+    "index.html": `
+      <!DOCTYPE html>
+      <html>
+      <head></head>
+      <body>
+        <script type="module" src="/js/script.ts"></script>
+      </body>
+      </html>
+    `,
+    "staged/script.ts": `console.log("script");`,
+  },
+  async test(dev) {
+    const errors = ['index.html: error: Could not resolve: "/js/script.ts"'];
+    await using c = await dev.client("/", { errors });
+    await c.expectNoWebSocketActivity(async () => {
+      await using _batch = await dev.batchChanges({ errors });
+      dev.mkdir("js");
+    });
+    await c.expectReload(async () => {
+      fs.renameSync(dev.join("staged/script.ts"), dev.join("js/script.ts"));
+    });
+    await c.expectMessage("script");
   },
 });
 devTest("a file whose import failed to resolve is imported by a second file", {

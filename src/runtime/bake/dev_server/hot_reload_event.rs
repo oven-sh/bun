@@ -93,7 +93,17 @@ impl HotReloadEvent {
         // drop, so it does not hold a borrow of `dev` for the scope.
         let _g = dev.graph_safety_lock.guard();
 
-        // First handle directories, because this may mutate `event.files`
+        // The entries that inotify names for a changed directory. `retry` reads them.
+        let mut rest_extra: &[u8] = &self.extra_files;
+        while let Some(str_idx) = bun_core::strings::index_of_char_usize(rest_extra, 0) {
+            bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
+            rest_extra = &rest_extra[str_idx as usize + 1..];
+        }
+        if !rest_extra.is_empty() {
+            bun_core::handle_oom(self.files.put(rest_extra, ()));
+        }
+
+        // Handle directories before the graphs, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {
                 let changed_dir = bun_paths::string_paths::without_trailing_slash_windows_path(
@@ -109,67 +119,8 @@ impl HotReloadEvent {
                     .bust_dir_cache(changed_dir);
 
                 // if a directory watch exists for resolution failures, check those now.
-                if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
-                    let mut new_chain: Option<u32> = None;
-                    let mut it: Option<u32> =
-                        Some(dev.directory_watchers.watches.values()[watcher_index].first_dep);
-
-                    while let Some(index) = it {
-                        // Note: reshaped for borrowck — re-index per iteration instead of
-                        // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
-                        let (source_file_path, specifier, next) = {
-                            let dep = &dev.directory_watchers.dependencies[index as usize];
-                            (dep.source_file_path, &raw const *dep.specifier, dep.next)
-                        };
-                        it = next;
-
-                        // `specifier` points into the dep's owned `Box<[u8]>`, which is
-                        // not mutated until after `resolve` returns.
-                        // SAFETY: see `Dep` doc — neither slice is mutated mid-resolve.
-                        let resolved = unsafe { dev.server_transpiler.assume_init_mut() }
-                            .resolver
-                            .resolve(
-                                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
-                                    source_file_path.slice(),
-                                ),
-                                unsafe { &*specifier },
-                                bun_ast::ImportKind::Stmt,
-                            )
-                            .is_ok();
-
-                        if resolved {
-                            // this resolution result is not preserved as passing it
-                            // into BundleV2 is too complicated. the resolution is
-                            // cached, anyways.
-                            // Note: inlined `append_file` body for disjoint borrow
-                            // (`self.dirs.keys()` is held immutably across this loop).
-                            bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
-                            dev.directory_watchers.free_dependency_index(index);
-                        } else {
-                            // rebuild a new linked list for unaffected files
-                            dev.directory_watchers.dependencies[index as usize].next = new_chain;
-                            new_chain = Some(index);
-                        }
-                    }
-
-                    if let Some(new_first_dep) = new_chain {
-                        dev.directory_watchers.watches.values_mut()[watcher_index].first_dep =
-                            new_first_dep;
-                    } else {
-                        // without any files to depend on this watcher is freed
-                        dev.directory_watchers.free_entry(watcher_index);
-                    }
-                }
+                dev.directory_watchers.retry(changed_dir, &mut self.files);
             }
-        }
-
-        let mut rest_extra: &[u8] = &self.extra_files;
-        while let Some(str_idx) = bun_core::strings::index_of_char_usize(rest_extra, 0) {
-            bun_core::handle_oom(self.files.put(&rest_extra[0..str_idx as usize], ()));
-            rest_extra = &rest_extra[str_idx as usize + 1..];
-        }
-        if !rest_extra.is_empty() {
-            bun_core::handle_oom(self.files.put(rest_extra, ()));
         }
 
         let changed_file_paths = self.files.keys();

@@ -503,10 +503,13 @@ impl DevServer {
         self.emit_visualizer_message_if_needed();
 
         // If there were pending requests, begin another bundle.
-        if self.next_bundle.reload_event.is_some() || !self.next_bundle.requests.first.is_null() {
+        if self.next_bundle.reload_event.is_some()
+            || !self.next_bundle.requests.first.is_null()
+            || !self.directory_watchers.rescan.is_empty()
+        {
             let mut entry_points = EntryPointList::empty();
 
-            let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
+            let (mut is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
                 'brk: {
                     // SAFETY: `event` points into `*self.watcher_atomics` (its
                     // own heap allocation); the slot is exclusively owned by
@@ -552,6 +555,8 @@ impl DevServer {
                 (false, Instant::now())
             };
 
+            is_reload |= self.retry_rescan_directories(&mut entry_points);
+
             // Note: iterate by index — `route_bundle_ptr` /
             // `append_route_entry_points_if_not_stale` need `&mut self`,
             // conflicting with the `keys()` iterator borrow.
@@ -593,5 +598,24 @@ impl DevServer {
 
             self.next_bundle.route_queue.clear_retaining_capacity();
         }
+    }
+
+    /// Retries the failed imports of each directory that the bundle put on
+    /// `DirectoryWatchStore::rescan`. Returns whether a file is bundled again.
+    fn retry_rescan_directories(&mut self, entry_points: &mut EntryPointList) -> bool {
+        if self.directory_watchers.rescan.is_empty() {
+            return false;
+        }
+        let _g = self.graph_safety_lock.guard();
+        let mut files = StringArrayHashMap::<()>::default();
+        for dir in core::mem::take(&mut self.directory_watchers.rescan) {
+            self.directory_watchers.retry(&dir, &mut files);
+        }
+        if files.count() == 0 {
+            return false;
+        }
+        bun_core::handle_oom(self.server_graph.invalidate(files.keys(), entry_points));
+        bun_core::handle_oom(self.client_graph.invalidate(files.keys(), entry_points));
+        true
     }
 }

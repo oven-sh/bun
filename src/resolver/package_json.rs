@@ -180,6 +180,11 @@ const INSTALLED_DEPENDENCY_GROUPS: [DependencyGroup; 2] =
     [DependencyGroup::DEPENDENCIES, DependencyGroup::OPTIONAL];
 
 impl PackageJSON {
+    /// The path that each main field ("main", "module", ...) of this package.json names.
+    pub fn main_field_values(&self) -> &[Box<[u8]>] {
+        self.main_fields.values()
+    }
+
     /// Returns true if auto-install can look up the version of an imported package in this
     /// package.json.
     pub(crate) fn lists_dependencies(&self) -> bool {

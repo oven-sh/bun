@@ -210,14 +210,25 @@ impl StatWatcherScheduler {
         ticket.post(ConcurrentTask::create_from(holder));
     }
 
-    pub(crate) fn timer_callback(&mut self, vm: &VirtualMachine) {
-        let has_been_cleared = self.event_loop_timer.state == EventLoopTimerState::CANCELLED
-            || vm.script_execution_status() != jsc::ScriptExecutionStatus::Running;
+    /// # Safety
+    /// `this` points to a live `StatWatcherScheduler` of `vm`, whose timer node has just been
+    /// popped.
+    pub(crate) unsafe fn timer_callback(this: *mut Self, vm: &VirtualMachine) {
+        // No `&mut Self`: the node is linked again below, and the pool thread borrows the
+        // scheduler as soon as the task is scheduled.
+        // SAFETY: fn contract. The node is unlinked, so nothing else reads or writes it.
+        let has_been_cleared = unsafe {
+            let timer = &raw mut (*this).event_loop_timer;
+            let was_cancelled = (*timer).state == EventLoopTimerState::CANCELLED;
+            (*timer).state = EventLoopTimerState::FIRED;
+            (*timer).heap = Default::default();
+            was_cancelled
+        } || vm.script_execution_status()
+            != jsc::ScriptExecutionStatus::Running;
+        // SAFETY: fn contract. What is read through it is atomics and a cell of this thread's.
+        let scheduler = unsafe { &*this };
 
-        self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        self.event_loop_timer.heap = Default::default();
-
-        if has_been_cleared || self.is_shutdown.load(Ordering::Relaxed) {
+        if has_been_cleared || scheduler.is_shutdown.load(Ordering::Relaxed) {
             return;
         }
 
@@ -240,10 +251,9 @@ impl StatWatcherScheduler {
         // that landed after its `pop_batch()`, which would otherwise leave a
         // live watcher with the timer disarmed. `.max(5)` matches the clamp
         // applied to every watcher interval in `StatWatcher::init`.
-        if self.work_pool_in_flight.swap(true, Ordering::AcqRel) {
-            let this = core::ptr::from_mut(self);
-            // SAFETY: `self` is live.
-            unsafe { Self::set_timer(this, self.get_interval().max(5), vm) };
+        if scheduler.work_pool_in_flight.swap(true, Ordering::AcqRel) {
+            // SAFETY: fn contract.
+            unsafe { Self::set_timer(this, scheduler.get_interval().max(5), vm) };
             return;
         }
 
@@ -251,10 +261,11 @@ impl StatWatcherScheduler {
         // `RefPtr::from_raw` in `work_pool_callback`). Taken here — not in
         // `set_interval` — so the count exactly tracks "task in flight" instead
         // of accumulating one leak per `set_interval(0)` / re-arm.
-        // SAFETY: `self` is live (`&mut self`).
-        unsafe { Self::ref_(core::ptr::from_mut(self)) };
-        self.ticket.set(Some(vm.ticket()));
-        WorkPool::schedule(&raw mut self.task);
+        // SAFETY: fn contract.
+        unsafe { Self::ref_(this) };
+        scheduler.ticket.set(Some(vm.ticket()));
+        // SAFETY: fn contract.
+        WorkPool::schedule(unsafe { &raw mut (*this).task });
     }
 
     /// Thread-pool callback (safe fn — coerces to the `WorkPoolTask.callback`

@@ -288,6 +288,36 @@ describe("bundler", () => {
       NODE_ENV: "production",
     },
   });
+  // A user `process.env.NODE_ENV` define selects the mode for `BUN_ENV` and
+  // `import.meta.env` too, in every spelling the define parser accepts.
+  for (const [name, value] of [
+    ["DoubleQuoted", '"production"'],
+    ["SingleQuoted", "'production'"],
+    ["EscapedQuoted", '\\"production\\"'],
+  ] as const) {
+    itBundled(`edgecase/ImportMetaEnvBrowserNodeEnvDefine${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          capture(process.env.NODE_ENV);
+          capture(process.env.BUN_ENV);
+          capture(import.meta.env.DEV);
+          capture(import.meta.env.PROD);
+          capture(import.meta.env.MODE);
+        `,
+      },
+      target: "browser",
+      define: {
+        "process.env.NODE_ENV": value,
+      },
+      capture: ['"production"', '"production"', "false", "true", '"production"'],
+      env: {
+        NODE_ENV: "development",
+      },
+    });
+  }
+  // The CLI `--env disable` skips every default define. The JS API
+  // `env: "disable"` only skips the `.env` inlining and keeps the defaults,
+  // the same split `process.browser` and `process.env.NODE_ENV` have.
   itBundled("edgecase/ImportMetaEnvBrowserEnvDisable", {
     files: {
       "/entry.js": /* js */ `
@@ -297,7 +327,20 @@ describe("bundler", () => {
     },
     target: "browser",
     dotenv: "disable",
+    backend: "cli",
     capture: ["import.meta.env.DEV", "process.browser"],
+  });
+  itBundled("edgecase/ImportMetaEnvBrowserEnvDisableApi", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(import.meta.env.DEV);
+        capture(process.browser);
+      `,
+    },
+    target: "browser",
+    dotenv: "disable",
+    backend: "api",
+    capture: ["true", "true"],
   });
   itBundled("edgecase/ImportMetaEnvBunTargetKeepsAccess", {
     files: {
@@ -307,6 +350,19 @@ describe("bundler", () => {
       `,
     },
     target: "bun",
+    capture: ["import.meta.env.DEV", "import.meta.env.MODE"],
+    env: {
+      NODE_ENV: "production",
+    },
+  });
+  itBundled("edgecase/ImportMetaEnvNodeTargetKeepsAccess", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(import.meta.env.DEV);
+        capture(import.meta.env.MODE);
+      `,
+    },
+    target: "node",
     capture: ["import.meta.env.DEV", "import.meta.env.MODE"],
     env: {
       NODE_ENV: "production",

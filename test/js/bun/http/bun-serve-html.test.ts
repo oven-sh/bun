@@ -1916,6 +1916,51 @@ describe("production headers and import.meta.env", () => {
     expect(out.jsCacheControl).toBeNull();
   });
 
+  // The bundler seeds the browser `import.meta.env` defaults from NODE_ENV.
+  // The HMR dev server inserts its own mode after, so its values win.
+  test("development: true keeps the dev server mode when NODE_ENV=production", async () => {
+    const dir = tempDirWithFiles("html-dev-server-import-meta-env", {
+      "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+      "app.ts": /*js*/ `
+        console.log("DEV", import.meta.env.DEV);
+        console.log("PROD", import.meta.env.PROD);
+        console.log("MODE", import.meta.env.MODE);
+        console.log("SSR", import.meta.env.SSR);
+        console.log("STATIC", import.meta.env.STATIC);
+      `,
+      "serve.ts": /*js*/ `
+        import index from "./index.html";
+        const server = Bun.serve({ port: 0, development: true, routes: { "/": index } });
+        const base = server.url.href;
+        const html = await (await fetch(base)).text();
+        const jsPath = html.match(/src="([^"]+\\.js)"/)[1];
+        const js = await (await fetch(new URL(jsPath, base))).text();
+        console.log(js.split(/[\\n;]/).filter(l => /console\\.log\\("(DEV|PROD|MODE|SSR|STATIC)"/.test(l)).map(l => l.trim()).join("\\n"));
+        await server.stop(true);
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "serve.ts"],
+      env: { ...bunEnv, NODE_ENV: "production" },
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      [
+        'console.log("DEV", true)',
+        'console.log("PROD", false)',
+        'console.log("MODE", "development")',
+        'console.log("SSR", false)',
+        'console.log("STATIC", false)',
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+  });
+
   test("distinct source maps get distinct ETags", async () => {
     const serveTs = /*js*/ `
       import index from "./index.html";

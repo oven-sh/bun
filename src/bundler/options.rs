@@ -921,13 +921,14 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        let is_production = {
-            let node_env = user_defines
-                .get_or_put_value(default_user_defines::node_env::KEY, quoted_node_env.clone())?;
-            let node_env: &[u8] = node_env.value_ptr;
-            node_env == b"\"production\"" || node_env == b"'production'"
-        };
-        user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        // A user `process.env.NODE_ENV` define wins over the default. `BUN_ENV`
+        // and the `import.meta.env` mode follow that effective value, so one
+        // bundle never mixes two modes.
+        let node_env: Box<[u8]> = user_defines
+            .get_or_put_value(default_user_defines::node_env::KEY, quoted_node_env)?
+            .value_ptr
+            .clone();
+        user_defines.get_or_put_value(b"process.env.BUN_ENV", node_env.clone())?;
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination
@@ -938,10 +939,27 @@ pub(crate) fn defines_from_transform_options(
             )?;
         }
 
-        // `import.meta.env` is undefined in a browser, so `import.meta.env.DEV`
-        // throws unless it folds. On the bun and node targets it is a runtime
-        // alias of `process.env`, so they keep the property access.
+        // A browser has no `import.meta.env`, so `import.meta.env.DEV` throws
+        // unless it folds. The Bun runtime aliases it to `process.env`, so the
+        // bun targets keep the property access. Node has no alias either, but
+        // a node build is a server build (Vite sets `SSR: true` there), and
+        // that table is a separate decision. Only the browser target folds.
         if target == Target::Browser {
+            // Parse the value like `from_input` does below, so `"production"`,
+            // `'production'` and `\"production\"` all select production.
+            // A malformed value reports its error once, from `from_input`.
+            let mut scratch_log = bun_ast::Log::default();
+            let is_production = defines::DefineData::parse(
+                default_user_defines::node_env::KEY,
+                &node_env,
+                false,
+                false,
+                &mut scratch_log,
+                bump,
+            )
+            .ok()
+            .and_then(|data| data.value.e_string())
+            .is_some_and(|s| s.eql_comptime(b"production"));
             for (key, value) in default_user_defines::import_meta_env_defines(
                 is_production,
                 /* ssr: */ false,

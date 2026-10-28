@@ -360,7 +360,7 @@ console.log(`API URL: ${apiUrl}`);
 | `import.meta.env.SSR`    | `false`        | `false`         |
 | `import.meta.env.STATIC` | `false`        | `false`         |
 
-`bun build --production`, `NODE_ENV=production`, or a `Bun.serve` HTML route with `development: false` selects production. A `define` entry for one of these keys wins over the default. `--env=disable` leaves them in place. Other `import.meta.env.*` names are not replaced.
+`bun build --production`, `NODE_ENV=production`, or a `Bun.serve` HTML route with `development: false` selects production. A `define` entry for one of these keys wins over the default. The `bun build --env=disable` flag skips them, as it skips `process.env.NODE_ENV`. `Bun.build({ env: "disable" })` still replaces them. Other `import.meta.env.*` names are not replaced.
 
 ## Echo console logs from browser to terminal
 

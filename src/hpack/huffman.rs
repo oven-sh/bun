@@ -200,53 +200,62 @@ pub(crate) fn encode(mut src: &[u8], out: &mut Vec<u8>) {
 }
 
 /// Most header text has codes of 5 to 7 bits, so this is two symbols per lookup.
-const PREFIX_BITS: u32 = 13;
+const PREFIX_BITS: u32 = 14;
 
-/// What the next [`PREFIX_BITS`] bits of the input start with.
+/// What the next [`PREFIX_BITS`] bits of the input start with: one or two whole symbols, if that many fit.
 #[derive(Clone, Copy)]
 struct Prefix {
-    /// One or two whole symbols, if that many fit.
-    symbols: [u8; 2],
-    /// How many symbols.
-    count: u8,
+    /// The last symbol, which is ASCII. The top bit says that there is one before it: [`PrefixTables::first_symbols`].
+    symbol: u8,
     /// The length of their codes together.
     bits: u8,
 }
 
-impl Prefix {
-    const NONE: Self = Self {
-        symbols: [0; 2],
-        count: 0,
-        bits: 0,
-    };
+/// One static, so that one register holds its address.
+struct PrefixTables {
+    prefixes: [Prefix; 1 << PREFIX_BITS],
+    /// The symbol whose code the next 8 bits of the input start with, if that many hold one.
+    first_symbols: [u8; 256],
 }
 
-static PREFIXES: [Prefix; 1 << PREFIX_BITS] = build_prefixes();
+static PREFIXES: PrefixTables = build_prefixes();
 
 #[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
-const fn build_prefixes() -> [Prefix; 1 << PREFIX_BITS] {
-    let mut prefixes = [Prefix::NONE; 1 << PREFIX_BITS];
+const fn build_prefixes() -> PrefixTables {
+    let mut tables = PrefixTables {
+        prefixes: [Prefix { symbol: 0, bits: 0 }; 1 << PREFIX_BITS],
+        first_symbols: [0; 256],
+    };
     let mut first = 0;
     while first < CODES.len() {
         let (code, bits) = CODES[first];
-        let mut prefix = Prefix {
-            symbols: [first as u8, 0],
-            count: 1,
-            bits,
-        };
-        fill_prefixes(&mut prefixes, code, prefix);
-        prefix.count = 2;
+        assert!(first < 0x80 || bits as u32 > PREFIX_BITS);
+        let symbol = first as u8;
+        fill_prefixes(&mut tables.prefixes, code, Prefix { symbol, bits });
         let mut second = 0;
         while second < CODES.len() {
             let (second_code, second_bits) = CODES[second];
-            prefix.symbols[1] = second as u8;
-            prefix.bits = bits + second_bits;
-            fill_prefixes(&mut prefixes, code << second_bits | second_code, prefix);
+            // `first_symbols` goes by 8 bits.
+            assert!(bits <= 8 || (bits + second_bits) as u32 > PREFIX_BITS);
+            let prefix = Prefix {
+                symbol: second as u8 | 0x80,
+                bits: bits + second_bits,
+            };
+            fill_prefixes(
+                &mut tables.prefixes,
+                code << second_bits | second_code,
+                prefix,
+            );
             second += 1;
+        }
+        let mut input = (code as usize) << 8 >> bits;
+        while bits <= 8 && input < (code as usize + 1) << 8 >> bits {
+            tables.first_symbols[input] = symbol;
+            input += 1;
         }
         first += 1;
     }
-    prefixes
+    tables
 }
 
 /// Sets the entry of every input that starts with `code`, which has `prefix.bits` bits, if that many fit.
@@ -304,17 +313,41 @@ impl Decoder<'_> {
     #[inline(always)]
     fn prefix(window: u64) -> Prefix {
         let index = (window >> (64 - PREFIX_BITS)) as usize;
-        PREFIXES.get(index).copied().unwrap_or(Prefix::NONE)
+        let prefix = PREFIXES.prefixes.get(index).copied();
+        prefix.unwrap_or(Prefix { symbol: 0, bits: 0 })
     }
 
     #[inline(always)]
-    fn write(&mut self, prefix: Prefix) -> Result<()> {
-        self.out
+    fn first_symbol(window: u64) -> u8 {
+        let first = PREFIXES.first_symbols.get((window >> 56) as usize).copied();
+        first.unwrap_or_default()
+    }
+
+    /// `prefix` is what `window` starts with.
+    #[inline(always)]
+    fn write(&mut self, window: u64, prefix: Prefix) -> Result<()> {
+        let two = usize::from(prefix.symbol >> 7);
+        let out = self
+            .out
             .get_mut(self.written..self.written + 2)
-            .ok_or(Error::TooLarge)?
-            .copy_from_slice(&prefix.symbols);
-        self.written += usize::from(prefix.count);
+            .ok_or(Error::TooLarge)?;
+        // No branch on how many there are: an only symbol goes over the first.
+        if let Some(first) = out.first_mut() {
+            *first = Self::first_symbol(window);
+        }
+        if let Some(last) = out.get_mut(two) {
+            *last = prefix.symbol & 0x7f;
+        }
+        self.written += 1 + two;
         self.bit_pos += usize::from(prefix.bits);
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn write_one(&mut self, symbol: u8, bits: u8) -> Result<()> {
+        *self.out.get_mut(self.written).ok_or(Error::TooLarge)? = symbol;
+        self.written += 1;
+        self.bit_pos += usize::from(bits);
         Ok(())
     }
 
@@ -334,24 +367,23 @@ impl Decoder<'_> {
             let start = self.bit_pos;
             for steps_left in (0..WINDOW_BITS / PREFIX_BITS).rev() {
                 let prefix = Self::prefix(window);
-                // One `write` after the `if` for both kinds of code costs 6 more instructions here: huffman_simd.md.
-                if prefix.count != 0 {
-                    self.write(prefix)?;
+                if prefix.bits != 0 {
+                    self.write(window, prefix)?;
                     window <<= prefix.bits;
                     continue;
                 }
-                let long = long_symbol(window)?;
+                let (bits, symbol) = long_symbol(window)?;
                 let left = WINDOW_BITS - (self.bit_pos - start) as u32;
                 // The window ends inside the code, and the zeros after it made it look like this one.
-                if u32::from(long.bits) > left {
+                if u32::from(bits) > left {
                     break;
                 }
-                self.write(long)?;
+                self.write_one(symbol, bits)?;
                 // It took the bits of a lookup that is still to come.
-                if left - u32::from(long.bits) < steps_left * PREFIX_BITS {
+                if left - u32::from(bits) < steps_left * PREFIX_BITS {
                     break;
                 }
-                window <<= long.bits;
+                window <<= bits;
             }
         }
         Ok(())
@@ -378,20 +410,26 @@ impl Decoder<'_> {
             .map_or(u64::MAX, |rest| !rest);
         // What is left at the end is padding: under 8 bits, all ones (the start of EOS).
         while window != u64::MAX {
-            let mut prefix = Self::prefix(window);
-            if prefix.count == 0 {
-                prefix = long_symbol(window)?;
+            let prefix = Self::prefix(window);
+            if prefix.bits != 0 && self.bit_pos + usize::from(prefix.bits) <= end {
+                self.write(window, prefix)?;
+                window = !(!window << prefix.bits);
+                continue;
             }
-            if self.bit_pos + usize::from(prefix.bits) > end {
-                // The first of two may still be whole, and counts towards the length.
-                prefix.count = 1;
-                prefix.bits = code(prefix.symbols[0]).1;
-                if self.bit_pos + usize::from(prefix.bits) > end {
-                    return Err(Error::Invalid);
+            // The first of two may still be whole, and counts towards the length.
+            let (bits, symbol) = match prefix {
+                Prefix { bits: 0, .. } => long_symbol(window)?,
+                Prefix { symbol: 0x80.., .. } => {
+                    let first = Self::first_symbol(window);
+                    (code(first).1, first)
                 }
+                _ => return Err(Error::Invalid),
+            };
+            if self.bit_pos + usize::from(bits) > end {
+                return Err(Error::Invalid);
             }
-            self.write(prefix)?;
-            window = !(!window << prefix.bits);
+            self.write_one(symbol, bits)?;
+            window = !(!window << bits);
         }
         if end - self.bit_pos > 7 {
             return Err(Error::Invalid);
@@ -456,18 +494,13 @@ const fn build_long_codes() -> LongCodes {
     codes
 }
 
-/// A symbol whose code is longer than [`PREFIX_BITS`].
+/// The length of a code that is longer than [`PREFIX_BITS`], and its symbol.
 #[inline(always)]
-fn long_symbol(window: u64) -> Result<Prefix> {
-    let (bits, symbol) = find_long_code(window);
-    if bits == 0 {
-        return Err(Error::Invalid);
+fn long_symbol(window: u64) -> Result<(u8, u8)> {
+    match find_long_code(window) {
+        (0, _) => Err(Error::Invalid),
+        long => Ok(long),
     }
-    Ok(Prefix {
-        symbols: [symbol, 0],
-        count: 1,
-        bits,
-    })
 }
 
 /// The length of the code and its symbol, apart, so that the next code does not wait for the symbol. No length: EOS.
@@ -539,16 +572,16 @@ pub(crate) mod test_kernel {
         // It may stop anywhere, also where it started.
         for _ in 0..(bit_pos * 7 + src.len()) % 29 {
             let window = (0..16).fold(0, |window, i| window << 1 | bit(bit_pos + i)) << 48;
-            let prefix = Decoder::prefix(window);
-            let len = usize::from(code(prefix.symbols[0]).1);
-            if prefix.count == 0 || len > 8 || bit_pos + len > src.len() * 8 {
+            let symbol = Decoder::first_symbol(window);
+            let len = usize::from(code(symbol).1);
+            if window >> (64 - 7) == 0x7f || bit_pos + len > src.len() * 8 {
                 break;
             }
             let Some(block) = out.get_mut(written..written + SPARE_OUT) else {
                 break;
             };
             block.fill(0xaa);
-            block[0] = prefix.symbols[0];
+            block[0] = symbol;
             written += 1;
             bit_pos += len;
         }

@@ -118,10 +118,61 @@ before it knows whether the code will be shorter than the text. On Sapphire Rapi
 corpus 22% faster. On Cascade Lake the corpus took as long as before. On both, a string that is
 sent as it is took 1.3 to 2 times as long, and one of 1 to 3 bytes 1.1 to 1.3 times.
 
-The scalar decoder's loop writes a short code and a long code in two places. With one `write` after
-the `if` for both, the compiler loads the four bytes of a table entry one by one and puts the two
-symbols together again: 23 instructions a lookup instead of 17. Sapphire Rapids hides most of that.
-On Cascade Lake text took 10 to 25% longer.
+With entries of 4 bytes, the scalar decoder's loop had to write a short code and a long code in two
+places. With one `write` after the `if` for both, the compiler loaded the four bytes of an entry one
+by one and put the two symbols together again: 23 instructions a lookup instead of 17. Sapphire
+Rapids hid most of that. On Cascade Lake text took 10 to 25% longer.
+
+## The table of the scalar decoder
+
+The numbers above are from a table of 13 bits with 4 bytes per entry. 13 bits do not hold two codes
+of 7 bits, which is what upper case has, so `SAMEORIGIN` took a lookup per character and longer than
+in the C code that this crate replaced, which looks up 16 bits in 256 KB.
+
+14 bits do. With entries of 4 bytes that is 64 KB, twice the L1 cache of most CPUs, so an entry has
+2 bytes now and the table is as big as it was:
+
+- the length of the codes, which is what the next lookup waits for, in a byte of its own,
+- the last symbol. Every symbol with a code of up to 14 bits is ASCII, so the top bit of that byte
+  says whether there is another symbol before it.
+
+That other symbol has a code of up to 8 bits. It comes from a table of 256 bytes, by the first 8
+bits, and nothing waits for it. Both are written as single bytes, the first one first, also if there
+is none: then the only symbol goes over it. So no branch and no select depends on how many there are.
+
+One field with a name from the static table, without the kernel, in ns. "13" is the table as it was,
+"64 KB" is 14 bits with entries of 4 bytes, "C" is ls-hpack 2.3.5.
+
+|                                             | Cascade Lake |      |       |      | Emerald Rapids |      |       |       |
+| ------------------------------------------- | ------------ | ---- | ----- | ---- | -------------- | ---- | ----- | ----- |
+| value                                       | 13           | now  | 64 KB | C    | 13             | now  | 64 KB | C     |
+| 8 characters with codes of up to 8 bits     | 62           | 55   | 58    | 71   | 44             | 37   | 40    | 51    |
+| 32                                          | 122          | 106  | 122   | 156  | 96             | 84   | 94    | 136   |
+| 100                                         | 285          | 244  | 298   | 410  | 251            | 223  | 255   | 397   |
+| 1000                                        | 2445         | 2111 | 2660  | 3868 | 2166           | 1913 | 2205  | 3996  |
+| 100, all with codes of 7 bits               | 380          | 202  | 202   | 303  | 350            | 195  | 190   | 293   |
+| 1000, all with codes of 5 bits              | 1823         | 1842 | 1818  | 1680 | 1670           | 1746 | 1664  | 1684  |
+| 100, all with codes of 8 bits               | 379          | 379  | 376   | 229  | 351            | 366  | 352   | 248   |
+| 200, 1 in 5 with a code of 10 to 19 bits    | 788          | 645  | 758   | 1710 | 678            | 584  | 639   | 1768  |
+| 200, all with codes of 14 bits              | 1111         | 757  | 751   | 798  | 651            | 697  | 680   | 925   |
+| 200, all with codes of 15 bits              | 1271         | 938  | 1139  | 804  | 718            | 749  | 761   | 941   |
+| `SAMEORIGIN`                                | 61           | 49   | 46    | 51   | 38             | 27   | 26    | 34    |
+| `GET, POST, PUT, DELETE, OPTIONS`           | 122          | 88   | 86    | 97   | 96             | 65   | 64    | 87    |
+| `Mon, 21 Oct 2013 20:13:21 GMT`             | 89           | 81   | 80    | 85   | 66             | 59   | 58    | 71    |
+| `text/html; charset=utf-8`                  | 74           | 71   | 69    | 78   | 49             | 49   | 49    | 64    |
+| the values in http2jp/hpack-test-case       | 106          | 96   | 100   | 138  | 76             | 70   | 73    | 111   |
+| 100 characters, 8 MB touched in between     | 4654         | 3978 | 5951  | 8833 | 5473           | 5329 | 6347  | 10457 |
+| the values in hpack-test-case, 8 MB touched | 2655         | 1987 | 2691  | 3207 | 2960           | 2994 | 3160  | 3994  |
+
+What did not work, each on text with 1 code in 5 of more than 8 bits or on codes of 5 bits only,
+against the table of 13 bits.
+
+| what                                                            | result                                |
+| --------------------------------------------------------------- | ------------------------------------- |
+| unpacking an entry into the old struct, `if count == 2`         | a branch: 1.5                         |
+| count and length in one byte                                    | the mask is on the chain: 1.17        |
+| picking the first symbol with `if`, the flag in the symbol      | a branch again: 1.5                   |
+| one bounds check per 8 bytes of input instead of one per lookup | no change: the time goes into waiting |
 
 ## The coder
 

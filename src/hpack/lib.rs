@@ -432,7 +432,7 @@ mod tests {
         for string in every_byte.chunks(1).chain([&every_byte[..]]) {
             check_huffman(string);
         }
-        // 13 zeros, the first entry of the decoder's table.
+        // 14 zeros, the first entry of the decoder's table.
         check_huffman(b"000");
     }
 
@@ -459,9 +459,11 @@ mod tests {
 
     #[test]
     fn huffman_codes_that_end_where_8_bytes_end() {
-        // Codes of 13 and 15 bits that end in a one, from every bit of a byte on.
+        // Codes of 14 and 15 bits, from every bit of a byte on.
         for (fives, sixes) in (0..8).flat_map(|fives| (0..8).map(move |sixes| (fives, sixes))) {
-            for codes in ["{{{$", "{{$$", "${{$", "$$${", "$$$$$"] {
+            for codes in [
+                "{{{}", "{{}}", "}{{}", "}}}{", "}}}}}", "`}}}", "}`}}", "}}`}",
+            ] {
                 let string = ["a".repeat(fives), "-".repeat(sixes), codes.repeat(3)].concat();
                 check_huffman(string.as_bytes());
             }
@@ -505,6 +507,8 @@ mod tests {
             ("18", 1),              // "a", then 000, which the padding would make another "a"
             ("18c6", 3),            // "aaa", then 0, which the padding would make "9"
             ("5961", 2),            // "--", then 0001, which the padding would make "a"
+            ("1adffe", 2),          // "a-", then 13 bits, which the padding would make "}"
+            ("18fffe", 2),          // "aa", then 14 bits, which the padding would make "`"
             ("18c6318c63 18c6318c63 18c6318c63 18", 25),
         ] {
             let decode = |max_len| decode_huffman(&hex(coded), max_len);

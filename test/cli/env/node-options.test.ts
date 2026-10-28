@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { symlinkSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { text } from "node:stream/consumers";
+import { unsupported as aotUnsupported } from "../../aot/supported";
 
 async function run(
   dir: string,
@@ -20,6 +24,55 @@ async function run(
 }
 
 describe("NODE_OPTIONS environment variable", () => {
+  test.skipIf(!isLinux || !!aotUnsupported)(
+    "AOT startup preserves inherited descriptors with BUN_OPTIONS",
+    async () => {
+      using dir = tempDir("node-options-aot-descriptor", {
+        "main.js": `require("node:fs").writeSync(3, "inherited"); console.log("ran");`,
+      });
+      const child = spawn(bunExe(), ["run", "main.js"], {
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_OPTIONS: "--aot", NODE_OPTIONS: "--conditions=development" },
+        stdio: ["ignore", "pipe", "pipe", "pipe"],
+      });
+      try {
+        const [stdout, stderr, inherited, [exitCode, signal]] = await Promise.all([
+          text(child.stdout!),
+          text(child.stderr!),
+          text(child.stdio[3] as import("node:stream").Readable),
+          once(child, "exit"),
+        ]);
+        expect({ stdout, stderr, inherited, exitCode, signal }).toEqual({
+          stdout: "ran\n",
+          stderr: "",
+          inherited: "inherited",
+          exitCode: 0,
+          signal: null,
+        });
+      } finally {
+        child.kill();
+      }
+    },
+  );
+
+  test.skipIf(!isLinux).each([false, true])(
+    "AOT startup reports malformed options after stdio init (env flag: %p)",
+    async envFlag => {
+      using dir = tempDir("node-options-aot-startup", { "main.js": "console.log('ran');" });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", ...(envFlag ? [] : ["--aot"]), "main.js"],
+        cwd: String(dir),
+        env: { ...bunEnv, BUN_OPTIONS: envFlag ? "--aot" : undefined, NODE_OPTIONS: "--import" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("");
+      expect(stderr).toContain("--import requires an argument");
+      expect({ exitCode, signalCode: proc.signalCode }).toEqual({ exitCode: 9, signalCode: null });
+    },
+  );
+
   // The repro from issue #40316: a package.json `imports` map with a
   // `development` condition. react-router dev 8.3+ relaunches itself with
   // NODE_OPTIONS=--conditions=development and breaks when it is ignored.

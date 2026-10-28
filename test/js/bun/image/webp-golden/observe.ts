@@ -14,6 +14,32 @@ export async function save(path: string, cases: unknown[]) {
   await Bun.write(path, Bun.gzipSync(Buffer.from(JSON.stringify(cases)), { level: 9 }));
 }
 
+// ── Containers ──
+
+export const hex = (digits: string) => Buffer.from(digits, "hex");
+
+export function le32(value: number) {
+  const bytes = Buffer.alloc(4);
+  bytes.writeUInt32LE(value);
+  return bytes;
+}
+
+/** `size` is what the chunk's header says. */
+export function chunk(tag: string, payload: Uint8Array, size = payload.length) {
+  return Buffer.concat([Buffer.from(tag), le32(size), payload, Buffer.alloc(payload.length & 1)]);
+}
+
+/** `size` is what the RIFF header says. */
+export function riff(chunks: Uint8Array[], size?: number) {
+  const body = Buffer.concat([Buffer.from("WEBP"), ...chunks]);
+  return Buffer.concat([Buffer.from("RIFF"), le32(size ?? body.length), body]);
+}
+
+/** `canvas` is the width and the height, each minus one, in 24 bits. */
+export function vp8x(flags: number, canvas = "000000000000") {
+  return chunk("VP8X", Buffer.concat([le32(flags), hex(canvas)]));
+}
+
 // ── PNG, written and read here so that the tests depend on no PNG encoder's choices ──
 
 function pngChunk(type: string, data: Uint8Array): Uint8Array {

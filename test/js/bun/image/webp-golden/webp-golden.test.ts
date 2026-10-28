@@ -2,14 +2,20 @@
 // the same errors, the same bytes. The exceptions are what libwebp has fixed since, and say so. record.ts says where the
 // expected results come from.
 import { describe, expect, test } from "bun:test";
+import { emptyProcessMaxRSS, runFixtureMaxRSS } from "harness";
 import { join } from "node:path";
 import {
+  chunk,
   hash,
+  hex,
   isLarge,
+  le32,
   load,
   observeDecode,
   observeEncode,
   observeMetadata,
+  riff,
+  vp8x,
   type DecodeCase,
   type EncodeCase,
 } from "./observe";
@@ -89,25 +95,35 @@ describe("decode", () => {
   });
 });
 
+// libwebp 1.6.0 kept all the pixels of a lossless image next to the output, and all of an alpha plane with such a header.
+describe.concurrent("peak memory", () => {
+  const flat = chunk("VP8L", Buffer.concat([hex("2f"), le32((16383 - 1) | ((2000 - 1) << 14)), hex("888808")]));
+  const fromFile = (name: string) => Bun.file(join(import.meta.dir, name)).bytes();
+
+  test.each([
+    // The output takes 131 MB.
+    ["a lossless image of 16383 x 2000", () => riff([flat]), "decoded", 200],
+    [
+      "a frame of 16383 x 16383 that ends after 16 rows",
+      () => fromFile("cut-short.webp"),
+      "ERR_IMAGE_DECODE_FAILED",
+      100,
+    ],
+    ["the same with a palette for alpha", () => fromFile("cut-short-palette.webp"), "ERR_IMAGE_DECODE_FAILED", 100],
+  ])("%s", async (_, file, result, megabytes) => {
+    const fixture = `
+      const file = Buffer.from("${Buffer.from(await file()).toString("base64")}", "base64");
+      const result = await new Bun.Image(file).resize(1, 1).png().bytes().then(() => "decoded", error => error.code);
+      console.log(JSON.stringify({ result }));
+    `;
+    const [peak, baseline] = await Promise.all([runFixtureMaxRSS(fixture, { result }), emptyProcessMaxRSS()]);
+    expect((peak - baseline) / 1e6).toBeLessThan(megabytes);
+  });
+});
+
 // Small files with what was wrong in the inputs behind libwebp's CVEs and its container fixes, and valid ones next to them.
 describe("libwebp's history", () => {
-  const hex = (digits: string) => Buffer.from(digits, "hex");
-  const le32 = (value: number) => {
-    const bytes = Buffer.alloc(4);
-    bytes.writeUInt32LE(value);
-    return bytes;
-  };
-  /** `size` is what the chunk's header says. */
-  const chunk = (tag: string, payload: Uint8Array, size = payload.length) =>
-    Buffer.concat([Buffer.from(tag), le32(size), payload, Buffer.alloc(payload.length & 1)]);
-  /** `size` is what the RIFF header says. */
-  const riff = (chunks: Uint8Array[], size?: number) => {
-    const body = Buffer.concat([Buffer.from("WEBP"), ...chunks]);
-    return Buffer.concat([Buffer.from("RIFF"), le32(size ?? body.length), body]);
-  };
   const [ANIMATION, ALPHA, ICCP] = [0x02, 0x10, 0x20];
-  /** `canvas` is the width and the height, each minus one, in 24 bits. */
-  const vp8x = (flags: number, canvas = "000000000000") => chunk("VP8X", Buffer.concat([le32(flags), hex(canvas)]));
   const lossy = chunk("VP8 ", hex("3201009d012a010001001178181180008e8000fe68000000"));
   const lossless = chunk("VP8L", hex("2f00000010071011118888fe07"));
   const iccp = chunk("ICCP", Buffer.from("prof"));

@@ -19,12 +19,16 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import {
+  chunk,
   encodePng,
+  hex,
   load,
   observeDecode,
   observeEncode,
   observeMetadata,
+  riff,
   save,
+  vp8x,
   type DecodeCase,
   type EncodeCase,
 } from "./observe";
@@ -175,4 +179,18 @@ for (const [name, image, options] of [
   await Bun.write(join(import.meta.dir, name), file);
   console.log(name, await observeDecode(file));
 }
+
+/**
+ * A lossy image of 16383 x 16383 that ends after its first row of macroblocks. `alpha` is a plane of a single level, which
+ * takes no bits per pixel. Its header says that the levels are pre-processed, for which libwebp 1.6.0 decoded all of it at once.
+ */
+async function cutShort(alpha: string) {
+  const rows = encodePng(16383, 16, new Uint8Array(16383 * 16 * 4).fill(255));
+  const frame = (await new Bun.Image(rows).webp({ quality: 20 }).bytes()).subarray(20);
+  // The height, behind the frame tag, the signature and the width.
+  frame.set(hex("ff3f"), 8);
+  return riff([vp8x(0x10, "fe3f00fe3f00"), chunk("ALPH", hex(alpha)), chunk("VP8 ", frame)]);
+}
+await Bun.write(join(import.meta.dir, "cut-short.webp"), await cutShort("11888808"));
+await Bun.write(join(import.meta.dir, "cut-short-palette.webp"), await cutShort("11ff171111888808"));
 console.log(`recorded ${decoded.length} decodes and ${encoded.length} encodes with Bun ${Bun.version}`);

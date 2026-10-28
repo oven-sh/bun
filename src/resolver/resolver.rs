@@ -5964,6 +5964,13 @@ impl<'a> Resolver<'a> {
         }
 
         let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
+        // The retry after a miss opens the directory of a package. It does not read all of `node_modules` again.
+        let generation = if self.rechecks_misses && bun_paths::basename(dir_path) == b"node_modules"
+        {
+            0
+        } else {
+            self.generation
+        };
 
         // PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
         // LIFETIMES.tsv); wrap in `BackRef` so later `&mut self` calls
@@ -5972,12 +5979,7 @@ impl<'a> Resolver<'a> {
         // holder by ARENA invariant).
         // SAFETY: `rfs` points at the process-global RealFS singleton (see note at fn top).
         let dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
-            match unsafe { &mut *rfs }.read_directory(
-                dir_path,
-                None,
-                self.generation,
-                self.store_fd,
-            ) {
+            match unsafe { &mut *rfs }.read_directory(dir_path, None, generation, self.store_fd) {
                 Ok(e) => bun_ptr::BackRef::new(&*e),
                 Err(_) => dec_ret!(None),
             };
@@ -6430,7 +6432,18 @@ impl<'a> Resolver<'a> {
                 // The only caller that reaches this with `parent` set
                 // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
                 // mutex is non-recursive, so go through the `_locked` accessor.
-                if let Some(parent_entries) = parent_.get_entries_ref_locked(self.generation) {
+                let parent_lists_it = |generation| {
+                    parent_
+                        .get_entries_ref_locked(generation)
+                        .is_some_and(|entries| entries.get(base).is_some())
+                };
+                // The retry after a miss reads the parent listing again only if it lacks this directory.
+                let parent_generation = if self.rechecks_misses && parent_lists_it(0) {
+                    0
+                } else {
+                    self.generation
+                };
+                if let Some(parent_entries) = parent_.get_entries_ref_locked(parent_generation) {
                     if let Some(lookup) = parent_entries.get(base) {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()

@@ -61,33 +61,42 @@ test("a constant that several built-in modules declare has one value", () => {
 type Value = number | string | undefined;
 
 // A member's value, in the forms that src/js writes one: left out, a number, a string, `1 << N` or an OR of members.
+// An escape can write one string in two ways, so a string with an escape is not one of the forms.
 function valueOf(text: string | undefined, previous: Value, values: Map<string, Value>): Value {
   if (text === undefined) return typeof previous === "number" ? previous + 1 : undefined;
-  if (/^"[^"]*"$/.test(text)) return text;
+  if (/^"[^"\\]*"$/.test(text)) return text;
   if (!Number.isNaN(Number(text))) return Number(text);
-  const shift = /^(\d+) << (\d+)$/.exec(text);
+  const shift = /^(\d+)\s*<<\s*(\d+)$/.exec(text);
   if (shift) return Number(shift[1]) << Number(shift[2]);
-  const bits = text.split(" | ").map(name => values.get(name));
+  const bits = text.split(/\s*\|\s*/).map(name => values.get(name));
   if (bits.every(bit => typeof bit === "number")) return bits.reduce((all, bit) => all | bit, 0);
+}
+
+// The members of an enum, from the text after its `{`. A comment is not part of a member. A string is, with any `,`,
+// `}` or `//` that it holds.
+function membersOf(text: string) {
+  const members = [""];
+  for (const [part] of text.matchAll(/"(?:[^"\\\n]|\\.)*"|\/\/.*|\/\*[^]*?\*\/|[^"\/,}]+|[^]/g)) {
+    if (part === "}") break;
+    if (part === ",") members.push("");
+    else if (!/^\/[/*]/.test(part)) members[members.length - 1] += part;
+  }
+  return members.map(member => member.trim()).filter(Boolean);
 }
 
 function readEnums(source: string) {
   const problems: string[] = [];
   let members = 0;
   for (const header of source.matchAll(/^[ \t]*(?:\w+\s+)*enum\s+(\w+)\s*\{/gm)) {
-    // The body ends at the first `}` that is not in a comment.
-    const afterHeader = source.slice(header.index + header[0].length);
-    const [body] = afterHeader.replace(/\/\/.*|\/\*[^]*?\*\//g, "").split("}", 1);
     const enumName = header[1];
     const values = new Map<string, Value>();
     let previous: Value = -1;
-    for (const member of body.split(",")) {
-      const written = member.trim().replace(/\s+/g, " ");
-      if (!written) continue;
+    for (const member of membersOf(source.slice(header.index + header[0].length))) {
       members++;
-      const [, name = "", text] = /^(\w+)(?: = (.+))?$/.exec(written) ?? [];
+      const [, name = "", text] = /^(\w+)(?:\s*=\s*([^]+))?$/.exec(member) ?? [];
       previous = name ? valueOf(text, previous, values) : undefined;
       const same = [...values].find(([, value]) => value === previous)?.[0];
+      const written = member.replace(/\s+/g, " ");
       if (previous === undefined) problems.push(`${enumName}: cannot read \`${written}\``);
       else if (same) problems.push(`${enumName}: \`${written}\` has the value of \`${same}\``);
       values.set(name, previous);
@@ -111,14 +120,18 @@ function family() {
   enum Family {
     IPv4 = "ipv4",
     Default = "ipv4",
+    Address = "tcp://{host}, {port}",
+    Padded = "tcp://{host},  {port}",
+    Tab = "\\t",
   }
 }`;
   expect(readEnums(sample)).toEqual({
-    members: 8,
+    members: 11,
     problems: [
       "Flag: `Recorded = 1 << 9` has the value of `Destroyed`",
       "Flag: cannot read `NotClosed = ~Closed`",
       'Family: `Default = "ipv4"` has the value of `IPv4`',
+      'Family: cannot read `Tab = "\\t"`',
     ],
   });
 

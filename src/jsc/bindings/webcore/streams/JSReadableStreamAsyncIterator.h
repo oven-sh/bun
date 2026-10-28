@@ -1,6 +1,6 @@
 // JSReadableStreamAsyncIterator — the spec-native ReadableStream async iterator cell
 // (readMany() stays public on the reader). NO globalThis constructor exists; its prototype
-// is %ReadableStreamAsyncIteratorPrototype% (own `next` / `return`,
+// is %ReadableStreamAsyncIteratorPrototype% (own `next` / `return` / @@toStringTag,
 // [[Prototype]] = %AsyncIteratorPrototype% so `for await` finds @@asyncIterator) and
 // instances are returned only by values() / [Symbol.asyncIterator](). Non-destructible.
 #pragma once

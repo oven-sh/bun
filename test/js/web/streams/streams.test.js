@@ -559,6 +559,21 @@ it("ReadableStream.prototype.values", async () => {
   expect(chunks.join("")).toBe("helloworld");
 });
 
+it("ReadableStream.prototype.values() returns an iterator with the Web IDL class string", () => {
+  const iterator = new ReadableStream().values();
+  const prototype = Object.getPrototypeOf(iterator);
+
+  expect(Object.getOwnPropertyDescriptor(prototype, Symbol.toStringTag)).toEqual({
+    value: "ReadableStream AsyncIterator",
+    writable: false,
+    enumerable: false,
+    configurable: true,
+  });
+  expect(Reflect.ownKeys(prototype)).toEqual(["next", "return", Symbol.toStringTag]);
+  expect(Object.prototype.toString.call(iterator)).toBe("[object ReadableStream AsyncIterator]");
+  expect(Object.getPrototypeOf(new ReadableStream()[Symbol.asyncIterator]())).toBe(prototype);
+});
+
 it.todoIf(isWindows || isMacOS)("Bun.file() read text from pipe", async () => {
   const fifoPath = join(tmpdirSync(), "bun-streams-test-fifo");
   try {

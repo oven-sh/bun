@@ -169,7 +169,7 @@ describe("fetch compress option", () => {
     expect(json.rawLength).toBe(0);
   });
 
-  test.concurrent("body larger than the shared buffer", async () => {
+  test.concurrent("body larger than 512 KiB", async () => {
     using server = makeServer();
     const big = Buffer.alloc(600 * 1024, "abcdefghij").toString();
     const res = await fetch(server.url, {
@@ -183,9 +183,8 @@ describe("fetch compress option", () => {
     expect(json.rawLength).toBeLessThan(big.length);
   });
 
-  // >512 KiB takes the streaming-zlib slow path; verify it produces a
-  // zlib-wrapped (RFC 1950) stream, not raw deflate.
-  test.concurrent("deflate body larger than the shared buffer (zlib streaming)", async () => {
+  // HTTP "deflate" is the zlib-wrapped (RFC 1950) stream, not raw deflate.
+  test.concurrent("deflate body larger than 512 KiB", async () => {
     using server = makeServer();
     const big = Buffer.alloc(600 * 1024, "abcdefghij").toString();
     const res = await fetch(server.url, { method: "POST", body: big, compress: "deflate" });
@@ -194,9 +193,7 @@ describe("fetch compress option", () => {
     expect(json.decoded).toBe(big);
   });
 
-  // gzip bound on 600 KiB of random bytes is > 512 KiB so compress_into spills
-  // straight to the per-request Vec instead of borrowing the shared buffer.
-  test.concurrent("incompressible body larger than the shared buffer (spill path)", async () => {
+  test.concurrent("incompressible body larger than 512 KiB", async () => {
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
@@ -221,9 +218,8 @@ describe("fetch compress option", () => {
     expect(json.sha).toBe(new Bun.CryptoHasher("sha1").update(big).digest("hex"));
   });
 
-  // 307 preserves method+body; the HTTP-thread compression must re-run on the
-  // second hop from the original uncompressed slice (state.original_request_body
-  // is never re-seated to the compressed bytes).
+  // 307 preserves method+body; the second hop re-sends the compressed bytes
+  // with the same Content-Encoding.
   test.concurrent("307 redirect re-sends compressed body", async () => {
     let target: URL;
     using dest = Bun.serve({
@@ -245,6 +241,116 @@ describe("fetch compress option", () => {
     const json: any = await res.json();
     expect(json.encoding).toBe("gzip");
     expect(json.decoded).toBe(payload);
+  });
+
+  // libdeflate levels 10 to 12 have no zlib equivalent; they must not be
+  // clamped on a large body.
+  test.concurrent("gzip level 12 on a body larger than 512 KiB", async () => {
+    using server = makeServer();
+    const big = Buffer.alloc(600 * 1024, "abcdefghij").toString();
+    const res = await fetch(server.url, {
+      method: "POST",
+      body: big,
+      compress: { encoding: "gzip", level: 12 },
+    });
+    const json: any = await res.json();
+    expect(json.encoding).toBe("gzip");
+    expect(json.decoded).toBe(big);
+    expect(Number(json.contentLength)).toBe(json.rawLength);
+  });
+
+  test.concurrent("concurrent large compressed bodies each arrive intact", async () => {
+    using server = makeServer();
+    const bodies = Array.from({ length: 8 }, (_, i) => Buffer.alloc(300 * 1024, `body-${i}-`).toString());
+    const results: any[] = await Promise.all(
+      bodies.map(body => fetch(server.url, { method: "POST", body, compress: "gzip" }).then(res => res.json())),
+    );
+    for (const [i, json] of results.entries()) {
+      expect(json.encoding).toBe("gzip");
+      expect(json.decoded).toBe(bodies[i]);
+      expect(Number(json.contentLength)).toBe(json.rawLength);
+    }
+  });
+
+  test.concurrent("abort while a large body is being compressed rejects with the reason", async () => {
+    let requests = 0;
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        requests++;
+        await req.arrayBuffer();
+        return new Response();
+      },
+    });
+    const reason = new Error("stop");
+    const controller = new AbortController();
+    const pending = fetch(server.url, {
+      method: "POST",
+      body: Buffer.alloc(2 * 1024 * 1024, "abcdefghij").toString(),
+      compress: "gzip",
+      signal: controller.signal,
+    });
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+    // A later request on the same server orders after anything the aborted
+    // fetch could have sent.
+    await fetch(server.url, { method: "POST", body: "x" });
+    expect(requests).toBe(1);
+  });
+
+  // The HTTP thread serves every fetch socket in the process. Compressing a
+  // body on that thread stalled every other in-flight response for the whole
+  // codec time (#47164). zstd level 19 on 1 MiB takes long enough to show it.
+  test("a large compressed body does not stall another in-flight response", async () => {
+    using server = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        if (req.url.endsWith("/stream")) {
+          return new Response(
+            async function* () {
+              for (;;) {
+                yield "tick\n";
+                await Bun.sleep(2);
+              }
+            },
+            { headers: { "content-type": "text/plain" } },
+          );
+        }
+        await req.arrayBuffer();
+        return new Response();
+      },
+    });
+
+    const reader = (await fetch(`${server.url}stream`)).body!.getReader();
+    let last = performance.now();
+    let maxGap = 0;
+    const pump = (async () => {
+      while (!(await reader.read()).done) {
+        const now = performance.now();
+        maxGap = Math.max(maxGap, now - last);
+        last = now;
+      }
+    })();
+
+    const body = JSON.stringify(
+      Array.from({ length: 14_000 }, (_, id) => ({ id, name: `item-${(id * 2654435761) % 4294967296}`, value: id / 7 })),
+    );
+    const start = performance.now();
+    last = start;
+    maxGap = 0;
+    await fetch(`${server.url}sink`, {
+      method: "POST",
+      body,
+      compress: { encoding: "zstd", level: 19 },
+    });
+    const postMs = performance.now() - start;
+    maxGap = Math.max(maxGap, performance.now() - last);
+    await reader.cancel();
+    await pump;
+
+    // With the codec on the HTTP thread the stream is silent for about the
+    // whole POST. Off that thread the longest gap is scheduling jitter.
+    expect(maxGap).toBeLessThan(postMs / 2);
   });
 
   test("invalid encoding string throws", () => {

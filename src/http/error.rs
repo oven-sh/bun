@@ -1,8 +1,6 @@
 #[allow(non_camel_case_types)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
-    #[error("CompressionFailed")]
-    CompressionFailed,
     #[error("Aborted")]
     Aborted,
     #[error("WriteFailed")]
@@ -266,7 +264,6 @@ impl Error {
     #[allow(clippy::trivially_copy_pass_by_ref)]
     pub fn name(&self) -> &'static str {
         match self {
-            Self::CompressionFailed => "CompressionFailed",
             Self::Aborted => "Aborted",
             Self::WriteFailed => "WriteFailed",
             Self::HTTP2RefusedStream => "HTTP2RefusedStream",

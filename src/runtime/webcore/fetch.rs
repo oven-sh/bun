@@ -71,6 +71,7 @@ use crate::webcore::{blob, readable_stream, response};
 use bun_http_jsc as _;
 use bun_http_jsc::headers_jsc::from_fetch_headers;
 use bun_jsc::AbortSignalRef;
+use bun_jsc::debugger::AsyncTaskTracker;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
@@ -1658,10 +1659,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // Automatic request-body compression. Only buffered bodies (Blob bytes,
     // ArrayBuffer/TypedArray, string) are handled; ReadableStream and sendfile
     // are skipped. S3 destinations replace the header set with a signed one,
-    // so compression is skipped there too. The actual compression runs on the
-    // HTTP thread (HTTPClient::start) so it can reuse LibdeflateState's shared
-    // scratch buffer; here we only commit to it by appending Content-Encoding
-    // and forwarding the option.
+    // so compression is skipped there too. Here we only commit to it by
+    // appending Content-Encoding; `compress_body::compress_then_queue` swaps
+    // the compressed bytes in before the request is queued.
     if let Some(compress_opt) = &compress
         && let HTTPRequestBody::AnyBlob(_) = &body
         && !url.is_s3()
@@ -1923,6 +1923,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     } else {
         None
     };
+    let tracker = AsyncTaskTracker::init(global_this.bun_vm().as_mut());
+    tracker.did_schedule(global_this);
     let fetch_options = FetchOptions {
         method,
         url: url_static,
@@ -1952,7 +1954,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         upgraded_connection,
         forced_protocol,
         is_node_http_client: ALLOW_GET_BODY,
-        compress,
+        tracker,
         check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
             jsc::strong::Optional::empty()
         } else {
@@ -1965,15 +1967,21 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         session_check_server_identity,
     };
 
-    let _ = FetchTasklet::queue(
-        &global_this.js_thread(context),
-        fetch_options,
-        // Pass the Strong value instead of creating a new one, or else we
-        // will leak it
-        // see https://github.com/oven-sh/bun/issues/2985
-        promise,
-    );
-    // `catch |err| bun.handleOom(err)` — FetchTasklet::queue aborts on OOM.
+    // Pass the Strong value instead of creating a new one, or else we
+    // will leak it
+    // see https://github.com/oven-sh/bun/issues/2985
+    match compress {
+        Some(opt) => compress_body::compress_then_queue(
+            &global_this.js_thread(context),
+            opt,
+            fetch_options,
+            promise,
+        )?,
+        // `catch |err| bun.handleOom(err)` — FetchTasklet::queue aborts on OOM.
+        None => {
+            let _ = FetchTasklet::queue(&global_this.js_thread(context), fetch_options, promise);
+        }
+    }
 
     // `body` has been *moved* into `FetchOptions`; the FetchTasklet now owns
     // the single live reference.

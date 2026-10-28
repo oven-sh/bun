@@ -230,11 +230,10 @@ pub(crate) const LIBDEFLATE_SHARED_BUFFER_LEN: usize = 512 * 1024;
 
 pub struct LibdeflateState {
     pub(crate) decompressor: Option<bun_libdeflate_sys::libdeflate::OwnedDecompressor>,
-    pub(crate) compressor: Option<bun_libdeflate_sys::libdeflate::OwnedCompressor>,
     pub(crate) shared_buffer: [u8; LIBDEFLATE_SHARED_BUFFER_LEN],
 }
 
-// SAFETY: `Option<Owned{De,}Compressor>` is `#[repr(transparent)]` over
+// SAFETY: `Option<OwnedDecompressor>` is `#[repr(transparent)]` over
 // `NonNull`, so all-zero = `None`; `[u8; N]` is valid at the all-zero bit
 // pattern.
 unsafe impl bun_core::Zeroable for LibdeflateState {}
@@ -1045,7 +1044,6 @@ impl HttpThread {
                 let client = &mut (*nn.as_ptr()).async_http.client;
                 drop(core::mem::take(&mut client.redirect));
                 drop(core::mem::take(&mut client.prev_redirect));
-                drop(core::mem::take(&mut client.compressed_request_body));
                 drop(core::mem::take(&mut client.proxy_authorization));
                 client.close_proxy_tunnel(false);
                 drop(core::mem::take(&mut client.custom_ssl_ctx));

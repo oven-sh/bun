@@ -18,6 +18,8 @@ pub(crate) struct ApiLoader(pub u8);
 impl ApiLoader {
     /// `_none = 254`.
     const NONE: Self = Self(api::Loader::_none as u8);
+    /// What C++ passes for the built-in `Module._extensions[".js"]` handler.
+    const JS: Self = Self(api::Loader::js as u8);
 
     /// Reconstruct the closed schema enum. Only valid when `self != NONE` is
     /// already established and the C++ caller honoured the `BunLoaderType`
@@ -126,6 +128,24 @@ impl Default for CustomLoader {
     }
 }
 
+/// The loader a built-in `Module._extensions` handler stands for once it is
+/// stored under the extension `ext`.
+///
+/// Node's `.js` handler does not force a format. It picks one from the file
+/// name it is given, so `Module._extensions[".ts"] = Module._extensions[".js"]`
+/// still strips types from `.ts` files. The `.ts` and `.json` handlers have no
+/// Node counterpart and keep their fixed loader, so `.js = .ts` parses `.js`
+/// files as TypeScript.
+fn builtin_handler_loader(vm: &VirtualMachine, ext: &[u8], handler: ApiLoader) -> Loader {
+    if handler == ApiLoader::JS {
+        // `ext` starts with `.`, so the last `.` always exists. For a key such
+        // as `.test.ts` the file's own extension is `.ts`.
+        let last_dot = strings::last_index_of_char(ext, b'.').unwrap_or(0);
+        return crate::module_loader::default_loader_for_ext(vm, &ext[last_dot..]);
+    }
+    Loader::from_api(handler.to_schema())
+}
+
 fn on_require_extension_modify(
     global: &JSGlobalObject,
     str: &[u8],
@@ -135,6 +155,7 @@ fn on_require_extension_modify(
     // global; we are on the JS thread so a `&mut` view is sound for this scope.
     let vm = global.bun_vm().as_mut();
     let is_built_in = DEFAULT_LOADERS.get(str).is_some();
+    let builtin = (loader != ApiLoader::NONE).then(|| builtin_handler_loader(vm, str, loader));
 
     let gop = vm.commonjs_custom_extensions.get_or_put(str)?;
     if !gop.found_existing {
@@ -144,14 +165,13 @@ fn on_require_extension_modify(
             vm.has_mutated_built_in_extensions += 1;
         }
 
-        *gop.value_ptr = if loader != ApiLoader::NONE {
-            CustomLoader::Loader(Loader::from_api(loader.to_schema()))
-        } else {
-            CustomLoader::Custom(Strong::create(value, global))
+        *gop.value_ptr = match builtin {
+            Some(loader) => CustomLoader::Loader(loader),
+            None => CustomLoader::Custom(Strong::create(value, global)),
         };
-    } else if loader != ApiLoader::NONE {
+    } else if let Some(loader) = builtin {
         // Replacing with a built-in loader: drop any held Strong via assignment.
-        *gop.value_ptr = CustomLoader::Loader(Loader::from_api(loader.to_schema()));
+        *gop.value_ptr = CustomLoader::Loader(loader);
     } else {
         match gop.value_ptr {
             CustomLoader::Loader(_) => {

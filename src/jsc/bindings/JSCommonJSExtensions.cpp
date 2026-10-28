@@ -11,9 +11,13 @@ using namespace JSC;
 const JSC::ClassInfo JSCommonJSExtensions::s_info = { "CommonJSExtensions"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCommonJSExtensions) };
 
 JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame, BunLoaderType loaderType);
+extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
 
 // These functions are separate so that assigning one to the other can be
-// detected and use the corresponding loader.
+// detected and use the corresponding loader. The JS handler is Node's
+// `Module._extensions['.js']`: it picks the loader from the file name it is
+// given (so it strips types from a `.ts` path). The TS and JSON handlers force
+// their loader.
 JSC_DEFINE_HOST_FUNCTION(jsLoaderJS, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     return builtinLoader(globalObject, callFrame, BunLoaderTypeJS);
@@ -238,13 +242,18 @@ JSC::EncodedJSValue builtinLoader(JSC::JSGlobalObject* globalObject, JSC::CallFr
     JSC::JSValue specifier = callFrame->argument(1);
     WTF::String specifierWtfString = specifier.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+    BunString specifierBunString = Bun::toString(specifierWtfString);
+    if (loaderType == BunLoaderTypeJS) {
+        // Node's `.js` handler picks the format from the file name.
+        loaderType = Bun__getDefaultLoader(globalObject, &specifierBunString);
+    }
     if (loaderType != BunLoaderTypeJSON) {
-        bool hasRun = evaluateCompiledFileForDefaultLoader(global, mod, specifierWtfString, loaderType == BunLoaderTypeTS);
+        bool isTypeScriptLoader = loaderType == BunLoaderTypeTS || loaderType == BunLoaderTypeTSX;
+        bool hasRun = evaluateCompiledFileForDefaultLoader(global, mod, specifierWtfString, isTypeScriptLoader);
         RETURN_IF_EXCEPTION(scope, {});
         if (hasRun)
             return JSC::JSValue::encode(jsUndefined());
     }
-    BunString specifierBunString = Bun::toString(specifierWtfString);
     BunString empty = BunStringEmpty;
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res;

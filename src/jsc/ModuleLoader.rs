@@ -313,26 +313,31 @@ unsafe extern "C" fn ModuleLoader__builtinAliasIndex(data: *const u8, len: usize
         .map_or(-1, i32::from)
 }
 
+/// The loader `require()` gives a file with the extension `ext` (with its
+/// leading `.`) when no `require.extensions` entry overrides it. An extension
+/// the loader map does not know is JavaScript, as in Node.
+pub(crate) fn default_loader_for_ext(jsc_vm: &VirtualMachine, ext: &[u8]) -> bun_ast::Loader {
+    match jsc_vm.transpiler.options.loader(ext) {
+        bun_ast::Loader::File | bun_ast::Loader::Bunsh => bun_ast::Loader::Js,
+        loader => loader,
+    }
+}
+
 /// C++ entry point: picks the loader for a specifier from its file extension and the VM's loader map.
 #[unsafe(no_mangle)]
 extern "C" fn Bun__getDefaultLoader(
     global: &JSGlobalObject,
     str: &bun_core::String,
 ) -> bun_options_types::schema::api::Loader {
-    use bun_options_types::schema::api;
     // SAFETY: C++ passed the live JS-thread global; `bun_vm()` is the
     // per-thread VM pointer (never null on this path).
     let jsc_vm = global.bun_vm();
     let filename = str.to_utf8();
-    let loader = jsc_vm
-        .transpiler
-        .options
-        .loader(bun_resolver::fs::PathName::init(filename.slice()).ext)
-        .to_api();
-    if loader == api::Loader::file {
-        return api::Loader::js;
-    }
-    loader
+    default_loader_for_ext(
+        jsc_vm,
+        bun_resolver::fs::PathName::init(filename.slice()).ext,
+    )
+    .to_api()
 }
 
 /// The namespace (`b""` for `file`) and path that plugins are asked about for `specifier`, if they are asked.

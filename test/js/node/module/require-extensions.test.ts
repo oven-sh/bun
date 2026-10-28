@@ -61,6 +61,56 @@ test("custom require extension overwrite default loader with other default loade
     require.extensions[".js"] = original;
   }
 });
+// Node's `.js` handler picks the format from the file name, so assigning it to
+// a TypeScript extension still strips types. @playwright/test 1.64 does this.
+test.concurrent("the .js handler assigned to TypeScript extensions still strips types", async () => {
+  using dir = tempDir("extensions-js-handler-by-name", {
+    "types.ts": `export type Foo = { value: number };`,
+    "spec.ts": `
+      import type { Foo } from "./types";
+      const value: number = (1 as number)!;
+      const typed: Foo = { value };
+      module.exports = typed;
+    `,
+    "spec.cts": `
+      const value: number = (2 as number)!;
+      module.exports = { value };
+    `,
+    "comp.tsx": `
+      const value: number = (3 as number)!;
+      module.exports = { value };
+    `,
+    "comp.jsx": `module.exports = { value: 4 };`,
+    "plain.foo": `module.exports = { foo: true };`,
+    "run.cjs": `
+      const Module = require("module");
+      const path = require("path");
+      for (const ext of [".ts", ".cts", ".tsx", ".jsx", ".foo"]) {
+        Module._extensions[ext] = Module._extensions[".js"];
+      }
+      const required = ["./spec.ts", "./spec.cts", "./comp.tsx", "./comp.jsx", "./plain.foo"].map(f => require(f));
+      // Calling the handler directly, as a wrapping hook does.
+      const direct = new Module("direct");
+      Module._extensions[".js"](direct, path.join(__dirname, "spec.ts"));
+      console.log(JSON.stringify({ required, direct: direct.exports }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "run.cjs"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    required: [{ value: 1 }, { value: 2 }, { value: 3 }, { value: 4 }, { foo: true }],
+    direct: { value: 1 },
+  });
+  expect(exitCode).toBe(0);
+});
 test("test that assigning properties weirdly wont do anything bad", () => {
   const original = require.extensions[".js"];
   try {

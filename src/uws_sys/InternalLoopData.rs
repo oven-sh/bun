@@ -34,7 +34,7 @@ pub struct InternalLoopData {
     pub quic_head: *mut c_void,
     pub quic_next_tick_us: i64,
     /// `us_nq_driver_s *` — node:quic's loop driver list.
-    pub nq_head: *mut c_void,
+    pub(crate) nq_head: *mut c_void,
     #[cfg(windows)]
     pub quic_timer: *mut Timer,
     pub iterator: *mut SocketGroup,
@@ -46,6 +46,7 @@ pub struct InternalLoopData {
     pub closed_udp_head: *mut udp::Socket,
     pub closed_head: *mut us_socket_t,
     pub low_prio_head: *mut us_socket_t,
+    pub low_prio_iterator: *mut us_socket_t,
     pub low_prio_budget: i32,
     pub dns_ready_head: *mut ConnectingSocket,
     pub closed_connecting_head: *mut ConnectingSocket,
@@ -56,17 +57,20 @@ pub struct InternalLoopData {
     /// cannot name `bun_threading::ReleaseImpl` directly, so use a layout-only
     /// placeholder of the correct size/align per platform.
     pub mutex: LoopDataMutex,
-    pub parent_ptr: *mut c_void,
-    pub parent_tag: c_char,
-    pub iteration_nr: u64,
+    pub(crate) parent_ptr: *mut c_void,
+    pub(crate) parent_tag: c_char,
+    pub(crate) iteration_nr: u64,
     // SAFETY: erased `Option<&'static jsc::VM>` — tier-0 crate cannot name jsc types.
     // Higher tier (`bun_runtime`) casts this back when reading.
     pub jsc_vm: *const c_void,
     pub tick_depth: c_int,
+    pub(crate) num_unresumable_sockets: c_int,
+    /// `us_internal_unresumable_socket_t *`. Only `loop.c` reads or frees this list.
+    pub(crate) unresumable_sockets: *mut c_void,
 }
 
 impl InternalLoopData {
-    pub fn should_enable_date_header_timer(&self) -> bool {
+    pub(crate) fn should_enable_date_header_timer(&self) -> bool {
         self.sweep_timer_count > 0
     }
 

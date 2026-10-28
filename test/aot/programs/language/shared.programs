@@ -1,0 +1,91 @@
+////: Box
+class Box {
+  constructor(
+    public n: number,
+    public next: Box | null,
+  ) {}
+}
+////: attempt-4
+function attempt(«1»: () => unknown): string {
+  try {
+    return «2»(«1»());
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+////: attempt-6
+function attempt(label, body) {
+  log("--", label);
+  try {
+    «1»);
+  } catch (error) {
+    log(label, "threw", error instanceof Error ? error.name : String(error));
+  }
+}
+////: describe
+function describe(error) {
+  if (error instanceof SuppressedError)
+    return `SuppressedError(${error.message}; error: ${describe(error.error)}; suppressed: ${describe(error.suppressed)})`;
+  if (error instanceof Error) return `${error.name}: ${error.message}`;
+  return String(error);
+}
+////: handedThroughNativeCode
+function handedThroughNativeCode(value) {
+  let out;
+  const target = new EventTarget();
+  target.addEventListener("x", event => {
+    out = event.detail;
+  });
+  target.dispatchEvent(new CustomEvent("x", { detail: value }));
+  return out;
+}
+////: lines
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true
+  }
+}
+////: lines-11
+function «1»() {
+  return «2»;
+}
+////: lines-15
+function «1»() {
+  eval(«2»);
+  return «3»;
+}
+////: lines-21
+function «1»() {
+  «2» new «3»(«4»);
+}
+////: lines-22
+function «1»(«2») {
+  return «3»;
+}
+////: lines-23
+function «1»(): «2» {
+  return «3»;
+}
+////: lines-24
+function «1»() {
+  return «2»(«3»);
+}
+////: lines-25
+async function «1»() {
+  await null;
+  throw new «2»(«3»);
+}
+////: result
+function result(name, done, value) {
+  return {
+    get done() {
+      log(name, "get done");
+      return done;
+    },
+    get value() {
+      log(name, "get value");
+      return value;
+    },
+  };
+}

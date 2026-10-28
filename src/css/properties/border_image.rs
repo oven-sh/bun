@@ -22,15 +22,15 @@ use bun_alloc::Arena;
 /// A value for the [border-image](https://www.w3.org/TR/css-backgrounds-3/#border-image) shorthand property.
 pub struct BorderImage {
     /// The border image.
-    pub source: Image,
+    pub(crate) source: Image,
     /// The offsets that define where the image is sliced.
-    pub slice: BorderImageSlice,
+    pub(crate) slice: BorderImageSlice,
     /// The width of the border image.
-    pub width: Rect<BorderImageSideWidth>,
+    pub(crate) width: Rect<BorderImageSideWidth>,
     /// The amount that the image extends beyond the border box.
-    pub outset: Rect<LengthOrNumber>,
+    pub(crate) outset: Rect<LengthOrNumber>,
     /// How the border image is scaled and tiled.
-    pub repeat: BorderImageRepeat,
+    pub(crate) repeat: BorderImageRepeat,
 }
 
 impl BorderImage {
@@ -157,7 +157,8 @@ impl BorderImage {
         repeat: &BorderImageRepeat,
         dest: &mut Printer,
     ) -> core::result::Result<(), PrintErr> {
-        if !source.eql(&Image::default()) {
+        let has_source = !source.eql(&Image::default());
+        if has_source {
             source.to_css(dest)?;
         }
         let has_slice = !slice.eql(&BorderImageSlice::default());
@@ -186,10 +187,14 @@ impl BorderImage {
             return repeat.to_css(dest);
         }
 
+        if !(has_source || has_slice || has_width || has_outset) {
+            dest.write_str("none")?;
+        }
+
         Ok(())
     }
 
-    pub(crate) fn get_fallbacks(
+    fn get_fallbacks(
         &mut self,
         arena: &Arena,
         targets: &css::targets::Targets,
@@ -239,9 +244,9 @@ impl BorderImage {
 /// A value for the [border-image-repeat](https://www.w3.org/TR/css-backgrounds-3/#border-image-repeat) property.
 pub struct BorderImageRepeat {
     /// The horizontal repeat value.
-    pub horizontal: BorderImageRepeatKeyword,
+    pub(crate) horizontal: BorderImageRepeatKeyword,
     /// The vertical repeat value.
-    pub vertical: BorderImageRepeatKeyword,
+    pub(crate) vertical: BorderImageRepeatKeyword,
 }
 
 impl BorderImageRepeat {
@@ -263,11 +268,11 @@ impl BorderImageRepeat {
         Ok(())
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         self.horizontal.is_compatible(browsers) && self.vertical.is_compatible(browsers)
     }
 
-    pub(crate) fn default() -> BorderImageRepeat {
+    fn default() -> BorderImageRepeat {
         BorderImageRepeat {
             horizontal: BorderImageRepeatKeyword::Stretch,
             vertical: BorderImageRepeatKeyword::Stretch,
@@ -319,7 +324,7 @@ impl BorderImageSideWidth {
         }
     }
 
-    pub(crate) fn default() -> BorderImageSideWidth {
+    fn default() -> BorderImageSideWidth {
         BorderImageSideWidth::Number(1.0)
     }
 
@@ -327,7 +332,7 @@ impl BorderImageSideWidth {
         self.clone()
     }
 
-    pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
         match self {
             BorderImageSideWidth::LengthPercentage(l) => l.is_compatible(browsers),
             _ => true,
@@ -359,7 +364,7 @@ pub enum BorderImageRepeatKeyword {
 }
 
 impl BorderImageRepeatKeyword {
-    pub(crate) fn is_compatible(self, browsers: &css::targets::Browsers) -> bool {
+    fn is_compatible(self, browsers: &css::targets::Browsers) -> bool {
         match self {
             BorderImageRepeatKeyword::Round => {
                 css::compat::Feature::BorderImageRepeatRound.is_compatible(browsers)
@@ -375,9 +380,9 @@ impl BorderImageRepeatKeyword {
 /// A value for the [border-image-slice](https://www.w3.org/TR/css-backgrounds-3/#border-image-slice) property.
 pub struct BorderImageSlice {
     /// The offsets from the edges of the image.
-    pub offsets: Rect<NumberOrPercentage>,
+    pub(crate) offsets: Rect<NumberOrPercentage>,
     /// Whether the middle of the border image should be preserved.
-    pub fill: bool,
+    pub(crate) fill: bool,
 }
 
 impl BorderImageSlice {
@@ -402,7 +407,7 @@ impl BorderImageSlice {
         Ok(())
     }
 
-    pub(crate) fn is_compatible(&self, _: &css::targets::Browsers) -> bool {
+    fn is_compatible(&self, _: &css::targets::Browsers) -> bool {
         true
     }
 
@@ -410,7 +415,7 @@ impl BorderImageSlice {
         self.offsets.eql(&other.offsets) && self.fill == other.fill
     }
 
-    pub(crate) fn default() -> BorderImageSlice {
+    fn default() -> BorderImageSlice {
         BorderImageSlice {
             offsets: Rect::<NumberOrPercentage>::all(NumberOrPercentage::Percentage(Percentage {
                 v: 1.0,
@@ -439,15 +444,15 @@ bitflags::bitflags! {
 }
 
 impl BorderImageProperty {
-    pub(crate) const BORDER_IMAGE_SOURCE: BorderImageProperty = BorderImageProperty::SOURCE;
-    pub(crate) const BORDER_IMAGE_SLICE: BorderImageProperty = BorderImageProperty::SLICE;
-    pub(crate) const BORDER_IMAGE_WIDTH: BorderImageProperty = BorderImageProperty::WIDTH;
-    pub(crate) const BORDER_IMAGE_OUTSET: BorderImageProperty = BorderImageProperty::OUTSET;
-    pub(crate) const BORDER_IMAGE_REPEAT: BorderImageProperty = BorderImageProperty::REPEAT;
+    const BORDER_IMAGE_SOURCE: BorderImageProperty = BorderImageProperty::SOURCE;
+    const BORDER_IMAGE_SLICE: BorderImageProperty = BorderImageProperty::SLICE;
+    const BORDER_IMAGE_WIDTH: BorderImageProperty = BorderImageProperty::WIDTH;
+    const BORDER_IMAGE_OUTSET: BorderImageProperty = BorderImageProperty::OUTSET;
+    const BORDER_IMAGE_REPEAT: BorderImageProperty = BorderImageProperty::REPEAT;
 
-    pub(crate) const BORDER_IMAGE: BorderImageProperty = BorderImageProperty::all();
+    const BORDER_IMAGE: BorderImageProperty = BorderImageProperty::all();
 
-    pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<BorderImageProperty> {
+    fn try_from_property_id(property_id: PropertyIdTag) -> Option<BorderImageProperty> {
         match property_id {
             PropertyIdTag::BorderImageSource => Some(BorderImageProperty::SOURCE),
             PropertyIdTag::BorderImageSlice => Some(BorderImageProperty::SLICE),
@@ -481,49 +486,29 @@ impl BorderImageHandler {
     ) -> bool {
         let arena = dest.bump();
 
-        // `flushHelper`/`propertyHelper` are macro_rules! to keep the
-        // per-field name dispatch without reflection.
-        macro_rules! flush_helper {
-            ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr) => {
-                if $self.$name.is_some()
-                    && !$self.$name.as_ref().unwrap().eql($val)
-                    && $ctx.targets.browsers.is_some()
-                    && $val.is_compatible(&$ctx.targets.browsers.unwrap())
-                {
-                    $self.flush($d, $ctx);
-                }
-            };
+        if self.will_flush(property, &context.targets) {
+            self.flush(dest, context);
         }
 
+        // `propertyHelper` is a macro_rules! to keep the
+        // per-field name dispatch without reflection.
         macro_rules! property_helper {
-            ($self:expr, $field:ident, $val:expr, $d:expr, $ctx:expr) => {{
-                if $self.vendor_prefix != VendorPrefix::NONE {
-                    $self.flush($d, $ctx);
-                }
-
-                flush_helper!($self, $d, $ctx, $field, $val);
-
-                $self.vendor_prefix = VendorPrefix::NONE;
-                $self.$field = Some($val.deep_clone(arena));
-                $self.has_any = true;
+            ($field:ident, $val:expr) => {{
+                self.vendor_prefix = VendorPrefix::NONE;
+                self.$field = Some($val.deep_clone(arena));
+                self.has_any = true;
             }};
         }
 
         match property {
-            Property::BorderImageSource(val) => property_helper!(self, source, val, dest, context),
-            Property::BorderImageSlice(val) => property_helper!(self, slice, val, dest, context),
-            Property::BorderImageWidth(val) => property_helper!(self, width, val, dest, context),
-            Property::BorderImageOutset(val) => property_helper!(self, outset, val, dest, context),
-            Property::BorderImageRepeat(val) => property_helper!(self, repeat, val, dest, context),
+            Property::BorderImageSource(val) => property_helper!(source, val),
+            Property::BorderImageSlice(val) => property_helper!(slice, val),
+            Property::BorderImageWidth(val) => property_helper!(width, val),
+            Property::BorderImageOutset(val) => property_helper!(outset, val),
+            Property::BorderImageRepeat(val) => property_helper!(repeat, val),
             Property::BorderImage(_val) => {
                 let val = &_val.0;
                 let vp = _val.1;
-
-                flush_helper!(self, dest, context, source, &val.source);
-                flush_helper!(self, dest, context, slice, &val.slice);
-                flush_helper!(self, dest, context, width, &val.width);
-                flush_helper!(self, dest, context, outset, &val.outset);
-                flush_helper!(self, dest, context, repeat, &val.repeat);
 
                 self.source = Some(val.source.deep_clone(arena));
                 self.slice = Some(val.slice.deep_clone(arena));
@@ -535,8 +520,6 @@ impl BorderImageHandler {
             }
             Property::Unparsed(unparsed) => {
                 if is_border_image_property(unparsed.property_id.tag()) {
-                    self.flush(dest, context);
-
                     // Even if we weren't able to parse the value (e.g. due to var() references),
                     // we can still add vendor prefixes to the property itself.
                     let mut unparsed_clone =
@@ -583,13 +566,49 @@ impl BorderImageHandler {
         self.repeat = None;
     }
 
-    pub(crate) fn will_flush(&self, property: &Property) -> bool {
+    /// Whether a complete `border-image` is held, with none of it written before.
+    pub(crate) fn will_flush_shorthand(&self) -> bool {
+        self.flushed_properties.is_empty()
+            && self.vendor_prefix.contains(VendorPrefix::NONE)
+            && self.source.is_some()
+            && self.slice.is_some()
+            && self.width.is_some()
+            && self.outset.is_some()
+            && self.repeat.is_some()
+    }
+
+    /// Whether `handle_property` writes what it holds before it takes `property`.
+    pub(crate) fn will_flush(&self, property: &Property, targets: &css::targets::Targets) -> bool {
+        // Not every browser reads a prefixed property or function.
+        let prefixed = match property {
+            Property::BorderImageSource(val) => val.has_vendor_prefix(),
+            Property::BorderImage((val, vp)) => {
+                !vp.contains(VendorPrefix::NONE) || val.source.has_vendor_prefix()
+            }
+            _ => false,
+        };
+        // What is held stays as the fallback of such a value.
+        macro_rules! is_fallback {
+            ($name:ident, $val:expr) => {
+                self.$name.as_ref().is_some_and(|held| !held.eql($val))
+                    && (prefixed || targets.browsers.is_some_and(|b| !$val.is_compatible(&b)))
+            };
+        }
+
+        let has_prefix = self.vendor_prefix != VendorPrefix::NONE;
         match property {
-            Property::BorderImageSource(_)
-            | Property::BorderImageSlice(_)
-            | Property::BorderImageWidth(_)
-            | Property::BorderImageOutset(_)
-            | Property::BorderImageRepeat(_) => self.vendor_prefix != VendorPrefix::NONE,
+            Property::BorderImageSource(val) => has_prefix || is_fallback!(source, val),
+            Property::BorderImageSlice(val) => has_prefix || is_fallback!(slice, val),
+            Property::BorderImageWidth(val) => has_prefix || is_fallback!(width, val),
+            Property::BorderImageOutset(val) => has_prefix || is_fallback!(outset, val),
+            Property::BorderImageRepeat(val) => has_prefix || is_fallback!(repeat, val),
+            Property::BorderImage((val, _)) => {
+                is_fallback!(source, &val.source)
+                    || is_fallback!(slice, &val.slice)
+                    || is_fallback!(width, &val.width)
+                    || is_fallback!(outset, &val.outset)
+                    || is_fallback!(repeat, &val.repeat)
+            }
             Property::Unparsed(val) => is_border_image_property(val.property_id.tag()),
             _ => false,
         }
@@ -699,7 +718,7 @@ impl BorderImageHandler {
     }
 }
 
-pub(crate) fn is_border_image_property(property_id: PropertyIdTag) -> bool {
+fn is_border_image_property(property_id: PropertyIdTag) -> bool {
     matches!(
         property_id,
         PropertyIdTag::BorderImageSource

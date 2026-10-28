@@ -33,7 +33,7 @@ pub enum FontFaceProperty {
 }
 
 impl FontFaceProperty {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         macro_rules! write_property_single {
             ($d:expr, $prop:expr, $value:expr) => {{
                 $d.write_str($prop)?;
@@ -74,14 +74,14 @@ impl FontFaceProperty {
                 write_property_multi!(dest, "unicode-range", value.as_slice())
             }
             FontFaceProperty::Custom(custom) => {
-                dest.write_str(custom.name.as_str())?;
+                custom.name.to_css(dest)?;
                 dest.delim(b':', false)?;
                 custom.value.to_css(dest, true)
             }
         }
     }
 
-    pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
         match self {
             FontFaceProperty::Source(v) => {
                 FontFaceProperty::Source(v.iter().map(|s| s.deep_clone(arena)).collect())
@@ -104,7 +104,7 @@ impl FontFaceProperty {
 }
 
 impl FontStyle {
-    pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
         match self {
             FontStyle::Normal => FontStyle::Normal,
             FontStyle::Italic => FontStyle::Italic,
@@ -122,14 +122,14 @@ impl FontStyle {
 /// Cannot be empty. Can represent a single code point when start == end.
 pub struct UnicodeRange {
     /// Inclusive start of the range. In [0, end].
-    pub start: u32,
+    pub(crate) start: u32,
 
     /// Inclusive end of the range. In [0, 0x10FFFF].
-    pub end: u32,
+    pub(crate) end: u32,
 }
 
 impl UnicodeRange {
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Attempt to optimize the range to use question mark syntax.
         if self.start != self.end {
             // Find the first hex digit that differs between the start and end values.
@@ -178,7 +178,7 @@ impl UnicodeRange {
     }
 
     /// https://drafts.csswg.org/css-syntax/#urange-syntax
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<UnicodeRange> {
+    fn parse(input: &mut css::Parser) -> css::Result<UnicodeRange> {
         // <urange> =
         //   u '+' <ident-token> '?'* |
         //   u <dimension-token> '?'* |
@@ -214,31 +214,24 @@ impl UnicodeRange {
     }
 
     fn parse_tokens(input: &mut css::Parser) -> css::Result<()> {
-        let tok = input.next_including_whitespace()?.clone();
+        let tok = *input.next_including_whitespace()?;
         // Tag-only matches on `Dimension`/`Number` — payloads are never inspected.
         match tok {
             css::Token::Dimension { .. } => return Self::parse_question_marks(input),
             css::Token::Number { .. } => {
                 let after_number = input.state();
-                let token = match input.next_including_whitespace() {
-                    Ok(vv) => vv,
-                    Err(_) => {
-                        input.reset(&after_number);
-                        return Ok(());
+                match input.next_including_whitespace() {
+                    Ok(&css::Token::Delim(c)) if c == '?' as u32 => {
+                        return Self::parse_question_marks(input);
                     }
-                };
-
-                if matches!(*token, css::Token::Delim(c) if c == '?' as u32) {
-                    return Self::parse_question_marks(input);
-                }
-                if matches!(*token, css::Token::Delim(_) | css::Token::Number { .. }) {
-                    return Ok(());
+                    Ok(&css::Token::Dimension { .. } | &css::Token::Number { .. }) => {}
+                    _ => input.reset(&after_number),
                 }
                 return Ok(());
             }
             css::Token::Delim(c) => {
                 if c == '+' as u32 {
-                    let next = input.next_including_whitespace()?.clone();
+                    let next = *input.next_including_whitespace()?;
                     if !(matches!(next, css::Token::Ident(_))
                         || matches!(next, css::Token::Delim(d) if d == '?' as u32))
                     {
@@ -342,7 +335,7 @@ pub enum FontStyle {
 }
 
 impl FontStyle {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<FontStyle> {
+    fn parse(input: &mut css::Parser) -> css::Result<FontStyle> {
         use crate::css_properties::font::FontStyle as FontStyleProperty;
         let property = FontStyleProperty::parse(input)?;
         Ok(match property {
@@ -362,7 +355,7 @@ impl FontStyle {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             FontStyle::Normal => dest.write_str("normal"),
             FontStyle::Italic => dest.write_str("italic"),
@@ -414,7 +407,7 @@ pub enum FontFormat {
 }
 
 impl FontFormat {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
+    fn parse(input: &mut css::Parser) -> css::Result<FontFormat> {
         let s = input.expect_ident_or_string_cloned()?;
         Ok(crate::match_ignore_ascii_case! { s, {
             b"woff" => FontFormat::Woff,
@@ -428,22 +421,23 @@ impl FontFormat {
         }})
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        let format: &[u8] = match self {
+            FontFormat::Woff => b"woff",
+            FontFormat::Woff2 => b"woff2",
+            FontFormat::Truetype => b"truetype",
+            FontFormat::Opentype => b"opentype",
+            FontFormat::EmbeddedOpentype => b"embedded-opentype",
+            FontFormat::Collection => b"collection",
+            FontFormat::Svg => b"svg",
+            FontFormat::String(s) => s,
+        };
         // Browser support for keywords rather than strings is very limited.
         // https://developer.mozilla.org/en-US/docs/Web/CSS/@font-face/src
-        match self {
-            FontFormat::Woff => dest.write_str("woff"),
-            FontFormat::Woff2 => dest.write_str("woff2"),
-            FontFormat::Truetype => dest.write_str("truetype"),
-            FontFormat::Opentype => dest.write_str("opentype"),
-            FontFormat::EmbeddedOpentype => dest.write_str("embedded-opentype"),
-            FontFormat::Collection => dest.write_str("collection"),
-            FontFormat::Svg => dest.write_str("svg"),
-            FontFormat::String(s) => dest.write_str(*s),
-        }
+        dest.serialize_string(format)
     }
 
-    pub(crate) fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, _arena: &bun_alloc::Arena) -> Self {
         // `css.implementDeepClone` variant-walk. All payloads are
         // `Copy` / arena-slice idents → identity copy.
         match self {
@@ -504,7 +498,7 @@ impl Source {
         }
     }
 
-    pub fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
         // `css.implementDeepClone` variant-walk, hand-expanded.
         match self {
             Source::Url(u) => Source::Url(u.deep_clone(arena)),
@@ -558,15 +552,15 @@ pub enum FontTechnology {
 /// property in an `@font-face` rule.
 pub struct UrlSource {
     /// The URL.
-    pub url: Url,
+    pub(crate) url: Url,
     /// Optional `format()` function.
-    pub format: Option<FontFormat>,
+    pub(crate) format: Option<FontFormat>,
     /// Optional `tech()` function.
-    pub tech: ArrayList<FontTechnology>,
+    pub(crate) tech: ArrayList<FontTechnology>,
 }
 
 impl UrlSource {
-    pub(crate) fn parse(input: &mut css::Parser) -> css::Result<UrlSource> {
+    fn parse(input: &mut css::Parser) -> css::Result<UrlSource> {
         let url = Url::parse(input)?;
 
         let format = if input
@@ -590,7 +584,7 @@ impl UrlSource {
         Ok(UrlSource { url, format, tech })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         self.url.to_css(dest)?;
         if let Some(format) = &self.format {
             dest.whitespace()?;
@@ -608,7 +602,7 @@ impl UrlSource {
         Ok(())
     }
 
-    pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
         // `css.implementDeepClone` field-walk, hand-expanded.
         Self {
             url: self.url.deep_clone(arena),
@@ -625,9 +619,9 @@ impl UrlSource {
 /// A [@font-face](https://drafts.csswg.org/css-fonts/#font-face-rule) rule.
 pub struct FontFaceRule {
     /// Declarations in the `@font-face` rule.
-    pub properties: ArrayList<FontFaceProperty>,
+    pub(crate) properties: ArrayList<FontFaceProperty>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl FontFaceRule {
@@ -674,58 +668,16 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
+    use css::{Parser, ParserOptions, Result};
 
     impl AtRuleParser for FontFaceDeclarationParser {
         type Prelude = ();
         type AtRule = FontFaceProperty;
-
-        fn parse_prelude(
-            _this: &mut Self,
-            name: &[u8],
-            input: &mut Parser,
-        ) -> Result<Self::Prelude> {
-            Err(
-                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
-                    [u8],
-                >(name))),
-            )
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _: Self::Prelude,
-            _: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-        }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _: Self::Prelude,
-            _: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
     }
 
     impl QualifiedRuleParser for FontFaceDeclarationParser {
         type Prelude = ();
         type QualifiedRule = FontFaceProperty;
-
-        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _: Self::Prelude,
-            _: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
     }
 
     impl DeclarationParser for FontFaceDeclarationParser {

@@ -1,0 +1,1 @@
+error: TS2322: Type 'Box<number>' is not assignable to type 'Crate<number>'.

@@ -1,0 +1,3 @@
+{
+  "build": ["--aot-disable=flow-results"]
+}

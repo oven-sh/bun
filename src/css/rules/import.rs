@@ -6,7 +6,6 @@ use crate::media_query::MediaList;
 use crate::{PrintErr, Printer};
 
 use bun_alloc::Arena;
-use bun_ast::ImportRecord;
 
 /// Layer slot used in both `ImportConditions.layer` and `ImportRule.layer`.
 /// The two uses are layout-identical, so a single type serves both.
@@ -18,7 +17,7 @@ pub struct Layer {
 }
 
 impl Layer {
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         Self {
             v: self.v.as_ref().map(|n| n.deep_clone(bump)),
         }
@@ -50,14 +49,6 @@ pub struct ImportConditions {
 }
 
 impl ImportConditions {
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
-        Self {
-            layer: self.layer.as_ref().map(|l| l.deep_clone(bump)),
-            supports: self.supports.as_ref().map(|s| s.deep_clone(bump)),
-            media: super::dc::media_list(&self.media, bump),
-        }
-    }
-
     pub fn has_anonymous_layer(&self) -> bool {
         matches!(&self.layer, Some(l) if l.v.is_none())
     }
@@ -154,6 +145,16 @@ impl ImportRule {
         }
     }
 
+    pub fn conditions(&self) -> &ImportConditions {
+        // SAFETY: both structs are `repr(C)`, and `layer`, `supports` and `media` are
+        // consecutive fields of `ImportRule` with the types and order of `ImportConditions`.
+        unsafe {
+            &*std::ptr::from_ref(self)
+                .byte_add(core::mem::offset_of!(Self, layer))
+                .cast::<ImportConditions>()
+        }
+    }
+
     pub fn conditions_mut(&mut self) -> &mut ImportConditions {
         // SAFETY: see `conditions()` above. Derived from `&mut self` (full-struct
         // provenance) via byte offset so the returned `&mut ImportConditions` may
@@ -165,32 +166,11 @@ impl ImportRule {
         }
     }
 
-    /// The `import_records` here is preserved from esbuild in the case that we do need it, it doesn't seem necessary now
-    pub fn conditions_with_import_records(
-        &self,
-        arena: &Arena,
-        import_records: &mut Vec<ImportRecord>,
-    ) -> ImportConditions {
-        ImportConditions {
-            layer: self.layer.as_ref().map(|layer| Layer {
-                v: layer
-                    .v
-                    .as_ref()
-                    .map(|l| l.clone_with_import_records(arena, import_records)),
-            }),
-            supports: self
-                .supports
-                .as_ref()
-                .map(|supp| supp.clone_with_import_records(arena, import_records)),
-            media: self.media.clone_with_import_records(arena, import_records),
-        }
-    }
-
     pub fn has_conditions(&self) -> bool {
         self.layer.is_some() || self.supports.is_some() || !self.media.media_queries.is_empty()
     }
 
-    pub fn deep_clone(&self, bump: &Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &Arena) -> Self {
         // `url: &'static [u8]` is an arena-owned slice → identity copy;
         // `media` routes through `dc::media_list` until
         // `MediaList` gains an arena-aware `deep_clone`.
@@ -210,8 +190,6 @@ impl ImportRule {
                 dest.arena,
                 self,
                 dest.filename(),
-                dest.local_names,
-                dest.symbols,
             ))
         } else {
             None

@@ -1,0 +1,9 @@
+object default "some words\n" 11 true {"default":"some words\n"} {"default":"some words\n"}
+object default "# a note\nmore\n"
+object default string true
+object __esModule,default "just a string"
+object __esModule,default 43 object __esModule,default null object true
+object default "from commonjs" object 43
+true true 11 object default some words
+object some words
+

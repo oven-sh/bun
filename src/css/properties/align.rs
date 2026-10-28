@@ -37,18 +37,18 @@ pub enum AlignContent {
 #[css(generate_to_css)]
 pub struct AlignContentContentPosition {
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
     /// A content position keyword.
-    pub value: ContentPosition,
+    pub(crate) value: ContentPosition,
 }
 
 impl AlignContentContentPosition {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let value = ContentPosition::parse(input)?;
         Ok(Self { overflow, value })
     }
-    pub(crate) fn to_inner(&self) -> ContentPositionInner {
+    fn to_inner(&self) -> ContentPositionInner {
         ContentPositionInner {
             overflow: self.overflow,
             value: self.value,
@@ -71,7 +71,7 @@ pub enum BaselinePosition {
 }
 
 impl BaselinePosition {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
@@ -89,7 +89,7 @@ impl BaselinePosition {
         }}
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             BaselinePosition::First => dest.write_str("baseline"),
             BaselinePosition::Last => dest.write_str("last baseline"),
@@ -125,13 +125,13 @@ pub enum JustifyContent {
 #[derive(Clone, PartialEq, Eq)]
 pub struct JustifyContentContentPosition {
     /// A content position keyword.
-    pub value: ContentPosition,
+    pub(crate) value: ContentPosition,
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
 }
 
 impl JustifyContentContentPosition {
-    pub(crate) fn to_inner(&self) -> ContentPositionInner {
+    fn to_inner(&self) -> ContentPositionInner {
         ContentPositionInner {
             overflow: self.overflow,
             value: self.value,
@@ -225,20 +225,20 @@ pub enum AlignSelf {
 #[css(generate_to_css)]
 pub struct AlignSelfSelfPosition {
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
     /// A self position keyword.
-    pub value: SelfPosition,
+    pub(crate) value: SelfPosition,
 }
 
 impl AlignSelfSelfPosition {
-    pub(crate) fn to_inner(&self) -> SelfPositionInner {
+    fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
             overflow: self.overflow,
             value: self.value,
         }
     }
 
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let self_position = SelfPosition::parse(input)?;
         Ok(Self {
@@ -280,13 +280,13 @@ pub enum JustifySelf {
 #[derive(Clone, PartialEq, Eq)]
 pub struct JustifySelfSelfPosition {
     /// A self position keyword.
-    pub value: SelfPosition,
+    pub(crate) value: SelfPosition,
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
 }
 
 impl JustifySelfSelfPosition {
-    pub(crate) fn to_inner(&self) -> SelfPositionInner {
+    fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
             overflow: self.overflow,
             value: self.value,
@@ -391,20 +391,20 @@ pub enum AlignItems {
 #[css(generate_to_css)]
 pub struct AlignItemsSelfPosition {
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
     /// A self position keyword.
-    pub value: SelfPosition,
+    pub(crate) value: SelfPosition,
 }
 
 impl AlignItemsSelfPosition {
-    pub(crate) fn to_inner(&self) -> SelfPositionInner {
+    fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
             overflow: self.overflow,
             value: self.value,
         }
     }
 
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         let overflow = input.try_parse(OverflowPosition::parse).ok();
         let self_position = SelfPosition::parse(input)?;
         Ok(Self {
@@ -446,13 +446,13 @@ pub enum JustifyItems {
 #[derive(Clone, PartialEq, Eq)]
 pub struct JustifyItemsSelfPosition {
     /// A self position keyword.
-    pub value: SelfPosition,
+    pub(crate) value: SelfPosition,
     /// An overflow alignment mode.
-    pub overflow: Option<OverflowPosition>,
+    pub(crate) overflow: Option<OverflowPosition>,
 }
 
 impl JustifyItemsSelfPosition {
-    pub(crate) fn to_inner(&self) -> SelfPositionInner {
+    fn to_inner(&self) -> SelfPositionInner {
         SelfPositionInner {
             overflow: self.overflow,
             value: self.value,
@@ -549,7 +549,7 @@ pub enum LegacyJustify {
 }
 
 impl LegacyJustify {
-    pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
+    fn parse(input: &mut Parser) -> CssResult<Self> {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
@@ -580,7 +580,7 @@ impl LegacyJustify {
         }}
     }
 
-    pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
+    fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         dest.write_str("legacy ")?;
         match self {
             LegacyJustify::Left => dest.write_str("left"),
@@ -608,9 +608,9 @@ pub enum GapValue {
 #[derive(Clone, PartialEq)]
 pub struct Gap {
     /// The row gap.
-    pub row: GapValue,
+    pub(crate) row: GapValue,
     /// The column gap.
-    pub column: GapValue,
+    pub(crate) column: GapValue,
 }
 
 impl Gap {
@@ -640,9 +640,9 @@ impl Gap {
 #[derive(Clone, PartialEq, Eq)]
 pub struct PlaceItems {
     /// The item alignment.
-    pub align: AlignItems,
+    pub(crate) align: AlignItems,
     /// The item justification.
-    pub justify: JustifyItems,
+    pub(crate) justify: JustifyItems,
 }
 
 impl PlaceItems {
@@ -702,9 +702,9 @@ impl PlaceItems {
 #[derive(Clone, PartialEq, Eq)]
 pub struct PlaceSelf {
     /// The item alignment.
-    pub align: AlignSelf,
+    pub(crate) align: AlignSelf,
     /// The item justification.
-    pub justify: JustifySelf,
+    pub(crate) justify: JustifySelf,
 }
 
 impl PlaceSelf {
@@ -792,9 +792,9 @@ pub enum SelfPosition {
 #[derive(Clone, PartialEq, Eq)]
 pub struct PlaceContent {
     /// The content alignment.
-    pub align: AlignContent,
+    pub(crate) align: AlignContent,
     /// The content justification.
-    pub justify: JustifyContent,
+    pub(crate) justify: JustifyContent,
 }
 
 impl PlaceContent {
@@ -937,21 +937,21 @@ pub(crate) struct ContentPositionInner {
 
 #[derive(Default)]
 pub struct AlignHandler {
-    pub align_content: Option<(AlignContent, VendorPrefix)>,
-    pub flex_line_pack: Option<(FlexLinePack, VendorPrefix)>,
-    pub justify_content: Option<(JustifyContent, VendorPrefix)>,
-    pub box_pack: Option<(BoxPack, VendorPrefix)>,
-    pub flex_pack: Option<(FlexPack, VendorPrefix)>,
-    pub align_self: Option<(AlignSelf, VendorPrefix)>,
-    pub flex_item_align: Option<(FlexItemAlign, VendorPrefix)>,
-    pub justify_self: Option<JustifySelf>,
-    pub align_items: Option<(AlignItems, VendorPrefix)>,
-    pub box_align: Option<(BoxAlign, VendorPrefix)>,
-    pub flex_align: Option<(FlexAlign, VendorPrefix)>,
-    pub justify_items: Option<JustifyItems>,
-    pub row_gap: Option<GapValue>,
-    pub column_gap: Option<GapValue>,
-    pub has_any: bool,
+    pub(crate) align_content: Option<(AlignContent, VendorPrefix)>,
+    pub(crate) flex_line_pack: Option<(FlexLinePack, VendorPrefix)>,
+    pub(crate) justify_content: Option<(JustifyContent, VendorPrefix)>,
+    pub(crate) box_pack: Option<(BoxPack, VendorPrefix)>,
+    pub(crate) flex_pack: Option<(FlexPack, VendorPrefix)>,
+    pub(crate) align_self: Option<(AlignSelf, VendorPrefix)>,
+    pub(crate) flex_item_align: Option<(FlexItemAlign, VendorPrefix)>,
+    pub(crate) justify_self: Option<JustifySelf>,
+    pub(crate) align_items: Option<(AlignItems, VendorPrefix)>,
+    pub(crate) box_align: Option<(BoxAlign, VendorPrefix)>,
+    pub(crate) flex_align: Option<(FlexAlign, VendorPrefix)>,
+    pub(crate) justify_items: Option<JustifyItems>,
+    pub(crate) row_gap: Option<GapValue>,
+    pub(crate) column_gap: Option<GapValue>,
+    pub(crate) has_any: bool,
 }
 
 // ─── helper macros ───
@@ -1052,7 +1052,6 @@ macro_rules! flush_legacy_property {
             // Remove Firefox and IE from standard prefixes.
             prefix.remove(VendorPrefix::MOZ);
             prefix.remove(VendorPrefix::MS);
-            let _ = prefix;
         }
     }};
     // variant with only 2012
@@ -1070,7 +1069,6 @@ macro_rules! flush_legacy_property {
 
             prefix.remove(VendorPrefix::MOZ);
             prefix.remove(VendorPrefix::MS);
-            let _ = prefix;
         }
     }};
 }
@@ -1178,15 +1176,20 @@ impl AlignHandler {
     ) -> bool {
         match property {
             Property::AlignContent((val, vp)) => {
-                self.flex_line_pack = None;
+                // Only targets can tell that a legacy property the author wrote is not needed.
+                if context.targets.browsers.is_some() {
+                    self.flex_line_pack = None;
+                }
                 handle_property_helper!(self, dest, context, align_content, val, *vp);
             }
             Property::FlexLinePack((val, vp)) => {
                 handle_property_helper!(self, dest, context, flex_line_pack, val, *vp);
             }
             Property::JustifyContent((val, vp)) => {
-                self.box_pack = None;
-                self.flex_pack = None;
+                if context.targets.browsers.is_some() {
+                    self.box_pack = None;
+                    self.flex_pack = None;
+                }
                 handle_property_helper!(self, dest, context, justify_content, val, *vp);
             }
             Property::BoxPack((val, vp)) => {
@@ -1196,9 +1199,11 @@ impl AlignHandler {
                 handle_property_helper!(self, dest, context, flex_pack, val, *vp);
             }
             Property::PlaceContent(val) => {
-                self.flex_line_pack = None;
-                self.box_pack = None;
-                self.flex_pack = None;
+                if context.targets.browsers.is_some() {
+                    self.flex_line_pack = None;
+                    self.box_pack = None;
+                    self.flex_pack = None;
+                }
                 handle_property_maybe_flush!(
                     self,
                     dest,
@@ -1233,7 +1238,9 @@ impl AlignHandler {
                 );
             }
             Property::AlignSelf((val, vp)) => {
-                self.flex_item_align = None;
+                if context.targets.browsers.is_some() {
+                    self.flex_item_align = None;
+                }
                 handle_property_helper!(self, dest, context, align_self, val, *vp);
             }
             Property::FlexItemAlign((val, vp)) => {
@@ -1244,7 +1251,9 @@ impl AlignHandler {
                 self.has_any = true;
             }
             Property::PlaceSelf(val) => {
-                self.flex_item_align = None;
+                if context.targets.browsers.is_some() {
+                    self.flex_item_align = None;
+                }
                 handle_property_helper!(
                     self,
                     dest,
@@ -1256,8 +1265,10 @@ impl AlignHandler {
                 self.justify_self = Some(val.justify.clone());
             }
             Property::AlignItems((val, vp)) => {
-                self.box_align = None;
-                self.flex_align = None;
+                if context.targets.browsers.is_some() {
+                    self.box_align = None;
+                    self.flex_align = None;
+                }
                 handle_property_helper!(self, dest, context, align_items, val, *vp);
             }
             Property::BoxAlign((val, vp)) => {
@@ -1271,8 +1282,10 @@ impl AlignHandler {
                 self.has_any = true;
             }
             Property::PlaceItems(val) => {
-                self.box_align = None;
-                self.flex_align = None;
+                if context.targets.browsers.is_some() {
+                    self.box_align = None;
+                    self.flex_align = None;
+                }
                 handle_property_helper!(
                     self,
                     dest,

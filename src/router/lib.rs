@@ -14,7 +14,7 @@ use std::cell::RefCell;
 
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::strings;
-use bun_paths::{self, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 
 use bun_http_types::URLPath::URLPath;
 
@@ -38,6 +38,7 @@ use bun_resolver::fs::FileSystem;
 
 type CoreError = crate::Error;
 
+use bun_collections::index_sort;
 use bun_core::HashedString;
 use bun_ptr::Interned;
 
@@ -50,10 +51,6 @@ use bun_ptr::Interned;
 #[derive(Debug, Clone, Default)]
 pub struct RouteConfig {
     pub dir: Box<[u8]>,
-
-    /// Frameworks like Next.js (and others) use a special prefix for bundled/transpiled assets.
-    /// This is combined with "origin" when printing import paths.
-    pub asset_prefix_path: Box<[u8]>,
 
     // TODO: do we need a separate list for data-only extensions?
     // e.g. /foo.json just to get the data for the route, without rendering the html
@@ -78,23 +75,20 @@ const INDEX_ROUTE_HASH: u32 =
 pub use bun_url::route_param;
 pub use route_param::Param;
 
-pub struct Router<'a> {
+pub struct Router {
     pub routes: Routes,
-    pub loaded_routes: bool,
-    // allocator dropped — global mimalloc
-    pub fs: &'a FileSystem,
+    pub(crate) loaded_routes: bool,
     pub config: RouteConfig,
 }
 
-impl<'a> Router<'a> {
-    pub fn init(fs: &'a FileSystem, config: RouteConfig) -> Result<Router<'a>, CoreError> {
+impl Router {
+    pub fn init(config: RouteConfig) -> Result<Router, CoreError> {
         Ok(Router {
             routes: Routes {
                 static_: StringHashMap::new(),
                 ..Routes::default()
             },
             loaded_routes: false,
-            fs,
             config,
         })
     }
@@ -139,7 +133,7 @@ struct RouteIndex {
 // yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
 // accessors. Hand-rolled SoA struct until the derive exists.
 #[derive(Default)]
-pub struct RouteIndexList {
+struct RouteIndexList {
     // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
     // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
     // would dangle them on `Vec` realloc.
@@ -151,61 +145,61 @@ pub struct RouteIndexList {
 }
 
 impl RouteIndexList {
-    pub fn set_capacity(&mut self, cap: usize) -> Result<(), CoreError> {
+    pub(crate) fn set_capacity(&mut self, cap: usize) -> Result<(), CoreError> {
         self.route.reserve_exact(cap);
         self.name.reserve_exact(cap);
         self.match_name.reserve_exact(cap);
         self.filepath.reserve_exact(cap);
         Ok(())
     }
-    pub(crate) fn push(&mut self, item: RouteIndex) {
+    fn push(&mut self, item: RouteIndex) {
         self.route.push(item.route);
         self.name.push(item.name);
         self.match_name.push(item.match_name);
         self.filepath.push(item.filepath);
     }
     #[inline]
-    pub fn len(&self) -> usize {
+    pub(crate) fn len(&self) -> usize {
         self.route.len()
     }
     #[inline]
-    pub fn items_route(&self) -> &[Box<Route>] {
+    pub(crate) fn items_route(&self) -> &[Box<Route>] {
         &self.route
     }
     #[inline]
-    pub fn items_name(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_name(&self) -> &[&'static [u8]] {
         &self.name
     }
     #[inline]
-    pub fn items_match_name(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_match_name(&self) -> &[&'static [u8]] {
         &self.match_name
     }
     #[inline]
-    pub fn items_filepath(&self) -> &[&'static [u8]] {
+    pub(crate) fn items_filepath(&self) -> &[&'static [u8]] {
         &self.filepath
     }
 }
 
 pub struct Routes {
-    pub list: RouteIndexList,
+    pub(crate) list: RouteIndexList,
     /// Index into `list`'s columns where dynamic routes begin (sorted after
     /// static). Stored as an offset+len instead of materialized slices to avoid
     /// a self-referential struct; we re-slice on each `match_dynamic` call.
-    pub dynamic_start: Option<usize>,
-    pub dynamic_len: usize,
+    pub(crate) dynamic_start: Option<usize>,
+    pub(crate) dynamic_len: usize,
 
     /// completely static children of indefinite depth
     /// `"blog/posts"`
     /// `"dashboard"`
     /// `"profiles"`
     /// this is a fast path?
-    pub static_: StringHashMap<*const Route>,
+    pub(crate) static_: StringHashMap<*const Route>,
 
     /// Corresponds to "index.js" on the filesystem.
     /// A raw pointer co-owned with `list` (points into a `Box<Route>` owned by
     /// `list.route`). Stored as `NonNull` (not `&'a Route`) so `Routes` claims
     /// no borrow it doesn't actually take; matches `static_` above.
-    pub index: Option<NonNull<Route>>,
+    pub(crate) index: Option<NonNull<Route>>,
 }
 
 impl Default for Routes {
@@ -222,10 +216,9 @@ impl Default for Routes {
 
 impl Routes {
     pub fn match_page_with_allocator<'p>(
-        &mut self,
-        _: &[u8],
+        &self,
         url_path: &URLPath,
-        params: &'p mut route_param::List<'p>,
+        params: &mut route_param::List<'p>,
     ) -> Option<Match<'p>> {
         // Trim trailing slash
         let mut path = url_path.path;
@@ -268,7 +261,6 @@ impl Routes {
                 // SAFETY: points into a Box<Route> owned by self.list; valid for &self.
                 let index = unsafe { index_ptr.as_ref() };
                 return Some(Match {
-                    params: std::ptr::from_mut(params),
                     name: index.name,
                     pathname: url_path.pathname,
                     file_path: index.abs_path.as_bytes(),
@@ -284,7 +276,6 @@ impl Routes {
             // self.list, which outlives self.
             let route = unsafe { &*route_ptr };
             return Some(Match {
-                params: std::ptr::from_mut(params),
                 name: route.name,
                 pathname: url_path.pathname,
                 file_path: route.abs_path.as_bytes(),
@@ -314,6 +305,8 @@ impl Routes {
             if Pattern::match_::<true>(path, &case_sensitive_name[1..], name, params) {
                 return Some(&raw const **route);
             }
+            // A failed match can leave params behind.
+            params.clear();
         }
 
         None
@@ -356,7 +349,7 @@ struct RouteLoader<'a> {
 }
 
 impl<'a> RouteLoader<'a> {
-    pub(crate) fn append_route(&mut self, route: Route) {
+    fn append_route(&mut self, route: Route) {
         use bun_collections::hash_map::Entry;
 
         // /index.js
@@ -457,7 +450,7 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub(crate) fn load_all<R: ResolverLike>(
+    fn load_all<R: ResolverLike>(
         config: RouteConfig,
         log: &'a mut bun_ast::Log,
         resolver: &mut R,
@@ -491,8 +484,9 @@ impl<'a> RouteLoader<'a> {
             };
         }
 
-        this.all_routes
-            .sort_unstable_by(|a, b| sorter::sort_by_name_cmp(a, b));
+        index_sort::sort_slice_unstable_by(&mut this.all_routes, |a, b| {
+            sorter::sort_by_name_cmp(a, b)
+        });
 
         let mut route_list = RouteIndexList::default();
         route_list
@@ -543,7 +537,7 @@ impl<'a> RouteLoader<'a> {
         }
     }
 
-    pub(crate) fn load<R: ResolverLike>(
+    fn load<R: ResolverLike>(
         &mut self,
         resolver: &mut R,
         root_dir_info: &DirInfo,
@@ -642,6 +636,8 @@ impl<'a> RouteLoader<'a> {
                         }
                     }
                 }
+
+                Fs::EntryKind::Dangling => {}
             }
         }
     }
@@ -654,24 +650,24 @@ pub struct TinyPtr(u32);
 
 impl TinyPtr {
     #[inline]
-    pub const fn offset(self) -> u16 {
+    pub(crate) const fn offset(self) -> u16 {
         self.0 as u16
     }
     #[inline]
-    pub const fn len(self) -> u16 {
+    pub(crate) const fn len(self) -> u16 {
         (self.0 >> 16) as u16
     }
     #[inline]
-    pub fn set_offset(&mut self, offset: u16) {
+    pub(crate) fn set_offset(&mut self, offset: u16) {
         self.0 = (self.0 & 0xFFFF_0000) | (offset as u32);
     }
     #[inline]
-    pub fn set_len(&mut self, len: u16) {
+    pub(crate) fn set_len(&mut self, len: u16) {
         self.0 = (self.0 & 0x0000_FFFF) | ((len as u32) << 16);
     }
 
     #[inline]
-    pub fn str<'s>(self, slice: &'s [u8]) -> &'s [u8] {
+    pub(crate) fn str<'s>(self, slice: &'s [u8]) -> &'s [u8] {
         if self.len() > 0 {
             &slice[self.offset() as usize..(self.offset() as usize + self.len() as usize)]
         } else {
@@ -692,34 +688,34 @@ pub struct Route {
     /// "/", "/index" is "/"
     /// "/foo/index.js" becomes "/foo"
     /// case-sensitive, has leading slash
-    pub name: &'static [u8],
+    pub(crate) name: &'static [u8],
 
     /// Name used for matching.
     /// - Omits leading slash
     /// - Lowercased
     /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
-    pub match_name: Interned,
+    pub(crate) match_name: Interned,
 
-    pub full_hash: u32,
-    pub param_count: u16,
+    pub(crate) full_hash: u32,
+    pub(crate) param_count: u16,
 
-    pub abs_path: AbsPath,
+    pub(crate) abs_path: AbsPath,
 
-    pub kind: pattern::Tag,
+    pub(crate) kind: pattern::Tag,
 
-    pub has_uppercase: bool,
+    pub(crate) has_uppercase: bool,
 }
 
 // TODO(b1): inherent assoc types unstable; module-level alias instead.
 
 impl Route {
-    pub const INDEX_ROUTE_NAME: &'static [u8] = b"/";
+    pub(crate) const INDEX_ROUTE_NAME: &'static [u8] = b"/";
 
     /// # Safety
     /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
     /// other active `&mut` borrow for the duration of the call. `base_` and
     /// `extname` may borrow `(*entry).base_`; see the NOTE below.
-    pub unsafe fn parse(
+    pub(crate) unsafe fn parse(
         base_: &[u8],
         extname: &[u8],
         entry: *mut Fs::Entry,
@@ -727,22 +723,28 @@ impl Route {
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        // NOTE: `entry` is a raw `*mut Entry`
-        // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
-        // string) and a `&mut Entry` parameter would alias them.
-        // Reads go through `unsafe { &*entry }`; the single mutation
-        // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
-        // `base_`/`extname` are no longer used.
+        // NOTE: `entry` is a raw `*mut Entry` because `base_`/`extname` may
+        // borrow `(*entry).base_` and a `&mut Entry` parameter would alias them.
+        let base = &base_[0..base_.len() - extname.len()];
+
         // SAFETY: caller passes an EntryStore-owned pointer valid for the
         // process lifetime; no other live `&mut` to it during this call.
-        let entry_abs_path = unsafe { &*entry }.abs_path().as_bytes();
-        let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
-            b""
-        } else {
-            entry_abs_path
-        };
-
-        let base = &base_[0..base_.len() - extname.len()];
+        let entry_r = unsafe { &*entry };
+        // The public path and the longer absolute path are both built in `route_file_buf`.
+        let dir = strings::without_trailing_slash(entry_r.dir());
+        if dir.len() + 1 + base_.len() >= MAX_PATH_BYTES {
+            log.add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "ENAMETOOLONG opening route: {}{}{}",
+                    bstr::BStr::new(dir),
+                    SEP_STR,
+                    bstr::BStr::new(base_)
+                ),
+            );
+            return None;
+        }
 
         let public_dir = strings::trim(public_dir_, SEP_STR.as_bytes());
 
@@ -848,12 +850,9 @@ impl Route {
                 (Route::INDEX_ROUTE_NAME, Route::INDEX_ROUTE_NAME)
             };
 
-            if abs_path_str.is_empty() {
-                // The reads of `cache().fd` and the `set_abs_path` write below
-                // rewrite the cached `Entry`; serialize them on the per-entry
-                // mutex (the same lock every other `Entry` rewrite path takes).
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                let _entry_guard = unsafe { &*entry }.mutex.lock_guard();
+            // The closure runs under the per-entry mutex, like every other write to a cached `Entry`.
+            let Ok(entry_abs_path) = entry_r.abs_path_or_try_fill(|| {
+                let mut abs_path_str: &[u8] = b"";
                 // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
                 // Cell so the drop closure can read it while the body still mutates.
@@ -869,13 +868,10 @@ impl Route {
                     }
                 });
 
-                // SAFETY: see fn-level NOTE — read-only reborrow.
-                if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
+                if let Some(valid) = entry_r.cache().fd.unwrap_valid() {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {
-                    // SAFETY: see fn-level NOTE — read-only reborrow.
-                    let entry_r = unsafe { &*entry };
                     let parts = [entry_r.dir(), entry_r.base()];
                     let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
                     // Rebind so the later getFdPath error
@@ -903,7 +899,7 @@ impl Route {
                                     bstr::BStr::new(&route_file_buf[..abs_len])
                                 ),
                             );
-                            return None;
+                            return Err(());
                         }
                     }
                     FileSystem::set_max_fd(file.as_ref().unwrap().handle().native());
@@ -922,19 +918,20 @@ impl Route {
                                 bstr::BStr::new(abs_path_str)
                             ),
                         );
-                        return None;
+                        return Err(());
                     }
                 };
 
-                abs_path_str = FileSystem::instance()
-                    .dirname_store()
-                    .append(_abs)
-                    .expect("unreachable");
-
-                // SAFETY: sole mutation; `base_`/`extname` (which may borrow
-                // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(Interned::from_static(abs_path_str));
-            }
+                Ok(Interned::from_static(
+                    FileSystem::instance()
+                        .dirname_store()
+                        .append(_abs)
+                        .expect("unreachable"),
+                ))
+            }) else {
+                return None;
+            };
+            let abs_path_str = entry_abs_path.as_bytes();
 
             #[cfg(windows)]
             let abs_path: AbsPath = {
@@ -958,8 +955,7 @@ impl Route {
                 debug_assert!(!strings::index_of_char(name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(abs_path.as_bytes(), b'\\').is_some());
-                // SAFETY: read-only reborrow; the `&mut` write above is dead.
-                debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
+                debug_assert!(!strings::index_of_char(entry_r.base(), b'\\').is_some());
             }
 
             Some(Route {
@@ -979,7 +975,7 @@ impl Route {
     }
 }
 
-pub mod sorter {
+pub(crate) mod sorter {
     use super::*;
 
     const fn build_sort_table() -> [u8; 256] {
@@ -999,7 +995,7 @@ pub mod sorter {
 
     static SORT_TABLE: [u8; 256] = build_sort_table();
 
-    pub fn sort_by_name_string(lhs: &[u8], rhs: &[u8]) -> bool {
+    pub(crate) fn sort_by_name_string(lhs: &[u8], rhs: &[u8]) -> bool {
         let n = lhs.len().min(rhs.len());
         for (lhs_i, rhs_i) in lhs[0..n].iter().zip(&rhs[0..n]) {
             match SORT_TABLE[*lhs_i as usize].cmp(&SORT_TABLE[*rhs_i as usize]) {
@@ -1011,7 +1007,7 @@ pub mod sorter {
         lhs.len().cmp(&rhs.len()) == Ordering::Less
     }
 
-    pub fn sort_by_name(a: &Route, b: &Route) -> bool {
+    pub(crate) fn sort_by_name(a: &Route, b: &Route) -> bool {
         let a_name = a.match_name.as_bytes();
         let b_name = b.match_name.as_bytes();
 
@@ -1038,7 +1034,7 @@ pub mod sorter {
     }
 
     /// Adapter for slice::sort_by which expects an Ordering.
-    pub fn sort_by_name_cmp(a: &Route, b: &Route) -> Ordering {
+    pub(crate) fn sort_by_name_cmp(a: &Route, b: &Route) -> Ordering {
         if sort_by_name(a, b) {
             Ordering::Less
         } else if sort_by_name(b, a) {
@@ -1072,52 +1068,7 @@ pub struct Match<'a> {
     pub file_path: &'a [u8],
     /// route name, like `"posts/[id]"`
     pub name: &'a [u8],
-
-    // NOTE: raw `*mut` (not `&'a mut`).
-    // `MatchedRoute` (bun_runtime) stores this self-referentially — a
-    // `&'a mut List` here would be invalidated under Stacked Borrows the
-    // moment any `&mut MatchedRoute` is taken.
-    pub params: *mut route_param::List<'a>,
     pub query_string: &'a [u8],
-}
-
-impl<'a> Match<'a> {
-    /// Widen all borrowed slices to `'static` for self-referential storage.
-    ///
-    /// Field-by-field move (no bitwise reinterpret). Used by `MatchedRoute`
-    /// (bun_runtime), which moves the backing `pathname_backing` buffer into
-    /// the same heap-stable `Box` that holds this `Match` — see the SAFETY
-    /// note at that call site for the full invariant.
-    ///
-    /// # Safety
-    /// Caller guarantees every borrowed slice (and `*params`' element slices)
-    /// outlives the returned value.
-    #[inline]
-    #[allow(unsafe_op_in_unsafe_fn)]
-    pub unsafe fn detach_lifetime(self) -> Match<'static> {
-        // `d` stays `unsafe fn` so a safe-signature wrapper does not hide the
-        // lifetime-widen; the outer fn carries `#[allow(unsafe_op_in_unsafe_fn)]`
-        // so the direct call sites below need no per-line `unsafe { }`.
-        #[inline(always)]
-        unsafe fn d(s: &[u8]) -> &'static [u8] {
-            // SAFETY: caller contract on `detach_lifetime` — every borrowed
-            // slice outlives the returned `Match<'static>`.
-            unsafe { &*core::ptr::from_ref::<[u8]>(s) }
-        }
-        Match {
-            pathname: d(self.pathname),
-            file_path: d(self.file_path),
-            name: d(self.name),
-            // Raw pointer; lifetime parameter on the pointee is phantom for the
-            // pointer value itself.
-            params: self.params.cast::<route_param::List<'static>>(),
-            query_string: d(self.query_string),
-        }
-    }
-
-    pub fn pathname_without_leading_slash(&self) -> &[u8] {
-        strings::trim_left(self.pathname, b"/")
-    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1146,17 +1097,17 @@ pub trait ResolverLike {
 pub mod pattern {
     use super::*;
 
-    pub type RoutePathInt = u16;
+    type RoutePathInt = u16;
 
     #[derive(Clone, Copy)]
     pub struct Pattern {
-        pub value: Value,
-        pub len: RoutePathInt,
+        pub(crate) value: Value,
+        pub(crate) len: RoutePathInt,
     }
 
     impl Pattern {
         /// Match a filesystem route pattern to a URL path.
-        pub fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
+        pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
             path: &'a [u8],
             // case-sensitive, must not have a leading slash
@@ -1173,8 +1124,8 @@ pub mod pattern {
 
                 match pattern.value {
                     Value::Static(str_) => {
-                        let segment =
-                            &path_[0..path_.iter().position(|&b| b == b'/').unwrap_or(path_.len())];
+                        let segment = &path_
+                            [0..strings::index_of_char_usize(path_, b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
                             params.clear(); // shrinkRetainingCapacity(0)
                             return false;
@@ -1191,7 +1142,7 @@ pub mod pattern {
                         }
                     }
                     Value::Dynamic(dynamic) => {
-                        if let Some(i) = path_.iter().position(|&b| b == b'/') {
+                        if let Some(i) = strings::index_of_char_usize(path_, b'/') {
                             params.push(Param {
                                 name: dynamic.str(name),
                                 value: &path_[0..i],
@@ -1220,9 +1171,11 @@ pub mod pattern {
                                 });
                                 path_ = b"";
                                 let _ = path_;
+                                return true;
                             }
 
-                            return true;
+                            params.clear(); // shrinkRetainingCapacity(0)
+                            return false;
                         }
 
                         if !ALLOW_OPTIONAL_CATCH_ALL {
@@ -1263,7 +1216,7 @@ pub mod pattern {
         /// Validate a Route pattern, returning the number of route parameters.
         /// `None` means invalid. Error messages are logged.
         /// That way, we can provide a list of all invalid routes rather than failing the first time.
-        pub fn validate(input: &[u8], log: &mut bun_ast::Log) -> Option<ValidationResult> {
+        pub(crate) fn validate(input: &[u8], log: &mut bun_ast::Log) -> Option<ValidationResult> {
             if strings::CodepointIterator::needs_utf8_decoding(input) {
                 let source = bun_ast::Source::init_empty_file(input);
                 log.add_error_fmt(
@@ -1349,15 +1302,18 @@ pub mod pattern {
             })
         }
 
-        pub fn init(input: &[u8], offset_: RoutePathInt) -> Result<Pattern, PatternParseError> {
+        pub(crate) fn init(
+            input: &[u8],
+            offset_: RoutePathInt,
+        ) -> Result<Pattern, PatternParseError> {
             Self::init_maybe_hash::<true>(input, offset_)
         }
 
-        pub fn is_end(self, input: &[u8]) -> bool {
+        pub(crate) fn is_end(self, input: &[u8]) -> bool {
             self.len as usize >= input.len() - 1
         }
 
-        pub fn init_unhashed(
+        pub(crate) fn init_unhashed(
             input: &[u8],
             offset_: RoutePathInt,
         ) -> Result<Pattern, PatternParseError> {
@@ -1516,8 +1472,8 @@ pub mod pattern {
 
     #[derive(Clone, Copy, Default)]
     pub struct ValidationResult {
-        pub param_count: u16,
-        pub kind: Tag,
+        pub(crate) param_count: u16,
+        pub(crate) kind: Tag,
     }
 
     #[derive(strum::IntoStaticStr, Debug, Clone, Copy)]
@@ -1551,206 +1507,15 @@ pub mod pattern {
     }
 }
 
-pub use pattern::Pattern;
+pub(crate) use pattern::Pattern;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Tests + test helpers
+// Tests
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn make_test(cwd_path: &[u8], data: &[(&str, &str)]) -> crate::Result<()> {
-        Output::init_test();
-        debug_assert!(cwd_path.len() > 1 && cwd_path != b"/" && !cwd_path.ends_with(b"bun"));
-        let bun_tests_dir = bun_sys::Dir::cwd()
-            .make_open_path(b"bun-test-scratch", bun_sys::OpenDirOptions::default())?;
-        let _ = bun_tests_dir.delete_tree(cwd_path);
-
-        let cwd = bun_tests_dir.make_open_path(cwd_path, bun_sys::OpenDirOptions::default())?;
-        bun_sys::fchdir(cwd.fd())?;
-
-        for (name, value) in data {
-            let name_b = name.as_bytes();
-            // NOTE: paths without a '/' have no parent dir to create;
-            // rposition on '/' finds the parent (test fixture paths are
-            // always forward-slash).
-            if let Some(slash) = name_b.iter().rposition(|&c| c == b'/') {
-                if slash > 0 {
-                    cwd.make_path(&name_b[..slash])?;
-                }
-            }
-            let file = bun_sys::File::create(cwd.fd(), name_b, true)?;
-            file.write_all(value.as_bytes())?;
-            let _ = file.close();
-        }
-        Ok(())
-    }
-
-    /// Newtype so the orphan rule lets us `impl ResolverLike` for a
-    /// foreign-crate type.
-    struct TestResolver<'a>(bun_resolver::Resolver<'a>);
-
-    impl<'a> ResolverLike for TestResolver<'a> {
-        fn fs(&self) -> &'static FileSystem {
-            // SAFETY: process-static singleton (see `FileSystem::instance`).
-            unsafe { &*self.0.fs() }
-        }
-        fn fs_impl(&self) -> *mut Fs::Implementation {
-            // SAFETY: `&fs.fs` — the `Implementation` field of the singleton.
-            unsafe { core::ptr::from_mut(&mut (*self.0.fs()).fs) }
-        }
-        fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
-            self.0.read_dir_info_ignore_error(path)
-        }
-    }
-
-    pub struct Test;
-
-    impl Test {
-        pub fn make_routes(
-            test_name: &'static str,
-            data: &[(&str, &str)],
-        ) -> crate::Result<Routes> {
-            Output::init_test();
-            make_test(test_name.as_bytes(), data)?;
-            bun_ast::initialize_store();
-            // const fs = try FileSystem.init(null);
-            let _ = bun_resolver::fs::FileSystem::init(None)?;
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-
-            // var pages_parts = [_]string{ top_level_dir, "pages" };
-            // const pages_dir = try Fs.FileSystem.instance.absAlloc(default_allocator, &pages_parts);
-            let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
-            let pages_dir = bun_resolver::fs::FileSystem::instance()
-                .abs_alloc(&pages_parts)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-
-            // const router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
-            // SAFETY: process-static singleton just initialized above.
-            let fs_opaque: &'static FileSystem = unsafe { &*fs };
-            let router = Router::init(
-                fs_opaque,
-                RouteConfig {
-                    dir: pages_dir.to_vec().into_boxed_slice(),
-                    extensions: vec![b"js".as_slice().into()].into_boxed_slice(),
-                    ..RouteConfig::default()
-                },
-            )?;
-
-            let mut log = bun_ast::Log::init();
-            // NOTE: `errdefer logger.print(Output.errorWriter())` — Rust has
-            // no errdefer; the test harness panics on error anyway, but the guard
-            // still flushes diagnostics on early-return for parity.
-            let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
-                // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
-            });
-
-            // const opts = Options.BundleOptions{ .target = .browser, ... };
-            // NOTE: the resolver-side `BundleOptions` subset omits
-            // `loaders`/`define`/`log`/`routes`/`entry_points`/`out_extensions`/
-            // `transform_options` — none are read by `Resolver::init1` or the
-            // dir-info walk, so `Default` + `target` is the faithful projection.
-            let opts = bun_resolver::options::BundleOptions {
-                target: bun_ast::Target::Browser,
-                external: bun_resolver::options::ExternalModules::default(),
-                ..Default::default()
-            };
-
-            // var resolver = Resolver.init1(default_allocator, &logger, &FileSystem.instance, opts);
-            let mut resolver = TestResolver(bun_resolver::Resolver::init1(
-                core::ptr::NonNull::from(&mut log),
-                fs,
-                opts,
-            ));
-
-            // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
-            let root_dir = resolver
-                .0
-                .read_dir_info(pages_dir)?
-                .ok_or_else(|| crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
-
-            // return RouteLoader.loadAll(..., opts.routes, &logger, Resolver, &resolver, root_dir);
-            // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
-            let routes = RouteLoader::load_all(
-                router.config.clone(),
-                unsafe { &mut *core::ptr::from_mut(&mut log) },
-                &mut resolver,
-                &root_dir,
-                top_level_dir,
-            );
-            scopeguard::ScopeGuard::into_inner(_err_dump);
-            Ok(routes)
-        }
-
-        pub fn make(
-            test_name: &'static str,
-            data: &[(&str, &str)],
-        ) -> crate::Result<Router<'static>> {
-            make_test(test_name.as_bytes(), data)?;
-            bun_ast::initialize_store();
-            // const fs = try FileSystem.initWithForce(null, true);
-            let _ = bun_resolver::fs::FileSystem::init_with_force::<true>(None)?;
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-
-            let pages_parts: [&[u8]; 2] = [top_level_dir, b"pages"];
-            let pages_dir = bun_resolver::fs::FileSystem::instance()
-                .abs_alloc(&pages_parts)
-                .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
-
-            // var router = try Router.init(&FileSystem.instance, default_allocator, RouteConfig{...});
-            // SAFETY: process-static singleton just initialized above.
-            let fs_opaque: &'static FileSystem = unsafe { &*fs };
-            let mut router = Router::init(
-                fs_opaque,
-                RouteConfig {
-                    dir: pages_dir.to_vec().into_boxed_slice(),
-                    extensions: vec![b"js".as_slice().into()].into_boxed_slice(),
-                    ..RouteConfig::default()
-                },
-            )?;
-
-            let mut log = bun_ast::Log::init();
-            let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
-                // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
-            });
-
-            let opts = bun_resolver::options::BundleOptions {
-                target: bun_ast::Target::Browser,
-                external: bun_resolver::options::ExternalModules::default(),
-                ..Default::default()
-            };
-
-            let mut resolver = TestResolver(bun_resolver::Resolver::init1(
-                core::ptr::NonNull::from(&mut log),
-                fs,
-                opts,
-            ));
-
-            // const root_dir = (try resolver.readDirInfo(pages_dir)).?;
-            let root_dir = resolver
-                .0
-                .read_dir_info(pages_dir)?
-                .ok_or_else(|| crate::Error::Sys(bun_errno::SystemErrno::ENOENT))?;
-
-            // try router.loadRoutes(&logger, root_dir, Resolver, &resolver, top_level_dir);
-            // SAFETY: `_err_dump` only re-derives `&*log` on drop (after this borrow ends).
-            router.load_routes(
-                unsafe { &mut *core::ptr::from_mut(&mut log) },
-                &root_dir,
-                &mut resolver,
-                top_level_dir,
-            )?;
-            let entry_points = router.get_entry_points();
-
-            assert_eq!(data.len(), entry_points.len());
-            scopeguard::ScopeGuard::into_inner(_err_dump);
-            Ok(router)
-        }
-    }
 
     #[test]
     fn pattern_match() {

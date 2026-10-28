@@ -1,0 +1,5 @@
+foo(/* HTML */ `---
+layout:   foo
+---
+Test <a
+href="https://example.com">abc</a>.`, b);

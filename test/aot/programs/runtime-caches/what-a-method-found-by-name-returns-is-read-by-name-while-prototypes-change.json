@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: Buffer",
+  "runWithASAN": "it reads members of prototypes whose storage has been packed anew"
+}

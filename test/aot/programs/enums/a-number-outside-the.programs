@@ -1,0 +1,90 @@
+//// a-number-outside-the-enum-is-given-for-a-parameter-with-a-default-and-read-in-a-closure.ts
+// TypeScript lets any number into a numeric enum. Here 2 ** 31, which no 32-bit integer holds, is all that is ever given for a parameter of the enum's type that has a default; it is copied into a `let` and read by a closure.
+enum Mode {
+  Off,
+  On,
+}
+function see(run: () => unknown): unknown {
+  try {
+    return run();
+  } catch (error) {
+    return error;
+  }
+}
+function inner(first: number, mode = Mode.On): string {
+  let local = mode;
+  return first + " " + see(() => local) + " " + typeof local;
+}
+function probe(mode: Mode): string {
+  return inner(1, mode);
+}
+const loose = 2 ** 31;
+console.log(probe(loose));
+
+// The same where several numbers and the default come by.
+function innerOfMany(first: number, mode = Mode.On): string {
+  let local = mode;
+  return first + " " + see(() => local) + " " + typeof local;
+}
+const half = 1 / 2;
+console.log(innerOfMany(1, loose), innerOfMany(2, Mode.Off), innerOfMany(3), innerOfMany(4, half), innerOfMany(5, -(2 ** 40)));
+//// a-number-outside-the-enum-is-given-for-it-and-read-in-a-closure.ts
+// TypeScript takes any number for a numeric enum, so a parameter of the enum's type may hold a number that no member has. The build once stopped on this program with an internal error.
+const seen: string[] = [];
+function see(run: () => unknown): void {
+  try { seen.push(String(run())); } catch (error) { seen.push((error as Error).name); }
+}
+enum Mode { Off, On }
+const taken: (string | Promise<string>)[] = [];
+const probe = (given: Mode): string => {
+  let out = "";
+  const checks: [string, () => unknown][] = [];
+  const local: Mode = given;
+  checks.push(["or-other", () => local || "other"]);
+  for (const [, run] of checks) see(run);
+  return out;
+};
+async function both(): Promise<void> {
+  const honest = Mode.On;
+  try {
+    const loose: number = 2 ** 31;
+    const typed = loose;
+    taken.push(probe(typed));
+  } catch (error) {}
+  try { taken.push(probe(honest)); } catch (error) {}
+}
+try { both(); } catch (error) {}
+console.log(seen.join(" "), taken.length);
+//// const-enum-members-across-files/again.ts
+export * from "./kinds";
+export { Kind as Sort } from "./kinds";
+//// const-enum-members-across-files/kinds.ts
+export const enum Kind { Word, Number = 5, Text, Flag = 1 << 4, Both = Number | Flag }
+export const enum Name { Left = "left", Right = "right" }
+export enum Plain { One = 1, Two = 2 }
+//// const-enum-members-across-files/main.js
+// A member of a `const` enum is its value wherever TypeScript names it, whichever file declares the enum, as in tsc and `bun build`. Plain `bun run` reads the object of an imported enum, so it shows what JavaScript stored there.
+// The object is still there for JavaScript and for a computed key. A plain enum of another file is read from its object.
+import { Kind, Name, Plain } from "./kinds.ts";
+import { describe, read, readByKey } from "./reader.ts";
+console.log(JSON.stringify(read()), [0, 5, 6, 21, 50].map(describe).join());
+Kind.Number = 50;
+Name.Left = "changed";
+Plain.One = 10;
+console.log(JSON.stringify(read()), [0, 5, 6, 21, 50].map(describe).join());
+console.log(JSON.stringify([Kind.Number, Name.Left, Plain.One, readByKey("Number"), typeof Kind]));
+//// const-enum-members-across-files/reader.ts
+import { Kind, Name, Plain } from "./kinds";
+import { Kind as ThroughStar, Sort } from "./again";
+import * as all from "./again";
+export function read(): unknown[] { return [Kind.Number, Kind["Text"], ThroughStar.Number, Sort.Both, all.Kind.Flag, Name.Left, Plain.One]; }
+export function describe(kind: number): string {
+  switch (kind) {
+    case Kind.Word: return "word";
+    case ThroughStar.Number: return "number";
+    case Sort.Text: return "text";
+    case all.Kind.Both: return "both";
+    default: return "other";
+  }
+}
+export function readByKey(key: string): unknown { return (all as any).Kind[key]; }

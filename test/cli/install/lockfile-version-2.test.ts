@@ -1,7 +1,7 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
 import { exists } from "fs/promises";
-import { bunExe, bunEnv as env, tempDir } from "harness";
+import { bunExe, bunEnv as env, MAX_PATH_BYTES, tempDir } from "harness";
 import { join } from "path";
 
 // These tests cover the text lockfile bump to version 2 and the parse-time
@@ -303,6 +303,34 @@ it("unsafe git .bun-tag is rejected only at version 2", async () => {
   }
 });
 
+// The tag is formatted into a cache folder name before `Repository::checkout` validates it.
+it.concurrent.each([0, 1, 2])(
+  "rejects a git .bun-tag longer than the path buffer at version %d",
+  async lockfileVersion => {
+    const gitUrl = "git+ssh://git@127.0.0.1:1/example/repo.git#main";
+    using dir = tempDir("lockfile-gittag-length", {
+      "package.json": JSON.stringify({ name: "root", dependencies: { dep: gitUrl } }),
+      "bun.lock": JSON.stringify({
+        lockfileVersion,
+        configVersion: 1,
+        workspaces: { "": { name: "root", dependencies: { dep: gitUrl } } },
+        packages: { dep: [`dep@${gitUrl}`, {}, Buffer.alloc(MAX_PATH_BYTES + 4, "a").toString()] },
+      }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--frozen-lockfile"],
+      cwd: String(dir),
+      // Blocks the ssh transport so git can't clone.
+      env: { ...env, GIT_ALLOW_PROTOCOL: "file" },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).toContain("Invalid git dependency tag");
+    expect(exitCode).toBe(1);
+  },
+);
+
 // A `github` dependency resolves via the tarball-download path, not
 // `Repository::checkout`, so its `.bun-tag` is fed into the cache folder name
 // with no use-site re-validation. The parse-time safety check therefore stays
@@ -338,6 +366,36 @@ it("unsafe github .bun-tag is rejected at every version", async () => {
     expect(err).toContain("Invalid git dependency tag");
     expect(exitCode).not.toBe(0);
   }
+});
+
+it("a github resolution whose committish contains a slash reads back with owner, repo and tag intact", async () => {
+  const ghUrl = "github:example/repo#feature/branch";
+  const lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: {
+      "": { name: "root", dependencies: { dep: ghUrl } },
+    },
+    packages: {
+      dep: [`dep@${ghUrl}`, {}, "example-repo-abc1234"],
+    },
+  });
+
+  using dir = tempDir("lockfile-github-committish-slash", {
+    "package.json": JSON.stringify({ name: "root", dependencies: { dep: ghUrl } }),
+    "bun.lock": lockfile,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "hash-string"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out).toContain("dep@github:example/repo#abc1234\n");
+  expect(exitCode).toBe(0);
 });
 
 // The writer must not silently upgrade a lockfile to v2 if doing so would make
@@ -386,6 +444,74 @@ it("re-saving a v1 off-registry lockfile keeps it at version 1", async () => {
   expect(exitCode).toBe(0);
 });
 
+// A nested override rule alone must not push a walk-held v1 file to v3 (v3 implies v2 strictness).
+it("re-saving a v1 off-registry lockfile that gains a nested override rule stays at version 1 and re-reads frozen in the same directory", async () => {
+  await using offRegistry = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  const v1Lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "root", dependencies: { "no-deps": "1.0.0" } } },
+    packages: {
+      "no-deps": ["no-deps@1.0.0", `http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`, {}, ""],
+    },
+  });
+
+  using dir = tempDir("lockfile-v1-nested-override-roundtrip", {
+    "package.json": JSON.stringify({
+      name: "root",
+      dependencies: { "no-deps": "1.0.0" },
+      overrides: { "no-deps": { bar: "1.0.0" } },
+    }),
+    "bun.lock": v1Lockfile,
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const after = await file(join(String(dir), "bun.lock")).text();
+  expect(err).toContain("Saved lockfile");
+  expect(after).toContain(`"lockfileVersion": 1,`);
+  expect(after).not.toContain(`"lockfileVersion": 3,`);
+  expect(after).toContain(`"no-deps": {`);
+  expect(after).toContain(`"bar": "1.0.0"`);
+  expect(after).toContain(`no-deps-1.0.0.tgz", {}, ""]`);
+  expect(exitCode).toBe(0);
+
+  await using frozenProc = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile", "--lockfile-only"],
+    cwd: String(dir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, frozenErr, frozenExit] = await Promise.all([
+    frozenProc.stdout.text(),
+    frozenProc.stderr.text(),
+    frozenProc.exited,
+  ]);
+
+  expect(frozenErr).not.toContain(
+    "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
+  );
+  expect(frozenErr).not.toContain("Ignoring lockfile");
+  expect(frozenErr).not.toContain("lockfile had changes, but lockfile is frozen");
+  expect(await file(join(String(dir), "bun.lock")).text()).toBe(after);
+  expect(frozenExit).toBe(0);
+});
+
 // The version stamp must not depend on the writer's registry config. A lockfile
 // is committed and shared, so whether the *reader* accepts it cannot hinge on
 // the *writer*'s `~/.npmrc` / scoped registries. A v1 lockfile with a tarball
@@ -422,7 +548,7 @@ it("re-saving keeps v1 for a tarball under a writer-only scoped registry", async
   // make the writer consider the entry "v2-clean" and stamp v2.
   using writerDir = tempDir("lockfile-scoped-writer", {
     "package.json": JSON.stringify({ name: "root", dependencies: { "@myorg/foo": "1.0.0" } }),
-    "bunfig.toml": `[install.scopes]\nmyorg = { url = "${scopedRegistryUrl}" }\n`,
+    "bunfig.toml": Bun.TOML.stringify({ install: { scopes: { myorg: { url: scopedRegistryUrl } } } }),
     "bun.lock": v1Lockfile,
   });
 
@@ -471,5 +597,86 @@ it("re-saving keeps v1 for a tarball under a writer-only scoped registry", async
     "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
   );
   // v1 round-trips with no fetch, so the reader exits cleanly.
+  expect(readerExit).toBe(0);
+});
+
+it("re-saving keeps v1 for a writer-only scoped tarball even when a nested override rule is added", async () => {
+  await using scopedRegistry = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    fetch() {
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const scopedRegistryUrl = `http://127.0.0.1:${scopedRegistry.port}/`;
+  const scopedTarball = `${scopedRegistryUrl}@myorg/foo/-/foo-1.0.0.tgz`;
+
+  const v1Lockfile = JSON.stringify({
+    lockfileVersion: 1,
+    configVersion: 1,
+    workspaces: { "": { name: "root", dependencies: { "@myorg/foo": "1.0.0" } } },
+    packages: {
+      "@myorg/foo": ["@myorg/foo@1.0.0", scopedTarball, {}, ""],
+    },
+  });
+  // `bar` is not in the tree, so the new rule re-resolves nothing and the row survives verbatim.
+  const packageJson = JSON.stringify({
+    name: "root",
+    dependencies: { "@myorg/foo": "1.0.0" },
+    overrides: { "@myorg/foo": { bar: "1.0.0" } },
+  });
+
+  using writerDir = tempDir("lockfile-scoped-nested-writer", {
+    "package.json": packageJson,
+    "bunfig.toml": Bun.TOML.stringify({ install: { scopes: { myorg: { url: scopedRegistryUrl } } } }),
+    "bun.lock": v1Lockfile,
+  });
+
+  await using writerProc = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: String(writerDir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, writerErr, writerExit] = await Promise.all([
+    writerProc.stdout.text(),
+    writerProc.stderr.text(),
+    writerProc.exited,
+  ]);
+
+  const rewritten = await file(join(String(writerDir), "bun.lock")).text();
+  expect(writerErr).toContain("Saved lockfile");
+  expect(rewritten).toContain(`"lockfileVersion": 1,`);
+  expect(rewritten).not.toContain(`"lockfileVersion": 3,`);
+  expect(rewritten).toContain(`"@myorg/foo": {`);
+  expect(rewritten).toContain(`"bar": "1.0.0"`);
+  expect(rewritten).toContain(scopedTarball);
+  expect(writerExit).toBe(0);
+
+  using readerDir = tempDir("lockfile-scoped-nested-reader", {
+    "package.json": packageJson,
+    "bun.lock": rewritten,
+  });
+
+  await using readerProc = spawn({
+    cmd: [bunExe(), "install", "--frozen-lockfile", "--lockfile-only"],
+    cwd: String(readerDir),
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, readerErr, readerExit] = await Promise.all([
+    readerProc.stdout.text(),
+    readerProc.stderr.text(),
+    readerProc.exited,
+  ]);
+
+  expect(readerErr).not.toContain(
+    "Missing integrity hash for npm package resolved to a tarball URL outside the configured registry",
+  );
+  expect(readerErr).not.toContain("Ignoring lockfile");
+  expect(readerErr).not.toContain("lockfile had changes, but lockfile is frozen");
+  expect(await file(join(String(readerDir), "bun.lock")).text()).toBe(rewritten);
   expect(readerExit).toBe(0);
 });

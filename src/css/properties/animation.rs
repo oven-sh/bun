@@ -1,11 +1,13 @@
 use crate as css;
 use crate::CSSString;
+use crate::css_properties::custom::{TokenOrValue, UnparsedProperty};
+use crate::css_properties::{Property, PropertyId};
 use crate::css_values::easing::EasingFunction;
 use crate::css_values::ident::{CustomIdent, DashedIdent, is_reserved_custom_ident};
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
 use crate::css_values::time::Time;
 use crate::generics::CssEql;
-use crate::{Parser, PrintErr, Printer};
+use crate::{Parser, PrintErr, Printer, Token};
 use bun_core::strings;
 
 /// A value for the [animation](https://drafts.csswg.org/css-animations/#animation) shorthand property.
@@ -14,21 +16,21 @@ pub struct Animation {
     /// The animation name.
     pub name: AnimationName,
     /// The animation duration.
-    pub duration: Time,
+    pub(crate) duration: Time,
     /// The easing function for the animation.
-    pub timing_function: EasingFunction,
+    pub(crate) timing_function: EasingFunction,
     /// The number of times the animation will run.
-    pub iteration_count: AnimationIterationCount,
+    pub(crate) iteration_count: AnimationIterationCount,
     /// The direction of the animation.
-    pub direction: AnimationDirection,
+    pub(crate) direction: AnimationDirection,
     /// The current play state of the animation.
-    pub play_state: AnimationPlayState,
+    pub(crate) play_state: AnimationPlayState,
     /// The animation delay.
-    pub delay: Time,
+    pub(crate) delay: Time,
     /// The animation fill mode.
-    pub fill_mode: AnimationFillMode,
+    pub(crate) fill_mode: AnimationFillMode,
     /// The animation timeline.
-    pub timeline: AnimationTimeline,
+    pub(crate) timeline: AnimationTimeline,
 }
 
 impl Animation {
@@ -282,7 +284,7 @@ impl AnimationName {
         }
     }
 
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+    pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         match self {
             AnimationName::None => hasher.update(&0u32.to_ne_bytes()),
             AnimationName::Ident(i) => {
@@ -298,7 +300,7 @@ impl AnimationName {
     }
 
     #[inline]
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         // All payloads are `Copy` (arena slice pointers); identity copy.
         match self {
             AnimationName::None => AnimationName::None,
@@ -374,6 +376,37 @@ impl AnimationName {
     }
 }
 
+/// The raw-token fallback of `animation` and `animation-name`. In a CSS module it tags the keyframes names.
+#[cold]
+pub(crate) fn parse_unparsed(
+    property_id: PropertyId,
+    input: &mut Parser,
+    options: &css::ParserOptions,
+) -> css::Result<Property> {
+    let mut unparsed = UnparsedProperty::parse(property_id, input, options)?;
+    if input.flags.css_modules() {
+        for token in unparsed.value.v.iter_mut() {
+            if let TokenOrValue::Token(Token::Ident(ident)) = *token
+                && !is_keyword(ident)
+            {
+                let name = AnimationName::Ident(CustomIdent { v: ident });
+                *token = TokenOrValue::AnimationName(name);
+            }
+        }
+    }
+    Ok(Property::Unparsed(unparsed))
+}
+
+/// Whether `ident` is a keyword of the `animation` shorthand and so not the name of a `@keyframes` rule.
+fn is_keyword(ident: &[u8]) -> bool {
+    EasingFunction::is_ident(ident)
+        || <AnimationDirection as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
+        || <AnimationFillMode as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
+        || <AnimationPlayState as css::EnumProperty>::from_ascii_case_insensitive(ident).is_some()
+        || strings::eql_any_case_insensitive_ascii(ident, &[b"infinite", b"auto"])
+        || is_reserved_custom_ident(ident)
+}
+
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.
 #[derive(Clone, Copy, PartialEq)]
 pub enum AnimationIterationCount {
@@ -402,7 +435,7 @@ impl AnimationIterationCount {
         }
     }
 
-    pub fn default() -> AnimationIterationCount {
+    pub(crate) fn default() -> AnimationIterationCount {
         AnimationIterationCount::Number(1.0)
     }
 }
@@ -421,7 +454,7 @@ pub enum AnimationDirection {
 }
 
 impl AnimationDirection {
-    pub fn default() -> AnimationDirection {
+    pub(crate) fn default() -> AnimationDirection {
         AnimationDirection::Normal
     }
 }
@@ -436,7 +469,7 @@ pub enum AnimationPlayState {
 }
 
 impl AnimationPlayState {
-    pub fn default() -> AnimationPlayState {
+    pub(crate) fn default() -> AnimationPlayState {
         AnimationPlayState::Running
     }
 }
@@ -455,7 +488,7 @@ pub enum AnimationFillMode {
 }
 
 impl AnimationFillMode {
-    pub fn default() -> AnimationFillMode {
+    pub(crate) fn default() -> AnimationFillMode {
         AnimationFillMode::None
     }
 }
@@ -495,11 +528,11 @@ impl AnimationTimeline {
         }
     }
 
-    pub fn default() -> AnimationTimeline {
+    pub(crate) fn default() -> AnimationTimeline {
         AnimationTimeline::Auto
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
         match self {
             AnimationTimeline::Auto => AnimationTimeline::Auto,
             AnimationTimeline::None => AnimationTimeline::None,

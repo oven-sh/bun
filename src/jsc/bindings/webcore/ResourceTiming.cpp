@@ -26,34 +26,14 @@
 #include "config.h"
 #include "ResourceTiming.h"
 
-// #include "CachedResource.h"
-// #include "DocumentLoadTiming.h"
-// #include "OriginAccessPatterns.h"
 #include "PerformanceServerTiming.h"
-// #include "SecurityOrigin.h"
 #include "ResourceLoadTiming.h"
-#include <wtf/CrossThreadCopier.h>
 
 #include "NetworkLoadMetrics.h"
 
 namespace WebCore {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceTiming);
-
-// ResourceTiming ResourceTiming::fromMemoryCache(const URL& url, const String& initiator, const ResourceLoadTiming& loadTiming, const ResourceResponse& response, const NetworkLoadMetrics& networkLoadMetrics, const SecurityOrigin& securityOrigin)
-// {
-//     return ResourceTiming(url, initiator, loadTiming, networkLoadMetrics, response, securityOrigin);
-// }
-
-// ResourceTiming ResourceTiming::fromLoad(CachedResource& resource, const URL& url, const String& initiator, const ResourceLoadTiming& loadTiming, const NetworkLoadMetrics& networkLoadMetrics, const SecurityOrigin& securityOrigin)
-// {
-//     return ResourceTiming(url, initiator, loadTiming, networkLoadMetrics, resource.response(), securityOrigin);
-// }
-
-// ResourceTiming ResourceTiming::fromSynchronousLoad(const URL& url, const String& initiator, const ResourceLoadTiming& loadTiming, const NetworkLoadMetrics& networkLoadMetrics, const ResourceResponse& response, const SecurityOrigin& securityOrigin)
-// {
-//     return ResourceTiming(url, initiator, loadTiming, networkLoadMetrics, response, securityOrigin);
-// }
 
 ResourceTiming::ResourceTiming(const URL& url, const String& initiatorType, const NetworkLoadMetrics& networkLoadMetrics)
     : m_url(url)
@@ -66,11 +46,6 @@ ResourceTiming::ResourceTiming(const URL& url, const String& initiatorType, cons
 {
 }
 
-// void ResourceTiming::updateExposure(const SecurityOrigin& origin)
-// {
-//     m_isSameOriginRequest = m_isSameOriginRequest && origin.canRequest(m_url, OriginAccessPatternsForWebProcess::singleton());
-// }
-
 Vector<Ref<PerformanceServerTiming>> ResourceTiming::populateServerTiming() const
 {
     // To increase privacy, this additional check was proposed at https://github.com/w3c/resource-timing/issues/342 .
@@ -80,28 +55,6 @@ Vector<Ref<PerformanceServerTiming>> ResourceTiming::populateServerTiming() cons
     return WTF::map(m_serverTiming, [](auto& entry) {
         return PerformanceServerTiming::create(String(entry.name), entry.duration, String(entry.description));
     });
-}
-
-ResourceTiming ResourceTiming::isolatedCopy() const&
-{
-    return ResourceTiming {
-        m_url.isolatedCopy(),
-        m_initiatorType.isolatedCopy(),
-        // m_resourceLoadTiming.isolatedCopy(),
-        m_networkLoadMetrics.isolatedCopy(),
-        crossThreadCopy(m_serverTiming)
-    };
-}
-
-ResourceTiming ResourceTiming::isolatedCopy() &&
-{
-    return ResourceTiming {
-        WTF::move(m_url).isolatedCopy(),
-        WTF::move(m_initiatorType).isolatedCopy(),
-        // WTF::move(m_resourceLoadTiming).isolatedCopy(),
-        WTF::move(m_networkLoadMetrics).isolatedCopy(),
-        crossThreadCopy(WTF::move(m_serverTiming))
-    };
 }
 
 } // namespace WebCore

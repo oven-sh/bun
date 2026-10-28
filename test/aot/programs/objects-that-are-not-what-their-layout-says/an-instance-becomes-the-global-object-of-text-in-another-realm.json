@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: node:vm",
+  "runWithASAN": "objects of the program are changed by code that the compiler does not see"
+}

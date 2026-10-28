@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "core": ["./packages/core/src/index.ts"],
+      "loose": ["./packages/loose/src/index.ts"]
+    }
+  },
+  "references": [{ "path": "./packages/core" }, { "path": "./packages/loose" }]
+}

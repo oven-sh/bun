@@ -1,24 +1,25 @@
 use crate as css;
 use crate::css_rules::{CssRuleList, Location};
-use crate::css_values::ident::CustomIdent;
+use crate::css_values::ident::{CustomIdent, CustomIdentFns};
 use crate::media_query::{self, MediaFeatureType, Operator, QueryCondition, QueryFeature, ToCss};
 use crate::properties::Property;
 use crate::{PrintErr, Printer};
 
 /// A [`<container-name>`](https://drafts.csswg.org/css-contain-3/#typedef-container-name).
 pub struct ContainerName {
-    pub v: CustomIdent,
+    pub(crate) v: CustomIdent,
 }
 
 impl ContainerName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        super::custom_ident_to_css(&self.v, dest)
+        // Global in a CSS module, like the name in `container` and `container-name`.
+        CustomIdentFns::to_css_with_options(&self.v, dest, false)
     }
 }
 
 impl ContainerName {
     #[inline]
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         Self {
             v: self.v.deep_clone(bump),
         }
@@ -28,7 +29,6 @@ impl ContainerName {
 // ─── ContainerName parse ──────────────────────────────────────────────────
 impl ContainerName {
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerName> {
-        use crate::css_values::ident::CustomIdentFns;
         use bun_core::strings;
         let ident = CustomIdentFns::parse(input)?;
 
@@ -44,7 +44,6 @@ impl ContainerName {
     }
 }
 
-pub use ContainerName as ContainerNameFns;
 pub(crate) type ContainerSizeFeature = QueryFeature<ContainerSizeFeatureId>;
 
 #[derive(Clone, Copy, PartialEq, Eq, css::DefineEnumProperty)]
@@ -177,7 +176,7 @@ impl QueryCondition for StyleQuery {
 }
 
 impl StyleQuery {
-    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `Operator` is `Copy`; `Property` routes through `dc::property` until
         // the per-variant `DeepClone` derives land in `properties_generated.rs`.
         match self {
@@ -209,6 +208,8 @@ pub enum ContainerCondition {
     },
     /// A style query.
     Style(StyleQuery),
+    /// `<general-enclosed>`, as its source text.
+    Unknown(&'static [u8]),
 }
 
 impl ToCss for ContainerCondition {
@@ -251,13 +252,17 @@ impl QueryCondition for ContainerCondition {
     ) -> core::result::Result<(), PrintErr> {
         f.to_css(dest)
     }
+    const GENERAL_ENCLOSED: Option<fn(&'static [u8]) -> Self> = Some(ContainerCondition::Unknown);
     fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let Self::Style(query) = self else {
-            unreachable!()
-        };
-        dest.write_str("style(")?;
-        query.to_css(dest)?;
-        dest.write_char(b')')
+        match self {
+            Self::Style(query) => {
+                dest.write_str("style(")?;
+                query.to_css(dest)?;
+                dest.write_char(b')')
+            }
+            Self::Unknown(raw) => dest.write_bytes(raw),
+            _ => unreachable!(),
+        }
     }
 
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
@@ -289,13 +294,13 @@ impl QueryCondition for ContainerCondition {
             ContainerCondition::Not(_) => true,
             ContainerCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
             ContainerCondition::Feature(f) => f.needs_parens(parent_operator, targets),
-            ContainerCondition::Style(_) => false,
+            ContainerCondition::Style(_) | ContainerCondition::Unknown(_) => false,
         }
     }
 }
 
 impl ContainerCondition {
-    pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
+    pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         // `QueryFeature<F>` routes through `dc::query_feature` (Clone is
         // faithful — see note there); `Operator` is `Copy`.
         match self {
@@ -309,6 +314,7 @@ impl ContainerCondition {
                 conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
             },
             Self::Style(q) => Self::Style(q.deep_clone(bump)),
+            Self::Unknown(raw) => Self::Unknown(raw),
         }
     }
 }
@@ -328,12 +334,12 @@ impl ContainerCondition {
 pub struct ContainerRule<R> {
     /// The name of the container.
     pub name: Option<ContainerName>,
-    /// The container condition.
-    pub condition: ContainerCondition,
+    /// The container condition. `None` when the rule has only a name.
+    pub(crate) condition: Option<ContainerCondition>,
     /// The rules within the `@container` rule.
-    pub rules: CssRuleList<R>,
+    pub(crate) rules: CssRuleList<R>,
     /// The location of the rule in the source file.
-    pub loc: Location,
+    pub(crate) loc: Location,
 }
 
 impl<R> ContainerRule<R> {
@@ -344,14 +350,18 @@ impl<R> ContainerRule<R> {
         dest.write_str("@container ")?;
         if let Some(name) = &self.name {
             name.to_css(dest)?;
-            dest.write_char(b' ')?;
+            if self.condition.is_some() {
+                dest.write_char(b' ')?;
+            }
         }
 
-        // Don't downlevel range syntax in container queries.
-        let exclude = dest.targets.exclude;
-        dest.targets.exclude.insert(css::Features::MEDIA_QUERIES);
-        self.condition.to_css(dest)?;
-        dest.targets.exclude = exclude;
+        if let Some(condition) = &self.condition {
+            // Don't downlevel range syntax in container queries.
+            let exclude = dest.targets.exclude;
+            dest.targets.exclude.insert(css::Features::MEDIA_QUERIES);
+            condition.to_css(dest)?;
+            dest.targets.exclude = exclude;
+        }
 
         dest.block(|d| {
             d.newline()?;
@@ -367,7 +377,7 @@ impl<R> ContainerRule<R> {
     {
         Self {
             name: self.name.as_ref().map(|n| n.deep_clone(bump)),
-            condition: self.condition.deep_clone(bump),
+            condition: self.condition.as_ref().map(|c| c.deep_clone(bump)),
             rules: self.rules.deep_clone(bump),
             loc: self.loc,
         }

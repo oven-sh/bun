@@ -5,28 +5,45 @@ use bun_ast::ImportRecord;
 use bun_core::strings;
 
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
+#[derive(Clone)]
 pub struct Url {
-    /// The url string.
-    pub import_record_idx: u32,
+    /// The url as written.
+    text: &'static [u8],
+    /// The import record of this `url()`.
+    pub(crate) import_record_idx: u32,
     /// The location where the `url()` was seen in the CSS source file.
-    pub loc: crate::dependencies::Location,
+    pub(crate) loc: crate::dependencies::Location,
 }
 
 impl Url {
+    pub(crate) fn new(
+        text: &'static [u8],
+        import_record_idx: u32,
+        loc: crate::dependencies::Location,
+    ) -> Url {
+        Url {
+            text,
+            import_record_idx,
+            loc,
+        }
+    }
+
     pub fn parse(input: &mut css::Parser) -> CssResult<Url> {
         let start_pos = input.position();
         let loc = input.current_source_location();
         let url = input.expect_url_cloned()?;
+        let end_pos = input.position();
         let import_record_idx =
-            input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
-        Ok(Url {
+            input.add_import_record(url, start_pos, end_pos, bun_ast::ImportKind::Url)?;
+        Ok(Url::new(
+            url,
             import_record_idx,
-            loc: crate::dependencies::Location::from_source_location(loc),
-        })
+            crate::dependencies::Location::from_source_location(loc),
+        ))
     }
 
     /// Returns whether the URL is absolute, and not relative.
-    pub fn is_absolute(&self, import_records: &[ImportRecord]) -> bool {
+    pub(crate) fn is_absolute(&self, import_records: &[ImportRecord]) -> bool {
         let url: &[u8] = import_records[self.import_record_idx as usize].path.pretty;
 
         // Quick checks. If the url starts with '.', it is relative.
@@ -100,13 +117,14 @@ impl Url {
         let is_internal = import_record
             .flags
             .contains(bun_ast::ImportRecordFlags::IS_INTERNAL);
-        let url = dest.get_import_record_url(self.import_record_idx)?;
+        let (url, is_placeholder) = dest.get_import_record_url(self.import_record_idx)?;
         // SAFETY: `url` borrows arena-backed `import_info` data valid for the
         // printer's `'a`; detach so `dest` can be re-borrowed mutably below.
         // Printer arena, not parser source — route to the raw primitive.
         let url: &[u8] = unsafe { bun_collections::detach_lifetime(url) };
 
-        if dest.minify && !is_internal {
+        // The path that replaces a placeholder can hold a space or a parenthesis: keep the quotes.
+        if dest.minify && !is_internal && !is_placeholder {
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
             // `Token::to_css_generic(UnquotedUrl(url))` is inlined here —
@@ -145,24 +163,16 @@ impl Url {
         Ok(())
     }
 
-    pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        Url {
-            import_record_idx: self.import_record_idx,
-            loc: self.loc,
-        }
+    pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
+        self.clone()
     }
 
-    // TODO: dedupe import records??
-    // This might not fucking work
+    /// Each `url()` has its own import record, so the text decides.
     pub fn eql(&self, other: &Url) -> bool {
-        self.import_record_idx == other.import_record_idx
+        self.text == other.text
     }
 
-    // TODO: dedupe import records??
-    // This might not fucking work
-    pub fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // Only `import_record_idx` participates in identity (matches `eql`
-        // above); `loc` is presentation metadata.
-        hasher.update(&self.import_record_idx.to_ne_bytes());
+    pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
+        hasher.update(self.text);
     }
 }

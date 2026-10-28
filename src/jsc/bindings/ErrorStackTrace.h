@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <JavaScriptCore/AOTFunctionDescription.h>
+#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/WasmIndexOrName.h>
@@ -16,8 +18,7 @@ using namespace WebCore;
 
 namespace Zig {
 
-/* JSCStackFrame is an alternative to JSC::StackFrame, which provides the following advantages\changes:
- * - Also hold the call frame (ExecState). This is mainly used by CallSite to get "this value".
+/* JSCStackFrame is a view over a JSC::StackFrame, which provides the following advantages\changes:
  * - More detailed and v8 compatible "source offsets" calculations: JSC::StackFrame only provides the
  *   line number and column numbers. It's column calculation seems to be different than v8's column.
  *   According to v8's unit tests, it seems that their column number points to the beginning of
@@ -46,10 +47,9 @@ public:
 
 private:
     JSC::VM& m_vm;
+    // Points into the vector this frame was built from (JSCStackTrace::fromExisting).
+    const JSC::StackFrame* m_stackFrame;
     JSC::JSCell* m_callee { nullptr };
-
-    // May be null
-    JSC::CallFrame* m_callFrame;
 
     // May be null
     JSC::CodeBlock* m_codeBlock { nullptr };
@@ -58,7 +58,6 @@ private:
     // Lazy-initialized
     WTF::String m_sourceURL;
     WTF::String m_functionName;
-    WTF::String m_typeName;
 
     // m_wasmFunctionIndexOrName has meaning only when m_isWasmFrame is set
     JSC::Wasm::IndexOrName m_wasmFunctionIndexOrName;
@@ -66,6 +65,7 @@ private:
 
     bool m_isFunctionOrEval = false;
     bool m_isAsync = false;
+    bool m_isAOTCompiled = false;
 
     enum class SourcePositionsState {
         NotCalculated,
@@ -77,17 +77,15 @@ private:
     SourcePositionsState m_sourcePositionsState;
 
 public:
-    JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor);
     JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame);
 
+    const JSC::StackFrame& stackFrame() const { return *m_stackFrame; }
     JSC::JSCell* callee() const { return m_callee; }
-    JSC::CallFrame* callFrame() const { return m_callFrame; }
     JSC::CodeBlock* codeBlock() const { return m_codeBlock; }
 
     intptr_t sourceID() const;
     JSC::JSString* sourceURL();
     JSC::JSString* functionName();
-    JSC::JSString* typeName();
 
     bool isFunctionOrEval() const { return m_isFunctionOrEval; }
     bool isAsync() const { return m_isAsync; }
@@ -104,6 +102,8 @@ public:
     bool isWasmFrame() const { return m_isWasmFrame; }
     bool isEval()
     {
+        if (m_isAOTCompiled)
+            return m_stackFrame->codeType() == JSC::EvalCode;
         if (m_codeBlock) {
             if (m_codeBlock->codeType() == JSC::EvalCode) {
                 return true;
@@ -134,6 +134,8 @@ public:
     }
     bool isConstructor() const
     {
+        if (m_isAOTCompiled)
+            return m_stackFrame->isConstructor() && !m_stackFrame->isBuiltinFunction();
         return m_codeBlock && (JSC::CodeSpecializationKind::CodeForConstruct == m_codeBlock->specializationKind());
     }
 
@@ -153,8 +155,6 @@ private:
      * "display name" property -> "name" property -> JSFunction\InternalFunction "name" methods.
      */
     ALWAYS_INLINE String retrieveFunctionName();
-
-    ALWAYS_INLINE String retrieveTypeName();
 
     bool calculateSourcePositions();
 };
@@ -179,27 +179,10 @@ public:
 
     WTF::Vector<JSCStackFrame>&& frames() { return WTF::move(m_frames); }
 
+    // Drops private-visibility frames (present when Options::showPrivateScriptsInStackTraces() is on), so the result does not index like existingFrames.
     static JSCStackTrace fromExisting(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& existingFrames);
 
     static void getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, JSC::JSCell* owner, JSC::JSValue caller, WTF::Vector<JSC::StackFrame>& stackTrace, size_t stackTraceLimit);
-
-    /* In JSC, JSC::Exception points to the actual value that was thrown, usually
-     * a JSC::ErrorInstance (but could be any JSValue). In v8, on the other hand,
-     * TryCatch::Exception returns the thrown value, and we follow the same rule in jscshim.
-     * This is a problem, since JSC::Exception is the one that holds the stack trace.
-     * ErrorInstances might also hold the stack trace (until the error properties are
-     * "materialized" and it is no longer needed). So, to try to get the stack trace for a thrown JSValue,
-     * we'll try two things:
-     * - If the current JSC (vm) exception points to our value, it means our value is probably the current
-     *   exception and we could take the stack trace from the vm's current JSC::Exception. The downside
-     *   of doing this is that we'll get the last stack trace of the thrown value, meaning that if the value
-     *   was thrown, stored in the api and than re-thrown, we'll get the latest stack trace and not the one
-     *   that was available when we stored it. For now it'll do.
-     * - If that failed and our thrown value is a JSC::ErrorInstance, we'll try to use it's stack trace,
-     *   if it currently has one.
-     *
-     * Return value must remain stack allocated */
-    static JSCStackTrace getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue);
 
 private:
     JSCStackTrace(WTF::Vector<JSCStackFrame>& frames)
@@ -211,6 +194,34 @@ private:
 bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor);
 bool isImplementationVisibilityPrivate(const JSC::StackFrame& frame);
 
+#if ENABLE(AOT)
+// The names and positions of such an executable are in a source map that is not shipped with it.
+inline bool hasExternalSourceMap()
+{
+    const JSC::AOT::Image* image = JSC::AOT::Image::current();
+    return image && image->isObfuscated();
+}
+
+// The file that every compiled frame of such an executable names. The line and column of a frame are a position in the map.
+String externalSourceMapFileURL();
+
+String sourceURL(const JSC::AOT::SourcePosition&);
+#endif
+
+// The position of a compiled frame was recorded at build time, in the original source or in an external source map: no source map applies to it at run time.
+inline bool hasOriginalSourcePosition(const JSC::StackFrame& frame)
+{
+#if ENABLE(AOT)
+    if (frame.isCompiledFrame()) [[unlikely]] {
+        auto position = frame.compiledPosition();
+        return position && (position->source || hasExternalSourceMap());
+    }
+#else
+    UNUSED_PARAM(frame);
+#endif
+    return false;
+}
+
 String sourceURL(const JSC::SourceOrigin& origin);
 String sourceURL(JSC::SourceProvider* sourceProvider);
 String sourceURL(const JSC::SourceCode& sourceCode);
@@ -219,11 +230,6 @@ String sourceURL(JSC::CodeBlock& codeBlock);
 String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
-
-enum class FinalizerSafety {
-    NotInFinalizer,
-    MustNotTriggerGC,
-};
 
 class FunctionNameFlags {
 public:
@@ -236,7 +242,7 @@ public:
 };
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee);
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety, unsigned int* flags);
+String functionName(JSC::VM& vm, JSC::JSObject* callee);
+String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags);
 
 }

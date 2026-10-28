@@ -26,36 +26,71 @@
 
 #include "DOMURL.h"
 #include <wtf/URLParser.h>
+#include <wtf/SIMDUTF.h>
 #include "helpers.h"
 #include "JSURLSearchParams.h"
+#include "VectorSizeLimit.h"
 
 namespace WebCore {
-
-extern "C" JSC::EncodedJSValue URLSearchParams__create(JSDOMGlobalObject* globalObject, const ZigString* input)
-{
-    String str = Zig::toString(*input);
-    auto result = URLSearchParams::create(str, nullptr);
-    return JSC::JSValue::encode(WebCore::toJSNewlyCreated(globalObject, globalObject, WTF::move(result)));
-}
 
 extern "C" WebCore::URLSearchParams* URLSearchParams__fromJS(JSC::EncodedJSValue value)
 {
     return WebCoreCast<WebCore::JSURLSearchParams, WebCore::URLSearchParams>(value);
 }
 
-// callback accepting a void* and a const ZigString*, returning void
-typedef void (*URLSearchParams__toStringCallback)(void* ctx, const ZigString* str);
+// callback accepting a void* and a const EncodedSlice*, returning void
+typedef void (*URLSearchParams__toStringCallback)(void* ctx, const EncodedSlice* str);
 
 extern "C" void URLSearchParams__toString(WebCore::URLSearchParams* urlSearchParams, void* ctx, URLSearchParams__toStringCallback callback)
 {
     String str = urlSearchParams->toString();
-    auto zig = Zig::toZigString(str);
-    callback(ctx, &zig);
+    auto slice = Zig::toEncodedSlice(str);
+    callback(ctx, &slice);
 }
 
-URLSearchParams::URLSearchParams(const String& init, DOMURL* associatedURL)
+static bool canDecodeURLEncodedPart(StringView part)
+{
+    // There's nothing to decode, so the parser returns the part unchanged.
+    if (part.containsOnlyASCII() && part.find('%') == notFound)
+        return true;
+    size_t utf8Length = part.is8Bit()
+        ? simdutf::utf8_length_from_latin1(reinterpret_cast<const char*>(part.span8().data()), part.length())
+        : simdutf::utf8_length_from_utf16le(part.span16().data(), part.length());
+    return utf8Length <= Bun::maxVectorSize<char16_t>();
+}
+
+static bool tryAppendPair(Vector<KeyValuePair<String, String>>& pairs, KeyValuePair<String, String>&& pair)
+{
+    return pairs.size() < Bun::maxVectorSize<KeyValuePair<String, String>>() && pairs.tryAppend(WTF::move(pair));
+}
+
+ExceptionOr<Vector<KeyValuePair<String, String>>> URLSearchParams::parseURLEncodedForm(StringView input)
+{
+    // A UTF-16 code unit is at most 3 UTF-8 bytes.
+    bool mayBeTooLong = static_cast<size_t>(input.length()) * 3 > Bun::maxVectorSize<char16_t>();
+    Vector<KeyValuePair<String, String>> pairs;
+    for (StringView pair : input.split('&')) {
+        if (mayBeTooLong) [[unlikely]] {
+            size_t equalIndex = pair.find('=');
+            if (equalIndex == notFound ? !canDecodeURLEncodedPart(pair) : !canDecodeURLEncodedPart(pair.left(equalIndex)) || !canDecodeURLEncodedPart(pair.substring(equalIndex + 1)))
+                return Exception { OutOfMemoryError };
+        }
+        if (auto nameAndValue = WTF::URLParser::parseQueryNameAndValue(pair)) {
+            if (!tryAppendPair(pairs, WTF::move(*nameAndValue))) [[unlikely]]
+                return Exception { OutOfMemoryError };
+        }
+    }
+    return WTF::move(pairs);
+}
+
+static ExceptionOr<Vector<KeyValuePair<String, String>>> parseSearch(const String& search)
+{
+    return URLSearchParams::parseURLEncodedForm(search.startsWith('?') ? StringView(search).substring(1) : StringView(search));
+}
+
+URLSearchParams::URLSearchParams(Vector<KeyValuePair<String, String>>&& pairs, DOMURL* associatedURL)
     : m_associatedURL(associatedURL)
-    , m_pairs(init.startsWith('?') ? WTF::URLParser::parseURLEncodedForm(StringView(init).substring(1)) : WTF::URLParser::parseURLEncodedForm(init))
+    , m_pairs(WTF::move(pairs))
 {
 }
 
@@ -66,6 +101,14 @@ URLSearchParams::URLSearchParams(const Vector<KeyValuePair<String, String>>& pai
 
 URLSearchParams::~URLSearchParams() = default;
 
+ExceptionOr<Ref<URLSearchParams>> URLSearchParams::create(const String& init, DOMURL* associatedURL)
+{
+    auto pairs = parseSearch(init);
+    if (pairs.hasException())
+        return pairs.releaseException();
+    return adoptRef(*new URLSearchParams(pairs.releaseReturnValue(), associatedURL));
+}
+
 ExceptionOr<Ref<URLSearchParams>> URLSearchParams::create(std::variant<Vector<Vector<String>>, Vector<KeyValuePair<String, String>>, String>&& variant)
 {
     auto visitor = WTF::makeVisitor([&](const Vector<Vector<String>>& vector) -> ExceptionOr<Ref<URLSearchParams>> {
@@ -73,9 +116,10 @@ ExceptionOr<Ref<URLSearchParams>> URLSearchParams::create(std::variant<Vector<Ve
         for (const auto& pair : vector) {
             if (pair.size() != 2)
                 return Exception { TypeError };
-            pairs.append({pair[0], pair[1]});
+            if (!tryAppendPair(pairs, { pair[0], pair[1] })) [[unlikely]]
+                return Exception { OutOfMemoryError };
         }
-        return adoptRef(*new URLSearchParams(WTF::move(pairs))); }, [&](const Vector<KeyValuePair<String, String>>& pairs) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(pairs)); }, [&](const String& string) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(string, nullptr)); });
+        return adoptRef(*new URLSearchParams(WTF::move(pairs))); }, [&](const Vector<KeyValuePair<String, String>>& pairs) -> ExceptionOr<Ref<URLSearchParams>> { return adoptRef(*new URLSearchParams(pairs)); }, [&](const String& string) -> ExceptionOr<Ref<URLSearchParams>> { return create(string, nullptr); });
     return std::visit(visitor, variant);
 }
 
@@ -106,7 +150,7 @@ void URLSearchParams::sort()
     needsSorting = false;
 }
 
-void URLSearchParams::set(const String& name, const String& value)
+ExceptionOr<void> URLSearchParams::set(const String& name, const String& value)
 {
     for (auto& pair : m_pairs) {
         if (pair.key != name)
@@ -124,18 +168,18 @@ void URLSearchParams::set(const String& name, const String& value)
         });
         updateURL();
         needsSorting = true;
-        return;
+        return {};
     }
-    m_pairs.append({ name, value });
-    needsSorting = true;
-    updateURL();
+    return append(name, value);
 }
 
-void URLSearchParams::append(const String& name, const String& value)
+ExceptionOr<void> URLSearchParams::append(const String& name, const String& value)
 {
-    m_pairs.append({ name, value });
+    if (!tryAppendPair(m_pairs, { name, value })) [[unlikely]]
+        return Exception { OutOfMemoryError };
     updateURL();
     needsSorting = true;
+    return {};
 }
 
 Vector<String> URLSearchParams::getAll(const StringView name) const
@@ -170,11 +214,15 @@ void URLSearchParams::updateURL()
         m_associatedURL->markSearchParamsDirty();
 }
 
-void URLSearchParams::updateFromAssociatedURL()
+ExceptionOr<void> URLSearchParams::updateFromAssociatedURL()
 {
     ASSERT(m_associatedURL);
-    String search = m_associatedURL->search();
-    m_pairs = search.startsWith('?') ? WTF::URLParser::parseURLEncodedForm(StringView(search).substring(1)) : WTF::URLParser::parseURLEncodedForm(search);
+    m_pairs.clear();
+    auto pairs = parseSearch(m_associatedURL->search());
+    if (pairs.hasException())
+        return pairs.releaseException();
+    m_pairs = pairs.releaseReturnValue();
+    return {};
 }
 
 std::optional<KeyValuePair<String, String>> URLSearchParams::Iterator::next()

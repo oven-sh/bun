@@ -27,7 +27,7 @@ use crate::reactive_scopes::visitors::{
 /// Prunes DeclareContexts lowered for HoistedConsts and transforms any
 /// references back to their original instruction kind.
 /// TS: `pruneHoistedContexts`
-pub fn prune_hoisted_contexts(
+pub(crate) fn prune_hoisted_contexts(
     func: &mut ReactiveFunction,
     env: &Environment,
 ) -> Result<(), CompilerError> {
@@ -50,7 +50,7 @@ enum UninitializedKind {
 }
 
 struct VisitorState {
-    active_scopes: Vec<std::collections::HashSet<IdentifierId>>,
+    active_scopes: Vec<crate::collections::FxHashSet<IdentifierId>>,
     uninitialized: IdMap<IdentifierId, UninitializedKind>,
 }
 
@@ -82,7 +82,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         state: &mut VisitorState,
     ) -> Result<(), CompilerError> {
         let scope_data = &self.env.scopes[scope.scope.0 as usize];
-        let decl_ids: std::collections::HashSet<IdentifierId> =
+        let decl_ids: crate::collections::FxHashSet<IdentifierId> =
             scope_data.declarations.iter().map(|(id, _)| *id).collect();
 
         // Add declared but not initialized variables
@@ -132,7 +132,7 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
         if let ReactiveValue::Instruction(InstructionValue::DeclareContext { lvalue, .. }) =
             &instruction.value
         {
-            let maybe_non_hoisted = convert_hoisted_lvalue_kind(lvalue.kind);
+            let maybe_non_hoisted = lvalue.kind.unhoisted();
             if let Some(non_hoisted) = maybe_non_hoisted {
                 if non_hoisted == InstructionKind::Function
                     && state.uninitialized.contains_key(lvalue.place.identifier)
@@ -181,15 +181,5 @@ impl<'a> ReactiveFunctionTransform for Transform<'a> {
 
         self.visit_instruction(instruction, state)?;
         Ok(Transformed::Keep)
-    }
-}
-
-/// Corresponds to TS `convertHoistedLValueKind` — returns None for non-hoisted kinds.
-fn convert_hoisted_lvalue_kind(kind: InstructionKind) -> Option<InstructionKind> {
-    match kind {
-        InstructionKind::HoistedLet => Some(InstructionKind::Let),
-        InstructionKind::HoistedConst => Some(InstructionKind::Const),
-        InstructionKind::HoistedFunction => Some(InstructionKind::Function),
-        _ => None,
     }
 }

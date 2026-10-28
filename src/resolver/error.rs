@@ -10,10 +10,12 @@ pub enum Error {
     InvalidResolveDir,
     #[error("ModuleNotFound")]
     ModuleNotFound,
-    #[error("VersionSpecifierNotAllowedHere")]
-    VersionSpecifierNotAllowedHere,
     #[error("ParseErrorAlreadyLogged")]
     ParseErrorAlreadyLogged,
+    #[error("SecurityScannerConfigured")]
+    SecurityScannerConfigured,
+    #[error("UnreadableConfig")]
+    UnreadableConfig,
     #[error(transparent)]
     Sys(#[from] bun_errno::SystemErrno),
     #[error(transparent)]
@@ -33,8 +35,9 @@ impl Error {
             Self::MissingResolveDir => "MissingResolveDir",
             Self::InvalidResolveDir => "InvalidResolveDir",
             Self::ModuleNotFound => "ModuleNotFound",
-            Self::VersionSpecifierNotAllowedHere => "VersionSpecifierNotAllowedHere",
             Self::ParseErrorAlreadyLogged => "ParseErrorAlreadyLogged",
+            Self::SecurityScannerConfigured => "SecurityScannerConfigured",
+            Self::UnreadableConfig => "UnreadableConfig",
             Self::Sys(e) => <&'static str>::from(e),
             Self::Alloc(_) => "OutOfMemory",
             Self::Core(e) => e.name(),
@@ -42,7 +45,7 @@ impl Error {
         }
     }
 
-    pub fn into_core(self) -> bun_core::Error {
+    pub(crate) fn into_core(self) -> bun_core::Error {
         match self {
             Self::Alloc(a) => bun_core::Error::Alloc(a),
             Self::Core(e) => e,

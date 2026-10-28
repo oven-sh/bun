@@ -17,7 +17,7 @@ use crate::{Opcode, Request, SendStatus, WebSocketUpgradeContext, uws_res};
 bun_opaque::opaque_ffi! { pub struct RawWebSocket; }
 
 impl RawWebSocket {
-    pub fn memory_cost(&mut self, ssl_flag: i32) -> usize {
+    pub(crate) fn memory_cost(&mut self, ssl_flag: i32) -> usize {
         c::uws_ws_memory_cost(ssl_flag, self)
     }
 }
@@ -41,6 +41,12 @@ impl AnyWebSocket {
         }
     }
 
+    /// A `uWS::WebSocket` is its `us_socket_t`.
+    #[inline]
+    pub fn us_socket(self) -> *mut crate::us_socket_t {
+        self.raw().cast()
+    }
+
     /// Raw user-data pointer cast to `*mut T` (NULL if unset).
     ///
     /// Noalias re-entrancy: the `WebSocketHandler` dispatch
@@ -54,7 +60,7 @@ impl AnyWebSocket {
     /// args) and raw-pointer `cast` is safe; only the eventual *dereference*
     /// requires the caller's "user data was set to a `*mut T`" guarantee.
     #[inline]
-    pub fn as_ptr<T>(self) -> *mut T {
+    pub(crate) fn as_ptr<T>(self) -> *mut T {
         let (ssl, ws) = self.split();
         c::uws_ws_get_user_data(ssl, ws).cast::<T>()
     }
@@ -84,6 +90,12 @@ impl AnyWebSocket {
     pub fn close(self) {
         let (ssl, ws) = self.split();
         c::uws_ws_close(ssl, ws)
+    }
+
+    /// Closes the connection with 1011 after failing to allocate a copy of an incoming message.
+    pub fn fail_out_of_memory(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_fail_out_of_memory(ssl, ws)
     }
 
     pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
@@ -149,10 +161,6 @@ impl AnyWebSocket {
     // getTopicsAsJSArray — deleted: *_jsc alias (see PORTING.md). Lives in
     // bun_runtime::socket::uws_jsc as an extension on AnyWebSocket.
 
-    // pub fn iterate_topics(self) {
-    //     return uws_ws_iterate_topics(ssl_flag, self.raw(), callback, user_data);
-    // }
-
     pub fn publish(
         self,
         topic: &[u8],
@@ -212,6 +220,22 @@ impl AnyWebSocket {
         c::uws_ws_get_buffered_amount(ssl, ws)
     }
 
+    /// Stops reading from the socket and suspends its idle timeout.
+    pub fn pause(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_pause(ssl, ws)
+    }
+
+    pub fn resume(self) {
+        let (ssl, ws) = self.split();
+        c::uws_ws_resume(ssl, ws)
+    }
+
+    pub fn is_paused(self) -> bool {
+        let (ssl, ws) = self.split();
+        c::uws_ws_is_paused(ssl, ws)
+    }
+
     pub fn get_remote_address<'a>(self, buf: &'a mut [u8]) -> &'a mut [u8] {
         let (ssl_flag, ws) = self.split();
         let mut ptr: *mut u8 = core::ptr::null_mut();
@@ -254,6 +278,8 @@ pub struct WebSocketBehavior {
     pub reset_idle_timeout_on_send: bool,
     pub send_pings_automatically: bool,
     pub max_lifetime: c_ushort,
+    pub auto_pong: bool,
+    pub skip_utf8_validation: bool,
     pub upgrade: uws_websocket_upgrade_handler,
     pub open: uws_websocket_handler,
     pub message: uws_websocket_message_handler,
@@ -274,6 +300,8 @@ impl Default for WebSocketBehavior {
             reset_idle_timeout_on_send: true,
             send_pings_automatically: true,
             max_lifetime: 0,
+            auto_pong: true,
+            skip_utf8_validation: false,
             upgrade: None,
             open: None,
             message: None,
@@ -351,7 +379,6 @@ pub struct Wrap<Server, T, const SSL: bool>(PhantomData<(Server, T)>);
 
 impl<Server, T, const SSL: bool> Wrap<Server, T, SSL>
 where
-    Server: WebSocketUpgradeServer<SSL>,
     T: WebSocketHandler,
 {
     #[inline(always)]
@@ -367,7 +394,7 @@ where
     // `WebSocketBehavior`; a safe `extern "C" fn` item coerces to the
     // `Option<unsafe extern "C" fn(..)>` field type. Each body already scopes
     // its own proof block around the `T::on_*` dispatch / `thunk::c_slice`.
-    pub(crate) extern "C" fn on_open(raw_ws: *mut RawWebSocket) {
+    extern "C" fn on_open(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
         // `*mut T` (not `&mut T`) — no `noalias` borrow held across the
         // re-entrant handler. User data was set to *mut T at upgrade time.
@@ -379,7 +406,7 @@ where
         unsafe { T::on_open(this, ws) };
     }
 
-    pub(crate) extern "C" fn on_message(
+    extern "C" fn on_message(
         raw_ws: *mut RawWebSocket,
         message: *const u8,
         length: usize,
@@ -394,7 +421,7 @@ where
         unsafe { T::on_message(this, ws, thunk::c_slice(message, length), opcode) };
     }
 
-    pub(crate) extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
+    extern "C" fn on_drain(raw_ws: *mut RawWebSocket) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if this.is_null() {
@@ -404,7 +431,7 @@ where
         unsafe { T::on_drain(this, ws) };
     }
 
-    pub(crate) extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
+    extern "C" fn on_ping(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if this.is_null() {
@@ -414,7 +441,7 @@ where
         unsafe { T::on_ping(this, ws, thunk::c_slice(message, length)) };
     }
 
-    pub(crate) extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
+    extern "C" fn on_pong(raw_ws: *mut RawWebSocket, message: *const u8, length: usize) {
         let ws = Self::make_ws(raw_ws);
         let this = ws.as_ptr::<T>();
         if this.is_null() {
@@ -424,7 +451,7 @@ where
         unsafe { T::on_pong(this, ws, thunk::c_slice(message, length)) };
     }
 
-    pub(crate) extern "C" fn on_close(
+    extern "C" fn on_close(
         raw_ws: *mut RawWebSocket,
         code: i32,
         message: *const u8,
@@ -439,7 +466,48 @@ where
         unsafe { T::on_close(this, ws, code, thunk::c_slice(message, length)) };
     }
 
-    pub(crate) extern "C" fn on_upgrade(
+    /// Settings for a `ws` package socket context. uWS's `wsPackageContext()` overrides the fields
+    /// left at their defaults. `max_payload_length` is in bytes, 0 = no limit. `compression` is
+    /// whether this context's sockets use permessage-deflate.
+    ///
+    /// These contexts aren't bound to a route, so `Server` is unused. Call it as `Wrap::<(), T, SSL>`.
+    pub fn ws_package(
+        max_payload_length: c_uint,
+        auto_pong: bool,
+        skip_utf8_validation: bool,
+        compression: bool,
+    ) -> WebSocketBehavior {
+        WebSocketBehavior {
+            compression: if compression {
+                c::SHARED_COMPRESSOR | c::SHARED_DECOMPRESSOR
+            } else {
+                0
+            },
+            // The frame parser uses 32-bit lengths, so u32::MAX is effectively no limit.
+            max_payload_length: if max_payload_length == 0 {
+                c_uint::MAX
+            } else {
+                max_payload_length
+            },
+            auto_pong,
+            skip_utf8_validation,
+            open: Some(Self::on_open),
+            message: Some(Self::on_message),
+            drain: Some(Self::on_drain),
+            ping: Some(Self::on_ping),
+            pong: Some(Self::on_pong),
+            close: Some(Self::on_close),
+            ..Default::default()
+        }
+    }
+}
+
+impl<Server, T, const SSL: bool> Wrap<Server, T, SSL>
+where
+    Server: WebSocketUpgradeServer<SSL>,
+    T: WebSocketHandler,
+{
+    extern "C" fn on_upgrade(
         ptr: *mut c_void,
         res: *mut uws_res,
         req: *mut Request,
@@ -476,6 +544,8 @@ where
             reset_idle_timeout_on_send: behavior.reset_idle_timeout_on_send,
             send_pings_automatically: behavior.send_pings_automatically,
             max_lifetime: behavior.max_lifetime,
+            auto_pong: behavior.auto_pong,
+            skip_utf8_validation: behavior.skip_utf8_validation,
             upgrade: Some(Self::on_upgrade),
             open: Some(Self::on_open),
             message: if T::HAS_ON_MESSAGE {
@@ -511,6 +581,8 @@ pub mod c {
     use super::*;
 
     pub(crate) type uws_compress_options_t = i32;
+    pub const SHARED_COMPRESSOR: i32 = 1;
+    pub const SHARED_DECOMPRESSOR: i32 = 1 << 8;
 
     // `RawWebSocket` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>` —
     // `&RawWebSocket`/`&mut RawWebSocket` are ABI-identical to a non-null
@@ -527,9 +599,16 @@ pub mod c {
             pattern_len: usize,
             id: usize,
             behavior: *const WebSocketBehavior,
+            context_key: *const c_void,
         );
+        pub(crate) fn uws_app_ws_package_context(
+            ssl: i32,
+            app: *mut uws_app_t,
+            behavior: *const WebSocketBehavior,
+        ) -> *mut WebSocketUpgradeContext;
         pub(crate) safe fn uws_ws_get_user_data(ssl: i32, ws: &mut RawWebSocket) -> *mut c_void;
         pub(crate) safe fn uws_ws_close(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) safe fn uws_ws_fail_out_of_memory(ssl: i32, ws: &mut RawWebSocket);
         pub(crate) fn uws_ws_send_with_options(
             ssl: i32,
             ws: *mut RawWebSocket,
@@ -538,28 +617,6 @@ pub mod c {
             opcode: Opcode,
             compress: bool,
             fin: bool,
-        ) -> SendStatus;
-        pub fn uws_ws_send_fragment(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            message: *const u8,
-            length: usize,
-            compress: bool,
-        ) -> SendStatus;
-        pub fn uws_ws_send_first_fragment(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            message: *const u8,
-            length: usize,
-            compress: bool,
-        ) -> SendStatus;
-        pub fn uws_ws_send_first_fragment_with_opcode(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            message: *const u8,
-            length: usize,
-            opcode: Opcode,
-            compress: bool,
         ) -> SendStatus;
         pub(crate) fn uws_ws_end(
             ssl: i32,
@@ -596,12 +653,6 @@ pub mod c {
             topic: *const u8,
             length: usize,
         ) -> bool;
-        pub fn uws_ws_iterate_topics(
-            ssl: i32,
-            ws: *mut RawWebSocket,
-            callback: Option<unsafe extern "C" fn(*const u8, usize, *mut c_void)>,
-            user_data: *mut c_void,
-        );
         // uws_ws_get_topics_as_js_array: see src/runtime/socket/uws_jsc.rs
         pub(crate) fn uws_ws_publish_with_options(
             ssl: i32,
@@ -614,15 +665,13 @@ pub mod c {
             compress: bool,
         ) -> SendStatus;
         pub(crate) safe fn uws_ws_get_buffered_amount(ssl: i32, ws: &mut RawWebSocket) -> usize;
+        pub(crate) safe fn uws_ws_pause(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) safe fn uws_ws_resume(ssl: i32, ws: &mut RawWebSocket);
+        pub(crate) safe fn uws_ws_is_paused(ssl: i32, ws: &mut RawWebSocket) -> bool;
         // Out-param `dest` is `&mut *mut u8` (non-null, valid for write); the C
         // shim only stores a pointer into socket-owned storage and returns its
         // length — no read-through precondition, so `safe fn`.
         pub(crate) safe fn uws_ws_get_remote_address(
-            ssl: i32,
-            ws: &mut RawWebSocket,
-            dest: &mut *mut u8,
-        ) -> usize;
-        pub safe fn uws_ws_get_remote_address_as_text(
             ssl: i32,
             ws: &mut RawWebSocket,
             dest: &mut *mut u8,

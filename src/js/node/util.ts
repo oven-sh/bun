@@ -1,7 +1,5 @@
 // Hardcoded module "node:util"
 const types = require("node:util/types");
-/** @type {import('node-inspect-extracted')} */
-const utl = require("internal/util/inspect");
 const { promisify } = require("internal/promisify");
 const {
   validateString,
@@ -10,20 +8,72 @@ const {
   validateObject,
   validateInteger,
 } = require("internal/validators");
-const { resistStopPropagation } = require("internal/shared");
+const { resistStopPropagation, ErrnoException } = require("internal/shared");
 const { MIMEType, MIMEParams } = require("internal/util/mime");
 const { deprecate } = require("internal/util/deprecate");
 
-const internalErrorName = $newRustFunction("node_util_binding.rs", "internalErrorName", 1);
-const parseEnv = $newRustFunction("node_util_binding.rs", "parseEnv", 1);
+const internalErrorName: (err: number) => string = $bindgen("node_util_binding.bind.ts", "internalErrorName");
+const internalErrorEntries: () => { code: number; name: string }[] = $bindgen(
+  "node_util_binding.bind.ts",
+  "internalErrorEntries",
+);
+const parseEnv: (content: string) => Record<string, string> = $bindgen("node_util_binding.bind.ts", "parseEnv");
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 const ObjectKeys = Object.keys;
 const ObjectGetOwnPropertyNames = Object.getOwnPropertyNames;
-const { uncurryThis, SafeMap } = require("internal/primordials");
-const RegExpPrototypeExec = uncurryThis(RegExp.prototype.exec);
+const { SafeMap } = require("internal/primordials");
+const RegExpPrototypeExec = RegExp.prototype.exec;
 
-var cjs_exports;
+type InspectModule = $BunModules["internal/util/inspect"];
+
+interface UtilModule {
+  _errnoException: typeof _errnoException;
+  _extend: typeof _extend;
+  callbackify: typeof callbackify;
+  convertProcessSignalToExitCode: typeof convertProcessSignalToExitCode;
+  debug: typeof debuglog;
+  debuglog: typeof debuglog;
+  deprecate: typeof deprecate;
+  format: InspectModule["format"];
+  styleText: typeof styleText;
+  formatWithOptions: InspectModule["formatWithOptions"];
+  getCallSites: typeof getCallSites;
+  getSystemErrorMap: typeof getSystemErrorMap;
+  getSystemErrorName: typeof getSystemErrorName;
+  getSystemErrorMessage: typeof getSystemErrorMessage;
+  inherits: typeof inherits;
+  inspect: InspectModule["inspect"];
+  isDeepStrictEqual: typeof isDeepStrictEqual;
+  promisify: typeof promisify;
+  setTraceSigInt: typeof setTraceSigInt;
+  stripVTControlCharacters: InspectModule["stripVTControlCharacters"];
+  toUSVString: typeof toUSVString;
+  aborted: typeof aborted;
+  types: typeof types;
+  parseEnv: typeof parseEnv;
+  parseArgs: typeof parseArgs;
+  TextDecoder: typeof TextDecoder;
+  TextEncoder: typeof TextEncoder;
+  MIMEType: typeof MIMEType;
+  MIMEParams: typeof MIMEParams;
+  isArray: typeof $isArray;
+  isBoolean: typeof isBoolean;
+  isBuffer: typeof isBuffer;
+  isNull: typeof isNull;
+  isNullOrUndefined: typeof isNullOrUndefined;
+  isNumber: typeof isNumber;
+  isString: typeof isString;
+  isSymbol: typeof isSymbol;
+  isUndefined: typeof isUndefined;
+  isRegExp: typeof isRegExp;
+  isObject: typeof isObject;
+  isDate: typeof isDate;
+  isError: typeof isError;
+  isFunction: typeof isFunction;
+  isPrimitive: typeof isPrimitive;
+  log: typeof log;
+}
 
 function isBuffer(value) {
   return Buffer.isBuffer(value);
@@ -32,19 +82,14 @@ function isFunction(value) {
   return typeof value === "function";
 }
 
-const deepEquals = Bun.deepEquals;
-function isDeepStrictEqual(a, b, skipPrototype) {
-  return deepEquals(a, b, true, skipPrototype);
-}
+// Node semantics (includes the [[Prototype]] identity check Bun.deepEquals omits) plus the
+// skipPrototype third argument, which is public API in node v26.3.0 (fn.length === 3).
+// https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
+const { isDeepStrictEqual } = require("internal/util/comparisons");
 
-const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
+const parseArgs = $bindgen("parse_args.bind.ts", "parseArgs");
 
-const inspect = utl.inspect;
-const formatWithOptions = utl.formatWithOptions;
-const format = utl.format;
-const stripVTControlCharacters = utl.stripVTControlCharacters;
-
-var debugs = {};
+var debugs: Record<string, (...args: unknown[]) => void> = {};
 var debugEnvRegex = /^$/;
 const NODE_DEBUG = process.env.NODE_DEBUG;
 if (NODE_DEBUG) {
@@ -56,10 +101,10 @@ if (NODE_DEBUG) {
     .toUpperCase();
   debugEnvRegex = new RegExp("^" + debugEnv + "$", "i");
 }
-var debugEnv;
+var debugEnv: string;
 // Emits a warning when the user enables NODE_DEBUG=http or NODE_DEBUG=http2,
 // like Node.js's internal/util/debuglog.
-function emitWarningIfNeeded(set) {
+function emitWarningIfNeeded(set: string) {
   if ("HTTP" === set || "HTTP2" === set) {
     process.emitWarning(
       "Setting the NODE_DEBUG environment variable " +
@@ -72,14 +117,16 @@ function emitWarningIfNeeded(set) {
   }
 }
 
-function debuglog(set) {
+/** Node also takes a callback that is given the logger once it is made. It is ignored here. */
+function debuglog(set: string, callback?: (fn: (...args: unknown[]) => void) => void): (...args: unknown[]) => void;
+function debuglog(set: string) {
   set = set.toUpperCase();
   if (!debugs[set]) {
     if (debugEnvRegex.test(set)) {
       var pid = process.pid;
       emitWarningIfNeeded(set);
       debugs[set] = function () {
-        var msg = format.$apply(cjs_exports, arguments);
+        var msg = require("internal/util/inspect").format.$apply(undefined, arguments as unknown as unknown[]);
         console.error("%s %d: %s", set, pid, msg);
       };
     } else {
@@ -131,7 +178,7 @@ function isPrimitive(arg) {
     typeof arg === "undefined"
   );
 }
-function pad(n) {
+function pad(n: number) {
   return n < 10 ? "0" + n.toString(10) : n.toString(10);
 }
 var months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -141,7 +188,11 @@ function timestamp() {
   return [d.getDate(), months[d.getMonth()], time].join(" ");
 }
 var log = function log() {
-  console.log("%s - %s", timestamp(), format.$apply(cjs_exports, arguments));
+  console.log(
+    "%s - %s",
+    timestamp(),
+    require("internal/util/inspect").format.$apply(undefined, arguments as unknown as unknown[]),
+  );
 };
 var inherits = function inherits(ctor, superCtor) {
   if (ctor === undefined || ctor === null) {
@@ -175,16 +226,20 @@ var _extend = function (origin, add) {
   return origin;
 };
 
-function callbackifyOnRejected(reason, cb) {
+interface FalsyValueRejectionError extends Error {
+  reason?: unknown;
+}
+
+function callbackifyOnRejected(reason: unknown, cb: (reason: unknown) => void) {
   if (!reason) {
-    var newReason = new Error("Promise was rejected with a falsy value");
+    var newReason: FalsyValueRejectionError = new Error("Promise was rejected with a falsy value");
     newReason.reason = reason;
     newReason.code = "ERR_FALSY_VALUE_REJECTION";
     reason = newReason;
   }
   return cb(reason);
 }
-function callbackify(original) {
+function callbackify(original: (this: unknown, ...args: unknown[]) => Promise<unknown>) {
   const { validateFunction } = require("internal/validators");
   validateFunction(original, "original");
 
@@ -235,20 +290,25 @@ const kHexStyleCacheMax = 256;
 // Matches #RGB or #RRGGBB
 const hexColorRegExp = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
-let styleCache;
-let hexStyleCache;
-let lazyStreamUtils;
-let lazyUtilColors;
+interface TextStyle {
+  __proto__: null;
+  openSeq: string;
+  closeSeq: string;
+  keepClose?: boolean;
+}
+
+let styleCache: Record<string, TextStyle> | undefined;
+let hexStyleCache: Map<string, TextStyle> | undefined;
 
 function getHexStyleCache() {
-  hexStyleCache ??= new SafeMap();
+  hexStyleCache ??= new SafeMap() as Map<string, TextStyle>;
   return hexStyleCache;
 }
 
 function getStyleCache() {
   if (styleCache === undefined) {
-    styleCache = { __proto__: null };
-    const colors = inspect.colors;
+    styleCache = { __proto__: null } as unknown as Record<string, TextStyle>;
+    const colors = require("internal/util/inspect").inspect.colors;
     for (const key of ObjectGetOwnPropertyNames(colors)) {
       const codes = colors[key];
       if (codes) {
@@ -266,8 +326,8 @@ function getStyleCache() {
   return styleCache;
 }
 
-function hexToRgb(hex) {
-  let hexStr;
+function hexToRgb(hex: string) {
+  let hexStr: string;
   if (hex.length === 4) {
     hexStr = hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3];
   } else if (hex.length === 7) {
@@ -279,24 +339,24 @@ function hexToRgb(hex) {
   return Buffer.from(hexStr, "hex");
 }
 
-function getHexStyle(hex) {
+function getHexStyle(hex: string) {
   const cache = getHexStyleCache();
   const cached = cache.get(hex);
   if (cached !== undefined) return cached;
   const rgb = hexToRgb(hex);
-  const style = {
+  const style: TextStyle = {
     __proto__: null,
     openSeq: kEscape + `38;2;${rgb[0]};${rgb[1]};${rgb[2]}` + kEscapeEnd,
     closeSeq: kHexCloseSeq,
   };
   if (cache.size >= kHexStyleCacheMax) {
-    cache.delete(cache.keys().next().value);
+    cache.delete(cache.keys().next().value!);
   }
   cache.set(hex, style);
   return style;
 }
 
-function replaceCloseCode(str, closeSeq, openSeq, keepClose) {
+function replaceCloseCode(str: string, closeSeq: string, openSeq: string, keepClose: boolean | undefined) {
   const closeLen = closeSeq.length;
   let index = str.indexOf(closeSeq);
   if (index === -1) return str;
@@ -334,7 +394,7 @@ function styleText(format, text, options) {
 
     if (format[0] === "#") {
       let hexStyle = getHexStyleCache().get(format);
-      if (hexStyle === undefined && RegExpPrototypeExec(hexColorRegExp, format) !== null) {
+      if (hexStyle === undefined && RegExpPrototypeExec.$call(hexColorRegExp, format) !== null) {
         hexStyle = getHexStyle(format);
       }
       if (hexStyle !== undefined) {
@@ -353,13 +413,11 @@ function styleText(format, text, options) {
   let skipColorize;
   if (validateStream) {
     const stream = options?.stream ?? process.stdout;
-    lazyStreamUtils ??= require("internal/streams/utils");
-    const { isNodeStream, isReadableStream, isWritableStream } = lazyStreamUtils;
+    const { isNodeStream, isReadableStream, isWritableStream } = require("internal/streams/utils");
     if (!isReadableStream(stream) && !isWritableStream(stream) && !isNodeStream(stream)) {
       throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
     }
-    lazyUtilColors ??= require("internal/util/colors");
-    skipColorize = !lazyUtilColors.shouldColorize(stream);
+    skipColorize = !require("internal/util/colors").shouldColorize(stream);
   }
 
   const formatArray = $isJSArray(format) ? format : [format];
@@ -374,7 +432,7 @@ function styleText(format, text, options) {
     if (typeof key === "string" && key[0] === "#") {
       let hexStyle = getHexStyleCache().get(key);
       if (hexStyle === undefined) {
-        if (RegExpPrototypeExec(hexColorRegExp, key) === null) {
+        if (RegExpPrototypeExec.$call(hexColorRegExp, key) === null) {
           throw $ERR_INVALID_ARG_VALUE("format", key, "must be a valid hex color (#RGB or #RRGGBB)");
         }
         if (skipColorize) continue;
@@ -390,7 +448,7 @@ function styleText(format, text, options) {
 
     const style = cache[key];
     if (style === undefined) {
-      validateOneOf(key, "format", ObjectGetOwnPropertyNames(inspect.colors));
+      validateOneOf(key, "format", ObjectGetOwnPropertyNames(require("internal/util/inspect").inspect.colors));
     }
     openCodes += style.openSeq;
     closeCodes = style.closeSeq + closeCodes;
@@ -408,13 +466,148 @@ function getSystemErrorName(err: any) {
   return internalErrorName(err);
 }
 
-function prepareCallSites(_err, callSites) {
-  const result = [];
+// libuv's uv_strerror() messages keyed by error name (target-independent).
+// The per-target codes come from the native uv_e table (internalErrorEntries).
+const uvErrorMessages = {
+  __proto__: null,
+  E2BIG: "argument list too long",
+  EACCES: "permission denied",
+  EADDRINUSE: "address already in use",
+  EADDRNOTAVAIL: "address not available",
+  EAFNOSUPPORT: "address family not supported",
+  EAGAIN: "resource temporarily unavailable",
+  EAI_ADDRFAMILY: "address family not supported",
+  EAI_AGAIN: "temporary failure",
+  EAI_BADFLAGS: "bad ai_flags value",
+  EAI_BADHINTS: "invalid value for hints",
+  EAI_CANCELED: "request canceled",
+  EAI_FAIL: "permanent failure",
+  EAI_FAMILY: "ai_family not supported",
+  EAI_MEMORY: "out of memory",
+  EAI_NODATA: "no address",
+  EAI_NONAME: "unknown node or service",
+  EAI_OVERFLOW: "argument buffer overflow",
+  EAI_PROTOCOL: "resolved protocol is unknown",
+  EAI_SERVICE: "service not available for socket type",
+  EAI_SOCKTYPE: "socket type not supported",
+  EALREADY: "connection already in progress",
+  EBADF: "bad file descriptor",
+  EBUSY: "resource busy or locked",
+  ECANCELED: "operation canceled",
+  ECHARSET: "invalid Unicode character",
+  ECONNABORTED: "software caused connection abort",
+  ECONNREFUSED: "connection refused",
+  ECONNRESET: "connection reset by peer",
+  EDESTADDRREQ: "destination address required",
+  EEXIST: "file already exists",
+  EFAULT: "bad address in system call argument",
+  EFBIG: "file too large",
+  EHOSTUNREACH: "host is unreachable",
+  EINTR: "interrupted system call",
+  EINVAL: "invalid argument",
+  EIO: "i/o error",
+  EISCONN: "socket is already connected",
+  EISDIR: "illegal operation on a directory",
+  ELOOP: "too many symbolic links encountered",
+  EMFILE: "too many open files",
+  EMSGSIZE: "message too long",
+  ENAMETOOLONG: "name too long",
+  ENETDOWN: "network is down",
+  ENETUNREACH: "network is unreachable",
+  ENFILE: "file table overflow",
+  ENOBUFS: "no buffer space available",
+  ENODEV: "no such device",
+  ENOENT: "no such file or directory",
+  ENOMEM: "not enough memory",
+  ENONET: "machine is not on the network",
+  ENOPROTOOPT: "protocol not available",
+  ENOSPC: "no space left on device",
+  ENOSYS: "function not implemented",
+  ENOTCONN: "socket is not connected",
+  ENOTDIR: "not a directory",
+  ENOTEMPTY: "directory not empty",
+  ENOTSOCK: "socket operation on non-socket",
+  ENOTSUP: "operation not supported on socket",
+  EOVERFLOW: "value too large for defined data type",
+  EPERM: "operation not permitted",
+  EPIPE: "broken pipe",
+  EPROTO: "protocol error",
+  EPROTONOSUPPORT: "protocol not supported",
+  EPROTOTYPE: "protocol wrong type for socket",
+  ERANGE: "result too large",
+  EROFS: "read-only file system",
+  ESHUTDOWN: "cannot send after transport endpoint shutdown",
+  ESPIPE: "invalid seek",
+  ESRCH: "no such process",
+  ETIMEDOUT: "connection timed out",
+  ETXTBSY: "text file is busy",
+  EXDEV: "cross-device link not permitted",
+  UNKNOWN: "unknown error",
+  EOF: "end of file",
+  ENXIO: "no such device or address",
+  EMLINK: "too many links",
+  EHOSTDOWN: "host is down",
+  EREMOTEIO: "remote I/O error",
+  ENOTTY: "inappropriate ioctl for device",
+  EFTYPE: "inappropriate file type or format",
+  EILSEQ: "illegal byte sequence",
+  ESOCKTNOSUPPORT: "socket type not supported",
+  ENODATA: "no data available",
+  EUNATCH: "protocol driver not attached",
+  ENOEXEC: "exec format error",
+};
+
+let uvErrmap: Map<number, [string, string]> | undefined;
+function getUvErrmap() {
+  if (uvErrmap === undefined) {
+    uvErrmap = new Map();
+    const entries = internalErrorEntries();
+    for (let i = 0; i < entries.length; i++) {
+      const { code, name } = entries[i];
+      if (!uvErrmap.has(code)) uvErrmap.set(code, [name, uvErrorMessages[name] ?? name]);
+    }
+  }
+  return uvErrmap;
+}
+
+function getSystemErrorMap() {
+  // Fresh Map with fresh entry arrays: node's binding materialises a new map
+  // per call, and callers may mutate the [name, message] pairs.
+  const copy = new Map();
+  for (const [code, entry] of getUvErrmap()) {
+    copy.set(code, [entry[0], entry[1]]);
+  }
+  return copy;
+}
+
+function getSystemErrorMessage(err: any) {
+  if (typeof err !== "number") throw $ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw $ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  const entry = getUvErrmap().get(err);
+  return entry !== undefined ? entry[1] : `Unknown system error ${err}`;
+}
+
+function _errnoException(err: any, syscall: string, original?: string) {
+  // ErrnoException validates err via getSystemErrorName (type + range) and
+  // builds node's exact `${syscall} ${code}[ ${original}]` shape.
+  return new ErrnoException(err, syscall, original);
+}
+
+interface CallSiteObject {
+  functionName: string;
+  scriptId: string;
+  scriptName: string;
+  lineNumber: number;
+  columnNumber: number;
+  column: number;
+}
+
+function prepareCallSites(_err: Error, callSites: NodeJS.CallSite[]) {
+  const result: CallSiteObject[] = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
-    // CallSite#getColumnNumber() is 0-based here but 1-based in V8, and node
-    // exposes the column under both names.
-    const columnNumber = (callSite.getColumnNumber() ?? 0) + 1;
+    // node exposes the column under both names.
+    const columnNumber = callSite.getColumnNumber() ?? 0;
     result.push({
       functionName: callSite.getFunctionName() ?? "",
       scriptId: `${callSite.getScriptId()}`,
@@ -457,7 +650,7 @@ function getCallSites(frameCount = 10, options) {
   // Capture with our own prepareStackTrace so a user-installed
   // Error.prepareStackTrace is never invoked, and so Error.stackTraceLimit
   // does not influence the number of frames returned.
-  const target = {};
+  const target: { stack?: CallSiteObject[] } = {};
   const savedPrepareStackTrace = Error.prepareStackTrace;
   const savedStackTraceLimit = Error.stackTraceLimit;
   try {
@@ -493,12 +686,18 @@ function convertProcessSignalToExitCode(signalCode) {
 
 let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
-  unregisterToken: (...args: any[]) => void;
+  listener: (...args: any[]) => void;
 }>;
-function onAbortedCallback(resolveFn: Function) {
-  lazyAbortedRegistry.unregister(resolveFn);
+function onAbortedCallback(promise: Promise<void>) {
+  lazyAbortedRegistry.unregister(promise);
 
-  resolveFn();
+  $resolvePromiseWithFirstResolvingFunctionCallCheck(promise, undefined);
+}
+
+// Its own function so the listener's scope holds `promise` and not aborted()'s `resource`. Not
+// onAbortedCallback.bind(): that looks up `bind` on Function.prototype, which user code can replace.
+function createAbortedListener(promise: Promise<void>) {
+  return () => onAbortedCallback(promise);
 }
 
 function aborted(signal: AbortSignal, resource: object) {
@@ -514,20 +713,14 @@ function aborted(signal: AbortSignal, resource: object) {
     return Promise.$resolve();
   }
 
-  const { promise, resolve } = $newPromiseCapability(Promise);
-  const unregisterToken = onAbortedCallback.bind(undefined, resolve);
-  signal.addEventListener(
-    "abort",
-    // Do not leak the current scope into the listener.
-    // Instead, create a new function.
-    unregisterToken,
-    resistStopPropagation({ __proto__: null, once: true }),
-  );
+  const promise = $newPromise<void>();
+  const listener = createAbortedListener(promise);
+  signal.addEventListener("abort", listener, resistStopPropagation({ __proto__: null, once: true }));
 
   if (!lazyAbortedRegistry) {
-    lazyAbortedRegistry = new FinalizationRegistry(({ ref, unregisterToken }) => {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, listener }) => {
       const signal = ref.deref();
-      if (signal) signal.removeEventListener("abort", unregisterToken);
+      if (signal) signal.removeEventListener("abort", listener);
     });
   }
 
@@ -538,9 +731,9 @@ function aborted(signal: AbortSignal, resource: object) {
     resource,
     {
       ref: new WeakRef(signal),
-      unregisterToken,
+      listener,
     },
-    unregisterToken,
+    promise,
   );
 
   return promise;
@@ -559,9 +752,9 @@ function setTraceSigInt(enable) {
   // is accepted as a no-op on the main thread.
 }
 
-cjs_exports = {
+var cjs_exports: UtilModule = {
   // This is in order of `node --print 'Object.keys(util)'`
-  // _errnoException,
+  _errnoException,
   // _exceptionWithHostPort,
   _extend,
   callbackify,
@@ -569,19 +762,49 @@ cjs_exports = {
   debug: debuglog,
   debuglog,
   deprecate,
-  format,
+  get format() {
+    return require("internal/util/inspect").format;
+  },
+  set format(value) {
+    Object.defineProperty(cjs_exports, "format", { value, writable: true, enumerable: true, configurable: true });
+  },
   styleText,
-  formatWithOptions,
+  get formatWithOptions() {
+    return require("internal/util/inspect").formatWithOptions;
+  },
+  set formatWithOptions(value) {
+    Object.defineProperty(cjs_exports, "formatWithOptions", {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  },
   getCallSites,
-  // getSystemErrorMap,
+  getSystemErrorMap,
   getSystemErrorName,
-  // getSystemErrorMessage,
+  getSystemErrorMessage,
   inherits,
-  inspect,
+  get inspect() {
+    return require("internal/util/inspect").inspect;
+  },
+  set inspect(value) {
+    Object.defineProperty(cjs_exports, "inspect", { value, writable: true, enumerable: true, configurable: true });
+  },
   isDeepStrictEqual,
   promisify,
   setTraceSigInt,
-  stripVTControlCharacters,
+  get stripVTControlCharacters() {
+    return require("internal/util/inspect").stripVTControlCharacters;
+  },
+  set stripVTControlCharacters(value) {
+    Object.defineProperty(cjs_exports, "stripVTControlCharacters", {
+      value,
+      writable: true,
+      enumerable: true,
+      configurable: true,
+    });
+  },
   toUSVString,
   // transferableAbortSignal,
   // transferableAbortController,

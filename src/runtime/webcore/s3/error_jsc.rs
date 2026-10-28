@@ -1,12 +1,12 @@
 //! JSC bridges for S3 signing errors. The pure error-code/message tables
 //! stay in `s3_signing/`; the `*JSGlobalObject`-taking variants live here.
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_jsc::{ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
 use bun_s3_signing::Error as SignError;
 use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
 
-pub use s3_error::S3Error;
+pub(crate) use s3_error::S3Error;
 
 // `get_sign_error_message` returns `&'static [u8]` of ASCII literals; reinterpret as
 // `&str` for the `format_args!`-taking `JSGlobalObject::err()` builder.
@@ -16,7 +16,7 @@ fn msg(bytes: &'static [u8]) -> &'static str {
     unsafe { core::str::from_utf8_unchecked(bytes) }
 }
 
-pub fn get_js_sign_error(err: SignError, global_this: &JSGlobalObject) -> JSValue {
+pub(crate) fn get_js_sign_error(err: SignError, global_this: &JSGlobalObject) -> JSValue {
     match err {
         SignError::MissingCredentials => global_this
             .err(
@@ -66,7 +66,7 @@ pub fn get_js_sign_error(err: SignError, global_this: &JSGlobalObject) -> JSValu
     }
 }
 
-pub fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> JsError {
+pub(crate) fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> JsError {
     match err {
         SignError::MissingCredentials => global_this
             .err(
@@ -117,41 +117,23 @@ pub fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> JsError
 }
 
 #[repr(C)]
-struct JSS3Error {
+struct JSS3Error<'a> {
     code: BunString,
     message: BunString,
-    path: BunString,
+    path: StringView<'a>,
 }
 
-impl Default for JSS3Error {
-    fn default() -> Self {
-        Self {
-            code: BunString::empty(),
-            message: BunString::empty(),
-            path: BunString::empty(),
-        }
-    }
-}
-
-impl JSS3Error {
-    pub(crate) fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
+impl<'a> JSS3Error<'a> {
+    fn init(code: &[u8], message: &[u8], path: Option<&'a [u8]>) -> Self {
         Self {
             // lets make sure we can reuse code and message and keep it service independent
             code: BunString::create_atom_if_possible(code),
             message: BunString::create_atom_if_possible(message),
-            path: if let Some(p) = path {
-                BunString::init(p)
-            } else {
-                BunString::empty()
-            },
+            path: path.map_or(StringView::EMPTY, StringView::from_bytes),
         }
     }
 
-    // The three `bun_core::String` fields deref themselves via `Drop`, so no
-    // explicit `Drop` impl is needed here.
-
-    pub(crate) fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
-        // `defer this.deinit()` → `self` is consumed and dropped at scope exit.
+    fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
         S3Error__toErrorInstance(&self, global)
     }
 }
@@ -160,10 +142,10 @@ impl JSS3Error {
 bun_jsc::jsc_abi_extern! {
     // C++ copies the three `BunString` fields out and does not write through
     // `this`, so `&JSS3Error` (readonly) is sound.
-    safe fn S3Error__toErrorInstance(this: &JSS3Error, global: &JSGlobalObject) -> JSValue;
+    safe fn S3Error__toErrorInstance(this: &JSS3Error<'_>, global: &JSGlobalObject) -> JSValue;
 }
 
-pub fn s3_error_to_js(
+pub(crate) fn s3_error_to_js(
     err: &S3Error,
     global_object: &JSGlobalObject,
     path: Option<&[u8]>,
@@ -191,8 +173,7 @@ pub(crate) fn s3_error_to_js_with_async_stack(
 /// `blob::Store` can use the spelling `err.to_js_with_async_stack(…)`.
 /// Forwards to the free fn above; returns `JsResult` because the consuming
 /// `JSPromiseStrong::reject` takes `JsResult<JSValue>`.
-pub trait S3ErrorJsc {
-    fn to_js(&self, global_object: &JSGlobalObject, path: Option<&[u8]>) -> JSValue;
+pub(crate) trait S3ErrorJsc {
     fn to_js_with_async_stack(
         &self,
         global_object: &JSGlobalObject,
@@ -201,10 +182,6 @@ pub trait S3ErrorJsc {
     ) -> bun_jsc::JsResult<JSValue>;
 }
 impl S3ErrorJsc for S3Error<'_> {
-    #[inline]
-    fn to_js(&self, global_object: &JSGlobalObject, path: Option<&[u8]>) -> JSValue {
-        s3_error_to_js(self, global_object, path)
-    }
     #[inline]
     fn to_js_with_async_stack(
         &self,

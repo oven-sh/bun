@@ -1,0 +1,3 @@
+{
+  "skipInShell": "it prints a stack as Bun formats it"
+}

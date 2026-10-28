@@ -20,7 +20,7 @@ use crate::diagnostics::{
 };
 use crate::hir::{BlockId, HirFunction, InstructionValue, Terminal};
 
-pub fn validate_no_jsx_in_try_statement(func: &HirFunction) -> CompilerError {
+pub(crate) fn validate_no_jsx_in_try_statement(func: &HirFunction) -> CompilerError {
     let mut active_try_blocks: Vec<BlockId> = Vec::new();
     let mut error = CompilerError::new();
 

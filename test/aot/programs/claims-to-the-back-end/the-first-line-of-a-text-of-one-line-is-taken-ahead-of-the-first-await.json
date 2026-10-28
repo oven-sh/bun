@@ -1,0 +1,3 @@
+{
+  "runWithASAN": "a call fills as much of a buffer as it finds, and every word of the buffer is read"
+}

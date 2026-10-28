@@ -22,12 +22,13 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, readSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
+import { formatElapsed } from "./tty.ts";
 
 /**
  * Absolute path to this file. Ninja rules use this in their command strings.
@@ -69,10 +70,36 @@ async function main(): Promise<void> {
         text = text.split(pairs[i]!).join(pairs[i + 1]!);
       }
       // dep_subst is restat=1 — preserve mtime when the rendered text is
-      // unchanged so depfile-tracked .o files (libarchive ← zlib.h) don't
+      // unchanged so depfile-tracked .o files (libspng ← zlib.h) don't
       // recompile after a no-op re-fetch.
       writeIfChanged(outPath, text);
       return;
+    }
+
+    case "check-undefined": {
+      // fetch-cli.ts check-undefined <name> <nm> <rspfile> <stamp> <symbols>
+      // <rspfile> is the edge's response file (one object per line);
+      // <symbols> is comma-separated. Writes <stamp> when no object has an
+      // undefined reference to any of the symbols. See
+      // DirectBuild.forbidUndefined in source.ts.
+      const [name, nm, rspfile, stamp, symbols] = args;
+      assert(
+        name !== undefined && nm !== undefined && rspfile !== undefined && stamp !== undefined && symbols !== undefined,
+        "check-undefined: missing name/nm/rspfile/stamp/symbols",
+      );
+      return checkUndefined(name, nm, rspfile, stamp, symbols.split(","));
+    }
+
+    case "check-defined": {
+      // fetch-cli.ts check-defined <name> <lib> <stamp> <symbols>
+      // <symbols> is comma-separated. Writes <stamp> when <lib> names every
+      // one of them. See Provides.requireDefined in source.ts.
+      const [name, lib, stamp, symbols] = args;
+      assert(
+        name !== undefined && lib !== undefined && stamp !== undefined && symbols !== undefined,
+        "check-defined: missing name/lib/stamp/symbols",
+      );
+      return checkDefined(name, lib, stamp, symbols.split(","));
     }
 
     case "prebuilt": {
@@ -82,6 +109,17 @@ async function main(): Promise<void> {
         name !== undefined && url !== undefined && dest !== undefined && identity !== undefined,
         "prebuilt: missing name/url/dest/identity",
       );
+      // A job that builds `codegen` alone reads the engine's code generators and nothing else of WebKit's tarball. A
+      // release has them as an asset of its own. An older one does not, and then it is the tarball after all.
+      if (name === "WebKit" && process.env.BUN_WEBKIT_GENERATORS_ONLY === "1") {
+        const generators = new URL("bun-webkit-aot-sources.tar.gz", url).href;
+        try {
+          return await fetchPrebuilt(name, generators, dest, `${identity}-generators-only`, rmPaths);
+        } catch (error) {
+          if (!(error instanceof BuildError)) throw error;
+          console.log(`${generators} could not be fetched, fetching ${url}`);
+        }
+      }
       return fetchPrebuilt(name, url, dest, identity, rmPaths);
     }
 
@@ -101,13 +139,118 @@ const USAGE = `\
 Usage: bun fetch-cli.ts <kind> <args...>
 
 Kinds:
-  dep      <name> <repo> <commit> <dest> <cache> [...patches]
-  prebuilt <name> <url> <dest> <identity> [...rm_paths]
-  subst    <in> <out> [<from> <to>]...
+  dep             <name> <repo> <commit> <dest> <cache> [...patches]
+  prebuilt        <name> <url> <dest> <identity> [...rm_paths]
+  subst           <in> <out> [<from> <to>]...
+  check-undefined <name> <nm> <rspfile> <stamp> <symbol,...>
 
 This is invoked by ninja build rules. You shouldn't need to call it
 directly — run ninja targets instead.
 `;
+
+// ───────────────────────────────────────────────────────────────────────────
+// check-undefined: no object of a dep may still reference the given symbols
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * `llvm-nm -A` prints one `<object>: <value> <type> <name>` line per symbol,
+ * with a blank value and type U (w or v when weak) for an undefined one, in
+ * the same shape for ELF, COFF, Mach-O and the bitcode objects of an LTO
+ * build. Not `-u`: for Mach-O that switches to printing bare names, which
+ * would match nothing here and pass the check without checking anything.
+ */
+const UNDEFINED_SYMBOL_LINE = /^(.*): +[Uwv] +(\S+)\s*$/;
+
+/** Windows' command line tops out at 32K characters; keep each nm invocation well inside it. */
+const NM_ARGV_BUDGET = 16_000;
+
+function checkUndefined(name: string, nm: string, rspfile: string, stamp: string, symbols: string[]): void {
+  const objects = readFileSync(rspfile, "utf8")
+    .split("\n")
+    .map(line => line.trim())
+    .filter(line => line.length > 0);
+  assert(objects.length > 0, `check-undefined ${name}: ${rspfile} lists no objects`);
+
+  // A Mach-O name carries a leading underscore, so one symbol list serves
+  // every format by also matching with it removed.
+  const forbidden = new Set(symbols);
+  let undefinedSymbols = 0;
+  const offenders: string[] = [];
+  for (let start = 0; start < objects.length;) {
+    let end = start;
+    let length = 0;
+    do {
+      length += objects[end]!.length + 1;
+      end++;
+    } while (end < objects.length && length + objects[end]!.length < NM_ARGV_BUDGET);
+    const result = spawnSync(nm, ["-A", ...objects.slice(start, end)], { encoding: "utf8", maxBuffer: 1 << 28 });
+    if (result.error) throw new BuildError(`check-undefined ${name}: failed to run ${nm}`, { cause: result.error });
+    if (result.status !== 0) throw new BuildError(`check-undefined ${name}: ${nm} failed:\n${result.stderr}`);
+    for (const line of result.stdout.split("\n")) {
+      const match = UNDEFINED_SYMBOL_LINE.exec(line);
+      if (match === null) continue;
+      undefinedSymbols++;
+      const symbol = match[2]!;
+      if (forbidden.has(symbol) || (symbol.startsWith("_") && forbidden.has(symbol.slice(1)))) {
+        offenders.push(`  ${match[1]}: ${symbol}`);
+      }
+    }
+    start = end;
+  }
+
+  // The objects of any dep call each other, libc and the OS, so parsing no
+  // undefined symbols at all means nm's output is not in the shape parsed
+  // above, and passing would be meaningless.
+  assert(
+    undefinedSymbols > 0,
+    `check-undefined ${name}: no undefined symbols parsed from ${nm} output for ${objects.length} objects`,
+  );
+  if (offenders.length > 0) {
+    throw new BuildError(`${name}: objects reference symbols its build forbids:\n${offenders.join("\n")}`, {
+      hint: `The symbols and the objects allowed to use them are declared by forbidUndefined in scripts/build/deps/${name}.ts; the comment there says what the references have to go through instead.`,
+    });
+  }
+  // dep_check_undefined is restat=1: an existing stamp keeps its mtime.
+  writeIfChanged(stamp, "");
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// check-defined: a prebuilt library has to name the given symbols
+// ───────────────────────────────────────────────────────────────────────────
+
+/**
+ * An archive's index and the string table of each member, object or bitcode,
+ * hold a name as plain bytes, so this needs no tool that may be missing. Only
+ * the definition names these symbols: nothing in the library refers to them.
+ */
+function checkDefined(name: string, lib: string, stamp: string, symbols: string[]): void {
+  const found = new Set<string>();
+  const longest = Math.max(...symbols.map(symbol => symbol.length));
+  const buffer = Buffer.allocUnsafe(64 << 20);
+  const descriptor = openSync(lib, "r");
+  try {
+    // What is kept from one read to the next is a name that lies across the two.
+    for (let kept = 0, read; (read = readSync(descriptor, buffer, kept, buffer.length - kept, null)) > 0;) {
+      const bytes = buffer.subarray(0, kept + read);
+      for (const symbol of symbols) if (bytes.includes(symbol)) found.add(symbol);
+      kept = Math.min(longest - 1, bytes.length);
+      buffer.copyWithin(0, bytes.length - kept, bytes.length);
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+  const missing = symbols.filter(symbol => !found.has(symbol));
+  if (missing.length > 0) {
+    throw new BuildError(
+      `${name}: ${lib} was not compiled with what this build asks of it. It does not define ${missing.join(", ")}`,
+      {
+        hint: `requireDefined in scripts/build/deps/${name.toLowerCase()}.ts says which option each symbol stands for. Take a version of ${name} whose prebuilts are compiled with it, or compile ${name} here`,
+      },
+    );
+  }
+  // dep_check_defined is restat=1: an existing stamp keeps its mtime.
+  writeIfChanged(stamp, "");
+}
 
 // ───────────────────────────────────────────────────────────────────────────
 // github-archive dep fetch: download tarball, extract, patch, stamp
@@ -163,6 +306,7 @@ async function fetchDep(
   }
 
   console.log(`fetching ${repo}@${commit.slice(0, 8)}`);
+  const started = performance.now();
 
   // ─── Download (with cache) ───
   const url = `https://github.com/${repo}/archive/${commit}.tar.gz`;
@@ -201,7 +345,7 @@ async function fetchDep(
   // ─── Write stamp ───
   // Written LAST — if anything above failed, no stamp means next build retries.
   await writeFile(refPath, identity + "\n");
-  console.log(`done → ${dest}`);
+  console.log(`done → ${dest} (${formatElapsed(performance.now() - started)})`);
 }
 
 /**

@@ -476,7 +476,7 @@ describe("bundler", () => {
 
   // The default resolver runs from the importer's parse, and from the answer of
   // an onResolve plugin that declines. Both make the same bundle.
-  test("browser/BrowserFieldSameOutputWithDecliningOnResolvePlugin", async () => {
+  test.concurrent("browser/BrowserFieldSameOutputWithDecliningOnResolvePlugin", async () => {
     using dir = tempDir("browser-field-declining-plugin", {
       "entry.js": /* js */ `
         import info from "pkg";
@@ -593,7 +593,7 @@ describe("bundler", () => {
 
   // `--check` checks the file as written. The empty module that stands in for a
   // disabled file in the bundle has no exports, and is not what the types are of.
-  test("browser/BrowserFieldDisabledModuleIsTypeCheckedAsWritten", async () => {
+  test.concurrent("browser/BrowserFieldDisabledModuleIsTypeCheckedAsWritten", async () => {
     using dir = tempDir("browser-field-check", {
       "package.json": JSON.stringify({ name: "project", browser: { "./src/node-only.ts": false } }),
       // No DOM or Node.js type definitions to load, which keeps the check fast.
@@ -625,7 +625,7 @@ describe("bundler", () => {
   // A disabled file that the imports name with its extension is one empty
   // module, also when one import reaches it through a symlinked package
   // directory and another through its real path.
-  test("browser/BrowserFieldDisabledModuleBehindSymlink", async () => {
+  test.concurrent("browser/BrowserFieldDisabledModuleBehindSymlink", async () => {
     using dir = tempDir("browser-field-symlink", {
       "entry.js": /* js */ `
         import viaLink from "pkg/node.js";

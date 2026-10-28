@@ -155,6 +155,8 @@ libfuzzer_sys::fuzz_target!(|input: &[u8]| {
     }
     let n = params.len();
     params.rotate_left(usize::from(h[11]) % n);
+    // The reference reads past the end of an empty dictionary when a copy goes on into it. Here nothing comes before an
+    // empty one but another empty one.
     let dicts: Vec<Vec<u8>> = match flags >> 4 & 3 {
         0 => vec![],
         1 => vec![TEXT.to_vec()],

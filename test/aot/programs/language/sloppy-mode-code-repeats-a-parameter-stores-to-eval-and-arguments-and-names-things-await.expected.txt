@@ -1,0 +1,10 @@
+two parameters of one name: 2 2
+of a generator: 2
+of a function expression: 3,2
+stores to arguments: 2 1 2 3 4 5 6 7 b 10
+stores to a parameter named eval: 0 1 2 1 3 4 5 6 7 8 9 key 10
+a variable named await at the top of the file, read by the value of a field: 1
+an escape in the string: 1 sloppy
+a line continuation in the string: 2 sloppy
+the string in parentheses: 3 sloppy
+of an async function: 2

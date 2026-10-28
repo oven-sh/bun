@@ -1,0 +1,12 @@
+multiply 42 -15 0 6
+square 144 144 -2147479015
+negate -5 5 -2147483648 true
+many -1500477535
+Buffer 48
+atob 54
+fetch 60
+other head 121 true
+second module 42 42 500500
+long head 72 -20
+capitals 210
+other data This is no module: it is a sentence that is long enough to be looked at.

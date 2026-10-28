@@ -481,9 +481,14 @@ static int bun_libc_csu_init(int argc, char** argv, char** envp)
 }
 BUN_SYMVER(__libc_start_main, BUN_GLIBC_BASE);
 extern "C" int __libc_start_main(int (*)(int, char**, char**), int, char**, int (*)(int, char**, char**), void (*)(), void (*)(), void*);
+extern "C" void Bun__askForAddressSpaceToStart();
 extern "C" int __wrap___libc_start_main(int (*main)(int, char**, char**), int argc, char** argv,
     int (*init)(int, char**, char**), void (*fini)(), void (*rtld_fini)(), void* stack_end)
 {
+    // libstdc++ allocates in an initializer. AddressSanitizer starts in one, and its address space can't be limited.
+#if !__has_feature(address_sanitizer)
+    Bun__askForAddressSpaceToStart();
+#endif
     return __libc_start_main(main, argc, argv, init ? init : bun_libc_csu_init, fini, rtld_fini, stack_end);
 }
 

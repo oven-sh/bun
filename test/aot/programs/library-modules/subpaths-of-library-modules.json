@@ -1,0 +1,8 @@
+{
+  "build": ["--aot-refuse-code-from-disk"],
+  "env": {
+    "NAMES": "node:fs/promises,fs/promises,node:path,node:util/types,node:readline/promises,node:dns/promises,node:stream/consumers"
+  },
+  "skipInShell": "it asks for modules of Bun",
+  "alone": "what it prints hangs on what else the executable holds: which modules and members were compiled in, and whether anything evaluates text"
+}

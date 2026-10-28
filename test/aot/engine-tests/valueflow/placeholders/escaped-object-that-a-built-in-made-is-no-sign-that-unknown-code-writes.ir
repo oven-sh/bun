@@ -1,0 +1,29 @@
+# export default shown = { go: one, decoder: new TextDecoder() }; shown.go()
+# The host reads the object, so it has escaped, and the decoder with it. Nothing says what a built-in has made, so the decoder may be an iterator, and whoever holds an iterator steps it.
+# The table lists no `next`, `return` or `throw` for it and does not say what lies above its prototype object, so nobody knows what is found under those names.
+# The holder that would call it is one nobody has seen either: that is no sign of code that stores into what it holds, so a read from the object still finds what the program has stored and nothing else.
+# iterator-handed-to-unknown-code.ir has an iterator whose `next` is known.
+# RUN: valueflow-solve calls
+# CHECK: f0 v7 -> f1
+# CHECK-NOT: unknown
+
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="default" variable=g0}]
+entry module=m0 hostReads=[{exportName="default"}]
+layout L0 name="Shown" fields=[{key="go" declared={type=anything} flags=[IsRequired]}, {key="decoder" declared={type=anything} flags=[IsRequired]}]
+variable g0 name="default" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=TextDecoder
+    v2 = Construct v1
+    v3 = NewObject -, v0, v2 layout=L0 fields=[0, 1]
+    PutModuleVariable v3 variable=g0
+    v5 = Undefined
+    v6 = PropGet v3 key="go"
+    v7 = Call v6, v3
+    Return
+}
+function f1 name="one" results=[{type=anything}] {
+  b0():
+    Return
+}

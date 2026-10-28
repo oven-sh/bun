@@ -1,0 +1,4 @@
+{
+  "build": ["--compile-inspector"],
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: import.meta.url of an executable"
+}

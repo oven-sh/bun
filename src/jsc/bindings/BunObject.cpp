@@ -1,6 +1,7 @@
 #include "root.h"
 
 #include "JavaScriptCore/HeapProfiler.h"
+#include <JavaScriptCore/AOTMembersLeftOut.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ArgList.h"
@@ -316,8 +317,8 @@ static JSValue constructIsMainThread(VM&, JSObject* object)
 static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
 {
     auto* globalObject = bunObject->globalObject();
-    JSFunction* pluginFunction = JSFunction::create(vm, globalObject, 1, String("plugin"_s), jsFunctionBunPlugin, ImplementationVisibility::Public, NoIntrinsic);
-    pluginFunction->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "clearAll"_s), 1, jsFunctionBunPluginClear, ImplementationVisibility::Public, NoIntrinsic,
+    JSFunction* pluginFunction = JSFunction::create(vm, globalObject, 1, String("plugin"_s), JSC::removableFunction<Bun::Feature::Plugin, JSC::RemovedFeatureStub::Throw, jsFunctionBunPlugin>(), ImplementationVisibility::Public, NoIntrinsic);
+    pluginFunction->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "clearAll"_s), 1, JSC::removableFunction<Bun::Feature::Plugin, JSC::RemovedFeatureStub::Throw, jsFunctionBunPluginClear>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
 
     return pluginFunction;
@@ -326,7 +327,7 @@ static JSValue constructPluginObject(VM& vm, JSObject* bunObject)
 static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
+    JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.sql", "default"_s);
     RETURN_IF_EXCEPTION(scope, {});
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, vm.propertyNames->defaultKeyword));
 }
@@ -334,7 +335,7 @@ static JSValue createBunSql(VM& vm, Zig::GlobalObject* globalObject)
 static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue sqlValue = globalObject->internalModuleRegistry()->requireId(globalObject, vm, InternalModuleRegistry::BunSql);
+    JSValue sqlValue = BUN_REQUIRE_INTERNAL_MODULE(globalObject, BunSql, "Bun.SQL", "SQL"_s);
     RETURN_IF_EXCEPTION(scope, {});
     auto clientData = WebCore::clientData(vm);
     RELEASE_AND_RETURN(scope, sqlValue.getObject()->get(globalObject, clientData->builtinNames().SQLPublicName()));
@@ -342,10 +343,10 @@ static JSValue createBunSQLConstructor(VM& vm, Zig::GlobalObject* globalObject)
 
 JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 {
-    JSFunction* fetchFn = JSFunction::create(vm, bunObject->globalObject(), 1, "fetch"_s, Bun::Bindgen::Generated::Fetch::jsFetch, ImplementationVisibility::Public, NoIntrinsic);
+    JSFunction* fetchFn = JSFunction::create(vm, bunObject->globalObject(), 1, "fetch"_s, JSC::removableFunction<Bun::Feature::Fetch, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::Fetch::jsFetch>(), ImplementationVisibility::Public, NoIntrinsic);
 
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(bunObject->globalObject());
-    fetchFn->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "preconnect"_s), 1, Bun::Bindgen::Generated::Fetch::jsPreconnect, ImplementationVisibility::Public, NoIntrinsic,
+    fetchFn->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "preconnect"_s), 1, JSC::removableFunction<Bun::Feature::Fetch, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::Fetch::jsPreconnect>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
 
     return fetchFn;
@@ -353,8 +354,8 @@ JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
 
 static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
 {
-    JSFunction* createParsedShellScript = JSFunction::create(vm, globalObject, 2, "createParsedShellScript"_s, Bun::Bindgen::Generated::ParsedShellScript::jsCreateParsedShellScript, ImplementationVisibility::Private, NoIntrinsic);
-    JSFunction* createShellInterpreterFunction = JSFunction::create(vm, globalObject, 1, "createShellInterpreter"_s, Bun::Bindgen::Generated::Interpreter::jsCreateShellInterpreter, ImplementationVisibility::Private, NoIntrinsic);
+    JSFunction* createParsedShellScript = JSFunction::create(vm, globalObject, 2, "createParsedShellScript"_s, JSC::removableFunction<Bun::Feature::Shell, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::ParsedShellScript::jsCreateParsedShellScript>(), ImplementationVisibility::Private, NoIntrinsic);
+    JSFunction* createShellInterpreterFunction = JSFunction::create(vm, globalObject, 1, "createShellInterpreter"_s, JSC::removableFunction<Bun::Feature::Shell, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::Interpreter::jsCreateShellInterpreter>(), ImplementationVisibility::Private, NoIntrinsic);
     JSC::JSFunction* createShellFn = JSC::JSFunction::create(vm, globalObject, shellCreateBunShellTemplateFunctionCodeGenerator(vm), globalObject);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -362,6 +363,18 @@ static JSValue createBunShell(VM& vm, Zig::GlobalObject* globalObject)
     args.append(createShellInterpreterFunction);
     args.append(createParsedShellScript);
     JSC::JSValue shell = JSC::call(globalObject, createShellFn, args, "BunShell"_s);
+#if ENABLE(AOT)
+    // An executable of a program that never names `Bun.$` has no code for the function. It reads `process.env` when it runs, so that read is made here.
+    if (vm.hasCompiledCode() && scope.exception()) [[unlikely]] {
+        if (JSValue standIn = JSC::AOT::takeStandInForMemberLeftOut(globalObject, "$"_s)) {
+            JSValue process = globalObject->get(globalObject, Identifier::fromString(vm, "process"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            process.get(globalObject, Identifier::fromString(vm, "env"_s));
+            RETURN_IF_EXCEPTION(scope, {});
+            return standIn;
+        }
+    }
+#endif
     RETURN_IF_EXCEPTION(scope, {});
 
     if (!shell.isObject()) [[unlikely]] {
@@ -402,37 +415,37 @@ static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {
     JSGlobalObject* globalObject = bunObject->globalObject();
     JSC::JSObject* dnsObject = JSC::constructEmptyObject(globalObject);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, Bun::Bindgen::Generated::Dns::jsLookup, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookup"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::Dns::jsLookup>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->resolve, 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolve, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, vm.propertyNames->resolve, 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolve>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSrv, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSrv"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSrv>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveTxt, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveTxt"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveTxt>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSoa, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveSoa"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveSoa>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveNaptr, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNaptr"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveNaptr>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveMx, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveMx"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveMx>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveCaa, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCaa"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveCaa>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveNs, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveNs"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveNs>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolvePtr, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolvePtr"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolvePtr>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveCname, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveCname"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveCname>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveAny"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveAny, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "resolveAny"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalResolveAny>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGetGlobalServers, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "getServers"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGetGlobalServers>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setServers"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsSetGlobalServers, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "setServers"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsSetGlobalServers>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalReverse, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "reverse"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalReverse>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
-    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, Bun::Bindgen::Generated::DnsInternals::jsGlobalLookupService, ImplementationVisibility::Public, NoIntrinsic,
+    dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "lookupService"_s), 2, JSC::removableFunction<Bun::Feature::Dns, JSC::RemovedFeatureStub::Throw, Bun::Bindgen::Generated::DnsInternals::jsGlobalLookupService>(), ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
     dnsObject->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "prefetch"_s), 1, Bun::Bindgen::Generated::Dns::jsPrefetch, ImplementationVisibility::Public, NoIntrinsic,
         JSC::PropertyAttribute::DontDelete | 0);
@@ -452,6 +465,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionJSONLParseChunk);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Jsonl, jsFunctionJSONLParse);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -472,6 +486,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
         }
         auto* data = static_cast<const uint8_t*>(view->vector());
         size_t length = view->byteLength();
+        Vector<uint8_t> copyOfSharedBytes;
+        if (view->isShared()) {
+            if (!copyOfSharedBytes.tryAppend(std::span { data, length })) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            data = copyOfSharedBytes.span().data();
+        }
 
         // Skip UTF-8 BOM if present
         if (length >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF) {
@@ -479,10 +501,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
             length -= 3;
         }
 
-        if (length <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(data), length)) {
-            auto chars = std::span { reinterpret_cast<const char8_t*>(data), length };
-            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
-        } else {
+        result.status = JSC::StreamingJSONParseResult::Status::NeedsText;
+        if (length <= String::MaxLength) {
+            result = JSC::streamingJSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(data), length }, values);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        if (result.status == JSC::StreamingJSONParseResult::Status::NeedsText) {
+            values.clear();
             size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(data), length);
             if (u16Length > String::MaxLength) {
                 throwOutOfMemoryError(globalObject, scope);
@@ -515,6 +540,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParse, (JSGlobalObject * globalObject, C
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(Jsonl, jsFunctionJSONLParseChunk);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -567,6 +593,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
 
         const uint8_t* sliceData = data + start;
         size_t sliceLen = end - start;
+        Vector<uint8_t> copyOfSharedBytes;
+        if (view->isShared()) {
+            if (!copyOfSharedBytes.tryAppend(std::span { sliceData, sliceLen })) {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
+            sliceData = copyOfSharedBytes.span().data();
+        }
 
         // Skip UTF-8 BOM if present at the start of the slice
         size_t bomOffset = 0;
@@ -576,12 +610,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionJSONLParseChunk, (JSGlobalObject * globalObje
             bomOffset = 3;
         }
 
-        if (sliceLen <= String::MaxLength && simdutf::validate_ascii(reinterpret_cast<const char*>(sliceData), sliceLen)) {
-            auto chars = std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen };
-            result = JSC::streamingJSONParse(globalObject, StringView(chars), values);
-            // For ASCII, byte offset = character offset
+        result.status = JSC::StreamingJSONParseResult::Status::NeedsText;
+        if (sliceLen <= String::MaxLength) {
+            result = JSC::streamingJSONParse(globalObject, std::span { reinterpret_cast<const char8_t*>(sliceData), sliceLen }, values);
+            RETURN_IF_EXCEPTION(scope, {});
             readBytes = start + bomOffset + result.charactersConsumed;
-        } else {
+        }
+        if (result.status == JSC::StreamingJSONParseResult::Status::NeedsText) {
+            values.clear();
             size_t u16Length = simdutf::utf16_length_from_utf8(reinterpret_cast<const char*>(sliceData), sliceLen);
             if (u16Length > String::MaxLength) {
                 throwOutOfMemoryError(globalObject, scope);

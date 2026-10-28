@@ -1,0 +1,2994 @@
+//// tests-that-are-returned-as-values-ask-about-a-parameter-typed-as-an-enum-member.ts
+////= Color
+
+type Tested = Color;
+
+////= lines-101	isUndefined	x	Tested	undefined
+
+function isNotUndefined(x: Tested): boolean {
+  return x !== undefined;
+}
+
+////= lines-101	isNull	x	Tested	null
+
+function isNullish(x: Tested): boolean {
+  return x == null;
+}
+
+////= lines-79	kindIsUndefined	x	Tested	"undefined"
+
+////= lines-79	kindIsNumber	x	Tested	"number"
+
+////= lines-185	kindIsNotNumber	x	Tested	"number"
+
+////= lines-79	kindIsString	x	Tested	"string"
+
+////= lines-185	kindIsNotString	x	Tested	"string"
+
+////= lines-79	kindIsBoolean	x	Tested	"boolean"
+
+////= lines-79	kindIsObject	x	Tested	"object"
+
+////= lines-185	kindIsNotObject	x	Tested	"object"
+
+////= lines-79	kindIsFunction	x	Tested	"function"
+
+function isFalsy(x: Tested): boolean {
+  return !x;
+}
+
+function isTruthy(x: Tested): boolean {
+  return !!x;
+}
+
+////= lines-101	isItself	x	Tested	x
+
+////= lines-36	isAList	x	Tested	boolean	Array.isArray	x
+
+const honest: Tested = Color.Green;
+let warm = 0;
+////= for-19
+console.log("2000 honest rounds: " + warm);
+
+const values: Tested[] = [honest];
+const wide: unknown[] = values;
+wide.push(undefined, null, 0, -0, NaN, 5, 1.5, "", "text", false, true, {}, [], () => 1, 10n, Symbol.iterator);
+const labels = ["honest", "undefined", "null", "zero", "minus zero", "not a number", "five", "one and a half", "an empty string", "a text", "false", "true", "an object", "a list", "a function", "a big integer", "a symbol", "past the end"];
+
+////= for-14
+
+export {};
+//// tests-that-are-returned-as-values-ask-about-a-parameter-typed-as-an-instance.ts
+////= Point-10
+
+type Tested = Point;
+
+////= lines-101	isUndefined	x	Tested	undefined
+
+function isNotUndefined(x: Tested): boolean {
+  return x !== undefined;
+}
+
+////= lines-101	isNull	x	Tested	null
+
+function isNullish(x: Tested): boolean {
+  return x == null;
+}
+
+////= lines-79	kindIsUndefined	x	Tested	"undefined"
+
+////= lines-79	kindIsNumber	x	Tested	"number"
+
+////= lines-185	kindIsNotNumber	x	Tested	"number"
+
+////= lines-79	kindIsString	x	Tested	"string"
+
+////= lines-185	kindIsNotString	x	Tested	"string"
+
+////= lines-79	kindIsBoolean	x	Tested	"boolean"
+
+////= lines-79	kindIsObject	x	Tested	"object"
+
+////= lines-185	kindIsNotObject	x	Tested	"object"
+
+////= lines-79	kindIsFunction	x	Tested	"function"
+
+function isFalsy(x: Tested): boolean {
+  return !x;
+}
+
+function isTruthy(x: Tested): boolean {
+  return !!x;
+}
+
+////= lines-101	isItself	x	Tested	x
+
+////= lines-36	isAList	x	Tested	boolean	Array.isArray	x
+
+function isAnObject(x: Tested): boolean {
+  return x instanceof Object;
+}
+
+const honest: Tested = new Point();
+let warm = 0;
+////= for-18
+console.log("2000 honest rounds: " + warm);
+
+const values: Tested[] = [honest];
+const wide: unknown[] = values;
+wide.push(undefined, null, 0, -0, NaN, 5, 1.5, "", "text", false, true, {}, [], () => 1, 10n, Symbol.iterator);
+const labels = ["honest", "undefined", "null", "zero", "minus zero", "not a number", "five", "one and a half", "an empty string", "a text", "false", "true", "an object", "a list", "a function", "a big integer", "a symbol", "past the end"];
+
+////= for-11
+
+export {};
+//// tests-that-the-types-call-pointless-decide-for-untyped-values.ts
+////= Point-2
+
+////= show-13
+
+////= attempt-4
+
+function aNumber(n: number): string {
+  if (n === undefined) return "undefined";
+  if (n === null) return "null";
+  if (typeof n !== "number") return "typeof says " + typeof n;
+  if (n !== n) return "not a number";
+  return "number " + (n + 1);
+}
+
+function aNumberLoosely(n: number): unknown {
+  return [n == null, n ?? "fallback", !n, !!n, n ? "truthy" : "falsy", typeof n === "number", Number.isInteger(n), Number.isNaN(n)];
+}
+
+function aText(s: string): string {
+  if (s === undefined) return "undefined";
+  if (s === null) return "null";
+  if (typeof s !== "string") return "typeof says " + typeof s;
+  return "text " + s.length;
+}
+
+function aTextLoosely(s: string): unknown {
+  return [s == null, s ?? "fallback", !s, s || "empty", s?.length, typeof s === "string"];
+}
+
+function aPoint(p: Point): string {
+  if (p === undefined) return "undefined";
+  if (p === null) return "null";
+  if (typeof p !== "object") return "typeof says " + typeof p;
+  if (p.x === undefined) return "no x";
+  if (typeof p.y !== "number") return "y is " + typeof p.y;
+  return "point " + (p.x + p.y);
+}
+
+function aPointLoosely(p: Point): unknown {
+  return [p == null, p?.x, p?.y ?? "no y", !p, typeof p, p instanceof Object, Array.isArray(p)];
+}
+
+function aList(list: number[]): string {
+  if (!list) return "nothing";
+  if (!Array.isArray(list)) return "no list: " + typeof list;
+  if (list.length === undefined) return "no length";
+  return "list of " + list.length;
+}
+
+function aFunction(f: () => number): string {
+  if (!f) return "nothing";
+  if (typeof f !== "function") return "typeof says " + typeof f;
+  return "function " + (f() + 1);
+}
+
+function aTruth(b: boolean): string {
+  if (b === true) return "true";
+  if (b === false) return "false";
+  return "neither: " + typeof b + " " + (b ? "truthy" : "falsy");
+}
+
+class Holder {
+  n: number;
+  p: Point;
+  constructor(text: string) {
+    const data = JSON.parse(text);
+    this.n = data.n;
+    this.p = data.p;
+  }
+  describe(): unknown {
+    return [this.n === undefined, this.n === null, typeof this.n, this.p === undefined, this.p === null, typeof this.p, this.p?.x ?? "no x"];
+  }
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  warm += aNumber(i).length + aText("ab").length + aPoint({ x: i, y: 1 }).length + aList([i]).length + aFunction(() => i).length + aTruth(i % 2 === 0).length;
+  warm += new Holder('{"n":1,"p":{"x":1,"y":2}}').n;
+}
+console.log("2000 honest rounds: " + warm);
+
+const texts = ["1", "0", "-0", '"1"', '""', "true", "false", "null", "[]", "[1]", "{}", '{"x":1}', '{"x":1,"y":"2"}', '{"x":1,"y":2}', '{"length":1}'];
+for (const text of texts) {
+  attempt("a number is " + text, () => aNumber(JSON.parse(text)));
+  attempt("a number, loosely, is " + text, () => aNumberLoosely(JSON.parse(text)));
+  attempt("a text is " + text, () => aText(JSON.parse(text)));
+  attempt("a text, loosely, is " + text, () => aTextLoosely(JSON.parse(text)));
+  attempt("a point is " + text, () => aPoint(JSON.parse(text)));
+  attempt("a point, loosely, is " + text, () => aPointLoosely(JSON.parse(text)));
+  attempt("a list is " + text, () => aList(JSON.parse(text)));
+  attempt("a function is " + text, () => aFunction(JSON.parse(text)));
+  attempt("a truth is " + text, () => aTruth(JSON.parse(text)));
+}
+
+const missing = JSON.parse("{}").nothing;
+attempt("undefined everywhere", () => [aNumber(missing), aText(missing), aPoint(missing), aList(missing), aFunction(missing), aTruth(missing)]);
+attempt("undefined, loosely", () => [aNumberLoosely(missing), aTextLoosely(missing), aPointLoosely(missing)]);
+
+for (const text of ['{"n":1,"p":{"x":1,"y":2}}', "{}", '{"n":null,"p":null}', '{"n":"1","p":"xy"}', '{"n":[1],"p":[1]}']) attempt("fields from " + text, () => new Holder(text).describe());
+
+export {};
+//// the-arguments-object-and-the-parameters-are-separate-in-strict-code.ts
+////= show-32
+
+console.log("strict: " + (function (this: unknown) {
+  return this === undefined;
+})());
+
+function storeToParameter(a: number, b: string): unknown[] {
+  a = 99;
+  b = "changed";
+  return [a, b, arguments[0], arguments[1], arguments.length];
+}
+
+function storeToArguments(a: number, b: string): unknown[] {
+  arguments[0] = "text";
+  arguments[1] = 5;
+  return [typeof a, a, a + 1, typeof b, b, b.toUpperCase(), arguments[0], arguments[1]];
+}
+
+function fewer(a: number, b?: number, c: number = 7): unknown[] {
+  return [arguments.length, a, b, c, arguments[1], arguments[2], 1 in arguments, 2 in arguments];
+}
+
+function storeBeyond(a: number, b?: number): unknown[] {
+  arguments[1] = 5;
+  return [arguments.length, b, arguments[1], Object.keys(arguments)];
+}
+
+function more(a: number): unknown[] {
+  return [arguments.length, a, arguments[1], arguments[2], more.length];
+}
+
+function withRest(a: number, ...rest: number[]): unknown[] {
+  rest[0] = 100;
+  return [arguments.length, arguments[1], rest, rest.length];
+}
+
+function increments(a: number): unknown[] {
+  a++;
+  arguments[0]++;
+  return [a, arguments[0]];
+}
+
+function captured(a: number): unknown[] {
+  const read = () => a;
+  arguments[0] = 50;
+  const first = read();
+  a = 60;
+  return [first, read(), arguments[0]];
+}
+
+function leaked(a: number, b: number): IArguments {
+  return arguments;
+}
+
+function sumOf(list: ArrayLike<number>): number {
+  let sum = 0;
+  for (let i = 0; i < list.length; i++) sum += list[i];
+  return sum;
+}
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += sumOf(leaked(i, 1)) + Number(storeToParameter(i, "s")[2]) + Number(fewer(i)[0]);
+console.log("2000 honest rounds: " + total);
+
+attempt("a store to a parameter", () => storeToParameter(1, "b"));
+attempt("a store to arguments", () => storeToArguments(1, "b"));
+attempt("fewer arguments", () => [fewer(1), fewer(1, 2), fewer(1, undefined, undefined), fewer(1, 2, 3)]);
+attempt("a store beyond what was passed", () => [storeBeyond(1), storeBeyond(1, 2)]);
+const loose: (...all: number[]) => unknown[] = more;
+attempt("more arguments than parameters", () => [loose(1), loose(1, 2, 3)]);
+attempt("a rest parameter", () => [withRest(1), withRest(1, 2, 3)]);
+attempt("increments", () => increments(1));
+attempt("a captured parameter", () => captured(1));
+attempt("leaked", () => {
+  const all = leaked(1, 2);
+  all[0] = 10;
+  return [sumOf(all), Array.from(all), Object.prototype.toString.call(all), Array.isArray(all)];
+});
+attempt("callee", () => {
+  function f(): unknown {
+    return arguments.callee;
+  }
+  return f();
+});
+attempt("an arrow function sees the outer ones", () => {
+  function outer(a: number, b: number): unknown[] {
+    const inner = (c: number) => [arguments.length, arguments[0], c];
+    return inner(9);
+  }
+  return outer(1, 2);
+});
+
+export {};
+//// the-arguments-object-changes-an-int32-parameter.cts
+import type { int32 } from "bun";
+
+////= show-35
+
+console.log(
+  "strict:",
+  (function (this: unknown) {
+    return this === undefined;
+  })(),
+);
+
+////= Cell-3
+
+////= uses-3
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += uses(i | 0).length + uses(-i | 0).length;
+console.log("4000 honest uses", warm);
+
+const odd: number[] = JSON.parse("[1.5, -0, 2147483648, -2147483649, 1e21, 3]");
+odd.push(NaN, Infinity);
+
+function changed(v: int32, to: number): unknown[] {
+  arguments[0] = to;
+  return uses(v);
+}
+function poke(list: IArguments, to: number): void {
+  list[0] = to;
+}
+function changedElsewhere(v: int32, to: number): unknown[] {
+  poke(arguments, to);
+  return uses(v);
+}
+function changedInALoop(v: int32, to: number): unknown[] {
+  let sum = 0;
+  for (let i = 0; i < 3; i++) {
+    sum += v;
+    if (i === 0) arguments[0] = to;
+  }
+  return [sum, v];
+}
+function halved(v: int32): unknown[] {
+  arguments[0] /= 2;
+  return uses(v);
+}
+function raised(v: int32): unknown[] {
+  arguments[0]++;
+  return uses(v);
+}
+function seen(v: int32): unknown[] {
+  v = (v + 1) | 0;
+  return [v, arguments[0], arguments.length];
+}
+function emptied(v: int32): unknown[] {
+  arguments.length = 0;
+  Reflect.deleteProperty(arguments, 0);
+  return [uses(v), arguments[0]];
+}
+
+for (const n of odd) {
+  const label = show(n);
+  attempt(label + " stored", () => changed(1, n));
+  attempt(label + " stored by another function", () => changedElsewhere(1, n));
+  attempt(label + " stored in a loop", () => changedInALoop(1, n));
+}
+attempt("halved", () => [halved(3), halved(4)]);
+attempt("raised at the limit", () => [raised(2147483647), raised(1)]);
+attempt("seen", () => seen(1));
+attempt("emptied", () => emptied(1));
+attempt("honest again", () => changed(1, 2));
+//// the-arguments-object-is-given-where-a-length-is-read.ts
+function collect(first: number, second: number): IArguments {
+  return arguments;
+}
+
+////= lines-89	lengthOf	item	length	number	number	item.length
+
+console.log("start");
+console.log("length", lengthOf(collect(1, 2)));
+//// the-arguments-object-under-object-types.ts
+////= show-30
+
+type HasLength = { length: number };
+
+function collect(first: number, second: number, third: number): IArguments {
+  return arguments;
+}
+
+function collectAfterAStore(first: number, second: number): IArguments {
+  first = 10;
+  return arguments;
+}
+
+function storeThenRead(first: number, second: number): number[] {
+  arguments[1] = 20;
+  return [first, second, arguments.length];
+}
+
+////= lengthOf-3
+
+////= lines-57	kindOf	item	HasLength
+
+////= setLength-2
+
+////= forget
+
+////= sum-3
+
+function inspect(list: ArrayLike<number>): string[] {
+  const lines: string[] = [];
+  for (let i = 0; i <= list.length; i++) lines.push(i + " " + (i in list ? "present" : "absent") + " " + typeof list[i] + " " + show(list[i]));
+  return lines;
+}
+
+////= total-6
+
+function countOwn(...values: number[]): number {
+  return values.length;
+}
+
+function fewer(first: number, second?: number, third?: number): unknown[] {
+  return [arguments.length, first, second, third, 1 in arguments, arguments[1]];
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += lengthOf({ length: i }) + kindOf({ length: i }).length + setLength({ length: i }, 1) + increment({ length: i }) + sum([i, 1]) + inspect([i]).length + total([i]);
+console.log("after 2000 honest values", warm);
+
+attempt("length", () => lengthOf(collect(1, 2.5, -0)));
+attempt("typeof", () => kindOf(collect(1, 2.5, -0)));
+attempt("sum", () => sum(collect(1, 2.5, -0)));
+attempt("elements", () => inspect(collect(1, 2.5, -0)));
+attempt("for-of", () => total(collect(1, 2.5, -0)));
+attempt("spread", () => [...collect(1, 2.5, -0)]);
+attempt("spread as arguments", () => countOwn(...collect(1, 2.5, -0)));
+attempt("Array.from", () => Array.from(collect(1, 2.5, -0)));
+attempt("isArray", () => Array.isArray(collect(1, 2.5, -0)));
+attempt("tag", () => Object.prototype.toString.call(collect(1, 2.5, -0)));
+attempt("keys", () => Object.keys(collect(1, 2.5, -0)));
+attempt("JSON", () => JSON.stringify(collect(1, 2.5, -0)));
+attempt("store 2 to the length", () => {
+  const made = collect(1, 2.5, -0);
+  return [setLength(made, 2), sum(made), Object.keys(made), made[2]];
+});
+attempt("length++", () => increment(collect(1, 2.5, -0)));
+attempt("delete the length", () => {
+  const made = collect(1, 2.5, -0);
+  return [forget(made), made.length, "length" in made];
+});
+attempt("a parameter is stored to before", () => {
+  const made = collectAfterAStore(1, 2);
+  return [made[0], made[1], made.length];
+});
+attempt("an element is stored to", () => storeThenRead(1, 2));
+attempt("fewer arguments than parameters", () => [fewer(1), fewer(1, 2), fewer(1, undefined, 3)]);
+attempt("honest again", () => [lengthOf({ length: 1 }), sum([1, 2])]);
+//// the-base-constructor-of-a-mixin-calls-a-method-that-the-mixin-overrides.ts
+////= describe
+
+const seen: string[] = [];
+
+class Base {
+  ready = "base field";
+  constructor() {
+    seen.push("base constructor sees " + this.name());
+  }
+  name(): string {
+    return "base";
+  }
+}
+
+function Named(Parent: new () => Base) {
+  return class extends Parent {
+    label = "mixin field";
+    name(): string {
+      return "mixin with label " + this.label + " and ready " + this.ready;
+    }
+  };
+}
+
+const made = new (Named(Base))();
+console.log(seen.join(" | "));
+console.log(describe(made) + " " + made.name());
+//// the-base-of-a-class-is-a-proxy-that-traps-construct-and-get.ts
+////= describe-7
+
+const seen: string[] = [];
+const Wrapped = new Proxy(Point, {
+  construct(target, args, newTarget) {
+    seen.push("construct for " + newTarget.name);
+    return Reflect.construct(target, args, newTarget);
+  },
+  get(target, key, receiver) {
+    seen.push("get " + String(key));
+    return Reflect.get(target, key, receiver);
+  },
+});
+
+////= lines-14	class	Derived	extends	Wrapped	extra	"dq"
+
+console.log("while defining: " + seen.join(", "));
+seen.length = 0;
+const made = new Derived();
+console.log("while constructing: " + seen.join(", "));
+console.log(describe(made) + " " + made.sum() + " " + (made instanceof Point));
+//// the-base-of-a-class-is-a-proxy-whose-construct-trap-returns-something-else.ts
+////= describe-7
+
+const Wrapped = new Proxy(Point, {
+  construct() {
+    return { x: 50, y: 60, sum: () => -1, stranger: true };
+  },
+});
+
+////= Derived-7	Wrapped	"dq"
+
+const made = new Derived();
+console.log(describe(made));
+console.log("members: " + made.x + " " + made.y + " " + made.extra + " " + made.sum() + " typeof twice " + typeof made.twice);
+console.log("instance: " + (made instanceof Derived) + " " + (made instanceof Point));
+//// the-brand-of-a-branded-value-is-compared-with-undefined.ts
+type UserId = string & { readonly __brand: "UserId" };
+type Meters = number & { readonly unit: "m" };
+
+function isUserId(text: string): text is UserId {
+  return text.length > 0;
+}
+function isMeters(n: number): n is Meters {
+  return n >= 0;
+}
+
+const text: string = "u7";
+const n: number = 2.5;
+if (isUserId(text)) {
+  console.log(text.__brand);
+  console.log(text.__brand === undefined);
+  console.log(text.__brand === "UserId");
+  console.log(typeof text.__brand);
+  console.log(typeof text.__brand === "string");
+  console.log(text.__brand ?? "no brand");
+  console.log(text.length, text + "!");
+}
+if (isMeters(n)) {
+  console.log(n.unit);
+  console.log(n.unit === undefined);
+  console.log(n.unit === "m");
+  console.log(typeof n.unit === "string");
+  console.log(n.unit ?? "no unit");
+  console.log(n * 2);
+}
+//// the-callee-is-read-before-the-arguments-run.ts
+const log: string[] = [];
+
+class Adder {
+  base = 100;
+  fn: (n: number) => string = n => "first field " + n;
+  add(n: number): string {
+    return "first method " + (this.base + n);
+  }
+  static make(n: number): string {
+    return "first static " + n;
+  }
+  get swapOwn(): number {
+    log.push("swapOwn");
+    this.add = n => "own " + n;
+    return 1;
+  }
+  get swapPrototype(): number {
+    log.push("swapPrototype");
+    Adder.prototype.add = function (n) {
+      return "second method " + (this.base + n);
+    };
+    return 2;
+  }
+  get swapField(): number {
+    log.push("swapField");
+    this.fn = n => "second field " + n;
+    return 3;
+  }
+  get swapStatic(): number {
+    log.push("swapStatic");
+    Adder.make = n => "second static " + n;
+    return 4;
+  }
+}
+
+const originalAdd = Adder.prototype.add;
+const originalMake = Adder.make;
+
+////= lines-228	line	" ["	"]"
+
+////= lines-187	callOwn	a	Adder	a.add	a.swapOwn
+
+////= lines-187	callPrototype	a	Adder	a.add	a.swapPrototype
+
+////= lines-187	callField	a	Adder	a.fn	a.swapField
+
+////= lines-187	callStatic	a	Adder	Adder.make	a.swapStatic
+
+const one = new Adder();
+line("an own member appears while the argument runs", callOwn(one));
+line("the next call", callOwn(one));
+line("plainly", one.add(0));
+
+const two = new Adder();
+line("the prototype changes while the argument runs", callPrototype(two));
+line("the next call", callPrototype(two));
+Adder.prototype.add = originalAdd;
+line("put back", two.add(0));
+
+const three = new Adder();
+line("the field changes while the argument runs", callField(three));
+line("the next call", callField(three));
+
+line("the static method changes while the argument runs", callStatic(three));
+line("the next call", callStatic(three));
+Adder.make = originalMake;
+line("put back", Adder.make(0));
+
+function swapReceiver(holder: { a: Adder }, next: Adder): number {
+  holder.a = next;
+  return 5;
+}
+
+const louder = new Adder();
+louder.base = 1000;
+const holder = { a: new Adder() };
+line("the receiver's holder changes while the argument runs", holder.a.add(swapReceiver(holder, louder)));
+line("the next call", holder.a.add(0));
+
+let warm = 0;
+const honest = new Adder();
+for (let i = 0; i < 2000; i++) warm += honest.add(i).length + honest.fn(i).length + Adder.make(i).length;
+console.log("2000 honest: " + warm);
+line("then an own member", callOwn(honest));
+line("then the field", callField(honest));
+line("and again", callOwn(honest) + " | " + callField(honest));
+
+export {};
+//// the-constructor-assigns-a-partial-of-its-own-class.ts
+class Options {
+  depth = 1;
+  name = "default";
+  label(): string {
+    return this.name + "/" + this.depth;
+  }
+  get deep(): boolean {
+    return this.depth > 1;
+  }
+  constructor(given: Partial<Options> = {}) {
+    Object.assign(this, given);
+  }
+}
+
+////= lines-19	labelOf	o	Options	string	o.label
+
+function describe(o: Options): string {
+  let deep: string;
+  try {
+    deep = String(o.deep);
+  } catch (error) {
+    deep = "threw";
+  }
+  return o.label() + " " + labelOf(o) + " " + deep + " own " + Object.hasOwn(o, "label") + " keys " + Object.keys(o).join() + " json " + JSON.stringify(o);
+}
+
+////= attempt-34	make	Options	console.log	describe
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += labelOf(new Options({ depth: i })).length + labelOf(new Options()).length;
+console.log("2000 honest: " + warm);
+
+attempt("nothing given", () => new Options());
+attempt("fields given", () => new Options({ name: "n", depth: 5 }));
+attempt("in another order", () => new Options({ depth: 5, name: "n" }));
+attempt("a method given", () => new Options({ label: () => "given" }));
+attempt("a method that reads this", () => new Options({
+  label() {
+    return "given for " + this.name;
+  },
+}));
+attempt("undefined for a field", () => new Options({ name: undefined }));
+attempt("undefined for the method", () => new Options({ label: undefined }));
+attempt("a value for the getter", () => new Options({ deep: true }));
+attempt("another instance", () => new Options(new Options({ name: "inner" })));
+attempt("an instance that covers the method", () => new Options(new Options({ label: () => "inner given" })));
+attempt("nothing given, at the end", () => new Options());
+
+export {};
+//// the-constructor-covers-a-method-for-some-instances.ts
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number, flat: boolean = false) {
+    this.x = x;
+    this.y = y;
+    if (flat) this.norm = () => 0;
+  }
+  norm(): number {
+    return this.x * this.x + this.y * this.y;
+  }
+  twice(): number {
+    return this.norm() * 2;
+  }
+}
+
+////= normOf
+
+function describe(p: Point): string {
+  return p.norm() + " " + normOf(p) + " " + p.twice() + " own " + Object.hasOwn(p, "norm") + " keys " + Object.keys(p).join();
+}
+
+console.log("round: " + describe(new Point(3, 4)));
+console.log("flat: " + describe(new Point(3, 4, true)));
+console.log("round again: " + describe(new Point(1, 1)));
+
+const points: Point[] = [];
+for (let i = 0; i < 2000; i++) points.push(new Point(1, 1, i % 500 === 499));
+let sum = 0;
+for (const p of points) sum += normOf(p) + p.twice();
+console.log("2000 points, four of them flat: " + sum);
+
+class Bound {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+    this.hello = this.hello.bind(this);
+  }
+  hello(): string {
+    return "hello from " + this.name;
+  }
+}
+
+////= lines-19	helloOf	b	Bound	string	b.hello
+
+const b = new Bound("b");
+const taken = b.hello;
+console.log("bound in the constructor: " + b.hello() + " | " + helloOf(b) + " | " + taken() + " | own " + Object.hasOwn(b, "hello") + " | " + b.hello.name);
+console.log("called for another: " + b.hello.call(new Bound("c")) + " | " + Bound.prototype.hello.call(new Bound("c")));
+Bound.prototype.hello = () => "patched";
+console.log("the prototype patched afterwards: " + helloOf(b) + " | " + helloOf(new Bound("d")));
+
+export {};
+//// the-constructor-member-of-a-prototype-is-replaced.ts
+class Point {
+  x = 1;
+  static label = "point class";
+  again(): object {
+    return Reflect.construct(this.constructor, []);
+  }
+}
+
+class Other {
+  y = 2;
+  static label = "other class";
+}
+
+////= lines-14	class	Sub	extends	Point	z	3
+
+////= lines-32	nameOf	p	Point	string	p.constructor.name
+
+////= lines-116	isItsClass	p	Point	p.constructor	Point
+
+function facts(p: Point): string {
+  return nameOf(p) + " " + isItsClass(p) + " " + (p instanceof Point) + " own " + Object.hasOwn(p, "constructor") + " again " + JSON.stringify(p.again()) + " " + p.again().constructor.name;
+}
+
+const p = new Point();
+const s = new Sub();
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += nameOf(p).length + (isItsClass(p) ? 1 : 0) + nameOf(s).length;
+console.log("2000 honest: " + warm);
+console.log("before: " + facts(p) + " | " + facts(s));
+
+Point.prototype.constructor = Other;
+console.log("replaced on the prototype: " + facts(p) + " | " + facts(new Point()) + " | the subclass " + facts(s));
+
+Point.prototype.constructor = Point;
+console.log("put back: " + facts(p));
+
+p.constructor = Other;
+console.log("an own member: " + facts(p) + " | another " + facts(new Point()) + " | keys " + Object.keys(p).join());
+
+Reflect.deleteProperty(p, "constructor");
+console.log("removed: " + facts(p));
+
+Reflect.deleteProperty(Sub.prototype, "constructor");
+console.log("deleted from the subclass's prototype: " + facts(s));
+
+Reflect.deleteProperty(Point.prototype, "constructor");
+console.log("deleted from both: " + nameOf(p) + " " + nameOf(s) + " " + isItsClass(p) + " " + (p instanceof Point));
+
+Object.defineProperty(Point.prototype, "constructor", { value: Point, writable: true, configurable: true });
+Object.defineProperty(Sub.prototype, "constructor", { value: Sub, writable: true, configurable: true });
+console.log("restored: " + facts(p) + " | " + facts(s));
+
+export {};
+//// the-constructor-of-a-length-holder-is-asked-for.ts
+type HasLength = { length: number };
+
+const values: HasLength[] = [{ length: 1 }, "a"];
+
+////= lines-32	maker	item	HasLength	string	item.constructor.name
+
+for (const value of values) console.log("made by", maker(value));
+//// the-data-of-events-and-messages-is-untyped.ts
+import { EventEmitter } from "node:events";
+
+////= Point-2
+
+////= show-14
+
+////= guarded-2
+
+////= sum-8
+
+const values: [string, unknown][] = [
+  ["honest", { x: 1, y: 2 }],
+  ["swapped", { y: 2, x: 1 }],
+  ["texts", { x: "1", y: "2" }],
+  ["partial", { x: 1 }],
+  ["a list", [1, 2]],
+  ["a map", new Map([["x", 1]])],
+  ["bigints", { x: 1n, y: 2n }],
+  ["a number", 5],
+  ["a text", "xy"],
+  ["null", null],
+  ["undefined", undefined],
+];
+
+const lines: string[] = [];
+
+const channel = new MessageChannel();
+const received = new Promise<void>(resolve => {
+  let count = 0;
+  channel.port2.onmessage = event => {
+    const p: Point = event.data;
+    const n: number = event.data;
+    lines.push("a message, " + values[count][0] + " -> " + guarded(() => [p.x, sum(p)]) + " " + guarded(() => [n + 1 === n + 1, typeof plusOne(n)]));
+    if (++count === values.length) resolve();
+  };
+});
+for (const [, value] of values) channel.port1.postMessage(value);
+await received;
+channel.port1.close();
+channel.port2.close();
+
+const target = new EventTarget();
+let turn = 0;
+target.addEventListener("custom", event => {
+  if (!(event instanceof CustomEvent)) return;
+  const p: Point = event.detail;
+  lines.push("a custom event, " + values[turn][0] + " -> " + guarded(() => [p.x, p.y, sum(p)]));
+});
+for (const [, value] of values) {
+  target.dispatchEvent(new CustomEvent("custom", { detail: value }));
+  turn++;
+}
+
+const emitter = new EventEmitter();
+function onPoint(p: Point, n: number): void {
+  lines.push("an emitter, " + values[turn][0] + " -> " + guarded(() => [p.x, sum(p)]) + " " + guarded(() => [n, plusOne(n)]));
+}
+emitter.on("point", onPoint);
+for (let i = 0; i < 2000; i++) emitter.emit("warm", { x: i, y: 1 }, i);
+turn = 0;
+for (const [, value] of values) {
+  emitter.emit("point", value, value);
+  turn++;
+}
+turn = 0;
+emitter.emit("point");
+emitter.once("once", function (this: Point, n: number) {
+  lines.push("this of a listener -> " + guarded(() => [typeof this.x, this === Object(emitter), plusOne(n)]));
+});
+emitter.emit("once", "1");
+
+const message = new MessageEvent("message", { data: JSON.parse("\"text\"") });
+const fromEvent: Point = message.data;
+lines.push("a message event made by hand -> " + guarded(() => [fromEvent.x, sum(fromEvent)]));
+
+const failure = new ErrorEvent("error", { error: "no error object" });
+const error: Error = failure.error;
+lines.push("an error event -> " + guarded(() => [typeof error, error.message]) + " " + guarded(() => error.message.length));
+
+for (const line of lines) console.log(line);
+//// the-dispose-method-is-replaced-after-the-resource-was-declared.ts
+const log: string[] = [];
+
+class Resource {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  [Symbol.dispose](): void {
+    log.push("class dispose " + this.name);
+  }
+}
+
+class AsyncResource {
+  name: string;
+  constructor(name: string) {
+    this.name = name;
+  }
+  async [Symbol.asyncDispose](): Promise<void> {
+    log.push("class async dispose " + this.name);
+  }
+}
+
+function line(label: string): void {
+  console.log(label + ": " + log.join(", "));
+  log.length = 0;
+}
+
+function plain(): void {
+  using r = new Resource("a");
+  log.push("body " + r.name);
+}
+
+function replacedInTheBody(): void {
+  using r = new Resource("b");
+  r[Symbol.dispose] = () => {
+    log.push("own dispose");
+  };
+  log.push("body " + r.name);
+}
+
+function replacedBefore(): void {
+  const made = new Resource("c");
+  made[Symbol.dispose] = () => {
+    log.push("own dispose, set before");
+  };
+  using r = made;
+  log.push("body " + r.name);
+}
+
+function prototypeReplacedInTheBody(): void {
+  using r = new Resource("d");
+  Resource.prototype[Symbol.dispose] = function () {
+    log.push("patched dispose " + this.name);
+  };
+  log.push("body " + r.name);
+}
+
+function two(): void {
+  using first = new Resource("first");
+  using second = new Resource("second");
+  log.push("body " + first.name + " " + second.name);
+}
+
+async function asynchronous(): Promise<void> {
+  await using r = new AsyncResource("e");
+  r[Symbol.asyncDispose] = async () => {
+    log.push("own async dispose");
+  };
+  log.push("body " + r.name);
+}
+
+const original = Resource.prototype[Symbol.dispose];
+
+for (let i = 0; i < 2000; i++) plain();
+console.log("2000 honest: " + log.length);
+log.length = 0;
+
+plain();
+line("nothing replaced");
+replacedInTheBody();
+line("an own member appears in the body");
+replacedBefore();
+line("an own member from before the declaration");
+prototypeReplacedInTheBody();
+line("the prototype's is replaced in the body");
+plain();
+line("the next resource");
+two();
+line("two resources");
+Resource.prototype[Symbol.dispose] = original;
+two();
+line("put back");
+await asynchronous();
+line("an asynchronous one");
+
+export {};
+//// the-element-at-the-length-and-at-minus-one.ts
+////= show-42
+
+function atLength<T>(list: T[]): T {
+  return list[list.length];
+}
+
+function atMinusOne<T>(list: T[]): T {
+  return list[-1];
+}
+
+function last<T>(list: T[]): T {
+  return list[list.length - 1];
+}
+
+function append<T>(list: T[], item: T): void {
+  list[list.length] = item;
+}
+
+function storeAtMinusOne<T>(list: T[], item: T): void {
+  list[-1] = item;
+}
+
+function lastNumber(numbers: number[]): number {
+  return numbers[numbers.length - 1] + 1;
+}
+
+function lastText(strings: string[]): number {
+  return strings[strings.length - 1].length;
+}
+
+function state(list: unknown[]): string {
+  return show(list) + " length " + list.length + " keys " + Object.keys(list).join();
+}
+
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  const list = [i];
+  append(list, 1);
+  total += last(list) + lastNumber(list) + lastText(["a", "bc"]);
+}
+console.log("2000 honest rounds: " + total);
+
+attempt("numbers[length]", () => [typeof atLength([1, 2]), atLength([1, 2]) + 1, atLength([0.5]) * 2, atLength([1, 2]) | 0]);
+attempt("numbers[-1]", () => [typeof atMinusOne([1, 2]), atMinusOne([1, 2]) + 1]);
+attempt("strings[length]", () => [typeof atLength(["a"]), atLength(["a"]) + "!"]);
+attempt("strings[length].length", () => atLength(["a"]).length);
+attempt("strings[-1].length", () => atMinusOne(["a"]).length);
+attempt("points[length].x", () => atLength([new Point(1)]).x);
+attempt("points[-1].x", () => atMinusOne([new Point(1)]).x);
+attempt("functions[length]()", () => atLength([() => 1])());
+attempt("functions[-1]()", () => atMinusOne([() => 1])());
+attempt("the last of an empty list", () => [typeof last<number>([]), last<number>([]) + 1, lastNumber([])]);
+attempt("the last of an empty list of strings", () => lastText([]));
+attempt("the last of an empty list of points", () => last<Point>([]).x);
+attempt("the last of an empty list of functions", () => last<() => number>([])());
+
+attempt("a store at the length appends", () => {
+  const numbers = [1, 2];
+  append(numbers, 3);
+  append(numbers, 0.5);
+  return [state(numbers), lastNumber(numbers)];
+});
+attempt("a store at the length of an empty list", () => {
+  const strings: string[] = [];
+  append(strings, "a");
+  append(strings, "b");
+  return [state(strings), lastText(strings)];
+});
+attempt("a store at minus one is no element", () => {
+  const numbers = [1, 2];
+  storeAtMinusOne(numbers, 9);
+  return [state(numbers), atMinusOne(numbers), last(numbers), JSON.stringify(numbers), numbers.reduce((a, b) => a + b, 0), numbers.at(-1), numbers.indexOf(9), numbers.includes(9)];
+});
+attempt("then it is read by every list's [-1]? no", () => [typeof atMinusOne([1, 2]), typeof atMinusOne(["a"])]);
+attempt("a store at minus one of strings", () => {
+  const strings = ["a"];
+  storeAtMinusOne(strings, "minus");
+  return [state(strings), atMinusOne(strings).length, strings.join()];
+});
+attempt("written out", () => {
+  const numbers = [1, 2];
+  numbers[numbers.length] = 3;
+  numbers[-1] = 4;
+  const past = numbers[numbers.length];
+  return [state(numbers), numbers[-1], typeof past, numbers[numbers.length - 1]];
+});
+attempt("a frozen list", () => {
+  const numbers: number[] = [1, 2];
+  Object.freeze(numbers);
+  append(numbers, 3);
+  return state(numbers);
+});
+attempt("a list that cannot grow", () => {
+  const numbers: number[] = [1, 2];
+  Object.preventExtensions(numbers);
+  storeAtMinusOne(numbers, 3);
+  return state(numbers);
+});
+
+export {};
+//// the-empty-object-type-takes-every-primitive.ts
+////= show-30
+
+function kindOf(value: {}): string {
+  return typeof value;
+}
+
+function keysOf(value: {}): string[] {
+  return Object.keys(value);
+}
+
+function copyOf(value: {}): {} {
+  return { ...value };
+}
+
+function jsonOf(value: {}): string | undefined {
+  return JSON.stringify(value);
+}
+
+function textOf(value: {}): string {
+  return value.toString();
+}
+
+function makerOf(value: {}): string {
+  return value.constructor.name;
+}
+
+function owns(value: {}, key: string): boolean {
+  return value.hasOwnProperty(key);
+}
+
+function isItself(value: {}): boolean {
+  return value === value;
+}
+
+function isAnObject(value: {}): boolean {
+  return value instanceof Object;
+}
+
+function boxedIsSame(value: {}): boolean {
+  return Object(value) === value;
+}
+
+function passThrough<T extends {}>(value: T): T {
+  const held: {} = value;
+  return held === value ? value : value;
+}
+
+const values: [string, {}][] = [
+  ["an empty literal", {}],
+  ["a literal", { a: 1 }],
+  ["0", 0],
+  ["-0", -0],
+  ["1.5", 1.5],
+  ["NaN", NaN],
+  ["2 ** 40", 2 ** 40],
+  ["an empty string", ""],
+  ["a string", "ab"],
+  ["true", true],
+  ["false", false],
+  ["a symbol", Symbol("s")],
+  ["0n", 0n],
+  ["a large bigint", 2n ** 80n],
+  ["a built-in function", Math.max],
+  ["an array", [1, 2]],
+];
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = { a: i };
+  warm += kindOf(honest).length + keysOf(honest).length + Object.keys(copyOf(honest)).length + (jsonOf(honest) ?? "").length + textOf(honest).length;
+  warm += makerOf(honest).length + (owns(honest, "a") ? 1 : 0) + (isItself(honest) ? 1 : 0) + (isAnObject(honest) ? 1 : 0) + (boxedIsSame(honest) ? 1 : 0) + passThrough(honest).a;
+}
+console.log("after 2000 literals", warm);
+
+for (const [name, value] of values) {
+  attempt(name + ": typeof", () => kindOf(value));
+  attempt(name + ": keys", () => keysOf(value));
+  attempt(name + ": spread", () => copyOf(value));
+  attempt(name + ": JSON", () => jsonOf(value));
+  attempt(name + ": toString", () => textOf(value));
+  attempt(name + ": constructor", () => makerOf(value));
+  attempt(name + ": owns 0", () => owns(value, "0"));
+  attempt(name + ": owns length", () => owns(value, "length"));
+  attempt(name + ": equals itself", () => isItself(value));
+  attempt(name + ": instanceof Object", () => isAnObject(value));
+  attempt(name + ": Object(value) is the value", () => boxedIsSame(value));
+  attempt(name + ": comes back", () => passThrough(value));
+}
+//// the-engine-calls-typed-methods-with-operands-they-do-not-list.ts
+////= text-12
+
+const log: string[] = [];
+
+class Money {
+  amount: number = 5;
+  [Symbol.toPrimitive](hint: "number"): number {
+    log.push("toPrimitive " + hint + " " + (hint === "number"));
+    return this.amount;
+  }
+}
+
+class Entry {
+  value: number = 1;
+  toJSON(key: "first"): string {
+    log.push("toJSON " + typeof key + " '" + key + "' " + (key === "first"));
+    return "entry under " + key;
+  }
+}
+
+class Thenable {
+  then(resolve: (value: number) => void): void {
+    log.push("then got " + arguments.length + " operands");
+    resolve(42);
+  }
+}
+
+class Counter implements Iterator<number, string, number> {
+  n: number = 0;
+  next(step: number): IteratorResult<number, string> {
+    log.push("next " + typeof step + " " + arguments.length);
+    this.n += step;
+    if (log.length > 40) return { done: true, value: "too many" };
+    return this.n < 3 || Number.isNaN(this.n) ? { done: false, value: this.n } : { done: true, value: "end" };
+  }
+  return(reason: string): IteratorResult<number, string> {
+    log.push("return " + typeof reason + " " + arguments.length);
+    return { done: true, value: reason };
+  }
+  [Symbol.iterator](): Iterator<number> {
+    return this;
+  }
+}
+
+class Picky {
+  static [Symbol.hasInstance](value: Money): boolean {
+    log.push("hasInstance " + typeof value + " " + typeof value.amount);
+    return value.amount === 5;
+  }
+}
+
+class Splitter {
+  [Symbol.split](text: string, limit: number): string[] {
+    log.push("split " + typeof text + " " + typeof limit);
+    return [text, String(limit)];
+  }
+  [Symbol.replace](text: string, replacement: string): string {
+    log.push("replace " + typeof text + " " + typeof replacement);
+    return text + "/" + replacement;
+  }
+}
+
+function flush(): void {
+  for (const entry of log.splice(0)) console.log("  " + entry);
+}
+
+const money = new Money();
+show("unary plus", () => +money);
+show("template", () => `${money}`);
+show("plus a string", () => money + "");
+show("String()", () => String(money));
+show("as a key", () => Object.keys({ [`${money}`]: 1 }).join());
+show("minus", () => -money);
+show("Number()", () => Number(money));
+show("in an array join", () => [money, money].join());
+flush();
+
+show("JSON under first", () => JSON.stringify({ first: new Entry() }));
+show("JSON under second", () => JSON.stringify({ second: new Entry() }));
+show("JSON in an array", () => JSON.stringify([new Entry()]));
+show("JSON at the top", () => JSON.stringify(new Entry()));
+flush();
+
+show("for-of", () => {
+  const seen: number[] = [];
+  for (const n of new Counter()) {
+    seen.push(n);
+    if (seen.length === 2) break;
+  }
+  return seen.map(n => String(n)).join();
+});
+flush();
+show("destructuring", () => {
+  const [a] = new Counter();
+  return a;
+});
+flush();
+show("honest next", () => new Counter().next(2).value);
+flush();
+
+show("instanceof with money", () => money instanceof Picky);
+const lessPicky: { [Symbol.hasInstance](value: object): boolean } = Picky;
+show("instanceof with something else", () => new Entry() instanceof lessPicky);
+show("instanceof with a function", () => flush instanceof lessPicky);
+flush();
+
+show("split without a limit", () => "a,b".split(new Splitter()));
+show("split with a limit", () => "a,b".split(new Splitter(), 1));
+show("replace", () => "a,b".replace(new Splitter(), "x"));
+flush();
+
+async function main(): Promise<void> {
+  const value = await new Thenable();
+  console.log("awaited: " + typeof value + " " + value);
+  flush();
+  console.log("resolved: " + (await Promise.resolve(new Thenable())));
+  flush();
+}
+main();
+//// the-entries-of-a-literal-are-changed-and-written-back.ts
+////= Inner-3
+
+let quiet = false;
+const log: string[] = [];
+
+////= text-23
+
+const changes: [string, (p: Part) => Part][] = [
+  ["its entries are written back", p => Object.assign(p, Object.fromEntries(Object.entries(p)))],
+  ["every value is written back as text", p => Object.assign(p, Object.fromEntries(Object.entries(p).map(([key, value]) => [key, String(value)])))],
+  ["every number is written back doubled", p => Object.assign(p, Object.fromEntries(Object.entries(p).map(([key, value]) => [key, typeof value === "number" ? value * 2 : value])))],
+  ["every value is written back as undefined", p => Object.assign(p, Object.fromEntries(Object.keys(p).map(key => [key, undefined])))],
+  ["each name gets the value of the next", p => Object.assign(p, Object.fromEntries(Object.keys(p).map((key, index, keys) => [key, Reflect.get(p, keys[(index + 1) % keys.length])])))],
+  ["entries out of a map", p => Object.assign(p, Object.fromEntries(new Map<string, unknown>([["count", "text"], ["added", 1]])))],
+  ["the names in capitals are added", p => Object.assign(p, Object.fromEntries(Object.entries(p).map(([key, value]) => [key.toUpperCase(), value])))],
+];
+
+quiet = true;
+////= for-30
+inPlaces("", fresh);
+inALoop("", p => p);
+quiet = false;
+
+use("untouched", fresh());
+
+////= for-35
+
+use("untouched afterwards", fresh());
+
+export {};
+//// the-field-of-a-mixin-meets-an-accessor-or-a-method-of-the-same-name-in-the-base.ts
+////= describe
+
+const seen: string[] = [];
+
+class WithSetter {
+  get tag(): string {
+    return "getter of the base";
+  }
+  set tag(value: string) {
+    seen.push("setter of the base: " + value);
+  }
+}
+
+////= lines-38	WithMethodNamedTag	tag	string	"a method of the base"
+
+////= lines-77	FieldOverAccessor	object	tag	"field of the mixin"
+
+for (const Base of [WithSetter, WithMethodNamedTag, Object]) {
+  const made = new (FieldOverAccessor(Base))();
+  console.log(Base.name + ": " + describe(made) + " tag " + made.tag + " own " + Object.hasOwn(made, "tag"));
+}
+console.log("seen: [" + seen.join(", ") + "]");
+//// the-fifth-of-five-handlers-reads-the-owner-of-a-cat.ts
+////= Person-3
+class Animal {}
+class Dog extends Animal {
+  owner: Person = new Person();
+}
+class Cat extends Animal {}
+////= lines-84	Handler	handle	a	Animal	string
+const handlers: Handler[] = [
+  { handle: () => "one" },
+  { handle: () => "two" },
+  { handle: () => "three" },
+  { handle: () => "four" },
+  { handle: (d: Dog) => d.owner.first },
+];
+for (const handler of handlers) {
+  for (const animal of [new Dog(), new Cat()]) {
+    try {
+      console.log("gives " + handler.handle(animal));
+    } catch (error) {
+      console.log("threw");
+    }
+  }
+}
+//// the-first-block-of-a-namespace-uses-what-the-second-block-makes.ts
+////= text-11
+
+////= attempt-18
+
+namespace Steps {
+  export let count: number = 0;
+  export function viaLater(): number {
+    return later() + 1;
+  }
+  export function readValue(): number {
+    return value;
+  }
+  export function readValuePlusOne(): number {
+    return value + 1;
+  }
+  export function makeLate(): number {
+    return new Late().size;
+  }
+  export function lateMode(): number {
+    return Mode.Second;
+  }
+  export enum Mode {
+    First,
+  }
+  export const atStart: string[] = [attempt(viaLater), attempt(readValue), attempt(readValuePlusOne), attempt(makeLate), attempt(lateMode)];
+}
+
+show("what the first block saw", () => Steps.atStart);
+show("between the blocks", () => [attempt(Steps.viaLater), attempt(Steps.readValue), attempt(Steps.readValuePlusOne), attempt(Steps.makeLate), attempt(Steps.lateMode)]);
+show("between the blocks: from outside", () => [attempt(() => Steps.value), attempt(() => Steps.later()), attempt(() => Steps.Mode.Second), typeof Steps.Late]);
+show("between the blocks: keys", () => [Object.keys(Steps), Object.keys(Steps.Mode)]);
+
+namespace Steps {
+  export function later(): number {
+    return count * 10;
+  }
+  export const value: number = 7;
+  export class Late {
+    size: number = 3;
+  }
+  export enum Mode {
+    Second = 5,
+  }
+}
+
+show("after both", () => [attempt(Steps.viaLater), attempt(Steps.readValue), attempt(Steps.readValuePlusOne), attempt(Steps.makeLate), attempt(Steps.lateMode)]);
+show("after both: keys", () => [Object.keys(Steps), Object.keys(Steps.Mode)]);
+
+Steps.count = 5;
+show("a variable of the first block, stored from outside and read by the second", () => [Steps.count, Steps.later(), Steps.viaLater()]);
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  Steps.count++;
+  sum += Steps.viaLater() + Steps.readValue();
+}
+show("2000 rounds", () => [sum, Steps.count]);
+//// the-first-value-sent-to-a-generator-is-dropped.ts
+////= text-4
+
+////= lines-99	Order	id	note	string
+
+function* orders(start: number): Generator<string, number, Order> {
+  console.log("body starts with " + start);
+  let ids = start;
+  let count = 0;
+  while (count < 3) {
+    const order: Order = yield "waiting " + count;
+    count++;
+    console.log("order " + count + ": " + text(order) + " id " + text(order.id) + " note " + text(order.note));
+    ids += order.id;
+  }
+  return ids;
+}
+
+function feed(list: Order[]): string[] {
+  const out: string[] = [];
+  const generator = orders(1000);
+  for (const order of list) out.push(text(generator.next(order)));
+  out.push(text(generator.next(new Order(-1, "late"))));
+  return out;
+}
+
+const list = [new Order(1, "first"), new Order(2, "second"), new Order(3, "third"), new Order(4, "fourth")];
+for (const line of feed(list)) console.log(line);
+
+function* echo(): Generator<number, void, number> {
+  let last = 0;
+  for (;;) {
+    const sent: number = yield last;
+    last = sent + 1;
+  }
+}
+
+const echoing = echo();
+console.log("first next(41): " + text(echoing.next(41)));
+console.log("second next(41): " + text(echoing.next(41)));
+let answer = 0;
+for (let i = 0; i < 2000; i++) {
+  const step = echoing.next(i);
+  if (!step.done) answer += step.value;
+}
+console.log("after 2000: " + answer);
+
+function* withDefault(first: number = 7): Generator<number, number, number> {
+  const sent: number = yield first;
+  return first + sent;
+}
+
+const a = withDefault();
+console.log(text(a.next(1)) + " " + text(a.next(2)) + " " + text(a.next(3)));
+const b = withDefault(undefined);
+console.log(text(b.next(1)) + " " + text(b.next(2)) + " " + text(b.next(3)));
+const c = withDefault(10);
+console.log(text(c.next(1)) + " " + text(c.next()) + " " + text(c.next(3)));
+//// the-forms-of-the-array-constructor.ts
+////= show-31
+
+let warm = 0;
+////= for-3
+console.log("after 4000 dense arrays", warm);
+
+report("new Array<number>(3)", () => new Array<number>(3));
+report("new Array<number>(1, 2, 3)", () => new Array<number>(1, 2, 3));
+report("new Array<number>(1.5, 2.5, 3.5)", () => new Array<number>(1.5, 2.5, 3.5));
+report("Array.of(3)", () => Array.of(3));
+report("Array.of(3, 4, 5)", () => Array.of(3, 4, 5));
+report("Array.of<number>()", () => Array.of<number>());
+report("new Array<number>()", () => new Array<number>());
+report("new Array<number>(0)", () => new Array<number>(0));
+report("new Array<number>(...[3])", () => new Array<number>(...[3]));
+report("new Array<number>(...[3, 4])", () => new Array<number>(...[3, 4]));
+
+function make(first: number): number[] {
+  return new Array<number>(first);
+}
+for (const first of [0, 1, 2, 2.5, -1, NaN, -0, 2 ** 32 - 1, 2 ** 32]) {
+  attempt("one argument, " + show(first), () => {
+    const numbers = make(first);
+    return [numbers.length, 0 in numbers, numbers[0]];
+  });
+}
+attempt("one argument that is a string", () => {
+  const texts = new Array<string>("3");
+  return [texts.length, texts[0], 0 in texts];
+});
+attempt("Reflect.construct", () => inspect(Reflect.construct(Array<number>, [3])));
+attempt("a subclass with one argument", () => {
+  class List extends Array<number> {}
+  const list = new List(3);
+  return [list.length, 0 in list, inspect(list), List.of(3).length];
+});
+attempt("the constructor in a variable", () => {
+  const Maker: new (length: number) => number[] = Array;
+  return inspect(new Maker(2));
+});
+attempt("the constructor handed to map", () => [1, 2].map(length => new Array<number>(length)).map(inspect));
+//// the-function-field-of-a-machine-is-called-and-never-replaced-honest.ts
+////= adder-2
+
+const m = new Machine();
+const other = new Machine();
+const first = m.step;
+const box = { count: 0 };
+
+////= attempt-95
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += m.step(i) + stepOf(m, i) + m.run(i) + stepOf(other, i);
+console.log("2000 honest rounds: " + sum);
+report("before");
+report("a second time");
+report("a third time");
+report("a fourth time");
+report("a fifth time");
+
+export {};
+//// the-functions-of-a-namespace-are-called-honest.ts
+////= Geometry
+
+////= lines-36	outside	side	number	number	Geometry.area	side
+
+function through(g: typeof Geometry, side: number): number {
+  return g.area(side);
+}
+
+function round(label: string): void {
+  console.log(label + ": " + [Geometry.area(3), outside(3), through(Geometry, 3), Geometry.twice(3), Geometry.twiceByName(3), Geometry.scale(3), Geometry.scaled(3)].join(" "));
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += outside(i) + through(Geometry, i) + Geometry.twice(i) + Geometry.scaled(i);
+console.log("2000 honest: " + warm);
+round("before");
+
+export {};
+//// the-handler-or-its-argument-changes-in-the-middle-of-a-loop.ts
+////= Person-5
+
+////= lines-84	Handler	handle	a	Animal	number
+
+class NameHandler implements Handler {
+  handle(a: Animal): number {
+    return a.name.length;
+  }
+}
+class LegHandler implements Handler {
+  handle(d: Dog): number {
+    return d.legs;
+  }
+}
+
+function tally(run: (i: number) => number, rounds: number): string {
+  let sum = 0;
+  let strange = 0;
+  let thrown = 0;
+  for (let i = 0; i < rounds; i++) {
+    try {
+      const n = run(i);
+      if (typeof n === "number" && !Number.isNaN(n)) sum += n;
+      else strange++;
+    } catch (error) {
+      thrown++;
+    }
+  }
+  return "sum " + sum + ", strange " + strange + ", thrown " + thrown;
+}
+
+show("the argument changes", () => {
+  const handler: Handler = new LegHandler();
+  let animal: Animal = new Dog("rex");
+  return tally(i => {
+    if (i === 1000) animal = new Cat("tom");
+    if (i === 1500) animal = new Dog("fido");
+    return handler.handle(animal);
+  }, 2000);
+});
+
+show("the handler changes", () => {
+  let handler: Handler = new NameHandler();
+  const animal: Animal = new Cat("tom");
+  return tally(i => {
+    if (i === 1000) handler = new LegHandler();
+    if (i === 1500) handler = new NameHandler();
+    return handler.handle(animal);
+  }, 2000);
+});
+
+show("the field is deleted", () => {
+  const handler: Handler = new LegHandler();
+  const dog = new Dog("rex");
+  const loose: { legs?: number } = dog;
+  return tally(i => {
+    if (i === 1000) delete loose.legs;
+    if (i === 1500) dog.legs = 3;
+    return handler.handle(dog);
+  }, 2000);
+});
+
+show("the field becomes a getter", () => {
+  const handler: Handler = new LegHandler();
+  const dog = new Dog("rex");
+  let reads = 0;
+  const result = tally(i => {
+    if (i === 1000) Object.defineProperty(dog, "legs", { get: () => (reads++, 10), configurable: true });
+    return handler.handle(dog);
+  }, 2000);
+  return result + ", reads " + reads;
+});
+
+show("the field gets a string", () => {
+  const handler: Handler = new LegHandler();
+  const dog = new Dog("rex");
+  const wide: { legs: number | string } = dog;
+  return tally(i => {
+    if (i === 1000) wide.legs = "four";
+    if (i === 1500) wide.legs = 2.5;
+    return handler.handle(dog);
+  }, 2000);
+});
+
+show("the prototype of the argument changes", () => {
+  const dog = new Dog("rex");
+  return tally(i => {
+    if (i === 1000) Object.setPrototypeOf(dog, Cat.prototype);
+    if (i === 1500) Object.setPrototypeOf(dog, Dog.prototype);
+    return dog.bark().length;
+  }, 2000);
+});
+
+show("the method is replaced on the prototype", () => {
+  const handler = new LegHandler();
+  const dog = new Dog("rex");
+  const original = LegHandler.prototype.handle;
+  const result = tally(i => {
+    if (i === 1000) LegHandler.prototype.handle = () => 100;
+    if (i === 1500) LegHandler.prototype.handle = original;
+    return handler.handle(dog);
+  }, 2000);
+  return result;
+});
+
+show("the callee itself swaps what it is given next", () => {
+  const animals: Animal[] = [new Dog("rex")];
+  let calls = 0;
+  const handler: Handler = {
+    handle(d: Dog) {
+      calls++;
+      if (calls === 1000) animals[0] = new Spider("boris");
+      if (calls === 1010) animals[0] = new Dog("back");
+      return d.legs;
+    },
+  };
+  return tally(() => handler.handle(animals[0]), 2000);
+});
+
+show("the object is frozen", () => {
+  const dog = new Dog("rex");
+  const shoe: { put(a: Animal, n: number): void } = {
+    put(d: Dog, n: number) {
+      d.legs = n;
+    },
+  };
+  const result = tally(i => {
+    if (i === 1000) Object.freeze(dog);
+    shoe.put(dog, i);
+    return 1;
+  }, 2000);
+  return result + ", legs " + dog.legs;
+});
+//// the-heritage-expression-runs-once-and-before-the-members.ts
+////= describe-7
+
+const seen: string[] = [];
+
+function give(): typeof Point {
+  seen.push("heritage");
+  return Point;
+}
+
+function key(): "computed" {
+  seen.push("computed key");
+  return "computed";
+}
+
+class Derived extends give() {
+  static first = seen.push("static field");
+  field = seen.push("instance field");
+  [key()](): string {
+    return "a method under a computed name";
+  }
+  static {
+    seen.push("static block");
+  }
+}
+
+console.log("after the definition: " + seen.join(", "));
+new Derived();
+new Derived();
+console.log("after two constructions: " + seen.join(", "));
+console.log(describe(new Derived()));
+//// the-holder-of-a-member-of-a-literal-or-an-inherited-field-is-locked-right-before-a-typed-store.ts
+////= nameOf-4
+
+////= lines-27	C1	value1	number	other1	number
+
+////= lines-33	ask1	C1	value1	"number"
+
+function block1(): void {
+  const o: C1 = { value1: 1, other1: 2 };
+  Object.freeze(o);
+  attempt("the holder of a member of a literal is frozen, asked directly", () => (o.value1 === undefined) + " " + (o.value1 == null) + " " + (typeof o.value1 === "number") + " " + typeof o.value1);
+  attempt("the holder of a member of a literal is frozen, asked by a typed function", () => ask1(o));
+  attempt("the holder of a member of a literal is frozen, asked by a callback", () => [o].filter(q => q.value1 === undefined).length + " " + [o].filter(q => typeof q.value1 === "number").length);
+  attempt("the holder of a member of a literal is frozen, used", () => o.value1 + o.other1);
+  attempt("the holder of a member of a literal is frozen, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a member of a literal is frozen, copied", () => JSON.stringify({ ...o }));
+  attempt("the holder of a member of a literal is frozen, a typed store", () => (o.value1 = 5));
+  attempt("the holder of a member of a literal is frozen, asked after the store", () => (o.value1 === undefined) + " " + (o.value1 == null) + " " + (typeof o.value1 === "number") + " " + typeof o.value1);
+}
+
+block1();
+
+////= lines-27	C2	value2	number	other2	number
+
+////= lines-33	ask2	C2	value2	"number"
+
+function block2(): void {
+  const o: C2 = { value2: 1, other2: 2 };
+  Object.seal(o);
+  attempt("the holder of a member of a literal is sealed, asked directly", () => (o.value2 === undefined) + " " + (o.value2 == null) + " " + (typeof o.value2 === "number") + " " + typeof o.value2);
+  attempt("the holder of a member of a literal is sealed, asked by a typed function", () => ask2(o));
+  attempt("the holder of a member of a literal is sealed, asked by a callback", () => [o].filter(q => q.value2 === undefined).length + " " + [o].filter(q => typeof q.value2 === "number").length);
+  attempt("the holder of a member of a literal is sealed, used", () => o.value2 + o.other2);
+  attempt("the holder of a member of a literal is sealed, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a member of a literal is sealed, copied", () => JSON.stringify({ ...o }));
+  attempt("the holder of a member of a literal is sealed, a typed store", () => (o.value2 = 5));
+  attempt("the holder of a member of a literal is sealed, asked after the store", () => (o.value2 === undefined) + " " + (o.value2 == null) + " " + (typeof o.value2 === "number") + " " + typeof o.value2);
+}
+
+block2();
+
+////= lines-27	C3	value3	number	other3	number
+
+////= lines-33	ask3	C3	value3	"number"
+
+function block3(): void {
+  const o: C3 = { value3: 1, other3: 2 };
+  Reflect.preventExtensions(o);
+  attempt("the holder of a member of a literal is kept from growing, asked directly", () => (o.value3 === undefined) + " " + (o.value3 == null) + " " + (typeof o.value3 === "number") + " " + typeof o.value3);
+  attempt("the holder of a member of a literal is kept from growing, asked by a typed function", () => ask3(o));
+  attempt("the holder of a member of a literal is kept from growing, asked by a callback", () => [o].filter(q => q.value3 === undefined).length + " " + [o].filter(q => typeof q.value3 === "number").length);
+  attempt("the holder of a member of a literal is kept from growing, used", () => o.value3 + o.other3);
+  attempt("the holder of a member of a literal is kept from growing, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a member of a literal is kept from growing, copied", () => JSON.stringify({ ...o }));
+  attempt("the holder of a member of a literal is kept from growing, a typed store", () => (o.value3 = 5));
+  attempt("the holder of a member of a literal is kept from growing, asked after the store", () => (o.value3 === undefined) + " " + (o.value3 == null) + " " + (typeof o.value3 === "number") + " " + typeof o.value3);
+}
+
+block3();
+
+////= lines-27	C4	value4	number	other4	number
+
+////= lines-33	ask4	C4	value4	"number"
+
+function block4(): void {
+  const o: C4 = { value4: 1, other4: 2 };
+  Object.defineProperty(o, "value4", { writable: false });
+  attempt("a member of a literal is made read-only, asked directly", () => (o.value4 === undefined) + " " + (o.value4 == null) + " " + (typeof o.value4 === "number") + " " + typeof o.value4);
+  attempt("a member of a literal is made read-only, asked by a typed function", () => ask4(o));
+  attempt("a member of a literal is made read-only, asked by a callback", () => [o].filter(q => q.value4 === undefined).length + " " + [o].filter(q => typeof q.value4 === "number").length);
+  attempt("a member of a literal is made read-only, used", () => o.value4 + o.other4);
+  attempt("a member of a literal is made read-only, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("a member of a literal is made read-only, copied", () => JSON.stringify({ ...o }));
+  attempt("a member of a literal is made read-only, a typed store", () => (o.value4 = 5));
+  attempt("a member of a literal is made read-only, asked after the store", () => (o.value4 === undefined) + " " + (o.value4 == null) + " " + (typeof o.value4 === "number") + " " + typeof o.value4);
+}
+
+block4();
+
+////= lines-31	B5	value	1	twice	2
+
+////= lines-14	class	C5	extends	B5	extra	2
+
+////= lines-33	ask5	B5	value	"number"
+
+function block5(): void {
+  const o = new C5();
+  Object.freeze(o);
+  attempt("the holder of an inherited field is frozen, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("the holder of an inherited field is frozen, asked by a typed function", () => ask5(o));
+  attempt("the holder of an inherited field is frozen, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("the holder of an inherited field is frozen, used", () => o.value + o.extra);
+  attempt("the holder of an inherited field is frozen, by the method of the base", () => o.twice());
+  attempt("the holder of an inherited field is frozen, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of an inherited field is frozen, a typed store", () => (o.value = 5));
+  attempt("the holder of an inherited field is frozen, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+}
+
+block5();
+
+////= lines-31	B6	value	1	twice	2
+
+////= lines-14	class	C6	extends	B6	extra	2
+
+////= lines-33	ask6	B6	value	"number"
+
+function block6(): void {
+  const o = new C6();
+  Object.seal(o);
+  attempt("the holder of an inherited field is sealed, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("the holder of an inherited field is sealed, asked by a typed function", () => ask6(o));
+  attempt("the holder of an inherited field is sealed, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("the holder of an inherited field is sealed, used", () => o.value + o.extra);
+  attempt("the holder of an inherited field is sealed, by the method of the base", () => o.twice());
+  attempt("the holder of an inherited field is sealed, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of an inherited field is sealed, a typed store", () => (o.value = 5));
+  attempt("the holder of an inherited field is sealed, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+}
+
+block6();
+
+////= lines-31	B7	value	1	twice	2
+
+////= lines-14	class	C7	extends	B7	extra	2
+
+////= lines-33	ask7	B7	value	"number"
+
+function block7(): void {
+  const o = new C7();
+  Reflect.preventExtensions(o);
+  attempt("the holder of an inherited field is kept from growing, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("the holder of an inherited field is kept from growing, asked by a typed function", () => ask7(o));
+  attempt("the holder of an inherited field is kept from growing, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("the holder of an inherited field is kept from growing, used", () => o.value + o.extra);
+  attempt("the holder of an inherited field is kept from growing, by the method of the base", () => o.twice());
+  attempt("the holder of an inherited field is kept from growing, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of an inherited field is kept from growing, a typed store", () => (o.value = 5));
+  attempt("the holder of an inherited field is kept from growing, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+}
+
+block7();
+
+////= lines-31	B8	value	1	twice	2
+
+////= lines-14	class	C8	extends	B8	extra	2
+
+////= lines-33	ask8	B8	value	"number"
+
+function block8(): void {
+  const o = new C8();
+  Object.defineProperty(o, "value", { writable: false });
+  attempt("an inherited field is made read-only, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("an inherited field is made read-only, asked by a typed function", () => ask8(o));
+  attempt("an inherited field is made read-only, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("an inherited field is made read-only, used", () => o.value + o.extra);
+  attempt("an inherited field is made read-only, by the method of the base", () => o.twice());
+  attempt("an inherited field is made read-only, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("an inherited field is made read-only, a typed store", () => (o.value = 5));
+  attempt("an inherited field is made read-only, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+}
+
+block8();
+
+export {};
+//// the-holder-of-a-member-of-a-prototype-a-class-or-a-function-is-locked-right-before-a-typed-store.ts
+////= nameOf-6
+
+function block1(): void {
+  const o = new C1();
+  Object.freeze(C1.prototype);
+  attempt("the holder of a method of a prototype is frozen, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+  attempt("the holder of a method of a prototype is frozen, asked by a typed function", () => ask1(o));
+  attempt("the holder of a method of a prototype is frozen, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "function").length);
+  attempt("the holder of a method of a prototype is frozen, used", () => o.value());
+  attempt("the holder of a method of a prototype is frozen, on a new instance", () => new C1().value());
+  attempt("the holder of a method of a prototype is frozen, listed", () => Object.hasOwn(o, "value") + " " + Object.getOwnPropertyNames(C1.prototype).join());
+  attempt("the holder of a method of a prototype is frozen, a typed store", () => (o.value = () => 2));
+  attempt("the holder of a method of a prototype is frozen, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+}
+
+block1();
+
+////= C2-5
+
+function block2(): void {
+  const o = new C2();
+  Object.seal(C2.prototype);
+  attempt("the holder of a method of a prototype is sealed, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+  attempt("the holder of a method of a prototype is sealed, asked by a typed function", () => ask2(o));
+  attempt("the holder of a method of a prototype is sealed, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "function").length);
+  attempt("the holder of a method of a prototype is sealed, used", () => o.value());
+  attempt("the holder of a method of a prototype is sealed, on a new instance", () => new C2().value());
+  attempt("the holder of a method of a prototype is sealed, listed", () => Object.hasOwn(o, "value") + " " + Object.getOwnPropertyNames(C2.prototype).join());
+  attempt("the holder of a method of a prototype is sealed, a typed store", () => (o.value = () => 2));
+  attempt("the holder of a method of a prototype is sealed, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+}
+
+block2();
+
+////= lines-143	C3	level	1	value
+
+////= lines-33	ask3	C3	value	"function"
+
+function block3(): void {
+  const o = new C3();
+  Reflect.preventExtensions(C3.prototype);
+  attempt("the holder of a method of a prototype is kept from growing, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+  attempt("the holder of a method of a prototype is kept from growing, asked by a typed function", () => ask3(o));
+  attempt("the holder of a method of a prototype is kept from growing, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "function").length);
+  attempt("the holder of a method of a prototype is kept from growing, used", () => o.value());
+  attempt("the holder of a method of a prototype is kept from growing, on a new instance", () => new C3().value());
+  attempt("the holder of a method of a prototype is kept from growing, listed", () => Object.hasOwn(o, "value") + " " + Object.getOwnPropertyNames(C3.prototype).join());
+  attempt("the holder of a method of a prototype is kept from growing, a typed store", () => (o.value = () => 2));
+  attempt("the holder of a method of a prototype is kept from growing, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+}
+
+block3();
+
+////= lines-143	C4	level	1	value
+
+////= lines-33	ask4	C4	value	"function"
+
+function block4(): void {
+  const o = new C4();
+  Object.defineProperty(C4.prototype, "value", { writable: false });
+  attempt("a method of a prototype is made read-only, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+  attempt("a method of a prototype is made read-only, asked by a typed function", () => ask4(o));
+  attempt("a method of a prototype is made read-only, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "function").length);
+  attempt("a method of a prototype is made read-only, used", () => o.value());
+  attempt("a method of a prototype is made read-only, on a new instance", () => new C4().value());
+  attempt("a method of a prototype is made read-only, listed", () => Object.hasOwn(o, "value") + " " + Object.getOwnPropertyNames(C4.prototype).join());
+  attempt("a method of a prototype is made read-only, a typed store", () => (o.value = () => 2));
+  attempt("a method of a prototype is made read-only, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+}
+
+block4();
+
+////= lines-73	C5
+
+////= lines-109	ask5	C5
+
+function block5(): void {
+  Object.freeze(C5);
+  attempt("the holder of a static field is frozen, asked directly", () => (C5.value === undefined) + " " + (C5.value == null) + " " + (typeof C5.value === "number") + " " + typeof C5.value);
+  attempt("the holder of a static field is frozen, asked by a typed function", () => ask5(C5));
+  attempt("the holder of a static field is frozen, asked by a callback", () => [C5].filter(q => q.value === undefined).length + " " + [C5].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a static field is frozen, used", () => C5.value + 1);
+  attempt("the holder of a static field is frozen, by a static method", () => C5.twice());
+  attempt("the holder of a static field is frozen, listed", () => Object.keys(C5).join());
+  attempt("the holder of a static field is frozen, a typed store", () => (C5.value = 5));
+  attempt("the holder of a static field is frozen, asked after the store", () => (C5.value === undefined) + " " + (C5.value == null) + " " + (typeof C5.value === "number") + " " + typeof C5.value);
+}
+
+block5();
+
+////= lines-73	C6
+
+////= lines-109	ask6	C6
+
+function block6(): void {
+  Object.seal(C6);
+  attempt("the holder of a static field is sealed, asked directly", () => (C6.value === undefined) + " " + (C6.value == null) + " " + (typeof C6.value === "number") + " " + typeof C6.value);
+  attempt("the holder of a static field is sealed, asked by a typed function", () => ask6(C6));
+  attempt("the holder of a static field is sealed, asked by a callback", () => [C6].filter(q => q.value === undefined).length + " " + [C6].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a static field is sealed, used", () => C6.value + 1);
+  attempt("the holder of a static field is sealed, by a static method", () => C6.twice());
+  attempt("the holder of a static field is sealed, listed", () => Object.keys(C6).join());
+  attempt("the holder of a static field is sealed, a typed store", () => (C6.value = 5));
+  attempt("the holder of a static field is sealed, asked after the store", () => (C6.value === undefined) + " " + (C6.value == null) + " " + (typeof C6.value === "number") + " " + typeof C6.value);
+}
+
+block6();
+
+////= lines-73	C7
+
+////= lines-109	ask7	C7
+
+function block7(): void {
+  Reflect.preventExtensions(C7);
+  attempt("the holder of a static field is kept from growing, asked directly", () => (C7.value === undefined) + " " + (C7.value == null) + " " + (typeof C7.value === "number") + " " + typeof C7.value);
+  attempt("the holder of a static field is kept from growing, asked by a typed function", () => ask7(C7));
+  attempt("the holder of a static field is kept from growing, asked by a callback", () => [C7].filter(q => q.value === undefined).length + " " + [C7].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a static field is kept from growing, used", () => C7.value + 1);
+  attempt("the holder of a static field is kept from growing, by a static method", () => C7.twice());
+  attempt("the holder of a static field is kept from growing, listed", () => Object.keys(C7).join());
+  attempt("the holder of a static field is kept from growing, a typed store", () => (C7.value = 5));
+  attempt("the holder of a static field is kept from growing, asked after the store", () => (C7.value === undefined) + " " + (C7.value == null) + " " + (typeof C7.value === "number") + " " + typeof C7.value);
+}
+
+block7();
+
+////= lines-73	C8
+
+////= lines-109	ask8	C8
+
+function block8(): void {
+  Object.defineProperty(C8, "value", { writable: false });
+  attempt("a static field is made read-only, asked directly", () => (C8.value === undefined) + " " + (C8.value == null) + " " + (typeof C8.value === "number") + " " + typeof C8.value);
+  attempt("a static field is made read-only, asked by a typed function", () => ask8(C8));
+  attempt("a static field is made read-only, asked by a callback", () => [C8].filter(q => q.value === undefined).length + " " + [C8].filter(q => typeof q.value === "number").length);
+  attempt("a static field is made read-only, used", () => C8.value + 1);
+  attempt("a static field is made read-only, by a static method", () => C8.twice());
+  attempt("a static field is made read-only, listed", () => Object.keys(C8).join());
+  attempt("a static field is made read-only, a typed store", () => (C8.value = 5));
+  attempt("a static field is made read-only, asked after the store", () => (C8.value === undefined) + " " + (C8.value == null) + " " + (typeof C8.value === "number") + " " + typeof C8.value);
+}
+
+block8();
+
+////= lines-110	ask9
+
+function block9(): void {
+  const f = Object.assign((n: number): number => n * 2, { value: 1 });
+  Object.freeze(f);
+  attempt("the holder of a member of a function is frozen, asked directly", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+  attempt("the holder of a member of a function is frozen, asked by a typed function", () => ask9(f));
+  attempt("the holder of a member of a function is frozen, asked by a callback", () => [f].filter(q => q.value === undefined).length + " " + [f].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a member of a function is frozen, used", () => f.value + 1);
+  attempt("the holder of a member of a function is frozen, called", () => f(2));
+  attempt("the holder of a member of a function is frozen, listed", () => Object.keys(f).join());
+  attempt("the holder of a member of a function is frozen, a typed store", () => (f.value = 5));
+  attempt("the holder of a member of a function is frozen, asked after the store", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+}
+
+block9();
+
+////= lines-110	ask10
+
+function block10(): void {
+  const f = Object.assign((n: number): number => n * 2, { value: 1 });
+  Object.seal(f);
+  attempt("the holder of a member of a function is sealed, asked directly", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+  attempt("the holder of a member of a function is sealed, asked by a typed function", () => ask10(f));
+  attempt("the holder of a member of a function is sealed, asked by a callback", () => [f].filter(q => q.value === undefined).length + " " + [f].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a member of a function is sealed, used", () => f.value + 1);
+  attempt("the holder of a member of a function is sealed, called", () => f(2));
+  attempt("the holder of a member of a function is sealed, listed", () => Object.keys(f).join());
+  attempt("the holder of a member of a function is sealed, a typed store", () => (f.value = 5));
+  attempt("the holder of a member of a function is sealed, asked after the store", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+}
+
+block10();
+
+////= lines-110	ask11
+
+function block11(): void {
+  const f = Object.assign((n: number): number => n * 2, { value: 1 });
+  Reflect.preventExtensions(f);
+  attempt("the holder of a member of a function is kept from growing, asked directly", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+  attempt("the holder of a member of a function is kept from growing, asked by a typed function", () => ask11(f));
+  attempt("the holder of a member of a function is kept from growing, asked by a callback", () => [f].filter(q => q.value === undefined).length + " " + [f].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a member of a function is kept from growing, used", () => f.value + 1);
+  attempt("the holder of a member of a function is kept from growing, called", () => f(2));
+  attempt("the holder of a member of a function is kept from growing, listed", () => Object.keys(f).join());
+  attempt("the holder of a member of a function is kept from growing, a typed store", () => (f.value = 5));
+  attempt("the holder of a member of a function is kept from growing, asked after the store", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+}
+
+block11();
+
+////= lines-110	ask12
+
+function block12(): void {
+  const f = Object.assign((n: number): number => n * 2, { value: 1 });
+  Object.defineProperty(f, "value", { writable: false });
+  attempt("a member of a function is made read-only, asked directly", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+  attempt("a member of a function is made read-only, asked by a typed function", () => ask12(f));
+  attempt("a member of a function is made read-only, asked by a callback", () => [f].filter(q => q.value === undefined).length + " " + [f].filter(q => typeof q.value === "number").length);
+  attempt("a member of a function is made read-only, used", () => f.value + 1);
+  attempt("a member of a function is made read-only, called", () => f(2));
+  attempt("a member of a function is made read-only, listed", () => Object.keys(f).join());
+  attempt("a member of a function is made read-only, a typed store", () => (f.value = 5));
+  attempt("a member of a function is made read-only, asked after the store", () => (f.value === undefined) + " " + (f.value == null) + " " + (typeof f.value === "number") + " " + typeof f.value);
+}
+
+block12();
+
+export {};
+//// the-holder-of-a-number-a-string-or-a-boolean-field-is-locked-right-before-a-typed-store.ts
+////= nameOf-7
+
+function block1(): void {
+  const o = new C1();
+  Object.freeze(o);
+  attempt("the holder of a number field is frozen, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("the holder of a number field is frozen, asked by a typed function", () => ask1(o));
+  attempt("the holder of a number field is frozen, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a number field is frozen, used", () => o.value + 1);
+  attempt("the holder of a number field is frozen, by its own method", () => o.twice());
+  attempt("the holder of a number field is frozen, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a number field is frozen, a typed store", () => (o.value = 5));
+  attempt("the holder of a number field is frozen, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+}
+
+block1();
+
+////= C2
+
+////= ask2-2
+
+function block2(): void {
+  const o = new C2();
+  Object.seal(o);
+  attempt("the holder of a number field is sealed, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("the holder of a number field is sealed, asked by a typed function", () => ask2(o));
+  attempt("the holder of a number field is sealed, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a number field is sealed, used", () => o.value + 1);
+  attempt("the holder of a number field is sealed, by its own method", () => o.twice());
+  attempt("the holder of a number field is sealed, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a number field is sealed, a typed store", () => (o.value = 5));
+  attempt("the holder of a number field is sealed, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+}
+
+block2();
+
+////= C3-2
+
+////= lines-33	ask3	C3	value	"number"
+
+function block3(): void {
+  const o = new C3();
+  Reflect.preventExtensions(o);
+  attempt("the holder of a number field is kept from growing, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("the holder of a number field is kept from growing, asked by a typed function", () => ask3(o));
+  attempt("the holder of a number field is kept from growing, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a number field is kept from growing, used", () => o.value + 1);
+  attempt("the holder of a number field is kept from growing, by its own method", () => o.twice());
+  attempt("the holder of a number field is kept from growing, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a number field is kept from growing, a typed store", () => (o.value = 5));
+  attempt("the holder of a number field is kept from growing, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+}
+
+block3();
+
+////= C4-2
+
+////= lines-33	ask4	C4	value	"number"
+
+function block4(): void {
+  const o = new C4();
+  Object.defineProperty(o, "value", { writable: false });
+  attempt("a number field is made read-only, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("a number field is made read-only, asked by a typed function", () => ask4(o));
+  attempt("a number field is made read-only, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("a number field is made read-only, used", () => o.value + 1);
+  attempt("a number field is made read-only, by its own method", () => o.twice());
+  attempt("a number field is made read-only, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("a number field is made read-only, a typed store", () => (o.value = 5));
+  attempt("a number field is made read-only, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+}
+
+block4();
+
+////= lines-74	C5
+
+////= lines-33	ask5	C5	value	"string"
+
+function block5(): void {
+  const o = new C5();
+  Object.freeze(o);
+  attempt("the holder of a string field is frozen, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+  attempt("the holder of a string field is frozen, asked by a typed function", () => ask5(o));
+  attempt("the holder of a string field is frozen, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "string").length);
+  attempt("the holder of a string field is frozen, used", () => o.value.length);
+  attempt("the holder of a string field is frozen, by its own method", () => o.size());
+  attempt("the holder of a string field is frozen, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a string field is frozen, a typed store", () => (o.value = "t"));
+  attempt("the holder of a string field is frozen, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+}
+
+block5();
+
+////= lines-74	C6
+
+////= lines-33	ask6	C6	value	"string"
+
+function block6(): void {
+  const o = new C6();
+  Object.seal(o);
+  attempt("the holder of a string field is sealed, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+  attempt("the holder of a string field is sealed, asked by a typed function", () => ask6(o));
+  attempt("the holder of a string field is sealed, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "string").length);
+  attempt("the holder of a string field is sealed, used", () => o.value.length);
+  attempt("the holder of a string field is sealed, by its own method", () => o.size());
+  attempt("the holder of a string field is sealed, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a string field is sealed, a typed store", () => (o.value = "t"));
+  attempt("the holder of a string field is sealed, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+}
+
+block6();
+
+////= lines-74	C7
+
+////= lines-33	ask7	C7	value	"string"
+
+function block7(): void {
+  const o = new C7();
+  Reflect.preventExtensions(o);
+  attempt("the holder of a string field is kept from growing, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+  attempt("the holder of a string field is kept from growing, asked by a typed function", () => ask7(o));
+  attempt("the holder of a string field is kept from growing, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "string").length);
+  attempt("the holder of a string field is kept from growing, used", () => o.value.length);
+  attempt("the holder of a string field is kept from growing, by its own method", () => o.size());
+  attempt("the holder of a string field is kept from growing, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a string field is kept from growing, a typed store", () => (o.value = "t"));
+  attempt("the holder of a string field is kept from growing, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+}
+
+block7();
+
+////= lines-74	C8
+
+////= lines-33	ask8	C8	value	"string"
+
+function block8(): void {
+  const o = new C8();
+  Object.defineProperty(o, "value", { writable: false });
+  attempt("a string field is made read-only, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+  attempt("a string field is made read-only, asked by a typed function", () => ask8(o));
+  attempt("a string field is made read-only, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "string").length);
+  attempt("a string field is made read-only, used", () => o.value.length);
+  attempt("a string field is made read-only, by its own method", () => o.size());
+  attempt("a string field is made read-only, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("a string field is made read-only, a typed store", () => (o.value = "t"));
+  attempt("a string field is made read-only, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+}
+
+block8();
+
+////= lines-76	C9
+
+////= lines-33	ask9	C9	value	"boolean"
+
+function block9(): void {
+  const o = new C9();
+  Object.freeze(o);
+  attempt("the holder of a boolean field is frozen, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "boolean") + " " + typeof o.value);
+  attempt("the holder of a boolean field is frozen, asked by a typed function", () => ask9(o));
+  attempt("the holder of a boolean field is frozen, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "boolean").length);
+  attempt("the holder of a boolean field is frozen, used", () => o.value ? "truthy" : "falsy");
+  attempt("the holder of a boolean field is frozen, by its own method", () => o.word());
+  attempt("the holder of a boolean field is frozen, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a boolean field is frozen, a typed store", () => (o.value = false));
+  attempt("the holder of a boolean field is frozen, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "boolean") + " " + typeof o.value);
+}
+
+block9();
+
+////= lines-76	C10
+
+////= lines-33	ask10	C10	value	"boolean"
+
+function block10(): void {
+  const o = new C10();
+  Object.seal(o);
+  attempt("the holder of a boolean field is sealed, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "boolean") + " " + typeof o.value);
+  attempt("the holder of a boolean field is sealed, asked by a typed function", () => ask10(o));
+  attempt("the holder of a boolean field is sealed, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "boolean").length);
+  attempt("the holder of a boolean field is sealed, used", () => o.value ? "truthy" : "falsy");
+  attempt("the holder of a boolean field is sealed, by its own method", () => o.word());
+  attempt("the holder of a boolean field is sealed, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a boolean field is sealed, a typed store", () => (o.value = false));
+  attempt("the holder of a boolean field is sealed, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "boolean") + " " + typeof o.value);
+}
+
+block10();
+
+////= lines-76	C11
+
+////= lines-33	ask11	C11	value	"boolean"
+
+function block11(): void {
+  const o = new C11();
+  Reflect.preventExtensions(o);
+  attempt("the holder of a boolean field is kept from growing, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "boolean") + " " + typeof o.value);
+  attempt("the holder of a boolean field is kept from growing, asked by a typed function", () => ask11(o));
+  attempt("the holder of a boolean field is kept from growing, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "boolean").length);
+  attempt("the holder of a boolean field is kept from growing, used", () => o.value ? "truthy" : "falsy");
+  attempt("the holder of a boolean field is kept from growing, by its own method", () => o.word());
+  attempt("the holder of a boolean field is kept from growing, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of a boolean field is kept from growing, a typed store", () => (o.value = false));
+  attempt("the holder of a boolean field is kept from growing, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "boolean") + " " + typeof o.value);
+}
+
+block11();
+
+////= lines-76	C12
+
+////= lines-33	ask12	C12	value	"boolean"
+
+function block12(): void {
+  const o = new C12();
+  Object.defineProperty(o, "value", { writable: false });
+  attempt("a boolean field is made read-only, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "boolean") + " " + typeof o.value);
+  attempt("a boolean field is made read-only, asked by a typed function", () => ask12(o));
+  attempt("a boolean field is made read-only, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "boolean").length);
+  attempt("a boolean field is made read-only, used", () => o.value ? "truthy" : "falsy");
+  attempt("a boolean field is made read-only, by its own method", () => o.word());
+  attempt("a boolean field is made read-only, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("a boolean field is made read-only, a typed store", () => (o.value = false));
+  attempt("a boolean field is made read-only, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "boolean") + " " + typeof o.value);
+}
+
+block12();
+
+export {};
+//// the-holder-of-an-element-of-an-array-or-a-tuple-is-locked-right-before-a-typed-store.ts
+////= nameOf-10
+
+function block1(): void {
+  const list: number[] = [1, 2, 3];
+  Object.freeze(list);
+  attempt("the holder of an element of numbers is frozen, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+  attempt("the holder of an element of numbers is frozen, asked by a typed function", () => ask1(list));
+  attempt("the holder of an element of numbers is frozen, asked by a callback", () => list.filter(n => n === undefined).length + " " + list.filter(n => typeof n === "number").length);
+  attempt("the holder of an element of numbers is frozen, used", () => list[1] + 1);
+  attempt("the holder of an element of numbers is frozen, summed", () => list.reduce((a, b) => a + b, 0));
+  attempt("the holder of an element of numbers is frozen, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("the holder of an element of numbers is frozen, a typed store", () => (list[1] = 5));
+  attempt("the holder of an element of numbers is frozen, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+}
+
+block1();
+
+////= ask2-4
+
+function block2(): void {
+  const list: number[] = [1, 2, 3];
+  Object.seal(list);
+  attempt("the holder of an element of numbers is sealed, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+  attempt("the holder of an element of numbers is sealed, asked by a typed function", () => ask2(list));
+  attempt("the holder of an element of numbers is sealed, asked by a callback", () => list.filter(n => n === undefined).length + " " + list.filter(n => typeof n === "number").length);
+  attempt("the holder of an element of numbers is sealed, used", () => list[1] + 1);
+  attempt("the holder of an element of numbers is sealed, summed", () => list.reduce((a, b) => a + b, 0));
+  attempt("the holder of an element of numbers is sealed, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("the holder of an element of numbers is sealed, a typed store", () => (list[1] = 5));
+  attempt("the holder of an element of numbers is sealed, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+}
+
+block2();
+
+////= lines-54	ask3	number	"number"
+
+function block3(): void {
+  const list: number[] = [1, 2, 3];
+  Reflect.preventExtensions(list);
+  attempt("the holder of an element of numbers is kept from growing, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+  attempt("the holder of an element of numbers is kept from growing, asked by a typed function", () => ask3(list));
+  attempt("the holder of an element of numbers is kept from growing, asked by a callback", () => list.filter(n => n === undefined).length + " " + list.filter(n => typeof n === "number").length);
+  attempt("the holder of an element of numbers is kept from growing, used", () => list[1] + 1);
+  attempt("the holder of an element of numbers is kept from growing, summed", () => list.reduce((a, b) => a + b, 0));
+  attempt("the holder of an element of numbers is kept from growing, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("the holder of an element of numbers is kept from growing, a typed store", () => (list[1] = 5));
+  attempt("the holder of an element of numbers is kept from growing, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+}
+
+block3();
+
+////= lines-54	ask4	number	"number"
+
+function block4(): void {
+  const list: number[] = [1, 2, 3];
+  Object.defineProperty(list, 1, { writable: false });
+  attempt("an element of numbers is made read-only, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+  attempt("an element of numbers is made read-only, asked by a typed function", () => ask4(list));
+  attempt("an element of numbers is made read-only, asked by a callback", () => list.filter(n => n === undefined).length + " " + list.filter(n => typeof n === "number").length);
+  attempt("an element of numbers is made read-only, used", () => list[1] + 1);
+  attempt("an element of numbers is made read-only, summed", () => list.reduce((a, b) => a + b, 0));
+  attempt("an element of numbers is made read-only, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("an element of numbers is made read-only, a typed store", () => (list[1] = 5));
+  attempt("an element of numbers is made read-only, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "number") + " " + typeof list[1]);
+}
+
+block4();
+
+////= lines-54	ask5	string	"string"
+
+function block5(): void {
+  const list: string[] = ["a", "b", "c"];
+  Object.freeze(list);
+  attempt("the holder of an element of strings is frozen, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("the holder of an element of strings is frozen, asked by a typed function", () => ask5(list));
+  attempt("the holder of an element of strings is frozen, asked by a callback", () => list.filter(s => s === undefined).length + " " + list.filter(s => typeof s === "string").length);
+  attempt("the holder of an element of strings is frozen, used", () => list[1].length);
+  attempt("the holder of an element of strings is frozen, joined", () => list.join("+"));
+  attempt("the holder of an element of strings is frozen, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("the holder of an element of strings is frozen, a typed store", () => (list[1] = "z"));
+  attempt("the holder of an element of strings is frozen, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block5();
+
+////= lines-54	ask6	string	"string"
+
+function block6(): void {
+  const list: string[] = ["a", "b", "c"];
+  Object.seal(list);
+  attempt("the holder of an element of strings is sealed, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("the holder of an element of strings is sealed, asked by a typed function", () => ask6(list));
+  attempt("the holder of an element of strings is sealed, asked by a callback", () => list.filter(s => s === undefined).length + " " + list.filter(s => typeof s === "string").length);
+  attempt("the holder of an element of strings is sealed, used", () => list[1].length);
+  attempt("the holder of an element of strings is sealed, joined", () => list.join("+"));
+  attempt("the holder of an element of strings is sealed, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("the holder of an element of strings is sealed, a typed store", () => (list[1] = "z"));
+  attempt("the holder of an element of strings is sealed, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block6();
+
+////= lines-54	ask7	string	"string"
+
+function block7(): void {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.preventExtensions(list);
+  attempt("the holder of an element of strings is kept from growing, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("the holder of an element of strings is kept from growing, asked by a typed function", () => ask7(list));
+  attempt("the holder of an element of strings is kept from growing, asked by a callback", () => list.filter(s => s === undefined).length + " " + list.filter(s => typeof s === "string").length);
+  attempt("the holder of an element of strings is kept from growing, used", () => list[1].length);
+  attempt("the holder of an element of strings is kept from growing, joined", () => list.join("+"));
+  attempt("the holder of an element of strings is kept from growing, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("the holder of an element of strings is kept from growing, a typed store", () => (list[1] = "z"));
+  attempt("the holder of an element of strings is kept from growing, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block7();
+
+////= lines-54	ask8	string	"string"
+
+function block8(): void {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { writable: false });
+  attempt("an element of strings is made read-only, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("an element of strings is made read-only, asked by a typed function", () => ask8(list));
+  attempt("an element of strings is made read-only, asked by a callback", () => list.filter(s => s === undefined).length + " " + list.filter(s => typeof s === "string").length);
+  attempt("an element of strings is made read-only, used", () => list[1].length);
+  attempt("an element of strings is made read-only, joined", () => list.join("+"));
+  attempt("an element of strings is made read-only, listed", () => list.length + " " + Object.keys(list).join() + " " + JSON.stringify(list));
+  attempt("an element of strings is made read-only, a typed store", () => (list[1] = "z"));
+  attempt("an element of strings is made read-only, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block8();
+
+////= lines-28	C9	depth9	number
+
+////= lines-54	ask9	C9	"object"
+
+function block9(): void {
+  const list: C9[] = [{ depth9: 1 }, { depth9: 2 }, { depth9: 3 }];
+  Object.freeze(list);
+  attempt("the holder of an element of objects is frozen, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+  attempt("the holder of an element of objects is frozen, asked by a typed function", () => ask9(list));
+  attempt("the holder of an element of objects is frozen, asked by a callback", () => list.filter(part => part === undefined).length + " " + list.filter(part => typeof part === "object").length);
+  attempt("the holder of an element of objects is frozen, used", () => list[1].depth9);
+  attempt("the holder of an element of objects is frozen, mapped", () => list.map(part => part.depth9).join());
+  attempt("the holder of an element of objects is frozen, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("the holder of an element of objects is frozen, a typed store", () => (list[1] = { depth9: 9 }));
+  attempt("the holder of an element of objects is frozen, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+}
+
+block9();
+
+////= lines-28	C10	depth10	number
+
+////= lines-54	ask10	C10	"object"
+
+function block10(): void {
+  const list: C10[] = [{ depth10: 1 }, { depth10: 2 }, { depth10: 3 }];
+  Object.seal(list);
+  attempt("the holder of an element of objects is sealed, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+  attempt("the holder of an element of objects is sealed, asked by a typed function", () => ask10(list));
+  attempt("the holder of an element of objects is sealed, asked by a callback", () => list.filter(part => part === undefined).length + " " + list.filter(part => typeof part === "object").length);
+  attempt("the holder of an element of objects is sealed, used", () => list[1].depth10);
+  attempt("the holder of an element of objects is sealed, mapped", () => list.map(part => part.depth10).join());
+  attempt("the holder of an element of objects is sealed, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("the holder of an element of objects is sealed, a typed store", () => (list[1] = { depth10: 9 }));
+  attempt("the holder of an element of objects is sealed, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+}
+
+block10();
+
+////= lines-28	C11	depth11	number
+
+////= lines-54	ask11	C11	"object"
+
+function block11(): void {
+  const list: C11[] = [{ depth11: 1 }, { depth11: 2 }, { depth11: 3 }];
+  Reflect.preventExtensions(list);
+  attempt("the holder of an element of objects is kept from growing, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+  attempt("the holder of an element of objects is kept from growing, asked by a typed function", () => ask11(list));
+  attempt("the holder of an element of objects is kept from growing, asked by a callback", () => list.filter(part => part === undefined).length + " " + list.filter(part => typeof part === "object").length);
+  attempt("the holder of an element of objects is kept from growing, used", () => list[1].depth11);
+  attempt("the holder of an element of objects is kept from growing, mapped", () => list.map(part => part.depth11).join());
+  attempt("the holder of an element of objects is kept from growing, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("the holder of an element of objects is kept from growing, a typed store", () => (list[1] = { depth11: 9 }));
+  attempt("the holder of an element of objects is kept from growing, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+}
+
+block11();
+
+////= lines-28	C12	depth12	number
+
+////= lines-54	ask12	C12	"object"
+
+function block12(): void {
+  const list: C12[] = [{ depth12: 1 }, { depth12: 2 }, { depth12: 3 }];
+  Object.defineProperty(list, 1, { writable: false });
+  attempt("an element of objects is made read-only, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+  attempt("an element of objects is made read-only, asked by a typed function", () => ask12(list));
+  attempt("an element of objects is made read-only, asked by a callback", () => list.filter(part => part === undefined).length + " " + list.filter(part => typeof part === "object").length);
+  attempt("an element of objects is made read-only, used", () => list[1].depth12);
+  attempt("an element of objects is made read-only, mapped", () => list.map(part => part.depth12).join());
+  attempt("an element of objects is made read-only, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("an element of objects is made read-only, a typed store", () => (list[1] = { depth12: 9 }));
+  attempt("an element of objects is made read-only, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "object") + " " + typeof list[1]);
+}
+
+block12();
+
+////= lines-111	ask13
+
+function block13(): void {
+  const list: [number, string] = [1, "one"];
+  Object.freeze(list);
+  attempt("the holder of an element of a tuple is frozen, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("the holder of an element of a tuple is frozen, asked by a typed function", () => ask13(list));
+  attempt("the holder of an element of a tuple is frozen, asked by a callback", () => [list].filter(q => q[1] === undefined).length + " " + [list].filter(q => typeof q[1] === "string").length);
+  attempt("the holder of an element of a tuple is frozen, used", () => list[1].length + list[0]);
+  attempt("the holder of an element of a tuple is frozen, a pattern", () => (([n, s]: [number, string]) => s + n)(list));
+  attempt("the holder of an element of a tuple is frozen, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("the holder of an element of a tuple is frozen, a typed store", () => (list[1] = "two"));
+  attempt("the holder of an element of a tuple is frozen, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block13();
+
+////= lines-111	ask14
+
+function block14(): void {
+  const list: [number, string] = [1, "one"];
+  Object.seal(list);
+  attempt("the holder of an element of a tuple is sealed, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("the holder of an element of a tuple is sealed, asked by a typed function", () => ask14(list));
+  attempt("the holder of an element of a tuple is sealed, asked by a callback", () => [list].filter(q => q[1] === undefined).length + " " + [list].filter(q => typeof q[1] === "string").length);
+  attempt("the holder of an element of a tuple is sealed, used", () => list[1].length + list[0]);
+  attempt("the holder of an element of a tuple is sealed, a pattern", () => (([n, s]: [number, string]) => s + n)(list));
+  attempt("the holder of an element of a tuple is sealed, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("the holder of an element of a tuple is sealed, a typed store", () => (list[1] = "two"));
+  attempt("the holder of an element of a tuple is sealed, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block14();
+
+////= lines-111	ask15
+
+function block15(): void {
+  const list: [number, string] = [1, "one"];
+  Reflect.preventExtensions(list);
+  attempt("the holder of an element of a tuple is kept from growing, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("the holder of an element of a tuple is kept from growing, asked by a typed function", () => ask15(list));
+  attempt("the holder of an element of a tuple is kept from growing, asked by a callback", () => [list].filter(q => q[1] === undefined).length + " " + [list].filter(q => typeof q[1] === "string").length);
+  attempt("the holder of an element of a tuple is kept from growing, used", () => list[1].length + list[0]);
+  attempt("the holder of an element of a tuple is kept from growing, a pattern", () => (([n, s]: [number, string]) => s + n)(list));
+  attempt("the holder of an element of a tuple is kept from growing, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("the holder of an element of a tuple is kept from growing, a typed store", () => (list[1] = "two"));
+  attempt("the holder of an element of a tuple is kept from growing, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block15();
+
+////= lines-111	ask16
+
+function block16(): void {
+  const list: [number, string] = [1, "one"];
+  Object.defineProperty(list, 1, { writable: false });
+  attempt("an element of a tuple is made read-only, asked directly", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+  attempt("an element of a tuple is made read-only, asked by a typed function", () => ask16(list));
+  attempt("an element of a tuple is made read-only, asked by a callback", () => [list].filter(q => q[1] === undefined).length + " " + [list].filter(q => typeof q[1] === "string").length);
+  attempt("an element of a tuple is made read-only, used", () => list[1].length + list[0]);
+  attempt("an element of a tuple is made read-only, a pattern", () => (([n, s]: [number, string]) => s + n)(list));
+  attempt("an element of a tuple is made read-only, listed", () => list.length + " " + JSON.stringify(list));
+  attempt("an element of a tuple is made read-only, a typed store", () => (list[1] = "two"));
+  attempt("an element of a tuple is made read-only, asked after the store", () => (list[1] === undefined) + " " + (list[1] == null) + " " + (typeof list[1] === "string") + " " + typeof list[1]);
+}
+
+block16();
+
+export {};
+//// the-holder-of-an-object-or-a-function-field-is-locked-right-before-a-typed-store.ts
+////= nameOf-8
+
+function block1(): void {
+  const o = new C1();
+  Object.freeze(o);
+  attempt("the holder of an object field is frozen, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "object") + " " + typeof o.value);
+  attempt("the holder of an object field is frozen, asked by a typed function", () => ask1(o));
+  attempt("the holder of an object field is frozen, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "object").length);
+  attempt("the holder of an object field is frozen, used", () => o.value.depth);
+  attempt("the holder of an object field is frozen, by its own method", () => o.depth());
+  attempt("the holder of an object field is frozen, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of an object field is frozen, a typed store", () => (o.value = { depth: 2 }));
+  attempt("the holder of an object field is frozen, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "object") + " " + typeof o.value);
+}
+
+block1();
+
+////= C2-3
+
+////= lines-33	ask2	C2	value	"object"
+
+function block2(): void {
+  const o = new C2();
+  Object.seal(o);
+  attempt("the holder of an object field is sealed, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "object") + " " + typeof o.value);
+  attempt("the holder of an object field is sealed, asked by a typed function", () => ask2(o));
+  attempt("the holder of an object field is sealed, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "object").length);
+  attempt("the holder of an object field is sealed, used", () => o.value.depth);
+  attempt("the holder of an object field is sealed, by its own method", () => o.depth());
+  attempt("the holder of an object field is sealed, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of an object field is sealed, a typed store", () => (o.value = { depth: 2 }));
+  attempt("the holder of an object field is sealed, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "object") + " " + typeof o.value);
+}
+
+block2();
+
+class C3 {
+  value = { depth: 1 };
+  depth(): number {
+    return this.value.depth;
+  }
+}
+
+////= lines-33	ask3	C3	value	"object"
+
+function block3(): void {
+  const o = new C3();
+  Reflect.preventExtensions(o);
+  attempt("the holder of an object field is kept from growing, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "object") + " " + typeof o.value);
+  attempt("the holder of an object field is kept from growing, asked by a typed function", () => ask3(o));
+  attempt("the holder of an object field is kept from growing, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "object").length);
+  attempt("the holder of an object field is kept from growing, used", () => o.value.depth);
+  attempt("the holder of an object field is kept from growing, by its own method", () => o.depth());
+  attempt("the holder of an object field is kept from growing, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of an object field is kept from growing, a typed store", () => (o.value = { depth: 2 }));
+  attempt("the holder of an object field is kept from growing, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "object") + " " + typeof o.value);
+}
+
+block3();
+
+class C4 {
+  value = { depth: 1 };
+  depth(): number {
+    return this.value.depth;
+  }
+}
+
+////= lines-33	ask4	C4	value	"object"
+
+function block4(): void {
+  const o = new C4();
+  Object.defineProperty(o, "value", { writable: false });
+  attempt("an object field is made read-only, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "object") + " " + typeof o.value);
+  attempt("an object field is made read-only, asked by a typed function", () => ask4(o));
+  attempt("an object field is made read-only, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "object").length);
+  attempt("an object field is made read-only, used", () => o.value.depth);
+  attempt("an object field is made read-only, by its own method", () => o.depth());
+  attempt("an object field is made read-only, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("an object field is made read-only, a typed store", () => (o.value = { depth: 2 }));
+  attempt("an object field is made read-only, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "object") + " " + typeof o.value);
+}
+
+block4();
+
+////= lines-75	C5
+
+////= lines-33	ask5	C5	value	"function"
+
+function block5(): void {
+  const o = new C5();
+  Object.freeze(o);
+  attempt("the holder of a function field is frozen, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+  attempt("the holder of a function field is frozen, asked by a typed function", () => ask5(o));
+  attempt("the holder of a function field is frozen, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "function").length);
+  attempt("the holder of a function field is frozen, used", () => o.value());
+  attempt("the holder of a function field is frozen, by its own method", () => o.run());
+  attempt("the holder of a function field is frozen, listed", () => Object.keys(o).join());
+  attempt("the holder of a function field is frozen, a typed store", () => (o.value = () => 2));
+  attempt("the holder of a function field is frozen, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+}
+
+block5();
+
+////= lines-75	C6
+
+////= lines-33	ask6	C6	value	"function"
+
+function block6(): void {
+  const o = new C6();
+  Object.seal(o);
+  attempt("the holder of a function field is sealed, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+  attempt("the holder of a function field is sealed, asked by a typed function", () => ask6(o));
+  attempt("the holder of a function field is sealed, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "function").length);
+  attempt("the holder of a function field is sealed, used", () => o.value());
+  attempt("the holder of a function field is sealed, by its own method", () => o.run());
+  attempt("the holder of a function field is sealed, listed", () => Object.keys(o).join());
+  attempt("the holder of a function field is sealed, a typed store", () => (o.value = () => 2));
+  attempt("the holder of a function field is sealed, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+}
+
+block6();
+
+////= lines-75	C7
+
+////= lines-33	ask7	C7	value	"function"
+
+function block7(): void {
+  const o = new C7();
+  Reflect.preventExtensions(o);
+  attempt("the holder of a function field is kept from growing, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+  attempt("the holder of a function field is kept from growing, asked by a typed function", () => ask7(o));
+  attempt("the holder of a function field is kept from growing, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "function").length);
+  attempt("the holder of a function field is kept from growing, used", () => o.value());
+  attempt("the holder of a function field is kept from growing, by its own method", () => o.run());
+  attempt("the holder of a function field is kept from growing, listed", () => Object.keys(o).join());
+  attempt("the holder of a function field is kept from growing, a typed store", () => (o.value = () => 2));
+  attempt("the holder of a function field is kept from growing, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+}
+
+block7();
+
+////= lines-75	C8
+
+////= lines-33	ask8	C8	value	"function"
+
+function block8(): void {
+  const o = new C8();
+  Object.defineProperty(o, "value", { writable: false });
+  attempt("a function field is made read-only, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+  attempt("a function field is made read-only, asked by a typed function", () => ask8(o));
+  attempt("a function field is made read-only, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "function").length);
+  attempt("a function field is made read-only, used", () => o.value());
+  attempt("a function field is made read-only, by its own method", () => o.run());
+  attempt("a function field is made read-only, listed", () => Object.keys(o).join());
+  attempt("a function field is made read-only, a typed store", () => (o.value = () => 2));
+  attempt("a function field is made read-only, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "function") + " " + typeof o.value);
+}
+
+block8();
+
+export {};
+//// the-holder-of-an-optional-or-a-readonly-field-is-locked-right-before-a-typed-store.ts
+////= nameOf-9
+
+function block1(): void {
+  const o = new C1();
+  Object.freeze(o);
+  attempt("the holder of an optional field is frozen, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+  attempt("the holder of an optional field is frozen, asked by a typed function", () => ask1(o));
+  attempt("the holder of an optional field is frozen, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "string").length);
+  attempt("the holder of an optional field is frozen, used", () => o.value?.length);
+  attempt("the holder of an optional field is frozen, or a default", () => o.value ?? "default");
+  attempt("the holder of an optional field is frozen, listed", () => ("value" in o) + " " + Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of an optional field is frozen, a typed store", () => (o.value = "t"));
+  attempt("the holder of an optional field is frozen, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+}
+
+block1();
+
+////= C2-4
+
+////= ask2-3
+
+function block2(): void {
+  const o = new C2();
+  Object.seal(o);
+  attempt("the holder of an optional field is sealed, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+  attempt("the holder of an optional field is sealed, asked by a typed function", () => ask2(o));
+  attempt("the holder of an optional field is sealed, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "string").length);
+  attempt("the holder of an optional field is sealed, used", () => o.value?.length);
+  attempt("the holder of an optional field is sealed, or a default", () => o.value ?? "default");
+  attempt("the holder of an optional field is sealed, listed", () => ("value" in o) + " " + Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of an optional field is sealed, a typed store", () => (o.value = "t"));
+  attempt("the holder of an optional field is sealed, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+}
+
+block2();
+
+class C3 {
+  id = 1;
+  value?: string = "s";
+}
+
+////= lines-33	ask3	C3	value	"string"
+
+function block3(): void {
+  const o = new C3();
+  Reflect.preventExtensions(o);
+  attempt("the holder of an optional field is kept from growing, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+  attempt("the holder of an optional field is kept from growing, asked by a typed function", () => ask3(o));
+  attempt("the holder of an optional field is kept from growing, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "string").length);
+  attempt("the holder of an optional field is kept from growing, used", () => o.value?.length);
+  attempt("the holder of an optional field is kept from growing, or a default", () => o.value ?? "default");
+  attempt("the holder of an optional field is kept from growing, listed", () => ("value" in o) + " " + Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("the holder of an optional field is kept from growing, a typed store", () => (o.value = "t"));
+  attempt("the holder of an optional field is kept from growing, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+}
+
+block3();
+
+class C4 {
+  id = 1;
+  value?: string = "s";
+}
+
+////= lines-33	ask4	C4	value	"string"
+
+function block4(): void {
+  const o = new C4();
+  Object.defineProperty(o, "value", { writable: false });
+  attempt("an optional field is made read-only, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+  attempt("an optional field is made read-only, asked by a typed function", () => ask4(o));
+  attempt("an optional field is made read-only, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "string").length);
+  attempt("an optional field is made read-only, used", () => o.value?.length);
+  attempt("an optional field is made read-only, or a default", () => o.value ?? "default");
+  attempt("an optional field is made read-only, listed", () => ("value" in o) + " " + Object.keys(o).join() + " " + JSON.stringify(o));
+  attempt("an optional field is made read-only, a typed store", () => (o.value = "t"));
+  attempt("an optional field is made read-only, asked after the store", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "string") + " " + typeof o.value);
+}
+
+block4();
+
+////= lines-62	C5	value
+
+////= lines-33	ask5	C5	value	"number"
+
+function block5(): void {
+  const o = new C5();
+  Object.freeze(o);
+  attempt("the holder of a readonly field is frozen, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("the holder of a readonly field is frozen, asked by a typed function", () => ask5(o));
+  attempt("the holder of a readonly field is frozen, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a readonly field is frozen, used", () => o.value + 1);
+  attempt("the holder of a readonly field is frozen, by its own method", () => o.twice());
+  attempt("the holder of a readonly field is frozen, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+}
+
+block5();
+
+////= lines-62	C6	value
+
+////= lines-33	ask6	C6	value	"number"
+
+function block6(): void {
+  const o = new C6();
+  Object.seal(o);
+  attempt("the holder of a readonly field is sealed, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("the holder of a readonly field is sealed, asked by a typed function", () => ask6(o));
+  attempt("the holder of a readonly field is sealed, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a readonly field is sealed, used", () => o.value + 1);
+  attempt("the holder of a readonly field is sealed, by its own method", () => o.twice());
+  attempt("the holder of a readonly field is sealed, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+}
+
+block6();
+
+////= lines-62	C7	value
+
+////= lines-33	ask7	C7	value	"number"
+
+function block7(): void {
+  const o = new C7();
+  Reflect.preventExtensions(o);
+  attempt("the holder of a readonly field is kept from growing, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("the holder of a readonly field is kept from growing, asked by a typed function", () => ask7(o));
+  attempt("the holder of a readonly field is kept from growing, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("the holder of a readonly field is kept from growing, used", () => o.value + 1);
+  attempt("the holder of a readonly field is kept from growing, by its own method", () => o.twice());
+  attempt("the holder of a readonly field is kept from growing, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+}
+
+block7();
+
+////= lines-62	C8	value
+
+////= lines-33	ask8	C8	value	"number"
+
+function block8(): void {
+  const o = new C8();
+  Object.defineProperty(o, "value", { writable: false });
+  attempt("a readonly field is made read-only, asked directly", () => (o.value === undefined) + " " + (o.value == null) + " " + (typeof o.value === "number") + " " + typeof o.value);
+  attempt("a readonly field is made read-only, asked by a typed function", () => ask8(o));
+  attempt("a readonly field is made read-only, asked by a callback", () => [o].filter(q => q.value === undefined).length + " " + [o].filter(q => typeof q.value === "number").length);
+  attempt("a readonly field is made read-only, used", () => o.value + 1);
+  attempt("a readonly field is made read-only, by its own method", () => o.twice());
+  attempt("a readonly field is made read-only, listed", () => Object.keys(o).join() + " " + JSON.stringify(o));
+}
+
+block8();
+
+export {};
+//// the-impostor-calls-first-and-the-honest-callers-follow.ts
+////= Person-5
+
+////= lines-245	Vet	check	a	Animal	weigh
+
+class DogVet implements Vet {
+  seen: number = 0;
+  check(d: Dog): string {
+    this.seen++;
+    return d.tag + "/" + d.legs + "/" + d.owner.first;
+  }
+  weigh(d: Dog): number {
+    this.seen++;
+    return d.legs * 2.5;
+  }
+}
+
+const own = new DogVet();
+const vet: Vet = own;
+
+show("first call ever: a cat is checked", () => vet.check(new Cat("tom")));
+show("first call ever: a cat is weighed", () => vet.weigh(new Cat("tom")));
+show("a spider is checked", () => vet.check(new Spider("boris")));
+show("a spider is weighed", () => vet.weigh(new Spider("boris")));
+show("an animal is checked", () => vet.check(new Animal("thing")));
+show("an animal is weighed", () => vet.weigh(new Animal("thing")));
+
+const rex = new Dog("rex");
+show("a typed caller checks a dog", () => own.check(rex));
+show("a typed caller weighs a dog", () => own.weigh(rex));
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += own.weigh(rex);
+show("2000 typed calls", () => sum);
+show("a cat again", () => vet.weigh(new Cat("late")));
+show("calls seen", () => own.seen);
+//// the-index-and-the-groups-of-a-match-are-read.ts
+const plain = /(x)/.exec("ax");
+console.log(typeof plain?.groups, plain?.index);
+const named = /(?<a>x)/.exec("ax");
+console.log(typeof named?.groups?.a, named?.index);

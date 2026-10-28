@@ -1,0 +1,3017 @@
+////: for
+for (const text of [narrow, wide]) {
+  for (let from = 0; from < text.length; from += 3) {
+    for (const length of [0, 1, 2, 3, 7, 12, 40]) {
+      lines.push(`${from}+${length} ${ask(text.substring(from, from + length))}`);
+      lines.push(`${from}~${length} ${ask(text.slice(from, from + length + 2).slice(1))}`);
+    }
+  }
+}
+////: for-2
+for (const first of parts) {
+  for (const second of parts) {
+    lines.push(`${JSON.stringify(first)} ${JSON.stringify(second)} ${ask(first + second)}`);
+    lines.push(`three ${ask(first + second + first)}`);
+    lines.push(`piece of both ${ask((first + narrow.substring(2, 9) + second).substring(1))}`);
+  }
+}
+////: for-3
+for (let turn = 0; turn < 2000; turn++) {
+  if (/^ab+c/.test(kept)) hits++;
+  if (/^ab+c/.test(narrow.substring(2 + (turn & 1), 12))) hits += 10;
+  if (narrow.substring(turn & 7, 30).search(/z+a/) >= 0) hits += 100;
+  if (/(z+)(a)/.exec(narrow.substring(turn & 15, 20)) !== null) hits += 1000;
+}
+//// regexp-empty-groups-quantified.ts
+// A group that can match nothing, under ?, *, + or a count with a least and a most: a turn beyond the least count that consumes nothing is refused and the group tries its other ways; the answers are those of plain Bun.
+const subjects = ["", "a", "b", "ab", "ba", "aa", "aab", "xay", "xy", "xaay", "abab", "c", "aac", "bc", "z", "aaz", "ababz", "a\nb", "aXa", "aaa", "xby", "baab", "\u4e2d", "\u4e2daab", "x\u4e2dy", "aa\u4e2d"];
+function sumOf(text: string, sum: number) {
+  for (let i = 0; i < text.length; i++) sum = (Math.imul(sum, 31) + text.charCodeAt(i)) | 0;
+  return sum;
+}
+let all = 0;
+function row(pattern: RegExp) {
+  let sum = 7;
+  let found = 0;
+  for (const subject of subjects) {
+    const match = pattern.exec(subject);
+    if (match) found++;
+    sum = sumOf(match ? JSON.stringify(match) + "@" + match.index : "null", sum);
+    sum = sumOf(String(pattern.test(subject)) + JSON.stringify(subject.replace(pattern, "<$&|$1>")) + subject.search(pattern), sum);
+  }
+  all = (Math.imul(all, 33) + sum) | 0;
+  console.log(String(pattern), found, sum);
+}
+row(/(a|)?/);
+row(/(?:(a|)?)+c/);
+row(/(?:a|)?$/);
+row(/(a|)??b/);
+row(/^(?:(a|)??|b)*$/);
+row(/x(?:a|)??y/);
+row(/a(?:a|)??a/);
+row(/^(a|)*$/);
+row(/((a|)*)*z/);
+row(/(?:a|)*/);
+row(/(?:(?:a|)*)+c/);
+row(/(a|)*?$/);
+row(/(?:a|)*?b/);
+row(/^(?:(?:a|)*?|b)*$/);
+row(/x(a|)+y/);
+row(/a(a|)+a/);
+row(/^(?:a|)+$/);
+row(/((?:a|)+)*z/);
+row(/(a|)+?/);
+row(/(?:(a|)+?)+c/);
+row(/(?:a|)+?$/);
+row(/(a|){0,2}b/);
+row(/^(?:(a|){0,2}|b)*$/);
+row(/x(?:a|){0,2}y/);
+row(/a(?:a|){0,2}a/);
+row(/^(a|){1,}$/);
+row(/((a|){1,})*z/);
+row(/(?:a|){1,}/);
+row(/(?:(?:a|){1,})+c/);
+row(/(a|){2,}$/);
+row(/(?:a|){2,}b/);
+row(/^(?:(?:a|){2,}|b)*$/);
+row(/x(a|){1,3}?y/);
+row(/a(a|){1,3}?a/);
+row(/^(?:a|){1,3}?$/);
+row(/((?:a|){1,3}?)*z/);
+row(/(a|){0,}?/);
+row(/(?:(a|){0,}?)+c/);
+row(/(?:a|){0,}?$/);
+row(/(a|){2,3}b/);
+row(/^(?:(a|){2,3}|b)*$/);
+row(/x(?:a|){2,3}y/);
+row(/a(?:a|){2,3}a/);
+row(/^(|a)?$/);
+row(/((|a)?)*z/);
+row(/(?:|a)?/);
+row(/(?:(?:|a)?)+c/);
+row(/(|a)??$/);
+row(/(?:|a)??b/);
+row(/^(?:(?:|a)??|b)*$/);
+row(/x(|a)*y/);
+row(/a(|a)*a/);
+row(/^(?:|a)*$/);
+row(/((?:|a)*)*z/);
+row(/(|a)*?/);
+row(/(?:(|a)*?)+c/);
+row(/(?:|a)*?$/);
+row(/(|a)+b/);
+row(/^(?:(|a)+|b)*$/);
+row(/x(?:|a)+y/);
+row(/a(?:|a)+a/);
+row(/^(|a)+?$/);
+row(/((|a)+?)*z/);
+row(/(?:|a)+?/);
+row(/(?:(?:|a)+?)+c/);
+row(/(|a){0,2}$/);
+row(/(?:|a){0,2}b/);
+row(/^(?:(?:|a){0,2}|b)*$/);
+row(/x(|a){1,}y/);
+row(/a(|a){1,}a/);
+row(/^(?:|a){1,}$/);
+row(/((?:|a){1,})*z/);
+row(/(|a){2,}/);
+row(/(?:(|a){2,})+c/);
+row(/(?:|a){2,}$/);
+row(/(|a){1,3}?b/);
+row(/^(?:(|a){1,3}?|b)*$/);
+row(/x(?:|a){1,3}?y/);
+row(/a(?:|a){1,3}?a/);
+row(/^(|a){0,}?$/);
+row(/((|a){0,}?)*z/);
+row(/(?:|a){0,}?/);
+row(/(?:(?:|a){0,}?)+c/);
+row(/(|a){2,3}$/);
+row(/(?:|a){2,3}b/);
+row(/^(?:(?:|a){2,3}|b)*$/);
+row(/x(a*)?y/);
+row(/a(a*)?a/);
+row(/^(?:a*)?$/);
+row(/((?:a*)?)*z/);
+row(/(a*)??/);
+row(/(?:(a*)??)+c/);
+row(/(?:a*)??$/);
+row(/(a*)*b/);
+row(/^(?:(a*)*|b)*$/);
+row(/x(?:a*)*y/);
+row(/a(?:a*)*a/);
+row(/^(a*)*?$/);
+row(/((a*)*?)*z/);
+row(/(?:a*)*?/);
+row(/(?:(?:a*)*?)+c/);
+row(/(a*)+$/);
+row(/(?:a*)+b/);
+row(/^(?:(?:a*)+|b)*$/);
+row(/x(a*)+?y/);
+row(/a(a*)+?a/);
+row(/^(?:a*)+?$/);
+row(/((?:a*)+?)*z/);
+row(/(a*){0,2}/);
+row(/(?:(a*){0,2})+c/);
+row(/(?:a*){0,2}$/);
+row(/(a*){1,}b/);
+row(/^(?:(a*){1,}|b)*$/);
+row(/x(?:a*){1,}y/);
+row(/a(?:a*){1,}a/);
+row(/^(a*){2,}$/);
+row(/((a*){2,})*z/);
+row(/(?:a*){2,}/);
+row(/(?:(?:a*){2,})+c/);
+row(/(a*){1,3}?$/);
+row(/(?:a*){1,3}?b/);
+row(/^(?:(?:a*){1,3}?|b)*$/);
+row(/x(a*){0,}?y/);
+row(/a(a*){0,}?a/);
+row(/^(?:a*){0,}?$/);
+row(/((?:a*){0,}?)*z/);
+row(/(a*){2,3}/);
+row(/(?:(a*){2,3})+c/);
+row(/(?:a*){2,3}$/);
+row(/(a?)?b/);
+row(/^(?:(a?)?|b)*$/);
+row(/x(?:a?)?y/);
+row(/a(?:a?)?a/);
+row(/^(a?)??$/);
+row(/((a?)??)*z/);
+row(/(?:a?)??/);
+row(/(?:(?:a?)??)+c/);
+row(/(a?)*$/);
+row(/(?:a?)*b/);
+row(/^(?:(?:a?)*|b)*$/);
+row(/x(a?)*?y/);
+row(/a(a?)*?a/);
+row(/^(?:a?)*?$/);
+row(/((?:a?)*?)*z/);
+row(/(a?)+/);
+row(/(?:(a?)+)+c/);
+row(/(?:a?)+$/);
+row(/(a?)+?b/);
+row(/^(?:(a?)+?|b)*$/);
+row(/x(?:a?)+?y/);
+row(/a(?:a?)+?a/);
+row(/^(a?){0,2}$/);
+row(/((a?){0,2})*z/);
+row(/(?:a?){0,2}/);
+row(/(?:(?:a?){0,2})+c/);
+row(/(a?){1,}$/);
+row(/(?:a?){1,}b/);
+row(/^(?:(?:a?){1,}|b)*$/);
+row(/x(a?){2,}y/);
+row(/a(a?){2,}a/);
+row(/^(?:a?){2,}$/);
+row(/((?:a?){2,})*z/);
+row(/(a?){1,3}?/);
+row(/(?:(a?){1,3}?)+c/);
+row(/(?:a?){1,3}?$/);
+row(/(a?){0,}?b/);
+row(/^(?:(a?){0,}?|b)*$/);
+row(/x(?:a?){0,}?y/);
+row(/a(?:a?){0,}?a/);
+row(/^(a?){2,3}$/);
+row(/((a?){2,3})*z/);
+row(/(?:a?){2,3}/);
+row(/(?:(?:a?){2,3})+c/);
+row(/(a*?)?$/);
+row(/(?:a*?)?b/);
+row(/^(?:(?:a*?)?|b)*$/);
+row(/x(a*?)??y/);
+row(/a(a*?)??a/);
+row(/^(?:a*?)??$/);
+row(/((?:a*?)??)*z/);
+row(/(a*?)*/);
+row(/(?:(a*?)*)+c/);
+row(/(?:a*?)*$/);
+row(/(a*?)*?b/);
+row(/^(?:(a*?)*?|b)*$/);
+row(/x(?:a*?)*?y/);
+row(/a(?:a*?)*?a/);
+row(/^(a*?)+$/);
+row(/((a*?)+)*z/);
+row(/(?:a*?)+/);
+row(/(?:(?:a*?)+)+c/);
+row(/(a*?)+?$/);
+row(/(?:a*?)+?b/);
+row(/^(?:(?:a*?)+?|b)*$/);
+row(/x(a*?){0,2}y/);
+row(/a(a*?){0,2}a/);
+row(/^(?:a*?){0,2}$/);
+row(/((?:a*?){0,2})*z/);
+row(/(a*?){1,}/);
+row(/(?:(a*?){1,})+c/);
+row(/(?:a*?){1,}$/);
+row(/(a*?){2,}b/);
+row(/^(?:(a*?){2,}|b)*$/);
+row(/x(?:a*?){2,}y/);
+row(/a(?:a*?){2,}a/);
+row(/^(a*?){1,3}?$/);
+row(/((a*?){1,3}?)*z/);
+row(/(?:a*?){1,3}?/);
+row(/(?:(?:a*?){1,3}?)+c/);
+row(/(a*?){0,}?$/);
+row(/(?:a*?){0,}?b/);
+row(/^(?:(?:a*?){0,}?|b)*$/);
+row(/x(a*?){2,3}y/);
+row(/a(a*?){2,3}a/);
+row(/^(?:a*?){2,3}$/);
+row(/((?:a*?){2,3})*z/);
+row(/(a??)?/);
+row(/(?:(a??)?)+c/);
+row(/(?:a??)?$/);
+row(/(a??)??b/);
+row(/^(?:(a??)??|b)*$/);
+row(/x(?:a??)??y/);
+row(/a(?:a??)??a/);
+row(/^(a??)*$/);
+row(/((a??)*)*z/);
+row(/(?:a??)*/);
+row(/(?:(?:a??)*)+c/);
+row(/(a??)*?$/);
+row(/(?:a??)*?b/);
+row(/^(?:(?:a??)*?|b)*$/);
+row(/x(a??)+y/);
+row(/a(a??)+a/);
+row(/^(?:a??)+$/);
+row(/((?:a??)+)*z/);
+row(/(a??)+?/);
+row(/(?:(a??)+?)+c/);
+row(/(?:a??)+?$/);
+row(/(a??){0,2}b/);
+row(/^(?:(a??){0,2}|b)*$/);
+row(/x(?:a??){0,2}y/);
+row(/a(?:a??){0,2}a/);
+row(/^(a??){1,}$/);
+row(/((a??){1,})*z/);
+row(/(?:a??){1,}/);
+row(/(?:(?:a??){1,})+c/);
+row(/(a??){2,}$/);
+row(/(?:a??){2,}b/);
+row(/^(?:(?:a??){2,}|b)*$/);
+row(/x(a??){1,3}?y/);
+row(/a(a??){1,3}?a/);
+row(/^(?:a??){1,3}?$/);
+row(/((?:a??){1,3}?)*z/);
+row(/(a??){0,}?/);
+row(/(?:(a??){0,}?)+c/);
+row(/(?:a??){0,}?$/);
+row(/(a??){2,3}b/);
+row(/^(?:(a??){2,3}|b)*$/);
+row(/x(?:a??){2,3}y/);
+row(/a(?:a??){2,3}a/);
+row(/^((?:a|b)*)?$/);
+row(/(((?:a|b)*)?)*z/);
+row(/(?:(?:a|b)*)?/);
+row(/(?:(?:(?:a|b)*)?)+c/);
+row(/((?:a|b)*)??$/);
+row(/(?:(?:a|b)*)??b/);
+row(/^(?:(?:(?:a|b)*)??|b)*$/);
+row(/x((?:a|b)*)*y/);
+row(/a((?:a|b)*)*a/);
+row(/^(?:(?:a|b)*)*$/);
+row(/((?:(?:a|b)*)*)*z/);
+row(/((?:a|b)*)*?/);
+row(/(?:((?:a|b)*)*?)+c/);
+row(/(?:(?:a|b)*)*?$/);
+row(/((?:a|b)*)+b/);
+row(/^(?:((?:a|b)*)+|b)*$/);
+row(/x(?:(?:a|b)*)+y/);
+row(/a(?:(?:a|b)*)+a/);
+row(/^((?:a|b)*)+?$/);
+row(/(((?:a|b)*)+?)*z/);
+row(/(?:(?:a|b)*)+?/);
+row(/(?:(?:(?:a|b)*)+?)+c/);
+row(/((?:a|b)*){0,2}$/);
+row(/(?:(?:a|b)*){0,2}b/);
+row(/^(?:(?:(?:a|b)*){0,2}|b)*$/);
+row(/x((?:a|b)*){1,}y/);
+row(/a((?:a|b)*){1,}a/);
+row(/^(?:(?:a|b)*){1,}$/);
+row(/((?:(?:a|b)*){1,})*z/);
+row(/((?:a|b)*){2,}/);
+row(/(?:((?:a|b)*){2,})+c/);
+row(/(?:(?:a|b)*){2,}$/);
+row(/((?:a|b)*){1,3}?b/);
+row(/^(?:((?:a|b)*){1,3}?|b)*$/);
+row(/x(?:(?:a|b)*){1,3}?y/);
+row(/a(?:(?:a|b)*){1,3}?a/);
+row(/^((?:a|b)*){0,}?$/);
+row(/(((?:a|b)*){0,}?)*z/);
+row(/(?:(?:a|b)*){0,}?/);
+row(/(?:(?:(?:a|b)*){0,}?)+c/);
+row(/((?:a|b)*){2,3}$/);
+row(/(?:(?:a|b)*){2,3}b/);
+row(/^(?:(?:(?:a|b)*){2,3}|b)*$/);
+row(/x(a*|b)?y/);
+row(/a(a*|b)?a/);
+row(/^(?:a*|b)?$/);
+row(/((?:a*|b)?)*z/);
+row(/(a*|b)??/);
+row(/(?:(a*|b)??)+c/);
+row(/(?:a*|b)??$/);
+row(/(a*|b)*b/);
+row(/^(?:(a*|b)*|b)*$/);
+row(/x(?:a*|b)*y/);
+row(/a(?:a*|b)*a/);
+row(/^(a*|b)*?$/);
+row(/((a*|b)*?)*z/);
+row(/(?:a*|b)*?/);
+row(/(?:(?:a*|b)*?)+c/);
+row(/(a*|b)+$/);
+row(/(?:a*|b)+b/);
+row(/^(?:(?:a*|b)+|b)*$/);
+row(/x(a*|b)+?y/);
+row(/a(a*|b)+?a/);
+row(/^(?:a*|b)+?$/);
+row(/((?:a*|b)+?)*z/);
+row(/(a*|b){0,2}/);
+row(/(?:(a*|b){0,2})+c/);
+row(/(?:a*|b){0,2}$/);
+row(/(a*|b){1,}b/);
+row(/^(?:(a*|b){1,}|b)*$/);
+row(/x(?:a*|b){1,}y/);
+row(/a(?:a*|b){1,}a/);
+row(/^(a*|b){2,}$/);
+row(/((a*|b){2,})*z/);
+row(/(?:a*|b){2,}/);
+row(/(?:(?:a*|b){2,})+c/);
+row(/(a*|b){1,3}?$/);
+row(/(?:a*|b){1,3}?b/);
+row(/^(?:(?:a*|b){1,3}?|b)*$/);
+row(/x(a*|b){0,}?y/);
+row(/a(a*|b){0,}?a/);
+row(/^(?:a*|b){0,}?$/);
+row(/((?:a*|b){0,}?)*z/);
+row(/(a*|b){2,3}/);
+row(/(?:(a*|b){2,3})+c/);
+row(/(?:a*|b){2,3}$/);
+row(/(b|a*)?b/);
+row(/^(?:(b|a*)?|b)*$/);
+row(/x(?:b|a*)?y/);
+row(/a(?:b|a*)?a/);
+row(/^(b|a*)??$/);
+row(/((b|a*)??)*z/);
+row(/(?:b|a*)??/);
+row(/(?:(?:b|a*)??)+c/);
+row(/(b|a*)*$/);
+row(/(?:b|a*)*b/);
+row(/^(?:(?:b|a*)*|b)*$/);
+row(/x(b|a*)*?y/);
+row(/a(b|a*)*?a/);
+row(/^(?:b|a*)*?$/);
+row(/((?:b|a*)*?)*z/);
+row(/(b|a*)+/);
+row(/(?:(b|a*)+)+c/);
+row(/(?:b|a*)+$/);
+row(/(b|a*)+?b/);
+row(/^(?:(b|a*)+?|b)*$/);
+row(/x(?:b|a*)+?y/);
+row(/a(?:b|a*)+?a/);
+row(/^(b|a*){0,2}$/);
+row(/((b|a*){0,2})*z/);
+row(/(?:b|a*){0,2}/);
+row(/(?:(?:b|a*){0,2})+c/);
+row(/(b|a*){1,}$/);
+row(/(?:b|a*){1,}b/);
+row(/^(?:(?:b|a*){1,}|b)*$/);
+row(/x(b|a*){2,}y/);
+row(/a(b|a*){2,}a/);
+row(/^(?:b|a*){2,}$/);
+row(/((?:b|a*){2,})*z/);
+row(/(b|a*){1,3}?/);
+row(/(?:(b|a*){1,3}?)+c/);
+row(/(?:b|a*){1,3}?$/);
+row(/(b|a*){0,}?b/);
+row(/^(?:(b|a*){0,}?|b)*$/);
+row(/x(?:b|a*){0,}?y/);
+row(/a(?:b|a*){0,}?a/);
+row(/^(b|a*){2,3}$/);
+row(/((b|a*){2,3})*z/);
+row(/(?:b|a*){2,3}/);
+row(/(?:(?:b|a*){2,3})+c/);
+row(/(\b)?$/);
+row(/(?:\b)?b/);
+row(/^(?:(?:\b)?|b)*$/);
+row(/x(\b)??y/);
+row(/a(\b)??a/);
+row(/^(?:\b)??$/);
+row(/((?:\b)??)*z/);
+row(/(\b)*/);
+row(/(?:(\b)*)+c/);
+row(/(?:\b)*$/);
+row(/(\b)*?b/);
+row(/^(?:(\b)*?|b)*$/);
+row(/x(?:\b)*?y/);
+row(/a(?:\b)*?a/);
+row(/^(\b)+$/);
+row(/((\b)+)*z/);
+row(/(?:\b)+/);
+row(/(?:(?:\b)+)+c/);
+row(/(\b)+?$/);
+row(/(?:\b)+?b/);
+row(/^(?:(?:\b)+?|b)*$/);
+row(/x(\b){0,2}y/);
+row(/a(\b){0,2}a/);
+row(/^(?:\b){0,2}$/);
+row(/((?:\b){0,2})*z/);
+row(/(\b){1,}/);
+row(/(?:(\b){1,})+c/);
+row(/(?:\b){1,}$/);
+row(/(\b){2,}b/);
+row(/^(?:(\b){2,}|b)*$/);
+row(/x(?:\b){2,}y/);
+row(/a(?:\b){2,}a/);
+row(/^(\b){1,3}?$/);
+row(/((\b){1,3}?)*z/);
+row(/(?:\b){1,3}?/);
+row(/(?:(?:\b){1,3}?)+c/);
+row(/(\b){0,}?$/);
+row(/(?:\b){0,}?b/);
+row(/^(?:(?:\b){0,}?|b)*$/);
+row(/x(\b){2,3}y/);
+row(/a(\b){2,3}a/);
+row(/^(?:\b){2,3}$/);
+row(/((?:\b){2,3})*z/);
+row(/((?=a))?/);
+row(/(?:((?=a))?)+c/);
+row(/(?:(?=a))?$/);
+row(/((?=a))??b/);
+row(/^(?:((?=a))??|b)*$/);
+row(/x(?:(?=a))??y/);
+row(/a(?:(?=a))??a/);
+row(/^((?=a))*$/);
+row(/(((?=a))*)*z/);
+row(/(?:(?=a))*/);
+row(/(?:(?:(?=a))*)+c/);
+row(/((?=a))*?$/);
+row(/(?:(?=a))*?b/);
+row(/^(?:(?:(?=a))*?|b)*$/);
+row(/x((?=a))+y/);
+row(/a((?=a))+a/);
+row(/^(?:(?=a))+$/);
+row(/((?:(?=a))+)*z/);
+row(/((?=a))+?/);
+row(/(?:((?=a))+?)+c/);
+row(/(?:(?=a))+?$/);
+row(/((?=a)){0,2}b/);
+row(/^(?:((?=a)){0,2}|b)*$/);
+row(/x(?:(?=a)){0,2}y/);
+row(/a(?:(?=a)){0,2}a/);
+row(/^((?=a)){1,}$/);
+row(/(((?=a)){1,})*z/);
+row(/(?:(?=a)){1,}/);
+row(/(?:(?:(?=a)){1,})+c/);
+row(/((?=a)){2,}$/);
+row(/(?:(?=a)){2,}b/);
+row(/^(?:(?:(?=a)){2,}|b)*$/);
+row(/x((?=a)){1,3}?y/);
+row(/a((?=a)){1,3}?a/);
+row(/^(?:(?=a)){1,3}?$/);
+row(/((?:(?=a)){1,3}?)*z/);
+row(/((?=a)){0,}?/);
+row(/(?:((?=a)){0,}?)+c/);
+row(/(?:(?=a)){0,}?$/);
+row(/((?=a)){2,3}b/);
+row(/^(?:((?=a)){2,3}|b)*$/);
+row(/x(?:(?=a)){2,3}y/);
+row(/a(?:(?=a)){2,3}a/);
+row(/^((?!b))?$/);
+row(/(((?!b))?)*z/);
+row(/(?:(?!b))?/);
+row(/(?:(?:(?!b))?)+c/);
+row(/((?!b))??$/);
+row(/(?:(?!b))??b/);
+row(/^(?:(?:(?!b))??|b)*$/);
+row(/x((?!b))*y/);
+row(/a((?!b))*a/);
+row(/^(?:(?!b))*$/);
+row(/((?:(?!b))*)*z/);
+row(/((?!b))*?/);
+row(/(?:((?!b))*?)+c/);
+row(/(?:(?!b))*?$/);
+row(/((?!b))+b/);
+row(/^(?:((?!b))+|b)*$/);
+row(/x(?:(?!b))+y/);
+row(/a(?:(?!b))+a/);
+row(/^((?!b))+?$/);
+row(/(((?!b))+?)*z/);
+row(/(?:(?!b))+?/);
+row(/(?:(?:(?!b))+?)+c/);
+row(/((?!b)){0,2}$/);
+row(/(?:(?!b)){0,2}b/);
+row(/^(?:(?:(?!b)){0,2}|b)*$/);
+row(/x((?!b)){1,}y/);
+row(/a((?!b)){1,}a/);
+row(/^(?:(?!b)){1,}$/);
+row(/((?:(?!b)){1,})*z/);
+row(/((?!b)){2,}/);
+row(/(?:((?!b)){2,})+c/);
+row(/(?:(?!b)){2,}$/);
+row(/((?!b)){1,3}?b/);
+row(/^(?:((?!b)){1,3}?|b)*$/);
+row(/x(?:(?!b)){1,3}?y/);
+row(/a(?:(?!b)){1,3}?a/);
+row(/^((?!b)){0,}?$/);
+row(/(((?!b)){0,}?)*z/);
+row(/(?:(?!b)){0,}?/);
+row(/(?:(?:(?!b)){0,}?)+c/);
+row(/((?!b)){2,3}$/);
+row(/(?:(?!b)){2,3}b/);
+row(/^(?:(?:(?!b)){2,3}|b)*$/);
+row(/x(^)?y/);
+row(/a(^)?a/);
+row(/^(?:^)?$/);
+row(/((?:^)?)*z/);
+row(/(^)??/);
+row(/(?:(^)??)+c/);
+row(/(?:^)??$/);
+row(/(^)*b/);
+row(/^(?:(^)*|b)*$/);
+row(/x(?:^)*y/);
+row(/a(?:^)*a/);
+row(/^(^)*?$/);
+row(/((^)*?)*z/);
+row(/(?:^)*?/);
+row(/(?:(?:^)*?)+c/);
+row(/(^)+$/);
+row(/(?:^)+b/);
+row(/^(?:(?:^)+|b)*$/);
+row(/x(^)+?y/);
+row(/a(^)+?a/);
+row(/^(?:^)+?$/);
+row(/((?:^)+?)*z/);
+row(/(^){0,2}/);
+row(/(?:(^){0,2})+c/);
+row(/(?:^){0,2}$/);
+row(/(^){1,}b/);
+row(/^(?:(^){1,}|b)*$/);
+row(/x(?:^){1,}y/);
+row(/a(?:^){1,}a/);
+row(/^(^){2,}$/);
+row(/((^){2,})*z/);
+row(/(?:^){2,}/);
+row(/(?:(?:^){2,})+c/);
+row(/(^){1,3}?$/);
+row(/(?:^){1,3}?b/);
+row(/^(?:(?:^){1,3}?|b)*$/);
+row(/x(^){0,}?y/);
+row(/a(^){0,}?a/);
+row(/^(?:^){0,}?$/);
+row(/((?:^){0,}?)*z/);
+row(/(^){2,3}/);
+row(/(?:(^){2,3})+c/);
+row(/(?:^){2,3}$/);
+row(/($)?b/);
+row(/^(?:($)?|b)*$/);
+row(/x(?:$)?y/);
+row(/a(?:$)?a/);
+row(/^($)??$/);
+row(/(($)??)*z/);
+row(/(?:$)??/);
+row(/(?:(?:$)??)+c/);
+row(/($)*$/);
+row(/(?:$)*b/);
+row(/^(?:(?:$)*|b)*$/);
+row(/x($)*?y/);
+row(/a($)*?a/);
+row(/^(?:$)*?$/);
+row(/((?:$)*?)*z/);
+row(/($)+/);
+row(/(?:($)+)+c/);
+row(/(?:$)+$/);
+row(/($)+?b/);
+row(/^(?:($)+?|b)*$/);
+row(/x(?:$)+?y/);
+row(/a(?:$)+?a/);
+row(/^($){0,2}$/);
+row(/(($){0,2})*z/);
+row(/(?:$){0,2}/);
+row(/(?:(?:$){0,2})+c/);
+row(/($){1,}$/);
+row(/(?:$){1,}b/);
+row(/^(?:(?:$){1,}|b)*$/);
+row(/x($){2,}y/);
+row(/a($){2,}a/);
+row(/^(?:$){2,}$/);
+row(/((?:$){2,})*z/);
+row(/($){1,3}?/);
+row(/(?:($){1,3}?)+c/);
+row(/(?:$){1,3}?$/);
+row(/($){0,}?b/);
+row(/^(?:($){0,}?|b)*$/);
+row(/x(?:$){0,}?y/);
+row(/a(?:$){0,}?a/);
+row(/^($){2,3}$/);
+row(/(($){2,3})*z/);
+row(/(?:$){2,3}/);
+row(/(?:(?:$){2,3})+c/);
+row(/(a|b|)?$/);
+row(/(?:a|b|)?b/);
+row(/^(?:(?:a|b|)?|b)*$/);
+row(/x(a|b|)??y/);
+row(/a(a|b|)??a/);
+row(/^(?:a|b|)??$/);
+row(/((?:a|b|)??)*z/);
+row(/(a|b|)*/);
+row(/(?:(a|b|)*)+c/);
+row(/(?:a|b|)*$/);
+row(/(a|b|)*?b/);
+row(/^(?:(a|b|)*?|b)*$/);
+row(/x(?:a|b|)*?y/);
+row(/a(?:a|b|)*?a/);
+row(/^(a|b|)+$/);
+row(/((a|b|)+)*z/);
+row(/(?:a|b|)+/);
+row(/(?:(?:a|b|)+)+c/);
+row(/(a|b|)+?$/);
+row(/(?:a|b|)+?b/);
+row(/^(?:(?:a|b|)+?|b)*$/);
+row(/x(a|b|){0,2}y/);
+row(/a(a|b|){0,2}a/);
+row(/^(?:a|b|){0,2}$/);
+row(/((?:a|b|){0,2})*z/);
+row(/(a|b|){1,}/);
+row(/(?:(a|b|){1,})+c/);
+row(/(?:a|b|){1,}$/);
+row(/(a|b|){2,}b/);
+row(/^(?:(a|b|){2,}|b)*$/);
+row(/x(?:a|b|){2,}y/);
+row(/a(?:a|b|){2,}a/);
+row(/^(a|b|){1,3}?$/);
+row(/((a|b|){1,3}?)*z/);
+row(/(?:a|b|){1,3}?/);
+row(/(?:(?:a|b|){1,3}?)+c/);
+row(/(a|b|){0,}?$/);
+row(/(?:a|b|){0,}?b/);
+row(/^(?:(?:a|b|){0,}?|b)*$/);
+row(/x(a|b|){2,3}y/);
+row(/a(a|b|){2,3}a/);
+row(/^(?:a|b|){2,3}$/);
+row(/((?:a|b|){2,3})*z/);
+row(/(|a|b)?/);
+row(/(?:(|a|b)?)+c/);
+row(/(?:|a|b)?$/);
+row(/(|a|b)??b/);
+row(/^(?:(|a|b)??|b)*$/);
+row(/x(?:|a|b)??y/);
+row(/a(?:|a|b)??a/);
+row(/^(|a|b)*$/);
+row(/((|a|b)*)*z/);
+row(/(?:|a|b)*/);
+row(/(?:(?:|a|b)*)+c/);
+row(/(|a|b)*?$/);
+row(/(?:|a|b)*?b/);
+row(/^(?:(?:|a|b)*?|b)*$/);
+row(/x(|a|b)+y/);
+row(/a(|a|b)+a/);
+row(/^(?:|a|b)+$/);
+row(/((?:|a|b)+)*z/);
+row(/(|a|b)+?/);
+row(/(?:(|a|b)+?)+c/);
+row(/(?:|a|b)+?$/);
+row(/(|a|b){0,2}b/);
+row(/^(?:(|a|b){0,2}|b)*$/);
+row(/x(?:|a|b){0,2}y/);
+row(/a(?:|a|b){0,2}a/);
+row(/^(|a|b){1,}$/);
+row(/((|a|b){1,})*z/);
+row(/(?:|a|b){1,}/);
+row(/(?:(?:|a|b){1,})+c/);
+row(/(|a|b){2,}$/);
+row(/(?:|a|b){2,}b/);
+row(/^(?:(?:|a|b){2,}|b)*$/);
+row(/x(|a|b){1,3}?y/);
+row(/a(|a|b){1,3}?a/);
+row(/^(?:|a|b){1,3}?$/);
+row(/((?:|a|b){1,3}?)*z/);
+row(/(|a|b){0,}?/);
+row(/(?:(|a|b){0,}?)+c/);
+row(/(?:|a|b){0,}?$/);
+row(/(|a|b){2,3}b/);
+row(/^(?:(|a|b){2,3}|b)*$/);
+row(/x(?:|a|b){2,3}y/);
+row(/a(?:|a|b){2,3}a/);
+row(/^((a)|)?$/);
+row(/(((a)|)?)*z/);
+row(/(?:(a)|)?/);
+row(/(?:(?:(a)|)?)+c/);
+row(/((a)|)??$/);
+row(/(?:(a)|)??b/);
+row(/^(?:(?:(a)|)??|b)*$/);
+row(/x((a)|)*y/);
+row(/a((a)|)*a/);
+row(/^(?:(a)|)*$/);
+row(/((?:(a)|)*)*z/);
+row(/((a)|)*?/);
+row(/(?:((a)|)*?)+c/);
+row(/(?:(a)|)*?$/);
+row(/((a)|)+b/);
+row(/^(?:((a)|)+|b)*$/);
+row(/x(?:(a)|)+y/);
+row(/a(?:(a)|)+a/);
+row(/^((a)|)+?$/);
+row(/(((a)|)+?)*z/);
+row(/(?:(a)|)+?/);
+row(/(?:(?:(a)|)+?)+c/);
+row(/((a)|){0,2}$/);
+row(/(?:(a)|){0,2}b/);
+row(/^(?:(?:(a)|){0,2}|b)*$/);
+row(/x((a)|){1,}y/);
+row(/a((a)|){1,}a/);
+row(/^(?:(a)|){1,}$/);
+row(/((?:(a)|){1,})*z/);
+row(/((a)|){2,}/);
+row(/(?:((a)|){2,})+c/);
+row(/(?:(a)|){2,}$/);
+row(/((a)|){1,3}?b/);
+row(/^(?:((a)|){1,3}?|b)*$/);
+row(/x(?:(a)|){1,3}?y/);
+row(/a(?:(a)|){1,3}?a/);
+row(/^((a)|){0,}?$/);
+row(/(((a)|){0,}?)*z/);
+row(/(?:(a)|){0,}?/);
+row(/(?:(?:(a)|){0,}?)+c/);
+row(/((a)|){2,3}$/);
+row(/(?:(a)|){2,3}b/);
+row(/^(?:(?:(a)|){2,3}|b)*$/);
+row(/x(|(a))?y/);
+row(/a(|(a))?a/);
+row(/^(?:|(a))?$/);
+row(/((?:|(a))?)*z/);
+row(/(|(a))??/);
+row(/(?:(|(a))??)+c/);
+row(/(?:|(a))??$/);
+row(/(|(a))*b/);
+row(/^(?:(|(a))*|b)*$/);
+row(/x(?:|(a))*y/);
+row(/a(?:|(a))*a/);
+row(/^(|(a))*?$/);
+row(/((|(a))*?)*z/);
+row(/(?:|(a))*?/);
+row(/(?:(?:|(a))*?)+c/);
+row(/(|(a))+$/);
+row(/(?:|(a))+b/);
+row(/^(?:(?:|(a))+|b)*$/);
+row(/x(|(a))+?y/);
+row(/a(|(a))+?a/);
+row(/^(?:|(a))+?$/);
+row(/((?:|(a))+?)*z/);
+row(/(|(a)){0,2}/);
+row(/(?:(|(a)){0,2})+c/);
+row(/(?:|(a)){0,2}$/);
+row(/(|(a)){1,}b/);
+row(/^(?:(|(a)){1,}|b)*$/);
+row(/x(?:|(a)){1,}y/);
+row(/a(?:|(a)){1,}a/);
+row(/^(|(a)){2,}$/);
+row(/((|(a)){2,})*z/);
+row(/(?:|(a)){2,}/);
+row(/(?:(?:|(a)){2,})+c/);
+row(/(|(a)){1,3}?$/);
+row(/(?:|(a)){1,3}?b/);
+row(/^(?:(?:|(a)){1,3}?|b)*$/);
+row(/x(|(a)){0,}?y/);
+row(/a(|(a)){0,}?a/);
+row(/^(?:|(a)){0,}?$/);
+row(/((?:|(a)){0,}?)*z/);
+row(/(|(a)){2,3}/);
+row(/(?:(|(a)){2,3})+c/);
+row(/(?:|(a)){2,3}$/);
+row(/((a*))?b/);
+row(/^(?:((a*))?|b)*$/);
+row(/x(?:(a*))?y/);
+row(/a(?:(a*))?a/);
+row(/^((a*))??$/);
+row(/(((a*))??)*z/);
+row(/(?:(a*))??/);
+row(/(?:(?:(a*))??)+c/);
+row(/((a*))*$/);
+row(/(?:(a*))*b/);
+row(/^(?:(?:(a*))*|b)*$/);
+row(/x((a*))*?y/);
+row(/a((a*))*?a/);
+row(/^(?:(a*))*?$/);
+row(/((?:(a*))*?)*z/);
+row(/((a*))+/);
+row(/(?:((a*))+)+c/);
+row(/(?:(a*))+$/);
+row(/((a*))+?b/);
+row(/^(?:((a*))+?|b)*$/);
+row(/x(?:(a*))+?y/);
+row(/a(?:(a*))+?a/);
+row(/^((a*)){0,2}$/);
+row(/(((a*)){0,2})*z/);
+row(/(?:(a*)){0,2}/);
+row(/(?:(?:(a*)){0,2})+c/);
+row(/((a*)){1,}$/);
+row(/(?:(a*)){1,}b/);
+row(/^(?:(?:(a*)){1,}|b)*$/);
+row(/x((a*)){2,}y/);
+row(/a((a*)){2,}a/);
+row(/^(?:(a*)){2,}$/);
+row(/((?:(a*)){2,})*z/);
+row(/((a*)){1,3}?/);
+row(/(?:((a*)){1,3}?)+c/);
+row(/(?:(a*)){1,3}?$/);
+row(/((a*)){0,}?b/);
+row(/^(?:((a*)){0,}?|b)*$/);
+row(/x(?:(a*)){0,}?y/);
+row(/a(?:(a*)){0,}?a/);
+row(/^((a*)){2,3}$/);
+row(/(((a*)){2,3})*z/);
+row(/(?:(a*)){2,3}/);
+row(/(?:(?:(a*)){2,3})+c/);
+row(/((a)?)?$/);
+row(/(?:(a)?)?b/);
+row(/^(?:(?:(a)?)?|b)*$/);
+row(/x((a)?)??y/);
+row(/a((a)?)??a/);
+row(/^(?:(a)?)??$/);
+row(/((?:(a)?)??)*z/);
+row(/((a)?)*/);
+row(/(?:((a)?)*)+c/);
+row(/(?:(a)?)*$/);
+row(/((a)?)*?b/);
+row(/^(?:((a)?)*?|b)*$/);
+row(/x(?:(a)?)*?y/);
+row(/a(?:(a)?)*?a/);
+row(/^((a)?)+$/);
+row(/(((a)?)+)*z/);
+row(/(?:(a)?)+/);
+row(/(?:(?:(a)?)+)+c/);
+row(/((a)?)+?$/);
+row(/(?:(a)?)+?b/);
+row(/^(?:(?:(a)?)+?|b)*$/);
+row(/x((a)?){0,2}y/);
+row(/a((a)?){0,2}a/);
+row(/^(?:(a)?){0,2}$/);
+row(/((?:(a)?){0,2})*z/);
+row(/((a)?){1,}/);
+row(/(?:((a)?){1,})+c/);
+row(/(?:(a)?){1,}$/);
+row(/((a)?){2,}b/);
+row(/^(?:((a)?){2,}|b)*$/);
+row(/x(?:(a)?){2,}y/);
+row(/a(?:(a)?){2,}a/);
+row(/^((a)?){1,3}?$/);
+row(/(((a)?){1,3}?)*z/);
+row(/(?:(a)?){1,3}?/);
+row(/(?:(?:(a)?){1,3}?)+c/);
+row(/((a)?){0,}?$/);
+row(/(?:(a)?){0,}?b/);
+row(/^(?:(?:(a)?){0,}?|b)*$/);
+row(/x((a)?){2,3}y/);
+row(/a((a)?){2,3}a/);
+row(/^(?:(a)?){2,3}$/);
+row(/((?:(a)?){2,3})*z/);
+row(/((?:))?/);
+row(/(?:((?:))?)+c/);
+row(/(?:(?:))?$/);
+row(/((?:))??b/);
+row(/^(?:((?:))??|b)*$/);
+row(/x(?:(?:))??y/);
+row(/a(?:(?:))??a/);
+row(/^((?:))*$/);
+row(/(((?:))*)*z/);
+row(/(?:(?:))*/);
+row(/(?:(?:(?:))*)+c/);
+row(/((?:))*?$/);
+row(/(?:(?:))*?b/);
+row(/^(?:(?:(?:))*?|b)*$/);
+row(/x((?:))+y/);
+row(/a((?:))+a/);
+row(/^(?:(?:))+$/);
+row(/((?:(?:))+)*z/);
+row(/((?:))+?/);
+row(/(?:((?:))+?)+c/);
+row(/(?:(?:))+?$/);
+row(/((?:)){0,2}b/);
+row(/^(?:((?:)){0,2}|b)*$/);
+row(/x(?:(?:)){0,2}y/);
+row(/a(?:(?:)){0,2}a/);
+row(/^((?:)){1,}$/);
+row(/(((?:)){1,})*z/);
+row(/(?:(?:)){1,}/);
+row(/(?:(?:(?:)){1,})+c/);
+row(/((?:)){2,}$/);
+row(/(?:(?:)){2,}b/);
+row(/^(?:(?:(?:)){2,}|b)*$/);
+row(/x((?:)){1,3}?y/);
+row(/a((?:)){1,3}?a/);
+row(/^(?:(?:)){1,3}?$/);
+row(/((?:(?:)){1,3}?)*z/);
+row(/((?:)){0,}?/);
+row(/(?:((?:)){0,}?)+c/);
+row(/(?:(?:)){0,}?$/);
+row(/((?:)){2,3}b/);
+row(/^(?:((?:)){2,3}|b)*$/);
+row(/x(?:(?:)){2,3}y/);
+row(/a(?:(?:)){2,3}a/);
+row(/^([ab]*)?$/);
+row(/(([ab]*)?)*z/);
+row(/(?:[ab]*)?/);
+row(/(?:(?:[ab]*)?)+c/);
+row(/([ab]*)??$/);
+row(/(?:[ab]*)??b/);
+row(/^(?:(?:[ab]*)??|b)*$/);
+row(/x([ab]*)*y/);
+row(/a([ab]*)*a/);
+row(/^(?:[ab]*)*$/);
+row(/((?:[ab]*)*)*z/);
+row(/([ab]*)*?/);
+row(/(?:([ab]*)*?)+c/);
+row(/(?:[ab]*)*?$/);
+row(/([ab]*)+b/);
+row(/^(?:([ab]*)+|b)*$/);
+row(/x(?:[ab]*)+y/);
+row(/a(?:[ab]*)+a/);
+row(/^([ab]*)+?$/);
+row(/(([ab]*)+?)*z/);
+row(/(?:[ab]*)+?/);
+row(/(?:(?:[ab]*)+?)+c/);
+row(/([ab]*){0,2}$/);
+row(/(?:[ab]*){0,2}b/);
+row(/^(?:(?:[ab]*){0,2}|b)*$/);
+row(/x([ab]*){1,}y/);
+row(/a([ab]*){1,}a/);
+row(/^(?:[ab]*){1,}$/);
+row(/((?:[ab]*){1,})*z/);
+row(/([ab]*){2,}/);
+row(/(?:([ab]*){2,})+c/);
+row(/(?:[ab]*){2,}$/);
+row(/([ab]*){1,3}?b/);
+row(/^(?:([ab]*){1,3}?|b)*$/);
+row(/x(?:[ab]*){1,3}?y/);
+row(/a(?:[ab]*){1,3}?a/);
+row(/^([ab]*){0,}?$/);
+row(/(([ab]*){0,}?)*z/);
+row(/(?:[ab]*){0,}?/);
+row(/(?:(?:[ab]*){0,}?)+c/);
+row(/([ab]*){2,3}$/);
+row(/(?:[ab]*){2,3}b/);
+row(/^(?:(?:[ab]*){2,3}|b)*$/);
+row(/x(a{0,2})?y/);
+row(/a(a{0,2})?a/);
+row(/^(?:a{0,2})?$/);
+row(/((?:a{0,2})?)*z/);
+row(/(a{0,2})??/);
+row(/(?:(a{0,2})??)+c/);
+row(/(?:a{0,2})??$/);
+row(/(a{0,2})*b/);
+row(/^(?:(a{0,2})*|b)*$/);
+row(/x(?:a{0,2})*y/);
+row(/a(?:a{0,2})*a/);
+row(/^(a{0,2})*?$/);
+row(/((a{0,2})*?)*z/);
+row(/(?:a{0,2})*?/);
+row(/(?:(?:a{0,2})*?)+c/);
+row(/(a{0,2})+$/);
+row(/(?:a{0,2})+b/);
+row(/^(?:(?:a{0,2})+|b)*$/);
+row(/x(a{0,2})+?y/);
+row(/a(a{0,2})+?a/);
+row(/^(?:a{0,2})+?$/);
+row(/((?:a{0,2})+?)*z/);
+row(/(a{0,2}){0,2}/);
+row(/(?:(a{0,2}){0,2})+c/);
+row(/(?:a{0,2}){0,2}$/);
+row(/(a{0,2}){1,}b/);
+row(/^(?:(a{0,2}){1,}|b)*$/);
+row(/x(?:a{0,2}){1,}y/);
+row(/a(?:a{0,2}){1,}a/);
+row(/^(a{0,2}){2,}$/);
+row(/((a{0,2}){2,})*z/);
+row(/(?:a{0,2}){2,}/);
+row(/(?:(?:a{0,2}){2,})+c/);
+row(/(a{0,2}){1,3}?$/);
+row(/(?:a{0,2}){1,3}?b/);
+row(/^(?:(?:a{0,2}){1,3}?|b)*$/);
+row(/x(a{0,2}){0,}?y/);
+row(/a(a{0,2}){0,}?a/);
+row(/^(?:a{0,2}){0,}?$/);
+row(/((?:a{0,2}){0,}?)*z/);
+row(/(a{0,2}){2,3}/);
+row(/(?:(a{0,2}){2,3})+c/);
+row(/(?:a{0,2}){2,3}$/);
+row(/((a)|\2)?b/);
+row(/^(?:((a)|\2)?|b)*$/);
+row(/x(?:(a)|\1)?y/);
+row(/a(?:(a)|\1)?a/);
+row(/^((a)|\2)??$/);
+row(/(((a)|\3)??)*z/);
+row(/(?:(a)|\1)??/);
+row(/(?:(?:(a)|\1)??)+c/);
+row(/((a)|\2)*$/);
+row(/(?:(a)|\1)*b/);
+row(/^(?:(?:(a)|\1)*|b)*$/);
+row(/x((a)|\2)*?y/);
+row(/a((a)|\2)*?a/);
+row(/^(?:(a)|\1)*?$/);
+row(/((?:(a)|\2)*?)*z/);
+row(/((a)|\2)+/);
+row(/(?:((a)|\2)+)+c/);
+row(/(?:(a)|\1)+$/);
+row(/((a)|\2)+?b/);
+row(/^(?:((a)|\2)+?|b)*$/);
+row(/x(?:(a)|\1)+?y/);
+row(/a(?:(a)|\1)+?a/);
+row(/^((a)|\2){0,2}$/);
+row(/(((a)|\3){0,2})*z/);
+row(/(?:(a)|\1){0,2}/);
+row(/(?:(?:(a)|\1){0,2})+c/);
+row(/((a)|\2){1,}$/);
+row(/(?:(a)|\1){1,}b/);
+row(/^(?:(?:(a)|\1){1,}|b)*$/);
+row(/x((a)|\2){2,}y/);
+row(/a((a)|\2){2,}a/);
+row(/^(?:(a)|\1){2,}$/);
+row(/((?:(a)|\2){2,})*z/);
+row(/((a)|\2){1,3}?/);
+row(/(?:((a)|\2){1,3}?)+c/);
+row(/(?:(a)|\1){1,3}?$/);
+row(/((a)|\2){0,}?b/);
+row(/^(?:((a)|\2){0,}?|b)*$/);
+row(/x(?:(a)|\1){0,}?y/);
+row(/a(?:(a)|\1){0,}?a/);
+row(/^((a)|\2){2,3}$/);
+row(/(((a)|\3){2,3})*z/);
+row(/(?:(a)|\1){2,3}/);
+row(/(?:(?:(a)|\1){2,3})+c/);
+row(/((a|)(b|))?$/);
+row(/(?:(a|)(b|))?b/);
+row(/^(?:(?:(a|)(b|))?|b)*$/);
+row(/x((a|)(b|))??y/);
+row(/a((a|)(b|))??a/);
+row(/^(?:(a|)(b|))??$/);
+row(/((?:(a|)(b|))??)*z/);
+row(/((a|)(b|))*/);
+row(/(?:((a|)(b|))*)+c/);
+row(/(?:(a|)(b|))*$/);
+row(/((a|)(b|))*?b/);
+row(/^(?:((a|)(b|))*?|b)*$/);
+row(/x(?:(a|)(b|))*?y/);
+row(/a(?:(a|)(b|))*?a/);
+row(/^((a|)(b|))+$/);
+row(/(((a|)(b|))+)*z/);
+row(/(?:(a|)(b|))+/);
+row(/(?:(?:(a|)(b|))+)+c/);
+row(/((a|)(b|))+?$/);
+row(/(?:(a|)(b|))+?b/);
+row(/^(?:(?:(a|)(b|))+?|b)*$/);
+row(/x((a|)(b|)){0,2}y/);
+row(/a((a|)(b|)){0,2}a/);
+row(/^(?:(a|)(b|)){0,2}$/);
+row(/((?:(a|)(b|)){0,2})*z/);
+row(/((a|)(b|)){1,}/);
+row(/(?:((a|)(b|)){1,})+c/);
+row(/(?:(a|)(b|)){1,}$/);
+row(/((a|)(b|)){2,}b/);
+row(/^(?:((a|)(b|)){2,}|b)*$/);
+row(/x(?:(a|)(b|)){2,}y/);
+row(/a(?:(a|)(b|)){2,}a/);
+row(/^((a|)(b|)){1,3}?$/);
+row(/(((a|)(b|)){1,3}?)*z/);
+row(/(?:(a|)(b|)){1,3}?/);
+row(/(?:(?:(a|)(b|)){1,3}?)+c/);
+row(/((a|)(b|)){0,}?$/);
+row(/(?:(a|)(b|)){0,}?b/);
+row(/^(?:(?:(a|)(b|)){0,}?|b)*$/);
+row(/x((a|)(b|)){2,3}y/);
+row(/a((a|)(b|)){2,3}a/);
+row(/^(?:(a|)(b|)){2,3}$/);
+row(/((?:(a|)(b|)){2,3})*z/);
+row(/((?:a|)*)?/);
+row(/(?:((?:a|)*)?)+c/);
+row(/(?:(?:a|)*)?$/);
+row(/((?:a|)*)??b/);
+row(/^(?:((?:a|)*)??|b)*$/);
+row(/x(?:(?:a|)*)??y/);
+row(/a(?:(?:a|)*)??a/);
+row(/^((?:a|)*)*$/);
+row(/(((?:a|)*)*)*z/);
+row(/(?:(?:a|)*)*/);
+row(/(?:(?:(?:a|)*)*)+c/);
+row(/((?:a|)*)*?$/);
+row(/(?:(?:a|)*)*?b/);
+row(/^(?:(?:(?:a|)*)*?|b)*$/);
+row(/x((?:a|)*)+y/);
+row(/a((?:a|)*)+a/);
+row(/^(?:(?:a|)*)+$/);
+row(/((?:(?:a|)*)+)*z/);
+row(/((?:a|)*)+?/);
+row(/(?:((?:a|)*)+?)+c/);
+row(/(?:(?:a|)*)+?$/);
+row(/((?:a|)*){0,2}b/);
+row(/^(?:((?:a|)*){0,2}|b)*$/);
+row(/x(?:(?:a|)*){0,2}y/);
+row(/a(?:(?:a|)*){0,2}a/);
+row(/^((?:a|)*){1,}$/);
+row(/(((?:a|)*){1,})*z/);
+row(/(?:(?:a|)*){1,}/);
+row(/(?:(?:(?:a|)*){1,})+c/);
+row(/((?:a|)*){2,}$/);
+row(/(?:(?:a|)*){2,}b/);
+row(/^(?:(?:(?:a|)*){2,}|b)*$/);
+row(/x((?:a|)*){1,3}?y/);
+row(/a((?:a|)*){1,3}?a/);
+row(/^(?:(?:a|)*){1,3}?$/);
+row(/((?:(?:a|)*){1,3}?)*z/);
+row(/((?:a|)*){0,}?/);
+row(/(?:((?:a|)*){0,}?)+c/);
+row(/(?:(?:a|)*){0,}?$/);
+row(/((?:a|)*){2,3}b/);
+row(/^(?:((?:a|)*){2,3}|b)*$/);
+row(/x(?:(?:a|)*){2,3}y/);
+row(/a(?:(?:a|)*){2,3}a/);
+row(/^((?:a*)+)?$/);
+row(/(((?:a*)+)?)*z/);
+row(/(?:(?:a*)+)?/);
+row(/(?:(?:(?:a*)+)?)+c/);
+row(/((?:a*)+)??$/);
+row(/(?:(?:a*)+)??b/);
+row(/^(?:(?:(?:a*)+)??|b)*$/);
+row(/x((?:a*)+)*y/);
+row(/a((?:a*)+)*a/);
+row(/^(?:(?:a*)+)*$/);
+row(/((?:(?:a*)+)*)*z/);
+row(/((?:a*)+)*?/);
+row(/(?:((?:a*)+)*?)+c/);
+row(/(?:(?:a*)+)*?$/);
+row(/((?:a*)+)+b/);
+row(/^(?:((?:a*)+)+|b)*$/);
+row(/x(?:(?:a*)+)+y/);
+row(/a(?:(?:a*)+)+a/);
+row(/^((?:a*)+)+?$/);
+row(/(((?:a*)+)+?)*z/);
+row(/(?:(?:a*)+)+?/);
+row(/(?:(?:(?:a*)+)+?)+c/);
+row(/((?:a*)+){0,2}$/);
+row(/(?:(?:a*)+){0,2}b/);
+row(/^(?:(?:(?:a*)+){0,2}|b)*$/);
+row(/x((?:a*)+){1,}y/);
+row(/a((?:a*)+){1,}a/);
+row(/^(?:(?:a*)+){1,}$/);
+row(/((?:(?:a*)+){1,})*z/);
+row(/((?:a*)+){2,}/);
+row(/(?:((?:a*)+){2,})+c/);
+row(/(?:(?:a*)+){2,}$/);
+row(/((?:a*)+){1,3}?b/);
+row(/^(?:((?:a*)+){1,3}?|b)*$/);
+row(/x(?:(?:a*)+){1,3}?y/);
+row(/a(?:(?:a*)+){1,3}?a/);
+row(/^((?:a*)+){0,}?$/);
+row(/(((?:a*)+){0,}?)*z/);
+row(/(?:(?:a*)+){0,}?/);
+row(/(?:(?:(?:a*)+){0,}?)+c/);
+row(/((?:a*)+){2,3}$/);
+row(/(?:(?:a*)+){2,3}b/);
+row(/^(?:(?:(?:a*)+){2,3}|b)*$/);
+row(/x(a*b*)?y/);
+row(/a(a*b*)?a/);
+row(/^(?:a*b*)?$/);
+row(/((?:a*b*)?)*z/);
+row(/(a*b*)??/);
+row(/(?:(a*b*)??)+c/);
+row(/(?:a*b*)??$/);
+row(/(a*b*)*b/);
+row(/^(?:(a*b*)*|b)*$/);
+row(/x(?:a*b*)*y/);
+row(/a(?:a*b*)*a/);
+row(/^(a*b*)*?$/);
+row(/((a*b*)*?)*z/);
+row(/(?:a*b*)*?/);
+row(/(?:(?:a*b*)*?)+c/);
+row(/(a*b*)+$/);
+row(/(?:a*b*)+b/);
+row(/^(?:(?:a*b*)+|b)*$/);
+row(/x(a*b*)+?y/);
+row(/a(a*b*)+?a/);
+row(/^(?:a*b*)+?$/);
+row(/((?:a*b*)+?)*z/);
+row(/(a*b*){0,2}/);
+row(/(?:(a*b*){0,2})+c/);
+row(/(?:a*b*){0,2}$/);
+row(/(a*b*){1,}b/);
+row(/^(?:(a*b*){1,}|b)*$/);
+row(/x(?:a*b*){1,}y/);
+row(/a(?:a*b*){1,}a/);
+row(/^(a*b*){2,}$/);
+row(/((a*b*){2,})*z/);
+row(/(?:a*b*){2,}/);
+row(/(?:(?:a*b*){2,})+c/);
+row(/(a*b*){1,3}?$/);
+row(/(?:a*b*){1,3}?b/);
+row(/^(?:(?:a*b*){1,3}?|b)*$/);
+row(/x(a*b*){0,}?y/);
+row(/a(a*b*){0,}?a/);
+row(/^(?:a*b*){0,}?$/);
+row(/((?:a*b*){0,}?)*z/);
+row(/(a*b*){2,3}/);
+row(/(?:(a*b*){2,3})+c/);
+row(/(?:a*b*){2,3}$/);
+row(/((?<=a))?b/);
+row(/^(?:((?<=a))?|b)*$/);
+row(/x(?:(?<=a))?y/);
+row(/a(?:(?<=a))?a/);
+row(/^((?<=a))??$/);
+row(/(((?<=a))??)*z/);
+row(/(?:(?<=a))??/);
+row(/(?:(?:(?<=a))??)+c/);
+row(/((?<=a))*$/);
+row(/(?:(?<=a))*b/);
+row(/^(?:(?:(?<=a))*|b)*$/);
+row(/x((?<=a))*?y/);
+row(/a((?<=a))*?a/);
+row(/^(?:(?<=a))*?$/);
+row(/((?:(?<=a))*?)*z/);
+row(/((?<=a))+/);
+row(/(?:((?<=a))+)+c/);
+row(/(?:(?<=a))+$/);
+row(/((?<=a))+?b/);
+row(/^(?:((?<=a))+?|b)*$/);
+row(/x(?:(?<=a))+?y/);
+row(/a(?:(?<=a))+?a/);
+row(/^((?<=a)){0,2}$/);
+row(/(((?<=a)){0,2})*z/);
+row(/(?:(?<=a)){0,2}/);
+row(/(?:(?:(?<=a)){0,2})+c/);
+row(/((?<=a)){1,}$/);
+row(/(?:(?<=a)){1,}b/);
+row(/^(?:(?:(?<=a)){1,}|b)*$/);
+row(/x((?<=a)){2,}y/);
+row(/a((?<=a)){2,}a/);
+row(/^(?:(?<=a)){2,}$/);
+row(/((?:(?<=a)){2,})*z/);
+row(/((?<=a)){1,3}?/);
+row(/(?:((?<=a)){1,3}?)+c/);
+row(/(?:(?<=a)){1,3}?$/);
+row(/((?<=a)){0,}?b/);
+row(/^(?:((?<=a)){0,}?|b)*$/);
+row(/x(?:(?<=a)){0,}?y/);
+row(/a(?:(?<=a)){0,}?a/);
+row(/^((?<=a)){2,3}$/);
+row(/(((?<=a)){2,3})*z/);
+row(/(?:(?<=a)){2,3}/);
+row(/(?:(?:(?<=a)){2,3})+c/);
+row(/(\B)?$/);
+row(/(?:\B)?b/);
+row(/^(?:(?:\B)?|b)*$/);
+row(/x(\B)??y/);
+row(/a(\B)??a/);
+row(/^(?:\B)??$/);
+row(/((?:\B)??)*z/);
+row(/(\B)*/);
+row(/(?:(\B)*)+c/);
+row(/(?:\B)*$/);
+row(/(\B)*?b/);
+row(/^(?:(\B)*?|b)*$/);
+row(/x(?:\B)*?y/);
+row(/a(?:\B)*?a/);
+row(/^(\B)+$/);
+row(/((\B)+)*z/);
+row(/(?:\B)+/);
+row(/(?:(?:\B)+)+c/);
+row(/(\B)+?$/);
+row(/(?:\B)+?b/);
+row(/^(?:(?:\B)+?|b)*$/);
+row(/x(\B){0,2}y/);
+row(/a(\B){0,2}a/);
+row(/^(?:\B){0,2}$/);
+row(/((?:\B){0,2})*z/);
+row(/(\B){1,}/);
+row(/(?:(\B){1,})+c/);
+row(/(?:\B){1,}$/);
+row(/(\B){2,}b/);
+row(/^(?:(\B){2,}|b)*$/);
+row(/x(?:\B){2,}y/);
+row(/a(?:\B){2,}a/);
+row(/^(\B){1,3}?$/);
+row(/((\B){1,3}?)*z/);
+row(/(?:\B){1,3}?/);
+row(/(?:(?:\B){1,3}?)+c/);
+row(/(\B){0,}?$/);
+row(/(?:\B){0,}?b/);
+row(/^(?:(?:\B){0,}?|b)*$/);
+row(/x(\B){2,3}y/);
+row(/a(\B){2,3}a/);
+row(/^(?:\B){2,3}$/);
+row(/((?:\B){2,3})*z/);
+console.log(all);
+//// regexp-empty-optional-groups.ts
+// An optional group whose content matched without consuming anything is skipped: its captures stay undefined. Here the group stands where its place in the subject is known from the start of the match.
+const subjects = ["", "a", "b", "ab", "ba", "a b", "aa", "\n", "a\nb", "xa", "x", "\u4e2d", "\u4e2da"];
+function spoil(depth: number): number {
+  const words = [depth, depth + 1, depth + 2, depth + 3, depth + 4, depth + 5, depth + 6, depth + 7];
+  return depth ? spoil(depth - 1) + words[depth & 7] : words.length;
+}
+function row(pattern: RegExp) {
+  const answers: string[] = [];
+  for (const subject of subjects) {
+    spoil(12);
+    const match = pattern.exec(subject);
+    answers.push(match ? JSON.stringify(match) + "@" + match.index : "null", JSON.stringify(subject.replace(pattern, "<$1|$2>")));
+  }
+  console.log(String(pattern), answers.join(" "));
+}
+row(/($\B)?/);
+row(/($\B)?|a/);
+row(/($\B)?|\s*(\2.[^a]|\1\1)+?/i);
+row(/(\b)?/);
+row(/(\b)?a/);
+row(/(\B)?b/);
+row(/(^)?a/);
+row(/($)?/);
+row(/($)?|b/m);
+row(/x(\b)?/);
+row(/x($)?/);
+row(/x(\B)?a/);
+row(/((?=a))?a/);
+row(/((?!a))?b/);
+row(/((?=a))?/);
+row(/(?:(\b))?a/);
+row(/(\b|$)?/);
+row(/(\b|a)?/);
+row(/(a|\b)?/);
+row(/(a*)?b/);
+row(/(a*)?$/);
+row(/(a?)?b/);
+row(/x(a*)?b/);
+row(/(()|a)?b/);
+row(/(\b)??a/);
+row(/($\B)??/);
+row(/^(\b)?a/);
+row(/^($)?/);
+row(/^x?(\b)?/);
+row(/.(\b)?/s);
+row(/..($)?/s);
+//// regexp-hundreds-of-long-alternatives.ts
+// Hundreds of literals of eight and more characters in one expression, literals longer than a hundred characters, literals with classes in the middle, with and without the i flag: every word itself,
+// and every word with one character changed, in both string widths.
+export { };
+function hash(h: number, n: number): number { return (Math.imul(h, 31) + n) | 0; }
+const words: string[] = ["75yx8xm5MslfY5ubi", "eyEd7P4z", "DL-ak6J0kGODKdinZnLX", "caBAg8WY", "jzIRlNQb0prFmbh7", "wy5yq1XoY1BaIMcAx", "mfsB4HbQLXjjlAFb", "VV6q9rXxtNDFyuzX9k1gnneG", "YG1_LwiqD9j", "BAciI05FhfwK", "qlUr5Qrec8TNecj", "iNOrjj5VfqRTk8j1d", "bWWbjkloG1QX647kd", "bWWbjklobVMs", "zvR4-EPZGz3zBXCOArr-SfiJvo58JB0", "-O5PjeJfJTNcrZ6y", "IEsgo5nV", "zz8Gwb8e", "CISuYCl0X", "56zaWR7PA", "pBFXlNPH", "cSke4R1J_dBi2ewQr8t4-lC4LvGNWAMsI", "-z0oaWdfZp_lvi60ZIF8-qR3", "Ony1dHqceytDbKPTF", "-n-pGz3cW0uABBrDSxOOyBym", "EqlHXm31q", "EqlHXm31yj9", "de9syxoA", "uKmhr7jmP", "72T3AVbfzx06UVZy", "vmbPkZyRHJouZrQV3xZAxjRM", "mbTgDIMRBZxjX-BpY", "conEG4ZgzWbmHGJR1m4jfXuX", "v-h2-1KZNUK9IKLdb", "fu0XgOYgOjC", "9GFfm7sFog16pAgT", "tpU4r16H1UrLqE9oNTJI", "yJEyFzfhbIH2denCJjluEV99", "ARR-rjp5B42HXtV", "ARR-rjp5k", "k3_7MbjNBkM-PKsCTPUp", "4J4N6OCZFkUUdUY", "XyVXtwwl6KcChuLc2iNkQkJn", "kdsm2FC_R6YSRQr", "_jf0SaWl7dUbo11sF", "uWvPAX2LJh8NoMtwh6c9eOnzxTBE8C4xJ", "wN9H_ZRl9CZgBrXJ", "Eb8V5F1u", "uPsHqIgtwaAtqkTI", "m97kMcy1yl4Ae0-uNONZjN7i", "jrnY7p4bW8ELo6b", "AtLWMRYlGyzWoQNJ8Q5WlnsmqwxyZe7lm", "AtLWMRYlrAs", "X9Q0bZOFcHQyRN4nWAQLnuGMDTszzdzkr", "91QQlUI7p5r", "iHvQspaKUEU", "xj6eZxrNW", "cuz07esXpZwRqHFQgesZ-n8S", "0K_703poQ31dPgL3", "WPNiFp5FYg8nENYEiV1vC1pjmqp6aLFMd", "wi45YsTDfNd6ONP", "s8AzLhzOT8cwzEygn", "OJ1rQ41kvCNp", "zIxELIVoDMxCJql7j4jfaKG2lvKyFwJdx", "e7Xa-hxiU", "e7Xa-hxi4GEH_C-", "ezg5xPtc-34H", "jowEsgN2", "OH-lvWGF", "-6hO07UBf", "_rs6faE0s", "YM82jeDL", "pE17lDUNRBfu", "hRw7YBWWgB1SFxu9", "ZB7N85_x_AX", "jgJUJcxHYBInUhtU", "EpcPX5kWP", "hMYE_fytqeAN", "hMYE_fytAJ5ZrXTC", "LVSBrfd9", "bMiBTpVEHl2pY-h_XQK-JCuZ", "8vSElR2t9GN", "cYpUiZIgW-M8PGjdeSPVMHx8XRUdBjg01", "Ji75WXer", "IN-U8ctyIDHCEaYaE-kQHSncOAYuyuu", "_LV1KU-EFUPwqii", "No59fu09", "SGYYGGVP", "QAq1qIuqz", "LDxb8rII1GYXrgup", "yKTpZQd9", "yKTpZQd9s", "XBKs4wnG_3ptPcIsJZJPDk9z", "HgtiaNkaxR9rz09", "1SYhBGJy", "F4gwdvpjITdN", "7bAiUbHF", "-ZNm9Z0GdbsDPXVJU5TNJiPmHQBxBgqMA", "SntsVSx3c", "ZgZmPAcw", "inP38C-0wIiXPxT", "bsWhBS42op6371XDWfe5", "KfgPt7QGOy8Zgq_oD", "sonGHixeR", "sonGHixeEjn4", "Ej-hitUwmQeSCKp1x", "Xd7_jlAOz3WbROJAAxqv7fqJ", "HSTNzbiA", "UN0zsjI2V0J6rpmS1E-pKpKk6C9Xz0C5i", "1QK4ILbFb0VqGX1", "Rnnm6AlUcVdS", "t8jUv7O9", "hCcY3Dohi7ZBA-VsYmkavG8p37tcVUd", "S0omMpiE", "lNLTFF07g", "5vn6rntsw0p", "bDtoWuLdZo-MfX1M", "bDtoWuLd", "mYMIHCVk29XT3Q5ogNhuWPZC", "mVeOU9D_bV0naTFUVMAhOx-pSglBGI2", "VZlKmkYCGQeOttKKh_gYkrRcBa91Qjw", "4rW53p4O", "joTopYNoBm1PrptJ80e3Wz--3X9nvPzbS", "SWX57Ts9Y", "l_DHS0fGiGWFB3i", "x06X_pDxnNteTu_Q_t5T", "mFtBzSpuyvVP", "nLHoFTcwGLKGqH_", "IdKJtXuq", "luHNg2UD95VSBISDjojManpy", "luHNg2UDsj3xlT-", "n1r_yk_dlrM", "QCItt2c_Ovlu", "noMMd1et", "kaViBYD0S", "CSYbEHgVQT6E1wz", "BG59CQxEH", "GcxNDiMQAeFlkF4Bf1rVTijX", "1DRAWKi8b", "-eWi2usi", "u-CORrrsOfy", "rE6VVpIsjxS", "gpNPxpJ4HlkCcjNxuQnL96S_7eys8d4", "gpNPxpJ4cdC2-i7dxRbvMfRH", "V8GOvTs126GQ_Du7KvOEZuRK", "maS9o-Wa-ZI-7hlO-9hsdJ4gkJgEZfG", "n2Thj_9tLOR", "B5MqFJMwp8M", "FfcR8ZiuoHKXNGxHqh30YaH-_CXTfcu-D", "pt3O7IxdInQ", "gdLM7hQnJB_iemg", "FKzUE3PYiRgTL1B0E", "kp2381G1blyxhtxIO", "fh6h3n8yGhja", "74q2-FZE0flq", "h8ZcXjY7nAF", "h8ZcXjY7ZyGelI5AU3A53OBc0Ml686WZj", "DLD63BMCkRYc1S2HlWCYMz3h-gBYiRU9G", "0udrPcJR-Pv-", "_L1smg674cLT3gjbMvUBWJsTdVYZtNF", "wdpkdyHc_hd", "LQBUPRB8Od4KTCCOtR43wxv8TSBOC9U", "D-gidmPf", "T_Xin1cwIftPg7KCcTFUaFLM", "bcUN1wIwoum8", "yN4F0XUH74CKcLMYef6KyV7V6lYDyjo", "Q2NeLTjobsX", "o53hwi7F-B5RcbCBjFNQwmxHyCvhSerzd", "u8PHxOoafMXGXx1-eEJIzkiGxEWLpXO-a", "u8PHxOoa", "VQXsxAb-E5y_fje", "yX7C3WuUg", "isJuedEWslfrReo", "Kxy5o3zjvjv", "W0tWmXa8NfdyQb2YLKqu", "VnfHKMLFmxYRGop1", "UJD9IsHZ-lqh3JAPXyI5dHxUyHzWRao", "aQJ8di3D", "w781IOYEO7tzque10", "yThVmer6G", "G6Vohd8DmduiuSqlSpVV2EgPK4K27Bb", "8H9uIhqUUmLj61JY9", "8H9uIhqU4t2mDs4L", "VXBbav9squro", "itBQ5xgKgQs2jneQ8ZAfw8-MN1Aj1u6xP", "1fErKFvO", "HFR1C7ipm", "vF1-_UzVjwC", "Fql30EV0UpGT7TItKXfGXOmw", "WoskG_CmiT8z", "2JN9dAP-ybp1", "kbE67_OO", "14THrUpq", "lwmlw0uMOLLk6e8", "Opu04lsgu", "Opu04lsgQ1a-", "WlBiSIx0QA27fGh7nrz_", "BWu84w-A", "pUv2Dla8qTlEKS36d7V6PstfXTek2CS", "kOCVoNrh", "WRwxnRb4DxkzyWO8lMf5_Tl8", "HiMRmvQz", "p6M4jOAl1eg", "KL1Zj1j0FZR4", "-igN0ILZLVc", "fQ_WlIgaLMuoEd9cd", "a4ud1mZ-mSXIXsM", "gg8qWavIs_oN3aQCW", "gg8qWavI9FRvnW7p5qIoxQX083rNcDFz6", "9SLNcqlAfEmFpkHn4J8qSIPrsGBwCoe", "0QjhfYh_g5zO3VhiWZ7At54nuaYFDrC1r", "cwNwTkRjSgg7_j76bvUUhaP__zeA7Yb", "PShYOJimNYpl2TfRzMCP", "M1LR_ITi", "SKrNWhSqFmun47rX", "Ih4XicHmBvM62OA", "GTlj9mqCaqh-5-d5Ifa7oQw1Qq0JKLSkY", "Ayaml_h8ugQXLID", "Ccsdu-10", "ONy3n7dTgFqDPzF", "t-nB-gVBivLf", "t-nB-gVB", "TMhq4mH4", "FYHaWE5s", "_Czp9KClS1gpg7XEvi5AaFq8kS81obrKr", "GrM5sZ_d", "u_x-BOSzh4684rLJ3LyIMisiU7k19Ak", "64hp0s6irpk2nrnj", "j4uJgczS3mriHufBS0A8ABc0", "lZtbSRFx", "zJLHzHBSvdGeNofFEimys7Iy", "awFDPmWKFYvCdFU", "3rLevELp", "4NnLcY68wkDJzaykww98sL7B", "4NnLcY68-xTs", "-RuX4lpcOD3_UIlg299v", "TMvdtwxvCLl5az5j", "6uTV4Ko8a2PyIRfE_SK-u4DA4D2SI78", "wEQUG33-GHW4YZ2s3DtylTpbgJdw-n7", "vPbgYO8_", "EneE8VU9o129Czu__IDhlEhx", "YnDbHeQE96zwGkn", "okfdzH5P", "7D4z3Fcnq", "CxGKaV35", "b-ZHpZP0OiTY", "Ta9Ms6GZcFO", "Ta9Ms6GZ29kTtpYCqdrMVb-v", "7i5DcD7c", "xxCiyK-61907UzkFniKFt3T2", "wMarO7O5i2c", "055KOAI1D2UJbJ8rjjJc", "tiMSwmWC-QLs5Gh19WixLiV-fR7DArI", "8E7fT1tGypXd", "6ZrVPKSFz3ZwlotMXVWFQMUFuuZlLTH", "w2An-IX50v6idUPZUa_j2b_gksOEt05FI", "NQSPFhkQ-lgwWMDx1KoV", "um_kr_uM", "NVKdeXyn3tj6H3rI", "s9nv64faLoX9PKEOLRY7aUhe"];
+const anyWord = /^(?:75yx8xm5MslfY5ubi|eyEd7P4z|DL\-ak6J0kGODKdinZnLX|caBAg8WY|jzIRlNQb0prFmbh7|wy5yq1XoY1BaIMcAx|mfsB4HbQLXjjlAFb|VV6q9rXxtNDFyuzX9k1gnneG|YG1_LwiqD9j|BAciI05FhfwK|qlUr5Qrec8TNecj|iNOrjj5VfqRTk8j1d|bWWbjkloG1QX647kd|bWWbjklobVMs|zvR4\-EPZGz3zBXCOArr\-SfiJvo58JB0|\-O5PjeJfJTNcrZ6y|IEsgo5nV|zz8Gwb8e|CISuYCl0X|56zaWR7PA|pBFXlNPH|cSke4R1J_dBi2ewQr8t4\-lC4LvGNWAMsI|\-z0oaWdfZp_lvi60ZIF8\-qR3|Ony1dHqceytDbKPTF|\-n\-pGz3cW0uABBrDSxOOyBym|EqlHXm31q|EqlHXm31yj9|de9syxoA|uKmhr7jmP|72T3AVbfzx06UVZy|vmbPkZyRHJouZrQV3xZAxjRM|mbTgDIMRBZxjX\-BpY|conEG4ZgzWbmHGJR1m4jfXuX|v\-h2\-1KZNUK9IKLdb|fu0XgOYgOjC|9GFfm7sFog16pAgT|tpU4r16H1UrLqE9oNTJI|yJEyFzfhbIH2denCJjluEV99|ARR\-rjp5B42HXtV|ARR\-rjp5k|k3_7MbjNBkM\-PKsCTPUp|4J4N6OCZFkUUdUY|XyVXtwwl6KcChuLc2iNkQkJn|kdsm2FC_R6YSRQr|_jf0SaWl7dUbo11sF|uWvPAX2LJh8NoMtwh6c9eOnzxTBE8C4xJ|wN9H_ZRl9CZgBrXJ|Eb8V5F1u|uPsHqIgtwaAtqkTI|m97kMcy1yl4Ae0\-uNONZjN7i|jrnY7p4bW8ELo6b|AtLWMRYlGyzWoQNJ8Q5WlnsmqwxyZe7lm|AtLWMRYlrAs|X9Q0bZOFcHQyRN4nWAQLnuGMDTszzdzkr|91QQlUI7p5r|iHvQspaKUEU|xj6eZxrNW|cuz07esXpZwRqHFQgesZ\-n8S|0K_703poQ31dPgL3|WPNiFp5FYg8nENYEiV1vC1pjmqp6aLFMd|wi45YsTDfNd6ONP|s8AzLhzOT8cwzEygn|OJ1rQ41kvCNp|zIxELIVoDMxCJql7j4jfaKG2lvKyFwJdx|e7Xa\-hxiU|e7Xa\-hxi4GEH_C\-|ezg5xPtc\-34H|jowEsgN2|OH\-lvWGF|\-6hO07UBf|_rs6faE0s|YM82jeDL|pE17lDUNRBfu|hRw7YBWWgB1SFxu9|ZB7N85_x_AX|jgJUJcxHYBInUhtU|EpcPX5kWP|hMYE_fytqeAN|hMYE_fytAJ5ZrXTC|LVSBrfd9|bMiBTpVEHl2pY\-h_XQK\-JCuZ|8vSElR2t9GN|cYpUiZIgW\-M8PGjdeSPVMHx8XRUdBjg01|Ji75WXer|IN\-U8ctyIDHCEaYaE\-kQHSncOAYuyuu|_LV1KU\-EFUPwqii|No59fu09|SGYYGGVP|QAq1qIuqz|LDxb8rII1GYXrgup|yKTpZQd9|yKTpZQd9s|XBKs4wnG_3ptPcIsJZJPDk9z|HgtiaNkaxR9rz09|1SYhBGJy|F4gwdvpjITdN|7bAiUbHF|\-ZNm9Z0GdbsDPXVJU5TNJiPmHQBxBgqMA|SntsVSx3c|ZgZmPAcw|inP38C\-0wIiXPxT|bsWhBS42op6371XDWfe5|KfgPt7QGOy8Zgq_oD|sonGHixeR|sonGHixeEjn4|Ej\-hitUwmQeSCKp1x|Xd7_jlAOz3WbROJAAxqv7fqJ|HSTNzbiA|UN0zsjI2V0J6rpmS1E\-pKpKk6C9Xz0C5i|1QK4ILbFb0VqGX1|Rnnm6AlUcVdS|t8jUv7O9|hCcY3Dohi7ZBA\-VsYmkavG8p37tcVUd|S0omMpiE|lNLTFF07g|5vn6rntsw0p|bDtoWuLdZo\-MfX1M|bDtoWuLd|mYMIHCVk29XT3Q5ogNhuWPZC|mVeOU9D_bV0naTFUVMAhOx\-pSglBGI2|VZlKmkYCGQeOttKKh_gYkrRcBa91Qjw|4rW53p4O|joTopYNoBm1PrptJ80e3Wz\-\-3X9nvPzbS|SWX57Ts9Y|l_DHS0fGiGWFB3i|x06X_pDxnNteTu_Q_t5T|mFtBzSpuyvVP|nLHoFTcwGLKGqH_|IdKJtXuq|luHNg2UD95VSBISDjojManpy|luHNg2UDsj3xlT\-|n1r_yk_dlrM|QCItt2c_Ovlu|noMMd1et|kaViBYD0S|CSYbEHgVQT6E1wz|BG59CQxEH|GcxNDiMQAeFlkF4Bf1rVTijX|1DRAWKi8b|\-eWi2usi|u\-CORrrsOfy|rE6VVpIsjxS|gpNPxpJ4HlkCcjNxuQnL96S_7eys8d4|gpNPxpJ4cdC2\-i7dxRbvMfRH|V8GOvTs126GQ_Du7KvOEZuRK|maS9o\-Wa\-ZI\-7hlO\-9hsdJ4gkJgEZfG|n2Thj_9tLOR|B5MqFJMwp8M|FfcR8ZiuoHKXNGxHqh30YaH\-_CXTfcu\-D|pt3O7IxdInQ|gdLM7hQnJB_iemg|FKzUE3PYiRgTL1B0E|kp2381G1blyxhtxIO|fh6h3n8yGhja|74q2\-FZE0flq|h8ZcXjY7nAF|h8ZcXjY7ZyGelI5AU3A53OBc0Ml686WZj|DLD63BMCkRYc1S2HlWCYMz3h\-gBYiRU9G|0udrPcJR\-Pv\-|_L1smg674cLT3gjbMvUBWJsTdVYZtNF|wdpkdyHc_hd|LQBUPRB8Od4KTCCOtR43wxv8TSBOC9U|D\-gidmPf|T_Xin1cwIftPg7KCcTFUaFLM|bcUN1wIwoum8|yN4F0XUH74CKcLMYef6KyV7V6lYDyjo|Q2NeLTjobsX|o53hwi7F\-B5RcbCBjFNQwmxHyCvhSerzd|u8PHxOoafMXGXx1\-eEJIzkiGxEWLpXO\-a|u8PHxOoa|VQXsxAb\-E5y_fje|yX7C3WuUg|isJuedEWslfrReo|Kxy5o3zjvjv|W0tWmXa8NfdyQb2YLKqu|VnfHKMLFmxYRGop1|UJD9IsHZ\-lqh3JAPXyI5dHxUyHzWRao|aQJ8di3D|w781IOYEO7tzque10|yThVmer6G|G6Vohd8DmduiuSqlSpVV2EgPK4K27Bb|8H9uIhqUUmLj61JY9|8H9uIhqU4t2mDs4L|VXBbav9squro|itBQ5xgKgQs2jneQ8ZAfw8\-MN1Aj1u6xP|1fErKFvO|HFR1C7ipm|vF1\-_UzVjwC|Fql30EV0UpGT7TItKXfGXOmw|WoskG_CmiT8z|2JN9dAP\-ybp1|kbE67_OO|14THrUpq|lwmlw0uMOLLk6e8|Opu04lsgu|Opu04lsgQ1a\-|WlBiSIx0QA27fGh7nrz_|BWu84w\-A|pUv2Dla8qTlEKS36d7V6PstfXTek2CS|kOCVoNrh|WRwxnRb4DxkzyWO8lMf5_Tl8|HiMRmvQz|p6M4jOAl1eg|KL1Zj1j0FZR4|\-igN0ILZLVc|fQ_WlIgaLMuoEd9cd|a4ud1mZ\-mSXIXsM|gg8qWavIs_oN3aQCW|gg8qWavI9FRvnW7p5qIoxQX083rNcDFz6|9SLNcqlAfEmFpkHn4J8qSIPrsGBwCoe|0QjhfYh_g5zO3VhiWZ7At54nuaYFDrC1r|cwNwTkRjSgg7_j76bvUUhaP__zeA7Yb|PShYOJimNYpl2TfRzMCP|M1LR_ITi|SKrNWhSqFmun47rX|Ih4XicHmBvM62OA|GTlj9mqCaqh\-5\-d5Ifa7oQw1Qq0JKLSkY|Ayaml_h8ugQXLID|Ccsdu\-10|ONy3n7dTgFqDPzF|t\-nB\-gVBivLf|t\-nB\-gVB|TMhq4mH4|FYHaWE5s|_Czp9KClS1gpg7XEvi5AaFq8kS81obrKr|GrM5sZ_d|u_x\-BOSzh4684rLJ3LyIMisiU7k19Ak|64hp0s6irpk2nrnj|j4uJgczS3mriHufBS0A8ABc0|lZtbSRFx|zJLHzHBSvdGeNofFEimys7Iy|awFDPmWKFYvCdFU|3rLevELp|4NnLcY68wkDJzaykww98sL7B|4NnLcY68\-xTs|\-RuX4lpcOD3_UIlg299v|TMvdtwxvCLl5az5j|6uTV4Ko8a2PyIRfE_SK\-u4DA4D2SI78|wEQUG33\-GHW4YZ2s3DtylTpbgJdw\-n7|vPbgYO8_|EneE8VU9o129Czu__IDhlEhx|YnDbHeQE96zwGkn|okfdzH5P|7D4z3Fcnq|CxGKaV35|b\-ZHpZP0OiTY|Ta9Ms6GZcFO|Ta9Ms6GZ29kTtpYCqdrMVb\-v|7i5DcD7c|xxCiyK\-61907UzkFniKFt3T2|wMarO7O5i2c|055KOAI1D2UJbJ8rjjJc|tiMSwmWC\-QLs5Gh19WixLiV\-fR7DArI|8E7fT1tGypXd|6ZrVPKSFz3ZwlotMXVWFQMUFuuZlLTH|w2An\-IX50v6idUPZUa_j2b_gksOEt05FI|NQSPFhkQ\-lgwWMDx1KoV|um_kr_uM|NVKdeXyn3tj6H3rI|s9nv64faLoX9PKEOLRY7aUhe)$/;
+const anyWordAnyCase = /^(?:75yx8xm5MslfY5ubi|eyEd7P4z|DL\-ak6J0kGODKdinZnLX|caBAg8WY|jzIRlNQb0prFmbh7|wy5yq1XoY1BaIMcAx|mfsB4HbQLXjjlAFb|VV6q9rXxtNDFyuzX9k1gnneG|YG1_LwiqD9j|BAciI05FhfwK|qlUr5Qrec8TNecj|iNOrjj5VfqRTk8j1d|bWWbjkloG1QX647kd|bWWbjklobVMs|zvR4\-EPZGz3zBXCOArr\-SfiJvo58JB0|\-O5PjeJfJTNcrZ6y|IEsgo5nV|zz8Gwb8e|CISuYCl0X|56zaWR7PA|pBFXlNPH|cSke4R1J_dBi2ewQr8t4\-lC4LvGNWAMsI|\-z0oaWdfZp_lvi60ZIF8\-qR3|Ony1dHqceytDbKPTF|\-n\-pGz3cW0uABBrDSxOOyBym|EqlHXm31q|EqlHXm31yj9|de9syxoA|uKmhr7jmP|72T3AVbfzx06UVZy|vmbPkZyRHJouZrQV3xZAxjRM|mbTgDIMRBZxjX\-BpY|conEG4ZgzWbmHGJR1m4jfXuX|v\-h2\-1KZNUK9IKLdb|fu0XgOYgOjC|9GFfm7sFog16pAgT|tpU4r16H1UrLqE9oNTJI|yJEyFzfhbIH2denCJjluEV99|ARR\-rjp5B42HXtV|ARR\-rjp5k|k3_7MbjNBkM\-PKsCTPUp|4J4N6OCZFkUUdUY|XyVXtwwl6KcChuLc2iNkQkJn|kdsm2FC_R6YSRQr|_jf0SaWl7dUbo11sF|uWvPAX2LJh8NoMtwh6c9eOnzxTBE8C4xJ|wN9H_ZRl9CZgBrXJ|Eb8V5F1u|uPsHqIgtwaAtqkTI|m97kMcy1yl4Ae0\-uNONZjN7i|jrnY7p4bW8ELo6b|AtLWMRYlGyzWoQNJ8Q5WlnsmqwxyZe7lm|AtLWMRYlrAs|X9Q0bZOFcHQyRN4nWAQLnuGMDTszzdzkr|91QQlUI7p5r|iHvQspaKUEU|xj6eZxrNW|cuz07esXpZwRqHFQgesZ\-n8S|0K_703poQ31dPgL3|WPNiFp5FYg8nENYEiV1vC1pjmqp6aLFMd|wi45YsTDfNd6ONP|s8AzLhzOT8cwzEygn|OJ1rQ41kvCNp|zIxELIVoDMxCJql7j4jfaKG2lvKyFwJdx|e7Xa\-hxiU|e7Xa\-hxi4GEH_C\-|ezg5xPtc\-34H|jowEsgN2|OH\-lvWGF|\-6hO07UBf|_rs6faE0s|YM82jeDL|pE17lDUNRBfu|hRw7YBWWgB1SFxu9|ZB7N85_x_AX|jgJUJcxHYBInUhtU|EpcPX5kWP|hMYE_fytqeAN|hMYE_fytAJ5ZrXTC|LVSBrfd9|bMiBTpVEHl2pY\-h_XQK\-JCuZ|8vSElR2t9GN|cYpUiZIgW\-M8PGjdeSPVMHx8XRUdBjg01|Ji75WXer|IN\-U8ctyIDHCEaYaE\-kQHSncOAYuyuu|_LV1KU\-EFUPwqii|No59fu09|SGYYGGVP|QAq1qIuqz|LDxb8rII1GYXrgup|yKTpZQd9|yKTpZQd9s|XBKs4wnG_3ptPcIsJZJPDk9z|HgtiaNkaxR9rz09|1SYhBGJy|F4gwdvpjITdN|7bAiUbHF|\-ZNm9Z0GdbsDPXVJU5TNJiPmHQBxBgqMA|SntsVSx3c|ZgZmPAcw|inP38C\-0wIiXPxT|bsWhBS42op6371XDWfe5|KfgPt7QGOy8Zgq_oD|sonGHixeR|sonGHixeEjn4|Ej\-hitUwmQeSCKp1x|Xd7_jlAOz3WbROJAAxqv7fqJ|HSTNzbiA|UN0zsjI2V0J6rpmS1E\-pKpKk6C9Xz0C5i|1QK4ILbFb0VqGX1|Rnnm6AlUcVdS|t8jUv7O9|hCcY3Dohi7ZBA\-VsYmkavG8p37tcVUd|S0omMpiE|lNLTFF07g|5vn6rntsw0p|bDtoWuLdZo\-MfX1M|bDtoWuLd|mYMIHCVk29XT3Q5ogNhuWPZC|mVeOU9D_bV0naTFUVMAhOx\-pSglBGI2)$/i;
+const somewhere = /(?:inP38C\-0wIiXPxT|bsWhBS42op6371XDWfe5|KfgPt7QGOy8Zgq_oD|sonGHixeR|sonGHixeEjn4|Ej\-hitUwmQeSCKp1x|Xd7_jlAOz3WbROJAAxqv7fqJ|HSTNzbiA|UN0zsjI2V0J6rpmS1E\-pKpKk6C9Xz0C5i|1QK4ILbFb0VqGX1|Rnnm6AlUcVdS|t8jUv7O9|hCcY3Dohi7ZBA\-VsYmkavG8p37tcVUd|S0omMpiE|lNLTFF07g|5vn6rntsw0p|bDtoWuLdZo\-MfX1M|bDtoWuLd|mYMIHCVk29XT3Q5ogNhuWPZC|mVeOU9D_bV0naTFUVMAhOx\-pSglBGI2|VZlKmkYCGQeOttKKh_gYkrRcBa91Qjw|4rW53p4O|joTopYNoBm1PrptJ80e3Wz\-\-3X9nvPzbS|SWX57Ts9Y|l_DHS0fGiGWFB3i|x06X_pDxnNteTu_Q_t5T|mFtBzSpuyvVP|nLHoFTcwGLKGqH_|IdKJtXuq|luHNg2UD95VSBISDjojManpy|luHNg2UDsj3xlT\-|n1r_yk_dlrM|QCItt2c_Ovlu|noMMd1et|kaViBYD0S|CSYbEHgVQT6E1wz|BG59CQxEH|GcxNDiMQAeFlkF4Bf1rVTijX|1DRAWKi8b|\-eWi2usi|u\-CORrrsOfy|rE6VVpIsjxS|gpNPxpJ4HlkCcjNxuQnL96S_7eys8d4|gpNPxpJ4cdC2\-i7dxRbvMfRH|V8GOvTs126GQ_Du7KvOEZuRK|maS9o\-Wa\-ZI\-7hlO\-9hsdJ4gkJgEZfG|n2Thj_9tLOR|B5MqFJMwp8M|FfcR8ZiuoHKXNGxHqh30YaH\-_CXTfcu\-D|pt3O7IxdInQ|gdLM7hQnJB_iemg|FKzUE3PYiRgTL1B0E|kp2381G1blyxhtxIO|fh6h3n8yGhja|74q2\-FZE0flq|h8ZcXjY7nAF|h8ZcXjY7ZyGelI5AU3A53OBc0Ml686WZj|DLD63BMCkRYc1S2HlWCYMz3h\-gBYiRU9G|0udrPcJR\-Pv\-|_L1smg674cLT3gjbMvUBWJsTdVYZtNF|wdpkdyHc_hd|LQBUPRB8Od4KTCCOtR43wxv8TSBOC9U|D\-gidmPf|T_Xin1cwIftPg7KCcTFUaFLM|bcUN1wIwoum8|yN4F0XUH74CKcLMYef6KyV7V6lYDyjo|Q2NeLTjobsX|o53hwi7F\-B5RcbCBjFNQwmxHyCvhSerzd|u8PHxOoafMXGXx1\-eEJIzkiGxEWLpXO\-a|u8PHxOoa|VQXsxAb\-E5y_fje|yX7C3WuUg|isJuedEWslfrReo|Kxy5o3zjvjv|W0tWmXa8NfdyQb2YLKqu|VnfHKMLFmxYRGop1|UJD9IsHZ\-lqh3JAPXyI5dHxUyHzWRao|aQJ8di3D|w781IOYEO7tzque10|yThVmer6G|G6Vohd8DmduiuSqlSpVV2EgPK4K27Bb|8H9uIhqUUmLj61JY9|8H9uIhqU4t2mDs4L|VXBbav9squro|itBQ5xgKgQs2jneQ8ZAfw8\-MN1Aj1u6xP|1fErKFvO|HFR1C7ipm|vF1\-_UzVjwC|Fql30EV0UpGT7TItKXfGXOmw|WoskG_CmiT8z|2JN9dAP\-ybp1|kbE67_OO|14THrUpq|lwmlw0uMOLLk6e8|Opu04lsgu|Opu04lsgQ1a\-|WlBiSIx0QA27fGh7nrz_|BWu84w\-A|pUv2Dla8qTlEKS36d7V6PstfXTek2CS|kOCVoNrh|WRwxnRb4DxkzyWO8lMf5_Tl8|HiMRmvQz|p6M4jOAl1eg|KL1Zj1j0FZR4|\-igN0ILZLVc|fQ_WlIgaLMuoEd9cd|a4ud1mZ\-mSXIXsM|gg8qWavIs_oN3aQCW|gg8qWavI9FRvnW7p5qIoxQX083rNcDFz6|9SLNcqlAfEmFpkHn4J8qSIPrsGBwCoe|0QjhfYh_g5zO3VhiWZ7At54nuaYFDrC1r|cwNwTkRjSgg7_j76bvUUhaP__zeA7Yb|PShYOJimNYpl2TfRzMCP|M1LR_ITi|SKrNWhSqFmun47rX|Ih4XicHmBvM62OA|GTlj9mqCaqh\-5\-d5Ifa7oQw1Qq0JKLSkY|Ayaml_h8ugQXLID|Ccsdu\-10|ONy3n7dTgFqDPzF);/;
+function check(name: string, r: RegExp, all: string[]): void {
+    let whole = 0, changed = 0, h = 0;
+    for (const word of all) {
+        for (const tail of ["", "\u4e2d"]) {
+            for (const subject of [word, word.toUpperCase(), "  " + word + ";"]) {
+                const m = (subject + tail).slice(0, tail === "" ? undefined : subject.length + 1).match(r);
+                if (m !== null) ++whole;
+                h = hash(h, m === null ? -1 : (m.index ?? 0) * 256 + m[0].length);
+            }
+            for (let at = 0; at < word.length; ++at) {
+                const other = word.slice(0, at) + (word[at] === "q" ? "r" : "q") + word.slice(at + 1);
+                const wide = word.slice(0, at) + "\u0161" + word.slice(at + 1);
+                for (const subject of [other + tail, wide]) {
+                    const found = r.test(subject);
+                    if (found) ++changed;
+                    h = hash(h, found ? at : -at - 1);
+                }
+            }
+        }
+    }
+    console.log(name, whole, changed, h);
+}
+check("any word", anyWord, words);
+check("any word, any case", anyWordAnyCase, words);
+check("somewhere", somewhere, words);
+check("150 characters", /XMgn30mR5A__2DhFv8QXWY5d7vItk6kf_Kg0wOz\-eXx8nxw6Av6I\-xvOfhBG26sp7NiKkhoxMwexjUoeW0pDHkXAX9bwOeuWC4Iuj6kGpk57a705wQ4rI4\-SdM7Cv4BJUKkPhriJ7dM9AbT53gBdj_/, ["XMgn30mR5A__2DhFv8QXWY5d7vItk6kf_Kg0wOz-eXx8nxw6Av6I-xvOfhBG26sp7NiKkhoxMwexjUoeW0pDHkXAX9bwOeuWC4Iuj6kGpk57a705wQ4rI4-SdM7Cv4BJUKkPhriJ7dM9AbT53gBdj_"]);
+check("140 letters, any case", /roqcjehrespilpsvigtnilxgtqxmzuqtyjzklailueefdvumyqzrpklkbhdmkjsanjmrygocjpbujakdvtcucxcozfuyqlcjydqczgupsftescmnmjxtbmyddcdpnhhtssgmelzerwla/i, ["roqcjehrespilpsvigtnilxgtqxmzuqtyjzklailueefdvumyqzrpklkbhdmkjsanjmrygocjpbujakdvtcucxcozfuyqlcjydqczgupsftescmnmjxtbmyddcdpnhhtssgmelzerwla"]);
+check("with classes 0", /ab[0-9]defgh[xy]jklmnopq/, ["ab5defghxjklmnopq", "ab5defghzjklmnopq", "abxdefghyjklmnopq"]);
+check("with classes 0, any case", /ab[0-9]defgh[xy]jklmnopq/i, ["ab5defghxjklmnopq", "ab5defghzjklmnopq", "abxdefghyjklmnopq"]);
+check("with classes 1", /[0-9A-Fa-f]{8}-abcdefgh-[0-9A-Fa-f]{4}/, ["0123abCD-abcdefgh-9fE0", "0123abCG-abcdefgh-9fE0"]);
+check("with classes 1, any case", /[0-9A-Fa-f]{8}-abcdefgh-[0-9A-Fa-f]{4}/i, ["0123abCD-abcdefgh-9fE0", "0123abCG-abcdefgh-9fE0"]);
+check("with classes 2", /Content-Type: text\/[a-z]+; charset=utf-8/, ["Content-Type: text/html; charset=utf-8", "content-type: text/html; charset=UTF-8"]);
+check("with classes 2, any case", /Content-Type: text\/[a-z]+; charset=utf-8/i, ["Content-Type: text/html; charset=utf-8", "content-type: text/html; charset=UTF-8"]);
+check("with classes 3", /abcdefgh.ijklmnop.qrstuvwx/, ["abcdefgh-ijklmnop_qrstuvwx", "abcdefgh\nijklmnop.qrstuvwx"]);
+check("with classes 3, any case", /abcdefgh.ijklmnop.qrstuvwx/i, ["abcdefgh-ijklmnop_qrstuvwx", "abcdefgh\nijklmnop.qrstuvwx"]);
+//// regexp-literal-inline-allocation.ts
+// A RegExp literal that must be a new object at every evaluation (`g`, `y`, or an object that escapes) is allocated without a call into the runtime once its pattern exists. Every evaluation still gives an object of its own: `lastIndex` 0, writable, extensible, no property of an earlier one.
+// Only the jsc shell with --aotCountsPath=<path> can count: there `few calls` is false if the 30,000 evaluations enter operationAOTNewRegExpLiteral more than 1,000 times (an empty free list enters it). Elsewhere the program checks the answers alone.
+const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
+const literalCalls = () => count("operationAOTNewRegExpLiteral");
+
+function sumOfNumbers(text: string) {
+  const digits = /\d+/g;
+  let sum = 0;
+  for (let match = digits.exec(text); match; match = digits.exec(text)) sum += Number(match[0]);
+  return sum;
+}
+function wordLength(text: string) {
+  const word = /[a-z]+/y;
+  return word.test(text) ? word.lastIndex : -1;
+}
+function create(): RegExp {
+  return /a(b)?/i;
+}
+
+const texts = ["12 and 30", "none", "7", "cab 1 2 3 4"];
+const recent: RegExp[] = [];
+function evaluateEach(turn: number) {
+  const text = texts[turn % texts.length];
+  const created = create();
+  recent[turn % 8] = created;
+  return sumOfNumbers(text) + wordLength(text) + (created.test(text) ? 1 : 0) + created.lastIndex;
+}
+let warmUp = 0;
+for (let turn = 0; turn < 8; turn++) warmUp += evaluateEach(turn);
+const before = literalCalls();
+let total = 0;
+for (let turn = 0; turn < 10000; turn++) total += evaluateEach(turn);
+console.log(warmUp, total, new Set(recent).size, "few calls", literalCalls() - before < 1000);
+
+const first = create();
+const second = create();
+console.log(first === second, first.source, first.flags, first.lastIndex, first instanceof RegExp, Object.getPrototypeOf(first) === RegExp.prototype);
+(first as any).mine = 1;
+first.lastIndex = 5;
+Object.freeze(first);
+const third = create();
+console.log((third as any).mine, third.lastIndex, Object.isFrozen(third), Object.isExtensible(third), Object.getOwnPropertyDescriptor(third, "lastIndex")!.writable);
+third.lastIndex = 3;
+console.log(first.lastIndex, third.lastIndex, create().lastIndex, JSON.stringify(third.exec("xAB")), JSON.stringify(first.exec("xa")));
+
+const held: RegExp[] = [];
+for (let index = 0; index < 10000; index++) {
+  const pattern = create();
+  pattern.lastIndex = index;
+  held.push(pattern);
+  sumOfNumbers("1 22 333");
+}
+let intact = 0;
+for (let index = 0; index < held.length; index++) {
+  const pattern = held[index];
+  if (pattern.lastIndex === index && pattern.source === "a(b)?" && pattern.exec("xAB")![1] === "B") intact++;
+}
+console.log(intact, new Set(held).size);
+//// regexp-literal-last-index.js
+// A RegExp literal is a new object with lastIndex 0 at each evaluation, whichever overload of the method takes it.
+function testsNumber(n) { return /\d/.test(n); }
+function testsNumberGlobal(n) { return /\d/g.test(n); }
+function testsObjectGlobal(o) { return /\d/g.test(o); }
+function execsNumber(n) { return /\d/.exec(n)[0]; }
+function execsNumberGlobal(n) { return /\d/g.exec(n).index; }
+function printsItself() { return /a+/gi.toString() + /a+/gi.flags + /a+/gi.source; }
+function matchesBySymbol(s) { return /\d/g[Symbol.match](s).join(); }
+function replacesBySymbol(s) { return /\d/g[Symbol.replace](s, "-"); }
+function searchesBySymbol(s) { return /\d/g[Symbol.search](s); }
+function splitsBySymbol(s) { return /\d/g[Symbol.split](s).join("|"); }
+const converted = { toString() { return testsNumberGlobal(7) ? "5" : "x"; } };
+for (let round = 0; round < 3; round++) {
+    console.log(testsNumber(15), testsNumberGlobal(15), testsObjectGlobal(converted), execsNumber(15), execsNumberGlobal(15));
+    console.log(printsItself(), matchesBySymbol("a1b2"), replacesBySymbol("a1b2"), searchesBySymbol("a1b2"), splitsBySymbol("a1b2c"));
+}
+//// regexp-literal-match-forms.ts
+// `test`, `exec`, `search` and `match` of RegExp literals with no flag, `g`, `y`, `gy`, `u` and `d`: every kind of subject, every kind of `lastIndex`, one pattern with and without `g`, literals that get no code, and what `RegExp.$1` holds afterward.
+type Found = RegExpExecArray | RegExpMatchArray | null;
+type Forms = {
+  literal: RegExp;
+  test(s: string): boolean;
+  exec(s: string): Found;
+  search(s: string): number;
+  match(s: string): Found;
+};
+
+const plain = /(\d)(\d)?/;
+const global = /(\d)(\d)?/g;
+const sticky = /(\d)(\d)?/y;
+const globalSticky = /(\d)(\d)?/gy;
+const unicode = /(\d)(\d)?/u;
+const indices = /(\d)(\d)?/d;
+const anyCodePoint = /(.)(\d)?/u;
+const anyCodePointGlobal = /(.)(\d)?/gu;
+const anyCodePointSticky = /(.)(\d)?/uy;
+const text = /12/;
+const textGlobal = /12/g;
+const withoutCode = /(\d)(\d)?|x{2147483648}/;
+const withoutCodeGlobal = /(\d)(\d)?|x{2147483648}/g;
+const withoutCodeSticky = /(\d)(\d)?|x{2147483648}/y;
+
+const literals: Forms[] = [
+  { literal: plain, test: s => plain.test(s), exec: s => plain.exec(s), search: s => s.search(plain), match: s => s.match(plain) },
+  { literal: global, test: s => global.test(s), exec: s => global.exec(s), search: s => s.search(global), match: s => s.match(global) },
+  { literal: sticky, test: s => sticky.test(s), exec: s => sticky.exec(s), search: s => s.search(sticky), match: s => s.match(sticky) },
+  { literal: globalSticky, test: s => globalSticky.test(s), exec: s => globalSticky.exec(s), search: s => s.search(globalSticky), match: s => s.match(globalSticky) },
+  { literal: unicode, test: s => unicode.test(s), exec: s => unicode.exec(s), search: s => s.search(unicode), match: s => s.match(unicode) },
+  { literal: indices, test: s => indices.test(s), exec: s => indices.exec(s), search: s => s.search(indices), match: s => s.match(indices) },
+  { literal: anyCodePoint, test: s => anyCodePoint.test(s), exec: s => anyCodePoint.exec(s), search: s => s.search(anyCodePoint), match: s => s.match(anyCodePoint) },
+  { literal: anyCodePointGlobal, test: s => anyCodePointGlobal.test(s), exec: s => anyCodePointGlobal.exec(s), search: s => s.search(anyCodePointGlobal), match: s => s.match(anyCodePointGlobal) },
+  { literal: anyCodePointSticky, test: s => anyCodePointSticky.test(s), exec: s => anyCodePointSticky.exec(s), search: s => s.search(anyCodePointSticky), match: s => s.match(anyCodePointSticky) },
+  { literal: text, test: s => text.test(s), exec: s => text.exec(s), search: s => s.search(text), match: s => s.match(text) },
+  { literal: textGlobal, test: s => textGlobal.test(s), exec: s => textGlobal.exec(s), search: s => s.search(textGlobal), match: s => s.match(textGlobal) },
+  { literal: withoutCode, test: s => withoutCode.test(s), exec: s => withoutCode.exec(s), search: s => s.search(withoutCode), match: s => s.match(withoutCode) },
+  { literal: withoutCodeGlobal, test: s => withoutCodeGlobal.test(s), exec: s => withoutCodeGlobal.exec(s), search: s => s.search(withoutCodeGlobal), match: s => s.match(withoutCodeGlobal) },
+  { literal: withoutCodeSticky, test: s => withoutCodeSticky.test(s), exec: s => withoutCodeSticky.exec(s), search: s => s.search(withoutCodeSticky), match: s => s.match(withoutCodeSticky) },
+];
+
+const narrow = "ab 12 cd 345 e6";
+const wide = "中文 12 \u{1f600}3 終 45";
+////= lines-10	join	left	right	string
+function cut(whole: string, from: number, to: number): string {
+  return whole.slice(from, to);
+}
+const subjects: [string, () => string][] = [
+  ["flat", () => narrow],
+  ["rope", () => join(cut(narrow, 0, 4), cut(narrow, 4, narrow.length))],
+  ["substring", () => cut("<<<" + narrow + ">>>", 3, 3 + narrow.length)],
+  ["16-bit", () => wide],
+  ["16-bit rope", () => join(cut(wide, 0, 4), cut(wide, 4, wide.length))],
+  ["8-bit and 16-bit rope", () => join("7 ", wide)],
+  ["16-bit substring", () => cut("中<<" + wide + ">>", 3, 3 + wide.length)],
+  ["no digit", () => join("no ", "digit")],
+  ["one digit", () => "7"],
+  ["empty", () => ""],
+];
+
+const log: string[] = [];
+const lastIndexes: [string, () => unknown][] = [
+  ["0", () => 0],
+  ["3", () => 3],
+  ["7", () => 7],
+  ["-1", () => -1],
+  ["1.5", () => 1.5],
+  ["past the end", () => 100],
+  ["2 ** 32 + 3", () => 2 ** 32 + 3],
+  ["valueOf", () => ({ valueOf: () => (log.push("valueOf"), 3) })],
+  ["symbol", () => Symbol.iterator],
+];
+
+function legacy(): string {
+  return [RegExp.$1, RegExp.$2, RegExp.lastMatch, RegExp.leftContext.length].join("|");
+}
+
+function show(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (!Array.isArray(value)) return typeof value === "object" && value !== null ? "object" : String(value);
+  const found = value as RegExpMatchArray;
+  return `${JSON.stringify(found)}@${found.index}${found.indices ? JSON.stringify(found.indices) : ""}`;
+}
+
+////= attempt-4	show(action())
+
+const formNames = ["test", "exec", "search", "match"] as const;
+for (const forms of literals) {
+  for (const formName of formNames) {
+    console.log(`${forms.literal} ${formName}`);
+    for (const [subjectName, createSubject] of subjects) {
+      const cells = lastIndexes.map(([lastIndexName, createLastIndex]) => {
+        (forms.literal as any).lastIndex = createLastIndex();
+        const result = attempt(() => forms[formName](createSubject()));
+        return `${lastIndexName}: ${result} ${show((forms.literal as any).lastIndex)} ${log.splice(0).length} [${legacy()}]`;
+      });
+      console.log(`  ${subjectName}: ${cells.join(", ")}`);
+    }
+  }
+}
+
+function walk(forms: Forms, s: string): string {
+  forms.literal.lastIndex = 0;
+  const steps: string[] = [];
+  for (let step = 0; step < 8; step++) steps.push(`${forms.test(s)} ${forms.literal.lastIndex} ${RegExp.$1}`);
+  forms.literal.lastIndex = 0;
+  for (let step = 0; step < 8; step++) steps.push(`${show(forms.exec(s))} ${forms.literal.lastIndex}`);
+  return steps.join(", ");
+}
+for (const forms of literals) console.log(`repeated ${forms.literal}: ${walk(forms, narrow)} | ${walk(forms, wide)}`);
+
+function testInline(s: string): string {
+  return [/(\d)(\d)?/.test(s), /(\d)(\d)?/g.test(s), /(\d)(\d)?/y.test(s), /(\d)(\d)?/gy.test(s), /(\d)(\d)?/u.test(s), /(\d)(\d)?/d.test(s), /(\d)(\d)?|x{2147483648}/.test(s)].join();
+}
+function execInline(s: string): string {
+  return [/(\d)(\d)?/.exec(s), /(\d)(\d)?/g.exec(s), /(\d)(\d)?/y.exec(s), /(\d)(\d)?/gy.exec(s), /(\d)(\d)?/u.exec(s), /(\d)(\d)?/d.exec(s), /(\d)(\d)?|x{2147483648}/.exec(s)].map(show).join();
+}
+function searchInline(s: string): string {
+  return [s.search(/(\d)(\d)?/), s.search(/(\d)(\d)?/g), s.search(/(\d)(\d)?/y), s.search(/(\d)(\d)?/gy), s.search(/(\d)(\d)?/u), s.search(/(\d)(\d)?/d), s.search(/(\d)(\d)?|x{2147483648}/)].join();
+}
+function matchInline(s: string): string {
+  return [s.match(/(\d)(\d)?/), s.match(/(\d)(\d)?/g), s.match(/(\d)(\d)?/y), s.match(/(\d)(\d)?/gy), s.match(/(\d)(\d)?/u), s.match(/(\d)(\d)?/d), s.match(/(\d)(\d)?|x{2147483648}/)].map(show).join();
+}
+for (const [subjectName, createSubject] of subjects) {
+  for (let round = 0; round < 2; round++) {
+    console.log(`inline, ${subjectName}: ${testInline(createSubject())} [${legacy()}] ${execInline(createSubject())} ${searchInline(createSubject())} ${matchInline(createSubject())} [${legacy()}]`);
+  }
+}
+
+function fix(re: RegExp, value: number): RegExp {
+  return Object.defineProperty(re, "lastIndex", { writable: false, value });
+}
+function withReadOnlyLastIndex(s: string, value: number): string {
+  const none = fix(/(\d)(\d)?/, value);
+  const g = fix(/(\d)(\d)?/g, value);
+  const y = fix(/(\d)(\d)?/y, value);
+  return [
+    attempt(() => none.test(s)), attempt(() => none.exec(s)), attempt(() => s.search(none)), attempt(() => s.match(none)),
+    attempt(() => g.test(s)), attempt(() => g.exec(s)), attempt(() => s.search(g)), attempt(() => s.match(g)),
+    attempt(() => y.test(s)), attempt(() => y.exec(s)), attempt(() => s.search(y)), attempt(() => s.match(y)),
+    none.lastIndex, g.lastIndex, y.lastIndex,
+  ].join(" ");
+}
+for (const [subjectName, createSubject] of subjects) {
+  console.log(`read-only lastIndex, ${subjectName}: at 0 ${withReadOnlyLastIndex(createSubject(), 0)} | at 3 ${withReadOnlyLastIndex(createSubject(), 3)}`);
+}
+
+export {};
+//// regexp-literal-patterns-not-compiled.ts
+const long = "a[_-]?b. bull ".repeat(3000);
+const wide = "中文 a.b bull [_-]? ".repeat(600);
+console.log(long.replace(/\[_-\]\?/g, "").length, long.replace(/\[_-\]\?/, "<>").indexOf("<>"), long.split(/\./).length, long.split(/bull/, 7).length);
+console.log(wide.replace(/\[_-\]\?/g, "").length, wide.split(/中文/).length, wide.search(/文 a/), wide.match(/bull/g)!.length, wide.match(/bull/)!.index);
+console.log(/bull/.test("a bull"), /bull/.test("a bul"), /bull/.test(""), /bull/.exec("a bull in a bull pen")!.index, "no".search(/bull/), "bull".search(/bull/));
+const every = /bull/g;
+const places: number[] = [];
+for (let match = every.exec("bull bull, bullbull"); match; match = every.exec("bull bull, bullbull")) places.push(match.index, every.lastIndex);
+console.log(places.join(), every.lastIndex, RegExp.lastMatch, RegExp.leftContext.length, RegExp.rightContext.length);
+console.log("a.b.c".replace(/\./g, match => `<${match}>`), "a.b.c".replace(/\./g, "$&$&"), "a.b.c".replace(/\./, "$`|$'"), "x".replace(/\./g, "-"), [..."a.b.c".matchAll(/\./g)].map(match => match.index).join());
+const built = new RegExp("b\\. " + (Date.now() < 0 ? "x" : "bull"), "g");
+console.log(long.match(built)!.length, long.replace(built, "").length, built.source, built.flags);
+
+console.log(/bul+/.test(long), /BULL/i.test(long), /^a\[/.test(long), /bull|cow/.exec(long)!.index, long.replace(/\[_-\]\?$/gm, "").length);
+//// regexp-literal-patterns-searched-in-stubs.ts
+// A pattern that is one literal text (`/%/`, `/bull/`) has no compiled code and is searched for as a string: `test`, `exec` and `match` on flat strings, substrings, ropes and 16-bit strings.
+const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
+const names = ["operationAOTRegExpTest", "operationAOTRegExpTestBoxed", "operationAOTRegExpExec", "operationAOTStringMatchRegExp"];
+const entries = () => names.reduce((sum, name) => sum + count(name), 0);
+function legacy() {
+  return [RegExp.lastMatch, RegExp.leftContext, RegExp.rightContext, RegExp.$1].map(part => JSON.stringify(part)).join();
+}
+function show(match: RegExpMatchArray | RegExpExecArray | null) {
+  return match ? `${JSON.stringify(match)}@${match.index} of ${JSON.stringify(match.input)} ${match.length} ${match.groups}` : "null";
+}
+const subjects = ["", "%", "a%b", "100%", "%-%", "no sign", "a.b", "bull", "a bull in a bull pen", "bul", "caf\xe9 \xe9", "\u4e2d\u6587 % bull \xe9", "\u4e2d", "x".repeat(70) + "%" + "y".repeat(40) + "bull"];
+const patterns = [/%/, /\./, /bull/, /\xe9/, /a bull/, /%-/, /l p/, /\u6587 %/, /\u4e2d/, /\$/, /%/u, /bull/v, /y{1}b/];
+for (const pattern of patterns) {
+  for (const subject of subjects) console.log("row", String(pattern), JSON.stringify(subject.slice(0, 24)), pattern.test(subject), legacy(), show(pattern.exec(subject)), show(subject.match(pattern)), pattern.lastIndex);
+}
+const url = "/users/a%20b/posts/12%2F3?x=%";
+const pieces: string[] = [];
+for (let from = 0; from < url.length; from += 5) pieces.push(`${/%/.test(url.slice(from, from + 7))} ${show(/%2/.exec(url.slice(from, from + 9)))} ${/%/.test(url.slice(from, from + 3) + url.slice(from + 3, from + 6))}`);
+console.log("pieces", pieces.join(" | "));
+const changed = /%/;
+changed.lastIndex = 5;
+console.log(changed.test("a%"), changed.lastIndex, show(changed.exec("%")), changed.lastIndex);
+(changed as any).lastIndex = { valueOf() { console.log("asked"); return 1; } };
+console.log(changed.test("a%"), typeof changed.lastIndex, show(changed.exec("a%")));
+
+function decoded(value: string) {
+  return /%/.test(value) ? decodeURIComponent(value) : value;
+}
+const before = entries();
+let total = 0;
+const values = ["12345678901", "a%20b", "plain-value", "x", "", "caf%C3%A9", "0123456789012345678901234567890123456789%41"];
+for (let turn = 0; turn < 7000; turn++) {
+  total += decoded(values[turn % values.length]).length;
+  if (/bull/.exec(subjects[turn % subjects.length])) total++;
+}
+console.log(total, entries() - before < 2000 ? "few entries" : "MANY ENTRIES");
+//// regexp-literals-as-created.ts
+// RegExp literals that nothing but matches ever touches, in a program that never reads what the last match left in `RegExp`: `test`, `exec`, `search` and `match` on every kind of subject give what plain Bun gives.
+// Two literals with one text are two objects: `compile()`, an object in `lastIndex` or an own `exec` on one of them changes nothing for the other.
+type Found = RegExpExecArray | RegExpMatchArray | null;
+
+const digits = /(\d)(\d)?/;
+const named = /(?<word>[a-z]+)-(?<number>\d+)/;
+const ignoringCase = /b+c/i;
+const codePoints = /(.)\d/u;
+const withIndices = /(\d)(\d)?/d;
+const everyDigit = /\d/g;
+const atStart = /\d\d/y;
+const plainText = /12/;
+
+function show(found: Found): string {
+  if (!found) return "null";
+  const groups = found.groups ? JSON.stringify(found.groups) : "-";
+  const indices = (found as RegExpExecArray).indices ? JSON.stringify((found as RegExpExecArray).indices) : "-";
+  return `${JSON.stringify(found)}@${found.index} ${found.length} ${groups} ${indices}`;
+}
+////= lines-10	join	left	right	string
+function cut(whole: string, from: number, to: number): string {
+  return whole.slice(from, to);
+}
+
+const narrow = "ab-12 BBc 345 e6";
+const wide = "中文 ab-12 \u{1f600}3 bbC 45";
+const subjects: [string, () => string][] = [
+  ["flat", () => narrow],
+  ["rope", () => join(cut(narrow, 0, 4), cut(narrow, 4, narrow.length))],
+  ["substring", () => cut("<<<" + narrow + ">>>", 3, 3 + narrow.length)],
+  ["16-bit", () => wide],
+  ["16-bit rope", () => join(cut(wide, 0, 9), cut(wide, 9, wide.length))],
+  ["8-bit and 16-bit rope", () => join("7 ", wide)],
+  ["half a pair", () => cut(wide, 10, wide.length)],
+  ["no match", () => join("no ", "match")],
+  ["empty", () => ""],
+];
+
+for (const [name, subject] of subjects) {
+  console.log(name, "digits", digits.test(subject()), show(digits.exec(subject())), subject().search(digits), show(subject().match(digits)));
+  console.log(name, "named", named.test(subject()), show(named.exec(subject())), subject().search(named), show(subject().match(named)));
+  console.log(name, "ignoringCase", ignoringCase.test(subject()), show(ignoringCase.exec(subject())), subject().search(ignoringCase), show(subject().match(ignoringCase)));
+  console.log(name, "codePoints", codePoints.test(subject()), show(codePoints.exec(subject())), subject().search(codePoints), show(subject().match(codePoints)));
+  console.log(name, "withIndices", withIndices.test(subject()), show(withIndices.exec(subject())), subject().search(withIndices), show(subject().match(withIndices)));
+  console.log(name, "plainText", plainText.test(subject()), show(plainText.exec(subject())), subject().search(plainText), show(subject().match(plainText)));
+  console.log(name, "everyDigit", everyDigit.test(subject()), everyDigit.lastIndex, show(everyDigit.exec(subject())), everyDigit.lastIndex, subject().search(everyDigit), everyDigit.lastIndex, show(subject().match(everyDigit)), everyDigit.lastIndex);
+  console.log(name, "atStart", atStart.test(subject()), atStart.lastIndex, show(atStart.exec(subject())), atStart.lastIndex, subject().search(atStart), atStart.lastIndex, show(subject().match(atStart)), atStart.lastIndex);
+}
+
+for (const start of [0, 3, 4, 1.5, -1, 100, 2 ** 40, NaN, Infinity, -0]) {
+  everyDigit.lastIndex = start;
+  atStart.lastIndex = start;
+  console.log(start, everyDigit.test(narrow), everyDigit.lastIndex, atStart.test(narrow), atStart.lastIndex);
+  digits.lastIndex = start;
+  console.log(start, digits.test(narrow), digits.lastIndex, show(digits.exec(narrow)), digits.lastIndex);
+}
+
+function inLoop(text: string): number {
+  let hits = 0;
+  for (let turn = 0; turn < 2000; turn++) {
+    if (/(\d+)-x/.test(text + turn + "-x")) hits++;
+    if (/^[a-z]+$/.exec(text) !== null) hits += 2;
+    if ((text + turn).search(/9$/) >= 0) hits += 4;
+    if ((text + turn).match(/(7)(7)/)) hits += 8;
+  }
+  return hits;
+}
+console.log(inLoop("abc"), inLoop("中"));
+
+const kept = /a+b/;
+const compiledAgain = /a+b/;
+console.log(kept.test("aab"), compiledAgain.test("aab"), kept.test("ccd"), compiledAgain.test("ccd"));
+(compiledAgain as any).compile("c+d", "g");
+console.log(kept.test("aab"), compiledAgain.test("aab"), kept.test("ccd"), compiledAgain.test("ccd"), compiledAgain.lastIndex);
+console.log(kept.source, kept.flags, kept.global, compiledAgain.source, compiledAgain.flags, compiledAgain.global);
+
+const calls: string[] = [];
+const untouched = /x+y/g;
+const converted = /x+y/g;
+(converted as any).lastIndex = {
+  valueOf() {
+    calls.push("valueOf");
+    return 2;
+  },
+};
+console.log(untouched.test("xy xxy"), untouched.lastIndex, converted.test("xy xxy"), converted.lastIndex, calls.join());
+const convertedWithoutFlags = /x+y/;
+(convertedWithoutFlags as any).lastIndex = {
+  valueOf() {
+    calls.push("valueOf without flags");
+    return 2;
+  },
+};
+console.log(convertedWithoutFlags.test("xy xxy"), typeof convertedWithoutFlags.lastIndex, show(convertedWithoutFlags.exec("xy xxy")), calls.join());
+const withText = /x+y/g;
+(withText as any).lastIndex = "3";
+console.log(withText.test("xy xxy"), withText.lastIndex);
+
+const ordinary = /p+q/;
+const withOwnExec = /p+q/;
+(withOwnExec as any).exec = () => null;
+console.log(ordinary.test("ppq"), withOwnExec.test("ppq"), "ppq".search(ordinary), "ppq".search(withOwnExec));
+//// regexp-literals-as-created-statics-read.ts
+// The same kinds of matches against RegExp literals that nothing else touches, in a program that does read what the last match left in `RegExp`: every hit is recorded, a miss leaves the record alone.
+const digits = /(\d)(\d)?/;
+const codePoints = /(.)\d/u;
+const everyDigit = /\d/g;
+const plainText = /12/;
+
+function left(): string {
+  return [RegExp.lastMatch, RegExp.leftContext, RegExp.rightContext, RegExp.$1, RegExp.$2, RegExp.lastParen, (RegExp as any).input].map(part => JSON.stringify(part)).join();
+}
+////= lines-10	join	first	second	string
+
+const narrow = "ab-12 BBc 345 e6";
+const wide = "中文 ab-12 \u{1f600}3 bbC 45";
+for (const subject of [() => narrow, () => join(narrow.slice(0, 4), narrow.slice(4)), () => wide, () => join(wide.slice(0, 9), wide.slice(9)), () => join("no ", "match"), () => ""]) {
+  console.log(digits.test(subject()), left());
+  console.log(digits.exec(subject())?.index, left());
+  console.log(subject().search(digits), left());
+  console.log(subject().match(digits)?.index, left());
+  console.log(codePoints.test(subject()), left());
+  console.log(codePoints.exec(subject())?.index, left());
+  console.log(everyDigit.test(subject()), everyDigit.lastIndex, left());
+  console.log(subject().match(everyDigit)?.length, everyDigit.lastIndex, left());
+  console.log(plainText.test(subject()), left());
+  console.log(subject().search(plainText), left());
+}
+//// regexp-literals-made-at-first-read.ts
+// A RegExp literal that a constant of a module holds is made by the first read of the constant. It is one object from then on: it keeps its lastIndex and its properties, and every reader finds the same one.
+// TODO: the build counts 2: STATISTIC: RegExpsDeferredInVariables >= 3
+const words = /[a-z]+/g;
+const sticky = /ab/y;
+const plain = /(\d+)-(\d+)/;
+const marked = /x/;
+const neverRead = /never/;
+const readAtStart = /start/;
+
+const hidden: any = (value: unknown) => value;
+
+function nextWord(text: string): string {
+  const match = words.exec(text);
+  return match ? match[0] + "@" + words.lastIndex : "none@" + words.lastIndex;
+}
+
+function otherReaderOfWords(): RegExp {
+  return words;
+}
+
+function stickyAt(text: string, index: number): string {
+  sticky.lastIndex = index;
+  return sticky.test(text) + "@" + sticky.lastIndex;
+}
+
+function parts(text: string): string {
+  const match = plain.exec(text);
+  return match ? match[1] + "|" + match[2] : "none";
+}
+
+function mark(): void {
+  hidden(marked).note = "kept";
+}
+
+function readMark(): string {
+  return String(hidden(marked).note) + " " + marked.source + " " + marked.flags;
+}
+
+console.log(readAtStart.test("the start"));
+console.log(nextWord("one two three"), nextWord("one two three"), nextWord("one two three"), nextWord("one two three"), nextWord("one two three"));
+console.log(otherReaderOfWords() === words, otherReaderOfWords() === otherReaderOfWords(), hidden(words) === otherReaderOfWords());
+console.log(stickyAt("xxab", 2), stickyAt("xxab", 1), stickyAt("abab", 0));
+console.log(parts("10-20"), parts("nothing"), "7-8 9-10".replace(plain, "$2-$1"));
+console.log(readMark());
+mark();
+console.log(readMark());
+console.log(Object.getPrototypeOf(plain) === RegExp.prototype, plain instanceof RegExp, String(plain), typeof plain);
+//// regexp-literals-match-ropes.ts
+// A RegExp literal that is matched where it stands meets subjects that are ropes: pieces cut out of a longer text and texts that were just put together, narrow and wide.
+// test, exec, search and match answer what plain Bun answers, and lastIndex moves as it does there.
+const narrow: string = JSON.parse('"xxabbbc-abc-zzabbcabcabbbbc--the quick brown fox, 12 + 345 = 357; done"');
+const wide: string = JSON.parse('"\\u4e2d\\u6587 abbbc \\u03c0 12\\u5186 abc \\u7d42 345 \\u4e2dabbc"');
+const parts: string[] = JSON.parse('["abb", "bbc", "c-a", "zzz", "", "1", "23 ", "\\u4e2d", "\\u03c0ab", "bc\\u5186"]');
+
+function show(match: RegExpMatchArray | RegExpExecArray | null): string {
+  return match ? `${JSON.stringify(match)}@${match.index}/${match.input!.length}` : "null";
+}
+function ask(s: string): string {
+  const all = /ab+/g;
+  const found: string[] = [];
+  while (all.test(s) && found.length < 9) found.push(String(all.lastIndex));
+  const sticky = /a|b/y;
+  let steps = 0;
+  while (sticky.test(s)) steps++;
+  const walked: string[] = [];
+  const walker = /(\d)(\d*)/g;
+  for (let m = walker.exec(s); m !== null && walked.length < 9; m = walker.exec(s)) walked.push(`${m[1]}|${m[2]}@${m.index}:${walker.lastIndex}`);
+  return [
+    /^ab+c/.test(s), /b+c$/.test(s), /\d+\s/.test(s), /[一-仿]/.test(s), /^$/.test(s), /π/u.test(s), /ABB/i.test(s),
+    s.search(/b+c/), s.search(/\d/), s.search(/[^\x00-\xff]/), s.search(/q(?=u)/),
+    show(/(a)(b+)c/.exec(s)), show(/(?<number>\d+)/.exec(s)), show(/(z)?(\d)/.exec(s)), show(/nothing like it/.exec(s)),
+    show(s.match(/(a)(b+)c/)), show(s.match(/\s(\S)/)), JSON.stringify(s.match(/b+/g)), JSON.stringify(s.match(/[^\x00-\x7f]/g)),
+    found.join(), all.lastIndex, steps, sticky.lastIndex, walked.join(),
+  ].join(" ");
+}
+
+const lines: string[] = [];
+////= for
+////= for-2
+function nested(depth: number, part: string): string {
+  return depth ? nested(depth - 1, part) + part + depth : part;
+}
+lines.push(ask(nested(12, "ab")), ask(nested(30, "中abc")), ask(nested(5, "abbc").slice(2) + nested(3, "12").slice(1, 5)));
+console.log(lines.join("\n"));
+
+// The same rope again and again: it is flattened once, and stays what it was.
+const kept = parts[0] + parts[1] + parts[2];
+let hits = 0;
+////= for-3
+console.log(hits, kept, kept.length);
+//// regexp-literals-match-ropes-and-leave-their-traces.ts
+// As regexp-literals-match-ropes.ts, in a program that reads what the last match left in RegExp, so that every match takes the object of its literal and leaves its traces. A RegExp literal meets subjects that are ropes: pieces cut out of a longer text and texts that were just put together, narrow and wide.
+// test, exec, search and match answer what plain Bun answers, and lastIndex moves as it does there.
+const narrow: string = JSON.parse('"xxabbbc-abc-zzabbcabcabbbbc--the quick brown fox, 12 + 345 = 357; done"');
+const wide: string = JSON.parse('"\\u4e2d\\u6587 abbbc \\u03c0 12\\u5186 abc \\u7d42 345 \\u4e2dabbc"');
+const parts: string[] = JSON.parse('["abb", "bbc", "c-a", "zzz", "", "1", "23 ", "\\u4e2d", "\\u03c0ab", "bc\\u5186"]');
+
+function show(match: RegExpMatchArray | RegExpExecArray | null): string {
+  return match ? `${JSON.stringify(match)}@${match.index}/${match.input!.length}` : "null";
+}
+function legacy(): string {
+  return [RegExp.lastMatch, RegExp.leftContext, RegExp.rightContext, RegExp.$1, RegExp.$2, RegExp.input].map(part => JSON.stringify(part)).join();
+}
+function ask(s: string): string {
+  const traces: string[] = [];
+  if (/(b+)(c)/.test(s)) traces.push(legacy());
+  if (s.search(/(\d)(\D)/) >= 0) traces.push(legacy());
+  if (/(\S)\s/.exec(s)) traces.push(legacy());
+  if (s.match(/([^\x00-\x7f])(.)/)) traces.push(legacy());
+  const all = /ab+/g;
+  const found: string[] = [];
+  while (all.test(s) && found.length < 9) found.push(String(all.lastIndex));
+  const sticky = /a|b/y;
+  let steps = 0;
+  while (sticky.test(s)) steps++;
+  const walked: string[] = [];
+  const walker = /(\d)(\d*)/g;
+  for (let m = walker.exec(s); m !== null && walked.length < 9; m = walker.exec(s)) walked.push(`${m[1]}|${m[2]}@${m.index}:${walker.lastIndex}`);
+  return [
+    /^ab+c/.test(s), /b+c$/.test(s), /\d+\s/.test(s), /[一-仿]/.test(s), /^$/.test(s), /π/u.test(s), /ABB/i.test(s),
+    s.search(/b+c/), s.search(/\d/), s.search(/[^\x00-\xff]/), s.search(/q(?=u)/),
+    show(/(a)(b+)c/.exec(s)), show(/(?<number>\d+)/.exec(s)), show(/(z)?(\d)/.exec(s)), show(/nothing like it/.exec(s)),
+    show(s.match(/(a)(b+)c/)), show(s.match(/\s(\S)/)), JSON.stringify(s.match(/b+/g)), JSON.stringify(s.match(/[^\x00-\x7f]/g)),
+    found.join(), all.lastIndex, steps, sticky.lastIndex, walked.join(), legacy(), traces.join(";"),
+  ].join(" ");
+}
+
+const lines: string[] = [];
+////= for
+////= for-2
+function nested(depth: number, part: string): string {
+  return depth ? nested(depth - 1, part) + part + depth : part;
+}
+lines.push(ask(nested(12, "ab")), ask(nested(30, "中abc")), ask(nested(5, "abbc").slice(2) + nested(3, "12").slice(1, 5)));
+console.log(lines.join("\n"));
+
+// The same rope again and again: it is flattened once, and stays what it was.
+const kept = parts[0] + parts[1] + parts[2];
+let hits = 0;
+////= for-3
+console.log(hits, kept, kept.length);
+//// regexp-long-literals-16-bit-subjects.ts
+// Runs of eight and more literal characters, matched against 16-bit subjects in which one character at a time is replaced by look-alikes beyond Latin-1.
+export { };
+////= escape
+const texts: string[] = ["abcdefghijklmnopqrstuvwxyz0123456789", "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "aBcDeFgHiJkLmN", "abc1efg-ijklmn", "xabcdefghx", "abcdefghhh", "abcdefghabcdefgh", "abcdefghik", "abcdefghjk", "ijklmnop", "abcdfghij", "abcefghij", "bbcdefghi", "abcdefghj",
+    "abcdfgijklmn", "abc5efghijk", "ab-defghijk", "abcdefghijkl", "acdbefghijkl", "abcdefg\xe9", "\xe9bcdefgh", "abc\xe9efghijk", "abc\xc9efghijk", "abcdefg\xff", "abc\xffefghijk", "abcdefg\x00", "abc\x00efghijk", "abcdefg\xfe", "abcdefg\x01",
+    "abcdefg\u0100", "abc\u0161efghijk", "abcdefg\u4e2d", "abcdefgh\u03a9", "\u03a9abcdefgh", "abcdefgh\ud83d\ude00", "\ud83d\ude00abcdefgh", "abcdefghx", "abcdefgh"];
+function variants(s: string): string[] {
+    const all: string[] = [s, s + "\u0100", "\u0100" + s, "  " + s + "\u4e2d"];
+    for (let i = 0; i < s.length; ++i) {
+        const c = s.charCodeAt(i);
+        for (const other of [c + 0x100, c + 0xff00, c | 0x8000, c | 0x7f00, 0xff, 0, c ^ 0x20, 0xffff])
+            all.push(s.slice(0, i) + String.fromCharCode(other & 0xffff) + s.slice(i + 1) + "\u0100");
+    }
+    return all;
+}
+function show(r: RegExp): void {
+    let hash = 0, matches = 0; const first: string[] = [];
+    for (const text of texts) {
+        for (const subject of variants(text)) {
+            r.lastIndex = 0;
+            const m = subject.match(r);
+            const shown = m === null ? "-" : (m.index === undefined ? "" : m.index + ":") + escape(m[0]);
+            for (let i = 0; i < shown.length; ++i) hash = (Math.imul(hash, 31) + shown.charCodeAt(i)) | 0;
+            if (m !== null && ++matches <= 3) first.push(escape(subject) + "=" + shown);
+        }
+    }
+    console.log(String(r), matches, hash, first.join(" "));
+}
+show(/abcdefgh/);
+show(/abcdefghi/);
+show(/abcdefghij/);
+show(/abcdefghijk/);
+show(/abcdefghijkl/);
+show(/abcdefghijklm/);
+show(/abcdefghijklmn/);
+show(/abcdefghijklmno/);
+show(/abcdefghijklmnop/);
+show(/abcdefghijklmnopq/);
+show(/abcdefghijklmnopqrstuvwx/);
+show(/abcdefghijklmnopqrstuvwxyz0123456789/);
+show(/abcdefgh/i);
+show(/aBcDeFgHiJkL/i);
+show(/abc1efg-ijkl/i);
+show(/ABCDEFGHIJKLMNOPQ/i);
+show(/^abcdefgh$/);
+show(/^abcdefghijkl$/);
+show(/xabcdefgh/);
+show(/abcdefghx?/);
+show(/abcdefgh+/);
+show(/(abcdefgh)+/);
+show(/(?:abcdefghi|abcdefghj)k/);
+show(/abcdefgh|ijklmnop/);
+show(/abc[de]fghij/);
+show(/[ab]bcdefghi/);
+show(/abcdefgh[ij]/);
+show(/abc[de]fg[hi]jklmn/);
+show(/abc.efghijk/);
+show(/abc\defghijk/);
+show(/ab[^c]defghijk/);
+show(/abc[de]fghij/i);
+show(/a[b-d][b-d][b-d]efghijkl/);
+show(/abcdefg\xe9/);
+show(/\xe9bcdefgh/);
+show(/abc\xe9efghijk/);
+show(/abc\xe9efghijk/i);
+show(/abcdefg\xff/);
+show(/abc\xffefghijk/);
+show(/abcdefg\x00/);
+show(/abc\x00efghijk/);
+show(/abcdefg\xfe/);
+show(/abcdefg\x01/);
+show(/abcdefg\u0100/);
+show(/abc\u0161efghijk/);
+show(/abcdefg\u4e2d/);
+show(/abcdefgh/u);
+show(/abcdefghijkl/u);
+show(/abcdefghijkl/iu);
+show(/abc[de]fghij/u);
+show(/abcdefgh\p{L}/u);
+show(/\p{L}abcdefgh/u);
+show(/abcdefgh\u{1F600}/u);
+show(/\u{1F600}abcdefgh/u);
+show(/abcdefgh/v);
+show(/abcdefgh/y);
+show(/abcdefgh/g);
+show(/abcdefgh/m);
+show(/(?<=abcdefgh)x/);
+show(/(?<!abcdefgh)x/);
+show(/(?=abcdefgh)a/);
+show(/(?!abcdefgh)a/);
+//// regexp-many-capture-groups.ts
+// Regular expressions with a dozen and more capture groups: what is undefined after a match, after backtracking out of a group and after another iteration of a loop.
+export { };
+////= escape
+const narrow: string[] = ["", "abcdefghijk", "abcdefghijkl", "abcdefghijklm", "abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyz", "a", "z", "a1b2c3d4e5f6g7h8", "abcxabx", "abc-ab-", "abc-", "ab-c-", "abce", "aabcdebe", "abcabcx", "abcdefghijklx", "abcdefghijkl5", "abc!", "xyz!", "xy!abc!", "abcxq", "ABCDEFGHIJKLM", "abcdefghijklla", "abcdefghijkllb"];
+const wide: string[] = ["\u03b1\u03b1\u03b1\u03b1\u03b1\u03b1\u03b1\u03b1\u03b1\u03b1\u03b1\u03b1", "abcdef\u4e2d\u4e2d\u4e2d\u4e2d\u4e2d\u4e2d", "\ud835\udc00abcdefghijk", "abcdefghijk\ud835\udc00"];
+function show(r: RegExp): void {
+    const parts: string[] = [];
+    for (const subject of narrow.concat(narrow.map((s: string): string => s + "\u0100"), wide)) {
+        r.lastIndex = 0;
+        const m = subject.match(r);
+        parts.push(m === null ? "-" : (m.index === undefined ? "" : m.index + ":") + m.map((c: string | undefined): string => c === undefined ? "~" : c === "" ? "0" : escape(c)).join(","));
+    }
+    console.log(r.source.length, r.flags, parts.join(" "));
+}
+show(/([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])/);
+show(/([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])/);
+show(/([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])/);
+show(/([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])/);
+show(/([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?/);
+show(/^([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?([a-z])?$/);
+show(/(a)|(a)|(a)|(a)|(a)|(a)|(a)|(a)|(a)|(a)|(a)|(a)|(z)/);
+show(/(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))(?:([a-z])|([0-9]))/);
+show(/(?:([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?x)+/);
+show(/(?:([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?-)*$/);
+show(/(?:([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?-){2}/);
+show(/(?:(a)|([b-d])?([b-d])?([b-d])?([b-d])?([b-d])?([b-d])?([b-d])?([b-d])?([b-d])?([b-d])?([b-d])?([b-d])?e)+/);
+show(/(([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?)*?x/);
+show(/(?=([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z]))\1/);
+show(/(?!([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])x)[a-z]/);
+show(/(?<=([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z]))[0-9]/);
+show(/(?:([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?|([x-z])?([x-z])?([x-z])?([x-z])?([x-z])?([x-z])?([x-z])?([x-z])?([x-z])?([x-z])?([x-z])?([x-z])?)!/);
+show(/^(?:([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?([a-c])?x|.)*$/);
+show(/(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)/s);
+show(/(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)(.)/u);
+show(/(\p{L})(\p{L})(\p{L})(\p{L})(\p{L})(\p{L})(\p{L})(\p{L})(\p{L})(\p{L})(\p{L})(\p{L})/u);
+show(/([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])/g);
+show(/([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])/y);
+show(/([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])/i);
+show(/([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])([a-z])\12\1/);
+//// regexp-many-large-classes.ts
+// Generated: one regular expression under the `u` flag with 20, 100 or 300 distinct large character classes.
+declare const console: { log(...a: unknown[]): void }
+function flat(s: string): string { return JSON.parse(JSON.stringify(s)) }
+const re20 = /[\p{L}\u{2000}][\p{L}\u{2001}][\p{L}\u{2002}][\p{L}\u{2003}][\p{L}\u{2004}][\p{L}\u{2005}][\p{L}\u{2006}][\p{L}\u{2007}][\p{L}\u{2008}][\p{L}\u{2009}][\p{L}\u{200a}][\p{L}\u{200b}][\p{L}\u{200c}][\p{L}\u{200d}][\p{L}\u{200e}][\p{L}\u{200f}][\p{L}\u{2010}][\p{L}\u{2011}][\p{L}\u{2012}][\p{L}\u{2013}]/u
+const re100 = /[\p{L}\u{2000}][\p{L}\u{2001}][\p{L}\u{2002}][\p{L}\u{2003}][\p{L}\u{2004}][\p{L}\u{2005}][\p{L}\u{2006}][\p{L}\u{2007}][\p{L}\u{2008}][\p{L}\u{2009}][\p{L}\u{200a}][\p{L}\u{200b}][\p{L}\u{200c}][\p{L}\u{200d}][\p{L}\u{200e}][\p{L}\u{200f}][\p{L}\u{2010}][\p{L}\u{2011}][\p{L}\u{2012}][\p{L}\u{2013}][\p{L}\u{2014}][\p{L}\u{2015}][\p{L}\u{2016}][\p{L}\u{2017}][\p{L}\u{2018}][\p{L}\u{2019}][\p{L}\u{201a}][\p{L}\u{201b}][\p{L}\u{201c}][\p{L}\u{201d}][\p{L}\u{201e}][\p{L}\u{201f}][\p{L}\u{2020}][\p{L}\u{2021}][\p{L}\u{2022}][\p{L}\u{2023}][\p{L}\u{2024}][\p{L}\u{2025}][\p{L}\u{2026}][\p{L}\u{2027}][\p{L}\u{2028}][\p{L}\u{2029}][\p{L}\u{202a}][\p{L}\u{202b}][\p{L}\u{202c}][\p{L}\u{202d}][\p{L}\u{202e}][\p{L}\u{202f}][\p{L}\u{2030}][\p{L}\u{2031}][\p{L}\u{2032}][\p{L}\u{2033}][\p{L}\u{2034}][\p{L}\u{2035}][\p{L}\u{2036}][\p{L}\u{2037}][\p{L}\u{2038}][\p{L}\u{2039}][\p{L}\u{203a}][\p{L}\u{203b}][\p{L}\u{203c}][\p{L}\u{203d}][\p{L}\u{203e}][\p{L}\u{203f}][\p{L}\u{2040}][\p{L}\u{2041}][\p{L}\u{2042}][\p{L}\u{2043}][\p{L}\u{2044}][\p{L}\u{2045}][\p{L}\u{2046}][\p{L}\u{2047}][\p{L}\u{2048}][\p{L}\u{2049}][\p{L}\u{204a}][\p{L}\u{204b}][\p{L}\u{204c}][\p{L}\u{204d}][\p{L}\u{204e}][\p{L}\u{204f}][\p{L}\u{2050}][\p{L}\u{2051}][\p{L}\u{2052}][\p{L}\u{2053}][\p{L}\u{2054}][\p{L}\u{2055}][\p{L}\u{2056}][\p{L}\u{2057}][\p{L}\u{2058}][\p{L}\u{2059}][\p{L}\u{205a}][\p{L}\u{205b}][\p{L}\u{205c}][\p{L}\u{205d}][\p{L}\u{205e}][\p{L}\u{205f}][\p{L}\u{2060}][\p{L}\u{2061}][\p{L}\u{2062}][\p{L}\u{2063}]/u
+const re300 = /[\p{L}\u{2000}][\p{L}\u{2001}][\p{L}\u{2002}][\p{L}\u{2003}][\p{L}\u{2004}][\p{L}\u{2005}][\p{L}\u{2006}][\p{L}\u{2007}][\p{L}\u{2008}][\p{L}\u{2009}][\p{L}\u{200a}][\p{L}\u{200b}][\p{L}\u{200c}][\p{L}\u{200d}][\p{L}\u{200e}][\p{L}\u{200f}][\p{L}\u{2010}][\p{L}\u{2011}][\p{L}\u{2012}][\p{L}\u{2013}][\p{L}\u{2014}][\p{L}\u{2015}][\p{L}\u{2016}][\p{L}\u{2017}][\p{L}\u{2018}][\p{L}\u{2019}][\p{L}\u{201a}][\p{L}\u{201b}][\p{L}\u{201c}][\p{L}\u{201d}][\p{L}\u{201e}][\p{L}\u{201f}][\p{L}\u{2020}][\p{L}\u{2021}][\p{L}\u{2022}][\p{L}\u{2023}][\p{L}\u{2024}][\p{L}\u{2025}][\p{L}\u{2026}][\p{L}\u{2027}][\p{L}\u{2028}][\p{L}\u{2029}][\p{L}\u{202a}][\p{L}\u{202b}][\p{L}\u{202c}][\p{L}\u{202d}][\p{L}\u{202e}][\p{L}\u{202f}][\p{L}\u{2030}][\p{L}\u{2031}][\p{L}\u{2032}][\p{L}\u{2033}][\p{L}\u{2034}][\p{L}\u{2035}][\p{L}\u{2036}][\p{L}\u{2037}][\p{L}\u{2038}][\p{L}\u{2039}][\p{L}\u{203a}][\p{L}\u{203b}][\p{L}\u{203c}][\p{L}\u{203d}][\p{L}\u{203e}][\p{L}\u{203f}][\p{L}\u{2040}][\p{L}\u{2041}][\p{L}\u{2042}][\p{L}\u{2043}][\p{L}\u{2044}][\p{L}\u{2045}][\p{L}\u{2046}][\p{L}\u{2047}][\p{L}\u{2048}][\p{L}\u{2049}][\p{L}\u{204a}][\p{L}\u{204b}][\p{L}\u{204c}][\p{L}\u{204d}][\p{L}\u{204e}][\p{L}\u{204f}][\p{L}\u{2050}][\p{L}\u{2051}][\p{L}\u{2052}][\p{L}\u{2053}][\p{L}\u{2054}][\p{L}\u{2055}][\p{L}\u{2056}][\p{L}\u{2057}][\p{L}\u{2058}][\p{L}\u{2059}][\p{L}\u{205a}][\p{L}\u{205b}][\p{L}\u{205c}][\p{L}\u{205d}][\p{L}\u{205e}][\p{L}\u{205f}][\p{L}\u{2060}][\p{L}\u{2061}][\p{L}\u{2062}][\p{L}\u{2063}][\p{L}\u{2064}][\p{L}\u{2065}][\p{L}\u{2066}][\p{L}\u{2067}][\p{L}\u{2068}][\p{L}\u{2069}][\p{L}\u{206a}][\p{L}\u{206b}][\p{L}\u{206c}][\p{L}\u{206d}][\p{L}\u{206e}][\p{L}\u{206f}][\p{L}\u{2170}][\p{L}\u{2171}][\p{L}\u{2172}][\p{L}\u{2173}][\p{L}\u{2174}][\p{L}\u{2175}][\p{L}\u{2176}][\p{L}\u{2177}][\p{L}\u{2178}][\p{L}\u{2179}][\p{L}\u{217a}][\p{L}\u{217b}][\p{L}\u{217c}][\p{L}\u{217d}][\p{L}\u{217e}][\p{L}\u{217f}][\p{L}\u{2180}][\p{L}\u{2181}][\p{L}\u{2182}][\p{L}\u{2183}][\p{L}\u{2184}][\p{L}\u{2185}][\p{L}\u{2186}][\p{L}\u{2187}][\p{L}\u{2188}][\p{L}\u{2189}][\p{L}\u{218a}][\p{L}\u{218b}][\p{L}\u{218c}][\p{L}\u{218d}][\p{L}\u{218e}][\p{L}\u{218f}][\p{L}\u{2190}][\p{L}\u{2191}][\p{L}\u{2192}][\p{L}\u{2193}][\p{L}\u{2194}][\p{L}\u{2195}][\p{L}\u{2196}][\p{L}\u{2197}][\p{L}\u{2198}][\p{L}\u{2199}][\p{L}\u{219a}][\p{L}\u{219b}][\p{L}\u{219c}][\p{L}\u{219d}][\p{L}\u{219e}][\p{L}\u{219f}][\p{L}\u{21a0}][\p{L}\u{21a1}][\p{L}\u{21a2}][\p{L}\u{21a3}][\p{L}\u{21a4}][\p{L}\u{21a5}][\p{L}\u{21a6}][\p{L}\u{21a7}][\p{L}\u{21a8}][\p{L}\u{21a9}][\p{L}\u{21aa}][\p{L}\u{21ab}][\p{L}\u{21ac}][\p{L}\u{21ad}][\p{L}\u{21ae}][\p{L}\u{21af}][\p{L}\u{21b0}][\p{L}\u{21b1}][\p{L}\u{21b2}][\p{L}\u{21b3}][\p{L}\u{21b4}][\p{L}\u{21b5}][\p{L}\u{21b6}][\p{L}\u{21b7}][\p{L}\u{21b8}][\p{L}\u{21b9}][\p{L}\u{21ba}][\p{L}\u{21bb}][\p{L}\u{21bc}][\p{L}\u{21bd}][\p{L}\u{21be}][\p{L}\u{21bf}][\p{L}\u{21c0}][\p{L}\u{21c1}][\p{L}\u{21c2}][\p{L}\u{21c3}][\p{L}\u{21c4}][\p{L}\u{21c5}][\p{L}\u{21c6}][\p{L}\u{21c7}][\p{L}\u{21c8}][\p{L}\u{21c9}][\p{L}\u{21ca}][\p{L}\u{21cb}][\p{L}\u{21cc}][\p{L}\u{21cd}][\p{L}\u{21ce}][\p{L}\u{21cf}][\p{L}\u{21d0}][\p{L}\u{21d1}][\p{L}\u{21d2}][\p{L}\u{21d3}][\p{L}\u{21d4}][\p{L}\u{21d5}][\p{L}\u{21d6}][\p{L}\u{21d7}][\p{L}\u{21d8}][\p{L}\u{21d9}][\p{L}\u{21da}][\p{L}\u{21db}][\p{L}\u{21dc}][\p{L}\u{21dd}][\p{L}\u{21de}][\p{L}\u{21df}][\p{L}\u{21e0}][\p{L}\u{21e1}][\p{L}\u{21e2}][\p{L}\u{21e3}][\p{L}\u{21e4}][\p{L}\u{21e5}][\p{L}\u{21e6}][\p{L}\u{21e7}][\p{L}\u{21e8}][\p{L}\u{21e9}][\p{L}\u{21ea}][\p{L}\u{21eb}][\p{L}\u{21ec}][\p{L}\u{21ed}][\p{L}\u{21ee}][\p{L}\u{21ef}][\p{L}\u{21f0}][\p{L}\u{21f1}][\p{L}\u{21f2}][\p{L}\u{21f3}][\p{L}\u{21f4}][\p{L}\u{21f5}][\p{L}\u{21f6}][\p{L}\u{21f7}][\p{L}\u{21f8}][\p{L}\u{21f9}][\p{L}\u{21fa}][\p{L}\u{21fb}][\p{L}\u{21fc}][\p{L}\u{21fd}][\p{L}\u{21fe}][\p{L}\u{21ff}][\p{L}\u{2200}][\p{L}\u{2201}][\p{L}\u{2202}][\p{L}\u{2203}][\p{L}\u{2204}][\p{L}\u{2205}][\p{L}\u{2206}][\p{L}\u{2207}][\p{L}\u{2208}][\p{L}\u{2209}][\p{L}\u{220a}][\p{L}\u{220b}][\p{L}\u{220c}][\p{L}\u{220d}][\p{L}\u{220e}][\p{L}\u{220f}][\p{L}\u{2210}][\p{L}\u{2211}][\p{L}\u{2212}][\p{L}\u{2213}][\p{L}\u{2214}][\p{L}\u{2215}][\p{L}\u{2216}][\p{L}\u{2217}][\p{L}\u{2218}][\p{L}\u{2219}][\p{L}\u{221a}][\p{L}\u{221b}][\p{L}\u{221c}][\p{L}\u{221d}][\p{L}\u{221e}][\p{L}\u{221f}][\p{L}\u{2220}][\p{L}\u{2221}][\p{L}\u{2222}][\p{L}\u{2223}][\p{L}\u{2224}][\p{L}\u{2225}][\p{L}\u{2226}][\p{L}\u{2227}][\p{L}\u{2228}][\p{L}\u{2229}][\p{L}\u{222a}][\p{L}\u{222b}]/u
+let marks = ""; for (let k = 0; k < 300; k++) marks += String.fromCodePoint(0x2000 + k + (k >= 0x70 ? 0x100 : 0))
+marks = flat(marks)
+const cyrillic = flat("\u0416".repeat(400)), astral = flat("\ud835\udc00".repeat(320)), snow = flat("\u2603".repeat(320)), narrow = flat("x".repeat(320)), late = flat("\u2603\u2603" + "\u4e2d".repeat(320))
+for (const [name, re] of [["20", re20], ["100", re100], ["300", re300]] as [string, RegExp][]) {
+  const row: (string | number)[] = [name]
+  for (const s of [cyrillic, astral, snow, narrow, late, marks, marks.slice(1), flat(marks.slice(0, 150) + cyrillic), cyrillic.slice(0, 19), cyrillic.slice(0, 99), cyrillic.slice(0, 299), cyrillic.slice(0, 300)]) { const m = re.exec(s); row.push(m ? m.index + ":" + m[0].length : "no") }
+  console.log(row.join(" "))
+}
+//// regexp-many-large-classes-untyped.js
+// Generated: one regular expression under the `u` flag with 20, 100 or 300 distinct large character classes (the same program without type annotations).
+function flat(s) {
+  return JSON.parse(JSON.stringify(s));
+}
+const re20 = /[\p{L}\u{2000}][\p{L}\u{2001}][\p{L}\u{2002}][\p{L}\u{2003}][\p{L}\u{2004}][\p{L}\u{2005}][\p{L}\u{2006}][\p{L}\u{2007}][\p{L}\u{2008}][\p{L}\u{2009}][\p{L}\u{200a}][\p{L}\u{200b}][\p{L}\u{200c}][\p{L}\u{200d}][\p{L}\u{200e}][\p{L}\u{200f}][\p{L}\u{2010}][\p{L}\u{2011}][\p{L}\u{2012}][\p{L}\u{2013}]/u;
+const re100 = /[\p{L}\u{2000}][\p{L}\u{2001}][\p{L}\u{2002}][\p{L}\u{2003}][\p{L}\u{2004}][\p{L}\u{2005}][\p{L}\u{2006}][\p{L}\u{2007}][\p{L}\u{2008}][\p{L}\u{2009}][\p{L}\u{200a}][\p{L}\u{200b}][\p{L}\u{200c}][\p{L}\u{200d}][\p{L}\u{200e}][\p{L}\u{200f}][\p{L}\u{2010}][\p{L}\u{2011}][\p{L}\u{2012}][\p{L}\u{2013}][\p{L}\u{2014}][\p{L}\u{2015}][\p{L}\u{2016}][\p{L}\u{2017}][\p{L}\u{2018}][\p{L}\u{2019}][\p{L}\u{201a}][\p{L}\u{201b}][\p{L}\u{201c}][\p{L}\u{201d}][\p{L}\u{201e}][\p{L}\u{201f}][\p{L}\u{2020}][\p{L}\u{2021}][\p{L}\u{2022}][\p{L}\u{2023}][\p{L}\u{2024}][\p{L}\u{2025}][\p{L}\u{2026}][\p{L}\u{2027}][\p{L}\u{2028}][\p{L}\u{2029}][\p{L}\u{202a}][\p{L}\u{202b}][\p{L}\u{202c}][\p{L}\u{202d}][\p{L}\u{202e}][\p{L}\u{202f}][\p{L}\u{2030}][\p{L}\u{2031}][\p{L}\u{2032}][\p{L}\u{2033}][\p{L}\u{2034}][\p{L}\u{2035}][\p{L}\u{2036}][\p{L}\u{2037}][\p{L}\u{2038}][\p{L}\u{2039}][\p{L}\u{203a}][\p{L}\u{203b}][\p{L}\u{203c}][\p{L}\u{203d}][\p{L}\u{203e}][\p{L}\u{203f}][\p{L}\u{2040}][\p{L}\u{2041}][\p{L}\u{2042}][\p{L}\u{2043}][\p{L}\u{2044}][\p{L}\u{2045}][\p{L}\u{2046}][\p{L}\u{2047}][\p{L}\u{2048}][\p{L}\u{2049}][\p{L}\u{204a}][\p{L}\u{204b}][\p{L}\u{204c}][\p{L}\u{204d}][\p{L}\u{204e}][\p{L}\u{204f}][\p{L}\u{2050}][\p{L}\u{2051}][\p{L}\u{2052}][\p{L}\u{2053}][\p{L}\u{2054}][\p{L}\u{2055}][\p{L}\u{2056}][\p{L}\u{2057}][\p{L}\u{2058}][\p{L}\u{2059}][\p{L}\u{205a}][\p{L}\u{205b}][\p{L}\u{205c}][\p{L}\u{205d}][\p{L}\u{205e}][\p{L}\u{205f}][\p{L}\u{2060}][\p{L}\u{2061}][\p{L}\u{2062}][\p{L}\u{2063}]/u;
+const re300 = /[\p{L}\u{2000}][\p{L}\u{2001}][\p{L}\u{2002}][\p{L}\u{2003}][\p{L}\u{2004}][\p{L}\u{2005}][\p{L}\u{2006}][\p{L}\u{2007}][\p{L}\u{2008}][\p{L}\u{2009}][\p{L}\u{200a}][\p{L}\u{200b}][\p{L}\u{200c}][\p{L}\u{200d}][\p{L}\u{200e}][\p{L}\u{200f}][\p{L}\u{2010}][\p{L}\u{2011}][\p{L}\u{2012}][\p{L}\u{2013}][\p{L}\u{2014}][\p{L}\u{2015}][\p{L}\u{2016}][\p{L}\u{2017}][\p{L}\u{2018}][\p{L}\u{2019}][\p{L}\u{201a}][\p{L}\u{201b}][\p{L}\u{201c}][\p{L}\u{201d}][\p{L}\u{201e}][\p{L}\u{201f}][\p{L}\u{2020}][\p{L}\u{2021}][\p{L}\u{2022}][\p{L}\u{2023}][\p{L}\u{2024}][\p{L}\u{2025}][\p{L}\u{2026}][\p{L}\u{2027}][\p{L}\u{2028}][\p{L}\u{2029}][\p{L}\u{202a}][\p{L}\u{202b}][\p{L}\u{202c}][\p{L}\u{202d}][\p{L}\u{202e}][\p{L}\u{202f}][\p{L}\u{2030}][\p{L}\u{2031}][\p{L}\u{2032}][\p{L}\u{2033}][\p{L}\u{2034}][\p{L}\u{2035}][\p{L}\u{2036}][\p{L}\u{2037}][\p{L}\u{2038}][\p{L}\u{2039}][\p{L}\u{203a}][\p{L}\u{203b}][\p{L}\u{203c}][\p{L}\u{203d}][\p{L}\u{203e}][\p{L}\u{203f}][\p{L}\u{2040}][\p{L}\u{2041}][\p{L}\u{2042}][\p{L}\u{2043}][\p{L}\u{2044}][\p{L}\u{2045}][\p{L}\u{2046}][\p{L}\u{2047}][\p{L}\u{2048}][\p{L}\u{2049}][\p{L}\u{204a}][\p{L}\u{204b}][\p{L}\u{204c}][\p{L}\u{204d}][\p{L}\u{204e}][\p{L}\u{204f}][\p{L}\u{2050}][\p{L}\u{2051}][\p{L}\u{2052}][\p{L}\u{2053}][\p{L}\u{2054}][\p{L}\u{2055}][\p{L}\u{2056}][\p{L}\u{2057}][\p{L}\u{2058}][\p{L}\u{2059}][\p{L}\u{205a}][\p{L}\u{205b}][\p{L}\u{205c}][\p{L}\u{205d}][\p{L}\u{205e}][\p{L}\u{205f}][\p{L}\u{2060}][\p{L}\u{2061}][\p{L}\u{2062}][\p{L}\u{2063}][\p{L}\u{2064}][\p{L}\u{2065}][\p{L}\u{2066}][\p{L}\u{2067}][\p{L}\u{2068}][\p{L}\u{2069}][\p{L}\u{206a}][\p{L}\u{206b}][\p{L}\u{206c}][\p{L}\u{206d}][\p{L}\u{206e}][\p{L}\u{206f}][\p{L}\u{2170}][\p{L}\u{2171}][\p{L}\u{2172}][\p{L}\u{2173}][\p{L}\u{2174}][\p{L}\u{2175}][\p{L}\u{2176}][\p{L}\u{2177}][\p{L}\u{2178}][\p{L}\u{2179}][\p{L}\u{217a}][\p{L}\u{217b}][\p{L}\u{217c}][\p{L}\u{217d}][\p{L}\u{217e}][\p{L}\u{217f}][\p{L}\u{2180}][\p{L}\u{2181}][\p{L}\u{2182}][\p{L}\u{2183}][\p{L}\u{2184}][\p{L}\u{2185}][\p{L}\u{2186}][\p{L}\u{2187}][\p{L}\u{2188}][\p{L}\u{2189}][\p{L}\u{218a}][\p{L}\u{218b}][\p{L}\u{218c}][\p{L}\u{218d}][\p{L}\u{218e}][\p{L}\u{218f}][\p{L}\u{2190}][\p{L}\u{2191}][\p{L}\u{2192}][\p{L}\u{2193}][\p{L}\u{2194}][\p{L}\u{2195}][\p{L}\u{2196}][\p{L}\u{2197}][\p{L}\u{2198}][\p{L}\u{2199}][\p{L}\u{219a}][\p{L}\u{219b}][\p{L}\u{219c}][\p{L}\u{219d}][\p{L}\u{219e}][\p{L}\u{219f}][\p{L}\u{21a0}][\p{L}\u{21a1}][\p{L}\u{21a2}][\p{L}\u{21a3}][\p{L}\u{21a4}][\p{L}\u{21a5}][\p{L}\u{21a6}][\p{L}\u{21a7}][\p{L}\u{21a8}][\p{L}\u{21a9}][\p{L}\u{21aa}][\p{L}\u{21ab}][\p{L}\u{21ac}][\p{L}\u{21ad}][\p{L}\u{21ae}][\p{L}\u{21af}][\p{L}\u{21b0}][\p{L}\u{21b1}][\p{L}\u{21b2}][\p{L}\u{21b3}][\p{L}\u{21b4}][\p{L}\u{21b5}][\p{L}\u{21b6}][\p{L}\u{21b7}][\p{L}\u{21b8}][\p{L}\u{21b9}][\p{L}\u{21ba}][\p{L}\u{21bb}][\p{L}\u{21bc}][\p{L}\u{21bd}][\p{L}\u{21be}][\p{L}\u{21bf}][\p{L}\u{21c0}][\p{L}\u{21c1}][\p{L}\u{21c2}][\p{L}\u{21c3}][\p{L}\u{21c4}][\p{L}\u{21c5}][\p{L}\u{21c6}][\p{L}\u{21c7}][\p{L}\u{21c8}][\p{L}\u{21c9}][\p{L}\u{21ca}][\p{L}\u{21cb}][\p{L}\u{21cc}][\p{L}\u{21cd}][\p{L}\u{21ce}][\p{L}\u{21cf}][\p{L}\u{21d0}][\p{L}\u{21d1}][\p{L}\u{21d2}][\p{L}\u{21d3}][\p{L}\u{21d4}][\p{L}\u{21d5}][\p{L}\u{21d6}][\p{L}\u{21d7}][\p{L}\u{21d8}][\p{L}\u{21d9}][\p{L}\u{21da}][\p{L}\u{21db}][\p{L}\u{21dc}][\p{L}\u{21dd}][\p{L}\u{21de}][\p{L}\u{21df}][\p{L}\u{21e0}][\p{L}\u{21e1}][\p{L}\u{21e2}][\p{L}\u{21e3}][\p{L}\u{21e4}][\p{L}\u{21e5}][\p{L}\u{21e6}][\p{L}\u{21e7}][\p{L}\u{21e8}][\p{L}\u{21e9}][\p{L}\u{21ea}][\p{L}\u{21eb}][\p{L}\u{21ec}][\p{L}\u{21ed}][\p{L}\u{21ee}][\p{L}\u{21ef}][\p{L}\u{21f0}][\p{L}\u{21f1}][\p{L}\u{21f2}][\p{L}\u{21f3}][\p{L}\u{21f4}][\p{L}\u{21f5}][\p{L}\u{21f6}][\p{L}\u{21f7}][\p{L}\u{21f8}][\p{L}\u{21f9}][\p{L}\u{21fa}][\p{L}\u{21fb}][\p{L}\u{21fc}][\p{L}\u{21fd}][\p{L}\u{21fe}][\p{L}\u{21ff}][\p{L}\u{2200}][\p{L}\u{2201}][\p{L}\u{2202}][\p{L}\u{2203}][\p{L}\u{2204}][\p{L}\u{2205}][\p{L}\u{2206}][\p{L}\u{2207}][\p{L}\u{2208}][\p{L}\u{2209}][\p{L}\u{220a}][\p{L}\u{220b}][\p{L}\u{220c}][\p{L}\u{220d}][\p{L}\u{220e}][\p{L}\u{220f}][\p{L}\u{2210}][\p{L}\u{2211}][\p{L}\u{2212}][\p{L}\u{2213}][\p{L}\u{2214}][\p{L}\u{2215}][\p{L}\u{2216}][\p{L}\u{2217}][\p{L}\u{2218}][\p{L}\u{2219}][\p{L}\u{221a}][\p{L}\u{221b}][\p{L}\u{221c}][\p{L}\u{221d}][\p{L}\u{221e}][\p{L}\u{221f}][\p{L}\u{2220}][\p{L}\u{2221}][\p{L}\u{2222}][\p{L}\u{2223}][\p{L}\u{2224}][\p{L}\u{2225}][\p{L}\u{2226}][\p{L}\u{2227}][\p{L}\u{2228}][\p{L}\u{2229}][\p{L}\u{222a}][\p{L}\u{222b}]/u;
+let marks = "";
+for (let k = 0;k < 300; k++)
+  marks += String.fromCodePoint(8192 + k + (k >= 112 ? 256 : 0));
+marks = flat(marks);
+const cyrillic = flat("\u0416".repeat(400));
+const astral = flat("\uD835\uDC00".repeat(320));
+const snow = flat("\u2603".repeat(320));
+const narrow = flat("x".repeat(320));
+const late = flat("\u2603\u2603" + "\u4E2D".repeat(320));
+for (const [name, re] of [["20", re20], ["100", re100], ["300", re300]]) {
+  const row = [name];
+  for (const s of [cyrillic, astral, snow, narrow, late, marks, marks.slice(1), flat(marks.slice(0, 150) + cyrillic), cyrillic.slice(0, 19), cyrillic.slice(0, 99), cyrillic.slice(0, 299), cyrillic.slice(0, 300)]) {
+    const m = re.exec(s);
+    row.push(m ? m.index + ":" + m[0].length : "no");
+  }
+  console.log(row.join(" "));
+}
+//// regexp-many-latin1-classes.ts
+// Dozens of different classes of Latin-1 characters in one program, each asked about every Latin-1 character and a few beyond, in both string widths.
+export { };
+function hash(h: number, n: number): number { return (Math.imul(h, 31) + n) | 0; }
+const classes: RegExp[] = [/[a-zA-Z_$]/, /[a-zA-Z0-9_$]/, /[a-zA-Z0-9_-]/, /[a-zA-Z0-9._~-]/, /[ \t\r\n,;]/, /[!#$%&'*+.^_`|~0-9a-zA-Z-]/, /[^a-zA-Z0-9]/, /[^ \t\r\n"'<>=]/, /[+*?()\[\]{}|^$.\\/-]/, /[aeiouAEIOU]/, /[^aeiouAEIOU\s]/, /[0-9a-fA-F:.]/, /[\xa0-\xff_a-z]/, /[^\x00-\x1f\x7f-\x9f]/, /[A-Za-z\xc0-\xd6\xd8-\xf6\xf8-\xff]/, /[\w.+-]/, /[\w\s]/, /[^\w\s]/, /[\d\s,.]/, /[<>&"']/, /[(){}\[\],;:]/, /[a-z0-9]/, /[A-Z_]/, /[b-df-hj-np-tv-z]/, /[#.:>+~\s]/, /[\x21-\x2f\x3a-\x40\x5b-\x60\x7b-\x7e]/, /[^\x46-\x49\xc6\x32-\x3b\x38-\x39\xb5]/, /[\x29\x8f-\x92\x31\x37-\x40]/, /[\xb0\x59-\x72\xc0-\xc9]/, /[^\xb5-\xb8\x2c\x2b-\x34\x42-\x43\x8b\xaa\xb2-\xb3]/, /[^\xce\x3a-\x43\xb2-\xcb\x50-\x51\x38-\x41\xd6\xb0\xbe\x9f-\xb8]/, /[\xe6-\xe7\x97-\xa0\x94-\x95\x6c\xeb\xd2]/, /[\x6c-\x75\x9e-\x9f\xda-\xdd\x69-\x72\x32\xa3-\xa6\x4a-\x4b]/, /[\x8b\xcb\xe3-\xec\xb2-\xb3\x77-\x90\x79-\x82]/, /[^\xec-\xef\x31\x65-\x68\xd2-\xeb\x30\xdb-\xf4\x6f-\x88]/, /[\x92-\x93\xd7-\xda\xcb-\xcc\x25-\x28\x7a\xbc\x9e\x57-\x58]/, /[\x5f-\x62\x84-\x87\x34\x92-\x95\xac-\xad\x43-\x46\xac-\xad\xd4-\xd7]/, /[\x81\x46\x4d\x5b-\x74\x5b\x9c-\xa5\x4e-\x4f\x68]/, /[\xa8-\xa9\xbc-\xc5\x71\xd0-\xd9\xbe-\xd7\xcd-\xe6]/, /[\xe7-\xff\xec-\xf5\x84-\x87\x86-\x89\x3a-\x3d\xc2-\xc5]/, /[\x31\x90\x3c-\x3d\xb9]/, /[\xb1\xa9\x7d-\x86]/, /[\x55-\x5e\x80\xc2-\xc3]/, /[^\x7d-\x80\x3f\x9c-\x9f\x9a-\x9d\x6f\x44\xdf-\xe0]/, /[^\x9a-\xb3\x49-\x52\x25\xa7-\xa8\x45-\x5e]/, /[\xe2-\xeb\x6c-\x85\x37-\x50]/, /[\x7d\x7b\xa8-\xb1\xe7-\xf0\x74-\x8d\x59-\x62\xef]/, /[\x86-\x9f\xed\x53-\x5c\x9e-\x9f\xdb\x27-\x28\x98-\x99\x51-\x6a\xba-\xbb]/, /[^\xd9-\xda\x7d\x58\x5a-\x5d\x52-\x53\x54-\x57\xbf-\xc8\x20-\x23\xc7-\xc8]/, /[\xc9\x83-\x9c\xe0]/, /[\x8f-\xa8\x75\xed-\xff\x85-\x88]/, /[\x35-\x4e\x48\x40\x46-\x4f\x97-\xb0\x45-\x4e\xb8-\xbb\xc8-\xc9]/, /[\xac\x25\xec-\xff\xc6\xa6-\xbf\x43-\x46\x51]/, /[\x56-\x57\xa0\xe3-\xec\x73-\x74\xab-\xae]/, /[\xdd-\xde\x95-\xae\xb5-\xbe]/, /[^\xa0\xa8\xa6-\xaf\x24-\x27\xe6\xbb\xe6\x4c\x99-\xa2]/, /[^\xae\x73-\x8c\xa4-\xad]/, /[^\xe8\xaf\x5f\x66\xe5\xa1-\xa4]/, /[^\xe2\x91-\x92\xbc-\xc5]/, /[\x53-\x6c\x66-\x69\xa2-\xab\xee-\xf1\xa1\xd2-\xdb\x62-\x6b]/, /[^\x92\x8a\x84-\x87\x70\xcb\x8d\x56-\x6f\x6d\xe6]/, /[\xc9-\xca\x44-\x45\x43-\x46\x58-\x71\x38-\x3b\x9c\xca\x49-\x62]/, /[^\x87-\x88\x8b\x7b-\x7c\x37-\x50\x7d\x76-\x7f\x95-\x98]/, /[\x82-\x83\xa4-\xad\x6b-\x74]/, /[\xe9\x3a\x63-\x64]/, /[^\x4e-\x4f\xe1\x8c-\xa5\x62-\x65\x46-\x4f\xa3-\xac\x9e-\xb7\x73\x67]/];
+for (const r of classes) {
+    let narrow = 0, wide = 0, runs = 0;
+    for (let c = 0; c < 0x130; ++c) {
+        const s = String.fromCharCode(c);
+        if (c < 0x100) narrow = hash(narrow, r.test("-" + s) || r.test(s) ? c : -c);
+        wide = hash(wide, r.test(s + "\u4e2d") ? c : -c);
+    }
+    let all = ""; for (let c = 1; c < 0x100; ++c) all += String.fromCharCode(c);
+    const g = new RegExp(r.source + "+", "g");
+    for (const m of all.matchAll(g)) runs = hash(runs, m.index * 256 + m[0].length);
+    console.log(r.source.length, narrow, wide, runs);
+}
+//// regexp-many-non-latin1-classes.ts
+// Dozens of classes that reach beyond Latin-1 and have much in common, each asked about code points all over the range, surrogates included.
+export { };
+function hash(h: number, n: number): number { return (Math.imul(h, 31) + n) | 0; }
+const classes: RegExp[] = [/[\p{L}]/u, /[^\p{L}]/u, /[\p{L}]+/v, /[\p{L}\p{N}_]/u, /[^\p{L}\p{N}_]/u, /[\p{L}\p{N}_]+/v, /[\p{L}\p{M}\p{N}\p{Pc}]/u, /[^\p{L}\p{M}\p{N}\p{Pc}]/u, /[\p{L}\p{M}\p{N}\p{Pc}]+/v, /[\p{ID_Start}]/u, /[^\p{ID_Start}]/u, /[\p{ID_Start}]+/v, /[\p{ID_Continue}]/u, /[^\p{ID_Continue}]/u, /[\p{ID_Continue}]+/v, /[\p{Alphabetic}]/u, /[^\p{Alphabetic}]/u, /[\p{Alphabetic}]+/v, /[\p{Lu}]/u, /[^\p{Lu}]/u, /[\p{Lu}]+/v, /[\p{Ll}]/u, /[^\p{Ll}]/u, /[\p{Ll}]+/v, /[\p{L}$]/u, /[^\p{L}$]/u, /[\p{L}$]+/v, /[\p{L}\-]/u, /[^\p{L}\-]/u, /[\p{L}\-]+/v, /[\p{L}\p{N}_$]/u, /[^\p{L}\p{N}_$]/u, /[\p{L}\p{N}_$]+/v, /[\p{L}\p{N}_.\-]/u, /[^\p{L}\p{N}_.\-]/u, /[\p{L}\p{N}_.\-]+/v, /[\p{ID_Start}$_]/u, /[^\p{ID_Start}$_]/u, /[\p{ID_Start}$_]+/v, /[\p{ID_Continue}$\u200c\u200d]/u, /[^\p{ID_Continue}$\u200c\u200d]/u, /[\p{ID_Continue}$\u200c\u200d]+/v, /[\p{P}]/u, /[^\p{P}]/u, /[\p{P}]+/v, /[\p{S}]/u, /[^\p{S}]/u, /[\p{S}]+/v, /[\p{P}\p{S}]/u, /[^\p{P}\p{S}]/u, /[\p{P}\p{S}]+/v, /[\p{N}]/u, /[^\p{N}]/u, /[\p{N}]+/v, /[\p{M}]/u, /[^\p{M}]/u, /[\p{M}]+/v, /[\p{Script=Han}]/u, /[^\p{Script=Han}]/u, /[\p{Script=Han}]+/v, /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u, /[^\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u, /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/v, /[\p{Script=Greek}\p{Script=Cyrillic}]/u, /[^\p{Script=Greek}\p{Script=Cyrillic}]/u, /[\p{Script=Greek}\p{Script=Cyrillic}]+/v, /[\p{Emoji}]/u, /[^\p{Emoji}]/u, /[\p{Emoji}]+/v, /[\p{L}\p{Emoji}]/u, /[^\p{L}\p{Emoji}]/u, /[\p{L}\p{Emoji}]+/v, /[\p{Zs}\t]/u, /[^\p{Zs}\t]/u, /[\p{Zs}\t]+/v, /[\p{Lo}]/u, /[^\p{Lo}]/u, /[\p{Lo}]+/v, /[\p{Lo}\p{Lm}]/u, /[^\p{Lo}\p{Lm}]/u, /[\p{Lo}\p{Lm}]+/v, /[\p{Nd}\p{Nl}]/u, /[^\p{Nd}\p{Nl}]/u, /[\p{Nd}\p{Nl}]+/v, /[\u0100-\u017f\u0391-\u03c9\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3]/, /[\u0100-\u017f\u0391-\u03c9\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f\u3040-\u30ff\u4e00-\u9fff\uff00-\uffef]/, /[\u0100-\u0110\u0120-\u0130\u0140-\u0150\u0160-\u0170\u0180-\u0190\u01a0-\u01b0\u01c0-\u01d0\u9000-\ud7ff]/, /[^\u0100-\u017f\u0391-\u03c9\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3]/, /[^\u0100-\u017f\u0391-\u03c9\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f\u3040-\u30ff\u4e00-\u9fff\uff00-\uffef]/, /[^\u0100-\u0110\u0120-\u0130\u0140-\u0150\u0160-\u0170\u0180-\u0190\u01a0-\u01b0\u01c0-\u01d0\u9000-\ud7ff]/, /[\u0100-\u017f\u0391-\u03c9\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7a3]/u, /[\u0100-\u017f\u0391-\u03c9\u0400-\u04ff\u0590-\u05ff\u0600-\u06ff\u0900-\u097f\u0e00-\u0e7f\u3040-\u30ff\u4e00-\u9fff\uff00-\uffef]/u, /[\u0100-\u0110\u0120-\u0130\u0140-\u0150\u0160-\u0170\u0180-\u0190\u01a0-\u01b0\u01c0-\u01d0\u9000-\ud7ff]/u, /[^\S\n]/u, /[\S\n]/u, /[\W_]/u, /[^\W\d]/u, /[\S]/, /[\W_]/];
+const points: number[] = [];
+for (let c = 0; c < 0x3000; c += 3) points.push(c);
+for (let c = 0x3000; c < 0x11000; c += 37) points.push(c);
+for (let c = 0x11000; c < 0x110000; c += 1013) points.push(c);
+for (const c of [0xd7ff, 0xd800, 0xdbff, 0xdc00, 0xdfff, 0xe000, 0xfffd, 0xffff, 0x10000, 0x1d400, 0x1f600, 0x2fa1d, 0x323af, 0xe01ef, 0x10ffff]) points.push(c);
+for (const r of classes) {
+    let alone = 0, inside = 0, count = 0;
+    for (const c of points) {
+        const s = String.fromCodePoint(c);
+        const found = r.test(s);
+        if (found) ++count;
+        alone = hash(alone, found ? c : -c);
+        const m = ("\u2028" + s + "\u2028").match(r);
+        inside = hash(inside, m === null ? -1 : (m.index ?? 0) * 8 + m[0].length);
+    }
+    console.log(r.source.length, r.flags, count, alone, inside);
+}
+//// regexp-methods-as-values.js
+// RegExp.prototype.exec and test kept in constants and called on a receiver, as Node's and Bun's own modules do (`RegExpPrototypeExec.call(pattern, value)`): with strings, with what is made a string of, with what cannot be, on what is no RegExp, on patterns that remember where they stopped, on an heir, on a pattern with an `exec` of its own.
+const exec = RegExp.prototype.exec;
+const test = RegExp.prototype.test;
+const lines = [];
+const attempt = f => { try { return f(); } catch (error) { return error.constructor.name; } };
+const show = match => (match === null ? "null" : typeof match === "string" ? match : JSON.stringify([...match]) + "@" + match.index + (match.groups ? JSON.stringify(match.groups) : ""));
+const invalid = /[^\t\x20-\x7e\x80-\xff]/;
+function isInvalid(value) { return exec.call(invalid, value) !== null; }
+function holds(pattern, value) { return test.call(pattern, value); }
+function find(pattern, value) { return exec.call(pattern, value); }
+
+const headers = ["text/html; charset=utf-8", "keep-alive", "a\u0001b", "", "é", "Ā", "x".repeat(300) + "\n"];
+let count = 0;
+for (let round = 0; round < 3000; round++) count += isInvalid(headers[round % headers.length]) ? 1 : 0;
+lines.push("invalid " + count + " " + headers.map(isInvalid).join());
+
+const log = [];
+const values = [undefined, null, 0, -0, 12.5, true, 10n, [], ["a", "b"], {}, { toString() { log.push("toString"); return "made"; } }, { valueOf() { log.push("valueOf"); return "no"; }, toString: undefined }, new String("boxed"), Symbol("s"), Object.create(null)];
+for (const value of values) lines.push([typeof value, attempt(() => show(find(/(?<first>[a-z0-9])[a-z]*/, value))), attempt(() => holds(/^[a-z]+$/, value)), attempt(() => isInvalid(value))].join(" "));
+lines.push(log.join());
+
+for (const receiver of [undefined, null, "a", 1, {}, [], () => 1, { exec() { return "own"; } }, RegExp.prototype, Object.create(/a/)]) lines.push(attempt(() => show(find(receiver, "a"))) + " " + attempt(() => holds(receiver, "a")));
+
+const global = /a./g;
+const sticky = /a./y;
+for (let step = 0; step < 4; step++) lines.push(show(find(global, "abacad")) + " " + global.lastIndex + " | " + show(find(sticky, "abacxad")) + " " + sticky.lastIndex + " | " + holds(global, "abacad") + " " + global.lastIndex);
+global.lastIndex = { valueOf() { log.push("lastIndex"); return 2; } };
+lines.push(show(find(global, "abacad")) + " " + global.lastIndex + " " + log.splice(0).join());
+const fixed = Object.freeze(/a/g);
+lines.push(attempt(() => show(find(fixed, "aa"))) + " " + attempt(() => holds(fixed, "b")));
+
+class Heir extends RegExp { exec(text) { log.push("the heir's exec"); return super.exec(text); } }
+const heir = new Heir("b+", "d");
+lines.push(show(find(heir, "abbc")) + " " + holds(heir, "abbc") + " " + log.splice(0).join() + " " + JSON.stringify(find(heir, "abbc").indices));
+const patched = /c/;
+patched.exec = () => { log.push("its own exec"); return null; };
+lines.push(show(find(patched, "abc")) + " " + holds(patched, "abc") + " " + log.splice(0).join());
+const extended = /d/;
+extended.note = 1;
+lines.push(show(find(extended, "abcd")) + " " + holds(extended, "abcd"));
+lines.push(show(find(/(\d+)-(?<rest>\w+)?/u, "no 12-ab")) + " " + RegExp.$1 + " " + RegExp.lastMatch + " " + RegExp["$`"]);
+lines.push(show(exec.call(/x/, "rope" + headers[1] + "x")) + " " + show(exec.apply(/y/, ["xyz"])) + " " + show(Reflect.apply(exec, /z/, ["xyz"])) + " " + attempt(() => show(exec.call(/u/))) + " " + attempt(() => show(exec.call(/a/, "a", "more"))));
+console.log(lines.join("\n"));
+//// regexp-miss-fast-path.ts
+// `test`, `exec`, `match` and `replace` that find nothing are answered without the generic operations, for every internal representation of the subject. Whatever the fast path cannot decide (a `lastIndex` that is not an index, a frozen RegExp, an own `exec`, a subclass) behaves as in plain Bun.
+// Only the jsc shell with --aotCountsPath=<path> can count: there the third number after the 10,000 turns must be 0. Elsewhere the program checks the answers alone.
+const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
+const genericOperations = ["operationAOTRegExpExec", "operationAOTRegExpTest", "operationAOTRegExpTestBoxed", "operationAOTRegExpFind", "operationAOTStringMatchRegExp", "operationAOTStringReplaceRegExpString"];
+const genericCalls = () => genericOperations.reduce((sum, name) => sum + count(name), 0);
+
+////= lines-35	tests	pattern	RegExp	text	string	pattern.test
+////= lines-35	execs	pattern	RegExp	text	string	pattern.exec
+function wholeMatch(pattern: RegExp, text: string) {
+  const [whole] = pattern.exec(text) ?? [];
+  return whole;
+}
+////= lines-35	matches	text	string	pattern	RegExp	text.match
+function replaces(text: string, pattern: RegExp) {
+  return text.replace(pattern, "<$&>");
+}
+function show(match: RegExpMatchArray | RegExpExecArray | null) {
+  return match ? `${JSON.stringify(match)}@${match.index}` : "null";
+}
+function shown(value: unknown) {
+  return typeof value === "object" && value !== null ? "object" : Object.is(value, -0) ? "-0" : String(value);
+}
+function state(pattern: RegExp) {
+  return `${shown(pattern.lastIndex)} ${JSON.stringify(RegExp.lastMatch)}`;
+}
+
+type Subject = [kind: string, make: () => string];
+function subjectsOf(text: string): Subject[] {
+  const padded = `<<${text}>>`;
+  const middle = text.length >> 1;
+  return [
+    ["flat", () => text],
+    ["substring", () => padded.slice(2, 2 + text.length)],
+    ["rope", () => text.slice(0, middle) + text.slice(middle)],
+  ];
+}
+const present = "-- 12x abc 50% a \xe9 --";
+const absent = "-- 12 34 .. 56 78 --";
+const widePresent = "─ -- 12x abc 50% a \xe9 --";
+const wideAbsent = "─ -- 12 34 .. 56 78 --";
+const subjects: Subject[] = [...subjectsOf(present), ...subjectsOf(absent), ...subjectsOf(widePresent), ...subjectsOf(wideAbsent), ["empty", () => ""]];
+
+const code = /\d+x/, word = /abc/, sign = /%/, everyA = /a/g, stickyA = /a/y, letter = /\p{L}/u, everyCode = /\d+x/g, stickyCode = /\d+x/y;
+for (const pattern of [code, word, sign, everyA, stickyA, letter, everyCode, stickyCode]) {
+  for (const [kind, make] of subjects) {
+    const columns: string[] = [];
+    for (const start of [0, 3]) {
+      pattern.lastIndex = start;
+      columns.push(`test ${tests(pattern, make())} ${state(pattern)}`);
+      pattern.lastIndex = start;
+      columns.push(`exec ${show(execs(pattern, make()))} ${state(pattern)}`);
+      pattern.lastIndex = start;
+      columns.push(`whole ${wholeMatch(pattern, make())} ${state(pattern)}`);
+      pattern.lastIndex = start;
+      columns.push(`match ${show(matches(make(), pattern))} ${state(pattern)}`);
+      pattern.lastIndex = start;
+      columns.push(`replace ${JSON.stringify(replaces(make(), pattern))} ${state(pattern)}`);
+    }
+    console.log(String(pattern), kind, JSON.stringify(make()), columns.join(" | "));
+  }
+}
+
+const flats = [absent, "0123456789", "-- .. --", "1 2 3 4 5 6 7 8 9"];
+const wides = [wideAbsent, "─━│ 123 ┃"];
+function countMisses(turn: number) {
+  const flat = flats[turn % flats.length];
+  const wide = wides[turn % wides.length];
+  const from = turn % 8;
+  let misses = 0;
+  for (const pattern of [code, word, sign]) {
+    if (!tests(pattern, flat)) misses++;
+    if (!tests(pattern, absent.slice(from, from + 10))) misses++;
+    if (execs(pattern, flat) === null) misses++;
+    if (execs(pattern, absent.slice(from, from + 10)) === null) misses++;
+    if (wholeMatch(pattern, flat) === undefined) misses++;
+    if (wholeMatch(pattern, absent.slice(from, from + 10)) === undefined) misses++;
+    if (matches(flat, pattern) === null) misses++;
+    if (matches(absent.slice(from, from + 10), pattern) === null) misses++;
+    if (replaces(flat, pattern) === flat) misses++;
+    if (replaces(absent.slice(from, from + 10), pattern).length === 10) misses++;
+  }
+  for (const pattern of [stickyA, everyCode, stickyCode]) {
+    pattern.lastIndex = from;
+    if (!tests(pattern, flat) && pattern.lastIndex === 0) misses++;
+    pattern.lastIndex = from;
+    if (!tests(pattern, absent.slice(from, from + 10)) && pattern.lastIndex === 0) misses++;
+    pattern.lastIndex = from;
+    if (execs(pattern, flat) === null && pattern.lastIndex === 0) misses++;
+  }
+  for (const pattern of [everyA, everyCode]) {
+    pattern.lastIndex = from;
+    if (replaces(flat, pattern) === flat && pattern.lastIndex === 0) misses++;
+    pattern.lastIndex = from;
+    if (replaces(absent.slice(from, from + 10), pattern).length === 10 && pattern.lastIndex === 0) misses++;
+  }
+  if (!tests(code, wide)) misses++;
+  if (!tests(code, wideAbsent.slice(from, from + 10))) misses++;
+  if (execs(code, wide) === null) misses++;
+  if (execs(code, wideAbsent.slice(from, from + 10)) === null) misses++;
+  if (matches(wide, code) === null) misses++;
+  if (replaces(wide, code) === wide) misses++;
+  if (replaces(wideAbsent.slice(from, from + 10), code).length === 10) misses++;
+  return misses;
+}
+let warmUp = 0;
+for (let turn = 0; turn < 8; turn++) warmUp += countMisses(turn);
+const before = genericCalls();
+let misses = 0;
+for (let turn = 0; turn < 10000; turn++) misses += countMisses(turn);
+console.log(warmUp, misses, genericCalls() - before, JSON.stringify(RegExp.lastMatch));
+
+function attempt(run: () => unknown) {
+  try {
+    const value = run();
+    return value === undefined ? "undefined" : JSON.stringify(value);
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+const operations: [name: string, run: (pattern: RegExp, text: string) => unknown][] = [
+  ["test", tests],
+  ["exec", execs],
+  ["whole", wholeMatch],
+  ["match", (pattern, text) => matches(text, pattern)],
+  ["replace", (pattern, text) => replaces(text, pattern)],
+];
+function report(label: string, create: () => RegExp) {
+  for (const text of [present, absent, present.slice(3, 14), absent.slice(3, 14)]) {
+    const columns = operations.map(([name, run]) => {
+      const pattern = create();
+      return `${name} ${attempt(() => run(pattern, text))} ${state(pattern)}`;
+    });
+    console.log(label, String(create()), JSON.stringify(text), columns.join(" | "));
+  }
+}
+
+let conversions = 0;
+const converted = {
+  valueOf() {
+    conversions++;
+    return 1;
+  },
+};
+function withLastIndex(pattern: RegExp, lastIndex: unknown) {
+  (pattern as any).lastIndex = lastIndex;
+  return pattern;
+}
+let ownExecCalls = 0;
+function withOwnExec(pattern: RegExp) {
+  (pattern as any).exec = function () {
+    ownExecCalls++;
+    return null;
+  };
+  return pattern;
+}
+for (const create of [() => /\d+x/, () => /abc/, () => /%/, () => /a/g, () => /a/y, () => /\d+x/g, () => /\p{L}/u]) {
+  report("lastIndex is an object", () => withLastIndex(create(), converted));
+  console.log("conversions", conversions);
+  report("lastIndex is -1", () => withLastIndex(create(), -1));
+  report("lastIndex is 1e9", () => withLastIndex(create(), 1e9));
+  report("lastIndex is 1.5", () => withLastIndex(create(), 1.5));
+  report("frozen", () => Object.freeze(create()));
+  report("read-only lastIndex", () => Object.defineProperty(create(), "lastIndex", { writable: false }));
+  report("own exec", () => withOwnExec(create()));
+  console.log("own exec calls", ownExecCalls);
+}
+
+class Pattern extends RegExp {}
+////= Counting	text
+report("subclass", () => new Pattern("\\d+x"));
+report("subclass", () => new Pattern("abc"));
+report("subclass", () => new Pattern("a", "g"));
+report("subclass", () => new Pattern("a", "y"));
+const counting = new Counting("\\d+x");
+report("subclass with its own exec", () => counting);
+console.log("calls", counting.calls);
+//// regexp-mixed-ascii-classes.ts
+// Character classes that mix ASCII and non-ASCII members, tested against every interesting code unit.
+declare const console: { log(...a: unknown[]): void }
+const F = String.fromCodePoint
+const units: number[] = [0, 9, 10, 13, 32, 33, 34, 39, 47, 48, 53, 57, 65, 75, 83, 90, 95, 97, 107, 115, 122, 126, 127, 128, 133, 160, 170, 181, 192, 223, 254, 255, 256, 257, 304, 305, 383, 384, 1072, 5760, 6158, 8192, 8202, 8203, 8231, 8232, 8233, 8234, 8235, 8239, 8287, 8288, 8490, 8491, 12288, 12351, 19968, 55357, 56832, 57344, 65279, 65280, 65519, 65534, 65535, 65536, 65537, 119808, 119833, 119834, 128512, 128591, 128592, 1114111]
+const wide = F(0x4e01), mixed = units.map(u => F(u)).join("") + wide, pairs = units.map(u => F(u) + F(u)).join(" ") + wide
+type Row = [RegExp, RegExp, RegExp, RegExp, RegExp]
+const rows: Row[] = [
+  [/^[\s"'a-z]/, /[\s"'a-z]*/g, /([\s"'a-z]{2})/g, /[\s"'a-z]+?\u4e01/, /^(?:[\s"'a-z]|x)+$/],
+  [/^[\s"'a-z]/i, /[\s"'a-z]*/gi, /([\s"'a-z]{2})/gi, /[\s"'a-z]+?\u4e01/i, /^(?:[\s"'a-z]|x)+$/i],
+  [/^[\s"'a-z]/u, /[\s"'a-z]*/gu, /([\s"'a-z]{2})/gu, /[\s"'a-z]+?\u4e01/u, /^(?:[\s"'a-z]|x)+$/u],
+  [/^[\s"'a-z]/iu, /[\s"'a-z]*/giu, /([\s"'a-z]{2})/giu, /[\s"'a-z]+?\u4e01/iu, /^(?:[\s"'a-z]|x)+$/iu],
+  [/^[^\s"'a-z]/, /[^\s"'a-z]*/g, /([^\s"'a-z]{2})/g, /[^\s"'a-z]+?\u4e01/, /^(?:[^\s"'a-z]|x)+$/],
+  [/^[^\s"'a-z]/i, /[^\s"'a-z]*/gi, /([^\s"'a-z]{2})/gi, /[^\s"'a-z]+?\u4e01/i, /^(?:[^\s"'a-z]|x)+$/i],
+  [/^[^\s"'a-z]/u, /[^\s"'a-z]*/gu, /([^\s"'a-z]{2})/gu, /[^\s"'a-z]+?\u4e01/u, /^(?:[^\s"'a-z]|x)+$/u],
+  [/^[^\s"'a-z]/iu, /[^\s"'a-z]*/giu, /([^\s"'a-z]{2})/giu, /[^\s"'a-z]+?\u4e01/iu, /^(?:[^\s"'a-z]|x)+$/iu],
+  [/^[\w\u0100-\u017f]/, /[\w\u0100-\u017f]*/g, /([\w\u0100-\u017f]{2})/g, /[\w\u0100-\u017f]+?\u4e01/, /^(?:[\w\u0100-\u017f]|x)+$/],
+  [/^[\w\u0100-\u017f]/i, /[\w\u0100-\u017f]*/gi, /([\w\u0100-\u017f]{2})/gi, /[\w\u0100-\u017f]+?\u4e01/i, /^(?:[\w\u0100-\u017f]|x)+$/i],
+  [/^[\w\u0100-\u017f]/u, /[\w\u0100-\u017f]*/gu, /([\w\u0100-\u017f]{2})/gu, /[\w\u0100-\u017f]+?\u4e01/u, /^(?:[\w\u0100-\u017f]|x)+$/u],
+  [/^[\w\u0100-\u017f]/iu, /[\w\u0100-\u017f]*/giu, /([\w\u0100-\u017f]{2})/giu, /[\w\u0100-\u017f]+?\u4e01/iu, /^(?:[\w\u0100-\u017f]|x)+$/iu],
+  [/^[^\w\u0100-\u017f]/, /[^\w\u0100-\u017f]*/g, /([^\w\u0100-\u017f]{2})/g, /[^\w\u0100-\u017f]+?\u4e01/, /^(?:[^\w\u0100-\u017f]|x)+$/],
+  [/^[^\w\u0100-\u017f]/i, /[^\w\u0100-\u017f]*/gi, /([^\w\u0100-\u017f]{2})/gi, /[^\w\u0100-\u017f]+?\u4e01/i, /^(?:[^\w\u0100-\u017f]|x)+$/i],
+  [/^[^\w\u0100-\u017f]/u, /[^\w\u0100-\u017f]*/gu, /([^\w\u0100-\u017f]{2})/gu, /[^\w\u0100-\u017f]+?\u4e01/u, /^(?:[^\w\u0100-\u017f]|x)+$/u],
+  [/^[^\w\u0100-\u017f]/iu, /[^\w\u0100-\u017f]*/giu, /([^\w\u0100-\u017f]{2})/giu, /[^\w\u0100-\u017f]+?\u4e01/iu, /^(?:[^\w\u0100-\u017f]|x)+$/iu],
+  [/^[!-~\u2027-\u202a]/, /[!-~\u2027-\u202a]*/g, /([!-~\u2027-\u202a]{2})/g, /[!-~\u2027-\u202a]+?\u4e01/, /^(?:[!-~\u2027-\u202a]|x)+$/],
+  [/^[!-~\u2027-\u202a]/i, /[!-~\u2027-\u202a]*/gi, /([!-~\u2027-\u202a]{2})/gi, /[!-~\u2027-\u202a]+?\u4e01/i, /^(?:[!-~\u2027-\u202a]|x)+$/i],
+  [/^[!-~\u2027-\u202a]/u, /[!-~\u2027-\u202a]*/gu, /([!-~\u2027-\u202a]{2})/gu, /[!-~\u2027-\u202a]+?\u4e01/u, /^(?:[!-~\u2027-\u202a]|x)+$/u],
+  [/^[!-~\u2027-\u202a]/iu, /[!-~\u2027-\u202a]*/giu, /([!-~\u2027-\u202a]{2})/giu, /[!-~\u2027-\u202a]+?\u4e01/iu, /^(?:[!-~\u2027-\u202a]|x)+$/iu],
+  [/^[^!-~\u2027-\u202a]/, /[^!-~\u2027-\u202a]*/g, /([^!-~\u2027-\u202a]{2})/g, /[^!-~\u2027-\u202a]+?\u4e01/, /^(?:[^!-~\u2027-\u202a]|x)+$/],
+  [/^[^!-~\u2027-\u202a]/i, /[^!-~\u2027-\u202a]*/gi, /([^!-~\u2027-\u202a]{2})/gi, /[^!-~\u2027-\u202a]+?\u4e01/i, /^(?:[^!-~\u2027-\u202a]|x)+$/i],
+  [/^[^!-~\u2027-\u202a]/u, /[^!-~\u2027-\u202a]*/gu, /([^!-~\u2027-\u202a]{2})/gu, /[^!-~\u2027-\u202a]+?\u4e01/u, /^(?:[^!-~\u2027-\u202a]|x)+$/u],
+  [/^[^!-~\u2027-\u202a]/iu, /[^!-~\u2027-\u202a]*/giu, /([^!-~\u2027-\u202a]{2})/giu, /[^!-~\u2027-\u202a]+?\u4e01/iu, /^(?:[^!-~\u2027-\u202a]|x)+$/iu],
+  [/^[0-9A-Za-z\u00c0-\uffff]/, /[0-9A-Za-z\u00c0-\uffff]*/g, /([0-9A-Za-z\u00c0-\uffff]{2})/g, /[0-9A-Za-z\u00c0-\uffff]+?\u4e01/, /^(?:[0-9A-Za-z\u00c0-\uffff]|x)+$/],
+  [/^[0-9A-Za-z\u00c0-\uffff]/i, /[0-9A-Za-z\u00c0-\uffff]*/gi, /([0-9A-Za-z\u00c0-\uffff]{2})/gi, /[0-9A-Za-z\u00c0-\uffff]+?\u4e01/i, /^(?:[0-9A-Za-z\u00c0-\uffff]|x)+$/i],
+  [/^[0-9A-Za-z\u00c0-\uffff]/u, /[0-9A-Za-z\u00c0-\uffff]*/gu, /([0-9A-Za-z\u00c0-\uffff]{2})/gu, /[0-9A-Za-z\u00c0-\uffff]+?\u4e01/u, /^(?:[0-9A-Za-z\u00c0-\uffff]|x)+$/u],
+  [/^[0-9A-Za-z\u00c0-\uffff]/iu, /[0-9A-Za-z\u00c0-\uffff]*/giu, /([0-9A-Za-z\u00c0-\uffff]{2})/giu, /[0-9A-Za-z\u00c0-\uffff]+?\u4e01/iu, /^(?:[0-9A-Za-z\u00c0-\uffff]|x)+$/iu],
+  [/^[^0-9A-Za-z\u00c0-\uffff]/, /[^0-9A-Za-z\u00c0-\uffff]*/g, /([^0-9A-Za-z\u00c0-\uffff]{2})/g, /[^0-9A-Za-z\u00c0-\uffff]+?\u4e01/, /^(?:[^0-9A-Za-z\u00c0-\uffff]|x)+$/],
+  [/^[^0-9A-Za-z\u00c0-\uffff]/i, /[^0-9A-Za-z\u00c0-\uffff]*/gi, /([^0-9A-Za-z\u00c0-\uffff]{2})/gi, /[^0-9A-Za-z\u00c0-\uffff]+?\u4e01/i, /^(?:[^0-9A-Za-z\u00c0-\uffff]|x)+$/i],
+  [/^[^0-9A-Za-z\u00c0-\uffff]/u, /[^0-9A-Za-z\u00c0-\uffff]*/gu, /([^0-9A-Za-z\u00c0-\uffff]{2})/gu, /[^0-9A-Za-z\u00c0-\uffff]+?\u4e01/u, /^(?:[^0-9A-Za-z\u00c0-\uffff]|x)+$/u],
+  [/^[^0-9A-Za-z\u00c0-\uffff]/iu, /[^0-9A-Za-z\u00c0-\uffff]*/giu, /([^0-9A-Za-z\u00c0-\uffff]{2})/giu, /[^0-9A-Za-z\u00c0-\uffff]+?\u4e01/iu, /^(?:[^0-9A-Za-z\u00c0-\uffff]|x)+$/iu],
+  [/^[ -~\u3000-\u303f\uff00-\uffef]/, /[ -~\u3000-\u303f\uff00-\uffef]*/g, /([ -~\u3000-\u303f\uff00-\uffef]{2})/g, /[ -~\u3000-\u303f\uff00-\uffef]+?\u4e01/, /^(?:[ -~\u3000-\u303f\uff00-\uffef]|x)+$/],
+  [/^[ -~\u3000-\u303f\uff00-\uffef]/i, /[ -~\u3000-\u303f\uff00-\uffef]*/gi, /([ -~\u3000-\u303f\uff00-\uffef]{2})/gi, /[ -~\u3000-\u303f\uff00-\uffef]+?\u4e01/i, /^(?:[ -~\u3000-\u303f\uff00-\uffef]|x)+$/i],
+  [/^[ -~\u3000-\u303f\uff00-\uffef]/u, /[ -~\u3000-\u303f\uff00-\uffef]*/gu, /([ -~\u3000-\u303f\uff00-\uffef]{2})/gu, /[ -~\u3000-\u303f\uff00-\uffef]+?\u4e01/u, /^(?:[ -~\u3000-\u303f\uff00-\uffef]|x)+$/u],
+  [/^[ -~\u3000-\u303f\uff00-\uffef]/iu, /[ -~\u3000-\u303f\uff00-\uffef]*/giu, /([ -~\u3000-\u303f\uff00-\uffef]{2})/giu, /[ -~\u3000-\u303f\uff00-\uffef]+?\u4e01/iu, /^(?:[ -~\u3000-\u303f\uff00-\uffef]|x)+$/iu],
+  [/^[\x00-\xff\u0100]/, /[\x00-\xff\u0100]*/g, /([\x00-\xff\u0100]{2})/g, /[\x00-\xff\u0100]+?\u4e01/, /^(?:[\x00-\xff\u0100]|x)+$/],
+  [/^[\x00-\xff\u0100]/i, /[\x00-\xff\u0100]*/gi, /([\x00-\xff\u0100]{2})/gi, /[\x00-\xff\u0100]+?\u4e01/i, /^(?:[\x00-\xff\u0100]|x)+$/i],
+  [/^[\x00-\xff\u0100]/u, /[\x00-\xff\u0100]*/gu, /([\x00-\xff\u0100]{2})/gu, /[\x00-\xff\u0100]+?\u4e01/u, /^(?:[\x00-\xff\u0100]|x)+$/u],
+  [/^[\x00-\xff\u0100]/iu, /[\x00-\xff\u0100]*/giu, /([\x00-\xff\u0100]{2})/giu, /[\x00-\xff\u0100]+?\u4e01/iu, /^(?:[\x00-\xff\u0100]|x)+$/iu],
+  [/^[^\x00-\xff\u0100]/, /[^\x00-\xff\u0100]*/g, /([^\x00-\xff\u0100]{2})/g, /[^\x00-\xff\u0100]+?\u4e01/, /^(?:[^\x00-\xff\u0100]|x)+$/],
+  [/^[^\x00-\xff\u0100]/i, /[^\x00-\xff\u0100]*/gi, /([^\x00-\xff\u0100]{2})/gi, /[^\x00-\xff\u0100]+?\u4e01/i, /^(?:[^\x00-\xff\u0100]|x)+$/i],
+  [/^[^\x00-\xff\u0100]/u, /[^\x00-\xff\u0100]*/gu, /([^\x00-\xff\u0100]{2})/gu, /[^\x00-\xff\u0100]+?\u4e01/u, /^(?:[^\x00-\xff\u0100]|x)+$/u],
+  [/^[^\x00-\xff\u0100]/iu, /[^\x00-\xff\u0100]*/giu, /([^\x00-\xff\u0100]{2})/giu, /[^\x00-\xff\u0100]+?\u4e01/iu, /^(?:[^\x00-\xff\u0100]|x)+$/iu],
+  [/^[ !\xfe\xff\u0100\u0101]/, /[ !\xfe\xff\u0100\u0101]*/g, /([ !\xfe\xff\u0100\u0101]{2})/g, /[ !\xfe\xff\u0100\u0101]+?\u4e01/, /^(?:[ !\xfe\xff\u0100\u0101]|x)+$/],
+  [/^[ !\xfe\xff\u0100\u0101]/i, /[ !\xfe\xff\u0100\u0101]*/gi, /([ !\xfe\xff\u0100\u0101]{2})/gi, /[ !\xfe\xff\u0100\u0101]+?\u4e01/i, /^(?:[ !\xfe\xff\u0100\u0101]|x)+$/i],
+  [/^[ !\xfe\xff\u0100\u0101]/u, /[ !\xfe\xff\u0100\u0101]*/gu, /([ !\xfe\xff\u0100\u0101]{2})/gu, /[ !\xfe\xff\u0100\u0101]+?\u4e01/u, /^(?:[ !\xfe\xff\u0100\u0101]|x)+$/u],
+  [/^[ !\xfe\xff\u0100\u0101]/iu, /[ !\xfe\xff\u0100\u0101]*/giu, /([ !\xfe\xff\u0100\u0101]{2})/giu, /[ !\xfe\xff\u0100\u0101]+?\u4e01/iu, /^(?:[ !\xfe\xff\u0100\u0101]|x)+$/iu],
+  [/^[^ !\xfe\xff\u0100\u0101]/, /[^ !\xfe\xff\u0100\u0101]*/g, /([^ !\xfe\xff\u0100\u0101]{2})/g, /[^ !\xfe\xff\u0100\u0101]+?\u4e01/, /^(?:[^ !\xfe\xff\u0100\u0101]|x)+$/],
+  [/^[^ !\xfe\xff\u0100\u0101]/i, /[^ !\xfe\xff\u0100\u0101]*/gi, /([^ !\xfe\xff\u0100\u0101]{2})/gi, /[^ !\xfe\xff\u0100\u0101]+?\u4e01/i, /^(?:[^ !\xfe\xff\u0100\u0101]|x)+$/i],
+  [/^[^ !\xfe\xff\u0100\u0101]/u, /[^ !\xfe\xff\u0100\u0101]*/gu, /([^ !\xfe\xff\u0100\u0101]{2})/gu, /[^ !\xfe\xff\u0100\u0101]+?\u4e01/u, /^(?:[^ !\xfe\xff\u0100\u0101]|x)+$/u],
+  [/^[^ !\xfe\xff\u0100\u0101]/iu, /[^ !\xfe\xff\u0100\u0101]*/giu, /([^ !\xfe\xff\u0100\u0101]{2})/giu, /[^ !\xfe\xff\u0100\u0101]+?\u4e01/iu, /^(?:[^ !\xfe\xff\u0100\u0101]|x)+$/iu],
+  [/^[ -\/k\u017f]/, /[ -\/k\u017f]*/g, /([ -\/k\u017f]{2})/g, /[ -\/k\u017f]+?\u4e01/, /^(?:[ -\/k\u017f]|x)+$/],
+  [/^[ -\/k\u017f]/i, /[ -\/k\u017f]*/gi, /([ -\/k\u017f]{2})/gi, /[ -\/k\u017f]+?\u4e01/i, /^(?:[ -\/k\u017f]|x)+$/i],
+  [/^[ -\/k\u017f]/u, /[ -\/k\u017f]*/gu, /([ -\/k\u017f]{2})/gu, /[ -\/k\u017f]+?\u4e01/u, /^(?:[ -\/k\u017f]|x)+$/u],
+  [/^[ -\/k\u017f]/iu, /[ -\/k\u017f]*/giu, /([ -\/k\u017f]{2})/giu, /[ -\/k\u017f]+?\u4e01/iu, /^(?:[ -\/k\u017f]|x)+$/iu],
+  [/^[a-z\u212a]/, /[a-z\u212a]*/g, /([a-z\u212a]{2})/g, /[a-z\u212a]+?\u4e01/, /^(?:[a-z\u212a]|x)+$/],
+  [/^[a-z\u212a]/i, /[a-z\u212a]*/gi, /([a-z\u212a]{2})/gi, /[a-z\u212a]+?\u4e01/i, /^(?:[a-z\u212a]|x)+$/i],
+  [/^[a-z\u212a]/u, /[a-z\u212a]*/gu, /([a-z\u212a]{2})/gu, /[a-z\u212a]+?\u4e01/u, /^(?:[a-z\u212a]|x)+$/u],
+  [/^[a-z\u212a]/iu, /[a-z\u212a]*/giu, /([a-z\u212a]{2})/giu, /[a-z\u212a]+?\u4e01/iu, /^(?:[a-z\u212a]|x)+$/iu],
+  [/^[\S ]/, /[\S ]*/g, /([\S ]{2})/g, /[\S ]+?\u4e01/, /^(?:[\S ]|x)+$/],
+  [/^[\S ]/i, /[\S ]*/gi, /([\S ]{2})/gi, /[\S ]+?\u4e01/i, /^(?:[\S ]|x)+$/i],
+  [/^[\S ]/u, /[\S ]*/gu, /([\S ]{2})/gu, /[\S ]+?\u4e01/u, /^(?:[\S ]|x)+$/u],
+  [/^[\S ]/iu, /[\S ]*/giu, /([\S ]{2})/giu, /[\S ]+?\u4e01/iu, /^(?:[\S ]|x)+$/iu],
+  [/^[\W_a]/, /[\W_a]*/g, /([\W_a]{2})/g, /[\W_a]+?\u4e01/, /^(?:[\W_a]|x)+$/],
+  [/^[\W_a]/i, /[\W_a]*/gi, /([\W_a]{2})/gi, /[\W_a]+?\u4e01/i, /^(?:[\W_a]|x)+$/i],
+  [/^[\W_a]/u, /[\W_a]*/gu, /([\W_a]{2})/gu, /[\W_a]+?\u4e01/u, /^(?:[\W_a]|x)+$/u],
+  [/^[\W_a]/iu, /[\W_a]*/giu, /([\W_a]{2})/giu, /[\W_a]+?\u4e01/iu, /^(?:[\W_a]|x)+$/iu],
+  [/^[\D5]/, /[\D5]*/g, /([\D5]{2})/g, /[\D5]+?\u4e01/, /^(?:[\D5]|x)+$/],
+  [/^[\D5]/i, /[\D5]*/gi, /([\D5]{2})/gi, /[\D5]+?\u4e01/i, /^(?:[\D5]|x)+$/i],
+  [/^[\D5]/u, /[\D5]*/gu, /([\D5]{2})/gu, /[\D5]+?\u4e01/u, /^(?:[\D5]|x)+$/u],
+  [/^[\D5]/iu, /[\D5]*/giu, /([\D5]{2})/giu, /[\D5]+?\u4e01/iu, /^(?:[\D5]|x)+$/iu],
+  [/^[^\S ]/, /[^\S ]*/g, /([^\S ]{2})/g, /[^\S ]+?\u4e01/, /^(?:[^\S ]|x)+$/],
+  [/^[^\S ]/i, /[^\S ]*/gi, /([^\S ]{2})/gi, /[^\S ]+?\u4e01/i, /^(?:[^\S ]|x)+$/i],
+  [/^[^\S ]/u, /[^\S ]*/gu, /([^\S ]{2})/gu, /[^\S ]+?\u4e01/u, /^(?:[^\S ]|x)+$/u],
+  [/^[^\S ]/iu, /[^\S ]*/giu, /([^\S ]{2})/giu, /[^\S ]+?\u4e01/iu, /^(?:[^\S ]|x)+$/iu],
+  [/^[^\D5]/, /[^\D5]*/g, /([^\D5]{2})/g, /[^\D5]+?\u4e01/, /^(?:[^\D5]|x)+$/],
+  [/^[^\D5]/i, /[^\D5]*/gi, /([^\D5]{2})/gi, /[^\D5]+?\u4e01/i, /^(?:[^\D5]|x)+$/i],
+  [/^[^\D5]/u, /[^\D5]*/gu, /([^\D5]{2})/gu, /[^\D5]+?\u4e01/u, /^(?:[^\D5]|x)+$/u],
+  [/^[^\D5]/iu, /[^\D5]*/giu, /([^\D5]{2})/giu, /[^\D5]+?\u4e01/iu, /^(?:[^\D5]|x)+$/iu],
+  [/^[\s\S]/, /[\s\S]*/g, /([\s\S]{2})/g, /[\s\S]+?\u4e01/, /^(?:[\s\S]|x)+$/],
+  [/^[\s\S]/i, /[\s\S]*/gi, /([\s\S]{2})/gi, /[\s\S]+?\u4e01/i, /^(?:[\s\S]|x)+$/i],
+  [/^[\s\S]/u, /[\s\S]*/gu, /([\s\S]{2})/gu, /[\s\S]+?\u4e01/u, /^(?:[\s\S]|x)+$/u],
+  [/^[\s\S]/iu, /[\s\S]*/giu, /([\s\S]{2})/giu, /[\s\S]+?\u4e01/iu, /^(?:[\s\S]|x)+$/iu],
+  [/^[!z\ufffe\uffff]/, /[!z\ufffe\uffff]*/g, /([!z\ufffe\uffff]{2})/g, /[!z\ufffe\uffff]+?\u4e01/, /^(?:[!z\ufffe\uffff]|x)+$/],
+  [/^[!z\ufffe\uffff]/i, /[!z\ufffe\uffff]*/gi, /([!z\ufffe\uffff]{2})/gi, /[!z\ufffe\uffff]+?\u4e01/i, /^(?:[!z\ufffe\uffff]|x)+$/i],
+  [/^[!z\ufffe\uffff]/u, /[!z\ufffe\uffff]*/gu, /([!z\ufffe\uffff]{2})/gu, /[!z\ufffe\uffff]+?\u4e01/u, /^(?:[!z\ufffe\uffff]|x)+$/u],
+  [/^[!z\ufffe\uffff]/iu, /[!z\ufffe\uffff]*/giu, /([!z\ufffe\uffff]{2})/giu, /[!z\ufffe\uffff]+?\u4e01/iu, /^(?:[!z\ufffe\uffff]|x)+$/iu],
+  [/^[^!z\ufffe\uffff]/, /[^!z\ufffe\uffff]*/g, /([^!z\ufffe\uffff]{2})/g, /[^!z\ufffe\uffff]+?\u4e01/, /^(?:[^!z\ufffe\uffff]|x)+$/],
+  [/^[^!z\ufffe\uffff]/i, /[^!z\ufffe\uffff]*/gi, /([^!z\ufffe\uffff]{2})/gi, /[^!z\ufffe\uffff]+?\u4e01/i, /^(?:[^!z\ufffe\uffff]|x)+$/i],
+  [/^[^!z\ufffe\uffff]/u, /[^!z\ufffe\uffff]*/gu, /([^!z\ufffe\uffff]{2})/gu, /[^!z\ufffe\uffff]+?\u4e01/u, /^(?:[^!z\ufffe\uffff]|x)+$/u],
+  [/^[^!z\ufffe\uffff]/iu, /[^!z\ufffe\uffff]*/giu, /([^!z\ufffe\uffff]{2})/giu, /[^!z\ufffe\uffff]+?\u4e01/iu, /^(?:[^!z\ufffe\uffff]|x)+$/iu],
+  [/^[!z\ud83d\ude00]/, /[!z\ud83d\ude00]*/g, /([!z\ud83d\ude00]{2})/g, /[!z\ud83d\ude00]+?\u4e01/, /^(?:[!z\ud83d\ude00]|x)+$/],
+  [/^[!z\ud83d\ude00]/i, /[!z\ud83d\ude00]*/gi, /([!z\ud83d\ude00]{2})/gi, /[!z\ud83d\ude00]+?\u4e01/i, /^(?:[!z\ud83d\ude00]|x)+$/i],
+  [/^\s/, /\s*/g, /(\s{2})/g, /\s+?\u4e01/, /^(?:\s|x)+$/],
+  [/^\s/i, /\s*/gi, /(\s{2})/gi, /\s+?\u4e01/i, /^(?:\s|x)+$/i],
+  [/^\s/u, /\s*/gu, /(\s{2})/gu, /\s+?\u4e01/u, /^(?:\s|x)+$/u],
+  [/^\s/iu, /\s*/giu, /(\s{2})/giu, /\s+?\u4e01/iu, /^(?:\s|x)+$/iu],
+  [/^\s/v, /\s*/gv, /(\s{2})/gv, /\s+?\u4e01/v, /^(?:\s|x)+$/v],
+  [/^\s/s, /\s*/gs, /(\s{2})/gs, /\s+?\u4e01/s, /^(?:\s|x)+$/s],
+  [/^\s/su, /\s*/gsu, /(\s{2})/gsu, /\s+?\u4e01/su, /^(?:\s|x)+$/su],
+  [/^\S/, /\S*/g, /(\S{2})/g, /\S+?\u4e01/, /^(?:\S|x)+$/],
+  [/^\S/i, /\S*/gi, /(\S{2})/gi, /\S+?\u4e01/i, /^(?:\S|x)+$/i],
+  [/^\S/u, /\S*/gu, /(\S{2})/gu, /\S+?\u4e01/u, /^(?:\S|x)+$/u],
+  [/^\S/iu, /\S*/giu, /(\S{2})/giu, /\S+?\u4e01/iu, /^(?:\S|x)+$/iu],
+  [/^\S/v, /\S*/gv, /(\S{2})/gv, /\S+?\u4e01/v, /^(?:\S|x)+$/v],
+  [/^\S/s, /\S*/gs, /(\S{2})/gs, /\S+?\u4e01/s, /^(?:\S|x)+$/s],
+  [/^\S/su, /\S*/gsu, /(\S{2})/gsu, /\S+?\u4e01/su, /^(?:\S|x)+$/su],
+  [/^\w/, /\w*/g, /(\w{2})/g, /\w+?\u4e01/, /^(?:\w|x)+$/],
+  [/^\w/i, /\w*/gi, /(\w{2})/gi, /\w+?\u4e01/i, /^(?:\w|x)+$/i],
+  [/^\w/u, /\w*/gu, /(\w{2})/gu, /\w+?\u4e01/u, /^(?:\w|x)+$/u],
+  [/^\w/iu, /\w*/giu, /(\w{2})/giu, /\w+?\u4e01/iu, /^(?:\w|x)+$/iu],
+  [/^\w/v, /\w*/gv, /(\w{2})/gv, /\w+?\u4e01/v, /^(?:\w|x)+$/v],
+  [/^\w/s, /\w*/gs, /(\w{2})/gs, /\w+?\u4e01/s, /^(?:\w|x)+$/s],
+  [/^\w/su, /\w*/gsu, /(\w{2})/gsu, /\w+?\u4e01/su, /^(?:\w|x)+$/su],
+  [/^\W/, /\W*/g, /(\W{2})/g, /\W+?\u4e01/, /^(?:\W|x)+$/],
+  [/^\W/i, /\W*/gi, /(\W{2})/gi, /\W+?\u4e01/i, /^(?:\W|x)+$/i],
+  [/^\W/u, /\W*/gu, /(\W{2})/gu, /\W+?\u4e01/u, /^(?:\W|x)+$/u],
+  [/^\W/iu, /\W*/giu, /(\W{2})/giu, /\W+?\u4e01/iu, /^(?:\W|x)+$/iu],
+  [/^\W/v, /\W*/gv, /(\W{2})/gv, /\W+?\u4e01/v, /^(?:\W|x)+$/v],
+  [/^\W/s, /\W*/gs, /(\W{2})/gs, /\W+?\u4e01/s, /^(?:\W|x)+$/s],
+  [/^\W/su, /\W*/gsu, /(\W{2})/gsu, /\W+?\u4e01/su, /^(?:\W|x)+$/su],
+  [/^\d/, /\d*/g, /(\d{2})/g, /\d+?\u4e01/, /^(?:\d|x)+$/],
+  [/^\d/i, /\d*/gi, /(\d{2})/gi, /\d+?\u4e01/i, /^(?:\d|x)+$/i],
+  [/^\d/u, /\d*/gu, /(\d{2})/gu, /\d+?\u4e01/u, /^(?:\d|x)+$/u],
+  [/^\d/iu, /\d*/giu, /(\d{2})/giu, /\d+?\u4e01/iu, /^(?:\d|x)+$/iu],
+  [/^\d/v, /\d*/gv, /(\d{2})/gv, /\d+?\u4e01/v, /^(?:\d|x)+$/v],
+  [/^\d/s, /\d*/gs, /(\d{2})/gs, /\d+?\u4e01/s, /^(?:\d|x)+$/s],
+  [/^\d/su, /\d*/gsu, /(\d{2})/gsu, /\d+?\u4e01/su, /^(?:\d|x)+$/su],
+  [/^\D/, /\D*/g, /(\D{2})/g, /\D+?\u4e01/, /^(?:\D|x)+$/],
+  [/^\D/i, /\D*/gi, /(\D{2})/gi, /\D+?\u4e01/i, /^(?:\D|x)+$/i],
+  [/^\D/u, /\D*/gu, /(\D{2})/gu, /\D+?\u4e01/u, /^(?:\D|x)+$/u],
+  [/^\D/iu, /\D*/giu, /(\D{2})/giu, /\D+?\u4e01/iu, /^(?:\D|x)+$/iu],
+  [/^\D/v, /\D*/gv, /(\D{2})/gv, /\D+?\u4e01/v, /^(?:\D|x)+$/v],
+  [/^\D/s, /\D*/gs, /(\D{2})/gs, /\D+?\u4e01/s, /^(?:\D|x)+$/s],
+  [/^\D/su, /\D*/gsu, /(\D{2})/gsu, /\D+?\u4e01/su, /^(?:\D|x)+$/su],
+  [/^./, /.*/g, /(.{2})/g, /.+?\u4e01/, /^(?:.|x)+$/],
+  [/^./i, /.*/gi, /(.{2})/gi, /.+?\u4e01/i, /^(?:.|x)+$/i],
+  [/^./u, /.*/gu, /(.{2})/gu, /.+?\u4e01/u, /^(?:.|x)+$/u],
+  [/^./iu, /.*/giu, /(.{2})/giu, /.+?\u4e01/iu, /^(?:.|x)+$/iu],
+  [/^./v, /.*/gv, /(.{2})/gv, /.+?\u4e01/v, /^(?:.|x)+$/v],
+  [/^./s, /.*/gs, /(.{2})/gs, /.+?\u4e01/s, /^(?:.|x)+$/s],
+  [/^./su, /.*/gsu, /(.{2})/gsu, /.+?\u4e01/su, /^(?:.|x)+$/su],
+  [/^[^\s]/, /[^\s]*/g, /([^\s]{2})/g, /[^\s]+?\u4e01/, /^(?:[^\s]|x)+$/],
+  [/^[^\s]/i, /[^\s]*/gi, /([^\s]{2})/gi, /[^\s]+?\u4e01/i, /^(?:[^\s]|x)+$/i],
+  [/^[^\s]/u, /[^\s]*/gu, /([^\s]{2})/gu, /[^\s]+?\u4e01/u, /^(?:[^\s]|x)+$/u],
+  [/^[^\s]/iu, /[^\s]*/giu, /([^\s]{2})/giu, /[^\s]+?\u4e01/iu, /^(?:[^\s]|x)+$/iu],
+  [/^[^\s]/v, /[^\s]*/gv, /([^\s]{2})/gv, /[^\s]+?\u4e01/v, /^(?:[^\s]|x)+$/v],
+  [/^[^\s]/s, /[^\s]*/gs, /([^\s]{2})/gs, /[^\s]+?\u4e01/s, /^(?:[^\s]|x)+$/s],
+  [/^[^\s]/su, /[^\s]*/gsu, /([^\s]{2})/gsu, /[^\s]+?\u4e01/su, /^(?:[^\s]|x)+$/su],
+  [/^[^\w]/, /[^\w]*/g, /([^\w]{2})/g, /[^\w]+?\u4e01/, /^(?:[^\w]|x)+$/],
+  [/^[^\w]/i, /[^\w]*/gi, /([^\w]{2})/gi, /[^\w]+?\u4e01/i, /^(?:[^\w]|x)+$/i],
+  [/^[^\w]/u, /[^\w]*/gu, /([^\w]{2})/gu, /[^\w]+?\u4e01/u, /^(?:[^\w]|x)+$/u],
+  [/^[^\w]/iu, /[^\w]*/giu, /([^\w]{2})/giu, /[^\w]+?\u4e01/iu, /^(?:[^\w]|x)+$/iu],
+  [/^[^\w]/v, /[^\w]*/gv, /([^\w]{2})/gv, /[^\w]+?\u4e01/v, /^(?:[^\w]|x)+$/v],
+  [/^[^\w]/s, /[^\w]*/gs, /([^\w]{2})/gs, /[^\w]+?\u4e01/s, /^(?:[^\w]|x)+$/s],
+  [/^[^\w]/su, /[^\w]*/gsu, /([^\w]{2})/gsu, /[^\w]+?\u4e01/su, /^(?:[^\w]|x)+$/su],
+  [/^[\d\s]/, /[\d\s]*/g, /([\d\s]{2})/g, /[\d\s]+?\u4e01/, /^(?:[\d\s]|x)+$/],
+  [/^[\d\s]/i, /[\d\s]*/gi, /([\d\s]{2})/gi, /[\d\s]+?\u4e01/i, /^(?:[\d\s]|x)+$/i],
+  [/^[\d\s]/u, /[\d\s]*/gu, /([\d\s]{2})/gu, /[\d\s]+?\u4e01/u, /^(?:[\d\s]|x)+$/u],
+  [/^[\d\s]/iu, /[\d\s]*/giu, /([\d\s]{2})/giu, /[\d\s]+?\u4e01/iu, /^(?:[\d\s]|x)+$/iu],
+  [/^[\d\s]/v, /[\d\s]*/gv, /([\d\s]{2})/gv, /[\d\s]+?\u4e01/v, /^(?:[\d\s]|x)+$/v],
+  [/^[\d\s]/s, /[\d\s]*/gs, /([\d\s]{2})/gs, /[\d\s]+?\u4e01/s, /^(?:[\d\s]|x)+$/s],
+  [/^[\d\s]/su, /[\d\s]*/gsu, /([\d\s]{2})/gsu, /[\d\s]+?\u4e01/su, /^(?:[\d\s]|x)+$/su],
+  [/^[!z\u{1f600}-\u{1f64f}]/u, /[!z\u{1f600}-\u{1f64f}]*/gu, /([!z\u{1f600}-\u{1f64f}]{2})/gu, /[!z\u{1f600}-\u{1f64f}]+?\u4e01/u, /^(?:[!z\u{1f600}-\u{1f64f}]|x)+$/u],
+  [/^[!z\u{1f600}-\u{1f64f}]/iu, /[!z\u{1f600}-\u{1f64f}]*/giu, /([!z\u{1f600}-\u{1f64f}]{2})/giu, /[!z\u{1f600}-\u{1f64f}]+?\u4e01/iu, /^(?:[!z\u{1f600}-\u{1f64f}]|x)+$/iu],
+  [/^[!z\u{1f600}-\u{1f64f}]/v, /[!z\u{1f600}-\u{1f64f}]*/gv, /([!z\u{1f600}-\u{1f64f}]{2})/gv, /[!z\u{1f600}-\u{1f64f}]+?\u4e01/v, /^(?:[!z\u{1f600}-\u{1f64f}]|x)+$/v],
+  [/^[^!z\u{1f600}-\u{1f64f}]/u, /[^!z\u{1f600}-\u{1f64f}]*/gu, /([^!z\u{1f600}-\u{1f64f}]{2})/gu, /[^!z\u{1f600}-\u{1f64f}]+?\u4e01/u, /^(?:[^!z\u{1f600}-\u{1f64f}]|x)+$/u],
+  [/^[^!z\u{1f600}-\u{1f64f}]/iu, /[^!z\u{1f600}-\u{1f64f}]*/giu, /([^!z\u{1f600}-\u{1f64f}]{2})/giu, /[^!z\u{1f600}-\u{1f64f}]+?\u4e01/iu, /^(?:[^!z\u{1f600}-\u{1f64f}]|x)+$/iu],
+  [/^[^!z\u{1f600}-\u{1f64f}]/v, /[^!z\u{1f600}-\u{1f64f}]*/gv, /([^!z\u{1f600}-\u{1f64f}]{2})/gv, /[^!z\u{1f600}-\u{1f64f}]+?\u4e01/v, /^(?:[^!z\u{1f600}-\u{1f64f}]|x)+$/v],
+  [/^[\d\u{10000}]/u, /[\d\u{10000}]*/gu, /([\d\u{10000}]{2})/gu, /[\d\u{10000}]+?\u4e01/u, /^(?:[\d\u{10000}]|x)+$/u],
+  [/^[\d\u{10000}]/iu, /[\d\u{10000}]*/giu, /([\d\u{10000}]{2})/giu, /[\d\u{10000}]+?\u4e01/iu, /^(?:[\d\u{10000}]|x)+$/iu],
+  [/^[\d\u{10000}]/v, /[\d\u{10000}]*/gv, /([\d\u{10000}]{2})/gv, /[\d\u{10000}]+?\u4e01/v, /^(?:[\d\u{10000}]|x)+$/v],
+  [/^[^\d\u{10000}]/u, /[^\d\u{10000}]*/gu, /([^\d\u{10000}]{2})/gu, /[^\d\u{10000}]+?\u4e01/u, /^(?:[^\d\u{10000}]|x)+$/u],
+  [/^[^\d\u{10000}]/iu, /[^\d\u{10000}]*/giu, /([^\d\u{10000}]{2})/giu, /[^\d\u{10000}]+?\u4e01/iu, /^(?:[^\d\u{10000}]|x)+$/iu],
+  [/^[^\d\u{10000}]/v, /[^\d\u{10000}]*/gv, /([^\d\u{10000}]{2})/gv, /[^\d\u{10000}]+?\u4e01/v, /^(?:[^\d\u{10000}]|x)+$/v],
+  [/^[\s\u{ffff}\u{10000}\u{10ffff}]/u, /[\s\u{ffff}\u{10000}\u{10ffff}]*/gu, /([\s\u{ffff}\u{10000}\u{10ffff}]{2})/gu, /[\s\u{ffff}\u{10000}\u{10ffff}]+?\u4e01/u, /^(?:[\s\u{ffff}\u{10000}\u{10ffff}]|x)+$/u],
+  [/^[\s\u{ffff}\u{10000}\u{10ffff}]/iu, /[\s\u{ffff}\u{10000}\u{10ffff}]*/giu, /([\s\u{ffff}\u{10000}\u{10ffff}]{2})/giu, /[\s\u{ffff}\u{10000}\u{10ffff}]+?\u4e01/iu, /^(?:[\s\u{ffff}\u{10000}\u{10ffff}]|x)+$/iu],
+  [/^[\s\u{ffff}\u{10000}\u{10ffff}]/v, /[\s\u{ffff}\u{10000}\u{10ffff}]*/gv, /([\s\u{ffff}\u{10000}\u{10ffff}]{2})/gv, /[\s\u{ffff}\u{10000}\u{10ffff}]+?\u4e01/v, /^(?:[\s\u{ffff}\u{10000}\u{10ffff}]|x)+$/v],
+  [/^[\w\u{1d400}-\u{1d419}]/u, /[\w\u{1d400}-\u{1d419}]*/gu, /([\w\u{1d400}-\u{1d419}]{2})/gu, /[\w\u{1d400}-\u{1d419}]+?\u4e01/u, /^(?:[\w\u{1d400}-\u{1d419}]|x)+$/u],
+  [/^[\w\u{1d400}-\u{1d419}]/iu, /[\w\u{1d400}-\u{1d419}]*/giu, /([\w\u{1d400}-\u{1d419}]{2})/giu, /[\w\u{1d400}-\u{1d419}]+?\u4e01/iu, /^(?:[\w\u{1d400}-\u{1d419}]|x)+$/iu],
+  [/^[\w\u{1d400}-\u{1d419}]/v, /[\w\u{1d400}-\u{1d419}]*/gv, /([\w\u{1d400}-\u{1d419}]{2})/gv, /[\w\u{1d400}-\u{1d419}]+?\u4e01/v, /^(?:[\w\u{1d400}-\u{1d419}]|x)+$/v],
+  [/^\p{L}/u, /\p{L}*/gu, /(\p{L}{2})/gu, /\p{L}+?\u4e01/u, /^(?:\p{L}|x)+$/u],
+  [/^\p{L}/iu, /\p{L}*/giu, /(\p{L}{2})/giu, /\p{L}+?\u4e01/iu, /^(?:\p{L}|x)+$/iu],
+  [/^\p{L}/v, /\p{L}*/gv, /(\p{L}{2})/gv, /\p{L}+?\u4e01/v, /^(?:\p{L}|x)+$/v],
+  [/^[\p{L}\d_]/u, /[\p{L}\d_]*/gu, /([\p{L}\d_]{2})/gu, /[\p{L}\d_]+?\u4e01/u, /^(?:[\p{L}\d_]|x)+$/u],
+  [/^[\p{L}\d_]/iu, /[\p{L}\d_]*/giu, /([\p{L}\d_]{2})/giu, /[\p{L}\d_]+?\u4e01/iu, /^(?:[\p{L}\d_]|x)+$/iu],
+  [/^[\p{L}\d_]/v, /[\p{L}\d_]*/gv, /([\p{L}\d_]{2})/gv, /[\p{L}\d_]+?\u4e01/v, /^(?:[\p{L}\d_]|x)+$/v],
+  [/^[^\p{L}\d_ ]/u, /[^\p{L}\d_ ]*/gu, /([^\p{L}\d_ ]{2})/gu, /[^\p{L}\d_ ]+?\u4e01/u, /^(?:[^\p{L}\d_ ]|x)+$/u],
+  [/^[^\p{L}\d_ ]/iu, /[^\p{L}\d_ ]*/giu, /([^\p{L}\d_ ]{2})/giu, /[^\p{L}\d_ ]+?\u4e01/iu, /^(?:[^\p{L}\d_ ]|x)+$/iu],
+  [/^[^\p{L}\d_ ]/v, /[^\p{L}\d_ ]*/gv, /([^\p{L}\d_ ]{2})/gv, /[^\p{L}\d_ ]+?\u4e01/v, /^(?:[^\p{L}\d_ ]|x)+$/v],
+]
+function sum(s: string): number { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return h }
+for (let r = 0; r < rows.length; r++) {
+  const [at, star, two, lazy, all] = rows[r]
+  let bits = "", narrow = "", whole = ""
+  for (const u of units) { const c = F(u); bits += at.test(c + wide) ? "1" : "0"; if (u < 256) narrow += at.test(c) ? "1" : "0"; whole += all.test(c + c + "x" + c) ? "1" : "0" }
+  const m = lazy.exec(mixed)
+  console.log(r + " /" + at.flags + " " + sum(at.source) + " " + bits + " " + narrow + " " + whole + " " + sum(mixed.replace(star, "<$&>")) + " " + sum(pairs.replace(two, "[$1]")) + " " + (m ? m.index + ":" + m[0].length : "-"))
+}
+console.log(rows.length + " rows")
+//// regexp-mixed-ascii-classes-untyped.js
+// Character classes that mix ASCII and non-ASCII members, tested against every interesting code unit (the same program without type annotations).
+const F = String.fromCodePoint;
+const units = [0, 9, 10, 13, 32, 33, 34, 39, 47, 48, 53, 57, 65, 75, 83, 90, 95, 97, 107, 115, 122, 126, 127, 128, 133, 160, 170, 181, 192, 223, 254, 255, 256, 257, 304, 305, 383, 384, 1072, 5760, 6158, 8192, 8202, 8203, 8231, 8232, 8233, 8234, 8235, 8239, 8287, 8288, 8490, 8491, 12288, 12351, 19968, 55357, 56832, 57344, 65279, 65280, 65519, 65534, 65535, 65536, 65537, 119808, 119833, 119834, 128512, 128591, 128592, 1114111];
+const wide = F(19969);
+const mixed = units.map((u) => F(u)).join("") + wide;
+const pairs = units.map((u) => F(u) + F(u)).join(" ") + wide;
+const rows = [
+  [/^[\s"'a-z]/, /[\s"'a-z]*/g, /([\s"'a-z]{2})/g, /[\s"'a-z]+?\u4e01/, /^(?:[\s"'a-z]|x)+$/],
+  [/^[\s"'a-z]/i, /[\s"'a-z]*/gi, /([\s"'a-z]{2})/gi, /[\s"'a-z]+?\u4e01/i, /^(?:[\s"'a-z]|x)+$/i],
+  [/^[\s"'a-z]/u, /[\s"'a-z]*/gu, /([\s"'a-z]{2})/gu, /[\s"'a-z]+?\u4e01/u, /^(?:[\s"'a-z]|x)+$/u],
+  [/^[\s"'a-z]/iu, /[\s"'a-z]*/giu, /([\s"'a-z]{2})/giu, /[\s"'a-z]+?\u4e01/iu, /^(?:[\s"'a-z]|x)+$/iu],
+  [/^[^\s"'a-z]/, /[^\s"'a-z]*/g, /([^\s"'a-z]{2})/g, /[^\s"'a-z]+?\u4e01/, /^(?:[^\s"'a-z]|x)+$/],
+  [/^[^\s"'a-z]/i, /[^\s"'a-z]*/gi, /([^\s"'a-z]{2})/gi, /[^\s"'a-z]+?\u4e01/i, /^(?:[^\s"'a-z]|x)+$/i],
+  [/^[^\s"'a-z]/u, /[^\s"'a-z]*/gu, /([^\s"'a-z]{2})/gu, /[^\s"'a-z]+?\u4e01/u, /^(?:[^\s"'a-z]|x)+$/u],
+  [/^[^\s"'a-z]/iu, /[^\s"'a-z]*/giu, /([^\s"'a-z]{2})/giu, /[^\s"'a-z]+?\u4e01/iu, /^(?:[^\s"'a-z]|x)+$/iu],
+  [/^[\w\u0100-\u017f]/, /[\w\u0100-\u017f]*/g, /([\w\u0100-\u017f]{2})/g, /[\w\u0100-\u017f]+?\u4e01/, /^(?:[\w\u0100-\u017f]|x)+$/],
+  [/^[\w\u0100-\u017f]/i, /[\w\u0100-\u017f]*/gi, /([\w\u0100-\u017f]{2})/gi, /[\w\u0100-\u017f]+?\u4e01/i, /^(?:[\w\u0100-\u017f]|x)+$/i],
+  [/^[\w\u0100-\u017f]/u, /[\w\u0100-\u017f]*/gu, /([\w\u0100-\u017f]{2})/gu, /[\w\u0100-\u017f]+?\u4e01/u, /^(?:[\w\u0100-\u017f]|x)+$/u],
+  [/^[\w\u0100-\u017f]/iu, /[\w\u0100-\u017f]*/giu, /([\w\u0100-\u017f]{2})/giu, /[\w\u0100-\u017f]+?\u4e01/iu, /^(?:[\w\u0100-\u017f]|x)+$/iu],
+  [/^[^\w\u0100-\u017f]/, /[^\w\u0100-\u017f]*/g, /([^\w\u0100-\u017f]{2})/g, /[^\w\u0100-\u017f]+?\u4e01/, /^(?:[^\w\u0100-\u017f]|x)+$/],
+  [/^[^\w\u0100-\u017f]/i, /[^\w\u0100-\u017f]*/gi, /([^\w\u0100-\u017f]{2})/gi, /[^\w\u0100-\u017f]+?\u4e01/i, /^(?:[^\w\u0100-\u017f]|x)+$/i],
+  [/^[^\w\u0100-\u017f]/u, /[^\w\u0100-\u017f]*/gu, /([^\w\u0100-\u017f]{2})/gu, /[^\w\u0100-\u017f]+?\u4e01/u, /^(?:[^\w\u0100-\u017f]|x)+$/u],
+  [/^[^\w\u0100-\u017f]/iu, /[^\w\u0100-\u017f]*/giu, /([^\w\u0100-\u017f]{2})/giu, /[^\w\u0100-\u017f]+?\u4e01/iu, /^(?:[^\w\u0100-\u017f]|x)+$/iu],
+  [/^[!-~\u2027-\u202a]/, /[!-~\u2027-\u202a]*/g, /([!-~\u2027-\u202a]{2})/g, /[!-~\u2027-\u202a]+?\u4e01/, /^(?:[!-~\u2027-\u202a]|x)+$/],
+  [/^[!-~\u2027-\u202a]/i, /[!-~\u2027-\u202a]*/gi, /([!-~\u2027-\u202a]{2})/gi, /[!-~\u2027-\u202a]+?\u4e01/i, /^(?:[!-~\u2027-\u202a]|x)+$/i],
+  [/^[!-~\u2027-\u202a]/u, /[!-~\u2027-\u202a]*/gu, /([!-~\u2027-\u202a]{2})/gu, /[!-~\u2027-\u202a]+?\u4e01/u, /^(?:[!-~\u2027-\u202a]|x)+$/u],
+  [/^[!-~\u2027-\u202a]/iu, /[!-~\u2027-\u202a]*/giu, /([!-~\u2027-\u202a]{2})/giu, /[!-~\u2027-\u202a]+?\u4e01/iu, /^(?:[!-~\u2027-\u202a]|x)+$/iu],
+  [/^[^!-~\u2027-\u202a]/, /[^!-~\u2027-\u202a]*/g, /([^!-~\u2027-\u202a]{2})/g, /[^!-~\u2027-\u202a]+?\u4e01/, /^(?:[^!-~\u2027-\u202a]|x)+$/],
+  [/^[^!-~\u2027-\u202a]/i, /[^!-~\u2027-\u202a]*/gi, /([^!-~\u2027-\u202a]{2})/gi, /[^!-~\u2027-\u202a]+?\u4e01/i, /^(?:[^!-~\u2027-\u202a]|x)+$/i],
+  [/^[^!-~\u2027-\u202a]/u, /[^!-~\u2027-\u202a]*/gu, /([^!-~\u2027-\u202a]{2})/gu, /[^!-~\u2027-\u202a]+?\u4e01/u, /^(?:[^!-~\u2027-\u202a]|x)+$/u],
+  [/^[^!-~\u2027-\u202a]/iu, /[^!-~\u2027-\u202a]*/giu, /([^!-~\u2027-\u202a]{2})/giu, /[^!-~\u2027-\u202a]+?\u4e01/iu, /^(?:[^!-~\u2027-\u202a]|x)+$/iu],
+  [/^[0-9A-Za-z\u00c0-\uffff]/, /[0-9A-Za-z\u00c0-\uffff]*/g, /([0-9A-Za-z\u00c0-\uffff]{2})/g, /[0-9A-Za-z\u00c0-\uffff]+?\u4e01/, /^(?:[0-9A-Za-z\u00c0-\uffff]|x)+$/],
+  [/^[0-9A-Za-z\u00c0-\uffff]/i, /[0-9A-Za-z\u00c0-\uffff]*/gi, /([0-9A-Za-z\u00c0-\uffff]{2})/gi, /[0-9A-Za-z\u00c0-\uffff]+?\u4e01/i, /^(?:[0-9A-Za-z\u00c0-\uffff]|x)+$/i],
+  [/^[0-9A-Za-z\u00c0-\uffff]/u, /[0-9A-Za-z\u00c0-\uffff]*/gu, /([0-9A-Za-z\u00c0-\uffff]{2})/gu, /[0-9A-Za-z\u00c0-\uffff]+?\u4e01/u, /^(?:[0-9A-Za-z\u00c0-\uffff]|x)+$/u],
+  [/^[0-9A-Za-z\u00c0-\uffff]/iu, /[0-9A-Za-z\u00c0-\uffff]*/giu, /([0-9A-Za-z\u00c0-\uffff]{2})/giu, /[0-9A-Za-z\u00c0-\uffff]+?\u4e01/iu, /^(?:[0-9A-Za-z\u00c0-\uffff]|x)+$/iu],
+  [/^[^0-9A-Za-z\u00c0-\uffff]/, /[^0-9A-Za-z\u00c0-\uffff]*/g, /([^0-9A-Za-z\u00c0-\uffff]{2})/g, /[^0-9A-Za-z\u00c0-\uffff]+?\u4e01/, /^(?:[^0-9A-Za-z\u00c0-\uffff]|x)+$/],
+  [/^[^0-9A-Za-z\u00c0-\uffff]/i, /[^0-9A-Za-z\u00c0-\uffff]*/gi, /([^0-9A-Za-z\u00c0-\uffff]{2})/gi, /[^0-9A-Za-z\u00c0-\uffff]+?\u4e01/i, /^(?:[^0-9A-Za-z\u00c0-\uffff]|x)+$/i],
+  [/^[^0-9A-Za-z\u00c0-\uffff]/u, /[^0-9A-Za-z\u00c0-\uffff]*/gu, /([^0-9A-Za-z\u00c0-\uffff]{2})/gu, /[^0-9A-Za-z\u00c0-\uffff]+?\u4e01/u, /^(?:[^0-9A-Za-z\u00c0-\uffff]|x)+$/u],
+  [/^[^0-9A-Za-z\u00c0-\uffff]/iu, /[^0-9A-Za-z\u00c0-\uffff]*/giu, /([^0-9A-Za-z\u00c0-\uffff]{2})/giu, /[^0-9A-Za-z\u00c0-\uffff]+?\u4e01/iu, /^(?:[^0-9A-Za-z\u00c0-\uffff]|x)+$/iu],
+  [/^[ -~\u3000-\u303f\uff00-\uffef]/, /[ -~\u3000-\u303f\uff00-\uffef]*/g, /([ -~\u3000-\u303f\uff00-\uffef]{2})/g, /[ -~\u3000-\u303f\uff00-\uffef]+?\u4e01/, /^(?:[ -~\u3000-\u303f\uff00-\uffef]|x)+$/],
+  [/^[ -~\u3000-\u303f\uff00-\uffef]/i, /[ -~\u3000-\u303f\uff00-\uffef]*/gi, /([ -~\u3000-\u303f\uff00-\uffef]{2})/gi, /[ -~\u3000-\u303f\uff00-\uffef]+?\u4e01/i, /^(?:[ -~\u3000-\u303f\uff00-\uffef]|x)+$/i],
+  [/^[ -~\u3000-\u303f\uff00-\uffef]/u, /[ -~\u3000-\u303f\uff00-\uffef]*/gu, /([ -~\u3000-\u303f\uff00-\uffef]{2})/gu, /[ -~\u3000-\u303f\uff00-\uffef]+?\u4e01/u, /^(?:[ -~\u3000-\u303f\uff00-\uffef]|x)+$/u],
+  [/^[ -~\u3000-\u303f\uff00-\uffef]/iu, /[ -~\u3000-\u303f\uff00-\uffef]*/giu, /([ -~\u3000-\u303f\uff00-\uffef]{2})/giu, /[ -~\u3000-\u303f\uff00-\uffef]+?\u4e01/iu, /^(?:[ -~\u3000-\u303f\uff00-\uffef]|x)+$/iu],
+  [/^[\x00-\xff\u0100]/, /[\x00-\xff\u0100]*/g, /([\x00-\xff\u0100]{2})/g, /[\x00-\xff\u0100]+?\u4e01/, /^(?:[\x00-\xff\u0100]|x)+$/],
+  [/^[\x00-\xff\u0100]/i, /[\x00-\xff\u0100]*/gi, /([\x00-\xff\u0100]{2})/gi, /[\x00-\xff\u0100]+?\u4e01/i, /^(?:[\x00-\xff\u0100]|x)+$/i],
+  [/^[\x00-\xff\u0100]/u, /[\x00-\xff\u0100]*/gu, /([\x00-\xff\u0100]{2})/gu, /[\x00-\xff\u0100]+?\u4e01/u, /^(?:[\x00-\xff\u0100]|x)+$/u],
+  [/^[\x00-\xff\u0100]/iu, /[\x00-\xff\u0100]*/giu, /([\x00-\xff\u0100]{2})/giu, /[\x00-\xff\u0100]+?\u4e01/iu, /^(?:[\x00-\xff\u0100]|x)+$/iu],
+  [/^[^\x00-\xff\u0100]/, /[^\x00-\xff\u0100]*/g, /([^\x00-\xff\u0100]{2})/g, /[^\x00-\xff\u0100]+?\u4e01/, /^(?:[^\x00-\xff\u0100]|x)+$/],
+  [/^[^\x00-\xff\u0100]/i, /[^\x00-\xff\u0100]*/gi, /([^\x00-\xff\u0100]{2})/gi, /[^\x00-\xff\u0100]+?\u4e01/i, /^(?:[^\x00-\xff\u0100]|x)+$/i],
+  [/^[^\x00-\xff\u0100]/u, /[^\x00-\xff\u0100]*/gu, /([^\x00-\xff\u0100]{2})/gu, /[^\x00-\xff\u0100]+?\u4e01/u, /^(?:[^\x00-\xff\u0100]|x)+$/u],
+  [/^[^\x00-\xff\u0100]/iu, /[^\x00-\xff\u0100]*/giu, /([^\x00-\xff\u0100]{2})/giu, /[^\x00-\xff\u0100]+?\u4e01/iu, /^(?:[^\x00-\xff\u0100]|x)+$/iu],
+  [/^[ !\xfe\xff\u0100\u0101]/, /[ !\xfe\xff\u0100\u0101]*/g, /([ !\xfe\xff\u0100\u0101]{2})/g, /[ !\xfe\xff\u0100\u0101]+?\u4e01/, /^(?:[ !\xfe\xff\u0100\u0101]|x)+$/],
+  [/^[ !\xfe\xff\u0100\u0101]/i, /[ !\xfe\xff\u0100\u0101]*/gi, /([ !\xfe\xff\u0100\u0101]{2})/gi, /[ !\xfe\xff\u0100\u0101]+?\u4e01/i, /^(?:[ !\xfe\xff\u0100\u0101]|x)+$/i],
+  [/^[ !\xfe\xff\u0100\u0101]/u, /[ !\xfe\xff\u0100\u0101]*/gu, /([ !\xfe\xff\u0100\u0101]{2})/gu, /[ !\xfe\xff\u0100\u0101]+?\u4e01/u, /^(?:[ !\xfe\xff\u0100\u0101]|x)+$/u],
+  [/^[ !\xfe\xff\u0100\u0101]/iu, /[ !\xfe\xff\u0100\u0101]*/giu, /([ !\xfe\xff\u0100\u0101]{2})/giu, /[ !\xfe\xff\u0100\u0101]+?\u4e01/iu, /^(?:[ !\xfe\xff\u0100\u0101]|x)+$/iu],
+  [/^[^ !\xfe\xff\u0100\u0101]/, /[^ !\xfe\xff\u0100\u0101]*/g, /([^ !\xfe\xff\u0100\u0101]{2})/g, /[^ !\xfe\xff\u0100\u0101]+?\u4e01/, /^(?:[^ !\xfe\xff\u0100\u0101]|x)+$/],
+  [/^[^ !\xfe\xff\u0100\u0101]/i, /[^ !\xfe\xff\u0100\u0101]*/gi, /([^ !\xfe\xff\u0100\u0101]{2})/gi, /[^ !\xfe\xff\u0100\u0101]+?\u4e01/i, /^(?:[^ !\xfe\xff\u0100\u0101]|x)+$/i],
+  [/^[^ !\xfe\xff\u0100\u0101]/u, /[^ !\xfe\xff\u0100\u0101]*/gu, /([^ !\xfe\xff\u0100\u0101]{2})/gu, /[^ !\xfe\xff\u0100\u0101]+?\u4e01/u, /^(?:[^ !\xfe\xff\u0100\u0101]|x)+$/u],
+  [/^[^ !\xfe\xff\u0100\u0101]/iu, /[^ !\xfe\xff\u0100\u0101]*/giu, /([^ !\xfe\xff\u0100\u0101]{2})/giu, /[^ !\xfe\xff\u0100\u0101]+?\u4e01/iu, /^(?:[^ !\xfe\xff\u0100\u0101]|x)+$/iu],
+  [/^[ -\/k\u017f]/, /[ -\/k\u017f]*/g, /([ -\/k\u017f]{2})/g, /[ -\/k\u017f]+?\u4e01/, /^(?:[ -\/k\u017f]|x)+$/],
+  [/^[ -\/k\u017f]/i, /[ -\/k\u017f]*/gi, /([ -\/k\u017f]{2})/gi, /[ -\/k\u017f]+?\u4e01/i, /^(?:[ -\/k\u017f]|x)+$/i],
+  [/^[ -\/k\u017f]/u, /[ -\/k\u017f]*/gu, /([ -\/k\u017f]{2})/gu, /[ -\/k\u017f]+?\u4e01/u, /^(?:[ -\/k\u017f]|x)+$/u],
+  [/^[ -\/k\u017f]/iu, /[ -\/k\u017f]*/giu, /([ -\/k\u017f]{2})/giu, /[ -\/k\u017f]+?\u4e01/iu, /^(?:[ -\/k\u017f]|x)+$/iu],
+  [/^[a-z\u212a]/, /[a-z\u212a]*/g, /([a-z\u212a]{2})/g, /[a-z\u212a]+?\u4e01/, /^(?:[a-z\u212a]|x)+$/],
+  [/^[a-z\u212a]/i, /[a-z\u212a]*/gi, /([a-z\u212a]{2})/gi, /[a-z\u212a]+?\u4e01/i, /^(?:[a-z\u212a]|x)+$/i],
+  [/^[a-z\u212a]/u, /[a-z\u212a]*/gu, /([a-z\u212a]{2})/gu, /[a-z\u212a]+?\u4e01/u, /^(?:[a-z\u212a]|x)+$/u],
+  [/^[a-z\u212a]/iu, /[a-z\u212a]*/giu, /([a-z\u212a]{2})/giu, /[a-z\u212a]+?\u4e01/iu, /^(?:[a-z\u212a]|x)+$/iu],
+  [/^[\S ]/, /[\S ]*/g, /([\S ]{2})/g, /[\S ]+?\u4e01/, /^(?:[\S ]|x)+$/],
+  [/^[\S ]/i, /[\S ]*/gi, /([\S ]{2})/gi, /[\S ]+?\u4e01/i, /^(?:[\S ]|x)+$/i],
+  [/^[\S ]/u, /[\S ]*/gu, /([\S ]{2})/gu, /[\S ]+?\u4e01/u, /^(?:[\S ]|x)+$/u],
+  [/^[\S ]/iu, /[\S ]*/giu, /([\S ]{2})/giu, /[\S ]+?\u4e01/iu, /^(?:[\S ]|x)+$/iu],
+  [/^[\W_a]/, /[\W_a]*/g, /([\W_a]{2})/g, /[\W_a]+?\u4e01/, /^(?:[\W_a]|x)+$/],
+  [/^[\W_a]/i, /[\W_a]*/gi, /([\W_a]{2})/gi, /[\W_a]+?\u4e01/i, /^(?:[\W_a]|x)+$/i],
+  [/^[\W_a]/u, /[\W_a]*/gu, /([\W_a]{2})/gu, /[\W_a]+?\u4e01/u, /^(?:[\W_a]|x)+$/u],
+  [/^[\W_a]/iu, /[\W_a]*/giu, /([\W_a]{2})/giu, /[\W_a]+?\u4e01/iu, /^(?:[\W_a]|x)+$/iu],
+  [/^[\D5]/, /[\D5]*/g, /([\D5]{2})/g, /[\D5]+?\u4e01/, /^(?:[\D5]|x)+$/],
+  [/^[\D5]/i, /[\D5]*/gi, /([\D5]{2})/gi, /[\D5]+?\u4e01/i, /^(?:[\D5]|x)+$/i],
+  [/^[\D5]/u, /[\D5]*/gu, /([\D5]{2})/gu, /[\D5]+?\u4e01/u, /^(?:[\D5]|x)+$/u],
+  [/^[\D5]/iu, /[\D5]*/giu, /([\D5]{2})/giu, /[\D5]+?\u4e01/iu, /^(?:[\D5]|x)+$/iu],
+  [/^[^\S ]/, /[^\S ]*/g, /([^\S ]{2})/g, /[^\S ]+?\u4e01/, /^(?:[^\S ]|x)+$/],
+  [/^[^\S ]/i, /[^\S ]*/gi, /([^\S ]{2})/gi, /[^\S ]+?\u4e01/i, /^(?:[^\S ]|x)+$/i],
+  [/^[^\S ]/u, /[^\S ]*/gu, /([^\S ]{2})/gu, /[^\S ]+?\u4e01/u, /^(?:[^\S ]|x)+$/u],
+  [/^[^\S ]/iu, /[^\S ]*/giu, /([^\S ]{2})/giu, /[^\S ]+?\u4e01/iu, /^(?:[^\S ]|x)+$/iu],
+  [/^[^\D5]/, /[^\D5]*/g, /([^\D5]{2})/g, /[^\D5]+?\u4e01/, /^(?:[^\D5]|x)+$/],
+  [/^[^\D5]/i, /[^\D5]*/gi, /([^\D5]{2})/gi, /[^\D5]+?\u4e01/i, /^(?:[^\D5]|x)+$/i],
+  [/^[^\D5]/u, /[^\D5]*/gu, /([^\D5]{2})/gu, /[^\D5]+?\u4e01/u, /^(?:[^\D5]|x)+$/u],
+  [/^[^\D5]/iu, /[^\D5]*/giu, /([^\D5]{2})/giu, /[^\D5]+?\u4e01/iu, /^(?:[^\D5]|x)+$/iu],
+  [/^[\s\S]/, /[\s\S]*/g, /([\s\S]{2})/g, /[\s\S]+?\u4e01/, /^(?:[\s\S]|x)+$/],
+  [/^[\s\S]/i, /[\s\S]*/gi, /([\s\S]{2})/gi, /[\s\S]+?\u4e01/i, /^(?:[\s\S]|x)+$/i],
+  [/^[\s\S]/u, /[\s\S]*/gu, /([\s\S]{2})/gu, /[\s\S]+?\u4e01/u, /^(?:[\s\S]|x)+$/u],
+  [/^[\s\S]/iu, /[\s\S]*/giu, /([\s\S]{2})/giu, /[\s\S]+?\u4e01/iu, /^(?:[\s\S]|x)+$/iu],
+  [/^[!z\ufffe\uffff]/, /[!z\ufffe\uffff]*/g, /([!z\ufffe\uffff]{2})/g, /[!z\ufffe\uffff]+?\u4e01/, /^(?:[!z\ufffe\uffff]|x)+$/],
+  [/^[!z\ufffe\uffff]/i, /[!z\ufffe\uffff]*/gi, /([!z\ufffe\uffff]{2})/gi, /[!z\ufffe\uffff]+?\u4e01/i, /^(?:[!z\ufffe\uffff]|x)+$/i],
+  [/^[!z\ufffe\uffff]/u, /[!z\ufffe\uffff]*/gu, /([!z\ufffe\uffff]{2})/gu, /[!z\ufffe\uffff]+?\u4e01/u, /^(?:[!z\ufffe\uffff]|x)+$/u],
+  [/^[!z\ufffe\uffff]/iu, /[!z\ufffe\uffff]*/giu, /([!z\ufffe\uffff]{2})/giu, /[!z\ufffe\uffff]+?\u4e01/iu, /^(?:[!z\ufffe\uffff]|x)+$/iu],
+  [/^[^!z\ufffe\uffff]/, /[^!z\ufffe\uffff]*/g, /([^!z\ufffe\uffff]{2})/g, /[^!z\ufffe\uffff]+?\u4e01/, /^(?:[^!z\ufffe\uffff]|x)+$/],
+  [/^[^!z\ufffe\uffff]/i, /[^!z\ufffe\uffff]*/gi, /([^!z\ufffe\uffff]{2})/gi, /[^!z\ufffe\uffff]+?\u4e01/i, /^(?:[^!z\ufffe\uffff]|x)+$/i],
+  [/^[^!z\ufffe\uffff]/u, /[^!z\ufffe\uffff]*/gu, /([^!z\ufffe\uffff]{2})/gu, /[^!z\ufffe\uffff]+?\u4e01/u, /^(?:[^!z\ufffe\uffff]|x)+$/u],
+  [/^[^!z\ufffe\uffff]/iu, /[^!z\ufffe\uffff]*/giu, /([^!z\ufffe\uffff]{2})/giu, /[^!z\ufffe\uffff]+?\u4e01/iu, /^(?:[^!z\ufffe\uffff]|x)+$/iu],
+  [/^[!z\ud83d\ude00]/, /[!z\ud83d\ude00]*/g, /([!z\ud83d\ude00]{2})/g, /[!z\ud83d\ude00]+?\u4e01/, /^(?:[!z\ud83d\ude00]|x)+$/],
+  [/^[!z\ud83d\ude00]/i, /[!z\ud83d\ude00]*/gi, /([!z\ud83d\ude00]{2})/gi, /[!z\ud83d\ude00]+?\u4e01/i, /^(?:[!z\ud83d\ude00]|x)+$/i],
+  [/^\s/, /\s*/g, /(\s{2})/g, /\s+?\u4e01/, /^(?:\s|x)+$/],
+  [/^\s/i, /\s*/gi, /(\s{2})/gi, /\s+?\u4e01/i, /^(?:\s|x)+$/i],
+  [/^\s/u, /\s*/gu, /(\s{2})/gu, /\s+?\u4e01/u, /^(?:\s|x)+$/u],
+  [/^\s/iu, /\s*/giu, /(\s{2})/giu, /\s+?\u4e01/iu, /^(?:\s|x)+$/iu],
+  [/^\s/v, /\s*/gv, /(\s{2})/gv, /\s+?\u4e01/v, /^(?:\s|x)+$/v],
+  [/^\s/s, /\s*/gs, /(\s{2})/gs, /\s+?\u4e01/s, /^(?:\s|x)+$/s],
+  [/^\s/su, /\s*/gsu, /(\s{2})/gsu, /\s+?\u4e01/su, /^(?:\s|x)+$/su],
+  [/^\S/, /\S*/g, /(\S{2})/g, /\S+?\u4e01/, /^(?:\S|x)+$/],
+  [/^\S/i, /\S*/gi, /(\S{2})/gi, /\S+?\u4e01/i, /^(?:\S|x)+$/i],
+  [/^\S/u, /\S*/gu, /(\S{2})/gu, /\S+?\u4e01/u, /^(?:\S|x)+$/u],
+  [/^\S/iu, /\S*/giu, /(\S{2})/giu, /\S+?\u4e01/iu, /^(?:\S|x)+$/iu],
+  [/^\S/v, /\S*/gv, /(\S{2})/gv, /\S+?\u4e01/v, /^(?:\S|x)+$/v],
+  [/^\S/s, /\S*/gs, /(\S{2})/gs, /\S+?\u4e01/s, /^(?:\S|x)+$/s],
+  [/^\S/su, /\S*/gsu, /(\S{2})/gsu, /\S+?\u4e01/su, /^(?:\S|x)+$/su],
+  [/^\w/, /\w*/g, /(\w{2})/g, /\w+?\u4e01/, /^(?:\w|x)+$/],
+  [/^\w/i, /\w*/gi, /(\w{2})/gi, /\w+?\u4e01/i, /^(?:\w|x)+$/i],
+  [/^\w/u, /\w*/gu, /(\w{2})/gu, /\w+?\u4e01/u, /^(?:\w|x)+$/u],
+  [/^\w/iu, /\w*/giu, /(\w{2})/giu, /\w+?\u4e01/iu, /^(?:\w|x)+$/iu],
+  [/^\w/v, /\w*/gv, /(\w{2})/gv, /\w+?\u4e01/v, /^(?:\w|x)+$/v],
+  [/^\w/s, /\w*/gs, /(\w{2})/gs, /\w+?\u4e01/s, /^(?:\w|x)+$/s],
+  [/^\w/su, /\w*/gsu, /(\w{2})/gsu, /\w+?\u4e01/su, /^(?:\w|x)+$/su],
+  [/^\W/, /\W*/g, /(\W{2})/g, /\W+?\u4e01/, /^(?:\W|x)+$/],
+  [/^\W/i, /\W*/gi, /(\W{2})/gi, /\W+?\u4e01/i, /^(?:\W|x)+$/i],
+  [/^\W/u, /\W*/gu, /(\W{2})/gu, /\W+?\u4e01/u, /^(?:\W|x)+$/u],
+  [/^\W/iu, /\W*/giu, /(\W{2})/giu, /\W+?\u4e01/iu, /^(?:\W|x)+$/iu],
+  [/^\W/v, /\W*/gv, /(\W{2})/gv, /\W+?\u4e01/v, /^(?:\W|x)+$/v],
+  [/^\W/s, /\W*/gs, /(\W{2})/gs, /\W+?\u4e01/s, /^(?:\W|x)+$/s],
+  [/^\W/su, /\W*/gsu, /(\W{2})/gsu, /\W+?\u4e01/su, /^(?:\W|x)+$/su],
+  [/^\d/, /\d*/g, /(\d{2})/g, /\d+?\u4e01/, /^(?:\d|x)+$/],
+  [/^\d/i, /\d*/gi, /(\d{2})/gi, /\d+?\u4e01/i, /^(?:\d|x)+$/i],
+  [/^\d/u, /\d*/gu, /(\d{2})/gu, /\d+?\u4e01/u, /^(?:\d|x)+$/u],
+  [/^\d/iu, /\d*/giu, /(\d{2})/giu, /\d+?\u4e01/iu, /^(?:\d|x)+$/iu],
+  [/^\d/v, /\d*/gv, /(\d{2})/gv, /\d+?\u4e01/v, /^(?:\d|x)+$/v],
+  [/^\d/s, /\d*/gs, /(\d{2})/gs, /\d+?\u4e01/s, /^(?:\d|x)+$/s],
+  [/^\d/su, /\d*/gsu, /(\d{2})/gsu, /\d+?\u4e01/su, /^(?:\d|x)+$/su],
+  [/^\D/, /\D*/g, /(\D{2})/g, /\D+?\u4e01/, /^(?:\D|x)+$/],
+  [/^\D/i, /\D*/gi, /(\D{2})/gi, /\D+?\u4e01/i, /^(?:\D|x)+$/i],
+  [/^\D/u, /\D*/gu, /(\D{2})/gu, /\D+?\u4e01/u, /^(?:\D|x)+$/u],
+  [/^\D/iu, /\D*/giu, /(\D{2})/giu, /\D+?\u4e01/iu, /^(?:\D|x)+$/iu],
+  [/^\D/v, /\D*/gv, /(\D{2})/gv, /\D+?\u4e01/v, /^(?:\D|x)+$/v],
+  [/^\D/s, /\D*/gs, /(\D{2})/gs, /\D+?\u4e01/s, /^(?:\D|x)+$/s],
+  [/^\D/su, /\D*/gsu, /(\D{2})/gsu, /\D+?\u4e01/su, /^(?:\D|x)+$/su],
+  [/^./, /.*/g, /(.{2})/g, /.+?\u4e01/, /^(?:.|x)+$/],
+  [/^./i, /.*/gi, /(.{2})/gi, /.+?\u4e01/i, /^(?:.|x)+$/i],
+  [/^./u, /.*/gu, /(.{2})/gu, /.+?\u4e01/u, /^(?:.|x)+$/u],
+  [/^./iu, /.*/giu, /(.{2})/giu, /.+?\u4e01/iu, /^(?:.|x)+$/iu],
+  [/^./v, /.*/gv, /(.{2})/gv, /.+?\u4e01/v, /^(?:.|x)+$/v],
+  [/^./s, /.*/gs, /(.{2})/gs, /.+?\u4e01/s, /^(?:.|x)+$/s],
+  [/^./su, /.*/gsu, /(.{2})/gsu, /.+?\u4e01/su, /^(?:.|x)+$/su],
+  [/^[^\s]/, /[^\s]*/g, /([^\s]{2})/g, /[^\s]+?\u4e01/, /^(?:[^\s]|x)+$/],
+  [/^[^\s]/i, /[^\s]*/gi, /([^\s]{2})/gi, /[^\s]+?\u4e01/i, /^(?:[^\s]|x)+$/i],
+  [/^[^\s]/u, /[^\s]*/gu, /([^\s]{2})/gu, /[^\s]+?\u4e01/u, /^(?:[^\s]|x)+$/u],
+  [/^[^\s]/iu, /[^\s]*/giu, /([^\s]{2})/giu, /[^\s]+?\u4e01/iu, /^(?:[^\s]|x)+$/iu],
+  [/^[^\s]/v, /[^\s]*/gv, /([^\s]{2})/gv, /[^\s]+?\u4e01/v, /^(?:[^\s]|x)+$/v],
+  [/^[^\s]/s, /[^\s]*/gs, /([^\s]{2})/gs, /[^\s]+?\u4e01/s, /^(?:[^\s]|x)+$/s],
+  [/^[^\s]/su, /[^\s]*/gsu, /([^\s]{2})/gsu, /[^\s]+?\u4e01/su, /^(?:[^\s]|x)+$/su],
+  [/^[^\w]/, /[^\w]*/g, /([^\w]{2})/g, /[^\w]+?\u4e01/, /^(?:[^\w]|x)+$/],
+  [/^[^\w]/i, /[^\w]*/gi, /([^\w]{2})/gi, /[^\w]+?\u4e01/i, /^(?:[^\w]|x)+$/i],
+  [/^[^\w]/u, /[^\w]*/gu, /([^\w]{2})/gu, /[^\w]+?\u4e01/u, /^(?:[^\w]|x)+$/u],
+  [/^[^\w]/iu, /[^\w]*/giu, /([^\w]{2})/giu, /[^\w]+?\u4e01/iu, /^(?:[^\w]|x)+$/iu],
+  [/^[^\w]/v, /[^\w]*/gv, /([^\w]{2})/gv, /[^\w]+?\u4e01/v, /^(?:[^\w]|x)+$/v],
+  [/^[^\w]/s, /[^\w]*/gs, /([^\w]{2})/gs, /[^\w]+?\u4e01/s, /^(?:[^\w]|x)+$/s],
+  [/^[^\w]/su, /[^\w]*/gsu, /([^\w]{2})/gsu, /[^\w]+?\u4e01/su, /^(?:[^\w]|x)+$/su],
+  [/^[\d\s]/, /[\d\s]*/g, /([\d\s]{2})/g, /[\d\s]+?\u4e01/, /^(?:[\d\s]|x)+$/],
+  [/^[\d\s]/i, /[\d\s]*/gi, /([\d\s]{2})/gi, /[\d\s]+?\u4e01/i, /^(?:[\d\s]|x)+$/i],
+  [/^[\d\s]/u, /[\d\s]*/gu, /([\d\s]{2})/gu, /[\d\s]+?\u4e01/u, /^(?:[\d\s]|x)+$/u],
+  [/^[\d\s]/iu, /[\d\s]*/giu, /([\d\s]{2})/giu, /[\d\s]+?\u4e01/iu, /^(?:[\d\s]|x)+$/iu],
+  [/^[\d\s]/v, /[\d\s]*/gv, /([\d\s]{2})/gv, /[\d\s]+?\u4e01/v, /^(?:[\d\s]|x)+$/v],
+  [/^[\d\s]/s, /[\d\s]*/gs, /([\d\s]{2})/gs, /[\d\s]+?\u4e01/s, /^(?:[\d\s]|x)+$/s],
+  [/^[\d\s]/su, /[\d\s]*/gsu, /([\d\s]{2})/gsu, /[\d\s]+?\u4e01/su, /^(?:[\d\s]|x)+$/su],
+  [/^[!z\u{1f600}-\u{1f64f}]/u, /[!z\u{1f600}-\u{1f64f}]*/gu, /([!z\u{1f600}-\u{1f64f}]{2})/gu, /[!z\u{1f600}-\u{1f64f}]+?\u4e01/u, /^(?:[!z\u{1f600}-\u{1f64f}]|x)+$/u],
+  [/^[!z\u{1f600}-\u{1f64f}]/iu, /[!z\u{1f600}-\u{1f64f}]*/giu, /([!z\u{1f600}-\u{1f64f}]{2})/giu, /[!z\u{1f600}-\u{1f64f}]+?\u4e01/iu, /^(?:[!z\u{1f600}-\u{1f64f}]|x)+$/iu],
+  [/^[!z\u{1f600}-\u{1f64f}]/v, /[!z\u{1f600}-\u{1f64f}]*/gv, /([!z\u{1f600}-\u{1f64f}]{2})/gv, /[!z\u{1f600}-\u{1f64f}]+?\u4e01/v, /^(?:[!z\u{1f600}-\u{1f64f}]|x)+$/v],
+  [/^[^!z\u{1f600}-\u{1f64f}]/u, /[^!z\u{1f600}-\u{1f64f}]*/gu, /([^!z\u{1f600}-\u{1f64f}]{2})/gu, /[^!z\u{1f600}-\u{1f64f}]+?\u4e01/u, /^(?:[^!z\u{1f600}-\u{1f64f}]|x)+$/u],
+  [/^[^!z\u{1f600}-\u{1f64f}]/iu, /[^!z\u{1f600}-\u{1f64f}]*/giu, /([^!z\u{1f600}-\u{1f64f}]{2})/giu, /[^!z\u{1f600}-\u{1f64f}]+?\u4e01/iu, /^(?:[^!z\u{1f600}-\u{1f64f}]|x)+$/iu],
+  [/^[^!z\u{1f600}-\u{1f64f}]/v, /[^!z\u{1f600}-\u{1f64f}]*/gv, /([^!z\u{1f600}-\u{1f64f}]{2})/gv, /[^!z\u{1f600}-\u{1f64f}]+?\u4e01/v, /^(?:[^!z\u{1f600}-\u{1f64f}]|x)+$/v],
+  [/^[\d\u{10000}]/u, /[\d\u{10000}]*/gu, /([\d\u{10000}]{2})/gu, /[\d\u{10000}]+?\u4e01/u, /^(?:[\d\u{10000}]|x)+$/u],
+  [/^[\d\u{10000}]/iu, /[\d\u{10000}]*/giu, /([\d\u{10000}]{2})/giu, /[\d\u{10000}]+?\u4e01/iu, /^(?:[\d\u{10000}]|x)+$/iu],
+  [/^[\d\u{10000}]/v, /[\d\u{10000}]*/gv, /([\d\u{10000}]{2})/gv, /[\d\u{10000}]+?\u4e01/v, /^(?:[\d\u{10000}]|x)+$/v],
+  [/^[^\d\u{10000}]/u, /[^\d\u{10000}]*/gu, /([^\d\u{10000}]{2})/gu, /[^\d\u{10000}]+?\u4e01/u, /^(?:[^\d\u{10000}]|x)+$/u],
+  [/^[^\d\u{10000}]/iu, /[^\d\u{10000}]*/giu, /([^\d\u{10000}]{2})/giu, /[^\d\u{10000}]+?\u4e01/iu, /^(?:[^\d\u{10000}]|x)+$/iu],
+  [/^[^\d\u{10000}]/v, /[^\d\u{10000}]*/gv, /([^\d\u{10000}]{2})/gv, /[^\d\u{10000}]+?\u4e01/v, /^(?:[^\d\u{10000}]|x)+$/v],
+  [/^[\s\u{ffff}\u{10000}\u{10ffff}]/u, /[\s\u{ffff}\u{10000}\u{10ffff}]*/gu, /([\s\u{ffff}\u{10000}\u{10ffff}]{2})/gu, /[\s\u{ffff}\u{10000}\u{10ffff}]+?\u4e01/u, /^(?:[\s\u{ffff}\u{10000}\u{10ffff}]|x)+$/u],
+  [/^[\s\u{ffff}\u{10000}\u{10ffff}]/iu, /[\s\u{ffff}\u{10000}\u{10ffff}]*/giu, /([\s\u{ffff}\u{10000}\u{10ffff}]{2})/giu, /[\s\u{ffff}\u{10000}\u{10ffff}]+?\u4e01/iu, /^(?:[\s\u{ffff}\u{10000}\u{10ffff}]|x)+$/iu],
+  [/^[\s\u{ffff}\u{10000}\u{10ffff}]/v, /[\s\u{ffff}\u{10000}\u{10ffff}]*/gv, /([\s\u{ffff}\u{10000}\u{10ffff}]{2})/gv, /[\s\u{ffff}\u{10000}\u{10ffff}]+?\u4e01/v, /^(?:[\s\u{ffff}\u{10000}\u{10ffff}]|x)+$/v],
+  [/^[\w\u{1d400}-\u{1d419}]/u, /[\w\u{1d400}-\u{1d419}]*/gu, /([\w\u{1d400}-\u{1d419}]{2})/gu, /[\w\u{1d400}-\u{1d419}]+?\u4e01/u, /^(?:[\w\u{1d400}-\u{1d419}]|x)+$/u],
+  [/^[\w\u{1d400}-\u{1d419}]/iu, /[\w\u{1d400}-\u{1d419}]*/giu, /([\w\u{1d400}-\u{1d419}]{2})/giu, /[\w\u{1d400}-\u{1d419}]+?\u4e01/iu, /^(?:[\w\u{1d400}-\u{1d419}]|x)+$/iu],
+  [/^[\w\u{1d400}-\u{1d419}]/v, /[\w\u{1d400}-\u{1d419}]*/gv, /([\w\u{1d400}-\u{1d419}]{2})/gv, /[\w\u{1d400}-\u{1d419}]+?\u4e01/v, /^(?:[\w\u{1d400}-\u{1d419}]|x)+$/v],
+  [/^\p{L}/u, /\p{L}*/gu, /(\p{L}{2})/gu, /\p{L}+?\u4e01/u, /^(?:\p{L}|x)+$/u],
+  [/^\p{L}/iu, /\p{L}*/giu, /(\p{L}{2})/giu, /\p{L}+?\u4e01/iu, /^(?:\p{L}|x)+$/iu],
+  [/^\p{L}/v, /\p{L}*/gv, /(\p{L}{2})/gv, /\p{L}+?\u4e01/v, /^(?:\p{L}|x)+$/v],
+  [/^[\p{L}\d_]/u, /[\p{L}\d_]*/gu, /([\p{L}\d_]{2})/gu, /[\p{L}\d_]+?\u4e01/u, /^(?:[\p{L}\d_]|x)+$/u],
+  [/^[\p{L}\d_]/iu, /[\p{L}\d_]*/giu, /([\p{L}\d_]{2})/giu, /[\p{L}\d_]+?\u4e01/iu, /^(?:[\p{L}\d_]|x)+$/iu],
+  [/^[\p{L}\d_]/v, /[\p{L}\d_]*/gv, /([\p{L}\d_]{2})/gv, /[\p{L}\d_]+?\u4e01/v, /^(?:[\p{L}\d_]|x)+$/v],
+  [/^[^\p{L}\d_ ]/u, /[^\p{L}\d_ ]*/gu, /([^\p{L}\d_ ]{2})/gu, /[^\p{L}\d_ ]+?\u4e01/u, /^(?:[^\p{L}\d_ ]|x)+$/u],
+  [/^[^\p{L}\d_ ]/iu, /[^\p{L}\d_ ]*/giu, /([^\p{L}\d_ ]{2})/giu, /[^\p{L}\d_ ]+?\u4e01/iu, /^(?:[^\p{L}\d_ ]|x)+$/iu],
+  [/^[^\p{L}\d_ ]/v, /[^\p{L}\d_ ]*/gv, /([^\p{L}\d_ ]{2})/gv, /[^\p{L}\d_ ]+?\u4e01/v, /^(?:[^\p{L}\d_ ]|x)+$/v]
+];
+////= sum
+for (let r = 0;r < rows.length; r++) {
+  const [at, star, two, lazy, all] = rows[r];
+  let bits = "", narrow = "", whole = "";
+  for (const u of units) {
+    const c = F(u);
+    bits += at.test(c + wide) ? "1" : "0";
+    if (u < 256)
+      narrow += at.test(c) ? "1" : "0";
+    whole += all.test(c + c + "x" + c) ? "1" : "0";
+  }
+  const m = lazy.exec(mixed);
+  console.log(r + " /" + at.flags + " " + sum(at.source) + " " + bits + " " + narrow + " " + whole + " " + sum(mixed.replace(star, "<$&>")) + " " + sum(pairs.replace(two, "[$1]")) + " " + (m ? m.index + ":" + m[0].length : "-"));
+}
+console.log(rows.length + " rows");
+//// regexp-named-backreference-after-lookahead.ts
+// A lookahead that captures under a name, followed by a reference to that name: the way atomic groups and possessive quantifiers are written in JavaScript. Beside it, named references that must really compare.
+export { };
+////= escape
+const subjects: string[] = ["", "xy", "xay", "xaay", "xaaay", "xaaa", "xaab", "xaaby", "xaaaa", "XAAY", "xAay", "xaaY", "xabc", "xabay", "xbaby", "xaayx", "xaayy", "xaaaay", "xayaay", "xaayaa", "xab", "xaabb", "\"abc\"", "'a\"", "\"a'b\"", "  word", "word", " 9", "x\u03b1\u03b2;", "x\u03b1\u03b2\u03b3", "x\ud835\udc00\ud835\udc00y", "x\ud835\udc00y", "x\ud835y", "yz", "ybbz", "xaaz", "aa", "bb", "ab", "aaxaa", "axa", "foo bar", "foo  bar baz", "xaaya", "xaaa\u0100", "zzxaay"];
+////= show-3	"\u4e2d"
+show(/x(?=(?<n>a+))\k<n>y/);
+show(/x(?:(?=(?<n>a+))\k<n>)y/);
+show(/x(?:(?=(?<n>a+))\k<n>)a/);
+show(/x(?:(?=(?<n>a*))\k<n>)y/v);
+show(/x(?:(?=(?<n>\p{L}+))\k<n>);/v);
+show(/x(?:(?=(?<n>\p{L}+))\k<n>)\p{L}/v);
+show(/(?:(?=(?<s>\s*))\k<s>)(?:(?=(?<w>\p{L}+))\k<w>)\b/v);
+show(/x(?:(?=(?<n>(?:a|b)+))\k<n>)y/v);
+show(/x(?:(?=(?<n>(?:a|ab)))\k<n>)c/);
+show(/x(?:(?=(?<n>a+))\k<n>)+y/v);
+show(/x(?:(?=(?<n>a+))\k<n>)?y/v);
+show(/x(?:(?=(?<n>a+))\k<n>)*?y/v);
+show(/x(?:(?=(?<n>a+))\k<n>)y/iv);
+show(/x(?:(?=(?<n>[a-z]+))\k<n>)Y/i);
+show(/x(?:(?=(?<n>\p{Lu}+))\k<n>)y/iu);
+show(/(?<q>x)(?:(?=(?<n>a+))\k<n>)y\k<q>/v);
+show(/x(?<n>a+)\k<n>y/v);
+show(/x(?<n>a+)y\k<n>/);
+show(/(?<q>["\x27]).*?\k<q>/);
+show(/(?<q>["\x27])(?:(?=(?<n>[^"\x27]*))\k<n>)\k<q>/);
+show(/x(?=(?<n>a+))b?\k<n>y/);
+show(/x(?=(?<n>a+)b)\k<n>b/);
+show(/x(?=(?<n>a+))\k<n>\k<n>/);
+show(/x(?!(?<n>a+)b)\k<n>a/);
+show(/x(?=(?<n>a+))(?:\k<n>)y/);
+show(/x(?=(?<n>a+))\k<n>{2}/);
+show(/x(?=(?<n>a+))\k<n>?y/);
+show(/\k<n>x(?=(?<n>a+))\k<n>y/);
+show(/(?:x(?=(?<n>a+))\k<n>|y(?=(?<n>b+))\k<n>)z/v);
+show(/(?:(?<n>a)|(?<n>b))\k<n>/v);
+show(/(?<=(?<n>a+))x\k<n>/);
+show(/x(?:(?=(?<n>(?<m>a)+))\k<n>)\k<m>/);
+show(/x(?:(?=(?<n>\u{1D400}+))\k<n>)y/v);
+show(/x(?:(?=(?<n>.+?))\k<n>)y/sv);
+show(/^(?:(?=(?<n>\w+))\k<n>)(?:(?=(?<m>\s+))\k<m>)(?:(?=(?<o>\w+))\k<o>)$/v);
+show(/x(?:(?=(?<n>a+))\k<n>)y/g);
+show(/x(?:(?=(?<n>a+))\k<n>)y/y);
+//// regexp-one-or-two-char-search.ts
+// Expressions whose match can only begin at one or two particular characters, searched for in subjects long enough for a search sixteen characters at a time: the character at every position of
+// subjects of many lengths, with characters that differ from it in one bit around it.
+export { };
+function hash(h: number, n: number): number { return (Math.imul(h, 31) + n) | 0; }
+const fillers: string[] = ["a", "y", "X", "\xf8", "i", "\x69", "\x79", "\x78\x78", " "];
+const needles: string[] = ["x", "q", "xy", "X", "\xe9", "\xe9t", "\xff", "\x00", "\x7f", "ax", "</x>", "\"", "\n", "\r\n", "5", "xx", "x" + "\n" + "y"];
+function run(r: RegExp): void {
+    let h = 0, found = 0;
+    for (const length of [0, 1, 2, 14, 15, 16, 17, 18, 30, 31, 32, 33, 34, 47, 48, 49, 63, 64, 65, 80]) {
+        for (const filler of fillers) {
+            const plain = filler.repeat(length).slice(0, length);
+            for (const needle of needles) {
+                for (let at = 0; at <= length; at += length > 34 ? 3 : 1) {
+                    for (const tail of ["", "\u4e2d"]) {
+                        const subject = plain.slice(0, at) + needle + plain.slice(at) + tail;
+                        r.lastIndex = 0;
+                        const m = subject.match(r);
+                        if (m === null) { h = hash(h, -1); continue; }
+                        ++found;
+                        h = hash(h, m.index === undefined ? m.length : m.index * 4 + m[0].length);
+                    }
+                }
+            }
+        }
+    }
+    console.log(String(r), found, h);
+}
+run(/x/);
+run(/x/g);
+run(/xy/);
+run(/x/i);
+run(/xy/gi);
+run(/[xq]/g);
+run(/[xq]y/);
+run(/x|q/g);
+run(/x+y/);
+run(/x(?=y)/g);
+run(/(x)(y)?/);
+run(/x$/);
+run(/x\b/g);
+run(/\xe9/g);
+run(/\xe9t/);
+run(/[\xe9i]/g);
+run(/\xff/g);
+run(/\x00/g);
+run(/\x7f|\xff/g);
+run(/x.y/s);
+run(/.x/g);
+run(/..x/);
+run(/ax/g);
+run(/[a-c]x/g);
+run(/x{2}/g);
+run(/x*?y/);
+run(/<\/?x>/g);
+run(/"/g);
+run(/\n/g);
+run(/\r?\n/g);
+run(/x/y);
+run(/x/u);
+run(/[xq]/giu);
+run(/[xqz]/g);
+run(/\d/g);
+//// regexp-rope-subjects.ts
+// A subject that has just been put together from parts (a rope) is matched like any other: test, exec, match and replace give what plain Bun gives, and the parts are joined once.
+const count: (name: string) => number = (globalThis as any).aotOperationCount ?? (() => 0);
+const names = ["operationAOTRegExpTest", "operationAOTRegExpTestBoxed", "operationAOTRegExpExec", "operationAOTStringMatchRegExp", "operationAOTStringReplaceRegExpString"];
+const entries = () => names.reduce((sum, name) => sum + count(name), 0);
+function show(match: RegExpMatchArray | RegExpExecArray | null) {
+  return match ? `${JSON.stringify(match)}@${match.index} of ${JSON.stringify(match.input)} ${match.length}` : "null";
+}
+function legacy() {
+  return [RegExp.lastMatch, RegExp.leftContext, RegExp.rightContext, RegExp.$1].map(part => JSON.stringify(part)).join();
+}
+const heads = ["text/html; ", "W/\"", "", "a", "caf\xe9 ", "\u4e2d\u6587 ", "key-" + "x".repeat(40) + " "];
+const tails = ["charset=utf-8", "c-abc\"", "", "b", "\xe9t\xe9 12", "\u6587 7", "bad\x01value", "y".repeat(50) + " = 345"];
+const patterns = [/[^\t\x20-\x7e\x80-\xff]/, /(\w+)=(\S+)/, /\d+/, /["<>&]/, /\s(\S)/, /^\S+$/, /\xe9+/, /[\u4e00-\u4eff]\s/, /(?<key>[a-z]+)-/, /z{3}/];
+for (const pattern of patterns) {
+  for (const head of heads) {
+    for (const tail of tails) {
+      console.log(String(pattern), JSON.stringify((head + tail).slice(0, 30)), pattern.test(head + tail), legacy(), show(pattern.exec(head + tail)), show((head + tail).match(pattern)), JSON.stringify((head + tail).replace(pattern, "<$&>").slice(0, 40)));
+    }
+  }
+}
+for (const pattern of [/\d+/g, /[a-z]+/y, /\s+/g, /\xe9/g]) {
+  for (const head of heads) {
+    const subject = head + "12 ab " + head + " 3";
+    const found: string[] = [];
+    pattern.lastIndex = 0;
+    for (let match = pattern.exec(subject); match && found.length < 9; match = pattern.exec(subject)) found.push(`${match[0]}@${match.index}:${pattern.lastIndex}`);
+    pattern.lastIndex = 2;
+    console.log(String(pattern), JSON.stringify(head.slice(0, 12)), found.join(), pattern.test(head + "12 ab " + tails[0]), pattern.lastIndex, JSON.stringify((head + "1 \xe9 2" + head).replace(pattern, "_").slice(0, 40)));
+  }
+}
+function nested(depth: number, part: string): string {
+  return depth ? nested(depth - 1, part) + part + depth : part;
+}
+console.log(/9x8/.test(nested(12, "x")), show(/(\d)x(\d\d)/.exec(nested(12, "x"))), nested(30, "\u4e2d").search(/29\u4e2d30/), (nested(5, "ab").slice(2) + nested(3, "cd").slice(1, 5)).match(/b\d[a-d]+/)![0]);
+
+const invalid = /[^\t\x20-\x7e\x80-\xff]/;
+const unsafe = /["'&<>]/;
+const values = ["text/html", "keep-alive", "12", "Express", "gzip, deflate", "no-cache"];
+let total = 0;
+const before = entries();
+for (let turn = 0; turn < 6000; turn++) {
+  const value = values[turn % values.length] + "; q=" + (turn % 10);
+  if (invalid.test(value)) total += 1;
+  if (invalid.exec(values[turn % values.length] + "-" + turn) !== null) total += 10;
+  if (unsafe.test("<" + value)) total += 100;
+  if (("a" + value).replace(unsafe, "") === "a" + value) total += 1000;
+  if (("b" + value).match(invalid) === null) total += 10000;
+}
+console.log(total, entries() - before < 600 ? "few entries" : "MANY ENTRIES");
+//// regexp-run-time-pattern-frame-limit.ts
+// Patterns built at run time whose matches need more frames than the flat program may allocate, so the bytecode interpreter finishes the match. The .json lowers the limit to 4096 frames.
+// What native code hands back is unknown to the compiler. A text that it can predict gets its code in the image and never comes here: `Date.now() < 0 ? "x" : ""` and `process.argv[2] ?? ""` are predicted.
+const tail: string = new CustomEvent("tail", { detail: "" }).detail;
+const maxFrames = 65536 / 16;
+
+const groups: [string, string][] = [
+  ["x(?:ab)*", "ab"],
+  ["x(?:ab)+", "ab"],
+  ["x(?:ab|cd)*", "cd"],
+  ["x(?:[ab]c)*", "bc"],
+  ["x(?:Жb)*", "Жb"],
+];
+
+for (const [text, iteration] of groups) {
+  const expression = new RegExp(text + tail);
+  for (const iterations of [1, maxFrames - 1, maxFrames, 3 * maxFrames, 2]) {
+    for (const prefix of ["", "yy", "Ж"]) {
+      const match = expression.exec(prefix + "x" + iteration.repeat(iterations) + "a");
+      console.log(`${expression} ${iterations} ${prefix.length}: ${match?.index} ${match?.[0].length}`);
+    }
+  }
+}
+
+export {};

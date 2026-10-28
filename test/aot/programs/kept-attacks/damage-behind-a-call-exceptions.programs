@@ -1,0 +1,796 @@
+////: callee-10
+function callee(round: number): number {
+  try {
+    risky();
+  } finally {
+    return round & 3;
+  }
+}
+////: callee-21
+function callee(round: number): number {
+  risky();
+  return round & 3;
+}
+////: callee-3
+function callee(round: number): number {
+  try {
+    return fails(round) + 1;
+  } catch {
+    strike();
+    return -1;
+  }
+}
+////: callee-4
+function callee(round: number): number {
+  try {
+    risky();
+  } catch {
+    return -1;
+  }
+  return round & 3;
+}
+////: callee-9
+function callee(round: number): number {
+  try {
+    return round & 3;
+  } finally {
+    strike();
+  }
+}
+////: fails
+function fails(round: number): number {
+  if (round % 50 < 2 || round === 299) throw new Error("now and then");
+  return round & 3;
+}
+////: holder-18
+function holder(p: Square, round: number): string {
+  const before = p.area() + p.kind();
+  let got: number;
+  try {
+    got = callee(round);
+  } catch {
+    got = -1;
+  }
+  const after = p.area() + "," + p.kind() + "," + p.side + "," + (p instanceof Square);
+  return before + " " + got + " " + after;
+}
+////: holder-34
+function holder(p: «1», round: number): string {
+  const before = «2» + p.«3»;
+  let got: number;
+  try {
+    got = callee(round);
+  } catch {
+    got = -1;
+  }
+  const after = «4»;
+  return before + " " + got + " " + after;
+}
+////: lines-29
+function «1»(p: Point): number {
+  if (strikes) {
+    (p as any).x = «2»;
+    throw new Error(«3»);
+  }
+  return 1;
+}
+////: risky
+function risky(): void {
+  if (strike()) throw new Error("behind the damage");
+}
+//// damage-behind-a-call-exceptions/a-callee-that-returns-into-a-try-block-freezes-the-object.ts
+// A typed caller reads an object, makes a call and reads it again. The call stands in a try block and nothing is thrown, so the catch block must not run. The callee freezes the object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty
+////= strike
+
+////= callee-2
+
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  let got: number;
+  try {
+    got = callee(round);
+  } catch {
+    got = -1;
+  }
+  let stored = "stored";
+  try {
+    p.x = 5;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  const after = stored + "," + p.x + "," + p.y + "," + Object.isFrozen(p);
+  return before + " " + got + " " + after;
+}
+
+////= outer-12
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-callee-that-returns-into-a-try-block-stores-zero-into-a-boolean-field.ts
+// A typed caller reads an object, makes a call and reads it again. The call stands in a try block and nothing is thrown, so the catch block must not run. The callee stores 0 into a boolean field of the object.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Lamp
+
+let victim: Lamp | null = null;
+let spark: number = 0;
+////= hot-7
+////= strike-2
+
+////= callee-2
+
+////= holder-34	Lamp	(p.on ? "lit" : "dark")	watts	(p.on ? "lit" : "dark") + "," + (p.on === true) + "," + (p.on === false) + "," + typeof p.on + "," + p.watts
+
+////= outer-16
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-callee-that-returns-into-a-try-block-takes-the-object-out-of-its-class.ts
+// A typed caller reads an object, makes a call and reads it again. The call stands in a try block and nothing is thrown, so the catch block must not run. The callee gives the object the prototype of the base class.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+////= strike-14
+
+////= callee-2
+
+////= holder-18
+
+////= outer-8
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-catch-block-hides-push-behind-an-own-property.ts
+// A typed caller reads an array, makes a call and reads it again. The catch block of the callee gives the array an own property named push.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+
+let victim: number[] | null = null;
+let spark: number = 0;
+////= hot-8
+////= strike-2
+
+////= fails
+////= callee-3
+
+////= holder-16
+
+////= outer-32
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-catch-block-replaces-a-method-on-the-prototype.ts
+// A typed caller reads an object, makes a call and reads it again. The catch block of the callee replaces a method on the prototype object of the class.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-3
+////= strike
+
+////= fails
+////= callee-3
+
+////= holder-43
+
+let digest = 0;
+////= for-3
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-catch-block-stores-a-string-into-a-number-field-of-a-literal.ts
+// A typed caller reads an object, makes a call and reads it again. The catch block of the callee stores a string into a number field of the object, which an object literal has made.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+////= strike-8
+
+////= fails
+////= callee-3
+
+////= holder-21
+
+////= outer-33
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-finally-block-freezes-the-object.ts
+// A typed caller reads an object, makes a call and reads it again. The finally block of the callee, behind its return statement, freezes the object.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot
+////= strike-2
+
+////= callee-9
+
+////= holder-10
+
+////= outer-13
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-finally-block-puts-the-class-under-another-base.ts
+// A typed caller reads an object, makes a call and reads it again. The finally block of the callee, behind its return statement, puts the prototype object of the class under another one.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+const otherBase = { kind: () => "another base", area: () => -4 };
+
+let victim: Square | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-12
+////= strike
+
+////= callee-9
+
+////= holder-43
+
+let digest = 0;
+////= for-5
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-finally-block-stores-zero-into-a-boolean-field.ts
+// A typed caller reads an object, makes a call and reads it again. The finally block of the callee, behind its return statement, stores 0 into a boolean field of the object.
+////= Lamp
+
+let victim: Lamp | null = null;
+////= strike-7
+
+////= callee-9
+
+////= holder-8
+
+////= outer-25
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-finally-block-that-swallows-what-was-thrown-deletes-an-element.ts
+// A typed caller reads an array, makes a call and reads it again. A function that then throws. A return statement in a finally block of the callee swallows what was thrown. That function deletes an element of the array.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+
+let victim: number[] | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-15
+////= strike
+
+////= risky
+////= callee-10
+
+////= holder-17
+
+////= outer-23
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-finally-block-that-swallows-what-was-thrown-seals-the-object.ts
+// A typed caller reads an object, makes a call and reads it again. A function that then throws. A return statement in a finally block of the callee swallows what was thrown. That function seals the object, which has an optional field that is not there yet.
+////= Card
+
+let victim: Card | null = null;
+////= strike-12
+
+////= risky
+////= callee-10
+
+////= holder-5
+
+////= outer-21
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-finally-block-that-swallows-what-was-thrown-stores-an-object-with-value-of-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. A function that then throws. A return statement in a finally block of the callee swallows what was thrown. That function stores an object with a valueOf method into a number field of the object.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Point
+
+let victim: Point | null = null;
+let spark: number = 0;
+////= hot-10
+////= strike-2
+
+////= risky
+////= callee-10
+
+////= holder-4
+
+////= outer-18
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-frame-in-between-catches-and-its-caller-trusts-the-return.ts
+// The plainest form of the trap: deep does the damage and throws, middle catches and returns a number as always, and holder, which saw a usual return, reads the object. Four kinds of damage, one after the other.
+class Square {
+  side: number;
+  tag: boolean;
+  constructor(side: number) {
+    this.side = side;
+    this.tag = true;
+  }
+  area(): number {
+    return this.side * this.side;
+  }
+}
+const area = Square.prototype.area;
+
+let mode = 0;
+function deep(s: Square): void {
+  if (mode === 0) return;
+  if (mode === 1) delete (s as any).side;
+  else if (mode === 2) (s as any).tag = "yes";
+  else if (mode === 3) Square.prototype.area = () => -1;
+  else if (mode === 4) Object.freeze(s);
+  throw new Error("thrown");
+}
+function middle(s: Square): number {
+  try {
+    deep(s);
+    return 1;
+  } catch {
+    return 2;
+  }
+}
+
+function holder(s: Square): string {
+  const before = s.side + "," + s.tag + "," + s.area();
+  const got = middle(s);
+  let stored = "stored";
+  const side = s.side, tag = s.tag === true, size = s.area();
+  try {
+    s.side = 3;
+  } catch (error) {
+    stored = (error as Error).name;
+  }
+  return before + " " + got + " " + side + "," + tag + "," + size + "," + stored + "," + s.side;
+}
+
+for (let round = 0; round < 500; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  if (mode === 5) mode = 0;
+  const line = holder(new Square(round));
+  Square.prototype.area = area;
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-exceptions/a-function-that-then-throws-to-the-callee-cuts-the-length-of-an-array.ts
+// A typed caller reads an array, makes a call and reads it again. A function that then throws. The callee catches and returns as if nothing had happened. That function cuts the length of the array.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+
+let victim: number[] | null = null;
+let spark: number = 0;
+////= hot-17
+////= strike-2
+
+////= risky
+////= callee-4
+
+////= holder-40
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-function-that-then-throws-to-the-callee-seals-the-object.ts
+// A typed caller reads an object, makes a call and reads it again. A function that then throws. The callee catches and returns as if nothing had happened. That function seals the object, which has an optional field that is not there yet.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Card
+
+let victim: Card | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-11
+////= strike
+
+////= risky
+////= callee-4
+
+////= holder-5
+
+////= outer-11
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-function-that-then-throws-to-the-callee-stores-an-object-with-value-of-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. A function that then throws. The callee catches and returns as if nothing had happened. That function stores an object with a valueOf method into a number field of the object.
+////= Point
+
+let victim: Point | null = null;
+////= strike-10
+
+////= risky
+////= callee-4
+
+////= holder-4
+
+////= outer-20
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-function-that-then-throws-to-the-caller-gives-an-array-another-prototype.ts
+// A typed caller reads an array, makes a call and reads it again. A function that then throws. The caller itself catches. That function deletes an element of the array and gives the array a prototype that has an element there.
+const withAnElement: number[] = Object.create(Array.prototype, { 1: { value: 111 } });
+
+let victim: number[] | null = null;
+////= strike-5
+
+////= risky
+////= callee-21
+
+function holder(p: number[], round: number): string {
+  const before = p[0] + p[3] + p.length;
+  let got: number;
+  try {
+    got = callee(round);
+  } catch {
+    got = -1;
+  }
+  let sum = 0;
+  for (let index = 0; index < p.length; index++) sum += p[index];
+  const after = sum + "," + p.length + "," + p[1] + "," + p[3];
+  return before + " " + got + " " + after;
+}
+
+////= outer-5
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-function-that-then-throws-to-the-caller-replaces-a-method-on-the-prototype.ts
+// A typed caller reads an object, makes a call and reads it again. A function that then throws. The caller itself catches. That function replaces a method on the prototype object of the class.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+let spark: number = 0;
+////= hot-3
+////= strike-2
+
+////= risky
+////= callee-21
+
+////= holder-18
+
+////= outer-2
+
+let digest = 0;
+////= for-3
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-function-that-then-throws-to-the-caller-stores-a-string-into-a-number-field-of-a-literal.ts
+// A typed caller reads an object, makes a call and reads it again. A function that then throws. The caller itself catches. That function stores a string into a number field of the object, which an object literal has made.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-6
+////= strike
+
+////= risky
+////= callee-21
+
+////= holder-34	Pair	p.left + p.right + ":"	note	p.left + "," + (p.right + 1) + "," + typeof p.right
+
+////= outer-27
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-exceptions/a-read-through-null-in-a-dirty-activation.ts
+// A typed function does the damage and then reads a field through a reference that its type calls an object and that is null. The TypeError comes out of an activation whose return address has been swapped, and the holder's handler has to be found.
+////= Leaf-5
+
+let strikes = false;
+const nothing: any = null;
+function reads(branch: Branch, other: Branch): number {
+  if (strikes) {
+    delete (other as any).weight;
+    branch.leaf = nothing;
+  }
+  return branch.leaf.value + branch.weight;
+}
+function between(branch: Branch, other: Branch): number {
+  return reads(branch, other) + other.weight;
+}
+
+function holder(branch: Branch, other: Branch): string {
+  const before = other.weight;
+  let got: string;
+  try {
+    got = "" + between(branch, other);
+  } catch (error) {
+    got = (error as Error).name;
+  }
+  return before + " " + got + " " + other.weight + " " + (branch.leaf === null);
+}
+
+////= for-24	holder(new Branch(new Leaf(round), 1), new Branch(new Leaf(0), 2)
+//// damage-behind-a-call-exceptions/an-error-of-the-run-time-behind-the-damage.ts
+// Behind the damage the callee reads a property of null, calls what is no function, or reads a variable in its dead zone, so the run time makes and throws the error. A frame between catches it and returns as usual.
+////= Point
+
+let mode = 0;
+const nothing: any = null;
+const noFunction: any = 5;
+function deep(p: Point): number {
+  if (mode === 0) return 1;
+  delete (p as any).x;
+  if (mode === 1) return nothing.field;
+  if (mode === 2) return noFunction();
+  if (mode === 3) return BigInt(1) + (p.y as any);
+  return late;
+}
+function middle(p: Point): string {
+  try {
+    return "" + deep(p);
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+
+function holder(p: Point): string {
+  const before = p.x;
+  const got = middle(p);
+  return before + " " + got + " " + p.x + " " + ("x" in p);
+}
+
+function run(): void {
+  for (let round = 0; round < 500; round++) {
+    mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+    if (mode === 5) mode = 0;
+    const line = holder(new Point(round, 1));
+    if (mode || round === 0) console.log(round + ": " + line);
+  }
+}
+run();
+const late = 1;
+//// damage-behind-a-call-exceptions/caught-by-the-holder-thrown-three-frames-below.ts
+// The damage is done three calls below the function that holds the object, and the exception that follows passes two frames that are dirty by then. The holder catches it and reads the object in the catch block and behind it.
+////= Point
+
+let strikes = false;
+function third(p: Point): number {
+  if (strikes) {
+    Object.defineProperty(p, "x", { get: () => -7 });
+    throw new RangeError("from the third");
+  }
+  return 3;
+}
+////= lines-31	second	third
+////= lines-31	first	second
+
+function holder(p: Point): string {
+  const before = p.x;
+  let inside = "";
+  try {
+    inside = "returned " + first(p) + " " + p.x;
+  } catch (error) {
+    inside = "caught " + (error as Error).name + " " + p.x;
+  }
+  return before + " " + inside + " " + p.x + "," + p.y;
+}
+
+////= for-4
+//// damage-behind-a-call-exceptions/caught-in-a-loop-that-goes-on.ts
+// A loop holds one object over all its iterations. In each iteration it makes a call under a handler. One call does the damage and throws, and the loop goes on reading the object.
+////= Point
+
+let strikes = false;
+function step(p: Point, index: number): number {
+  if (strikes && index === 2) {
+    delete (p as any).x;
+    throw new Error("at " + index);
+  }
+  return index;
+}
+
+function holder(p: Point): string {
+  let text = "";
+  for (let index = 0; index < 5; index++) {
+    try {
+      text += p.x + ":" + step(p, index) + ":" + p.x + " ";
+    } catch (error) {
+      text += "(" + (error as Error).message + ":" + p.x + ") ";
+    }
+  }
+  return text;
+}
+
+////= for-4
+//// damage-behind-a-call-exceptions/caught-two-frames-above-the-holder.ts
+// The damage is done, then an exception is thrown. The function that holds the object has no handler, and neither has its caller. The function above them catches, reads the object in place and returns as usual to a caller that holds the object too.
+////= Point
+
+let strikes = false;
+function damageAndThrow(p: Point): number {
+  if (!strikes) return 1;
+  delete (p as any).x;
+  throw new Error("behind the damage");
+}
+
+function holder(p: Point): number {
+  const before = p.x;
+  const got = damageAndThrow(p);
+  return before + got + p.x;
+}
+
+function between(p: Point): number {
+  return holder(p) + p.y;
+}
+
+function catcher(p: Point): string {
+  const before = p.x + p.y;
+  let got: string;
+  try {
+    got = "returned " + between(p);
+  } catch (error) {
+    got = "caught " + (error as Error).message;
+  }
+  return before + " " + got + " " + p.x + "," + p.y;
+}
+
+function outermost(p: Point): string {
+  const before = p.x + p.y;
+  const told = catcher(p);
+  return before + " [" + told + "] " + p.x + "," + p.y + "," + (p.x + p.y);
+}
+
+////= for-24	outermost(new Point(round, 1)
+//// damage-behind-a-call-exceptions/nested-finally-blocks-each-read-the-object.ts
+// Three functions hold the object, each with a finally block that reads it. The innermost call does the damage and throws. Every finally block runs while the exception is on its way, and the outermost function catches.
+////= Point
+
+let strikes = false;
+let trail = "";
+////= lines-29	innermost	null	"innermost"
+function inner(p: Point): number {
+  const before = p.x;
+  try {
+    return innermost(p);
+  } finally {
+    trail += "inner " + before + ">" + p.x + ";";
+  }
+}
+function middle(p: Point): number {
+  const before = p.x;
+  try {
+    return inner(p) + 1;
+  } finally {
+    trail += "middle " + before + ">" + p.x + ";";
+  }
+}
+function outermost(p: Point): string {
+  const before = p.x;
+  try {
+    return "returned " + middle(p) + " " + p.x;
+  } catch (error) {
+    return "caught " + (error as Error).message + " " + before + ">" + p.x;
+  }
+}
+
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  trail = "";
+  const line = outermost(new Point(round, 1));
+  if (strikes || round === 0) console.log(round + ": " + line + " | " + trail);
+}
+//// damage-behind-a-call-exceptions/rethrown-by-a-frame-in-between.ts
+// A frame between the damage and the holder catches the exception, reads the object, and throws it again. The holder catches that. Each of the two reads in its own catch block.
+////= Point
+
+let strikes = false;
+let noted = "";
+////= lines-29	deep	"text"	"deep"
+function middle(p: Point): number {
+  const before = p.x;
+  try {
+    return deep(p) + before;
+  } catch (error) {
+    noted = before + ">" + p.x;
+    throw error;
+  }
+}
+
+function holder(p: Point): string {
+  const before = p.x;
+  try {
+    return before + " " + middle(p) + " " + p.x;
+  } catch (error) {
+    return before + " " + (error as Error).message + " " + p.x + " " + noted;
+  }
+}
+
+////= for-4
+//// damage-behind-a-call-exceptions/the-thrown-value-is-the-damaged-object.ts
+// The callee damages the object and throws that very object. The holder reads it through its parameter and through the binding of the catch clause.
+////= Point
+
+let strikes = false;
+function check(p: Point): number {
+  if (strikes) {
+    delete (p as any).y;
+    throw p;
+  }
+  return p.y;
+}
+
+function holder(p: Point): string {
+  const before = p.x + p.y;
+  try {
+    return before + " " + check(p) + " " + (p.x + p.y);
+  } catch (thrown) {
+    const q = thrown as Point;
+    return before + " thrown " + q.x + "," + q.y + " " + p.x + "," + p.y + " " + (p === q);
+  }
+}
+
+////= for-4
+//// damage-behind-a-call-exceptions/thrown-out-of-the-callee-of-a-tail-call.ts
+// The callee does the damage and leaves through a call in tail position. The function that runs in its place throws. The handler is the holder's, whose call site the exception has to be matched to.
+////= Point
+
+let strikes = false;
+function last(n: number): number {
+  if (strikes) throw new Error("from the last");
+  return n;
+}
+function callee(p: Point): number {
+  if (strikes) delete (p as any).x;
+  return last(p.y);
+}
+
+function holder(p: Point): string {
+  const before = p.x;
+  let first = "";
+  try {
+    first = "" + callee(p);
+  } catch (error) {
+    first = (error as Error).message;
+  }
+  let second = "";
+  try {
+    second = "" + callee(p);
+  } catch (error) {
+    second = "again " + (error as Error).message;
+  }
+  return before + " " + first + " " + second + " " + p.x;
+}
+
+////= for-4

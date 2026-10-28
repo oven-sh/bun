@@ -1,0 +1,4 @@
+{
+  "alone": "it starts its own executable again, which has to begin with this program",
+  "skipInShell": "it starts itself again with Bun.spawn"
+}

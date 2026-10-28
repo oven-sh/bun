@@ -1,0 +1,18 @@
+# <regex over "producer verdict detail origin"><TAB><why it is not a bug, or "known bug: " and where it is kept>. Read anew at every round.
+REFUSED TypeError: expected [^|]*\[\], got native ProxyObject	language rule: a value typed T[] is an array; a Proxy of an array is refused loudly
+REFUSED TypeError: Cannot delete property .* only optional properties can be deleted	known bug: test/aot/programs/typed-objects/required-field-deleted-through-untyped-code.todo.txt
+REFUSED TypeError: Cannot set prototype of .* typed objects keep their prototype	known bug: test/aot/programs/typed-objects/prototype-set-through-untyped-code.todo.txt
+(mutated|border):\w+ DIFFERENT .*before initialization	plain Bun does not enforce the dead zone of top-level classes
+(mutated|border):\w+ DIFFERENT .*compiled 'ReferenceError'	the same: a dead zone that plain Bun does not enforce
+(mutated|border):\w+ DIFFERENT .*(is not a function|is not an object|is not a constructor|Cannot read properties of|is not iterable|is not defined|Cannot access)	the words of an engine error differ: compiled code has no source text to quote
+(mutated|border):\w+ DIFFERENT .*\^'	the same: the caret under a quoted source line
+mutated:js DIFFERENT .*jsx/	a @jsx pragma that is not in the leading comments is read by plain Bun's transpiler and not by TypeScript's rules
+generated:objects REFUSED 	objects.py stores values through `any` into accessors with typed parameters: the refusal is meant
+REFUSED TypeError: Cannot redefine property .* a declared property has to stay a writable, enumerable, configurable data property	known bug: test/aot/programs/typed-objects/field-redefined-through-untyped-code.todo.txt
+(mutated|border):\w+ DIFFERENT .*built-in objects are read-only	language rule: built-in objects are immutable
+with-holes REFUSED TypeError: expected 	a hole of TypeScript's type system gave a value that does not fit its type: a loud TypeError is allowed
+run-aot plain|corpus:programs DIFFERENT .*warning TS2688	the copy of the tests has no node_modules, and `bun run --aot` prints the warning about bun-types
+generated:own-property-queries-by-name DIFFERENT .*plain .WRONG Object.keys	plain Bun is wrong: Object.assign onto a non-enumerable indexed property makes it enumerable
+generated:objects (DIFFERENT|REFUSED) .*plain .true	plain Bun is wrong: delete of a character of a string held in a constant
+corpus:programs DIFFERENT .*modules/awaited-import-tick-count	when the first import() of a file settles depends on how fast the file is read, from sources
+generated:sloppy-code DIFFERENT .*compiled "f\d+/\d+ '\d+<[^>]*hole	plain Bun is wrong: delete of a redefined argument beyond the parameters deletes nothing where a parameter is captured

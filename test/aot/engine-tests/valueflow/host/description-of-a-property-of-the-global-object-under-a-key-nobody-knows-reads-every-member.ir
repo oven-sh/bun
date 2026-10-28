@@ -1,0 +1,21 @@
+# Object.getOwnPropertyDescriptor(globalThis, handedOver())
+# Under a key nobody knows the description may hold any member, and one that the host makes at its first read is made here.
+# LIBRARY: own
+# RUN: valueflow-why used-builtin=Fetch escaped-builtin=GlobalThis
+# CHECK: used-builtin=Fetch
+# CHECK-NEXT: by Lookup
+# CHECK: escaped-builtin=GlobalThis
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="handedOver" [isFreeName]
+    v2 = Call v1
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectGetOwnPropertyDescriptor
+    v5 = Call v4, v3, v0, v2
+    Return
+}

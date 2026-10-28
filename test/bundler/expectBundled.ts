@@ -1705,9 +1705,13 @@ for (const [key, blob] of build.outputs) {
         throw new Error(`[${id}] matchesBunRun needs a first \`run\` with a string \`stdout\``);
       }
       const cmd = [bunExe(), ...(firstRun.bunArgs ?? []), entryPaths[0], ...(firstRun.args ?? [])];
+      const unbundledEnv: Record<string, string> = {};
+      for (const [key, value] of Object.entries({ ...bunEnv, ...env, ...(firstRun.env || {}) })) {
+        if (typeof value === "string") unbundledEnv[key] = value.replaceAll("{{root}}", root);
+      }
       await using unbundled = Bun.spawn({
         cmd,
-        env: { ...bunEnv, ...env, ...(firstRun.env || {}) },
+        env: unbundledEnv,
         timeout: 60_000,
         stdio: ["ignore", "pipe", "pipe"],
         cwd: root,

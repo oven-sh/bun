@@ -5324,6 +5324,36 @@ describe("bundler", () => {
     target: "node",
     run: { runtime: "node", exitCode: 13, stdout: "entry start" },
   });
+  // The barrel four waits for seven, and seven calls `import()` on three before
+  // its await. three starts inside that call, when four has not run its body
+  // yet: `undefined`. node starts three later and prints `set`. main's bundle
+  // prints `set` too, because its barrel does not wait for seven. With an
+  // `import` in the place of the `export *`, main's bundle prints `undefined`.
+  itBundled("edgecase/ImportCallInExportStarDependencyRunsBeforeBarrelBody", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./four.js";
+        console.log("entry");
+      `,
+      "/four.js": /* js */ `
+        export * from "./seven.js";
+        export const v = ["set"].join();
+        console.log("four");
+      `,
+      "/seven.js": /* js */ `
+        import("./three.js");
+        await 0;
+        export const s = 1;
+        console.log("seven");
+      `,
+      "/three.js": /* js */ `
+        import { v } from "./four.js";
+        console.log("three sees v =", v);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "three sees v = undefined\nseven\nfour\nentry" },
+  });
   // With `--splitting`, a file has a wrapper only when CommonJS reaches it.
   // load.cjs makes the `import()`, so both modes wrap x and its dependencies.
   for (const splitting of [false, true]) {

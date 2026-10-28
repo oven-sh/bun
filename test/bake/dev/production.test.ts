@@ -1,6 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { beforeAll, describe, expect, test } from "bun:test";
+import { existsSync, readdirSync } from "fs";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
@@ -872,5 +872,92 @@ export default function IndexPage() {
     const unresolved = await Bun.$`${bunExe()} build --app ./unresolved.ts`.cwd(String(dir)).env(env).throws(false);
     expect(unresolved.stderr.toString()).toContain("Cannot find module './does-not-exist'");
     expect(unresolved.exitCode).toBe(1);
+  });
+
+  // The build used to report the file, prerender the pages anyway and exit 0.
+  describe("an output file that cannot be written fails the build", () => {
+    const app = {
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./framework/server.ts", clientEntryPoint: "./browser/client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+      "framework/server.ts": `
+        export function render(req, meta) {
+          return new Response(meta.pageModule.default());
+        }
+        export async function prerender(meta) {
+          return { files: { "/index.html": meta.pageModule.default() } };
+        }
+      `,
+      "browser/client.ts": `console.log("client");`,
+      "routes/index.ts": `import "./index.css";\nexport default () => "home";`,
+      "routes/index.css": `body { color: red; }`,
+    };
+    // Both graphs import a CommonJS module, so the bundler emits a runtime chunk
+    // and the client entry point imports it.
+    const appWithRuntimeChunk = {
+      ...app,
+      "browser/client.ts": `import shared from "../shared.cjs";\nconsole.log("client", shared.name);`,
+      "routes/index.ts": `import shared from "../shared.cjs";\nexport default () => "home " + shared.name;`,
+      "shared.cjs": `module.exports = { name: "shared" };`,
+    };
+
+    /** Runs the build in `dir`. Returns the result to compare, and the stderr of the build for the failure message. */
+    async function build(dir: string, ...flags: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts", ...flags],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const result = {
+        // Paths relative to dist/_bun, without the content hash.
+        failedWrites: Array.from(
+          normalizePath(stderr).matchAll(/Failed to write "_bun\/([^"]+)" to output directory/g),
+          match => match[1].replace(/[a-z0-9]{8}(?=\.)/, "[hash]"),
+        ).sort(),
+        prerendered: existsSync(path.join(dir, "dist", "index.html")),
+        stdout,
+        exitCode,
+      };
+      return { result, stderr };
+    }
+    const failed = (...failedWrites: string[]) => ({ failedWrites, prerendered: false, stdout: "", exitCode: 1 });
+
+    // The name of a chunk is a hash of its content, so every build of `app` writes this name.
+    let clientChunk: string;
+    beforeAll(async () => {
+      using dir = tempDir("bake-production-output", app);
+      const { result, stderr } = await build(String(dir));
+      expect(result, stderr).toEqual({ failedWrites: [], prerendered: true, stdout: "done\n", exitCode: 0 });
+      clientChunk = readdirSync(path.join(String(dir), "dist", "_bun")).find(name => name.endsWith(".js"))!;
+    });
+
+    test.concurrent("a directory where a chunk goes", async () => {
+      using dir = tempDir("bake-production-unwritable-output", { ...app, [`dist/_bun/${clientChunk}`]: {} });
+      const { result, stderr } = await build(String(dir));
+      expect(result, stderr).toEqual(failed("[hash].js"));
+    });
+
+    test.concurrent("every failed write is reported", async () => {
+      using dir = tempDir("bake-production-unwritable-output", { ...app, "dist/_bun": "not a directory" });
+      const { result, stderr } = await build(String(dir));
+      // The stylesheet and the client entry point.
+      expect(result, stderr).toEqual(failed("[hash].css", "[hash].js"));
+    });
+
+    // --debug-no-minify names each output file after its source, so a regular file where a
+    // directory goes blocks one output. Only canary and debug builds have the --debug flags.
+    test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary")).each([
+      ["a client file", app, "dist/_bun/browser", [], "browser/client.[hash].js"],
+      ["the runtime chunk", appWithRuntimeChunk, "dist/_bun/framework", [], "framework/server.[hash].chunk.js"],
+      ["a server file", app, "dist/_bun/framework", ["--debug-dump-server-files"], "framework/server.[hash].js"],
+    ])("%s", async (_, files, blocked, flags, file) => {
+      using dir = tempDir("bake-production-unwritable-output", { ...files, [blocked]: "not a directory" });
+      const { result, stderr } = await build(String(dir), "--debug-no-minify", ...flags);
+      expect(result, stderr).toEqual(failed(file));
+    });
   });
 });

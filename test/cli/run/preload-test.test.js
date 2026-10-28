@@ -5,6 +5,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 import { pathToFileURL } from "url";
+import { unsupported as aotUnsupported } from "../../aot/supported";
 const preloadModule = `
 import {plugin} from 'bun';
 
@@ -39,6 +40,47 @@ process.exit(0);
 const bunfig = `preload = ["./preload.js"]`;
 
 describe("preload", () => {
+  test.skipIf(!!aotUnsupported)("compiled executables preserve file URL preload identity", async () => {
+    using dir = tempDir("compiled-file-url-preload", {
+      "spaced dir/preload.mjs": `(globalThis.preloadURLs ??= []).push(import.meta.url);`,
+      "main.mjs": `console.log(JSON.stringify(globalThis.preloadURLs));`,
+    });
+    const executable = join(String(dir), process.platform === "win32" ? "app.exe" : "app");
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "--compile", "--aot", "--aot-allow-code-from-disk", "main.mjs", "--outfile", executable],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [buildOut, buildError, buildExit] = await Promise.all([
+      build.stdout.text(),
+      build.stderr.text(),
+      build.exited,
+    ]);
+    expect({ buildOut: buildExit ? buildOut : "", buildError: buildExit ? buildError : "", buildExit }).toEqual({
+      buildOut: "",
+      buildError: "",
+      buildExit: 0,
+    });
+    const url = pathToFileURL(join(String(dir), "spaced dir", "preload.mjs")).href;
+    const first = url + "?generation=1#first";
+    const second = url + "?generation=2#second";
+    await using proc = Bun.spawn({
+      cmd: [executable],
+      cwd: String(dir),
+      env: { ...bunEnv, BUN_OPTIONS: `--import ${first} --import ${first} --import ${second}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `${JSON.stringify([first, second])}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("--import file URLs preserve query and fragment identity", async () => {
     using dir = tempDir("preload-file-url-query", {
       "preload.mjs": `(globalThis.preloadURLs ??= []).push(import.meta.url);`,

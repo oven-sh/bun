@@ -101,6 +101,7 @@ class InspectorCDPAdapter {
     { clientId: number | string | null; method: string; onResult?: (result: AnyObject, error?: AnyObject) => void }
   >();
   #scripts = new Map<string, { cdpUrl: string; endLine: number; endColumn: number }>();
+  #breakpoints = new Set<string>();
 
   constructor(writeToBackend: (message: string) => void, writeToClient: (message: string) => void) {
     this.#writeToBackend = writeToBackend;
@@ -152,6 +153,14 @@ class InspectorCDPAdapter {
     if (typeof method === "string") {
       this.#translateBackendEvent(method, parsed.params || {});
     }
+  }
+
+  // The backend has one set of breakpoints for every frontend. A V8 session takes its own with it.
+  removeBreakpoints(): void {
+    for (const breakpointId of this.#breakpoints) {
+      this.#sendToBackend("Debugger.removeBreakpoint", { breakpointId });
+    }
+    this.#breakpoints.$clear();
   }
 
   #replyToClient(id: number | string, result: AnyObject): void {
@@ -379,9 +388,13 @@ class InspectorCDPAdapter {
       case "Debugger.stepOut":
       case "Debugger.stepOver":
       case "Debugger.setBreakpointsActive":
-      case "Debugger.removeBreakpoint":
       case "Debugger.continueToLocation":
       case "Debugger.getScriptSource":
+        this.#sendToBackend(method, params, id, method);
+        return;
+
+      case "Debugger.removeBreakpoint":
+        this.#breakpoints.$delete(params.breakpointId);
         this.#sendToBackend(method, params, id, method);
         return;
 
@@ -524,6 +537,11 @@ class InspectorCDPAdapter {
     switch (method) {
       case "Debugger.enable":
         return { debuggerId: "(bun)", ...result };
+
+      case "Debugger.setBreakpointByUrl":
+      case "Debugger.setBreakpoint":
+        if (result.breakpointId) this.#breakpoints.$add(result.breakpointId);
+        return result;
 
       case "Runtime.evaluate":
       case "Runtime.callFunctionOn":

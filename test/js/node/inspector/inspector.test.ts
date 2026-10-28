@@ -1071,6 +1071,130 @@ test("Debugger.scriptParsed reports isModule and scriptLanguage from JSC's scrip
   ]);
 });
 
+// The inspector backend has one set of agents for every client. A V8 session takes its
+// breakpoints with it, and the sessions that stay notice nothing.
+test.concurrent.each(["an inspector.Session", "a WebSocket client"])(
+  "%s that leaves takes its breakpoints with it, and the client that stays keeps its events",
+  async leaving => {
+    using dir = tempDir("inspector-leaving-client", {
+      "entry.mjs": `
+import inspector from "node:inspector";
+inspector.open(0, "127.0.0.1");
+globalThis.session = new inspector.Session();
+session.connect();
+process.stdin.once("data", async () => {
+  globalThis.hit = (await import("./target.mjs")).hit;
+  hit();
+  console.log("first call done");
+});
+`,
+      "target.mjs": `export function hit() {
+  return "hit";
+}
+`,
+    });
+    // Runtime.evaluate goes through JSC's InjectedScript. In the prebuilt WebKit it has
+    // exception checks missing, which abort the child under validateExceptionChecks.
+    const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...env } = bunEnv;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.mjs"],
+      env,
+      cwd: String(dir),
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    let stderr = "";
+    let url: string | undefined;
+    const decoder = new TextDecoder();
+    for await (const chunk of proc.stderr) {
+      stderr += decoder.decode(chunk, { stream: true });
+      url = stderr.match(/Debugger listening on (ws:\S+)/)?.[1];
+      if (url) break;
+    }
+    if (!url) throw new Error(`no inspector URL:\n${stderr}`);
+
+    // A DevTools-protocol client. It resumes each pause, and counts them.
+    async function connect() {
+      const ws = new WebSocket(url!);
+      const pending = new Map<number, (message: any) => void>();
+      let nextId = 1;
+      const client = {
+        paused: 0,
+        logged: [] as string[],
+        closed: Promise.withResolvers<void>(),
+        send(method: string, params?: object) {
+          const id = nextId++;
+          ws.send(JSON.stringify({ id, method, params }));
+          return new Promise<any>((resolve, reject) =>
+            pending.set(id, message => (message ? resolve(message) : reject(new Error(`closed before ${method}`)))),
+          );
+        },
+        close: () => ws.close(),
+      };
+      ws.onmessage = event => {
+        const message = JSON.parse(String(event.data));
+        if (message.id) {
+          pending.get(message.id)?.(message);
+          pending.delete(message.id);
+        } else if (message.method === "Debugger.paused") {
+          client.paused++;
+          ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume" }));
+        } else if (message.method === "Runtime.consoleAPICalled") {
+          client.logged.push(message.params.args[0].value);
+        }
+      };
+      ws.onclose = () => {
+        client.closed.resolve();
+        for (const settle of pending.values()) settle(undefined);
+      };
+      await new Promise((resolve, reject) => ((ws.onopen = resolve), (ws.onerror = reject)));
+      return client;
+    }
+
+    const staying = await connect();
+    await staying.send("Runtime.enable");
+    await staying.send("Debugger.enable");
+
+    const breakpoint = { lineNumber: 1, urlRegex: "target\\.mjs$" };
+    let leave: () => Promise<unknown>;
+    if (leaving === "an inspector.Session") {
+      // The Session forwards Debugger commands to the debugger thread and does not wait.
+      // That thread gets them before it sends this answer.
+      await staying.send("Runtime.evaluate", {
+        expression: `session.post("Debugger.enable"); session.post("Debugger.setBreakpointByUrl", ${JSON.stringify(breakpoint)})`,
+      });
+      leave = () => staying.send("Runtime.evaluate", { expression: "session.disconnect()" });
+    } else {
+      const client = await connect();
+      await client.send("Debugger.enable");
+      expect(await client.send("Debugger.setBreakpointByUrl", breakpoint)).toEqual({
+        id: expect.any(Number),
+        result: expect.objectContaining({ breakpointId: expect.any(String) }),
+      });
+      leave = () => (client.close(), client.closed.promise);
+    }
+
+    // The breakpoint of the client that is about to leave works: the first call pauses.
+    proc.stdin.write("go\n");
+    proc.stdin.flush();
+    await staying.send("Runtime.evaluate", { expression: "0" });
+    while (staying.logged.length === 0) await staying.send("Runtime.evaluate", { expression: "0" });
+    expect({ paused: staying.paused, logged: staying.logged }).toEqual({ paused: 1, logged: ["first call done"] });
+
+    // The commands below reach the inspected thread after the other client's disconnect:
+    // the debugger thread forwards both in the order it got them.
+    await leave();
+    await staying.send("Runtime.evaluate", { expression: `hit(); console.log("second call done")` });
+    expect({ paused: staying.paused, logged: staying.logged }).toEqual({
+      paused: 1,
+      logged: ["first call done", "second call done"],
+    });
+    staying.close();
+  },
+  30_000,
+);
+
 test("disconnect does not clobber a console method reassigned by user code", () => {
   const session = new inspector.Session();
   session.connect();

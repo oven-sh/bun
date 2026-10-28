@@ -10,10 +10,14 @@
 #include <JavaScriptCore/Debugger.h>
 #include <wtf/Condition.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringToIntegerConversion.h>
 #include "ScriptExecutionContext.h"
 #include "debug-helpers.h"
 #include "BunInjectedScriptHost.h"
+#include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
+#include <JavaScriptCore/JSLock.h>
 #include <wtf/JSONValues.h>
 
 #include "InspectorLifecycleAgent.h"
@@ -91,9 +95,14 @@ public:
 enum class ConnectionStatus : int32_t {
     Pending = 0,
     Connected = 1,
-    Disconnecting = 2,
-    Disconnected = 3,
+    // Dropped for not reading. debugger.ts still holds the transport, to tell the frontend why.
+    Muted = 2,
+    Disconnecting = 3,
+    Disconnected = 4,
 };
+
+// A frontend is dropped once this much was queued for it since it last took a byte. Node queues without bound.
+static size_t stalledFrontendBacklog = 192 * 1024 * 1024;
 
 class BunInspectorConnection : public ThreadSafeRefCounted<BunInspectorConnection>, public Inspector::FrontendChannel {
 
@@ -207,7 +216,15 @@ public:
 
             // Do not call .disconnect() if we never actually connected.
             if (connection->hasEverConnected) {
-                connection->inspector().disconnect(connection.get());
+                // The controller's disconnectFrontend() disables every agent before its last-frontend check.
+                auto* inspectedGlobalObject = connection->globalObject;
+                auto& router = const_cast<Inspector::FrontendRouter&>(inspectedGlobalObject->inspectorController().frontendRouter());
+                if (router.frontendCount() > 1) {
+                    JSC::JSLockHolder locker(inspectedGlobalObject->vm());
+                    router.disconnectFrontend(connection.get());
+                } else {
+                    connection->inspector().disconnect(connection.get());
+                }
             }
 
             if (connection->unrefOnDisconnect) {
@@ -231,9 +248,20 @@ public:
         return globalObject->inspectorDebuggable();
     }
 
+    // The frontend gets no more answers, so the debugger goes on without it.
+    bool isGone() const
+    {
+        return status.load() >= ConnectionStatus::Muted;
+    }
+
     void sendMessageToFrontend(const String& message) override
     {
         if (message.length() == 0)
+            return;
+
+        // The debugger thread no longer hands anything to these.
+        auto status = this->status.load(std::memory_order_relaxed);
+        if (status == ConnectionStatus::Muted || status == ConnectionStatus::Disconnecting)
             return;
 
         this->sendMessageToDebuggerThread(message.isolatedCopy());
@@ -262,8 +290,7 @@ public:
         while (!isDoneProcessingEvents) {
             size_t closedCount = 0;
             for (auto& connection : connections) {
-                ConnectionStatus status = connection->status.load();
-                if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting) {
+                if (connection->isGone()) {
                     closedCount++;
                     continue;
                 }
@@ -301,8 +328,7 @@ public:
     {
         size_t closedCount = 0;
         for (auto& connection : connections) {
-            ConnectionStatus status = connection->status.load();
-            if (status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting) {
+            if (connection->isGone()) {
                 closedCount++;
                 continue;
             }
@@ -388,45 +414,191 @@ public:
         messages.clear();
     }
 
-    void receiveMessagesOnDebuggerThread(ScriptExecutionContext& context, Zig::GlobalObject* debuggerGlobalObject)
+    // Debugger thread. Hands the queued messages to debugger.ts for as long as the transport takes them.
+    void deliverMessagesOnDebuggerThread(Zig::GlobalObject* debuggerGlobalObject)
     {
+        // One call takes at most Interpreter::maxArguments arguments.
+        static constexpr size_t maxPieceMessages = 1024;
+        static constexpr size_t maxPieceBytes = 1024 * 1024;
+
         debuggerThreadMessageScheduledCount.store(0);
-        WTF::Vector<WTF::String, 12> messages;
 
-        {
-            Locker<Lock> locker(debuggerThreadMessagesLock);
-            this->debuggerThreadMessages.swap(messages);
-        }
+        auto& vm = debuggerGlobalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-        if (!jsBunDebuggerOnMessageFunction)
+        if (transportIsFull && !transportHasRoom(debuggerGlobalObject))
             return;
 
-        JSFunction* onMessageFn = uncheckedDowncast<JSFunction>(jsBunDebuggerOnMessageFunction.get());
-        MarkedArgumentBuffer arguments;
-        arguments.ensureCapacity(messages.size());
-        auto& vm = debuggerGlobalObject->vm();
-
-        for (auto& message : messages) {
-            arguments.append(jsString(vm, message));
+        // One batch per task, so that the debugger thread's other tasks and sockets get their turn.
+        if (undeliveredIndex == undelivered.size()) {
+            undelivered.clear();
+            undeliveredIndex = 0;
+            Locker<Lock> locker(debuggerThreadMessagesLock);
+            debuggerThreadMessages.swap(undelivered);
         }
 
-        messages.clear();
+        while (undeliveredIndex < undelivered.size()) {
+            // jsFunctionDisconnect() clears it, also from inside the call below.
+            if (!jsBunDebuggerOnMessageFunction) {
+                dropQueuedMessages();
+                return;
+            }
 
-        JSC::call(debuggerGlobalObject, onMessageFn, arguments, "BunInspectorConnection::receiveMessagesOnDebuggerThread - onMessageFn"_s);
+            MarkedArgumentBuffer arguments;
+            size_t pieceBytes = 0;
+            do {
+                auto& message = undelivered[undeliveredIndex];
+                size_t bytes = message.sizeInBytes();
+                if (pieceBytes && pieceBytes + bytes > maxPieceBytes)
+                    break;
+                pieceBytes += bytes;
+                arguments.append(jsString(vm, WTF::move(message)));
+                undeliveredIndex++;
+            } while (undeliveredIndex < undelivered.size() && arguments.size() < maxPieceMessages);
+
+            JSValue unsent = JSC::call(debuggerGlobalObject, jsBunDebuggerOnMessageFunction.get(), arguments, "BunInspectorConnection::deliverMessagesOnDebuggerThread - onMessageFn"_s);
+            bool threw = reportExceptionOnDebuggerThread(debuggerGlobalObject, scope);
+            RETURN_IF_EXCEPTION(scope, );
+
+            // The callback returns what the transport could not write, when there is any.
+            size_t unsentBytes = !threw && unsent.isNumber() && unsent.asNumber() > 0 ? static_cast<size_t>(unsent.asNumber()) : 0;
+            bool hasMoreQueued;
+            {
+                Locker<Lock> locker(debuggerThreadMessagesLock);
+                queuedBytes -= std::min(queuedBytes, pieceBytes);
+                hasMoreQueued = !debuggerThreadMessages.isEmpty();
+                if (unsentBytes) {
+                    transportIsFull = true;
+                    queuedBytesAtProgress = queuedBytes;
+                    nextStallCheck = queuedBytes + stalledFrontendBacklog / 8;
+                }
+            }
+            if (unsentBytes) {
+                transportUnsentBytes = unsentBytes;
+                return;
+            }
+            // What was queued while the transport was full has no task of its own.
+            if (hasMoreQueued && undeliveredIndex == undelivered.size())
+                scheduleDeliveryOnDebuggerThread();
+        }
+    }
+
+    // Debugger thread. False while the transport still holds bytes, and then `queuedBytes` only grows.
+    bool transportHasRoom(Zig::GlobalObject* debuggerGlobalObject)
+    {
+        auto& vm = debuggerGlobalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+
+        size_t unsentBytes = 0;
+        if (jsTransportUnsentBytesFunction) {
+            JSValue unsent = JSC::call(debuggerGlobalObject, jsTransportUnsentBytesFunction.get(), MarkedArgumentBuffer(), "BunInspectorConnection::transportHasRoom - unsentBytesFn"_s);
+            bool threw = reportExceptionOnDebuggerThread(debuggerGlobalObject, scope);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!threw && unsent.isNumber() && unsent.asNumber() > 0)
+                unsentBytes = static_cast<size_t>(unsent.asNumber());
+        }
+
+        bool tookBytes = unsentBytes < transportUnsentBytes;
+        transportUnsentBytes = unsentBytes;
+
+        size_t stalledBytes = 0;
+        {
+            Locker<Lock> locker(debuggerThreadMessagesLock);
+            if (!unsentBytes) {
+                transportIsFull = false;
+                return true;
+            }
+            if (tookBytes)
+                queuedBytesAtProgress = queuedBytes;
+            else if (queuedBytes >= queuedBytesAtProgress + stalledFrontendBacklog)
+                stalledBytes = queuedBytes;
+        }
+
+        if (stalledBytes)
+            muteOnDebuggerThread(debuggerGlobalObject, stalledBytes);
+        return false;
+    }
+
+    // Debugger thread. Frees the queue, and debugger.ts closes the transport once it has said why.
+    void muteOnDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, size_t stalledBytes)
+    {
+        auto connected = ConnectionStatus::Connected;
+        if (!status.compare_exchange_strong(connected, ConnectionStatus::Muted))
+            return;
+        dropQueuedMessages();
+        // A paused inspected thread stops waiting for this frontend.
+        notifyPausedThread();
+
+        if (!jsTransportDismissFunction)
+            return;
+
+        auto& vm = debuggerGlobalObject->vm();
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsString(vm, makeString("Inspector frontend read nothing while "_s, stalledBytes / (1024 * 1024), " MB were queued for it"_s)));
+        JSC::call(debuggerGlobalObject, jsTransportDismissFunction.get(), arguments, "BunInspectorConnection::muteOnDebuggerThread - dismissFn"_s);
+        reportExceptionOnDebuggerThread(debuggerGlobalObject, scope);
+        RETURN_IF_EXCEPTION(scope, );
+    }
+
+    // debugger.ts runs at the top of the stack here, so what it throws has no handler.
+    static bool reportExceptionOnDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, JSC::TopExceptionScope& scope)
+    {
+        auto* exception = scope.exception();
+        if (!exception) [[likely]]
+            return false;
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(debuggerGlobalObject, exception);
+        return true;
+    }
+
+    // Debugger thread.
+    void dropQueuedMessages()
+    {
+        WTF::Vector<WTF::String, 12> dropped;
+        {
+            Locker<Lock> locker(debuggerThreadMessagesLock);
+            queuedBytes = 0;
+            dropped.swap(debuggerThreadMessages);
+        }
+        undelivered.clear();
+        undeliveredIndex = 0;
+    }
+
+    // Debugger thread. The transport wrote what it held.
+    void resumeDeliveryOnDebuggerThread()
+    {
+        if (transportIsFull)
+            scheduleDeliveryOnDebuggerThread();
+    }
+
+    void scheduleDeliveryOnDebuggerThread()
+    {
+        if (this->debuggerThreadMessageScheduledCount++ == 0) {
+            debuggerScriptExecutionContext->postTaskConcurrently([connection = Ref { *this }](ScriptExecutionContext& context) {
+                connection->deliverMessagesOnDebuggerThread(static_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
+            });
+        }
     }
 
     void sendMessageToDebuggerThread(WTF::String&& inputMessage)
     {
+        size_t bytes = inputMessage.sizeInBytes();
+        bool schedule = true;
         {
             Locker<Lock> locker(debuggerThreadMessagesLock);
-            debuggerThreadMessages.append(inputMessage);
+            debuggerThreadMessages.append(WTF::move(inputMessage));
+            queuedBytes += bytes;
+            if (transportIsFull) [[unlikely]] {
+                // Nothing is handed over now. The debugger thread asks the transport again as the queue grows.
+                schedule = queuedBytes >= nextStallCheck;
+                if (schedule)
+                    nextStallCheck = queuedBytes + stalledFrontendBacklog / 8;
+            }
         }
 
-        if (this->debuggerThreadMessageScheduledCount++ == 0) {
-            debuggerScriptExecutionContext->postTaskConcurrently([connection = Ref { *this }](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnDebuggerThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
-            });
-        }
+        if (schedule)
+            scheduleDeliveryOnDebuggerThread();
     }
 
     void sendMessageToInspectorFromDebuggerThread(Vector<WTF::String, 12>&& inputMessages)
@@ -463,7 +635,20 @@ public:
 
     WTF::Vector<WTF::String, 12> debuggerThreadMessages;
     WTF::Lock debuggerThreadMessagesLock = WTF::Lock();
+    // Bytes in `debuggerThreadMessages` and in what is left of `undelivered`.
+    size_t queuedBytes { 0 };
+    // The debugger thread writes it under the lock and is the only one to read it without.
+    bool transportIsFull { false };
+    // `queuedBytes` when the frontend last took a byte.
+    size_t queuedBytesAtProgress { 0 };
+    // `queuedBytes` at which the debugger thread asks the transport again.
+    size_t nextStallCheck { 0 };
     std::atomic<uint32_t> debuggerThreadMessageScheduledCount { 0 };
+
+    // Debugger thread only: the batch it is handing to debugger.ts.
+    WTF::Vector<WTF::String, 12> undelivered;
+    size_t undeliveredIndex { 0 };
+    size_t transportUnsentBytes { 0 };
 
     WTF::Vector<WTF::String, 12> jsThreadMessages;
     WTF::Lock jsThreadMessagesLock = WTF::Lock();
@@ -472,6 +657,8 @@ public:
     JSC::JSGlobalObject* globalObject;
     ScriptExecutionContextIdentifier scriptExecutionContextIdentifier;
     JSC::Strong<JSC::Unknown> jsBunDebuggerOnMessageFunction {};
+    JSC::Strong<JSC::Unknown> jsTransportUnsentBytesFunction {};
+    JSC::Strong<JSC::Unknown> jsTransportDismissFunction {};
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
@@ -482,6 +669,7 @@ public:
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDisconnect);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionResume);
 
 class JSBunInspectorConnection final : public JSC::JSDestructibleObject {
 public:
@@ -541,6 +729,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSend, (JSC::JSGlobalObject * globalObject, JS
     if (!jsConnection)
         return JSValue::encode(jsUndefined());
 
+    // Nothing answers a frontend that is muted or on its way out.
+    auto status = jsConnection->connection()->status.load();
+    if (status != ConnectionStatus::Pending && status != ConnectionStatus::Connected)
+        return JSValue::encode(jsUndefined());
+
     if (message.isString()) {
         jsConnection->connection()->sendMessageToInspectorFromDebuggerThread(message.toWTFString(globalObject).isolatedCopy());
     } else if (message.isCell()) {
@@ -564,11 +757,23 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObje
 
     auto& connection = *jsConnection->connection();
 
-    if (connection.status == ConnectionStatus::Connected || connection.status == ConnectionStatus::Pending) {
+    auto status = connection.status.load();
+    if (status == ConnectionStatus::Connected || status == ConnectionStatus::Pending || status == ConnectionStatus::Muted) {
         connection.status = ConnectionStatus::Disconnecting;
         connection.jsBunDebuggerOnMessageFunction.clear();
+        connection.jsTransportUnsentBytesFunction.clear();
+        connection.jsTransportDismissFunction.clear();
+        connection.dropQueuedMessages();
         connection.disconnect();
     }
+
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionResume, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (auto* jsConnection = dynamicDowncast<JSBunInspectorConnection>(callFrame->thisValue()))
+        jsConnection->connection()->resumeDeliveryOnDebuggerThread();
 
     return JSValue::encode(jsUndefined());
 }
@@ -669,6 +874,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
         inspectorConnections->set(targetContext->identifier(), connections);
     }
     connection->jsBunDebuggerOnMessageFunction = { vm, onMessageFn };
+    if (JSValue unsentBytesFn = callFrame->argument(3); unsentBytesFn.isCallable())
+        connection->jsTransportUnsentBytesFunction = { vm, unsentBytesFn };
+    if (JSValue dismissFn = callFrame->argument(4); dismissFn.isCallable())
+        connection->jsTransportDismissFunction = { vm, dismissFn };
     connection->connect();
 
     return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), WTF::move(connection)));
@@ -925,8 +1134,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_closeNodeInspector, (JSGlobalObject*, CallFr
 
 extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, const BunString* portOrPathString, int isAutomatic, bool isUrlServer, bool isNodeInspector)
 {
-    if (!debuggerScriptExecutionContext)
+    if (!debuggerScriptExecutionContext) {
         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
+        // For the tests: megabytes, so that a test reaches the limit without 192 MB of messages.
+        if (const char* megabytes = getenv("BUN_DEBUG_TEST_INSPECTOR_BACKLOG_MB")) {
+            if (auto parsed = parseInteger<uint32_t>(StringView::fromLatin1(megabytes)))
+                stalledFrontendBacklog = static_cast<size_t>(*parsed) * 1024 * 1024;
+        }
+    }
 
     JSC::VM& vm = debuggerGlobalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -943,13 +1158,14 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
         return;
     }
     arguments.append(portOrPathJS);
-    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String(), jsFunctionCreateConnection, ImplementationVisibility::Public));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 5, String(), jsFunctionCreateConnection, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 1, String("send"_s), jsFunctionSend, ImplementationVisibility::Public));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("disconnect"_s), jsFunctionDisconnect, ImplementationVisibility::Public));
     arguments.append(jsBoolean(isAutomatic));
     arguments.append(jsBoolean(isUrlServer));
     arguments.append(jsBoolean(isNodeInspector));
     arguments.append(JSFunction::create(vm, debuggerGlobalObject, 3, String("reportNodeInspectorServerStarted"_s), jsFunctionReportNodeInspectorServerStarted, ImplementationVisibility::Public));
+    arguments.append(JSFunction::create(vm, debuggerGlobalObject, 0, String("resume"_s), jsFunctionResume, ImplementationVisibility::Public));
 
     JSC::call(debuggerGlobalObject, debuggerDefaultFn, arguments, "Bun__initJSDebuggerThread - debuggerDefaultFn"_s);
     scope.assertNoException();

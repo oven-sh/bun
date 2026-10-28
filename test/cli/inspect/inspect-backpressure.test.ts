@@ -1,147 +1,213 @@
-import { spawn } from "bun";
-import { expect, setDefaultTimeout, test } from "bun:test";
+import { spawn, type Subprocess } from "bun";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug } from "harness";
-import crypto from "node:crypto";
 import net from "node:net";
-import stripAnsi from "strip-ansi";
+import { RawFrontend } from "./raw-frontend";
 
-setDefaultTimeout(isASAN || isDebug ? 120_000 : 60_000);
-
-// A frontend that sends Console.enable and then stops reading must not make
-// the inspected process buffer every console line forever: the per-connection
-// outgoing backlog is bounded and a stalled peer is terminated once it fills.
-test("a stalled inspector frontend is disconnected instead of buffering console output unboundedly", async () => {
-  // Each Console.messageAdded for a 64 KB string is ~130 KB of JSON, so the
-  // inspector's combined per-connection send limit (uWS 16 MB plus the JS-side
-  // 32 MB retry buffer) is reached after a few hundred lines. The counter
-  // argument keeps every message unique so JSC does not collapse them into
-  // messageRepeatCountUpdated. Logging is gated on stdin so every line is
-  // emitted after Console.enable has reached the backend, and stops after
-  // several times that many lines so a build without the cap plateaus instead
-  // of growing until the test times out. RSS is reported per batch so the test
-  // can fail fast on unbounded growth rather than waiting for the timeout.
-  const app = `
-    await new Promise(resolve => process.stdin.once("data", resolve));
-    const base = process.memoryUsage.rss();
-    const line = Buffer.alloc(65536, "L").toString();
-    let i = 0;
-    const t = setInterval(() => {
-      for (let k = 0; k < 50; k++) console.log(line, i++);
-      process.stderr.write("RSS:" + (process.memoryUsage.rss() - base) + "\\n");
-      if (i >= 5000) clearInterval(t);
-    }, 0);
-    setInterval(() => {}, 1 << 30);
-  `;
-
-  await using child = spawn({
-    cmd: [bunExe(), "--inspect=127.0.0.1:0/stalled", "-e", app],
-    env: bunEnv,
-    stdin: "pipe",
-    stdout: "ignore",
-    stderr: "pipe",
+// The inspected program. For each "log" on stdin it logs a batch of 8 lines and then prints
+// "LOGGED <lines so far>". A line is "#<n> " and 64 KB of padding, so that a frontend can tell
+// which lines arrived. A batch is 1 MB of inspector messages.
+const logger = /* js */ `
+  const pad = Buffer.alloc(64 * 1024, "L").toString();
+  let lines = 0;
+  process.stdin.on("data", data => {
+    for (const command of String(data).split("\\n")) {
+      if (command !== "log") continue;
+      for (let i = 0; i < 8; i++) console.log("#" + lines++ + " " + pad);
+      process.stderr.write("LOGGED " + lines + "\\n");
+    }
   });
+`;
 
-  let stderr = "";
-  let rssDelta = 0;
-  let rssLine = "";
-  (async () => {
-    for await (const chunk of child.stderr as ReadableStream) {
-      const text = new TextDecoder().decode(chunk);
-      stderr += stripAnsi(text);
-      rssLine += text;
-      let nl: number;
-      while ((nl = rssLine.indexOf("\n")) !== -1) {
-        const line = rssLine.slice(0, nl);
-        rssLine = rssLine.slice(nl + 1);
-        const m = line.match(/^RSS:(\d+)$/);
-        if (m) rssDelta = Math.max(rssDelta, +m[1]);
+// Runtime.evaluate goes through JSC's InjectedScript. In the prebuilt WebKit it has exception
+// checks missing, which abort the program under validateExceptionChecks.
+const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...env } = bunEnv;
+
+class Program implements AsyncDisposable {
+  /** The WebSocket URL of the inspector, once the program printed it. */
+  url = "";
+  /** How many lines the program has logged. */
+  lines = 0;
+
+  #proc: Subprocess<"pipe", "ignore", "pipe">;
+  #stderr = "";
+  #exited = false;
+  #waiters: (() => void)[] = [];
+
+  constructor(args: string[], source: string) {
+    this.#proc = spawn({
+      cmd: [bunExe(), ...args, "-e", source],
+      // A frontend is dropped once 192 MB were queued for it since it last took a byte.
+      // That is too much for a test, so the tests set 4 MB.
+      env: { ...env, BUN_DEBUG_TEST_INSPECTOR_BACKLOG_MB: "4" },
+      stdin: "pipe",
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    this.#read();
+  }
+
+  async #read() {
+    const decoder = new TextDecoder();
+    let rest = "";
+    for await (const chunk of this.#proc.stderr) {
+      const text = decoder.decode(chunk, { stream: true });
+      this.#stderr += text;
+      const lines = (rest + text).split("\n");
+      rest = lines.pop()!;
+      for (const line of lines) {
+        if (line.startsWith("LOGGED ")) this.lines = Number(line.slice(7));
+        else this.url ||= line.match(/ws:\/\/127\.0\.0\.1:\d+\/\S*/)?.[0] ?? "";
       }
+      for (const waiter of this.#waiters.splice(0)) waiter();
     }
-  })();
-  let port = 0;
-  while (!port) {
-    const m = stderr.match(/ws:\/\/127\.0\.0\.1:(\d+)\/stalled/);
-    if (m) {
-      port = +m[1];
-      break;
-    }
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error("inspectee exited before printing the listening URL:\n" + stderr);
-    }
-    await Bun.sleep(10);
+    this.#exited = true;
+    for (const waiter of this.#waiters.splice(0)) waiter();
   }
 
-  // Raw TCP so the client can stop reading after the upgrade; a real
-  // WebSocket client would drain the socket and never build backpressure.
-  const sock = net.connect(port, "127.0.0.1");
-  try {
-    await new Promise<void>((resolve, reject) => {
-      sock.once("connect", () => resolve());
-      sock.once("error", reject);
-    });
-    sock.on("error", () => {});
-    let closed = false;
-    const closedPromise = new Promise<void>(resolve => {
-      sock.once("close", () => {
-        closed = true;
-        resolve();
-      });
-    });
+  /** Resolves when `condition()` holds. Rejects with the program's stderr if it exits first. */
+  async until(condition: () => boolean, what: string): Promise<void> {
+    while (!condition()) {
+      if (this.#exited) throw new Error(`the program exited before ${what}:\n${this.#stderr}`);
+      await new Promise<void>(resolve => this.#waiters.push(resolve));
+    }
+  }
 
-    sock.write(
-      "GET /stalled HTTP/1.1\r\n" +
-        `Host: 127.0.0.1:${port}\r\n` +
-        "Upgrade: websocket\r\n" +
-        "Connection: Upgrade\r\n" +
-        `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString("base64")}\r\n` +
-        "Sec-WebSocket-Version: 13\r\n" +
-        "\r\n",
-    );
-    // Read only the handshake response, then stop; the rest piles up in the
-    // kernel receive buffer and the inspected process's send buffers.
-    await Promise.race([
-      new Promise<void>(resolve => {
-        sock.once("data", () => {
-          sock.pause();
-          resolve();
+  /** Logs `megabytes` batches of 1 MB. */
+  async log(megabytes: number): Promise<void> {
+    for (let i = 0; i < megabytes; i++) {
+      const lines = this.lines + 8;
+      this.#proc.stdin.write("log\n");
+      this.#proc.stdin.flush();
+      await this.until(() => this.lines === lines, "the batch");
+    }
+  }
+
+  get running(): boolean {
+    return this.#proc.exitCode === null && this.#proc.signalCode === null;
+  }
+
+  async [Symbol.asyncDispose]() {
+    this.#proc.kill();
+    await this.#proc.exited;
+  }
+}
+
+// The tests move tens of megabytes through a debug build, which the default 5 s does not cover.
+const timeout = isASAN || isDebug ? 60_000 : 20_000;
+
+describe.concurrent.each([
+  ["bun --inspect", ["--inspect=127.0.0.1:0"], logger, "Console.enable"],
+  ["inspector.open()", [], `require("node:inspector").open(0, "127.0.0.1");` + logger, "Runtime.enable"],
+])("%s", (_, args, source, enable) => {
+  test(
+    "drops a frontend that stops reading and tells it why, and another frontend keeps its events",
+    async () => {
+      await using program = new Program(args, source);
+      await program.until(() => program.url !== "", "the inspector URL");
+      const stalled = await RawFrontend.connect(program.url);
+      let witness: RawFrontend | undefined;
+      try {
+        await stalled.send(enable);
+        stalled.pause();
+        await program.log(32);
+
+        // A second frontend shows what the stalled one cannot. The debugger thread runs its
+        // tasks in order: once it answers a command, it has done what was queued for it
+        // before. After this answer, the stalled frontend's socket is full. It holds about
+        // 8 MB of the 32 MB, and the rest waits.
+        witness = await RawFrontend.connect(program.url);
+        await witness.send(enable);
+
+        // 8 MB more, twice the limit, and the stalled frontend takes none of it. After this
+        // answer, the debugger thread has seen that.
+        await program.log(8);
+        await witness.send("Runtime.evaluate", { expression: "0" });
+
+        // The stalled frontend reads again. It gets what its socket held, then the reason.
+        // If nothing had dropped it, it would get every line and stay connected.
+        stalled.resume();
+        await stalled.until(() => stalled.lines.size === program.lines, "every line").catch(() => {});
+        expect(stalled.closeFrame).toEqual({
+          code: 1013,
+          reason: expect.stringMatching(/^Inspector frontend read nothing while \d+ MB were queued for it$/),
         });
-      }),
-      closedPromise.then(() => Promise.reject(new Error("socket closed before handshake response:\n" + stderr))),
-    ]);
+        expect(stalled.lines.size).toBeLessThan(program.lines);
 
-    const sendFrame = (opcode: number, payload: Buffer) => {
-      const mask = crypto.randomBytes(4);
-      const masked = Buffer.alloc(payload.length);
-      for (let i = 0; i < payload.length; i++) masked[i] = payload[i] ^ mask[i & 3];
-      const head =
-        payload.length < 126
-          ? Buffer.from([0x80 | opcode, 0x80 | payload.length])
-          : Buffer.from([0x80 | opcode, 0x80 | 126, payload.length >> 8, payload.length & 255]);
-      sock.write(Buffer.concat([head, mask, masked]));
-    };
-
-    // Console.enable: the backend now emits Console.messageAdded for every log
-    // line toward this socket, which is no longer reading.
-    sendFrame(0x1, Buffer.from(JSON.stringify({ id: 1, method: "Console.enable", params: {} })));
-    child.stdin.write("go\n");
-
-    // Writes from a stalled reader still reach the peer; once the server
-    // terminates the socket (send backlog exceeded), one of these pings
-    // surfaces the reset and 'close' fires. Probing by writing avoids waiting
-    // on a FIN that would sit behind the peer's full receive buffer.
-    const ping = Buffer.from([0x89, 0x80, 0, 0, 0, 0]);
-    const rssLimit = 400 * 1024 * 1024;
-    while (!closed && rssDelta <= rssLimit) {
-      sock.write(ping);
-      await Promise.race([closedPromise, Bun.sleep(20)]);
-    }
-    expect(rssDelta).toBeLessThanOrEqual(rssLimit);
-    expect(closed).toBe(true);
-    // The frontend was dropped; the inspected process itself must still be
-    // running, otherwise a crash would have produced the same observables.
-    expect({ exitCode: child.exitCode, signalCode: child.signalCode }).toEqual({ exitCode: null, signalCode: null });
-  } finally {
-    sock.destroy();
-    child.kill("SIGKILL");
-  }
+        // The other frontend still gets events after the stalled one left. This command is
+        // dispatched after that disconnect: both are tasks of the inspected thread, and the
+        // disconnect was posted first.
+        await witness.send("Runtime.evaluate", { expression: `console.log("#1000000 after")` });
+        await witness.until(() => witness!.lines.has(1000000), "a line logged after the stalled frontend left");
+        expect(witness.closeFrame).toBeUndefined();
+        expect(program.running).toBe(true);
+      } finally {
+        stalled.close();
+        witness?.close();
+      }
+    },
+    timeout,
+  );
 });
+
+test.concurrent(
+  "keeps a frontend that reads, however far behind it is",
+  async () => {
+    await using program = new Program(["--inspect=127.0.0.1:0"], logger);
+    await program.until(() => program.url !== "", "the inspector URL");
+    const slow = await RawFrontend.connect(program.url);
+    try {
+      await slow.send("Console.enable");
+      slow.pause();
+
+      // For each megabyte logged, the frontend takes one chunk: 512 KB at most. It ends up
+      // 16 MB or more behind. Its socket holds about 8 MB of that and the rest waits, twice
+      // the limit. But 4 MB are never queued since it last took a byte.
+      for (let i = 0; i < 32; i++) {
+        await program.log(1);
+        await slow.readChunk();
+      }
+
+      slow.resume();
+      await slow.until(() => slow.lines.size === program.lines, "every line");
+      expect(slow.closeFrame).toBeUndefined();
+    } finally {
+      slow.close();
+    }
+  },
+  timeout,
+);
+
+test.concurrent(
+  "disconnects a frontend on the socket transport that stops reading",
+  async () => {
+    // The inspected process dials this transport. It has no close frame.
+    const { promise: accepted, resolve: accept } = Promise.withResolvers<net.Socket>();
+    const server = net.createServer(accept).listen(0, "127.0.0.1");
+    try {
+      await new Promise(resolve => server.once("listening", resolve));
+      const { port } = server.address() as net.AddressInfo;
+      await using program = new Program([`--inspect=tcp://127.0.0.1:${port}`], logger);
+      const stalled = RawFrontend.accept(await accepted);
+      try {
+        await stalled.send("Console.enable");
+        stalled.pause();
+
+        // Its socket holds about 8 MB. The program drops it 4 MB later.
+        for (let i = 0; i < 64 && !stalled.ended; i++) await program.log(1);
+
+        // If nothing dropped it, it now gets every line and stays connected.
+        stalled.resume();
+        await stalled.until(() => stalled.lines.size === program.lines, "every line").catch(() => {});
+        expect(stalled.ended).toBe(true);
+        expect(stalled.lines.size).toBeLessThan(program.lines);
+        expect(program.running).toBe(true);
+      } finally {
+        stalled.close();
+      }
+    } finally {
+      server.close();
+    }
+  },
+  timeout,
+);

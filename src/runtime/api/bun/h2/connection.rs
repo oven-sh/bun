@@ -155,6 +155,8 @@ enum BlockDisposition {
     /// The embedder refused the stream (can_open_stream = false, node's maxSessionMemory):
     /// answered with RST_STREAM(ENHANCE_YOUR_CALM).
     Refused,
+    /// HEADERS arrived on a stream that is closed and evicted: dropped, as nghttp2 does.
+    Ignored,
 }
 
 pub(crate) struct Feed {
@@ -694,9 +696,7 @@ impl Connection {
         }
         self.replenish_buf = buf;
         // Evict closed streams so the map (and this scan) stay bounded on long-lived connections.
-        // Late DATA for an evicted id is dropped (is_closed_stream). A late HEADERS for an
-        // evicted id re-opens a fresh entry (the parity check still applies); that matches how
-        // trailers-after-close are treated as a new block by the legacy parser as well.
+        // Late DATA and HEADERS for an evicted id are dropped (is_closed_stream).
         let mut evict = std::mem::take(&mut self.evict_buf);
         evict.clear();
         for (id, s) in self.streams.iter() {
@@ -1086,13 +1086,16 @@ impl Connection {
             );
             return true;
         }
-        let refused = is_new && self.is_server && !sink.can_open_stream();
-        let mut disposition = if refused {
+        let mut disposition = if !is_new {
+            BlockDisposition::Deliver
+        } else if self.is_closed_stream(sink, hdr.stream_id) {
+            BlockDisposition::Ignored
+        } else if self.is_server && !sink.can_open_stream() {
             BlockDisposition::Refused
         } else {
             BlockDisposition::Deliver
         };
-        if !refused {
+        if disposition == BlockDisposition::Deliver {
             let s = self
                 .streams
                 .entry(hdr.stream_id)
@@ -1149,7 +1152,7 @@ impl Connection {
             if hdr.stream_id > self.last_stream_id {
                 self.last_stream_id = hdr.stream_id;
             }
-            if !refused {
+            if disposition == BlockDisposition::Deliver {
                 sink.on_stream_open(hdr.stream_id);
             }
         }
@@ -1442,6 +1445,7 @@ impl Connection {
                 sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
                 return false;
             }
+            BlockDisposition::Ignored => return false,
             BlockDisposition::Deliver => {}
         }
         // RFC 9113 §8.3.1 (nghttp2_http_on_request_headers): a request block needs exactly one

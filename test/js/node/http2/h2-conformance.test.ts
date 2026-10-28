@@ -2789,6 +2789,93 @@ describe("DATA on a closed stream (RFC 9113 §5.1)", () => {
   });
 });
 
+describe("HEADERS on a closed stream (RFC 9113 §5.1)", () => {
+  const resets = (frames: Frame[]) =>
+    frames.filter(f => f.type === FrameType.RST_STREAM).map(f => [f.streamId, f.payload.readUInt32BE(0)]);
+  const headersOrGoaway = (id: number) => (f: Frame) =>
+    (f.type === FrameType.HEADERS && f.streamId === id) || f.type === FrameType.GOAWAY;
+  // What was on its way when the stream closed. It makes x-late: 1 entry 62 of the HPACK table.
+  const trailers = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x-late"), hpackLiteral("1")]);
+
+  // Each entry closes stream 1 of a server and resolves to the resets that this takes.
+  const closings: Record<string, (c: RawH2) => Promise<number[][]>> = {
+    "the server reset": async c => {
+      c.sendFrame(FrameType.HEADERS, 0x4, 1, requestHeaderBlock("POST"));
+      await c.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      return [[1, ErrorCode.CANCEL]];
+    },
+    "the server answered": async c => {
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      await c.waitFor(f => f.type === FrameType.DATA && f.streamId === 1 && (f.flags & 0x1) !== 0);
+      return [];
+    },
+  };
+
+  test.each(Object.keys(closings))("that %s are decoded and dropped", async name => {
+    const srv = http2.createServer();
+    const seen: http2.IncomingHttpHeaders[] = [];
+    srv.on("stream", (stream, headers) => {
+      seen.push(headers);
+      stream.on("error", () => {});
+      if (headers[":method"] === "POST") return stream.close(http2.constants.NGHTTP2_CANCEL);
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    srv.listen(0, "127.0.0.1");
+    await once(srv, "listening");
+    const c = await RawH2.connect((srv.address() as net.AddressInfo).port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const expected = await closings[name](c);
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, trailers);
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET")); // Not a new request either.
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", Buffer.from([0xbe])));
+      expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
+      expect(resets(c.frames)).toEqual(expected);
+      expect(seen.map(headers => headers["x-late"])).toEqual([undefined, "1"]);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test.each([
+    ["trailers", trailers],
+    ["a response", Buffer.concat([Buffer.from([0x88]), trailers])],
+  ])("that the client canceled are decoded and dropped: %s", async (_, late) => {
+    const raw = await RawH2Server.listen();
+    const client = http2.connect(`http://127.0.0.1:${raw.port}`);
+    try {
+      client.on("error", () => {});
+      const req = client.request({ ":path": "/" });
+      req.on("error", () => {});
+      req.on("response", () => req.close(http2.constants.NGHTTP2_CANCEL));
+      const closed = once(req, "close");
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 1);
+      raw.sendFrame(FrameType.SETTINGS, 0, 0);
+      raw.sendFrame(FrameType.HEADERS, 0x4, 1, Buffer.from([0x88]));
+      await raw.waitFor(f => f.type === FrameType.RST_STREAM && f.streamId === 1);
+      await closed;
+      raw.sendFrame(FrameType.HEADERS, 0x5, 1, late);
+
+      const next = client.request({ ":path": "/" });
+      const response = once(next, "response");
+      next.resume();
+      await raw.waitFor(f => f.type === FrameType.HEADERS && f.streamId === 3);
+      raw.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.from([0x88, 0xbe]));
+      expect((await response)[0]).toMatchObject({ ":status": 200, "x-late": "1" });
+      // The session is not left waiting for a stream that nobody has.
+      await new Promise<void>(resolve => client.close(resolve));
+      await raw.waitFor(f => f.type === FrameType.GOAWAY);
+      expect(resets(raw.frames)).toEqual([[1, ErrorCode.CANCEL]]);
+    } finally {
+      client.destroy();
+      raw.close();
+    }
+  });
+});
+
 describe("HPACK (RFC 7541)", () => {
   const HEADER_TABLE_SIZE = 0x1;
   const isSettingsAck = (f: Frame) => f.type === FrameType.SETTINGS && (f.flags & 0x1) !== 0;

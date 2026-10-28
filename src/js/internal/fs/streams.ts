@@ -437,11 +437,12 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
     return;
   }
 
+  const fd = stream.fd;
   // A raw fd 0 stays open, as in node (process.stdin over a file). A FileHandle always gets its ref back.
-  if (stream[kHandle] ? stream.fd == null : !stream.fd) {
+  if (fd == null || (fd === 0 && !stream[kHandle])) {
     cb(err);
   } else if (stream.flush) {
-    stream[kFs].fsync!(stream.fd, flushErr => {
+    stream[kFs].fsync!(fd, flushErr => {
       closeAfterSync(stream, err || flushErr, cb);
     });
   } else {

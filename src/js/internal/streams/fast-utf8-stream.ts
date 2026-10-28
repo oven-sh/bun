@@ -79,6 +79,8 @@ class Utf8Stream extends EventEmitter {
   #mode;
   #retryEAGAIN: (err: unknown, writeBufferLen: number, remainingBufferLen: number) => boolean = () => true;
   #mkdir = false;
+  #maxWriteRetries = 0;
+  #writeRetries = 0;
   #writingBuf: any = "";
   #write: (data: string | Uint8Array) => boolean;
   #flush: (cb: FlushCallback | null) => void;
@@ -101,6 +103,7 @@ class Utf8Stream extends EventEmitter {
       append = true,
       mkdir,
       retryEAGAIN,
+      maxWriteRetries,
       fsync,
       contentMode = kContentModeUtf8,
       mode,
@@ -134,12 +137,14 @@ class Utf8Stream extends EventEmitter {
     this.#mode = mode;
     this.#retryEAGAIN = retryEAGAIN || (() => true);
     this.#mkdir = mkdir || false;
+    this.#maxWriteRetries = maxWriteRetries || 0;
 
     validateUint32(this.#hwm, "options.hwm");
     validateUint32(this.#minLength, "options.minLength");
     validateUint32(this.#maxLength, "options.maxLength");
     validateUint32(this.#maxWrite, "options.maxWrite");
     validateUint32(this.#periodicFlush, "options.periodicFlush");
+    validateUint32(this.#maxWriteRetries, "options.maxWriteRetries");
     validateBoolean(this.#sync, "options.sync");
     validateBoolean(this.#fsync, "options.fsync");
     validateBoolean(this.#append, "options.append");
@@ -348,8 +353,15 @@ class Utf8Stream extends EventEmitter {
 
   #release(err?, n?) {
     if (err) {
+      const isRetryableErr = err.code === "EAGAIN" || err.code === "EBUSY";
+      if (isRetryableErr) {
+        this.#writeRetries++;
+      }
+      const retriesExhausted = this.#maxWriteRetries > 0 && this.#writeRetries > this.#maxWriteRetries;
+
       if (
-        (err.code === "EAGAIN" || err.code === "EBUSY") &&
+        isRetryableErr &&
+        !retriesExhausted &&
         this.#retryEAGAIN(err, this.#writingBuf.length, this.#len - this.#writingBuf.length)
       ) {
         if (this.#sync) {
@@ -372,6 +384,13 @@ class Utf8Stream extends EventEmitter {
         this.emit("error", err);
       }
       return;
+    }
+
+    // Reset the retry counter only once real forward progress (n > 0) is
+    // confirmed. Otherwise a stuck destination would never accumulate past
+    // one retry and `maxWriteRetries` could never trigger.
+    if (n > 0) {
+      this.#writeRetries = 0;
     }
 
     this.emit("write", n);
@@ -612,6 +631,7 @@ class Utf8Stream extends EventEmitter {
       }
       try {
         const n = this.#fs.writeSync(this.#fd, buf);
+        this.#writeRetries = 0;
         buf = buf.subarray(n);
         this.#len = Math.max(this.#len - n, 0);
         if (buf.length <= 0) {
@@ -621,7 +641,11 @@ class Utf8Stream extends EventEmitter {
       } catch (err) {
         const shouldRetry =
           (err as NodeJS.ErrnoException).code === "EAGAIN" || (err as NodeJS.ErrnoException).code === "EBUSY";
-        if (shouldRetry && !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
+        if (shouldRetry) {
+          this.#writeRetries++;
+        }
+        const retriesExhausted = this.#maxWriteRetries > 0 && this.#writeRetries > this.#maxWriteRetries;
+        if (!shouldRetry || retriesExhausted || !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
           throw err;
         }
 
@@ -651,6 +675,7 @@ class Utf8Stream extends EventEmitter {
       }
       try {
         const n = this.#fs.writeSync(this.#fd, buf, "utf8");
+        this.#writeRetries = 0;
         const releasedBufObj = releaseWritingBuf(buf, this.#len, n);
         buf = releasedBufObj.writingBuf;
         this.#len = releasedBufObj.len;
@@ -660,7 +685,11 @@ class Utf8Stream extends EventEmitter {
       } catch (err) {
         const shouldRetry =
           (err as NodeJS.ErrnoException).code === "EAGAIN" || (err as NodeJS.ErrnoException).code === "EBUSY";
-        if (shouldRetry && !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
+        if (shouldRetry) {
+          this.#writeRetries++;
+        }
+        const retriesExhausted = this.#maxWriteRetries > 0 && this.#writeRetries > this.#maxWriteRetries;
+        if (!shouldRetry || retriesExhausted || !this.#retryEAGAIN(err, buf.length, this.#len - buf.length)) {
           throw err;
         }
 

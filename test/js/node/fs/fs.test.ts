@@ -7875,6 +7875,266 @@ describe("fs.Utf8Stream", () => {
     });
     await done;
   });
+
+  // `write` and `writeSync` fail with `code` for the first `failures` calls, then reach the file.
+  // The failures end so that a stream that retries without a bound still completes.
+  function failingFs(code: string, failures: number) {
+    const counter = {
+      calls: 0,
+      fs: {
+        write(...args: any[]) {
+          const cb = args.pop();
+          if (++counter.calls <= failures) return process.nextTick(cb, Object.assign(new Error(code), { code }));
+          (fs.write as any)(...args, cb);
+        },
+        writeSync(...args: any[]) {
+          if (++counter.calls <= failures) throw Object.assign(new Error(code), { code });
+          return (fs.writeSync as any)(...args);
+        },
+      },
+    };
+    return counter;
+  }
+
+  // @types/node does not declare `maxWriteRetries` yet.
+  type Utf8StreamOptions = ConstructorParameters<typeof fs.Utf8Stream>[0] & { maxWriteRetries?: unknown };
+  function utf8Stream(options: Utf8StreamOptions) {
+    return new fs.Utf8Stream(options);
+  }
+
+  // 'error' (its code) or 'drain', whichever the stream emits first.
+  function errorOrDrain(stream: fs.Utf8Stream) {
+    const { promise, resolve } = Promise.withResolvers<string>();
+    stream.once("error", err => resolve((err as NodeJS.ErrnoException).code!));
+    stream.once("drain", () => resolve("drain"));
+    return promise;
+  }
+
+  describe.each(["utf8", "buffer"] as const)("contentMode %s", contentMode => {
+    const hello = contentMode === "buffer" ? Buffer.from("hello\n") : "hello\n";
+
+    it("flushSync() throws a write error that is not EAGAIN or EBUSY", () => {
+      using dir = tempDir("utf8stream-flushsync-error", {});
+      const fake = failingFs("ENOSPC", 3);
+      // minLength keeps the chunk in the buffer until flushSync().
+      const stream = utf8Stream({
+        dest: path.join(String(dir), "out.log"),
+        sync: true,
+        minLength: 4096,
+        contentMode,
+        fs: fake.fs,
+      });
+      try {
+        stream.write(hello);
+        let code: string | undefined;
+        try {
+          stream.flushSync();
+        } catch (err) {
+          code = (err as NodeJS.ErrnoException).code;
+        }
+        expect({ code, calls: fake.calls }).toEqual({ code: "ENOSPC", calls: 1 });
+      } finally {
+        stream.destroy();
+      }
+    });
+
+    it("flushSync() stops after maxWriteRetries consecutive EAGAIN", () => {
+      using dir = tempDir("utf8stream-flushsync-retries", {});
+      const fake = failingFs("EAGAIN", 4);
+      const stream = utf8Stream({
+        dest: path.join(String(dir), "out.log"),
+        sync: true,
+        minLength: 4096,
+        maxWriteRetries: 2,
+        contentMode,
+        fs: fake.fs,
+      });
+      try {
+        stream.write(hello);
+        let code: string | undefined;
+        try {
+          stream.flushSync();
+        } catch (err) {
+          code = (err as NodeJS.ErrnoException).code;
+        }
+        // The first attempt and two retries.
+        expect({ code, calls: fake.calls }).toEqual({ code: "EAGAIN", calls: 3 });
+      } finally {
+        stream.destroy();
+      }
+    });
+
+    // Buffer mode does not store the first chunk of a group (nodejs/node#63833): flushSync() gets an empty buffer,
+    // which call 2 cannot write in two parts, so there is no call 3 (observed: calls is 2, the file is empty).
+    it.todoIf(contentMode === "buffer")("flushSync() resets the maxWriteRetries count after progress", () => {
+      using dir = tempDir("utf8stream-flushsync-reset", {});
+      const dest = path.join(String(dir), "out.log");
+      let calls = 0;
+      const stream = utf8Stream({
+        dest,
+        sync: true,
+        minLength: 4096,
+        maxWriteRetries: 1,
+        contentMode,
+        fs: {
+          // Calls 1 and 3 fail. Call 2 writes 3 bytes, so the loop has more to write when call 3 fails.
+          writeSync(fd: number, data: string | Buffer, ...rest: any[]) {
+            calls++;
+            if (calls === 1 || calls === 3) throw Object.assign(new Error("EAGAIN"), { code: "EAGAIN" });
+            return (fs.writeSync as any)(fd, calls === 2 ? data.slice(0, 3) : data, ...rest);
+          },
+        },
+      });
+      try {
+        stream.write(hello);
+        stream.flushSync();
+        expect({ calls, file: fs.readFileSync(dest, "utf8") }).toEqual({ calls: 4, file: "hello\n" });
+      } finally {
+        stream.destroy();
+      }
+    });
+  });
+
+  it.each(["EAGAIN", "EBUSY"])("maxWriteRetries bounds the %s retries of an async write", async code => {
+    using dir = tempDir("utf8stream-max-write-retries", {});
+    const fake = failingFs(code, 4);
+    const stream = utf8Stream({
+      dest: path.join(String(dir), "out.log"),
+      sync: false,
+      maxWriteRetries: 2,
+      fs: fake.fs,
+    });
+    try {
+      const outcome = errorOrDrain(stream);
+      stream.write("hello\n");
+      expect({ outcome: await outcome, calls: fake.calls, writing: stream.writing }).toEqual({
+        outcome: code,
+        calls: 3,
+        writing: false,
+      });
+    } finally {
+      stream.destroy();
+    }
+  });
+
+  it.each([
+    [2, 2],
+    [0, 3],
+    [undefined, 3],
+  ] as const)(
+    "with maxWriteRetries %p, a write that succeeds after %d EAGAIN does not fail",
+    async (maxWriteRetries, failures) => {
+      using dir = tempDir("utf8stream-retries-within-limit", {});
+      const dest = path.join(String(dir), "out.log");
+      const fake = failingFs("EAGAIN", failures);
+      const stream = utf8Stream({ dest, sync: false, maxWriteRetries, fs: fake.fs });
+      try {
+        const outcome = errorOrDrain(stream);
+        stream.write("hello\n");
+        expect({ outcome: await outcome, calls: fake.calls, file: fs.readFileSync(dest, "utf8") }).toEqual({
+          outcome: "drain",
+          calls: failures + 1,
+          file: "hello\n",
+        });
+      } finally {
+        stream.destroy();
+      }
+    },
+  );
+
+  it("a write that makes progress resets the maxWriteRetries count", async () => {
+    using dir = tempDir("utf8stream-retries-reset", {});
+    const dest = path.join(String(dir), "out.log");
+    let calls = 0;
+    const stream = utf8Stream({
+      dest,
+      sync: false,
+      maxWriteRetries: 1,
+      fs: {
+        // Every odd call fails: each chunk needs one retry, and two chunks need two in total.
+        write(...args: any[]) {
+          const cb = args.pop();
+          if (++calls % 2 === 1) return process.nextTick(cb, Object.assign(new Error("EAGAIN"), { code: "EAGAIN" }));
+          (fs.write as any)(...args, cb);
+        },
+      },
+    });
+    try {
+      const first = errorOrDrain(stream);
+      stream.write("one\n");
+      expect(await first).toBe("drain");
+      const second = errorOrDrain(stream);
+      stream.write("two\n");
+      expect({ outcome: await second, calls, file: fs.readFileSync(dest, "utf8") }).toEqual({
+        outcome: "drain",
+        calls: 4,
+        file: "one\ntwo\n",
+      });
+    } finally {
+      stream.destroy();
+    }
+  });
+
+  it("a sync write throws once maxWriteRetries is exhausted", () => {
+    using dir = tempDir("utf8stream-sync-max-write-retries", {});
+    const fake = failingFs("EAGAIN", 4);
+    const stream = utf8Stream({
+      dest: path.join(String(dir), "out.log"),
+      sync: true,
+      maxWriteRetries: 2,
+      fs: fake.fs,
+    });
+    try {
+      let code: string | undefined;
+      try {
+        stream.write("hello\n");
+      } catch (err) {
+        code = (err as NodeJS.ErrnoException).code;
+      }
+      expect({ code, calls: fake.calls, writing: stream.writing }).toEqual({
+        code: "EAGAIN",
+        calls: 3,
+        writing: false,
+      });
+    } finally {
+      stream.destroy();
+    }
+  });
+
+  it.each([
+    [-1, RangeError, "ERR_OUT_OF_RANGE", "It must be >= 0 && <= 4294967295. Received -1"],
+    [1.5, RangeError, "ERR_OUT_OF_RANGE", "It must be an integer. Received 1.5"],
+    [2 ** 32, RangeError, "ERR_OUT_OF_RANGE", "It must be >= 0 && <= 4294967295. Received 4294967296"],
+  ] as const)("rejects maxWriteRetries %p", (maxWriteRetries, constructor, code, detail) => {
+    let thrown: any;
+    try {
+      utf8Stream({ fd: 1, maxWriteRetries });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(constructor);
+    expect({ code: thrown.code, message: thrown.message }).toEqual({
+      code,
+      message: `The value of "options.maxWriteRetries" is out of range. ${detail}`,
+    });
+  });
+
+  it.each([
+    ["3", "type string ('3')"],
+    [true, "type boolean (true)"],
+  ] as const)("rejects a maxWriteRetries that is not a number: %p", (maxWriteRetries, received) => {
+    let thrown: any;
+    try {
+      utf8Stream({ fd: 1, maxWriteRetries });
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(TypeError);
+    expect({ code: thrown.code, message: thrown.message }).toEqual({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "options.maxWriteRetries" property must be of type number. Received ${received}`,
+    });
+  });
 });
 
 describe.if(isPosix)("fs.read into a view over a WebAssembly.Memory that grows during the read", () => {

@@ -177,6 +177,23 @@ pub(crate) fn append(to: &mut Vec<u8>, from: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// `to.extend_from_within(start..start + len)`, without a new allocation.
+#[inline]
+pub(crate) fn append_within(to: &mut Vec<u8>, start: usize, len: usize) -> Result<()> {
+    let end = start + len;
+    if end > to.len() || len > to.capacity() - to.len() {
+        return Err(BUG);
+    }
+    if is_slow_to_copy(to.len() - start, len) {
+        (start..end)
+            .step_by(MAX_COPY)
+            .for_each(|part| to.extend_from_within(part..(part + MAX_COPY).min(end)));
+    } else {
+        to.extend_from_within(start..end);
+    }
+    Ok(())
+}
+
 #[inline(always)]
 pub(crate) fn read_le16(data: &[u8], pos: usize) -> Result<u16> {
     Ok(u16::from_le_bytes(*data.array_at(pos)?))
@@ -271,6 +288,11 @@ mod tests {
         let mut within = from.repeat(3);
         let len = MAX_COPY + 9;
         for distance in (PAGE..PAGE + 200).chain(len..PAGE).step_by(step) {
+            within.truncate(3 * from.len());
+            within.reserve(len);
+            append_within(&mut within, 3 * from.len() - distance, len)?;
+            assert!(within.span(3 * from.len() - distance, len)? == within.sub(3 * from.len()..)?);
+
             let expected = within.span(5, len)?.to_vec();
             within.move_within(5, 5 + distance, len)?;
             assert!(*within.span(5 + distance, len)? == *expected);

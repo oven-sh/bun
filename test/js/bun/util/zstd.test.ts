@@ -343,6 +343,114 @@ describe("Zstandard compression", async () => {
   }
 });
 
+describe("decompressing frames whose size is known", () => {
+  let x = 0x9e3779b9;
+  const noise = (length: number) =>
+    Buffer.from(
+      Uint8Array.from({ length }, () => {
+        x ^= x << 13;
+        x ^= x >>> 17;
+        x ^= x << 5;
+        return x;
+      }),
+    );
+  const repeated = (period: Buffer, length: number) => Buffer.alloc(length, period);
+  // Blocks that are stored, blocks of one byte, blocks of a few long matches, and blocks of many short ones.
+  const pieces = [
+    noise(140_000),
+    Buffer.alloc(270_000, 7),
+    repeated(noise(1000), 140_000),
+    repeated(Buffer.from("one two three two one three "), 20_000),
+    repeated(noise(60_000), 200_000),
+    Buffer.from(noise(30_000).map(byte => 97 + (byte & 3) * ((byte >> 2) % 3))),
+    noise(9),
+  ];
+  const whole = Buffer.concat(pieces);
+
+  // "raw", "rle", or how many sequences a compressed block has.
+  function blocks(frame: Uint8Array) {
+    const descriptor = frame[4];
+    const isSingleSegment = (descriptor >> 5) & 1;
+    let at = 5 + (1 - isSingleSegment) + [0, 1, 2, 4][descriptor & 3] + [isSingleSegment, 2, 4, 8][descriptor >> 6];
+    const kinds: (string | number)[] = [];
+    for (let isLast = 0; !isLast;) {
+      const header = frame[at] | (frame[at + 1] << 8) | (frame[at + 2] << 16);
+      at += 3;
+      isLast = header & 1;
+      const type = (header >> 1) & 3;
+      if (type === 2) {
+        const format = (frame[at] >> 2) & 3;
+        const bits =
+          frame[at] +
+          frame[at + 1] * 2 ** 8 +
+          frame[at + 2] * 2 ** 16 +
+          frame[at + 3] * 2 ** 24 +
+          frame[at + 4] * 2 ** 32;
+        let literals: number;
+        if ((frame[at] & 3) < 2) {
+          const size = format === 1 ? (bits >> 4) & 0xfff : format === 3 ? (bits >> 4) & 0xfffff : frame[at] >> 3;
+          literals = [1, 2, 1, 3][format] + ((frame[at] & 3) === 0 ? size : 1);
+        } else {
+          const width = [10, 10, 14, 18][format];
+          literals = [3, 3, 4, 5][format] + (Math.floor(bits / 2 ** (4 + width)) % 2 ** width);
+        }
+        const [first, second, third] = frame.subarray(at + literals);
+        kinds.push(first < 128 ? first : first < 255 ? ((first - 128) << 8) + second : second + (third << 8) + 0x7f00);
+      } else {
+        kinds.push(["raw", "rle"][type]);
+      }
+      at += type === 1 ? 1 : header >> 3;
+    }
+    return kinds;
+  }
+
+  it("the frames have blocks of these kinds", () => {
+    expect(pieces.map(piece => blocks(zstdCompressSync(piece, { level: 1 })))).toEqual([
+      ["raw", "raw"],
+      [1, "rle", "rle"],
+      [1, 1],
+      [4],
+      [1, 1],
+      [3647],
+      ["raw"],
+    ]);
+  });
+
+  it.each([1, 3])("stretches of noise, runs and long matches in one frame of level %i", level => {
+    expect(zstdDecompressSync(zstdCompressSync(whole, { level })).equals(whole)).toBe(true);
+  });
+
+  it("the same in a frame each, whose blocks are let to write more or less", () => {
+    const frames = pieces.map((piece, i) =>
+      zlib.zstdCompressSync(piece, { params: { [zlib.constants.ZSTD_c_windowLog]: [17, 10, 20, 12][i % 4] } }),
+    );
+    expect(zstdDecompressSync(Buffer.concat(frames)).equals(whole)).toBe(true);
+    expect(zstdDecompressSync(Buffer.concat(frames.toReversed())).equals(Buffer.concat(pieces.toReversed()))).toBe(
+      true,
+    );
+  });
+
+  it.each([4097, 4100, 4222, 8200])("long matches from %i bytes back, which are copied in parts", period => {
+    const data = repeated(noise(period), 40_000);
+    const frame = zstdCompressSync(data, { level: 3 });
+    expect(zstdDecompressSync(frame).equals(data)).toBe(true);
+    expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+  });
+
+  it("a frame that makes more than it says is refused", () => {
+    for (const piece of pieces.filter(piece => piece.length >= 135_000)) {
+      const frame = zstdCompressSync(piece.subarray(0, 135_000), { level: 1 });
+      // The content size, 4 bytes of it from 64 KB on, after the magic number and the descriptor.
+      expect(frame.readUInt32LE(5)).toBe(135_000);
+      for (const size of [134_999, 131_072, 70_000]) {
+        const lying = Buffer.from(frame);
+        lying.writeUInt32LE(size, 5);
+        expect(() => zstdDecompressSync(lying)).toThrow("Decompression failed: DecompressionFailed");
+      }
+    }
+  });
+});
+
 // zstdDecompressSync sizes its output from the frame header when the content size is
 // present and at most 16 MiB. Anything else is decoded in a stream into a buffer that
 // starts at a guess (the input size, or the 16 MiB limit) and grows as needed.

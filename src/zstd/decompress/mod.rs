@@ -8,7 +8,8 @@ mod seq_table;
 use std::borrow::Cow;
 
 use block::{
-    BlockDecoder, BlockOutput, EntropyDTables, ExtDict, OutputBuffer, Streaming, get_c_block_size,
+    BlockDecoder, BlockOutput, EntropyDTables, ExtDict, Growth, OutputBuffer, Streaming,
+    get_c_block_size,
 };
 use seq_table::{LL_CODES, ML_CODES, OF_CODES, SeqTableSources, TableSource};
 
@@ -24,7 +25,7 @@ use crate::common::{
     ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
 use crate::error::{Error, Result};
-use crate::util::{SliceExt, read_le16, read_le32, read_le64, try_copy};
+use crate::util::{SliceExt, append, read_le16, read_le32, read_le64, try_copy};
 use crate::{InBuffer, OutBuffer};
 
 /// `ZSTD_FRAMEHEADERSIZE_PREFIX`: what it takes to know the size of a frame header.
@@ -623,8 +624,28 @@ impl DCtx {
     /// `ZSTD_decompressDCtx`: decompresses all the frames of `src`, which has to end with one, to the start of `dst`.
     /// Returns how many bytes that is.
     pub fn decompress(&mut self, dst: &mut [u8], src: &[u8]) -> Result<usize> {
+        let (size, dst) = (dst.len(), &mut OutputBuffer::Whole(dst));
         self.state
-            .decompress_multi_frame(dst, 0, src, self.ddict.as_deref())
+            .decompress_multi_frame(dst, size, 0, src, self.ddict.as_deref())
+    }
+
+    /// The same to a new buffer of `capacity` bytes, little more of which is touched than is written. With `ddict`, if
+    /// there is one, and not with a dictionary that was loaded.
+    pub(crate) fn decompress_to_vec(
+        &mut self,
+        capacity: usize,
+        src: &[u8],
+        ddict: Option<&DDict<'_>>,
+    ) -> Result<Vec<u8>> {
+        let mut dst = Vec::new();
+        dst.try_reserve_exact(capacity)
+            .map_err(|_| Error::MemoryAllocation)?;
+        let used = &mut OutputBuffer::Used(&mut dst);
+        let size = self
+            .state
+            .decompress_multi_frame(used, capacity, 0, src, ddict)?;
+        dst.truncate(size);
+        Ok(dst)
     }
 
     /// `ZSTD_decompress_usingDDict`
@@ -634,7 +655,9 @@ impl DCtx {
         src: &[u8],
         ddict: &DDict<'_>,
     ) -> Result<usize> {
-        self.state.decompress_multi_frame(dst, 0, src, Some(ddict))
+        let (size, dst) = (dst.len(), &mut OutputBuffer::Whole(dst));
+        self.state
+            .decompress_multi_frame(dst, size, 0, src, Some(ddict))
     }
 
     /// `ZSTD_DCtx_loadDictionary`: `dict` is copied, and used for every frame from now on. None if it is empty.
@@ -689,17 +712,12 @@ impl DCtx {
     }
 }
 
-/// `ZSTD_decompress`
-pub(crate) fn decompress(dst: &mut [u8], src: &[u8]) -> Result<usize> {
-    DCtx::new().decompress(dst, src)
-}
-
 /// `ZSTD_copyRawBlock`
 fn copy_raw_block(dst: &mut [u8], src: &[u8]) -> Result<usize> {
-    let Some(dst) = dst.get_mut(..src.len()) else {
+    if src.len() > dst.len() {
         return Err(Error::DstSizeTooSmall);
-    };
-    dst.copy_from_slice(src);
+    }
+    dst.write_at(0, src)?;
     Ok(src.len())
 }
 
@@ -822,7 +840,8 @@ impl DState {
     /// Returns how much was written, and how much was read.
     fn decompress_frame(
         &mut self,
-        dst: &mut [u8],
+        dst: &mut OutputBuffer<'_>,
+        dst_size: usize,
         ostart: usize,
         src: &[u8],
         ddict: Option<&DDict<'_>>,
@@ -852,11 +871,10 @@ impl DState {
 
             let decoded_size = match properties.block_type {
                 BlockType::Compressed => {
-                    let capacity = dst.len() - op;
                     let decoded_size = self.decompress_block(
-                        OutputBuffer::Whole(dst),
+                        dst.reborrow(),
                         op,
-                        capacity,
+                        dst_size - op,
                         block,
                         ddict,
                         Streaming::No,
@@ -867,16 +885,25 @@ impl DState {
                     }
                     decoded_size
                 }
-                BlockType::Raw => copy_raw_block(dst.sub_mut(op..)?, block)?,
-                BlockType::Rle => set_rle_block(
-                    dst.sub_mut(op..)?,
-                    block.at(0)?,
-                    properties.orig_size as usize,
-                )?,
+                BlockType::Raw => {
+                    if block.len() > dst_size - op {
+                        return Err(Error::DstSizeTooSmall);
+                    }
+                    dst.write(op, block, Growth::Append)?;
+                    block.len()
+                }
+                BlockType::Rle => {
+                    let size = properties.orig_size as usize;
+                    if size > dst_size - op {
+                        return Err(Error::DstSizeTooSmall);
+                    }
+                    dst.fill(op, block.at(0)?, size, Growth::Append)?;
+                    size
+                }
                 BlockType::Reserved => return Err(Error::CorruptionDetected),
             };
             if self.validate_checksum {
-                self.xxh_state.update(dst.span(op, decoded_size)?);
+                self.xxh_state.update(dst.bytes().span(op, decoded_size)?);
             }
             op += decoded_size;
             ip += c_block_size;
@@ -905,7 +932,8 @@ impl DState {
     /// `ZSTD_decompressMultiFrame`: all the frames of `src`, to `dst` from `dst_start` on.
     fn decompress_multi_frame(
         &mut self,
-        dst: &mut [u8],
+        dst: &mut OutputBuffer<'_>,
+        dst_size: usize,
         dst_start: usize,
         mut src: &[u8],
         ddict: Option<&DDict<'_>>,
@@ -920,9 +948,9 @@ impl DState {
             }
 
             self.begin_using_ddict(ddict);
-            self.check_continuity(op, dst.len() - op);
+            self.check_continuity(op, dst_size - op);
 
-            match self.decompress_frame(dst, op, src, ddict) {
+            match self.decompress_frame(dst, dst_size, op, src, ddict) {
                 // More likely `src` is longer than its frames than damaged where a magic number is expected.
                 Err(Error::PrefixUnknown) if more_than_1_frame => {
                     return Err(Error::SrcSizeWrong);
@@ -1202,7 +1230,8 @@ impl DState {
                 {
                     if let Ok(c_size) = find_frame_compressed_size(src.sub(istart..)?) {
                         let decompressed_size = self.decompress_multi_frame(
-                            output.dst,
+                            &mut OutputBuffer::Whole(output.dst),
+                            oend,
                             op,
                             src.span(istart, c_size)?,
                             ddict,
@@ -1267,9 +1296,7 @@ impl DState {
                         return Err(Error::CorruptionDetected);
                     }
                     self.in_buff.bytes.truncate(self.in_pos);
-                    self.in_buff
-                        .bytes
-                        .extend_from_slice(src.span(ip, loaded_size)?);
+                    append(&mut self.in_buff.bytes, src.span(ip, loaded_size)?)?;
                 }
                 ip += loaded_size;
                 self.in_pos += loaded_size;

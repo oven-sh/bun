@@ -41,6 +41,7 @@ const MIRI_CRATES = [
   "bun_sema",
   "bun_ast",
   "bun_paths",
+  "bun_zstd",
   "bun_hash",
   "bun_base64",
   "bun_bundler",
@@ -56,7 +57,6 @@ const MIRI_CRATES = [
   "bun_threading",
   "bun_url",
   "bun_wyhash",
-  "bun_zstd",
 ];
 
 function run(cmd: string, args: string[], opts: Parameters<typeof spawnSync>[2] = {}) {

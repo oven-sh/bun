@@ -18,7 +18,7 @@ use crate::common::{
     REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
 };
 use crate::error::{Error, Result};
-use crate::util::{BUG, SliceExt, read_le16, read_le24, read_le32};
+use crate::util::{BUG, SliceExt, append, append_within, copy, read_le16, read_le24, read_le32};
 
 /// `blockProperties_t`
 pub(crate) struct BlockProperties {
@@ -103,12 +103,25 @@ impl ExtDict<'_> {
         }
     }
 
-    /// `memmove(&buf[dst], dictEnd - back, len)`
+    /// `memmove(&out[dst], dictEnd - back, len)`
     #[inline]
-    fn copy_to(&self, buf: &mut [u8], dst: usize, back: usize, len: usize) -> Result<()> {
+    fn copy_to(
+        &self,
+        out: &mut OutputBuffer<'_>,
+        dst: usize,
+        back: usize,
+        len: usize,
+        growth: Growth,
+    ) -> Result<()> {
         match *self {
-            ExtDict::Dict(dict) => buf.write_at(dst, dict.span(dict.len() - back, len)?),
-            ExtDict::Within { end, .. } => buf.move_within(end - back, dst, len),
+            ExtDict::Dict(dict) => out.write(dst, dict.span(dict.len() - back, len)?, growth),
+            ExtDict::Within { end, .. } => {
+                let Growth::Zeros { limit } = growth else {
+                    return Err(BUG);
+                };
+                out.extend_to(dst + len, limit);
+                out.bytes().move_within(end - back, dst, len)
+            }
         }
     }
 }
@@ -116,13 +129,14 @@ impl ExtDict<'_> {
 /// A buffer that output goes to.
 pub(crate) enum OutputBuffer<'a> {
     Whole(&'a mut [u8]),
-    /// What has been written so far of a buffer. It has the capacity for all that a block is let to write.
+    /// What has been written so far of a buffer, or somewhat more. It has the capacity for all that a block is let to
+    /// write.
     Used(&'a mut Vec<u8>),
 }
 
 impl OutputBuffer<'_> {
     #[inline(always)]
-    fn bytes(&mut self) -> &mut [u8] {
+    pub(crate) fn bytes(&mut self) -> &mut [u8] {
         match self {
             Self::Whole(bytes) => bytes,
             Self::Used(bytes) => bytes,
@@ -130,7 +144,7 @@ impl OutputBuffer<'_> {
     }
 
     #[inline(always)]
-    fn reborrow(&mut self) -> OutputBuffer<'_> {
+    pub(crate) fn reborrow(&mut self) -> OutputBuffer<'_> {
         match self {
             Self::Whole(bytes) => OutputBuffer::Whole(bytes),
             Self::Used(bytes) => OutputBuffer::Used(bytes),
@@ -146,6 +160,73 @@ impl OutputBuffer<'_> {
             bytes.resize((end + ahead).min(limit), 0);
         }
     }
+
+    /// Where the `len` bytes from `start` on go.
+    fn room(&mut self, start: usize, len: usize, growth: Growth) -> Result<Room<'_>> {
+        if let Growth::Zeros { limit } = growth {
+            self.extend_to(start + len, limit);
+        }
+        match self {
+            Self::Used(bytes) if start + len > bytes.len() => {
+                if start > bytes.len() || !matches!(growth, Growth::Append) {
+                    return Err(BUG);
+                }
+                bytes.truncate(start);
+                Ok(Room::AtEnd(bytes))
+            }
+            _ => Ok(Room::There(self.bytes().span_mut(start, len)?)),
+        }
+    }
+
+    /// `memcpy(&self[start], from, from.len())`
+    pub(crate) fn write(&mut self, start: usize, from: &[u8], growth: Growth) -> Result<()> {
+        match self.room(start, from.len(), growth)? {
+            Room::There(room) => room.write_at(0, from),
+            Room::AtEnd(bytes) => append(bytes, from),
+        }
+    }
+
+    /// `memset(&self[start], byte, len)`
+    pub(crate) fn fill(
+        &mut self,
+        start: usize,
+        byte: u8,
+        len: usize,
+        growth: Growth,
+    ) -> Result<()> {
+        match self.room(start, len, growth)? {
+            Room::There(room) => room.fill(byte),
+            Room::AtEnd(bytes) if len > bytes.capacity() - start => return Err(BUG),
+            Room::AtEnd(bytes) => bytes.resize(start + len, byte),
+        }
+        Ok(())
+    }
+
+    /// [`copy_match_exact`]
+    fn repeat(&mut self, src: usize, dst: usize, len: usize, growth: Growth) -> Result<()> {
+        if src >= dst {
+            return Err(BUG);
+        }
+        if let Room::AtEnd(bytes) = self.room(dst, len, growth)? {
+            return in_whole_periods(dst - src, len, |_, chunk| append_within(bytes, src, chunk));
+        }
+        copy_match_exact(self.bytes(), src, dst, len)
+    }
+}
+
+/// What to do about a buffer that is `Used` only up to before the end of what is to be written.
+#[derive(Clone, Copy)]
+pub(crate) enum Growth {
+    /// Zeros up to there, and somewhat further if `limit` allows.
+    Zeros { limit: usize },
+    /// What is written becomes its end, without being zeroed first. Only for output in one call, where nothing that
+    /// comes after what is being written is of any use.
+    Append,
+}
+
+enum Room<'a> {
+    There(&'a mut [u8]),
+    AtEnd(&'a mut Vec<u8>),
 }
 
 /// Where a block is written.
@@ -437,7 +518,7 @@ impl BlockDecoder {
                     }
                     self.scratch()
                         .lit_buffer(lit_size)?
-                        .copy_from_slice(src.span(lh_size, lit_size)?);
+                        .write_at(0, src.span(lh_size, lit_size)?)?;
                     return Ok(Literals {
                         c_size: lh_size + lit_size,
                         size: lit_size,
@@ -664,23 +745,39 @@ impl BlockDecoder {
             && literals.location == LitLocation::NotInDst
             && matches!(ext_dict, ExtDict::Dict(_));
         let (out, copy_to) = match buf {
-            OutputBuffer::Whole(bytes) if is_small => {
+            OutputBuffer::Used(_) if streaming == Streaming::Yes => (buf, None),
+            buf if is_small => {
                 let used = capacity + WILDCOPY_OVERLENGTH;
                 *small_output_used = used.max(*small_output_used);
                 (
                     OutputBuffer::Whole(small_output.sub_mut(..used)?),
-                    Some(bytes.span_mut(start, capacity)?),
+                    Some((buf, start)),
                 )
             }
             OutputBuffer::Whole(bytes) => (OutputBuffer::Whole(bytes.sub_mut(..oend)?), None),
-            used => (used, None),
+            // Sequences that are few can be long, and then what they make is best appended. A block whose literals are
+            // in `src` is let to write all there is room for. A frame before may have been let to write further.
+            OutputBuffer::Used(bytes)
+                if nb_seq > MAX_ONE_BY_ONE
+                    && oend - start <= 2 * (block_size_max + WILDCOPY_OVERLENGTH)
+                    || oend - start <= Scratch::MAX_SMALL_OUTPUT
+                    || bytes.len() > oend =>
+            {
+                if bytes.len() < oend {
+                    bytes.resize(oend, 0);
+                }
+                (OutputBuffer::Whole(bytes.sub_mut(..oend)?), None)
+            }
+            OutputBuffer::Used(_) => (buf, None),
         };
+        let in_one_call = streaming == Streaming::No && matches!(out, OutputBuffer::Used(_));
         let (start, prefix_start, oend) = match copy_to {
             Some(_) => (0, 0, capacity),
             None => (start, prefix_start, oend),
         };
         let mut exec = Executor {
             out,
+            in_one_call,
             oend,
             op: start,
             prefix_start,
@@ -704,8 +801,8 @@ impl BlockDecoder {
         }
         exec.last_literals()?;
         let size = exec.op - start;
-        if let Some(to) = copy_to {
-            to.write_at(0, exec.out.bytes().sub(..size)?)?;
+        if let Some((mut to, start)) = copy_to {
+            to.write(start, exec.out.bytes().sub(..size)?, Growth::Append)?;
         }
         Ok(size)
     }
@@ -1149,15 +1246,23 @@ fn copy_16(buf: &mut [u8], src: usize, dst: usize) -> bool {
 #[cold]
 #[inline(never)]
 fn copy_match_exact(buf: &mut [u8], src: usize, dst: usize, len: usize) -> Result<()> {
-    let offset = dst - src;
-    if offset >= len {
-        return buf.move_within(src, dst, len);
-    }
-    // What is copied so far is whole periods, so it can be copied again from the start, twice as much each time.
-    let mut done = 0usize;
+    in_whole_periods(dst - src, len, |done, chunk| {
+        buf.move_within(src, dst + done, chunk)
+    })
+}
+
+/// For a match of `len` bytes `offset` bytes back: `copy` gets how much of it is copied and how much to copy next, from
+/// where the match starts. What is copied so far is whole periods, so it can be copied again, twice as much each time.
+#[inline(always)]
+fn in_whole_periods(
+    offset: usize,
+    len: usize,
+    mut copy: impl FnMut(usize, usize) -> Result<()>,
+) -> Result<()> {
+    let mut done = 0;
     while done < len {
         let chunk = (offset + done).min(len - done);
-        buf.move_within(src, dst + done, chunk)?;
+        copy(done, chunk)?;
         done += chunk;
     }
     Ok(())
@@ -1194,6 +1299,8 @@ fn resolve_offset(sequences: &mut [RawSequence], index: usize) -> u32 {
 struct Executor<'buf, 'a> {
     /// What is beyond `oend` is room for copies in chunks.
     out: OutputBuffer<'buf>,
+    /// All the output is written in one call, so nothing that comes after `op` is of any use.
+    in_one_call: bool,
     /// Where the output of the block has to end.
     oend: usize,
     op: usize,
@@ -1210,6 +1317,18 @@ struct Executor<'buf, 'a> {
 }
 
 impl<'a> Executor<'_, 'a> {
+    /// How `out` is to grow for `size` bytes that are written with exact copies: if with zeros, up to `limit` at most.
+    #[inline(always)]
+    fn growth(&self, size: usize, limit: usize) -> Growth {
+        /// Less is likely followed by more of the kind, which is copied in chunks where there is room.
+        const MIN_SIZE_TO_APPEND: usize = 256;
+        if self.in_one_call && size >= MIN_SIZE_TO_APPEND {
+            Growth::Append
+        } else {
+            Growth::Zeros { limit }
+        }
+    }
+
     /// `litBufferEnd - litPtr`
     #[inline(always)]
     fn lits_left(&self) -> usize {
@@ -1253,8 +1372,6 @@ impl<'a> Executor<'_, 'a> {
         if lit_length + match_length > self.oend - op {
             return Err(Error::DstSizeTooSmall);
         }
-        self.out
-            .extend_to(op + lit_length + match_length, self.oend);
         if lit_length > self.lits_left() {
             return Err(Error::CorruptionDetected);
         }
@@ -1265,9 +1382,8 @@ impl<'a> Executor<'_, 'a> {
             }
         }
 
-        self.out
-            .bytes()
-            .write_at(op, self.lits.sub(..lit_length)?)?;
+        let growth = self.growth(lit_length + match_length, self.oend);
+        self.out.write(op, self.lits.sub(..lit_length)?, growth)?;
         self.lits = self.lits.sub(lit_length..)?;
         op += lit_length;
         self.op = op + match_length;
@@ -1282,15 +1398,16 @@ impl<'a> Executor<'_, 'a> {
             if back >= match_length {
                 return self
                     .ext_dict
-                    .copy_to(self.out.bytes(), op, back, match_length);
+                    .copy_to(&mut self.out, op, back, match_length, growth);
             }
             // The match spans the two segments.
-            self.ext_dict.copy_to(self.out.bytes(), op, back, back)?;
+            self.ext_dict
+                .copy_to(&mut self.out, op, back, back, growth)?;
             op += back;
             match_length -= back;
             match_pos = self.prefix_start;
         }
-        copy_match_exact(self.out.bytes(), match_pos, op, match_length)
+        self.out.repeat(match_pos, op, match_length, growth)
     }
 
     /// `ZSTD_execSequence` and `ZSTD_execSequenceSplitLitBuffer`, if there is room to copy in chunks and the match is
@@ -1322,8 +1439,11 @@ impl<'a> Executor<'_, 'a> {
 
         *room.first_chunk_mut::<16>()? = *self.lits.first_chunk()?;
         if lit_length > 16 {
-            room.get_mut(16..lit_length)?
-                .copy_from_slice(self.lits.get(16..lit_length)?);
+            copy(
+                room.get_mut(16..lit_length)?,
+                self.lits.get(16..lit_length)?,
+            )
+            .ok()?;
         }
 
         let o_lit_end = op + lit_length;
@@ -1348,8 +1468,7 @@ impl<'a> Executor<'_, 'a> {
             if match_length > 16 {
                 let rounded = (match_length + 15) & !15;
                 if offset >= rounded {
-                    room.get_mut(16..rounded)?
-                        .copy_from_slice(from.get(16..rounded)?);
+                    copy(room.get_mut(16..rounded)?, from.get(16..rounded)?).ok()?;
                 } else {
                     let buf = self.out.bytes();
                     copy_match_exact(buf, o_lit_end - offset, o_lit_end, match_length).ok()?;
@@ -1421,10 +1540,9 @@ impl<'a> Executor<'_, 'a> {
             if leftover_lit > self.oend - self.op {
                 return Err(Error::DstSizeTooSmall);
             }
-            self.out.extend_to(self.op + leftover_lit, self.oend);
+            let growth = self.growth(leftover_lit, self.oend);
             self.out
-                .bytes()
-                .write_at(self.op, self.lits.sub(..leftover_lit)?)?;
+                .write(self.op, self.lits.sub(..leftover_lit)?, growth)?;
             sequence.lit_length -= leftover_lit as u32;
             self.op += leftover_lit;
         }
@@ -1780,10 +1898,10 @@ impl<'a> Executor<'_, 'a> {
         if size > self.oend - self.op {
             return Err(Error::DstSizeTooSmall);
         }
-        self.out.extend_to(self.op + size, self.op + size);
+        let growth = self.growth(size, self.op + size);
         for part in parts {
             if !part.is_empty() {
-                self.out.bytes().write_at(self.op, part)?;
+                self.out.write(self.op, part, growth)?;
                 self.op += part.len();
             }
         }

@@ -1,6 +1,7 @@
 import { file, serve } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tmpdirSync } from "harness";
+import { writeFileSync } from "node:fs";
 import type { NetworkInterfaceInfo } from "node:os";
 import { networkInterfaces } from "node:os";
 import { join } from "node:path";
@@ -267,7 +268,8 @@ test.skipIf(!isLinux)("server.address / server.port do not panic when getsocknam
 
 // listen(port, "localhost") walks the getaddrinfo() results in resolver order
 // and binds the first one, as node does. It moves to the next address only when
-// bind() says the family is unusable on this host (EADDRNOTAVAIL, EAFNOSUPPORT).
+// bind() says the address cannot be bound on this host (EADDRNOTAVAIL,
+// EAFNOSUPPORT). The wildcard (no hostname) keeps its fallback on any error.
 describe('listen on "localhost"', () => {
   test("Bun.serve() reports EADDRINUSE instead of binding the other loopback family", () => {
     using first = serve({ hostname: "localhost", port: 0, fetch: () => new Response() });
@@ -290,6 +292,17 @@ describe('listen on "localhost"', () => {
     }
     expect({ code: error?.code, syscall: error?.syscall }).toEqual({ code: "EADDRINUSE", syscall: "listen" });
   });
+
+  // Linux refuses bind(::) while a listener holds [::1]:port. The wildcard
+  // listener then falls back to 0.0.0.0, as before this change.
+  test.skipIf(!isLinux || !hasIPv6)(
+    "Bun.serve() with no hostname falls back to 0.0.0.0 when only [::1]:port is taken",
+    () => {
+      using occupant = Bun.listen({ hostname: "::1", port: 0, socket: { data() {} } });
+      using server = serve({ port: occupant.port, fetch: () => new Response() });
+      expect(server.address).toMatchObject({ address: "0.0.0.0", port: occupant.port });
+    },
+  );
 
   // Every listener in the process reports the loopback address it bound.
   const probe = /* js */ `
@@ -329,24 +342,33 @@ describe('listen on "localhost"', () => {
     return JSON.parse(stdout.trim());
   }
 
+  function expectBound(out: Record<string, unknown>, address: string) {
+    expect(out).toMatchObject({ serve: address, fetch: 200, listen: address, net: address, udp: address });
+  }
+
+  // The resolver's first answer is the address the listeners bind, on every
+  // platform. dns.lookup() uses the same resolver as the listen path.
+  test("every listener binds the first address dns.lookup reports", async () => {
+    const out = await runProbe([]);
+    expectBound(out, out.lookup[0]);
+  });
+
   // A private mount namespace lets the test swap /etc/gai.conf, which is how
   // glibc orders getaddrinfo() results. Skipped where user namespaces are off,
-  // as in most containers.
-  const canMount =
+  // as in most containers, and where the resolver is not glibc.
+  const gaiConf = join(tmpdirSync(), "gai.conf");
+  writeFileSync(gaiConf, "precedence ::ffff:0:0/96  100\n");
+  const canSwapResolverOrder =
     isLinux &&
     Bun.which("unshare") !== null &&
-    Bun.spawnSync({ cmd: ["unshare", "-Urm", "true"], stdout: "ignore", stderr: "ignore" }).exitCode === 0;
-
-  test.skipIf(!canMount)("every listener binds 127.0.0.1 when the resolver puts it first", async () => {
-    using dir = tempDir("gai-ipv4-first", { "gai.conf": "precedence ::ffff:0:0/96  100\n" });
-    const gaiConf = join(String(dir), "gai.conf");
-    // glibc reads the file once per process. Check the namespace sees the new order.
-    const probeOrder = Bun.spawnSync({
+    Bun.spawnSync({
       cmd: ["unshare", "-Urm", "sh", "-c", 'mount --bind "$0" /etc/gai.conf && getent ahosts localhost', gaiConf],
       stderr: "ignore",
-    });
-    if (!probeOrder.stdout.toString().startsWith("127.0.0.1")) return;
+    })
+      .stdout.toString()
+      .startsWith("127.0.0.1");
 
+  test.skipIf(!canSwapResolverOrder)("every listener binds 127.0.0.1 when the resolver puts it first", async () => {
     const out = await runProbe([
       "unshare",
       "-Urm",
@@ -355,14 +377,8 @@ describe('listen on "localhost"', () => {
       'mount --bind "$0" /etc/gai.conf && exec "$@"',
       gaiConf,
     ]);
-    expect(out).toEqual({
-      lookup: ["127.0.0.1", "::1"],
-      serve: "127.0.0.1",
-      fetch: 200,
-      listen: "127.0.0.1",
-      net: "127.0.0.1",
-      udp: "127.0.0.1",
-    });
+    expect(out.lookup[0]).toBe("127.0.0.1");
+    expectBound(out, "127.0.0.1");
   });
 
   // A private network namespace with IPv6 turned off on lo: bind(::1) fails
@@ -385,12 +401,6 @@ describe('listen on "localhost"', () => {
       'ip link set lo up && sysctl -qw net.ipv6.conf.lo.disable_ipv6=1 && exec "$@"',
       "sh",
     ]);
-    expect(out).toMatchObject({
-      serve: "127.0.0.1",
-      fetch: 200,
-      listen: "127.0.0.1",
-      net: "127.0.0.1",
-      udp: "127.0.0.1",
-    });
+    expectBound(out, "127.0.0.1");
   });
 });

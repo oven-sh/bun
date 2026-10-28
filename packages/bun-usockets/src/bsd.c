@@ -1136,11 +1136,11 @@ static struct addrinfo *bsd_addrinfo_inet6_first(struct addrinfo *list) {
 /* Resolves the address a passive socket binds. Callers walk the chain in order
  * and bind the first usable entry.
  *
- * A named host keeps the resolver's order. Node binds the first dns.lookup()
- * result, and that order is what dns.lookup(host) reports to the user: for
- * "localhost" it is 127.0.0.1 first on Windows and ::1 first on glibc, so a
- * fixed IPv6-first walk would leave the listener on a loopback address the
- * user's other tools do not connect to.
+ * A named host keeps the resolver's order, so the listener lands on the address
+ * the machine's own policy puts first (gai.conf on glibc, the prefix policy on
+ * Windows). Node binds the first dns.lookup() result in the same way. A fixed
+ * IPv6-first walk put a "localhost" listener on ::1 on hosts configured to
+ * prefer IPv4, where every other tool connects to 127.0.0.1.
  *
  * The wildcard (host == NULL) has no resolver order to follow. glibc returns
  * 0.0.0.0 before ::, so the chain is reordered to keep the default listener on
@@ -1162,13 +1162,20 @@ static int bsd_listen_getaddrinfo(const char *host, int port, int socktype, stru
     return rc;
 }
 
-/* True when a bind() failure means the address family is unusable on this host
- * (EADDRNOTAVAIL for ::1 with IPv6 disabled on lo, EAFNOSUPPORT with no IPv6
- * stack), so the walk moves on to the next candidate. Every other error is about
- * this port (EADDRINUSE, EACCES) and is reported: binding the other loopback
- * family instead would hide a port conflict that node reports. */
-static int bsd_bind_should_try_next(int err) {
-    return err == LIBUS_EAFNOSUPPORT || err == LIBUS_EADDRNOTAVAIL;
+/* Decides whether a failed bind() of one entry lets the walk move on to the
+ * next one.
+ *
+ * The wildcard falls through on any error, as it always did: a `::` bind that
+ * fails still gets a 0.0.0.0 listener.
+ *
+ * A named host falls through only when bind() says the address cannot be bound
+ * on this host at all: EADDRNOTAVAIL (::1 with IPv6 disabled on lo) or
+ * EAFNOSUPPORT (no IPv6 stack). This is broader than node, which reports
+ * EADDRNOTAVAIL for a record that is not local. Every other error is about this
+ * port (EADDRINUSE, EACCES) and is reported: binding the other loopback family
+ * instead would hide a port conflict that node reports. */
+static int bsd_bind_should_try_next(const char *host, int err) {
+    return host == NULL || err == LIBUS_EAFNOSUPPORT || err == LIBUS_EADDRNOTAVAIL;
 }
 
 /* libuv's uv__sock_reuseaddr: SO_REUSEPORT on the BSDs where that is what
@@ -1360,9 +1367,8 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
 
     LIBUS_SOCKET_DESCRIPTOR fd = LIBUS_SOCKET_ERROR;
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
-        fd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
+        fd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error);
         if (fd == LIBUS_SOCKET_ERROR) {
-            *error = LIBUS_ERR;
             continue;
         }
 #if defined(SO_REUSEADDR) && !defined(_WIN32)
@@ -1385,7 +1391,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_bound_socket(const char *host, int port, int 
         *error = LIBUS_ERR;
         bsd_close_socket(fd);
         fd = LIBUS_SOCKET_ERROR;
-        if (!bsd_bind_should_try_next(*error)) {
+        if (!bsd_bind_should_try_next(host, *error)) {
             break;
         }
     }
@@ -1424,19 +1430,18 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_listen_socket(const char *host, int port, int
     }
 
     for (struct addrinfo *a = result; a != NULL; a = a->ai_next) {
-        LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, NULL);
+        LIBUS_SOCKET_DESCRIPTOR listenFd = bsd_create_socket(a->ai_family, a->ai_socktype, a->ai_protocol, error);
         if (listenFd == LIBUS_SOCKET_ERROR) {
             continue;
         }
 
-        *error = 0;
         if (bsd_bind_listen_fd(listenFd, a, port, options, error) != LIBUS_SOCKET_ERROR) {
             freeaddrinfo(result);
             return listenFd;
         }
 
         bsd_close_socket(listenFd);
-        if (!bsd_bind_should_try_next(*error)) {
+        if (!bsd_bind_should_try_next(host, *error)) {
             break;
         }
     }
@@ -1821,7 +1826,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_udp_socket(const char *host, int port, int op
 
         last_error = LIBUS_ERR;
         bsd_close_socket(listenFd);
-        if (!bsd_bind_should_try_next(last_error)) {
+        if (!bsd_bind_should_try_next(host, last_error)) {
             break;
         }
     }

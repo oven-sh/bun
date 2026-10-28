@@ -76,7 +76,7 @@ public:
     // Shadows ErrorInstance's. JSVMClientData calls it for this subspace after each collection.
     void reconcileWeakReferencesAtGCEnd(JSC::VM&, JSC::CollectionScope);
 
-    // An own data property wins over the wrapped impl, as it does for a plain Error. Never allocates or runs JS.
+    // An own data property wins over the wrapped impl, as it does for a plain Error. Never runs JS or allocates GC cells.
     WTF::String displayName(JSC::VM&) const;
     WTF::String displayMessage(JSC::VM&) const;
     WTF::String displayHeader(JSC::VM&) const;

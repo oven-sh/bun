@@ -1,0 +1,4 @@
+{
+  "skipInVariants": "a build can lower only one limit, and some variants lower another",
+  "build": ["--aot-heat=everything-is-hot", "--aot-limit=MaxSiteCaches:0"]
+}

@@ -1,0 +1,7 @@
+{
+  "build": [
+    "--define",
+    "OBJ={\"A\":\"x\",\"N\":{\"B\":2},\"L\":[1,2],\"U\":\"\u00fc\ud83d\ude00\\n\"}"
+  ],
+  "reference": "compiled"
+}

@@ -1,0 +1,6 @@
+one namespace: true true true true true
+one helper: true true
+one state: true true
+what they are: [object Module] sealed [object Module] sealed [object Module] sealed
+the same names: true true true
+in require.cache: 

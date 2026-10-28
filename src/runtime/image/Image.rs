@@ -574,10 +574,14 @@ impl Image {
             if let Some(p) = options.get(global, "progressive")? {
                 enc.progressive = p.to_boolean();
             }
-            if let Some(c) = options
-                .get_optional_enum::<codecs::ChromaSubsampling>(global, "chromaSubsampling")?
-            {
-                enc.chroma_subsampling = c;
+            // JPEG only. The other encoders have no sampling knob, so the key
+            // is not read (and cannot throw) for them.
+            if fmt == codecs::Format::Jpeg {
+                if let Some(c) = options
+                    .get_optional_enum::<codecs::ChromaSubsampling>(global, "chromaSubsampling")?
+                {
+                    enc.chroma_subsampling = c;
+                }
             }
         }
         self.update_pipeline(|p| p.output = Some(enc));

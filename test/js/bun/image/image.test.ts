@@ -1226,6 +1226,14 @@ describe("Bun.Image", () => {
       expect(() => new Bun.Image(gradientPng).jpeg({ chromaSubsampling: 444 as any })).toThrow(TypeError);
     });
 
+    test("chromaSubsampling is read for .jpeg() only", async () => {
+      // A shared options bag must not break the other encoders.
+      const png = await new Bun.Image(gradientPng).png({ chromaSubsampling: 420 } as any).bytes();
+      expect(png[0]).toBe(0x89);
+      const webp = await new Bun.Image(gradientPng).webp({ chromaSubsampling: "4:2:2" } as any).bytes();
+      expect(String.fromCharCode(...webp.subarray(8, 12))).toBe("WEBP");
+    });
+
     test(".toBuffer() is a Sharp-compat alias for .buffer()", async () => {
       const buf = await new Bun.Image(cornersPng).png().toBuffer();
       expect(Buffer.isBuffer(buf)).toBe(true);

@@ -7710,28 +7710,33 @@ impl NodeFS {
                 }
             };
 
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            let flags = sys::O::PATH; // O_PATH is faster
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
+            #[cfg(target_os = "macos")]
+            let buf = Syscall::get_full_path(path, &mut outbuf)?;
+            #[cfg(not(target_os = "macos"))]
+            let buf = {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                let flags = sys::O::PATH; // O_PATH is faster
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
-            let fd = match sys::open(path, flags, 0) {
-                Err(err) => return Err(err.with_path(path)),
-                Ok(fd_) => fd_,
+                let fd = match sys::open(path, flags, 0) {
+                    Err(err) => return Err(err.with_path(path)),
+                    Ok(fd_) => fd_,
+                };
+                let _close = scopeguard::guard(fd, |fd| fd.close());
+
+                let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
+                    Err(err) => return Err(err.with_path(path)),
+                    Ok(buf_) => buf_,
+                };
+
+                // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can end like that too.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                if buf.ends_with(b" (deleted)") && Syscall::fstat(fd)?.st_nlink == 0 {
+                    return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
+                }
+                buf
             };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
-
-            let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
-                Err(err) => return Err(err.with_path(path)),
-                Ok(buf_) => buf_,
-            };
-
-            // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can
-            // end like that too.
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            if buf.ends_with(b" (deleted)") && Syscall::fstat(fd)?.st_nlink == 0 {
-                return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
-            }
 
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {

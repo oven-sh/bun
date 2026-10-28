@@ -21,7 +21,7 @@
  *   bun run rust:miri -p bun_foo   # extra args go straight to one `cargo miri test`
  */
 
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { resolve } from "node:path";
@@ -112,18 +112,60 @@ const allCrates = MIRI_CRATES.flatMap(c => ["-p", c]);
 console.log(`\x1b[36m[miri]\x1b[0m cargo miri test --no-run ${allCrates.join(" ")}`);
 if (run("cargo", ["miri", "test", "--no-run", ...allCrates], { env }).status !== 0) process.exit(1);
 
-type Result = { crate: string; ok: boolean; seconds: number; output: string };
+// How long one crate gets for its wait on cargo's build lock, its build and
+// its tests. Past that the crate is stopped and fails, and its output is
+// printed: under Miri libtest runs one test at a time and prints each name
+// first, so the output ends at the test that did not finish.
+const CRATE_LIMIT_MINUTES = 45;
+
+type Result = { crate: string; ok: boolean; overLimit: boolean; seconds: number; output: string };
+
+const windows = process.platform === "win32";
+const running = new Set<ChildProcess>();
+
+// Stops `cargo miri test` together with the Miri process it started.
+function stop(child: ChildProcess) {
+  try {
+    if (windows || child.pid === undefined) child.kill();
+    else process.kill(-child.pid, "SIGKILL");
+  } catch {
+    // Already gone.
+  }
+}
+
+// Each `cargo miri test` leads its own process group so that `stop` reaches
+// Miri too. A Ctrl-C in the terminal no longer reaches that group: pass it on.
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
+  process.on(signal, () => {
+    running.forEach(stop);
+    process.exit(1);
+  });
+}
 
 function testCrate(crate: string): Promise<Result> {
   return new Promise(done => {
     const started = Date.now();
     const chunks: Buffer[] = [];
-    const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always"], { cwd: repo, env });
+    const child = spawn("cargo", ["miri", "test", "-p", crate, "--color", "always"], {
+      cwd: repo,
+      env,
+      detached: !windows,
+    });
+    running.add(child);
+    let overLimit = false;
+    const limit = setTimeout(() => {
+      overLimit = true;
+      stop(child);
+    }, CRATE_LIMIT_MINUTES * 60_000);
     child.stdout.on("data", chunk => chunks.push(chunk));
     child.stderr.on("data", chunk => chunks.push(chunk));
-    child.on("close", code =>
-      done({ crate, ok: code === 0, seconds: (Date.now() - started) / 1000, output: Buffer.concat(chunks).toString() }),
-    );
+    child.on("close", code => {
+      clearTimeout(limit);
+      running.delete(child);
+      const ok = code === 0;
+      const seconds = (Date.now() - started) / 1000;
+      done({ crate, ok, overLimit: overLimit && !ok, seconds, output: Buffer.concat(chunks).toString() });
+    });
   });
 }
 
@@ -143,6 +185,13 @@ async function worker() {
       console.log(result.output);
     } else {
       console.log(`::group::${result.crate} output\n${result.output}\n::endgroup::`);
+    }
+    if (result.overLimit) {
+      console.log(
+        `\x1b[31m[miri]\x1b[0m ${result.crate} was stopped at the limit of ${CRATE_LIMIT_MINUTES} minutes. ` +
+          "Its output ends at the test that did not finish. Give that test less to do under `cfg!(miri)`, " +
+          "or skip it there with `#[cfg_attr(miri, ignore)]`.",
+      );
     }
   }
 }

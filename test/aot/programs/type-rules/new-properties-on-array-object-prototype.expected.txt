@@ -1,0 +1,8 @@
+Array.prototype.foo: no error
+Array.prototype['1']: TypeError
+Array.prototype[2]: TypeError
+true 1 undefined undefined
+Object.prototype[2]: TypeError
+Object.prototype.foo: TypeError
+false false undefined
+1 1 3

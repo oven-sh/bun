@@ -1,0 +1,4 @@
+{
+  "build": ["--aot-limit=MaxLiteralStrings:2"],
+  "skipInShell": "CustomEvent is not in the shell"
+}

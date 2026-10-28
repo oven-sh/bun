@@ -1,0 +1,22 @@
+// eval and the Function constructor where the evaluated code calls nothing that --trim removed, and programs that only check whether eval works.
+//// species-like-array-from
+//@ exit 1
+console.log(Array.from.call((() => {}).constructor, [])() === undefined);
+//// probe-like-zod
+function allowsEval() { try { const F = Function; new F(""); return true; } catch { return false; } }
+console.log(allowsEval());
+//// probe-then-use
+function allowsEval() { try { const F = Function; new F(""); return true; } catch { return false; } }
+console.log(allowsEval() ? "fast path" : "slow path");
+//// eval-of-non-string
+console.log(eval(42), eval({ a: 1 }).a);
+//// eval-of-json
+console.log(eval('({"a": [1, 2, {"b": 3}]})').a[2].b);
+//// typeof-eval
+console.log(typeof eval, eval.name, eval.length);
+//// typeof-in-eval
+console.log(eval("typeof HTMLRewriter + ' ' + typeof Bun.color"));
+//// typeof-in-Function
+console.log(Function("return typeof HTMLRewriter + ' ' + typeof Bun.color")());
+//// members-in-eval
+console.log(eval("WebSocket.OPEN + ' ' + ('send' in WebSocket.prototype) + ' ' + Bun.color.name"));

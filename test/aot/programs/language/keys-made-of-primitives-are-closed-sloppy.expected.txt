@@ -1,0 +1,4 @@
+Array.prototype: undefined TypeError null TypeError true TypeError false TypeError NaN TypeError -1 TypeError 1.5 TypeError 0 TypeError nothing stored
+String.prototype: undefined TypeError null TypeError true TypeError false TypeError NaN TypeError -1 TypeError 1.5 TypeError 0 TypeError nothing stored
+Date.prototype: undefined TypeError null TypeError true TypeError false TypeError NaN TypeError -1 TypeError 1.5 TypeError 0 TypeError nothing stored
+WeakRef.prototype: undefined stored null stored true stored false stored NaN stored -1 stored 1.5 stored 0 stored nothing stored

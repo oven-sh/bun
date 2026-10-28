@@ -1,0 +1,6 @@
+Array.prototype.map | refused, TypeError, TypeError, Function.prototype is taken | 2,4 | true
+Array.prototype.filter | refused, TypeError, TypeError, Function.prototype is taken | 2 | true
+Reflect.get | refused, TypeError, TypeError, Function.prototype is taken | 1 | true
+Function.prototype.call | refused, TypeError, TypeError, Function.prototype is taken | 2 | true
+Math.max | refused, TypeError, TypeError, Function.prototype is taken | 2 | true
+Object.prototype.hasOwnProperty | refused, TypeError, TypeError, Function.prototype is taken | true | true

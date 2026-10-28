@@ -1,0 +1,28 @@
+# eval(String(Date.now()))
+# Evaluated text has all of the language, and of the host what the program's own code names. It finds process.emitWarning through the global object. Nobody has handed it over, and that it is found is no use of it:
+# what hangs on that built-in in the table does not come into the image for it, and the call throws an error that names the built-in.
+# native-caller-passes-what-the-annotation-says.ir is a program that names it
+# LIBRARY: own
+# RUN: valueflow-solve unseen
+# CHECK: unseen EvaluatesText Eval f0:v5
+# CHECK: unseen-code yes
+# RUN(WHY): valueflow-why escaped-builtin=ProcessEmitWarning used-builtin=ProcessEmitWarning used-builtin=ArrayPrototypeMap
+# WHY: escaped-builtin=ProcessEmitWarning
+# WHY-NEXT: not held
+# WHY-NEXT: used-builtin=ProcessEmitWarning
+# WHY-NEXT: not held
+# WHY-NEXT: used-builtin=ArrayPrototypeMap
+# WHY-NOT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=DateNow
+    v1 = Call v0
+    v2 = ToString v1
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="eval" [isFreeName]
+    v5 = Call v4, -, v2
+    Return
+}

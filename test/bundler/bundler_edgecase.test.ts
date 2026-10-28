@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
+import { unsupported } from "../aot/run-programs";
+import { type BundlerTestInput, decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
 // A public path composes with the referenced file's path relative to the output
 // directory, never relative to the importing chunk (esbuild's semantics).
@@ -1868,6 +1869,66 @@ describe("bundler", () => {
     onAfterBundle(api) {
       api.expectFile("/out.js").toContain("h(");
     },
+  });
+  // `bun build --compile --aot` resolves entry points with a resolver of its own, to the same answers.
+  const itCompiledAheadOfTime = (id: string, opts: BundlerTestInput) =>
+    (unsupported ? itBundled.skip : itBundled)(`edgecase/aot/${id}`, {
+      target: "bun",
+      compile: { aot: true },
+      ...opts,
+    });
+  for (const [id, entryPoint] of [
+    ["EntryPointIsNodeBuiltin", "node:fs"],
+    ["EntryPointIsBareNodeBuiltin", "fs"],
+    ["EntryPointIsBunWrap", "bun:wrap"],
+  ]) {
+    itCompiledAheadOfTime(id, {
+      files: {
+        "/entry.ts": `console.log("never built");`,
+      },
+      entryPointsRaw: [entryPoint],
+      bundleErrors: {
+        "<bun>": [`Cannot use "${entryPoint}" as an entry point: it resolves to a builtin module`],
+      },
+    });
+  }
+  itCompiledAheadOfTime("EntryPointIsBunBuiltinNextToRealEntryPoint", {
+    // The API backend names every entry point after the outfile, which is an error of its own.
+    backend: "cli",
+    files: {
+      "/entry.ts": `console.log("built");`,
+    },
+    entryPoints: ["/entry.ts"],
+    entryPointsRaw: ["bun"],
+    bundleErrors: {
+      "<bun>": ['Cannot use "bun" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  itCompiledAheadOfTime("EntryPointIsImportsAliasOfBuiltin", {
+    files: {
+      "/package.json": `{ "name": "app", "imports": { "#fs": "node:fs" } }`,
+      "/entry.ts": `console.log("never built");`,
+    },
+    entryPointsRaw: ["#fs"],
+    bundleErrors: {
+      "<bun>": ['Cannot use "#fs" as an entry point: it resolves to a builtin module'],
+    },
+  });
+  itCompiledAheadOfTime("EntryPointNamedLikeBuiltinIsALocalFile", {
+    files: {
+      "/util.ts": `console.log("local util");`,
+    },
+    entryPointsRaw: ["util"],
+    run: { file: "/out", stdout: "local util" },
+  });
+  itCompiledAheadOfTime("EntryPointIsExternalPackage", {
+    files: {
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "main": "index.js" }`,
+      "/node_modules/pkg/index.js": `console.log("bundled pkg");`,
+    },
+    entryPointsRaw: ["pkg"],
+    external: ["pkg"],
+    run: { file: "/out", stdout: "bundled pkg" },
   });
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
@@ -5530,6 +5591,50 @@ describe("bundler", () => {
         }),
       );
       expect(Object.fromEntries(bundles)).toEqual({ bun: source, node: source, browser: source, minify: source });
+    });
+  }
+
+  for (const splitting of [false, true]) {
+    itBundled(`edgecase/ImportCycleKeepsEvaluationOrder${splitting ? "Splitting" : ""}`, {
+      files: {
+        "/entry.ts": /* ts */ `
+          import * as all from "./barrel.ts";
+          console.log(all.atLoad, all.mentionsDebug(), all.ranAtLoad);
+        `,
+        "/barrel.ts": /* ts */ `
+          export * from "./core.ts";
+          export * from "./debug.ts";
+          export * from "./later.ts";
+        `,
+        "/core.ts": /* ts */ `
+          import { debugValue, laterValue } from "./barrel.ts";
+          export function mentionsDebug() {
+            return debugValue();
+          }
+          export const mentionsLater = () => laterValue;
+          const hasOwnProperty = Object.prototype.hasOwnProperty;
+          export function hasProperty(object: object, key: string) {
+            return hasOwnProperty.call(object, key);
+          }
+        `,
+        "/debug.ts": /* ts */ `
+          import { hasProperty } from "./barrel.ts";
+          export function debugValue() {
+            return 1;
+          }
+          export const atLoad = hasProperty({ a: 1 }, "a");
+        `,
+        "/later.ts": /* ts */ `
+          import { atLoad, mentionsLater } from "./barrel.ts";
+          export const laterValue = "later";
+          export const ranAtLoad = String(atLoad) + " " + mentionsLater();
+        `,
+      },
+      splitting,
+      format: "esm",
+      target: "bun",
+      outdir: "/out",
+      run: { file: "/out/entry.js", stdout: "true 1 true later" },
     });
   }
 });

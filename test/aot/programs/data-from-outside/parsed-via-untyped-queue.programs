@@ -1,0 +1,2512 @@
+////: Incoming
+class Incoming {
+  #text: string;
+  constructor(text: string) {
+    this.#text = text;
+  }
+  json<T = any>(): Promise<T> {
+    return Promise.resolve(this.#text).then((text: string) => {
+      parsed = JSON.parse(text);
+      if («1»er;
+      «2»er;
+      return parsed;
+    });
+  }
+}
+////: PropsOf
+interface PropsOf {
+  A: { p?: string; z: number };
+  B: { q: boolean };
+  C: { q: boolean; r: string | null };
+}
+////: TABLE
+export const TABLE: Readonly<Partial<Record<Names, Readonly<Record<string, ReadonlyArray<string> | typeof ANY>>>>> = {
+  A: { p: ["a string", "missing"] },
+  B: { q: OTHER },
+  C: { q: OTHER, r: ANY },
+} satisfies {
+  readonly [N in Names]?: { readonly [K in keyof PropsOf[N]]?: ReadonlyArray<string> | typeof ANY };
+};
+////: api
+export const api = {
+  async post<T>(path: string, body: unknown): Promise<Result<T>> {
+    return { ok: false, reason: "offline", detail: path + " " + String(body) };
+  },
+  lookup(id: number): Reply {
+    return { headers: {}, url: "/" + id, code: 200 };
+  },
+};
+////: either
+async function either<In, Result>(act: «1»Either<In, Result>> {
+  await Promise.race([act.early, chain.then(() => undefined, () => undefined)]);
+  if (act.isEarly()) {
+    return { early: await act.early };
+  }
+  return { late: await chain };
+}
+////: for
+for (const n of Object.keys(TABLE) as Names[]) {
+  const row = TABLE[n]!;
+  for (const k of Object.keys(row)) console.log(n, k, typeof row[k] === "string" ? row[k] : row[k].length);
+}
+////: lines-10
+export interface «1» {
+  held: «2»;
+}
+//// parsed-via-untyped-queue-same-object.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("a queue, the same object twice", () => { const queue: any[] = []; const m = JSON.parse(line); queue.push(m, m); return handle(queue[0]) + handle(queue[1]) + (queue[0] === queue[1]) })
+//// parsed-via-untyped-result.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("a result", () => { function next(): Message { const held: any = JSON.parse(line); return held } return handle(next()) })
+//// parsed-via-untyped-stored-afterward.ts
+// Parsed data that travels as `any` or `unknown` before a typed function first holds it, some of its optional members absent: queues,
+// caches, event buses. The type has more than six members.
+interface Meta { source: string; hops: number; a?: number; b?: number; c?: number; d?: number; e?: number; f?: number; g?: number }
+////= Message
+type Wide = { a: number; b: number; c: number; d: number; e: number; f: number; g: number; h?: Message }
+const line = '{"id":1,"at":0.5,"size":2.5,"weight":3.5,"body":"hello"}'
+const withMeta = '{"id":2,"at":0.5,"size":2.5,"weight":3.5,"body":"hi","meta":{"source":"wire","hops":2},"tags":["x","y"]}'
+////= handle
+const made: Message = { id: 9, at: 1.5, size: 2.5, weight: 3.5, body: "z", retries: 3.5, delay: 0.5, sentAt: 4.5, score: 0.25, tags: [], meta: { source: "own", hops: 0.5, a: 1.5, b: 2.5, c: 3.5, d: 4.5, e: 5.5, f: 6.5, g: 7.5 } }
+////= row
+row("made by the program", () => handle(made))
+row("stored to afterwards", () => { const held: any = JSON.parse(line); const m: Message = held; m.retries = 2; m.delay = 0.25; m.meta = { source: "later", hops: 1 }; return handle(m) + JSON.stringify(held) })
+//// passed-directly-to-host.ts
+// A function of the host is declared in this file with types that this file writes. An argument is tested by the function that receives it, and the host's function tests nothing. A literal written as the argument is created as `Options`, so each member enters a field with a written type: a member of another kind throws a TypeError where the literal is made, and so does `e as T` on a primitive of another kind on the way; an object passes the cast. undefined and null pass.
+interface Inner { type: "chrome" | "other"; stderr?: string }
+interface Options { fatal?: boolean; dir?: string; count?: number; backend?: Inner; list?: number[]; on?(n: number): number }
+declare function hostTakes(options?: Options, more?: string): string;
+declare class HostClass { constructor(label: string, options?: Options); said: string; take(options: Options): string }
+declare const hostObject: { take(options: Options): string; held: Options | undefined };
+const show = (v: unknown) => JSON.stringify(v, (_, x) => (x === undefined ? "undefined" : typeof x === "function" ? "function" : typeof x === "bigint" ? x + "n" : x));
+(globalThis as any).hostTakes = function (options: unknown, more: unknown) { return show([options, more]); };
+(globalThis as any).HostClass = class { said; constructor(label: unknown, options: unknown) { this.said = show([label, options]); } take(options: unknown) { return show(options); } };
+(globalThis as any).hostObject = { take(options: unknown) { return show(options); }, held: undefined };
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).constructor.name; } console.log(name + ": " + (typeof r === "string" ? r : show(r))); };
+const falsy: any[] = [0, "", null, undefined, NaN, 0n];
+for (const value of falsy) row("a member of another kind, " + String(value), () => hostTakes({ fatal: value }));
+row("a constant of another kind, through any", () => hostTakes({ dir: 123 as any }));
+// @ts-expect-error
+row("a constant of another kind, behind @ts-expect-error", () => hostTakes({ dir: 123 }));
+row("below", () => hostTakes({ backend: { type: "chrome", stderr: 123 as any } }));
+row("in an array", () => hostTakes({ list: [1, "2" as any, null as any] }));
+row("new", () => new HostClass("l", { count: "3" as any }).said);
+row("a method", () => new HostClass("l").take({ count: "3" as any }));
+row("a method of an object of the host", () => hostObject.take({ fatal: 1 as any }));
+row("the second argument", () => hostTakes({}, 5 as any));
+row("the argument itself of another kind", () => [hostTakes(5 as any), hostTakes("s" as any), hostTakes(null as any), hostTakes([] as any)]);
+row("an object of another look, through any", () => hostTakes({ other: 1 } as any));
+row("one of two", () => hostTakes(falsy.length > 99 ? { fatal: true } : { fatal: "no" as any }));
+row("a callback inside", () => hostTakes({ on(n) { return n + 1; }, count: 1 }));
+row("as the type says", () => hostTakes({ fatal: true, dir: "d", count: 1, backend: { type: "other" }, list: [1] }, "more"));
+row("key order and extra members", () => hostTakes({ count: 1, fatal: false, ...({ extra: 1 } as object) }));
+row("stored onto the host", () => { hostObject.held = { count: "7" as any }; return show(hostObject.held); });
+row("a cast on the way: a constant", () => [hostTakes({}, 5 as unknown as string), hostTakes("x" as unknown as Options)]);
+for (const value of ["2", null, 2.5, { toString() { return "t"; } }]) row("a cast on the way: " + show(value), () => [hostTakes({ count: value as number }), hostTakes({}, value as string), new HostClass(value as string).said]);
+const kept: Options = { fatal: true, count: 2 };
+function countOf(o: Options) { return o.count; }
+row("one that typed code holds too", () => [hostTakes(kept), countOf(kept)]);
+//// plain-objects-in-larger-cells-convert-within-bounds.ts
+// Plain objects of one shape can lie in cells of different sizes. Each passes a parameter of a record type as it is, whichever size the first one had, and typed and untyped reads of it agree afterwards.
+type Link = { n: number; next: Link | null; previous: Link | null };
+
+function typedLink(n: number): Link {
+  return { n, next: null, previous: null };
+}
+function weigh(link: Link): number {
+  return link.n + (link.next ? link.next.n : 1) + (link.previous ? link.previous.n : 1);
+}
+function grow(n: number): any {
+  const link: any = { n };
+  link.next = null;
+  link.previous = null;
+  return link;
+}
+
+let sum = weigh(typedLink(1));
+const links: any[] = [];
+for (let i = 0; i < 3000; i++) links.push(grow(i));
+for (let i = 0; i < links.length; i++) sum += weigh(links[i]);
+for (let i = 0; i < links.length; i++) sum += links[i].n + Object.keys(links[i]).length;
+console.log(sum);
+//// plain-objects-kept-plain-convert-their-children.ts
+// A parsed body is cast to a record type and read by typed code. The cast takes any object and changes nothing: the body and the objects below it stay the same ordinary objects, and untyped code stores whatever it likes into them afterwards. A field of the wrong kind throws where typed code reads it.
+type Customer = { id: number; name: string; tags: string[] };
+type Item = { sku: string; quantity: number };
+type Order = { customer: Customer; items: Item[]; coupon?: string };
+
+let parsed: any;
+let parsedCustomer: any;
+let sharedCustomer: any = null;
+////= Incoming	sharedCustomer !== null) parsed.customer = sharedCustom	parsedCustomer = parsed.custom
+function makeOrder(i: number): Order {
+  return { customer: { id: i, name: "made", tags: [] }, items: [{ sku: "m", quantity: i }], coupon: "C" };
+}
+function weigh(order: Order): number {
+  let sum = order.customer.id + order.customer.name.length + order.customer.tags.length;
+  for (const item of order.items) sum += item.sku.length + item.quantity;
+  return sum + (order.coupon === undefined ? 0 : order.coupon.length);
+}
+////= attempt
+async function weighBody(incoming: Incoming): Promise<string> {
+  try {
+    const order = (await incoming.json()) as Order;
+    return String(weigh(order)) + (order === parsed && order.customer === parsedCustomer ? "" : " not the same object");
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+function body(i: number, customer: string, rest: string): Incoming {
+  return new Incoming('{"customer":' + customer + ',"items":[{"sku":"a' + i + '","quantity":' + i + '},{"sku":"b","quantity":2}]' + rest + "}");
+}
+const good = (i: number) => '{"id":' + i + ',"name":"name ' + i + '","tags":["x"]}';
+
+console.log(weigh(makeOrder(1)));
+let sum = 0;
+const kept: any[] = [];
+for (let i = 0; i < 600; i++) {
+  sum += Number(await weighBody(body(i, good(i), i % 3 === 0 ? ',"coupon":"TEN"' : "")));
+  kept.push(parsed);
+}
+console.log(sum);
+console.log(JSON.stringify(kept[7]), Object.keys(kept[7]).join(), Object.keys(kept[7].customer).join());
+console.log(JSON.stringify(kept[9]), Object.keys(kept[9]).join());
+console.log(attempt(() => { kept[7].customer.id = "text"; return kept[7].customer.id; }));
+console.log(attempt(() => { kept[7].customer.id = 70; return kept[7].customer.id; }));
+console.log(attempt(() => { kept[7].coupon = 5; return kept[7].coupon; }));
+console.log(attempt(() => { kept[7].more = "more"; return JSON.stringify(kept[7]); }));
+
+for (const [name, customer, rest] of [
+  ["a coupon of the wrong kind", good(1), ',"coupon":5'],
+  ["a customer of the wrong kind", '{"id":"text","name":"n","tags":[]}', ""],
+  ["a customer that lacks a field", '{"id":1,"name":"n"}', ""],
+  ["a customer with one more", '{"id":1,"name":"n","tags":[],"more":true}', ""],
+  ["no customer", "null", ""],
+  ["one more property", good(1), ',"more":[1]'],
+]) {
+  const outcome = await weighBody(body(1, customer, rest));
+  const below = parsedCustomer;
+  console.log(name + ":", outcome, JSON.stringify(parsed), attempt(() => { below.id = "text"; return below.id; }));
+}
+
+sharedCustomer = JSON.parse(good(9));
+console.log(await weighBody(body(1, "null", "")), await weighBody(body(2, "null", "")), attempt(() => { sharedCustomer.id = "text"; return sharedCustomer.id; }));
+//// plain-objects-kept-plain-with-several-children.ts
+// A parsed body holds several objects, some of them the same object under two names, and is cast to a record type. The cast looks at no field and touches no object: whether they fit or not, untyped code stores whatever it likes into them afterwards. Only a field of the wrong kind that typed code reads throws.
+type Customer = { id: number; name: string; tags: string[] };
+type Owner = { id: number; name: string; tags: string[]; level?: number };
+type Deal = { buyer: Customer; seller: Customer; owner: Owner; note?: string };
+
+let parsed: any;
+let alias = "";
+////= Incoming	alias === "seller is buyer") parsed.seller = parsed.buy	if (alias === "owner is buyer") parsed.owner = parsed.buy
+function makeDeal(i: number): Deal {
+  return { buyer: { id: i, name: "b", tags: [] }, seller: { id: i, name: "s", tags: [] }, owner: { id: i, name: "o", tags: [], level: 1 } };
+}
+function weigh(deal: Deal): number {
+  return deal.buyer.id + deal.seller.name.length + deal.owner.tags.length + (deal.owner.level ?? 0) + (deal.note === undefined ? 0 : deal.note.length);
+}
+function noteLength(deal: Deal): number {
+  return deal.note === undefined ? 0 : deal.note.length;
+}
+////= attempt
+async function cast(incoming: Incoming): Promise<string> {
+  try {
+    const deal = (await incoming.json()) as Deal;
+    return noteLength(deal) + (deal === parsed ? " cast" : " another object");
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+async function weighBody(incoming: Incoming): Promise<string> {
+  try {
+    return String(weigh((await incoming.json()) as Deal));
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+const person = (i: number, more = "") => '{"id":' + i + ',"name":"n' + i + '","tags":["x"]' + more + "}";
+const body = (buyer: string, seller: string, owner: string, rest = "") => new Incoming('{"buyer":' + buyer + ',"seller":' + seller + ',"owner":' + owner + rest + "}");
+const takesText = (below: any) => attempt(() => { below.id = "text"; return below.id; });
+
+console.log(weigh(makeDeal(1)));
+let sum = 0;
+for (let i = 0; i < 500; i++) sum += Number(await weighBody(body(person(i), person(i + 1), person(i + 2, i % 2 ? ',"level":3' : ""), i % 3 ? "" : ',"note":"n"')));
+console.log(sum, JSON.stringify(parsed), Object.keys(parsed.owner).join());
+
+for (const [name, buyer, seller, owner, rest] of [
+  ["all fit", person(1), person(2), person(3), ""],
+  ["the last does not fit", person(1), person(2), '{"id":"x","name":"n","tags":[]}', ""],
+  ["the middle one does not fit", person(1), '{"id":1,"name":2,"tags":[]}', person(3), ""],
+  ["the first does not fit", '{"id":1}', person(2), person(3), ""],
+  ["the note does not fit", person(1), person(2), person(3), ',"note":7'],
+]) {
+  const outcome = await cast(body(buyer, seller, owner, rest));
+  console.log(name + ":", outcome, takesText(parsed.buyer), takesText(parsed.seller), takesText(parsed.owner));
+}
+for (const which of ["seller is buyer", "owner is buyer"]) {
+  alias = which;
+  for (let i = 0; i < 3; i++) {
+    const outcome = await weighBody(body(person(4), person(5), person(6)));
+    console.log(which + ":", outcome, parsed.seller === parsed.buyer, parsed.owner === parsed.buyer, takesText(parsed.buyer), takesText(parsed.seller), takesText(parsed.owner));
+  }
+}
+//// plain-objects-used-as-records-keep-what-they-hold.ts
+// Plain objects whose properties hold newly allocated strings, arrays, functions and typed objects are used as record types, as they are, while other allocations go on. Everything they hold is still there afterwards.
+type Leaf = { n: number; up: Leaf | null };
+type Branch = { id: number; label: string; leaf: Leaf; list: number[]; act: () => number; note: unknown };
+
+function typedLeaf(n: number, up: Leaf | null): Leaf {
+  return { n, up };
+}
+function typedBranch(): Branch {
+  return { id: 0, label: "typed", leaf: typedLeaf(0, null), list: [0], act: () => 0, note: null };
+}
+function check(branch: Branch, i: number): number {
+  if (branch.id !== i || branch.label !== "label " + i || branch.leaf.n !== i || branch.leaf.up!.n !== i + 1 || branch.list.length !== 3 || branch.list[2] !== i || branch.act() !== i * 2) return 0;
+  const note = branch.note as { text: string };
+  return note.text === "note " + i ? 1 : 0;
+}
+function grow(i: number): any {
+  const branch: any = { id: i };
+  branch.label = "label " + i;
+  branch.leaf = typedLeaf(i, typedLeaf(i + 1, null));
+  branch.list = [1, 2, i];
+  branch.act = () => i * 2;
+  branch.note = { text: "note " + i };
+  return branch;
+}
+
+let good = check({ ...typedBranch(), id: 5, label: "label 5", leaf: typedLeaf(5, typedLeaf(6, null)), list: [1, 2, 5], act: () => 10, note: { text: "note 5" } }, 5);
+const kept: any[] = [];
+for (let i = 0; i < 2000; i++) {
+  const shared = grow(i);
+  kept.push(shared);
+  good += check(shared, i);
+  const fresh: any = { id: i, label: "label " + i, leaf: typedLeaf(i, typedLeaf(i + 1, null)), list: [1, 2, i], act: () => i * 2, note: { text: "note " + i } };
+  good += check(fresh, i);
+}
+for (let i = 0; i < kept.length; i++) {
+  good += check(kept[i], i);
+  if (kept[i].label !== "label " + i || kept[i].list[2] !== i || kept[i].note.text !== "note " + i || Object.keys(kept[i]).join() !== "id,label,leaf,list,act,note") good = -1000000;
+}
+console.log(good);
+//// primitive-annotated-host-callback-parameter.ts
+// A parameter of a function handed straight to the host, or to untyped code, that is annotated with a primitive type or a built-in type: `req.on("data", (chunk: string) => { body += chunk })`, where a Buffer arrives. The parameter is tested on entry, whoever calls: a value of another kind throws a TypeError, undefined and null pass, and any object passes `Error`.
+declare const hostEmitter: { on(name: string, listener: (...args: any[]) => void): void; once: (name: string, listener: (value: any, more?: any) => void) => void };
+const given: Record<string, unknown> = { bytes: { toString() { return "bytes"; }, length: 5 }, seven: 7, text: "text", yes: true, nothing: null, none: undefined };
+(globalThis as any).hostEmitter = { on(name: string, f: Function) { f(given[name]); }, once(name: string, f: Function) { f(given[name], given[name]); } };
+const untyped: any = (globalThis as any).hostEmitter;
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).constructor.name; } console.log(name + ": " + JSON.stringify(r)); };
+const kind = (v: unknown) => typeof v + " " + String(v);
+for (const name of ["bytes", "seven", "text", "yes", "nothing", "none"]) {
+  row("the host, string, " + name, () => { let body = ""; hostEmitter.on(name, (chunk: string) => { body += chunk; }); return body; });
+  row("untyped code, string, " + name, () => { let body = ""; untyped.on(name, (chunk: string) => { body += chunk; }); return body; });
+  row("the host, number, " + name, () => { let seen = ""; hostEmitter.on(name, (n: number) => { seen = kind(n); }); return seen; });
+  row("untyped code, boolean, " + name, () => { let seen = ""; untyped.on(name, (flag: boolean) => { seen = kind(flag) + (flag ? " yes" : " no"); }); return seen; });
+  row("the host, two of them, " + name, () => { let seen = ""; hostEmitter.once(name, (a: string, b?: number) => { seen = kind(a) + " " + kind(b); }); return seen; });
+  row("a function expression, " + name, () => { let seen = ""; untyped.on(name, function (chunk: string | undefined) { seen = kind(chunk); }); return seen; });
+}
+for (const name of ["text", "seven", "nothing", "bytes"]) {
+  row("the host, a built-in type, " + name, () => { let seen = ""; hostEmitter.once(name, (code: number, reason: Uint8Array) => { seen = kind(code) + " " + String(reason); }); return seen; });
+  row("untyped code, an Error, " + name, () => { let seen = ""; untyped.on(name, (error: Error) => { seen = kind(error) + " " + (error instanceof Error); }); return seen; });
+  row("the host, a Date or nothing, " + name, () => { let seen = ""; hostEmitter.on(name, (when?: Date | null) => { seen = kind(when); }); return seen; });
+}
+row("a built-in type, as it says", () => { const seen: unknown[] = []; given.array = new Uint8Array([1, 2]); given.error = new RangeError("r"); hostEmitter.on("array", (bytes: Uint8Array) => { seen.push(bytes.length, bytes[1]); }); untyped.on("error", (error: Error) => { seen.push(error.message, error.name); }); return seen; });
+row("used as the type says", () => { const seen: unknown[] = []; hostEmitter.on("text", (chunk: string) => { seen.push(chunk.length, chunk.toUpperCase(), chunk + "!"); }); hostEmitter.on("seven", (n: number) => { seen.push(n + 1, n.toFixed(1)); }); return seen; });
+row("used as the type says though it is not", () => { const seen: unknown[] = []; hostEmitter.on("bytes", (chunk: string) => { seen.push(chunk.length, typeof chunk, chunk + "!"); }); untyped.on("text", (n: number) => { seen.push(String(n), typeof n); }); return seen; });
+row("kept", () => { const chunks: unknown[] = []; untyped.on("bytes", (chunk: string) => { chunks.push(chunk); }); return [chunks.length, chunks[0] === given.bytes]; });
+row("hot", () => { let total = 0; for (let i = 0; i < 3000; i++) hostEmitter.on("seven", (n: number) => { total += n; }); return total; });
+//// primitive-for-dts-object/host.d.ts
+export interface Timer { ref(): Timer; unref(): Timer; hasRef(): boolean }
+export class Handle { close(): void }
+export function startTimer(f: () => void, ms: number): Timer;
+export function stopTimer(timer: Timer): void;
+export function open(name: string): Handle;
+//// primitive-for-dts-object/host.js
+export class Handle { close() {} }
+export function startTimer(f, ms) { return ms; }
+export function stopTimer(timer) {}
+export function open(name) { return name === "real" ? new Handle() : name; }
+//// primitive-for-dts-object/main.ts
+// A declaration file says that a function of a package yields an object. The package, or a mock that stands in for it in a test, yields a primitive. The program only keeps the value and hands it back, which plain JavaScript allows: nothing throws.
+import { type Handle, open, startTimer, stopTimer, type Timer } from "./host.js";
+class Debounce {
+  private timer: ReturnType<typeof startTimer> | null = null;
+  start(): void { this.timer = startTimer(() => {}, 0); }
+  stop(): boolean { if (this.timer !== null) { stopTimer(this.timer); this.timer = null; return true; } return false; }
+}
+function later(): ReturnType<typeof startTimer> { return startTimer(() => {}, 5); }
+function keep(): { id: Timer | undefined } { const held: { id: Timer | undefined } = { id: undefined }; held.id = startTimer(() => {}, 7); return held; }
+function pass(timer: Timer): Timer { return timer; }
+function attempt(name: string, f: () => unknown): void { try { console.log(name, String(f())); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n")[0].replace(/ \(bun compile[^)]*\)/, "")); } }
+attempt("a field:", () => { const d = new Debounce(); d.start(); return d.stop(); });
+attempt("a result:", () => later());
+attempt("a member:", () => keep().id);
+attempt("a parameter:", () => pass(startTimer(() => {}, 9)));
+attempt("a variable:", () => { const timer: Timer = startTimer(() => {}, 11); return timer; });
+attempt("an element:", () => { const list: Timer[] = [startTimer(() => {}, 13)]; return list[0]; });
+attempt("a class of the declaration file, a string:", () => { const handle: Handle = open("text"); return handle; });
+attempt("a class of the declaration file, an instance:", () => { const handle: Handle = open("real"); handle.close(); return typeof handle; });
+//// program-functions-typed-as-host-functions.ts
+// A value typed as a host function (`typeof structuredClone`) can hold any function of the program. A call through it returns whatever that function returns.
+function same(value: any) {
+  return JSON.parse(JSON.stringify(value));
+}
+async function later(original: any) {
+  await null;
+  return JSON.parse(JSON.stringify(original));
+}
+
+// TypeScript reduces the three element types to `<T>(value: T) => T`, so it types the third call as an array. It returns a promise.
+for (const clone of [structuredClone, same, later]) {
+  const input = [1, "two", true];
+  const result = clone(input);
+  const cloned = await result;
+  console.log(clone.name, Object.prototype.toString.call(result), cloned instanceof Array, cloned !== input, cloned.length, cloned.join());
+}
+
+function through(clone: typeof structuredClone, input: { a: number }) {
+  return clone(input);
+}
+console.log(JSON.stringify(through(structuredClone, { a: 1 })), JSON.stringify(through(same, { a: 2 })), JSON.stringify(await through(later, { a: 3 })));
+
+let held = structuredClone;
+console.log(held("text").length);
+held = later;
+console.log(Object.prototype.toString.call(held("text")), (await held("text")).length);
+//// promise-claim-all-array-variable.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. The promises are kept in an array variable before Promise.all, and the result is pushed to a typed array. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const all_of_them: { k: Part }[] = []
+async function ask() { const pending = [later<{ k: Part }>('{"k": {"id": 1}}')]; const answer = (await Promise.all(pending))[0]!; all_of_them.push(answer); return all_of_them[0]!.k }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-all-mapped-array.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. The promises come from map(), go through Promise.all, and the result is spread. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+async function ask() { const answer = (await Promise.all(['{"k": {"id": 1}}'].map(text => later<{ k: Part }>(text))))[0]!; const copy = { ...answer, j: 1 }; return copy.k }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-all-settled-into-map.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. The promise goes through Promise.allSettled, and the value is stored in a typed Map. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const held = new Map<string, { k: Part }>()
+async function ask() { const [settled] = await Promise.allSettled([later<{ k: Part }>('{"k": {"id": 1}}')]); if (settled.status !== 'fulfilled') return 'no'; const answer = settled.value; held.set('x', answer); return held.get('x')!.k }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-all-tagged-union.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. Two such promises go through Promise.all, and the first result is a tagged union. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+async function ask() { const [answer, other] = await Promise.all([later<{ ok: true; k: Part } | { ok: false; e: string }>('{"ok": true, "k": {"id": 1}}'), later<{ e: string }>('{"e": "x"}')]); if (other.e !== 'x') return 'no'; return answer.ok ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-all-widened.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. The promise goes through Promise.all, and the result is passed to a parameter whose type has one more optional member. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function use(given: { k: Part; j?: number }): Part { return given.k }
+async function ask() { const [answer] = await Promise.all([later<{ k: Part }>('{"k": {"id": 1}}')]); return use(answer) }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-any-aliased.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. The promise goes through Promise.any, and the result is passed through a function typed with an alias of the same shape. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+type Answer = { k: Part }
+function same(given: Answer): Answer { return given }
+async function ask() { const answer = await Promise.any([later<{ k: Part }>('{"k": {"id": 1}}')]); return same(answer).k }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-arrow-with-function-type.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. An arrow function typed by `type Loader<R> = (text: string) => Promise<R>` returns Promise.resolve(JSON.parse(text)). The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const all_of_them: { k: Part }[] = []
+type Loader<R> = (text: string) => Promise<R>
+async function ask() { const load: Loader<{ k: Part }> = text => Promise.resolve(JSON.parse(text)); const answer = await load('{"k": {"id": 1}}'); all_of_them.push(answer); return all_of_them[0]!.k }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-async-generator-tagged-union.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. The caller calls next() on an async generator that yields `JSON.parse(text) as R`. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+async function* each<R>(texts: string[]): AsyncGenerator<R> { for (const text of texts) yield JSON.parse(text) as R }
+async function ask() { const step = await each<{ ok: true; k: Part } | { ok: false; e: string }>(['{"ok": true, "k": {"id": 1}}']).next(); if (step.done) return 'none'; const answer = step.value; return answer.ok ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-async-generator-widened.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. An async generator function yields `JSON.parse(text) as R`, and none of its parameters mention R. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function use(given: { k: Part; j?: number }): Part { return given.k }
+async function* each<R>(texts: string[]): AsyncGenerator<R> { for (const text of texts) yield JSON.parse(text) as R }
+async function ask() { for await (const answer of each<{ k: Part }>(['{"k": {"id": 1}}'])) { return use(answer) }; return 'none' }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-async-iterable-spread.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. A function returns an AsyncIterable<R> that yields `JSON.parse(text) as R`, and none of its parameters mention R. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function each<R>(texts: string[]): AsyncIterable<R> { return (async function* () { for (const text of texts) yield JSON.parse(text) as R })() }
+async function ask() { for await (const answer of each<{ k: Part }>(['{"k": {"id": 1}}'])) { const copy = { ...answer, j: 1 }; return copy.k }; return 'none' }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-from-annotated-arrow.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. An arrow function annotated Promise<T> returns the promise. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const load = (): Promise<{ k: Part }> => later('{"k": {"id": 1}}')
+async function ask() { const answer = await load(); const copy = { ...answer, j: 1 }; return copy.k }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-from-annotated-method.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. A method that is not async and is annotated Promise<T> returns the promise. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function use(given: { k: Part; j?: number }): Part { return given.k }
+class Api { load(): Promise<{ k: Part }> { return later('{"k": {"id": 1}}') } }
+async function ask() { const answer = await new Api().load(); return use(answer) }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-from-generic-method-caller.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. A method annotated Promise<T> returns what a generic method of the same class returns. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+class Api { private request<R>(text: string): Promise<R> { return later<R>(text) }
+  load(): Promise<{ k: any }> { return this.request('{"k": {"id": 1}}') } }
+async function ask() { const answer = await new Api().load(); return answer.k }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-from-literal-method.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. A method of an object literal annotated Promise<T> returns the promise. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const held = new Map<string, { k: Part }>()
+const api = { load(): Promise<{ k: Part }> { return later('{"k": {"id": 1}}') } }
+async function ask() { const answer = await api.load(); held.set('x', answer); return held.get('x')!.k }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-from-two-returns.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. A function annotated Promise<T> returns such a promise from two return statements. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const all_of_them: { k: Part }[] = []
+function load(flag: boolean): Promise<{ k: Part }> { if (flag) return later('{"k": {"id": 1}}'); return later('{}') }
+async function ask() { const answer = await load(true); all_of_them.push(answer); return all_of_them[0]!.k }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-generator-spread.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. A generator function yields `JSON.parse(text) as R`, and none of its parameters mention R. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function* each<R>(texts: string[]): Generator<R> { for (const text of texts) yield JSON.parse(text) as R }
+async function ask() { for (const answer of each<{ k: Part }>(['{"k": {"id": 1}}'])) { const copy = { ...answer, j: 1 }; return copy.k }; return 'none' }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-generic-async-method.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. An async method of `class Client<R>` returns `JSON.parse(text) as R`. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function use(given: { k: Part; j?: number }): Part { return given.k }
+class Client<R> { async get(text: string): Promise<R> { return JSON.parse(text) as R } }
+async function ask() { const answer = await new Client<{ k: Part }>().get('{"k": {"id": 1}}'); return use(answer) }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-generic-async-method-awaits.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. An async method of `class Client<R>` awaits later<R>(text) and returns the value. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+class Client<R> { async get(text: string): Promise<R> { const value = await later<R>(text); return value } }
+async function ask() { const answer = await new Client<{ ok: true; k: Part } | { ok: false; e: string }>().get('{"ok": true, "k": {"id": 1}}'); return answer.ok ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-generic-method-returns-promise.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. A method of `class Client<R>` returns later<R>(text). The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+class Client<R> { get(text: string): Promise<R> { return later<R>(text) } }
+async function ask() { const answer = await new Client<{ k: Part } | { e: string }>().get('{"k": {"id": 1}}'); return 'k' in answer ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-race-in-narrowed.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. The promise goes through Promise.race, and the result is a union narrowed with `in`. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+async function ask() { const answer = await Promise.race([later<{ k: Part } | { e: string }>('{"k": {"id": 1}}')]); return 'k' in answer ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-resolve-parsed-data.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. A function annotated Promise<T> returns Promise.resolve(JSON.parse(text)). The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function use(given: { k: Part; j?: number }): Part { return given.k }
+function load(): Promise<{ k: Part }> { return Promise.resolve(JSON.parse('{"k": {"id": 1}}')) }
+async function ask() { const answer = await load(); return use(answer) }
+console.log(JSON.stringify(await ask()))
+//// promise-claim-through-two-annotated-functions.ts
+// `later<R>(text): Promise<R>` resolves to parsed data, and R is only what the caller claims. Two functions that are not async and are annotated Promise<T> hand the promise on. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function inner(): Promise<{ ok: true; k: Part } | { ok: false; e: string }> { return later('{"ok": true, "k": {"id": 1}}') }
+function outer(): Promise<{ ok: true; k: Part } | { ok: false; e: string }> { return inner() }
+async function ask() { const answer = await outer(); return answer.ok ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// properties-of-a-body-that-stays-plain-read-again-and-again.ts
+// A parsed body is cast to a record type and stays the object it is; its properties (a record, arrays, an optional text) are read by typed code again and again, with stores from outside in between.
+type Customer = { id: number; name: string; tags: string[] };
+type Item = { sku: string; quantity: number };
+type Order = { customer: Customer; items: Item[]; coupon?: string; spare: Customer | null };
+
+class Incoming {
+  #text: string;
+  constructor(text: string) {
+    this.#text = text;
+  }
+  json<T = any>(): Promise<T> {
+    return Promise.resolve(this.#text).then((text: string) => JSON.parse(text));
+  }
+}
+const made = (i: number): Order => ({ customer: { id: i, name: "made", tags: [] }, items: [{ sku: "m", quantity: i }], coupon: "C", spare: null });
+function read(order: Order): number {
+  let sum = order.customer.id + order.customer.name.length + order.customer.tags.length + (order.coupon === undefined ? 0 : order.coupon.length);
+  for (const item of order.items) sum += item.sku.length + item.quantity;
+  if (order.spare !== null) sum += order.spare.id;
+  return sum;
+}
+const texts = [
+  JSON.stringify(made(7)),
+  `{"customer":{"id":1,"name":"first","tags":["a","b"]},"items":[],"spare":null}`,
+  `{"customer":{"id":2,"name":"second","tags":[]},"items":[{"sku":"x","quantity":1},{"sku":"yy","quantity":2.5}],"coupon":"","spare":{"id":40,"name":"spare","tags":["t"]}}`,
+  `{"spare":null,"items":[{"quantity":3,"sku":"other order"}],"customer":{"tags":["z"],"name":"third","id":3},"more":true}`,
+];
+console.log("made here", read(made(1)));
+for (let round = 0; round < 4; round++) {
+  for (const text of texts) {
+    const body: any = await new Incoming(text).json();
+    const customer = body.customer;
+    const items = body.items;
+    const first = read(body as Order);
+    const second = read(body as Order);
+    console.log(round, first, second, body.customer === customer, body.items === items, Object.keys(body).join(), Object.keys(customer).join());
+    items.push({ sku: "pushed", quantity: 10 });
+    customer.tags.push("pushed");
+    customer.id += 100;
+    body.items = items.slice(0);
+    body.coupon = "changed";
+    console.log(round, read(body as Order), body.items === items, JSON.stringify(body));
+    body.customer = { id: 5, name: "replaced", tags: [] };
+    body.spare = customer;
+    console.log(round, read(body as Order), body.spare === customer);
+  }
+}
+//// prototype-object-into-generic-callback.ts
+// A generic function makes an object with Object.create(prototype), types it with a generic interface, and hands it to the
+// caller's callback. The callback's parameter is an instantiation of that interface.
+interface Endpoint<Name extends string> {
+  readonly name: Name
+}
+interface Handlers<Endpoints extends Endpoint<string>, Handled extends string = never> {
+  readonly '~Endpoints': Endpoints
+  readonly names: string[]
+  handle<Name extends Exclude<Endpoints['name'], Handled>>(name: Name, run: () => string): Handlers<Endpoints, Handled | Name>
+}
+const HandlersProto = {
+  handle(this: Handlers<any, any>, name: string, run: () => string) {
+    this.names.push(name + '=' + run())
+    return this
+  },
+}
+const makeHandlers = <Endpoints extends Endpoint<string>>(endpoints: readonly Endpoints[]): Handlers<Endpoints> => {
+  const self = Object.create(HandlersProto)
+  self.names = [String(endpoints.length)]
+  return self
+}
+const group = <Endpoints extends Endpoint<string>, Result>(endpoints: readonly Endpoints[], build: (handlers: Handlers<Endpoints>) => Result): Result => build(makeHandlers(endpoints))
+const text: Endpoint<'text'> = { name: 'text' }
+const json: Endpoint<'json'> = { name: 'json' }
+const built = group([text, json], handlers => handlers.handle('text', () => 'hello').handle('json', () => '{}'))
+console.log(built.names.join())
+//// read-narrowed-to-never-accessor.ts
+// The property that the program tests against its declared type is an accessor of an object from untyped code. What the getter returns is tested like the value of a field: a string where `string[] | true` is written throws a TypeError at the read, also under `typeof`.
+interface Meta { sign: string[] | true; secrets?: string }
+const own: Meta = { sign: ["own"] };
+const stored: unknown[] = [];
+function normalize(app: any): string {
+  const meta: Meta = app.cookie;
+  if (typeof meta.sign === "string") meta.sign = [meta.sign];
+  return JSON.stringify(meta) + " " + JSON.stringify(stored);
+}
+console.log(normalize({ cookie: own }));
+try { console.log(normalize({ cookie: Object.defineProperty({}, "sign", { get() { return "one"; }, set(value) { stored.push(value); }, enumerable: true }) })); } catch (e) { console.log("a getter that returns a string:", (e as Error).constructor.name); }
+//// read-narrowed-to-never-after-cast.ts
+// The program tests a property for a kind that its declared type rules out. The operand of `typeof` is a typed read like any other: a string where `string[] | true` is written throws a TypeError at the read, so the branch is never entered.
+interface Meta { sign: string[] | true; secrets?: string }
+const own: Meta = { sign: ["own"] };
+function normalize(meta: Meta): string {
+  if (typeof meta.sign === "string") meta.sign = [meta.sign];
+  return JSON.stringify(meta);
+}
+const mistyped = { sign: "one" } as unknown as Meta;
+try { console.log(normalize(own), normalize(mistyped)); } catch (e) { console.log("a string:", (e as Error).constructor.name); }
+//// read-narrowed-to-never-by-typeof.ts
+// The program tests a property for a kind that its declared type rules out. The operand of `typeof` is a typed read like any other: a string where `string[] | true` is written throws a TypeError at the read, so the branch is never entered.
+interface Meta { sign: string[] | true; secrets?: string }
+const own: Meta = { sign: ["own"] };
+function normalize(app: any): string {
+  const meta: Meta = app.cookie;
+  if (typeof meta.sign === "string") meta.sign = [meta.sign];
+  return JSON.stringify(meta);
+}
+console.log(normalize({ cookie: own }));
+try { console.log(normalize({ cookie: { sign: "one" } })); } catch (e) { console.log("a string:", (e as Error).constructor.name); }
+console.log(normalize({ cookie: { sign: ["a"] } }));
+try { console.log(normalize(JSON.parse('{"cookie":{"sign":"two","secrets":"s"}}'))); } catch (e) { console.log("a parsed string:", (e as Error).constructor.name); }
+//// read-narrowed-to-never-in-closure.ts
+// A closure captures a variable with a written type and tests one of its properties for a kind that the type rules out. The read is a typed read: a string where `string[] | true` is written throws a TypeError.
+function compose(app: any): () => string {
+  const meta: { secrets?: string | string[]; sign: string[] | true } = app.config.cookie;
+  const encode = () => {
+    if (meta?.sign) {
+      if (typeof meta.sign === "string") meta.sign = [meta.sign];
+      return "signed " + JSON.stringify(meta.sign);
+    }
+    return "plain " + JSON.stringify(meta);
+  };
+  return () => encode() + " " + encode();
+}
+try { console.log(compose({ config: { cookie: { sign: "one" } } })()); } catch (e) { console.log("a string:", (e as Error).constructor.name); }
+console.log(compose({ config: { cookie: { sign: ["a"] } } })());
+console.log(compose({ config: { cookie: { path: "/" } } })());
+//// record-with-two-union-members-fields.ts
+// A generic async function returns one of two record types, and a record with the fields of both arrives from JSON.
+declare const console: { log(...values: unknown[]): void };
+type Either<In, Result> = { early: In; late?: undefined } | { late: Result; early?: undefined };
+type Act<In> = { early: Promise<In>; isEarly(): boolean };
+////= either	Act<In>, chain: Promise<Result>): Promise<
+type Entering = { text: string; extra?: readonly string[] };
+type Answer = { drop?: string };
+async function use(has: boolean): Promise<string> {
+  const act: Act<Entering> = { early: has ? Promise.resolve({ text: 'in' }) : new Promise<Entering>(() => {}), isEarly: () => has };
+  const first = await either(act, Promise.resolve<Answer>({ drop: 'why' }));
+  if (first.early) {
+    const early = first.early;
+    return 'early ' + early.text;
+  }
+  const late = first.late;
+  return 'late ' + late.drop;
+}
+use(true).then(a => use(false).then(b => console.log(a, '|', b)));
+const alike = JSON.parse('{"early":"s","late":"t"}') as { early: string; late: string }; console.log(alike.early);
+export {};
+//// return-only-generic-aliased-tagged-union.ts
+// A generic function returns Promise<R> and none of its parameters mention R, so only the caller's claim determines R. The type argument is a tagged union of two aliases. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+type Ok = { ok: true; k: Part }
+type No = { ok: false; e: string }
+async function ask() { const answer = await later<Ok | No>('{"ok": true, "k": {"id": 1}}'); return answer.ok ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-array-created-empty.ts
+// A generic function returns a new empty R[] and none of its parameters mention R. The caller fills it with parsed data and reads an element. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function empty<R>(): R[] { return [] }
+async function ask() { const list = empty<{ k: Part }>(); list.push(JSON.parse('{"k": {"id": 1}}')); const answer = list[0]!; return answer.k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-array-destructured.ts
+// A generic function returns `JSON.parse(text) as R[]` and none of its parameters mention R, so R is only what the caller claims. A method destructures the first element and stores it in a typed Map. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const held = new Map<string, { k: Part }>()
+function list<R>(text: string): R[] { return JSON.parse(text) as R[] }
+class Caller { async ask() { const [answer] = list<{ k: Part }>('[' + '{"k": {"id": 1}}' + ']'); if (!answer) return 'none'; held.set('x', answer); return held.get('x')!.k } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// return-only-generic-array-element-widened.ts
+// A generic function returns `JSON.parse(text) as R[]` and none of its parameters mention R, so R is only what the caller claims. An element is passed to a parameter whose type has one more optional member. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function use(given: { k: Part; j?: number }): Part { return given.k }
+function list<R>(text: string): R[] { return JSON.parse(text) as R[] }
+async function ask() { const answer = list<{ k: Part }>('[' + '{"k": {"id": 1}}' + ']')[0]!; return use(answer) }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-array-find-and-spread.ts
+// A generic function returns `JSON.parse(text) as R[]` and none of its parameters mention R, so R is only what the caller claims. An element returned by find() is spread into a new object. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function list<R>(text: string): R[] { return JSON.parse(text) as R[] }
+async function ask() { const answer = list<{ k: Part }>('[' + '{"k": {"id": 1}}' + ']').find(() => true)!; const copy = { ...answer, j: 1 }; return copy.k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-array-for-of.ts
+// A generic function returns `JSON.parse(text) as R[]` and none of its parameters mention R, so R is only what the caller claims. Each element of a for-of loop is pushed to a typed array. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const all_of_them: { k: Part }[] = []
+function list<R>(text: string): R[] { return JSON.parse(text) as R[] }
+async function ask() { for (const answer of list<{ k: Part }>('[' + '{"k": {"id": 1}}' + ']')) { all_of_them.push(answer); return all_of_them[0]!.k }; return 'none' }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-array-tagged-union.ts
+// A generic function returns `JSON.parse(text) as R[]` and none of its parameters mention R, so R is only what the caller claims. The type argument is a tagged union and an element is narrowed by its tag. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function list<R>(text: string): R[] { return JSON.parse(text) as R[] }
+async function ask() { const answer = list<{ ok: true; k: Part } | { ok: false; e: string }>('[' + '{"ok": true, "k": {"id": 1}}' + ']')[0]!; return answer.ok ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-member-accessor.ts
+// A generic function returns Promise<R> and none of its parameters mention R, so only the caller's claim determines R. The member is an accessor. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+function computed<R>(): Promise<R> { const made: any = {}; Object.defineProperty(made, "k", { get() { return { id: 1 } }, enumerable: true }); return Promise.resolve(made as R) }
+async function ask() { const answer = await computed<{ k: Part }>(); return answer.k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-promise-array-pushed.ts
+// A generic function returns a promise of R[] and none of its parameters mention R, so R is only what the caller claims. An element is pushed to a typed array. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const all_of_them: { k: Part }[] = []
+function all<R>(text: string): Promise<R[]> { return Promise.resolve(JSON.parse(text) as R[]) }
+async function ask() { const answer = (await all<{ k: Part }>('[' + '{"k": {"id": 1}}' + ']'))[0]!; all_of_them.push(answer); return all_of_them[0]!.k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-promise-array-tagged-union.ts
+// A generic function returns a promise of R[] and none of its parameters mention R, so R is only what the caller claims. A method writes a tagged union as the type argument and narrows an element by its tag. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function all<R>(text: string): Promise<R[]> { return Promise.resolve(JSON.parse(text) as R[]) }
+class Caller { async ask() { const answer = (await all<{ ok: true; k: Part } | { ok: false; e: string }>('[' + '{"ok": true, "k": {"id": 1}}' + ']'))[0]!; return answer.ok ? answer.k : answer.e } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// return-only-generic-promise-array-widened.ts
+// A generic function returns a promise of R[] and none of its parameters mention R, so R is only what the caller claims. An element is passed to a parameter whose type has one more optional member. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function use(given: { k: Part; j?: number }): Part { return given.k }
+function all<R>(text: string): Promise<R[]> { return Promise.resolve(JSON.parse(text) as R[]) }
+async function ask() { const answer = (await all<{ k: Part }>('[' + '{"k": {"id": 1}}' + ']'))[0]!; return use(answer) }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-promise-map-in-narrowed.ts
+// A generic function returns a promise of Map<string, R> and none of its parameters mention R, so R is only what the caller claims. The type argument is a union that the caller narrows with `in`. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function all<R>(text: string): Promise<Map<string, R>> { return Promise.resolve(new Map<string, R>([['x', JSON.parse(text) as R]])) }
+async function ask() { const answer = (await all<{ k: Part } | { e: string }>('{"k": {"id": 1}}')).get('x')!; return 'k' in answer ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-promise-readonly-array-spread.ts
+// A generic function returns a promise of readonly R[] and none of its parameters mention R, so R is only what the caller claims. An element is spread into a new object. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function all<R>(text: string): Promise<readonly R[]> { return Promise.resolve(JSON.parse(text) as R[]) }
+async function ask() { const answer = (await all<{ k: Part }>('[' + '{"k": {"id": 1}}' + ']'))[0]!; const copy = { ...answer, j: 1 }; return copy.k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-promise-record-into-map.ts
+// A generic function returns a promise of Record<string, R> and none of its parameters mention R, so R is only what the caller claims. A value is stored in a typed Map. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const held = new Map<string, { k: Part }>()
+function all<R>(text: string): Promise<Record<string, R>> { return Promise.resolve(JSON.parse(text) as Record<string, R>) }
+async function ask() { const answer = (await all<{ k: Part }>('{"x": ' + '{"k": {"id": 1}}' + '}'))['x']!; held.set('x', answer); return held.get('x')!.k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-promise-record-into-member.ts
+// A generic function returns a promise of Record<string, R> and none of its parameters mention R, so R is only what the caller claims. A value is stored in a member of a typed object literal. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+type Keeper = { held: { k: Part } }
+function all<R>(text: string): Promise<Record<string, R>> { return Promise.resolve(JSON.parse(text) as Record<string, R>) }
+async function ask() { const answer = (await all<{ k: Part }>('{"x": ' + '{"k": {"id": 1}}' + '}'))['x']!; const keeper: Keeper = { held: answer }; return keeper.held.k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-promise-tuple-aliased.ts
+// A generic function returns a promise of [R, number] and none of its parameters mention R, so R is only what the caller claims. The first element is passed to and returned from a function typed with an alias of the same shape. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+type Answer = { k: Part }
+function same(given: Answer): Answer { return given }
+function all<R>(text: string): Promise<[R, number]> { return Promise.resolve(JSON.parse(text) as [R, number]) }
+async function ask() { const answer = (await all<{ k: Part }>('[' + '{"k": {"id": 1}}' + ', 1]'))[0]; return same(answer).k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-promise-tuple-any-member.ts
+// A generic function returns a promise of [R, number] and none of its parameters mention R, so R is only what the caller claims. The only member of the type argument is typed `any`. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function all<R>(text: string): Promise<[R, number]> { return Promise.resolve(JSON.parse(text) as [R, number]) }
+class Caller { async ask() { const answer = (await all<{ k: any }>('[' + '{"k": {"id": 1}}' + ', 1]'))[0]; return answer.k } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// return-only-generic-promise-tuple-spread.ts
+// A generic function returns a promise of [R, number] and none of its parameters mention R, so R is only what the caller claims. The first element is kept in a variable and spread into a new object. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function all<R>(text: string): Promise<[R, number]> { return Promise.resolve(JSON.parse(text) as [R, number]) }
+async function ask() { const answer = (await all<{ k: Part }>('[' + '{"k": {"id": 1}}' + ', 1]'))[0]; const copy = { ...answer, j: 1 }; return copy.k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-result-aliased.ts
+// A generic function returns Promise<R> and none of its parameters mention R, so only the caller's claim determines R. The result is passed to and returned from a function typed with an alias of the same shape. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+type Answer = { k: Part }
+function same(given: Answer): Answer { return given }
+async function ask() { const answer = await later<{ k: Part }>('{"k": {"id": 1}}'); return same(answer).k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-result-into-map.ts
+// A generic function returns Promise<R> and none of its parameters mention R, so only the caller's claim determines R. The result is stored in a typed Map. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+const kept = new Map<string, { k: Part }>()
+async function ask() { kept.set('x', await later<{ k: Part }>('{"k": {"id": 1}}')); return kept.get('x')!.k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-result-pushed.ts
+// A generic function returns Promise<R> and none of its parameters mention R, so only the caller's claim determines R. The result is pushed to a typed array. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+const all: { k: Part }[] = []
+async function ask() { all.push(await later<{ k: Part }>('{"k": {"id": 1}}')); return all[0]!.k }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-result-pushed-method.ts
+// A generic function returns Promise<R> and none of its parameters mention R, so only the caller's claim determines R. A method pushes the result to a typed array. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+const all: { k: Part }[] = []
+class Caller { async ask() { all.push(await later<{ k: Part }>('{"k": {"id": 1}}')); return all[0]!.k } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// return-only-generic-result-widened.ts
+// A generic function returns Promise<R> and none of its parameters mention R, so only the caller's claim determines R. The result is passed to a parameter whose type has one more optional member. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+function use(given: { k: Part; j?: number }): Part { return given.k }
+async function ask() { const answer = await later<{ k: Part }>('{"k": {"id": 1}}'); return use(answer) }
+console.log(JSON.stringify(await ask()))
+//// return-only-generic-result-widened-method.ts
+// A generic function returns Promise<R> and none of its parameters mention R, so only the caller's claim determines R. A method passes the result to a parameter whose type has one more optional member. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+type Waiting = { resolve: (result: unknown) => void; reject: (error: unknown) => void }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; a = 5; b = 6; c = 7; d = 8 }
+const unrelated = new Unrelated()
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.a + unrelated.b + unrelated.c + unrelated.d < 0) console.log('never')
+const waiting = new Map<number, Waiting>()
+const seen: unknown[] = []
+let next = 0
+////= arrive-2
+function use(given: { k: Part; j?: number }): Part { return given.k }
+class Caller { async ask() { const answer = await later<{ k: Part }>('{"k": {"id": 1}}'); return use(answer) } }
+console.log(JSON.stringify(await new Caller().ask()))
+//// returned-data-cast-elsewhere/load.ts
+import type { Row } from "./types";
+////= load
+//// returned-data-cast-elsewhere/main.ts
+// Data from outside is looked at as one type, and a function of another module returns it as a second type with the same properties. It stays the same object, and handing it on tests only that it is an object. A property that holds another kind than its type declares is found at the first typed read of it, which throws a TypeError; null and a missing property pass. A third module, the first to be compiled, casts between two types that hold these two, so the compiler has compared them before it comes to the return.
+import { widen, type Line } from "./types";
+import { load } from "./load";
+import { pass } from "./pass";
+
+const row = load('{"id":1,"name":"parsed"}');
+const line = pass(row);
+console.log(row === (line as unknown), line.id, line.name);
+line.id = 2;
+console.log(row.id, line.id);
+row.name = "changed";
+console.log(row.name, line.name);
+
+const odd = pass(load('{"id":"seven","name":null,"more":true}'));
+try {
+  console.log(odd.id);
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+console.log(odd.name, Object.keys(odd).join());
+const short = pass(load('{"id":8}'));
+console.log(short.id, short.name, Object.keys(short).join());
+
+const own: Line = { id: 3, name: "made here" };
+console.log(own.id, own.name, JSON.stringify(own));
+const holder = widen({ held: { id: 4, name: "held" } });
+console.log(holder.held.id, holder.held.name);
+//// returned-data-cast-elsewhere/pass.ts
+import type { Line, Row } from "./types";
+export function pass(row: Row): Line {
+  return row;
+}
+//// returned-data-cast-elsewhere/types.ts
+////= Row
+////= Line
+////= lines-10	RowHolder	Row
+////= lines-10	LineHolder	Line
+export function widen(holder: RowHolder): LineHolder {
+  return holder as LineHolder;
+}
+//// returned-data-used-in-typed-code/load.ts
+import type { Row } from "./types";
+////= load
+//// returned-data-used-in-typed-code/main.ts
+// Data from outside is looked at as one type, and a function of another module returns it as a second type with the same properties. What is read out of it is used in typed code: joined to a string, put into a template, compared, stored in an array. Handing it on tests only that it is an object. A property that holds another kind than its type declares is found at the first typed read of it, which throws a TypeError; null and a missing property pass. A third module, the first to be compiled, casts between two types that hold these two, so the compiler has compared them before it comes to the return.
+import { widen } from "./types";
+import { load } from "./load";
+import { pass } from "./pass";
+
+const odd = pass(load('{"id":"seven","name":null,"more":true}'));
+////= lines
+const written = `name ${odd.name}`;
+console.log(written, odd.name === "n", [odd.name].length);
+
+const short = pass(load('{"id":8}'));
+const sum = "" + short.id + short.name;
+console.log(sum, typeof short.name);
+
+const holder = widen({ held: { id: 4, name: "held" } });
+console.log("" + holder.held.id + holder.held.name);
+//// returned-data-used-in-typed-code/pass.ts
+import type { Line, Row } from "./types";
+export function pass(row: Row): Line {
+  return row;
+}
+//// returned-data-used-in-typed-code/types.ts
+////= Row
+////= Line
+////= lines-10	RowHolder	Row
+////= lines-10	LineHolder	Line
+export function widen(holder: RowHolder): LineHolder {
+  return holder as LineHolder;
+}
+//// sql-plain-rows-in-callbacks.ts
+// The SQLite adapter of Bun.sql creates plain objects. A callback called with rows of sql<Row[]> converts a plain row that matches Row in place at its entry and runs its typed body; a row that does not match runs the untyped clone.
+import { SQL } from "bun";
+
+interface Row {
+  id: number;
+  parentId: number | null;
+  body: string;
+  login: string;
+}
+interface Author {
+  login: string;
+}
+interface Comment {
+  id: number;
+  parentId: number | null;
+  author: Author;
+  body: string;
+}
+interface CommentNode extends Comment {
+  replies: CommentNode[];
+}
+
+const db = new SQL("sqlite://:memory:");
+await db`CREATE TABLE comments (id INTEGER PRIMARY KEY, parentId INTEGER, body, login TEXT)`;
+await db`INSERT INTO comments VALUES (1, NULL, 'first', 'ann'), (2, 1, '', 'bob'), (3, 1, 'naïve — 日本語', 'ann')`;
+await db`CREATE TABLE mismatches (id INTEGER PRIMARY KEY, parentId INTEGER, body, login TEXT)`;
+await db`INSERT INTO mismatches VALUES (1, NULL, 'matches', 'ann'), (2, 1, 7, 'bob'), (3, 1, 'no login', NULL)`;
+
+async function commentsOf(): Promise<Comment[]> {
+  const rows = await db<Row[]>`SELECT id, parentId, body, login FROM comments ORDER BY id`;
+  return rows.map(row => ({ id: row.id, parentId: row.parentId, author: { login: row.login }, body: row.body }));
+}
+
+function describe(comments: Comment[]): string {
+  let text = "";
+  for (const comment of comments) {
+    const node: CommentNode = { ...comment, replies: [] };
+    text += `${node.id}:${node.parentId}:${node.author.login}:${node.body.length}:${node.replies.length} `;
+  }
+  return text;
+}
+console.log(describe(await commentsOf()));
+
+async function inspectMismatches(): Promise<void> {
+  const rows = await db<Row[]>`SELECT id, parentId, body, login FROM mismatches ORDER BY id`;
+  console.log(rows.map(row => `${row.id}${typeof row.body}${typeof row.login}`).join(), JSON.stringify(rows), Object.keys(rows[0]!).join());
+}
+await inspectMismatches();
+
+await db.close();
+Bun.gc(true);
+//// stored-fields.ts
+// Parsed JSON is stored into the fields of an object that the program creates. What fits is stored as it is. A number under `id: string` and a string under `flag: boolean` throw a TypeError where typed code takes them, and what was stored until then stays.
+type Def = { id: string; held?: () => boolean }
+type Plan = { slot: Def | null; overflow: number }
+type State = { winner: Def | null; rule: { flag: boolean } | null; released: boolean; label: string | null }
+const state: State = { winner: null, rule: null, released: false, label: null }
+function getState(): State { return state }
+function planOf(items: Def[], rule: { flag: boolean }): Plan {
+  let slot: Def | null = null
+  let overflow = 0
+  for (const item of items) {
+    if (slot === null && (rule.flag || item.held === undefined)) slot = item
+    else overflow++
+  }
+  return { slot, overflow }
+}
+function choose(items: Def[], options: { flag: boolean }): Plan {
+  const s = getState()
+  const rule = s.rule ?? options
+  const plan = planOf(items, rule)
+  if (plan.slot !== null) {
+    s.winner = plan.slot
+    s.rule = { flag: rule.flag }
+    s.label = plan.slot.id
+  }
+  return plan
+}
+const made: Def[] = [{ id: "made", held: () => true }, { id: "second" }]
+const given = JSON.parse('[{"id":"given"},{"id":7,"extra":[1]},{"id":"third"}]') as Def[]
+const options = JSON.parse('{"flag":false}') as { flag: boolean }
+function show(plan: Plan) {
+  const s = getState()
+  console.log(JSON.stringify(plan), JSON.stringify(s), s.winner === plan.slot, typeof s.label)
+}
+show(choose(made, { flag: true }))
+show(choose(made, options))
+show(choose(given, options))
+try { show(choose(given.slice(1), { flag: false })) } catch (e) { console.log("a number for the id:", (e as Error).constructor.name) }
+state.rule = null
+try { show(choose(given.slice(1), JSON.parse('{"flag":"yes"}'))) } catch (e) { console.log("a string for the flag:", (e as Error).constructor.name) }
+show(choose([], options))
+//// stream-branches-passed-to-typed-function.ts
+// Chunks of a host stream are typed arrays. They have a numeric `length`, so a function that asks for `{ length: number }` accepts them.
+const own = { length: 7 };
+console.log(own.length);
+////= lines-3	count	chunks	chunk
+console.log((await Promise.all(new Response("hi").body!.tee().map(count))).join());
+////= lines-3	countToo	chunks	chunk
+const [first, second] = new Response("hello").body!.tee();
+console.log(await countToo(first), await countToo(second));
+//// string-object-cast-returned-by-async.ts
+// A String object cast to `string & Removable` is accepted wherever a string is, including after an async function returns it.
+class Removable extends String {
+  [Symbol.dispose]() {
+    console.log("removed " + this);
+  }
+}
+function folder(base: string): string & Removable {
+  return new Removable(base) as string & Removable;
+}
+function cacheOf(dir: string) {
+  return { cache: dir + "/cache" };
+}
+function lockOf(dir: string) {
+  return dir + "/bun.lock";
+}
+function look(dir: string) {
+  return dir.length + ":" + dir.toUpperCase() + ":" + `${dir}` + ":" + dir.startsWith("/tmp");
+}
+async function setup(name: string) {
+  const dir = folder("/tmp/" + name);
+  console.log(cacheOf(dir).cache);
+  await null;
+  return dir;
+}
+const setupToo = async (name: string) => folder("/tmp/" + name);
+
+async function main() {
+  using dir = await setup("a");
+  console.log(lockOf(dir), look(dir), cacheOf(dir).cache);
+  console.log(JSON.stringify(String(dir)), [String(dir), "x"].join("/"));
+  const second = await setup("b");
+  console.log(lockOf(second), look(second));
+  const promise = setupToo("c");
+  using third = await promise;
+  console.log(lockOf(third), look(third), lockOf(await setupToo("d")));
+}
+await main();
+//// stub-function-cast-to-typed-function/api.ts
+export type Reply = { headers: Record<string, string>; url: string; code: number };
+export type Ok<T> = { ok: true; data: T; status: number; reply: Reply };
+export type Failed = { ok: false; reason: string; detail: string };
+export type Result<T> = Ok<T> | Failed;
+export type Routed<T> = Result<T> & { route: string; fromFar: boolean };
+
+////= api
+
+async function direct<T>(path: string): Promise<Result<T>> {
+  return api.post<T>(path, null);
+}
+export const send = async <T>(path: string): Promise<Routed<T>> => ({ ...(await direct<T>(path)), route: "direct", fromFar: true });
+export const sendUnrouted = async <T>(path: string): Promise<Result<T>> => {
+  const result = await direct<T>(path);
+  return result;
+};
+export function describeLookup(id: number): string {
+  const reply = api.lookup(id);
+  return reply.url + " " + reply.code;
+}
+//// stub-function-cast-to-typed-function/main.ts
+// A test replaces a typed function with a stand-in that returns canned values typed `unknown`, and casts the stand-in to the function's type. The canned objects then reach places typed by the function's declared result. Each of them satisfies that type, so the program must behave as it does in plain JavaScript.
+import * as mod from "./api";
+
+type Item = { id: number };
+type Call = { args: unknown[] };
+function mockPost(result: unknown | ((call: Call) => unknown)) {
+  mod.api.post = (async (...args: unknown[]) => {
+    const call: Call = { args };
+    return typeof result === "function" ? result(call) : result;
+  }) as typeof mod.api.post;
+}
+function show(label: string, result: mod.Result<Item>) {
+  console.log(label + ":", result.ok, result.ok ? result.status + " " + result.data.id : result.reason, Object.keys(result).join());
+}
+
+show("not replaced", await mod.send<Item>("/real"));
+
+mockPost({ ok: true, status: 200, data: { id: 1 }, reply: { headers: {}, url: "u", code: 1 } });
+const complete = await mod.send<Item>("/a");
+show("complete", complete);
+console.log(complete.route, complete.fromFar, complete.ok && complete.reply.url);
+show("complete, unrouted", await mod.sendUnrouted<Item>("/a"));
+
+mockPost({ ok: false, reason: "refused", detail: "by the stand-in" });
+show("the other member of the union", await mod.send<Item>("/b"));
+
+mockPost({ ok: true, data: { id: 2 }, status: 201, reply: { headers: { a: "b" }, url: "v", code: 2 }, extra: "kept" });
+show("one member more", await mod.send<Item>("/c"));
+
+mockPost((call: Call) => ({ ok: true, status: 202, data: { id: call.args.length }, reply: { headers: {}, url: String(call.args[0]), code: 3 } }));
+const computed = await mod.sendUnrouted<Item>("/d");
+show("computed by a function", computed);
+console.log(computed.ok && computed.reply.url);
+
+mod.api.lookup = ((id: unknown) => ({ headers: {}, url: "canned " + id, code: 7 }) as unknown) as typeof mod.api.lookup;
+console.log(mod.describeLookup(9));
+//// stub-function-cast-via-any-or-unknown/api.ts
+export type Reply = { headers: Record<string, string>; url: string; code: number };
+export type Ok<T> = { ok: true; data: T; status: number; reply: Reply };
+export type Failed = { ok: false; reason: string; detail: string };
+export type Result<T> = Ok<T> | Failed;
+export type Routed<T> = Result<T> & { route: string; fromFar: boolean };
+
+////= api
+
+async function direct<T>(path: string): Promise<Result<T>> {
+  return api.post<T>(path, null);
+}
+export const send = async <T>(path: string): Promise<Routed<T>> => ({ ...(await direct<T>(path)), route: "direct", fromFar: true });
+export const sendUnrouted = async <T>(path: string): Promise<Result<T>> => {
+  const result = await direct<T>(path);
+  return result;
+};
+export function describeLookup(id: number): string {
+  const reply = api.lookup(id);
+  return reply.url + " " + reply.code;
+}
+//// stub-function-cast-via-any-or-unknown/main.ts
+// A typed function is replaced by a stand-in that is cast to `any`, or through `unknown`, on its way to the typed place. The canned objects satisfy the declared result type, so the program must behave as it does in plain JavaScript.
+import * as mod from "./api";
+
+type Item = { id: number };
+function show(label: string, result: mod.Result<Item>) {
+  console.log(label + ":", result.ok, result.ok ? result.status + " " + result.data.id + " " + result.reply.url : result.reason, Object.keys(result).join());
+}
+function canned(id: number): unknown {
+  return { ok: true, status: 200 + id, data: { id }, reply: { headers: {}, url: "u" + id, code: id } };
+}
+
+function castToAny(result: unknown) {
+  mod.api.post = (async () => result) as any;
+}
+castToAny(canned(1));
+show("cast to any", await mod.sendUnrouted<Item>("/a"));
+show("cast to any, routed", await mod.send<Item>("/a"));
+
+function castThroughUnknown(result: unknown) {
+  mod.api.post = (async () => result) as unknown as typeof mod.api.post;
+}
+castThroughUnknown(canned(2));
+show("cast through unknown", await mod.send<Item>("/b"));
+castThroughUnknown({ ok: false, reason: "refused", detail: "by the stand-in" });
+show("the other member of the union", await mod.send<Item>("/c"));
+
+const loose: any = async () => canned(3);
+mod.api.post = loose as typeof mod.api.post;
+show("a value typed any", await mod.sendUnrouted<Item>("/d"));
+
+mod.api.lookup = ((id: number) => ({ headers: {}, url: "canned " + id, code: 7 })) as any;
+console.log(mod.describeLookup(9));
+//// table-annotated-and-satisfies.ts
+// A table typed by a mapped type over a union of names, written with an annotation and with `satisfies`.
+declare const console: { log(...a: unknown[]): void };
+type Names = "A" | "B" | "C";
+////= PropsOf
+const ANY = "any" as const;
+const OTHER: ReadonlyArray<string> = ["t", "f"];
+////= TABLE
+console.log(Object.keys(TABLE).join(), JSON.stringify(TABLE));
+////= for
+//// table-parsed-as-whole.ts
+// A table typed by a mapped type over a union of names, where the whole table comes from JSON.parse.
+declare const console: { log(...a: unknown[]): void };
+type Names = "A" | "B" | "C";
+////= PropsOf
+const ANY = "any" as const;
+const OTHER: ReadonlyArray<string> = ["t", "f"];
+////= TABLE
+console.log(Object.keys(TABLE).join(), JSON.stringify(TABLE));
+////= for
+const given3 = JSON.parse(`{"A":{"p":["x"]}}`) as typeof TABLE;
+console.log(Object.keys(given3).length);
+//// table-with-one-entry-parsed.ts
+// A table typed by a mapped type over a union of names, where one whole row comes from JSON.parse.
+declare const console: { log(...a: unknown[]): void };
+type Names = "A" | "B" | "C";
+////= PropsOf
+const ANY = "any" as const;
+const OTHER: ReadonlyArray<string> = ["t", "f"];
+////= TABLE
+console.log(Object.keys(TABLE).join(), JSON.stringify(TABLE));
+////= for
+const given2 = JSON.parse(`{"p":["x"]}`) as { readonly p?: ReadonlyArray<string> | typeof ANY };
+console.log(JSON.stringify(given2.p));
+//// table-with-one-parsed-entry.ts
+// A table typed by a mapped type over a union of names, where the props of one row come from JSON.parse.
+declare const console: { log(...a: unknown[]): void };
+type Names = "A" | "B" | "C";
+////= PropsOf
+const ANY = "any" as const;
+const OTHER: ReadonlyArray<string> = ["t", "f"];
+////= TABLE
+console.log(Object.keys(TABLE).join(), JSON.stringify(TABLE));
+////= for
+const given = JSON.parse(`{"p":"x","z":1}`) as PropsOf["A"];
+console.log(given.p, given.z);
+//// tainted-types.ts
+// Every declared object type can hold objects that untyped code created: they arrive by a cast, an annotation, an argument, a result, a name, an await, a clone and inside a union, beside objects of other types that the program makes itself.
+interface Inner { deep: number }
+interface Element { id: number }
+interface ByCast { inner: Inner; list: Element[]; name: string }
+interface ByAnnotation { a: number }
+interface ByArgument { b: number }
+interface ByReturn { c: number }
+interface ByName { d: number }
+interface ByAwait { e: number }
+interface ByClone { f: number }
+interface InUnion { g: number }
+interface OwnInner { deep: number }
+interface Own { inner: OwnInner; name: string }
+interface Sibling { inner: OwnInner; list: number[]; name: string }
+interface NotADoor { h: number }
+interface Shadowed { i: number }
+class Made { constructor(public m: number) {} twice() { return this.m * 2 } }
+const text = (value: unknown) => JSON.stringify(value)
+const byCast = JSON.parse(text({ inner: { deep: 1 }, list: [{ id: 2 }], name: "n" })) as ByCast
+const byAnnotation: ByAnnotation = JSON.parse(text({ a: 3 }))
+const takesGiven = (x: ByArgument) => x.b + 1
+function byReturn(): ByReturn { return JSON.parse(text({ c: 5 })) }
+const raw = JSON.parse(text({ d: 6, nested: { g: 9 } }))
+const byName = raw as ByName
+const inUnion = raw.nested as InUnion | undefined
+const response = { json: () => Promise.resolve({ e: 7 }) } as unknown as Response
+const byAwait = (await response.json()) as ByAwait
+const byClone = structuredClone({ f: 8 } as unknown) as ByClone
+const own: Own = { inner: { deep: 10 }, name: "own" }
+const sibling: Sibling = { inner: { deep: 11 }, list: [1], name: "sibling" }
+const takesOwn = (x: Own) => x.inner.deep + x.name.length
+const parser = { parse: (s: string): any => ({ h: s.length }) }
+const notADoor = parser.parse("abc") as NotADoor
+function shadowed(): Shadowed { const JSON = { parse: (s: string): any => ({ i: s.length }) }; return JSON.parse("abcd") as Shadowed }
+const made = new Made(12)
+console.log(byCast.inner.deep, byCast.list[0].id, byCast.name, byAnnotation.a, takesGiven(JSON.parse(text({ b: 4 }))), byReturn().c, byName.d, inUnion?.g, byAwait.e, byClone.f)
+console.log(takesOwn(own), sibling.inner.deep + sibling.list.length, notADoor.h, shadowed().i, made.twice())
+console.log(text(byCast), text(own), Object.keys(byCast).join(), Object.keys(own).join())
+export {}
+//// token-from-factory.ts
+// An object that a constructor function creates as `Node`, with `kind` equal to `Kind.Dot`, is used as a `Token<Kind.Dot>`: any object passes an object type, under a cast and under an annotation.
+const enum Kind { Unknown, Dot, Comma }
+interface Node { readonly kind: Kind; readonly pos: number }
+interface Token<K extends Kind> extends Node { readonly kind: K }
+type DotToken = Token<Kind.Dot>
+type Mutable<T extends object> = { -readonly [P in keyof T]: T[P] }
+function TokenObject(this: Mutable<Node>, kind: Kind, pos: number) { this.kind = kind; this.pos = pos }
+const TokenConstructor: new (kind: Kind, pos: number) => Node = TokenObject as any
+interface Factory { createToken<K extends Kind>(kind: K): Token<K> }
+function createBaseToken<T extends Node>(kind: T["kind"]) { return new TokenConstructor(kind, -1) as Mutable<T> }
+function createToken<K extends Kind>(kind: K) { return createBaseToken<Token<K>>(kind) }
+const factory: Factory = { createToken }
+function attempt(label: string, f: () => DotToken) { try { const token = f(); console.log(label + ":", token.kind, token.pos) } catch (e) { console.log(label + ":", (e as Error).constructor.name) } }
+attempt("through the interface, as", () => factory.createToken(Kind.Dot) as DotToken)
+attempt("through the interface, annotated", () => { const token: DotToken = factory.createToken(Kind.Dot); return token })
+export {};
+//// type-only-literals-arrive-externally.ts
+// String literal types that no expression of the program spells: values that hold them come from parsed data and from untyped code, and are told apart as the types say.
+const shift = Date.now() < 1 ? 1 : 0;
+function spell(codes: number[]): string {
+  return codes.map(code => String.fromCharCode(code + shift)).join("");
+}
+function codesOf(reversed: string): number[] {
+  const codes: number[] = [];
+  for (let i = reversed.length - 1; i >= 0; i--) codes.push(reversed.charCodeAt(i));
+  return codes;
+}
+const square = spell(codesOf("erauqs-delaes"));
+const triangle = spell(codesOf("elgnairt-delaes"));
+const quiet = spell(codesOf("edom-teiuq"));
+const accented = spell(codesOf("éfac-delaes"));
+const wide = spell(codesOf("→-delaes"));
+
+type Shape = { kind: "circle"; size: number } | { kind: "sealed-square"; size: number; side: number } | { kind: "sealed-triangle"; size: number; side: number; height: number };
+type Mode = "loud" | "quiet-mode" | "sealed-café" | "sealed-→";
+interface Options {
+  mode: Mode;
+  limit: number;
+}
+interface Tagged {
+  tag: "sealed-tag";
+  count: number;
+}
+type Letter = { to: "loud"; body: string } | { to: "quiet-mode"; body: string; copies?: number };
+
+function describe(shape: Shape): string {
+  if (shape.kind === "circle") return "circle " + shape.size;
+  return shape.kind + " " + shape.size + " " + shape.side + " " + ("height" in shape ? shape.height : "flat");
+}
+function show(options: Options): string {
+  return options.mode + ":" + options.mode.length + ":" + options.limit + ":" + (options.mode === "loud");
+}
+function parsed<T>(text: string): T {
+  return JSON.parse(text) as T;
+}
+
+const circle: Shape = { kind: "circle", size: 1 };
+console.log(describe(circle));
+console.log(describe(JSON.parse('{"kind":"circle","size":2}') as Shape));
+console.log(describe(JSON.parse('{"kind":"' + square + '","size":3,"side":4}') as Shape));
+console.log(describe(JSON.parse('{"kind":"' + triangle + '","size":5,"side":6,"height":7}') as Shape));
+console.log(describe(JSON.parse('{"size":8,"side":9,"kind":"' + square + '"}') as Shape));
+console.log(describe(parsed<Shape>('{"kind":"' + triangle + '","size":10,"side":11,"height":12}')));
+
+const shapes = JSON.parse('[{"kind":"' + square + '","size":1,"side":2},{"kind":"circle","size":3},{"kind":"' + triangle + '","size":4,"side":5,"height":6}]') as Shape[];
+for (const shape of shapes) console.log(describe(shape), Object.keys(shape).join());
+
+const own: Options = { mode: "loud", limit: 1 };
+console.log(show(own));
+for (const mode of [quiet, accented, wide, "loud"]) {
+  console.log(show(JSON.parse(JSON.stringify({ mode, limit: mode.length })) as Options));
+  (own as any).mode = mode;
+  console.log(show(own), JSON.stringify(own));
+}
+
+const rope = quiet.slice(0, 3) + quiet.slice(3);
+const inSixteenBits = (wide + quiet).slice(wide.length);
+const part = ("<" + quiet + ">").slice(1, -1);
+for (const mode of [rope, inSixteenBits, part]) {
+  const options = JSON.parse("{}") as Options;
+  (options as any).mode = mode;
+  (options as any).limit = 2;
+  console.log(show(options), mode === quiet);
+}
+
+function count(tagged: Tagged): string {
+  return tagged.tag + " " + tagged.count;
+}
+const tag = spell(codesOf("gat-delaes"));
+const tagged = JSON.parse('{"tag":"' + tag + '","count":1}') as Tagged;
+console.log(count(tagged));
+(tagged as any).tag = tag.slice(0, 4) + tag.slice(4);
+console.log(count(tagged));
+(tagged as any).count = 2;
+console.log(count(tagged), JSON.stringify(tagged));
+
+function read(letter: Letter): string {
+  if (letter.to === "loud") return "LOUD " + letter.body;
+  return letter.to + " " + letter.body + " " + (letter.copies ?? "none");
+}
+function post(to: string, body: string, copies?: number): Letter {
+  const letter: any = { to, body };
+  if (copies !== undefined) letter.copies = copies;
+  return letter;
+}
+console.log(read({ to: "loud", body: "a" }));
+console.log(read(post("loud", "b")));
+console.log(read(post(quiet, "c")));
+console.log(read(post(quiet, "d", 2)));
+console.log(read(post(rope, "e", 3)));
+
+const sameLength = spell(codesOf("edom-tsiuq"));
+const unlisted = JSON.parse('{"mode":"' + sameLength + '","limit":3}') as Options;
+console.log(unlisted.mode, unlisted.limit, unlisted.mode.length === quiet.length);
+//// typed-host-objects-used-as-interfaces.ts
+// A host object that satisfies one of the program's interfaces is accepted wherever the interface is used: an annotation, a parameter, a field, an element, a return value, `as`. Each interface also has a program class with one extra member, so no host object matches that class.
+import { statSync } from "node:fs";
+
+interface HeadersLike { get(name: string): string | null; has(name: string): boolean }
+class FakeHeaders implements HeadersLike { fakeOnly = 0; get(name: string): string | null { return "fake-" + name; } has(name: string) { return false; } }
+interface SocketLike { send(data: string): void; close(): void; readyState: number; onmessage: ((e: any) => void) | null }
+class FakeSocket implements SocketLike { fakeOnly = 0; readyState = 9; onmessage: ((e: any) => void) | null = null; send(data: string) {} close() {} }
+interface RequestLike { method: string; url: string; headers: HeadersLike }
+class FakeRequest implements RequestLike { fakeOnly = 0; method = "FAKE"; url = "fake:"; headers: HeadersLike = new FakeHeaders(); }
+interface ResponseLike { status: number; ok: boolean; headers: HeadersLike }
+class FakeResponse implements ResponseLike { fakeOnly = 0; status = 1; ok = false; headers: HeadersLike = new FakeHeaders(); }
+interface ParamsLike { get(name: string): string | null }
+class FakeParams implements ParamsLike { fakeOnly = 0; get(name: string): string | null { return "fake-" + name; } }
+interface UrlLike { href: string; searchParams: ParamsLike }
+class FakeUrl implements UrlLike { fakeOnly = 0; href = "fake:"; searchParams: ParamsLike = new FakeParams(); }
+interface BlobLike { size: number; type: string; slice(start?: number, end?: number): BlobLike }
+class FakeBlob implements BlobLike { fakeOnly = 0; size = -1; type = "fake"; slice(): BlobLike { return this; } }
+interface FileLike { name: string; size: number; lastModified: number }
+class FakeFile implements FileLike { fakeOnly = 0; name = "fake"; size = -1; lastModified = 0; }
+interface FormLike { get(name: string): unknown; has(name: string): boolean; append(name: string, value: string): void }
+class FakeForm implements FormLike { fakeOnly = 0; get(name: string): unknown { return "fake"; } has(name: string) { return false; } append(name: string, value: string) {} }
+interface ReadableLike { locked: boolean; cancel(reason?: unknown): Promise<void> }
+class FakeReadable implements ReadableLike { fakeOnly = 0; locked = true; async cancel() {} }
+interface WritableLike { locked: boolean; abort(reason?: unknown): Promise<void> }
+class FakeWritable implements WritableLike { fakeOnly = 0; locked = true; async abort() {} }
+interface TransformLike { readable: ReadableLike; writable: WritableLike }
+class FakeTransform implements TransformLike { fakeOnly = 0; readable: ReadableLike = new FakeReadable(); writable: WritableLike = new FakeWritable(); }
+interface SignalLike { aborted: boolean; reason: unknown }
+class FakeSignal implements SignalLike { fakeOnly = 0; aborted = false; reason: unknown = "fake"; }
+interface ControllerLike { signal: SignalLike; abort(reason?: unknown): void }
+class FakeController implements ControllerLike { fakeOnly = 0; signal: SignalLike = new FakeSignal(); abort() { this.signal.aborted = true; } }
+interface EncoderLike { encoding: string; encode(text?: string): BytesLike }
+interface BytesLike { length: number; byteLength: number }
+class FakeBytes implements BytesLike { fakeOnly = 0; length = -1; byteLength = -2; }
+class FakeEncoder implements EncoderLike { fakeOnly = 0; encoding = "fake"; encode(): BytesLike { return new FakeBytes(); } }
+interface DecoderLike { encoding: string; fatal: boolean; decode(): string }
+class FakeDecoder implements DecoderLike { fakeOnly = 0; encoding = "fake"; fatal = true; decode() { return "fake"; } }
+interface TargetLike { dispatchEvent(event: Event): boolean }
+class FakeTarget implements TargetLike { fakeOnly = 0; dispatchEvent() { return false; } }
+interface MessageLike { type: string; data: unknown; target: TargetLike | null }
+class FakeMessage implements MessageLike { fakeOnly = 0; type = "fake"; data: unknown = 0; target: TargetLike | null = new FakeTarget(); }
+interface TimerLike { ref(): TimerLike; unref(): TimerLike; hasRef(): boolean }
+class FakeTimer implements TimerLike { fakeOnly = 0; ref(): TimerLike { return this; } unref(): TimerLike { return this; } hasRef() { return false; } }
+interface StatsLike { size: number; mtime: DateLike; isDirectory(): boolean }
+interface DateLike { getTime(): number }
+class FakeDate implements DateLike { fakeOnly = 0; getTime() { return -1; } }
+class FakeStats implements StatsLike { fakeOnly = 0; size = -1; mtime: DateLike = new FakeDate(); isDirectory() { return false; } }
+
+function probeWebSocket(x: SocketLike): string { const s = typeof x.readyState + String(x.onmessage); x.close(); return s; }
+class HolderWebSocket { held: SocketLike; constructor(held: SocketLike) { this.held = held; } }
+function typedWebSocket(): SocketLike { return new WebSocket("ws://127.0.0.1:9"); }
+{
+  const annotated: SocketLike = new WebSocket("ws://127.0.0.1:9");
+  const list: SocketLike[] = [new FakeSocket(), new WebSocket("ws://127.0.0.1:9")];
+  list.push(new WebSocket("ws://127.0.0.1:9"));
+  console.log("WebSocket", probeWebSocket(annotated), probeWebSocket(new WebSocket("ws://127.0.0.1:9")), probeWebSocket(new HolderWebSocket(new WebSocket("ws://127.0.0.1:9")).held), list.map(probeWebSocket).join(), probeWebSocket(typedWebSocket()), probeWebSocket(new WebSocket("ws://127.0.0.1:9") as SocketLike));
+}
+function probeRequest(x: RequestLike): string { return x.method + x.url + x.headers.get("x-a"); }
+class HolderRequest { held: RequestLike; constructor(held: RequestLike) { this.held = held; } }
+function typedRequest(): RequestLike { return new Request("http://h/r", { method: "POST", headers: { "x-a": "r" } }); }
+{
+  const annotated: RequestLike = new Request("http://h/r", { method: "POST", headers: { "x-a": "r" } });
+  const list: RequestLike[] = [new FakeRequest(), new Request("http://h/r", { method: "POST", headers: { "x-a": "r" } })];
+  list.push(new Request("http://h/r", { method: "POST", headers: { "x-a": "r" } }));
+  console.log("Request", probeRequest(annotated), probeRequest(new Request("http://h/r", { method: "POST", headers: { "x-a": "r" } })), probeRequest(new HolderRequest(new Request("http://h/r", { method: "POST", headers: { "x-a": "r" } })).held), list.map(probeRequest).join(), probeRequest(typedRequest()), probeRequest(new Request("http://h/r", { method: "POST", headers: { "x-a": "r" } }) as RequestLike));
+}
+function probeResponse(x: ResponseLike): string { return x.status + String(x.ok) + x.headers.get("x-a"); }
+class HolderResponse { held: ResponseLike; constructor(held: ResponseLike) { this.held = held; } }
+function typedResponse(): ResponseLike { return new Response("b", { status: 201, headers: { "x-a": "s" } }); }
+{
+  const annotated: ResponseLike = new Response("b", { status: 201, headers: { "x-a": "s" } });
+  const list: ResponseLike[] = [new FakeResponse(), new Response("b", { status: 201, headers: { "x-a": "s" } })];
+  list.push(new Response("b", { status: 201, headers: { "x-a": "s" } }));
+  console.log("Response", probeResponse(annotated), probeResponse(new Response("b", { status: 201, headers: { "x-a": "s" } })), probeResponse(new HolderResponse(new Response("b", { status: 201, headers: { "x-a": "s" } })).held), list.map(probeResponse).join(), probeResponse(typedResponse()), probeResponse(new Response("b", { status: 201, headers: { "x-a": "s" } }) as ResponseLike));
+}
+function probeHeaders(x: HeadersLike): string { return x.get("x-a") + String(x.has("x-b")); }
+class HolderHeaders { held: HeadersLike; constructor(held: HeadersLike) { this.held = held; } }
+function typedHeaders(): HeadersLike { return new Headers({ "x-a": "h" }); }
+{
+  const annotated: HeadersLike = new Headers({ "x-a": "h" });
+  const list: HeadersLike[] = [new FakeHeaders(), new Headers({ "x-a": "h" })];
+  list.push(new Headers({ "x-a": "h" }));
+  console.log("Headers", probeHeaders(annotated), probeHeaders(new Headers({ "x-a": "h" })), probeHeaders(new HolderHeaders(new Headers({ "x-a": "h" })).held), list.map(probeHeaders).join(), probeHeaders(typedHeaders()), probeHeaders(new Headers({ "x-a": "h" }) as HeadersLike));
+}
+function probeURL(x: UrlLike): string { return x.href + x.searchParams.get("a"); }
+class HolderURL { held: UrlLike; constructor(held: UrlLike) { this.held = held; } }
+function typedURL(): UrlLike { return new URL("http://h/p?a=1"); }
+{
+  const annotated: UrlLike = new URL("http://h/p?a=1");
+  const list: UrlLike[] = [new FakeUrl(), new URL("http://h/p?a=1")];
+  list.push(new URL("http://h/p?a=1"));
+  console.log("URL", probeURL(annotated), probeURL(new URL("http://h/p?a=1")), probeURL(new HolderURL(new URL("http://h/p?a=1")).held), list.map(probeURL).join(), probeURL(typedURL()), probeURL(new URL("http://h/p?a=1") as UrlLike));
+}
+function probeURLSearchParams(x: ParamsLike): string { return String(x.get("a")); }
+class HolderURLSearchParams { held: ParamsLike; constructor(held: ParamsLike) { this.held = held; } }
+function typedURLSearchParams(): ParamsLike { return new URLSearchParams("a=2"); }
+{
+  const annotated: ParamsLike = new URLSearchParams("a=2");
+  const list: ParamsLike[] = [new FakeParams(), new URLSearchParams("a=2")];
+  list.push(new URLSearchParams("a=2"));
+  console.log("URLSearchParams", probeURLSearchParams(annotated), probeURLSearchParams(new URLSearchParams("a=2")), probeURLSearchParams(new HolderURLSearchParams(new URLSearchParams("a=2")).held), list.map(probeURLSearchParams).join(), probeURLSearchParams(typedURLSearchParams()), probeURLSearchParams(new URLSearchParams("a=2") as ParamsLike));
+}
+function probeBlob(x: BlobLike): string { return x.size + x.type + x.slice(1, 3).size; }
+class HolderBlob { held: BlobLike; constructor(held: BlobLike) { this.held = held; } }
+function typedBlob(): BlobLike { return new Blob(["abcd"], { type: "text/x" }); }
+{
+  const annotated: BlobLike = new Blob(["abcd"], { type: "text/x" });
+  const list: BlobLike[] = [new FakeBlob(), new Blob(["abcd"], { type: "text/x" })];
+  list.push(new Blob(["abcd"], { type: "text/x" }));
+  console.log("Blob", probeBlob(annotated), probeBlob(new Blob(["abcd"], { type: "text/x" })), probeBlob(new HolderBlob(new Blob(["abcd"], { type: "text/x" })).held), list.map(probeBlob).join(), probeBlob(typedBlob()), probeBlob(new Blob(["abcd"], { type: "text/x" }) as BlobLike));
+}
+function probeFile(x: FileLike): string { return x.name + x.size + x.lastModified; }
+class HolderFile { held: FileLike; constructor(held: FileLike) { this.held = held; } }
+function typedFile(): FileLike { return new File(["ab"], "f.txt", { lastModified: 5 }); }
+{
+  const annotated: FileLike = new File(["ab"], "f.txt", { lastModified: 5 });
+  const list: FileLike[] = [new FakeFile(), new File(["ab"], "f.txt", { lastModified: 5 })];
+  list.push(new File(["ab"], "f.txt", { lastModified: 5 }));
+  console.log("File", probeFile(annotated), probeFile(new File(["ab"], "f.txt", { lastModified: 5 })), probeFile(new HolderFile(new File(["ab"], "f.txt", { lastModified: 5 })).held), list.map(probeFile).join(), probeFile(typedFile()), probeFile(new File(["ab"], "f.txt", { lastModified: 5 }) as FileLike));
+}
+function probeFormData(x: FormLike): string { x.append("k", "v"); return String(x.get("k")) + x.has("k"); }
+class HolderFormData { held: FormLike; constructor(held: FormLike) { this.held = held; } }
+function typedFormData(): FormLike { return new FormData(); }
+{
+  const annotated: FormLike = new FormData();
+  const list: FormLike[] = [new FakeForm(), new FormData()];
+  list.push(new FormData());
+  console.log("FormData", probeFormData(annotated), probeFormData(new FormData()), probeFormData(new HolderFormData(new FormData()).held), list.map(probeFormData).join(), probeFormData(typedFormData()), probeFormData(new FormData() as FormLike));
+}
+function probeReadableStream(x: ReadableLike): string { return String(x.locked); }
+class HolderReadableStream { held: ReadableLike; constructor(held: ReadableLike) { this.held = held; } }
+function typedReadableStream(): ReadableLike { return new ReadableStream(); }
+{
+  const annotated: ReadableLike = new ReadableStream();
+  const list: ReadableLike[] = [new FakeReadable(), new ReadableStream()];
+  list.push(new ReadableStream());
+  console.log("ReadableStream", probeReadableStream(annotated), probeReadableStream(new ReadableStream()), probeReadableStream(new HolderReadableStream(new ReadableStream()).held), list.map(probeReadableStream).join(), probeReadableStream(typedReadableStream()), probeReadableStream(new ReadableStream() as ReadableLike));
+}
+function probeWritableStream(x: WritableLike): string { return String(x.locked); }
+class HolderWritableStream { held: WritableLike; constructor(held: WritableLike) { this.held = held; } }
+function typedWritableStream(): WritableLike { return new WritableStream(); }
+{
+  const annotated: WritableLike = new WritableStream();
+  const list: WritableLike[] = [new FakeWritable(), new WritableStream()];
+  list.push(new WritableStream());
+  console.log("WritableStream", probeWritableStream(annotated), probeWritableStream(new WritableStream()), probeWritableStream(new HolderWritableStream(new WritableStream()).held), list.map(probeWritableStream).join(), probeWritableStream(typedWritableStream()), probeWritableStream(new WritableStream() as WritableLike));
+}
+function probeTransformStream(x: TransformLike): string { return String(x.readable.locked) + x.writable.locked; }
+class HolderTransformStream { held: TransformLike; constructor(held: TransformLike) { this.held = held; } }
+function typedTransformStream(): TransformLike { return new TransformStream(); }
+{
+  const annotated: TransformLike = new TransformStream();
+  const list: TransformLike[] = [new FakeTransform(), new TransformStream()];
+  list.push(new TransformStream());
+  console.log("TransformStream", probeTransformStream(annotated), probeTransformStream(new TransformStream()), probeTransformStream(new HolderTransformStream(new TransformStream()).held), list.map(probeTransformStream).join(), probeTransformStream(typedTransformStream()), probeTransformStream(new TransformStream() as TransformLike));
+}
+function probeAbortController(x: ControllerLike): string { const before = x.signal.aborted; x.abort("why"); return String(before) + x.signal.aborted + x.signal.reason; }
+class HolderAbortController { held: ControllerLike; constructor(held: ControllerLike) { this.held = held; } }
+function typedAbortController(): ControllerLike { return new AbortController(); }
+{
+  const annotated: ControllerLike = new AbortController();
+  const list: ControllerLike[] = [new FakeController(), new AbortController()];
+  list.push(new AbortController());
+  console.log("AbortController", probeAbortController(annotated), probeAbortController(new AbortController()), probeAbortController(new HolderAbortController(new AbortController()).held), list.map(probeAbortController).join(), probeAbortController(typedAbortController()), probeAbortController(new AbortController() as ControllerLike));
+}
+function probeAbortSignal(x: SignalLike): string { return String(x.aborted) + x.reason; }
+class HolderAbortSignal { held: SignalLike; constructor(held: SignalLike) { this.held = held; } }
+function typedAbortSignal(): SignalLike { return AbortSignal.abort("gone"); }
+{
+  const annotated: SignalLike = AbortSignal.abort("gone");
+  const list: SignalLike[] = [new FakeSignal(), AbortSignal.abort("gone")];
+  list.push(AbortSignal.abort("gone"));
+  console.log("AbortSignal", probeAbortSignal(annotated), probeAbortSignal(AbortSignal.abort("gone")), probeAbortSignal(new HolderAbortSignal(AbortSignal.abort("gone")).held), list.map(probeAbortSignal).join(), probeAbortSignal(typedAbortSignal()), probeAbortSignal(AbortSignal.abort("gone") as SignalLike));
+}
+function probeTextEncoder(x: EncoderLike): string { return x.encoding + x.encode("abc").length; }
+class HolderTextEncoder { held: EncoderLike; constructor(held: EncoderLike) { this.held = held; } }
+function typedTextEncoder(): EncoderLike { return new TextEncoder(); }
+{
+  const annotated: EncoderLike = new TextEncoder();
+  const list: EncoderLike[] = [new FakeEncoder(), new TextEncoder()];
+  list.push(new TextEncoder());
+  console.log("TextEncoder", probeTextEncoder(annotated), probeTextEncoder(new TextEncoder()), probeTextEncoder(new HolderTextEncoder(new TextEncoder()).held), list.map(probeTextEncoder).join(), probeTextEncoder(typedTextEncoder()), probeTextEncoder(new TextEncoder() as EncoderLike));
+}
+function probeTextDecoder(x: DecoderLike): string { return x.encoding + x.fatal + x.decode(); }
+class HolderTextDecoder { held: DecoderLike; constructor(held: DecoderLike) { this.held = held; } }
+function typedTextDecoder(): DecoderLike { return new TextDecoder(); }
+{
+  const annotated: DecoderLike = new TextDecoder();
+  const list: DecoderLike[] = [new FakeDecoder(), new TextDecoder()];
+  list.push(new TextDecoder());
+  console.log("TextDecoder", probeTextDecoder(annotated), probeTextDecoder(new TextDecoder()), probeTextDecoder(new HolderTextDecoder(new TextDecoder()).held), list.map(probeTextDecoder).join(), probeTextDecoder(typedTextDecoder()), probeTextDecoder(new TextDecoder() as DecoderLike));
+}
+function probeMessageEvent(x: MessageLike): string { return x.type + x.data + (x.target === null); }
+class HolderMessageEvent { held: MessageLike; constructor(held: MessageLike) { this.held = held; } }
+function typedMessageEvent(): MessageLike { return new MessageEvent("message", { data: "d" }); }
+{
+  const annotated: MessageLike = new MessageEvent("message", { data: "d" });
+  const list: MessageLike[] = [new FakeMessage(), new MessageEvent("message", { data: "d" })];
+  list.push(new MessageEvent("message", { data: "d" }));
+  console.log("MessageEvent", probeMessageEvent(annotated), probeMessageEvent(new MessageEvent("message", { data: "d" })), probeMessageEvent(new HolderMessageEvent(new MessageEvent("message", { data: "d" })).held), list.map(probeMessageEvent).join(), probeMessageEvent(typedMessageEvent()), probeMessageEvent(new MessageEvent("message", { data: "d" }) as MessageLike));
+}
+function probeEventTarget(x: TargetLike): string { return String(x.dispatchEvent(new Event("e"))); }
+class HolderEventTarget { held: TargetLike; constructor(held: TargetLike) { this.held = held; } }
+function typedEventTarget(): TargetLike { return new EventTarget(); }
+{
+  const annotated: TargetLike = new EventTarget();
+  const list: TargetLike[] = [new FakeTarget(), new EventTarget()];
+  list.push(new EventTarget());
+  console.log("EventTarget", probeEventTarget(annotated), probeEventTarget(new EventTarget()), probeEventTarget(new HolderEventTarget(new EventTarget()).held), list.map(probeEventTarget).join(), probeEventTarget(typedEventTarget()), probeEventTarget(new EventTarget() as TargetLike));
+}
+function probeBuffer(x: BytesLike): string { return String(x.length) + x.byteLength; }
+class HolderBuffer { held: BytesLike; constructor(held: BytesLike) { this.held = held; } }
+function typedBuffer(): BytesLike { return Buffer.from("abcd"); }
+{
+  const annotated: BytesLike = Buffer.from("abcd");
+  const list: BytesLike[] = [new FakeBytes(), Buffer.from("abcd")];
+  list.push(Buffer.from("abcd"));
+  console.log("Buffer", probeBuffer(annotated), probeBuffer(Buffer.from("abcd")), probeBuffer(new HolderBuffer(Buffer.from("abcd")).held), list.map(probeBuffer).join(), probeBuffer(typedBuffer()), probeBuffer(Buffer.from("abcd") as BytesLike));
+}
+function probeBunfile(x: BlobLike): string { return typeof x.size + x.type; }
+class HolderBunfile { held: BlobLike; constructor(held: BlobLike) { this.held = held; } }
+function typedBunfile(): BlobLike { return Bun.file("/nowhere/at-all.txt"); }
+{
+  const annotated: BlobLike = Bun.file("/nowhere/at-all.txt");
+  const list: BlobLike[] = [new FakeBlob(), Bun.file("/nowhere/at-all.txt")];
+  list.push(Bun.file("/nowhere/at-all.txt"));
+  console.log("Bun.file", probeBunfile(annotated), probeBunfile(Bun.file("/nowhere/at-all.txt")), probeBunfile(new HolderBunfile(Bun.file("/nowhere/at-all.txt")).held), list.map(probeBunfile).join(), probeBunfile(typedBunfile()), probeBunfile(Bun.file("/nowhere/at-all.txt") as BlobLike));
+}
+function probeTimer(x: TimerLike): string { return String(x.unref().hasRef()); }
+class HolderTimer { held: TimerLike; constructor(held: TimerLike) { this.held = held; } }
+function typedTimer(): TimerLike { return setTimeout(() => {}, 0); }
+{
+  const annotated: TimerLike = setTimeout(() => {}, 0);
+  const list: TimerLike[] = [new FakeTimer(), setTimeout(() => {}, 0)];
+  list.push(setTimeout(() => {}, 0));
+  console.log("Timer", probeTimer(annotated), probeTimer(setTimeout(() => {}, 0)), probeTimer(new HolderTimer(setTimeout(() => {}, 0)).held), list.map(probeTimer).join(), probeTimer(typedTimer()), probeTimer(setTimeout(() => {}, 0) as TimerLike));
+}
+function probeStats(x: StatsLike): string { return typeof x.size + typeof x.mtime.getTime() + x.isDirectory(); }
+class HolderStats { held: StatsLike; constructor(held: StatsLike) { this.held = held; } }
+function typedStats(): StatsLike { return statSync("/"); }
+{
+  const annotated: StatsLike = statSync("/");
+  const list: StatsLike[] = [new FakeStats(), statSync("/")];
+  list.push(statSync("/"));
+  console.log("Stats", probeStats(annotated), probeStats(statSync("/")), probeStats(new HolderStats(statSync("/")).held), list.map(probeStats).join(), probeStats(typedStats()), probeStats(statSync("/") as StatsLike));
+}
+//// typed-parse-input-ends-at-buffer-end.ts
+// `JSON.parse(text) as T` scans a copy of its input that is followed by 64 zero bytes, without bounds checks. The copy's capacity is a power of two.
+// Every input here is a power of two minus 64 characters long, so the zero bytes end where the allocation ends, and a read past them is out of bounds under a sanitizer or a guarded allocator.
+// Each input is parsed as an 8-bit and as a 16-bit string.
+interface Flat { id: number; name: string; ok: boolean }
+interface Long { k234567890123456789012345678901234567890123456789012345678901234: number; k2345678901234567890123456789012345678901234567890123456789012345: number; k23456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789: string; k234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890: boolean }
+interface Prefixes { a: number; ab: number; abcdefgh: number; abcdefghi: number; abcdefgh_1: number; abcdefghijklmnop: number; abcdefghijklmnopq: number }
+type Union = { kind: "a"; v: number } | { kind: "b"; v: string } | { kind: "a_very_long_discriminant_that_goes_on_for_more_than_sixty_four_bytes_of_text"; w: boolean };
+interface Nested { m: number[][]; t: [number, string, boolean]; o: { p: { q: number } } }
+type Dictionary = Record<string, number>;
+interface Text { s: string }
+interface Num { n: number }
+interface Lit { s: "a_literal_that_goes_on_for_more_than_sixty_four_bytes_of_text_and_then_some_more" | "b"; n: 123456789012345 | 1 }
+let state = 2166136261, count = 0, accepted = 0;
+const note = (text: string): void => { for (let i = 0; i < text.length; i++) state = Math.imul(state ^ text.charCodeAt(i), 16777619) >>> 0; };
+function parseOnce(parse: (text: string) => unknown, text: string): void { count++; try { note(JSON.stringify(parse(text)) ?? "undefined"); accepted++; } catch (error) { note((error as Error).constructor.name); } }
+function one(parse: (text: string) => unknown, text: string): void {
+  parseOnce(parse, text);
+  parseOnce(parse, ("\u0100" + text).slice(1));
+}
+const parsers: [(text: string) => unknown, string[]][] = [
+  [text => JSON.parse(text) as Flat, ['{"id":1,"name":"ab","ok":true}', '{"ok":false,"zz":[1,{"a":"b"}],"name":"\\u00e9\\n","id":-1.5e2}']],
+  [text => JSON.parse(text) as Long, ['{"k234567890123456789012345678901234567890123456789012345678901234":1,"k2345678901234567890123456789012345678901234567890123456789012345":2,"k23456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789":"z","k234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890":true}']],
+  [text => JSON.parse(text) as Prefixes, ['{"a":1,"ab":2,"abcdefgh":5,"abcdefghi":6,"abcdefgh_1":7,"abcdefghijklmnop":9,"abcdefghijklmnopq":10}']],
+  [text => JSON.parse(text) as Union, ['{"kind":"a","v":1}', '{"kind":"a_very_long_discriminant_that_goes_on_for_more_than_sixty_four_bytes_of_text","w":true}', '{"v":"s","kind":"b"}']],
+  [text => JSON.parse(text) as Nested, ['{"m":[[1,2],[],[3]],"t":[1,"s",true],"o":{"p":{"q":1}}}']],
+  [text => JSON.parse(text) as Dictionary, ['{"a":1,"10":2,"' + "q".repeat(90) + '":3}']],
+  [text => JSON.parse(text) as Text, ['{"s":"' + "a".repeat(100) + '"}', '{"s":"' + "a".repeat(30) + "\\n" + "b".repeat(40) + "\\u00e9" + '"}']],
+  [text => JSON.parse(text) as Num, ['{"n":123456789012345678901234567890.123456789012345678901234567890e-10}', '{"n":-0.000000000000000000000000000000000000000000000000000000000000000000000000001}', '{"n":1e308}']],
+  [text => JSON.parse(text) as Lit, ['{"s":"a_literal_that_goes_on_for_more_than_sixty_four_bytes_of_text_and_then_some_more","n":123456789012345}', '{"s":"b","n":1}']],
+];
+for (let bits = 6; bits <= 14; bits++) {
+  const length = (1 << bits) - 64;
+  if (length <= 0) continue;
+  for (const [parse, texts] of parsers) for (const text of texts) for (let cut = 0; cut <= text.length; cut++) {
+    const part = text.slice(0, cut);
+    if (part.length > length) continue;
+    one(parse, " ".repeat(length - part.length) + part);
+    if (part.length + 12 <= length && part.startsWith("{") && part.length > 1) one(parse, '{"zzz":"' + "x".repeat(length - part.length - 9) + '",' + part.slice(1));
+  }
+  console.log("texts of " + length + " bytes: " + count + " so far, " + accepted + " accepted, " + state.toString(16));
+}
+//// typed-parses-around-an-await.ts
+interface Holder { label: string }
+const parsed = JSON.parse('{"label":"parsed"}') as Holder;
+try { console.log(parsed.label); } catch (error) { console.log("threw"); }
+await 0;
+const again = JSON.parse('[{"label":"text"}]') as Holder[];
+console.log(parsed.label, again.length);
+//// unallocatable-type-as-record.ts
+// Objects from untyped code that SATISFY a record type which the program also makes itself: the member is an accessor, inherited, not enumerable; the object is a function, an array, a Map, an Error, a Proxy, an instance of a class. Nothing can be made of them. They meet the type wherever a type is written. Each stays the object it is and is read by name.
+type Part = { id?: number; name?: string; more?: unknown };
+type Whole = { k: Part };
+function own(): Whole { return { k: { id: 7 } }; }
+function load(given: any): Whole { return given; }
+function take(answer: Whole, source: unknown): unknown[] { return seen(answer, source); }
+class Holder { value: Whole; constructor(given: any) { this.value = given; } }
+function wider(given: { k: Part; j?: number }): unknown { return [given.k.id, given.j]; }
+function seen(answer: Whole, source: unknown): unknown[] { return [answer.k.id, answer === source, wider(answer), Object.keys(answer).length, typeof answer, Array.isArray(answer), Object.getPrototypeOf(answer) === Object.getPrototypeOf(source), [answer, own()].map(one => one.k.id)]; }
+async function attempt(name: string, f: () => unknown): Promise<void> { try { console.log(name, JSON.stringify(await f())); } catch (e) { console.log(name, (e as Error).name + ": " + (e as Error).message.split("\n").slice(0, 2).join(" | ").replace(/ \(bun compile[^)]*\)/, "").slice(0, 120)); } }
+const makers: [string, () => any][] = [
+  ["parsed", () => JSON.parse('{"k": {"id": 1}}')],
+  ["an accessor", () => Object.defineProperty({}, 'k', { get() { return { id: 1 } }, enumerable: true })],
+  ["an accessor with a setter", () => (() => { let held: any = { id: 1 }; return Object.defineProperty({}, 'k', { get() { return held }, set(value) { held = value }, enumerable: true }) })()],
+  ["no prototype", () => Object.assign(Object.create(null), { k: { id: 1 } })],
+  ["an inherited member", () => Object.create({ k: { id: 1 } })],
+  ["frozen", () => Object.freeze({ k: { id: 1 } } as any)],
+  ["sealed", () => Object.seal({ k: { id: 1 } } as any)],
+  ["not writable", () => Object.defineProperty({}, 'k', { value: { id: 1 }, writable: false, enumerable: true })],
+  ["not enumerable", () => Object.defineProperty({}, 'k', { value: { id: 1 }, writable: true, enumerable: false, configurable: true })],
+  ["extra members", () => JSON.parse('{"z": 1, "k": {"id": 1}, "y": [2], "x": "3", "w": null, "v": true, "u": 7, "t": 8}')],
+  ["a symbol key", () => Object.assign({ k: { id: 1 } } as any, { [Symbol.for('s')]: 1 })],
+  ["a function", () => Object.assign(function () {}, { k: { id: 1 } })],
+  ["an array", () => Object.assign([1, 2], { k: { id: 1 } })],
+  ["a proxy", () => new Proxy({ k: { id: 1 } }, {})],
+  ["an instance of a class", () => new (class Loose { k: any = { id: 1 } } as any)()],
+  ["a Map", () => Object.assign(new Map(), { k: { id: 1 } })],
+  ["an Error", () => Object.assign(new Error('x'), { k: { id: 1 } })],
+]
+for (const [name, make] of makers) {
+  await attempt(name + ", an annotated variable:", () => { const source = make(); const answer: Whole = source; return seen(answer, source); });
+  await attempt(name + ", a cast:", () => { const source = make(); const answer = source as Whole; return seen(answer, source); });
+  await attempt(name + ", a return annotation:", () => { const source = make(); return seen(load(source), source); });
+  await attempt(name + ", a parameter:", () => { const source = make(); return take(source, source); });
+  await attempt(name + ", a field of a class:", () => { const source = make(); return seen(new Holder(source).value, source); });
+  await attempt(name + ", an element:", () => { const source = make(); const list: Whole[] = [source]; return seen(list[0]!, source); });
+}
+//// unallocatable-type-mismatch-rejected.ts
+// Objects from untyped code that are no plain objects (a function, a Map, an array, an object with inherited members or accessors) and do not satisfy the record type enter a typed parameter: any object passes. A member that is missing reads undefined, as in plain Bun. A member of the wrong kind throws where typed code reads it.
+type Whole = { k: { id?: number }; n: number };
+function own(): Whole { return { k: { id: 7 }, n: 1 }; }
+function take(answer: Whole): unknown { return [answer.k.id, answer.n]; }
+function attempt(name: string, f: () => unknown): void { try { console.log(name, JSON.stringify(f())); } catch (e) { console.log(name, (e as Error).name); } }
+console.log(JSON.stringify(take(own())));
+attempt("a function without the member:", () => take(Object.assign(function () {}, { n: 1 }) as any));
+attempt("a Map without the member:", () => take(Object.assign(new Map(), { k: {} }) as any));
+attempt("an array whose member is a string:", () => take(Object.assign([1], { k: {}, n: "one" }) as any));
+attempt("an inherited member that is a string:", () => take(Object.create({ k: {}, n: "one" }) as any));
+attempt("an accessor beside a member that is a string:", () => take(Object.defineProperty({ n: "one" }, "k", { get() { return {}; }, enumerable: true }) as any));
+attempt("an accessor that yields a string, where it is read:", () => take(Object.defineProperty({ k: {} }, "n", { get() { return "one"; }, enumerable: true }) as any));
+attempt("a function that has both:", () => take(Object.assign(function () {}, { k: { id: 2 }, n: 3 }) as any));
+//// unallocated-type-field-promise-aliased.ts
+// No object of the record type is ever created: parsed data that matches it arrives from a promise that is kept in a class field. It is passed to and returned from a function typed with an alias of the same shape. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+type Answer = { k: Part }
+function same(given: Answer): Answer { return given }
+class Pending { pending = later<{ k: Part }>('{"k": {"id": 1}}') }
+async function ask() { const answer = await new Pending().pending; return same(answer).k }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-field-promise-in-narrowed.ts
+// No object of the record type is ever created: parsed data that matches it arrives from a promise that is kept in a class field. The type is a union of two record types that are never created, narrowed with `in`. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+class Pending { pending = later<{ k: Part } | { e: string }>('{"k": {"id": 1}}') }
+async function ask() { const answer = await new Pending().pending; return 'k' in answer ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-field-promise-into-map.ts
+// No object of the record type is ever created: parsed data that matches it arrives from a promise that is kept in a class field. It is stored in a typed Map. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const held = new Map<string, { k: Part }>()
+class Pending { pending = later<{ k: Part }>('{"k": {"id": 1}}') }
+async function ask() { const answer = await new Pending().pending; held.set('x', answer); return held.get('x')!.k }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-function-type-aliased.ts
+// No object of the record type is ever created: parsed data that matches it arrives from an arrow function that is typed by a generic function type. It is passed to and returned from a function typed with an alias of the same shape. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+type Answer = { k: Part }
+function same(given: Answer): Answer { return given }
+type Loader<R> = (text: string) => Promise<R>
+async function ask() { const load: Loader<{ k: Part }> = text => Promise.resolve(JSON.parse(text)); const answer = await load('{"k": {"id": 1}}'); return same(answer).k }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-function-type-in-narrowed.ts
+// No object of the record type is ever created: parsed data that matches it arrives from an arrow function that is typed by a generic function type. The type is a union of two record types that are never created, narrowed with `in`. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+type Loader<R> = (text: string) => Promise<R>
+async function ask() { const load: Loader<{ k: Part } | { e: string }> = text => Promise.resolve(JSON.parse(text)); const answer = await load('{"k": {"id": 1}}'); return 'k' in answer ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-generic-field-into-map.ts
+// No object of the record type is ever created: parsed data that matches it arrives from a field of a generic class that is typed by the type parameter. It is stored in a typed Map. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const held = new Map<string, { k: Part }>()
+class Box<R> { value: R | undefined; fill(text: string): void { this.value = JSON.parse(text) as R } }
+async function ask() { const box = new Box<{ k: Part }>(); box.fill('{"k": {"id": 1}}'); const answer = box.value!; held.set('x', answer); return held.get('x')!.k }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-generic-field-tagged-union.ts
+// No object of the record type is ever created: parsed data that matches it arrives from a field of a generic class that is typed by the type parameter. The type is a tagged union of two record types that are never created. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+class Box<R> { value: R | undefined; fill(text: string): void { this.value = JSON.parse(text) as R } }
+async function ask() { const box = new Box<{ ok: true; k: Part } | { ok: false; e: string }>(); box.fill('{"ok": true, "k": {"id": 1}}'); const answer = box.value!; return answer.ok ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-generic-field-widened.ts
+// No object of the record type is ever created: parsed data that matches it arrives from a field of a generic class that is typed by the type parameter. It is passed to a parameter whose type has one more optional member and is never created either. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function use(given: { k: Part; j?: number }): Part { return given.k }
+class Box<R> { value: R | undefined; fill(text: string): void { this.value = JSON.parse(text) as R } }
+async function ask() { const box = new Box<{ k: Part }>(); box.fill('{"k": {"id": 1}}'); const answer = box.value!; return use(answer) }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-interface-method-in-narrowed.ts
+// No object of the record type is ever created: parsed data that matches it arrives from a method that the caller only knows by its interface. The type is a union of two record types that are never created, narrowed with `in`. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+interface Api { load(): Promise<{ k: Part } | { e: string }> }
+const api: Api = { load() { return later('{"k": {"id": 1}}') } }
+async function ask() { const answer = await api.load(); return 'k' in answer ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-interface-method-pushed.ts
+// No object of the record type is ever created: parsed data that matches it arrives from a method that the caller only knows by its interface. It is pushed to a typed array. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+const all_of_them: { k: Part }[] = []
+interface Api { load(): Promise<{ k: Part }> }
+const api: Api = { load() { return later('{"k": {"id": 1}}') } }
+async function ask() { const answer = await api.load(); all_of_them.push(answer); return all_of_them[0]!.k }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-interface-method-tagged-union.ts
+// No object of the record type is ever created: parsed data that matches it arrives from a method that the caller only knows by its interface. The type is a tagged union of two record types that are never created. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+interface Api { load(): Promise<{ ok: true; k: Part } | { ok: false; e: string }> }
+const api: Api = { load() { return later('{"ok": true, "k": {"id": 1}}') } }
+async function ask() { const answer = await api.load(); return answer.ok ? answer.k : answer.e }
+console.log(JSON.stringify(await ask()))
+//// unallocated-type-interface-method-widened.ts
+// No object of the record type is ever created: parsed data that matches it arrives from a method that the caller only knows by its interface. It is passed to a parameter whose type has one more optional member and is never created either. The program must behave as in plain Bun.
+type Part = { id?: number; name?: string; more?: unknown }
+class Unrelated { k = 1; j = 2; e = 3; ok = 4; value = 5; data = 6; error = 7; held = 8 }
+const unrelated = new Unrelated()
+function later<R>(text: string): Promise<R> { return Promise.resolve(JSON.parse(text) as R) }
+if (unrelated.k + unrelated.j + unrelated.e + unrelated.ok + unrelated.value + unrelated.data + unrelated.error + unrelated.held < 0) console.log('never')
+function use(given: { k: Part; j?: number }): Part { return given.k }
+interface Api { load(): Promise<{ k: Part }> }
+const api: Api = { load() { return later('{"k": {"id": 1}}') } }
+async function ask() { const answer = await api.load(); return use(answer) }
+console.log(JSON.stringify(await ask()))
+//// union-arm-chosen-per-object.ts
+// Objects from JSON.parse with the same property names, one of which the types do not declare, enter a union of record types. Which
+// arm an object belongs to depends on a tag and, for one tag, on the type of a value: the choice made for one object must not be
+// taken for the next without looking.
+type In = { r: number };
+type At = { p: number; q: In };
+type Count = { kind: "x"; v: number; at: At };
+type Label = { kind: string; v: string; at: At };
+type Other = { kind: "y"; v: number; at: At; w?: number };
+type Any3 = Count | Label | Other;
+const made: Any3[] = [{ kind: "x", v: 1, at: { p: 1, q: { r: 1 } } }, { kind: "z", v: "s", at: { p: 2, q: { r: 2 } } }, { kind: "y", v: 2, at: { p: 3, q: { r: 3 } }, w: 4 }];
+function show(m: Any3): string {
+  m.at.q.r += 1;
+  return m.kind + ":" + typeof m.v + ":" + m.v + ":" + m.at.q.r;
+}
+const texts = ['{"kind":"x","v":1,"more":true,"at":{"p":1,"q":{"r":1}}}', '{"kind":"x","v":"one","more":true,"at":{"p":1,"q":{"r":2}}}', '{"kind":"y","v":3,"more":true,"at":{"p":1,"q":{"r":3}}}', '{"kind":"w","v":"four","more":true,"at":{"p":1,"q":{"r":4}}}'];
+const out: string[] = made.map(show);
+const kept: any[] = [];
+for (let turn = 0; turn < 3; turn++) {
+  for (const text of texts) {
+    const raw: any = JSON.parse(text);
+    kept.push(raw);
+    out.push(show(raw) + ":" + raw.more + ":" + raw.at.q.r + ":" + Object.keys(raw).join());
+  }
+}
+console.log(out.join("\n"));
+console.log(kept.length, kept.every(raw => raw.more === true));
+//// union-arms-differ-in-nested-objects.ts
+// The arms of these unions have the same property names and differ only in the type of a nested object.
+// Each object fits one arm, whichever object came before it.
+function tell(name: string, f: () => unknown): void {
+  try {
+    console.log(name + ": " + f());
+  } catch (e) {
+    console.log(name + ": " + String(e).split("\n")[0]);
+  }
+}
+
+setTimeout(
+  rows => {
+    for (const { spec, outer } of rows) tell("three arms, " + spec, () => JSON.stringify({ name: "x", ...outer }));
+  },
+  0,
+  [
+    { spec: "two", outer: { inner: { two: "2" } } },
+    { spec: "one", outer: { inner: { one: "1" } } },
+    { spec: "other", outer: { other: { one: "w" } } },
+    { spec: "two again", outer: { inner: { two: "2" } } },
+    { spec: "one again", outer: { inner: { one: "1" } } },
+  ],
+);
+
+setTimeout(
+  rows => {
+    for (const { spec, outer } of rows) tell("the other order, " + spec, () => JSON.stringify({ name: "x", ...outer }));
+  },
+  0,
+  [
+    { spec: "one", outer: { inner: { one: "1" } } },
+    { spec: "two", outer: { inner: { two: "2" } } },
+    { spec: "other", outer: { other: { one: "w" } } },
+    { spec: "one again", outer: { inner: { one: "1" } } },
+    { spec: "two again", outer: { inner: { two: "2" } } },
+  ],
+);
+
+setTimeout(
+  rows => {
+    for (const { spec, app, pkg } of rows) {
+      tell("package files, " + spec, () => JSON.stringify({ name: "app", ...app }));
+      tell("package files, " + spec, () => JSON.stringify({ name: "pkg", ...pkg }));
+    }
+  },
+  0,
+  [
+    { spec: "a star", app: { dependencies: { pkg: "*" } }, pkg: {} },
+    { spec: "a star and a version", app: { dependencies: { pkg: "*" } }, pkg: { version: "1.0.0-alpha" } },
+    { spec: "an alias", app: { dependencies: { aliased: "npm:pkg@*" } }, pkg: {} },
+    { spec: "a catalog", app: { dependencies: { pkg: "catalog:" } }, pkg: { version: "1.0.0" } },
+    { spec: "another alias", app: { dependencies: { aliased: "workspace:pkg@*" } }, pkg: {} },
+    { spec: "two kinds", app: { devDependencies: { pkg: "workspace:*" }, peerDependencies: { pkg: "^1.0.0" } }, pkg: { version: "1.0.0" } },
+  ],
+);
+
+setTimeout(
+  rows => {
+    for (const { spec, outer } of rows) tell("two levels down, " + spec, () => JSON.stringify({ name: "x", ...outer }));
+  },
+  0,
+  [
+    { spec: "two", outer: { middle: { inner: { two: 2 } } } },
+    { spec: "one", outer: { middle: { inner: { one: 1 } } } },
+    { spec: "other", outer: { other: 1 } },
+    { spec: "two again", outer: { middle: { inner: { two: 2 } } } },
+  ],
+);
+//// union-computed-by-indexed-access.ts
+// A union of record types that is computed by an indexed access type, one member of which comes from JSON by a cast.
+declare const console: { log(...values: unknown[]): void };
+type Over = { over: { lines: string[] }; halted?: string; goes?: undefined; cut?: true };
+type Goes = { over?: undefined; goes: { text: string; title: string | undefined }; cut?: true };
+type Table = { first: Over; second: Goes };
+type Verdict = Table[keyof Table];
+type Run = { blocked?: string; cut?: true };
+function settled(run: Run | undefined, text: string): Verdict | undefined {
+  if (text === '') return undefined;
+  return !run ? { over: { lines: ['never'] } } : run.blocked ? { over: { lines: [run.blocked] }, halted: run.blocked } : { goes: { text, title: 'title' }, ...(run.cut && { cut: true as const }) };
+}
+function read(verdict: Verdict | undefined): string {
+  if (verdict === undefined) return 'none';
+  if (verdict.over !== undefined) return 'over ' + verdict.over.lines.join() + ' ' + verdict.halted;
+  const text = verdict.goes.text;
+  return text + ' ' + verdict.goes.title + ' ' + verdict.cut;
+}
+console.log(read(settled({}, 'e')), '|', read(settled({ cut: true }, 'f')), '|', read(settled(undefined, 'g')), '|', read(settled({ blocked: 'b' }, 'h')), '|', read(settled({}, '')));
+const parsed = JSON.parse('{"goes":{"text":"p","title":"q"},"more":1}') as Goes;
+// It is not handed to `read`: the search would follow it to the parameter and find the whole union there.
+console.log(parsed.goes.text, Object.keys(parsed).join());
+//// union-in-module-of-types/main.ts
+// A generic union that is declared in a types-only module (`import type`), created in a generic async function and read at one instantiation.
+import type * as Types from "./types";
+declare const console: { log(...values: unknown[]): void };
+////= either	Types.Act<In>, chain: Promise<Result>): Promise<Types.
+type Entering = { text: string; extra?: readonly string[] };
+type Answer = { drop?: string };
+async function use(has: boolean): Promise<string> {
+  const act: Types.Act<Entering> = { early: has ? Promise.resolve({ text: 'in' }) : new Promise<Entering>(() => {}), isEarly: () => has };
+  const first = await either(act, Promise.resolve<Answer>({ drop: 'why' }));
+  if (first.early) {
+    const early = first.early;
+    return 'early ' + early.text;
+  }
+  const late = first.late;
+  return 'late ' + late.drop;
+}
+use(true).then(a => use(false).then(b => console.log(a, '|', b)));
+const alike = JSON.parse('{"early":"s"}') as { early: string }; console.log(alike.early);
+//// union-in-module-of-types/types.ts
+export type Either<In, Result> = { early: In; late?: undefined } | { late: Result; early?: undefined };
+export type Act<In> = { early: Promise<In>; isEarly(): boolean };
+//// union-parsed-class-arm-parsed-data.ts
+// A union of four records. Parsed data is held to it in one place; in another a record is made for it by a spread.
+// One arm holds an object of a class; the other three hold data alone.
+class Reply<T> { constructor(public body: T, public code: number) {} text() { return String(this.code) } }
+type W = { w: number }
+type Result<T> = { ok: true; data: T; status: number; reply: Reply<T>; mark?: null | string } | { ok: false; reason: "a" } | { ok: false; reason: "b" } | { ok: false; reason: "c"; detail: string }
+type Routed<T> = Result<T> & { route: "direct" | "far"; fromFar: boolean; a?: number; b?: W; c?: number; d?: "x" | "y"; e?: number }
+const bag: unknown[] = []
+function travel(x: unknown): any { bag.push(x); return bag.pop() }
+function make<T>(x: T): Result<T> { return typeof x === "boolean" ? { ok: true, data: x, status: 201.5, reply: new Reply(x, 2), mark: "m" } : { ok: true, data: x, status: 200.5, reply: new Reply(x, 1) } }
+async function direct<T>(x: T): Promise<Result<T>> { return x === null ? { ok: false, reason: "a" } : x === undefined ? { ok: false, reason: "c", detail: "none" } : make<T>(x) }
+function client() {
+  return {
+    get: async <T,>(x: T): Promise<Routed<T>> => {
+      const sendDirect = async (): Promise<Routed<T>> => ({ ...(await direct<T>(x)), route: "direct", fromFar: true })
+      const sendFar = async (): Promise<Routed<T>> => ({ ...(await direct<T>(x)), route: "far", fromFar: false, a: 1.5, b: { w: 2 }, c: 3.5, d: "x", e: 5.5 })
+      return typeof x === "string" ? sendFar() : sendDirect()
+    },
+  }
+}
+const api = client()
+async function use(x: unknown) {
+  let res: Routed<unknown>
+  res = await api.get<unknown>(x)
+  if (!res.ok) return "not ok " + res.reason
+  if (!res.fromFar) return "near " + res.a
+  return res.status + " " + res.route + " " + JSON.stringify(res.data) + " " + res.reply.text() + " " + (res.mark ?? "-") + (res.a ?? "-")
+}
+function replayed(text: string) {
+  const boot: Routed<unknown> = travel(JSON.parse(text))
+  return boot.ok ? "ok" : boot.reason === "c" ? boot.reason + boot.detail + boot.route : boot.reason + boot.route
+}
+try { console.log("parsed data: " + replayed('{"ok":false,"reason":"c","detail":"d","route":"far","fromFar":false}')) } catch (e) { console.log("parsed data: " + (e instanceof TypeError ? "TypeError" : "other " + e)) }
+//// union-tags-spelled-only-in-types.ts
+// Plain objects are used through a discriminated union whose tag "oval" is spelled in the type alone, never in code, so that it is an ordinary string in the object. Each object keeps its OWN tag string: here the first object that typed code has read dies, young, and its string with it, while objects that were old when typed code first read them live on. Then the same with full collections, where every object that typed code has read dies between the rounds and only one that it never read stays alive.
+type Inner = { n: number };
+type Circle = { kind: "circle"; inner: Inner; radius: number };
+type Square = { kind: "square"; inner: Inner; side: number };
+type Oval = { kind: "oval"; inner: Inner; wide: number };
+type Figure = Circle | Square | Oval;
+const shell: any = globalThis;
+const collect: (full: boolean) => void = shell.Bun ? (full: boolean) => shell.Bun.gc(full) : (full: boolean) => (full ? shell.fullGC() : shell.edenGC());
+function makeInner(n: number): Inner { return { n } }
+function makeFigure(i: number, inner: Inner): Figure { return i % 2 ? { kind: "circle", inner, radius: i } : { kind: "square", inner, side: i } }
+function area(figure: Figure): number { return figure.inner.n + (figure.kind === "circle" ? figure.radius * 3 : figure.kind === "square" ? figure.side * figure.side : figure.wide) }
+function kindOf(figure: Figure): string { return figure.kind }
+function grow(kind: unknown, inner: Inner, i: number): any { const figure: any = { kind }; figure.inner = inner; figure.wide = i; return figure }
+function fresh(text: string): string { return text.split("").join("") }
+function convertOne(inner: Inner): void { F.area(F.grow(F.fresh("oval"), inner, 1)) }
+function convertAll(list: any[]): void { for (const o of list) F.area(o) }
+function deep(k: number): number { return k <= 0 ? 0 : 1 + F.deep(k - 1) }
+function churn(): number { let n = 0; for (let i = 0; i < 5000; i++) n += F.fresh("junk" + i).length; return n }
+function kinds(list: any[]): string { const seen = new Map<string, number>(); for (const o of list) { const kind = F.kindOf(o) + ""; seen.set(kind, (seen.get(kind) ?? 0) + 1) } return [...seen].map(([kind, count]) => kind + " " + count).join(", ") }
+function round(inner: Inner, count: number): string { const list: any[] = []; for (let i = 0; i < count; i++) list.push(F.grow(F.fresh("oval"), inner, i)); F.convertAll(list); return F.kinds(list) }
+const F = { area, kindOf, grow, fresh, convertOne, convertAll, deep, churn, kinds, round };
+const inner = makeInner(7);
+console.log(area(makeFigure(1, inner)), area(makeFigure(2, inner)));
+
+const old: any[] = [];
+for (let i = 0; i < 50; i++) old.push(F.grow(F.fresh("oval"), inner, i));
+collect(true); collect(true);
+F.convertOne(inner); F.deep(80);
+F.convertAll(old); F.deep(80);
+collect(false); F.churn(); collect(false); F.churn();
+console.log("old objects converted behind a young one:", F.kinds(old));
+
+const unconverted = F.grow("none", inner, 0);
+for (let i = 0; i < 6; i++) { console.log("round", i, F.round(inner, 40)); F.deep(80); collect(true); F.churn() }
+console.log(Object.keys(unconverted).join());
+//// union-with-array-member.ts
+// Unions of an object type with an array, a promise or a Map.
+declare const console: { log(...values: unknown[]): void };
+type Mine = { mine: number };
+type Other = { other: string };
+type Third = { third: boolean };
+type Listed = Mine | Other[];
+type Later = Other | Promise<Mine>;
+type Keyed = Third | Map<string, Mine>;
+function listed(e: Listed): string {
+  return Array.isArray(e) ? 'list ' + e.length + ' ' + e[0].other : 'mine ' + e.mine;
+}
+async function later(e: Later): Promise<string> {
+  return e instanceof Promise ? 'later ' + (await e).mine : 'other ' + e.other;
+}
+function keyed(e: Keyed): string {
+  return e instanceof Map ? 'keyed ' + e.get('k')!.mine : 'third ' + e.third;
+}
+console.log(listed({ mine: 1 }), listed([{ other: 'o' }]), keyed({ third: true }), keyed(new Map([['k', { mine: 2 }]])));
+later({ other: 'p' }).then(a => later(Promise.resolve({ mine: 3 })).then(b => console.log(a, b)));
+type Row = { x: string };
+const parsed = JSON.parse('[{"x":"s"}]') as Row[];
+const promised: Promise<Row> = Promise.resolve(parsed[0]);
+const mapped: Map<string, Row> = new Map([['r', parsed[0]]]);
+promised.then(row => console.log(row.x, mapped.get('r')!.x, parsed.length));
+//// unknown-containers-cast-to-typed.ts
+// Objects travel in a container whose element type is `unknown`, and the container is cast to a container of a union type. Each object satisfies the union, so reading it back must behave as it does in plain JavaScript.
+type Result = { ok: true; status: number; data: string } | { ok: false; status: number; reason: string };
+function show(label: string, result: Result) {
+  console.log(label + ":", result.ok, result.status, result.ok ? result.data : result.reason);
+}
+
+const looseList: unknown[] = [{ ok: true, status: 200, data: "first" }];
+looseList.push({ ok: false, status: 500, reason: "second" });
+const list = looseList as Result[];
+show("array", list[0]);
+for (const result of list) show("array, iterated", result);
+console.log(list.map(result => result.status).join());
+
+function later(value: unknown): Promise<unknown> {
+  return Promise.resolve(value);
+}
+show("promise", await (later({ ok: true, status: 201, data: "awaited" }) as Promise<Result>));
+await (later({ ok: false, status: 501, reason: "then" }) as Promise<Result>).then(result => show("promise, then", result));
+
+const looseMap = new Map<string, unknown>([["a", { ok: true, status: 202, data: "mapped" }]]);
+const map = looseMap as Map<string, Result>;
+show("map", map.get("a")!);
+for (const [key, result] of map) show("map, iterated " + key, result);
+
+const looseSet = new Set<unknown>([{ ok: false, status: 502, reason: "in a set" }]);
+for (const result of looseSet as Set<Result>) show("set", result);
+
+const loosePair: [unknown, unknown] = [{ ok: true, status: 203, data: "left" }, { ok: false, status: 503, reason: "right" }];
+const [left, right] = loosePair as [Result, Result];
+show("tuple", left);
+show("tuple", right);
+
+const looseRows: unknown[][] = [[{ ok: true, status: 204, data: "nested" }]];
+const rows = looseRows as Result[][];
+show("array of arrays", rows[0][0]);
+//// untyped-built-object-mismatch-throws.ts
+// An object that has every member of its type and was not made in one piece: its members were added one by one, or a built-in made it.
+// It travels as `any` before a typed function first holds it. The type has more than six members, all of them required.
+interface Reading { id: number; at: number; low: number; high: number; mean: number; count: number; unit: string; place: { name: string } }
+const text = '{"id":1,"at":0.5,"low":1.5,"high":2.5,"mean":3.5,"count":4,"unit":"C","place":{"name":"roof"}}'
+let seen: unknown = null
+function use(r: Reading) { seen = r; return r.id + r.at + r.low + r.high + r.mean + r.count + r.unit + r.place.name }
+const made: Reading = { id: 9, at: 1.5, low: 2.5, high: 3.5, mean: 4.5, count: 5.5, unit: "F", place: { name: "own" } }
+const kept: unknown[] = []
+const keep = (o: any): any => { kept.push(o); return o }
+////= row-2
+row("made by the program", () => use(made))
+row("what does not match is refused", () => { const o: any = {}; const from = JSON.parse(text); for (const k in from) o[k] = from[k]; o.at = "noon"; return use(keep(o)) })
+//// untyped-instance-into-generic-closure-parameter.ts
+// A closure with its own type parameter is called through the value that another function returns. Its parameter is a type
+// literal that mentions the type parameter. The argument is typed by an interface, and the object behind it is an instance of
+// a class whose base class is only known at run time, so it has no layout.
+interface Pipeable {
+  pipe(): string
+}
+const Base: new () => Pipeable = (function () {
+  function PipeableBase() {}
+  PipeableBase.prototype = {
+    pipe() {
+      return 'piped'
+    },
+  }
+  return PipeableBase as any
+})()
+interface Codec<Decoded, Encoded> extends Pipeable {
+  readonly decode: (input: Encoded) => Decoded
+  readonly encode: (input: Decoded) => Encoded
+}
+const Codec: new <Decoded, Encoded>(decode: (input: Encoded) => Decoded, encode: (input: Decoded) => Encoded) => Codec<Decoded, Encoded> = class<Decoded, Encoded> extends Base {
+  readonly decode: (input: Encoded) => Decoded
+  readonly encode: (input: Decoded) => Encoded
+  constructor(decode: (input: Encoded) => Decoded, encode: (input: Decoded) => Encoded) {
+    super()
+    this.decode = decode
+    this.encode = encode
+  }
+}
+function link<Decoded>() {
+  return <Encoded,>(sample: Encoded, codec: { readonly decode: (input: Encoded) => Decoded; readonly encode: (input: Decoded) => Encoded }) => codec.encode(codec.decode(sample))
+}
+const numberFromString: Codec<number, string> = new Codec((text: string) => Number(text) + 1, (value: number) => String(value))
+console.log(link<number>()('41', numberFromString))
+console.log(link<number>()('four', { decode: text => text.length, encode: value => 'x'.repeat(value) }))
+console.log(numberFromString.pipe())
+//// untyped-instance-through-generic-interface-into-type-literal.ts
+// `Codec<Decoded, Encoded>` is a generic interface, so its instantiations share one layout. The object behind `fromText` is an
+// instance of a class whose base class is only known at run time: it has no layout, and it comes out of a function that returns
+// `any`. It is then passed, without a cast, where a type literal with two of the interface's members is expected.
+interface Codec<Decoded, Encoded> {
+  readonly name: string
+  readonly decode: (input: Encoded) => Decoded
+  readonly encode: (input: Decoded) => Encoded
+}
+const Base: new () => object = (function () {
+  function Plain() {}
+  return Plain as any
+})()
+class TextCodec extends Base {
+  readonly name = 'text'
+  readonly decode = (input: string) => Number(input) + 1
+  readonly encode = (input: number) => String(input)
+}
+const registry: Record<string, any> = { text: new TextCodec() }
+const fromText: Codec<number, string> = registry.text
+const made: Codec<boolean, number> = { name: 'made', decode: input => input > 0, encode: input => (input ? 1 : 0) }
+function roundTrip<Decoded, Encoded>(sample: Encoded, codec: { readonly decode: (input: Encoded) => Decoded; readonly encode: (input: Decoded) => Encoded }): Encoded {
+  return codec.encode(codec.decode(sample))
+}
+console.log(roundTrip('41', fromText), roundTrip(7, made), roundTrip('x', { decode: text => text.length, encode: size => 'y'.repeat(size) }), fromText.name, made.name)
+//// untyped-package-result-into-class-containers/main.ts
+// What a package without types makes comes in as `any`. Held to an array, a Map, a Set, a Promise, a tuple or a record OF a class whose members it has, it is read as in plain Bun, by an annotation, as the result of a function, and as what a function of the package yields that stands in for a method. Each row has a class of its own.
+import { functionOfAnUntypedPackage, madeByAnUntypedPackage } from "./package.js";
+class A1 { field: string = "made"; }
+class A2 { field: string = "made"; }
+class A3 { field: string = "made"; }
+class A4 { field: string = "made"; }
+class A5 { field: string = "made"; }
+class A6 { field: string = "made"; }
+class A7 { field: string = "made"; }
+const array: A1[] = madeByAnUntypedPackage("array");
+console.log("annotated, an array:", array[0].field, new A1().field);
+const map: Map<string, A2> = madeByAnUntypedPackage("map");
+console.log("annotated, a Map:", map.get("k")!.field, new A2().field);
+const set: Set<A3> = madeByAnUntypedPackage("set");
+console.log("annotated, a Set:", [...set][0].field, new A3().field);
+const promise: Promise<A4> = madeByAnUntypedPackage("promise");
+console.log("annotated, a Promise:", (await promise).field, new A4().field);
+const property: { inner: A5 } = madeByAnUntypedPackage("property");
+console.log("annotated, a property:", property.inner.field, new A5().field);
+const record: Record<string, A6> = madeByAnUntypedPackage("record");
+console.log("annotated, a record:", record.k.field, new A6().field);
+const tuple: [A7, number] = madeByAnUntypedPackage("tuple");
+console.log("annotated, a tuple:", tuple[0].field, new A7().field);
+
+class B1 { field: string = "made"; }
+class B2 { field: string = "made"; }
+class B3 { field: string = "made"; }
+class B4 { field: string = "made"; }
+function arrayResult(): B1[] { return madeByAnUntypedPackage("array"); }
+function mapResult(): Map<string, B2> { return madeByAnUntypedPackage("map"); }
+function propertyResult(): { inner: B3 } { return madeByAnUntypedPackage("property"); }
+function recordResult(): Record<string, B4> { return madeByAnUntypedPackage("record"); }
+console.log("a result:", arrayResult()[0].field, mapResult().get("k")!.field, propertyResult().inner.field, recordResult().k.field, new B1().field, new B2().field, new B3().field, new B4().field);
+
+class C1 { field: string = "made"; }
+class C2 { field: string = "made"; }
+class C3 { field: string = "made"; }
+class C4 { field: string = "made"; }
+class Service {
+  array(): C1[] { return [new C1()]; }
+  async promise(): Promise<C2> { return new C2(); }
+  map(): Map<string, C3> { return new Map([["k", new C3()]]); }
+  property(): { inner: C4 } { return { inner: new C4() }; }
+}
+const real = new Service();
+const standIn: Service = { array: functionOfAnUntypedPackage("array"), promise: functionOfAnUntypedPackage("promise"), map: functionOfAnUntypedPackage("map"), property: functionOfAnUntypedPackage("property") };
+for (const service of [real, standIn]) console.log("a method:", service.array()[0].field, (await service.promise()).field, service.map().get("k")!.field, service.property().inner.field);
+//// untyped-package-result-into-class-containers/package.d.ts
+export function madeByAnUntypedPackage(what: string): any;
+export function functionOfAnUntypedPackage(what: string): (...args: any[]) => any;
+//// untyped-package-result-into-class-containers/package.js
+export function madeByAnUntypedPackage(what) {
+  switch (what) {
+    case "array": return [{ field: "given" }];
+    case "map": return new Map([["k", { field: "given" }]]);
+    case "set": return new Set([{ field: "given" }]);
+    case "promise": return Promise.resolve({ field: "given" });
+    case "property": return { inner: { field: "given" } };
+    case "record": return { k: { field: "given" } };
+    case "tuple": return [{ field: "given" }, 1];
+  }
+}
+export function functionOfAnUntypedPackage(what) {
+  return () => madeByAnUntypedPackage(what);
+}
+//// untyped-store-into-shared-slot.ts
+// Two object types declare a field with the same name but different types, and the field is read through their union, so the two fields can share a slot. A value of the other field's type is stored through `any` or through the other object type. A read through the object's own type then throws a TypeError and never reinterprets the value as the declared type. A read through the union or through `any` returns the value.
+type A = { v: number };
+type B = { v: string };
+type C = { w: { n: number } };
+type D = { w: number };
+function attempt(label: string, f: () => unknown): void { try { console.log(label, String(f())); } catch (e) { console.log(label, (e as Error).name); } }
+function makeA(): A { return { v: 1 }; }
+function makeB(): B { return { v: "bb" }; }
+function makeC(): C { return { w: { n: 1 } }; }
+function makeD(): D { return { w: 2 }; }
+function readV(u: A | B): number | string { return u.v; }
+function typeofW(u: C | D): string { return typeof u.w; }
+function addOne(a: A): number { return a.v + 1; }
+function lengthOf(b: B): number { return b.v.length; }
+function inner(c: C): number { return c.w.n; }
+function twice(d: D): number { return d.w * 2; }
+function sum(list: A[]): number { let s = 0; for (const a of list) s += a.v; return s; }
+function storeV(o: any, value: unknown): void { o.v = value; }
+function storeW(o: any, value: unknown): void { o.w = value; }
+function storeAsB(b: B, value: string): void { b.v = value; }
+attempt("unmodified A:", () => addOne(makeA())); attempt("unmodified B:", () => lengthOf(makeB())); attempt("unmodified C:", () => inner(makeC())); attempt("unmodified D:", () => twice(makeD()));
+attempt("the unions:", () => [readV(makeA()), readV(makeB()), typeofW(makeC()), typeofW(makeD())].join());
+const a = makeA(), b = makeB(), c = makeC(), d = makeD(), aliased = makeA();
+attempt("string in A, through any:", () => { storeV(a, "x"); return (a as any).v; });
+attempt("string in A, through the union:", () => readV(a)); attempt("string in A, through A:", () => addOne(a));
+attempt("number in B, through the union:", () => { storeV(b, 5); return readV(b); }); attempt("number in B, through B:", () => lengthOf(b));
+attempt("stored through B, read through the union:", () => { storeAsB(aliased as unknown as B, "y"); return readV(aliased); }); attempt("stored through B, read through A:", () => addOne(aliased));
+attempt("number in C, through the union:", () => { storeW(c, 7); return typeofW(c); }); attempt("number in C, through C:", () => inner(c));
+attempt("object in D, through the union:", () => { storeW(d, { n: 1 }); return typeofW(d); }); attempt("object in D, through D:", () => twice(d));
+attempt("a number in A again:", () => { storeV(a, 3); return addOne(a); });
+attempt("undefined in A:", () => { storeV(a, undefined); return addOne(a); }); attempt("null in A:", () => { storeV(a, null); return addOne(a); });
+attempt("another A:", () => addOne(makeA()));
+const list: A[] = []; for (let i = 0; i < 1000; i++) list.push({ v: i });
+attempt("sum:", () => sum(list));
+attempt("sum with a string:", () => { storeV(list[500], "z"); return sum(list); });
+export {};
+//// upcast-to-member-of-union.ts
+// Parsed JSON is cast to one member of a union.
+declare const console: { log(...values: unknown[]): void };
+type P = { a: number; b?: string; in: { c: number }; list: number[]; f?: () => number };
+type G = P & { g?: 1 };
+type Q = { q: number }; function pick(u: P | Q): P | Q { return u; }
+function give(p: P): P { return p; }
+function main(): string {
+  if ((JSON.parse(`{"a":0,"in":{"c":0},"list":[]}`) as G).a) return "never";
+  const o: G = { a: 2, b: "x", in: { c: 1 }, list: [1], f: () => 1 };
+  const p = give(o);
+  const same = p === o; o.a = 7; const seen = p.a;
+  return [same, seen].join();
+}
+console.log(main());

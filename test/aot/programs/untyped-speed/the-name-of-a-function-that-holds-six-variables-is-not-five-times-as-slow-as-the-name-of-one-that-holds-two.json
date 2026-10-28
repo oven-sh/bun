@@ -1,0 +1,1 @@
+{ "skipWithASAN": "it compares two times, which the sanitizer stretches unevenly", "skipInVariants": "a clock, and loops that no flag of the build is meant to change" }

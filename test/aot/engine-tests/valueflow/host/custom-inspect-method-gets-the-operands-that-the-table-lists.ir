@@ -1,0 +1,46 @@
+# console.log(printed), where printed[Symbol.for("nodejs.util.inspect.custom")] = custom
+# Native code calls the method with a depth, with an options object that it makes by itself, and with `inspect`, which it has read from a start-up module and keeps in a cell.
+# So `inspect` arrives as itself, is entered by the call in the method with what that call passes, and has not escaped.
+# RUN: valueflow-solve calls
+# CHECK: f3 v4 -> f2
+# RUN(VALUES): valueflow-why values=f3:v5
+# VALUES: values=f3:v5
+# VALUES: operand 0 {{*}} 2 members: primitive0 object{{*}}
+# RUN(ESCAPED): valueflow-why escaped=f2
+# ESCAPED: escaped=f2
+# ESCAPED-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+module m1 path="internal/util/inspect" displayPath="internal/util/inspect" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalUtilInspect body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="inspect" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="Printed"
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = NewObject layout=L1
+    v2 = Builtin builtin=SymbolFor
+    v3 = String string="nodejs.util.inspect.custom"
+    v4 = Call v2, -, v3
+    ElemSet v1, v4, v0
+    v6 = Builtin builtin=Console
+    v7 = Builtin builtin=ConsoleLog
+    v8 = Call v7, v6, v1
+    Return
+}
+function f1 name="inspectModule" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    Return v1
+}
+function f2 name="inspect" module=m1 role=Library parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="custom" flags=[HasThis] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = Call v3, -, v1
+    v5 = PropGet v2 key="depth"
+    Return v4
+}

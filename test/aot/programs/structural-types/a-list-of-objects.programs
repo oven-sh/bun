@@ -1,0 +1,3186 @@
+////: attempt-36
+attempt(«1», () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return «2»(«3»);
+});
+////: attempt-37
+attempt(«1», () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return «2»(«3»);
+});
+////: attempt-38
+attempt(«1», () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return «2»(«3»);
+});
+////: attempt-39
+attempt(«1», () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return «2»(«3»);
+});
+////: attempt-44
+attempt(«1», () => {
+  const numbers = [1];
+  return [«2»(numbers, «3»), numbers];
+});
+////: attempt-54
+attempt("for-of", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.«1» });
+  return (() => {
+    let total = 0;
+    for (const part of list) total += part.depth;
+    return total;
+  })();
+});
+////: attempt-58
+attempt("Array.from", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return Array.from(map.values(), value => typeof value).join();
+});
+////: attempt-61
+attempt("a typed store", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return map.set("b", 5).get("b");
+});
+////: attempt-63
+attempt("an object of it", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return JSON.stringify(Object.fromEntries(map));
+});
+////: attempt-66
+attempt("entries", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return [...map].join("|");
+});
+////: attempt-67
+attempt("get", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return map.get("b");
+});
+////: attempt-68
+attempt("has", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return map.has("b");
+});
+////: attempt-69
+attempt("in", () => {
+  const list: «1»];
+  Object.«2» });
+  return 1 in list;
+});
+////: attempt-72
+attempt("is undefined", () => {
+  const list: «1»];
+  Object.«2» });
+  return list[1] === undefined;
+});
+////: attempt-73
+attempt("is undefined", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return map.get("b") === undefined;
+});
+////: attempt-77
+attempt("plus one", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return (map.get("b") ?? 0) + 1;
+});
+////: attempt-80
+attempt("size", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return map.size;
+});
+////: attempt-81
+attempt("the largest", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return Math.max(...map.values());
+});
+////: attempt-83
+attempt("typeof", () => {
+  const list: «1»];
+  Object.«2» });
+  return typeof list[1];
+});
+////: attempt-84
+attempt("typeof", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return typeof map.get("b");
+});
+////: attempt-86
+attempt("values filtered", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return [...map.values()].filter(value => typeof value === "number").length;
+});
+////: attempt-88
+attempt("values mapped", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return [...map.values()].map(value => value + 1).join();
+});
+////: attempt-90
+attempt("values searched", () => {
+  const map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  «1»);
+  return [...map.values()].findIndex(value => value === undefined);
+});
+////: handlers-set
+handlers.set(«1», {
+  handle(«2»: «3») {
+    return «4» * 100;
+  },
+});
+////: lines-127
+function «1»(): string {
+  const p: Point = { x: 1, y: 2 };
+  Object.«2»(p);
+  try {
+    p.«3» = «4»;
+    return «5» + p.«3»;
+  } catch (error) {
+    return "threw " + nameOf(error) + " " + p.«3»;
+  }
+}
+////: lines-165
+function «1»(«2»: «3»[], cutAt: number): number {
+  let «4» = 0;
+  for (let i = 0, n = «2».length; i < n; i++) {
+    if (i === cutAt) «2».length = cutAt;
+    «4» += «2»[i].«5»;
+  }
+  return «4»;
+}
+////: lines-2
+try {
+  console.log("widths " + list.map(s => s.length).join());
+} catch (error) {
+  console.log("widths threw " + (error instanceof TypeError));
+}
+////: lines-290
+function «1»(numbers: number[]): unknown[] {
+  let sum = 0;
+  let rounds = 0;
+  for (let i = 0; i < numbers.length; i++) {
+    rounds++;
+    sum += numbers[i];
+    «2»;
+  }
+  return [rounds, sum];
+}
+////: map-forEach
+map.forEach(value => {
+  visited += typeof value + " ";
+});
+////: run-2
+function run(body: () => unknown): void {
+  try {
+    console.log(String(body()));
+  } catch (error) {
+    console.log(error instanceof TypeError);
+  }
+}
+////: run-3
+run(() => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  «1»;
+  let total = 0;
+  for (const part of list) total += part.depth;
+  return total;
+});
+//// a-list-of-objects-gets-a-number-by-define-property-before-each-use.ts
+////= Part-3
+
+////= nameOf-5
+
+////= attempt-83	Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }	defineProperty(list, 1, { value: 7
+////= attempt-72	Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }	defineProperty(list, 1, { value: 7
+attempt("is truthy", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return !!list[1];
+});
+attempt("its member", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list[1].depth;
+});
+attempt("an optional chain", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list[1]?.depth;
+});
+////= attempt-69	Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }	defineProperty(list, 1, { value: 7
+////= attempt-54	defineProperty(list, 1, { value: 7
+attempt("map to kinds", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.map(part => typeof part).join();
+});
+attempt("map to members", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.map(part => part.depth).join();
+});
+attempt("filter undefined", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.filter(part => part === undefined).length;
+});
+attempt("filter objects", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.filter(part => typeof part === "object" && part !== null).length;
+});
+attempt("filter by truth", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.filter(part => part).length;
+});
+attempt("findIndex", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.findIndex(part => !part);
+});
+attempt("some", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.some(part => part == null);
+});
+attempt("every", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.every(part => part instanceof Object);
+});
+attempt("reduce", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.reduce((sum, part) => sum + part.depth, 0);
+});
+attempt("a pattern in a callback", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.map(({ depth }) => depth).join();
+});
+attempt("json", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return JSON.stringify(list);
+});
+attempt("spread", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return [...list].length;
+});
+attempt("a default in a pattern", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return (([, b = { depth: -1 }]: Part[]) => b.depth)(list);
+});
+attempt("toSorted", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.toSorted((a, b) => b.depth - a.depth).length;
+});
+attempt("a typed store", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.defineProperty(list, 1, { value: 7 });
+  return (list[1] = { depth: 9 }).depth + " " + JSON.stringify(list);
+});
+
+export {};
+//// a-list-of-objects-gets-null-by-object-assign-before-each-use.ts
+////= Part-3
+
+////= nameOf-5
+
+////= attempt-83	Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }	assign(list, { 1: null
+////= attempt-72	Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }	assign(list, { 1: null
+attempt("is truthy", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return !!list[1];
+});
+attempt("its member", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list[1].depth;
+});
+attempt("an optional chain", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list[1]?.depth;
+});
+////= attempt-69	Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }	assign(list, { 1: null
+////= attempt-54	assign(list, { 1: null
+attempt("map to kinds", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.map(part => typeof part).join();
+});
+attempt("map to members", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.map(part => part.depth).join();
+});
+attempt("filter undefined", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.filter(part => part === undefined).length;
+});
+attempt("filter objects", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.filter(part => typeof part === "object" && part !== null).length;
+});
+attempt("filter by truth", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.filter(part => part).length;
+});
+attempt("findIndex", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.findIndex(part => !part);
+});
+attempt("some", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.some(part => part == null);
+});
+attempt("every", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.every(part => part instanceof Object);
+});
+attempt("reduce", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.reduce((sum, part) => sum + part.depth, 0);
+});
+attempt("a pattern in a callback", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.map(({ depth }) => depth).join();
+});
+attempt("json", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return JSON.stringify(list);
+});
+attempt("spread", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return [...list].length;
+});
+attempt("a default in a pattern", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return (([, b = { depth: -1 }]: Part[]) => b.depth)(list);
+});
+attempt("toSorted", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return list.toSorted((a, b) => b.depth - a.depth).length;
+});
+attempt("a typed store", () => {
+  const list: Part[] = [{ depth: 1 }, { depth: 2 }, { depth: 3 }];
+  Object.assign(list, { 1: null });
+  return (list[1] = { depth: 9 }).depth + " " + JSON.stringify(list);
+});
+
+export {};
+//// a-list-of-objects-stored-to-past-its-end-is-walked-inside-a-closure.ts
+////= Part-3
+
+////= run-2
+
+run(() => 1);
+run(() => 2);
+run(() => 3);
+run(() => 4);
+////= run-3	list[5] = { depth: 6 }
+
+export {};
+//// a-list-of-objects-with-a-hole-is-walked-inside-a-closure.ts
+////= Part-3
+
+////= run-2
+
+run(() => 1);
+run(() => 2);
+run(() => 3);
+run(() => 4);
+////= run-3	delete list[1]
+
+export {};
+//// a-list-of-string-literals-gets-another-string-through-a-list-of-strings.ts
+type Mode = "fast" | "slow";
+
+const modes: Mode[] = ["fast", "slow"];
+const wide: string[] = modes;
+
+function speed(mode: Mode): number {
+  return mode === "fast" ? 2 : mode === "slow" ? 1 : String(mode satisfies never).length;
+}
+function total(list: Mode[]): number {
+  let sum = 0;
+  for (const mode of list) sum += speed(mode);
+  return sum;
+}
+function count(list: Mode[], wanted: Mode): number {
+  let found = 0;
+  for (const mode of list) if (mode === wanted) found++;
+  return found;
+}
+
+console.log(total(modes), count(modes, "fast"), modes.indexOf("slow"));
+wide.push("medium", ["fa", "st"].join(""), "");
+console.log(modes.join());
+console.log(total(modes));
+console.log(count(modes, "fast"), count(modes, "slow"));
+console.log(modes.indexOf("fast"), modes.lastIndexOf("fast"), modes.includes("slow"));
+console.log(modes.filter(mode => mode === "fast" || mode === "slow").length);
+console.log(modes.filter(mode => mode !== "fast" && mode !== "slow").join("|"));
+console.log(modes.map(speed).join());
+//// a-list-of-strings-gets-a-hole-by-reflect-delete-property-before-each-use.ts
+////= nameOf-5
+
+attempt("read", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list[1];
+});
+attempt("typeof", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return typeof list[1];
+});
+attempt("is undefined", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list[1] === undefined;
+});
+attempt("is a string", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return typeof list[1] === "string";
+});
+attempt("its length", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list[1].length;
+});
+attempt("glued", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list[1] + "!";
+});
+attempt("in", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return 1 in list;
+});
+attempt("length", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.length;
+});
+////= attempt-55	list: string[] = ["a", "b", "c"]	Reflect.deleteProperty(list, 1)	s of list) kinds += typeof s
+attempt("map to kinds", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.map(s => typeof s).join();
+});
+attempt("map to lengths", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.map(s => s.length).join();
+});
+attempt("map to capitals", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.map(s => s.toUpperCase()).join();
+});
+attempt("filter undefined", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.filter(s => s === undefined).length;
+});
+attempt("filter strings", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.filter(s => typeof s === "string").length;
+});
+attempt("findIndex", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.findIndex(s => typeof s !== "string");
+});
+attempt("some", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.some(s => s == null);
+});
+attempt("every", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.every(s => typeof s === "string");
+});
+attempt("reduce", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.reduce((a, b) => a + b, "");
+});
+////= attempt-38	"indexOf"	list.indexOf	"c"
+////= attempt-38	"includes"	list.includes	"c"
+////= attempt-38	"join"	list.join	"+"
+////= attempt-38	"json"	JSON.stringify	list
+attempt("toSorted", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.toSorted().join();
+});
+attempt("sort", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return list.sort().join();
+});
+attempt("spread", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return [...list].map(s => typeof s).join();
+});
+attempt("a default in a pattern", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return (([, b = "default"]: string[]) => b)(list);
+});
+attempt("a set", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return new Set(list).size;
+});
+attempt("a template", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return `${list[0]}${list[1]}`;
+});
+attempt("a typed store", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.deleteProperty(list, 1);
+  return (list[1] = "z") + " " + list.join();
+});
+
+export {};
+//// a-list-of-strings-gets-a-number-by-define-property-before-each-use.ts
+////= nameOf-5
+
+attempt("read", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list[1];
+});
+attempt("typeof", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return typeof list[1];
+});
+attempt("is undefined", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list[1] === undefined;
+});
+attempt("is a string", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return typeof list[1] === "string";
+});
+attempt("its length", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list[1].length;
+});
+attempt("glued", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list[1] + "!";
+});
+attempt("in", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return 1 in list;
+});
+attempt("length", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.length;
+});
+////= attempt-55	list: string[] = ["a", "b", "c"]	Object.defineProperty(list, 1, { value: 7 })	s of list) kinds += typeof s
+attempt("map to kinds", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.map(s => typeof s).join();
+});
+attempt("map to lengths", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.map(s => s.length).join();
+});
+attempt("map to capitals", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.map(s => s.toUpperCase()).join();
+});
+attempt("filter undefined", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.filter(s => s === undefined).length;
+});
+attempt("filter strings", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.filter(s => typeof s === "string").length;
+});
+attempt("findIndex", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.findIndex(s => typeof s !== "string");
+});
+attempt("some", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.some(s => s == null);
+});
+attempt("every", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.every(s => typeof s === "string");
+});
+attempt("reduce", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.reduce((a, b) => a + b, "");
+});
+////= attempt-37	"indexOf"	list.indexOf	"c"
+////= attempt-37	"includes"	list.includes	"c"
+////= attempt-37	"join"	list.join	"+"
+////= attempt-37	"json"	JSON.stringify	list
+attempt("toSorted", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.toSorted().join();
+});
+attempt("sort", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return list.sort().join();
+});
+attempt("spread", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return [...list].map(s => typeof s).join();
+});
+attempt("a default in a pattern", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return (([, b = "default"]: string[]) => b)(list);
+});
+attempt("a set", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return new Set(list).size;
+});
+attempt("a template", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return `${list[0]}${list[1]}`;
+});
+attempt("a typed store", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.defineProperty(list, 1, { value: 7 });
+  return (list[1] = "z") + " " + list.join();
+});
+
+export {};
+//// a-list-of-strings-gets-a-number-pushed-through-a-wider-alias-and-is-asked-what-it-holds.ts
+const list: string[] = ["a", "b", "c"];
+const wide: (string | number)[] = list;
+wide.push(7);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(s => s === undefined));
+console.log("some " + list.some(s => s === undefined));
+console.log("every " + list.every(s => s !== undefined));
+console.log("filter " + list.filter(s => s === undefined).length);
+console.log("filter by typeof " + list.filter(s => typeof s !== "string").length);
+console.log("map " + list.map(s => typeof s).join());
+console.log("map + '!' " + list.map(s => s + "!").join());
+console.log("reduce " + list.reduce((text, s) => text + typeof s + " ", ""));
+console.log("Array.from " + Array.from(list, s => typeof s).join());
+let walked = "";
+for (const s of list) walked += typeof s + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let glued = "";
+for (const s of list) glued += s;
+console.log("glued " + glued);
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+////= lines-2
+
+export {};
+//// a-list-of-strings-gets-null-by-object-assign-before-each-use.ts
+////= nameOf-5
+
+attempt("read", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list[1];
+});
+////= attempt-83	string[] = ["a", "b", "c"	assign(list, { 1: null
+////= attempt-72	string[] = ["a", "b", "c"	assign(list, { 1: null
+attempt("is a string", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return typeof list[1] === "string";
+});
+attempt("its length", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list[1].length;
+});
+attempt("glued", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list[1] + "!";
+});
+////= attempt-69	string[] = ["a", "b", "c"	assign(list, { 1: null
+attempt("length", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.length;
+});
+////= attempt-55	list: string[] = ["a", "b", "c"]	Object.assign(list, { 1: null })	s of list) kinds += typeof s
+attempt("map to kinds", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.map(s => typeof s).join();
+});
+attempt("map to lengths", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.map(s => s.length).join();
+});
+attempt("map to capitals", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.map(s => s.toUpperCase()).join();
+});
+attempt("filter undefined", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.filter(s => s === undefined).length;
+});
+attempt("filter strings", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.filter(s => typeof s === "string").length;
+});
+attempt("findIndex", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.findIndex(s => typeof s !== "string");
+});
+attempt("some", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.some(s => s == null);
+});
+attempt("every", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.every(s => typeof s === "string");
+});
+attempt("reduce", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.reduce((a, b) => a + b, "");
+});
+////= attempt-36	"indexOf"	list.indexOf	"c"
+////= attempt-36	"includes"	list.includes	"c"
+////= attempt-36	"join"	list.join	"+"
+////= attempt-36	"json"	JSON.stringify	list
+attempt("toSorted", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.toSorted().join();
+});
+attempt("sort", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return list.sort().join();
+});
+attempt("spread", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return [...list].map(s => typeof s).join();
+});
+attempt("a default in a pattern", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return (([, b = "default"]: string[]) => b)(list);
+});
+attempt("a set", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return new Set(list).size;
+});
+attempt("a template", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return `${list[0]}${list[1]}`;
+});
+attempt("a typed store", () => {
+  const list: string[] = ["a", "b", "c"];
+  Object.assign(list, { 1: null });
+  return (list[1] = "z") + " " + list.join();
+});
+
+export {};
+//// a-list-of-strings-gets-undefined-by-reflect-set-before-each-use.ts
+////= nameOf-5
+
+attempt("read", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list[1];
+});
+attempt("typeof", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return typeof list[1];
+});
+attempt("is undefined", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list[1] === undefined;
+});
+attempt("is a string", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return typeof list[1] === "string";
+});
+attempt("its length", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list[1].length;
+});
+attempt("glued", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list[1] + "!";
+});
+attempt("in", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return 1 in list;
+});
+attempt("length", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.length;
+});
+////= attempt-55	list: string[] = ["a", "b", "c"]	Reflect.set(list, 1, undefined)	s of list) kinds += typeof s
+attempt("map to kinds", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.map(s => typeof s).join();
+});
+attempt("map to lengths", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.map(s => s.length).join();
+});
+attempt("map to capitals", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.map(s => s.toUpperCase()).join();
+});
+attempt("filter undefined", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.filter(s => s === undefined).length;
+});
+attempt("filter strings", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.filter(s => typeof s === "string").length;
+});
+attempt("findIndex", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.findIndex(s => typeof s !== "string");
+});
+attempt("some", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.some(s => s == null);
+});
+attempt("every", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.every(s => typeof s === "string");
+});
+attempt("reduce", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.reduce((a, b) => a + b, "");
+});
+////= attempt-39	"indexOf"	list.indexOf	"c"
+////= attempt-39	"includes"	list.includes	"c"
+////= attempt-39	"join"	list.join	"+"
+////= attempt-39	"json"	JSON.stringify	list
+attempt("toSorted", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.toSorted().join();
+});
+attempt("sort", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return list.sort().join();
+});
+attempt("spread", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return [...list].map(s => typeof s).join();
+});
+attempt("a default in a pattern", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return (([, b = "default"]: string[]) => b)(list);
+});
+attempt("a set", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return new Set(list).size;
+});
+attempt("a template", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return `${list[0]}${list[1]}`;
+});
+attempt("a typed store", () => {
+  const list: string[] = ["a", "b", "c"];
+  Reflect.set(list, 1, undefined);
+  return (list[1] = "z") + " " + list.join();
+});
+
+export {};
+//// a-list-of-strings-is-a-group-of-a-match-that-did-not-take-part-and-is-asked-what-it-holds.ts
+const found = /(a)(z)?/.exec("a");
+const list: string[] = found === null ? [] : [...found];
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(s => s === undefined));
+console.log("some " + list.some(s => s === undefined));
+console.log("every " + list.every(s => s !== undefined));
+console.log("filter " + list.filter(s => s === undefined).length);
+console.log("filter by typeof " + list.filter(s => typeof s !== "string").length);
+console.log("map " + list.map(s => typeof s).join());
+console.log("map + '!' " + list.map(s => s + "!").join());
+console.log("reduce " + list.reduce((text, s) => text + typeof s + " ", ""));
+console.log("Array.from " + Array.from(list, s => typeof s).join());
+let walked = "";
+for (const s of list) walked += typeof s + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let glued = "";
+for (const s of list) glued += s;
+console.log("glued " + glued);
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+////= lines-2
+
+export {};
+//// a-list-of-strings-is-made-longer-by-its-length-and-is-asked-what-it-holds.ts
+const list: string[] = ["a", "b", "c"];
+list.length = 5;
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(s => s === undefined));
+console.log("some " + list.some(s => s === undefined));
+console.log("every " + list.every(s => s !== undefined));
+console.log("filter " + list.filter(s => s === undefined).length);
+console.log("filter by typeof " + list.filter(s => typeof s !== "string").length);
+console.log("map " + list.map(s => typeof s).join());
+console.log("map + '!' " + list.map(s => s + "!").join());
+console.log("reduce " + list.reduce((text, s) => text + typeof s + " ", ""));
+console.log("Array.from " + Array.from(list, s => typeof s).join());
+let walked = "";
+for (const s of list) walked += typeof s + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let glued = "";
+for (const s of list) glued += s;
+console.log("glued " + glued);
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+////= lines-2
+
+export {};
+//// a-list-of-strings-is-pushed-a-letter-from-past-the-end-of-a-text-and-is-asked-what-it-holds.ts
+const list: string[] = ["a", "b", "c"];
+const text: string = "abc";
+const index: number = 9;
+list.push(text[index]);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(s => s === undefined));
+console.log("some " + list.some(s => s === undefined));
+console.log("every " + list.every(s => s !== undefined));
+console.log("filter " + list.filter(s => s === undefined).length);
+console.log("filter by typeof " + list.filter(s => typeof s !== "string").length);
+console.log("map " + list.map(s => typeof s).join());
+console.log("map + '!' " + list.map(s => s + "!").join());
+console.log("reduce " + list.reduce((text, s) => text + typeof s + " ", ""));
+console.log("Array.from " + Array.from(list, s => typeof s).join());
+let walked = "";
+for (const s of list) walked += typeof s + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let glued = "";
+for (const s of list) glued += s;
+console.log("glued " + glued);
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+////= lines-2
+
+export {};
+//// a-list-of-strings-is-pushed-a-missing-entry-of-a-record-and-is-asked-what-it-holds.ts
+const names: Record<string, string> = { a: "ann" };
+const list: string[] = ["a", "b", "c"];
+list.push(names.b);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(s => s === undefined));
+console.log("some " + list.some(s => s === undefined));
+console.log("every " + list.every(s => s !== undefined));
+console.log("filter " + list.filter(s => s === undefined).length);
+console.log("filter by typeof " + list.filter(s => typeof s !== "string").length);
+console.log("map " + list.map(s => typeof s).join());
+console.log("map + '!' " + list.map(s => s + "!").join());
+console.log("reduce " + list.reduce((text, s) => text + typeof s + " ", ""));
+console.log("Array.from " + Array.from(list, s => typeof s).join());
+let walked = "";
+for (const s of list) walked += typeof s + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let glued = "";
+for (const s of list) glued += s;
+console.log("glued " + glued);
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+////= lines-2
+
+export {};
+//// a-list-of-strings-is-pushed-a-part-that-a-split-did-not-give-and-is-asked-what-it-holds.ts
+const list: string[] = ["a", "b", "c"];
+list.push("no comma".split(",")[1]);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(s => s === undefined));
+console.log("some " + list.some(s => s === undefined));
+console.log("every " + list.every(s => s !== undefined));
+console.log("filter " + list.filter(s => s === undefined).length);
+console.log("filter by typeof " + list.filter(s => typeof s !== "string").length);
+console.log("map " + list.map(s => typeof s).join());
+console.log("map + '!' " + list.map(s => s + "!").join());
+console.log("reduce " + list.reduce((text, s) => text + typeof s + " ", ""));
+console.log("Array.from " + Array.from(list, s => typeof s).join());
+let walked = "";
+for (const s of list) walked += typeof s + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let glued = "";
+for (const s of list) glued += s;
+console.log("glued " + glued);
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+////= lines-2
+
+export {};
+//// a-list-of-strings-is-pushed-the-elements-of-a-list-of-holes-and-is-asked-what-it-holds.ts
+const list: string[] = ["a", "b", "c"];
+list.push(...new Array<string>(2));
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(s => s === undefined));
+console.log("some " + list.some(s => s === undefined));
+console.log("every " + list.every(s => s !== undefined));
+console.log("filter " + list.filter(s => s === undefined).length);
+console.log("filter by typeof " + list.filter(s => typeof s !== "string").length);
+console.log("map " + list.map(s => typeof s).join());
+console.log("map + '!' " + list.map(s => s + "!").join());
+console.log("reduce " + list.reduce((text, s) => text + typeof s + " ", ""));
+console.log("Array.from " + Array.from(list, s => typeof s).join());
+let walked = "";
+for (const s of list) walked += typeof s + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let glued = "";
+for (const s of list) glued += s;
+console.log("glued " + glued);
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+////= lines-2
+
+export {};
+//// a-list-of-strings-is-pushed-the-name-of-an-enum-member-that-is-not-there-and-is-asked-what-it-holds.ts
+////= Color
+
+const list: string[] = ["a", "b", "c"];
+const index: number = 9;
+list.push(Color[index]);
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(s => s === undefined));
+console.log("some " + list.some(s => s === undefined));
+console.log("every " + list.every(s => s !== undefined));
+console.log("filter " + list.filter(s => s === undefined).length);
+console.log("filter by typeof " + list.filter(s => typeof s !== "string").length);
+console.log("map " + list.map(s => typeof s).join());
+console.log("map + '!' " + list.map(s => s + "!").join());
+console.log("reduce " + list.reduce((text, s) => text + typeof s + " ", ""));
+console.log("Array.from " + Array.from(list, s => typeof s).join());
+let walked = "";
+for (const s of list) walked += typeof s + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let glued = "";
+for (const s of list) glued += s;
+console.log("glued " + glued);
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+////= lines-2
+
+export {};
+//// a-list-of-strings-is-stored-to-far-past-its-end-and-is-asked-what-it-holds.ts
+const list: string[] = ["a", "b", "c"];
+list[5] = "f";
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(s => s === undefined));
+console.log("some " + list.some(s => s === undefined));
+console.log("every " + list.every(s => s !== undefined));
+console.log("filter " + list.filter(s => s === undefined).length);
+console.log("filter by typeof " + list.filter(s => typeof s !== "string").length);
+console.log("map " + list.map(s => typeof s).join());
+console.log("map + '!' " + list.map(s => s + "!").join());
+console.log("reduce " + list.reduce((text, s) => text + typeof s + " ", ""));
+console.log("Array.from " + Array.from(list, s => typeof s).join());
+let walked = "";
+for (const s of list) walked += typeof s + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let glued = "";
+for (const s of list) glued += s;
+console.log("glued " + glued);
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+////= lines-2
+
+export {};
+//// a-list-of-strings-loses-an-element-by-delete-and-is-asked-what-it-holds.ts
+const list: string[] = ["a", "b", "c"];
+delete list[1];
+console.log("length " + list.length);
+console.log("findIndex " + list.findIndex(s => s === undefined));
+console.log("some " + list.some(s => s === undefined));
+console.log("every " + list.every(s => s !== undefined));
+console.log("filter " + list.filter(s => s === undefined).length);
+console.log("filter by typeof " + list.filter(s => typeof s !== "string").length);
+console.log("map " + list.map(s => typeof s).join());
+console.log("map + '!' " + list.map(s => s + "!").join());
+console.log("reduce " + list.reduce((text, s) => text + typeof s + " ", ""));
+console.log("Array.from " + Array.from(list, s => typeof s).join());
+let walked = "";
+for (const s of list) walked += typeof s + " ";
+console.log("for of " + walked);
+let indexed = "";
+for (let i = 0; i < list.length; i++) indexed += typeof list[i] + " ";
+console.log("by index " + indexed);
+let glued = "";
+for (const s of list) glued += s;
+console.log("glued " + glued);
+console.log("join " + list.join("-"));
+console.log("JSON " + JSON.stringify(list));
+console.log("keys " + Object.keys(list).join());
+////= lines-2
+
+export {};
+//// a-list-pattern-takes-the-first-element-and-the-rest-in-a-function-with-two-callers.ts
+function total(list: number[]): number {
+  const [first, ...rest] = list;
+  return first + rest.length;
+}
+console.log(total([1, 2]));
+console.log(total([3]));
+export {};
+//// a-list-that-starts-empty-is-pushed-to-by-a-closure.ts
+////= show-15
+
+////= attempt-4
+
+////= total
+
+function pushedByAClosure(late: unknown, spoils: boolean): unknown {
+  const list = [];
+  const add = () => {
+    list.push(late);
+  };
+  list.push(1);
+  list.push(2);
+  if (spoils) add();
+  const numbers: number[] = list;
+  let sum = 0;
+  for (const n of numbers) sum += n;
+  return [sum, total(numbers), numbers.map(n => n * 2), numbers.length];
+}
+
+function storedByIndexInAClosure(late: unknown, spoils: boolean): unknown {
+  const list = [];
+  const add = () => {
+    list[5] = late;
+  };
+  list[0] = 1;
+  list[1] = 2;
+  if (spoils) add();
+  const numbers: number[] = list;
+  return [total(numbers), numbers, numbers.indexOf(2), numbers.includes(NaN)];
+}
+
+function objectsInTheList(late: unknown, spoils: boolean): unknown {
+  const list = [];
+  const add = () => {
+    list.push(late);
+  };
+  list.push({ x: 1, y: 2 });
+  if (spoils) add();
+  let sum = 0;
+  for (const p of list) sum += p.x + p.y;
+  return [sum, list.map(p => p.x), list.length];
+}
+
+function textsInTheList(late: unknown, spoils: boolean): unknown {
+  const list = [];
+  const add = () => {
+    list.unshift(late);
+  };
+  list.push("ab");
+  if (spoils) add();
+  const texts: string[] = list;
+  return [texts.map(s => s.length), texts.join("+"), texts[0].length];
+}
+
+let shared = [];
+function addToShared(late: unknown): void {
+  shared.push(late);
+}
+
+function aModuleList(late: unknown, spoils: boolean): unknown {
+  shared = [];
+  shared.push(4);
+  if (spoils) addToShared(late);
+  const numbers: number[] = shared;
+  return [total(numbers), numbers];
+}
+
+const cases: [string, (late: unknown, spoils: boolean) => unknown][] = [
+  ["pushed", pushedByAClosure],
+  ["stored far away", storedByIndexInAClosure],
+  ["objects", objectsInTheList],
+  ["texts", textsInTheList],
+  ["a module list", aModuleList],
+];
+
+const late: [string, unknown][] = [
+  ["a text", "3"],
+  ["a fraction", 1.5],
+  ["minus zero", -0],
+  ["not a number", NaN],
+  ["true", true],
+  ["null", null],
+  ["undefined", undefined],
+  ["a bigint", 3n],
+  ["a list", [3]],
+  ["an object with valueOf", { valueOf: () => 3 }],
+  ["other members", { y: "2", x: "1", length: 9 }],
+];
+
+console.log("honest callers: " + [total([1, 2]), total([]), total([0.5, 1.5])].join(" "));
+
+////= for-33
+
+export {};
+//// a-listener-for-unhandled-rejections-is-added.ts
+process.on("unhandledRejection", () => {});
+console.log("zzqq");
+//// a-literal-and-an-instance-arrive-under-one-interface.ts
+// One interface is satisfied by an object literal and by instances of a class; the same typed functions read and write both, by turns.
+interface Shape {
+  name: string;
+  size: number;
+  parent: Shape | null;
+  area(): number;
+}
+class Square implements Shape {
+  name = "square";
+  parent: Shape | null = null;
+  constructor(public size: number) {}
+  area(): number {
+    return this.size * this.size;
+  }
+}
+function literal(size: number): Shape {
+  return { name: "literal", size, parent: null, area() { return this.size * 2; } };
+}
+function grow(shape: Shape, parent: Shape | null): string {
+  shape.size += 1;
+  shape.name = shape.name + "+";
+  shape.parent = parent;
+  return shape.name + " " + shape.size + " " + shape.area() + " " + (shape.parent ? shape.parent.name : "none");
+}
+class Holder {
+  shape: Shape;
+  constructor(shape: Shape) {
+    this.shape = shape;
+  }
+  swap(next: Shape): Shape {
+    const before = this.shape;
+    this.shape = next;
+    return before;
+  }
+}
+const shapes: Shape[] = [];
+for (let index = 0; index < 6; index++) shapes.push(index % 2 ? new Square(index) : literal(index));
+let parent: Shape | null = null;
+for (const shape of shapes) {
+  console.log(grow(shape, parent));
+  parent = shape;
+}
+const holder = new Holder(shapes[0]);
+for (const shape of shapes) console.log(holder.swap(shape).name, holder.shape.area(), holder.shape instanceof Square);
+//// a-literal-born-with-null-is-filled-through-a-type-that-says-more.ts
+// An object literal whose own type says `null` is written through a declared type that allows a string as well; another literal of the same name holds a boolean.
+type Color = "red" | "blue";
+type Holder = { color: Color | null };
+type HolderWithAge = { color: Color | null; age?: number };
+
+function pick(): Color {
+  return Math.random() < 2 ? "red" : "blue";
+}
+function makeEmpty() {
+  return { color: null };
+}
+function makeFlag(on: boolean) {
+  return { color: on };
+}
+function fill(holder: Holder): Color {
+  if (holder.color === null) holder.color = pick();
+  return holder.color;
+}
+function fillAndAge(holder: HolderWithAge): string {
+  if (holder.color === null) holder.color = pick();
+  holder.age = (holder.age ?? 0) + 1;
+  return holder.color + " " + holder.age;
+}
+
+const first = makeEmpty();
+const second = makeEmpty();
+console.log(makeFlag(true).color, fill(first), first.color);
+console.log(fillAndAge(second), fillAndAge(second), JSON.stringify(second), Object.keys(second).join());
+for (let round = 0; round < 3; round++) {
+  const holder = makeEmpty();
+  console.log(round, holder.color, fill(holder), JSON.stringify(holder));
+}
+//// a-literal-for-a-class-type.ts
+////= lines-31	Point	x	1	double	2
+
+function use(p: Point): string {
+  return p.double() + " " + p.x + " " + (p instanceof Point);
+}
+
+const fake: Point = { x: 5, double: () => -1 };
+console.log(use(new Point()));
+console.log(use(fake));
+console.log(use(new Point()));
+
+export {};
+//// a-literal-gets-values-of-every-kind-in-every-field-through-any.ts
+// Every field of a typed object literal is stored with values of every other kind through `any`, and typed code reads it after each store.
+type Item = { id: string; count: number; done: boolean; tags: string[]; owner: { name: string }; run: () => string; note?: string };
+
+function make(): Item {
+  return { id: "a", count: 1, done: false, tags: ["x"], owner: { name: "ann" }, run: () => "ran" };
+}
+function describe(value: unknown): string {
+  if (typeof value === "function") return "function";
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "symbol") return value.toString();
+  return typeof value + ":" + JSON.stringify(value);
+}
+function read(item: Item): string {
+  return [item.id, item.count, item.done, item.tags, item.owner, item.run, item.note].map(describe).join(" ");
+}
+
+const values: unknown[] = ["text", 7, 1.5, -0, NaN, 2 ** 40, true, null, undefined, [1], { other: 1 }, () => 1, 10n, Symbol("s")];
+const names = ["id", "count", "done", "tags", "owner", "run", "note"];
+for (const name of names) {
+  const item = make();
+  for (const value of values) {
+    (item as any)[name] = value;
+    console.log(name, read(item), Object.keys(item).join());
+  }
+}
+const item = make();
+(item as any).id = 5;
+console.log(typeof item.id, (item.id as any) + 1, item.id.length);
+(item as any).count = "9";
+console.log(typeof item.count, item.count + 1, item.count * 2);
+(item as any).done = 0;
+console.log(item.done ? "yes" : "no", item.done === false, !item.done);
+//// a-literal-holds-a-method-read-from-a-prototype.ts
+class Tool {
+  count(n: number): string {
+    return "count " + n;
+  }
+  measure(n: number): string {
+    return "measure " + n;
+  }
+}
+
+Object.assign(Tool.prototype, { measure: Tool.prototype.count });
+console.log(new Tool().measure(1));
+
+export {};
+//// a-literal-in-a-function-that-is-never-called-holds-another-kind-of-value.ts
+////= lines-28	Box	value	unknown
+function never(): Box {
+  return { value: 7 };
+}
+const box: Box = { value: "text" };
+console.log(box.value);
+//// a-literal-in-another-order-with-more-members-is-used-as-a-config.ts
+////= show-39
+
+function shuffled(source: Config): Config {
+  const wider = { extra: "more", limits: source.limits, paths: source.paths, secure: source.secure, host: source.host, ratio: source.ratio, last: 1, port: source.port };
+  return wider;
+}
+
+////= uses-6
+
+let warm = 0;
+////= for-27
+for (const [, use] of uses) for (let i = 0; i < 200; i++) use(config(i));
+console.log("after the honest configs", warm);
+
+////= for-44	shuffled
+////= lines-37	shuffled
+attempt("honest again", () => [address(config(80)), budget(config(80)), move(config(80), 1)]);
+//// a-literal-is-handed-to-a-generic-function-that-stores-a-wider-member.ts
+////= Animal-2
+////= lines-14	class	Dog	extends	Animal	legs	4
+////= Cat-4
+function rehome<T extends { pet: Animal }>(home: T): T {
+  home.pet = new Cat();
+  return home;
+}
+console.log("zq " + rehome({ pet: new Dog() }).pet.legs);
+//// a-literal-is-rebuilt-from-its-entries-or-descriptors.ts
+////= Inner-3
+
+let quiet = false;
+const log: string[] = [];
+
+////= text-23
+
+////= changes
+
+quiet = true;
+////= for-30
+inPlaces("", fresh);
+inALoop("", p => p);
+quiet = false;
+
+use("untouched", fresh());
+
+////= for-35
+
+use("untouched afterwards", fresh());
+
+export {};
+//// a-literal-keyed-by-enum-members-lists-its-keys-as-every-object-does.ts
+enum Slot {
+  A,
+  B,
+  C = 10,
+  Minus = -1,
+  Half = 0.5,
+}
+////= lines-70	Name	X	"x"	Two	"2"
+
+const table = { [Slot.C]: "c", name: "n", [Slot.B]: "b", [Slot.Minus]: "minus", [Slot.A]: "a", [Slot.Half]: "half" };
+const named = { [Name.X]: 1, [Name.Two]: 2, z: 3, [Slot.B]: 4 };
+
+class Keyed {
+  last = "last";
+  [Slot.C] = "c";
+  [Slot.A] = "a";
+  [Name.Two] = "two";
+  [Name.X] = "x";
+}
+
+console.log(Object.keys(table).join());
+console.log(JSON.stringify(table));
+console.log(table[Slot.A], table[Slot.B], table[Slot.C], table[Slot.Minus], table[Slot.Half], table.name);
+console.log(table[0], table[10], table["-1"], table["0.5"]);
+console.log(Object.keys(named).join());
+console.log(JSON.stringify(named));
+console.log(named.x, named[2], named["2"], named[1]);
+const keyed = new Keyed();
+console.log(Object.keys(keyed).join());
+console.log(JSON.stringify(keyed));
+console.log(keyed[0], keyed[10], keyed[2], keyed.x, keyed.last);
+const keys: string[] = [];
+for (const key in table) keys.push(key);
+console.log(keys.join());
+console.log(Object.keys({ ...table }).join(), Object.keys(Object.assign({}, keyed)).join());
+//// a-literal-of-three-numbers-loses-a-key-by-reflect-delete-property-before-each-use.ts
+interface Triple {
+  a: number;
+  b: number;
+  c: number;
+}
+
+////= nameOf-5
+
+////= attempt-79	Triple	deleteProperty(scores, "b
+////= attempt-85	Triple	deleteProperty(scores, "b
+////= attempt-74	Triple	deleteProperty(scores, "b
+////= attempt-71	Triple	deleteProperty(scores, "b
+////= attempt-78	Triple	deleteProperty(scores, "b
+////= attempt-70	Triple	deleteProperty(scores, "b
+////= attempt-76	Triple	deleteProperty(scores, "b
+////= attempt-93	Triple	deleteProperty(scores, "b
+////= attempt-89	Triple	deleteProperty(scores, "b
+////= attempt-87	Triple	deleteProperty(scores, "b
+////= attempt-91	Triple	deleteProperty(scores, "b
+////= attempt-92	Triple	deleteProperty(scores, "b
+////= attempt-64	Triple	deleteProperty(scores, "b
+////= attempt-65	Triple	deleteProperty(scores, "b
+////= attempt-75	Triple	deleteProperty(scores, "b
+////= attempt-60	Triple	deleteProperty(scores, "b
+////= attempt-59	Triple	deleteProperty(scores, "b
+attempt("a pattern", () => {
+  const scores: Triple = { a: 1, b: 2, c: 3 };
+  Reflect.deleteProperty(scores, "b");
+  return (({ b }: Triple) => b + 1)(scores);
+});
+////= attempt-82	Triple	deleteProperty(scores, "b
+////= attempt-62	Triple	deleteProperty(scores, "b
+
+export {};
+//// a-literal-with-a-proto-key.ts
+interface Leaf {
+  own: number;
+  shared?: number;
+  __proto__?: unknown;
+}
+
+const base = { shared: 7 };
+
+function facts(label: string, o: Leaf): void {
+  const walked: string[] = [];
+  for (const key in o) walked.push(key);
+  console.log(
+    label +
+      ": own " + o.own +
+      " shared " + o.shared +
+      " keys " + Object.keys(o).join() +
+      " for-in " + walked.join() +
+      " json " + JSON.stringify(o) +
+      " spread " + JSON.stringify({ ...o }) +
+      " prototype is base " + (Object.getPrototypeOf(o) === base) +
+      " own __proto__ " + Object.hasOwn(o, "__proto__"),
+  );
+}
+
+facts("a plain key sets the prototype", { __proto__: base, own: 1 });
+facts("after another member", { own: 2, __proto__: base });
+facts("a quoted key sets it too", { "__proto__": base, own: 3 });
+facts("a computed key makes a member", { ["__proto__"]: base, own: 4 });
+
+const __proto__ = base;
+facts("shorthand makes a member", { __proto__, own: 5 });
+facts("a method makes a member", {
+  __proto__() {
+    return base;
+  },
+  own: 6,
+});
+
+const withOwn = { ["__proto__"]: base, own: 7 };
+facts("a spread copies the member as a member", { ...withOwn });
+
+const nothing: Leaf = { __proto__: null, own: 8 };
+console.log("null: " + (Object.getPrototypeOf(nothing) === null) + " " + Object.keys(nothing).join() + " " + nothing.own + " " + nothing.shared + " " + ("toString" in nothing));
+
+const ignored: Leaf = { __proto__: 5, own: 9 };
+console.log("a number is ignored: " + (Object.getPrototypeOf(ignored) === Object.prototype) + " " + Object.keys(ignored).join());
+
+function make(parent: { shared: number } | null, own: number): Leaf {
+  return { __proto__: parent, own };
+}
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += make(base, i).shared ?? 0;
+console.log("2000 with the base: " + sum);
+console.log("then null: " + make(null, 1).shared + ", another: " + make({ shared: 9 }, 1).shared + ", the base: " + make(base, 1).shared);
+
+base.shared = 70;
+console.log("the base changed: " + make(base, 1).shared);
+
+const chain: Leaf = { __proto__: { __proto__: { shared: 3 } }, own: 10 };
+console.log("two levels: " + chain.shared + " " + Object.keys(chain).join());
+
+const child: Leaf = { __proto__: base, own: 11 };
+child.shared = 1;
+console.log("a store makes an own member: " + JSON.stringify(child) + " " + base.shared);
+delete child.shared;
+console.log("deleted, the base shows again: " + child.shared + " " + JSON.stringify(child));
+
+class Holder {
+  leaf: Leaf = { __proto__: base, own: 12 };
+  leaves: Leaf[] = [{ own: 13 }, { __proto__: base, own: 14 }, { own: 15, shared: 16 }];
+  total(): number {
+    let total = this.leaf.shared ?? 0;
+    for (const leaf of this.leaves) total += leaf.shared ?? 0;
+    return total;
+  }
+}
+console.log("fields and elements: " + new Holder().total() + " " + JSON.stringify(new Holder()));
+
+export {};
+//// a-literal-with-a-spread-holds-what-the-spread-brings.ts
+// A literal with a spread under a declared type: the spread brings values that the declared type of a field does not name, and names beyond the type.
+type Options = { host: string; port: number; secure?: boolean; headers: { [name: string]: string } };
+const loose: any = { host: 80, port: "eighty", extra: [1, 2], headers: null };
+const typed: Options = { host: "a", port: 1, headers: { a: "b" } };
+
+function merge(base: Options, port: number): Options {
+  return { ...base, port };
+}
+function show(options: Options): string {
+  return typeof options.host + " " + options.host + " " + typeof options.port + " " + options.port + " " + options.secure + " " + JSON.stringify(options.headers) + " " + Object.keys(options).join();
+}
+console.log(show(merge(typed, 2)));
+console.log(show(merge(loose, 3)));
+console.log(show({ ...loose }));
+console.log(show({ ...typed, ...loose }));
+console.log(show({ ...loose, ...typed }));
+console.log(show({ ...typed, secure: true, headers: {} }));
+const parsed: Options = JSON.parse('{"host":1,"port":"x","headers":[],"more":true}');
+console.log(show(parsed), show({ ...parsed, host: "h" }));
+//// a-literal-with-methods-is-spread-copied-and-listed.ts
+////= show-6
+
+const counter = {
+  count: 1,
+  label: "counter",
+  read(): number {
+    return this.count;
+  },
+  bump(): number {
+    return ++this.count;
+  },
+  title(): string {
+    return this.label.toUpperCase();
+  },
+  get doubled(): number {
+    return this.count * 2;
+  },
+};
+
+show("honest read", () => counter.read());
+show("honest doubled", () => counter.doubled);
+
+const copy = { ...counter };
+copy.count = 100;
+show("spread: read follows the copy", () => copy.read());
+show("spread: bump", () => copy.bump());
+show("spread: the getter became a value", () => copy.doubled);
+show("spread: the original", () => counter.count);
+
+const assigned = Object.assign({}, counter, { count: 200 });
+show("assign: read", () => assigned.read());
+show("assign: doubled", () => assigned.doubled);
+
+const overridden = { ...counter, count: "many", label: 5 };
+show("fields of other kinds: read", () => overridden.read());
+show("fields of other kinds: bump", () => overridden.bump());
+show("fields of other kinds: title", () => overridden.title());
+show("fields of other kinds: count", () => overridden.count);
+
+const { read, bump, title, ...rest } = counter;
+show("destructured: read", () => read());
+show("destructured: bump", () => bump());
+show("destructured: title", () => title());
+show("the rest", () => Object.keys(rest).join());
+
+show("values, called bare", () =>
+  Object.values({ read: counter.read, bump: counter.bump })
+    .map(f => {
+      try {
+        return String(f());
+      } catch (error) {
+        return "threw";
+      }
+    })
+    .join(),
+);
+show("values, called as elements", () => {
+  const values = Object.values({ read: counter.read, bump: counter.bump });
+  return String(values[0]()) + " " + String(values[1]()) + " " + Object.keys(values).join();
+});
+show("entries into a map", () => {
+  const table = new Map(Object.entries({ read: counter.read }));
+  return table.get("read")?.();
+});
+const child: typeof counter = Object.create(counter);
+show("a child: read", () => child.read());
+show("a child: bump lands on the child", () => child.bump() + " " + counter.count + " " + Object.keys(child).join());
+show("a child: doubled", () => child.doubled);
+//// a-local-array-made-by-fill-is-read-and-stored-out-of-bounds.ts
+////= show-31
+
+let warm = 0;
+////= for-3
+console.log("after 4000 dense arrays", warm);
+
+function countPrimes(upTo: number): number {
+  const crossedOut = new Array<boolean>(upTo + 1).fill(false);
+  let primes = 0;
+  for (let candidate = 2; candidate <= upTo; candidate++) {
+    if (!crossedOut[candidate]) {
+      primes++;
+      let multiple = candidate * candidate;
+      while (multiple <= upTo) {
+        crossedOut[multiple] = true;
+        multiple += candidate;
+      }
+    }
+  }
+  return primes;
+}
+
+function flagsPastTheEnd(size: number): unknown[] {
+  const flags = new Array<boolean>(size).fill(false);
+  return [flags[size], typeof flags[size], flags[size] === false, flags[-1], flags[0.5], flags.length];
+}
+
+function flagStoredPastTheEnd(size: number): unknown[] {
+  const flags = new Array<boolean>(size).fill(false);
+  flags[size + 1] = true;
+  return [flags.length, flags[size], size in flags, flags[size + 1]];
+}
+
+function flagStoredBelowZero(size: number): unknown[] {
+  const flags = new Array<boolean>(size).fill(true);
+  flags[-1] = false;
+  return [flags.length, flags[-1], flags[0]];
+}
+
+function countsPastTheEnd(size: number): unknown[] {
+  const counts = new Array<number>(size).fill(0);
+  for (let i = 0; i < 1000; i++) counts[i % size] = (counts[i % size] + 1) & 255;
+  return [counts[0], counts[size - 1], counts[size], typeof counts[size], counts[size] + 1, counts[size] | 0, counts.length];
+}
+
+function countStoredPastTheEnd(size: number): unknown[] {
+  const counts = new Array<number>(size).fill(0);
+  counts[size + 2] = 7 & 255;
+  let total = 0;
+  for (let i = 0; i < counts.length; i++) total += counts[i];
+  return [counts.length, total, size in counts];
+}
+
+function oneTooFar(size: number): number {
+  const counts = new Array<number>(size).fill(1);
+  let total = 0;
+  for (let i = 0; i <= size; i++) total += counts[i];
+  return total;
+}
+
+function bytesThatOverflow(size: number): number[] {
+  const bytes = new Array<number>(size).fill(255);
+  for (let i = 0; i < size; i++) bytes[i] = bytes[i] + i;
+  return [bytes[0], bytes[1], bytes[size - 1]];
+}
+
+function smallThenLarge(size: number, large: number): number[] {
+  const values = new Array<number>(size).fill(0);
+  for (let i = 0; i < size; i++) values[i] = i & 7;
+  values[0] = large;
+  return [values[0], values[1], values[0] + values[1]];
+}
+
+function lengthOfMade(size: number): number {
+  return new Array<number>(size).fill(0).length;
+}
+
+function filledWith(value: number): unknown[] {
+  const values = new Array<number>(2).fill(value);
+  return [values[0], values[1], Object.is(values[0], value), 0 in values];
+}
+
+function partlyFilled(): unknown[] {
+  const values = new Array<number>(3).fill(0, 1);
+  return [values[0], 0 in values, values[1], values[0] + values[1]];
+}
+
+function neverFilled(size: number): unknown[] {
+  const values = new Array<number>(size);
+  let total = 0;
+  for (let i = 0; i < size; i++) total += values[i];
+  return [total, values[0], 0 in values];
+}
+
+function shrunk(size: number): unknown[] {
+  const values = new Array<number>(size).fill(1);
+  values.length = 1;
+  return [values.length, values[0], values[1], 1 in values];
+}
+
+function popped(): unknown[] {
+  const flags = new Array<boolean>(2).fill(true);
+  return [flags.pop(), flags.pop(), flags.pop(), flags.length];
+}
+
+attempt("primes below 100, 1000, 10000", () => [countPrimes(100), countPrimes(1000), countPrimes(10000)]);
+attempt("primes below 0, 1, 2", () => [countPrimes(0), countPrimes(1), countPrimes(2)]);
+for (const size of [1, 4, 100]) {
+  attempt("size " + size + ": flags read past the end", () => flagsPastTheEnd(size));
+  attempt("size " + size + ": a flag stored past the end", () => flagStoredPastTheEnd(size));
+  attempt("size " + size + ": a flag stored below zero", () => flagStoredBelowZero(size));
+  attempt("size " + size + ": counts read past the end", () => countsPastTheEnd(size));
+  attempt("size " + size + ": a count stored past the end", () => countStoredPastTheEnd(size));
+  attempt("size " + size + ": a loop that goes one too far", () => oneTooFar(size));
+  attempt("size " + size + ": bytes that overflow", () => bytesThatOverflow(size));
+  attempt("size " + size + ": never filled", () => neverFilled(size));
+  attempt("size " + size + ": shrunk", () => shrunk(size));
+}
+for (const large of [255, 256, -1, -129, 65536, 2 ** 31, -(2 ** 31) - 1, 0.5, NaN, -0, Infinity]) attempt("small values, then " + show(large), () => smallThenLarge(4, large));
+for (const size of [0, -1, 1.5, NaN, 2 ** 32, -0]) attempt("made with the length " + show(size), () => lengthOfMade(size));
+for (const value of [0, -0, 1, 255, 256, -1, 0.5, NaN]) attempt("filled with " + show(value), () => filledWith(value));
+attempt("partly filled", partlyFilled);
+attempt("popped", popped);
+//// a-local-object-that-never-leaves-its-function.ts
+////= Point-18
+
+function nameOf(error: unknown): string {
+  return error instanceof Error ? error.constructor.name : typeof error;
+}
+
+////= lines-127	frozenThenStored	freeze	x	5	"stored "
+
+////= lines-127	sealedThenGrown	seal	z	3	"grown "
+
+function lockedThenStored(): string {
+  const p: Point = { x: 1, y: 2 };
+  Object.defineProperty(p, "y", { writable: false });
+  try {
+    p.x = 5;
+    p.y = 6;
+    return "stored";
+  } catch (error) {
+    return "threw " + nameOf(error) + " " + p.x + "," + p.y;
+  }
+}
+
+function getterDefined(): number {
+  const p: Point = { x: 1, y: 2 };
+  let reads = 0;
+  Object.defineProperty(p, "x", { get: () => ++reads });
+  return p.x * 100 + p.x * 10 + reads;
+}
+
+function keysInOrder(): string {
+  const p: Point = { y: 2, x: 1 };
+  p.z = 3;
+  return Object.keys(p).join("");
+}
+
+function deletedAndAdded(): string {
+  const p: Point = { x: 1, y: 2, z: 3 };
+  delete p.z;
+  const without = Object.keys(p).join("") + ("z" in p) + p.z;
+  p.z = 4;
+  return without + " " + Object.keys(p).join("") + p.z;
+}
+
+function undefinedIsPresent(): string {
+  const p: Point = { x: 1, y: 2, z: undefined };
+  const q: Point = { x: 1, y: 2 };
+  return ("z" in p) + " " + ("z" in q) + " " + Object.keys(p).length + " " + Object.keys(q).length + " " + JSON.stringify(p) + JSON.stringify(q);
+}
+
+function reparented(): string {
+  const p: Point = { x: 1, y: 2 };
+  Object.setPrototypeOf(p, { z: 9 });
+  let walked = "";
+  for (const key in p) walked += key;
+  return p.z + " " + walked + " " + Object.keys(p).join("");
+}
+
+function copied(): string {
+  const wide = { w: 0, y: 2, x: 1 };
+  const p: Point = wide;
+  const copy = { ...p };
+  return JSON.stringify(copy) + Object.keys(copy).length;
+}
+
+function hidden(): string {
+  const p: Point = { x: 1, y: 2 };
+  Object.defineProperty(p, "x", { enumerable: false });
+  return JSON.stringify(p) + Object.keys(p).join("") + JSON.stringify({ ...p }) + p.x;
+}
+
+function aliased(): number {
+  const p: Point = { x: 1, y: 2 };
+  const q: { x: number } = p;
+  q.x = 10;
+  return p.x + q.x;
+}
+
+////= Pair-2
+
+function localInstance(): string {
+  const p = new Pair();
+  p.sum = () => -1;
+  return p.sum() + " " + Object.keys(p).join("");
+}
+
+function localLookAlike(): string {
+  const p: Pair = { x: 5, y: 6, sum: () => 0 };
+  return p.sum() + " " + (p instanceof Pair) + " " + p.constructor.name;
+}
+
+function localFrozenInstance(): string {
+  const p = Object.freeze(new Pair());
+  const open: { x: number } = p;
+  try {
+    open.x = 9;
+    return "stored";
+  } catch (error) {
+    return "threw " + nameOf(error) + " " + p.sum();
+  }
+}
+
+const cases: [string, () => unknown][] = [
+  ["frozen, then stored", frozenThenStored],
+  ["sealed, then grown", sealedThenGrown],
+  ["one member locked", lockedThenStored],
+  ["a getter defined", getterDefined],
+  ["keys in order", keysInOrder],
+  ["deleted and added", deletedAndAdded],
+  ["undefined is present", undefinedIsPresent],
+  ["another prototype", reparented],
+  ["copied", copied],
+  ["hidden", hidden],
+  ["aliased", aliased],
+  ["an instance with an own method", localInstance],
+  ["a look-alike", localLookAlike],
+  ["a frozen instance", localFrozenInstance],
+];
+
+for (const [label, run] of cases) console.log(label + ": " + String(run()));
+
+console.log("called directly: " + frozenThenStored() + " | " + getterDefined() + " | " + keysInOrder() + " | " + undefinedIsPresent());
+
+for (const [label, run] of cases) {
+  let last: unknown;
+  for (let i = 0; i < 2000; i++) last = run();
+  console.log(label + ", the 2000th time: " + String(last));
+}
+
+export {};
+//// a-look-alike-declares-its-fields-in-another-order.ts
+class Vector {
+  x = 1;
+  y = 2;
+  z = 3;
+}
+
+class Reversed {
+  z = 30;
+  y = 20;
+  x = 10;
+}
+
+class Padded {
+  id = "padded";
+  x = 100;
+  weight = 0.5;
+  y = 200;
+  tags: string[] = [];
+  z = 300;
+}
+
+class FromConstructor {
+  z: number;
+  x: number;
+  y: number;
+  constructor() {
+    this.y = 2000;
+    this.x = 1000;
+    this.z = 3000;
+  }
+}
+
+////= lines-18	Base	y	20000
+
+class Derived extends Base {
+  z = 30000;
+  x = 10000;
+}
+
+function digits(v: Vector): number {
+  return v.x + v.y + v.z;
+}
+
+////= lines-20	first	v	Vector	number	return	v.x
+
+////= lines-20	last	v	Vector	number	return	v.z
+
+function scale(v: Vector, by: number): void {
+  v.x *= by;
+  v.y *= by;
+  v.z *= by;
+}
+
+////= lines-80	setFirst	v	Vector	value	number	v.x
+
+class Holder {
+  constructor(public vector: Vector) {}
+  first(): number {
+    return this.vector.x;
+  }
+  last(): number {
+    return this.vector.z;
+  }
+}
+
+function all(): Vector[] {
+  return [new Vector(), new Reversed(), new Padded(), new FromConstructor(), new Derived(), { y: 5, z: 6, x: 4 }];
+}
+
+for (const v of all()) {
+  const name = v.constructor.name;
+  console.log(name + ": first " + first(v) + " last " + last(v) + " all " + digits(v));
+  console.log(name + ": keys " + Object.keys(v).join() + " json " + JSON.stringify(v));
+  console.log(name + ": field " + new Holder(v).first() + " " + new Holder(v).last());
+  console.log(name + ": copy " + JSON.stringify({ ...v }));
+  console.log(name + ": instanceof Vector " + (v instanceof Vector));
+}
+
+for (const v of all()) {
+  scale(v, 2);
+  setFirst(v, -1);
+  console.log(v.constructor.name + ", stored: " + JSON.stringify(v));
+}
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += first(new Vector()) + last(new Vector());
+console.log("2000 honest: " + total);
+console.log("then: " + all().map(first).join() + " | " + all().map(last).join());
+
+const local: Vector = new Reversed();
+console.log("local: " + local.x + " " + local.y + " " + local.z);
+local.x = 7;
+console.log("local after a store: " + JSON.stringify(local));
+const captured = () => local.z - local.x;
+console.log("captured: " + captured());
+
+export {};
+//// a-look-alike-has-accessors-where-the-class-has-fields.ts
+const log: string[] = [];
+
+class Plain {
+  width = 2;
+  height = 3;
+  area(): number {
+    return this.width * this.height;
+  }
+}
+
+class Watched {
+  private w = 20;
+  private h = 30;
+  get width(): number {
+    log.push("get width");
+    return this.w;
+  }
+  set width(value: number) {
+    log.push("set width " + value);
+    this.w = value;
+  }
+  get height(): number {
+    log.push("get height");
+    return this.h;
+  }
+  set height(value: number) {
+    log.push("set height " + value);
+    this.h = value;
+  }
+  area(): number {
+    log.push("area");
+    return this.width * this.height;
+  }
+}
+
+////= flush
+
+////= lines-20	width	p	Plain	number	return	p.width
+
+function perimeter(p: Plain): number {
+  return 2 * (p.width + p.height);
+}
+
+function widen(p: Plain, by: number): number {
+  p.width += by;
+  return p.width;
+}
+
+function grow(p: Plain): void {
+  p.height++;
+  p.width = p.height;
+}
+
+////= lines-134	Frame	inner	Plain	measure	inner.width	inner.height
+
+const watched: Plain = new Watched();
+flush("local read", watched.width);
+flush("parameter read", width(watched));
+flush("two reads in order", perimeter(watched));
+flush("compound store", widen(watched, 1));
+flush("increment then store", grow(watched));
+flush("method", watched.area());
+flush("field", new Frame(watched).measure());
+flush("keys", Object.keys(watched).join());
+flush("json", JSON.stringify(watched));
+flush("spread", JSON.stringify({ ...watched }));
+flush("own width", Object.hasOwn(watched, "width"));
+flush("width in it", "width" in watched);
+flush("instanceof", watched instanceof Plain);
+flush("destructured", (({ height, width }: Plain) => height - width)(watched));
+flush("the class's method borrowed", Plain.prototype.area.call(watched));
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += perimeter(new Plain()) + widen(new Plain(), 1);
+flush("2000 honest", sum);
+flush("then the watched one, read", perimeter(new Watched()));
+flush("then the watched one, store", widen(new Watched(), 5));
+flush("then honest", perimeter(new Plain()));
+
+const list: Plain[] = [new Plain(), new Watched(), new Plain()];
+flush("elements", list.map(p => p.width).join());
+for (const p of list) p.height = 1;
+flush("stores through elements", list.map(p => p.area()).join());
+
+const captured = () => watched.height;
+flush("captured", captured());
+
+export {};
+//// a-look-alike-is-an-instance-of-neither-class-of-a-union.ts
+////= lines-48	Cat	name	"cat"	lives	9
+////= lines-48	Dog	name	"dog"	tricks	3
+
+function describe(pet: Cat | Dog): string {
+  if (pet instanceof Cat) return "cat " + pet.lives;
+  if (pet instanceof Dog) return "dog " + pet.tricks;
+  return "neither, undefined: " + (pet === undefined) + ", null: " + (pet === null) + ", an object: " + (typeof pet === "object");
+}
+
+const fake: Cat = { name: "fake", lives: 1 };
+console.log(describe(new Cat()));
+console.log(describe(new Dog()));
+console.log(describe(fake));
+//// a-look-alikes-method-reads-members-the-type-does-not-name.ts
+class Timer {
+  ticks = 0;
+  tick(): number {
+    return ++this.ticks;
+  }
+  reset(): void {
+    this.ticks = 0;
+  }
+}
+
+class Metronome {
+  tempo = 3;
+  history: number[] = [];
+  ticks = 0;
+  tick(): number {
+    this.ticks += this.tempo;
+    this.history.push(this.ticks);
+    return this.ticks;
+  }
+  reset(): void {
+    this.history.length = 0;
+    this.tempo++;
+    this.ticks = -1;
+  }
+}
+
+function run(t: Timer, times: number): number {
+  let last = 0;
+  for (let i = 0; i < times; i++) last = t.tick();
+  return last;
+}
+
+function restart(t: Timer): number {
+  t.reset();
+  return t.tick();
+}
+
+const timer = new Timer();
+const metronome = new Metronome();
+
+console.log("timer: " + run(timer, 3) + " " + JSON.stringify(timer));
+console.log("metronome through the timer's type: " + run(metronome, 3) + " " + JSON.stringify(metronome));
+console.log("timer restarted: " + restart(timer) + " " + JSON.stringify(timer));
+console.log("metronome restarted: " + restart(metronome) + " " + JSON.stringify(metronome));
+
+console.log("the timer's method on the metronome: " + Timer.prototype.tick.call(metronome) + " " + JSON.stringify(metronome));
+const asTimer: Timer = metronome;
+const borrowed = asTimer.tick;
+console.log("the metronome's method on a fresh metronome: " + borrowed.call(new Metronome()));
+
+////= attempt-7
+
+attempt("the metronome's method on a timer", () => borrowed.call(new Timer()));
+attempt("the metronome's reset on a timer", () => asTimer.reset.call(new Timer()));
+////= lines-65	attempt	"a method without its object"	free	asTimer.tick
+attempt("a method handed to a built-in", () => [1, 2].map(asTimer.tick).join());
+attempt("a method handed to a built-in with its object", () => [1, 2].map(asTimer.tick, new Metronome()).join());
+attempt("bound to the look-alike", () => timer.tick.bind(metronome)());
+attempt("bound to the timer", () => asTimer.tick.bind(timer)());
+
+run(new Timer(), 2000);
+console.log("after 2000 honest ticks: " + run(new Metronome(), 2) + " " + run(new Timer(), 2));
+
+class Stage {
+  clocks: Timer[] = [new Timer(), new Metronome(), new Timer()];
+  main: Timer = new Metronome();
+  beat(): string {
+    return this.clocks.map(c => c.tick()).join() + " " + this.main.tick();
+  }
+}
+
+const stage = new Stage();
+console.log("fields and elements: " + stage.beat() + " | " + stage.beat());
+console.log("what they hold: " + JSON.stringify(stage));
+
+export {};
+//// a-loop-bound-by-a-length-that-grows-in-the-body.ts
+////= show-32
+
+function doubled(numbers: number[], limit: number): number {
+  let sum = 0;
+  for (let i = 0; i < numbers.length; i++) {
+    sum += numbers[i];
+    if (numbers.length < limit) numbers.push(numbers[i] * 2);
+  }
+  return sum;
+}
+
+function cachedBound(numbers: number[]): number {
+  let sum = 0;
+  for (let i = 0, n = numbers.length; i < n; i++) {
+    sum += numbers[i];
+    numbers.push(100);
+  }
+  return sum;
+}
+
+function byForOf(numbers: number[], limit: number): number {
+  let sum = 0;
+  for (const n of numbers) {
+    sum += n;
+    if (numbers.length < limit) numbers.push(n + 0.5);
+  }
+  return sum;
+}
+
+function byLengthStore(numbers: number[], limit: number): string {
+  let kinds = "";
+  for (let i = 0; i < numbers.length; i++) {
+    kinds += typeof numbers[i] + " ";
+    if (numbers.length < limit) numbers.length += 1;
+  }
+  return kinds;
+}
+
+////= lines-290	farStore	if (i === 0) numbers[5] = 1
+
+function unshifted(strings: string[], limit: number): string {
+  let text = "";
+  for (let i = 0; i < strings.length; i++) {
+    text += strings[i].toUpperCase();
+    if (strings.length < limit) strings.unshift("n" + i);
+  }
+  return text;
+}
+
+function growingText(text: string, limit: number): string {
+  let seen = "";
+  for (let i = 0; i < text.length; i++) {
+    seen += text[i];
+    if (text.length < limit) text += String(i);
+  }
+  return seen + " " + text.length;
+}
+
+function queue(start: number): number[] {
+  const work = [start];
+  const order: number[] = [];
+  for (let i = 0; i < work.length; i++) {
+    const n = work[i];
+    order.push(n);
+    if (n > 1) work.push(n >> 1, n - (n >> 1));
+  }
+  return order;
+}
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += doubled([1, 2], 2) + cachedBound([i]) + byForOf([i], 1) + queue(1).length;
+console.log("2000 rounds in which nothing grows: " + total);
+
+////= attempt-44	"pushed to in the body"	doubled	6
+attempt("pushed to, the bound was read once", () => {
+  const numbers = [1, 2, 3];
+  return [cachedBound(numbers), numbers];
+});
+////= attempt-44	"pushed to under for of"	byForOf	5
+attempt("integers get fractions under for of", () => {
+  const numbers = [1, 2, 3];
+  return [byForOf(numbers, 6), numbers];
+});
+////= attempt-44	"the length is stored to in the body"	byLengthStore	4
+attempt("a store far past the end in the body", () => {
+  const numbers = [1, 2];
+  return [farStore(numbers), numbers];
+});
+attempt("put in front in the body", () => {
+  const strings = ["a", "b"];
+  return [unshifted(strings, 5), strings];
+});
+attempt("a text grows in the body", () => [growingText("ab", 6), growingText("", 3), growingText("x", 1)]);
+attempt("a work list", () => queue(5));
+
+export {};
+//// a-loop-bound-by-a-length-that-shrinks-in-the-body.ts
+////= show-42
+
+////= lines-290	popping	numbers.pop()
+
+function cachedBound(numbers: number[], cutAt: number): unknown[] {
+  let sum = 0;
+  const kinds: string[] = [];
+  for (let i = 0, n = numbers.length; i < n; i++) {
+    if (i === cutAt) numbers.length = cutAt;
+    kinds.push(typeof numbers[i]);
+    sum += numbers[i];
+  }
+  return [sum, kinds.join()];
+}
+
+////= lines-165	cachedBoundOfStrings	strings	string	width	length
+
+////= lines-165	cachedBoundOfPoints	points	Point	sum	x
+
+function cachedBoundOfFunctions(functions: (() => number)[], cutAt: number): number {
+  let sum = 0;
+  for (let i = 0, n = functions.length; i < n; i++) {
+    if (i === cutAt) functions.length = cutAt;
+    sum += functions[i]();
+  }
+  return sum;
+}
+
+function removeEven(numbers: number[]): number[] {
+  for (let i = 0; i < numbers.length; i++) if (numbers[i] % 2 === 0) numbers.splice(i, 1);
+  return numbers;
+}
+
+function shifting(strings: string[]): string {
+  let text = "";
+  for (let i = 0; i < strings.length; i++) {
+    text += strings[i];
+    strings.shift();
+  }
+  return text;
+}
+
+function emptiedUnderForOf(numbers: number[]): unknown[] {
+  const seen: number[] = [];
+  for (const n of numbers) {
+    seen.push(n);
+    if (n === 2) numbers.length = 0;
+  }
+  return [seen, numbers];
+}
+
+function backwards(numbers: number[]): unknown[] {
+  const kinds: string[] = [];
+  for (let i = numbers.length - 1; i >= 0; i--) {
+    kinds.push(typeof numbers[i]);
+    if (i === numbers.length - 1) numbers.length = Math.max(0, numbers.length - 2);
+  }
+  return [kinds.join(), numbers];
+}
+
+function cutByACallee(numbers: number[], cut: (list: number[]) => void): unknown[] {
+  let sum = 0;
+  for (let i = 0; i < 3; i++) {
+    sum += numbers[i];
+    cut(numbers);
+  }
+  return [sum, numbers.length];
+}
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += Number(cachedBound([i, 1, 2], 9)[0]) + cachedBoundOfStrings(["a", "b"], 9) + cachedBoundOfPoints([new Point(i)], 9) + cachedBoundOfFunctions([() => i], 9) + Number(cutByACallee([i, 1, 2], () => {})[0]);
+console.log("2000 rounds in which nothing shrinks: " + total);
+
+attempt("popped in the body", () => popping([1, 2, 3, 4, 5]));
+attempt("cut, the bound was read once: integers", () => cachedBound([1, 2, 3, 4], 2));
+attempt("cut, the bound was read once: fractions", () => cachedBound([0.5, 1.5, 2.5, 3.5], 1));
+attempt("cut to nothing at once", () => cachedBound([1, 2], 0));
+attempt("cut, the bound was read once: strings", () => cachedBoundOfStrings(["a", "b", "c"], 1));
+attempt("cut, the bound was read once: points", () => cachedBoundOfPoints([new Point(1), new Point(2)], 1));
+attempt("cut, the bound was read once: functions", () => cachedBoundOfFunctions([() => 1, () => 2], 1));
+attempt("spliced in the body: one is skipped", () => removeEven([1, 2, 4, 6, 7, 8]));
+attempt("shifted in the body", () => shifting(["a", "b", "c", "d", "e"]));
+attempt("emptied under for of", () => emptiedUnderForOf([1, 2, 3, 4]));
+attempt("backwards", () => backwards([1, 2, 3, 4, 5]));
+attempt("cut by a function that is called in the body", () => cutByACallee([1, 2, 3], list => (list.length = 1)));
+attempt("emptied by a function that is called in the body", () => cutByACallee([1.5, 2.5, 3.5], list => list.splice(0)));
+
+export {};
+//// a-loop-is-left-early-and-the-iterators-return-throws.ts
+////= text-14
+
+let log: string[] = [];
+
+class Source implements Iterable<number> {
+  how: string;
+  constructor(how: string) {
+    this.how = how;
+  }
+  [Symbol.iterator](): Iterator<number> {
+    let n = 0;
+    const how = this.how;
+    return {
+      next(): IteratorResult<number> {
+        n++;
+        log.push("next " + n);
+        if (how === "next throws" && n === 2) throw new RangeError("next");
+        return n > 3 ? { done: true, value: undefined } : { done: false, value: n };
+      },
+      return(): IteratorResult<number> {
+        log.push("return");
+        if (how === "return throws") throw new SyntaxError("return");
+        if (how === "return gives a number") return JSON.parse("5");
+        if (how === "return gives null") return JSON.parse("null");
+        return { done: true, value: undefined };
+      },
+    };
+  }
+}
+
+function leaveByBreak(numbers: Iterable<number>): string {
+  let last = 0;
+  for (const n of numbers) {
+    last = n;
+    if (n === 1) break;
+  }
+  return "broke at " + last;
+}
+
+function leaveByReturn(numbers: Iterable<number>): string {
+  for (const n of numbers) return "returned at " + n;
+  return "empty";
+}
+
+function leaveByThrow(numbers: Iterable<number>): string {
+  for (const n of numbers) throw new EvalError("body " + n);
+  return "empty";
+}
+
+function leaveByContinueOuter(numbers: Iterable<number>): string {
+  let rounds = 0;
+  outer: for (let i = 0; i < 2; i++) {
+    for (const n of numbers) {
+      rounds += n;
+      continue outer;
+    }
+  }
+  return "rounds " + rounds;
+}
+
+function leaveByPattern(numbers: Iterable<number>): string {
+  const [a] = numbers;
+  return "took " + a;
+}
+
+function patternDefaultThrows(numbers: Iterable<number | undefined>): string {
+  const explode = (): number => {
+    throw new EvalError("default");
+  };
+  const [a, b = explode()] = numbers;
+  return "took " + a + " and " + b;
+}
+
+function runToTheEnd(numbers: Iterable<number>): string {
+  let sum = 0;
+  for (const n of numbers) sum += n;
+  return "sum " + sum;
+}
+
+function* leaveInsideAGenerator(numbers: Iterable<number>): Generator<number, string, void> {
+  for (const n of numbers) yield n;
+  return "ended";
+}
+
+const kinds = ["well behaved", "return throws", "return gives a number", "return gives null", "next throws"];
+const ways: [string, (numbers: Iterable<number>) => string][] = [
+  ["break", leaveByBreak],
+  ["return", leaveByReturn],
+  ["throw", leaveByThrow],
+  ["continue outer", leaveByContinueOuter],
+  ["pattern", leaveByPattern],
+  ["pattern with a default", patternDefaultThrows],
+  ["to the end", runToTheEnd],
+  ["a generator that is closed", numbers => {
+    const g = leaveInsideAGenerator(numbers);
+    g.next();
+    return text(g.return("closed"));
+  }],
+  ["a generator that is thrown at", numbers => {
+    const g = leaveInsideAGenerator(numbers);
+    g.next();
+    return text(g.throw(new URIError("thrown in")));
+  }],
+];
+
+for (const kind of kinds) {
+  for (const [label, leave] of ways) {
+    log = [];
+    let outcome: string;
+    try {
+      outcome = leave(new Source(kind));
+    } catch (error) {
+      outcome = failure(error);
+    }
+    console.log(kind + ", " + label + ": " + outcome + " [" + log.join(", ") + "]");
+  }
+}
+//// a-loop-runs-one-past-the-end-of-four-kinds-of-arrays.ts
+////= show-32
+
+////= Point-11
+
+////= lines-191	sum	numbers	number	total	0
+
+function sumAsIntegers(numbers: number[]): number {
+  let total = 0;
+  for (let i = 0; i <= numbers.length; i++) total = (total + numbers[i]) | 0;
+  return total;
+}
+
+function largest(numbers: number[]): number {
+  let best = -Infinity;
+  for (let i = 0; i <= numbers.length; i++) if (numbers[i] > best) best = numbers[i];
+  return best;
+}
+
+function countZeros(numbers: number[]): number {
+  let count = 0;
+  for (let i = 0; i <= numbers.length; i++) if (numbers[i] === 0) count++;
+  return count;
+}
+
+function countFalsy(numbers: number[]): number {
+  let count = 0;
+  for (let i = 0; i <= numbers.length; i++) if (!numbers[i]) count++;
+  return count;
+}
+
+////= lines-191	glue	strings	string	text	""
+
+function widths(strings: string[]): number {
+  let total = 0;
+  for (let i = 0; i <= strings.length; i++) total += strings[i].length;
+  return total;
+}
+
+function xs(points: Point[]): number {
+  let total = 0;
+  for (let i = 0; i <= points.length; i++) total += points[i].x;
+  return total;
+}
+
+function twices(points: Point[]): number {
+  let total = 0;
+  for (let i = 0; i <= points.length; i++) total += points[i].twice();
+  return total;
+}
+
+////= runAll	let i = 0; i <= functions.length; i++) total += functions[i]
+
+function copy(numbers: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i <= numbers.length; i++) out.push(numbers[i]);
+  return out;
+}
+
+function copyByIndex(numbers: number[]): number[] {
+  const out = new Array<number>(numbers.length);
+  for (let i = 0; i <= numbers.length; i++) out[i] = numbers[i];
+  return out;
+}
+
+function pairs(numbers: number[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < numbers.length; i++) out.push(numbers[i] + numbers[i + 1]);
+  return out;
+}
+
+function fromMinusOne(numbers: number[]): number {
+  let total = 0;
+  for (let i = -1; i < numbers.length; i++) total += numbers[i];
+  return total;
+}
+
+function tupleSum(pair: [number, number]): number {
+  let total = 0;
+  for (let i = 0; i <= pair.length; i++) total += pair[i];
+  return total;
+}
+
+attempt("integers: sum", () => sum([1, 2, 3]));
+attempt("integers: sum as integers", () => sumAsIntegers([1, 2, 3]));
+attempt("integers: largest", () => largest([1, 2, 3]));
+attempt("integers: zeros", () => countZeros([0, 1, 0]));
+attempt("integers: falsy ones", () => countFalsy([0, 1, 0]));
+attempt("fractions: sum", () => sum([0.5, 1.5]));
+attempt("fractions: zeros", () => countZeros([0.5, 0, -0]));
+attempt("fractions: largest", () => largest([0.5, 1.5]));
+attempt("an empty list", () => [sum([]), sumAsIntegers([]), largest([]), countZeros([]), countFalsy([])]);
+attempt("strings: glued", () => glue(["a", "b"]));
+attempt("strings: widths", () => widths(["a", "b"]));
+attempt("points: xs", () => xs([new Point(1)]));
+attempt("points: twices", () => twices([new Point(1)]));
+attempt("functions", () => runAll([() => 1]));
+attempt("a copy by push", () => copy([1, 2]));
+attempt("a copy by index", () => copyByIndex([1, 2]));
+attempt("a copy of fractions", () => [copy([0.5]), copyByIndex([0.5])]);
+attempt("a copy, summed honestly", () => copy([1, 2]).reduce((a, b) => a + b, 0));
+attempt("each with its neighbor", () => [pairs([1, 2, 3]), pairs([0.5]), pairs([])]);
+attempt("from minus one", () => fromMinusOne([1, 2]));
+attempt("a tuple", () => tupleSum([1, 2]));
+
+export {};
+//// a-map-of-dogs-gets-a-cat.ts
+////= show-33
+
+function legsOf(dogs: Map<string, Dog>, name: string): number {
+  const dog = dogs.get(name);
+  return dog === undefined ? -1 : dog.legs + 1;
+}
+
+function barkOf(dogs: Map<string, Dog>, name: string): string {
+  return dogs.get(name)?.bark() ?? "nobody";
+}
+
+function totalLegs(dogs: Map<string, Dog>): number {
+  let total = 0;
+  for (const dog of dogs.values()) total += dog.legs;
+  return total;
+}
+
+function totalByEntries(dogs: Map<string, Dog>): string {
+  let text = "";
+  for (const [name, dog] of dogs) text += name + "=" + dog.legs + ";";
+  return text;
+}
+
+function totalByForEach(dogs: Map<string, Dog>): number {
+  let total = 0;
+  dogs.forEach(dog => {
+    total += dog.legs;
+  });
+  return total;
+}
+
+function add(animals: Map<string, Animal>, animal: Animal): void {
+  animals.set(animal.name, animal);
+}
+
+let warm = 0;
+for (let i = 0; i < 2000; i++) {
+  const honest = new Map([["a", new Dog("a")], ["b", new Dog("b")]]);
+  warm += legsOf(honest, "a") + barkOf(honest, "b").length + totalLegs(honest) + totalByEntries(honest).length + totalByForEach(honest);
+}
+console.log("after 2000 honest maps", warm);
+
+const dogs = new Map<string, Dog>([["rex", new Dog("rex")]]);
+const animals: Map<string, Animal> = dogs;
+animals.set("tom", new Cat("tom"));
+add(dogs, new Cat("kit"));
+dogs.set("fido", new Dog("fido"));
+
+for (const name of ["rex", "tom", "kit", "fido", "nobody"]) {
+  attempt(name + ": legs + 1", () => legsOf(dogs, name));
+  attempt(name + ": bark", () => barkOf(dogs, name));
+}
+attempt("total legs", () => totalLegs(dogs));
+attempt("by entries", () => totalByEntries(dogs));
+attempt("by forEach", () => totalByForEach(dogs));
+attempt("values spread", () => [...dogs.values()].map(dog => dog.legs));
+attempt("an old dog replaced by a cat", () => {
+  animals.set("rex", new Cat("rex"));
+  return [legsOf(dogs, "rex"), dogs.get("rex")?.tag, dogs.size];
+});
+
+attempt("dogs as keys", () => {
+  const ages = new Map<Dog, number>([[new Dog("rex"), 3]]);
+  const wide: Map<Animal, number> = ages;
+  wide.set(new Cat("tom"), 5);
+  let total = 0;
+  for (const [dog, age] of ages) total += dog.legs * age;
+  return [total, [...ages.keys()].map(dog => typeof dog.legs)];
+});
+attempt("numbers as values get a string", () => {
+  const counts = new Map<string, number>([["a", 1]]);
+  const wide: Map<string, number | string> = counts;
+  wide.set("b", "two");
+  let total = 0;
+  for (const count of counts.values()) total += count;
+  return [total, (counts.get("b") ?? 0) * 2, typeof counts.get("b")];
+});
+attempt("a readonly map changes under its reader", () => {
+  const counts = new Map<string, number>([["a", 1]]);
+  const view: ReadonlyMap<string, number> = counts;
+  const before = [view.size, view.get("a")];
+  counts.set("a", 2).set("b", 3);
+  return [...before, view.size, view.get("a")];
+});
+attempt("a map of arrays of dogs", () => {
+  const packs = new Map<string, Dog[]>([["home", [new Dog("rex")]]]);
+  const wide: Map<string, Animal[]> = packs;
+  wide.get("home")?.push(new Cat("tom"));
+  wide.set("away", [new Cat("kit")]);
+  return [...packs.values()].map(pack => pack.map(dog => dog.legs));
+});
+//// a-map-of-handlers-each-narrower-than-its-type.ts
+////= Person-5
+
+////= lines-84	Handler	handle	a	Animal	number
+
+const handlers = new Map<string, Handler>();
+////= handlers-set	"dog"	d	Dog	d.legs
+////= handlers-set	"cat"	c	Cat	c.weight
+////= handlers-set	"spider"	s	Spider	s.tag
+handlers.set("owner", {
+  handle(d: Dog) {
+    return d.owner.first.length;
+  },
+});
+handlers.set("tricks", {
+  handle(d: Dog) {
+    let letters = 0;
+    for (const trick of d.tricks) letters += trick.length;
+    return letters;
+  },
+});
+
+const record: Record<string, Handler> = {};
+for (const [name, handler] of handlers) record[name] = handler;
+
+const animals: Animal[] = [new Dog("rex"), new Cat("tom"), new Spider("boris"), new Animal("thing")];
+
+function dispatch(name: string, a: Animal): number {
+  const handler = handlers.get(name);
+  if (handler === undefined) return -1;
+  return handler.handle(a);
+}
+
+for (const name of handlers.keys()) {
+  for (const animal of animals) {
+    show("map " + name + " gets " + animal.constructor.name, () => dispatch(name, animal));
+    show("record " + name + " gets " + animal.constructor.name, () => record[name].handle(animal));
+  }
+}
+show("no such handler", () => dispatch("fish", animals[0]));
+show("no such entry", () => record["fish"].handle(animals[0]));
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += dispatch("dog", animals[0]);
+show("2000 dogs for the dog handler", () => total);
+show("a cat for the dog handler", () => dispatch("dog", animals[1]));
+show("a spider for the dog handler", () => dispatch("dog", animals[2]));
+show("a dog for the dog handler", () => dispatch("dog", animals[0]));
+//// a-map-of-numbers-gets-a-missing-entry-of-a-record-and-is-asked-what-it-holds.ts
+const map = new Map<string, number>([["a", 1]]);
+const ages: Record<string, number> = {};
+map.set("b", ages.bob);
+console.log("size " + map.size);
+console.log("has " + map.has("b"));
+console.log("get " + typeof map.get("b"));
+const got = map.get("b");
+console.log("get + 1 " + (got === undefined ? "nothing" : got + 1));
+let visited = "";
+////= map-forEach
+console.log("forEach " + visited);
+console.log("values " + [...map.values()].map(value => typeof value).join());
+console.log("Array.from " + Array.from(map.values(), value => typeof value).join());
+console.log("some " + [...map.values()].some(value => value === undefined));
+console.log("filter " + [...map.values()].filter(value => typeof value !== "number").length);
+let walked = "";
+for (const [key, value] of map) walked += key + " " + typeof value + " ";
+console.log("for of " + walked);
+let sum = 0;
+for (const value of map.values()) sum += value;
+console.log("sum " + sum);
+console.log("JSON " + JSON.stringify([...map]));
+
+export {};
+//// a-map-of-numbers-gets-a-string-by-a-borrowed-set-before-each-use.ts
+////= nameOf-5
+
+////= attempt-67	Map.prototype.set.call(map, "b", "text"
+////= attempt-84	Map.prototype.set.call(map, "b", "text"
+////= attempt-73	Map.prototype.set.call(map, "b", "text"
+////= attempt-77	Map.prototype.set.call(map, "b", "text"
+////= attempt-68	Map.prototype.set.call(map, "b", "text"
+////= attempt-80	Map.prototype.set.call(map, "b", "text"
+////= attempt-55	map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]])	Map.prototype.set.call(map, "b", "text")	[, value] of map) kinds += typeof value
+////= attempt-56	map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]	Map.prototype.set.call(map, "b", "text"	map.values()
+////= attempt-50	map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]	Map.prototype.set.call(map, "b", "text"	map
+////= attempt-88	Map.prototype.set.call(map, "b", "text"
+////= attempt-86	Map.prototype.set.call(map, "b", "text"
+////= attempt-90	Map.prototype.set.call(map, "b", "text"
+////= attempt-66	Map.prototype.set.call(map, "b", "text"
+////= attempt-58	Map.prototype.set.call(map, "b", "text"
+////= attempt-81	Map.prototype.set.call(map, "b", "text"
+////= attempt-63	Map.prototype.set.call(map, "b", "text"
+////= attempt-61	Map.prototype.set.call(map, "b", "text"
+
+export {};
+//// a-map-of-numbers-gets-a-string-through-a-generic-function-at-a-wider-type-argument-and-is-asked-what-it-holds.ts
+function put<K, V>(target: Map<K, V>, key: K, value: V): void {
+  target.set(key, value);
+}
+
+const map = new Map<string, number>([["a", 1]]);
+put<string, number | string>(map, "b", "text");
+console.log("size " + map.size);
+console.log("has " + map.has("b"));
+console.log("get " + typeof map.get("b"));
+const got = map.get("b");
+console.log("get + 1 " + (got === undefined ? "nothing" : got + 1));
+let visited = "";
+////= map-forEach
+console.log("forEach " + visited);
+console.log("values " + [...map.values()].map(value => typeof value).join());
+console.log("Array.from " + Array.from(map.values(), value => typeof value).join());
+console.log("some " + [...map.values()].some(value => value === undefined));
+console.log("filter " + [...map.values()].filter(value => typeof value !== "number").length);
+let walked = "";
+for (const [key, value] of map) walked += key + " " + typeof value + " ";
+console.log("for of " + walked);
+let sum = 0;
+for (const value of map.values()) sum += value;
+console.log("sum " + sum);
+console.log("JSON " + JSON.stringify([...map]));
+
+export {};
+//// a-map-of-numbers-gets-a-string-through-a-wider-alias-and-is-asked-what-it-holds.ts
+const map = new Map<string, number>([["a", 1]]);
+const wide: Map<string, number | string> = map;
+wide.set("b", "text");
+console.log("size " + map.size);
+console.log("has " + map.has("b"));
+console.log("get " + typeof map.get("b"));
+const got = map.get("b");
+console.log("get + 1 " + (got === undefined ? "nothing" : got + 1));
+let visited = "";
+////= map-forEach
+console.log("forEach " + visited);
+console.log("values " + [...map.values()].map(value => typeof value).join());
+console.log("Array.from " + Array.from(map.values(), value => typeof value).join());
+console.log("some " + [...map.values()].some(value => value === undefined));
+console.log("filter " + [...map.values()].filter(value => typeof value !== "number").length);
+let walked = "";
+for (const [key, value] of map) walked += key + " " + typeof value + " ";
+console.log("for of " + walked);
+let sum = 0;
+for (const value of map.values()) sum += value;
+console.log("sum " + sum);
+console.log("JSON " + JSON.stringify([...map]));
+
+export {};
+//// a-map-of-numbers-gets-an-element-from-past-the-end-of-a-list-and-is-asked-what-it-holds.ts
+const map = new Map<string, number>([["a", 1]]);
+const list = [1, 2];
+map.set("b", list[5]);
+console.log("size " + map.size);
+console.log("has " + map.has("b"));
+console.log("get " + typeof map.get("b"));
+const got = map.get("b");
+console.log("get + 1 " + (got === undefined ? "nothing" : got + 1));
+let visited = "";
+////= map-forEach
+console.log("forEach " + visited);
+console.log("values " + [...map.values()].map(value => typeof value).join());
+console.log("Array.from " + Array.from(map.values(), value => typeof value).join());
+console.log("some " + [...map.values()].some(value => value === undefined));
+console.log("filter " + [...map.values()].filter(value => typeof value !== "number").length);
+let walked = "";
+for (const [key, value] of map) walked += key + " " + typeof value + " ";
+console.log("for of " + walked);
+let sum = 0;
+for (const value of map.values()) sum += value;
+console.log("sum " + sum);
+console.log("JSON " + JSON.stringify([...map]));
+
+export {};
+//// a-map-of-numbers-gets-null-by-reflect-apply-of-its-own-set-before-each-use.ts
+////= nameOf-5
+
+////= attempt-67	Reflect.apply(map.set, map, ["b", null]
+////= attempt-84	Reflect.apply(map.set, map, ["b", null]
+////= attempt-73	Reflect.apply(map.set, map, ["b", null]
+////= attempt-77	Reflect.apply(map.set, map, ["b", null]
+////= attempt-68	Reflect.apply(map.set, map, ["b", null]
+////= attempt-80	Reflect.apply(map.set, map, ["b", null]
+////= attempt-55	map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]])	Reflect.apply(map.set, map, ["b", null])	[, value] of map) kinds += typeof value
+////= attempt-56	map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]	Reflect.apply(map.set, map, ["b", null]	map.values()
+////= attempt-50	map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]	Reflect.apply(map.set, map, ["b", null]	map
+////= attempt-88	Reflect.apply(map.set, map, ["b", null]
+////= attempt-86	Reflect.apply(map.set, map, ["b", null]
+////= attempt-90	Reflect.apply(map.set, map, ["b", null]
+////= attempt-66	Reflect.apply(map.set, map, ["b", null]
+////= attempt-58	Reflect.apply(map.set, map, ["b", null]
+////= attempt-81	Reflect.apply(map.set, map, ["b", null]
+////= attempt-63	Reflect.apply(map.set, map, ["b", null]
+////= attempt-61	Reflect.apply(map.set, map, ["b", null]
+
+export {};
+//// a-map-of-numbers-gets-undefined-by-reflect-apply-of-set-before-each-use.ts
+////= nameOf-5
+
+////= attempt-67	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-84	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-73	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-77	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-68	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-80	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-55	map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]])	Reflect.apply(Map.prototype.set, map, ["b", undefined])	[, value] of map) kinds += typeof value
+////= attempt-56	map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]	Reflect.apply(Map.prototype.set, map, ["b", undefined]	map.values()
+////= attempt-50	map = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]	Reflect.apply(Map.prototype.set, map, ["b", undefined]	map
+////= attempt-88	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-86	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-90	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-66	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-58	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-81	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-63	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+////= attempt-61	Reflect.apply(Map.prototype.set, map, ["b", undefined]
+
+export {};
+//// a-map-of-numbers-gets-undefined-through-a-wider-alias-and-is-asked-what-it-holds.ts
+const map = new Map<string, number>([["a", 1]]);
+const wide: Map<string, number | undefined> = map;
+wide.set("b", undefined);
+console.log("size " + map.size);
+console.log("has " + map.has("b"));
+console.log("get " + typeof map.get("b"));
+const got = map.get("b");
+console.log("get + 1 " + (got === undefined ? "nothing" : got + 1));
+let visited = "";
+////= map-forEach
+console.log("forEach " + visited);
+console.log("values " + [...map.values()].map(value => typeof value).join());
+console.log("Array.from " + Array.from(map.values(), value => typeof value).join());
+console.log("some " + [...map.values()].some(value => value === undefined));
+console.log("filter " + [...map.values()].filter(value => typeof value !== "number").length);
+let walked = "";
+for (const [key, value] of map) walked += key + " " + typeof value + " ";
+console.log("for of " + walked);
+let sum = 0;
+for (const value of map.values()) sum += value;
+console.log("sum " + sum);
+console.log("JSON " + JSON.stringify([...map]));
+
+export {};
+//// a-map-of-numbers-is-constructed-from-a-wider-map-and-is-asked-what-it-holds.ts
+////= lines-310	source = new Map<string, number | string>
+const narrow = new Map<string, number>();
+const wide: Map<string, number | string> = narrow;
+for (const [key, value] of source) wide.set(key, key === "b" ? String(value) : value);
+const map = narrow;
+console.log("size " + map.size);
+console.log("has " + map.has("b"));
+console.log("get " + typeof map.get("b"));
+const got = map.get("b");
+console.log("get + 1 " + (got === undefined ? "nothing" : got + 1));
+let visited = "";
+////= map-forEach
+console.log("forEach " + visited);
+console.log("values " + [...map.values()].map(value => typeof value).join());
+console.log("Array.from " + Array.from(map.values(), value => typeof value).join());
+console.log("some " + [...map.values()].some(value => value === undefined));
+console.log("filter " + [...map.values()].filter(value => typeof value !== "number").length);
+let walked = "";
+for (const [key, value] of map) walked += key + " " + typeof value + " ";
+console.log("for of " + walked);
+let sum = 0;
+for (const value of map.values()) sum += value;
+console.log("sum " + sum);
+console.log("JSON " + JSON.stringify([...map]));
+
+export {};
+//// a-map-of-numbers-is-constructed-from-pairs-with-an-element-from-past-the-end-and-is-asked-what-it-holds.ts
+const list = [1, 2];
+const map = new Map<string, number>([
+  ["a", list[0]],
+  ["b", list[5]],
+]);
+console.log("size " + map.size);
+console.log("has " + map.has("b"));
+console.log("get " + typeof map.get("b"));
+const got = map.get("b");
+console.log("get + 1 " + (got === undefined ? "nothing" : got + 1));
+let visited = "";
+////= map-forEach
+console.log("forEach " + visited);
+console.log("values " + [...map.values()].map(value => typeof value).join());
+console.log("Array.from " + Array.from(map.values(), value => typeof value).join());
+console.log("some " + [...map.values()].some(value => value === undefined));
+console.log("filter " + [...map.values()].filter(value => typeof value !== "number").length);
+let walked = "";
+for (const [key, value] of map) walked += key + " " + typeof value + " ";
+console.log("for of " + walked);
+let sum = 0;
+for (const value of map.values()) sum += value;
+console.log("sum " + sum);
+console.log("JSON " + JSON.stringify([...map]));
+
+export {};
+//// a-map-subclass-made-from-entries-needs-its-own-set-method.ts
+////= Counting
+
+console.log("size " + new Counting([["k", 1]]).size);
+
+export {};
+//// a-mapped-type-exchanges-the-types-of-two-members.ts
+////= show-32
+
+interface Point {
+  x: number;
+  name: string;
+  live: boolean;
+}
+
+type Exchanged<T extends { x: unknown; name: unknown }> = { [K in keyof T as K extends "x" ? "name" : K extends "name" ? "x" : K]: T[K] };
+type Prefixed<T> = { [K in keyof T as `old${Capitalize<K & string>}`]: T[K] };
+type Getters<T> = { [K in keyof T as `get${Capitalize<K & string>}`]: () => T[K] };
+
+function xOf<T extends { x: unknown }>(o: T): T["x"] {
+  return o.x;
+}
+
+function nameOf<T extends { name: unknown }>(o: T): T["name"] {
+  return o.name;
+}
+
+////= set
+
+const yes: boolean = process.argv.length > 0;
+
+const point: Point = { x: 1, name: "p", live: true };
+const exchanged: Exchanged<Point> = { name: 2, x: "q", live: false };
+const sameOrder: Exchanged<Point> = { x: "r", name: 3, live: true };
+const prefixed: Prefixed<Point> = { oldX: 4, oldName: "s", oldLive: true };
+const getters: Getters<Point> = { getX: () => 5, getName: () => "t", getLive: () => false };
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += xOf(point) + nameOf(point).length;
+console.log("2000 rounds with the first shape: " + total);
+
+attempt("the first shape", () => [xOf(point) + 1, nameOf(point).toUpperCase(), Object.keys(point), JSON.stringify(point)]);
+attempt("the exchanged shape", () => [xOf(exchanged).toUpperCase(), nameOf(exchanged) + 1, Object.keys(exchanged), JSON.stringify(exchanged)]);
+attempt("the exchanged shape in the first one's order", () => [xOf(sameOrder).toUpperCase(), nameOf(sameOrder) + 1, Object.keys(sameOrder), JSON.stringify(sameOrder)]);
+attempt("the first shape again", () => [xOf(point) + 1, nameOf(point).toUpperCase()]);
+attempt("in one list", () => [point, exchanged, sameOrder].map(o => typeof o.x + " " + typeof o.name + " " + String(o.x) + String(o.name)));
+attempt("prefixed", () => [prefixed.oldX + 1, prefixed.oldName.toUpperCase(), prefixed.oldLive, Object.keys(prefixed)]);
+attempt("getters", () => [getters.getX() + 1, getters.getName().toUpperCase(), getters.getLive(), Object.keys(getters)]);
+
+set(exchanged, yes ? "x" : "name", 9);
+attempt("a union key on the exchanged shape: a number in its x", () => [typeof exchanged.x, JSON.stringify(exchanged), exchanged.x + "!"]);
+attempt("a union key on the exchanged shape: a method", () => exchanged.x.toUpperCase());
+set(prefixed, yes ? "oldX" : "oldName", "text");
+attempt("a union key on the prefixed shape", () => [typeof prefixed.oldX, prefixed.oldX + 1, JSON.stringify(prefixed)]);
+set(getters, yes ? "getX" : "getName", () => "from the other getter");
+attempt("a union key on the getters", () => [typeof getters.getX(), getters.getX() + 1]);
+attempt("a union key on the getters: a method of the result", () => getters.getX().toFixed(1));
+
+export {};

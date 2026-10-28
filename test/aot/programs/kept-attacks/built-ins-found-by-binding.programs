@@ -1,0 +1,305 @@
+////: attempts
+const attempts: [string, () => unknown][] = [
+  ["setMaxListeners 5", () => emitter.setMaxListeners(5).getMaxListeners()],
+  ["setMaxListeners -1", () => emitter.setMaxListeners(-1)],
+  ["setMaxListeners text", () => emitter.setMaxListeners("x" as any)],
+  ["events.setMaxListeners NaN", () => events.setMaxListeners(NaN)],
+  ["readSync offset -1", () => fs.readSync(«1», Buffer.alloc(1), -1 as any)],
+  ["readSync offset 1.5", () => fs.readSync(«1», Buffer.alloc(4), 1.5 as any)],
+  ["readSync length text", () => fs.readSync(«1», Buffer.alloc(4), 0, "2" as any, null)],
+  ["createReadStream start -1", () => fs.createReadStream("nowhere", { start: -1 })],
+  ["createReadStream start 2 end 1", () => fs.createReadStream("nowhere", { start: 2, end: 1 })],
+  ["listen port 70000", () => net.createServer().listen({ port: 70000 })],
+  ["listen port text", () => net.createServer().listen({ port: "x" as any })],
+  ["connect port -1", () => net.connect({ port: -1 })],
+  ["setTimeout text", () => new net.Socket().setTimeout("a" as any)],
+  ["setTimeout 10", () => typeof new net.Socket().setTimeout(0)],
+  ["deflate level 99", () => zlib.deflateSync("a", { level: 99 })],
+  ["deflate level 5", () => zlib.inflateSync(zlib.deflateSync("abc", { level: 5 })).toString()],
+  ["deflate chunkSize 1", () => zlib.deflateSync("a", { chunkSize: 1 })],
+  ["deflate windowBits text", () => zlib.deflateSync("a", { windowBits: "9" as any })],
+  ["Readable highWaterMark -1", () => new Readable({ highWaterMark: -1 })],
+  ["Readable highWaterMark 8", () => new Readable({ highWaterMark: 8 }).readableHighWaterMark],
+  ["spawnSync timeout -1", () => child_process.spawnSync("true", { timeout: -1 })],
+  ["spawnSync maxBuffer text", () => child_process.spawnSync("true", { maxBuffer: "1" as any })],
+  ["once signal 5", () => events.once(emitter, "x", { signal: 5 as any })],
+  ["once signal object", () => typeof events.once(emitter, "x", { signal: { aborted: false, addEventListener() {}, removeEventListener() {} } as any })],
+  ["lookup family 9", () => dns.lookup("localhost", { family: 9 as any }, () => {})],
+  ["parseArgs args 5", () => util.parseArgs({ args: 5 as any })],
+  ["parseArgs options 5", () => util.parseArgs({ args: [], options: 5 as any })],
+  ["parseArgs", () => JSON.stringify(util.parseArgs({ args: ["-a"], options: { a: { type: "boolean", short: "a" } } }).values)],
+  ["inspect options", () => util.inspect({ a: 1 }, { depth: 0 })],
+  ["Buffer.alloc -1", () => Buffer.alloc(-1)],
+  ["Buffer.alloc text", () => Buffer.alloc("1" as any)],
+  ["readUInt8 9", () => Buffer.alloc(4).readUInt8(9)],
+  ["readUIntBE 0 7", () => Buffer.alloc(8).readUIntBE(0, 7)],
+  ["write hex odd", () => Buffer.alloc(4).write("abc", "hex")],
+  ["mkdtemp object", () => fs.mkdtempSync({} as any)],
+  ["truncate len text", () => fs.truncateSync("nowhere", "1" as any)],
+  ["watchFile interval text", () => fs.watchFile("nowhere", { interval: "1" as any }, () => {})],
+];
+////: for-13
+for (const [label, attempt] of attempts) {
+  try {
+    const answer = attempt();
+    console.log(label, "->", typeof answer === "object" && answer !== null ? Object.prototype.toString.call(answer) : String(answer));
+  } catch (error) {
+    const { name, code, message } = error as NodeJS.ErrnoException;
+    console.log(label, "throws", name, code, message);
+  }
+}
+////: lines-34
+«1».on(«2», (message: any) => {
+  console.log("child got", JSON.stringify(message), Buffer.isBuffer(message.bytes), String(message.bytes));
+  «1».exit(0);
+});
+////: lines-43
+try {
+  «1»);
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+//// built-ins-found-by-binding/programs-arguments.ts
+// Built ins found by binding: programs arguments. It prints what plain Bun prints.
+console.log(process.argv.length, typeof process.argv[0], Array.isArray(process.argv), process.argv.slice(2).join("|"));
+console.log(process.argv === process.argv, Bun.argv === process.argv, process.execArgv.length, Array.isArray(process.execArgv));
+for (const argument of process.argv.slice(2)) console.log(argument.toUpperCase());
+process.argv.push("pushed");
+console.log(process.argv.at(-1), Bun.argv.at(-1));
+(process as any).argv[0] = 41;
+console.log((process as any).argv[0] + 1, (Bun as any).argv[0] + 1);
+const replacement = [{ a: 1 }];
+(process as any).argv = replacement;
+console.log((process as any).argv === replacement, (process as any).argv[0].a, Bun.argv === (process as any).argv);
+(process as any).argv = 7;
+console.log((process as any).argv + 1);
+(process as any).execArgv = "text";
+console.log((process as any).execArgv.length);
+//// built-ins-found-by-binding/programs-channel-child-answers.ts
+// Built ins found by binding: programs channel child answers. It prints what plain Bun prints.
+process.on("message", (message: any) => {
+  process.send!({ answer: message.ask * 2, bytes: Buffer.from("from the child") }, undefined, undefined, () => process.disconnect!());
+});
+process.on("disconnect", () => console.log("child is disconnected", process.connected));
+//// built-ins-found-by-binding/programs-channel-child-literal.ts
+// Built ins found by binding: programs channel child literal. It prints what plain Bun prints.
+////= lines-34	process	"message"
+console.log("child listens", process.listenerCount("message"), process.connected);
+//// built-ins-found-by-binding/programs-channel-child-unknown.ts
+// Built ins found by binding: programs channel child unknown. It prints what plain Bun prints.
+const p = (globalThis as any)[["pro", "cess"].join("")];
+////= lines-34	p	"message"
+console.log("child listens", p.listenerCount("message"), p.connected);
+//// built-ins-found-by-binding/programs-channel-child-variable.ts
+// Built ins found by binding: programs channel child variable. It prints what plain Bun prints.
+const p = process;
+const name = ["mess", "age"].join("");
+////= lines-34	p	name
+console.log("child listens", p.listenerCount(name), p.connected);
+//// built-ins-found-by-binding/programs-console-lines.ts
+// Built ins found by binding: programs console lines. It prints what plain Bun prints.
+console.log(Object.hasOwn(console, Symbol.asyncIterator), typeof console[Symbol.asyncIterator]);
+let count = 0;
+for await (const line of console) {
+  console.log("line " + line.toUpperCase());
+  if (++count === 2) break;
+}
+console.log(count);
+//// built-ins-found-by-binding/programs-events-and-listener.ts
+// Built ins found by binding: programs events and listener. It prints what plain Bun prints.
+import "node:events";
+process.on("exit", code => console.log(code));
+//// built-ins-found-by-binding/programs-events-later.cjs
+// Built ins found by binding: programs events later. It prints what plain Bun prints.
+const native = Object.getPrototypeOf(process);
+console.log(Object.getPrototypeOf(native) === Object.prototype, process._eventsCount, process.domain);
+const EventEmitter = require("node:events");
+console.log(Object.getPrototypeOf(native) === EventEmitter.prototype, process._eventsCount, process instanceof EventEmitter);
+console.log(process.on === native.on, process.on !== EventEmitter.prototype.on);
+process.on("exit", code => console.log("exit", code));
+//// built-ins-found-by-binding/programs-late-members.cjs
+// Built ins found by binding: programs late members. It prints what plain Bun prints.
+function readFlag() {
+  return process.noDeprecation;
+}
+function readAll() {
+  return [process.noDeprecation, process.traceDeprecation, process.throwDeprecation, process.pendingDeprecation, process.traceProcessWarnings, process.noProcessWarnings].join();
+}
+console.log(readAll(), "noDeprecation" in process, Object.hasOwn(process, "noDeprecation"));
+process.noDeprecation = true;
+console.log(readFlag(), "noDeprecation" in process);
+console.log("x" in process, process.x);
+process.x = { y: 1 };
+console.log("x" in process, process.x.y, Object.keys(process).includes("x"));
+console.log(process._events, process._eventsCount, process._maxListeners, "_events" in process);
+const EventEmitter = require("node:events");
+console.log(process._events, process._eventsCount, process._maxListeners, "_events" in process);
+EventEmitter.prototype.added = function () {
+  return "added " + (this === process);
+};
+console.log(process.added());
+Object.getPrototypeOf(process).alsoAdded = 3;
+console.log(process.alsoAdded + 1);
+console.log(typeof process._debugEnd, typeof process._debugProcess, typeof process._startProfilerIdleNotifier, typeof process._stopProfilerIdleNotifier);
+const key = ["no", "Deprecation"].join("");
+console.log(process[key], delete process.noDeprecation, process[key], readFlag());
+function lengthOfStored() {
+  return process.throwDeprecation.length;
+}
+process.throwDeprecation = "text";
+console.log(lengthOfStored(), typeof process.throwDeprecation);
+//// built-ins-found-by-binding/programs-listeners.ts
+// Built ins found by binding: programs listeners. It prints what plain Bun prints.
+import { on as importedOn, listenerCount as importedCount } from "node:process";
+
+const seen: string[] = [];
+const first = (value: unknown) => seen.push("first " + value);
+const second = (value: unknown) => seen.push("second " + value);
+
+console.log(Object.hasOwn(process, "on"), typeof process.on, process.on.name, process.on.length);
+console.log(process.on === Object.getPrototypeOf(process).on, importedOn === process.on, importedCount === process.listenerCount);
+console.log(process.on("custom", first) === process, process.once("custom", second) === process);
+console.log(process.listenerCount("custom"), process.listeners("custom").length, process.rawListeners("custom").length);
+console.log(process.eventNames().includes("custom"), typeof process.getMaxListeners());
+console.log(process.emit("custom", 1), process.emit("custom", 2), process.emit("nobody"));
+console.log(seen.join(", "));
+process.prependListener("custom", second);
+process.prependOnceListener("custom", value => seen.push("third " + value));
+process.emit("custom", 3);
+console.log(seen.join(", "));
+console.log(process.off("custom", first) === process, process.removeListener("custom", second) === process, process.listenerCount("custom"));
+process.addListener("other", first);
+console.log(process.removeAllListeners("other") === process, process.listenerCount("other"));
+console.log(process.setMaxListeners(20), process.getMaxListeners());
+console.log(process.constructor.name, Object.prototype.toString.call(Object.getPrototypeOf(process)), Object.prototype.toString.call(process));
+console.log((process as any).domain, (process as any).noDeprecation, (process as any).traceDeprecation, (process as any).traceProcessWarnings, (process as any)._exiting);
+
+const other: any = {};
+console.log((process.on as any).call(other, "x", first) === other, Object.keys(other).join(), (process.listenerCount as any).call(other, "x"));
+////= lines-43	(process.on as any).call(undefined, "x", first
+try {
+  (process.on as any)("x");
+} catch (error) {
+  console.log((error as Error).constructor.name, (error as Error).message);
+}
+
+const emit = process.emit;
+(process as any).emit = function (this: unknown, name: string, ...rest: unknown[]) {
+  if (name === "exit" || name === "beforeExit") console.log("emit is replaced: " + name + " " + rest.length);
+  return (emit as any).call(this, name, ...rest);
+};
+console.log(Object.hasOwn(process, "emit"), process.emit !== emit);
+process.on("beforeExit", code => console.log("before exit " + code));
+process.once("exit", code => console.log("exit " + code));
+(process as any).on = 5;
+console.log((process as any).on + 1, Object.hasOwn(process, "on"));
+delete (process as any).on;
+console.log(typeof process.on);
+//// built-ins-found-by-binding/programs-one-domain.ts
+// Built ins found by binding: programs one domain. It prints what plain Bun prints.
+console.log((process as any).domain, (process as any).noDeprecation);
+//// built-ins-found-by-binding/programs-one-listener.ts
+// Built ins found by binding: programs one listener. It prints what plain Bun prints.
+process.on("exit", code => console.log(code));
+//// built-ins-found-by-binding/programs-only-log.ts
+// Built ins found by binding: programs only log. It prints what plain Bun prints.
+console.log(1);
+//// built-ins-found-by-binding/programs-owner-hello.ts
+// Built ins found by binding: programs owner hello. It prints what plain Bun prints.
+console.log(1 + 2);
+//// built-ins-found-by-binding/programs-timeline.ts
+// Built ins found by binding: programs timeline. It prints what plain Bun prints.
+console.log(Object.keys(performance).join(), Object.hasOwn(performance, "mark"), typeof performance.mark, performance.mark === Performance.prototype.mark);
+console.log(Object.getPrototypeOf(performance) === Performance.prototype, Object.getPrototypeOf(Performance.prototype) === EventTarget.prototype);
+console.log(typeof performance.now(), typeof performance.timeOrigin, performance.timeOrigin > 0, typeof (performance as any).timing);
+const mark = performance.mark("first", { detail: { a: 1 } });
+console.log(mark.name, mark.entryType, mark.detail.a, performance.getEntriesByName("first").length, performance.getEntriesByName("first")[0] === mark);
+performance.mark("second");
+const measure = performance.measure("between", "first", "second");
+console.log(measure.name, measure.entryType, typeof measure.duration, performance.getEntries().length, performance.getEntriesByType("mark").length);
+performance.clearMarks("first");
+console.log(performance.getEntriesByType("mark").length);
+performance.clearMarks();
+performance.clearMeasures();
+console.log(performance.getEntries().length, Object.keys(performance.toJSON()).sort().join());
+let heard = 0;
+const listener = (event: Event) => {
+  heard += event.type.length;
+};
+performance.addEventListener("custom", listener);
+console.log(performance.dispatchEvent(new Event("custom")), heard);
+performance.removeEventListener("custom", listener);
+console.log(performance.dispatchEvent(new Event("custom")), heard, performance.addEventListener === EventTarget.prototype.addEventListener);
+console.log((performance as any).onresourcetimingbufferfull, performance.setResourceTimingBufferSize(10), performance.clearResourceTimings());
+const target = new EventTarget();
+target.addEventListener("ping", event => console.log("target heard " + event.type, event.target === target));
+target.dispatchEvent(new Event("ping"));
+const controller = new AbortController();
+controller.signal.addEventListener("abort", () => console.log("aborted", controller.signal.aborted));
+controller.abort();
+////= lines-24	Mine	EventTarget	count	0
+const mine = new Mine();
+mine.addEventListener("x", { handleEvent: () => void mine.count++ });
+mine.dispatchEvent(new Event("x"));
+console.log(mine.count);
+////= lines-43	(performance.mark as any).call({}, "x"
+////= lines-43	new (Performance as any)(
+(performance as any).mark = () => "replaced";
+console.log((performance as any).mark(), Object.hasOwn(performance, "mark"));
+delete (performance as any).mark;
+console.log(typeof performance.mark("third").startTime);
+(performance as any).extra = 4;
+console.log((performance as any).extra + 1, "extra" in performance);
+//// built-ins-found-by-binding/programs-validator-loop.ts
+// Built ins found by binding: programs validator loop. It prints what plain Bun prints.
+import { EventEmitter } from "node:events";
+const emitter = new EventEmitter();
+let sum = 0;
+for (let i = 0; i < 20_000_000; i++) {
+  emitter.setMaxListeners(i & 7);
+  sum += emitter.getMaxListeners();
+}
+console.log(sum);
+//// built-ins-found-by-binding/programs-validators-in-use.ts
+// Built ins found by binding: programs validators in use. It prints what plain Bun prints.
+import { Buffer } from "node:buffer";
+import child_process from "node:child_process";
+import dns from "node:dns";
+import events, { EventEmitter } from "node:events";
+import fs from "node:fs";
+import net from "node:net";
+import { Readable } from "node:stream";
+import util from "node:util";
+import zlib from "node:zlib";
+
+const emitter = new EventEmitter();
+////= attempts	0
+////= for-13
+process.exit(0);
+//// built-ins-found-by-binding/programs-validators-in-use-2.ts
+// Built ins found by binding: programs validators in use. It prints what plain Bun prints.
+import { Buffer } from "node:buffer";
+import child_process from "node:child_process";
+import dns from "node:dns";
+import events, { EventEmitter } from "node:events";
+import fs from "node:fs";
+import net from "node:net";
+import { Readable } from "node:stream";
+import util from "node:util";
+import zlib from "node:zlib";
+
+const emitter = new EventEmitter();
+const descriptor = fs.openSync(process.execPath, "r");
+////= attempts	descriptor
+////= for-13
+process.exit(0);
+//// built-ins-found-by-binding/programs-worker-members.cjs
+// Built ins found by binding: programs worker members. It prints what plain Bun prints.
+const { Worker, isMainThread, parentPort } = require("node:worker_threads");
+const describe = () => [typeof process._debugEnd, typeof process._debugProcess, typeof process._startProfilerIdleNotifier, typeof process._stopProfilerIdleNotifier, typeof process.on, typeof process.abort].join();
+if (isMainThread) {
+  console.log("main", describe());
+  new Worker(__filename).on("message", text => console.log("worker", text));
+} else {
+  parentPort.postMessage(describe());
+}

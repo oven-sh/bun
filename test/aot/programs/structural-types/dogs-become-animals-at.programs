@@ -1,0 +1,3177 @@
+////: Box
+class Box {
+  kept = 0;
+  other = 5;
+  get size(): number {
+    return this.kept;
+  }
+  set size(value: number) {
+    this.kept = value + 1;
+  }
+}
+////: Cell
+class Cell {
+  count = 1;
+  ready = false;
+  title = "a";
+  run: () => number = () => 1;
+  other = 5;
+}
+////: Cell-2
+class Cell {
+  value: number | string = 1;
+  leaf: Leaf | null = new Leaf();
+  other = 5;
+}
+////: Other
+class Other {
+  price = 4;
+}
+////: Task
+class Task {
+  cost = 3;
+}
+////: Wide-2
+interface Wide {
+  get size(): number;
+  set size(value: number | string);
+}
+////: change
+function change(): void {
+  values.push("text");
+  values.«1»);
+  leaves.push(null);
+  leaves.«2»);
+}
+////: claims
+function claims(v: «1» | «2»): v is «3» {
+  return true;
+}
+////: describe-3
+function describe(c: Cell): string {
+  const value = typeof c.value === "number" ? "number " + (c.value + 1) : "string " + c.value.length;
+  const leaf = c.leaf === null ? "null" : "leaf " + c.leaf.weight;
+  return value + ", " + leaf + ", " + c.other;
+}
+////: describe-4
+function describe(c: Cell): string {
+  return [c.count + 1, c.count * 2, c.ready ? "ready" : "not ready", c.title + "!", c.title.length, c.run(), c.other].join(" ");
+}
+////: describe-5
+function describe(v: number | string): string {
+  return typeof v === "number" ? "number " + (v + 1) : "string " + v.length;
+}
+////: describe-8
+////= describe-5
+
+////= weigh
+////: edgeOrRadius
+function edgeOrRadius(s: Circle | Square): string {
+  if ("edge" in s) return "edge " + typeof s.edge + " " + String(s.edge) + " " + s.corner;
+  return "radius " + typeof s.radius + " " + String(s.radius);
+}
+////: edgeOrRadius-2
+function edgeOrRadius(s: Circle | Square): string {
+  if ("edge" in s) return "edge " + typeof s.edge + " " + String(s.edge);
+  return "radius " + s.radius;
+}
+////: for-22
+for (let i = 0; i < 2000; i++) {
+  shared.size = i;
+  sum += shared.size;
+}
+////: for-4
+for (let i = 0; i < 2000; i++) {
+  const c = new Cell();
+  if (typeof c.value === "number" && c.leaf !== null) sum += c.value + c.leaf.weight;
+}
+////: for-5
+for (let i = 0; i < 2000; i++) {
+  const c = new Cell();
+  sum += c.count + c.run() + (c.ready ? 1 : 0) + c.title.length;
+}
+////: if
+if (typeof cell.value === "number" && cell.leaf !== null) {
+  change(cell);
+  say("value", cell.value);
+  say("value plus one", cell.value + 1);
+  say("value doubled", cell.value * 2);
+  say("leaf", cell.leaf === null ? "null" : "a leaf");
+}
+////: if-2
+if (typeof values[0] === "number" && leaves[0] !== null) {
+  change();
+  say("the first value", values[0]);
+  say("the first value plus one", values[0] + 1);
+  say("the first leaf", leaves[0] === null ? "null" : "a leaf");
+}
+////: if-3
+if ("edge" in square) {
+  change(square);
+  say("edge", square.edge);
+  say("edge doubled", square.edge * 2);
+  say("in", "edge" in square);
+}
+////: if-4
+if (claims(v)) {
+  say("v", v);
+  say("v + 1", v + 1);
+  say("v * 2", v * 2);
+  say("v | 0", v | 0);
+}
+////: make-2
+function make(): «1» | «2» {
+  return «3»;
+}
+////: say-10
+////= say
+
+////= Circle-3
+
+////= Square-5
+
+////= edgeOrRadius
+////: say-11
+////= say
+
+////= Box
+
+////= Wide-2
+////: say-14
+////= say
+
+////= Cell
+
+////= storesToThis
+
+////= describe-4
+////: say-3
+////= say
+
+////= Leaf
+
+////= Cell-2
+
+////= describe-3
+////: say-6
+////= say
+
+////= Cell
+
+////= describe-4
+////: say-7
+////= say
+
+////= Task
+
+////= Other
+////: storesToThis
+function storesToThis(this: Cell): void {
+  this.count = 2.5;
+  this.ready = true;
+  this.title = "bcd";
+  this.run = () => 2;
+}
+////: weigh
+function weigh(l: Leaf | null): string {
+  return l === null ? "null" : "leaf " + l.weight;
+}
+//// dogs-become-animals-at-every-kind-of-conversion-part-three.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+////= lines-18	A48	name	"a48"
+////= lines-14	class	D48	extends	A48	legs	4
+////= lines-14	class	C48	extends	A48	lives	"nine"
+type S48 = D48[];
+type T48 = A48[];
+////= lines-24	honest48	T48	A48
+////= lines-23	add48	T48	C48
+////= lines-17	total48	S48
+////= lines-45	take48	t	T48	T48
+function via48(s: S48): T48 {
+  return take48.apply(undefined, [s]);
+}
+
+////= lines-18	A49	name	"a49"
+////= lines-14	class	D49	extends	A49	legs	4
+////= lines-14	class	C49	extends	A49	lives	"nine"
+type S49 = D49[];
+type T49 = A49[];
+////= lines-24	honest49	T49	A49
+////= lines-23	add49	T49	C49
+////= lines-17	total49	S49
+////= lines-45	take49	t	T49	T49
+function via49(s: S49): T49 {
+  return take49.bind(undefined, s)();
+}
+
+////= lines-18	A50	name	"a50"
+////= lines-14	class	D50	extends	A50	legs	4
+////= lines-14	class	C50	extends	A50	lives	"nine"
+type S50 = D50[];
+type T50 = A50[];
+////= lines-24	honest50	T50	A50
+////= lines-23	add50	T50	C50
+////= lines-17	total50	S50
+////= lines-45	take50	t	T50	T50
+function via50(s: S50): T50 {
+  return Reflect.apply(take50, undefined, [s]);
+}
+
+////= lines-18	A51	name	"a51"
+////= lines-14	class	D51	extends	A51	legs	4
+////= lines-14	class	C51	extends	A51	lives	"nine"
+type S51 = D51[];
+type T51 = A51[];
+////= lines-24	honest51	T51	A51
+////= lines-23	add51	T51	C51
+////= lines-17	total51	S51
+////= lines-45	self51	this	T51	T51
+////= lines-36	via51	s	S51	T51	self51.call	s
+
+////= lines-18	A52	name	"a52"
+////= lines-14	class	D52	extends	A52	legs	4
+////= lines-14	class	C52	extends	A52	lives	"nine"
+type S52 = D52[];
+type T52 = A52[];
+////= lines-24	honest52	T52	A52
+////= lines-23	add52	T52	C52
+////= lines-17	total52	S52
+////= via52
+
+////= lines-18	A53	name	"a53"
+////= lines-14	class	D53	extends	A53	legs	4
+////= lines-14	class	C53	extends	A53	lives	"nine"
+type S53 = D53[];
+type T53 = A53[];
+////= lines-24	honest53	T53	A53
+////= lines-23	add53	T53	C53
+////= lines-17	total53	S53
+////= via53
+
+////= lines-18	A54	name	"a54"
+////= lines-14	class	D54	extends	A54	legs	4
+////= lines-14	class	C54	extends	A54	lives	"nine"
+type S54 = D54[];
+type T54 = A54[];
+////= lines-24	honest54	T54	A54
+////= lines-23	add54	T54	C54
+////= lines-17	total54	S54
+////= via54
+
+////= lines-18	A55	name	"a55"
+////= lines-14	class	D55	extends	A55	legs	4
+////= lines-14	class	C55	extends	A55	lives	"nine"
+type S55 = D55[];
+type T55 = A55[];
+////= lines-24	honest55	T55	A55
+////= lines-23	add55	T55	C55
+////= lines-17	total55	S55
+////= via55
+
+////= lines-18	A56	name	"a56"
+////= lines-14	class	D56	extends	A56	legs	4
+////= lines-14	class	C56	extends	A56	lives	"nine"
+type S56 = D56[];
+type T56 = A56[];
+////= lines-24	honest56	T56	A56
+////= lines-23	add56	T56	C56
+////= lines-17	total56	S56
+////= via56
+
+////= lines-18	A57	name	"a57"
+////= lines-14	class	D57	extends	A57	legs	4
+////= lines-14	class	C57	extends	A57	lives	"nine"
+type S57 = D57[];
+type T57 = A57[];
+////= lines-24	honest57	T57	A57
+////= lines-23	add57	T57	C57
+////= lines-17	total57	S57
+////= via57
+
+////= lines-18	A58	name	"a58"
+////= lines-14	class	D58	extends	A58	legs	4
+////= lines-14	class	C58	extends	A58	lives	"nine"
+type S58 = D58[];
+type T58 = A58[];
+////= lines-24	honest58	T58	A58
+////= lines-23	add58	T58	C58
+////= lines-17	total58	S58
+////= via58
+
+////= lines-18	A59	name	"a59"
+////= lines-14	class	D59	extends	A59	legs	4
+////= lines-14	class	C59	extends	A59	lives	"nine"
+type S59 = D59[];
+type T59 = A59[];
+////= lines-24	honest59	T59	A59
+////= lines-23	add59	T59	C59
+////= lines-17	total59	S59
+////= via59
+
+////= lines-18	A60	name	"a60"
+////= lines-14	class	D60	extends	A60	legs	4
+////= lines-14	class	C60	extends	A60	lives	"nine"
+type S60 = D60[];
+type T60 = A60[];
+////= lines-24	honest60	T60	A60
+////= lines-23	add60	T60	C60
+////= lines-17	total60	S60
+////= via60
+
+////= lines-18	A61	name	"a61"
+////= lines-14	class	D61	extends	A61	legs	4
+////= lines-14	class	C61	extends	A61	lives	"nine"
+type S61 = D61[];
+type T61 = A61[];
+////= lines-24	honest61	T61	A61
+////= lines-23	add61	T61	C61
+////= lines-17	total61	S61
+////= via61
+
+////= lines-18	A62	name	"a62"
+////= lines-14	class	D62	extends	A62	legs	4
+////= lines-14	class	C62	extends	A62	lives	"nine"
+type S62 = D62[];
+type T62 = A62[];
+////= lines-24	honest62	T62	A62
+////= lines-23	add62	T62	C62
+////= lines-17	total62	S62
+////= lines-141	Source62	held	S62
+////= via62
+
+////= lines-18	A63	name	"a63"
+////= lines-14	class	D63	extends	A63	legs	4
+////= lines-14	class	C63	extends	A63	lives	"nine"
+type S63 = D63[];
+type T63 = A63[];
+////= lines-24	honest63	T63	A63
+////= lines-23	add63	T63	C63
+////= lines-17	total63	S63
+////= via63
+
+////= lines-18	A64	name	"a64"
+////= lines-14	class	D64	extends	A64	legs	4
+////= lines-14	class	C64	extends	A64	lives	"nine"
+type S64 = D64[];
+type T64 = A64[];
+////= lines-24	honest64	T64	A64
+////= lines-23	add64	T64	C64
+////= lines-17	total64	S64
+////= lines-273	Box64	X	held
+function via64(s: S64): T64 {
+  return new Box64<T64>(s).held;
+}
+
+////= lines-18	A65	name	"a65"
+////= lines-14	class	D65	extends	A65	legs	4
+////= lines-14	class	C65	extends	A65	lives	"nine"
+type S65 = D65[];
+type T65 = A65[];
+////= lines-24	honest65	T65	A65
+////= lines-23	add65	T65	C65
+////= lines-17	total65	S65
+function via65(s: S65): T65 {
+  return Array.of<T65>(s)[0];
+}
+
+////= lines-18	A66	name	"a66"
+////= lines-14	class	D66	extends	A66	legs	4
+////= lines-14	class	C66	extends	A66	lives	"nine"
+type S66 = D66[];
+type T66 = A66[];
+////= lines-24	honest66	T66	A66
+////= lines-23	add66	T66	C66
+////= lines-17	total66	S66
+////= via66
+
+////= lines-18	A67	name	"a67"
+////= lines-14	class	D67	extends	A67	legs	4
+////= lines-14	class	C67	extends	A67	lives	"nine"
+type S67 = D67[];
+type T67 = A67[];
+////= lines-24	honest67	T67	A67
+////= lines-23	add67	T67	C67
+////= lines-17	total67	S67
+////= via67
+
+////= lines-18	A68	name	"a68"
+////= lines-14	class	D68	extends	A68	legs	4
+////= lines-14	class	C68	extends	A68	lives	"nine"
+type S68 = D68[];
+type T68 = A68[];
+////= lines-24	honest68	T68	A68
+////= lines-23	add68	T68	C68
+////= lines-17	total68	S68
+////= via68
+
+////= lines-18	A69	name	"a69"
+////= lines-14	class	D69	extends	A69	legs	4
+////= lines-14	class	C69	extends	A69	lives	"nine"
+type S69 = D69[];
+type T69 = A69[];
+////= lines-24	honest69	T69	A69
+////= lines-23	add69	T69	C69
+////= lines-17	total69	S69
+////= via69
+
+////= lines-18	A70	name	"a70"
+////= lines-14	class	D70	extends	A70	legs	4
+////= lines-14	class	C70	extends	A70	lives	"nine"
+type S70 = D70[];
+type T70 = A70[];
+////= lines-24	honest70	T70	A70
+////= lines-23	add70	T70	C70
+////= lines-17	total70	S70
+////= via70
+
+////= lines-18	A71	name	"a71"
+////= lines-14	class	D71	extends	A71	legs	4
+////= lines-14	class	C71	extends	A71	lives	"nine"
+type S71 = D71[];
+type T71 = A71[];
+////= lines-24	honest71	T71	A71
+////= lines-23	add71	T71	C71
+////= lines-17	total71	S71
+////= via71
+
+let warm = 0;
+////= for-41	add48	honest48	total48	D48
+{
+  const dogs = [new D48()];
+  const t = await via48(dogs);
+  attempt("apply: the same array", () => t === dogs);
+  add48(t);
+  attempt("apply: total legs", () => total48(dogs));
+  attempt("apply: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add49	honest49	total49	D49
+{
+  const dogs = [new D49()];
+  const t = await via49(dogs);
+  attempt("bind: the same array", () => t === dogs);
+  add49(t);
+  attempt("bind: total legs", () => total49(dogs));
+  attempt("bind: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add50	honest50	total50	D50
+{
+  const dogs = [new D50()];
+  const t = await via50(dogs);
+  attempt("Reflect.apply: the same array", () => t === dogs);
+  add50(t);
+  attempt("Reflect.apply: total legs", () => total50(dogs));
+  attempt("Reflect.apply: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add51	honest51	total51	D51
+{
+  const dogs = [new D51()];
+  const t = await via51(dogs);
+  attempt("this of a call: the same array", () => t === dogs);
+  add51(t);
+  attempt("this of a call: total legs", () => total51(dogs));
+  attempt("this of a call: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add52	honest52	total52	D52
+{
+  const dogs = [new D52()];
+  const t = await via52(dogs);
+  attempt("a store to a member: the same array", () => t === dogs);
+  add52(t);
+  attempt("a store to a member: total legs", () => total52(dogs));
+  attempt("a store to a member: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add53	honest53	total53	D53
+{
+  const dogs = [new D53()];
+  const t = await via53(dogs);
+  attempt("a store to an element: the same array", () => t === dogs);
+  add53(t);
+  attempt("a store to an element: total legs", () => total53(dogs));
+  attempt("a store to an element: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add54	honest54	total54	D54
+{
+  const dogs = [new D54()];
+  const t = await via54(dogs);
+  attempt("an array pattern that is assigned to: the same array", () => t === dogs);
+  add54(t);
+  attempt("an array pattern that is assigned to: total legs", () => total54(dogs));
+  attempt("an array pattern that is assigned to: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add55	honest55	total55	D55
+{
+  const dogs = [new D55()];
+  const t = await via55(dogs);
+  attempt("an object pattern that is assigned to: the same array", () => t === dogs);
+  add55(t);
+  attempt("an object pattern that is assigned to: total legs", () => total55(dogs));
+  attempt("an object pattern that is assigned to: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add56	honest56	total56	D56
+{
+  const dogs = [new D56()];
+  const t = await via56(dogs);
+  attempt("Object.assign: the same array", () => t === dogs);
+  add56(t);
+  attempt("Object.assign: total legs", () => total56(dogs));
+  attempt("Object.assign: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add57	honest57	total57	D57
+{
+  const dogs = [new D57()];
+  const t = await via57(dogs);
+  attempt("a union that is narrowed again: the same array", () => t === dogs);
+  add57(t);
+  attempt("a union that is narrowed again: total legs", () => total57(dogs));
+  attempt("a union that is narrowed again: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add58	honest58	total58	D58
+{
+  const dogs = [new D58()];
+  const t = await via58(dogs);
+  attempt("an entry of a record: the same array", () => t === dogs);
+  add58(t);
+  attempt("an entry of a record: total legs", () => total58(dogs));
+  attempt("an entry of a record: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add59	honest59	total59	D59
+{
+  const dogs = [new D59()];
+  const t = await via59(dogs);
+  attempt("an array of the narrower type: the same array", () => t === dogs);
+  add59(t);
+  attempt("an array of the narrower type: total legs", () => total59(dogs));
+  attempt("an array of the narrower type: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add60	honest60	total60	D60
+{
+  const dogs = [new D60()];
+  const t = await via60(dogs);
+  attempt("an object with a member of the narrower type: the same array", () => t === dogs);
+  add60(t);
+  attempt("an object with a member of the narrower type: total legs", () => total60(dogs));
+  attempt("an object with a member of the narrower type: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add61	honest61	total61	D61
+{
+  const dogs = [new D61()];
+  const t = await via61(dogs);
+  attempt("a map of the narrower type: the same array", () => t === dogs);
+  add61(t);
+  attempt("a map of the narrower type: total legs", () => total61(dogs));
+  attempt("a map of the narrower type: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add62	honest62	total62	D62
+{
+  const dogs = [new D62()];
+  const t = await via62(dogs);
+  attempt("an instance with a field of the narrower type: the same array", () => t === dogs);
+  add62(t);
+  attempt("an instance with a field of the narrower type: total legs", () => total62(dogs));
+  attempt("an instance with a field of the narrower type: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add63	honest63	total63	D63
+{
+  const dogs = [new D63()];
+  const t = await via63(dogs);
+  attempt("a static field: the same array", () => t === dogs);
+  add63(t);
+  attempt("a static field: total legs", () => total63(dogs));
+  attempt("a static field: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add64	honest64	total64	D64
+{
+  const dogs = [new D64()];
+  const t = await via64(dogs);
+  attempt("a generic class: the same array", () => t === dogs);
+  add64(t);
+  attempt("a generic class: total legs", () => total64(dogs));
+  attempt("a generic class: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add65	honest65	total65	D65
+{
+  const dogs = [new D65()];
+  const t = await via65(dogs);
+  attempt("Array.of: the same array", () => t === dogs);
+  add65(t);
+  attempt("Array.of: total legs", () => total65(dogs));
+  attempt("Array.of: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add66	honest66	total66	D66
+{
+  const dogs = [new D66()];
+  const t = await via66(dogs);
+  attempt("Array.from: the same array", () => t === dogs);
+  add66(t);
+  attempt("Array.from: total legs", () => total66(dogs));
+  attempt("Array.from: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add67	honest67	total67	D67
+{
+  const dogs = [new D67()];
+  const t = await via67(dogs);
+  attempt("fill: the same array", () => t === dogs);
+  add67(t);
+  attempt("fill: total legs", () => total67(dogs));
+  attempt("fill: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add68	honest68	total68	D68
+{
+  const dogs = [new D68()];
+  const t = await via68(dogs);
+  attempt("splice: the same array", () => t === dogs);
+  add68(t);
+  attempt("splice: total legs", () => total68(dogs));
+  attempt("splice: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add69	honest69	total69	D69
+{
+  const dogs = [new D69()];
+  const t = await via69(dogs);
+  attempt("concat: the same array", () => t === dogs);
+  add69(t);
+  attempt("concat: total legs", () => total69(dogs));
+  attempt("concat: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add70	honest70	total70	D70
+{
+  const dogs = [new D70()];
+  const t = await via70(dogs);
+  attempt("a variable that a closure assigns: the same array", () => t === dogs);
+  add70(t);
+  attempt("a variable that a closure assigns: total legs", () => total70(dogs));
+  attempt("a variable that a closure assigns: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add71	honest71	total71	D71
+{
+  const dogs = [new D71()];
+  const t = await via71(dogs);
+  attempt("an intersection with the empty object type: the same array", () => t === dogs);
+  add71(t);
+  attempt("an intersection with the empty object type: total legs", () => total71(dogs));
+  attempt("an intersection with the empty object type: legs", () => dogs.map(dog => dog.legs));
+}
+console.log("honest uses", warm);
+
+export {};
+//// dogs-become-animals-at-every-kind-of-conversion-part-two.ts
+////= show-30
+
+const yes = [1].length === 1;
+function touch(): void {}
+
+////= lines-18	A24	name	"a24"
+////= lines-14	class	D24	extends	A24	legs	4
+////= lines-14	class	C24	extends	A24	lives	"nine"
+type S24 = D24[];
+type T24 = A24[];
+////= lines-24	honest24	T24	A24
+////= lines-23	add24	T24	C24
+////= lines-17	total24	S24
+////= via24
+
+////= lines-18	A25	name	"a25"
+////= lines-14	class	D25	extends	A25	legs	4
+////= lines-14	class	C25	extends	A25	lives	"nine"
+type S25 = D25[];
+type T25 = A25[];
+////= lines-24	honest25	T25	A25
+////= lines-23	add25	T25	C25
+////= lines-17	total25	S25
+////= via25
+
+////= lines-18	A26	name	"a26"
+////= lines-14	class	D26	extends	A26	legs	4
+////= lines-14	class	C26	extends	A26	lives	"nine"
+type S26 = D26[];
+type T26 = A26[];
+////= lines-24	honest26	T26	A26
+////= lines-23	add26	T26	C26
+////= lines-17	total26	S26
+////= via26
+
+////= lines-18	A27	name	"a27"
+////= lines-14	class	D27	extends	A27	legs	4
+////= lines-14	class	C27	extends	A27	lives	"nine"
+type S27 = D27[];
+type T27 = A27[];
+////= lines-24	honest27	T27	A27
+////= lines-23	add27	T27	C27
+////= lines-17	total27	S27
+////= via27
+
+////= lines-18	A28	name	"a28"
+////= lines-14	class	D28	extends	A28	legs	4
+////= lines-14	class	C28	extends	A28	lives	"nine"
+type S28 = D28[];
+type T28 = A28[];
+////= lines-24	honest28	T28	A28
+////= lines-23	add28	T28	C28
+////= lines-17	total28	S28
+////= lines-173	via28	s	S28	T28
+
+////= lines-18	A29	name	"a29"
+////= lines-14	class	D29	extends	A29	legs	4
+////= lines-14	class	C29	extends	A29	lives	"nine"
+type S29 = D29[];
+type T29 = A29[];
+////= lines-24	honest29	T29	A29
+////= lines-23	add29	T29	C29
+////= lines-17	total29	S29
+function via29(s: S29): Promise<T29> {
+  return Promise.resolve<T29>(s);
+}
+
+////= lines-18	A30	name	"a30"
+////= lines-14	class	D30	extends	A30	legs	4
+////= lines-14	class	C30	extends	A30	lives	"nine"
+type S30 = D30[];
+type T30 = A30[];
+////= lines-24	honest30	T30	A30
+////= lines-23	add30	T30	C30
+////= lines-17	total30	S30
+function via30(s: S30): Promise<T30> {
+  return Promise.resolve(0).then((): T30 => s);
+}
+
+////= lines-18	A31	name	"a31"
+////= lines-14	class	D31	extends	A31	legs	4
+////= lines-14	class	C31	extends	A31	lives	"nine"
+type S31 = D31[];
+type T31 = A31[];
+////= lines-24	honest31	T31	A31
+////= lines-23	add31	T31	C31
+////= lines-17	total31	S31
+function via31(s: S31): Promise<T31> {
+  return new Promise<T31>(resolve => resolve(s));
+}
+
+////= lines-18	A32	name	"a32"
+////= lines-14	class	D32	extends	A32	legs	4
+////= lines-14	class	C32	extends	A32	lives	"nine"
+type S32 = D32[];
+type T32 = A32[];
+////= lines-24	honest32	T32	A32
+////= lines-23	add32	T32	C32
+////= lines-17	total32	S32
+function via32(s: S32): T32 {
+  return [0].map((): T32 => s)[0];
+}
+
+////= lines-18	A33	name	"a33"
+////= lines-14	class	D33	extends	A33	legs	4
+////= lines-14	class	C33	extends	A33	lives	"nine"
+type S33 = D33[];
+type T33 = A33[];
+////= lines-24	honest33	T33	A33
+////= lines-23	add33	T33	C33
+////= lines-17	total33	S33
+////= lines-276	same33	X	x
+function via33(s: S33): T33 {
+  return same33<T33>(s);
+}
+
+////= lines-18	A34	name	"a34"
+////= lines-14	class	D34	extends	A34	legs	4
+////= lines-14	class	C34	extends	A34	lives	"nine"
+type S34 = D34[];
+type T34 = A34[];
+////= lines-24	honest34	T34	A34
+////= lines-23	add34	T34	C34
+////= lines-17	total34	S34
+function widen34<X extends T34>(x: X): T34 {
+  return x;
+}
+////= lines-60	via34	s	S34	T34	widen34	s
+
+////= lines-18	A35	name	"a35"
+////= lines-14	class	D35	extends	A35	legs	4
+////= lines-14	class	C35	extends	A35	lives	"nine"
+type S35 = D35[];
+type T35 = A35[];
+////= lines-24	honest35	T35	A35
+////= lines-23	add35	T35	C35
+////= lines-17	total35	S35
+////= via35
+
+////= lines-18	A36	name	"a36"
+////= lines-14	class	D36	extends	A36	legs	4
+////= lines-14	class	C36	extends	A36	lives	"nine"
+type S36 = D36[];
+type T36 = A36[];
+////= lines-24	honest36	T36	A36
+////= lines-23	add36	T36	C36
+////= lines-17	total36	S36
+////= via36
+
+////= lines-18	A37	name	"a37"
+////= lines-14	class	D37	extends	A37	legs	4
+////= lines-14	class	C37	extends	A37	lives	"nine"
+type S37 = D37[];
+type T37 = A37[];
+////= lines-24	honest37	T37	A37
+////= lines-23	add37	T37	C37
+////= lines-17	total37	S37
+////= via37
+
+////= lines-18	A38	name	"a38"
+////= lines-14	class	D38	extends	A38	legs	4
+////= lines-14	class	C38	extends	A38	lives	"nine"
+type S38 = D38[];
+type T38 = A38[];
+////= lines-24	honest38	T38	A38
+////= lines-23	add38	T38	C38
+////= lines-17	total38	S38
+////= via38
+
+////= lines-18	A39	name	"a39"
+////= lines-14	class	D39	extends	A39	legs	4
+////= lines-14	class	C39	extends	A39	lives	"nine"
+type S39 = D39[];
+type T39 = A39[];
+////= lines-24	honest39	T39	A39
+////= lines-23	add39	T39	C39
+////= lines-17	total39	S39
+////= Keeper39
+////= via39
+
+////= lines-18	A40	name	"a40"
+////= lines-14	class	D40	extends	A40	legs	4
+////= lines-14	class	C40	extends	A40	lives	"nine"
+type S40 = D40[];
+type T40 = A40[];
+////= lines-24	honest40	T40	A40
+////= lines-23	add40	T40	C40
+////= lines-17	total40	S40
+////= via40
+
+////= lines-18	A41	name	"a41"
+////= lines-14	class	D41	extends	A41	legs	4
+////= lines-14	class	C41	extends	A41	lives	"nine"
+type S41 = D41[];
+type T41 = A41[];
+////= lines-24	honest41	T41	A41
+////= lines-23	add41	T41	C41
+////= lines-17	total41	S41
+////= via41
+
+////= lines-18	A42	name	"a42"
+////= lines-14	class	D42	extends	A42	legs	4
+////= lines-14	class	C42	extends	A42	lives	"nine"
+type S42 = D42[];
+type T42 = A42[];
+////= lines-24	honest42	T42	A42
+////= lines-23	add42	T42	C42
+////= lines-17	total42	S42
+////= lines-84	Taker42	take	s	S42	T42
+////= Wide42
+////= via42
+
+////= lines-18	A43	name	"a43"
+////= lines-14	class	D43	extends	A43	legs	4
+////= lines-14	class	C43	extends	A43	lives	"nine"
+type S43 = D43[];
+type T43 = A43[];
+////= lines-24	honest43	T43	A43
+////= lines-23	add43	T43	C43
+////= lines-17	total43	S43
+////= via43
+
+////= lines-18	A44	name	"a44"
+////= lines-14	class	D44	extends	A44	legs	4
+////= lines-14	class	C44	extends	A44	lives	"nine"
+type S44 = D44[];
+type T44 = A44[];
+////= lines-24	honest44	T44	A44
+////= lines-23	add44	T44	C44
+////= lines-17	total44	S44
+function tag44(strings: TemplateStringsArray, t: T44): T44 {
+  return t;
+}
+function via44(s: S44): T44 {
+  return tag44`${s}`;
+}
+
+////= lines-18	A45	name	"a45"
+////= lines-14	class	D45	extends	A45	legs	4
+////= lines-14	class	C45	extends	A45	lives	"nine"
+type S45 = D45[];
+type T45 = A45[];
+////= lines-24	honest45	T45	A45
+////= lines-23	add45	T45	C45
+////= lines-17	total45	S45
+////= lines-141	Base45	held	T45
+////= Derived45
+////= lines-216	via45	s	S45	T45	Derived45	held
+
+////= lines-18	A46	name	"a46"
+////= lines-14	class	D46	extends	A46	legs	4
+////= lines-14	class	C46	extends	A46	lives	"nine"
+type S46 = D46[];
+type T46 = A46[];
+////= lines-24	honest46	T46	A46
+////= lines-23	add46	T46	C46
+////= lines-17	total46	S46
+////= via46
+
+////= lines-18	A47	name	"a47"
+////= lines-14	class	D47	extends	A47	legs	4
+////= lines-14	class	C47	extends	A47	lives	"nine"
+type S47 = D47[];
+type T47 = A47[];
+////= lines-24	honest47	T47	A47
+////= lines-23	add47	T47	C47
+////= lines-17	total47	S47
+////= lines-45	take47	t	T47	T47
+function via47(s: S47): T47 {
+  return take47.call(undefined, s);
+}
+
+let warm = 0;
+////= for-41	add24	honest24	total24	D24
+{
+  const dogs = [new D24()];
+  const t = await via24(dogs);
+  attempt("the entries a map is made from: the same array", () => t === dogs);
+  add24(t);
+  attempt("the entries a map is made from: total legs", () => total24(dogs));
+  attempt("the entries a map is made from: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add25	honest25	total25	D25
+{
+  const dogs = [new D25()];
+  const t = await via25(dogs);
+  attempt("a member of a set: the same array", () => t === dogs);
+  add25(t);
+  attempt("a member of a set: total legs", () => total25(dogs));
+  attempt("a member of a set: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add26	honest26	total26	D26
+{
+  const dogs = [new D26()];
+  const t = await via26(dogs);
+  attempt("yield: the same array", () => t === dogs);
+  add26(t);
+  attempt("yield: total legs", () => total26(dogs));
+  attempt("yield: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add27	honest27	total27	D27
+{
+  const dogs = [new D27()];
+  const t = await via27(dogs);
+  attempt("the value sent into a generator: the same array", () => t === dogs);
+  add27(t);
+  attempt("the value sent into a generator: total legs", () => total27(dogs));
+  attempt("the value sent into a generator: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add28	honest28	total28	D28
+{
+  const dogs = [new D28()];
+  const t = await via28(dogs);
+  attempt("the result of an async function: the same array", () => t === dogs);
+  add28(t);
+  attempt("the result of an async function: total legs", () => total28(dogs));
+  attempt("the result of an async function: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add29	honest29	total29	D29
+{
+  const dogs = [new D29()];
+  const t = await via29(dogs);
+  attempt("Promise.resolve: the same array", () => t === dogs);
+  add29(t);
+  attempt("Promise.resolve: total legs", () => total29(dogs));
+  attempt("Promise.resolve: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add30	honest30	total30	D30
+{
+  const dogs = [new D30()];
+  const t = await via30(dogs);
+  attempt("the result of a reaction: the same array", () => t === dogs);
+  add30(t);
+  attempt("the result of a reaction: total legs", () => total30(dogs));
+  attempt("the result of a reaction: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add31	honest31	total31	D31
+{
+  const dogs = [new D31()];
+  const t = await via31(dogs);
+  attempt("the resolver of a promise: the same array", () => t === dogs);
+  add31(t);
+  attempt("the resolver of a promise: total legs", () => total31(dogs));
+  attempt("the resolver of a promise: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add32	honest32	total32	D32
+{
+  const dogs = [new D32()];
+  const t = await via32(dogs);
+  attempt("the result of a callback: the same array", () => t === dogs);
+  add32(t);
+  attempt("the result of a callback: total legs", () => total32(dogs));
+  attempt("the result of a callback: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add33	honest33	total33	D33
+{
+  const dogs = [new D33()];
+  const t = await via33(dogs);
+  attempt("an explicit type argument: the same array", () => t === dogs);
+  add33(t);
+  attempt("an explicit type argument: total legs", () => total33(dogs));
+  attempt("an explicit type argument: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add34	honest34	total34	D34
+{
+  const dogs = [new D34()];
+  const t = await via34(dogs);
+  attempt("a constrained type parameter: the same array", () => t === dogs);
+  add34(t);
+  attempt("a constrained type parameter: total legs", () => total34(dogs));
+  attempt("a constrained type parameter: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add35	honest35	total35	D35
+{
+  const dogs = [new D35()];
+  const t = await via35(dogs);
+  attempt("the target of a for-of: the same array", () => t === dogs);
+  add35(t);
+  attempt("the target of a for-of: total legs", () => total35(dogs));
+  attempt("the target of a for-of: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add36	honest36	total36	D36
+{
+  const dogs = [new D36()];
+  const t = await via36(dogs);
+  attempt("??=: the same array", () => t === dogs);
+  add36(t);
+  attempt("??=: total legs", () => total36(dogs));
+  attempt("??=: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add37	honest37	total37	D37
+{
+  const dogs = [new D37()];
+  const t = await via37(dogs);
+  attempt("||=: the same array", () => t === dogs);
+  add37(t);
+  attempt("||=: total legs", () => total37(dogs));
+  attempt("||=: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add38	honest38	total38	D38
+{
+  const dogs = [new D38()];
+  const t = await via38(dogs);
+  attempt("the result of a getter: the same array", () => t === dogs);
+  add38(t);
+  attempt("the result of a getter: total legs", () => total38(dogs));
+  attempt("the result of a getter: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add39	honest39	total39	D39
+{
+  const dogs = [new D39()];
+  const t = await via39(dogs);
+  attempt("the parameter of a setter: the same array", () => t === dogs);
+  add39(t);
+  attempt("the parameter of a setter: total legs", () => total39(dogs));
+  attempt("the parameter of a setter: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add40	honest40	total40	D40
+{
+  const dogs = [new D40()];
+  const t = await via40(dogs);
+  attempt("the result of a function type: the same array", () => t === dogs);
+  add40(t);
+  attempt("the result of a function type: total legs", () => total40(dogs));
+  attempt("the result of a function type: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add41	honest41	total41	D41
+{
+  const dogs = [new D41()];
+  const t = await via41(dogs);
+  attempt("the parameter of a function type: the same array", () => t === dogs);
+  add41(t);
+  attempt("the parameter of a function type: total legs", () => total41(dogs));
+  attempt("the parameter of a function type: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add42	honest42	total42	D42
+{
+  const dogs = [new D42()];
+  const t = await via42(dogs);
+  attempt("a method that implements an interface: the same array", () => t === dogs);
+  add42(t);
+  attempt("a method that implements an interface: total legs", () => total42(dogs));
+  attempt("a method that implements an interface: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add43	honest43	total43	D43
+{
+  const dogs = [new D43()];
+  const t = await via43(dogs);
+  attempt("a place of a tuple: the same array", () => t === dogs);
+  add43(t);
+  attempt("a place of a tuple: total legs", () => total43(dogs));
+  attempt("a place of a tuple: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add44	honest44	total44	D44
+{
+  const dogs = [new D44()];
+  const t = await via44(dogs);
+  attempt("a tagged template: the same array", () => t === dogs);
+  add44(t);
+  attempt("a tagged template: total legs", () => total44(dogs));
+  attempt("a tagged template: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add45	honest45	total45	D45
+{
+  const dogs = [new D45()];
+  const t = await via45(dogs);
+  attempt("an argument of super: the same array", () => t === dogs);
+  add45(t);
+  attempt("an argument of super: total legs", () => total45(dogs));
+  attempt("an argument of super: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add46	honest46	total46	D46
+{
+  const dogs = [new D46()];
+  const t = await via46(dogs);
+  attempt("an optional call: the same array", () => t === dogs);
+  add46(t);
+  attempt("an optional call: total legs", () => total46(dogs));
+  attempt("an optional call: legs", () => dogs.map(dog => dog.legs));
+}
+////= for-41	add47	honest47	total47	D47
+{
+  const dogs = [new D47()];
+  const t = await via47(dogs);
+  attempt("call: the same array", () => t === dogs);
+  add47(t);
+  attempt("call: total legs", () => total47(dogs));
+  attempt("call: legs", () => dogs.map(dog => dog.legs));
+}
+console.log("honest uses", warm);
+
+export {};
+//// each-route-alone/a-guard-takes-a-bigint-for-a-number.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+////= claims	number	bigint	number
+
+////= make-2	number	bigint	5n
+
+const v = make();
+if (claims(v)) {
+  say("v", v);
+  say("-v", -v);
+  say("v > 3", v > 3);
+  say("v === 5", v === 5);
+}
+//// each-route-alone/a-guard-takes-a-function-for-an-object.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+function claims(v: (() => number) | Task): v is Task {
+  return true;
+}
+
+function make(): (() => number) | Task {
+  return () => 1;
+}
+
+const v = make();
+if (claims(v)) {
+  say("typeof v", typeof v);
+  say("v.cost", v.cost);
+  say("v.cost * 2", v.cost * 2);
+}
+//// each-route-alone/a-guard-takes-a-literal-for-a-class.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+function claims(v: Task | { price: number }): v is Task {
+  return true;
+}
+
+function make(): Task | { price: number } {
+  return { price: 4 };
+}
+
+const v = make();
+if (claims(v)) {
+  say("v.cost", v.cost);
+  say("v.cost * 2", v.cost * 2);
+  say("v instanceof Task", v instanceof Task);
+}
+//// each-route-alone/a-guard-takes-a-number-for-a-string.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+////= claims	number	string	string
+
+////= make-2	number	string	7
+
+const v = make();
+if (claims(v)) {
+  say("v", v);
+  say(`v + "!"`, v + "!");
+  say("v.length", v.length);
+  say("v[0]", v[0]);
+}
+//// each-route-alone/a-guard-takes-a-short-tuple-for-a-long-one.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+function claims(v: [number] | [number, number]): v is [number, number] {
+  return true;
+}
+
+function make(): [number] | [number, number] {
+  return [9];
+}
+
+const v = make();
+if (claims(v)) {
+  say("v.length", v.length);
+  say("v[0]", v[0]);
+  say("v[1]", v[1]);
+  say("v[1] * 2", v[1] * 2);
+}
+//// each-route-alone/a-guard-takes-a-sibling-class.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+////= claims	Task	Other	Task
+
+function make(): Task | Other {
+  return new Other();
+}
+
+const v = make();
+if (claims(v)) {
+  say("v.cost", v.cost);
+  say("v.cost * 2", v.cost * 2);
+  say("v instanceof Task", v instanceof Task);
+}
+//// each-route-alone/a-guard-takes-a-string-for-a-number.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+////= claims	number	string	number
+
+////= make-2	number	string	"text"
+
+const v = make();
+if (claims(v)) {
+  say("v", v);
+  say("v + 1", v + 1);
+  say("v * 2", v * 2);
+  say("-v", -v);
+  say("v > 3", v > 3);
+}
+//// each-route-alone/a-guard-takes-a-string-for-an-array.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+function claims(v: number[] | string): v is number[] {
+  return true;
+}
+
+function make(): number[] | string {
+  return "text";
+}
+
+const v = make();
+if (claims(v)) {
+  say("v.length", v.length);
+  say("v[0]", v[0]);
+  say("typeof v", typeof v);
+}
+//// each-route-alone/a-guard-takes-an-array-for-a-string.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+function claims(v: number[] | string): v is string {
+  return true;
+}
+
+function make(): number[] | string {
+  return [1, 2];
+}
+
+const v = make();
+if (claims(v)) {
+  say("v.length", v.length);
+  say("v[0]", v[0]);
+  say(`v + "!"`, v + "!");
+}
+//// each-route-alone/a-guard-takes-false-for-true.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+////= lines-222	claims	v	boolean	true
+
+////= lines-34	make	boolean	return	false
+
+const v = make();
+if (claims(v)) {
+  say("v", v);
+  say(`v ? "yes" : "no"`, v ? "yes" : "no");
+  say("!v", !v);
+  say("v === true", v === true);
+}
+//// each-route-alone/a-guard-takes-null-for-a-number.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+////= claims	number	null	number
+
+////= make-2	number	null	null
+
+const v = make();
+////= if-4
+//// each-route-alone/a-guard-takes-one-literal-for-another.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+////= claims	"on"	"off"	"on"
+
+////= make-2	"on"	"off"	"off"
+
+const v = make();
+if (claims(v)) {
+  say("v", v);
+  say(`v === "on"`, v === "on");
+  say("v.length", v.length);
+  say("costs[v]", costs[v]);
+}
+//// each-route-alone/a-guard-takes-undefined-for-a-number.ts
+////= say-7
+
+const costs = { on: 10, off: 20 };
+
+////= claims	number	undefined	number
+
+////= make-2	number	undefined	undefined
+
+const v = make();
+////= if-4
+//// each-route-alone/a-lying-instanceof-in-a-captured-variable.ts
+////= say-5
+
+let s: Shape = new Shape();
+const read = (): unknown => (s instanceof Square ? s.edge : "other");
+say("edge", read());
+s = new Shape();
+//// each-route-alone/a-lying-instanceof-in-a-condition-kept-in-a-constant.ts
+////= say-5
+
+const s: Shape = new Shape();
+const isSquare = s instanceof Square;
+if (isSquare) say("edge", s.edge);
+//// each-route-alone/a-lying-instanceof-in-a-conditional-expression.ts
+////= say-5
+
+const s: Shape = new Shape();
+say("edge", s instanceof Square ? s.edge : "other");
+//// each-route-alone/a-lying-instanceof-in-a-field.ts
+////= say-5
+
+////= lines-177	Holder	shape	Shape	Shape
+const h = new Holder();
+if (h.shape instanceof Square) say("edge", h.shape.edge);
+//// each-route-alone/a-lying-instanceof-in-a-function-with-two-callers.ts
+////= say-5
+
+function edgeOf(s: Shape): unknown {
+  return s instanceof Square ? s.edge : "other";
+}
+say("a shape", edgeOf(new Shape()));
+say("a square", edgeOf(new Square()));
+//// each-route-alone/a-lying-instanceof-in-a-member-of-the-base.ts
+////= say-5
+
+const s: Shape = new Shape();
+if (s instanceof Square) say("sides", s.sides);
+//// each-route-alone/a-lying-instanceof-in-a-type-parameter.ts
+////= say-5
+
+function generic<T extends Shape>(s: T): unknown {
+  return s instanceof Square ? s.edge : "other";
+}
+say("edge", generic(new Shape()));
+//// each-route-alone/a-lying-instanceof-in-a-while-loop.ts
+////= say-5
+
+let s: Shape = new Shape();
+let turns = 0;
+while (s instanceof Square && turns++ < 1) say("edge", s.edge);
+//// each-route-alone/a-lying-instanceof-in-an-asserted-condition.ts
+////= say-5
+
+const s: Shape = new Shape();
+mustHold(s instanceof Square);
+say("edge", s.edge);
+//// each-route-alone/a-lying-instanceof-in-an-element.ts
+////= say-5
+
+const shapes: Shape[] = [new Shape()];
+if (shapes[0] instanceof Square) say("edge", shapes[0].edge);
+//// each-route-alone/a-lying-instanceof-in-and.ts
+////= say-5
+
+const s: Shape = new Shape();
+say("edge", s instanceof Square && s.edge);
+//// each-route-alone/a-lying-instanceof-in-handed-on.ts
+////= say-5
+
+////= lines-20	edgeOf	q	Square	number	return	q.edge
+const s: Shape = new Shape();
+if (s instanceof Square) say("edge", edgeOf(s));
+//// each-route-alone/a-lying-instanceof-in-only-typeof-of-the-member.ts
+////= say-5
+
+const s: Shape = new Shape();
+if (s instanceof Square) say("typeof edge", typeof s.edge);
+//// each-route-alone/a-lying-instanceof-in-or.ts
+////= say-5
+
+const s: Shape = new Shape();
+say("edge", !(s instanceof Square) || s.edge);
+//// each-route-alone/a-lying-instanceof-in-stored-to.ts
+////= say-5
+
+const s: Shape = new Shape();
+if (s instanceof Square) {
+  s.edge = 7;
+  say("edge", s.edge);
+  say("keys", Object.keys(s).length);
+}
+//// each-route-alone/a-lying-instanceof-in-switch-true.ts
+////= say-5
+
+const s: Shape = new Shape();
+switch (true) {
+  case s instanceof Square:
+    say("edge", s.edge);
+    break;
+  default:
+    say("sides", s.sides);
+}
+//// each-route-alone/a-member-gets-another-kind-by-a-callback-with-a-this-argument.ts
+////= say-9
+
+////= Cell-2
+
+function storesToThis(this: Cell): void {
+  this.value = "text";
+  this.leaf = null;
+}
+
+////= describe-3
+
+function change(c: Cell): void {
+  [0].forEach(storesToThis, c);
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-a-default-in-an-array-pattern.ts
+////= say-3
+
+function change(c: Cell): void {
+  [c.value = "text", c.leaf = null] = [];
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-a-delete-that-uncovers-the-prototype.ts
+////= say-3
+
+function change(c: Cell): void {
+  Object.setPrototypeOf(c, { value: "text", leaf: null });
+  Reflect.deleteProperty(c, "value");
+  Reflect.deleteProperty(c, "leaf");
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-a-function-called-with-reflect-apply.ts
+////= say-9
+
+////= Cell-2
+
+function storesToThis(this: Cell): void {
+  this.value = "text";
+  this.leaf = null;
+}
+
+////= describe-3
+
+function change(c: Cell): void {
+  Reflect.apply(storesToThis, c, []);
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-a-generic-store-under-a-key.ts
+////= say-9
+
+////= Cell-2
+
+////= put
+
+////= describe-3
+
+function change(c: Cell): void {
+  put(c, "value", "text");
+  put(c, "leaf", null);
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-a-getter-defined-later.ts
+////= say-3
+
+function change(c: Cell): void {
+  Object.defineProperty(c, "value", { get: () => "text" });
+  Object.defineProperty(c, "leaf", { get: () => null });
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-a-key-put-together-at-run-time.ts
+////= say-3
+
+function change(c: Cell): void {
+  const keys: ("value" | "leaf")[] = ["value", "leaf"];
+  for (const key of keys) {
+    if (key === "value") c[key] = "text";
+    else c[key] = null;
+  }
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-a-proxy.ts
+////= say-3
+
+function change(c: Cell): void {
+  const p = new Proxy(c, {});
+  p.value = "text";
+  p.leaf = null;
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-a-rest-in-a-pattern.ts
+////= say-3
+
+function change(c: Cell): void {
+  const holder: { rest: (number | string)[] } = { rest: [] };
+  [...holder.rest] = ["text"];
+  c.value = holder.rest[0];
+  c.leaf = null;
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-an-array-pattern.ts
+////= say-3
+
+function change(c: Cell): void {
+  [c.value, c.leaf] = ["text", null];
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-an-object-pattern.ts
+////= say-3
+
+function change(c: Cell): void {
+  ({ a: c.value, b: c.leaf } = { a: "text", b: null });
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-define-properties.ts
+////= say-3
+
+function change(c: Cell): void {
+  Object.defineProperties(c, { value: { value: "text" }, leaf: { value: null } });
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-define-property.ts
+////= say-3
+
+function change(c: Cell): void {
+  Object.defineProperty(c, "value", { value: "text" });
+  Object.defineProperty(c, "leaf", { value: null });
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-entries-and-reflect-set.ts
+////= say-3
+
+function change(c: Cell): void {
+  for (const [key, value] of Object.entries({ value: "text", leaf: null })) Reflect.set(c, key, value);
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-object-assign.ts
+////= say-3
+
+function change(c: Cell): void {
+  Object.assign(c, { value: "text", leaf: null });
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-object-assign-of-another-cell.ts
+////= say-3
+
+function change(c: Cell): void {
+  const source = new Cell();
+  source.value = "text";
+  source.leaf = null;
+  Object.assign(c, source);
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-object-assign-of-parsed-text.ts
+////= say-3
+
+function change(c: Cell): void {
+  Object.assign(c, JSON.parse('{"value":"text","leaf":null}'));
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-reflect-set.ts
+////= say-3
+
+function change(c: Cell): void {
+  Reflect.set(c, "value", "text");
+  Reflect.set(c, "leaf", null);
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-the-head-of-a-for-in-loop.ts
+////= say-3
+
+function change(c: Cell): void {
+  for (c.value in { text: 1 }) {
+  }
+  c.leaf = null;
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-member-gets-another-kind-by-the-head-of-a-for-of-loop.ts
+////= say-3
+
+function change(c: Cell): void {
+  for (c.value of ["text"]) {
+  }
+  for (c.leaf of [null]) {
+  }
+}
+
+let sum = 0;
+////= for-4
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+////= if
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-name-asked-for-with-in-appears-by-a-function-called-with-call.ts
+////= say-13
+
+function storesToThis(this: { radius: number; edge?: string }): void {
+  this.edge = "added";
+}
+
+////= edgeOrRadius-2
+
+function change(c: Circle): void {
+  storesToThis.call(c);
+}
+
+let honest = "";
+for (let i = 0; i < 2000; i++) honest = edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", honest);
+const circle = new Circle();
+say("before", edgeOrRadius(circle));
+say("before: in", "edge" in circle);
+change(circle);
+say("after", edgeOrRadius(circle));
+say("after: in", "edge" in circle);
+say("after: own", Object.hasOwn(circle, "edge"));
+say("after: keys", Object.keys(circle).length);
+say("after: radius", circle.radius);
+say("a fresh circle", edgeOrRadius(new Circle()));
+say("a fresh square", edgeOrRadius(new Square()));
+//// each-route-alone/a-name-asked-for-with-in-appears-by-a-generic-store-under-a-key.ts
+////= say-13
+
+////= put
+
+////= edgeOrRadius-2
+
+function change(c: Circle): void {
+  const loose: { radius: number; edge?: string } = c;
+  put(loose, "edge", "added");
+}
+
+let honest = "";
+for (let i = 0; i < 2000; i++) honest = edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", honest);
+const circle = new Circle();
+say("before", edgeOrRadius(circle));
+say("before: in", "edge" in circle);
+change(circle);
+say("after", edgeOrRadius(circle));
+say("after: in", "edge" in circle);
+say("after: own", Object.hasOwn(circle, "edge"));
+say("after: keys", Object.keys(circle).length);
+say("after: radius", circle.radius);
+say("a fresh circle", edgeOrRadius(new Circle()));
+say("a fresh square", edgeOrRadius(new Square()));
+//// each-route-alone/a-name-asked-for-with-in-appears-by-a-name-put-together-at-run-time.ts
+////= say-13
+
+////= edgeOrRadius-2
+
+function change(c: Circle): void {
+  Reflect.set(c, ["ed", "ge"].join(""), "added");
+}
+
+let honest = "";
+for (let i = 0; i < 2000; i++) honest = edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", honest);
+const circle = new Circle();
+say("before", edgeOrRadius(circle));
+say("before: in", "edge" in circle);
+change(circle);
+say("after", edgeOrRadius(circle));
+say("after: in", "edge" in circle);
+say("after: own", Object.hasOwn(circle, "edge"));
+say("after: keys", Object.keys(circle).length);
+say("after: radius", circle.radius);
+say("a fresh circle", edgeOrRadius(new Circle()));
+say("a fresh square", edgeOrRadius(new Square()));
+//// each-route-alone/a-name-asked-for-with-in-appears-by-reflect-set.ts
+////= say-13
+
+////= edgeOrRadius-2
+
+function change(c: Circle): void {
+  Reflect.set(c, "edge", "added");
+}
+
+let honest = "";
+for (let i = 0; i < 2000; i++) honest = edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", honest);
+const circle = new Circle();
+say("before", edgeOrRadius(circle));
+say("before: in", "edge" in circle);
+change(circle);
+say("after", edgeOrRadius(circle));
+say("after: in", "edge" in circle);
+say("after: own", Object.hasOwn(circle, "edge"));
+say("after: keys", Object.keys(circle).length);
+say("after: radius", circle.radius);
+say("a fresh circle", edgeOrRadius(new Circle()));
+say("a fresh square", edgeOrRadius(new Square()));
+//// each-route-alone/a-name-asked-for-with-in-vanishes-by-delete-in-a-function-called-with-call.ts
+////= say-10
+
+function change(s: Square): void {
+  (function (this: { edge?: number }): void {
+    delete this.edge;
+  }).call(s);
+}
+
+let honest = "";
+for (let i = 0; i < 2000; i++) honest = edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", honest);
+const square = new Square();
+say("before", edgeOrRadius(square));
+////= if-3
+say("after", edgeOrRadius(square));
+say("after: own", Object.hasOwn(square, "edge"));
+say("after: keys", Object.keys(square).join());
+say("after: corner", square.corner);
+square.edge = 5;
+say("stored again", edgeOrRadius(square));
+say("stored again: keys", Object.keys(square).join());
+say("a fresh square", edgeOrRadius(new Square()));
+//// each-route-alone/a-name-asked-for-with-in-vanishes-by-delete-through-a-proxy.ts
+////= say-10
+
+function change(s: Square): void {
+  const loose: { edge?: number } = new Proxy(s, {});
+  delete loose.edge;
+}
+
+let honest = "";
+for (let i = 0; i < 2000; i++) honest = edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", honest);
+const square = new Square();
+say("before", edgeOrRadius(square));
+////= if-3
+say("after", edgeOrRadius(square));
+say("after: own", Object.hasOwn(square, "edge"));
+say("after: keys", Object.keys(square).join());
+say("after: corner", square.corner);
+square.edge = 5;
+say("stored again", edgeOrRadius(square));
+say("stored again: keys", Object.keys(square).join());
+say("a fresh square", edgeOrRadius(new Square()));
+//// each-route-alone/a-name-asked-for-with-in-vanishes-by-delete-through-a-view-with-an-optional-member.ts
+////= say-10
+
+function change(s: Square): void {
+  const loose: { edge?: number } = s;
+  delete loose.edge;
+}
+
+let honest = "";
+for (let i = 0; i < 2000; i++) honest = edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", honest);
+const square = new Square();
+say("before", edgeOrRadius(square));
+////= if-3
+say("after", edgeOrRadius(square));
+say("after: own", Object.hasOwn(square, "edge"));
+say("after: keys", Object.keys(square).join());
+say("after: corner", square.corner);
+square.edge = 5;
+say("stored again", edgeOrRadius(square));
+say("stored again: keys", Object.keys(square).join());
+say("a fresh square", edgeOrRadius(new Square()));
+//// each-route-alone/a-name-asked-for-with-in-vanishes-by-delete-under-a-key-put-together-at-run-time.ts
+////= say-10
+
+function change(s: Square): void {
+  Reflect.deleteProperty(s, ["ed", "ge"].join(""));
+}
+
+let honest = "";
+for (let i = 0; i < 2000; i++) honest = edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", honest);
+const square = new Square();
+say("before", edgeOrRadius(square));
+////= if-3
+say("after", edgeOrRadius(square));
+say("after: own", Object.hasOwn(square, "edge"));
+say("after: keys", Object.keys(square).join());
+say("after: corner", square.corner);
+square.edge = 5;
+say("stored again", edgeOrRadius(square));
+say("stored again: keys", Object.keys(square).join());
+say("a fresh square", edgeOrRadius(new Square()));
+//// each-route-alone/a-name-asked-for-with-in-vanishes-by-delete-under-a-key-that-is-a-parameter.ts
+////= say-10
+
+function change(s: Square): void {
+  const remove = (o: { edge?: number; other?: number }, key: "edge" | "other"): void => {
+    delete o[key];
+  };
+  remove(s, "edge");
+}
+
+let honest = "";
+for (let i = 0; i < 2000; i++) honest = edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", honest);
+const square = new Square();
+say("before", edgeOrRadius(square));
+////= if-3
+say("after", edgeOrRadius(square));
+say("after: own", Object.hasOwn(square, "edge"));
+say("after: keys", Object.keys(square).join());
+say("after: corner", square.corner);
+square.edge = 5;
+say("stored again", edgeOrRadius(square));
+say("stored again: keys", Object.keys(square).join());
+say("a fresh square", edgeOrRadius(new Square()));
+//// each-route-alone/a-name-asked-for-with-in-vanishes-by-reflect-delete-property.ts
+////= say-10
+
+function change(s: Square): void {
+  Reflect.deleteProperty(s, "edge");
+}
+
+let honest = "";
+for (let i = 0; i < 2000; i++) honest = edgeOrRadius(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", honest);
+const square = new Square();
+say("before", edgeOrRadius(square));
+////= if-3
+say("after", edgeOrRadius(square));
+say("after: own", Object.hasOwn(square, "edge"));
+say("after: keys", Object.keys(square).join());
+say("after: corner", square.corner);
+square.edge = 5;
+say("stored again", edgeOrRadius(square));
+say("stored again: keys", Object.keys(square).join());
+say("a fresh square", edgeOrRadius(new Square()));
+//// each-route-alone/a-setter-of-numbers-gets-a-string-by-a-proxy-under-the-wider-interface.ts
+////= say-11
+
+function change(b: Box): void {
+  const wide: Wide = new Proxy(b, {});
+  wide.size = "text";
+}
+
+let sum = 0;
+const shared = new Box();
+////= for-22
+say("honest rounds", sum);
+const box = new Box();
+box.size = 1;
+say("before", box.size);
+change(box);
+say("kept", box.kept);
+say("kept plus one", box.kept + 1);
+say("kept doubled", box.kept * 2);
+say("size", box.size);
+say("size plus one", box.size + 1);
+say("other", box.other);
+box.size = 1;
+say("a number again", box.size);
+//// each-route-alone/a-setter-of-numbers-gets-a-string-by-an-interface-with-a-wider-setter.ts
+////= say-11
+
+function change(b: Box): void {
+  const wide: Wide = b;
+  wide.size = "text";
+}
+
+let sum = 0;
+const shared = new Box();
+////= for-22
+say("honest rounds", sum);
+const box = new Box();
+box.size = 1;
+say("before", box.size);
+change(box);
+say("kept", box.kept);
+say("kept plus one", box.kept + 1);
+say("kept doubled", box.kept * 2);
+say("size", box.size);
+say("size plus one", box.size + 1);
+say("other", box.other);
+box.size = 1;
+say("a number again", box.size);
+//// each-route-alone/a-setter-of-numbers-gets-a-string-by-entries-and-reflect-set.ts
+////= say-11
+
+function change(b: Box): void {
+  for (const [key, value] of Object.entries({ size: "text" })) Reflect.set(b, key, value);
+}
+
+let sum = 0;
+const shared = new Box();
+////= for-22
+say("honest rounds", sum);
+const box = new Box();
+box.size = 1;
+say("before", box.size);
+change(box);
+say("kept", box.kept);
+say("kept plus one", box.kept + 1);
+say("kept doubled", box.kept * 2);
+say("size", box.size);
+say("size plus one", box.size + 1);
+say("other", box.other);
+box.size = 1;
+say("a number again", box.size);
+//// each-route-alone/a-setter-of-numbers-gets-a-string-by-object-assign.ts
+////= say-11
+
+function change(b: Box): void {
+  Object.assign(b, { size: "text" });
+}
+
+let sum = 0;
+const shared = new Box();
+////= for-22
+say("honest rounds", sum);
+const box = new Box();
+box.size = 1;
+say("before", box.size);
+change(box);
+say("kept", box.kept);
+say("kept plus one", box.kept + 1);
+say("kept doubled", box.kept * 2);
+say("size", box.size);
+say("size plus one", box.size + 1);
+say("other", box.other);
+box.size = 1;
+say("a number again", box.size);
+//// each-route-alone/a-setter-of-numbers-gets-a-string-by-object-assign-of-parsed-text.ts
+////= say-11
+
+function change(b: Box): void {
+  Object.assign(b, JSON.parse('{"size":"text"}'));
+}
+
+let sum = 0;
+const shared = new Box();
+////= for-22
+say("honest rounds", sum);
+const box = new Box();
+box.size = 1;
+say("before", box.size);
+change(box);
+say("kept", box.kept);
+say("kept plus one", box.kept + 1);
+say("kept doubled", box.kept * 2);
+say("size", box.size);
+say("size plus one", box.size + 1);
+say("other", box.other);
+box.size = 1;
+say("a number again", box.size);
+//// each-route-alone/a-setter-of-numbers-gets-a-string-by-reflect-set.ts
+////= say-11
+
+function change(b: Box): void {
+  Reflect.set(b, "size", "text");
+}
+
+let sum = 0;
+const shared = new Box();
+////= for-22
+say("honest rounds", sum);
+const box = new Box();
+box.size = 1;
+say("before", box.size);
+change(box);
+say("kept", box.kept);
+say("kept plus one", box.kept + 1);
+say("kept doubled", box.kept * 2);
+say("size", box.size);
+say("size plus one", box.size + 1);
+say("other", box.other);
+box.size = 1;
+say("a number again", box.size);
+//// each-route-alone/a-setter-of-numbers-gets-a-string-by-reflect-set-with-a-receiver.ts
+////= say-11
+
+function change(b: Box): void {
+  Reflect.set(new Box(), "size", "text", b);
+}
+
+let sum = 0;
+const shared = new Box();
+////= for-22
+say("honest rounds", sum);
+const box = new Box();
+box.size = 1;
+say("before", box.size);
+change(box);
+say("kept", box.kept);
+say("kept plus one", box.kept + 1);
+say("kept doubled", box.kept * 2);
+say("size", box.size);
+say("size plus one", box.size + 1);
+say("other", box.other);
+box.size = 1;
+say("a number again", box.size);
+//// each-route-alone/a-setter-of-numbers-gets-a-string-by-the-setter-taken-from-its-descriptor.ts
+////= say-11
+
+function change(b: Box): void {
+  Object.getOwnPropertyDescriptor(Box.prototype, "size")?.set?.call(b, "text");
+}
+
+let sum = 0;
+const shared = new Box();
+////= for-22
+say("honest rounds", sum);
+const box = new Box();
+box.size = 1;
+say("before", box.size);
+change(box);
+say("kept", box.kept);
+say("kept plus one", box.kept + 1);
+say("kept doubled", box.kept * 2);
+say("size", box.size);
+say("size plus one", box.size + 1);
+say("other", box.other);
+box.size = 1;
+say("a number again", box.size);
+//// each-route-alone/a-sound-member-changes-by-a-callback-with-a-this-argument.ts
+////= say-14
+
+function change(c: Cell): void {
+  [0].forEach(storesToThis, c);
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-a-default-in-an-array-pattern.ts
+////= say-6
+
+function change(c: Cell): void {
+  [c.count = 2.5, c.ready = true, c.title = "bcd", c.run = () => 2] = [];
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-a-delete-that-uncovers-the-prototype.ts
+////= say-6
+
+function change(c: Cell): void {
+  Object.setPrototypeOf(c, { count: 2.5, ready: true, title: "bcd", run: () => 2 });
+  Reflect.deleteProperty(c, "count");
+  Reflect.deleteProperty(c, "ready");
+  Reflect.deleteProperty(c, "title");
+  Reflect.deleteProperty(c, "run");
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-a-function-called-with-reflect-apply.ts
+////= say-14
+
+function change(c: Cell): void {
+  Reflect.apply(storesToThis, c, []);
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-a-generic-store-under-a-key.ts
+////= say
+
+////= Cell
+
+////= put
+
+////= describe-4
+
+function change(c: Cell): void {
+  put(c, "count", 2.5);
+  put(c, "ready", true);
+  put(c, "title", "bcd");
+  put(c, "run", () => 2);
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-a-getter-defined-later.ts
+////= say-6
+
+function change(c: Cell): void {
+  Object.defineProperty(c, "count", { get: () => 2.5 });
+  Object.defineProperty(c, "ready", { get: () => true });
+  Object.defineProperty(c, "title", { get: () => "bcd" });
+  Object.defineProperty(c, "run", { get: () => () => 2 });
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-a-plain-store.ts
+////= say-6
+
+function change(c: Cell): void {
+  c.count = 2.5;
+  c.ready = true;
+  c.title = "bcd";
+  c.run = () => 2;
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-a-proxy.ts
+////= say-6
+
+function change(c: Cell): void {
+  const p = new Proxy(c, {});
+  p.count = 2.5;
+  p.ready = true;
+  p.title = "bcd";
+  p.run = () => 2;
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-a-spread-copied-back-by-a-loop.ts
+////= say-6
+
+function change(c: Cell): void {
+  const source: Cell = { ...c, count: 2.5, ready: true, title: "bcd", run: () => 2 };
+  c.count = source.count;
+  c.ready = source.ready;
+  c.title = source.title;
+  c.run = source.run;
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-an-array-pattern.ts
+////= say-6
+
+function change(c: Cell): void {
+  [c.count, c.ready, c.title, c.run] = [2.5, true, "bcd", () => 2];
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-compound-assignments.ts
+////= say-6
+
+function change(c: Cell): void {
+  c.count += 1.5;
+  c.ready = !c.ready;
+  c.title = c.title.replace("a", "bcd");
+  const old = c.run;
+  c.run = () => old() + 1;
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-define-properties.ts
+////= say-6
+
+function change(c: Cell): void {
+  Object.defineProperties(c, { count: { value: 2.5 }, ready: { value: true }, title: { value: "bcd" }, run: { value: () => 2 } });
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-define-property.ts
+////= say-6
+
+function change(c: Cell): void {
+  Object.defineProperty(c, "count", { value: 2.5 });
+  Object.defineProperty(c, "ready", { value: true });
+  Object.defineProperty(c, "title", { value: "bcd" });
+  Object.defineProperty(c, "run", { value: () => 2 });
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-entries-and-reflect-set.ts
+////= say-6
+
+function change(c: Cell): void {
+  for (const [key, value] of Object.entries({ count: 2.5, ready: true, title: "bcd", run: () => 2 })) Reflect.set(c, key, value);
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-logical-assignments.ts
+////= say-6
+
+function change(c: Cell): void {
+  c.count &&= 2.5;
+  c.ready ||= true;
+  c.title &&= "bcd";
+  c.run &&= () => 2;
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-reflect-define-property.ts
+////= say-6
+
+function change(c: Cell): void {
+  Reflect.defineProperty(c, "count", { value: 2.5 });
+  Reflect.defineProperty(c, "ready", { value: true });
+  Reflect.defineProperty(c, "title", { value: "bcd" });
+  Reflect.defineProperty(c, "run", { value: () => 2 });
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-reflect-set.ts
+////= say-6
+
+function change(c: Cell): void {
+  Reflect.set(c, "count", 2.5);
+  Reflect.set(c, "ready", true);
+  Reflect.set(c, "title", "bcd");
+  Reflect.set(c, "run", () => 2);
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-sound-member-changes-by-the-head-of-a-for-of-loop.ts
+////= say-6
+
+function change(c: Cell): void {
+  for (c.count of [2.5]) {
+  }
+  for (c.ready of [true]) {
+  }
+  for (c.title of ["bcd"]) {
+  }
+  for (c.run of [() => 2]) {
+  }
+}
+
+let sum = 0;
+////= for-5
+say("honest rounds", sum);
+const cell = new Cell();
+say("before", describe(cell));
+change(cell);
+say("count", cell.count);
+say("count plus one", cell.count + 1);
+say("ready", cell.ready);
+say("ready picks", cell.ready ? "ready" : "not ready");
+say("title", cell.title);
+say("run", cell.run());
+say("after", describe(cell));
+say("a fresh cell", describe(new Cell()));
+//// each-route-alone/a-square-made-by-a-literal-with-getters.ts
+////= say-4
+
+type Tagged = { kind: "circle" | "square" };
+
+function make(): Square {
+  return {
+    get kind(): "square" {
+      return "square";
+    },
+    get edge(): number {
+      return 2;
+    },
+    set edge(value: number) {},
+    corner: 90,
+  };
+}
+
+////= area-3
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += area(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", sum);
+const odd = make();
+say("kind", odd.kind);
+say("edge", odd.edge);
+say("area", area(odd));
+say("described", describe(odd));
+say("is a square", odd instanceof Square);
+odd.edge = 5;
+say("area after a store", area(odd));
+//// each-route-alone/a-square-made-by-a-proxy.ts
+////= say-4
+
+type Tagged = { kind: "circle" | "square" };
+
+function make(): Square {
+  return new Proxy(new Square(), {});
+}
+
+////= area-3
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += area(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", sum);
+const odd = make();
+say("kind", odd.kind);
+say("edge", odd.edge);
+say("area", area(odd));
+say("described", describe(odd));
+say("is a square", odd instanceof Square);
+odd.edge = 5;
+say("area after a store", area(odd));
+//// each-route-alone/a-square-made-by-a-structured-clone.ts
+////= say-4
+
+type Tagged = { kind: "circle" | "square" };
+
+function make(): Square {
+  return structuredClone(new Square());
+}
+
+////= area-3
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += area(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", sum);
+const odd = make();
+say("kind", odd.kind);
+say("edge", odd.edge);
+say("area", area(odd));
+say("described", describe(odd));
+say("is a square", odd instanceof Square);
+odd.edge = 5;
+say("area after a store", area(odd));
+//// each-route-alone/a-square-made-by-object-assign-into-a-literal.ts
+////= say-4
+
+type Tagged = { kind: "circle" | "square" };
+
+function make(): Square {
+  return Object.assign({}, new Square());
+}
+
+////= area-3
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) sum += area(i % 2 === 0 ? new Circle() : new Square());
+say("honest rounds", sum);
+const odd = make();
+say("kind", odd.kind);
+say("edge", odd.edge);
+say("area", area(odd));
+say("described", describe(odd));
+say("is a square", odd instanceof Square);
+odd.edge = 5;
+say("area after a store", area(odd));
+//// each-route-alone/elements-get-another-kind-by-a-callback-of-for-each.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  values.forEach((v, i, all) => {
+    all[i] = "text";
+  });
+  leaves.forEach((l, i, all) => {
+    all[i] = null;
+  });
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-a-plain-store.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  values[0] = "text";
+  leaves[0] = null;
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-a-proxy.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  new Proxy(values, {})[0] = "text";
+  new Proxy(leaves, {})[0] = null;
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-a-store-through-an-alias.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  const v = values;
+  const l = leaves;
+  v[0] = "text";
+  l[0] = null;
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-a-store-under-a-computed-index.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  const at = values.length - 3;
+  values[at] = "text";
+  leaves[at] = null;
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-an-array-pattern.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  [values[0], leaves[0]] = ["text", null];
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-an-object-pattern.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  ({ a: values[0], b: leaves[0] } = { a: "text", b: null });
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-fill.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  values.fill("text");
+  leaves.fill(null);
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-fill-of-one-slot.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  values.fill("text", 0, 1);
+  leaves.fill(null, 0, 1);
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-push-and-copy-within.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+////= change	copyWithin(0, 3	copyWithin(0, 3
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-push-and-reverse.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+////= change	reverse(	reverse(
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-push-and-sort.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+////= change	sort((a, b) => (typeof a === "string" ? -1 : typeof b === "string" ? 1 : 0)	sort((a, b) => (a === null ? -1 : b === null ? 1 : 0)
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-push-through-call.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  values.length = 0;
+  leaves.length = 0;
+  Array.prototype.push.call(values, "text");
+  Array.prototype.push.call(leaves, null);
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-splice.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  values.splice(0, 1, "text");
+  leaves.splice(0, 1, null);
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-the-head-of-a-for-of-loop.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  for (values[0] of ["text"]) {
+  }
+  for (leaves[0] of [null]) {
+  }
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);
+//// each-route-alone/elements-get-another-kind-by-unshift.ts
+////= say-9
+
+const values: (number | string)[] = [1, 2, 3];
+const leaves: (Leaf | null)[] = [new Leaf(), new Leaf(), new Leaf()];
+
+////= describe-8
+
+function change(): void {
+  values.unshift("text");
+  leaves.unshift(null);
+}
+
+say("before", describe(values[0]) + ", " + weigh(leaves[0]));
+////= if-2
+say("described", describe(values[0]) + ", " + weigh(leaves[0]));
+say("some value is a string", values.some(v => typeof v === "string"));
+say("every value is a number", values.every(v => typeof v === "number"));
+say("numbers kept by filter", values.filter(v => typeof v === "number").length);
+say("the index of the first string", values.findIndex(v => typeof v === "string"));
+say("some leaf is null", leaves.some(l => l === null));
+say("leaves kept by filter", leaves.filter(l => l !== null).length);
+let text = "";
+for (const v of values) text += typeof v + " ";
+for (const l of leaves) text += weigh(l) + " ";
+say("walked", text);

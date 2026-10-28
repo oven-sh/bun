@@ -1,0 +1,194 @@
+////: asked
+function asked(make) {
+  const before = count("operationAOTTryPutProperties");
+  const said = new Set();
+  for (let i = 0; i < 2000; i++) said.add(«1»));
+  console.log([...said].join("\n"));
+  return count("operationAOTTryPutProperties") - before;
+}
+////: attempt
+function attempt(label, run) {
+  try {
+    say(label, run());
+  } catch (error) {
+    say(label, "threw", error.constructor.name);
+  }
+}
+////: attempt-2
+function attempt(action) {
+  try {
+    return action();
+  } catch (error) {
+    return error.constructor.name;
+  }
+}
+////: attempt-3
+const attempt = run => {
+  try {
+    return «1»(run());
+  } catch (error) {
+    return «2» + error.constructor.name;
+  }
+};
+////: churn
+function churn(n) {
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += { a: i, b: "t" + i, c: [i] }.b.length;
+  return sum;
+}
+////: find
+function find(list, key) {
+  for (let entry = list; entry; entry = entry.parent) {
+    if (entry.key === key)
+      return entry.value;
+  }
+  return "absent";
+}
+////: for
+for (var kind in kinds) {
+  var wrong = [];
+  for (var way in ways) {
+    for (var round = 0; round < 5; round++) {
+      var said;
+      try { var made = kinds[kind](round); holds = made[1]; lostAt = []; said = !ways[way](made[0]) ? "a property reads back wrong" : !made[1]() ? "it lost what it held" : lostAt.length ? "it had lost what it held ahead of addition " + lostAt.join() : ""; } catch (error) { said = "threw " + error.constructor.name + ": " + error.message; }
+      holds = null;
+      if (said) wrong.push(way + " " + round + ": " + said);
+    }
+  }
+  console.log(kind + ": " + (wrong.length ? wrong.length + " wrong: " + wrong.slice(0, 4).join(" | ") : "as it was"));
+}
+////: for-2
+for (const [name, f] of all) {
+  say(name + " 3", () => f("x", "y", 3)); say(name + " 0", () => f()); say(name + " 1", () => f("x"));
+  H.fn = f; say(name + " unknown", () => H.fn("x", "y", 3)); say(name + " apply", () => H.fn.apply(null, ["x", undefined])); say(name + " 12", () => H.fn(...twelve));
+}
+////: for-7
+for (const read of [«1»s]) {
+  for (const receiver of receivers) {
+    const before = asked();
+    results.push(read(receiver, 500));
+    most = Math.max(most, asked() - before);
+  }
+}
+////: lines-10
+function «1»(«2», «3») {
+  «4» = «3»;
+}
+////: lines-15
+class «1» extends «2» {
+  «3» = «4»;
+}
+////: lines-16
+function «1»(«2», «3») {
+  return «4»(«3»);
+}
+////: lines-17
+function «1»(«2», value) {
+  «3» = value;
+  return «3»;
+}
+////: lines-18
+class «1» {
+  constructor(«2») {
+    this.«2» = «2»;
+  }
+}
+////: lines-21
+function «1»(«2») {
+  return «3»();
+}
+////: lines-22
+function «1»(«2»: unknown): «3» {
+  return «2»;
+}
+////: lines-23
+function «1»(«2», «3», «4») {
+  return «5»(«3», «4»);
+}
+////: lines-27
+try {
+  new «1»);
+} catch (error) {
+  console.log(error.«2»e);
+}
+////: lines-28
+try {
+  «1»;
+} catch (error) {
+  results.push(error.constructor.name);
+}
+////: lines-6
+function «1»(«2») {
+  «3» «4»;
+}
+////: make
+function make(i) {
+  const o = {};
+  o["kind" + i] = i;
+  o.first = i; o.second = 2; o.third = 3; o.fourth = 4; o.fifth = 5; o.sixth = 6; o.seventh = 7; o.eighth = 8;
+  return o;
+}
+////: readRepeatedly
+function readRepeatedly(read, receiver) {
+  let last;
+  for (let i = 0; i < 1000; i++) last = read(receiver);
+  return last;
+}
+////: say
+const say = (label, run) => {
+  const seen = [];
+  for (let turn = 0; turn < 6; turn++) {
+    try {
+      seen.push(show(run()));
+    } catch (error) {
+      seen.push("throws " + error.constructor.name);
+    }
+  }
+  lines.push(label + ": " + seen.join(" "));
+};
+////: say-2
+function say(...parts) {
+  lines.push(parts.map(part => (typeof part === "string" ? part : JSON.stringify(part) ?? String(part))).join(" "));
+}
+////: say-3
+function say(label, work) {
+  let text;
+  try {
+    text = JSON.stringify(work());
+  } catch (error) {
+    text = "throws " + error.constructor.name;
+  }
+  lines.push(label + ": " + text);
+}
+////: show-2
+function show(name: string, make: () => unknown) {
+  let out: string;
+  try { out = JSON.stringify(make(), (_k, v) => say(v)); } catch (e) { out = «1» + (e as Error).name; }
+  console.log(String(++count).padStart(2, "0"), name + ":", out);
+}
+////: show-4
+function show(name: string, make: () => unknown) {
+  let out: string;
+  try { out = JSON.stringify(make(), (_k, v) => (v === undefined ? "undefined" : typeof v === "function" ? "function" : «1»e; }
+  console.log(String(++count).padStart(2, "0"), name + ":", out);
+}
+////: show-5
+function show(name: string, make: () => unknown) {
+  let out: string;
+  try { out = JSON.stringify(make()«1» " + (e as Error).name; }
+  console.log(String(++count).padStart(2, "0"), name + ":", out);
+}
+////: ways
+var ways = {
+  "fields by name": function (o) { new ByName(o); return [o.a, o.b, o.c, o.d, o.e, o.f, o.g, o.h, o.i, o.j, o.k, o.l, o.m, o.n, o.o, o.p, o.q, o.r, o.s, o.t].join() === upTo(20); },
+  "fields by text": function (o) { new ByText(o); return texts.map(function (k) { return o[k]; }).join() === upTo(20); },
+  "fields by symbol": function (o) { new BySymbol(o); return symbols.map(function (k) { return o[k]; }).join() === upTo(20); },
+  "private fields": function (o) { new Private(o); return Private.read(o).join() === upTo(20); },
+  "private methods": function (o) { new PrivateMethods(o); return PrivateMethods.read(o).join() === upTo(9); },
+  "of every kind by turns": function (o) { new Mixed(o); return Mixed.read(o).join() === upTo(11); },
+  "stores by name": function (o) { storeNames(o); return [o.a, o.b, o.c, o.d, o.e, o.f, o.g, o.h, o.i, o.j, o.k, o.l, o.m, o.n, o.o, o.p, o.q, o.r, o.s, o.t].join() === upTo(20); },
+  "stores by text": function (o) { storeKeys(o, texts); return texts.map(function (k) { return o[k]; }).join() === upTo(20); },
+  "stores by symbol": function (o) { storeKeys(o, symbols); return symbols.map(function (k) { return o[k]; }).join() === upTo(20); },
+  "private fields, then fields by name": function (o) { new Private(o); new ByName(o); return Private.read(o).join() === upTo(20) && o.t === 19; },
+  "stores by name, then fields by symbol": function (o) { storeNames(o); new BySymbol(o); return o.a === 0 && o.t === 19 && o[symbols[19]] === 19; },
+};

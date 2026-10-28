@@ -1,0 +1,8 @@
+////: checksum
+function checksum(parts: string[]): number {
+  let sum = 0;
+  for (const part of parts) {
+    for (let i = 0; i < part.length; i++) sum = (Math.imul(sum, 31) + part.charCodeAt(i)) | 0;
+  }
+  return sum;
+}

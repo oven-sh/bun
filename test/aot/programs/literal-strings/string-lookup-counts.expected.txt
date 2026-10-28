@@ -1,0 +1,2 @@
+100 every fresh string was looked up
+square no literal was looked up

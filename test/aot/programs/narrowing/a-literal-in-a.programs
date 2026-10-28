@@ -1,0 +1,3202 @@
+////: Crate
+class Crate {
+  constructor(
+    public held: string,
+    public more: Box | undefined,
+  ) {}
+}
+////: byAClosure
+function byAClosure(n: number) {
+  let held = either(n);
+  const read = () => held;
+  seen.push(read());
+  if (typeof held === "number") {
+    const narrowed = held;
+    const again = (value = narrowed) => value;
+    seen.push(again() + 1);
+    held = again();
+  }
+  return read();
+}
+////: double
+function double(count: 0 | 1): number {
+  return count * 2;
+}
+////: for
+for (const [name, handler] of table) {
+  handler();
+  onName(name);
+}
+////: lengths
+function lengths(value: string | number[], rounds: number): number {
+  let r = 0;
+  for (let i = 0; i < rounds; i++) {
+    r = (r + value.length) | 0;
+    const unit = value[i & 3];
+    r = (r + (typeof unit === "string" ? unit.charCodeAt(0) : unit ?? -1)) | 0;
+    r ^= value.length << 3;
+  }
+  return r;
+}
+////: lines
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true
+  }
+}
+////: lines-2
+class «1» {
+  name = «2»;
+  «3» = «4»;
+  speak() {
+    return «5»;
+  }
+  get legs() {
+    return «6»;
+  }
+}
+////: lines-3
+function «1»() {
+  let socket: Socket | «2» = «2»;
+  later(() => {
+    socket = new Socket();
+  });
+  // @ts-ignore
+  return socket?.end();
+}
+////: lines-4
+function «1»(«2»: «3», alias: «3», other: Tree): string {
+  if («2».item instanceof Leaf) {
+    alias.item = other;
+    return format(«2».item.text, «2».item.describe());
+  }
+  return "not a leaf";
+}
+////: lines-5
+function «1»() {
+  let pet: Cat | Bird = new Cat();
+  later(() => {
+    pet = new Bird();
+  });
+  return pet.«2»;
+}
+////: lines-6
+function «1»() {
+  let pet: Cat | «2» = new Cat();
+  later(() => {
+    pet = new «2»();
+  });
+  return pet.speak();
+}
+////: lines-7
+function «1»() {
+  let socket: Socket | null = null;
+  later(() => {
+    socket = new Socket();
+  });
+  // @ts-ignore
+  return socket«2»;
+}
+////: ofClasses
+function ofClasses(n: number) {
+  let held = boxed(n);
+  seen.push(held.held);
+  while (held instanceof Crate) {
+    const crate = held;
+    const inner = crate.more;
+    seen.push(crate.held.length);
+    if (!inner) break;
+    held = inner;
+  }
+  return held.held;
+}
+////: ofRows
+function ofRows(n: number) {
+  let held = row(n);
+  seen.push(held.k);
+  if (held.k === "a") {
+    const narrowed = held;
+    const list = [narrowed];
+    seen.push(list[0].a);
+    held = narrowed;
+  } else {
+    const { field } = { field: held };
+    seen.push(field.b);
+    held = field;
+  }
+  return held;
+}
+////: pick
+function pick(word: "a" | "b"): string {
+  return word === "a" ? "first" : "second";
+}
+////: pick-2
+////= pick
+
+////= double
+////: readFirst
+function readFirst(n: number) {
+  let held = either(n);
+  seen.push(held);
+  if (typeof held !== "string") {
+    const narrowed = held;
+    seen.push(narrowed + 1);
+    held = narrowed;
+  }
+  return held;
+}
+////: readFirst-2
+////= readFirst
+
+////= throughTwo
+
+////= ofClasses
+
+////= ofRows
+
+////= byAClosure
+////: tell
+tell(«1», () => {
+  let a: number[] | undefined = undefined;
+  later(() => {
+    a = [7];
+  });
+  // @ts-ignore
+  return «2»;
+});
+////: throughTwo
+function throughTwo(n: number) {
+  let held = either(n);
+  seen.push(held);
+  for (let i = 0; i < 3; i++) {
+    if (typeof held === "number") {
+      const first = held;
+      const second = first;
+      seen.push(second * 2);
+      held = i === 1 ? "stopped" : second + 1;
+    }
+  }
+  return held;
+}
+////: while
+while (started < «1») {
+  const promises: Promise<void>[] = [];
+  for (let i = 0; i < 100; i++) {
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const socket = connect({ path: "p" })
+      .on("connect", () => {
+        socket.on("close", () => resolve());
+        socket.end();
+      })
+      .on("error", e => {
+        reject(e);
+      });
+
+    promises.push(promise);
+    started++;
+  }
+  await Promise.all(promises);
+  await sleep(1);
+  if (started % 100 === 0) {
+    console.log(`Completed ${started} connections.`);
+  }
+}
+//// a-literal-in-a-captured-variable-that-a-call-has-changed.ts
+// The checker keeps what an assignment has told it across a call: to it the variable still holds the literal that was stored. The call has stored another one.
+// Every use below has to see the value that is there.
+const table = { a: 1, b: 2 };
+const list = ["zero", "one"];
+
+////= pick-2
+
+function run(): string {
+  let heldWord: "a" | "b" = "a";
+  let heldCount: 0 | 1 = 0;
+  let heldFlag = false;
+  let heldMaybe: number | undefined = undefined;
+  const change = (): void => {
+    heldWord = "b";
+    heldCount = 1;
+    heldFlag = true;
+    heldMaybe = 7;
+  };
+  const lines: unknown[] = [];
+  heldWord = "a";
+  change();
+  lines.push(table[heldWord], heldWord + "!", `<${heldWord}>`, heldWord.charCodeAt(0), [heldWord].join(), pick(heldWord), heldWord.toUpperCase(), heldWord < "b");
+  const word: string = heldWord;
+  lines.push(word, word === "b", typeof heldWord);
+  heldCount = 0;
+  change();
+  lines.push(list[heldCount], heldCount + 1, heldCount * 2, -heldCount, heldCount ? "yes" : "no", String(heldCount), double(heldCount), heldCount | 4, heldCount < 1);
+  const count: number = heldCount;
+  lines.push(count, count === 1, [10, 20][heldCount]);
+  heldFlag = false;
+  change();
+  lines.push(heldFlag ? 1 : 2, !heldFlag, heldFlag && "x", String(heldFlag), heldFlag || "y", Number(heldFlag));
+  if (heldFlag) lines.push("taken");
+  else lines.push("not taken");
+  const flag: boolean = heldFlag;
+  lines.push(flag, flag ? "set" : "clear");
+  heldMaybe = undefined;
+  change();
+  lines.push(heldMaybe === undefined ? "none" : "some", typeof heldMaybe, String(heldMaybe), [heldMaybe].length, heldMaybe == null);
+  const maybe: number | undefined = heldMaybe;
+  lines.push(maybe, maybe === 7);
+  return lines.map(String).join(" ");
+}
+
+for (let turn = 0; turn < 3; turn++) console.log(run());
+//// a-literal-in-a-member-that-a-call-has-changed.ts
+// The checker keeps what an assignment has told it across a call: to it the member still holds the literal that was stored. The call has stored another one.
+// Every use below has to see the value that is there.
+const table = { a: 1, b: 2 };
+const list = ["zero", "one"];
+
+////= pick-2
+
+class Box {
+  word: "a" | "b" = "a";
+  count: 0 | 1 = 0;
+  flag = false;
+  maybe: number | undefined = undefined;
+}
+
+function change(box: Box): void {
+  box.word = "b";
+  box.count = 1;
+  box.flag = true;
+  box.maybe = 7;
+}
+
+function run(box: Box): string {
+  const lines: unknown[] = [];
+  box.word = "a";
+  change(box);
+  lines.push(table[box.word], box.word + "!", `<${box.word}>`, box.word.charCodeAt(0), [box.word].join(), pick(box.word), box.word.toUpperCase(), box.word < "b");
+  const word: string = box.word;
+  lines.push(word, word === "b", typeof box.word);
+  box.count = 0;
+  change(box);
+  lines.push(list[box.count], box.count + 1, box.count * 2, -box.count, box.count ? "yes" : "no", String(box.count), double(box.count), box.count | 4, box.count < 1);
+  const count: number = box.count;
+  lines.push(count, count === 1, [10, 20][box.count]);
+  box.flag = false;
+  change(box);
+  lines.push(box.flag ? 1 : 2, !box.flag, box.flag && "x", String(box.flag), box.flag || "y", Number(box.flag));
+  if (box.flag) lines.push("taken");
+  else lines.push("not taken");
+  const flag: boolean = box.flag;
+  lines.push(flag, flag ? "set" : "clear");
+  box.maybe = undefined;
+  change(box);
+  lines.push(box.maybe === undefined ? "none" : "some", typeof box.maybe, String(box.maybe), [box.maybe].length, box.maybe == null);
+  const maybe: number | undefined = box.maybe;
+  lines.push(maybe, maybe === 7);
+  return lines.map(String).join(" ");
+}
+
+for (let turn = 0; turn < 3; turn++) console.log(run(new Box()));
+//// a-literal-in-a-module-variable-that-a-call-has-changed.ts
+// The checker keeps what an assignment has told it across a call: to it the variable still holds the literal that was stored. The call has stored another one.
+// Every use below has to see the value that is there.
+const table = { a: 1, b: 2 };
+const list = ["zero", "one"];
+
+////= pick-2
+
+let heldWord: "a" | "b" = "a";
+let heldCount: 0 | 1 = 0;
+let heldFlag = false;
+let heldMaybe: number | undefined = undefined;
+
+function change(): void {
+  heldWord = "b";
+  heldCount = 1;
+  heldFlag = true;
+  heldMaybe = 7;
+}
+
+function run(): string {
+  const lines: unknown[] = [];
+  heldWord = "a";
+  change();
+  lines.push(table[heldWord], heldWord + "!", `<${heldWord}>`, heldWord.charCodeAt(0), [heldWord].join(), pick(heldWord), heldWord.toUpperCase(), heldWord < "b");
+  const word: string = heldWord;
+  lines.push(word, word === "b", typeof heldWord);
+  heldCount = 0;
+  change();
+  lines.push(list[heldCount], heldCount + 1, heldCount * 2, -heldCount, heldCount ? "yes" : "no", String(heldCount), double(heldCount), heldCount | 4, heldCount < 1);
+  const count: number = heldCount;
+  lines.push(count, count === 1, [10, 20][heldCount]);
+  heldFlag = false;
+  change();
+  lines.push(heldFlag ? 1 : 2, !heldFlag, heldFlag && "x", String(heldFlag), heldFlag || "y", Number(heldFlag));
+  if (heldFlag) lines.push("taken");
+  else lines.push("not taken");
+  const flag: boolean = heldFlag;
+  lines.push(flag, flag ? "set" : "clear");
+  heldMaybe = undefined;
+  change();
+  lines.push(heldMaybe === undefined ? "none" : "some", typeof heldMaybe, String(heldMaybe), [heldMaybe].length, heldMaybe == null);
+  const maybe: number | undefined = heldMaybe;
+  lines.push(maybe, maybe === 7);
+  return lines.map(String).join(" ");
+}
+
+for (let turn = 0; turn < 3; turn++) console.log(run());
+//// a-literal-in-an-element-that-a-call-has-changed.ts
+// The checker keeps what an assignment has told it across a call: to it the element still holds the literal that was stored. The call has stored another one.
+// Every use below has to see the value that is there.
+const table = { a: 1, b: 2 };
+const list = ["zero", "one"];
+
+////= pick-2
+
+type Held = [word: "a" | "b", count: 0 | 1, flag: boolean, maybe: number | undefined];
+
+function change(held: Held): void {
+  held[0] = "b";
+  held[1] = 1;
+  held[2] = true;
+  held[3] = 7;
+}
+
+function run(held: Held): string {
+  const lines: unknown[] = [];
+  held[0] = "a";
+  change(held);
+  lines.push(table[held[0]], held[0] + "!", `<${held[0]}>`, held[0].charCodeAt(0), [held[0]].join(), pick(held[0]), held[0].toUpperCase(), held[0] < "b");
+  const word: string = held[0];
+  lines.push(word, word === "b", typeof held[0]);
+  held[1] = 0;
+  change(held);
+  lines.push(list[held[1]], held[1] + 1, held[1] * 2, -held[1], held[1] ? "yes" : "no", String(held[1]), double(held[1]), held[1] | 4, held[1] < 1);
+  const count: number = held[1];
+  lines.push(count, count === 1, [10, 20][held[1]]);
+  held[2] = false;
+  change(held);
+  lines.push(held[2] ? 1 : 2, !held[2], held[2] && "x", String(held[2]), held[2] || "y", Number(held[2]));
+  if (held[2]) lines.push("taken");
+  else lines.push("not taken");
+  const flag: boolean = held[2];
+  lines.push(flag, flag ? "set" : "clear");
+  held[3] = undefined;
+  change(held);
+  lines.push(held[3] === undefined ? "none" : "some", typeof held[3], String(held[3]), [held[3]].length, held[3] == null);
+  const maybe: number | undefined = held[3];
+  lines.push(maybe, maybe === 7);
+  return lines.map(String).join(" ");
+}
+
+for (let turn = 0; turn < 3; turn++) console.log(run(["a", 0, false, undefined]));
+//// a-literal-that-a-call-has-changed-is-stored-where-only-the-old-one-fits.ts
+// To the checker the variable still holds the literal that was stored, and a position that takes only that literal takes the variable. The call has stored another
+// literal. Whatever reads the position has to see the value that is there.
+let held: "a" | "b" = "a";
+
+function change(): void {
+  held = "b";
+}
+
+let inModule: "a" = "a";
+
+class Box {
+  field: "a" = "a";
+}
+
+function name(word: "a"): string {
+  return word === "a" ? "first" : "second";
+}
+
+function returned(): "a" {
+  held = "a";
+  change();
+  return held;
+}
+
+function run(box: Box): string {
+  let captured: "a" = "a";
+  const read = (): string => (captured === "a" ? "first" : "second");
+  held = "a";
+  change();
+  inModule = held;
+  captured = held;
+  box.field = held;
+  const list: "a"[] = [held];
+  const lines = [
+    inModule === "a" ? "first" : "second",
+    read(),
+    box.field === "a" ? "first" : "second",
+    name(held),
+    returned() === "a" ? "first" : "second",
+    list[0] === "a" ? "first" : "second",
+    inModule + captured + box.field + list[0],
+  ];
+  return lines.join(" ");
+}
+
+for (let turn = 0; turn < 3; turn++) console.log(run(new Box()));
+//// a-narrowed-union-stored-into-a-captured-variable-of-the-narrower-union.ts
+// `restore = before` stands where the checker has narrowed `before` to the two strings that `restore` may hold, through a condition that was kept in a constant. Only the read of `before` says so: for the checker the
+// types fit, so nothing is asked at the store.
+// `restore` is captured by a closure, `kept` is a field, `pick` returns, `take` is called: each is a declared position of the narrower union, and each has to get a value that is proven to lie inside it.
+type Mode = "off" | "read" | "write" | "admin";
+type Restorable = "read" | "write";
+class Holder {
+  kept: Restorable = "read";
+}
+function take(mode: Restorable): number {
+  return mode === "read" ? 1 : 2;
+}
+function pick(before: Mode): Restorable {
+  const fits = before === "read" || before === "write";
+  if (!fits) return "read";
+  return before;
+}
+function run(before: Mode, ok: boolean, holder: Holder): string {
+  let restore: Restorable = "read";
+  const later = () => restore;
+  let taken = 0;
+  const liftable = before === "read" || before === "write";
+  if (before === "off") {
+    taken = -1;
+  } else if (!liftable) {
+    taken = -2;
+  } else {
+    if (ok) {
+      restore = before;
+      holder.kept = before;
+      taken = take(before);
+    }
+  }
+  return later() + " " + holder.kept + " " + taken + " " + pick(before);
+}
+const modes: Mode[] = ["off", "read", "write", "admin"];
+for (let i = 0; i < 16; i++) {
+  const mode = JSON.parse(JSON.stringify(modes[i & 3])) as Mode;
+  console.log(mode, run(mode, (i & 4) === 0, new Holder()));
+}
+console.log(run("other" as Mode, true, new Holder()));
+//// a-number-out-of-a-tuple-with-a-function-is-captured-under-a-case-of-a-switch-in-a-validating-build.ts
+const later: Array<() => void> = [];
+function show(level: number, isLow: boolean): void {
+  console.log("level", level, isLow);
+}
+function onLevel(level: number): void {
+  switch (level) {
+    case 1:
+    case 2:
+    case 3:
+      later.push(() => show(level, level !== 3));
+      return;
+    default:
+      later.push(() => show(-1, false));
+  }
+}
+function other(): void {}
+const table: Array<[number, () => void]> = [];
+table.push([1, other]);
+table.push([3, other]);
+table.push([7, other]);
+for (const [level, handler] of table) {
+  handler();
+  onLevel(level);
+}
+for (const run of later) run();
+//// a-number-out-of-a-tuple-with-a-function-is-captured-where-a-comparison-has-narrowed-it-in-a-validating-build.ts
+// The analysis keeps one set for all the positions of a tuple, so for it the function reaches `c` too. `c === 0` holds for a number alone, so the arrow captures a number: a validating build must not stop here.
+const made: Record<number, () => unknown> = {};
+function f(c: number): Array<() => unknown> { const all: Array<() => unknown> = []; if (c === 0) all.push(() => made[c]); return all; }
+function other(): void {}
+const table: Array<[number, () => void]> = []; table.push([0, other]);
+for (const [c, h] of table) for (const g of f(c)) console.log(g());
+//// a-number-out-of-options-that-untyped-code-has-made-is-captured-where-a-comparison-has-narrowed-it-in-a-validating-build.ts
+// The options come out of code without types. `limit === 0` holds for a number alone, whatever that code has stored, so the first arrow captures a number: a validating build must not stop here.
+function report(limit: number, strict: boolean): string { return limit + " " + strict; }
+function start({ limit = 0, strict = false }: { limit?: number; strict?: boolean } = {}): () => string {
+  if (limit === 0) return () => report(limit, strict);
+  return () => "limited " + report(limit, strict);
+}
+////= set
+const settings = set({}, ["quota", "limit"], 0);
+console.log(start(settings.quota)(), start()(), start({ limit: 3, strict: true })());
+//// a-string-is-captured-where-it-equals-a-constant-of-the-module-in-a-validating-build.ts
+const later: Array<() => void> = [];
+function show(name: string): void {
+  console.log("name", name);
+}
+const READ_TOOL = "read_comments";
+function onName(name: string): void {
+  if (name === READ_TOOL) later.push(() => show(name));
+}
+function other(): void {}
+const table: Array<[string, () => void]> = [];
+table.push(["read_comments", other]);
+table.push(["write_comments", other]);
+////= for
+for (const run of later) run();
+//// a-string-is-captured-where-it-equals-an-imported-constant-in-a-validating-build/main.ts
+import { READ_TOOL } from "./names";
+const later: Array<() => void> = [];
+function show(name: string): void {
+  console.log("name", name);
+}
+function onName(name: string): void {
+  if (name === READ_TOOL) later.push(() => show(name));
+}
+function other(): void {}
+const table: Array<[string, () => void]> = [];
+table.push(["read_comments", other]);
+table.push(["write_comments", other]);
+////= for
+for (const run of later) run();
+//// a-string-is-captured-where-it-equals-an-imported-constant-in-a-validating-build/names.ts
+export const READ_TOOL = "read_comments";
+//// a-string-is-captured-where-three-cases-of-a-switch-share-a-body-and-values-of-every-kind-come-in-a-validating-build.ts
+type Reason = "RETENTION" | "GENERATION" | "ROTATION" | "SERVER";
+const later: Array<() => void> = [];
+function open(options: { forceMint: boolean; kind: string }): void {
+  console.log("open", options.forceMint, options.kind);
+}
+function onReset(reason: Reason): void {
+  switch (reason) {
+    case "RETENTION":
+    case "GENERATION":
+    case "ROTATION":
+      later.push(() => open({ forceMint: reason !== "RETENTION", kind: typeof reason }));
+      return;
+    default:
+      later.push(() => open({ forceMint: false, kind: typeof reason }));
+  }
+}
+const values: any[] = [
+  "RETENTION",
+  "ROTATION",
+  "SERVER",
+  "RETEN" + String(["TION"]),
+  new String("RETENTION"),
+  { toString: () => "RETENTION" },
+  ["RETENTION"],
+  () => "RETENTION",
+  Symbol.for("RETENTION"),
+  1,
+  -0,
+  NaN,
+  1n,
+  true,
+  null,
+  undefined,
+];
+for (const value of values) onReset(value);
+for (const run of later) run();
+//// a-string-or-an-array-is-read-in-a-loop-that-does-not-change-it.ts
+////= lengths
+console.log(lengths("abcd", 5), lengths([1, 2, 3], 6), lengths("", 3), lengths([], 2));
+//// a-string-out-of-a-tuple-with-a-function-is-captured-under-a-case-of-a-switch-in-a-validating-build.ts
+const later: Array<() => void> = [];
+function show(name: string): void {
+  console.log("name", name);
+}
+function onName(name: string): void {
+  switch (name) {
+    case "one":
+      later.push(() => show(name));
+      return;
+    default:
+      later.push(() => show("other"));
+  }
+}
+function other(): void {}
+const table: Array<[string, () => void]> = [];
+table.push(["one", other]);
+table.push(["two", other]);
+////= for
+for (const run of later) run();
+//// a-string-out-of-a-tuple-with-a-function-is-captured-where-a-comparison-has-narrowed-it-in-a-validating-build.ts
+// A tuple holds a string and a function. The string goes into a function that compares it with a literal and, where they are equal, makes a closure that captures it. Built with --aot-validate.
+const made: Record<string, () => any> = { Array: () => "made for Array" };
+function makersFor(name: string): Array<() => any> {
+  const all: Array<() => any> = [];
+  if (name === "Array") all.push(() => made[name]);
+  return all;
+}
+function other(): void {}
+const table: Array<[string, () => void]> = [];
+table.push(["Array", other]);
+table.push(["Map", other]);
+for (const [name, handler] of table) {
+  handler();
+  for (const maker of makersFor(name)) console.log(name, maker()());
+}
+console.log("done");
+//// a-test-that-does-not-change-in-a-loop-goes-both-ways.ts
+// for (const item of items) if (exclude === undefined || !(item.flags & exclude)) ..: the test of `exclude` comes out the same in every round of a call, and both ways occur among the calls.
+// Neither way may cost the loop its types; here only the answers are compared, also where the value, the array or an element is not what its type says.
+interface Item { flags: number; weight: number }
+function sum(items: readonly Item[], exclude?: number): number { let total = 0; for (const item of items) { if (exclude === undefined || !(item.flags & exclude)) total |= item.weight; } return total; }
+function pick(items: readonly Item[], mode: string | number): number { let total = 0; for (let i = 0; i < items.length; i++) { total += typeof mode === "string" ? items[i].flags : items[i].weight + mode; } return total; }
+function scale(items: readonly Item[], by: number | null): number { let total = 0; for (const item of items) total += by === null ? item.weight : item.weight * by; return total; }
+function count(items: readonly Item[], list: number[] | undefined): number { let total = 0; for (let i = 0; i < items.length; i++) { if (list) total += list.length + items[i].flags; else total -= items[i].weight; } return total; }
+function changed(items: readonly Item[], box: { limit?: number }): number { let total = 0; for (const item of items) { if (box.limit === undefined) { total += item.weight; if (item.flags === 5) box.limit = 3; } else total -= item.flags & box.limit; } return total; }
+const launder = new Function("v", process.env.LAUNDER_TEXT ?? "return v") as <V>(v: V) => V;
+const items: Item[] = []; for (let i = 0; i < 50; i++) items.push({ flags: i & 7, weight: i * 3 });
+const table = launder({ sum, pick, scale, count, changed });
+const attempt = (label: string, run: () => unknown) => { try { console.log(label, String(run())); } catch (error) { console.log(label, (error as Error).constructor.name); } };
+for (let round = 0; round < 3; round++) {
+  attempt("sum without", () => table.sum(items));
+  attempt("sum with", () => table.sum(items, 4));
+  attempt("sum with zero", () => table.sum(items, 0));
+  attempt("sum with a fraction", () => table.sum(items, 4.5));
+  attempt("sum with null", () => table.sum(items, launder(null) as unknown as number));
+  attempt("sum with text", () => table.sum(items, launder("4") as unknown as number));
+  attempt("pick text", () => table.pick(items, "flags"));
+  attempt("pick number", () => table.pick(items, 2));
+  attempt("pick an object", () => table.pick(items, launder({ valueOf() { return 1; } }) as unknown as number));
+  attempt("scale null", () => table.scale(items, null));
+  attempt("scale by", () => table.scale(items, 3));
+  attempt("scale by undefined", () => table.scale(items, launder(undefined) as unknown as number));
+  attempt("count with", () => table.count(items, [1, 2, 3]));
+  attempt("count without", () => table.count(items, undefined));
+  attempt("count with null", () => table.count(items, launder(null) as unknown as undefined));
+  attempt("changed in the loop", () => table.changed(items, {}));
+  attempt("changed before", () => table.changed(items, { limit: 6 }));
+  attempt("no items", () => table.sum([], 4) + table.pick([], 1) + table.scale([], null));
+  attempt("holes", () => table.sum(launder([items[1], , items[3]]) as Item[], 4));
+  attempt("other objects", () => table.sum(launder([{ weight: 2, flags: 1 }, { flags: "4", weight: 8 }, { weight: 16 }]) as Item[], 4));
+  attempt("not an array", () => table.sum(launder(new Set(items)) as unknown as Item[], 4));
+  attempt("not iterable", () => table.sum(launder({ length: 1 }) as unknown as Item[]));
+}
+//// array-buffer-or-shared-array-buffer.ts
+// An ArrayBuffer and a SharedArrayBuffer are cells of one kind in the engine, and each class has getters and methods of its own: a member of a value that may be either comes from the class of the value.
+type AnyBuffer = ArrayBuffer | SharedArrayBuffer;
+function sizeOf(buffer: AnyBuffer): number { return buffer.byteLength; }
+function limitOf(buffer: AnyBuffer): number { return buffer.maxByteLength; }
+function tailOf(buffer: AnyBuffer): AnyBuffer { return buffer.slice(4); }
+function tagOf(buffer: AnyBuffer): string { return buffer[Symbol.toStringTag]; }
+function kindOf(buffer: AnyBuffer): string {
+  if (buffer instanceof SharedArrayBuffer) return `shared growable=${buffer.growable}`;
+  return `unshared resizable=${buffer.resizable} detached=${buffer.detached}`;
+}
+function describe(value: AnyBuffer | Uint8Array | string | undefined): string {
+  if (value === undefined) return "nothing";
+  if (typeof value === "string") return `text ${value.length}`;
+  if (value instanceof Uint8Array) return `view ${value.length} over ${kindOf(value.buffer)}`;
+  return `${tagOf(value)} ${sizeOf(value)}`;
+}
+function firstByte(buffer: AnyBuffer): number {
+  const bytes = new Uint8Array(buffer);
+  bytes[0] = sizeOf(buffer);
+  return new DataView(buffer).getUint8(0);
+}
+const buffers: AnyBuffer[] = [new ArrayBuffer(8), new SharedArrayBuffer(16), new ArrayBuffer(24, { maxByteLength: 32 }), new SharedArrayBuffer(40, { maxByteLength: 64 })];
+for (let round = 0; round < 3; round++) {
+  for (const buffer of buffers) console.log(round, sizeOf(buffer), limitOf(buffer), sizeOf(tailOf(buffer)), tagOf(buffer), tagOf(tailOf(buffer)), kindOf(buffer), firstByte(buffer));
+}
+for (const value of [buffers[0], buffers[1], new Uint8Array(buffers[0]), new Uint8Array(buffers[1]), "text", undefined]) console.log(describe(value));
+const moved = new ArrayBuffer(8);
+const target = moved.transfer(4);
+console.log(kindOf(moved), sizeOf(moved), kindOf(target), sizeOf(target));
+//// constant-conditions-match-ecmascript.ts
+// A condition on constants is decided as ECMAScript decides it, or not at all: NaN, -0, coercions, bigints, getters, effects. Every line is what plain Bun prints.
+const log: string[] = []
+const say = (name: string, value: unknown) => void log.push(name + ": " + (Object.is(value, -0) ? "-0" : String(value)))
+const NAN: any = NaN
+const MINUS_ZERO: any = -0
+const ZERO: any = 0
+const ONE: any = 1
+const EMPTY: any = ""
+const SPACE: any = " "
+const TEXT_ZERO: any = "0"
+const TEXT_ONE: any = "1"
+const NULL: any = null
+const UNDEFINED: any = undefined
+const TRUE: any = true
+const FALSE: any = false
+const BIG_ZERO: any = 0n
+const BIG_ONE: any = 1n
+
+say("truthiness", [NAN ? 1 : 0, MINUS_ZERO ? 1 : 0, ZERO ? 1 : 0, ONE ? 1 : 0, EMPTY ? 1 : 0, SPACE ? 1 : 0, TEXT_ZERO ? 1 : 0, NULL ? 1 : 0, UNDEFINED ? 1 : 0, BIG_ZERO ? 1 : 0, BIG_ONE ? 1 : 0])
+say("not", [!NAN, !MINUS_ZERO, !EMPTY, !TEXT_ZERO, !NULL, !BIG_ZERO, !BIG_ONE, !!SPACE])
+say("and", [NAN && "right", MINUS_ZERO && "right", EMPTY && "right", TEXT_ZERO && "right", BIG_ZERO && "right", NULL && "right"].map(value => (Object.is(value, -0) ? "-0" : String(value))))
+say("or", [NAN || "right", MINUS_ZERO || "right", EMPTY || "right", TEXT_ZERO || "right", BIG_ZERO || "right", BIG_ONE || "right"])
+say("nullish", [NAN ?? "right", ZERO ?? "right", EMPTY ?? "right", FALSE ?? "right", NULL ?? "right", UNDEFINED ?? "right", BIG_ZERO ?? "right"])
+
+say("strictly equal", [NAN === NAN, NAN !== NAN, ZERO === MINUS_ZERO, TEXT_ONE === ONE, NULL === UNDEFINED, BIG_ONE === ONE, EMPTY === EMPTY, TRUE === ONE])
+say("loosely equal", [NULL == UNDEFINED, NULL == ZERO, NULL == EMPTY, NULL == FALSE, UNDEFINED == ZERO, TEXT_ONE == ONE, EMPTY == ZERO, SPACE == ZERO, TEXT_ZERO == ZERO, TEXT_ZERO == FALSE])
+say("loosely equal, more", [TRUE == ONE, TRUE == TEXT_ONE, NAN == NAN, NAN != NAN, BIG_ONE == ONE, BIG_ONE == TEXT_ONE, BIG_ZERO == EMPTY, BIG_ZERO == FALSE, ZERO == MINUS_ZERO])
+say("ordered", ["10" < "9", ("10" as any) < 9, NULL >= ZERO, NULL > ZERO, UNDEFINED >= ZERO, NAN < ONE, NAN >= ONE, BIG_ONE < 2, TEXT_ONE < 2, EMPTY < ONE, MINUS_ZERO < ZERO])
+
+say("sums", [ONE + TEXT_ONE, TEXT_ONE + ONE, TEXT_ONE - ONE, TRUE + ONE, NULL + ONE, UNDEFINED + ONE, EMPTY + MINUS_ZERO, EMPTY + NAN, EMPTY + 1e21, EMPTY + 0.1 * 3, BIG_ONE + BIG_ONE])
+say("sums decide", [ONE + TEXT_ONE === "11" ? "text" : "number", TEXT_ONE - ONE ? "truthy" : "falsy", UNDEFINED + ONE ? "truthy" : "falsy", NULL + ZERO ? "truthy" : "falsy"])
+say("division", [ONE / MINUS_ZERO, ONE / ZERO, ZERO / ZERO, ONE / MINUS_ZERO < 0 ? "below" : "not below", ZERO / ZERO ? "truthy" : "falsy", ZERO * -1, 1 / (ZERO * -1)])
+say("remainder", [5 % -3, -5 % 3, -5 % 5, 1 / (-5 % 5), ONE % ZERO, -5 % 5 ? "truthy" : "falsy"].map(value => (Object.is(value, -0) ? "-0" : String(value))))
+say("bits", [2 ** 31 | 0, 2 ** 32 | 0, 1 << 31, 1 << 32, -1 >>> 0, -1 >>> 32, -1 >> 31, 2 ** 53 | 0, NAN | 0, 1.9 | 0, -1.9 | 0, (1 << 31) < 0 ? "negative" : "not negative", -1 >>> 0 > 0 ? "positive" : "not positive"])
+say("negation", [-ZERO, -MINUS_ZERO, -NAN, -TEXT_ONE, -EMPTY, -NULL, -UNDEFINED, -ZERO ? "truthy" : "falsy"].map(value => (Object.is(value, -0) ? "-0" : String(value))))
+say("typeof", [typeof NAN, typeof NULL, typeof UNDEFINED, typeof EMPTY, typeof BIG_ZERO, typeof TRUE, typeof NULL === "object" ? "an object" : "no object", typeof BIG_ZERO === "number" ? "a number" : "no number"])
+
+let reads = 0
+const holder = {
+  get flag() {
+    reads++
+    return false
+  },
+}
+class WithStatic {
+  static get flag() {
+    reads++
+    return 0
+  }
+}
+const coerces: any = {
+  valueOf() {
+    reads++
+    return 0
+  },
+  toString() {
+    reads++
+    return ""
+  },
+}
+say("getters", [holder.flag ? "truthy" : "falsy", holder.flag && "never", holder.flag || "right", WithStatic.flag ? "truthy" : "falsy", WithStatic.flag ?? "never"])
+say("getters were read", reads)
+say("an object that converts to zero", [coerces ? "truthy" : "falsy", !coerces, coerces == 0 ? "equal" : "not equal", coerces === 0 ? "same" : "not same", coerces + 1, `${coerces}` ? "truthy" : "falsy", coerces ?? "never" ? "kept" : "not kept"])
+say("conversions ran", reads)
+const settings = { debug: false }
+const flips = () => void (settings.debug = !settings.debug)
+say("a property of a constant object", settings.debug ? "on" : "off")
+flips()
+say("the same, stored to since", settings.debug ? "on" : "off")
+
+let effects = 0
+const effect = () => ++effects
+const VOID: any = void effect()
+say("effects of tests", [VOID ? "truthy" : "falsy", (effect(), FALSE) ? "truthy" : "falsy", effect() && FALSE ? "truthy" : "falsy", (effect(), NULL) ?? "right", (effect(), NULL)?.never])
+say("effects ran", effects)
+say("chains", [NULL?.[effect()], UNDEFINED?.a.b.c, NULL?.(effect()), NULL?.a[effect()](effect()), ZERO?.toFixed(1), EMPTY?.length, NAN?.toString(), FALSE?.toString()])
+say("nothing behind a null ran", effects)
+
+function switches(): string[] {
+  const seen: string[] = []
+  switch (NAN) {
+    case NaN:
+      seen.push("NaN matches NaN")
+      break
+    default:
+      seen.push("NaN matches nothing")
+  }
+  switch (MINUS_ZERO) {
+    case 0:
+      seen.push("-0 matches 0")
+      break
+    default:
+      seen.push("-0 does not match 0")
+  }
+  switch (TEXT_ONE) {
+    case 1:
+      seen.push("a text matches a number")
+      break
+    case "1":
+      seen.push("a text matches a text")
+    case "2":
+      seen.push("and falls through")
+      break
+    case "3":
+      seen.push("never")
+  }
+  switch (ONE) {
+    default:
+      seen.push("the default comes first")
+    case 2:
+      seen.push("and falls through")
+      break
+    case 3:
+      seen.push("never")
+  }
+  switch (BIG_ONE) {
+    case 1:
+      seen.push("a bigint matches a number")
+      break
+    case 1n:
+      seen.push("a bigint matches a bigint")
+  }
+  switch (ONE) {
+    case effect():
+      seen.push("never")
+      break
+    case 1:
+      seen.push("the tests before it ran")
+  }
+  return seen
+}
+say("switches", switches().join(" | "))
+say("effects ran", effects)
+
+function statements(): string[] {
+  const seen: string[] = []
+  if (NAN) seen.push("never")
+  else seen.push("NaN is falsy")
+  if (MINUS_ZERO) seen.push("never")
+  if (TEXT_ZERO) seen.push("a text of a zero is truthy")
+  if (BIG_ZERO) seen.push("never")
+  while (EMPTY) seen.push("never")
+  for (let i = 0; NULL; i++) seen.push("never")
+  do seen.push("a body runs once")
+  while (NAN)
+  for (const key in NULL) seen.push("never " + key)
+  label: {
+    if (ONE) break label
+    seen.push("never")
+  }
+  seen.push("behind the label")
+  try {
+    if (ONE) throw new Error("thrown")
+    seen.push("never")
+  } catch (error) {
+    seen.push((error as Error).message)
+  } finally {
+    seen.push("finally")
+  }
+  for (const n of [1, 2, 3]) {
+    if (ZERO) continue
+    if (n === 2 && ONE) break
+    seen.push("n " + n)
+  }
+  seen.push(hoisted())
+  return seen
+  function hoisted() {
+    return "declared behind the return"
+  }
+}
+say("statements", statements().join(" | "))
+console.log(log.join("\n"))
+//// evolving-let.ts
+// `let x;` without a type or an initializer in a TypeScript file holds whatever is assigned to it.
+function ends(text: string) { let end; let count = 0; for (let i = 0; i < text.length; i++) { if (text.charCodeAt(i) === 32) { end = i; count++ } } return end === undefined ? -1 : end * 10 + count }
+function label(n: number) { let s; if (n > 0) s = "above"; else if (n < 0) s = "below"; return s ?? "zero" }
+function mixed(n: number) { let v; v = n > 1 ? n : "one"; return typeof v === "number" ? v + 1 : v + "!" }
+function counted(n: number) { let k; k = 0; while (k < n) { k++; k += 2 } return k }
+function list(n: number) { let a; a = []; for (let i = 0; i < n; i++) a.push(i * 2); return a.length + (a[1] ?? 0) }
+function untyped(o: any) { let v; v = o.x; return v }
+function taken(p: number[]) { let x; [x] = p; return x }
+const n = Number("4")
+console.log(ends("a b c"), ends("abc"), label(n), label(-n), label(0), mixed(n), mixed(1), counted(n * 2))
+console.log(list(n), untyped({ x: "y" }), untyped({}), taken([n, 1]))
+//// evolving-let-counted.ts
+// A `let` without a type or an initializer at the top level of a module with top-level `await`.
+class Socket { handlers: Record<string, (e?: unknown) => void> = {}; on(name: string, f: (e?: unknown) => void) { this.handlers[name] = f; return this } end() { Promise.resolve().then(() => this.handlers["close"]?.()) } }
+const connect = (options: { path: string }) => { const socket = new Socket(); Promise.resolve().then(() => socket.handlers["connect"]?.()); return socket }
+const sleep = (ms: number) => new Promise<void>(done => Promise.resolve(ms).then(() => done()))
+const isSlow = Number("0") === 1
+const { promise, resolve } = Promise.withResolvers<void>();
+Promise.resolve().then(() => resolve());
+await promise;
+const warmup_total = isSlow ? 100 : 300;
+const measured_total = isSlow ? 200 : 500;
+
+let started;
+
+started = 0;
+////= while	warmup_total
+
+started = 0;
+////= while	measured_total
+console.log("done", started, typeof started)
+export {}
+//// falsy-object-is-nullish.ts
+// Where a value that is an object, undefined or null has tested falsy it goes on as undefined or null: `a && f(a)`, `a || b`, `!a`, early returns, loops, and the same through parameters that untyped callers fill.
+interface Item { name: string; next?: Item | null }
+function nameOf(item: Item): string { return item.name; }
+function andThen(item: Item | undefined | null): string | undefined | null { return item && nameOf(item); }
+function orElse(item: Item | undefined, other: Item): Item { return item || other; }
+function early(item: Item | null): string { if (!item) return String(item); return item.name; }
+function keepsWhichNil(item: Item | undefined | null): string { const left = item && item.next; return left === undefined ? "undefined" : left === null ? "null" : left.name; }
+function last(item: Item | undefined | null): string { let seen = "none"; while (item) { seen = item.name; item = item.next; } return seen + " " + String(item); }
+function handOn(item: Item | undefined | null): string { return take(item && item.next); }
+function take(item: Item | undefined | null): string { return item ? item.name : String(item); }
+const c: Item = { name: "c", next: null }, b: Item = { name: "b", next: c }, a: Item = { name: "a", next: b }, alone: Item = { name: "alone" };
+console.log(andThen(a), andThen(undefined), andThen(null), orElse(undefined, b).name, orElse(a, b).name, early(null), early(c));
+console.log(keepsWhichNil(a), keepsWhichNil(c), keepsWhichNil(alone), keepsWhichNil(undefined), keepsWhichNil(null), last(a), last(alone), last(undefined), last(null));
+console.log(handOn(a), handOn(c), handOn(alone), handOn(undefined), handOn(null));
+const untyped: any[] = [andThen, early, keepsWhichNil, last, handOn];
+for (const f of untyped) {
+  for (const given of [a, undefined, null, 0, "", false, "text"]) {
+    try { console.log(f.name, String(given && (given as any).name || given), String(f(given))); } catch (error) { console.log(f.name, String(given), (error as Error).name); }
+  }
+}
+//// instanceof-beside-values-that-are-no-objects.ts
+// `x instanceof Left` where the type of x lists two classes beside false, a number, true, a string or undefined. Left has a class below it; two more classes below the same base exist and arrive under `as`
+class Base { tag = 0; }
+class Left extends Base { left = 1; }
+class LeftMost extends Left { most = 2; }
+class Right extends Base { right = 3; }
+class Far extends Base { far = 4; }
+function besideFalse(x: Left | Right | false): number { return x instanceof Left ? x.left : 0; }
+function besideNumber(x: Left | Right | number): number { return x instanceof Left ? x.left + 10 : 0; }
+function besideTrue(x: Right | LeftMost | true): number { return x instanceof Right ? x.right : 0; }
+function besideString(x: Left | Right | string): number { return x instanceof Left ? x.left + 20 : 0; }
+function besideNothing(x?: Left | Right): number { return x instanceof Left ? x.left + 30 : 0; }
+const values: unknown[] = [new Left(), new Right(), new LeftMost(), new Far(), new Base(), false, true, 0, 1.5, NaN, "left", "", undefined, null, {}, [], Object.create(Left.prototype), Object.create(null), () => 1, Symbol.iterator, 5n];
+for (let round = 0; round < 300; round++) {
+  let line = "";
+  for (const value of values)
+    line += besideFalse(value as Left | false) + "," + besideNumber(value as Left | number) + "," + besideTrue(value as Right | true) + "," + besideString(value as Left | string) + "," + besideNothing(value as Left | undefined) + " ";
+  if (round % 149 === 0) console.log(round, line);
+}
+//// large-object-union/files/guards.ts
+import type { All, I7, Sub17, Sub5 } from "./nodes";
+import { parse, parse5, take, take5, unknownToAll } from "./take";
+export function isSub17(node: All): node is Sub17 { return node.kind !== "k1" && node.kind !== "k2" && node.kind !== "k20"; }
+export function byGuard(node: All): string { return isSub17(node) ? take(node) : "-"; }
+export function byChain(node: All): string {
+    if (node.kind === "k1") return "1";
+    if (node.kind === "k2") return "2";
+    if (node.kind === "k20") return "20";
+    return take(node);
+}
+export function byCast(node: All): string { const sub = node as Sub17; return take(sub); }
+export function byVariable(node: All): string { let sub: Sub17 | undefined; if (isSub17(node)) sub = node; return sub ? take(sub) : "-"; }
+export function single(node: I7): string { return take(node); }
+export function five(node: Sub5): string { return take(node) + take5(node); }
+export function parsed(): string { return take(parse('{"kind":"k4","id":4,"name":"d","own4":4}')) + take5(parse5('{"kind":"k5","id":5,"name":"e","own5":5}')) + take(unknownToAll({ kind: "k6", id: 6, name: "f", own6: 6 })); }
+//// large-object-union/files/nodes.ts
+export interface I1 { kind: "k1"; id: number; name: string; own1: number }
+export interface I2 { kind: "k2"; id: number; name: string; own2: number }
+export interface I3 { kind: "k3"; id: number; name: string; own3: number }
+export interface I4 { kind: "k4"; id: number; name: string; own4: number }
+export interface I5 { kind: "k5"; id: number; name: string; own5: number }
+export interface I6 { kind: "k6"; id: number; name: string; own6: number }
+export interface I7 { kind: "k7"; id: number; name: string; own7: number }
+export interface I8 { kind: "k8"; id: number; name: string; own8: number }
+export interface I9 { kind: "k9"; id: number; name: string; own9: number }
+export interface I10 { kind: "k10"; id: number; name: string; own10: number }
+export interface I11 { kind: "k11"; id: number; name: string; own11: number }
+export interface I12 { kind: "k12"; id: number; name: string; own12: number }
+export interface I13 { kind: "k13"; id: number; name: string; own13: number }
+export interface I14 { kind: "k14"; id: number; name: string; own14: number }
+export interface I15 { kind: "k15"; id: number; name: string; own15: number }
+export interface I16 { kind: "k16"; id: number; name: string; own16: number }
+export interface I17 { kind: "k17"; id: number; name: string; own17: number }
+export interface I18 { kind: "k18"; id: number; name: string; own18: number }
+export interface I19 { kind: "k19"; id: number; name: string; own19: number }
+export interface I20 { kind: "k20"; id: number; name: string; own20: number }
+export type All = I1 | I2 | I3 | I4 | I5 | I6 | I7 | I8 | I9 | I10 | I11 | I12 | I13 | I14 | I15 | I16 | I17 | I18 | I19 | I20;
+export type Sub17 = I3 | I4 | I5 | I6 | I7 | I8 | I9 | I10 | I11 | I12 | I13 | I14 | I15 | I16 | I17 | I18 | I19;
+export type Sub5 = I1 | I2 | I3 | I4 | I5;
+//// large-object-union/files/take.ts
+import type { All, Sub5 } from "./nodes";
+export function take(node: All): string { return node.kind + node.id + node.name; }
+export function take5(node: Sub5): string { return node.kind + node.id; }
+export function parse(text: string): All { return JSON.parse(text) as All; }
+export function parse5(text: string): Sub5 { const made = JSON.parse(text) as Sub5; return made; }
+export function unknownToAll(value: unknown): All { return value as All; }
+//// large-object-union/main.ts
+// A union of nine object types is read through the fields they have in common.
+import type { All, I1, I7, I9, I20 } from "./files/nodes";
+import { byCast, byChain, byGuard, byVariable, five, parsed, single } from "./files/guards";
+const one: I1 = { kind: "k1", id: 1, name: "a", own1: 1 };
+const seven: I7 = { kind: "k7", id: 7, name: "g", own7: 7 };
+const nine: I9 = { kind: "k9", id: 9, name: "i", own9: 9 };
+const twenty: I20 = { kind: "k20", id: 20, name: "t", own20: 20 };
+const all: All[] = [one, seven, nine, twenty];
+console.log(all.map(byGuard).join(), all.map(byChain).join(), byCast(nine), all.map(byVariable).join());
+console.log(single(seven), five(one), parsed());
+//// literals-that-a-failed-comparison-or-an-assignment-takes-away.ts
+// Behind a failed `kind === "alpha"` the checker takes "alpha" out of the union, and behind `done = false` it holds `done` for false. Nothing is tested for that: the value keeps the type it had.
+// The checker is wrong about `done`, `count` and `last`: a closure assigns them behind its back.
+type Kind = "alpha" | "beta" | "gamma" | "delta" | "epsilon" | "zeta" | "eta" | "theta";
+function isGate(kind: Kind): boolean {
+  return kind === "alpha" || kind === "beta" || kind === "gamma" || kind === "delta";
+}
+function rank(kind: Kind): number {
+  if (kind === "alpha") return 1;
+  if (kind === "beta") return 2;
+  if (kind !== "gamma" && kind !== "delta") return kind === "theta" ? 8 : kind.length;
+  return kind === "gamma" ? 3 : 4;
+}
+const all: Kind[] = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta"];
+let gates = 0;
+let ranks = 0;
+for (let i = 0; i < 64; i++) {
+  const kind = JSON.parse(JSON.stringify(all[i & 7])) as Kind;
+  if (isGate(kind)) gates++;
+  ranks += rank(kind);
+}
+console.log(gates, ranks);
+
+function walk(items: number[], visit: (item: number) => void): void {
+  for (const item of items) visit(item);
+}
+function findsEven(items: number[]): string {
+  let done = false;
+  let count = 0;
+  let last: "none" | "even" | "odd" = "none";
+  walk(items, item => {
+    if (item % 2 === 0) done = true;
+    count++;
+    last = item % 2 === 0 ? "even" : "odd";
+  });
+  const seen = done ? "found" : "missing";
+  const many = count === 0 ? "empty" : "some " + count;
+  return seen + " " + many + " " + (last === "none" ? "nothing" : last);
+}
+console.log(findsEven([1, 3, 5]), "|", findsEven([1, 2, 3]), "|", findsEven([]), "|", findsEven([4]));
+console.log(isGate("omega" as Kind), rank("omega" as Kind), isGate(undefined as unknown as Kind), isGate(7 as unknown as Kind));
+//// members-changed-behind-the-checker.ts
+// TypeScript keeps the narrowed type of `a.b` until `a.b` itself is assigned, so an alias, a call, a getter or an `await` can change the property between the check and the use. Every use must see the current value, as in plain Bun, and code that ran before the use must not run again.
+class Leaf {
+  kind = "leaf" as const;
+  text: string;
+  weight = 1;
+  constructor(text: string) {
+    this.text = text;
+  }
+  describe(): string {
+    return "leaf " + this.text;
+  }
+  shout(): string {
+    return this.text.toUpperCase();
+  }
+}
+
+class Branch {
+  kind = "branch" as const;
+  weight = "heavy";
+  children: Tree[];
+  constructor(children: Tree[]) {
+    this.children = children;
+  }
+  describe(): string {
+    return "branch of " + this.children.length;
+  }
+}
+
+type Tree = Leaf | Branch;
+
+interface Slot {
+  item: Tree;
+}
+
+class Holder {
+  item: Tree;
+  constructor(item: Tree) {
+    this.item = item;
+  }
+  setItem(item: Tree): void {
+    this.item = item;
+  }
+  readAfterAliasStore(alias: Holder, other: Tree): string {
+    if (this.item instanceof Leaf) {
+      alias.item = other;
+      return format(this.item.text, this.item.describe());
+    }
+    return "not a leaf";
+  }
+  readAfterOwnMethod(other: Tree): string {
+    if (this.item instanceof Leaf) {
+      this.setItem(other);
+      return format(this.item.text, this.item.describe());
+    }
+    return "not a leaf";
+  }
+}
+
+class Outer {
+  inner: Holder;
+  constructor(inner: Holder) {
+    this.inner = inner;
+  }
+}
+
+function format(...values: unknown[]): string {
+  return values.map(value => String(value)).join(" ");
+}
+
+function isLeaf(tree: Tree): tree is Leaf {
+  return tree instanceof Leaf;
+}
+
+function assertLeaf(tree: Tree): asserts tree is Leaf {
+  if (!(tree instanceof Leaf)) throw new RangeError("not a leaf");
+}
+
+function setItem(holder: Holder, item: Tree): void {
+  holder.item = item;
+}
+
+function setItemAndReturnTrue(holder: Holder, item: Tree): boolean {
+  holder.item = item;
+  return true;
+}
+
+function setItemThenCheckLeaf(tree: Tree, holder: Holder, item: Tree): tree is Leaf {
+  holder.item = item;
+  return tree instanceof Leaf;
+}
+
+function itemKey(): "item" {
+  return "item";
+}
+
+////= lines-4	checkInstanceof	holder	Holder
+
+function checkTypePredicate(holder: Holder, alias: Holder, other: Tree): string {
+  if (isLeaf(holder.item)) {
+    alias.item = other;
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function checkDiscriminant(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item.kind === "leaf") {
+    alias.item = other;
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function checkInOperator(holder: Holder, alias: Holder, other: Tree): string {
+  if ("text" in holder.item) {
+    alias.item = other;
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function checkAssertion(holder: Holder, alias: Holder, other: Tree): string {
+  assertLeaf(holder.item);
+  alias.item = other;
+  return format(holder.item.text, holder.item.describe());
+}
+
+function checkSwitch(holder: Holder, alias: Holder, other: Tree): string {
+  switch (holder.item.kind) {
+    case "leaf":
+      alias.item = other;
+      return format(holder.item.text, holder.item.describe());
+    case "branch":
+      alias.item = other;
+      return format(holder.item.children.length, holder.item.describe());
+    default:
+      return "neither";
+  }
+}
+
+function checkSwitchTrue(holder: Holder, alias: Holder, other: Tree): string {
+  switch (true) {
+    case holder.item instanceof Leaf:
+      alias.item = other;
+      return format(holder.item.text, holder.item.describe());
+    default:
+      return "not a leaf";
+  }
+}
+
+function checkAliasedCondition(view: { readonly item: Tree }, alias: Holder, other: Tree): string {
+  const wasLeaf = view.item instanceof Leaf;
+  alias.item = other;
+  if (wasLeaf) return format(view.item.text, view.item.describe());
+  return "not a leaf";
+}
+
+function checkEarlyReturn(holder: Holder, alias: Holder, other: Tree): string {
+  if (!(holder.item instanceof Leaf)) return "not a leaf";
+  alias.item = other;
+  return format(holder.item.text, holder.item.describe());
+}
+
+function checkAndUseInOneExpression(holder: Holder, alias: Holder, other: Tree): string {
+  return holder.item instanceof Leaf && setItemAndReturnTrue(alias, other) ? format(holder.item.text, holder.item.describe()) : "not a leaf";
+}
+
+function changeInCall(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    setItem(alias, other);
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeInClosure(holder: Holder, alias: Holder, other: Tree): string {
+  const change = () => {
+    alias.item = other;
+  };
+  if (holder.item instanceof Leaf) {
+    change();
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeInAliasMethod(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    alias.setItem(other);
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeInHolderMethod(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    holder.setItem(other);
+    return format(holder.item.text, holder.item.describe(), alias.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeInToString(holder: Holder, alias: Holder, other: Tree): string {
+  const trigger = {
+    toString(): string {
+      alias.item = other;
+      return "converted";
+    },
+  };
+  if (holder.item instanceof Leaf) {
+    return format(`${trigger}`, holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeInBuiltinCallback(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    [other].forEach(item => {
+      alias.item = item;
+    });
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeBetweenArguments(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    return format(holder.item.text, setItemAndReturnTrue(alias, other), holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeInTypePredicate(holder: Holder, alias: Holder, other: Tree): string {
+  if (setItemThenCheckLeaf(holder.item, alias, other)) {
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeWithObjectAssign(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    Object.assign(alias, { item: other });
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeWithReflectSet(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    Reflect.set(alias, "item", other);
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeWithComputedKey(holder: Holder, alias: Holder, other: Tree): string {
+  const key = itemKey();
+  if (holder.item instanceof Leaf) {
+    alias[key] = other;
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeWithDestructuring(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    ({ item: alias.item } = { item: other });
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function* readAcrossYield(holder: Holder): Generator<string, string, void> {
+  if (holder.item instanceof Leaf) {
+    yield holder.item.text;
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function changeBetweenYields(holder: Holder, alias: Holder, other: Tree): string {
+  const generator = readAcrossYield(holder);
+  const first = generator.next();
+  alias.item = other;
+  const second = generator.next();
+  return format(first.value, first.done, second.value, second.done);
+}
+
+async function changeDuringAwait(holder: Holder, alias: Holder, other: Tree): Promise<string> {
+  if (holder.item instanceof Leaf) {
+    queueMicrotask(() => {
+      alias.item = other;
+    });
+    await Promise.resolve();
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function deleteProperty(holder: Holder, alias: Holder): string {
+  if (holder.item instanceof Leaf) {
+    delete (alias as { item?: Tree }).item;
+    return format(Object.keys(holder).join(), holder.item.text);
+  }
+  return "not a leaf";
+}
+
+function thisProperty(holder: Holder, alias: Holder, other: Tree): string {
+  return holder.readAfterAliasStore(alias, other);
+}
+
+function thisPropertyOwnMethod(holder: Holder, alias: Holder, other: Tree): string {
+  return format(holder.readAfterOwnMethod(other), alias.item.describe());
+}
+
+////= lines-4	interfaceProperty	slot	Slot
+
+function nestedPropertyLastStep(outer: Outer, alias: Outer, other: Tree): string {
+  if (outer.inner.item instanceof Leaf) {
+    alias.inner.item = other;
+    return format(outer.inner.item.text, outer.inner.item.describe());
+  }
+  return "not a leaf";
+}
+
+function nestedPropertyFirstStep(outer: Outer, alias: Outer, other: Tree): string {
+  if (outer.inner.item instanceof Leaf) {
+    alias.inner = new Holder(other);
+    return format(outer.inner.item.text, outer.inner.item.describe());
+  }
+  return "not a leaf";
+}
+
+function tupleElement(pair: [Tree, number], alias: [Tree, number], other: Tree): string {
+  if (pair[0] instanceof Leaf) {
+    alias[0] = other;
+    return format(pair[0].text, pair[0].describe());
+  }
+  return "not a leaf";
+}
+
+function arrayElement(list: Tree[], alias: Tree[], other: Tree): string {
+  if (list[0] instanceof Leaf) {
+    alias[0] = other;
+    return format(list[0].text, list[0].describe());
+  }
+  return "not a leaf";
+}
+
+function arrayElementAfterUnshift(list: Tree[], alias: Tree[], other: Tree): string {
+  if (list[0] instanceof Leaf) {
+    alias.unshift(other);
+    return format(list[0].text, list[0].describe());
+  }
+  return "not a leaf";
+}
+
+function arrayElementAfterTruncation(list: Tree[], alias: Tree[]): string {
+  if (list[0] instanceof Leaf) {
+    alias.length = 0;
+    return format(list[0].text);
+  }
+  return "not a leaf";
+}
+
+const sharedHolder = new Holder(new Leaf("shared"));
+let activeHolder = new Holder(new Leaf("active"));
+
+class Registry {
+  static current: Tree = new Leaf("registered");
+  static setCurrent(item: Tree): void {
+    Registry.current = item;
+  }
+}
+
+function setActiveHolder(holder: Holder): void {
+  activeHolder = holder;
+}
+
+function moduleConstProperty(first: Tree, other: Tree): string {
+  sharedHolder.item = first;
+  if (sharedHolder.item instanceof Leaf) {
+    setItem(sharedHolder, other);
+    return format(sharedHolder.item.text, sharedHolder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function reassignedModuleVariable(first: Tree, other: Tree): string {
+  activeHolder = new Holder(first);
+  if (activeHolder.item instanceof Leaf) {
+    setActiveHolder(new Holder(other));
+    return format(activeHolder.item.text, activeHolder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function staticProperty(first: Tree, other: Tree): string {
+  Registry.current = first;
+  if (Registry.current instanceof Leaf) {
+    Registry.setCurrent(other);
+    return format(Registry.current.text, Registry.current.describe());
+  }
+  return "not a leaf";
+}
+
+function localObjectProperty(first: Tree, other: Tree): string {
+  const holder = new Holder(first);
+  const alias = holder;
+  if (holder.item instanceof Leaf) {
+    alias.item = other;
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function capturedObjectProperty(first: Tree, other: Tree): string {
+  const holder = new Holder(first);
+  const change = () => {
+    holder.item = other;
+  };
+  if (holder.item instanceof Leaf) {
+    change();
+    return format(holder.item.text, holder.item.describe());
+  }
+  return "not a leaf";
+}
+
+function readAllFields(holder: Holder, alias: Holder, other: Tree): string {
+  if (!(holder.item instanceof Leaf)) return "not a leaf";
+  const before = holder.item.text;
+  alias.item = other;
+  return format(before, holder.item.text, holder.item.weight, holder.item.weight + 1, holder.item.kind, typeof holder.item.shout, "text" in holder.item);
+}
+
+function callLeafOnlyMethod(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    alias.item = other;
+    return holder.item.shout();
+  }
+  return "not a leaf";
+}
+
+function leafSummary(leaf: Leaf): string {
+  return leaf.text + "/" + leaf.describe();
+}
+
+function passToTypedParameter(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    alias.item = other;
+    return leafSummary(holder.item);
+  }
+  return "not a leaf";
+}
+
+class LeafHolder {
+  leaf: Leaf;
+  constructor(leaf: Leaf) {
+    this.leaf = leaf;
+  }
+}
+
+function storeToTypedField(holder: Holder, alias: Holder, other: Tree): string {
+  const target = new LeafHolder(new Leaf("initial"));
+  if (holder.item instanceof Leaf) {
+    alias.item = other;
+    target.leaf = holder.item;
+  }
+  return format(target.leaf.text, target.leaf.describe(), Object.keys(target).join());
+}
+
+function takeLeaf(holder: Holder, alias: Holder, other: Tree): Leaf | undefined {
+  if (holder.item instanceof Leaf) {
+    alias.item = other;
+    return holder.item;
+  }
+  return undefined;
+}
+
+function returnFromTypedFunction(holder: Holder, alias: Holder, other: Tree): string {
+  const leaf = takeLeaf(holder, alias, other);
+  return leaf ? format(leaf.text, leaf.describe()) : "not a leaf";
+}
+
+function bindToConst(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    alias.item = other;
+    const leaf = holder.item;
+    const readText = () => leaf.text;
+    return format(leaf.text, readText(), leaf.describe());
+  }
+  return "not a leaf";
+}
+
+function pushToTypedArray(holder: Holder, alias: Holder, other: Tree): string {
+  const leaves: Leaf[] = [];
+  if (holder.item instanceof Leaf) {
+    alias.item = other;
+    leaves.push(holder.item);
+  }
+  return leaves.map(leaf => leaf.text + "/" + leaf.describe()).join();
+}
+
+function writeThroughProperty(holder: Holder, alias: Holder, other: Tree): string {
+  if (holder.item instanceof Leaf) {
+    alias.item = other;
+    holder.item.text = "stored";
+    holder.item.weight += 1;
+    return format(Object.keys(holder.item).join(), holder.item.text, holder.item.weight);
+  }
+  return "not a leaf";
+}
+
+function checkOutsideLoop(holder: Holder, alias: Holder, other: Tree): string {
+  let result = "";
+  if (holder.item instanceof Leaf) {
+    for (let i = 0; i < 4; i++) {
+      result += holder.item.text + ",";
+      if (i === 1) alias.item = other;
+    }
+  }
+  return result;
+}
+
+function checkInLoopCondition(holder: Holder, alias: Holder, other: Tree): string {
+  let result = "";
+  for (let i = 0; i < 3 && holder.item instanceof Leaf; i++) {
+    if (i === 1) alias.item = other;
+    result += holder.item.text + ",";
+  }
+  return result;
+}
+
+function useInsideTry(holder: Holder, alias: Holder, other: Tree): string {
+  let trace = "";
+  try {
+    trace += "try ";
+    if (holder.item instanceof Leaf) {
+      alias.item = other;
+      trace += holder.item.shout() + " ";
+    }
+  } catch (error) {
+    trace += "caught " + (error as Error).constructor.name + " ";
+  } finally {
+    trace += "finally";
+  }
+  return trace;
+}
+
+let sideEffectCount = 0;
+
+function sideEffectsRunOnce(holder: Holder, alias: Holder, other: Tree): string {
+  let sum = 0;
+  let label = "";
+  const visited: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    sideEffectCount++;
+    sum += i * 1.5;
+    label += i;
+    visited.push(i);
+    if (holder.item instanceof Leaf) {
+      if (i === 3) alias.item = other;
+      label += holder.item.text;
+      sum += holder.item.weight;
+    } else {
+      label += "-";
+    }
+  }
+  return format(sum, label, visited.join(""), sideEffectCount);
+}
+
+function manyHolders(count: number): string {
+  const holders: Holder[] = [];
+  for (let i = 0; i < count; i++) holders.push(new Holder(i % 5 === 4 ? new Branch([]) : new Leaf("l" + i)));
+  let totalLength = 0;
+  let missingCount = 0;
+  for (let i = 0; i < count; i++) {
+    const holder = holders[i];
+    if (holder.item instanceof Leaf) {
+      if (i % 7 === 3) setItem(holders[i], new Branch([holder.item]));
+      const text = holder.item.text;
+      if (text === undefined) missingCount++;
+      else totalLength += text.length;
+    }
+  }
+  return format(totalLength, missingCount);
+}
+
+class Alternating {
+  readCount = 0;
+  constructor(
+    private first: Tree,
+    private second: Tree,
+  ) {}
+  get item(): Tree {
+    return this.readCount++ % 2 === 0 ? this.first : this.second;
+  }
+  readOwnAccessor(): string {
+    if (this.item instanceof Leaf) return format(this.item.text, this.item.describe(), this.readCount);
+    return format("not a leaf", this.readCount);
+  }
+}
+
+function readAccessor(alternating: Alternating): string {
+  if (alternating.item instanceof Leaf) return format(alternating.item.text, alternating.item.describe(), alternating.item.weight, alternating.readCount);
+  return format("not a leaf", alternating.readCount);
+}
+
+function readSlot(slot: Slot): string {
+  if (slot.item instanceof Leaf) return format(slot.item.text, slot.item.describe());
+  return "not a leaf";
+}
+
+function readHolder(holder: Holder): string {
+  if (holder.item instanceof Leaf) return format(holder.item.text, holder.item.describe());
+  return "not a leaf";
+}
+
+function createAlternatingSlot(first: Tree, second: Tree): Slot {
+  let readCount = 0;
+  return {
+    get item(): Tree {
+      return readCount++ % 2 === 0 ? first : second;
+    },
+  };
+}
+
+function defineAlternatingGetter(first: Tree, second: Tree): Holder {
+  const holder = new Holder(first);
+  let readCount = 0;
+  Object.defineProperty(holder, "item", {
+    get: () => (readCount++ % 2 === 0 ? first : second),
+    configurable: true,
+  });
+  return holder;
+}
+
+function createAlternatingProxy(first: Tree, second: Tree): Holder {
+  let readCount = 0;
+  return new Proxy(new Holder(first), {
+    get(target, key, receiver) {
+      if (key === "item") return readCount++ % 2 === 0 ? first : second;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+}
+
+class Cell {
+  value: string | number;
+  next: Cell | undefined;
+  constructor(value: string | number, next?: Cell) {
+    this.value = value;
+    this.next = next;
+  }
+}
+
+function numberArithmetic(cell: Cell, alias: Cell, other: string | number): string {
+  if (typeof cell.value === "number") {
+    alias.value = other;
+    return format(cell.value + 1, cell.value * 2, -cell.value, cell.value < 10, cell.value | 0);
+  }
+  return "not a number";
+}
+
+function numberMethod(cell: Cell, alias: Cell, other: string | number): string {
+  if (typeof cell.value === "number") {
+    alias.value = other;
+    return cell.value.toFixed(1);
+  }
+  return "not a number";
+}
+
+function stringReads(cell: Cell, alias: Cell, other: string | number): string {
+  if (typeof cell.value === "string") {
+    alias.value = other;
+    return format(cell.value.length, cell.value + "!", cell.value[0]);
+  }
+  return "not a string";
+}
+
+function stringMethod(cell: Cell, alias: Cell, other: string | number): string {
+  if (typeof cell.value === "string") {
+    alias.value = other;
+    return cell.value.toUpperCase();
+  }
+  return "not a string";
+}
+
+function clearAfterTruthyCheck(cell: Cell, alias: Cell): string {
+  if (cell.next) {
+    alias.next = undefined;
+    return format(cell.next.value);
+  }
+  return "no next";
+}
+
+function clearAfterUndefinedCheck(cell: Cell, alias: Cell): string {
+  if (cell.next !== undefined) {
+    alias.next = undefined;
+    return format(cell.next.value);
+  }
+  return "no next";
+}
+
+function clearAfterOptionalChain(cell: Cell, alias: Cell): string {
+  if (cell.next?.value !== undefined) {
+    alias.next = undefined;
+    return format(cell.next.value);
+  }
+  return "no next";
+}
+
+enum Mode {
+  Off,
+  On,
+}
+
+class Dial {
+  color: "red" | "green" = "red";
+  mode: Mode = Mode.Off;
+  isOn = true;
+}
+
+function stringLiteralProperty(dial: Dial, alias: Dial): string {
+  if (dial.color === "red") {
+    alias.color = "green";
+    const color: "red" = dial.color;
+    return color;
+  }
+  return "not red";
+}
+
+function enumProperty(dial: Dial, alias: Dial): number {
+  if (dial.mode === Mode.Off) {
+    alias.mode = Mode.On;
+    const mode: Mode.Off = dial.mode;
+    return mode + 10;
+  }
+  return -1;
+}
+
+function booleanProperty(dial: Dial, alias: Dial): string {
+  if (dial.isOn) {
+    alias.isOn = false;
+    return dial.isOn ? "on" : "off";
+  }
+  return "was off";
+}
+
+class Box<T> {
+  value: T;
+  constructor(value: T) {
+    this.value = value;
+  }
+}
+
+function storeThroughWiderBox(leafBox: Box<Leaf>, other: Tree): string {
+  const treeBox: Box<Tree> = leafBox;
+  treeBox.value = other;
+  return format(leafBox.value.text, leafBox.value.describe());
+}
+
+function storeThroughWiderArray(leaves: Leaf[], other: Tree): string {
+  const trees: Tree[] = leaves;
+  trees[0] = other;
+  return format(leaves[0].text, leaves[0].describe());
+}
+
+const lines: string[] = [];
+
+function attempt(run: () => unknown): string {
+  try {
+    return String(run());
+  } catch (error) {
+    return "threw " + (error as Error).constructor.name;
+  }
+}
+
+async function attemptAsync(run: () => Promise<unknown>): Promise<string> {
+  try {
+    return String(await run());
+  } catch (error) {
+    return "threw " + (error as Error).constructor.name;
+  }
+}
+
+function runAliasCases<H>(label: string, testCase: (holder: H, alias: H, other: Tree) => unknown, create: (item: Tree) => H): void {
+  const leafToBranch = create(new Leaf("a"));
+  const leafToLeaf = create(new Leaf("b"));
+  const branchToLeaf = create(new Branch([]));
+  const results = [
+    attempt(() => testCase(leafToBranch, leafToBranch, new Branch([]))),
+    attempt(() => testCase(leafToLeaf, leafToLeaf, new Leaf("c"))),
+    attempt(() => testCase(create(new Leaf("d")), create(new Leaf("e")), new Branch([]))),
+    attempt(() => testCase(branchToLeaf, branchToLeaf, new Leaf("f"))),
+  ];
+  lines.push(label + ": " + results.join(" | "));
+}
+
+async function runAliasCasesAsync(label: string, testCase: (holder: Holder, alias: Holder, other: Tree) => Promise<unknown>): Promise<void> {
+  const leafToBranch = new Holder(new Leaf("a"));
+  const leafToLeaf = new Holder(new Leaf("b"));
+  const branchToLeaf = new Holder(new Branch([]));
+  const results = [
+    await attemptAsync(() => testCase(leafToBranch, leafToBranch, new Branch([]))),
+    await attemptAsync(() => testCase(leafToLeaf, leafToLeaf, new Leaf("c"))),
+    await attemptAsync(() => testCase(new Holder(new Leaf("d")), new Holder(new Leaf("e")), new Branch([]))),
+    await attemptAsync(() => testCase(branchToLeaf, branchToLeaf, new Leaf("f"))),
+  ];
+  lines.push(label + ": " + results.join(" | "));
+}
+
+function runValuePairs(label: string, testCase: (first: Tree, second: Tree) => unknown): void {
+  const results = [
+    attempt(() => testCase(new Leaf("g"), new Branch([]))),
+    attempt(() => testCase(new Leaf("h"), new Leaf("i"))),
+    attempt(() => testCase(new Branch([]), new Leaf("j"))),
+  ];
+  lines.push(label + ": " + results.join(" | "));
+}
+
+function runAliasedAndDistinct<H>(label: string, testCase: (holder: H, alias: H) => unknown, create: () => H): void {
+  const aliased = create();
+  lines.push(label + ": " + attempt(() => testCase(aliased, aliased)) + " | " + attempt(() => testCase(create(), create())));
+}
+
+function runCellCases(label: string, testCase: (cell: Cell, alias: Cell, other: string | number) => unknown): void {
+  const numberToString = new Cell(5);
+  const numberToNumber = new Cell(6);
+  const stringToNumber = new Cell("five");
+  const stringToString = new Cell("six");
+  const results = [
+    attempt(() => testCase(numberToString, numberToString, "7")),
+    attempt(() => testCase(numberToNumber, numberToNumber, 8.5)),
+    attempt(() => testCase(stringToNumber, stringToNumber, 9)),
+    attempt(() => testCase(stringToString, stringToString, "ten")),
+    attempt(() => testCase(new Cell(1), new Cell(2), "3")),
+    attempt(() => testCase(new Cell("one"), new Cell("two"), 3)),
+  ];
+  lines.push(label + ": " + results.join(" | "));
+}
+
+const createHolder = (item: Tree): Holder => new Holder(item);
+const createSlot = (item: Tree): Slot => ({ item });
+const createOuter = (item: Tree): Outer => new Outer(new Holder(item));
+const createTuple = (item: Tree): [Tree, number] => [item, 0];
+const createArray = (item: Tree): Tree[] => [item];
+const createLinkedCells = (): Cell => new Cell(1, new Cell(2));
+const createDial = (): Dial => new Dial();
+
+for (const round of ["first round", "second round"]) {
+  lines.push(round);
+
+  runAliasCases<Holder>("instanceof", checkInstanceof, createHolder);
+  runAliasCases<Holder>("type predicate", checkTypePredicate, createHolder);
+  runAliasCases<Holder>("discriminant", checkDiscriminant, createHolder);
+  runAliasCases<Holder>("in operator", checkInOperator, createHolder);
+  runAliasCases<Holder>("assertion function", checkAssertion, createHolder);
+  runAliasCases<Holder>("switch", checkSwitch, createHolder);
+  runAliasCases<Holder>("switch (true)", checkSwitchTrue, createHolder);
+  runAliasCases<Holder>("aliased condition", checkAliasedCondition, createHolder);
+  runAliasCases<Holder>("early return", checkEarlyReturn, createHolder);
+  runAliasCases<Holder>("one expression", checkAndUseInOneExpression, createHolder);
+
+  runAliasCases<Holder>("call", changeInCall, createHolder);
+  runAliasCases<Holder>("closure", changeInClosure, createHolder);
+  runAliasCases<Holder>("method of the alias", changeInAliasMethod, createHolder);
+  runAliasCases<Holder>("method of the holder", changeInHolderMethod, createHolder);
+  runAliasCases<Holder>("toString", changeInToString, createHolder);
+  runAliasCases<Holder>("built-in callback", changeInBuiltinCallback, createHolder);
+  runAliasCases<Holder>("between arguments", changeBetweenArguments, createHolder);
+  runAliasCases<Holder>("inside the type predicate", changeInTypePredicate, createHolder);
+  runAliasCases<Holder>("Object.assign", changeWithObjectAssign, createHolder);
+  runAliasCases<Holder>("Reflect.set", changeWithReflectSet, createHolder);
+  runAliasCases<Holder>("computed key", changeWithComputedKey, createHolder);
+  runAliasCases<Holder>("destructuring", changeWithDestructuring, createHolder);
+  runAliasCases<Holder>("yield", changeBetweenYields, createHolder);
+  await runAliasCasesAsync("await", changeDuringAwait);
+
+  runAliasCases<Holder>("this", thisProperty, createHolder);
+  runAliasCases<Holder>("this, own method", thisPropertyOwnMethod, createHolder);
+  runAliasCases<Slot>("object literal behind an interface", interfaceProperty, createSlot);
+  runAliasCases<Slot>("class instance behind an interface", interfaceProperty, createHolder);
+  runAliasCases<Outer>("nested property, last step", nestedPropertyLastStep, createOuter);
+  runAliasCases<Outer>("nested property, first step", nestedPropertyFirstStep, createOuter);
+  runAliasCases<[Tree, number]>("tuple element", tupleElement, createTuple);
+  runAliasCases<Tree[]>("array element", arrayElement, createArray);
+  runAliasCases<Tree[]>("array element after unshift", arrayElementAfterUnshift, createArray);
+  runAliasCases<Tree[]>("array element after truncation", arrayElementAfterTruncation, createArray);
+  runValuePairs("module const", moduleConstProperty);
+  runValuePairs("reassigned module variable", reassignedModuleVariable);
+  runValuePairs("static property", staticProperty);
+  runValuePairs("local object", localObjectProperty);
+  runValuePairs("captured object", capturedObjectProperty);
+
+  runAliasCases<Holder>("all fields", readAllFields, createHolder);
+  runAliasCases<Holder>("method only Leaf has", callLeafOnlyMethod, createHolder);
+  runAliasCases<Holder>("typed parameter", passToTypedParameter, createHolder);
+  runAliasCases<Holder>("typed field", storeToTypedField, createHolder);
+  runAliasCases<Holder>("typed return", returnFromTypedFunction, createHolder);
+  runAliasCases<Holder>("const", bindToConst, createHolder);
+  runAliasCases<Holder>("typed array", pushToTypedArray, createHolder);
+
+  runAliasCases<Holder>("check outside the loop", checkOutsideLoop, createHolder);
+  runAliasCases<Holder>("check in the loop condition", checkInLoopCondition, createHolder);
+  runAliasCases<Holder>("try", useInsideTry, createHolder);
+  runAliasCases<Holder>("side effects", sideEffectsRunOnce, createHolder);
+  lines.push("many holders: " + manyHolders(0) + " | " + manyHolders(3) + " | " + manyHolders(200));
+
+  runValuePairs("class accessor", (first, second) => readAccessor(new Alternating(first, second)));
+  runValuePairs("class accessor through this", (first, second) => new Alternating(first, second).readOwnAccessor());
+  runValuePairs("class accessor behind an interface", (first, second) => readSlot(new Alternating(first, second)));
+  runValuePairs("object literal accessor", (first, second) => readSlot(createAlternatingSlot(first, second)));
+
+  runCellCases("number arithmetic", numberArithmetic);
+  runCellCases("number method", numberMethod);
+  runCellCases("string reads", stringReads);
+  runCellCases("string method", stringMethod);
+  runAliasedAndDistinct<Cell>("cleared after a truthy check", clearAfterTruthyCheck, createLinkedCells);
+  runAliasedAndDistinct<Cell>("cleared after an undefined check", clearAfterUndefinedCheck, createLinkedCells);
+  runAliasedAndDistinct<Cell>("cleared after an optional chain", clearAfterOptionalChain, createLinkedCells);
+  runAliasedAndDistinct<Dial>("string literal", stringLiteralProperty, createDial);
+  runAliasedAndDistinct<Dial>("enum", enumProperty, createDial);
+  runAliasedAndDistinct<Dial>("boolean", booleanProperty, createDial);
+
+  lines.push("wider box: " + attempt(() => storeThroughWiderBox(new Box(new Leaf("k")), new Branch([]))) + " | " + attempt(() => storeThroughWiderBox(new Box(new Leaf("l")), new Leaf("m"))));
+  lines.push("wider array: " + attempt(() => storeThroughWiderArray([new Leaf("n")], new Branch([]))) + " | " + attempt(() => storeThroughWiderArray([new Leaf("o")], new Leaf("p"))));
+
+  runAliasCases<Holder>("write through the property", writeThroughProperty, createHolder);
+  runAliasCases<Holder>("delete", deleteProperty, createHolder);
+  runValuePairs("getter defined over a field", (first, second) => readHolder(defineAlternatingGetter(first, second)));
+  runValuePairs("proxy", (first, second) => readHolder(createAlternatingProxy(first, second)));
+}
+
+console.log(lines.join("\n"));
+
+export {};
+//// module-variables-tested-for-undefined.ts
+// Module variables that start as undefined (`var`: there is no dead zone and no store at the declaration) and are only ever tested before use. Every test has to tell undefined from each other value the variable can hold, among them null, zero, the empty string and false, and has to see undefined again after it was stored back.
+class Entry {
+  constructor(public id: number) {}
+}
+
+var cached: Entry | undefined;
+var nullable: Entry | null | undefined;
+var anyValue: unknown;
+var counter: number | undefined;
+
+function idOrMinusOne(): number {
+  const entry = cached;
+  if (entry === undefined) return -1;
+  return entry.id;
+}
+function idUnlessNullish(): number {
+  const entry = nullable;
+  if (entry == null) return -2;
+  return entry.id;
+}
+function kindOfNullable(): string {
+  const entry = nullable;
+  if (entry === undefined) return "undefined";
+  return entry === null ? "null" : "entry " + entry.id;
+}
+function isSet(): boolean {
+  return anyValue !== undefined;
+}
+function isNullish(): boolean {
+  return anyValue == null;
+}
+function lazily(): Entry {
+  const entry = cached;
+  if (entry !== undefined) return entry;
+  return (cached = new Entry(1000));
+}
+function next(): number {
+  const n = counter;
+  if (n === undefined) return (counter = 0);
+  return (counter = n + 1);
+}
+
+const log: string[] = [];
+function report(label: string) {
+  log.push(`${label}: ${idOrMinusOne()} ${idUnlessNullish()} ${kindOfNullable()} ${isSet()} ${isNullish()} ${next()}`);
+}
+
+report("at the start");
+const values: unknown[] = [undefined, null, 0, -0, "", false, NaN, 0n, [], {}, Symbol.iterator, () => undefined, new Entry(7)];
+for (let i = 0; i < values.length; i++) {
+  anyValue = values[i];
+  cached = i % 3 === 0 ? undefined : new Entry(i);
+  nullable = i % 4 === 0 ? undefined : i % 4 === 1 ? null : new Entry(-i);
+  if (i % 5 === 4) counter = undefined;
+  report("value " + i);
+}
+cached = undefined;
+log.push("made lazily: " + lazily().id + " " + lazily().id + " " + idOrMinusOne());
+cached = undefined;
+nullable = undefined;
+anyValue = undefined;
+counter = undefined;
+report("cleared");
+
+let sum = 0;
+for (let i = 0; i < 20000; i++) {
+  cached = i & 1 ? new Entry(i) : undefined;
+  nullable = i % 3 === 0 ? null : i % 3 === 1 ? undefined : cached;
+  sum += idOrMinusOne() + idUnlessNullish() + next();
+}
+log.push("sum " + sum);
+console.log(log.join("\n"));
+//// narrowed-by-initializer-closure-store/main.ts
+// A variable of a union type that a nested function assigns: TypeScript narrows it to the type of its first value and does not see the later store. A method that every member of the annotated type has is called on the variable's current value.
+import { Circle, type Shape, Square } from "./shapes";
+////= lines-2	Cat	"cat"	lives	9	"meow"	4
+////= lines-2	Bird	"bird"	wings	"two"	"tweet"	2
+class Parrot extends Bird {
+  words = 3;
+}
+function later(f: () => void) {
+  f();
+}
+////= lines-6	method	Bird
+////= lines-6	inherited	Parrot
+////= lines-5	getter	legs
+////= lines-5	field	name
+function notStored() {
+  let pet: Cat | Bird = new Cat();
+  later(() => {});
+  return pet.speak();
+}
+function storedTwice() {
+  let pet: Cat | Bird = new Cat();
+  const said: string[] = [];
+  const swap = () => {
+    pet = pet instanceof Cat ? new Bird() : new Cat();
+  };
+  for (let i = 0; i < 3; i++) {
+    said.push(pet.speak());
+    swap();
+  }
+  return said;
+}
+function afterATest() {
+  let pet: Cat | Bird = new Bird();
+  const swap = () => {
+    pet = new Cat();
+  };
+  if (pet instanceof Bird) {
+    swap();
+    return pet.speak();
+  }
+  return "none";
+}
+function ofAnotherFile() {
+  let shape: Circle | Square = new Circle(1);
+  later(() => {
+    shape = new Square(2);
+  });
+  return [shape.area(), shape.describe()];
+}
+function throughAnInterface() {
+  let shape: Shape = new Circle(1);
+  later(() => {
+    shape = new Square(3);
+  });
+  return shape.area();
+}
+for (const f of [method, inherited, getter, field, notStored, storedTwice, afterATest, ofAnotherFile, throughAnInterface]) console.log(f.name + ":", JSON.stringify(f()));
+//// narrowed-by-initializer-closure-store/shapes.ts
+export interface Shape {
+  area(): number;
+}
+class Named {
+  describe() {
+    return this.constructor.name;
+  }
+}
+export class Circle extends Named implements Shape {
+  constructor(public r: number) {
+    super();
+  }
+  area() {
+    return 3 * this.r * this.r;
+  }
+}
+export class Square extends Named implements Shape {
+  constructor(public side: number) {
+    super();
+  }
+  area() {
+    return this.side * this.side;
+  }
+}
+//// narrowed-by-initializer-closure-store/tsconfig.json
+////= lines
+//// narrowed-store-back.ts
+function either(n: number): number | string {
+  return n > 1 ? n : "one";
+}
+
+class Box {
+  constructor(public held: number) {}
+}
+
+////= Crate
+
+function boxed(n: number): Box | Crate {
+  return n > 1 ? new Box(n) : new Crate("crate", n > 0 ? new Box(-n) : undefined);
+}
+
+type Row = { k: "a"; a: number } | { k: "b"; b: string };
+
+function row(n: number): Row {
+  return n > 1 ? { k: "a", a: n } : { k: "b", b: "b" + n };
+}
+
+const seen: unknown[] = [];
+
+////= readFirst-2
+
+for (const n of [0, 1, 2, 3]) {
+  console.log(n, readFirst(n), throughTwo(n), ofClasses(n), JSON.stringify(ofRows(n)), byAClosure(n));
+}
+console.log(JSON.stringify(seen));
+//// narrowed-store-back-untyped-params.ts
+function either(n: number): number | string {
+  return n > 1 ? n : "one";
+}
+
+class Box {
+  constructor(public held: number) {}
+}
+
+////= Crate
+
+function boxed(n: number): Box | Crate {
+  return n > 1 ? new Box(n) : new Crate("crate", n > 0 ? new Box(-n) : undefined);
+}
+
+type Row = { k: "a"; a: number } | { k: "b"; b: string };
+
+function row(n: number): Row {
+  return n > 1 ? { k: "a", a: n } : { k: "b", b: "b" + n };
+}
+
+const seen: unknown[] = [];
+
+function least(x: any, y: any) {
+  let z = y;
+  return x < z ? x : z;
+}
+
+////= readFirst-2
+
+for (const n of [0, 1, 2, 3]) {
+  console.log(n, readFirst(n), throughTwo(n), ofClasses(n), JSON.stringify(ofRows(n)), byAClosure(n));
+}
+console.log(JSON.stringify(seen), least(2, 1), least("a", "b"));
+//// narrowed-to-null-closure-store/main.ts
+// A variable, a property or an element that a nested function assigns: TypeScript narrows it to the null that was stored last and does not see the later store. The slot holds whatever its annotated type allows, and a use of it depends on its current value.
+class Socket {
+  open = true;
+  end() {
+    this.open = false;
+    return "ended";
+  }
+}
+class Pipe {
+  end() {
+    return "pipe ended";
+  }
+}
+function later(f: () => void) {
+  f();
+}
+////= lines-3	optionalCall	null
+////= lines-7	optionalRead	?.open
+////= lines-3	startsUndefined	undefined
+function literal() {
+  let point: { x: number; y: number } | null = null;
+  later(() => {
+    point = { x: 1, y: 2 };
+  });
+  // @ts-ignore
+  return [point?.x, point?.y];
+}
+function staysNull() {
+  let socket: Socket | null = null;
+  later(() => {});
+  // @ts-ignore
+  return socket?.end();
+}
+function inFinally() {
+  let socket: Socket | null = null;
+  try {
+    later(() => {
+      socket = new Socket();
+    });
+    return "tried";
+  } finally {
+    // @ts-ignore
+    console.log("finally:", socket?.end());
+  }
+}
+async function acrossAnAwait() {
+  const { promise, resolve } = Promise.withResolvers<string>();
+  let socket: Socket | null = null;
+  setTimeout(() => {
+    socket = new Socket();
+    resolve("connected");
+  }, 0);
+  const said = await promise;
+  // @ts-ignore
+  return [said, socket?.end()];
+}
+function oneOfTwo() {
+  let either: Socket | Pipe | null = null;
+  later(() => {
+    either = new Pipe();
+  });
+  // @ts-ignore
+  return either?.end();
+}
+////= lines-7	withoutTheQuestionMark	.end()
+function nullWithoutTheQuestionMark() {
+  let socket: Socket | null = null;
+  later(() => {});
+  try {
+    // @ts-ignore
+    return socket.end();
+  } catch (e) {
+    return (e as Error).constructor.name;
+  }
+}
+class Holder {
+  socket: Socket | null = null;
+}
+function propertyOfAnInstance() {
+  const holder = new Holder();
+  holder.socket = null;
+  later(() => {
+    holder.socket = new Socket();
+  });
+  // @ts-ignore
+  return holder.socket?.end();
+}
+function propertyOfALiteral() {
+  const holder: { socket: Socket | null } = { socket: null };
+  holder.socket = null;
+  later(() => {
+    holder.socket = new Socket();
+  });
+  // @ts-ignore
+  return holder.socket?.end();
+}
+function element() {
+  const list: (Socket | null)[] = [null];
+  list[0] = null;
+  later(() => {
+    list[0] = new Socket();
+  });
+  // @ts-ignore
+  return list[0]?.end();
+}
+for (const f of [optionalCall, optionalRead, startsUndefined, literal, staysNull, inFinally, oneOfTwo, withoutTheQuestionMark, nullWithoutTheQuestionMark, propertyOfAnInstance, propertyOfALiteral, element]) console.log(f.name + ":", JSON.stringify(f()));
+console.log("acrossAnAwait:", JSON.stringify(await acrossAnAwait()));
+//// narrowed-to-null-closure-store/tsconfig.json
+////= lines
+//// null-initializer-unannotated/main.ts
+// `let found = null` without a written type, under "strict" with "noImplicitAny": false: TypeScript gives the variable the type null, and takes a store of `any`. Nobody wrote that type: the variable holds what is stored.
+const frames: any[] = [{ file: "" }, { file: "a.ts" }, { file: "b.ts" }];
+function first() { let found = null; for (const frame of frames) { const file = frame.file; if (file && file !== "") { found = file; break; } } return found; }
+function none() { let found = null; for (const frame of [] as any[]) found = frame; return found; }
+function undefinedFirst() { let found = undefined; for (const frame of frames) found = frame.file; return found; }
+function inAClosure() { let found = null; frames.forEach(frame => { found = frame.file; }); return found; }
+function anObject() { let found = null; for (const frame of frames) found = frame; return JSON.stringify(found); }
+function byVar() { var found = null; found = frames[1].file; return found; }
+let ofTheModule = null;
+function storesToIt() { ofTheModule = frames[2].file; }
+storesToIt();
+const row = (name: string, f: () => unknown) => { let r: unknown; try { r = f(); } catch (e) { r = "THROWS " + (e as Error).message.split(" (bun")[0]; } console.log(name + ": " + String(r)); };
+row("a string is stored", first);
+row("nothing is stored", none);
+row("undefined first", undefinedFirst);
+row("stored in a closure", inAClosure);
+row("an object is stored", anObject);
+row("var", byVar);
+row("a variable of the module", () => ofTheModule);
+row("used afterwards", () => { const found = first(); return typeof found + " " + (found as any).length; });
+//// null-initializer-unannotated/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": false
+  }
+}
+//// one-loop-over-whatever-a-parser-gave.js
+// One loop is entered with each kind of value that JSON.parse can give, so the copy of the loop for arrays, the copy for what is left and the way from one test to the tests behind it all run.
+var text = JSON.stringify({
+  numbers: [3, 1, 4, 1, 5, 9, 2, 6],
+  words: ["a", "bc", "def"],
+  mixed: [1, "two", null, true, [3], { four: 4 }],
+  empty: [],
+  string: "a text",
+  emptyString: "",
+  arrayLike: { length: 3, 0: 10, 1: 20, 2: 30 },
+  noLength: { other: 1 },
+  number: 12,
+  boolean: true,
+  nothing: null,
+});
+
+function sum(values) {
+  var total = 0;
+  for (var i = 0; i < values.length; i++) total += values[i];
+  return total;
+}
+
+function lengths(values) {
+  var total = 0;
+  for (var i = 0; i < values.length; i++) {
+    var item = values[i];
+    if (item != null && item.length !== undefined) total += item.length;
+    total += values.length;
+  }
+  return total;
+}
+
+function describe(run, value) {
+  try {
+    return String(run(value));
+  } catch (error) {
+    return error instanceof TypeError ? "TypeError" : "another error";
+  }
+}
+
+var data = JSON.parse(text);
+var names = Object.keys(data);
+var lines = [];
+for (var round = 0; round < 300; round++) {
+  if (round % 100 === 0) data = JSON.parse(text);
+  for (var n = 0; n < names.length; n++) {
+    var line = names[n] + ": " + describe(sum, data[names[n]]) + " | " + describe(lengths, data[names[n]]);
+    if (round === 0) lines.push(line);
+    else if (lines[n] !== line) lines[n] = "CHANGED in round " + round + ": " + line;
+  }
+}
+console.log(lines.join("\n"));
+console.log(describe(sum, undefined), describe(lengths, undefined));
+//// optional-call-untyped/impl.js
+function attempt(label, f) { try { console.log(label, String(f())); } catch (e) { console.log(label, e.constructor.name); } }
+
+
+const yes = (s) => s + "!";
+const hide = (v) => v;
+class Base { m= null; n(s) { return "base " + s; } }
+class C extends Base {
+  #nul= null; #und= undefined; #fn= yes; #any= null; static #snul= null; static #sfn= yes;
+  pnul= null; pund= undefined; pfn= yes; pany= null; static snul= null; static sfn= yes;
+  #method(s) { return "method " + s; }
+  privates() { return [this.#nul?.("a"), this.#und?.("a"), this.#fn?.("a"), this.#any?.("a"), this.#method?.("a"), C.#snul?.("a"), C.#sfn?.("a")].join(); }
+  publics() { return [this.pnul?.("a"), this.pund?.("a"), this.pfn?.("a"), this.pany?.("a"), C.snul?.("a"), C.sfn?.("a")].join(); }
+  supers() { return [super.n?.("a"), super.m?.("a"), super.missing?.("a")].join(); }
+  chains(o) { return [o?.pnul?.("a"), o?.pfn?.("a")].join(); }
+  argumentsAreNotEvaluated() { let n = 0; this.#nul?.(String(n++)); this.pnul?.(String(n++)); this.#fn?.(String(n++)); return n; }
+}
+const c = new C();
+attempt("private", () => c.privates());
+attempt("public", () => c.publics());
+attempt("super", () => c.supers());
+attempt("chains", () => c.chains(c) + " " + c.chains(null));
+attempt("arguments", () => c.argumentsAreNotEvaluated());
+let moduleNull= null, moduleUndefined= undefined, moduleFunction= yes; const touch = () => { moduleNull = null; moduleUndefined = undefined; moduleFunction = yes; }; touch();
+attempt("module variables", () => [moduleNull?.("a"), moduleUndefined?.("a"), moduleFunction?.("a")].join());
+attempt("locals", () => { let a= hide(null), b= hide(undefined), f= hide(yes); return [a?.("a"), b?.("a"), f?.("a")].join(); });
+attempt("any", () => [hide(null)?.("a"), hide(undefined)?.("a"), hide(yes)?.("a"), hide({ f: null }).f?.("a"), hide({}).f?.("a"), hide({ f: yes }).f?.("a")].join());
+const o = { b: { f: null } }; const k = "b" + "";
+attempt("a?.b?.()", () => [o?.b?.f?.("a"), o.b?.g?.("a"), o?.missing?.("a"), o?.[k]?.f?.("a"), o?.[k + "x"]?.("a"), o[k]?.["f"]?.("a")].join());
+attempt("not a function", () => hide(5)?.("a"));
+attempt("not a function, private", () => new (class { #x= 5; run() { return this.#x?.("a"); } })().run());
+//// optional-call-untyped/main.ts
+// `f?.(..)` returns `undefined` when `f` is undefined or null, wherever `f` is stored (the same program without type annotations).
+import "./impl.js";
+//// optional-element-after-closure-store/main.ts
+// A nested function assigns the variable. TypeScript still narrows it to the `undefined` or `null` that was stored first, so it types `a?.[0]` as `undefined`.
+// The element that is read is whatever the array holds.
+function later(f: () => void) {
+  f();
+}
+function tell(name: string, make: () => unknown) {
+  try {
+    console.log(name + ": " + JSON.stringify(make()));
+  } catch (e) {
+    console.log(name + ": " + (e as Error).name + ": " + (e as Error).message.split("\n")[0]);
+  }
+}
+////= tell	"returned"	a?.[0]
+////= tell	"in an array literal"	[a?.[0]]
+////= tell	"in an object literal"	{ first: a?.[0] }
+////= tell	"as an argument"	String(a?.[0])
+tell("by a name in brackets", () => {
+  let o: { open: boolean } | null = null;
+  later(() => {
+    o = { open: true };
+  });
+  // @ts-ignore
+  return [o?.["open"]];
+});
+tell("beside a call and a member", () => {
+  let f: (() => string) | undefined = undefined,
+    a: number[] | undefined = undefined,
+    o: { m: string } | undefined = undefined;
+  later(() => {
+    f = () => "f";
+    a = [7];
+    o = { m: "m" };
+  });
+  // @ts-ignore
+  return [f?.(), a?.[0], o?.m];
+});
+tell("further down the chain", () => {
+  let a: { n: number }[] | undefined = undefined;
+  later(() => {
+    a = [{ n: 7 }];
+  });
+  // @ts-ignore
+  return [a?.[0].n, a?.[0]?.n];
+});
+tell("never assigned", () => {
+  let a: number[] | undefined = undefined;
+  later(() => {});
+  // @ts-ignore
+  return [a?.[0]];
+});
+//// optional-element-after-closure-store/tsconfig.json
+////= lines
+//// optional-number-narrowed-one-path.ts
+// A number that may be undefined is narrowed on one path out of a branch and not on the other.
+function attempt(label: string, f: () => unknown): void { try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) } }
+const list: number[] = [1, 20, 5]
+function isBig(n: number): boolean { return n > 10 }
+function twice(n: number): number { return n * 2 }
+// `n` gets room: it is handed an element that need not be there.
+function byEquality(n: number): number { if (n === 1 || n && !isBig(n)) { return twice(n) } return -1 }
+function byTypeof(n: number): number { if (typeof n === "number" && n > 100 || n && !isBig(n)) { return twice(n) } return -1 }
+function byUndefined(n: number): number { if (n !== undefined && n < 3 || n && !isBig(n)) { return twice(n) } return -1 }
+function inALoop(n: number): number { let total = 0; for (let i = 0; i < 2; i++) { if (n === 1 || n && !isBig(n)) { total += twice(n) } else { total -= 1 } } return total }
+function bySwitch(n: number): number { switch (n) { case 1: case 5: return twice(n); default: return -1 } }
+for (const at of [0, 1, 2, 9]) {
+  attempt("=== " + at, () => byEquality(list[at]))
+  attempt("typeof " + at, () => byTypeof(list[at]))
+  attempt("!== undefined " + at, () => byUndefined(list[at]))
+  attempt("in a loop " + at, () => inALoop(list[at]))
+  attempt("switch " + at, () => bySwitch(list[at]))
+}
+//// program-constants-fold-conditions.ts
+// A `const` that holds a primitive literal decides the conditions it is tested in. The code that never runs is not checked: each call of `wrong` with a text is a type error. A read in the temporal dead zone still throws.
+// A `const` that holds an object is checked on both sides, and the side for a falsy or missing object never runs.
+const log: unknown[] = []
+function readsEarly(): string {
+  try {
+    return late ? "yes" : "no"
+  } catch (error) {
+    return (error as Error).name
+  }
+}
+function readsEarlyInAnd(): unknown {
+  try {
+    return late && "never"
+  } catch (error) {
+    return (error as Error).name
+  }
+}
+function readsEarlyInIf(): string {
+  try {
+    if (late) return "never"
+    return "no"
+  } catch (error) {
+    return (error as Error).name
+  }
+}
+log.push(readsEarly(), readsEarlyInAnd(), readsEarlyInIf())
+const late = false
+log.push(readsEarly(), readsEarlyInAnd(), readsEarlyInIf())
+
+function wrong(n: number): number {
+  log.push("this ran: " + n)
+  return n
+}
+const DEBUG = false
+const picked = DEBUG ? wrong("an arm") : "quiet"
+function describe() {
+  if (DEBUG) return wrong("a branch")
+  return "described"
+}
+const table = { a: 1 }
+const always = table ? "an object is truthy" : wrong(1)
+const present = table ?? { a: wrong(2) }
+log.push(picked, describe(), always, present.a)
+
+function loop(): string[] {
+  const seen: string[] = []
+  for (let i = 0; i < 3; i++) {
+    const even = i % 2 === 0
+    seen.push(even ? "even" : "odd")
+  }
+  return seen
+}
+log.push(...loop())
+console.log(log.map(String).join("\n"))
+//// switch-on-numbers.ts
+// `switch` and `===` chains on a parameter of type `number`, with integers, fractions, -0 and NaN.
+function pick(k: number): number { switch (k) { case 0: return 10; case 1: return 21; case 2: return 32; case 3: return 43; case 4: return 54; case 5: return 65; default: return 0 } }
+function sparse(k: number): string { switch (k) { case -1: return "minus one"; case 0: return "zero"; case 1000: return "thousand"; case 2147483648: return "2^31"; case -2147483649: return "below"; case 9007199254740992: return "2^53"; default: return "none" } }
+function chain(k: number): string { return k === 7 ? "seven" : k === 0 ? "zero" : k !== 3 ? (k === 2.5 ? "fraction" : "other") : "three" }
+function few(k: number): string { return k === 1 ? "one" : k === 2 ? "two" : "many" }
+const ks: number[] = ["0", "-0", "1", "2", "3", "4", "5", "6", "7", "-1", "2.5", "0.5", "4.000000001", "1000", "2147483648", "-2147483649", "9007199254740992", "9007199254740993", "1e300", "NaN", "Infinity", "-Infinity", "5e-324"].map(Number)
+console.log(ks.map(pick).join())
+console.log(ks.map(sparse).join())
+console.log(ks.map(chain).join())
+console.log(ks.map(few).join())
+let seen = ""
+for (let x = Number("-1"); x < 4; x += 0.5) { switch (x) { case 0: seen += "a"; break; case 1: seen += "b"; break; case 2: seen += "c"; break; case 3: seen += "d"; break; default: seen += "." } }
+console.log(seen)
+const loose: any = pick
+console.log(loose(4), loose(4.5), loose(-0), loose(NaN), loose(5))
+//// switch-on-union-tag.ts
+// `switch` on the string discriminant of a union of object types.
+type E = { kind: "text"; n: number } | { kind: "tool"; name: string } | { kind: "end" };
+function h(e: E): string { switch (e.kind) { case "text": return "t" + e.n; case "tool": return "x" + e.name; case "end": return "e"; } }
+const l: E[] = [{ kind: "text", n: 1 }, { kind: "tool", name: "ls" }, { kind: "end" }];
+console.log(l.map(h).join());
+//// tag-decides-union-member.ts
+// A test of a tag says which member of a union an object is, as long as the tag holds what the member was created with. Every way to give an object the tag of another member has to read what plain Bun reads.
+type Round = { kind: 1; r: number };
+type Wide = { kind: 2; w: number };
+type High = { kind: 3; h: number };
+type Shape = Round | Wide | High;
+
+function area(s: Shape): number {
+  switch (s.kind) {
+    case 1:
+      return s.r * 3;
+    case 2:
+      return s.w * 2;
+    default:
+      return s.h;
+  }
+}
+
+function makeShape(i: number): Shape {
+  const k = i % 3;
+  if (k === 0) return { kind: 1, r: i };
+  if (k === 1) return { kind: 2, w: i };
+  return { kind: 3, h: i };
+}
+
+let total = 0;
+for (let i = 0; i < 300; i++) total += area(makeShape(i));
+console.log("one number a member", total);
+
+type Oval = { kind: 1 | 4; r: number };
+type Box = { kind: 2; w: number };
+type Bar = { kind: 3; h: number };
+type Figure = Oval | Box | Bar;
+
+function size(f: Figure): number {
+  switch (f.kind) {
+    case 1:
+    case 4:
+      return f.r * 3;
+    case 2:
+      return f.w * 2;
+    default:
+      return f.h;
+  }
+}
+
+function makeFigure(i: number): Figure {
+  const k = i & 3;
+  if (k === 0) return { kind: 1, r: i };
+  if (k === 1) return { kind: 4, r: i };
+  if (k === 2) return { kind: 2, w: i };
+  return { kind: 3, h: i };
+}
+
+total = 0;
+for (let i = 0; i < 300; i++) total += size(makeFigure(i));
+console.log("two numbers in one member", total);
+
+type Value = { tag: "value"; ok: true; value: number };
+type Failure = { tag: "failure"; ok: false; error: string };
+type Result = Value | Failure;
+
+function makeResult(i: number): Result {
+  return i % 4 ? { tag: "value", ok: true, value: i } : { tag: "failure", ok: false, error: "e" + i };
+}
+function byString(r: Result): number | string {
+  if (r.tag === "value") return r.value;
+  return r.error;
+}
+function byOtherString(r: Result): number | string {
+  if (r.tag !== "failure") return r.value;
+  else return r.error;
+}
+function byBoolean(r: Result): number | string {
+  return r.ok ? r.value : r.error;
+}
+function byNegation(r: Result): number | string {
+  if (!r.ok) return r.error;
+  return r.value;
+}
+
+const seen: (number | string)[] = [];
+for (let i = 0; i < 6; i++) {
+  const r = makeResult(i);
+  seen.push(byString(r), byOtherString(r), byBoolean(r), byNegation(r));
+}
+console.log("strings and booleans", seen.join());
+
+const retagged = makeShape(0);
+(retagged as any).kind = 2;
+console.log("the tag of another member", area(retagged), Object.keys(retagged).join());
+
+const outside = makeShape(1);
+(outside as any).kind = 9;
+console.log("a tag of no member", area(outside));
+
+const untagged = makeShape(3);
+delete (untagged as any).kind;
+console.log("no tag", area(untagged), Object.keys(untagged).join());
+
+const computed = makeShape(6);
+let reads = 0;
+Object.defineProperty(computed, "kind", {
+  get() {
+    reads++;
+    return 2;
+  },
+});
+console.log("a tag that a getter answers", area(computed), reads);
+
+function tagReadFirst(s: Shape): number {
+  const kind = s.kind;
+  (s as any).kind = 2;
+  return kind === 1 ? (s as Round).r : -1;
+}
+console.log("a store between the read and the test", tagReadFirst(makeShape(9)), tagReadFirst(makeShape(10)));
+
+function tagOfAnother(s: Shape, t: Shape): number | undefined {
+  return t.kind === 1 ? (s as Round).r : (s as Wide).w;
+}
+console.log("the tag of another object", tagOfAnother(makeShape(1), makeShape(0)), tagOfAnother(makeShape(0), makeShape(1)), tagOfAnother(makeShape(0), makeShape(0)));
+
+function tagAgainstVariable(s: Shape, kind: number): number | undefined {
+  return s.kind === kind ? (s as Round).r : (s as High).h;
+}
+console.log("a tag compared with a variable", tagAgainstVariable(makeShape(0), 1), tagAgainstVariable(makeShape(0), 2), tagAgainstVariable(makeShape(2), 1), tagAgainstVariable(makeShape(1), 2));
+
+type Zero = { kind: 0; z: number };
+type Minus = { kind: number; m: number };
+function zeroes(v: Zero | Minus): number | undefined {
+  switch (v.kind) {
+    case 0:
+      return (v as Zero).z;
+    default:
+      return (v as Minus).m;
+  }
+}
+const zero: Zero = { kind: 0, z: 1 };
+const minusZero: Minus = { kind: -0, m: 2 };
+const notANumber: Minus = { kind: NaN, m: 3 };
+console.log("zero, minus zero and NaN", zeroes(zero), zeroes(minusZero), zeroes(notANumber));
+
+class Leaf {
+  kind = 1 as const;
+  text = "leaf";
+}
+class Pair {
+  kind = 2 as const;
+  left: Tree;
+  right: Tree;
+  constructor(left: Tree, right: Tree) {
+    this.left = left;
+    this.right = right;
+  }
+}
+type Tree = Leaf | Pair;
+function count(t: Tree): number {
+  return t.kind === 1 ? t.text.length : count(t.left) + count(t.right);
+}
+let tree: Tree = new Leaf();
+for (let i = 0; i < 5; i++) tree = new Pair(tree, new Leaf());
+console.log("classes", count(tree));
+
+function walk(first: Shape, shapes: Shape[]): number {
+  let sum = 0;
+  let current = first;
+  for (let i = 0; i < shapes.length; i++) {
+    if (current.kind === 1) {
+      current = shapes[i]!;
+      sum += (current as Round).r || 0;
+    } else {
+      sum += area(current);
+      current = shapes[i]!;
+    }
+  }
+  return sum;
+}
+console.log("another object each turn", walk(makeShape(0), [makeShape(1), makeShape(0), makeShape(3), makeShape(2), makeShape(6)]));
+//// union-constant-kind-per-member.ts
+// `s.kind === "circle"` on a union whose members each have a constant `kind`.
+// CODE isCircle HAS ldu?rb\s+w\d+, \[x26
+// CODE notSquare HAS ldu?rb\s+w\d+, \[x26
+// CODE pick HAS ldu?rb\s+w\d+, \[x26
+// CODE byswitch HAS ldu?rb\s+w\d+, \[x26
+// CODE kindOf LACKS ldu?rb\s+w\d+, \[x26
+// CODE sameKind LACKS ldu?rb\s+w\d+, \[x26
+// CODE isCircleOrText LACKS ldu?rb\s+w\d+, \[x26
+// CODE makeCircle LACKS stu?rb\s+w\d+, \[x26
+// CODE makeRound LACKS stu?rb\s+w\d+, \[x26
+// CODE restate LACKS stu?rb\s+w\d+, \[x26
+// CODE storeGiven HAS stu?rb\s+w\d+, \[x26
+// CODE makeGiven HAS stu?rb\s+w\d+, \[x26
+interface Circle { kind: "circle"; r: number }
+interface Square { kind: "square"; w: number }
+interface Triangle { kind: "triangle"; a: number; b: number }
+type Shape = Circle | Square | Triangle;
+function pick(s: Shape): number { return s.kind === "circle" ? s.r : s.kind === "square" ? s.w : s.a + s.b; }
+function byswitch(s: Shape): number { switch (s.kind) { case "circle": return s.r; case "square": return s.w; default: return s.a * s.b; } }
+function isCircle(s: Shape): boolean { return s.kind === "circle"; }
+function notSquare(s: Shape): boolean { return s.kind !== "square"; }
+// The value itself is used, or compared with something that is not a constant: an ordinary read.
+function kindOf(s: Shape): string { return s.kind; }
+function sameKind(s: Shape, t: Shape): boolean { return s.kind === t.kind; }
+// A view with a member that is not pinned: `kind: string`.
+interface Text { kind: string; text: string }
+function isCircleOrText(s: Circle | Text): boolean { return s.kind === "circle"; }
+function makeCircle(r: number): Circle { return { kind: "circle", r }; }
+class Round { readonly kind = "round"; constructor(public r: number) {} }
+function makeRound(r: number): Round { return new Round(r); }
+function isRound(s: Round | Square): boolean { return s.kind === "round"; }
+// Storing the constant that it is pinned to again: nothing to guard. Anything else: the byte.
+function restate(c: Circle): void { c.kind = "circle"; }
+function storeGiven(c: Circle, k: "circle"): void { c.kind = k; }
+function makeGiven(k: "circle", r: number): Circle { return { kind: k, r }; }
+const asValues: unknown[] = [pick, byswitch, isCircle, notSquare, kindOf, sameKind, isCircleOrText, makeCircle, makeRound, isRound, restate, storeGiven, makeGiven];
+const xs: Shape[] = [];
+for (let i = 0; i < 12; i++) xs.push(i % 3 === 0 ? { kind: "circle", r: i } : i % 3 === 1 ? { kind: "square", w: i } : { kind: "triangle", a: i, b: 2 });
+let sum = 0;
+for (const s of xs) sum += pick(s) + byswitch(s) + (isCircle(s) ? 100 : 0) + (notSquare(s) ? 1000 : 0);
+console.log(sum, asValues.length);
+const c = makeCircle(5), text: Text = { kind: "circle", text: "t" };
+console.log(kindOf(c), sameKind(c, xs[0]!), sameKind(c, xs[1]!), isCircleOrText(c), isCircleOrText(text), isCircleOrText({ kind: "other", text: "t" }), isRound(makeRound(1)), isRound(xs[1] as Square));
+restate(c); console.log(isCircle(c), pick(c));
+storeGiven(c, "circle"); console.log(isCircle(c), pick(c), isCircle(makeGiven("circle", 2)), isCircle(xs[1]!), byswitch(xs[2]!));
+//// union-member-chosen-at-runtime.ts
+// Which member of a union an object literal belongs to depends on a run-time value.
+interface Tree { kind: number }
+type Result =
+  | { type: Tree; fallback: undefined }
+  | { type: undefined; fallback: true }
+  | { type: undefined; fallback: false }
+function result(type: Tree | undefined): Result
+function result(type: undefined, fallback: boolean): Result
+function result(type: Tree | undefined, fallback: boolean = true) {
+  return { type, fallback: type ? undefined : fallback } as Result
+}
+const no: Result = result(undefined, false)
+const yes: Result = result(undefined, true)
+const tree: Result = result({ kind: 7 })
+for (const r of [no, yes, tree]) console.log(r.type ? r.type.kind : "none", r.fallback, Object.keys(r).join())
+export {}
+//// union-members-same-fields.ts
+// All members of a union have the same field names, inherited from a common base type.
+interface Message { text: string }
+interface Base { name: string; type: "string" | "number" | "boolean" | "object" | "list" | Map<string, number | string>; about?: string | number | boolean | Message }
+interface OfBoolean extends Base { type: "boolean"; about?: boolean | Message }
+interface OfString extends Base { type: "string"; about?: string | Message }
+interface OfNumber extends Base { type: "number"; about?: number | Message }
+interface OfObject extends Base { type: "object" }
+interface OfList extends Base { type: "list" }
+interface OfCustom extends Base { type: Map<string, number | string>; about?: number | string | Message }
+type Option = OfCustom | OfString | OfNumber | OfBoolean | OfObject | OfList
+const options: Option[] = [
+  { name: "watch", type: new Map(Object.entries({ x: 1, y: 2 })), about: 4 },
+  { name: "flag", type: "boolean", about: true },
+  { name: "text", type: "string", about: { text: "t" } },
+]
+for (const o of options) console.log(o.name, typeof o.type === "string" ? o.type : o.type.size, typeof o.about)
+export {}
+//// union-passed-between-modules/files/any.ts
+import type { S1 } from "./s1";
+import type { S2 } from "./s2";
+import type { S3 } from "./s3";
+import type { S4 } from "./s4";
+import type { S5 } from "./s5";
+import type { S6 } from "./s6";
+import type { S7 } from "./s7";
+import type { S8 } from "./s8";
+export type Any3 = S1 | S2 | S3;
+export type Any5 = S1 | S2 | S3 | S4 | S5;
+export type Any8 = S1 | S2 | S3 | S4 | S5 | S6 | S7 | S8;
+//// union-passed-between-modules/files/base.ts
+export type Base = { id: string; type: string; status: "idle" | "busy"; tags: string[]; meta: { at: number } };
+//// union-passed-between-modules/files/calls.ts
+import type { Any8 } from "./any";
+import type { Deep } from "./deep";
+import type { S3 } from "./s3";
+import { make5, make8 } from "./make";
+import { row5, row8 } from "./row";
+export function whole(task: Deep<Any8>): string { return row8(task); }
+export function narrowed(task: Deep<Any8>): string {
+    if (task.type === "t1") return "first";
+    if (task.type === "t8") return "last";
+    return row8(task);
+}
+export function one(task: Deep<S3>): string { return row8(task); }
+export function calls(): string {
+    const all: string[] = [];
+    for (let n = 1; n <= 8; n++) all.push(whole(make8(n)), narrowed(make8(n)));
+    for (let n = 1; n <= 5; n++) all.push(row5(make5(n)));
+    all.push(one({ id: "c", type: "t3", status: "busy", tags: ["q"], meta: { at: 3 }, own3: 3 }));
+    return all.join(" ");
+}
+//// union-passed-between-modules/files/deep.ts
+export type Deep<T> = T extends (infer U)[] ? readonly Deep<U>[] : T extends Function ? T : T extends object ? { readonly [K in keyof T]: Deep<T[K]> } : T;
+//// union-passed-between-modules/files/first.ts
+import type { Deep } from "./deep";
+import type { S8 } from "./s8";
+import type { S7 } from "./s7";
+import type { S5 } from "./s5";
+import type { S3 } from "./s3";
+import { row3, row5, row8 } from "./row";
+const eight: Deep<S8> = { id: "h", type: "t8", status: "busy", tags: ["x"], meta: { at: 8 }, own8: 8, extra8: 80 };
+const seven: Deep<S7> = { id: "g", type: "t7", status: "idle", tags: [], meta: { at: 7 }, own7: 7 };
+const five: Deep<S5> = { id: "e", type: "t5", status: "idle", tags: [], meta: { at: 5 }, own5: 5 };
+const three: Deep<S3> = { id: "c", type: "t3", status: "busy", tags: [], meta: { at: 3 }, own3: 3 };
+export function first(): string { return [row8(eight), row8(seven), row5(five), row3(three)].join(" "); }
+//// union-passed-between-modules/files/make.ts
+import type { Any5, Any8 } from "./any";
+import type { Deep } from "./deep";
+export function make5(n: number): Any5 {
+    switch (n) {
+        case 1: return { id: "a", type: "t1", status: "idle", tags: [], meta: { at: 1 }, own1: 1 };
+        case 2: return { id: "b", type: "t2", status: "busy", tags: [], meta: { at: 2 }, own2: 2, extra2: 20 };
+        case 3: return { id: "c", type: "t3", status: "idle", tags: [], meta: { at: 3 }, own3: 3 };
+        case 4: return { id: "d", type: "t4", status: "busy", tags: [], meta: { at: 4 }, own4: 4, extra4: 40 };
+        default: return { id: "e", type: "t5", status: "idle", tags: [], meta: { at: 5 }, own5: 5 };
+    }
+}
+// The same by way of a variable, so that the values meet.
+export function pick5(n: number): Deep<Any5> {
+    let made: Deep<Any5>;
+    if (n === 1) made = { id: "a", type: "t1", status: "idle", tags: [], meta: { at: 1 }, own1: 1 };
+    else if (n === 2) made = { id: "b", type: "t2", status: "busy", tags: [], meta: { at: 2 }, own2: 2, extra2: 20 };
+    else if (n === 3) made = { id: "c", type: "t3", status: "idle", tags: [], meta: { at: 3 }, own3: 3 };
+    else if (n === 4) made = { id: "d", type: "t4", status: "busy", tags: [], meta: { at: 4 }, own4: 4, extra4: 40 };
+    else made = { id: "e", type: "t5", status: "idle", tags: [], meta: { at: 5 }, own5: 5 };
+    return made;
+}
+export function make8(n: number): Deep<Any8> {
+    if (n === 6) return { id: "f", type: "t6", status: "idle", tags: ["z"], meta: { at: 6 }, own6: 6, extra6: 60 };
+    if (n === 7) return { id: "g", type: "t7", status: "busy", tags: [], meta: { at: 7 }, own7: 7 };
+    if (n === 8) return { id: "h", type: "t8", status: "busy", tags: [], meta: { at: 8 }, own8: 8, extra8: 80 };
+    return pick5(n);
+}
+//// union-passed-between-modules/files/parse.ts
+import type { Any5, Any8 } from "./any";
+import type { Deep } from "./deep";
+export function parse5(text: string): Deep<Any5> { return JSON.parse(text) as Deep<Any5>; }
+export function parse8(text: string): Deep<Any8> { const made = JSON.parse(text) as Deep<Any8>; return made; }
+export function plain5(text: string): Any5 { return JSON.parse(text) as Any5; }
+export function from(value: unknown): Deep<Any8> { return value as Deep<Any8>; }
+//// union-passed-between-modules/files/row.ts
+import type { Any3, Any5, Any8 } from "./any";
+import type { Deep } from "./deep";
+export function row3(task: Deep<Any3>): string { return task.type + task.status + task.meta.at; }
+export function row5(task: Deep<Any5>): string { return task.type + task.status + task.meta.at; }
+export function row8(task: Deep<Any8>): string {
+    switch (task.type) {
+        case "t1": return "one" + task.own1;
+        case "t8": return "eight" + task.own8 + task.extra8;
+        default: return task.type + task.status + task.tags.length;
+    }
+}
+//// union-passed-between-modules/files/s1.ts
+import type { Base } from "./base";
+export type S1 = Base & { type: "t1"; own1: number };
+//// union-passed-between-modules/files/s2.ts
+import type { Base } from "./base";
+export type S2 = Base & { type: "t2"; own2: number } & { extra2: number };
+//// union-passed-between-modules/files/s3.ts
+import type { Base } from "./base";
+export type S3 = Base & { type: "t3"; own3: number };
+//// union-passed-between-modules/files/s4.ts
+import type { Base } from "./base";
+export type S4 = Base & { type: "t4"; own4: number } & { extra4: number };
+//// union-passed-between-modules/files/s5.ts
+import type { Base } from "./base";
+export type S5 = Base & { type: "t5"; own5: number };
+//// union-passed-between-modules/files/s6.ts
+import type { Base } from "./base";
+export type S6 = Base & { type: "t6"; own6: number } & { extra6: number };
+//// union-passed-between-modules/files/s7.ts
+import type { Base } from "./base";
+export type S7 = Base & { type: "t7"; own7: number };
+//// union-passed-between-modules/files/s8.ts
+import type { Base } from "./base";
+export type S8 = Base & { type: "t8"; own8: number } & { extra8: number };
+//// union-passed-between-modules/files/second.ts
+import type { Deep } from "./deep";
+import type { S2 } from "./s2";
+import type { S1 } from "./s1";
+import type { S4 } from "./s4";
+import { row3, row5, row8 } from "./row";
+const two: Deep<S2> = { id: "b", type: "t2", status: "busy", tags: ["x", "y"], meta: { at: 2 }, own2: 2, extra2: 20 };
+const one: Deep<S1> = { id: "a", type: "t1", status: "idle", tags: [], meta: { at: 1 }, own1: 1 };
+const four: Deep<S4> = { id: "d", type: "t4", status: "idle", tags: [], meta: { at: 4 }, own4: 4, extra4: 40 };
+export function second(): string { return [row8(two), row8(one), row5(four), row3(two)].join(" "); }
+//// union-passed-between-modules/files/third.ts
+import type { Deep } from "./deep";
+import type { S6 } from "./s6";
+import type { S4 } from "./s4";
+import type { Any5, Any8 } from "./any";
+import { from, parse5, parse8, plain5 } from "./parse";
+import { row5, row8 } from "./row";
+const six: Deep<S6> = { id: "f", type: "t6", status: "idle", tags: [], meta: { at: 6 }, own6: 6, extra6: 60 };
+const four: Deep<S4> = { id: "d", type: "t4", status: "idle", tags: [], meta: { at: 4 }, own4: 4, extra4: 40 };
+function again(task: Deep<Any8>): Deep<Any8> { return JSON.parse(JSON.stringify(task)) as Deep<Any8>; }
+function again5(task: Any5): Any5 { return JSON.parse(JSON.stringify(task)) as Any5; }
+export function third(): string {
+    return [row8(six), row5(four), row5(parse5('{"id":"a","type":"t1","status":"idle","tags":[],"meta":{"at":1},"own1":1}')), row8(parse8('{"id":"g","type":"t7","status":"busy","tags":[],"meta":{"at":7},"own7":7}')),
+        row5(plain5('{"id":"b","type":"t2","status":"busy","tags":[],"meta":{"at":2},"own2":2,"extra2":20}')), row8(from(six)), row8(again(six)), row5(again5(plain5('{"id":"c","type":"t3","status":"idle","tags":[],"meta":{"at":3},"own3":3}')))].join(" ");
+}
+//// union-passed-between-modules/main.ts
+// A union of object types is passed between modules as a whole, as a narrowed subset and as a single member.
+import { first } from "./files/first";
+import { second } from "./files/second";
+import { third } from "./files/third";
+import { calls } from "./files/calls";
+console.log(first());
+console.log(second());
+console.log(third());
+console.log(calls());
+//// union-shares-only-discriminant/files/guards.ts
+import type { All, Deep, I3, Sub6 } from "./nodes";
+import { kindOf, lit, parse, parseLit, take, takeDeep } from "./take";
+export function isSub6(node: All): node is Sub6 { return node.kind !== "k1" && node.kind !== "k8"; }
+export function byGuard(node: All): string { return isSub6(node) ? take(node) : "-"; }
+export function byChain(node: All): string { if (node.kind === "k1") return "1"; if (node.kind === "k8") return "8"; return take(node) + takeDeep(node); }
+export function single(node: I3): string { return take(node) + takeDeep(node); }
+export function deepSingle(node: Deep<I3>): string { return takeDeep(node); }
+export function parsed(): string { return take(parse('{"kind":"k4","own4":4}')) + kindOf(parseLit('{"kind":"l2","v2":2}')) + kindOf(lit(3)) + kindOf(lit(5)); }
+//// union-shares-only-discriminant/files/nodes.ts
+export interface I1 { kind: "k1"; own1: number }
+export interface I2 { kind: "k2"; own2: number }
+export interface I3 { kind: "k3"; own3: number }
+export interface I4 { kind: "k4"; own4: number }
+export interface I5 { kind: "k5"; own5: number }
+export interface I6 { kind: "k6"; own6: number }
+export interface I7 { kind: "k7"; own7: number }
+export interface I8 { kind: "k8"; own8: number }
+export type All = I1 | I2 | I3 | I4 | I5 | I6 | I7 | I8;
+export type Sub6 = I2 | I3 | I4 | I5 | I6 | I7;
+export type Lit = { kind: "l1"; v1: number } | { kind: "l2"; v2: number } | { kind: "l3"; v3: number } | { kind: "l4"; v4: number } | { kind: "l5"; v5: number };
+export type Deep<T> = T extends object ? { readonly [K in keyof T]: Deep<T[K]> } : T;
+//// union-shares-only-discriminant/files/take.ts
+import type { All, Deep, Lit } from "./nodes";
+export function take(node: All): string { return node.kind; }
+export function takeDeep(node: Deep<All>): string { return node.kind; }
+export function parse(text: string): All { return JSON.parse(text) as All; }
+export function lit(n: number): Lit {
+    switch (n) {
+        case 1: return { kind: "l1", v1: 1 };
+        case 2: return { kind: "l2", v2: 2 };
+        case 3: return { kind: "l3", v3: 3 };
+        case 4: return { kind: "l4", v4: 4 };
+        default: return { kind: "l5", v5: 5 };
+    }
+}
+export function parseLit(text: string): Deep<Lit> { return JSON.parse(text) as Deep<Lit>; }
+export function kindOf(l: Deep<Lit>): string { return l.kind; }
+//// union-shares-only-discriminant/main.ts
+// A union of object types that have only the discriminant in common.
+import type { All, I1, I3, I5, I8 } from "./files/nodes";
+import { byChain, byGuard, deepSingle, parsed, single } from "./files/guards";
+const one: I1 = { kind: "k1", own1: 1 };
+const three: I3 = { kind: "k3", own3: 3 };
+const five: I5 = { kind: "k5", own5: 5 };
+const eight: I8 = { kind: "k8", own8: 8 };
+const all: All[] = [one, three, five, eight];
+console.log(all.map(byGuard).join(), all.map(byChain).join(), single(three), deepSingle(three), parsed());
+//// unions-that-do-not-change-in-a-loop.ts
+// A value of a union type is used several times in each iteration of a loop that does not change it, so its type can be tested once in front of the loop. Every member of each union arrives, loops run zero times, and close neighbors change the value in the loop.
+type Text = string | number[] | undefined;
+
+////= lengths
+
+function optional(value: Text, rounds: number): string {
+  let out = "";
+  for (let i = 0; i < rounds; i++) {
+    if (value === undefined) out += "-";
+    else out += value.length;
+    if (typeof value === "string") out += value[i] ?? "?";
+    else if (value !== undefined) out += value[i] ?? "!";
+  }
+  return out;
+}
+
+function leavesTheLoop(value: string | number, rounds: number): number {
+  let r = 0;
+  for (let i = 0; i < rounds; i++) {
+    if (typeof value !== "string") return -1 - i - value;
+    r += value.length;
+    if (typeof value === "string") r += value.charCodeAt(i % value.length);
+  }
+  return r;
+}
+
+function nested(outer: string | number[], inner: number | string, rounds: number): number {
+  let r = 0;
+  for (let i = 0; i < rounds; i++) {
+    r += outer.length;
+    for (let j = 0; j < i; j++) {
+      r += typeof inner === "string" ? inner.length : inner;
+      r += typeof outer === "string" ? outer.charCodeAt(j % outer.length) : outer[j % outer.length];
+      r += typeof inner === "number" ? inner * 2 : inner.charCodeAt(0);
+    }
+  }
+  return r;
+}
+
+function changesInTheLoop(first: string | number[], second: string | number[], rounds: number): number {
+  let value = first;
+  let r = 0;
+  for (let i = 0; i < rounds; i++) {
+    r += value.length;
+    if (i % 3 === 1) value = value === first ? second : first;
+    r += typeof value === "string" ? value.charCodeAt(0) : value[0];
+    r += value.length;
+  }
+  return r;
+}
+
+function changesOnce(value: string | number, rounds: number): string {
+  let out = "";
+  for (let i = 0; i < rounds; i++) {
+    out += typeof value === "string" ? value.length : value + 1;
+    if (i === 2) value = typeof value === "string" ? value.length : "n" + value;
+    out += typeof value === "string" ? "s" : "n";
+  }
+  return out;
+}
+
+function underHandler(value: string | null, rounds: number): string {
+  let out = "";
+  for (let i = 0; i < rounds; i++) {
+    try {
+      out += (value as string).length;
+      out += value === null ? "null" : value[i % 2];
+    } catch (error) {
+      out += (error as Error).constructor.name;
+    }
+  }
+  return out;
+}
+
+const texts: (string | number[])[] = ["abcd", "é☃", "", [1, 2, 3, 4, 5], [], [7]];
+for (const rounds of [0, 1, 2, 7]) {
+  console.log(rounds, texts.map(text => lengths(text, rounds)).join(","));
+  console.log(rounds, [...texts, undefined].map(text => optional(text, rounds)).join(","));
+  console.log(rounds, ["xy", 5, "z", -0.5].map(value => leavesTheLoop(value, rounds)).join(","));
+  console.log(rounds, texts.filter(text => text.length > 0).flatMap(text => [nested(text, 3, rounds), nested(text, "pq", rounds)]).join(","));
+  console.log(rounds, changesInTheLoop("ab", [9, 8], rounds), changesInTheLoop([5], "xyz", rounds), changesInTheLoop("a", "bc", rounds));
+  console.log(rounds, changesOnce("abc", rounds), changesOnce(4, rounds));
+  console.log(rounds, underHandler("ok", rounds), underHandler(null, rounds));
+}
+//// values-of-every-kind-where-closures-capture-a-string-that-equals-an-imported-constant-in-a-validating-build/main.ts
+import { READ_TOOL } from "./names";
+type Decision = { behavior: string; message: string } | null;
+type Hooks = {
+  replyGrant: null;
+  threadId: () => string | undefined;
+  lateDeny: () => Decision;
+  askRule: (rules: string[]) => string;
+  updatedInput: () => undefined;
+};
+class Notice {
+  async decide(context: { depth: number }, target: string, hooks: Hooks): Promise<string> {
+    await null;
+    return [context.depth, target, hooks.threadId(), JSON.stringify(hooks.lateDeny()), hooks.askRule(["a", "read_comments"]), hooks.updatedInput()].join(" | ");
+  }
+}
+function noticeRead(input: unknown): Notice | undefined {
+  return typeof input === "object" && input !== null ? new Notice() : undefined;
+}
+function refusal(name: string, input: unknown): Decision | undefined {
+  return name.charCodeAt(0) === 114 && input !== null ? { behavior: "deny", message: name.slice(5) + name.length } : undefined;
+}
+function ruleForCall(rules: string[], name: string): { rule: string } | undefined {
+  const found = rules.find(rule => rule === name);
+  return found === undefined ? undefined : { rule: found + ":" + name.toUpperCase() };
+}
+async function check(name: string, input: unknown): Promise<string> {
+  if (name === READ_TOOL) {
+    const under = await noticeRead(input)?.decide({ depth: 1 }, "target", {
+      replyGrant: null,
+      threadId: () => undefined,
+      lateDeny: () => refusal(name, input) ?? null,
+      askRule: rules => ruleForCall(rules, name)?.rule ?? "none",
+      updatedInput: () => undefined,
+    });
+    return "under " + String(under);
+  }
+  return "past " + typeof name;
+}
+class Named {
+  [Symbol.toPrimitive]() {
+    return "read_comments";
+  }
+}
+const values: any[] = [
+  "read_comments",
+  "read_" + String(["comments"]),
+  ["read", "comments"].join("_"),
+  "write_comments",
+  "",
+  new String("read_comments"),
+  { toString: () => "read_comments" },
+  { valueOf: () => "read_comments" },
+  new Named(),
+  ["read_comments"],
+  () => "read_comments",
+  Symbol.for("read_comments"),
+  new Proxy({}, {}),
+  Object.create(null),
+  /read_comments/,
+  new Date(0),
+  1,
+  -0,
+  NaN,
+  1n,
+  true,
+  false,
+  null,
+  undefined,
+];
+for (let round = 0; round < 40; round++) {
+  const lines: string[] = [];
+  for (const value of values) for (const input of [{}, null, 1]) lines.push(await check(value, input));
+  if (round === 0 || round === 39) console.log(lines.join("\n"));
+}
+//// values-of-every-kind-where-closures-capture-a-string-that-equals-an-imported-constant-in-a-validating-build/names.ts
+export const READ_TOOL = "read_comments";

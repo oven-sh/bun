@@ -1,0 +1,8 @@
+the program resolves: inner.cjs function b.txt
+the text, its cache: 0 files of the program
+the text, its main: undefined
+the text, an entry under the path of a file: undefined
+the text, a file under a path that it computes: throws Error
+the text, a file under a relative name that it computes: throws Error
+the text, a module of the library: d.txt
+the program goes on: 1 3 6

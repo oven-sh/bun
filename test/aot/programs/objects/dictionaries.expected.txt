@@ -1,0 +1,39 @@
+filled by key: 2,10,k0,k1,k2,k3,k4 n3 10 two undefined
+an ordinary object: true true function true true false [object Object]
+named like built-ins: constructor,toString,hasOwnProperty,valueOf,__defineGetter__ 1 2 {"constructor":1,"toString":2,"hasOwnProperty":3,"valueOf":4,"__defineGetter__":5}
+no conversion to a string: TypeError true 5
+prototype from the literal: true 7 own true false
+no prototype: null false a 1
+a primitive is no prototype: true a
+own properties named __proto__: true 5 true __proto__ true
+stored through the setter: true 0 7
+a primitive stored through the setter: true 0
+stored without the setter: null a,__proto__ true
+order of keys: 1,2,4294967294,b,a,01,-1,1.5,4294967295 {"1":"one","2":"two","4294967294":"largest index","b":"b","a":"a","01":"zero one","-1":"minus","1.5":"half","4294967295":"too large"}
+order after changes: 0,1,2,4294967294,b,01,-1,1.5,4294967295,c,a zero,one,two,largest index,b,zero one,minus,half,too large,c,again
+a repeated key keeps its place: {"a":3,"b":2}
+symbols: 0,plain Symbol(tag),Symbol(Symbol.iterator) 1 3 0,plain,Symbol(tag),Symbol(Symbol.iterator) {"0":4,"plain":2}
+symbol deleted: 1 false true
+copies: ,id0,id0+id1,id0+id1+id2,id0+id1+id2+id3,id0+id1+id2+id3,id0+id1+id2+id3 {"id0":{"name":"n4","size":4},"id1":{"name":"box","size":3},"id2":{"name":"n2","size":2},"id3":{"name":"box","size":3}} false
+an instance read back: true box 3 27
+spread: before,computed,plain,after 1 1 1 undefined 2 1
+spread of other values: {"0":9,"1":"b"}
+spread of narrower types: one=box/3,two=box/3,three=three/0
+nested: {"a":{"x":[1,2],"y":[]},"b":{"late":[4]},"c":{"z":[3]}} late {"a":{"x":[1,2]}} 112
+toJSON: {"replaced":"toJSON,a"} {"inner":{"replaced":"toJSON,a"}}
+parsed and merged: 1,first,b,a,__proto__ true 4 true
+functions: double=-6/double,square=9/square,cube=-27/cube,negate=3/negate,chosen=3/abs
+super: child of parent parent
+accessors: 1 2 10 11 once,plain function
+contents that do not fit the type: good=good/1,number=undefined/undefined,text=undefined/undefined,nothing=nil,other=undefined/wide,list=undefined/undefined
+members that do not fit the type: {"1":1,"wrong":{"name":1}} 1 1
+frozen: TypeError,TypeError true a,b 3 undefined
+for-in through a prototype: below=3,shared=4,above=2 below,3;shared,4 {"below":3,"shared":1,"above":2}
+a new dictionary each time: a 0 false {"byId":{},"ids":[],"count":0}
+in an array: [{"x":1},{"a":1},{"y3":2}] false
+fields and parameters: box,plain {"zero":0,"box":1,"plain":2} false
+arguments and assertions: 0 2 0 1 1
+indexed by numbers: 0,2,5,1000 five undefined {"0":"zero","2":"two","5":"five","1000":"thousand"} zero||two
+a literal of computed keys: {"k36":2,"more":2} 2
+many keys: 2001 2999999 seed,key1,key2 key2999=2999
+a long literal: 111885 70 w36 w70 4761

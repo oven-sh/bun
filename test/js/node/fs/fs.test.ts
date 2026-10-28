@@ -5674,7 +5674,7 @@ describe("fs.read/readv/write/writev pass the buffer to the callback on error", 
             fs.write(fd, buffer, offset, length, position, (err, bytesWritten, buf) => {
               calls.push([err?.code, bytesWritten, buf === buffer]);
               if (err?.code === "EAGAIN") {
-                for (let left = filled; left > 0;)
+                for (let left = filled; left > 0; )
                   left -= fs.readSync(reader, scratch, 0, Math.min(left, scratch.length));
               }
               cb(err, bytesWritten, buf);
@@ -7578,12 +7578,17 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
   // pending operation keeps the process alive, so "exited" is printed after
   // it completed and anything it reported would precede it.
   describe.concurrent("ignores a non-callable 4-argument symlink callback, like node", () => {
-    function symlinkIgnoringCallback(link: string, callbackLiteral: string) {
+    // With `control`, a callable callback runs the same operation on the same
+    // path and prints its error code, to prove the dropped error is real.
+    function symlinkIgnoringCallback(link: string, callbackLiteral: string, control = false) {
+      const target = `${file}, ${JSON.stringify(link)}, "file"`;
       return runScript(`
         process.on("uncaughtException", e => console.log("UNCAUGHT:" + e.code));
         process.on("unhandledRejection", e => console.log("REJECTED:" + e.code));
         process.on("exit", () => console.log("exited"));
-        require("fs").symlink(${file}, ${JSON.stringify(link)}, "file", ${callbackLiteral});
+        const fs = require("fs");
+        fs.symlink(${target}, ${callbackLiteral});
+        ${control ? `fs.symlink(${target}, e => console.log("CONTROL:" + e.code));` : ""}
       `);
     }
 
@@ -7597,9 +7602,8 @@ describe("a throw from a node-style callback is an uncaughtException", () => {
 
     it.each([`"notafunc"`, "null"])("drops the error of a failed operation (callback: %s)", async callbackLiteral => {
       const link = join(dir, "missing-dir", "lnc");
-      const { stdout, exitCode } = await symlinkIgnoringCallback(link, callbackLiteral);
-      expect(stdout).toBe("exited");
-      expect(existsSync(link)).toBe(false);
+      const { stdout, exitCode } = await symlinkIgnoringCallback(link, callbackLiteral, true);
+      expect(stdout.split("\n")).toEqual(["CONTROL:ENOENT", "exited"]);
       expect(exitCode).toBe(0);
     });
 

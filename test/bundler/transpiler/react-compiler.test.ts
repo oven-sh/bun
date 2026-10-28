@@ -4912,6 +4912,7 @@ test.concurrent.each(Object.keys(waysToHaveANamespace) as (keyof typeof waysToHa
       const outputs = Object.entries(result.metafile!.outputs);
       const bytesOfTheModules: Record<string, number> = {};
       const compiled: Record<string, string[]> = {};
+      const keepsNotRead: string[] = [];
       for (const name of names) {
         const [, output] = outputs.find(([file]) => file.replace(/^\.\//, "") === `${name}/entry.js`)!;
         for (const [input, { bytesInOutput }] of Object.entries(output.inputs)) {
@@ -4919,8 +4920,9 @@ test.concurrent.each(Object.keys(waysToHaveANamespace) as (keyof typeof waysToHa
         }
         const text = await Bun.file(join(root, side, name, "entry.js")).text();
         compiled[name] = Array.from(text.matchAll(/function (\w+)\(t0\) \{\s*let \$ = c\(\d+\)/g), m => m[1]);
+        if (text.includes("NOT_READ_SENTINEL")) keepsNotRead.push(name);
       }
-      return { bytesOfTheModules, compiled };
+      return { bytesOfTheModules, compiled, keepsNotRead };
     };
     const plain = await build("plain");
     const compiled = await build("compiled");
@@ -4939,10 +4941,13 @@ test.concurrent.each(Object.keys(waysToHaveANamespace) as (keyof typeof waysToHa
     const keepsMore = Object.keys(compiled.bytesOfTheModules).filter(
       module => compiled.bytesOfTheModules[module] > (plain.bytesOfTheModules[module] ?? 0),
     );
-    expect({ compiled: values.compiled, minified: values.minified, keepsMore }).toEqual({
+    // An export that nothing reads is in the bundle only where it is there without the compiler.
+    const keepsNotRead = { compiled: compiled.keepsNotRead, minified: minified.keepsNotRead };
+    expect({ compiled: values.compiled, minified: values.minified, keepsMore, keepsNotRead }).toEqual({
       compiled: values.plain,
       minified: values.plain,
       keepsMore: [],
+      keepsNotRead: { compiled: plain.keepsNotRead, minified: plain.keepsNotRead },
     });
     const allButAtTheLimit = Object.fromEntries(names.map(name => [name, reads.filter(read => read !== "AtTheLimit")]));
     expect({ compiled: compiled.compiled, minified: minified.compiled }).toEqual({

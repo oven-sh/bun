@@ -496,8 +496,7 @@ impl Identifier {
 /// "{x: importedNamespace.x}". This separate type forces code to opt-in to
 /// doing this instead of opt-out.
 /// 8-byte import-identifier payload — `was_originally_identifier` rides in
-/// `Ref` user bit 0 and `is_member_call_target` in bit 1 (see `Identifier` doc
-/// for the packing rationale).
+/// `Ref` user bit 0 (see `Identifier` doc for the packing rationale).
 #[derive(Clone, Copy)]
 pub struct ImportIdentifier {
     pub ref_: Ref,
@@ -529,9 +528,7 @@ impl ImportIdentifier {
         self.ref_.user_bit(0)
     }
 
-    /// If true, this was the `ns.foo` of a call `ns.foo()`, which has `ns` as its
-    /// `this`. Set for the React Compiler only: a folded `(0, ns.foo)()` has the
-    /// same import identifier as its target and is no such call.
+    /// Set for the React Compiler on the `ns.foo` of a call `ns.foo()`, which a folded `(0, ns.foo)()` is not.
     #[inline]
     pub const fn is_member_call_target(self) -> bool {
         self.ref_.user_bit(1)

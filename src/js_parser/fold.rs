@@ -46,6 +46,14 @@ fn e_string_eql_bytes(s: &E::EString, other: &[u8]) -> bool {
     }
 }
 
+/// The import item of `ns.member`, marked where a call has it as its target, for the React Compiler.
+fn member_call_target(is_member_call: bool, mut item: Expr) -> Expr {
+    if is_member_call && let js_ast::ExprData::EImportIdentifier(import) = &mut item.data {
+        import.set_is_member_call_target(true);
+    }
+    item
+}
+
 // File-split mixin pattern: a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -286,31 +294,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 p.symbols[ref_.inner_index() as usize].set_called_as_method(true);
                             }
 
-                            let mut item = p.handle_identifier(
-                                name_loc,
-                                E::Identifier {
-                                    ref_,
-                                    ..Default::default()
-                                },
-                                Some(name),
-                                IdentifierOpts::new()
-                                    .with_assign_target(identifier_opts.assign_target())
-                                    .with_is_call_target(identifier_opts.is_call_target())
-                                    .with_is_delete_target(identifier_opts.is_delete_target())
-                                    .with_is_property_access_target(
-                                        identifier_opts.is_property_access_target(),
-                                    )
-                                    // If this expression is used as the target of a call expression, make
-                                    // sure the value of "this" is preserved.
-                                    .with_was_originally_identifier(false),
-                            );
-                            if identifier_opts.is_call_target()
-                                && p.options.features.react_compiler.is_enabled()
-                                && let js_ast::ExprData::EImportIdentifier(item) = &mut item.data
-                            {
-                                item.set_is_member_call_target(true);
-                            }
-                            return Some(item);
+                            let is_member_call = identifier_opts.is_call_target()
+                                && p.options.features.react_compiler.is_enabled();
+                            return Some(member_call_target(
+                                is_member_call,
+                                p.handle_identifier(
+                                    name_loc,
+                                    E::Identifier {
+                                        ref_,
+                                        ..Default::default()
+                                    },
+                                    Some(name),
+                                    IdentifierOpts::new()
+                                        .with_assign_target(identifier_opts.assign_target())
+                                        .with_is_call_target(identifier_opts.is_call_target())
+                                        .with_is_delete_target(identifier_opts.is_delete_target())
+                                        .with_is_property_access_target(
+                                            identifier_opts.is_property_access_target(),
+                                        )
+                                        // If this expression is used as the target of a call expression, make
+                                        // sure the value of "this" is preserved.
+                                        .with_was_originally_identifier(false),
+                                ),
+                            ));
                         }
                     }
 

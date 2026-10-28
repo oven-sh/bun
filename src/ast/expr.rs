@@ -591,6 +591,8 @@ pub enum EFlags {
     TsDecorator,
     /// Between the `?` and `:` of a conditional, where an arrow return type is ambiguous.
     AfterQuestionAndBeforeColon,
+    /// The same, in an arrow function body or on the right side of an assignment.
+    AfterQuestionAndBeforeColonCarried,
     /// The same, in the body of an arrow function whose own return type is ambiguous.
     AfterQuestionAndBeforeColonInTypedArrow,
     /// The operand of a TypeScript `<T>` cast. tsc reads a unary expression there, so a `:` behind its parentheses is not a return type.
@@ -602,7 +604,9 @@ impl EFlags {
     pub fn is_after_question_and_before_colon(self) -> bool {
         matches!(
             self,
-            Self::AfterQuestionAndBeforeColon | Self::AfterQuestionAndBeforeColonInTypedArrow
+            Self::AfterQuestionAndBeforeColon
+                | Self::AfterQuestionAndBeforeColonCarried
+                | Self::AfterQuestionAndBeforeColonInTypedArrow
         )
     }
 }

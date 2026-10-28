@@ -587,6 +587,16 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? b : c => (d): T[] => e", "x = a ? b : (c) => (d) => e;\n");
       exp("x = a ? (b.c) : d => (e): T[] => f", "x = a ? b.c : (d) => (e) => f;\n");
 
+      // TypeScript reports an error for each of these, and main prints "x = a ? b : ...". The attempt
+      // for "(b)" finds its second ":", and what follows is read as main reads it elsewhere: type
+      // arguments in parentheses before "=>", "<T, U>(d)" as a cast, and "(d,)" as an expression.
+      exp("x = a ? (b) : c => (d): (P<R>) => e", "x = a ? (b) => d : (P) => e;\n");
+      exp("x = a ? (b) : c => <T, U>(d): R => e", "x = a ? (b) => d : (R) => e;\n");
+      exp("x = a ? (b) : c => (d,): T => e", "x = a ? (b) => d : (T) => e;\n");
+
+      // The operand of "yield" is a new expression too. This is JavaScript that TypeScript 6.0 and main refuse.
+      err("function* g() { x = a ? yield (c) : d => e }", 'Expected ":" but found "}"');
+
       // The right side of each assignment operator
       exp("x = a ? b = (c) : d => e", "x = a ? b = c : (d) => e;\n");
       exp("x = a ? b = (c) : d => e : f", "x = a ? b = (c) => e : f;\n");
@@ -691,6 +701,18 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? q => async (): T => b : c", "x = a ? (q) => async () => b : c;\n");
       exp("x = a ? q = async (): T => b : c", "x = a ? q = async () => b : c;\n");
 
+      // ... but there only if no reading leaves a ":" for the conditional. Each of these has an "async"
+      // arrow function with a return type that leaves one, so they stay the errors that they are on
+      // main and in TypeScript 6.0.
+      err("x = a ? q => async (): T => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? q = async (): T => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? q += async (...b): T => (d) : e => f", 'Expected ":" but found end of file');
+      err("x = a ? q => async() : T => (b): number => b", 'Expected ":" but found end of file');
+      err("x = a ? q => b ? c : async (): T => (d) : e => f", 'Expected ":" but found end of file');
+      // Directly in the branch the call stays, as on main
+      exp("x = a ? async (): T => (d) : e => f", "x = a ? async() : (T) => (d) => f;\n");
+      exp("x = a ? async() : T => (b): number => b", "x = a ? async() : (T) => (b) => b;\n");
+
       // ... but not in the body of "(b): c =>". There "async ():" starts an arrow function at first
       // sight, as in TypeScript: a call would leave its ":" to "(b)".
       exp("x = a ? (b) : c => q => async (): S => d", "x = a ? b : (c) => (q) => async () => d;\n");
@@ -739,6 +761,15 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? async <T extends X>(b): U => (c) : d => e", "x = a ? async (b) => c : (d) => e;\n");
       err("x = a ? <T extends X>(b): U => c", 'Expected ":" but found end of file');
       err("x = a ? <T extends X>(b): U => async() : d => e", 'Expected ":" but found end of file');
+
+      // Nor do "<T>(b: B)", "<T>()" and "<T>(...b)", which are no cast. They are read as on main: an
+      // error is the one of the body or of the conditional, not an unexpected ":" at the parameter.
+      exp("x = a ? <T>(b: B): U => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? <T>(): U => (c) : d => e", "x = a ? () => c : (d) => e;\n");
+      exp("x = a ? <T>(...b): U => (c) : d => e", "x = a ? (...b) => c : (d) => e;\n");
+      exp("x = a ? async <T>(): U => (c) : d => e", "x = a ? async () => c : (d) => e;\n");
+      err("x = a ? <T>(b: B): U => c", 'Expected ":" but found end of file');
+      err("x = a ? <T>(b: B): U => { return (c; } : d", 'Expected ")" but found ";"');
 
       // The operand of a "<T>" cast in these positions takes no return type either
       exp("x = a ? q => <B[]>(b) : d => e", "x = a ? (q) => b : (d) => e;\n");
@@ -837,7 +868,7 @@ describe("Bun.Transpiler", () => {
       // "/" divides, so it gives up on "async (h, k)" and takes both scripts. The attempt here reads
       // "await" as the operator: "/x? async (a, c = /" is then a regular expression, the parentheses
       // end behind "/.y/g", and the ":" behind them ends the attempt. Only a name "await" before "/"
-      // does this.
+      // does this. TypeScript and main print "x = y ? async(h, k) : (R) => ..." for each of these.
       err(
         "x = y ? async (h, k) : R => (p = await /x? async (a, c = /.y/g) : T => await z : no) => body;",
         '"await" can only be used inside an "async" function',
@@ -845,6 +876,11 @@ describe("Bun.Transpiler", () => {
       err(
         "x = y ? async (h, k) : R => (p = await /x? async w => async (a, c = /.y/g) : T => await /u ? 1 /g : no) => body;",
         'Expected ";" but found ")"',
+      );
+      // ... and not each is an error
+      exp(
+        'x = y ? async (h, k) : R => (p = await /x? async (a, c = ")" + /.y/g) : T => await /u + / + "[" : no) => body + "]" /g;',
+        'x = y ? async (h, k) => p = await /x? async (a, c = ")" + /.y / g : (T) => await / u + / + "[" : no) => body + "]" /g;\n',
       );
       // "async (h, k!)" cannot be parameters, so there is no attempt
       exp(

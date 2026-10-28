@@ -33,6 +33,27 @@ use bun_ast::op::Level;
 use bun_ast::{ArrayBinding, StrictModeKind};
 use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt};
 
+/// How parentheses between "?" and ":" are read when a ":" or "=>" follows them.
+#[derive(Clone, Copy)]
+struct MarkedParens {
+    body_flags: EFlags,
+    /// The flags of the body in the attempt. `None`: these are parameters, no attempt.
+    attempt_flags: Option<EFlags>,
+}
+
+/// Not inlined: `parse_suffix` would compute it at its entry, for every expression.
+#[cold]
+#[inline(never)]
+fn carried_mark(flags: EFlags) -> EFlags {
+    match flags {
+        EFlags::AfterQuestionAndBeforeColon | EFlags::AfterQuestionAndBeforeColonCarried => {
+            EFlags::AfterQuestionAndBeforeColonCarried
+        }
+        EFlags::AfterQuestionAndBeforeColonInTypedArrow => flags,
+        _ => EFlags::None,
+    }
+}
+
 // File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
 // so this is a direct `impl P` block.
 
@@ -64,8 +85,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// What an arrow function body and the right side of an assignment get from the flags of their expression.
     #[inline]
     pub(crate) fn carried_flags(flags: EFlags) -> EFlags {
-        if Self::IS_TYPESCRIPT_ENABLED && flags.is_after_question_and_before_colon() {
-            flags
+        if Self::IS_TYPESCRIPT_ENABLED && flags != EFlags::None {
+            carried_mark(flags)
         } else {
             EFlags::None
         }
@@ -457,6 +478,53 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
+    #[cold]
+    #[inline(never)]
+    fn marked_parens(
+        opts: ParenExprOpts,
+        items: &[Expr],
+        first_sight_at_comma: Option<bool>,
+        has_spread: bool,
+        type_colon_range: bun_ast::Range,
+        errors: &DeferredErrors,
+        is_arrow_fn: bool,
+    ) -> MarkedParens {
+        let is_first_sight = !opts.after_type_parameters
+            && first_sight_at_comma.unwrap_or_else(|| {
+                Self::is_first_sight_arrow_head(items.first(), type_colon_range, errors)
+            });
+        // The body of a first sight arrow function is a new expression, as in tsc. A body behind a return type is in a typed arrow function.
+        let body_flags = if is_first_sight {
+            EFlags::None
+        } else if is_arrow_fn {
+            opts.flags
+        } else {
+            EFlags::AfterQuestionAndBeforeColonInTypedArrow
+        };
+        // No second ":" is needed for a first sight head in a typed arrow function, as in tsc, and behind type parameters for parentheses that are no cast, as on main.
+        let is_decided = opts.force_arrow_fn
+            || (is_first_sight && opts.flags == EFlags::AfterQuestionAndBeforeColonInTypedArrow)
+            || (opts.after_type_parameters
+                && (type_colon_range.len > 0
+                    || errors.invalid_expr_after_question.is_some()
+                    || (!opts.is_async && (items.is_empty() || has_spread))));
+        let attempt_flags = if is_decided {
+            None
+        } else if is_first_sight
+            && opts.is_async
+            && opts.flags == EFlags::AfterQuestionAndBeforeColonCarried
+        {
+            // In an arrow function body or an assignment, `async()` is a call only if no reading leaves a ":" for the conditional.
+            Some(EFlags::AfterQuestionAndBeforeColonInTypedArrow)
+        } else {
+            Some(body_flags)
+        };
+        MarkedParens {
+            body_flags,
+            attempt_flags,
+        }
+    }
+
     /// This assumes that the open parenthesis has already been parsed by the caller
     pub(crate) fn parse_paren_expr(
         &mut self,
@@ -621,24 +689,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             };
 
-            let is_after_question_and_before_colon =
-                Self::IS_TYPESCRIPT_ENABLED && opts.flags.is_after_question_and_before_colon();
-            let mut is_first_sight_arrow = false;
-            // The body of a first sight arrow function is a new expression, as in tsc. A body behind a return type is in a typed arrow function.
-            let mut body_flags = EFlags::None;
-            if is_after_question_and_before_colon {
-                is_first_sight_arrow = !opts.after_type_parameters
-                    && first_sight_at_comma.unwrap_or_else(|| {
-                        Self::is_first_sight_arrow_head(items.first(), type_colon_range, &errors)
-                    });
-                if !is_first_sight_arrow {
-                    body_flags = if is_arrow_fn {
-                        opts.flags
-                    } else {
-                        EFlags::AfterQuestionAndBeforeColonInTypedArrow
-                    };
-                }
-            }
+            let marked =
+                if Self::IS_TYPESCRIPT_ENABLED && opts.flags.is_after_question_and_before_colon() {
+                    Some(Self::marked_parens(
+                        opts,
+                        items,
+                        first_sight_at_comma,
+                        spread_range.len > 0,
+                        type_colon_range,
+                        &errors,
+                        is_arrow_fn,
+                    ))
+                } else {
+                    None
+                };
 
             // Avoid parsing TypeScript code like "a ? (1 + 2) : (3 + 4)" as an arrow
             // function. The ":" after the ")" may be a return type annotation, so we
@@ -650,16 +714,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && (invalid_log.is_empty() || Self::has_only_rest_initializers(&invalid_log))
                 && !errors.has_erased_syntax
             {
-                // In a typed arrow function a first sight head is an arrow function without a second ":", as in tsc: the outer one waits for that ":".
-                let is_decided = opts.force_arrow_fn
-                    || (is_first_sight_arrow
-                        && opts.flags == EFlags::AfterQuestionAndBeforeColonInTypedArrow);
-                if is_after_question_and_before_colon && !is_decided {
+                if let Some(MarkedParens {
+                    attempt_flags: Some(attempt_flags),
+                    ..
+                }) = marked
+                {
                     // Only do this very expensive check if we must
                     is_arrow_fn = p
                         .is_type_script_arrow_return_type_after_question_and_before_colon(
                             &arrow_data,
-                            body_flags,
+                            attempt_flags,
                         )?;
                     if is_arrow_fn {
                         // We know this will succeed because we've already done it once above
@@ -684,6 +748,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 let args_slice: &'a mut [G::Arg] = args.into_bump_slice_mut();
+                let body_flags = marked.map_or(EFlags::None, |marked| marked.body_flags);
                 let mut arrow = p.parse_arrow_body(args_slice, &mut arrow_data, body_flags)?;
                 arrow.is_async = opts.is_async;
                 arrow.has_rest_arg = spread_range.len > 0;

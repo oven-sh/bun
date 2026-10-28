@@ -3,10 +3,19 @@ import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
+import * as vm from "node:vm";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
 });
+// The error that fn() throws.
+const thrownBy = fn => {
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+};
 
 test("Regular .stack", () => {
   var err;
@@ -1558,7 +1567,8 @@ test("lazy error-info materialization does not store an empty stack value when t
 // A collection that finds a frame of an unread trace dead turns the frames into a string before they are
 // lost (ErrorInstance::reconcileWeakReferencesAtGCEnd), and `.stack` must then read as it does when it
 // is materialized on access. Known exceptions: an installed Error.prepareStackTrace (it needs the
-// trace), a SyntaxError's "at <parse>" line, and the positions of node:vm frames in a transpiled file.
+// trace), the "at <parse>" line of a SyntaxError that has a source, and the positions of node:vm frames
+// in a transpiled file.
 //
 // Whether the collection materializes a given stack is not up to the test, so each shape makes several
 // errors, each under its own functions that are garbage once they return, and each with a twin: a plain
@@ -1603,6 +1613,7 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
     const shapes = {
       // How the name and the message are joined.
       "TypeError with a message": () => new TypeError("boom"),
+      "SyntaxError without a source": () => new SyntaxError("boom"),
       "no message": () => new Error(),
       "empty own name": () => Object.assign(new Error("boom"), { name: "" }),
       // They are read when the stack is first read, whichever way the frames were formatted.
@@ -1701,6 +1712,7 @@ test.concurrent("a stack that a collection materializes reads the same as one ma
   const row = (header, frames = []) => ({ materializedByACollection: true, header, frames, sameText: true });
   const expectedRows = {
     "TypeError with a message": row("TypeError: boom"),
+    "SyntaxError without a source": row("SyntaxError: boom"),
     "no message": row("Error"),
     "empty own name": row("boom"),
     "message is a Symbol": row("throws Cannot convert a symbol to a string"),
@@ -2139,6 +2151,417 @@ test.concurrent("a stack taken while a CommonJS module loads names the frame of 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
     stdout: { line: "    at anonymous (unknown)", name: "anonymous", text: "anonymous (native)" },
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+test("a SyntaxError gets an `at <parse>` line only if it has a source", async () => {
+  class Sub extends SyntaxError {}
+  const withoutSource = {
+    "new SyntaxError()": new SyntaxError("m"),
+    "SyntaxError()": SyntaxError("m"),
+    "a subclass": new Sub("m"),
+    "JSON.parse": thrownBy(() => JSON.parse("{")),
+    "eval": thrownBy(() => (0, eval)("{")),
+    "eval with a sourceURL comment": thrownBy(() => (0, eval)("{\n//# sourceURL=named.js")),
+    "new Function": thrownBy(() => new Function("{")),
+    "new RegExp": thrownBy(() => new RegExp("[")),
+    "BigInt": thrownBy(() => BigInt("x")),
+    "Response.prototype.json": await new Response("").json().catch(e => e),
+    "structuredClone": structuredClone(new SyntaxError("m")),
+  };
+  for (const error of Object.values(withoutSource)) expect(error).toBeInstanceOf(SyntaxError);
+  expect(Object.keys(withoutSource).filter(name => withoutSource[name].stack.includes("<parse>"))).toEqual([]);
+
+  const limit = Error.stackTraceLimit;
+  let stack;
+  try {
+    Error.stackTraceLimit = 1;
+    ({ stack } = new SyntaxError("m"));
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
+  expect(stack.split("\n").length).toBe(2);
+
+  using dir = tempDir("syntax-error-parse-line", { "bad-regex.cjs": `/* line 1 */\n"".test(/[a-0]/);\n` });
+  const file = join(String(dir), "bad-regex.cjs");
+  expect(thrownBy(() => require(file)).stack.split("\n")[1]).toBe(`    at <parse> (${file}:2)`);
+});
+
+test("Error.captureStackTrace adds an `at <parse>` line only to a SyntaxError that still has a source", () => {
+  const frameHere = expect.stringMatching(/^    at .*capture-stack-trace\.test\.js:\d+:\d+\)?$/);
+
+  // The lazy getter formats an error whose stack was not read.
+  const unread = new SyntaxError("m");
+  Error.captureStackTrace(unread);
+  // Math.max is not on the stack, so no frame is captured.
+  const withoutFrames = new SyntaxError("m");
+  Error.captureStackTrace(withoutFrames, Math.max);
+  // An error whose stack was read gets the new one at once.
+  const alreadyRead = new SyntaxError("m");
+  void alreadyRead.stack;
+  Error.captureStackTrace(alreadyRead);
+  // A read moves the source of a parser error from the error to its own properties.
+  using dir = tempDir("syntax-error-recapture", { "bad-regex.cjs": `/* line 1 */\n"".test(/[a-0]/);\n` });
+  const parserErrorAlreadyRead = thrownBy(() => require(join(String(dir), "bad-regex.cjs")));
+  void parserErrorAlreadyRead.stack;
+  Error.captureStackTrace(parserErrorAlreadyRead);
+
+  expect({
+    unread: unread.stack.split("\n").slice(0, 2),
+    withoutFrames: withoutFrames.stack,
+    alreadyRead: alreadyRead.stack.split("\n").slice(0, 2),
+    parserErrorAlreadyRead: parserErrorAlreadyRead.stack.split("\n").slice(0, 2),
+  }).toEqual({
+    unread: ["SyntaxError: m", frameHere],
+    withoutFrames: "SyntaxError: m",
+    alreadyRead: ["SyntaxError: m", frameHere],
+    parserErrorAlreadyRead: [expect.stringMatching(/^SyntaxError: /), frameHere],
+  });
+});
+
+test("a SyntaxError from node:vm has an `at <parse>` line only if the source has a filename", () => {
+  // The `<parse>` line of the SyntaxError that fn() throws. A row with none reads `undefined`.
+  const parseLineOf = fn => {
+    const error = thrownBy(fn);
+    expect(error).toBeInstanceOf(SyntaxError);
+    return error.stack.split("\n").find(line => line.includes("<parse>"));
+  };
+  // An options object without a filename gets Node's default name. compileFunction has no default, and
+  // neither has an empty filename.
+  expect({
+    script: parseLineOf(() => new vm.Script("\n\n/[a-0]/", { filename: "my-script.js" })),
+    scriptWithEmptyOptions: parseLineOf(() => new vm.Script("\n\n/[a-0]/", {})),
+    scriptWithAnEmptyFilename: parseLineOf(() => new vm.Script("\n\n/[a-0]/", { filename: "" })),
+    compileFunction: parseLineOf(() => vm.compileFunction("{", [], { filename: "named.js" })),
+    compileFunctionWithoutAFilename: parseLineOf(() => vm.compileFunction("{")),
+  }).toEqual({
+    script: "    at <parse> (my-script.js:3)",
+    scriptWithEmptyOptions: "    at <parse> (evalmachine.<anonymous>:3)",
+    scriptWithAnEmptyFilename: undefined,
+    compileFunction: "    at <parse> (named.js:1)",
+    compileFunctionWithoutAFilename: undefined,
+  });
+});
+
+test.concurrent(
+  "a SyntaxError from import() keeps its `at <parse>` line, with and without captured frames",
+  async () => {
+    // Bun's transpiler accepts these modules and JavaScriptCore's parser rejects the regular expression.
+    // A top-level `await import()` fails with no JavaScript frame on the stack, so each error has only the
+    // frames that Error.captureStackTrace gives it.
+    const badModule = `module.exports = 1;\n"".match(/[a-0]/);\n`;
+    using dir = tempDir("syntax-error-import", {
+      "bad-a.cjs": badModule,
+      "bad-b.cjs": badModule,
+      "index.mjs": `
+      const a = await import("./bad-a.cjs").catch(e => e);
+      const b = await import("./bad-b.cjs").catch(e => e);
+      // Math.max is not on the stack, so no frame is captured.
+      Error.captureStackTrace(a, Math.max);
+      Error.captureStackTrace(b);
+      console.log(JSON.stringify({ withoutFrames: a.stack.split("\\n"), withFrames: b.stack.split("\\n").slice(0, 3) }));
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: {
+        withoutFrames: [
+          expect.stringMatching(/^SyntaxError: /),
+          expect.stringMatching(/^    at <parse> \(.*bad-a\.cjs:\d+\)$/),
+        ],
+        withFrames: [
+          expect.stringMatching(/^SyntaxError: /),
+          expect.stringMatching(/^    at <parse> \(.*bad-b\.cjs:\d+\)$/),
+          expect.stringMatching(/^    at .*index\.mjs:\d+:\d+\)?$/),
+        ],
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// `at <parse> (file:line)` is the position where JavaScriptCore's parser rejected a source, which the
+// parser records on the error. An error can have a source URL from somewhere else: a structured clone
+// copies the one of its original, and a collection that formats the frames of an unread stack leaves
+// the first frame's on the error. Error.captureStackTrace in another file must not show either as a
+// position of the parser.
+test.concurrent(
+  "Error.captureStackTrace adds an `at <parse>` line only for a position that the parser recorded",
+  async () => {
+    // Bun's transpiler accepts these modules and JavaScriptCore's parser rejects the regular expression.
+    const badModule = `module.exports = 1;\n"".match(/[a-0]/);\n`;
+    const badESModule = `export default 1;\n"".match(/[a-0]/);\n`;
+    // A parser error for each import(), each from its own file.
+    const badModules = Array.from({ length: 10 }, (_, i) => `./bad-${i}.cjs`);
+    using dir = tempDir("syntax-error-parse-position", {
+      ...Object.fromEntries(badModules.map(name => [name, badModule])),
+      "bad-0.mjs": badESModule,
+      "bad-1.mjs": badESModule,
+      "bad-regex.cjs": `/* line 1 */\n"".test(/[a-0]/);\n`,
+      // The finally blocks keep each return out of tail position, so each function is a frame.
+      "elsewhere.mjs": `
+        export function makeSyntaxError() {
+          try {
+            return new SyntaxError("boom");
+          } finally {
+          }
+        }
+        export function makeEvalSyntaxError() {
+          try {
+            (0, eval)("{");
+          } catch (error) {
+            return error;
+          }
+        }
+        export function captureStackTraceElsewhere(error) {
+          Error.captureStackTrace(error);
+          return error;
+        }
+      `,
+      "main.mjs": `
+        import { createRequire } from "node:module";
+        import vm from "node:vm";
+        import { captureStackTraceElsewhere, makeEvalSyntaxError, makeSyntaxError } from "./elsewhere.mjs";
+        ${materializedByACollection}
+        const require = createRequire(import.meta.url);
+        const thrownBy = fn => {
+          try {
+            fn();
+          } catch (error) {
+            return error;
+          }
+        };
+        const firstLines = (error, count) => error.stack.split("\\n").slice(0, count);
+        function recapture(error) {
+          Error.captureStackTrace(error);
+          return firstLines(error, 2);
+        }
+        // Math.max is not on the stack, so no frame is captured.
+        function recaptureWithoutFrames(error) {
+          Error.captureStackTrace(error, Math.max);
+          return error.stack.split("\\n");
+        }
+        function append(destination) {
+          Error.appendStackTrace(new Error("source"), destination);
+          return firstLines(destination, 2);
+        }
+        // read(error) for each error whose frames the collection formatted.
+        const afterACollection = (errors, read) => {
+          const stacks = readMaterialized(errors, error => JSON.stringify(read(error)));
+          return {
+            materializedByACollection: stacks.length > 0,
+            stacks: [...new Set(stacks)].map(stack => JSON.parse(stack)),
+          };
+        };
+
+        // A top-level await import() fails with no JavaScript frame on the stack, so each of these
+        // errors has the parser's position and only the frames that Error.captureStackTrace gives it.
+        const parserErrors = [];
+        for (const badModule of ${JSON.stringify(badModules)}) {
+          parserErrors.push(await import(badModule).catch(error => error));
+        }
+        const [withoutFrames, withFramesFromHere, ...withFramesFromElsewhere] = parserErrors;
+        const esmWithoutFrames = await import("./bad-0.mjs").catch(error => error);
+        const esmWithFramesFromHere = await import("./bad-1.mjs").catch(error => error);
+
+        // With no number for a limit, an error gets no trace, not an empty one.
+        const limit = Error.stackTraceLimit;
+        let madeWithoutATrace;
+        try {
+          Error.stackTraceLimit = undefined;
+          madeWithoutATrace = thrownBy(() => require("./bad-regex.cjs"));
+        } finally {
+          Error.stackTraceLimit = limit;
+        }
+
+        // The read is pending when the stream gets the error, so the async frames of consume() are attached to it.
+        const forwarded = structuredClone(makeSyntaxError());
+        let controller;
+        const stream = new ReadableStream({
+          start(streamController) {
+            controller = streamController;
+          },
+        });
+        async function consume() {
+          try {
+            await stream.getReader().read();
+          } catch (error) {
+            return error;
+          }
+        }
+        const pending = consume();
+        controller.error(forwarded);
+        const fromStream = await pending;
+        // Read before the collection below, which would format these frames with no line for a position.
+        const fromStreamRow = {
+          sameError: fromStream === forwarded,
+          parseLines: fromStream.stack.split("\\n").filter(line => line.includes("<parse>")),
+        };
+
+        const unread = {
+          "new SyntaxError()": [captureAll(makeSyntaxError), recapture],
+          "new SyntaxError(), no frames": [captureAll(makeSyntaxError), recaptureWithoutFrames],
+          "a parser error of eval code": [captureAll(makeEvalSyntaxError), recapture],
+          "a parser error of import() that got its frames in another file": [
+            withFramesFromElsewhere.map(error => capture(() => captureStackTraceElsewhere(error))),
+            recapture,
+          ],
+        };
+        await collect();
+
+        Error.captureStackTrace(withoutFrames, Math.max);
+        Error.captureStackTrace(withFramesFromHere);
+        Error.captureStackTrace(esmWithoutFrames, Math.max);
+        Error.captureStackTrace(esmWithFramesFromHere);
+        const scriptError = thrownBy(() => new vm.Script("\\n\\n/[a-0]/", { filename: "my-script.js" }));
+        console.log(
+          JSON.stringify({
+            parserPosition: {
+              "require()": firstLines(thrownBy(() => require("./bad-regex.cjs")), 2),
+              "new vm.Script": scriptError.stack.split("\\n").filter(line => line.includes("<parse>")),
+              "import(), no frames": firstLines(withoutFrames, 3),
+              "import(), frames from this file": firstLines(withFramesFromHere, 3),
+              "import() of an ES module, no frames": firstLines(esmWithoutFrames, 3),
+              "import() of an ES module, frames from this file": firstLines(esmWithFramesFromHere, 3),
+            },
+            otherSourceURL: {
+              "a structuredClone copy": recapture(structuredClone(makeSyntaxError())),
+              "a structuredClone copy, no frames": recaptureWithoutFrames(structuredClone(makeSyntaxError())),
+              // The copy has no stack text then, only the source URL.
+              "a structuredClone copy of an error whose stack is not a string": recapture(
+                structuredClone(Object.assign(makeSyntaxError(), { stack: 1 })),
+              ),
+              // With no stack text, a read materializes nothing.
+              "the same, read before the capture": (() => {
+                const copy = structuredClone(Object.assign(makeSyntaxError(), { stack: 1 }));
+                return [typeof copy.stack, ...recapture(copy)];
+              })(),
+              "a structuredClone copy of a parser error": recapture(
+                structuredClone(thrownBy(() => require("./bad-regex.cjs"))),
+              ),
+              "a structuredClone copy that gets frames from Error.appendStackTrace": append(
+                structuredClone(makeSyntaxError()),
+              ),
+              "a structuredClone copy that gets frames from a pending read of a stream": fromStreamRow,
+              // The error printer takes its frames, and the source it shows, from the stack.
+              "Bun.inspect() of a structuredClone copy after the capture": (() => {
+                const copy = structuredClone(makeSyntaxError());
+                recapture(copy);
+                return Bun.inspect(copy).split("\\n").filter(line => /^ +at /.test(line))[0];
+              })(),
+            },
+            withoutATrace: {
+              "a parser error made while Error.stackTraceLimit is not a number": recapture(madeWithoutATrace),
+            },
+            framesFormattedByACollection: Object.fromEntries(
+              Object.entries(unread).map(([name, [errors, read]]) => [name, afterACollection(errors, read)]),
+            ),
+          }),
+        );
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const parserError = expect.stringMatching(/^SyntaxError: Invalid regular expression: /);
+    const parsed = (file, line = "\\d+") =>
+      expect.stringMatching(new RegExp(`^    at <parse> \\(.*${file}:${line}\\)$`));
+    const here = expect.stringMatching(/^    at .*main\.mjs:\d+:\d+$/);
+    const recaptured = expect.stringMatching(/^    at recapture \(.*main\.mjs:\d+:\d+\)$/);
+    const afterACollection = (...stack) => ({ materializedByACollection: true, stacks: [stack] });
+    expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+      stdout: {
+        parserPosition: {
+          "require()": [parserError, parsed("bad-regex\\.cjs", 2)],
+          "new vm.Script": ["    at <parse> (my-script.js:3)"],
+          "import(), no frames": [parserError, parsed("bad-0\\.cjs")],
+          "import(), frames from this file": [parserError, parsed("bad-1\\.cjs"), here],
+          "import() of an ES module, no frames": [parserError, parsed("bad-0\\.mjs", 2)],
+          "import() of an ES module, frames from this file": [parserError, parsed("bad-1\\.mjs", 2), here],
+        },
+        otherSourceURL: {
+          "a structuredClone copy": ["SyntaxError: boom", recaptured],
+          "a structuredClone copy, no frames": ["SyntaxError: boom"],
+          "a structuredClone copy of an error whose stack is not a string": ["SyntaxError: boom", recaptured],
+          "the same, read before the capture": ["undefined", "SyntaxError: boom", recaptured],
+          "a structuredClone copy of a parser error": [parserError, recaptured],
+          "a structuredClone copy that gets frames from Error.appendStackTrace": [
+            "SyntaxError: boom",
+            expect.stringMatching(/^    at append \(.*main\.mjs:\d+:\d+\)$/),
+          ],
+          "a structuredClone copy that gets frames from a pending read of a stream": {
+            sameError: true,
+            parseLines: [],
+          },
+          "Bun.inspect() of a structuredClone copy after the capture": expect.stringMatching(
+            /^ +at recapture \(.*main\.mjs:\d+:\d+\)$/,
+          ),
+        },
+        // Nothing tells this error from a copy when frames are installed, so its position goes too.
+        withoutATrace: {
+          "a parser error made while Error.stackTraceLimit is not a number": [parserError, recaptured],
+        },
+        framesFormattedByACollection: {
+          "new SyntaxError()": afterACollection("SyntaxError: boom", recaptured),
+          "new SyntaxError(), no frames": afterACollection("SyntaxError: boom"),
+          "a parser error of eval code": afterACollection(expect.stringMatching(/^SyntaxError: /), recaptured),
+          // The collection left the first frame's position where the parser's was.
+          "a parser error of import() that got its frames in another file": afterACollection(parserError, recaptured),
+        },
+      },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  },
+);
+
+// A SyntaxError that a Worker posts arrives as a structured clone, with the source URL of the worker's file.
+test.concurrent("Error.captureStackTrace adds no `at <parse>` line to a SyntaxError that a Worker posted", async () => {
+  using dir = tempDir("syntax-error-from-worker", {
+    "worker.mjs": `
+      import { parentPort } from "node:worker_threads";
+      parentPort.postMessage(new SyntaxError("boom"));
+    `,
+    "main.mjs": `
+      import { Worker } from "node:worker_threads";
+      const worker = new Worker(new URL("./worker.mjs", import.meta.url));
+      const error = await new Promise((resolve, reject) => {
+        worker.once("message", resolve);
+        worker.once("error", reject);
+      });
+      await worker.terminate();
+      function recapture(error) {
+        Error.captureStackTrace(error);
+        return error.stack.split("\\n").slice(0, 2);
+      }
+      console.log(JSON.stringify(recapture(error)));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout && JSON.parse(stdout), stderr }).toEqual({
+    stdout: ["SyntaxError: boom", expect.stringMatching(/^    at recapture \(.*main\.mjs:\d+:\d+\)$/)],
     stderr: "",
   });
   expect(exitCode).toBe(0);

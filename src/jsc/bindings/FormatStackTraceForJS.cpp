@@ -253,7 +253,7 @@ WTF::String formatStackTrace(
 
     if (errorInstance) {
         if (JSC::ErrorInstance* err = dynamicDowncast<JSC::ErrorInstance>(errorInstance)) {
-            if (err->errorType() == ErrorType::SyntaxError && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
+            if (err->errorType() == ErrorType::SyntaxError && !err->sourceURL().isEmpty() && (stackTrace.isEmpty() || stackTrace.at(0).sourceURL(vm) != err->sourceURL())) {
                 // There appears to be an off-by-one error.
                 // The following reproduces the issue:
                 // /* empty comment */
@@ -266,18 +266,8 @@ WTF::String formatStackTrace(
                 remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
                 remappedFrame.position.column_zero_based = 0;
 
-                String sourceURLForFrame = err->sourceURL();
-
-                // If it's not a Zig::GlobalObject, don't bother source-mapping it.
-                if (globalObject && !sourceURLForFrame.isEmpty()) {
-                    // https://github.com/oven-sh/bun/issues/3595
-                    if (!sourceURLForFrame.isEmpty()) {
-                        remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
-                        remappedFrames.remap(getBunVM());
-
-                        sourceURLForFrame = remappedFrame.source_url.toWTFString();
-                    }
-                }
+                remappedFrame.source_url = Bun::toStringRef(err->sourceURL());
+                remappedFrames.remap(getBunVM());
 
                 // there is always a newline before each stack frame line, ensuring that the name + message
                 // exist on the first line, even if both are empty
@@ -752,6 +742,15 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
     return result;
 }
 
+void clearLocationOfErrorWithoutTrace(JSC::ErrorInstance* error)
+{
+    if (error->returnAddresses() || error->framesBesideReturnAddresses())
+        return;
+    error->setSourceURL(String());
+    error->setLine(0);
+    error->setColumn(0);
+}
+
 JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -777,6 +776,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     }
 
     if (!destination->stackTrace()) {
+        clearLocationOfErrorWithoutTrace(destination);
         destination->captureStackTrace(vm, globalObject, 1);
     }
 
@@ -902,6 +902,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
             errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
         } else {
             // Not yet materialized — safe to install new frames with a lazy getter.
+            clearLocationOfErrorWithoutTrace(instance);
             instance->setStackFrames(vm, WTF::move(stackTrace));
 
             {

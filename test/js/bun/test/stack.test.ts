@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, bunRun, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "node:path";
 
 test("name property is used for function calls in Error.stack", () => {
@@ -175,3 +175,43 @@ test("Async functions frame should be included in stack trace", async () => {
         at async <anonymous> (file:NN:NN)"
   `);
 });
+
+// Once `.stack` is read, the error printer works from that string and not from the frames.
+test("Bun.inspect() of a SyntaxError whose stack was read shows the frame that made it", () => {
+  const err = new SyntaxError("inspected");
+  void err.stack;
+  const printed = Bun.inspect(err);
+  expect(printed).toContain("SyntaxError: inspected");
+  expect(printed).not.toContain("<parse>");
+  expect(printed).toMatch(/stack\.test\.ts:\d+:\d+/);
+});
+
+test.concurrent.each(["index.cjs", "index.mjs"])(
+  "an uncaught SyntaxError whose stack was read says where it was made (%s)",
+  async entry => {
+    using dir = tempDir("syntax-error-stack-read", {
+      [entry]: [
+        "function make() {",
+        '  const err = new SyntaxError("boom");',
+        "  void err.stack;",
+        "  return err;",
+        "}",
+        "throw make();",
+        "",
+      ].join("\n"),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), entry],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("SyntaxError: boom");
+    expect(stderr).not.toContain("<parse>");
+    expect(stderr).toMatch(/at make \(.*index\.[cm]js:2:\d+\)/);
+    expect(exitCode).toBe(1);
+  },
+);

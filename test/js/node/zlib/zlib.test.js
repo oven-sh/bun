@@ -165,8 +165,13 @@ describe("zlib", () => {
 
     let inputs;
     beforeAll(() => {
-      let state = 0x2545f491;
-      const next = () => ((state ^= state << 13), (state ^= state >>> 17), (state ^= state << 5), state >>> 0);
+      const xorshift = state => () => (
+        (state ^= state << 13),
+        (state ^= state >>> 17),
+        (state ^= state << 5),
+        state >>> 0
+      );
+      const next = xorshift(0x2545f491);
       const fourBytesEach = (length, four) => Buffer.from(Uint32Array.from({ length: length / 4 }, four).buffer);
       const noise = length => fourBytesEach(length, next);
       const word = () =>
@@ -217,6 +222,22 @@ describe("zlib", () => {
       for (let half = 0, i = 0; half < 2; half++)
         for (let stride = 1; stride < 251; stride++)
           for (let multiple = 0; multiple < 251; multiple++) inputs.noMatches[i++] = (stride * multiple) % 251;
+      // Few items of many kinds, which the static codes suit best. Levels 11 and 12 also parse for those codes, up to 1000
+      // and 10000 bytes. This seed is one of few with which all four lengths tell.
+      const diverse = Buffer.alloc(10_001);
+      const pick = xorshift(356);
+      for (let size = 0; size < diverse.length;) {
+        if (size < 256) diverse[size] = size++;
+        else if (pick() % 8 === 0) diverse[size++] = pick();
+        else
+          for (let from = pick() % size, end = size + 3 + (pick() % 256); size < end && size < diverse.length;)
+            diverse[size++] = diverse[from++];
+      }
+      for (const length of [1000, 1001, 10_000, 10_001]) inputs[`diverse${length}`] = diverse.subarray(0, length);
+      // The kind of data changes shortly before 5512 bytes. A block can end there only if 5000 bytes are left.
+      const late = xorshift(1);
+      const lateChange = Buffer.alloc(10_512).map((_, i) => (late() & 0x3e) | (i < 5_212 ? 0 : 0xc1));
+      for (const length of [10_511, 10_512]) inputs[`lateChange${length}`] = lateChange.subarray(0, length);
     });
 
     // What the C library wrote for each input at levels 0 to 12: the length and the start of the SHA-1.
@@ -365,6 +386,79 @@ describe("zlib", () => {
         "77054 98aa56ac451a6536",
       ],
       noMatches: ["125510 fe85f174af38f0d4", "125309 dedf5d158bed37db", ...Array(11).fill("125279 85be301be4068581")],
+      diverse1000: [
+        "1005 a0f627280504e4b9",
+        "302 e5ca7a54359c1e4c",
+        "302 1f10771bc8bbc7bc",
+        "306 5474c17b143d4931",
+        "302 f3757703d752c5ce",
+        "298 c640e0560b7ce7f2",
+        "298 02a0efa04dcb6de2",
+        ...Array(3).fill("297 67f0abe7eb516ce8"),
+        "298 02a0efa04dcb6de2",
+        "297 67f0abe7eb516ce8",
+        "297 67f0abe7eb516ce8",
+      ],
+      diverse1001: [
+        "1006 99fa4348845b5b0a",
+        "302 d2ae3cbaf7446974",
+        "302 96876a6d1f135118",
+        "303 b5b5c3c0a2ffceb8",
+        "303 a9c1bd924ed8b6d2",
+        "298 5db64e38cb1047e4",
+        "298 6a17cf8858208f10",
+        ...Array(3).fill("297 d9deb3aabd0224f7"),
+        "298 6a17cf8858208f10",
+        "298 6a17cf8858208f10",
+        "297 d9deb3aabd0224f7",
+      ],
+      diverse10000: [
+        "10005 5b48abbcd55dfd7b",
+        "637 1a3613a1cf3b2c6f",
+        "634 53745e915007bcfb",
+        "642 087a094534b52484",
+        "594 91a3bdb2aa814016",
+        "575 e0d69dbbedac67a8",
+        "554 ca59efe9efb870b0",
+        "530 f80086751a9bae73",
+        "524 9733ff66685fdc83",
+        "522 e78e7a8370e200a2",
+        "552 b3bd2b6093fe696e",
+        "511 3465a200456f5057",
+        "499 9bb10e0d82379f0e",
+      ],
+      diverse10001: [
+        "10006 1425d4b5be51288f",
+        "637 4eef1c99ca7a7e31",
+        "634 08e15acbbaef8ffe",
+        "642 24902a0d65f22ec4",
+        "594 ec6f5097e671c8dc",
+        "575 c46b1c2f19e083ae",
+        "554 00e5a863c14ff846",
+        "530 78dd73937448a8ad",
+        "524 eb1f9d877db8cb21",
+        "522 fd04f4335e77162c",
+        "552 b8f469dd9b7d6326",
+        "511 4008a4039a94e455",
+        "499 70f083380aa1a077",
+      ],
+      lateChange10511: [
+        "10516 0ad25c3ffb9af24f",
+        "7930 4fe5e4e057ccb098",
+        ...Array(3).fill("7938 726b203ce7306f6d"),
+        ...Array(5).fill("7940 5f71d77293cd6c8d"),
+        "7913 af7927ab2717bff3",
+        "7912 4b305e950f1818f2",
+        "7912 4b305e950f1818f2",
+      ],
+      lateChange10512: [
+        "10517 ef674c4f2d4315ae",
+        "7931 f5fce3cc812a58ca",
+        ...Array(8).fill("6878 3d824ea82d177d03"),
+        "6819 ef2247d063593ee8",
+        "6813 e12a96adcc4c4a34",
+        "6813 e12a96adcc4c4a34",
+      ],
     };
     const writtenByCFor0To79Bytes = [
       "3560 c856dc0aca751fee",

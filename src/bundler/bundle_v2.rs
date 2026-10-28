@@ -239,63 +239,38 @@ impl<'a> BundleV2<'a> {
         self.graph.path_to_source_index_map(target)
     }
 
-    /// Whether `bun build --app` builds this file once for every graph. Copies
-    /// of a plain `.css` file print the same (`BundleOptions::css_target`) and
-    /// would collide on the content-hashed output path. Every other loader
-    /// stays per graph: a JS chunk takes its side from its entry point. So
-    /// does the dev server, whose IncrementalGraph tracks a stylesheet per
-    /// importing graph, and a plugin namespace, where the same path text can
-    /// be anything.
+    /// Whether `bun build --app` builds this stylesheet once, as a client file,
+    /// for every graph that imports it as CSS. The loader has to be final (no
+    /// `onLoad` filter matches the path): a JS chunk takes its side from its
+    /// entry point. The dev server tracks a stylesheet per importing graph,
+    /// and a plugin namespace can make the same path text anything.
     pub(crate) fn is_stylesheet_shared_across_graphs(
         &self,
         loader: options::Loader,
         path: &bun_paths::fs::Path<'_>,
     ) -> bool {
-        loader.is_css() && path.is_file() && self.framework.is_some() && self.dev_server.is_none()
+        loader.is_css()
+            && path.is_file()
+            && self.framework.is_some()
+            && self.dev_server.is_none()
+            && !self
+                .plugins_ref()
+                .is_some_and(|plugins| plugins.has_any_matches(path, true))
     }
 
-    /// The graph that parses a file `importer` imports. A shared stylesheet is
-    /// always a client file, so its class names and the resolution of its own
-    /// imports do not depend on which graph registers it first.
-    pub(crate) fn target_for_imported_file(
-        &self,
-        importer: options::Target,
-        loader: options::Loader,
-        path: &bun_paths::fs::Path<'_>,
-    ) -> options::Target {
-        if self.is_stylesheet_shared_across_graphs(loader, path) {
-            Target::Browser
-        } else {
-            importer
-        }
-    }
-
-    /// Registers a shared stylesheet in the path map of every graph, so each
-    /// graph's imports of it resolve to the one copy.
-    pub(crate) fn share_stylesheet_source_index_across_graphs(
+    /// The shared stylesheet that another graph registered for this path,
+    /// which becomes `importer`'s copy too.
+    pub(crate) fn adopt_shared_stylesheet(
         &mut self,
-        loader: options::Loader,
-        path: &bun_paths::fs::Path<'_>,
-        source_index: IndexInt,
-    ) {
-        if !self.is_stylesheet_shared_across_graphs(loader, path) {
-            return;
-        }
-        let separate_ssr = self
-            .framework
-            .as_ref()
-            .and_then(|f| f.server_components.as_ref())
-            .is_some_and(|sc| sc.separate_ssr_graph);
-        let server = self.transpiler.options.target;
-        for target in [Target::Browser, server, Target::ServerComponentsSsr] {
-            if target == Target::ServerComponentsSsr && !separate_ssr {
-                continue;
-            }
-            self.graph
-                .path_to_source_index_map(target)
-                .put(path.text, source_index)
-                .expect("oom");
-        }
+        importer: options::Target,
+        path_text: &[u8],
+    ) -> Option<IndexInt> {
+        let existing = self.graph.shared_stylesheets.get(path_text)?;
+        self.graph
+            .path_to_source_index_map(importer)
+            .put(path_text, existing)
+            .expect("oom");
+        Some(existing)
     }
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
@@ -3007,25 +2982,30 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
 
+            let loader: Loader = 'brk: {
+                let record: &ImportRecord = &self.graph.ast.items_import_records()
+                    [import_record.importer_source_index as usize]
+                    .as_slice()[import_record.import_record_index as usize];
+                if let Some(out_loader) = record.loader {
+                    break 'brk out_loader;
+                }
+                // SAFETY: see `transpiler` note above.
+                break 'brk path
+                    .loader(unsafe { &(*transpiler).options.loaders })
+                    .unwrap_or(Loader::File);
+                // HTML is only allowed at the entry point.
+            };
+            let shared = self.is_stylesheet_shared_across_graphs(loader, &path);
+
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
-            if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
+            let existing = match self.path_to_source_index_map(target).get(path.text) {
+                None if shared => self.adopt_shared_stylesheet(target, path.text),
+                existing => existing,
+            };
+            if let Some(existing) = existing {
                 out_source_index = Some(Index::init(existing));
             } else {
-                let loader: Loader = 'brk: {
-                    let record: &ImportRecord = &self.graph.ast.items_import_records()
-                        [import_record.importer_source_index as usize]
-                        .as_slice()[import_record.import_record_index as usize];
-                    if let Some(out_loader) = record.loader {
-                        break 'brk out_loader;
-                    }
-                    // SAFETY: see `transpiler` note above.
-                    break 'brk path
-                        .loader(unsafe { &(*transpiler).options.loaders })
-                        .unwrap_or(Loader::File);
-                    // HTML is only allowed at the entry point.
-                };
-                let shared = self.is_stylesheet_shared_across_graphs(loader, &path);
                 let path = self
                     .path_with_pretty_initialized(
                         &path,
@@ -3053,6 +3033,12 @@ pub mod bv2_impl {
                 self.path_to_source_index_map(target)
                     .put(path.text, idx)
                     .expect("oom");
+                if shared {
+                    self.graph
+                        .shared_stylesheets
+                        .put(path.text, idx)
+                        .expect("oom");
+                }
                 out_source_index = Some(Index::init(idx));
 
                 if let Some(secondary) = &resolve_result.path_pair.secondary {
@@ -3064,9 +3050,6 @@ pub mod bv2_impl {
                         self.graph.has_any_secondary_paths = true;
                     }
                 }
-
-                // It is silly to bundle index.css depended on by client+server twice.
-                self.share_stylesheet_source_index_across_graphs(loader, &path, idx);
             }
 
             if let Some(source_index) = out_source_index {
@@ -5417,6 +5400,7 @@ pub mod bv2_impl {
                                 existing.found_existing,
                             )
                         };
+                        let mut new_file: Option<(Loader, bool)> = None;
                         if !found_existing {
                             // A file that a plugin resolved the record to instead keeps its own loader.
                             let loader = this.requested_file_loader(
@@ -5426,11 +5410,24 @@ pub mod bv2_impl {
                                     .loader
                                     .filter(|_| path.text == &*resolve.import_record.specifier),
                             );
-                            let task_target = this.target_for_imported_file(
-                                resolve.import_record.original_target,
-                                loader,
-                                &path,
-                            );
+                            let shared = this.is_stylesheet_shared_across_graphs(loader, &path);
+                            let adopted = if shared {
+                                this.graph.shared_stylesheets.get(path.text)
+                            } else {
+                                None
+                            };
+                            match adopted {
+                                // SAFETY: map slot from `get_or_put` above; map not mutated since.
+                                Some(existing) => unsafe { *value_ptr = existing },
+                                None => new_file = Some((loader, shared)),
+                            }
+                        }
+                        if let Some((loader, shared)) = new_file {
+                            let task_target = if shared {
+                                Target::Browser
+                            } else {
+                                resolve.import_record.original_target
+                            };
                             let path = this
                                 .path_with_pretty_initialized(&path, task_target)
                                 .expect("oom");
@@ -5459,11 +5456,12 @@ pub mod bv2_impl {
                                     ..Default::default()
                                 })
                                 .expect("unreachable");
-                            this.share_stylesheet_source_index_across_graphs(
-                                loader,
-                                &path,
-                                source_index.get(),
-                            );
+                            if shared {
+                                this.graph
+                                    .shared_stylesheets
+                                    .put(path.text, source_index.get())
+                                    .expect("oom");
+                            }
                             let task_val = ParseTask {
                                 // SAFETY: `from_mut(this)` is the live bundle (write provenance);
                                 // outlives the task.
@@ -5480,11 +5478,7 @@ pub mod bv2_impl {
                                     file: bun_sys::Fd::INVALID,
                                 },
                                 side_effects: bun_ast::SideEffects::HasSideEffects,
-                                jsx: this
-                                    .transpiler_for_target(task_target)
-                                    .options
-                                    .jsx
-                                    .clone(),
+                                jsx: this.transpiler_for_target(task_target).options.jsx.clone(),
                                 source_index: bun_ast::Index::init(source_index.get()),
                                 module_type: options::ModuleType::Unknown,
                                 loader: Some(loader),
@@ -7340,6 +7334,12 @@ pub mod bv2_impl {
                     continue;
                 }
 
+                let shared = self.is_stylesheet_shared_across_graphs(import_record_loader, path);
+                if shared && let Some(id) = self.adopt_shared_stylesheet(target, path.text) {
+                    import_record.source_index = Index::init(id);
+                    continue;
+                }
+
                 if is_html_entrypoint {
                     import_record.kind = ImportKind::HtmlManifest;
                 }
@@ -7351,7 +7351,7 @@ pub mod bv2_impl {
                     continue;
                 }
 
-                let task_target = self.target_for_imported_file(target, import_record_loader, path);
+                let task_target = if shared { Target::Browser } else { target };
                 *path = self
                     .path_with_pretty_initialized(path, task_target)
                     .expect("oom");
@@ -7481,11 +7481,12 @@ pub mod bv2_impl {
                         *value_ptr = new_task.source_index.get();
                     }
 
-                    self.share_stylesheet_source_index_across_graphs(
-                        loader,
-                        &new_task.path,
-                        new_task.source_index.get(),
-                    );
+                    if self.is_stylesheet_shared_across_graphs(loader, &new_task.path) {
+                        self.graph
+                            .shared_stylesheets
+                            .put(new_task.path.text, new_task.source_index.get())
+                            .expect("oom");
+                    }
 
                     diff += 1;
 

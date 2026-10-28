@@ -1747,8 +1747,8 @@ devTest("recovers from importing a file in a directory that can't be opened", {
 
 // Compiling nesting away writes the parent selector for each `&`. With two per level the CSS
 // printer stops at its expansion limit. This only fails because the dev server prints CSS for
-// browser targets that lack nesting. If that changes, this test needs another stylesheet that
-// fails to print.
+// the default browser targets, which lack nesting. If that changes, this test needs another
+// stylesheet that fails to print.
 devTest("editing an @imported stylesheet recovers from a failed CSS print", {
   files: {
     "index.html": emptyHtmlFile({
@@ -1757,9 +1757,10 @@ devTest("editing an @imported stylesheet recovers from a failed CSS print", {
     }),
     "main.css": `@import "./child.css";\nbody { margin: 0; }\n`,
     "child.css":
-      Array.from({ length: 20 }, () => "&:is(.a, &.b) {").join("\n") +
+      ".x {\n" +
+      Array.from({ length: 20 }, () => "& & {").join("\n") +
       "\ncolor: red;\n" +
-      Buffer.alloc(20, "}").toString() +
+      Buffer.alloc(21, "}").toString() +
       "\n",
   },
   async test(dev) {

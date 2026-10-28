@@ -1628,13 +1628,12 @@ impl<'a> BundleOptions<'a> {
         b"react-refresh",
     ];
 
-    /// The target whose CSS feature set stylesheets are minified and printed
-    /// for. A bake build (the dev server, `bun build --app`) sets `framework`
-    /// on every transpiler and ships every stylesheet to the browser, so CSS
-    /// compiles for the browser even when the importing graph is a server
-    /// one. Minify and print must both resolve targets here: minify assigns
-    /// vendor prefixes and fallbacks, print compiles nesting and media
-    /// ranges, and a sheet that gets one half is only partly lowered.
+    /// The target stylesheets are minified and printed for. A bake build (the
+    /// dev server, `bun build --app`) sets `framework` on every transpiler and
+    /// ships every stylesheet to the browser, also one that a server graph
+    /// imports. Minify and print both read this: minify assigns vendor
+    /// prefixes, print compiles nesting and media ranges, and a sheet that
+    /// gets one half is only partly lowered.
     #[inline]
     pub(crate) fn css_target(&self) -> Target {
         if self.framework.is_some() {

@@ -66,6 +66,10 @@ pub struct Graph<'a> {
     /// A map of build targets to their corresponding module graphs.
     pub build_graphs: EnumMap<options::Target, PathToSourceIndexMap>,
 
+    /// The stylesheets that `bun build --app` builds once for every graph.
+    /// See `BundleV2::is_stylesheet_shared_across_graphs`.
+    pub(crate) shared_stylesheets: PathToSourceIndexMap,
+
     /// When Server Components is enabled, this holds a list of all boundary
     /// files. This happens for all files with a "use <side>" directive.
     pub server_component_boundaries: server_component_boundary::List,
@@ -171,6 +175,7 @@ impl<'a> Graph<'a> {
             defer_epoch: 0,
             cancelled: false,
             build_graphs: EnumMap::default(),
+            shared_stylesheets: PathToSourceIndexMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: HtmlImports::default(),
             estimated_file_loader_count: 0,

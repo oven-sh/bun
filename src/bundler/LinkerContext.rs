@@ -1450,11 +1450,8 @@ pub struct LinkerOptions {
     pub(crate) module_preload: bool,
     pub(crate) source_maps: SourceMapOption,
     pub(crate) target: Target,
-    /// Target CSS chunks are printed for. In bake builds `target` is the
-    /// server target while stylesheets still ship to the browser, so
-    /// print-gated CSS transforms key off this instead. Copied from
-    /// `BundleOptions::css_target`, which documents why the minify targets
-    /// must agree with it.
+    /// The target CSS chunks are printed for, from `BundleOptions::css_target`.
+    /// A bake build's `target` is the server's, but its stylesheets go to the browser.
     pub(crate) css_target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,

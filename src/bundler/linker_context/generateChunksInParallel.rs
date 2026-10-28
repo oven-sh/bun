@@ -445,6 +445,15 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             let claimed = path_names_map.get_or_put(&rel_path)?;
             if claimed.found_existing {
                 let first = *claimed.value_ptr as usize;
+                // `bun build --app` names its output files, so two stylesheets with the same bytes are one file.
+                if c.framework.is_some()
+                    && hashes[first] == hashes[index]
+                    && matches!(chunks[first].content, crate::chunk::Content::Css(_))
+                    && matches!(chunks[index].content, crate::chunk::Content::Css(_))
+                {
+                    chunks[index].final_rel_path = rel_path.into_boxed_slice();
+                    continue;
+                }
                 let dup = duplicates_map.get_or_put(&rel_path)?;
                 if !dup.found_existing {
                     *dup.value_ptr = DuplicateEntry::default();

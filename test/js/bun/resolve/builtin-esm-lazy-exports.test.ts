@@ -607,6 +607,29 @@ test.concurrent("node:fs: a user-defined accessor is read when the module loads,
   expect(result).toEqual({ readsAfterLoad: 1, readStreamStillAnAccessor: true, value: 1, readsAfterRead: 1 });
 });
 
+// The other half of the rule: a getter that the engine or Bun made as a getter is not user code, also where user code
+// installed it. Neither of these two is read when node:process loads. The first one throws for a receiver that is not
+// a Map, and the second one returns what events.defaultMaxListeners holds at the time of the call.
+test.concurrent("node:process: an accessor with a getter of the engine or of Bun stays lazy", async () => {
+  const result = await runEntry(`
+    const events = require("node:events");
+    const getterOf = (object, name) => Object.getOwnPropertyDescriptor(object, name).get;
+    // A native getter, and a getter from src/js that is written as a function expression.
+    Object.defineProperty(process, "nativeGetter", { enumerable: true, configurable: true, get: getterOf(Map.prototype, "size") });
+    Object.defineProperty(process, "builtinGetter", { enumerable: true, configurable: true, get: getterOf(events, "defaultMaxListeners") });
+    const ns = await import("node:process");
+    events.defaultMaxListeners = 42;
+    let nativeGetterThrows;
+    try {
+      ns.nativeGetter;
+    } catch (error) {
+      nativeGetterThrows = error.constructor.name;
+    }
+    console.log(JSON.stringify({ builtinGetter: ns.builtinGetter, nativeGetterThrows }));
+  `);
+  expect(result).toEqual({ builtinGetter: 42, nativeGetterThrows: "TypeError" });
+});
+
 test.concurrent("a user-defined getter can itself load the modules that import the export it backs", async () => {
   // Read while E.mjs linked, the require() evaluated E.mjs inside that link, before the binding it imports had a
   // value: "Cannot access 'userDefined' before initialization". Read while node:process loads, the require() loads
@@ -657,18 +680,33 @@ const throwingGetter = `{
   },
 }`;
 
-// The same getter behind util.deprecate(): the accessor's getter is then a function of Bun's own (compiled from
-// src/js) that calls the user's function, and it is just as much user code.
+// The same function where the accessor's getter is not the function itself but a function of Bun's or of the engine
+// that calls it. Such a getter is just as much user code.
+const userFunction = `function () {
+  try {
+    require("./Q.mjs");
+  } catch {}
+  throw new Error("getter throws");
+}`;
+
+// A function compiled from src/js: util.deprecate() returns a wrapper that calls the user's function.
 const deprecatedThrowingGetter = `{
   enumerable: true,
   configurable: true,
-  get: require("node:util").deprecate(function () {
-    try {
-      require("./Q.mjs");
-    } catch {}
-    throw new Error("getter throws");
-  }, "userDefined is deprecated"),
+  get: require("node:util").deprecate(${userFunction}, "userDefined is deprecated"),
 }`;
+
+// A native function that user code installed as the getter: Array.prototype.toString calls `this.join`.
+const nativeThrowingGetter = `{ enumerable: true, configurable: true, get: Array.prototype.toString }`;
+
+// A function of another native class that has the name of a getter, as an N-API accessor has: an FFI function.
+// `callback` stays in the scope of the entry module, so it lives as long as the function that calls it.
+const installFFIGetterOnFs = `
+  const { JSCallback, linkSymbols } = require("bun:ffi");
+  const callback = new JSCallback(${userFunction}, { args: [], returns: "void" });
+  const { symbols } = linkSymbols({ "get userDefined": { ptr: callback.ptr, args: [], returns: "void" } });
+  Object.defineProperty(require("node:fs"), "userDefined", { enumerable: true, configurable: true, get: symbols["get userDefined"] });
+`;
 
 const linkReentrancyCases: {
   name: string;
@@ -717,6 +755,18 @@ const linkReentrancyCases: {
   {
     name: "node:fs, an accessor whose getter is util.deprecate() of a user function",
     install: `process.noDeprecation = true;\nObject.defineProperty(require("node:fs"), "userDefined", ${deprecatedThrowingGetter});`,
+    exportName: "userDefined",
+    importFrom: "node:fs",
+  },
+  {
+    name: "node:process, an accessor whose getter is a native function that calls a user function of its receiver",
+    install: `process.join = ${userFunction};\nObject.defineProperty(process, "userDefined", ${nativeThrowingGetter});`,
+    exportName: "userDefined",
+    importFrom: "node:process",
+  },
+  {
+    name: "node:fs, an accessor whose getter is an FFI function with the name of a getter",
+    install: installFFIGetterOnFs,
     exportName: "userDefined",
     importFrom: "node:fs",
   },

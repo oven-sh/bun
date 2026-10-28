@@ -224,6 +224,8 @@ pub enum Error {
     #[error(transparent)]
     Parsers(#[from] bun_parsers::Error),
     #[error(transparent)]
+    JsPrinter(#[from] bun_js_printer::Error),
+    #[error(transparent)]
     Bunfig(#[from] bun_bunfig::Error),
     #[error(transparent)]
     Transpiler(#[from] bun_transpiler::Error),
@@ -372,6 +374,7 @@ impl Error {
             Self::PackageManifest(e) => <&'static str>::from(e),
             Self::Dotenv(e) => e.name(),
             Self::Parsers(e) => e.name(),
+            Self::JsPrinter(e) => e.name(),
             Self::Bunfig(e) => e.name(),
             Self::Transpiler(e) => e.name(),
             Self::Paths(e) => e.name(),
@@ -393,14 +396,14 @@ impl From<bun_sys::Error> for Error {
     }
 }
 
-impl From<bun_libarchive::Error> for Error {
-    fn from(e: bun_libarchive::Error) -> Self {
+impl From<bun_archive::Error> for Error {
+    fn from(e: bun_archive::Error) -> Self {
         match e {
-            bun_libarchive::Error::Fail => Self::Fail,
-            bun_libarchive::Error::Sys(s) => Self::Sys(s),
-            bun_libarchive::Error::Alloc(a) => Self::Alloc(a),
-            bun_libarchive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
-            bun_libarchive::Error::Paths(p) => Self::Paths(p),
+            bun_archive::Error::Fail => Self::Fail,
+            bun_archive::Error::Sys(s) => Self::Sys(s),
+            bun_archive::Error::Alloc(a) => Self::Alloc(a),
+            bun_archive::Error::MakeLibUvOwned(_) => Self::SystemFdQuotaExceeded,
+            bun_archive::Error::Paths(p) => Self::Paths(p),
         }
     }
 }

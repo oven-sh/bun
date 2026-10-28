@@ -1,0 +1,31 @@
+Array.prototype.map call: TypeError: Cannot assign to 'call' of a built-in function because built-in objects are read-only in a compiled executable
+Array.prototype.map apply: TypeError: Cannot assign to 'apply' of a built-in function because built-in objects are read-only in a compiled executable
+Array.prototype.map bind: TypeError: Cannot assign to 'bind' of a built-in function because built-in objects are read-only in a compiled executable
+Array.prototype.map Symbol.hasInstance: TypeError: Cannot assign to [Symbol.hasInstance] of a built-in function because built-in objects are read-only in a compiled executable
+Array.prototype.map another name: planted ran
+Array.prototype.map as an object: TypeError: Cannot assign to 'call' of a built-in function because built-in objects are read-only in a compiled executable
+Array.prototype.map own names: mine
+Array.prototype.forEach call: TypeError: Cannot assign to 'call' of a built-in function because built-in objects are read-only in a compiled executable
+Array.prototype.forEach apply: TypeError: Cannot assign to 'apply' of a built-in function because built-in objects are read-only in a compiled executable
+Array.prototype.forEach bind: TypeError: Cannot assign to 'bind' of a built-in function because built-in objects are read-only in a compiled executable
+Array.prototype.forEach Symbol.hasInstance: TypeError: Cannot assign to [Symbol.hasInstance] of a built-in function because built-in objects are read-only in a compiled executable
+Array.prototype.forEach another name: planted ran
+Array.prototype.forEach as an object: TypeError: Cannot assign to 'call' of a built-in function because built-in objects are read-only in a compiled executable
+Array.prototype.forEach own names: mine
+Function.prototype.call call: TypeError: Cannot assign to 'call' of a built-in function because built-in objects are read-only in a compiled executable
+Function.prototype.call apply: TypeError: Cannot assign to 'apply' of a built-in function because built-in objects are read-only in a compiled executable
+Function.prototype.call bind: TypeError: Cannot assign to 'bind' of a built-in function because built-in objects are read-only in a compiled executable
+Function.prototype.call Symbol.hasInstance: TypeError: Cannot assign to [Symbol.hasInstance] of a built-in function because built-in objects are read-only in a compiled executable
+Function.prototype.call another name: planted ran
+Function.prototype.call as an object: TypeError: Cannot assign to 'call' of a built-in function because built-in objects are read-only in a compiled executable
+Function.prototype.call own names: mine
+Reflect.get call: TypeError: Cannot assign to 'call' of a built-in function because built-in objects are read-only in a compiled executable
+Reflect.get apply: TypeError: Cannot assign to 'apply' of a built-in function because built-in objects are read-only in a compiled executable
+Reflect.get bind: TypeError: Cannot assign to 'bind' of a built-in function because built-in objects are read-only in a compiled executable
+Reflect.get Symbol.hasInstance: TypeError: Cannot assign to [Symbol.hasInstance] of a built-in function because built-in objects are read-only in a compiled executable
+Reflect.get another name: planted ran
+Reflect.get as an object: TypeError: Cannot assign to 'call' of a built-in function because built-in objects are read-only in a compiled executable
+Reflect.get own names: mine
+2,4 7
+planted ran
+true

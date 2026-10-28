@@ -86,7 +86,7 @@ fn is_as_parameter(node: Expr) -> bool {
     }
 }
 
-/// oxlint's `needs_parens_for_parent`, for a `node` that is not in parentheses.
+/// oxlint's `needs_parens_for_parent`, for a `node` that isn't parenthesized.
 fn needs_parens_for_parent(node: Expr) -> bool {
     match node.parent() {
         Node::Expr(parent) => match parent.kind() {
@@ -108,7 +108,7 @@ fn needs_parens_for_parent(node: Expr) -> bool {
     }
 }
 
-/// What oxlint makes of `<cast>expression`, which is `node`.
+/// oxlint's fix for `<cast>expression`, which is `node`.
 fn fix_as_oxlint<'a>(fixer: Fixer<'a>, node: Expr<'a>, expression: Expr<'a>, cast: &[u8]) -> Fix {
     let needs_parentheses = !node.is_parenthesized() && needs_parens_for_parent(node);
     let starts_a_statement = || match node.parent() {

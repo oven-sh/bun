@@ -1,0 +1,1 @@
+{ "skipInShell": "it reads process.env, which the jsc shell does not have" }

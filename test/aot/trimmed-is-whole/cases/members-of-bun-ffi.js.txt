@@ -1,0 +1,30 @@
+// Bun.FFI is the object behind bun:ffi. A program names one of its members and calls it.
+function attempt(work) {
+  try {
+    console.log("answers", typeof work());
+  } catch (error) {
+    console.log("throws", error.name, error.code, error.message);
+  }
+}
+//// toBuffer
+attempt(() => Bun.FFI.toBuffer(-1));
+//// toBuffer-without-a-receiver
+attempt(() => (0, Bun?.FFI.toBuffer)(-1));
+//// toArrayBuffer
+attempt(() => Bun.FFI.toArrayBuffer(-1));
+//// CString
+attempt(() => Bun.FFI.CString(-1));
+//// ptr
+attempt(() => Bun.FFI.ptr(new Uint8Array(8)));
+//// viewSource
+attempt(() => Bun.FFI.viewSource({}));
+//// callback
+attempt(() => Bun.FFI.callback({}, {}));
+//// closeCallback
+attempt(() => Bun.FFI.closeCallback({}));
+//// read
+const bytes = new Uint8Array([7, 8]);
+attempt(() => Bun.FFI.read.u8(Bun.FFI.ptr(bytes), 1));
+//// through-a-variable
+const { toBuffer } = Bun.FFI;
+attempt(() => toBuffer(-1));

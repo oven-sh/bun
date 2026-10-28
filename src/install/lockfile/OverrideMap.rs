@@ -42,12 +42,18 @@ pub(crate) enum OverrideRule<'a> {
 }
 
 impl<'a> OverrideRule<'a> {
+    /// The rule as stored: the name in its key and its value. `catalog:` is the entry of that name.
+    #[inline]
+    pub(crate) fn dep(self) -> &'a Dependency {
+        match self {
+            OverrideRule::Flat(dep) => dep,
+            OverrideRule::Scoped(rule) => &rule.dep,
+        }
+    }
+
     #[inline]
     pub(crate) fn version(self) -> &'a dependency::Version {
-        match self {
-            OverrideRule::Flat(dep) => &dep.version,
-            OverrideRule::Scoped(rule) => &rule.dep.version,
-        }
+        &self.dep().version
     }
 }
 
@@ -70,15 +76,35 @@ fn is_npm_alias(version: &dependency::Version) -> bool {
     version.tag == VersionTag::Npm && version.npm().is_alias
 }
 
-/// Whether a rule keyed `name@<range>` selects a dependency declared as `declared`.
-fn range_selects(range: &dependency::Version, declared: &dependency::Version, buf: &[u8]) -> bool {
+/// How the range in a `name@<range>` key is compared with the range that a dependency declares.
+#[derive(Clone, Copy)]
+enum Selects {
+    /// The key matches if the two ranges overlap. npm and pnpm do this.
+    Overlapping,
+    /// The key matches only if the two ranges are the same text. yarn does this.
+    SameRange,
+}
+
+/// Returns true if a rule with the key `name@<range>` applies to a dependency declared as
+/// `declared`.
+fn range_selects(
+    range: &dependency::Version,
+    declared: &dependency::Version,
+    selects: Selects,
+    buf: &[u8],
+) -> bool {
     match (range.tag, declared.tag) {
         (VersionTag::Npm, VersionTag::Npm) => {
+            let is_same_text = dependency::without_npm_protocol(range.literal.slice(buf))
+                == dependency::without_npm_protocol(declared.literal.slice(buf));
             let (range, declared) = (range.npm(), declared.npm());
             // An alias key selects aliases of the same package. A plain key never selects an alias.
             range.is_alias == declared.is_alias
                 && (!range.is_alias || range.name.eql(declared.name, buf, buf))
-                && range.version.intersects(buf, &declared.version, buf)
+                && match selects {
+                    Selects::Overlapping => range.version.intersects(buf, &declared.version, buf),
+                    Selects::SameRange => is_same_text,
+                }
         }
         (VersionTag::Catalog, VersionTag::Catalog) => {
             CatalogMap::same_name(range.catalog().slice(buf), declared.catalog().slice(buf))
@@ -101,7 +127,8 @@ fn cmp_range_text(l: &ScopedOverride, r: &ScopedOverride, buf: &[u8]) -> Orderin
     })
 }
 
-/// dependency id -> owning package id, filled lazily. Checked on use: a package's rows can move.
+/// Maps a dependency id to the package that owns it. Filled lazily and verified on use, because a
+/// package's dependencies can move.
 #[derive(Default)]
 struct OwnerIndex {
     by_dep: Vec<PackageID>,
@@ -187,7 +214,7 @@ struct ParseContext<'a, 'b> {
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
     log: &'a mut bun_ast::Log,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     workspace_names: &'a WorkspaceMap,
     builder: &'a mut StringBuilder<'b>,
 }
@@ -214,6 +241,24 @@ impl OverrideMap {
         self.lookup_declared(lockfile, dependency_id, name_hash, declared)
     }
 
+    /// Like `lookup`, but a `name@<range>` key only matches a dependency that declares exactly that
+    /// range, as in yarn.
+    pub(crate) fn lookup_as_yarn(
+        &self,
+        lockfile: &Lockfile,
+        dependency_id: DependencyID,
+        name_hash: PackageNameHash,
+    ) -> Option<OverrideRule<'_>> {
+        let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
+        self.lookup_selecting(
+            lockfile,
+            dependency_id,
+            name_hash,
+            declared,
+            Selects::SameRange,
+        )
+    }
+
     /// `declared` is the version being resolved. `enqueue_pinned` resolves another one than the row's.
     pub(crate) fn lookup_declared(
         &self,
@@ -222,9 +267,28 @@ impl OverrideMap {
         name_hash: PackageNameHash,
         declared: &dependency::Version,
     ) -> Option<OverrideRule<'_>> {
+        self.lookup_selecting(
+            lockfile,
+            dependency_id,
+            name_hash,
+            declared,
+            Selects::Overlapping,
+        )
+    }
+
+    fn lookup_selecting(
+        &self,
+        lockfile: &Lockfile,
+        dependency_id: DependencyID,
+        name_hash: PackageNameHash,
+        declared: &dependency::Version,
+        selects: Selects,
+    ) -> Option<OverrideRule<'_>> {
         scoped_log!(OverrideMap, "looking up override for {:x}", name_hash);
         if !self.scoped.is_empty() && self.scoped_names.contains(&name_hash) {
-            if let Some(rule) = self.scoped_rule_for(lockfile, dependency_id, name_hash, declared) {
+            if let Some(rule) =
+                self.scoped_rule_for(lockfile, dependency_id, name_hash, declared, selects)
+            {
                 return Some(OverrideRule::Scoped(rule));
             }
         }
@@ -246,6 +310,7 @@ impl OverrideMap {
         dependency_id: DependencyID,
         name_hash: PackageNameHash,
         declared: &dependency::Version,
+        selects: Selects,
     ) -> Option<&'s ScopedOverride> {
         let buf = lockfile.buffers.string_bytes.as_slice();
         let mut owner: Option<Option<(PackageNameHash, Option<SemverVersion>)>> = None;
@@ -288,7 +353,7 @@ impl OverrideMap {
                 if best.is_some_and(|(_, best_tier)| best_tier > tier + 1) {
                     continue;
                 }
-                if !range_selects(&rule.target_range, declared, buf) {
+                if !range_selects(&rule.target_range, declared, selects, buf) {
                     continue;
                 }
                 tier += 1;

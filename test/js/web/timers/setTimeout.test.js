@@ -502,7 +502,8 @@ it.skipIf(!isLinux)("epoll_pwait fallback does not busy-spin on sub-ms timers", 
 // process.on(), which wakes the loop via eventfd and masks the bug), and
 // assert a 200 ms setTimeout still fires roughly on time.
 // https://man7.org/linux/man-pages/man7/signal.7.html (epoll_*wait is never
-// restarted by SA_RESTART)
+// restarted by SA_RESTART). The handler has SA_RESTART for LeakSanitizer, which
+// forks at exit and reads the status of a waitpid() it does not check for EINTR.
 describe.skipIf(!isLinux)("epoll EINTR retry accounts for elapsed time", () => {
   const src = `
 #include <signal.h>
@@ -511,7 +512,7 @@ describe.skipIf(!isLinux)("epoll EINTR retry accounts for elapsed time", () => {
 static void noop(int s) { (void) s; }
 __attribute__((constructor)) static void arm(void) {
     struct sigaction sa; memset(&sa, 0, sizeof sa);
-    sa.sa_handler = noop; sigemptyset(&sa.sa_mask); sa.sa_flags = 0;
+    sa.sa_handler = noop; sigemptyset(&sa.sa_mask); sa.sa_flags = SA_RESTART;
     sigaction(SIGALRM, &sa, 0);
     struct itimerval itv;
     itv.it_interval.tv_sec = 0; itv.it_interval.tv_usec = 20000;
@@ -693,6 +694,77 @@ it("clearTimeout with a numeric id is a no-op after a timeout promoted to an int
     .join("\n");
   expect(stderrLines).toBe("");
   expect(stdout).toBe("converted: ok\nsurvived\n");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("timer ids past 2^31 and 2^32 are positive and unique", async () => {
+  const src = `
+    import { timerInternals } from "bun:internal-for-testing";
+    const result = {};
+
+    {
+      timerInternals.setNextTimerId(2 ** 31 - 1);
+      const timers = [0, 1, 2].map(() => setTimeout(() => {}, 1e6));
+      const ids = timers.map(Number);
+      clearTimeout(String(ids[0]));
+      clearTimeout(String(ids[1]));
+      clearTimeout(ids[2]);
+      result.pastInt32 = { ids, destroyed: timers.map(t => t._destroyed) };
+    }
+
+    {
+      const first = setInterval(() => {}, 1e6);
+      const id = +first;
+      timerInternals.setNextTimerId(2 ** 32 + id);
+      const second = setInterval(() => {}, 1e6);
+      const idDistance = +second - id;
+      clearInterval(id);
+      result.pastUint32 = { idDistance, destroyed: [first._destroyed, second._destroyed] };
+      clearInterval(second);
+    }
+
+    // A timeout that _repeat turned into an interval is still tracked in the timeout id map.
+    {
+      let other;
+      const id = await (async () => {
+        let fires = 0;
+        const { promise: secondFire, resolve } = Promise.withResolvers();
+        const timer = setTimeout(() => {
+          if (++fires === 2) resolve();
+        }, 1);
+        const id = +timer;
+        timer._repeat = 1;
+        await secondFire;
+        timerInternals.setNextTimerId(2 ** 32 + id);
+        other = setInterval(() => {}, 1e6);
+        +other;
+        clearInterval(timer);
+        return id;
+      })();
+      for (let i = 0; i < 3; i++) {
+        Bun.gc(true);
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      clearTimeout(id);
+      clearInterval(id);
+      result.promotedTimeout = { otherIsAlive: !other._destroyed };
+      clearInterval(other);
+    }
+
+    console.log(JSON.stringify(result));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({
+    pastInt32: { ids: [2147483647, 2147483648, 2147483649], destroyed: [true, true, true] },
+    pastUint32: { idDistance: 2 ** 32, destroyed: [true, false] },
+    promotedTimeout: { otherIsAlive: true },
+  });
   expect(exitCode).toBe(0);
 });
 

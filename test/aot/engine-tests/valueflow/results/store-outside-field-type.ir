@@ -1,0 +1,46 @@
+# An untyped store by name of a value outside the type of a field costs that field. The value lies beside the slot, so the field may be stored a value of another type and is not always filled, and a read by name finds the value.
+# The object keeps its layout. A store inside the type costs nothing. Both objects are created with the field and nothing deletes it, so no read finds nothing.
+# The numbers are no integers: a field that is seen to hold small integers gets a range of its own before the analysis runs, and the analysis follows no ranges
+# RUN: valueflow-apply
+# CHECK: layout L0 name="Overwritten" fields=[{key="n" {{*}}stability=[IsNeverDeleted, IsNeverRedefined]}
+# CHECK: layout L1 name="Kept" fields=[{key="n" {{*}}occupancy=AlwaysFilled {{*}}stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}
+# CHECK: variable g0 name="fromOverwritten" {{*}}declared={type=fractional|"text"}
+# CHECK: variable g1 name="fromKept" {{*}}declared={type=fractional}
+# CHECK: L0 = NewObject -, v0 layout=L0
+# CHECK: L1 = NewObject -, v0 layout=L1
+# RUN(RESULTS): valueflow-results
+# RESULTS: class [[overwritten]] layout=L0 impossibleMutations=[
+# RESULTS-NOT: StoreOfOtherType
+# RESULTS: class [[kept]] layout=L1 impossibleMutations=[{{*}}StoreOfOtherType
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Overwritten" fields=[{key="n" declared={type=number} flags=[IsRequired]}]
+layout L1 name="Kept" fields=[{key="n" declared={type=number} flags=[IsRequired]}]
+variable g0 name="fromOverwritten" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="fromKept" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Double number=1.5
+    v1 = String string="text"
+    v2 = NewObject -, v0 layout=L0 fields=[0]
+    v3 = NewObject -, v0 layout=L1 fields=[0]
+    v4 = CallDirect v2, v1 function=f1
+    v5 = Double number=2.5
+    v6 = CallDirect v3, v5 function=f2
+    v7 = PropGet v2 key="n"
+    PutModuleVariable v7 variable=g0
+    v9 = PropGet v3 key="n"
+    PutModuleVariable v9 variable=g1
+    Return
+}
+function f1 name="storeText" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="n" mode=Strict
+    Return
+}
+function f2 name="storeNumber" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="n" mode=Strict
+    Return
+}

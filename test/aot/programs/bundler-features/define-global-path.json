@@ -1,0 +1,19 @@
+{
+  "build": [
+    "--define",
+    "LOG=console.log",
+    "--define",
+    "ROOT=holder.inner.value",
+    "--define",
+    "NAME=target",
+    "--define",
+    "DESCRIBE=holder.inner.describe",
+    "--define",
+    "FLOOR=Math.floor",
+    "--define",
+    "ITERATOR=Symbol.iterator",
+    "--define",
+    "process.env.ALIAS=holder.inner.extra"
+  ],
+  "reference": "compiled"
+}

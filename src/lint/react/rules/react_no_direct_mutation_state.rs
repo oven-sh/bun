@@ -25,18 +25,18 @@ const IN_COMPONENT: u8 = 1 << 2;
 
 #[derive(Default)]
 pub struct State<'a> {
-    /// What something is in, up to the innermost class.
-    around: AncestorWalk<'a, u8, u8>,
-    /// The assignments to something in `this.state` and the updates of it, for upstream.
+    /// Caches what a node is inside of, up to the innermost class.
+    enclosing_context: AncestorWalk<'a, u8, u8>,
+    /// For upstream: the assignments to and updates of something in `this.state`.
     mutations: Vec<Expr<'a>>,
 }
 
-/// What upstream keeps in a component.
+/// The properties that upstream stores on a component.
 #[derive(Copy, Clone, Default)]
 struct Component {
     in_constructor: bool,
     in_call_expression: bool,
-    /// Which list of `mutations`: two components can have one.
+    /// The index of its `mutations` list. Two components can share one.
     mutations: Option<usize>,
 }
 
@@ -51,13 +51,13 @@ impl Rule for NoDirectMutationState {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let on = On::new().exprs(&[ExprTag::Assign]).unaries(&UPDATES);
-        // What is a component, and in what, depends for upstream on what comes before.
+        // For upstream, what counts as a component and what's inside it depends on what comes before.
         if file.language().is_oxlint { on } else { on.finish() }
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
         let is_oxlint = file.language().is_oxlint;
-        // upstream takes `this.#state` for `this.state`.
+        // upstream treats `this.#state` as `this.state`.
         let is_candidate = (file.mentions("state") || (!is_oxlint && file.mentions("#state")))
             && file.has_exprs([ExprTag::This])
             && if is_oxlint { is_jsx(file) } else { Components::may_have_any(file) };
@@ -97,12 +97,12 @@ impl Rule for NoDirectMutationState {
     }
 }
 
-/// The `this.state` that `target`, which is assigned to, is or is in.
+/// Returns the `this.state` that the assignment target `target` is or is part of.
 fn state_of(target: Expr<'_>, is_oxlint: bool) -> Option<Expr<'_>> {
     if is_oxlint {
         return get_outer_member_expression(target).filter(|&it| is_state_member_expression(it));
     }
-    // upstream's `getOuterMemberExpression`, which has a `ChainExpression` around `(a?.b)`.
+    // upstream's `getOuterMemberExpression`, where `(a?.b)` is wrapped in a `ChainExpression`.
     let is_member = |it: &Expr| matches!(it.tag(), ExprTag::Dot | ExprTag::Index) && !it.is_chain_root();
     let mut item = Some(target).filter(is_member)?;
     while let Some(object) = item.object().filter(is_member) {
@@ -112,7 +112,7 @@ fn state_of(target: Expr<'_>, is_oxlint: bool) -> Option<Expr<'_>> {
 }
 
 fn should_ignore_component<'a>(e: Expr<'a>, cx: &mut Cx<'a, NoDirectMutationState>) -> bool {
-    let found = cx.state.around.run(Node::Expr(e), 0, |_, parent, found| match parent {
+    let found = cx.state.enclosing_context.run(Node::Expr(e), 0, |_, parent, found| match parent {
         Node::Member(_) if as_method_definition(parent).is_some_and(Member::is_constructor) => {
             ControlFlow::Continue(found | IN_CONSTRUCTOR)
         }
@@ -127,8 +127,8 @@ fn should_ignore_component<'a>(e: Expr<'a>, cx: &mut Cx<'a, NoDirectMutationStat
     found & (IN_CONSTRUCTOR | IN_CALL_EXPRESSION) == IN_CONSTRUCTOR || found & IN_COMPONENT == 0
 }
 
-/// upstream's listeners, in the order of ESLint's walk, in a file that has `mutations`. Then its `Program:exit`.
-/// `false`, and nothing is reported: `inCallExpression` is asked for, which only a walk `with_calls` knows.
+/// Runs upstream's listeners in ESLint's traversal order, for a file that has `mutations`, then its `Program:exit`.
+/// Returns false without reporting anything if it needs `inCallExpression`, which is only tracked `with_calls`.
 fn walk<'a>(mutations: &[Expr<'a>], with_calls: bool, cx: &Cx<'a, NoDirectMutationState>) -> bool {
     let file = cx.file();
     let mut queue = Queue::default();
@@ -175,7 +175,7 @@ fn walk<'a>(mutations: &[Expr<'a>], with_calls: bool, cx: &Cx<'a, NoDirectMutati
         if component.in_constructor && !component.in_call_expression {
             continue;
         }
-        // Of an assignment `node.left.object`, of an update the `this.state`.
+        // For an assignment it's `node.left.object`, for an update the `this.state`.
         let mutation = match e.left() {
             Some(left) => left.object(),
             None => e.operand().and_then(|it| state_of(it, cx.language().is_oxlint)),

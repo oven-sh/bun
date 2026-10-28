@@ -588,7 +588,7 @@ describe("bun pm cache unpack", () => {
     expect(readdirSync(box.tmp)).toEqual([]);
   }
 
-  test.concurrent("the sound pack is sound", async () => {
+  test.concurrent("the valid pack is valid", async () => {
     using box = sandbox();
     writeFileSync(box.at("sound.pack"), sound);
     const { out, err, code } = await bun(box, ["pm", "cache", "unpack", box.at("sound.pack")]);
@@ -728,7 +728,7 @@ describe("bun pm cache unpack", () => {
     },
   );
 
-  test.concurrent("does not touch what the cache has, complete or not", async () => {
+  test.concurrent("doesn't touch existing cache entries, complete or not", async () => {
     using box = sandbox({
       cache: {
         ...populatedCache,
@@ -770,7 +770,7 @@ describe("bun pm cache unpack", () => {
     expect(code).toBe(0);
   });
 
-  test.concurrent("does not read the packages the cache has", async () => {
+  test.concurrent("doesn't read the packages that are already in the cache", async () => {
     using box = sandbox({ cache: populatedCache });
     // Garbage where the records of a cached package would be; a sound package after it.
     const garbage = Buffer.alloc(3 << 20, 0xff);
@@ -781,7 +781,7 @@ describe("bun pm cache unpack", () => {
     expect(code).toBe(0);
   });
 
-  test.concurrent("several at once: every entry is created once, by one of them", async () => {
+  test.concurrent("several at the same time: every entry is created once, by one of them", async () => {
     using box = sandbox();
     const names = Array.from(
       { length: 40 },
@@ -989,7 +989,7 @@ describe("bun pm cache pack", () => {
     }
   });
 
-  test.concurrent("leaves out, and reports, what the cache does not have or has in part", async () => {
+  test.concurrent("skips and reports entries that the cache doesn't have or only has in part", async () => {
     using box = sandbox();
     await installedProject(box);
     const [gone, partial] = entryNames(box.cache).filter(name => /^(no-deps|what-bin)@/.test(name));
@@ -1008,31 +1008,34 @@ describe("bun pm cache pack", () => {
     expect(r.code).toBe(0);
   });
 
-  test.concurrent("does not miss what no install here fetches: bundled, or for another platform", async () => {
-    using box = sandbox({
-      project: {
-        "package.json": JSON.stringify({
-          name: "app",
-          // Bundles no-deps@1.0.0.
-          dependencies: { "bundled-1": "1.0.0" },
-          // "os": ["foo"]
-          optionalDependencies: { "native-foo-x64": "1.0.0" },
-        }),
-      },
-    });
-    writeFileSync(join(box.project, "bunfig.toml"), toml({ install: { registry: registry.registryUrl() } }));
-    let r = await bun(box, ["install"]);
-    expect(r.err).not.toContain("error:");
-    expect(r.code).toBe(0);
-    const lockfile = readFileSync(join(box.project, "bun.lock"), "utf8");
-    expect(lockfile).toContain("no-deps@1.0.0");
-    expect(lockfile).toContain("native-foo-x64@1.0.0");
+  test.concurrent(
+    "doesn't report packages that no install here downloads: bundled, or for another platform",
+    async () => {
+      using box = sandbox({
+        project: {
+          "package.json": JSON.stringify({
+            name: "app",
+            // Bundles no-deps@1.0.0.
+            dependencies: { "bundled-1": "1.0.0" },
+            // "os": ["foo"]
+            optionalDependencies: { "native-foo-x64": "1.0.0" },
+          }),
+        },
+      });
+      writeFileSync(join(box.project, "bunfig.toml"), toml({ install: { registry: registry.registryUrl() } }));
+      let r = await bun(box, ["install"]);
+      expect(r.err).not.toContain("error:");
+      expect(r.code).toBe(0);
+      const lockfile = readFileSync(join(box.project, "bun.lock"), "utf8");
+      expect(lockfile).toContain("no-deps@1.0.0");
+      expect(lockfile).toContain("native-foo-x64@1.0.0");
 
-    r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
-    expect(r.err).toBe("");
-    expect(r.out).toContain("Packed 1 package (");
-    expect(r.code).toBe(0);
-  });
+      r = await bun(box, ["pm", "cache", "pack", "cache.pack"]);
+      expect(r.err).toBe("");
+      expect(r.out).toContain("Packed 1 package (");
+      expect(r.code).toBe(0);
+    },
+  );
 
   test.concurrent.skipIf(isWindows)(
     "refuses an entry that unpack would refuse, and leaves no file behind",

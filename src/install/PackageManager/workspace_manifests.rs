@@ -61,7 +61,8 @@ impl ScratchManifests {
         self.fail_on_logged_errors()
     }
 
-    /// Reads no member: takes bun.lock's workspace paths, not its versions, which may be stale.
+    /// Doesn't read any workspace. Uses bun.lock's workspace paths, but not its versions, which may
+    /// be stale.
     fn parse_root_alone(&mut self, manager: &mut PackageManager) -> crate::Result<()> {
         let installed = &manager.lockfile;
         let buf = installed.buffers.string_bytes.as_slice();
@@ -91,7 +92,7 @@ impl ScratchManifests {
         )
     }
 
-    /// For a caller that goes on without the file: nothing is printed and `log` is left clean.
+    /// For a caller that continues without the file. Nothing is printed, and `log` is left clean.
     fn try_parse_member(
         &mut self,
         manager: &mut PackageManager,
@@ -179,24 +180,28 @@ pub struct DeclaredDependency {
     pub package_id: PackageID,
 }
 
-/// What the package.json files declare now; bun.lock only supplies what is installed for each.
+/// What the package.json files declare now. bun.lock only supplies what's installed for each
+/// dependency.
 pub struct DeclaredDependencies {
-    /// The package.json parse: dependency rows, their strings and the root catalogs. No packages.
+    /// The result of parsing the package.json files: dependencies, their strings and the root's
+    /// catalogs. It has no packages.
     lockfile: Lockfile,
     rows: Vec<DeclaredDependency>,
 }
 
-/// What a member's unreadable package.json does to [`DeclaredDependencies::load`].
+/// What [`DeclaredDependencies::load`] does when a workspace's package.json can't be read.
 #[derive(Clone, Copy)]
 pub enum BrokenMember {
     /// The command installs afterwards, which reads every member, selected or not.
     Fatal,
-    /// The command only reports: a selected one is named on stderr, the others are never read.
+    /// The command only reports. If a selected workspace can't be read, its name is printed to
+    /// stderr. The others are never read.
     LeftOut,
 }
 
 impl DeclaredDependencies {
-    /// Exits when the root package.json does not parse. Declared but not installed: no row.
+    /// Exits if the root package.json doesn't parse. A dependency that's declared but not installed
+    /// is skipped.
     pub fn load(
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
@@ -352,10 +357,12 @@ fn installed_row(
     same_name
 }
 
-/// What `bun pm pack` / `bun publish` substitute, from the files: bun.lock's versions may be stale.
+/// The values that `bun pm pack` and `bun publish` substitute. They're read from the files, because
+/// bun.lock's versions may be stale.
 pub struct WorkspaceManifests {
     lockfile: Lockfile,
-    /// Has a `Behavior::WORKSPACE` entry per workspace: its name and root-relative directory.
+    /// Has one `Behavior::WORKSPACE` entry per workspace, with its name and its directory relative
+    /// to the root.
     root_dependencies: DependencySlice,
     root_package_json_path: Box<[u8]>,
 }
@@ -372,11 +379,12 @@ impl WorkspaceManifests {
         })
     }
 
-    /// For a caller that goes on without them. An unreadable root package.json still exits.
+    /// For a caller that continues without them. An unreadable root package.json still exits.
     pub fn try_load(
         manager: &mut PackageManager,
     ) -> Result<WorkspaceManifests, (bun_ast::Log, crate::Error)> {
-        // Only what pack reads: `bun install`'s checks on the root's lists do not fail a pack.
+        // Only what pack reads. The checks that `bun install` runs on the root's lists don't fail a
+        // pack.
         let features = Features {
             is_main: true,
             workspaces: true,
@@ -419,7 +427,8 @@ impl WorkspaceManifests {
         })
     }
 
-    /// Whether `workspace:` links a package named `name`: a workspace, or the root package.
+    /// Returns true if `workspace:` can link to a package named `name`, which is either a workspace
+    /// or the root package.
     pub fn has_workspace(&self, name: &[u8]) -> bool {
         let name_hash: PackageNameHash = bun_semver::string::Builder::string_hash(name);
         self.lockfile.workspace_paths.contains(&name_hash)
@@ -427,7 +436,7 @@ impl WorkspaceManifests {
 
     /// The workspace `workspace:<path>` in `package_dir` links, per `Package::parse_dependency`.
     pub fn workspace_name_at_path(&self, package_dir: &[u8], path: &[u8]) -> Option<&[u8]> {
-        // Joined as a path, `workspace:` alone would name `package_dir` itself.
+        // Joined as a path, a bare `workspace:` would refer to `package_dir` itself.
         if path.is_empty() {
             return None;
         }
@@ -549,7 +558,8 @@ pub(crate) fn relation_graph(
     WorkspaceGraph::from_edges(targets.len(), edges)
 }
 
-/// The package.json paths `--filter` selects (without one: all), each after those it depends on.
+/// Returns the package.json paths that `--filter` selects (all of them without a filter). Each one
+/// comes after the ones it depends on.
 pub fn selected_in_dependency_order(
     manager: &mut PackageManager,
     original_cwd: &[u8],
@@ -585,7 +595,7 @@ fn crash_for_filter(log: &mut bun_ast::Log, pattern: &[u8], err: crate::Error) -
     )
 }
 
-/// The parse errors explain the failure when there are any; `what` and `err` are the fallback.
+/// If there are parse errors, they explain the failure. `what` and `err` are the fallback.
 fn crash(log: &mut bun_ast::Log, err: crate::Error, what: fmt::Arguments<'_>) -> ! {
     if log.has_errors() {
         let _ = log.print(std::ptr::from_mut(Output::error_writer()));

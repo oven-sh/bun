@@ -23,12 +23,12 @@ fn is_inline_name(name: Name<'_>) -> bool {
     )
 }
 
-/// Whether a call of `createElement` can be in the file: `a.#createElement()` is one.
+/// True if the file can contain a `createElement` call. `a.#createElement()` is one.
 fn mentions_create_element(file: &File) -> bool {
     file.mentions("createElement") || file.mentions("#createElement")
 }
 
-/// `isInline` of a `JSXElement`.
+/// `isInline` for a `JSXElement`.
 fn is_inline_element(node: Expr<'_>) -> bool {
     match (node.tag() == ExprTag::Jsx).then(|| node.kind()) {
         Some(ExprKind::Jsx(jsx)) => jsx.tag().and_then(Expr::as_ident).is_some_and(is_inline_name),
@@ -36,14 +36,14 @@ fn is_inline_element(node: Expr<'_>) -> bool {
     }
 }
 
-/// `isInline`, of an element of an array. `None` where upstream throws: a hole, a call without arguments.
+/// `isInline` for an array element. `None` where upstream throws: on a hole, or on a call without arguments.
 fn is_inline(node: Expr<'_>) -> Option<bool> {
     Some(match node.kind() {
         ExprKind::Missing => return None,
         ExprKind::String(value) => {
             strings::js_whitespace_len(value.bytes()) == 0 && strings::js_whitespace_len_back(value.bytes()) == 0
         }
-        // As a string none of these has white space at an end.
+        // Converted to a string, none of these starts or ends with whitespace.
         ExprKind::Number(_)
         | ExprKind::BigInt(_)
         | ExprKind::Regex(_)
@@ -80,7 +80,7 @@ impl Rule for NoAdjacentInlineElements {
 
     fn expr<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         match e.kind() {
-            // Text, white space and braces are children that are not inline: two elements have to touch.
+            // Text, whitespace and braces are children that aren't inline, so two elements have to touch.
             ExprKind::Jsx(jsx) if !jsx.is_fragment() => {
                 let children = jsx.children();
                 let mut pairs = children.iter().zip(children.iter().skip(1));

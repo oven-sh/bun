@@ -579,28 +579,6 @@ impl fmt::Display for Response<'_> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Headers
-// ──────────────────────────────────────────────────────────────────────────
-
-pub struct Headers<'a> {
-    pub headers: &'a [Header],
-}
-
-impl fmt::Display for Headers<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        for header in self.headers {
-            write!(
-                f,
-                "{}: {}\r\n",
-                BStr::new(header.name()),
-                BStr::new(header.value())
-            )?;
-        }
-        Ok(())
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
 // Re-exports from picohttp_sys
 // ──────────────────────────────────────────────────────────────────────────
 

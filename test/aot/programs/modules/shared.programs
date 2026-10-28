@@ -1,0 +1,37 @@
+////: attempt-2
+const attempt = (run: () => unknown) => {
+  try {
+    return run();
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+};
+////: attempt-3
+export function attempt(run: () => unknown) {
+  try {
+    return run();
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+////: attempt-4
+async function attempt(label, run) {
+  try {
+    console.log(label + ":", await run());
+  } catch (error) {
+    console.log(label + ":", «1»);
+  }
+}
+////: lines-3
+export function «1»(): «2» {
+  return «3»;
+}
+////: lines-4
+export function «1»() {
+  return «2»;
+}
+////: lines-8
+export interface «1» {
+  «2»: «3»;
+  «4»: number;
+}

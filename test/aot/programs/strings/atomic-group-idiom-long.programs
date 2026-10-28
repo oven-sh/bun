@@ -1,0 +1,2963 @@
+////: for-4
+for (const a of texts)
+  for (const «1» of «2») {
+    const k = String(a) + «3» + String(«1»);
+    map.set(k, "m:" + k);
+    set.add(k);
+    record[k] = "r:" + k;
+  }
+////: lines-36
+function «1»(s) {
+  return Buffer.byteLength(s, «2»);
+}
+////: lines-40
+function «1»(s: string): Tally {
+  const tally = new Tally();
+  for (let j = 0; j < s.length; ++j) {
+    if («2»;
+    tally.add(s.charCodeAt(j));
+  }
+  return tally;
+}
+//// atomic-group-idiom-long-regexps-untyped.js
+// The atomic-group idiom `(?=(X))\1` inside very long regular expressions (the same program without type annotations).
+function long(text, flags) {
+  return new RegExp(text + "|[" + "a".repeat(17000) + "]{9}~~", flags);
+}
+const expressions = [
+  long("(?=([abd-fx-z0-9_]*))\\1!", ""),
+  long("(?=([abd-fx-z0-9_]+))\\1!", ""),
+  long("(?=([abd-fx-z0-9_]+))\\1!", "i"),
+  long("(?=([abd-fx-z0-9_]+))\\1!", "u"),
+  long("(?=([abd-fx-z0-9_]*))\\1!", "iu"),
+  long("(?=([abd-fx-z0-9_]+))\\1!", "giu"),
+  long("(?=([abd-fx-z0-9_]+))\\1!", "y"),
+  long("(?=([abd-fx-z0-9_]*))\\1!", "v"),
+  long("(?=([^abd-fx-z0-9_]*))\\1a", ""),
+  long("(?=([^abd-fx-z0-9_]+))\\1a", ""),
+  long("(?=([^abd-fx-z0-9_]+))\\1a", "u"),
+  long("(?=([^abd-fx-z0-9_]*))\\1a", "iu"),
+  long("(?=([^abd-fx-z0-9_]+))\\1a", "giu"),
+  long("(?=([^abd-fx-z0-9_]+))\\1a", "v"),
+  long("(?=([\\w$.-]+))\\1;", ""),
+  long("(?=([\\w$.-]*))\\1;", "u"),
+  long("(?=([\\w$.-]+))\\1;", "iu"),
+  long(`(?=([^\\s"'(\\[{<]+))\\1\\s`, ""),
+  long(`(?=([^\\s"'(\\[{<]+))\\1\\s`, "u"),
+  long(`(?=([^\\s"'(\\[{<]*))\\1\\s`, "giu"),
+  long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]*))\\1X", "u"),
+  long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X", "u"),
+  long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X", "iu"),
+  long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X", "giu"),
+  long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]*))\\1X", "v"),
+  long("(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]*))\\1_", "u"),
+  long("(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1_", "u"),
+  long("(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1_", "iu"),
+  long("(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1\\u{1f600}", "u"),
+  long("(?=([\\p{L}\\d_]+))\\1!", "u"),
+  long("(?=([\\p{L}\\d_]*))\\1!", "iu"),
+  long("(?=([^\\p{L}\\d_]+))\\1a", "u"),
+  long("(?=([\\ud83d\\ude00ab0-9]+))\\1a", ""),
+  long("(?=([\\ud83d\\ude00ab0-9]*))\\1X", ""),
+  long("(?=([^\\ud83d\\ude00ab0-9]+))\\1a", ""),
+  long("y(?=([abd-fx-z0-9_]+))\\1!", ""),
+  long("y(?=([abd-fx-z0-9_]+))\\1!", "u"),
+  long("xy(?=([abd-fx-z0-9_]*))\\1!!", "iu"),
+  long("\\u{1f600}(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X", "u"),
+  long(".(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X", "u"),
+  long("..(?=([^a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1_", "u"),
+  long("(?=([abd-fx-z0-9_]+))\\1-(?=([abd-fx-z0-9_]*))\\2;", ""),
+  long("(?=([abd-fx-z0-9_]+))\\1-(?=([abd-fx-z0-9_]*))\\2;", "u"),
+  long("(?=([abd-fx-z0-9_]+))\\1-(?=([^abd-fx-z0-9_]+))\\2a", "iu"),
+  long("(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1-(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\2;", "u"),
+  long("(?=([\\w$.-]+))\\1 (?=([abd-fx-z0-9_]+))\\2!", "giu"),
+  long("(?:(?=([abd-fx-z0-9_]+))\\1|q)z", ""),
+  long("(?:(?=([abd-fx-z0-9_]+))\\1!|q)z", "u"),
+  long("(?:(?=([abd-fx-z0-9_]*))\\1!|(?=([\\w$.-]+))\\2;)+", "u"),
+  long("(?:(?=([a-c\\u{1f600}-\\u{1f64f}\\u0430-\\u044f_]+))\\1X|.)+$", "u"),
+  long("(z)?(?=([abd-fx-z0-9_]+))\\2(!)?;", "iu"),
+  long(`^(?:(?=([^\\s"'(\\[{<]+))\\1\\s)*$`, "u")
+];
+const F = String.fromCodePoint;
+const G = F(128512);
+const H = F(128591);
+const L = F(55357);
+const T = F(56832);
+const Z = F(1078);
+const subjects = [
+  "",
+  "a",
+  "!",
+  "ab!",
+  "AB!",
+  "ab",
+  "c!",
+  "abc!",
+  "ab09_z!",
+  "ab09_z",
+  "  a",
+  "--a",
+  "cca",
+  "CCa",
+  "a.b-c;",
+  "$;",
+  ";",
+  "a.b c",
+  "word next",
+  "word",
+  "(x y",
+  "y12_ab!",
+  "yab",
+  "xyab!!",
+  "xy!!",
+  "xyab!",
+  "ab-xy;",
+  "ab-;",
+  "ab-",
+  "-;",
+  "ab---a",
+  "ab-cca",
+  "a.b ab!",
+  "a.b ab",
+  "qz",
+  "abz",
+  "ab!z",
+  "z",
+  "ab!a.b;ab!",
+  "zab!;",
+  "ab;",
+  "zab;",
+  "one two three ",
+  "one two three",
+  "one (two ",
+  G + "X",
+  G + H + "X",
+  "a" + G + "_" + Z + "X",
+  "A" + G + "x",
+  G,
+  G + "a",
+  L + "X",
+  "a" + L + "X",
+  "a" + L,
+  "_" + L,
+  "_" + T + "X",
+  T + "X",
+  L + T + "X",
+  T + L + "X",
+  G + L + "X",
+  L + G + "X",
+  G + L,
+  "x" + L + "_",
+  L + "_",
+  T + "_",
+  "x" + G + "_",
+  "xx" + L,
+  "x" + L + G,
+  "dd" + G,
+  L + G,
+  G + G + "X",
+  G + "a" + G + "X",
+  "q" + G + "X",
+  L + "aX",
+  "qq" + L + "x_",
+  G + G + "-" + H + ";",
+  G + "-" + L + ";",
+  Z + "7_!",
+  Z + L + "!",
+  L + "a",
+  T + "a",
+  L + L + "a",
+  "ab" + L + "9a",
+  L + "9X",
+  "x" + Z + "a",
+  G + "X" + L + "aX",
+  "aX" + L,
+  Z + Z + " " + G + " ",
+  "ab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_z!",
+  "ab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_zab09_z",
+  "aaaaaaaaa~",
+  "aaaaaaaaa~~",
+  "xaaaaaaaaaa~~y"
+];
+function show(m) {
+  return m === null ? "-" : m.index + ":" + JSON.stringify(Array.from(m));
+}
+////= sum
+let rows = 0;
+for (let e = 0;e < expressions.length; e++) {
+  const r = expressions[e];
+  let line = "";
+  for (const s of subjects) {
+    r.lastIndex = 0;
+    const first = show(r.exec(s)), at = r.lastIndex;
+    const second = r.global || r.sticky ? show(r.exec(s)) : "";
+    r.lastIndex = 1;
+    const third = r.global || r.sticky ? show(r.exec(s)) : "";
+    r.lastIndex = 0;
+    line += " " + first + (at ? "@" + at : "") + second + third + "|" + JSON.stringify(s.replace(r, "<$&,$1,$2>")) + (r.test(s) ? "t" : "f") + s.search(r) + "," + s.split(r).length;
+    r.lastIndex = 0;
+  }
+  rows++;
+  console.log(e + " /" + r.flags + " " + r.source.length + " " + sum(r.source) + " " + sum(String(r)) + " ->" + line);
+}
+console.log(rows + " rows");
+//// body-returns.ts
+// Regular expressions that can match the empty string, in every method that takes a RegExp.
+declare const console: { log(...a: unknown[]): void }
+const R: any = RegExp
+const patterns: RegExp[] = [
+  /(?:)/, /a*/, /^/, /$/, /x?/, /(a)?/, /(?:a|)/, /\b/,
+  /a.c/s, /abc/, /(a)(b)/, /(a)|(b)/, /(a)(?:(b)|(c))/, /[a-f]x/, /..../,
+  /a+(b)?/, /a+?b/, /(a+)(b+)?c/, /\d+/, /\w+@\w+/, /(x*)(y*)(z*)/,
+  /^\s*$/, /^abc/, /^a|^b/, /^(?:x|yz)+$/, /^$/, /^ab?c$/, /^(a)?b/, /abc$/,
+  /abc|d/, /d|abc/, /ab|cde|f/, /f|cde|ab/, /a|bc|d/, /(ab)|(cde)|(f)/,
+  /a/y, /a*/y, /(a)|b/y, /ab|c/y, /a/g, /a*/g, /(a)(b)?/g, /^a/gm, /a$/gm, /b|^a/gm,
+  /abc/i, /(A)b/i, /a.c/, /\bab\b/, /(?=a)a/, /(?!a)./, /(?<=a)b/, /(a)\1/, /(a)?\1b/, /ab?c/u, /./u, /(.)(.)/su,
+]
+const subjects: string[] = ["", "a", "b", "abc", "xabcx", "aab", "aaabbbc", "d", "f", "cde", "12 34", "me@there", "  ", "xyzx", "ab", "ac", "a\nc", "a\nb\na", "ABC", "aa", "fx", "x ab y", "zzzz", "xxyyzz",
+  "一", "a一", "一abc", "一aab一", "一d", "一 12", "a c", "一\na", "𝒳a", "a𝒳b", "一aa一"]
+function shown(m: RegExpExecArray | null): string { return m === null ? "null" : m.index + ":" + JSON.stringify(Array.from(m)) }
+function statics(): string { return JSON.stringify([R.lastMatch, R.$1, R.$2, R.leftContext, R.rightContext]) }
+let lines = 0, sum = 0
+function note(s: string): void { lines++; for (let i = 0; i < s.length; i++) sum = (sum * 31 + s.charCodeAt(i)) | 0 }
+for (const r of patterns) {
+  const out: string[] = []
+  for (const s of subjects) {
+    r.lastIndex = 0
+    const first = shown(r.exec(s)), at = r.lastIndex
+    const second = r.global || r.sticky ? shown(r.exec(s)) + "@" + r.lastIndex : ""
+    r.lastIndex = 0
+    const t = r.test(s); r.lastIndex = 0
+    const one = first + "@" + at + " " + second + " " + t + " " + s.search(r) + " " + JSON.stringify(s.replace(r, "[$&|$1]")) + " " + JSON.stringify(s.split(r, 4)) + " " + JSON.stringify(s.match(r)) + " " + statics()
+    r.lastIndex = 0
+    note(one); out.push(one)
+  }
+  console.log(String(r), out.length, out[3], "·", out[6], "·", out[27])
+}
+for (const r of [/(a)(b)?/g, /a*/g, /b|^a/gm, /(x*)(y*)(z*)/g]) for (const s of subjects) note(JSON.stringify(Array.from(s.matchAll(r), m => [m.index, ...m])))
+const kept = /(a+)(b+)?c/
+for (let i = 0; i < 40; i++) { const hit = kept.exec(i % 3 ? "zaabbc" : "zac"), miss = kept.exec("zzz"), none = /(q)(r)/.exec("zzz"); note(shown(hit) + shown(miss) + shown(none) + statics()) }
+for (const at of [0, 1, 3, 4, 5, 100, -1, 1.5]) for (const r of [/a/g, /a/y, /(?:)/g, /$/g, /^/gm, /(a)|b/y]) { r.lastIndex = at; note(at + shown(r.exec("abca")) + "@" + r.lastIndex) }
+console.log(patterns.length, subjects.length, lines, sum)
+//// body-returns-untyped.js
+// Regular expressions that can match the empty string, in every method that takes a RegExp (the same program without type annotations).
+const R = RegExp;
+const patterns = [
+  /(?:)/,
+  /a*/,
+  /^/,
+  /$/,
+  /x?/,
+  /(a)?/,
+  /(?:a|)/,
+  /\b/,
+  /a.c/s,
+  /abc/,
+  /(a)(b)/,
+  /(a)|(b)/,
+  /(a)(?:(b)|(c))/,
+  /[a-f]x/,
+  /..../,
+  /a+(b)?/,
+  /a+?b/,
+  /(a+)(b+)?c/,
+  /\d+/,
+  /\w+@\w+/,
+  /(x*)(y*)(z*)/,
+  /^\s*$/,
+  /^abc/,
+  /^a|^b/,
+  /^(?:x|yz)+$/,
+  /^$/,
+  /^ab?c$/,
+  /^(a)?b/,
+  /abc$/,
+  /abc|d/,
+  /d|abc/,
+  /ab|cde|f/,
+  /f|cde|ab/,
+  /a|bc|d/,
+  /(ab)|(cde)|(f)/,
+  /a/y,
+  /a*/y,
+  /(a)|b/y,
+  /ab|c/y,
+  /a/g,
+  /a*/g,
+  /(a)(b)?/g,
+  /^a/gm,
+  /a$/gm,
+  /b|^a/gm,
+  /abc/i,
+  /(A)b/i,
+  /a.c/,
+  /\bab\b/,
+  /(?=a)a/,
+  /(?!a)./,
+  /(?<=a)b/,
+  /(a)\1/,
+  /(a)?\1b/,
+  /ab?c/u,
+  /./u,
+  /(.)(.)/su
+];
+const subjects = [
+  "",
+  "a",
+  "b",
+  "abc",
+  "xabcx",
+  "aab",
+  "aaabbbc",
+  "d",
+  "f",
+  "cde",
+  "12 34",
+  "me@there",
+  "  ",
+  "xyzx",
+  "ab",
+  "ac",
+  `a
+c`,
+  `a
+b
+a`,
+  "ABC",
+  "aa",
+  "fx",
+  "x ab y",
+  "zzzz",
+  "xxyyzz",
+  "\u4E00",
+  "a\u4E00",
+  "\u4E00abc",
+  "\u4E00aab\u4E00",
+  "\u4E00d",
+  "\u4E00 12",
+  "a\u2028c",
+  `\u4E00
+a`,
+  "\uD835\uDCB3a",
+  "a\uD835\uDCB3b",
+  "\u4E00aa\u4E00"
+];
+function shown(m) {
+  return m === null ? "null" : m.index + ":" + JSON.stringify(Array.from(m));
+}
+function statics() {
+  return JSON.stringify([R.lastMatch, R.$1, R.$2, R.leftContext, R.rightContext]);
+}
+let lines = 0;
+let sum = 0;
+function note(s) {
+  lines++;
+  for (let i = 0;i < s.length; i++)
+    sum = sum * 31 + s.charCodeAt(i) | 0;
+}
+for (const r of patterns) {
+  const out = [];
+  for (const s of subjects) {
+    r.lastIndex = 0;
+    const first = shown(r.exec(s)), at = r.lastIndex;
+    const second = r.global || r.sticky ? shown(r.exec(s)) + "@" + r.lastIndex : "";
+    r.lastIndex = 0;
+    const t = r.test(s);
+    r.lastIndex = 0;
+    const one = first + "@" + at + " " + second + " " + t + " " + s.search(r) + " " + JSON.stringify(s.replace(r, "[$&|$1]")) + " " + JSON.stringify(s.split(r, 4)) + " " + JSON.stringify(s.match(r)) + " " + statics();
+    r.lastIndex = 0;
+    note(one);
+    out.push(one);
+  }
+  console.log(String(r), out.length, out[3], "\xB7", out[6], "\xB7", out[27]);
+}
+for (const r of [/(a)(b)?/g, /a*/g, /b|^a/gm, /(x*)(y*)(z*)/g])
+  for (const s of subjects)
+    note(JSON.stringify(Array.from(s.matchAll(r), (m) => [m.index, ...m])));
+const kept = /(a+)(b+)?c/;
+for (let i = 0;i < 40; i++) {
+  const hit = kept.exec(i % 3 ? "zaabbc" : "zac"), miss = kept.exec("zzz"), none = /(q)(r)/.exec("zzz");
+  note(shown(hit) + shown(miss) + shown(none) + statics());
+}
+for (const at of [0, 1, 3, 4, 5, 100, -1, 1.5])
+  for (const r of [/a/g, /a/y, /(?:)/g, /$/g, /^/gm, /(a)|b/y]) {
+    r.lastIndex = at;
+    note(at + shown(r.exec("abca")) + "@" + r.lastIndex);
+  }
+console.log(patterns.length, subjects.length, lines, sum);
+//// buffer-byte-length-untyped.js
+// `Buffer.byteLength` of strings of every internal representation (the same program without type annotations).
+const g = globalThis;
+if (!g.Buffer) {
+  g.Buffer = {
+    byteLength(value, encoding) {
+      if (typeof value !== "string") {
+        if (value && typeof value.byteLength === "number")
+          return value.byteLength;
+        const error = new TypeError('The "string" argument must be of type string or an instance of Buffer or ArrayBuffer.');
+        error.code = "ERR_INVALID_ARG_TYPE";
+        throw error;
+      }
+      if (encoding === "latin1")
+        return value.length;
+      if (encoding === "hex")
+        return value.length >>> 1;
+      if (encoding === "ucs2")
+        return value.length * 2;
+      let bytes = 0;
+      for (let i = 0;i < value.length; i++) {
+        const unit = value.charCodeAt(i);
+        if (unit < 128)
+          bytes += 1;
+        else if (unit < 2048)
+          bytes += 2;
+        else if (unit >= 55296 && unit < 56320 && i + 1 < value.length && (value.charCodeAt(i + 1) & 64512) === 56320) {
+          bytes += 4;
+          i++;
+        } else
+          bytes += 3;
+      }
+      return bytes;
+    }
+  };
+}
+////= lines-36	ofText	"utf8"
+function ofTextByDefault(s) {
+  return Buffer.byteLength(s);
+}
+////= lines-36	ofTextWithHyphen	"utf-8"
+function ofTextsWithHyphen(list) {
+  let n = 0;
+  for (const s of list)
+    n += Buffer.byteLength(s, "utf-8");
+  return n;
+}
+////= lines-36	ofLatin1	"latin1"
+function ofEncoding(s, encoding) {
+  return Buffer.byteLength(s, encoding);
+}
+////= lines-36	ofUnknown	"utf8"
+g.kept = [ofText, ofTextByDefault, ofTextWithHyphen, ofTextsWithHyphen, ofLatin1, ofEncoding, ofUnknown];
+const fresh = (x) => String.fromCharCode(...[...x].map((c) => c.charCodeAt(0)));
+const ascii = fresh('<div class="a">hello</div>');
+const latin1 = fresh("na\xEFve caf\xE9 \xFF\x80\x7F");
+const wide = fresh("\u2502 wide \xE9");
+const texts = [fresh(""), ascii, latin1, wide, ascii + latin1, (ascii + latin1).slice(3, 30), ascii.slice(1), latin1 + wide, fresh("\x80"), fresh("\x7F")];
+for (const f of g.kept.slice(0, 4))
+  console.log(texts.map((t) => f(t)).join(" "));
+console.log(["utf8", "utf-8", "latin1", "hex", "ucs2"].map((e) => texts.map((t) => ofEncoding(t, e)).join(" ")).join(" | "));
+console.log(texts.map((t) => ofUnknown(t)).join(" "), ofUnknown(new Uint8Array(7)), ofUnknown(new ArrayBuffer(9)));
+for (const bad of [1, null, undefined, true, {}, []]) {
+  try {
+    console.log(ofUnknown(bad));
+  } catch (e) {
+    console.log(e instanceof TypeError, e.code);
+  }
+}
+let sum = 0;
+for (let i = 0;i < 1000; i++)
+  sum += ofText(texts[i % texts.length]) + ofUnknown(texts[(i + 3) % texts.length]);
+console.log(sum);
+console.log(ofText(ascii), ofTextByDefault(latin1), ofUnknown(wide), ofTextsWithHyphen(texts));
+const { byteLength } = Buffer;
+console.log(byteLength(latin1, "utf8"), byteLength.call(undefined, wide));
+//// build-time-regexps-untyped.js
+// Regular expressions that are not literals but are still known at build time, built the way the packages ansi-regex and wrap-ansi build them, and some that are not known (the same program without type annotations).
+function make(text) {
+  return Array.from(text).join("");
+}
+function ansiRegex({ onlyFirst = false } = {}) {
+  const ST = "(?:\\u0007|\\u001B\\u005C|\\u009C)";
+  const osc = "(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))";
+  const csi = "[\\u001B\\u009B][[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]";
+  const pattern = "(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))|[\\u001B\\u009B][[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]";
+  return new RegExp("(?:(?:\\u001B\\]|\\u009D)[^\\u0007\\u001B\\u009C\\u009D]*(?:\\u0007|\\u001B\\u005C|\\u009C))|[\\u001B\\u009B][[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]", onlyFirst ? undefined : "g");
+}
+function chosen(kind) {
+  return new RegExp("cho+sen", kind === 0 ? "i" : kind === 1 ? "gi" : kind === 2 ? undefined : "m");
+}
+function withFlags(flags) {
+  return new RegExp("unkno+wnflags", flags);
+}
+const LONG = "lo+ng0123456789012345678901234567890123456789012345678901234567890123456789";
+const SHORT = "sho+rt";
+const long = new RegExp(`${LONG}|${SHORT}`);
+const ESCAPE = "a";
+const BELL = "c";
+const C1 = "b";
+const CSI = "[";
+const OSC = "]";
+const SGR_TERMINATOR = "m";
+const CSI_INTRODUCER = `(?:${ESCAPE}\\${CSI}|${C1})`;
+const CSI_PARAMETERS = "[0-?]*[ -/]*[@-~]";
+const SGR_PARAMETERS = `(?<sgr>[0-9;:]*)${SGR_TERMINATOR}`;
+const OSC_STRING_TERMINATOR = `(?:${BELL}|${ESCAPE}\\\\)`;
+const OSC_STRING_PAYLOAD = String.raw`[^\u0000-\u001F\u007F-\u009F]*`;
+const LINK_PARAMETERS = String.raw`8;(?<parameters>[^;\u0000-\u001F\u007F-\u009F]*);(?<uri>${OSC_STRING_PAYLOAD})${OSC_STRING_TERMINATOR}`;
+const OSC_STRING = `${OSC_STRING_PAYLOAD}${OSC_STRING_TERMINATOR}`;
+const wrapped = new RegExp(`${CSI_INTRODUCER}(?:${SGR_PARAMETERS}|${CSI_PARAMETERS})|${ESCAPE}\\${OSC}(?:${LINK_PARAMETERS}|${OSC_STRING})`, "y");
+const ONE = 1;
+const raw = new RegExp(String.raw`ra+w\d${ONE}\n`);
+const numbered = new RegExp("nu+mber12-0.5");
+let assignedText = "assi+";
+for (let i = 0;i < make("x").length; i++)
+  assignedText += "gned";
+const assigned = new RegExp(assignedText);
+const fromCall = new RegExp(make("fromca+ll"));
+const SET = new Set(["a", "b"]);
+const joined = new RegExp(`[${[...SET].join("")}]joi+ned`);
+const object = { toString() {
+  return "7";
+} };
+const withObject = new RegExp(`obje+ct${object}`);
+const styled = make("\x1B[31mred\x1B[39m \x1B]8;;http://x\x07link\x1B]8;;\x07 \x9B1mb");
+const out = [styled.replace(ansiRegex(), ""), ansiRegex({ onlyFirst: true }).exec(styled)?.index, ansiRegex().flags, ansiRegex({ onlyFirst: true }).flags];
+for (let kind = 0;kind < 4; kind++)
+  out.push(chosen(kind).flags + chosen(kind).test(make("x CHOOSEN")));
+for (const flags of ["", "g", "i", "dgimsuy", "v"])
+  out.push(withFlags(make(flags)).flags + withFlags(make(flags)).test(make("UNKNOOWNFLAGS unknoowNflags unknoownflags")));
+out.push(long.exec(make("a shoort"))?.index, long.source.length, wrapped.flags, wrapped.exec(make("a[1;2m"))?.groups?.sgr, wrapped.exec(make("a]8;k=v;http://yc"))?.groups?.uri, wrapped.exec(make("x")), raw.test(make(`raaw51
+`)), raw.source, numbered.test(make("nuumber12-0x5")), numbered.source);
+out.push(assigned.test(make("assiigned")), fromCall.test(make("fromcaall")), joined.test(make("bjoiined")), withObject.test(make("objeect7")), CSI_INTRODUCER, LINK_PARAMETERS.length, OSC_STRING);
+try {
+  withFlags(make("gg"));
+  out.push("no error");
+} catch (e) {
+  out.push(e.name);
+}
+console.log(out.map(String).join(" | "));
+//// captured-strings-read-in-loops.ts
+// Loops that read the characters of a string held in a captured variable, while callees, callbacks, recursion, generators and the loop itself replace the string.
+declare const console: { log(...args: unknown[]): void }
+const wide = "ключ значение λ→∞ 𝒳𝒴 end", narrow = "alpha beta gamma delta epsilon"
+function rope(a: string, b: string): string { return a + b }
+function part(s: string, from: number, to: number): string { return ("<<" + s + ">>").slice(from + 2, to + 2) }
+const texts: (() => string)[] = [() => narrow, () => wide, () => rope(narrow.slice(0, 11), wide.slice(5)), () => rope("x", "yz"), () => part(narrow, 6, 16), () => part(wide, 0, 13), () => "", () => "q", () => part(part(narrow, 2, 25), 3, 12)]
+function createScanner(initial: string, onToken: ((kind: string) => void) | undefined) {
+  let text = initial, pos = 0, end = initial.length, log = ""
+  function setText(next: string): void { text = next; pos = 0; end = next.length }
+  function isLetter(ch: number): boolean { return ch >= 97 && ch <= 122 || ch > 127 }
+  function words(): string { let out = ""; while (pos < end) { const start = pos; while (pos < end && isLetter(text.charCodeAt(pos))) pos++; if (pos > start) out += text.substring(start, pos) + "/"; else pos++ } return out }
+  function codePoints(): number { let sum = 0; for (let i = 0; i < text.length; i++) sum = (sum * 31 + text.codePointAt(i)!) % 1000003; return sum }
+  function characters(): string { let out = ""; for (let i = text.length - 1; i >= -1; i--) out += text.charAt(i) + (text[i] ?? "?") + (text.at(i) ?? "!"); return out }
+  function pastTheEnd(): string { let out = ""; for (let i = -2; i < text.length + 2; i++) out += text.charCodeAt(i) + ","; return out }
+  function replacedByCallee(next: string): string { let out = ""; pos = 0; while (pos < end) { out += text.charCodeAt(pos) + " "; if (pos === 2 && text !== next) setText(next); else pos++ } return out }
+  function replacedByCallback(): string { let out = ""; pos = 0; while (pos < text.length) { const ch = text.charCodeAt(pos); out += ch + " "; pos++; if (ch === 32 && onToken) onToken("space") } return out }
+  function replacedInTheLoop(all: string[]): string { let out = ""; for (let i = 0; i < all.length; i++) { text = all[i]; for (let j = 0; j < text.length; j += 3) out += text.charCodeAt(j) + "."; out += "|" } return out }
+  function keepsTheOldString(next: string): string { let out = ""; for (let i = 0; i < 4; i++) { const before = text; if (i === 1) setText(next); out += before.charCodeAt(i) + ":" + text.charCodeAt(i) + ":" + before.length + ":" + text.length + " " } return out }
+  function withHandler(): string { let out = ""; for (let i = 0; i < text.length + 1; i++) { try { if (i === 3) throw new Error("three"); out += text.charCodeAt(i) + " " } catch (e) { setText(text + "!"); out += (e as Error).message + " " } } return out }
+  function nested(depth: number): string { let out = ""; for (let i = 0; i < text.length && i < 6; i++) { out += text.charCodeAt(i) + " "; if (i === 1 && depth > 0) { const saved = text; setText(saved.slice(1) + depth); out += "[" + nested(depth - 1) + "]"; setText(saved) } } return out }
+  function usedAsKey(table: Record<string, number>): string { let out = ""; for (let i = 0; i < text.length && i < 8; i++) { table[text] = (table[text] ?? 0) + 1; out += text.charCodeAt(i) + "#" + table[text] + " "; log += "k" } return out }
+  function* lazily(): Generator<number> { for (let i = 0; i < text.length; i++) yield text.charCodeAt(i) }
+  async function slowly(): Promise<string> { let out = ""; for (let i = 0; i < text.length && i < 7; i++) { out += text.charCodeAt(i) + " "; await undefined; if (i === 2) setText(text.slice(1)) } return out }
+  function lengths(): string { let out = ""; for (let i = 0; i < 5; i++) { out += text.length + " "; if (i === 2) setText(text + text) } return out }
+  return { setText, words, codePoints, characters, pastTheEnd, replacedByCallee, replacedByCallback, replacedInTheLoop, keepsTheOldString, withHandler, nested, usedAsKey, lazily, slowly, lengths, log: () => log }
+}
+function createOptional(initial: string) {
+  let text = initial, done = ""
+  function put(next: string): void { text = next }
+  function codes(turns: number, next: string): void { for (let i = 0; i < turns; i++) { done += text.charCodeAt(i) + ","; if (i === 1) put(next) } }
+  function points(turns: number, next: string): void { for (let i = 0; i < turns; i++) { done += text.codePointAt(i) + ","; if (i === 1) put(next) } }
+  function single(turns: number, next: string): void { for (let i = 0; i < turns; i++) { done += text.charAt(i) + ","; if (i === 1) put(next) } }
+  function relative(turns: number, next: string): void { for (let i = 0; i < turns; i++) { done += text.at(-i) + ","; if (i === 1) put(next) } }
+  function indexed(turns: number, next: string): void { for (let i = 0; i < turns; i++) { done += text[i] + ","; if (i === 1) put(next) } }
+  function measured(turns: number, next: string): void { for (let i = 0; i < turns; i++) { done += text.length + ","; if (i === 1) put(next) } }
+  return { put, all: [codes, points, single, relative, indexed, measured], take(): string { const was = done; done = ""; return was } }
+}
+function optional(): void {
+  const values = new Array<string>(6)
+  values[0] = "abc"; values[2] = (JSON.parse("[null]") as string[])[0]; values[3] = ""; values[4] = wide; values[5] = rope("r", "ope")
+  for (const first of values) for (const next of values) for (const turns of [0, 1, 4]) {
+    const held = createOptional(first)
+    let row = String(first) + " " + String(next) + " " + turns + ":"
+    for (const read of held.all) {
+      held.put(first)
+      try { read(turns, next); row += " ok " } catch (e) { row += " " + (e as Error).constructor.name + " " }
+      row += held.take()
+    }
+    console.log(row)
+  }
+}
+let noise = 0
+function quiet(k: number): number { if (k > 1e9) return quiet(k - 1) + quiet(k - 2); return k & 3 }
+function loud(k: number): number { if (k > 1e9) return loud(k - 1) + loud(k - 2); noise += k; return noise & 3 }
+function createCalling(initial: string) {
+  let text = initial
+  let turn = 0
+  function put(next: string): number { if (next.length > 1e9) return put(next + next); text = next; return next.length }
+  function grow(k: number): number { if (k > 1e9) return grow(k - 1) + grow(k - 2); if (++turn % 3 === 0) text = text + "+" + k; return turn }
+  function lengthsBehindQuietCalls(turns: number): number { let sum = 0; for (let i = 0; i < turns; i++) { sum += quiet(i); sum += text.length } return sum }
+  function lengthsBehindLoudCalls(turns: number): number { let sum = 0; for (let i = 0; i < turns; i++) { sum += loud(i); sum += text.length } return sum }
+  function codesBehindQuietCalls(turns: number): string { let row = ""; for (let i = 0; i < turns; i++) { row += quiet(i) + ":" + text.charCodeAt(i) + " " } return row }
+  function codesBehindLoudCalls(turns: number): string { let row = ""; for (let i = 0; i < turns; i++) { row += loud(i) + ":" + text.charCodeAt(i) + ":" + text.length + " " } return row }
+  function codesBehindCallsThatStore(turns: number): string { let row = ""; for (let i = 0; i < turns; i++) { row += grow(i) + ":" + text.charCodeAt(i) + ":" + text.codePointAt(text.length - 1) + ":" + text.length + " " } return row }
+  function codesAheadOfCallsThatStore(turns: number): string { let row = ""; for (let i = 0; i < turns; i++) { row += text.charAt(i) + text.length + ":" + grow(i) + " " } return row }
+  function codesAroundRareCalls(turns: number, next: string): string { let row = ""; for (let i = 0; i < turns; i++) { if (i === 2) row += "(" + put(next) + ")"; row += text.charCodeAt(i) + "," + text.at(-1) + " " } return row }
+  return { put, lengthsBehindQuietCalls, lengthsBehindLoudCalls, codesBehindQuietCalls, codesBehindLoudCalls, codesBehindCallsThatStore, codesAheadOfCallsThatStore, codesAroundRareCalls }
+}
+function calling(): void {
+  for (const make of texts) {
+    const held = createCalling(make())
+    console.log(held.lengthsBehindQuietCalls(5), held.lengthsBehindLoudCalls(5), held.codesBehindQuietCalls(5), held.codesBehindLoudCalls(5))
+    console.log(held.codesBehindCallsThatStore(8)); held.put(make())
+    console.log(held.codesAheadOfCallsThatStore(8)); held.put(make())
+    for (const other of texts) { console.log(held.codesAroundRareCalls(5, other())); held.put(make()) }
+  }
+}
+async function main(): Promise<void> {
+  optional()
+  calling()
+  for (let a = 0; a < texts.length; a++) {
+    let turns = 0
+    const scanner = createScanner(texts[a](), kind => { if (++turns === 2) scanner.setText(texts[(a + 3) % texts.length]() + " " + kind) })
+    const fresh = () => scanner.setText(texts[a]())
+    console.log("== " + a)
+    console.log(scanner.words()); fresh()
+    console.log(scanner.codePoints()); fresh()
+    console.log(scanner.characters()); fresh()
+    console.log(scanner.pastTheEnd()); fresh()
+    for (let b = 0; b < texts.length; b++) { console.log(scanner.replacedByCallee(texts[b]())); fresh(); console.log(scanner.keepsTheOldString(texts[b]())); fresh() }
+    console.log(scanner.replacedByCallback()); fresh()
+    console.log(scanner.replacedInTheLoop(texts.map(make => make()))); fresh()
+    console.log(scanner.withHandler()); fresh()
+    console.log(scanner.nested(3)); fresh()
+    console.log(scanner.usedAsKey({})); fresh()
+    let seen = ""; for (const ch of scanner.lazily()) { seen += ch + " "; if (seen.length === 20) scanner.setText("swapped") } console.log(seen); fresh()
+    console.log(await scanner.slowly()); fresh()
+    console.log(scanner.lengths(), scanner.log().length)
+  }
+  const scanner = createScanner("", undefined)
+  let total = 0
+  for (let round = 0; round < 3000; round++) { scanner.setText(rope("word" + round + " ", part(narrow, round % 7, 20)) + (round % 5 ? "" : " ж")); total += scanner.words().length + scanner.codePoints() % 7 }
+  console.log(total)
+}
+main()
+//// case-conversion.js
+"use strict";
+// toLowerCase() and toUpperCase() of short and long texts, again and again, with collections in between:
+// the result is a string like any other, whatever the engine remembers of earlier results.
+const log = [];
+const names = ["Content-Type", "content-type", "CONTENT-TYPE", "X", "x", "", "ETag", "a1B2c3", "Zoë", "ÀÉÎ", "straße", "İstanbul", "ǅ", "ΣΣ", "A".repeat(63), "A".repeat(64), "A".repeat(65), "Ab".repeat(500), "KK", "𐐀"];
+function describe(text) {
+  return text.length + ":" + Array.from(text.slice(0, 12), c => c.codePointAt(0).toString(16)).join(".");
+}
+for (const name of names) log.push(describe(name) + " | " + describe(name.toLowerCase()) + " | " + describe(name.toUpperCase()));
+
+// The result is used as a key, as a part of a longer text, and compared.
+const seen = new Set();
+for (let i = 0; i < 3000; i++) {
+  const headers = { __proto__: null };
+  for (const name of names) headers[name.toLowerCase()] = (headers[name.toLowerCase()] || 0) + 1;
+  const upper = {};
+  for (const name of names) upper[name.toUpperCase()] = name.toLowerCase() === name ? "same" : name.toLowerCase() + "!";
+  seen.add(Object.keys(headers).length + " " + headers["content-type"] + " " + Object.keys(upper).length + " " + upper["CONTENT-TYPE"] + " " + upper.ETAG);
+}
+log.push([...seen].join("\n"));
+
+// Texts that are made anew every time: of parts, of slices, of numbers.
+let count = 0;
+const map = new Map();
+for (let i = 0; i < 20000; i++) {
+  const made = "Key-" + (i % 700) + (i & 1 ? "-A" : "-b");
+  const lower = made.toLowerCase();
+  map.set(lower, (map.get(lower) || 0) + 1);
+  if (("xx" + made).slice(2).toLowerCase() === lower && lower.toUpperCase() === made.toUpperCase()) count++;
+}
+log.push(count + " " + map.size + " " + map.get("key-3-a") + " " + map.get("key-4-b"));
+
+// Garbage between two conversions of the same text.
+let kept = "Content-Type".toLowerCase();
+for (let round = 0; round < 40; round++) {
+  const garbage = [];
+  for (let i = 0; i < 20000; i++) garbage.push({ i, text: "t" + i });
+  const again = "Content-Type".toLowerCase();
+  if (again !== kept || again.length !== 12) log.push("differs in round " + round);
+  kept = round & 1 ? again : kept;
+}
+log.push(kept);
+
+// Objects that are no strings, and the receiver's conversion.
+log.push(String.prototype.toLowerCase.call(12.5) + " " + String.prototype.toLowerCase.call({ toString() { return "FROM-AN-OBJECT"; } }) + " " + String.prototype.toUpperCase.call(true) + " " + String.prototype.toLowerCase.call(["A", "B"]));
+for (const nothing of [undefined, null]) {
+  try {
+    String.prototype.toLowerCase.call(nothing);
+    log.push("no error");
+  } catch (error) {
+    log.push(error.constructor.name);
+  }
+}
+console.log(log.join("\n"));
+//// case-conversion-of-pieces-of-wide-texts.ts
+// word.toLowerCase() | toUpperCase() where the word is a piece of a text that holds a character outside Latin-1: the answers are plain Bun's, whether the piece itself is ASCII or not.
+const texts: string[] = [
+  "Plain Words And UPPER lower 123 東京",
+  "東京 Café CRÈME straße İstanbul ΣΑΣ ǅ ﬁn",
+  "😀 Emoji A \ud83d B \ude00 c",
+  "x 　 Y",
+];
+for (const text of texts) {
+  const words = text.split(" ");
+  console.log(JSON.stringify(words.map(word => word.toLowerCase())), JSON.stringify(words.map(word => word.toUpperCase())));
+  for (let from = 0; from < text.length; from += 3) {
+    const piece = text.slice(from, from + 5);
+    console.log(JSON.stringify([piece, piece.toLowerCase(), piece.toUpperCase(), piece.toLowerCase() === piece, piece.toUpperCase() === piece]));
+  }
+  console.log(JSON.stringify([text.toLowerCase(), text.toUpperCase(), (text + "|" + text).toLowerCase(), text.slice(0, 0).toUpperCase()]));
+}
+const long = ("Word ".repeat(40) + "東").slice(0, 190);
+console.log(long.toLowerCase().length, long.toUpperCase().slice(0, 12), long.toLowerCase().slice(-7));
+let total = 0;
+for (let round = 0; round < 5000; round++) {
+  const words = ("Round " + round + " Of MANY 東京").split(" ");
+  for (const word of words) total += word.toLowerCase().length + (word.toLowerCase() === word ? 1 : 0);
+}
+console.log(total);
+//// chains-of-character-replacements.ts
+// s.replace(/a/g, "..").replace(/b/g, "..") ..: chains of global patterns of one character with constant replacements. Which chains may be done in one pass over the string and which may not; each is checked against the same steps done one at a time through variables that are used twice, and against what RegExp's legacy static properties say afterwards.
+const report: string[] = [];
+let wrong = 0;
+const legacy = RegExp as unknown as Record<string, string>;
+function left(): string {
+  return JSON.stringify([legacy.lastMatch, legacy.input, legacy.leftContext, legacy.rightContext, legacy["$&"], legacy.$1]);
+}
+function reset(): void {
+  /^mark$/.test("mark");
+}
+
+function forShell(text: string): string {
+  return text.replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/ /g, "\\ ").replace(/\t/g, "\\t");
+}
+function forShellStepByStep(text: string): string {
+  const one = text.replace(/\\/g, "\\\\");
+  const two = one.replace(/'/g, "\\'");
+  const three = two.replace(/ /g, "\\ ");
+  return [one, two, three].length === 3 ? three.replace(/\t/g, "\\t") : one;
+}
+function toPath(text: string): string {
+  return text.replace(/\./g, "/").replace(/\$/g, "_inner_");
+}
+function toPathStepByStep(text: string): string {
+  const one = text.replace(/\./g, "/");
+  return one.length >= 0 ? one.replace(/\$/g, "_inner_") : one;
+}
+function squash(text: string): string {
+  return text.replace(/,/g, "").replace(/;/g, " ").replace(/ /g, "");
+}
+function eachFeedsTheNext(text: string): string {
+  return text.replace(/p/g, "q").replace(/q/g, "r").replace(/r/g, "p");
+}
+function withReferences(text: string): string {
+  return text.replace(/u/g, "<$&>").replace(/v/g, "$$").replace(/w/g, "W");
+}
+function withOtherPatterns(text: string): string {
+  return text.replace(/k/gi, "1").replace(/l/, "2").replace(/m/g, "3").replace(/n/g, "4").replace(/oo/g, "5").replace(/[st]/g, "6");
+}
+function sameCharacterTwice(text: string): string {
+  return text.replace(/e/g, "E").replace(/e/g, "never").replace(/z/g, "e");
+}
+function middleIsKept(text: string): string {
+  const middle = text.replace(/\+/g, " plus ");
+  return middle.replace(/-/g, " minus ") + "|" + middle.length;
+}
+function tenSteps(text: string): string {
+  return text.replace(/a/g, "0").replace(/b/g, "1").replace(/c/g, "2").replace(/d/g, "3").replace(/e/g, "4").replace(/f/g, "5").replace(/g/g, "6").replace(/h/g, "7").replace(/i/g, "8").replace(/j/g, "9");
+}
+
+const texts: string[] = ["", "nothing to do", "\\", "'", " ", "\t", "it's a 'test'\tof\\paths", "   ", "\\\\''", "na\u00efve caf\u00e9 's", "\u4e2d\u6587 it's", "end\\", "'start", "m".repeat(90) + "'" + "n".repeat(90) + " "];
+for (let i = 0; i < 5; i++) texts.push(texts[i + 5]! + "/" + texts[(i * 3) % 7]! + texts[6]!.slice(i, i + 9));
+for (let turn = 0; turn < 3; turn++)
+  for (const text of texts) {
+    reset();
+    const fused = forShell(text);
+    const after = left();
+    reset();
+    if (fused !== forShellStepByStep(text) || after !== left()) wrong++;
+    reset();
+    const path = toPath(text + ".a$b.");
+    const afterPath = left();
+    reset();
+    if (path !== toPathStepByStep(text + ".a$b.") || afterPath !== left()) wrong++;
+    if (turn === 2 && text.length < 24) report.push(JSON.stringify(fused) + " " + after);
+  }
+for (const text of ["a,b;c d,,e", "pqr rqp", "uvw wvu", "KkLlMmNnoo sstt klmn", "eze zez", "1+2-3+4", "abcdefghij jihgfedcba k"]) {
+  reset();
+  report.push([squash(text), eachFeedsTheNext(text), withReferences(text), withOtherPatterns(text), sameCharacterTwice(text), middleIsKept(text), tenSteps(text)].join(" | ") + " " + left());
+}
+for (const absent of [undefined, null] as unknown as string[]) {
+  try {
+    report.push(forShell(absent));
+  } catch (problem) {
+    report.push((problem as Error).name);
+  }
+}
+report.push("wrong " + wrong);
+console.log(report.join("\n"));
+//// char-at-vs-single-char-literal.ts
+// `<`, `<=`, `>` and `>=` between a character read from a string and a one-character literal.
+declare const console: any;
+
+const texts: string[] = ["", " ", "a", "az", "~\x7f\0", "\x80\xe9\xff", "Ā ￿", "😀", "aĀa"];
+
+function byIndex(text: string, i: number): string {
+    const c = text[i];
+    return `${c < " "}${c <= " "}${c > " "}${c >= " "}|${c < "a"}${c <= "a"}${c > "a"}${c >= "a"}|${c < "~"}${c <= "~"}${c > "~"}${c >= "~"}|${c < "\0"}${c <= "\0"}${c > "\0"}${c >= "\0"}|${c < "\x7f"}${c <= "\x7f"}${c > "\x7f"}${c >= "\x7f"}`;
+}
+
+function byIndexWithTheLiteralFirst(text: string, i: number): string {
+    const c = text[i];
+    return `${" " < c}${" " <= c}${" " > c}${" " >= c}|${"a" < c}${"a" <= c}${"a" > c}${"a" >= c}|${"~" < c}${"~" <= c}${"~" > c}${"~" >= c}|${"\0" < c}${"\0" <= c}${"\0" > c}${"\0" >= c}`;
+}
+
+function byCharAt(text: string, i: number): string {
+    const c = text.charAt(i);
+    return `${c < " "}${c <= " "}${c > " "}${c >= " "}|${c < "a"}${c <= "a"}${c > "a"}${c >= "a"}|${"a" < c}${"a" <= c}${"a" > c}${"a" >= c}|${c < "\0"}${c <= "\0"}${c > "\0"}${c >= "\0"}`;
+}
+
+function byAt(text: string, i: number): string {
+    const c = text.at(i);
+    if (c === undefined) return "nothing there";
+    return `${c < " "}${c <= " "}${c > " "}${c >= " "}|${c < "a"}${c <= "a"}${c > "a"}${c >= "a"}|${"a" < c}${"a" <= c}${"a" > c}${"a" >= c}`;
+}
+
+function byAtThatMayBeUndefined(text: string, i: number): string {
+    const c = text.at(i) as string;
+    return `${c < "a"}${c <= "a"}${c > "a"}${c >= "a"}|${"a" < c}${"a" <= c}${"a" > c}${"a" >= c}`;
+}
+
+function countOfControlCharacters(text: string): number {
+    let count = 0;
+    for (let i = 0; i < text.length; i++) {
+        if (text[i] < " ") count++;
+    }
+    return count;
+}
+
+function lengthOfNumber(text: string): number {
+    let i = 0;
+    while (i < text.length && text[i] >= "0" && text[i] <= "9") i++;
+    return i;
+}
+
+function pastTheEnd(text: string): number {
+    let count = 0;
+    for (let i = 0; i <= text.length + 1; i++) {
+        if (text[i] < "z") count += 1;
+        if (text[i] >= "\0") count += 10;
+        if (text.charAt(i) < "z") count += 100;
+        if (text.charAt(i) >= "\0") count += 1000;
+    }
+    return count;
+}
+
+for (const text of texts) {
+    for (let i = -2; i <= text.length + 1; i++)
+        console.log(JSON.stringify(text), i, byIndex(text, i), byIndexWithTheLiteralFirst(text, i), byCharAt(text, i), byAt(text, i), byAtThatMayBeUndefined(text, i));
+    console.log(JSON.stringify(text), countOfControlCharacters(text), lengthOfNumber(text), pastTheEnd(text));
+}
+console.log(countOfControlCharacters("a\tb\nc\0d\x1fe f"), lengthOfNumber("12345x"), lengthOfNumber("/0:"), lengthOfNumber("0123456789"), pastTheEnd("hello, world"));
+console.log(byIndex("abc", 1.5), byIndex("abc", NaN), byCharAt("abc", 1.5), byCharAt("abc", NaN), byCharAt("abc", -0), byAt("abc", -1), byAt("abc", 1.9));
+export {};
+//// char-code-at-positions-outside-every-string.js
+// charCodeAt at a position that no string has, in front of the first character or behind the longest string there can be, answers NaN.
+// The path that would read a character ends at once, and the compiler's own checks hold behind every pass (--aot-check=verify-each-pass).
+function codeBefore(text) {
+  return text.charCodeAt(-1)
+}
+
+function codeFarBehind(text) {
+  return text.charCodeAt(4294967296)
+}
+
+function isEscaped(text, index) {
+  return text.charCodeAt(index - 1) === 92
+}
+
+const texts = ['abc', '\\(', '', 'x']
+let missing = 0
+let escaped = 0
+for (let i = 0; i < 4000; i++) {
+  const text = texts[i & 3]
+  if (Number.isNaN(codeBefore(text))) missing++
+  if (Number.isNaN(codeFarBehind(text))) missing++
+  if (isEscaped(text, 0)) escaped++
+  if (isEscaped(text, 1)) escaped++
+}
+console.log(missing, escaped)
+//// char-codes-at-integers-that-may-be-outside.ts
+// charCodeAt at integer positions that nothing puts inside the string: the code unit is used as an integer by comparisons, a switch, arithmetic and bit operations, and outside the string every one of them sees NaN.
+const opaque = new Function("value", "return value") as <T>(value: T) => T;
+const flat = (text: string): string => opaque(text.split("").join(""));
+const rope = (text: string): string => (text.length < 2 ? flat(text) : flat(text.slice(0, 1)) + flat(text.slice(1)));
+const wide = (text: string): string => flat(text + "☃").replace("☃", "");
+const makers = [flat, rope, wide];
+
+function kindAt(s: string, i: number): string {
+  const unit = s.charCodeAt(i | 0);
+  if (unit === 47) return "slash";
+  if (unit >= 48 && unit <= 57) return "digit" + (unit - 48);
+  if (unit < 33) return "space";
+  if (unit !== unit) return "outside";
+  return "other" + unit;
+}
+
+function switchAt(s: string, i: number): number {
+  switch (s.charCodeAt(i | 0)) {
+    case 47: return 1;
+    case 92: return 2;
+    case 48: return 3;
+    case 9731: return 4;
+    default: return 0;
+  }
+}
+
+function arithmeticAt(s: string, i: number): string {
+  const unit = s.charCodeAt(i | 0);
+  return [unit + 1, unit * 2, unit - 0.5, unit | 0, unit & 15, unit >>> 1, unit ^ 255, -unit, unit / 2, unit % 7, `${unit}`, unit == null, typeof unit, Math.max(unit, 3), isNaN(unit)].join(" ");
+}
+
+function lookAround(s: string): string {
+  let out = "";
+  for (let i = 0; i < s.length; i++) {
+    const before = s.charCodeAt(i - 1);
+    const after = s.charCodeAt(i + 1);
+    if (before === 47 && after === 47) out += "b";
+    else if (after === 47) out += "a";
+    else if (before !== before) out += "<";
+    else if (!(after >= 0)) out += ">";
+    else out += ".";
+  }
+  return out;
+}
+
+function hash(s: string, from: number, count: number): number {
+  let h = 17;
+  for (let i = from | 0; i < ((from + count) | 0); i++) h = (Math.imul(h, 31) ^ s.charCodeAt(i)) | 0;
+  return h;
+}
+
+function chain(s: string, i: number): number {
+  let k = s.charCodeAt(i & 7);
+  k = s.charCodeAt(k & 3);
+  k = s.charCodeAt((k | 0) - 96);
+  return k;
+}
+
+function kept(s: string, i: number): number[] {
+  const units = [s.charCodeAt(i | 0), s.charCodeAt((i + 1) | 0)];
+  return units;
+}
+
+function underHandler(s: string | null, i: number): string {
+  try {
+    const unit = (s as string).charCodeAt(i | 0);
+    return unit > 96 ? "letter" : "no " + unit;
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+
+const texts = ["", "/", "a/b", "//", "0 9\\", "ab☃/", "abcdefgh", "\0\t"];
+const places = [0, 1, 2, 3, 4, 7, 8, 100, -1, -2, -100, 2147483647, -2147483648];
+for (const text of texts) {
+  for (const make of makers) {
+    console.log(JSON.stringify(text), make.name, places.map(place => kindAt(make(text), place)).join(","), places.map(place => switchAt(make(text), place)).join(""));
+    console.log(lookAround(make(text)), places.slice(0, 9).map(place => hash(make(text), place, 3)).join(","), places.map(place => chain(make(text), place)).join(","));
+    console.log(places.slice(0, 10).map(place => kept(make(text), place).join("/")).join(" "), places.slice(0, 4).map(place => underHandler(make(text), place)).join(","));
+  }
+  console.log(arithmeticAt(text, 0), "|", arithmeticAt(text, text.length), "|", arithmeticAt(text, -1));
+}
+console.log(underHandler(null, 0));
+//// char-codes-of-ropes-read-in-loops.js
+function sumOfCodes(text) {
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) sum += text.charCodeAt(i);
+  return sum;
+}
+
+function codesAround(text, from, to) {
+  const codes = [];
+  for (let i = from; i <= to; i++) codes.push(text.charCodeAt(i));
+  return codes.join();
+}
+
+function firstSlash(text) {
+  for (let i = 1; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code === 47 || (code === 37 && text.charCodeAt(i + 1) === 50)) return i;
+  }
+  return -1;
+}
+
+function readAnything(value, count) {
+  let sum = 0;
+  for (let i = 0; i < count; i++) sum += value.charCodeAt(i);
+  return sum;
+}
+
+const url = "http://localhost:3000/users/42/posts?limit=10&name=%20x";
+const wide = "préfixe ‑ Ωμέγα / 漢字 / end";
+const lines = [];
+for (let round = 0; round < 3; ++round) {
+  const path = url.slice(url.indexOf("/", 8));
+  const joined = "/a" + round + "/" + path + "/" + wide;
+  const partOfJoined = joined.slice(3, joined.length - 2);
+  const partOfPart = path.slice(1).slice(2, 12);
+  lines.push(sumOfCodes(path), sumOfCodes(joined), sumOfCodes(partOfJoined), sumOfCodes(partOfPart), sumOfCodes(wide.slice(3)), sumOfCodes(""), sumOfCodes(url.slice(5, 6)));
+  lines.push(codesAround(url.slice(7), -2, 2), codesAround(("x" + round).concat("yz"), 1, 5), codesAround(wide.substring(8, 14), 0, 6));
+  lines.push(firstSlash(path), firstSlash(path.slice(6)), firstSlash("/" + path.slice(30)), path.length, path, partOfPart);
+  lines.push(readAnything(url.slice(12), 4), readAnything({ charCodeAt: i => i * 2 }, 4), readAnything(new String(url.slice(12)), 4));
+  lines.push(path === url.slice(21), path.slice(0, 6) === "/users", joined.includes(path), { [path.slice(1, 6)]: 1 }.users);
+}
+for (const bad of [undefined, null, 3]) {
+  try {
+    readAnything(bad, 1);
+    lines.push("read");
+  } catch (error) {
+    lines.push(error instanceof TypeError);
+  }
+}
+console.log(lines.join("\n"));
+//// char-codes-under-a-length-test.ts
+// charCodeAt at positions that a comparison with the length of the same string puts inside the string, and at the close neighbors that reach one position outside it, where the answer is NaN.
+const opaque = new Function("value", "return value") as <T>(value: T) => T;
+
+const flat = (text: string): string => opaque(text.split("").join(""));
+const rope = (text: string): string => (text.length < 2 ? flat(text) : flat(text.slice(0, 1)) + flat(text.slice(1)));
+const substring = (text: string): string => flat("<" + text + ">").slice(1, -1);
+const wide = (text: string): string => flat(text + "☃").replace("☃", "");
+const wideRope = (text: string): string => (text.length < 2 ? wide(text) : wide(text.slice(0, 1)) + flat(text.slice(1)));
+const makers = [flat, rope, substring, wide, wideRope];
+
+class Tally {
+  sum = 0;
+  missing = 0;
+  add(unit: number): void {
+    if (unit !== unit) this.missing++;
+    else this.sum = (Math.imul(this.sum, 31) + unit) | 0;
+  }
+  toString(): string {
+    return `${this.sum}/${this.missing}`;
+  }
+}
+
+function everyPosition(s: string): Tally {
+  const tally = new Tally();
+  for (let j = 0; j < s.length; ++j) tally.add(s.charCodeAt(j));
+  return tally;
+}
+
+function plainSum(s: string): number {
+  let r = 0;
+  for (let j = 0; j < s.length; ++j) r = (r + s.charCodeAt(j)) | 0;
+  return r;
+}
+
+function lengthReadOnce(s: string): Tally {
+  const tally = new Tally();
+  const n = s.length;
+  for (let j = 0; j < n; ++j) tally.add(s.charCodeAt(j));
+  return tally;
+}
+
+function lengthOfAnotherString(s: string, t: string): Tally {
+  const tally = new Tally();
+  for (let j = 0; j < t.length; ++j) tally.add(s.charCodeAt(j));
+  return tally;
+}
+
+function onePastTheEnd(s: string): Tally {
+  const tally = new Tally();
+  for (let j = 0; j <= s.length; ++j) tally.add(s.charCodeAt(j));
+  return tally;
+}
+
+function backwards(s: string): Tally {
+  const tally = new Tally();
+  for (let j = s.length - 1; j >= 0; --j) tally.add(s.charCodeAt(j));
+  return tally;
+}
+
+function backwardsFromTheLength(s: string): Tally {
+  const tally = new Tally();
+  for (let j = s.length; j >= -1; --j) tally.add(s.charCodeAt(j));
+  return tally;
+}
+
+function fromBelowZero(s: string): Tally {
+  const tally = new Tally();
+  for (let j = -2; j < s.length; ++j) tally.add(s.charCodeAt(j));
+  return tally;
+}
+
+function nextPosition(s: string): Tally {
+  const tally = new Tally();
+  for (let j = 0; j < s.length; ++j) tally.add(s.charCodeAt(j + 1));
+  return tally;
+}
+
+////= lines-40	nextPositionTested	j + 1 < s.length) tally.add(s.charCodeAt(j + 1))
+
+function pairsBelowLastPosition(s: string): Tally {
+  const tally = new Tally();
+  for (let j = 0; j < s.length - 1; ++j) {
+    tally.add(s.charCodeAt(j));
+    tally.add(s.charCodeAt(j + 1));
+    tally.add(s.charCodeAt(j + 2));
+  }
+  return tally;
+}
+
+function everySecondPosition(s: string): Tally {
+  const tally = new Tally();
+  for (let j = 0; j < s.length; j += 2) {
+    tally.add(s.charCodeAt(j));
+    tally.add(s.charCodeAt(j + 1));
+  }
+  return tally;
+}
+
+////= lines-40	positionMovedInTheBody	s.charCodeAt(j) === 98) j += 3
+
+function stringReplacedBehindTheTest(s: string, shorter: string): Tally {
+  const tally = new Tally();
+  let t = s;
+  for (let j = 0; j < t.length; ++j) {
+    if (j === 2) t = shorter;
+    tally.add(t.charCodeAt(j));
+  }
+  return tally;
+}
+
+function stringReplacedBehindTheRead(s: string): Tally {
+  const tally = new Tally();
+  let t = s;
+  for (let j = 0; j < t.length; ++j) {
+    const unit = t.charCodeAt(j);
+    tally.add(unit);
+    if (unit === 99) t = t.slice(0, j + 2);
+  }
+  return tally;
+}
+
+function skipLeading(s: string, unit: number): number {
+  let j = 0;
+  const n = s.length;
+  while (j < n && s.charCodeAt(j) === unit) j++;
+  return j;
+}
+
+function firstAndLast(s: string): Tally {
+  const tally = new Tally();
+  if (s.length > 0) {
+    tally.add(s.charCodeAt(0));
+    tally.add(s.charCodeAt(s.length - 1));
+  }
+  tally.add(s.charCodeAt(0));
+  tally.add(s.charCodeAt(s.length - 1));
+  tally.add(s.charCodeAt(s.length));
+  return tally;
+}
+
+function classOfUnits(s: string): string {
+  let digits = 0, letters = 0, slashes = 0, others = 0;
+  for (let j = 0; j < s.length; ++j) {
+    const unit = s.charCodeAt(j);
+    if (unit >= 48 && unit <= 57) digits++;
+    else if ((unit | 32) >= 97 && (unit | 32) <= 122) letters++;
+    else {
+      switch (unit) {
+        case 47: case 92: slashes++; break;
+        default: others++;
+      }
+    }
+  }
+  return `${digits},${letters},${slashes},${others}`;
+}
+
+const texts = ["", "a", "ab", "abc", "abcabc", "aaab/b\\c0189 Z", "bbbbbbbb", "cccc", "é~ÿ\0x", "x".repeat(70) + "bc"];
+for (const text of texts) {
+  for (const make of makers) {
+    const s = make(text);
+    const line = [
+      everyPosition(make(text)), plainSum(make(text)), lengthReadOnce(make(text)), lengthOfAnotherString(make(text), make(text + "zz")), lengthOfAnotherString(make(text), make(text.slice(1))),
+      onePastTheEnd(make(text)), backwards(make(text)), backwardsFromTheLength(make(text)), fromBelowZero(make(text)), nextPosition(make(text)), nextPositionTested(make(text)),
+      pairsBelowLastPosition(make(text)), everySecondPosition(make(text)), positionMovedInTheBody(make(text)), stringReplacedBehindTheTest(make(text), make(text.slice(0, 2))),
+      stringReplacedBehindTheTest(make(text), make("")), stringReplacedBehindTheRead(make(text)), skipLeading(make(text), 97), skipLeading(make(text), 98), firstAndLast(s), classOfUnits(s),
+    ];
+    console.log(JSON.stringify(text.slice(0, 16)), make.name, line.join(" "));
+  }
+}
+//// characters-of-a-known-text-by-a-masked-position.ts
+// `ALPHABET[bits & 63]`: a position that lies inside a text written in the program finds a character; one that may lie outside may find nothing, and then `+` adds what it finds:
+// undefined + undefined is NaN, undefined + "a" is "undefineda". Joined, appended to a text that grows, compared, used as keys.
+const lines: string[] = [];
+const hide = <T,>(value: T): T => new CustomEvent("x", { detail: value }).detail;
+const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const SHORTER = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+";
+const HEX = "0123456789abcdef";
+const WIDE = "ЖЯабвгде";
+const EMPTY = "";
+
+function base64(bytes: Uint8Array): string {
+  let out = "";
+  let k = 0;
+  for (; k + 2 < bytes.length; k += 3) {
+    const v = (bytes[k]! << 16) | (bytes[k + 1]! << 8) | bytes[k + 2]!;
+    out += ALPHABET[(v >> 18) & 63]! + ALPHABET[(v >> 12) & 63]! + ALPHABET[(v >> 6) & 63]! + ALPHABET[v & 63]!;
+  }
+  if (k + 1 === bytes.length) { const v = bytes[k]! << 16; out += ALPHABET[(v >> 18) & 63]! + ALPHABET[(v >> 12) & 63]! + "=="; }
+  if (k + 2 === bytes.length) { const v = (bytes[k]! << 16) | (bytes[k + 1]! << 8); out += ALPHABET[(v >> 18) & 63]! + ALPHABET[(v >> 12) & 63]! + ALPHABET[(v >> 6) & 63]! + "="; }
+  return out;
+}
+function hex(bytes: Uint8Array): string {
+  let out = "";
+  for (const byte of bytes) out += HEX[byte >> 4]! + HEX[byte & 15]!;
+  return out;
+}
+function pairOf(text: 0 | 1 | 2 | 3, i: number, j: number): unknown {
+  switch (text) {
+    case 0: return (ALPHABET[i & 63] as any) + (ALPHABET[j & 63] as any);
+    case 1: return (SHORTER[i & 63] as any) + (SHORTER[j & 63] as any);
+    case 2: return (WIDE[i & 7] as any) + (WIDE[j & 15] as any);
+    case 3: return (EMPTY[i & 1] as any) + (HEX[j & 31] as any);
+  }
+}
+function threeOf(i: number): string { return HEX[i & 15]! + HEX[(i >> 4) & 15]! + HEX[(i >> 8) & 15]!; }
+function unread(i: number): number { HEX[i & 15]; ALPHABET.charCodeAt(i & 63); ALPHABET.charAt(i); return i; }
+function oneOfTwo(flag: boolean, i: number): string | undefined { const text = flag ? "abcd" : "abcdefgh"; return text[i & 7]; }
+function oneOfTwoInside(flag: boolean, i: number): string { const text = flag ? "abcd" : "abcdefgh"; return text[i & 3]! + "|"; }
+
+for (const length of [0, 1, 2, 3, 4, 5, 6, 7, 30, 31, 32, 33]) {
+  const bytes = hide(new Uint8Array(length).map((_, i) => (i * 37 + length * 11) & 255));
+  lines.push(`${length} ${base64(bytes)} ${hex(bytes)} ${base64(bytes) === Buffer.from(bytes).toString("base64")} ${hex(bytes) === Buffer.from(bytes).toString("hex")}`);
+}
+for (const i of hide([0, 1, 7, 8, 15, 16, 31, 62, 63, 64, -1, -64, 127, 1000003])) {
+  for (const j of hide([0, 3, 9, 16, 63])) {
+    lines.push(`${i} ${j} ${String(pairOf(0, i, j))} ${String(pairOf(1, i, j))} ${String(pairOf(2, i, j))} ${String(pairOf(3, i, j))} ${threeOf(i * 31 + j)} ${unread(i)} ${oneOfTwo(i % 2 === 0, j)} ${oneOfTwoInside(j % 2 === 0, i)}`);
+  }
+}
+const seen = new Map<string, number>();
+for (let i = 0; i < 5000; i++) { const key = HEX[i & 15]! + HEX[(i >> 2) & 15]!; seen.set(key, (seen.get(key) ?? 0) + 1); }
+lines.push(String(seen.size), [...seen].slice(0, 6).join(" "));
+let total = 0;
+const turns = Number(process.argv[2] ?? 3000);
+const input = hide(new Uint8Array([1, 2, 3, 250, 251, 252, 9, 8, 7]));
+for (let i = 0; i < turns; i++) total += base64(input).length + hex(input).length;
+lines.push(String(total));
+console.log(lines.join("\n"));
+//// characters-ordered-against-literals.js
+// One character of a string against a one-character literal, with every operator, from both sides, at positions inside and outside the string.
+// Outside the string s[i] and s.at(i) are undefined, for which no relation holds, and s.charAt(i) is the empty string, which is less than every character.
+function element_lt(s, i) {
+  return s[i] < "m";
+}
+function element_lt_literalFirst(s, i) {
+  return "m" < s[i];
+}
+function element_le(s, i) {
+  return s[i] <= "m";
+}
+function element_le_literalFirst(s, i) {
+  return "m" <= s[i];
+}
+function element_gt(s, i) {
+  return s[i] > "m";
+}
+function element_gt_literalFirst(s, i) {
+  return "m" > s[i];
+}
+function element_ge(s, i) {
+  return s[i] >= "m";
+}
+function element_ge_literalFirst(s, i) {
+  return "m" >= s[i];
+}
+function element_eq(s, i) {
+  return s[i] === "m";
+}
+function element_eq_literalFirst(s, i) {
+  return "m" === s[i];
+}
+function element_ne(s, i) {
+  return s[i] !== "m";
+}
+function element_ne_literalFirst(s, i) {
+  return "m" !== s[i];
+}
+function element_looseEq(s, i) {
+  return s[i] == "m";
+}
+function element_looseEq_literalFirst(s, i) {
+  return "m" == s[i];
+}
+function elementAtInteger_lt(s, i) {
+  return s[i | 0] < "m";
+}
+function elementAtInteger_lt_literalFirst(s, i) {
+  return "m" < s[i | 0];
+}
+function elementAtInteger_le(s, i) {
+  return s[i | 0] <= "m";
+}
+function elementAtInteger_le_literalFirst(s, i) {
+  return "m" <= s[i | 0];
+}
+function elementAtInteger_gt(s, i) {
+  return s[i | 0] > "m";
+}
+function elementAtInteger_gt_literalFirst(s, i) {
+  return "m" > s[i | 0];
+}
+function elementAtInteger_ge(s, i) {
+  return s[i | 0] >= "m";
+}
+function elementAtInteger_ge_literalFirst(s, i) {
+  return "m" >= s[i | 0];
+}
+function elementAtInteger_eq(s, i) {
+  return s[i | 0] === "m";
+}
+function elementAtInteger_eq_literalFirst(s, i) {
+  return "m" === s[i | 0];
+}
+function elementAtInteger_ne(s, i) {
+  return s[i | 0] !== "m";
+}
+function elementAtInteger_ne_literalFirst(s, i) {
+  return "m" !== s[i | 0];
+}
+function elementAtInteger_looseEq(s, i) {
+  return s[i | 0] == "m";
+}
+function elementAtInteger_looseEq_literalFirst(s, i) {
+  return "m" == s[i | 0];
+}
+function charAt_lt(s, i) {
+  return s.charAt(i) < "m";
+}
+function charAt_lt_literalFirst(s, i) {
+  return "m" < s.charAt(i);
+}
+function charAt_le(s, i) {
+  return s.charAt(i) <= "m";
+}
+function charAt_le_literalFirst(s, i) {
+  return "m" <= s.charAt(i);
+}
+function charAt_gt(s, i) {
+  return s.charAt(i) > "m";
+}
+function charAt_gt_literalFirst(s, i) {
+  return "m" > s.charAt(i);
+}
+function charAt_ge(s, i) {
+  return s.charAt(i) >= "m";
+}
+function charAt_ge_literalFirst(s, i) {
+  return "m" >= s.charAt(i);
+}
+function charAt_eq(s, i) {
+  return s.charAt(i) === "m";
+}
+function charAt_eq_literalFirst(s, i) {
+  return "m" === s.charAt(i);
+}
+function charAt_ne(s, i) {
+  return s.charAt(i) !== "m";
+}
+function charAt_ne_literalFirst(s, i) {
+  return "m" !== s.charAt(i);
+}
+function charAt_looseEq(s, i) {
+  return s.charAt(i) == "m";
+}
+function charAt_looseEq_literalFirst(s, i) {
+  return "m" == s.charAt(i);
+}
+function at_lt(s, i) {
+  return s.at(i) < "m";
+}
+function at_lt_literalFirst(s, i) {
+  return "m" < s.at(i);
+}
+function at_le(s, i) {
+  return s.at(i) <= "m";
+}
+function at_le_literalFirst(s, i) {
+  return "m" <= s.at(i);
+}
+function at_gt(s, i) {
+  return s.at(i) > "m";
+}
+function at_gt_literalFirst(s, i) {
+  return "m" > s.at(i);
+}
+function at_ge(s, i) {
+  return s.at(i) >= "m";
+}
+function at_ge_literalFirst(s, i) {
+  return "m" >= s.at(i);
+}
+function at_eq(s, i) {
+  return s.at(i) === "m";
+}
+function at_eq_literalFirst(s, i) {
+  return "m" === s.at(i);
+}
+function at_ne(s, i) {
+  return s.at(i) !== "m";
+}
+function at_ne_literalFirst(s, i) {
+  return "m" !== s.at(i);
+}
+function at_looseEq(s, i) {
+  return s.at(i) == "m";
+}
+function at_looseEq_literalFirst(s, i) {
+  return "m" == s.at(i);
+}
+function isDigit(s, i) {
+  const c = s[i | 0];
+  return c >= "0" && c <= "9";
+}
+function isLetter(s, i) {
+  const c = s.charAt(i);
+  return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_";
+}
+function isBelowSpaceOrMissing(s, i) {
+  return s.charAt(i) <= " ";
+}
+function kind(s, i) {
+  const c = s[i | 0];
+  if (c === "(") return 1;
+  if (c === ")") return 2;
+  if (c === "[") return 3;
+  if (c === "]") return 4;
+  if (c === undefined) return -1;
+  return 0;
+}
+function kindWithoutUndefined(s, i) {
+  const c = s[i | 0];
+  if (c === "(") return 1;
+  if (c === ")") return 2;
+  if (c === "[") return 3;
+  if (c === "]") return 4;
+  return 0;
+}
+function kindBySwitch(s, i) {
+  switch (s.charAt(i)) {
+    case "a":
+      return 1;
+    case "m":
+      return 2;
+    case "\u4e2d":
+      return 3;
+    case "z":
+      return 4;
+    default:
+      return 0;
+  }
+}
+function wideLiteral(s, i) {
+  return [s[i | 0] < "\u4e2d", s[i | 0] > "\u4e2d", s.charAt(i) < "\uffff", s.charAt(i) >= "\u0000", s.at(i) <= "\u0000", s[i | 0] <= "\uffff"].join();
+}
+function ofSlice(s, i) {
+  const part = s.slice(1, 4);
+  return [part[i | 0] === "m", part.charAt(i) < "m", part.at(i) >= "m", part[i | 0] <= "m"].join();
+}
+function answers(s, i) {
+  let bits = "";
+  bits += element_lt(s, i) ? "1" : "0";
+  bits += element_lt_literalFirst(s, i) ? "1" : "0";
+  bits += element_le(s, i) ? "1" : "0";
+  bits += element_le_literalFirst(s, i) ? "1" : "0";
+  bits += element_gt(s, i) ? "1" : "0";
+  bits += element_gt_literalFirst(s, i) ? "1" : "0";
+  bits += element_ge(s, i) ? "1" : "0";
+  bits += element_ge_literalFirst(s, i) ? "1" : "0";
+  bits += element_eq(s, i) ? "1" : "0";
+  bits += element_eq_literalFirst(s, i) ? "1" : "0";
+  bits += element_ne(s, i) ? "1" : "0";
+  bits += element_ne_literalFirst(s, i) ? "1" : "0";
+  bits += element_looseEq(s, i) ? "1" : "0";
+  bits += element_looseEq_literalFirst(s, i) ? "1" : "0";
+  bits += elementAtInteger_lt(s, i) ? "1" : "0";
+  bits += elementAtInteger_lt_literalFirst(s, i) ? "1" : "0";
+  bits += elementAtInteger_le(s, i) ? "1" : "0";
+  bits += elementAtInteger_le_literalFirst(s, i) ? "1" : "0";
+  bits += elementAtInteger_gt(s, i) ? "1" : "0";
+  bits += elementAtInteger_gt_literalFirst(s, i) ? "1" : "0";
+  bits += elementAtInteger_ge(s, i) ? "1" : "0";
+  bits += elementAtInteger_ge_literalFirst(s, i) ? "1" : "0";
+  bits += elementAtInteger_eq(s, i) ? "1" : "0";
+  bits += elementAtInteger_eq_literalFirst(s, i) ? "1" : "0";
+  bits += elementAtInteger_ne(s, i) ? "1" : "0";
+  bits += elementAtInteger_ne_literalFirst(s, i) ? "1" : "0";
+  bits += elementAtInteger_looseEq(s, i) ? "1" : "0";
+  bits += elementAtInteger_looseEq_literalFirst(s, i) ? "1" : "0";
+  bits += charAt_lt(s, i) ? "1" : "0";
+  bits += charAt_lt_literalFirst(s, i) ? "1" : "0";
+  bits += charAt_le(s, i) ? "1" : "0";
+  bits += charAt_le_literalFirst(s, i) ? "1" : "0";
+  bits += charAt_gt(s, i) ? "1" : "0";
+  bits += charAt_gt_literalFirst(s, i) ? "1" : "0";
+  bits += charAt_ge(s, i) ? "1" : "0";
+  bits += charAt_ge_literalFirst(s, i) ? "1" : "0";
+  bits += charAt_eq(s, i) ? "1" : "0";
+  bits += charAt_eq_literalFirst(s, i) ? "1" : "0";
+  bits += charAt_ne(s, i) ? "1" : "0";
+  bits += charAt_ne_literalFirst(s, i) ? "1" : "0";
+  bits += charAt_looseEq(s, i) ? "1" : "0";
+  bits += charAt_looseEq_literalFirst(s, i) ? "1" : "0";
+  bits += at_lt(s, i) ? "1" : "0";
+  bits += at_lt_literalFirst(s, i) ? "1" : "0";
+  bits += at_le(s, i) ? "1" : "0";
+  bits += at_le_literalFirst(s, i) ? "1" : "0";
+  bits += at_gt(s, i) ? "1" : "0";
+  bits += at_gt_literalFirst(s, i) ? "1" : "0";
+  bits += at_ge(s, i) ? "1" : "0";
+  bits += at_ge_literalFirst(s, i) ? "1" : "0";
+  bits += at_eq(s, i) ? "1" : "0";
+  bits += at_eq_literalFirst(s, i) ? "1" : "0";
+  bits += at_ne(s, i) ? "1" : "0";
+  bits += at_ne_literalFirst(s, i) ? "1" : "0";
+  bits += at_looseEq(s, i) ? "1" : "0";
+  bits += at_looseEq_literalFirst(s, i) ? "1" : "0";
+  bits += isDigit(s, i) ? "1" : "0";
+  bits += isLetter(s, i) ? "1" : "0";
+  bits += isBelowSpaceOrMissing(s, i) ? "1" : "0";
+  return bits;
+}
+function rope(a, b) {
+  return a + b;
+}
+const texts = ["", "m", "almz", "a\u4e2dm\uffff\u0000", rope("0123456789abc", "mnopqrstuvwxyz_AZ ()[]"), rope("xyzm", "mm").slice(2), "\ud83d\ude00m"];
+const positions = [0, 1, 2, 3, 4, 5, 13, 30, 100, -1, -2, -100, 2147483647, -2147483648, 4294967296, 1.5, -0.5, -0, NaN, Infinity, -Infinity];
+for (const text of texts) {
+  for (const position of positions) {
+    console.log(JSON.stringify(text), position, answers(text, position), kind(text, position), kindWithoutUndefined(text, position), kindBySwitch(text, position), wideLiteral(text, position), ofSlice(text, position));
+  }
+}
+//// characters-ordered-against-literals-typed.ts
+// characters-ordered-against-literals.js with types: one character of a string against a one-character literal, with every operator, from both sides,
+// at positions inside and outside the string. Outside it s[i] is undefined, for which no relation holds, and s.charAt(i) is the empty string.
+function element_lt(s: string, i: number): boolean {
+  return s[i | 0] < 'm'
+}
+function element_lt_literalFirst(s: string, i: number): boolean {
+  return 'm' < s[i | 0]
+}
+function element_le(s: string, i: number): boolean {
+  return s[i | 0] <= 'm'
+}
+function element_le_literalFirst(s: string, i: number): boolean {
+  return 'm' <= s[i | 0]
+}
+function element_gt(s: string, i: number): boolean {
+  return s[i | 0] > 'm'
+}
+function element_gt_literalFirst(s: string, i: number): boolean {
+  return 'm' > s[i | 0]
+}
+function element_ge(s: string, i: number): boolean {
+  return s[i | 0] >= 'm'
+}
+function element_ge_literalFirst(s: string, i: number): boolean {
+  return 'm' >= s[i | 0]
+}
+function element_eq(s: string, i: number): boolean {
+  return s[i | 0] === 'm'
+}
+function element_eq_literalFirst(s: string, i: number): boolean {
+  return 'm' === s[i | 0]
+}
+function element_ne(s: string, i: number): boolean {
+  return s[i | 0] !== 'm'
+}
+function element_ne_literalFirst(s: string, i: number): boolean {
+  return 'm' !== s[i | 0]
+}
+function element_looseEq(s: string, i: number): boolean {
+  return s[i | 0] == 'm'
+}
+function element_looseEq_literalFirst(s: string, i: number): boolean {
+  return 'm' == s[i | 0]
+}
+function charAt_lt(s: string, i: number): boolean {
+  return s.charAt(i) < 'm'
+}
+function charAt_lt_literalFirst(s: string, i: number): boolean {
+  return 'm' < s.charAt(i)
+}
+function charAt_le(s: string, i: number): boolean {
+  return s.charAt(i) <= 'm'
+}
+function charAt_le_literalFirst(s: string, i: number): boolean {
+  return 'm' <= s.charAt(i)
+}
+function charAt_gt(s: string, i: number): boolean {
+  return s.charAt(i) > 'm'
+}
+function charAt_gt_literalFirst(s: string, i: number): boolean {
+  return 'm' > s.charAt(i)
+}
+function charAt_ge(s: string, i: number): boolean {
+  return s.charAt(i) >= 'm'
+}
+function charAt_ge_literalFirst(s: string, i: number): boolean {
+  return 'm' >= s.charAt(i)
+}
+function charAt_eq(s: string, i: number): boolean {
+  return s.charAt(i) === 'm'
+}
+function charAt_eq_literalFirst(s: string, i: number): boolean {
+  return 'm' === s.charAt(i)
+}
+function charAt_ne(s: string, i: number): boolean {
+  return s.charAt(i) !== 'm'
+}
+function charAt_ne_literalFirst(s: string, i: number): boolean {
+  return 'm' !== s.charAt(i)
+}
+function charAt_looseEq(s: string, i: number): boolean {
+  return s.charAt(i) == 'm'
+}
+function charAt_looseEq_literalFirst(s: string, i: number): boolean {
+  return 'm' == s.charAt(i)
+}
+function isDigit(s: string, i: number): boolean {
+  const c = s[i | 0]
+  return c >= '0' && c <= '9'
+}
+function isLetter(s: string, i: number): boolean {
+  const c = s.charAt(i)
+  return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c === '_'
+}
+function isBelowSpaceOrMissing(s: string, i: number): boolean {
+  return s.charAt(i) <= ' '
+}
+function kind(s: string, i: number): number {
+  const c = s[i | 0]
+  if (c === '(') return 1
+  if (c === ')') return 2
+  if (c === '[') return 3
+  if (c === ']') return 4
+  return 0
+}
+function kindByCharAt(s: string, i: number): number {
+  const c = s.charAt(i)
+  if (c === '(') return 1
+  if (c === ')') return 2
+  if (c === '[') return 3
+  if (c === ']') return 4
+  if (c === '') return -1
+  return 0
+}
+function kindBySwitch(s: string, i: number): number {
+  switch (s.charAt(i)) {
+    case 'a':
+      return 1
+    case 'm':
+      return 2
+    case '\u4e2d':
+      return 3
+    case 'z':
+      return 4
+    default:
+      return 0
+  }
+}
+function wideLiteral(s: string, i: number): string {
+  return [s[i | 0] < '\u4e2d', s[i | 0] > '\u4e2d', s.charAt(i) < '\uffff', s.charAt(i) >= '\u0000', s[i | 0] <= '\uffff', s.charAt(i) <= '\u0000'].join()
+}
+function ofSlice(s: string, i: number): string {
+  const part = s.slice(1, 4)
+  return [part[i | 0] === 'm', part.charAt(i) < 'm', part.charAt(i) >= 'm', part[i | 0] <= 'm'].join()
+}
+function answers(s: string, i: number): string {
+  let bits = ''
+  bits += element_lt(s, i) ? '1' : '0'
+  bits += element_lt_literalFirst(s, i) ? '1' : '0'
+  bits += element_le(s, i) ? '1' : '0'
+  bits += element_le_literalFirst(s, i) ? '1' : '0'
+  bits += element_gt(s, i) ? '1' : '0'
+  bits += element_gt_literalFirst(s, i) ? '1' : '0'
+  bits += element_ge(s, i) ? '1' : '0'
+  bits += element_ge_literalFirst(s, i) ? '1' : '0'
+  bits += element_eq(s, i) ? '1' : '0'
+  bits += element_eq_literalFirst(s, i) ? '1' : '0'
+  bits += element_ne(s, i) ? '1' : '0'
+  bits += element_ne_literalFirst(s, i) ? '1' : '0'
+  bits += element_looseEq(s, i) ? '1' : '0'
+  bits += element_looseEq_literalFirst(s, i) ? '1' : '0'
+  bits += charAt_lt(s, i) ? '1' : '0'
+  bits += charAt_lt_literalFirst(s, i) ? '1' : '0'
+  bits += charAt_le(s, i) ? '1' : '0'
+  bits += charAt_le_literalFirst(s, i) ? '1' : '0'
+  bits += charAt_gt(s, i) ? '1' : '0'
+  bits += charAt_gt_literalFirst(s, i) ? '1' : '0'
+  bits += charAt_ge(s, i) ? '1' : '0'
+  bits += charAt_ge_literalFirst(s, i) ? '1' : '0'
+  bits += charAt_eq(s, i) ? '1' : '0'
+  bits += charAt_eq_literalFirst(s, i) ? '1' : '0'
+  bits += charAt_ne(s, i) ? '1' : '0'
+  bits += charAt_ne_literalFirst(s, i) ? '1' : '0'
+  bits += charAt_looseEq(s, i) ? '1' : '0'
+  bits += charAt_looseEq_literalFirst(s, i) ? '1' : '0'
+  bits += isDigit(s, i) ? '1' : '0'
+  bits += isLetter(s, i) ? '1' : '0'
+  bits += isBelowSpaceOrMissing(s, i) ? '1' : '0'
+  return bits
+}
+function rope(a: string, b: string): string {
+  return a + b
+}
+const texts: string[] = ['', 'm', 'almz', 'a\u4e2dm\uffff\u0000', rope('0123456789abc', 'mnopqrstuvwxyz_AZ ()[]'), rope('xyzm', 'mm').slice(2), '\ud83d\ude00m']
+const positions: number[] = [0, 1, 2, 3, 4, 5, 13, 30, 100, -1, -2, -100, 2147483647, -2147483648, 4294967296, 1.5, -0.5, -0, NaN, Infinity, -Infinity]
+for (const text of texts) {
+  for (const position of positions) {
+    console.log(JSON.stringify(text), position, answers(text, position), kind(text, position), kindByCharAt(text, position), kindBySwitch(text, position), wideLiteral(text, position), ofSlice(text, position))
+  }
+}
+//// characters-replaced-at-every-place.ts
+// A chain of one-character replacements over texts of every length from 0 to 50, with one of the characters at every place, and with the characters woven in at every period; replacements that are empty, of one character, of sixteen and of more than sixteen. Checked against a walk over the text with a table.
+let wrong = 0;
+let lengths = 0;
+function widen(text: string): string {
+  return text.replace(/~/g, "~0").replace(/\//g, "~1").replace(/%/g, "~25").replace(/\^/g, "~5e~");
+}
+function narrow(text: string): string {
+  return text.replace(/~/g, "").replace(/\//g, "|").replace(/%/g, "");
+}
+function stretch(text: string): string {
+  return text.replace(/\//g, "sixteen-letters-").replace(/%/g, "seventeen-letters").replace(/\^/g, "a replacement of thirty-six letters..");
+}
+function walk(text: string, table: Map<string, string>): string {
+  const out: string[] = [];
+  for (const character of text) out.push(table.get(character) ?? character);
+  return out.join("");
+}
+const widened = new Map([["~", "~0"], ["/", "~1"], ["%", "~25"], ["^", "~5e~"]]);
+const narrowed = new Map([["~", ""], ["/", "|"], ["%", ""]]);
+const stretched = new Map([["/", "sixteen-letters-"], ["%", "seventeen-letters"], ["^", "a replacement of thirty-six letters.."]]);
+function verify(text: string): void {
+  const made = [widen(text), narrow(text), stretch(text)];
+  if (made[0] !== walk(text, widened) || made[1] !== walk(text, narrowed) || made[2] !== walk(text, stretched)) wrong++;
+  lengths += made[0]!.length + made[1]!.length * 3 + made[2]!.length * 5;
+}
+const marks = "~/%^";
+for (let length = 0; length <= 50; length++) {
+  const filler = "0123456789".repeat(5).slice(0, length);
+  for (let place = 0; place < length; place++) verify(filler.slice(0, place) + marks[(place + length) % 4]! + filler.slice(place + 1));
+  for (let period = 1; period <= 7; period++) {
+    const woven: string[] = [];
+    for (let i = 0; i < length; i++) woven.push(i % period === 0 ? marks[((i / period) | 0) % 4]! : "x");
+    verify(woven.join(""));
+  }
+}
+console.log("wrong " + wrong + ", lengths " + lengths);
+//// characters-searched-in-strings-of-every-length.ts
+// One character is searched for in strings of 0 to 80 characters, where it stands at every index or nowhere, from start positions of every kind: indexOf, includes, test and search with a regular expression of one character, split. The strings are 8-bit and 16-bit, flat, ropes and slices, and hold characters that share a byte with the sought one; a character above 0xff is sought in 8-bit strings too. Each answer is checked against a loop over the code units, and every line prints what plain Bun prints.
+const never = Date.now() < 0;
+const hidden = (text: string): string => (never ? text + "!" : text);
+const flat = (text: string): string => hidden(text.split("").join(""));
+const wideFlat = (text: string): string => JSON.parse(JSON.stringify([text, "\u2603"]))[0];
+
+function indexOfX(s: string): number { return s.indexOf("x"); }
+function indexOfXFrom(s: string, from: number): number { return s.indexOf("x", from); }
+function indexOfXFromInteger(s: string, from: number): number { return s.indexOf("x", from | 0); }
+function includesX(s: string): boolean { return s.includes("x"); }
+function includesXFrom(s: string, from: number): boolean { return s.includes("x", from); }
+function testX(s: string): boolean { return /x/.test(s); }
+function searchX(s: string): number { return s.search(/x/); }
+function partsAtX(s: string): number { return s.split("x").length; }
+function countX(s: string): number { let count = 0; for (let at = s.indexOf("x"); at !== -1; at = s.indexOf("x", at + 1)) count++; return count; }
+
+function indexOfAcute(s: string): number { return s.indexOf("\u00e9"); }
+function indexOfAcuteFrom(s: string, from: number): number { return s.indexOf("\u00e9", from); }
+function indexOfAcuteFromInteger(s: string, from: number): number { return s.indexOf("\u00e9", from | 0); }
+function includesAcute(s: string): boolean { return s.includes("\u00e9"); }
+function includesAcuteFrom(s: string, from: number): boolean { return s.includes("\u00e9", from); }
+function testAcute(s: string): boolean { return /\u00e9/.test(s); }
+function searchAcute(s: string): number { return s.search(/\u00e9/); }
+function partsAtAcute(s: string): number { return s.split("\u00e9").length; }
+function countAcute(s: string): number { let count = 0; for (let at = s.indexOf("\u00e9"); at !== -1; at = s.indexOf("\u00e9", at + 1)) count++; return count; }
+
+function indexOfWide(s: string): number { return s.indexOf("\u0178"); }
+function indexOfWideFrom(s: string, from: number): number { return s.indexOf("\u0178", from); }
+function indexOfWideFromInteger(s: string, from: number): number { return s.indexOf("\u0178", from | 0); }
+function includesWide(s: string): boolean { return s.includes("\u0178"); }
+function includesWideFrom(s: string, from: number): boolean { return s.includes("\u0178", from); }
+function testWide(s: string): boolean { return /\u0178/.test(s); }
+function searchWide(s: string): number { return s.search(/\u0178/); }
+function partsAtWide(s: string): number { return s.split("\u0178").length; }
+function countWide(s: string): number { let count = 0; for (let at = s.indexOf("\u0178"); at !== -1; at = s.indexOf("\u0178", at + 1)) count++; return count; }
+
+function indexOfGiven(s: string, sought: string, from: number): number { return s.indexOf(sought, from); }
+function allAtOnce(s: string, from: number): number {
+  return s.indexOf("x", from) + 100 * s.indexOf("\u00e9", from) + 10000 * s.indexOf("\u0178", from) + (s.includes("x", from) ? 1000000 : 0) + (/x/.test(s) ? 2000000 : 0) + (s.search(/\u00e9/) >= 0 ? 4000000 : 0);
+}
+
+type Searchers = {
+  unit: number;
+  given: string;
+  indexOf: (s: string) => number;
+  indexOfFrom: (s: string, from: number) => number;
+  indexOfFromInteger: (s: string, from: number) => number;
+  includes: (s: string) => boolean;
+  includesFrom: (s: string, from: number) => boolean;
+  test: (s: string) => boolean;
+  search: (s: string) => number;
+  parts: (s: string) => number;
+  count: (s: string) => number;
+};
+const searchers: Searchers[] = [
+  { unit: 0x78, given: flat("x"), indexOf: indexOfX, indexOfFrom: indexOfXFrom, indexOfFromInteger: indexOfXFromInteger, includes: includesX, includesFrom: includesXFrom, test: testX, search: searchX, parts: partsAtX, count: countX },
+  { unit: 0xe9, given: flat("\u00e9"), indexOf: indexOfAcute, indexOfFrom: indexOfAcuteFrom, indexOfFromInteger: indexOfAcuteFromInteger, includes: includesAcute, includesFrom: includesAcuteFrom, test: testAcute, search: searchAcute, parts: partsAtAcute, count: countAcute },
+  { unit: 0x178, given: flat("\u0178"), indexOf: indexOfWide, indexOfFrom: indexOfWideFrom, indexOfFromInteger: indexOfWideFromInteger, includes: includesWide, includesFrom: includesWideFrom, test: testWide, search: searchWide, parts: partsAtWide, count: countWide },
+];
+
+function firstFrom(text: string, unit: number, from: number): number {
+  for (let i = from > 0 ? Math.floor(from) : 0; i < text.length; i++) if (text.charCodeAt(i) === unit) return i;
+  return -1;
+}
+function occurrences(text: string, unit: number): number {
+  let count = 0;
+  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === unit) count++;
+  return count;
+}
+function unitsOf(text: string): string {
+  if (text.length > 100) return text.length + " units";
+  let out = "";
+  for (let i = 0; i < text.length; i++) out += (i ? "." : "") + text.charCodeAt(i).toString(16);
+  return "'" + out + "'";
+}
+
+let hash = 0;
+let answers = 0;
+let wrong = 0;
+function note(what: string, unit: number, form: number, text: string, from: number, got: number, want: number): void {
+  hash = (Math.imul(hash, 31) + got) | 0;
+  answers++;
+  if (got !== want && wrong++ < 20) console.log("WRONG: " + what + " of " + unit.toString(16) + " in form " + form + " of " + unitsOf(text) + " from " + from + " is " + got + ", not " + want);
+}
+
+function exercise(text: string, forms: number): void {
+  const length = text.length;
+  const half = length >> 1;
+  const whole = flat(text);
+  const left = flat(text.slice(0, half));
+  const right = flat(text.slice(half));
+  const padded = flat("\u00e9x" + text + "x\u00e9");
+  const wide = forms > 3 ? wideFlat(text) : whole;
+  const widePadded = flat("\u0178x" + text + "x\u0178");
+  const subject = (form: number): string => {
+    switch (form) {
+      case 0:
+        return whole;
+      case 1:
+        return left + right;
+      case 2:
+        return padded.slice(2, -2);
+      case 3:
+        return wide;
+      default:
+        return widePadded.slice(2, -2);
+    }
+  };
+  const starts = [-1, 0, 1.5, half, length - 1, length, length + 1, NaN, Infinity, -Infinity, 2 ** 32];
+  for (const sought of searchers) {
+    const unit = sought.unit;
+    const first = firstFrom(whole, unit, 0);
+    const count = occurrences(whole, unit);
+    for (let form = 0; form < forms; form++) {
+      note("indexOf", unit, form, text, 0, sought.indexOf(subject(form)), first);
+      note("includes", unit, form, text, 0, Number(sought.includes(subject(form))), Number(first !== -1));
+      note("test", unit, form, text, 0, Number(sought.test(subject(form))), Number(first !== -1));
+      note("search", unit, form, text, 0, sought.search(subject(form)), first);
+      note("split", unit, form, text, 0, sought.parts(subject(form)), count + 1);
+      note("indexOf again and again", unit, form, text, 0, sought.count(subject(form)), count);
+    }
+    for (const from of starts) {
+      const want = firstFrom(whole, unit, from);
+      const wantFromInteger = firstFrom(whole, unit, from | 0);
+      for (let form = 0; form < forms; form++) {
+        note("indexOf", unit, form, text, from, sought.indexOfFrom(subject(form), from), want);
+        note("indexOf at an integer", unit, form, text, from, sought.indexOfFromInteger(subject(form), from), wantFromInteger);
+        note("includes", unit, form, text, from, Number(sought.includesFrom(subject(form), from)), Number(want !== -1));
+        note("indexOf of a given character", unit, form, text, from, indexOfGiven(subject(form), sought.given, from), want);
+      }
+    }
+  }
+  for (const from of starts) {
+    const x = firstFrom(whole, 0x78, from);
+    const want = x + 100 * firstFrom(whole, 0xe9, from) + 10000 * firstFrom(whole, 0x178, from) + (x !== -1 ? 1000000 : 0) + (firstFrom(whole, 0x78, 0) !== -1 ? 2000000 : 0) + (firstFrom(whole, 0xe9, 0) !== -1 ? 4000000 : 0);
+    for (let form = 0; form < forms; form++) note("all at once", 0, form, text, from, allAtOnce(subject(form), from), want);
+  }
+}
+
+function textWith(marker: string, at: number, length: number, filler: string): string {
+  let text = "";
+  for (let i = 0; i < length; i++) text += i === at ? marker : filler[i % filler.length];
+  return text;
+}
+const without = (filler: string, marker: string): string => filler.split(marker).join("");
+const narrowFiller = "abXi\u00f8cdy\u00e9efgwx\u00c9h";
+const wideFiller = "ab\u0278c\u7800\u01e9d\u00e9exf\u0178g\u7801\u78e9";
+
+for (let length = 0; length <= 80; length++) {
+  hash = 0;
+  for (let at = -1; at < length; at++) exercise(textWith("x", at, length, without(narrowFiller, "x")), 5);
+  for (const at of [-1, 0, length >> 1, length - 1]) {
+    exercise(textWith("x", at, length, without(wideFiller, "x")), 3);
+    exercise(textWith("\u00e9", at, length, without(narrowFiller, "\u00e9")), 5);
+    exercise(textWith("\u00e9", at, length, without(wideFiller, "\u00e9")), 3);
+    exercise(textWith("\u0178", at, length, without(wideFiller, "\u0178")), 3);
+  }
+  console.log(length + " characters: " + hash);
+}
+
+function inManyPieces(text: string): string {
+  let rope = "";
+  for (let i = 0; i < text.length; i += 7) rope += flat(text.slice(i, i + 7));
+  return rope;
+}
+for (const length of [100, 1000, 5000]) {
+  hash = 0;
+  for (const at of [-1, 0, 31, 32, 33, length >> 1, length - 1]) {
+    for (const filler of [narrowFiller, wideFiller]) {
+      const text = textWith("x", at, length, without(without(filler, "x"), "\u00e9"));
+      exercise(text, filler === narrowFiller ? 5 : 3);
+      for (const sought of searchers) {
+        const first = firstFrom(text, sought.unit, 0);
+        note("indexOf in many pieces", sought.unit, 5, "", 0, sought.indexOf(inManyPieces(text)), first);
+        note("indexOf in many pieces", sought.unit, 5, "", length - 40, sought.indexOfFrom(inManyPieces(text), length - 40), firstFrom(text, sought.unit, length - 40));
+        note("includes in many pieces", sought.unit, 5, "", 0, Number(sought.includes(inManyPieces(text))), Number(first !== -1));
+        note("test in many pieces", sought.unit, 5, "", 0, Number(sought.test(inManyPieces(text))), Number(first !== -1));
+        note("search in many pieces", sought.unit, 5, "", 0, sought.search(inManyPieces(text)), first);
+      }
+    }
+  }
+  console.log(length + " characters: " + hash);
+}
+console.log(answers + " answers, " + wrong + " wrong");
+//// classes-of-patterns-made-at-run-time-in-unicode-mode.ts
+// Patterns whose text is made at run time, with the flags u and v: classes that are negated, that hold characters beyond the BMP, the dot, property escapes, letters without regard to case;
+// on subjects of 8-bit characters, of 16-bit characters without surrogates, with pairs and with lone surrogates.
+const lines: string[] = [];
+const hide = <T,>(value: T): T => new CustomEvent("x", { detail: value }).detail as T;
+const letters = "aAＡａ𝐀𝐚𝐴𝑎bBＢｂ𝐁𝐛cC<＜﹤〈⟨‹";
+const sources: [string, string][] = [
+  ["[^0-9<A-Z[a-z" + letters + "\\[\\uff3b\\ufe47]", "gu"], ["[^0-9<A-Z[a-z" + letters + "]+", "gu"], ["[" + letters + "]", "gu"], ["[^a-z]", "u"], ["[^a-z]", "giu"], [".", "gu"], [".", "gsu"], ["a.c", "u"],
+  ["\\P{L}", "gu"], ["\\p{L}+", "gu"], ["[^\\p{L}\\p{N}]+", "gu"], ["\\p{Lu}", "giu"], ["[\\u{1d400}-\\u{1d7ff}]", "gu"], ["[^\\u{1d400}-\\u{1d7ff}]", "gu"], ["^[^x]*$", "u"], ["(?:[^<]|<(?!b))*", "u"],
+  ["([^,]*),([^,]*)", "u"], ["[^\\s]+", "gu"], ["\\S\\s\\S", "u"], ["\\W", "gu"], ["\\W", "giu"], ["\\w+", "giu"], ["[^\\d]", "gu"], ["é|[^é]", "giu"], ["[^ÿ]ÿ", "iu"], ["[µ]", "giu"], ["[^µ]", "giu"], ["ß", "iu"], ["[^ß]+", "iu"],
+  ["[^a-z]", "gv"], ["[[a-z]--[aeiou]]", "gv"], ["[^[a-z]&&[aeiou]]", "gv"], ["\\p{RGI_Emoji}", "gv"], [".", "gv"],
+];
+const subjects: string[] = hide([
+  "", "a", "plain text, with <b>tags</b> [and] 0123 digits\n", "ÀÉÎõü ÿ µ ß ÷ ×   end", "x".repeat(70), "a\nc a c abc",
+  "wide ＡＢ ａｂ 〈tag〉 日本語", "pairs 𝐀𝐚𝐴 and 😀😀 end", "lone \ud835 and \udc00 ends", "\ud835", "\udc00𝐀", "K K k ſ s S", "ǅ ǆ Ǆ İ ı i I",
+]);
+function show(value: unknown): string { return value === null ? "null" : JSON.stringify(value); }
+for (const [source, flags] of sources) {
+  const pattern = new RegExp(hide(source), hide(flags));
+  const row: string[] = [];
+  for (const subject of subjects) {
+    pattern.lastIndex = 0;
+    const first = pattern.exec(subject);
+    pattern.lastIndex = 0;
+    row.push(show(first && [first.index, ...first]) + " " + show(subject.replace(pattern, "_")) + " " + pattern.test(subject) + " " + subject.search(pattern) + " " + subject.split(pattern).length);
+    pattern.lastIndex = 0;
+  }
+  lines.push("/" + source.length + "/" + flags + ": " + row.join(" | "));
+}
+const strip = new RegExp(hide(sources[0]![0]), "gu");
+let total = 0;
+const rounds = Number(process.argv[2] ?? 200);
+const text = hide("Some ordinary text of a message, with <b>a tag</b>, [a bracket], 12 digits; and punctuation: all of it in 8-bit characters.\n");
+for (let i = 0; i < rounds; i++) total += text.replace(strip, "").length;
+lines.push("total " + total);
+console.log(lines.join("\n"));
+//// code-points-around-the-surrogates.ts
+// codePointAt and charCodeAt at every kind of unit and position: below the surrogates, lead and trail surrogates in and out of pairs, the units above them, and positions that lie outside the text.
+const lines: string[] = [];
+const texts = [
+  "", "a", "plain ascii text", "café ÿ", "Ā߿ࠀ퟿", "퟿𐀀", "\ud800", "\udc00", "􏿿", "\ud800𐀀", "\udc00\ud800",
+  "a😀b", "\ud83d", "x\ud83d", "\ude00x", "﻿Ａ�￿", "퟿", "\ud800a", "a\udfff", "\ud800", "\udbff퟿",
+];
+const positions: number[] = [0, 1, 2, 3, 4, 5, 16, -1, -2, -2147483648, 2147483647, 2147483648, 4294967295, 4294967296, -4294967296, 0.5, 1.9, -0.5, -0, NaN, Infinity, -Infinity, 1e21];
+function point(text: string, position: number) { return text.codePointAt(position); }
+function unit(text: string, position: number) { return text.charCodeAt(position); }
+function pointOfAnything(text: any, position: any) { return text.codePointAt(position); }
+for (const text of texts) {
+  const row: string[] = [];
+  for (const position of positions) row.push(String(point(text, position)) + "|" + String(unit(text, position)) + "|" + String(pointOfAnything(text, position)));
+  lines.push(JSON.stringify(text) + " " + row.join(" "));
+}
+// A walk by code points, as a scanner does it.
+function walk(text: string) {
+  const found: number[] = [];
+  let position = 0;
+  while (position < text.length) {
+    const ch = text.codePointAt(position)!;
+    found.push(ch);
+    position += ch >= 0x10000 ? 2 : 1;
+  }
+  return found.map(c => c.toString(16)).join();
+}
+for (const text of texts) lines.push("walk " + walk(text));
+// Backwards from a position that runs below zero.
+function backwards(text: string) { let sum = 0, missing = 0; for (let i = text.length + 1; i >= -3; i--) { const c = text.codePointAt(i); if (c === undefined) missing++; else sum += c; } return sum + " " + missing; }
+for (const text of texts) lines.push("backwards " + backwards(text));
+// Ropes and pieces of other texts.
+const seed = String(process.argv.length);
+const rope = "left " + seed + "\ud83d" + ("\ude00" + seed) + " rightＡ";
+lines.push("rope " + walk(rope) + " " + point(rope, 6 + seed.length - 1) + " " + point(rope, -1) + " " + point(rope, rope.length));
+const piece = ("0123456789😀tail" + seed).slice(9, 14);
+lines.push("piece " + walk(piece) + " " + point(piece, 1) + " " + point(piece, 2) + " " + point(piece, 5) + " " + unit(piece, -1));
+const rounds = Number(process.argv[2] ?? 200);
+let total = 0;
+for (let r = 0; r < rounds; r++) for (const text of texts) for (let i = -1; i <= text.length; i++) total += (text.codePointAt(i) ?? 1) + (text.charCodeAt(i) || 2);
+lines.push("total " + total);
+console.log(lines.join("\n"));
+//// code-points-of-every-kind-of-string.ts
+// codePointAt, a loop over a string and a pattern that takes a string apart read code points: of narrow and wide texts, pairs and halves of pairs, ropes and pieces of other strings, at positions in and out of range.
+function at(text: string, position: number): number | undefined {
+  return text.codePointAt(position);
+}
+function first(text: any): number | undefined {
+  return text.codePointAt();
+}
+function inRange(text: string): number {
+  let sum = 0;
+  for (let i = 0; i < text.length; i++) sum += text.codePointAt(i)!;
+  return sum;
+}
+function walk(value: any): string {
+  const parts: string[] = [];
+  for (const part of value) parts.push(String(part.codePointAt ? part.codePointAt(0) : part));
+  return parts.join(",");
+}
+function takeApart(value: any): string {
+  const [a, b, ...rest] = value;
+  return `${a}|${b}|${rest.length}`;
+}
+function spread(value: any): number {
+  return [...value].length;
+}
+
+const narrow = "plain text";
+const wide = "wide 世界 text";
+const pairs = "a\u{1f600}b\u{10ffff}\u{10000}";
+const halves = "\ud83d" + "x" + "\ude00" + "\ud83d";
+const leadAtEnd = "ab\ud800";
+const twoLeads = "\ud800𐀀";
+////= lines-10	rope	a	b	string
+const texts = [
+  "",
+  "x",
+  narrow,
+  wide,
+  pairs,
+  halves,
+  leadAtEnd,
+  twoLeads,
+  rope(narrow, narrow),
+  rope(narrow, pairs),
+  rope(rope(wide, "-"), rope(pairs, halves)),
+  rope("\ud83d", "\ude00"),
+  (narrow + wide + pairs).slice(3, 24),
+  (narrow + narrow + narrow).substring(5, 27),
+  pairs.slice(2),
+];
+const positions = [0, 1, 2, 3, 5, 9, 10, 21, 1000, -1, -0, 0.5, 1.9, -0.5, NaN, Infinity, -Infinity, 2 ** 31, 2 ** 32, 2 ** 32 + 1, -(2 ** 31), 2 ** 53];
+
+for (const text of texts) {
+  console.log(JSON.stringify(text.length), first(text), inRange(text), positions.map(position => String(at(text, position))).join(" "));
+  console.log(walk(text), takeApart(text), spread(text));
+}
+console.log(walk([1, "two", "\u{1f600}"]), takeApart([1, 2, 3, 4]), spread(new Set(["a", "b"])), walk(new Set(["世"])), takeApart(new Map([[1, 2]]).keys()));
+//// code-units-of-letters-and-pieces-cut-from-a-string.ts
+// The code units of what was cut from a string: letters of a for-of loop (pairs of surrogates too), slices, substrings, characters by index, positions outside the piece.
+function sumOfLetters(text: string): number {
+  let sum = 0;
+  for (const letter of text) sum += letter.charCodeAt(0);
+  return sum;
+}
+function secondUnits(text: string): string {
+  const units: number[] = [];
+  for (const letter of text) units.push(letter.charCodeAt(1));
+  return units.join(",");
+}
+function codePoints(text: string): string {
+  const points: (number | undefined)[] = [];
+  for (const letter of text) points.push(letter.codePointAt(0));
+  return points.join(",");
+}
+function unitOfSlice(text: string, from: number, to: number, position: number): number {
+  return text.slice(from, to).charCodeAt(position);
+}
+function unitOfSubstring(text: string, from: number, to: number, position: number): number {
+  return text.substring(from, to).charCodeAt(position);
+}
+function unitOfPieceOfPiece(text: string, from: number, position: number): number {
+  return text.slice(from).slice(1, 4).charCodeAt(position);
+}
+function unitOfEither(first: string, second: string, takeFirst: boolean, position: number): number {
+  const piece = takeFirst ? first.slice(1, 3) : second.slice(2);
+  return piece.charCodeAt(position);
+}
+const texts = ["iteration", "", "a", "né", "a\u{1F600}b", "\uD83D", "\uDE00\uD83D", "x".repeat(40) + "yz", "left" + String(Date.now() > 0 ? "-right" : "")];
+for (const text of texts) {
+  console.log(JSON.stringify(text.length), sumOfLetters(text), secondUnits(text), codePoints(text));
+  for (const from of [0, 1, 3, -2, 50, 1.5, NaN])
+    for (const to of [0, 2, 5, -1, 60])
+      for (const position of [0, 1, 2, -1, 7, 0.5, NaN])
+        console.log(unitOfSlice(text, from, to, position), unitOfSubstring(text, from, to, position), unitOfPieceOfPiece(text, from, position));
+  for (const position of [0, 1, 2, 3, -1]) console.log(unitOfEither(text, "second", true, position), unitOfEither("first", text, false, position));
+}
+//// collections-iterated-from-untyped-code.ts
+// `for..of` through a value of no known type over Sets and Maps of every kind of key, their iterators, changed while they are stepped through: deleted from, added to, cleared, grown past a rehash.
+const out: string[] = [];
+function all(x: any): string { const seen: string[] = []; for (const v of x) seen.push(Array.isArray(v) ? "[" + v.map(String).join(",") + "]" : typeof v === "symbol" ? v.toString() : Object.is(v, -0) ? "-0" : String(v)); return seen.join(" "); }
+function some(x: any, stopAt: number): string { const seen: string[] = []; for (const v of x) { seen.push(String(v)); if (seen.length === stopAt) break; } return seen.join(" "); }
+function changing(x: any, change: (v: any, turn: number) => void, limit = 60): string { const seen: string[] = []; let turn = 0; for (const v of x) { seen.push(String(v)); change(v, turn++); if (turn >= limit) break; } return seen.join(" "); }
+const o = { toString() { return "object"; } }, sym = Symbol("s");
+const kinds: [string, () => unknown[]][] = [
+    ["integers", () => [0, 7, 14, 21, 28, 35]], ["doubles", () => [0.5, -0, NaN, Infinity, 1e21, 2 ** 31]], ["strings", () => ["a", "bb", "", "ccc", "7", "a b"]],
+    ["mixed", () => [1, "1", true, null, undefined, o, sym, 10n, "x"]], ["none", () => []], ["one", () => [42]],
+];
+for (const [name, make] of kinds) {
+    const keys = make();
+    const set = new Set<unknown>(keys), map = new Map<unknown, unknown>(keys.map((k, i) => [k, i]));
+    out.push(name + " | " + [all(set), all(set.values()), all(set.keys()), all(set.entries()), all(map), all(map.keys()), all(map.values()), all(map.entries())].join(" | "));
+    out.push(name + " left early | " + [some(set, 2), some(map.keys(), 2), some(map.values(), 1), some(set, 100)].join(" | "));
+    const it = set.values(); it.next();
+    out.push(name + " begun elsewhere | " + all(it) + " | " + all(it));
+}
+for (const start of [[1, 2, 3, 4, 5, 6, 7, 8], ["a", "b", "c", "d", "e", "f", "g", "h"]] as unknown[][]) {
+    const fresh = () => new Set<unknown>(start);
+    let s = fresh(); out.push("deletes what comes next | " + changing(s, (v, t) => s.delete(start[t + 1 + (t & 1)])) + " | " + all(s));
+    s = fresh(); out.push("deletes itself | " + changing(s, v => s.delete(v)) + " | " + all(s));
+    s = fresh(); out.push("deletes and adds itself again | " + changing(s, (v, t) => { if (t < 12) { s.delete(v); s.add(v); } }) + " | " + all(s));
+    s = fresh(); out.push("adds | " + changing(s, (v, t) => { if (t < 40) s.add(typeof v === "number" ? 100 + t : "k" + t); }).length + " | " + s.size);
+    s = fresh(); out.push("clears | " + changing(s, (v, t) => { if (t === 2) s.clear(); }) + " | " + all(s));
+    s = fresh(); out.push("clears and fills | " + changing(s, (v, t) => { if (t === 2) { s.clear(); s.add("new"); s.add(5); s.add(start[0]); } }) + " | " + all(s));
+    s = fresh(); out.push("another kind of key comes | " + changing(s, (v, t) => { if (t === 1) { s.add(typeof v === "number" ? "text" : 99); s.add(o); } }) + " | " + all(s));
+    s = fresh(); out.push("two at once | " + changing(s, v => { out.push("  inner " + some(s, 3)); }, 2));
+    const m = new Map<unknown, unknown>(start.map((k, i) => [k, i]));
+    out.push("a map's values, deleted from | " + changing(m.values(), (v, t) => m.delete(start[t + 2])) + " | " + all(m));
+    const m2 = new Map<unknown, unknown>(start.map((k, i) => [k, i]));
+    out.push("a map's keys, grown | " + changing(m2.keys(), (v, t) => { if (t < 30) m2.set(typeof v === "number" ? 1000 + t : "z" + t, t); }).length + " | " + m2.size);
+}
+let total = 0; const big = new Set<unknown>(); for (let i = 0; i < 5000; i++) big.add(i * 3); for (let r = 0; r < 20; r++) for (const v of big as any) total += v; out.push("big " + total);
+console.log(out.join("\n"));
+//// compare-with-literals.ts
+// Strings in every internal representation, undefined, null, numbers and objects are compared with string literals of 0 to 33 characters and with non-ASCII literals: === !== == != as a condition and as a value, in loops and outside, typed string, string | undefined and unknown.
+const opaque = new Function("value", "return value") as <T>(value: T) => T;
+const unseen = new Function("f", "return (...values) => f(...values)") as <F>(f: F) => F;
+
+const flat = (text: string): string => opaque(text.split("").join(""));
+const rope = (text: string): string => (text.length < 2 ? flat(text) : flat(text.slice(0, 1)) + flat(text.slice(1)));
+const substring = (text: string): string => flat("<" + text + ">").slice(1, -1);
+const wide = (text: string): string => flat(text + "☃").replace("☃", "");
+const wideSubstring = (text: string): string => flat("☃" + text).slice(1);
+const wideRope = (text: string): string => (text.length < 2 ? wide(text) : wide(text.slice(0, 1)) + wide(text.slice(1)));
+const mixedRope = (text: string): string => (text.length < 2 ? flat(text) : flat(text.slice(0, 1)) + wide(text.slice(1)));
+const makers = [flat, rope, substring, wide, wideSubstring, wideRope, mixedRope];
+
+// Every code unit is the literal's plus 0x100: a comparison that looks at the low bytes alone finds it equal.
+const raised = (text: string): string => String.fromCharCode(...text.split("").map(unit => unit.charCodeAt(0) + 0x100));
+
+function nearMisses(text: string): string[] {
+  if (text.length === 0) return [" ", "\0", "☃"];
+  const middle = text.length >> 1;
+  return [text.slice(0, -1), text + text.slice(-1), text + "\0", "~" + text.slice(1), text.slice(0, -1) + "~", text.slice(0, middle) + "~" + text.slice(middle + 1)];
+}
+
+function stringsFor(text: string): string[] {
+  const subjects = makers.map(make => make(text));
+  subjects.push(raised(text));
+  for (const miss of nearMisses(text)) for (const make of makers) subjects.push(make(miss));
+  subjects.push(flat(""));
+  return subjects;
+}
+
+function optionalsFor(text: string): (string | undefined)[] {
+  return [...stringsFor(text), undefined];
+}
+
+function valuesFor(text: string): unknown[] {
+  const others: unknown[] = [undefined, null, 0, -0, 7, 7.5, NaN, true, false, 7n, Symbol.iterator, {}, [], [text], [[text]], { toString: () => text }, { valueOf: () => text }, new String(text)];
+  return (stringsFor(text) as unknown[]).concat(others);
+}
+
+type Check = {
+  text: string;
+  ofString: (s: string) => number;
+  ofOptional: (s: string | undefined) => number;
+  ofUnknown: (x: unknown) => number;
+  ofStrings: (list: string[], masks: number[]) => void;
+  ofOptionals: (list: (string | undefined)[], masks: number[]) => void;
+  ofUnknowns: (list: unknown[], masks: number[]) => void;
+};
+
+const checks: Check[] = [
+  {
+    text: "",
+    ofString: (s: string): number => (s === "" ? 1 : 0) | (s !== "" ? 2 : 0) | (s == "" ? 4 : 0) | (s != "" ? 8 : 0) | ("" === s ? 16 : 0) | (Number(s === "") << 5),
+    ofOptional: (s: string | undefined): number => (s === "" ? 1 : 0) | (s !== "" ? 2 : 0) | (s == "" ? 4 : 0) | (s != "" ? 8 : 0) | ("" === s ? 16 : 0) | (Number(s === "") << 5),
+    ofUnknown: (x: unknown): number => (x === "" ? 1 : 0) | (x !== "" ? 2 : 0) | (x == "" ? 4 : 0) | (x != "" ? 8 : 0) | ("" === x ? 16 : 0) | (Number(x === "") << 5),
+    ofStrings: (list: string[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "" ? 1 : 0) | (s !== "" ? 2 : 0) | (s == "" ? 4 : 0) | (s != "" ? 8 : 0) | ("" === s ? 16 : 0) | (Number(s === "") << 5)); } },
+    ofOptionals: (list: (string | undefined)[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "" ? 1 : 0) | (s !== "" ? 2 : 0) | (s == "" ? 4 : 0) | (s != "" ? 8 : 0) | ("" === s ? 16 : 0) | (Number(s === "") << 5)); } },
+    ofUnknowns: (list: unknown[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const x = list[i]; masks.push((x === "" ? 1 : 0) | (x !== "" ? 2 : 0) | (x == "" ? 4 : 0) | (x != "" ? 8 : 0) | ("" === x ? 16 : 0) | (Number(x === "") << 5)); } },
+  },
+  {
+    text: "7",
+    ofString: (s: string): number => (s === "7" ? 1 : 0) | (s !== "7" ? 2 : 0) | (s == "7" ? 4 : 0) | (s != "7" ? 8 : 0) | ("7" === s ? 16 : 0) | (Number(s === "7") << 5),
+    ofOptional: (s: string | undefined): number => (s === "7" ? 1 : 0) | (s !== "7" ? 2 : 0) | (s == "7" ? 4 : 0) | (s != "7" ? 8 : 0) | ("7" === s ? 16 : 0) | (Number(s === "7") << 5),
+    ofUnknown: (x: unknown): number => (x === "7" ? 1 : 0) | (x !== "7" ? 2 : 0) | (x == "7" ? 4 : 0) | (x != "7" ? 8 : 0) | ("7" === x ? 16 : 0) | (Number(x === "7") << 5),
+    ofStrings: (list: string[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "7" ? 1 : 0) | (s !== "7" ? 2 : 0) | (s == "7" ? 4 : 0) | (s != "7" ? 8 : 0) | ("7" === s ? 16 : 0) | (Number(s === "7") << 5)); } },
+    ofOptionals: (list: (string | undefined)[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "7" ? 1 : 0) | (s !== "7" ? 2 : 0) | (s == "7" ? 4 : 0) | (s != "7" ? 8 : 0) | ("7" === s ? 16 : 0) | (Number(s === "7") << 5)); } },
+    ofUnknowns: (list: unknown[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const x = list[i]; masks.push((x === "7" ? 1 : 0) | (x !== "7" ? 2 : 0) | (x == "7" ? 4 : 0) | (x != "7" ? 8 : 0) | ("7" === x ? 16 : 0) | (Number(x === "7") << 5)); } },
+  },
+  {
+    text: "ab",
+    ofString: (s: string): number => (s === "ab" ? 1 : 0) | (s !== "ab" ? 2 : 0) | (s == "ab" ? 4 : 0) | (s != "ab" ? 8 : 0) | ("ab" === s ? 16 : 0) | (Number(s === "ab") << 5),
+    ofOptional: (s: string | undefined): number => (s === "ab" ? 1 : 0) | (s !== "ab" ? 2 : 0) | (s == "ab" ? 4 : 0) | (s != "ab" ? 8 : 0) | ("ab" === s ? 16 : 0) | (Number(s === "ab") << 5),
+    ofUnknown: (x: unknown): number => (x === "ab" ? 1 : 0) | (x !== "ab" ? 2 : 0) | (x == "ab" ? 4 : 0) | (x != "ab" ? 8 : 0) | ("ab" === x ? 16 : 0) | (Number(x === "ab") << 5),
+    ofStrings: (list: string[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "ab" ? 1 : 0) | (s !== "ab" ? 2 : 0) | (s == "ab" ? 4 : 0) | (s != "ab" ? 8 : 0) | ("ab" === s ? 16 : 0) | (Number(s === "ab") << 5)); } },
+    ofOptionals: (list: (string | undefined)[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "ab" ? 1 : 0) | (s !== "ab" ? 2 : 0) | (s == "ab" ? 4 : 0) | (s != "ab" ? 8 : 0) | ("ab" === s ? 16 : 0) | (Number(s === "ab") << 5)); } },
+    ofUnknowns: (list: unknown[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const x = list[i]; masks.push((x === "ab" ? 1 : 0) | (x !== "ab" ? 2 : 0) | (x == "ab" ? 4 : 0) | (x != "ab" ? 8 : 0) | ("ab" === x ? 16 : 0) | (Number(x === "ab") << 5)); } },
+  },
+  {
+    text: "abcdefg",
+    ofString: (s: string): number => (s === "abcdefg" ? 1 : 0) | (s !== "abcdefg" ? 2 : 0) | (s == "abcdefg" ? 4 : 0) | (s != "abcdefg" ? 8 : 0) | ("abcdefg" === s ? 16 : 0) | (Number(s === "abcdefg") << 5),
+    ofOptional: (s: string | undefined): number => (s === "abcdefg" ? 1 : 0) | (s !== "abcdefg" ? 2 : 0) | (s == "abcdefg" ? 4 : 0) | (s != "abcdefg" ? 8 : 0) | ("abcdefg" === s ? 16 : 0) | (Number(s === "abcdefg") << 5),
+    ofUnknown: (x: unknown): number => (x === "abcdefg" ? 1 : 0) | (x !== "abcdefg" ? 2 : 0) | (x == "abcdefg" ? 4 : 0) | (x != "abcdefg" ? 8 : 0) | ("abcdefg" === x ? 16 : 0) | (Number(x === "abcdefg") << 5),
+    ofStrings: (list: string[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "abcdefg" ? 1 : 0) | (s !== "abcdefg" ? 2 : 0) | (s == "abcdefg" ? 4 : 0) | (s != "abcdefg" ? 8 : 0) | ("abcdefg" === s ? 16 : 0) | (Number(s === "abcdefg") << 5)); } },
+    ofOptionals: (list: (string | undefined)[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "abcdefg" ? 1 : 0) | (s !== "abcdefg" ? 2 : 0) | (s == "abcdefg" ? 4 : 0) | (s != "abcdefg" ? 8 : 0) | ("abcdefg" === s ? 16 : 0) | (Number(s === "abcdefg") << 5)); } },
+    ofUnknowns: (list: unknown[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const x = list[i]; masks.push((x === "abcdefg" ? 1 : 0) | (x !== "abcdefg" ? 2 : 0) | (x == "abcdefg" ? 4 : 0) | (x != "abcdefg" ? 8 : 0) | ("abcdefg" === x ? 16 : 0) | (Number(x === "abcdefg") << 5)); } },
+  },
+  {
+    text: "abcdefgh",
+    ofString: (s: string): number => (s === "abcdefgh" ? 1 : 0) | (s !== "abcdefgh" ? 2 : 0) | (s == "abcdefgh" ? 4 : 0) | (s != "abcdefgh" ? 8 : 0) | ("abcdefgh" === s ? 16 : 0) | (Number(s === "abcdefgh") << 5),
+    ofOptional: (s: string | undefined): number => (s === "abcdefgh" ? 1 : 0) | (s !== "abcdefgh" ? 2 : 0) | (s == "abcdefgh" ? 4 : 0) | (s != "abcdefgh" ? 8 : 0) | ("abcdefgh" === s ? 16 : 0) | (Number(s === "abcdefgh") << 5),
+    ofUnknown: (x: unknown): number => (x === "abcdefgh" ? 1 : 0) | (x !== "abcdefgh" ? 2 : 0) | (x == "abcdefgh" ? 4 : 0) | (x != "abcdefgh" ? 8 : 0) | ("abcdefgh" === x ? 16 : 0) | (Number(x === "abcdefgh") << 5),
+    ofStrings: (list: string[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "abcdefgh" ? 1 : 0) | (s !== "abcdefgh" ? 2 : 0) | (s == "abcdefgh" ? 4 : 0) | (s != "abcdefgh" ? 8 : 0) | ("abcdefgh" === s ? 16 : 0) | (Number(s === "abcdefgh") << 5)); } },
+    ofOptionals: (list: (string | undefined)[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "abcdefgh" ? 1 : 0) | (s !== "abcdefgh" ? 2 : 0) | (s == "abcdefgh" ? 4 : 0) | (s != "abcdefgh" ? 8 : 0) | ("abcdefgh" === s ? 16 : 0) | (Number(s === "abcdefgh") << 5)); } },
+    ofUnknowns: (list: unknown[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const x = list[i]; masks.push((x === "abcdefgh" ? 1 : 0) | (x !== "abcdefgh" ? 2 : 0) | (x == "abcdefgh" ? 4 : 0) | (x != "abcdefgh" ? 8 : 0) | ("abcdefgh" === x ? 16 : 0) | (Number(x === "abcdefgh") << 5)); } },
+  },
+  {
+    text: "abcdefghi",
+    ofString: (s: string): number => (s === "abcdefghi" ? 1 : 0) | (s !== "abcdefghi" ? 2 : 0) | (s == "abcdefghi" ? 4 : 0) | (s != "abcdefghi" ? 8 : 0) | ("abcdefghi" === s ? 16 : 0) | (Number(s === "abcdefghi") << 5),
+    ofOptional: (s: string | undefined): number => (s === "abcdefghi" ? 1 : 0) | (s !== "abcdefghi" ? 2 : 0) | (s == "abcdefghi" ? 4 : 0) | (s != "abcdefghi" ? 8 : 0) | ("abcdefghi" === s ? 16 : 0) | (Number(s === "abcdefghi") << 5),
+    ofUnknown: (x: unknown): number => (x === "abcdefghi" ? 1 : 0) | (x !== "abcdefghi" ? 2 : 0) | (x == "abcdefghi" ? 4 : 0) | (x != "abcdefghi" ? 8 : 0) | ("abcdefghi" === x ? 16 : 0) | (Number(x === "abcdefghi") << 5),
+    ofStrings: (list: string[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "abcdefghi" ? 1 : 0) | (s !== "abcdefghi" ? 2 : 0) | (s == "abcdefghi" ? 4 : 0) | (s != "abcdefghi" ? 8 : 0) | ("abcdefghi" === s ? 16 : 0) | (Number(s === "abcdefghi") << 5)); } },
+    ofOptionals: (list: (string | undefined)[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "abcdefghi" ? 1 : 0) | (s !== "abcdefghi" ? 2 : 0) | (s == "abcdefghi" ? 4 : 0) | (s != "abcdefghi" ? 8 : 0) | ("abcdefghi" === s ? 16 : 0) | (Number(s === "abcdefghi") << 5)); } },
+    ofUnknowns: (list: unknown[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const x = list[i]; masks.push((x === "abcdefghi" ? 1 : 0) | (x !== "abcdefghi" ? 2 : 0) | (x == "abcdefghi" ? 4 : 0) | (x != "abcdefghi" ? 8 : 0) | ("abcdefghi" === x ? 16 : 0) | (Number(x === "abcdefghi") << 5)); } },
+  },
+  {
+    text: "abcdefghijklmnopqrstuvwxyz012345",
+    ofString: (s: string): number => (s === "abcdefghijklmnopqrstuvwxyz012345" ? 1 : 0) | (s !== "abcdefghijklmnopqrstuvwxyz012345" ? 2 : 0) | (s == "abcdefghijklmnopqrstuvwxyz012345" ? 4 : 0) | (s != "abcdefghijklmnopqrstuvwxyz012345" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz012345" === s ? 16 : 0) | (Number(s === "abcdefghijklmnopqrstuvwxyz012345") << 5),
+    ofOptional: (s: string | undefined): number => (s === "abcdefghijklmnopqrstuvwxyz012345" ? 1 : 0) | (s !== "abcdefghijklmnopqrstuvwxyz012345" ? 2 : 0) | (s == "abcdefghijklmnopqrstuvwxyz012345" ? 4 : 0) | (s != "abcdefghijklmnopqrstuvwxyz012345" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz012345" === s ? 16 : 0) | (Number(s === "abcdefghijklmnopqrstuvwxyz012345") << 5),
+    ofUnknown: (x: unknown): number => (x === "abcdefghijklmnopqrstuvwxyz012345" ? 1 : 0) | (x !== "abcdefghijklmnopqrstuvwxyz012345" ? 2 : 0) | (x == "abcdefghijklmnopqrstuvwxyz012345" ? 4 : 0) | (x != "abcdefghijklmnopqrstuvwxyz012345" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz012345" === x ? 16 : 0) | (Number(x === "abcdefghijklmnopqrstuvwxyz012345") << 5),
+    ofStrings: (list: string[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "abcdefghijklmnopqrstuvwxyz012345" ? 1 : 0) | (s !== "abcdefghijklmnopqrstuvwxyz012345" ? 2 : 0) | (s == "abcdefghijklmnopqrstuvwxyz012345" ? 4 : 0) | (s != "abcdefghijklmnopqrstuvwxyz012345" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz012345" === s ? 16 : 0) | (Number(s === "abcdefghijklmnopqrstuvwxyz012345") << 5)); } },
+    ofOptionals: (list: (string | undefined)[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "abcdefghijklmnopqrstuvwxyz012345" ? 1 : 0) | (s !== "abcdefghijklmnopqrstuvwxyz012345" ? 2 : 0) | (s == "abcdefghijklmnopqrstuvwxyz012345" ? 4 : 0) | (s != "abcdefghijklmnopqrstuvwxyz012345" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz012345" === s ? 16 : 0) | (Number(s === "abcdefghijklmnopqrstuvwxyz012345") << 5)); } },
+    ofUnknowns: (list: unknown[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const x = list[i]; masks.push((x === "abcdefghijklmnopqrstuvwxyz012345" ? 1 : 0) | (x !== "abcdefghijklmnopqrstuvwxyz012345" ? 2 : 0) | (x == "abcdefghijklmnopqrstuvwxyz012345" ? 4 : 0) | (x != "abcdefghijklmnopqrstuvwxyz012345" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz012345" === x ? 16 : 0) | (Number(x === "abcdefghijklmnopqrstuvwxyz012345") << 5)); } },
+  },
+  {
+    text: "abcdefghijklmnopqrstuvwxyz0123456",
+    ofString: (s: string): number => (s === "abcdefghijklmnopqrstuvwxyz0123456" ? 1 : 0) | (s !== "abcdefghijklmnopqrstuvwxyz0123456" ? 2 : 0) | (s == "abcdefghijklmnopqrstuvwxyz0123456" ? 4 : 0) | (s != "abcdefghijklmnopqrstuvwxyz0123456" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz0123456" === s ? 16 : 0) | (Number(s === "abcdefghijklmnopqrstuvwxyz0123456") << 5),
+    ofOptional: (s: string | undefined): number => (s === "abcdefghijklmnopqrstuvwxyz0123456" ? 1 : 0) | (s !== "abcdefghijklmnopqrstuvwxyz0123456" ? 2 : 0) | (s == "abcdefghijklmnopqrstuvwxyz0123456" ? 4 : 0) | (s != "abcdefghijklmnopqrstuvwxyz0123456" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz0123456" === s ? 16 : 0) | (Number(s === "abcdefghijklmnopqrstuvwxyz0123456") << 5),
+    ofUnknown: (x: unknown): number => (x === "abcdefghijklmnopqrstuvwxyz0123456" ? 1 : 0) | (x !== "abcdefghijklmnopqrstuvwxyz0123456" ? 2 : 0) | (x == "abcdefghijklmnopqrstuvwxyz0123456" ? 4 : 0) | (x != "abcdefghijklmnopqrstuvwxyz0123456" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz0123456" === x ? 16 : 0) | (Number(x === "abcdefghijklmnopqrstuvwxyz0123456") << 5),
+    ofStrings: (list: string[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "abcdefghijklmnopqrstuvwxyz0123456" ? 1 : 0) | (s !== "abcdefghijklmnopqrstuvwxyz0123456" ? 2 : 0) | (s == "abcdefghijklmnopqrstuvwxyz0123456" ? 4 : 0) | (s != "abcdefghijklmnopqrstuvwxyz0123456" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz0123456" === s ? 16 : 0) | (Number(s === "abcdefghijklmnopqrstuvwxyz0123456") << 5)); } },
+    ofOptionals: (list: (string | undefined)[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "abcdefghijklmnopqrstuvwxyz0123456" ? 1 : 0) | (s !== "abcdefghijklmnopqrstuvwxyz0123456" ? 2 : 0) | (s == "abcdefghijklmnopqrstuvwxyz0123456" ? 4 : 0) | (s != "abcdefghijklmnopqrstuvwxyz0123456" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz0123456" === s ? 16 : 0) | (Number(s === "abcdefghijklmnopqrstuvwxyz0123456") << 5)); } },
+    ofUnknowns: (list: unknown[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const x = list[i]; masks.push((x === "abcdefghijklmnopqrstuvwxyz0123456" ? 1 : 0) | (x !== "abcdefghijklmnopqrstuvwxyz0123456" ? 2 : 0) | (x == "abcdefghijklmnopqrstuvwxyz0123456" ? 4 : 0) | (x != "abcdefghijklmnopqrstuvwxyz0123456" ? 8 : 0) | ("abcdefghijklmnopqrstuvwxyz0123456" === x ? 16 : 0) | (Number(x === "abcdefghijklmnopqrstuvwxyz0123456") << 5)); } },
+  },
+  {
+    text: "é",
+    ofString: (s: string): number => (s === "é" ? 1 : 0) | (s !== "é" ? 2 : 0) | (s == "é" ? 4 : 0) | (s != "é" ? 8 : 0) | ("é" === s ? 16 : 0) | (Number(s === "é") << 5),
+    ofOptional: (s: string | undefined): number => (s === "é" ? 1 : 0) | (s !== "é" ? 2 : 0) | (s == "é" ? 4 : 0) | (s != "é" ? 8 : 0) | ("é" === s ? 16 : 0) | (Number(s === "é") << 5),
+    ofUnknown: (x: unknown): number => (x === "é" ? 1 : 0) | (x !== "é" ? 2 : 0) | (x == "é" ? 4 : 0) | (x != "é" ? 8 : 0) | ("é" === x ? 16 : 0) | (Number(x === "é") << 5),
+    ofStrings: (list: string[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "é" ? 1 : 0) | (s !== "é" ? 2 : 0) | (s == "é" ? 4 : 0) | (s != "é" ? 8 : 0) | ("é" === s ? 16 : 0) | (Number(s === "é") << 5)); } },
+    ofOptionals: (list: (string | undefined)[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "é" ? 1 : 0) | (s !== "é" ? 2 : 0) | (s == "é" ? 4 : 0) | (s != "é" ? 8 : 0) | ("é" === s ? 16 : 0) | (Number(s === "é") << 5)); } },
+    ofUnknowns: (list: unknown[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const x = list[i]; masks.push((x === "é" ? 1 : 0) | (x !== "é" ? 2 : 0) | (x == "é" ? 4 : 0) | (x != "é" ? 8 : 0) | ("é" === x ? 16 : 0) | (Number(x === "é") << 5)); } },
+  },
+  {
+    text: "\u{1F600}",
+    ofString: (s: string): number => (s === "\u{1F600}" ? 1 : 0) | (s !== "\u{1F600}" ? 2 : 0) | (s == "\u{1F600}" ? 4 : 0) | (s != "\u{1F600}" ? 8 : 0) | ("\u{1F600}" === s ? 16 : 0) | (Number(s === "\u{1F600}") << 5),
+    ofOptional: (s: string | undefined): number => (s === "\u{1F600}" ? 1 : 0) | (s !== "\u{1F600}" ? 2 : 0) | (s == "\u{1F600}" ? 4 : 0) | (s != "\u{1F600}" ? 8 : 0) | ("\u{1F600}" === s ? 16 : 0) | (Number(s === "\u{1F600}") << 5),
+    ofUnknown: (x: unknown): number => (x === "\u{1F600}" ? 1 : 0) | (x !== "\u{1F600}" ? 2 : 0) | (x == "\u{1F600}" ? 4 : 0) | (x != "\u{1F600}" ? 8 : 0) | ("\u{1F600}" === x ? 16 : 0) | (Number(x === "\u{1F600}") << 5),
+    ofStrings: (list: string[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "\u{1F600}" ? 1 : 0) | (s !== "\u{1F600}" ? 2 : 0) | (s == "\u{1F600}" ? 4 : 0) | (s != "\u{1F600}" ? 8 : 0) | ("\u{1F600}" === s ? 16 : 0) | (Number(s === "\u{1F600}") << 5)); } },
+    ofOptionals: (list: (string | undefined)[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const s = list[i]; masks.push((s === "\u{1F600}" ? 1 : 0) | (s !== "\u{1F600}" ? 2 : 0) | (s == "\u{1F600}" ? 4 : 0) | (s != "\u{1F600}" ? 8 : 0) | ("\u{1F600}" === s ? 16 : 0) | (Number(s === "\u{1F600}") << 5)); } },
+    ofUnknowns: (list: unknown[], masks: number[]): void => { for (let i = 0; i < list.length; i++) { const x = list[i]; masks.push((x === "\u{1F600}" ? 1 : 0) | (x !== "\u{1F600}" ? 2 : 0) | (x == "\u{1F600}" ? 4 : 0) | (x != "\u{1F600}" ? 8 : 0) | ("\u{1F600}" === x ? 16 : 0) | (Number(x === "\u{1F600}") << 5)); } },
+  },
+];
+
+const strictlyEqual = 1 | 4 | 16 | 32;
+const looselyEqual = 2 | 4;
+const different = 2 | 8;
+const describe = (mask: number): string => (mask === strictlyEqual ? "=" : mask === looselyEqual ? "~" : mask === different ? "." : "(" + mask + ")");
+const quoted = (text: string): string => '"' + text.split("").map(unit => (unit.charCodeAt(0) < 0x7f ? unit : "\\u" + unit.charCodeAt(0).toString(16).padStart(4, "0"))).join("") + '"';
+
+function outsideLoops<T>(subjects: T[], compare: (subject: T) => number): string {
+  const called = unseen(compare);
+  return subjects.map(subject => describe(called(subject))).join("");
+}
+
+function inLoops<T>(subjectsOf: () => T[], compareAll: (list: T[], masks: number[]) => void): string {
+  let line = "";
+  for (let round = 0; round < 10; round++) {
+    const masks: number[] = [];
+    compareAll(subjectsOf(), masks);
+    const next = masks.map(describe).join("");
+    if (round > 0 && next !== line) return "round " + round + " differs: " + line + " " + next;
+    line = next;
+  }
+  return line;
+}
+
+for (const check of checks) {
+  const text = check.text;
+  console.log(quoted(text));
+  console.log("  string              " + outsideLoops(stringsFor(text), check.ofString));
+  console.log("  string, loop        " + inLoops(() => stringsFor(text), check.ofStrings));
+  console.log("  string | undefined  " + outsideLoops(optionalsFor(text), check.ofOptional));
+  console.log("  the same, loop      " + inLoops(() => optionalsFor(text), check.ofOptionals));
+  console.log("  unknown             " + outsideLoops(valuesFor(text), check.ofUnknown));
+  console.log("  unknown, loop       " + inLoops(() => valuesFor(text), check.ofUnknowns));
+}
+
+const once: string = rope("abcdefgh");
+const onceOptional: string | undefined = substring("ab");
+const onceUnknown: unknown = wide("abcdefghijklmnopqrstuvwxyz0123456");
+const onceMissing: string | undefined = opaque(undefined);
+const onceAccented: string = wideSubstring("é");
+const atTopLevel = [
+  once === "abcdefgh", once === "abcdefgi", once !== "abcdefgh", once == "abcdefgh", once === "abcdefg", once === "abcdefghi", once === "", once === "é",
+  onceOptional === "ab", onceOptional !== "ab", onceOptional === "a", onceOptional === "",
+  onceUnknown === "abcdefghijklmnopqrstuvwxyz0123456", onceUnknown == "abcdefghijklmnopqrstuvwxyz0123456", onceUnknown === "abcdefghijklmnopqrstuvwxyz012345", onceUnknown === "7", onceUnknown === "\u{1F600}",
+  onceMissing === "", onceMissing === "7", onceMissing == "ab", onceMissing !== "abcdefghi", onceMissing === "é",
+  onceAccented === "é", onceAccented == "é", onceAccented === "e", onceAccented === "\u{1F600}",
+];
+console.log("top level " + atTopLevel.map(answer => (answer ? "=" : ".")).join(""));
+//// compile-gives-a-regexp-literal-another-pattern.js
+// RegExp.prototype.compile gives a literal another pattern and other flags: called on it, in a callee, through call, by a computed name, by text made at run time. source, flags, test, replace, match, split and search follow. And what `new RegExp` and `RegExp` make of constant operands, valid or not.
+const re = /abc/g;
+console.log(re.source, re.flags, re.global);
+re.compile("xyz", "i");
+console.log(re.source, re.flags, re.global, re.ignoreCase, re.test("XYZ"), re.test("abc"), new RegExp(re, "g").source, "aXYZb".replace(re, "-"), "abc".search(re), String(re));
+function mut(r) { r.compile("q+"); }
+const r2 = /one/; mut(r2); console.log(r2.source, r2.test("qq"), r2.test("one"), "one qq".match(r2)[0], "a,qq,b".split(r2).join("|"));
+const r3 = /two/y; RegExp.prototype.compile.call(r3, "2", "g"); console.log(r3.source, r3.flags, r3.sticky, "2 two".replace(r3, "#"));
+const r4 = /three/; new Function("r", "r.compile('3')")(r4); console.log(r4.source, r4.test("3"), r4.test("three"));
+function f() { const r = /four/; if (Date.now() > 0) r.compile("4"); return r.source + r.test("4") + "four4".replace(r, "!"); } console.log(f(), f());
+function g(s) { return /five/.test(s); } const k = "comp" + "ile"; const r5 = /five/; r5[k]("5"); console.log(g("five"), g("5"), r5.test("5"), r5.source);
+const r6 = /six/g; r6.lastIndex = 2; console.log("six six".replace(r6, "6"), r6.lastIndex, r6.exec("six six six").index, r6.lastIndex);
+console.log(new RegExp("a/b").source, new RegExp("\n").source, new RegExp("").source, new RegExp(undefined).source, new RegExp(null).source, new RegExp(5).source, RegExp("[/]").source, new RegExp("\\/").source, String(new RegExp("/", "gimsuy")), new RegExp(/x/g).flags, RegExp(/x/g, undefined).flags, new RegExp(/x/g, "").flags);
+const lit = /same/; console.log(RegExp(lit) === lit, new RegExp(lit) === lit, RegExp(lit, "g") === lit);
+for (const bad of [["(", ""], ["a", "gg"], ["a", "x"], ["\\", ""], ["(?<n>a)(?<n>b)", ""], ["a", "uv"]]) { try { new RegExp(bad[0], bad[1]); console.log("ok"); } catch (e) { console.log(e.name, e.message); } }
+try { new RegExp("(", ""); } catch (e) { console.log(e.name, e.message); } try { new RegExp("a", "gg"); } catch (e) { console.log(e.name, e.message); } try { RegExp("[", "u"); } catch (e) { console.log(e.name, e.message); }
+//// computed-module-constants-read-in-functions.ts
+// A constant of the module whose initializer folds to a primitive is that primitive in every function that reads it, and a read in its dead zone still throws.
+const out: unknown[] = [];
+
+function early(): string {
+  return `${LATE}!`;
+}
+try {
+  out.push(early());
+} catch (error) {
+  out.push((error as Error).name);
+}
+const LATE = `${"l"}${"ate"}`;
+out.push(early());
+
+const PREFIX = `${"ab"}${"+"}`;
+const COUNT = 2 + 3;
+const FLAG = "x".length === 1;
+function pattern(): RegExp {
+  return new RegExp(`^${PREFIX}c{${COUNT}}$`, FLAG ? "i" : "");
+}
+out.push(pattern().source, pattern().flags, pattern().test("ABBCCCCC"), pattern().test("abc"));
+
+// Stored more than once, or with a value that only the running program knows: no constant.
+let changed = `${"a"}${"b"}`;
+function readChanged(): string {
+  return `${changed}?`;
+}
+out.push(readChanged());
+changed = `${"c"}${"d"}`;
+out.push(readChanged());
+
+const FROM_OUTSIDE = `${Date.now() > 0 ? "after" : "before"}-1970`;
+function readFromOutside(): string {
+  return `${FROM_OUTSIDE}.`;
+}
+out.push(readFromOutside());
+
+// One of two stores runs.
+let either: string;
+if (Date.now() > 0) either = `${"fir"}${"st"}`;
+else either = `${"sec"}${"ond"}`;
+function readEither(): string {
+  return `${either};`;
+}
+out.push(readEither());
+
+console.log(out.map(String).join(" | "));
+//// concat-with-every-kind-of-operand.js
+// String.prototype.concat with every kind of operand, beside the template that says the same.
+const out = [];
+function say(...a) { out.push(a.map(String).join(" | ")); }
+function attempt(name, f) { try { say(name, f()); } catch (e) { say(name, "threw " + e.constructor.name); } }
+const names = ["ab", "cd", "ef"];
+function four(i) { return "<".concat(names[i & 3], ":", String(i & 7), ">"); }
+function numbers(a, b) { return "n".concat(a, b, a + b, -0, 0.1, 1e21, NaN, -Infinity); }
+function nothing(s) { return s.concat(); }
+function others(s) { return s.concat(undefined, null, true, false, 10n); }
+function anything(s, v) { return s.concat(v); }
+function many(s) { return s.concat(s, s, s, s, s, s, s, s, s, s, s, s, s, s, s, s, s, s, s, s); }
+function lengthOnly(a, b) { return a.concat(b, "!").length; }
+function chained(a, b) { return a.concat(b).concat("-", a).concat(); }
+function wide(a) { return a.concat("é", "世", "😀"); }
+for (let round = 0; round < 200; round++) {
+  out.length = 0;
+  say(four(0), four(1), four(2), four(3), four(12));
+  say(numbers(1, 2), numbers(1.5, -2), numbers(2 ** 31, 2 ** 53));
+  say(nothing("same"), nothing(""), nothing("x") === "x");
+  say(others("o"), many("ab").length, lengthOnly("abc", "de"), chained("a", "b"), wide("w"), wide("w").length);
+  const log = [];
+  const first = { toString() { log.push("first"); return "1"; } }, second = { valueOf() { log.push("valueOf"); return "v"; }, toString() { log.push("second"); return "2"; } };
+  say("s".concat(first, second, first), log.join());
+  say(anything("s", [1, [2, 3]]), anything("s", {}), anything("s", () => 1), anything("s", new String("boxed")), anything("s", { [Symbol.toPrimitive](hint) { return hint; } }));
+  attempt("a symbol", () => anything("s", Symbol("x")));
+  attempt("a symbol behind others", () => "s".concat(first, Symbol("x"), second));
+  attempt("throws", () => anything("s", { toString() { throw new RangeError("no"); } }));
+  attempt("undefined receiver", () => String.prototype.concat.call(undefined, "a"));
+  attempt("null receiver", () => String.prototype.concat.call(null, "a"));
+  attempt("other receivers", () => [String.prototype.concat.call(5, 6), String.prototype.concat.call(true, null), String.prototype.concat.call([1, 2], 3), String.prototype.concat.call({ toString() { return "obj"; } }, "!")].join());
+  attempt("spread", () => "s".concat(...names, ...[1, 2]));
+  attempt("apply", () => "s".concat.apply("t", names));
+  say(`<${names[1]}:${String(3)}>` === four(1 + 8 + 2 - 8) || four(3), "".concat("", "") === "", "a".concat("") === "a");
+}
+console.log(out.join("\n"));
+//// concatenate-mixed-parts.ts
+// Chains of `+` and templates over strings, numbers, objects with toString and valueOf, and symbols: what is converted, in which order, and how often. One row differs from plain Bun: in `a + "" + s + b` with a symbol `s` the second addition throws before `b` is converted, as ECMAScript orders it; plain Bun converts every operand first.
+const log: string[] = [];
+
+class Logged {
+  label: string;
+  constructor(label: string) {
+    this.label = label;
+  }
+  toString(): string {
+    log.push("toString " + this.label);
+    return "<" + this.label + ">";
+  }
+}
+
+class LoggedNumber extends Logged {
+  valueOf(): number {
+    log.push("valueOf " + this.label);
+    return 42;
+  }
+}
+
+////= attempt-3	text	text.length > 80 ? "length " + text.length : JSON.stringify(text)	", "
+
+function noParts(): string {
+  return ``;
+}
+function oneNumber(a: number): string {
+  return `${a}`;
+}
+function oneString(a: string): string {
+  return `${a}`;
+}
+function oneValue(a: any): string {
+  return `${a}`;
+}
+////= lines-10	twoParts	a	b	number
+function threeParts(a: number, b: string, c: boolean): string {
+  return `${a}${b}${c}`;
+}
+function fourParts(a: string, b: undefined, c: null, d: bigint): string {
+  return `${a}${b}${c}${d}`;
+}
+function fiveParts(a: number, b: number, c: number): string {
+  return a + "," + b + "," + c;
+}
+function sixParts(a: string | undefined | null, b: number | undefined | null, c: boolean | undefined | null): string {
+  return `${a}|${b}|${c}|`;
+}
+function sevenParts(a: Logged, b: number, c: Logged, d: string): string {
+  return `${a}:${b}:${c}:${d}`;
+}
+function eightParts(a: any, b: any, c: any, d: any): string {
+  return `[${a},${b},${c},${d}`;
+}
+function nineParts(s: string, i: number, d: number, u: undefined, n: null, t: boolean, b: bigint, o: Logged, x: any): string {
+  return `${s}${i}${d}${u}${n}${t}${b}${o}${x}`;
+}
+
+////= lines-10	twoStrings	a	b	string
+function threeStrings(a: string, b: string, c: string): string {
+  return `${a}${b}${c}`;
+}
+function fourStrings(a: string, b: string, c: string, d: string): string {
+  return a + b + c + d;
+}
+function nineStrings(a: string, b: string, c: string): string {
+  return a + b + c + a + b + c + a + b + c;
+}
+
+////= lines-10	plusObject	a	o	Logged
+function templateObject(a: string, o: Logged): string {
+  return `${a}${o}`;
+}
+function templateWithSymbol(a: Logged, s: any, b: Logged): string {
+  return `${a}${s}${b}`;
+}
+function plusWithSymbol(a: Logged, s: any, b: Logged): string {
+  return a + "" + s + b;
+}
+function numberBetween(a: string, n: number): string {
+  return `${a}${n}${a}`;
+}
+function objectBetween(a: string, o: Logged): string {
+  return `${a}${o}${a}`;
+}
+
+const numbers = [0, -0, 7, -1, 2147483647, -2147483648, 2147483648, 4294967301, 1e21, 1e-7, 0.5, -0.5, NaN, Infinity, -Infinity];
+console.log(JSON.stringify(noParts()), noParts().length);
+for (const n of numbers) console.log(oneNumber(n), twoParts("n=", n), threeParts(n, "/", n > 0), fiveParts(n, -n, n * 2), oneValue(n));
+for (const text of ["", "a", "é", "日本語", "plain text"]) console.log(JSON.stringify(oneString(text)), oneString(text) === text, JSON.stringify(oneValue(text)));
+console.log(oneValue(undefined), oneValue(null), oneValue(true), oneValue(12345678901234567890n), oneValue([1, [2, 3]]), oneValue({}));
+console.log(fourParts("x", undefined, null, 0n), fourParts("", undefined, null, -(2n ** 70n)));
+console.log(sixParts("s", 5, true), sixParts("", -0, false), sixParts(undefined, null, undefined), sixParts(null, undefined, null), sixParts("é", 1e21, true));
+console.log(eightParts(1, "two", 3n, null), eightParts(undefined, true, -0, 1e21), eightParts(NaN, "", false, 0.1), eightParts([], [null], [[]], {}));
+
+attempt("objects in a template", () => sevenParts(new Logged("a"), 1.5, new Logged("c"), "d"));
+attempt("objects among untyped parts", () => eightParts(new Logged("a"), new LoggedNumber("b"), 3, new Logged("d")));
+attempt("nine parts", () => nineParts("s", 1, -0, undefined, null, false, 9n, new Logged("o"), new LoggedNumber("x")));
+attempt("nine parts, numbers", () => nineParts("", -2147483648, 1e21, undefined, null, true, -1n, new LoggedNumber("o"), NaN));
+attempt("plus prefers valueOf", () => plusObject("=", new LoggedNumber("n")));
+attempt("a template prefers toString", () => templateObject("=", new LoggedNumber("n")));
+attempt("plus without valueOf", () => plusObject("=", new Logged("n")));
+attempt("a symbol in a template", () => templateWithSymbol(new Logged("before"), Symbol("s"), new Logged("after")));
+attempt("a symbol in a chain", () => plusWithSymbol(new Logged("before"), Symbol.iterator, new Logged("after")));
+attempt("a symbol alone", () => oneValue(Symbol()));
+attempt("a symbol last", () => eightParts(new Logged("a"), new Logged("b"), new Logged("c"), Symbol("last")));
+
+function countByKey(prefix: string, rounds: number): string {
+  const counts = new Map<string, number>();
+  const table: Record<string, number> = {};
+  for (let i = 0; i < rounds; i++) {
+    const key = prefix + ":" + (i % 7) + ":" + (i % 2 === 0);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+    const name = `${prefix}.${i % 5}.${i % 3 ? undefined : null}`;
+    table[name] = (table[name] ?? 0) + i;
+    const index = "" + (i % 4);
+    table[index] = (table[index] ?? 0) + 1;
+  }
+  const lines: string[] = [];
+  for (const [key, count] of counts) lines.push(key + "=" + count);
+  for (const name of Object.keys(table)) lines.push(name + "=" + table[name]);
+  return lines.join(" ");
+}
+console.log(countByKey("k", 1));
+console.log(countByKey("key", 20000));
+console.log(countByKey("", 210));
+
+function mixedInLoop(rounds: number, name: string, flag: boolean, big: bigint): number {
+  let checksum = 0;
+  for (let i = 0; i < rounds; i++) {
+    const text = `${name}#${i}/${i / 2}/${flag}/${big}/${i % 3 ? undefined : null}`;
+    checksum = (checksum * 31 + text.length + text.charCodeAt(i % text.length)) | 0;
+  }
+  return checksum;
+}
+function ropesInLoop(rounds: number, a: string, b: string, c: string): number {
+  let checksum = 0;
+  for (let i = 0; i < rounds; i++) {
+    const two = a + b;
+    const three = `${a}${b}${c}`;
+    const four = a + b + c + two;
+    const nine = nineStrings(c, two, a);
+    checksum = (checksum * 31 + two.length + three.length * 3 + four.length * 5 + nine.length * 7 + (nine + "!").charCodeAt(i % (nine.length + 1))) | 0;
+  }
+  return checksum;
+}
+console.log(mixedInLoop(30000, "name", true, 123456789012345678901234567890n), mixedInLoop(3, "", false, 0n));
+console.log(ropesInLoop(30000, "ab", "cde", "f"), ropesInLoop(30000, "", "é", ""), ropesInLoop(30000, "", "", ""), ropesInLoop(2, "日", "本", "語"));
+console.log(fourStrings("a", "", "b", ""), nineStrings("x", "", "yz"), threeStrings("", "", "").length);
+
+function keepsText(x: string, empty: string): boolean {
+  const results = ["" + x, x + "", empty + x, x + empty, `${x}`, `${empty}${x}`, `${x}${empty}${empty}`, empty + x + empty, empty + empty + x + empty];
+  for (const result of results) {
+    if (result !== x || result.length !== x.length) return false;
+  }
+  return true;
+}
+const rope = twoStrings("left ", "right");
+for (const text of ["", "a", "é", "plain text", "日本語", rope, rope.slice(2, 8)]) {
+  let areAllEqual = true;
+  for (let i = 0; i < 2000; i++) areAllEqual = areAllEqual && keepsText(text, "");
+  console.log(JSON.stringify(text), areAllEqual);
+}
+
+////= doubled
+const half = doubled(30);
+const quarter = doubled(29);
+attempt("under the limit", () => twoStrings(half, quarter));
+attempt("an empty part at any length", () => threeStrings("", half, ""));
+attempt("two strings over the limit", () => twoStrings(half, half));
+attempt("three strings over the limit", () => threeStrings(half, quarter, half));
+attempt("four strings over the limit", () => fourStrings(quarter, half, quarter, "y"));
+attempt("a number between", () => numberBetween(half, 7));
+attempt("an object between", () => objectBetween(half, new Logged("middle")));
+attempt("after the failures", () => nineParts("s", 2, 2.5, undefined, null, true, 2n, new Logged("o"), "x"));
+//// concatenated-keys-untyped.js
+// Lookup keys built with `+` (`a + "," + b`) and used at once in a Map, a Set or an object (the same program without type annotations).
+class Holder {
+  tag;
+  v;
+  constructor(tag, v) {
+    this.tag = tag;
+    this.v = v;
+  }
+  get part() {
+    seen.push(this.tag + ".part");
+    return this.v;
+  }
+}
+const seen = [];
+function note(tag, v) {
+  seen.push(tag);
+  return v;
+}
+const long = "L".repeat(70);
+const rope = "ro" + "pe".slice(0) + String(1);
+const part = "a part of this".slice(2, 6);
+const wide = "\u0416\u65E5";
+const texts = ["a", "", "bc", long, rope, part, wide, "\xE9", "undefined", "null", undefined, null, "0", "-1"];
+const numbers = [0, -0, 1, -1, 10, 2147483647, -2147483648, 4294967296, 0.5, -0.25, 1000000000000000000000, 0.0000001, NaN, 1 / 0];
+const map = new Map;
+const set = new Set;
+const record = {};
+////= for-4	b	texts	","
+////= for-4	n	numbers	"#"
+for (const a of texts)
+  for (const b of texts) {
+    const k = String(a) + "/" + String(b) + "/" + String(a);
+    map.set(k, "m3:" + k);
+  }
+let rows = 0;
+let lines = 0;
+function say(name, v) {
+  rows++;
+  const text = typeof v === "string" && v.length > 60 ? v.length + ":" + v.slice(0, 12) : String(v);
+  console.log(name + " -> " + text + (seen.length ? " after " + seen.join() : ""));
+  seen.length = 0;
+  lines++;
+}
+for (let turn = 0;turn < 2; turn++) {
+  for (let i = 0;i < texts.length; i++)
+    for (let j = 0;j < texts.length; j++) {
+      const it = { name: texts[i], other: texts[j], n: numbers[j] };
+      const at = i + "," + j;
+      say("get " + at, map.get(it.name + "," + it.other));
+      say("has " + at, set.has(it.name + "," + it.other));
+      say("record " + at, record[it.name + "," + it.other]);
+      say("get three " + at, map.get(it.name + "/" + it.other + "/" + it.name));
+      say("get # " + at, map.get(it.name + "#" + it.n));
+      say("has # " + at, set.has(it.name + "#" + it.n));
+      say("record # " + at, record[it.name + "#" + it.n]);
+      say("a template " + at, map.get(`${it.name},${it.other}`));
+      say("with effects " + at, map.get(note("first", it.name) + "," + note("second", it.other)));
+      say("a miss " + at, map.get(it.name + ";" + it.other));
+      say("number first " + at, map.get(it.n + "," + it.other));
+      say("kept too " + at, (() => {
+        const k = it.name + "," + it.other;
+        return map.get(k) + "|" + k.length;
+      })());
+    }
+}
+function thing(tag, v) {
+  return { valueOf() {
+    seen.push(tag + ".valueOf");
+    return v;
+  }, toString() {
+    seen.push(tag + ".toString");
+    return "T" + tag;
+  } };
+}
+function onlyText(tag, v) {
+  return { toString() {
+    seen.push(tag + ".toString");
+    return v;
+  } };
+}
+function attempt(name, f) {
+  let r;
+  try {
+    r = f();
+  } catch (e) {
+    r = "throws " + e.name;
+  }
+  say(name, r);
+}
+const kinds = [["a text", () => "a"], ["a number", () => 1], ["valueOf a text", (t) => thing(t, "a")], ["valueOf a number", (t) => thing(t, 1)], ["valueOf an object", (t) => thing(t, {})], ["toString alone", (t) => onlyText(t, "bc")], ["undefined", () => {
+  return;
+}], ["null", () => null], ["a bigint", () => 10n], ["true", () => true]];
+for (let turn = 0;turn < 2; turn++)
+  for (const [x, makeX] of kinds)
+    for (const [y, makeY] of kinds) {
+      const a = makeX("a"), b = makeY("b"), ha = new Holder("ha", a), hb = new Holder("hb", b);
+      attempt("any: " + x + " , " + y, () => map.get(a + "," + b));
+      attempt("any, three: " + x + " / " + y, () => map.get(a + "/" + b + "/" + a));
+      attempt("getters: " + x + " , " + y, () => map.get(ha.part + "," + hb.part));
+      attempt("a template: " + x + " , " + y, () => map.get(`${a},${b}`));
+      attempt("a record: " + x + " , " + y, () => record[a + "," + b]);
+      attempt("a text first: " + x + " , " + y, () => set.has("a," + a + b));
+    }
+const nothing = [];
+function beyond(a, i) {
+  try {
+    return String(map.get(a.name + "," + nothing[i].name));
+  } catch (e) {
+    return "throws " + e.name;
+  }
+}
+say("the second holder is not there", beyond({ name: "a", other: "", n: 0 }, 3));
+console.log(rows + " rows");
+//// concatenation-untyped.js
+// String concatenations with numbers among their operands, and their use as property keys (the same program without type annotations).
+const print = (s) => console.log(s);
+////= show-5
+export function pairKey(a, b) {
+  return a.id + "," + b.id;
+}
+export function templateKey(a, b, postfix) {
+  return `${a.id},${b.id}${postfix}`;
+}
+export function idAndAlias(a, alias) {
+  return a.id + alias;
+}
+export function aliasAndId(alias, a) {
+  return alias + a.id;
+}
+export function three(a, b, c) {
+  return a + ":" + b + ":" + c;
+}
+export function named(a, n) {
+  return a.name + "#" + n;
+}
+export function stringsOnly(a, b) {
+  return a.name + "," + b.name;
+}
+export function withBoolean(a, flag) {
+  return a.id + "," + flag;
+}
+export function usedTwice(a, b) {
+  const head = a.id + ",";
+  return head + b.id + head;
+}
+export function textTwice(a) {
+  const text = "" + a.id;
+  return text + "/" + text;
+}
+export function manyParts(a) {
+  return a + "a" + a + "b" + a + "c" + a + "d" + a + "e" + a;
+}
+export function longConstant(a) {
+  return "0123456789012345678901234567890123456789012345678901234" + a;
+}
+export function appended(ids) {
+  let result = "";
+  for (const id of ids) {
+    if (result.length)
+      result += ",";
+    result += id;
+  }
+  return result;
+}
+export function between(a, b, log) {
+  const head = a.name + a.id;
+  log.push("between");
+  return head + b.id;
+}
+export function handled(a, b) {
+  try {
+    return a.id + "," + b.id;
+  } catch {
+    return a.id + "!";
+  }
+}
+export function integers(s, i) {
+  return s.length + ":" + (i | 0) + ":" + (i >>> 0);
+}
+const numbers = [0, -0, 1, 9, 10, 1023, 1024, 65535, 123456, 2147483647, 2147483648, -1, -2147483648, -2147483649, 4294967295, 9007199254740992, -9007199254740992, 1000000000000000000000, 0.0000001, 0.1, -0.5, 1.5, NaN, 1 / 0, -1 / 0, 1000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000, 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005];
+const strings = ["", "x", "@12", "caf\xE9", "\u65E5\u672C", "a".repeat(30), "a".repeat(40), "a".repeat(41), "a".repeat(42), "a".repeat(52), "a".repeat(53), "a".repeat(64), "a".repeat(200), cat("ab", "cd"), cat3("a", "b", "c"), part("xxabcdefxx", 2, 8), flattened(cat("ab", "cd")), cat("\u65E5", "x")];
+function check(made, expected, what) {
+  return made === expected && made.length === expected.length ? "" : " DIFFERS " + what + " " + show(made) + " " + show(expected);
+}
+let bad = "";
+let sum = 0;
+function note(s) {
+  for (let i = 0;i < s.length; i++)
+    sum = sum * 31 + s.charCodeAt(i) | 0;
+}
+for (const x of numbers) {
+  for (const y of numbers) {
+    const a = { id: x, name: "n" + x }, b = { id: y, name: "m" };
+    const X = String(x), Y = String(y);
+    bad += check(pairKey(a, b), [X, Y].join(","), "pairKey") + check(three(x, y, x), [X, Y, X].join(":"), "three") + check(usedTwice(a, b), X + "," + Y + X + ",", "usedTwice") + check(handled(a, b), [X, Y].join(","), "handled");
+    note(pairKey(a, b));
+    note(withBoolean(a, y > 0));
+    for (const s of strings) {
+      bad += check(templateKey(a, b, s), [X, Y].join(",").concat(s), "templateKey");
+      if (x === y)
+        bad += check(idAndAlias(a, s), X.concat(s), "idAndAlias") + check(aliasAndId(s, a), s.concat(X), "aliasAndId") + check(named({ id: 0, name: s }, x), s.concat("#", X), "named") + check(stringsOnly({ id: 0, name: s }, b), s.concat(",m"), "stringsOnly");
+    }
+  }
+  bad += check(textTwice({ id: x, name: "" }), String(x) + "/" + String(x), "textTwice") + check(manyParts(x), [x, x, x, x, x, x].map(String).join("?").replace("?", "a").replace("?", "b").replace("?", "c").replace("?", "d").replace("?", "e"), "manyParts");
+  bad += check(longConstant(x), "0123456789012345678901234567890123456789012345678901234".concat(String(x)), "longConstant") + check(integers("abc", x), "3:" + String(x | 0) + ":" + String(x >>> 0), "integers");
+}
+print("differences:" + bad + " " + sum);
+print(appended([]) + "|" + appended([5]) + "|" + appended([1, 22, 333, 4444, 55555, 666666, 7777777, 88888888, 999999999, 1.5, -0, NaN]) + "|" + appended(Array.from({ length: 40 }, (_, i) => i * 1000)).length);
+const log = [];
+print(between({ id: 1, name: "n" }, { id: 2, name: "" }, log) + " " + log.join());
+const map = new Map;
+const set = new Set;
+const record = {};
+for (let i = 0;i < 300; i++) {
+  const a = { id: i * 37, name: "" }, b = { id: 1e5 - i, name: "" };
+  map.set(pairKey(a, b), i);
+  set.add(templateKey(a, b, i & 1 ? "" : ":1"));
+  record[idAndAlias(a, "@" + i)] = i;
+}
+let found = 0;
+for (let i = 0;i < 300; i++) {
+  const plain = String(i * 37) + "," + String(1e5 - i);
+  if (map.get(plain) === i)
+    found++;
+  if (map.get(pairKey({ id: i * 37, name: "" }, { id: 1e5 - i, name: "" })) === i)
+    found++;
+  if (set.has(plain + (i & 1 ? "" : ":1")))
+    found++;
+  if (record[String(i * 37) + "@" + String(i)] === i)
+    found++;
+  if (map.has(three(i, i, i)))
+    found--;
+}
+print("found " + found + " of 1200; " + map.size + " " + set.size + " " + Object.keys(record).length + " " + [...map.keys()].slice(0, 3).join(" "));
+function nil() {
+  return numbers.length > 1000 ? { id: 1, name: "" } : undefined;
+}
+print(attempt(() => pairKey(nil(), { id: 1, name: "" })) + " " + attempt(() => pairKey({ id: 1, name: "" }, nil())) + " " + attempt(() => templateKey({ id: 1, name: "" }, nil(), "")));
+globalThis.kept = [pairKey, templateKey, idAndAlias, aliasAndId, three, named, stringsOnly, withBoolean, usedTwice, textTwice, manyParts, longConstant, appended, between, handled, integers];
+console.log("number");
+//// constant-created-between-comparisons.ts
+type Described = { mode: "default"; level: "low" | "high" | "none" };
+
+function describe(text: string): Described | undefined {
+  if (text === "skip") return undefined;
+  return { mode: "default", level: text === "a" ? "low" : text === "b" ? "high" : "none" };
+}
+
+const texts = ["skip", "a", "b", "c", "skipped", ""];
+for (let round = 0; round < 3; round++) {
+  for (const text of texts) {
+    const described = describe(text + (round > 5 ? "x" : ""));
+    console.log(text, described ? described.mode + " " + described.level : "nothing");
+  }
+}
+//// constant-formatters.ts
+// Constant Intl formatters, with the values their format patterns decline and the uses that must take the real function.
+const print = (s: string) => console.log(s);
+function attempt(name: string, f: () => unknown): void {
+    try {
+        print(name + ": " + String(f()));
+    } catch (e) {
+        print(name + ": throws " + (e as Error).name);
+    }
+}
+
+const beforeSpringChange = new Date(Date.UTC(2024, 2, 10, 6, 59, 59));
+const afterSpringChange = new Date(Date.UTC(2024, 2, 10, 7, 0, 0));
+const beforeFallChange = new Date(Date.UTC(2024, 10, 3, 5, 59, 59));
+const afterFallChange = new Date(Date.UTC(2024, 10, 3, 6, 0, 0));
+const dates = [beforeSpringChange, afterSpringChange, beforeFallChange, afterFallChange];
+
+const utc = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", dateStyle: "medium", timeStyle: "medium" });
+const fixedOffset = new Intl.DateTimeFormat("en-US", { timeZone: "+05:30", dateStyle: "medium", timeStyle: "medium" });
+const newYork = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", dateStyle: "medium", timeStyle: "medium" });
+const defaultZone = new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "medium" });
+for (const date of dates) {
+    attempt("utc date", () => utc.format(date));
+    attempt("utc number", () => utc.format(date.getTime()));
+    attempt("fixed offset date", () => fixedOffset.format(date));
+    attempt("fixed offset number", () => fixedOffset.format(date.getTime()));
+    attempt("new york date", () => newYork.format(date));
+    attempt("new york number", () => newYork.format(date.getTime()));
+    attempt("default zone date", () => defaultZone.format(date));
+    attempt("default zone number", () => defaultZone.format(date.getTime()));
+    attempt("toLocaleString utc", () => date.toLocaleString("en-US", { timeZone: "UTC" }));
+    attempt("toLocaleString fixed offset", () => date.toLocaleString("en-US", { timeZone: "+05:30" }));
+    attempt("toLocaleString new york", () => date.toLocaleString("en-US", { timeZone: "America/New_York" }));
+    attempt("toLocaleString default zone", () => date.toLocaleString("en-US"));
+    attempt("toLocaleDateString utc", () => date.toLocaleDateString("en-US", { timeZone: "UTC" }));
+    attempt("toLocaleDateString new york", () => date.toLocaleDateString("en-US", { timeZone: "America/New_York" }));
+    attempt("toLocaleDateString default zone", () => date.toLocaleDateString("en-US"));
+    attempt("toLocaleTimeString utc", () => date.toLocaleTimeString("en-US", { timeZone: "UTC" }));
+    attempt("toLocaleTimeString new york", () => date.toLocaleTimeString("en-US", { timeZone: "America/New_York" }));
+    attempt("toLocaleTimeString default zone", () => date.toLocaleTimeString("en-US"));
+}
+
+const decimal = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+const percent = new Intl.NumberFormat("en-US", { style: "percent" });
+const numbers = [0, 1, -1, 1234.5, 1234567.891, 0.125, NaN, 1e21, -0, Infinity];
+for (const value of numbers) {
+    attempt("decimal format", () => decimal.format(value));
+    attempt("percent format", () => percent.format(value));
+    attempt("toLocaleString number", () => value.toLocaleString("en-US", { maximumFractionDigits: 2 }));
+}
+
+attempt("new york fraction before change", () => newYork.format(-1633280400000.5));
+
+const yearZero = new Date(-62198755200000);
+const invalid = new Date(NaN);
+attempt("year zero format", () => utc.format(yearZero));
+attempt("year zero toLocaleString", () => yearZero.toLocaleString("en-US", { timeZone: "UTC" }));
+attempt("invalid format", () => utc.format(invalid));
+attempt("invalid number format", () => utc.format(NaN));
+attempt("invalid toLocaleString", () => invalid.toLocaleString("en-US", { timeZone: "UTC" }));
+
+const withOwnValueOf = new Date(0);
+withOwnValueOf.valueOf = () => 86400000;
+attempt("own valueOf", () => utc.format(withOwnValueOf));
+
+class LoudNumberFormat extends Intl.NumberFormat {
+    describe(value: number): string {
+        return "<" + this.format(value) + ">";
+    }
+}
+const loud = new LoudNumberFormat("en-US", { maximumFractionDigits: 1 });
+attempt("subclass format", () => loud.format(1234.56));
+attempt("subclass method", () => loud.describe(1234.56));
+
+const formatNumberLater = decimal.format;
+const formatDateLater = utc.format;
+attempt("number format as value", () => formatNumberLater(9876.543));
+attempt("date format as value", () => formatDateLater(afterFallChange));
+
+attempt("format without argument", () => typeof utc.format());
+
+for (let i = 0; i < 3; i++) {
+    const inLoop = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2 });
+    attempt("number formatter in loop", () => inLoop.format(i * 1000.5));
+    const dateInLoop = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", dateStyle: "short" });
+    attempt("date formatter in loop", () => dateInLoop.format(i * 86400000));
+}

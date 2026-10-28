@@ -80,7 +80,8 @@ async function project(linker: Linker, bunfigOpts: { saveTextLockfile?: boolean 
     async resolvedFrom(name: string, version: string, dependency: string): Promise<string | undefined> {
       let nodeModules = join(dir, "node_modules");
       if (linker === "isolated") {
-        // Through the root's link: added peers rename the entry, and the one it replaces stays in the store.
+        // Read through the root's link, because added peers rename the entry, and the entry that it replaces stays in
+        // the store.
         nodeModules = dirname(await realpath(join(nodeModules, name)));
         expect(basename(dirname(nodeModules))).toStartWith(`${name}@${version}`);
       }
@@ -155,7 +156,7 @@ describe.each(["hoisted", "isolated"] as const)("packageExtensions (%s)", linker
     expect((await app.lock()).packageExtensions).toEqual({
       "a-dep@1.0.3": { peerDependencies: ["left-pad", "no-deps", "peer-no-deps"] },
     });
-    // The required peer is what the root provides. Nobody provides the optional ones.
+    // The root provides the required peer. Nobody provides the optional ones.
     expect(await app.locked()).toEqual(["a-dep@1.0.3", "peer-no-deps@1.0.1"]);
     expect(await app.resolvedFrom("a-dep", "1.0.3", "peer-no-deps")).toBe("1.0.1");
     expect(await app.resolvedFrom("a-dep", "1.0.3", "left-pad")).toBeUndefined();
@@ -164,7 +165,7 @@ describe.each(["hoisted", "isolated"] as const)("packageExtensions (%s)", linker
     await app.install(manifest, false, "--frozen-lockfile");
   });
 
-  test.concurrent("what the package declares itself wins", async () => {
+  test.concurrent("the package's own declaration wins", async () => {
     const app = await project(linker);
     await app.install(
       {
@@ -265,21 +266,24 @@ describe.each(["hoisted", "isolated"] as const)("packageExtensions (%s)", linker
     expect(await loadable()).toEqual([]);
   });
 
-  // bun.lock says which rows were added, so a row the package declares is not taken for one.
-  test.concurrent("removing a key that repeats what the package declares keeps the package's row", async () => {
-    const app = await project(linker);
-    const dependencies = { "one-fixed-dep": "1.0.0" };
-    await app.install({ dependencies }, true);
-    const without = await app.lockText();
+  // bun.lock records which dependencies were added, so one that the package declares isn't mistaken for an added one.
+  test.concurrent(
+    "removing a key that repeats the package's own declaration keeps the package's dependency",
+    async () => {
+      const app = await project(linker);
+      const dependencies = { "one-fixed-dep": "1.0.0" };
+      await app.install({ dependencies }, true);
+      const without = await app.lockText();
 
-    await app.install(
-      { dependencies, packageExtensions: { "one-fixed-dep": { dependencies: { "no-deps": "1.0.0" } } } },
-      false,
-    );
-    expect(await app.lockText()).toBe(without);
-    await app.install({ dependencies }, false);
-    expect(await app.entry("one-fixed-dep")).toEqual({ dependencies: { "no-deps": "1.0.0" } });
-  });
+      await app.install(
+        { dependencies, packageExtensions: { "one-fixed-dep": { dependencies: { "no-deps": "1.0.0" } } } },
+        false,
+      );
+      expect(await app.lockText()).toBe(without);
+      await app.install({ dependencies }, false);
+      expect(await app.entry("one-fixed-dep")).toEqual({ dependencies: { "no-deps": "1.0.0" } });
+    },
+  );
 
   test.concurrent("makes a peer that the package declares optional, and required again", async () => {
     const app = await project(linker);
@@ -392,7 +396,7 @@ describe.each(["hoisted", "isolated"] as const)("packageExtensions (%s)", linker
     await app.install(manifest, false);
   });
 
-  test.concurrent("bun.lockb records what was added as well", async () => {
+  test.concurrent("bun.lockb also records what was added", async () => {
     const app = await project(linker, { saveTextLockfile: false });
     const extended = (version: string) => ({
       dependencies: { "a-dep": "1.0.5" },
@@ -452,7 +456,7 @@ test.concurrent("a key with a mistake is ignored with a warning", async () => {
         "a-dep@not a range": { dependencies },
         "a-dep@": { dependencies },
         "": { dependencies },
-        // Read against the extended package, these would not mean what they say.
+        // Read against the extended package, these wouldn't mean what they say.
         "a-dep@1.x": { dependencies: { "no-deps": "file:./no-deps" } },
         "a-dep@^1": { dependencies: { "no-deps": "link:./no-deps" } },
         "a-dep@~1": { dependencies: { "no-deps": "workspace:*" } },
@@ -512,7 +516,7 @@ test.concurrent("only the root package.json is read", async () => {
   expect(exitCode).toBe(0);
 });
 
-test.concurrent("what no key adds any more is unlinked from the extended package only", async () => {
+test.concurrent("a dependency that no key adds anymore is only unlinked from the extended package", async () => {
   const root = { name: "app", workspaces: ["packages/*"], dependencies: { "a-dep": "1.0.5" } };
   const { packageDir, packageJson } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },

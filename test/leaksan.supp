@@ -67,6 +67,9 @@ leak:runtime.webcore.Blob.getNameString
 leak:JSC::callIntlDateTimeFormat
 leak:functionRunProfiler
 leak:JSC::JSModuleLoader::evaluateNonVirtual
+# Under --aot it serves the default export of an entry point, which plain Bun does from the evaluation of its entry
+# wrapper (the line above). NewServer::init makes a pool of request contexts once a thread, which a Worker's end does not free.
+leak:Zig::startServerFromNamespace
 leak:patch.patch.PatchFile.apply
 leak:jsc.ModuleLoader.RuntimeTranspilerStore.TranspilerJob.runFromJSThread
 leak:runtime.webcore.blob.Store.initS3WithReferencedCredentials
@@ -95,14 +98,13 @@ leak:runtime.node.node_fs_watcher.FSWatcher.Arguments.fromJS
 leak:jsc.web_worker.create
 leak:runtime.node.zlib.NativeZlib.Context.init
 leak:JSC::intlCollatorAvailableLocales
-leak:Bun__canonicalizeIP
+leak:Bun__Bindgen__CaresJsc__canonicalizeIP
 leak:dlopen
 leak:Bun::evaluateCommonJSModuleOnce
 leak:fse_run_loop
 leak:Zig::NapiClass_ConstructorFunction
 leak:runtime.webcore.fetch.FetchTasklet.toResponse
 leak:JSC::jsonProtoFuncStringify
-leak:libarchive_sys.bindings.Archive.readNew
 leak:Zig::SourceProvider::create
 
 leak:fromErrorInstance
@@ -113,10 +115,6 @@ leak:WebCore::JSReadableStreamDefaultReaderPrototype::finishCreation
 leak:WebCore::JSReadableStreamDefaultControllerPrototype::finishCreation
 
 # file comments below are where it was first seen, not an exhaustive list
-# test/js/node/test/parallel/test-inspector-enabled.js
-leak:jsc.Debugger.startJSDebuggerThread
-# test/js/sql/sqlite-sql.test.ts
-leak:WebCore::jsSQLStatementOpenStatementFunction
 # test/js/web/atomics.test.ts — RunLoop::scheduleTimer's DispatchTimer captures
 # a Ref to itself in m_function; the cycle only breaks when fired(). If stop()
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),

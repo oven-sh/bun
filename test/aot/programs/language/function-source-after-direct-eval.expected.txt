@@ -1,0 +1,15 @@
+function first(s) { return eval(s); }
+function Plain(a) { this.a = a; }
+(x) => x + 1
+class K { constructor() { this.k = 1; } m() { return eval("this.k + 1"); } static s() {} }
+m() { return eval("this.k + 1"); }
+s() {}
+class D extends K {}
+method(a, b) { return a + b; }
+get g() { return 1; }
+async am() {}
+*gm() {}
+function between(x) { return eval("x * 2") + eval("x * 3"); }
+function sameLine() { return "behind two on one line"; }
+function last() { return "last"; }
+2 2 10 true

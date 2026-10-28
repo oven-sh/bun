@@ -1,0 +1,2831 @@
+////: above
+const above = {
+  "a String object": () => new String("abc"),
+  "a typed array": () => new Uint8Array([7, 8, 9]),
+  "an empty typed array": () => new Uint8Array(0),
+  "an array": () => [7, 8, 9],
+  "a frozen array": () => Object.freeze([7, 8, 9]),
+  "an array with a getter and a setter": () =>
+    Object.defineProperty([7], 1, {
+      get() {
+        return "got";
+      },
+      set(value) {
+        this.seen = value;
+      },
+    }),
+  "an array with a getter alone": () =>
+    Object.defineProperty([7], 1, {
+      get() {
+        return "got";
+      },
+    }),
+  "an object with an element that cannot be written": () =>
+    Object.defineProperty({}, 1, { value: "fixed", writable: false }),
+  "an arguments object": () =>
+    (function () {
+      return arguments;
+    })(7, 8, 9),
+  "a proxy that refuses": () =>
+    new Proxy(
+      {},
+      {
+        set() {
+          return false;
+        },
+      },
+    ),
+  "a proxy that stores under another name": () =>
+    new Proxy(
+      {},
+      {
+        set(target, key, value, receiver) {
+          return Reflect.defineProperty(receiver, "other", {
+            value,
+            configurable: true,
+            enumerable: true,
+            writable: true,
+          });
+        },
+      },
+    ),
+  "a frozen literal": () => Object.freeze({ 1: "f" }),
+  "a literal with an element that cannot be written": () => {
+    const literal = { b: 2 };
+    Object.defineProperty(literal, 1, { value: "fixed", writable: false });
+    return literal;
+  },
+  "a literal below a String object": () => Object.setPrototypeOf({ b: 2 }, new String("abc")),
+  "a created object below a String object": () => Object.create(new String("abc")),
+  "a String object below a proxy that refuses": () =>
+    Object.setPrototypeOf(
+      new String("abc"),
+      new Proxy(
+        {},
+        {
+          set() {
+            return false;
+          },
+        },
+      ),
+    ),
+  "a typed array below an object with an element that cannot be written": () =>
+    Object.setPrototypeOf(new Uint8Array(1), Object.defineProperty({}, 5, { value: "fixed", writable: false })),
+  "a String object below an object with an element that cannot be written": () =>
+    Object.setPrototypeOf(new String("a"), Object.defineProperty({}, 5, { value: "fixed", writable: false })),
+};
+////: below
+const below = {
+  "a literal": proto => Object.setPrototypeOf({ a: 1 }, proto),
+  "a literal that names its prototype": proto => ({ __proto__: proto, a: 1 }),
+  "an instance of a class": proto => Object.setPrototypeOf(new Instance(), proto),
+  "an instance of a function": proto => Object.setPrototypeOf(new Made(), proto),
+  "a created object": proto => Object.create(proto),
+  "a literal that takes no more": proto => Object.preventExtensions(Object.setPrototypeOf({ a: 1 }, proto)),
+  "a literal with the element": proto => Object.setPrototypeOf({ a: 1, 1: "own", 5: "own" }, proto),
+  "a literal with the element, which cannot be written": proto =>
+    Object.defineProperty(Object.defineProperty(Object.setPrototypeOf({ a: 1 }, proto), 1, { value: "own" }), 5, {
+      value: "own",
+    }),
+};
+////: for
+for (const [upper, makeAbove] of Object.entries(above)) {
+  for (const [lower, makeBelow] of Object.entries(below)) {
+    for (const key of [1, 5, "1", JSON.parse("5")]) {
+      const label = lower + " below " + upper + ", " + typeof key + " " + key;
+      say(label, () => {
+        const proto = makeAbove();
+        const object = makeBelow(proto);
+        object[key] = "z";
+        return seenOf(object, proto, key);
+      });
+      say(label + ", by Reflect.set", () => {
+        const proto = makeAbove();
+        const object = makeBelow(proto);
+        return [Reflect.set(object, key, "z"), ...seenOf(object, proto, key)];
+      });
+    }
+    say(lower + " below " + upper + ", for another receiver", () => {
+      const proto = makeAbove();
+      const object = makeBelow(proto);
+      const receiver = { r: 1 };
+      return [Reflect.set(object, 1, "z", receiver), receiver[1], object[1], Object.hasOwn(object, 1)];
+    });
+  }
+}
+////: lines-21
+«1»(«2», function () {
+  lines.push(
+    «3» + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+////: lines-64
+(() => {
+  const counts = «1»;
+  for (const w of words) { counts[w] ??= 0; counts[w] = counts[w] + 1; }
+  let total = 0;
+  for (const w of words) total = total + counts[w];
+  console.log(«2», show(total));
+  console.log(«2», Object.keys(counts).join());
+})();
+////: lines-65
+(() => {
+  const counts: Record<string, number> = «1»;
+  for (const w of words) { counts[w] ??= 0; counts[w] = counts[w] + 1; }
+  let total = 0;
+  for (const w of words) total = total + counts[w];
+  console.log(«2», show(total));
+  console.log(«2», Object.keys(counts).join());
+})();
+////: lines-66
+(() => {
+  const counts = «1»;
+  for (const w of words) «2»
+  for (const w of words) console.log(«3», w, show(counts[w]));
+  console.log(«3», Object.keys(counts).join());
+})();
+////: lines-67
+(() => {
+  const counts: Record<string, number> = «1»;
+  for (const w of words) «2»
+  for (const w of words) console.log(«3», w, show(counts[w]));
+  console.log(«3», Object.keys(counts).join());
+})();
+////: lines-68
+(() => {
+  const groups = «1»;
+  let i = 0;
+  for (const w of words) console.log(«2», w, attempt(() => { (groups[w] ||= []).push(i++); return groups[w].length; }));
+  console.log(«2», Object.keys(groups).join());
+})();
+////: lines-69
+(() => {
+  const set = «1»;
+  for (const w of words) set[w] = true;
+  for (const w of words) console.log(«2», w, attempt(() => delete set[w]), show(set[w]));
+  console.log(«2», Object.keys(set).join());
+})();
+////: lines-70
+(() => {
+  const table = «1»;
+  for (const w of words) table[w] = { n: w.length };
+  for (const w of [...words, "n", "zzz"]) console.log(«2», w, attempt(() => show(table[w])), attempt(() => show(table[w].n)));
+  console.log(«2», Object.keys(table).join(), Object.getPrototypeOf(table) === Object.prototype, Object.getPrototypeOf(table) === null);
+})();
+////: lines-73
+(() => {
+  const handlers = «1»;
+  handlers.a = x => x + 1; handlers.b = x => x * 2;
+  for (const w of words) console.log(«2», w, attempt(() => { const h = handlers[w]; return h ? show(h(3)) : "none"; }));
+})();
+////: lines-74
+(() => {
+  const names = «1»;
+  names.a = "A";
+  for (const w of words) console.log(«2», w, attempt(() => { const s = names[w]; return s === undefined ? "none" : show(s.length) + show(s + "!"); }));
+})();
+////: say-2
+function say(label, run) {
+  try {
+    lines.push(label + ": " + JSON.stringify(run()));
+  } catch (error) {
+    lines.push(label + ": threw " + error.name);
+  }
+}
+////: seenOf
+const seenOf = (object, proto, key) => [
+  object[key],
+  Object.hasOwn(object, key),
+  Object.hasOwn(proto, key),
+  object.seen,
+  object.other,
+];
+//// copies-whose-sources-targets-and-keys-arrive-late.js
+// Copies of properties whose sources, targets, keys and excluded keys arrive late.
+function id(x) { return x; }
+function chain(x) { return id(id(id(id(id(id(id(id(x)))))))); }
+function show(...parts) { console.log(parts.map(String).join(" | ")); }
+function dynamic(text) { return (text + "!").slice(0, text.length); }
+
+// 1: the source gets a property after the copy was seen
+{
+  const source = { a: 1 };
+  function grow(s) { s.late = "text"; }
+  grow(chain(source));
+  const copy = { ...source };
+  show("1", copy.a + 1, copy.late.length);
+}
+// 2: another source, another target
+{
+  function assign(t, s) { return Object.assign(t, s); }
+  const t1 = assign({}, { a: 1 });
+  const t2 = assign(chain({ own: true }), { a: 1 });
+  const t3 = assign({}, chain({ b: "text" }));
+  show("2", t1.a + 1, t2.a + 1, t2.own, t3.b.length, t3.a);
+}
+// 3: Object.assign runs a setter that appears late on the chain of the target
+{
+  const log = [];
+  const proto = {};
+  const target = Object.create(proto);
+  function assign(t, s) { return Object.assign(t, s); }
+  assign({}, { x: 0 });
+  Object.defineProperty(chain(proto), "x", { set(v) { log.push(v); this.hidden = v; }, configurable: true });
+  assign(target, { x: 5 });
+  show("3", Object.keys(target).join(), target.hidden + 1, log.join());
+}
+// 4: the getter of a source appears late
+{
+  const source = { a: 1 };
+  Object.defineProperty(chain(source), "g", { get() { return helper(); }, enumerable: true });
+  function helper() { return ["from getter"]; }
+  const copy = { ...source };
+  show("4", copy.g.length, copy.g[0].length, Object.getOwnPropertyDescriptor(copy, "g").value.length);
+}
+// 5: a rest pattern whose excluded key is one name first and two names later
+{
+  function omit(o, k) { const { [k]: dropped, ...rest } = o; return rest; }
+  const first = omit({ a: 1, b: "text" }, "a");
+  show("5a", first.a, first.b.length);
+  const second = omit({ a: 1, b: "text" }, chain("b"));
+  show("5b", second.a + 1, second.b);
+}
+// 6: a rest pattern with a key that nobody can name
+{
+  function omit(o, k) { const { [k]: dropped, ...rest } = o; return rest; }
+  const rest = omit({ a: 1, b: "text" }, dynamic("a"));
+  show("6", rest.a, rest.b.length);
+  const rest2 = omit({ a: 1, b: "text" }, dynamic("zz"));
+  show("6b", rest2.a + 1, rest2.b.length);
+}
+// 7: a string as a source, arriving late
+{
+  function spread(s) { return { ...s }; }
+  show("7a", Object.keys(spread({ a: 1 })).join());
+  const characters = spread(chain("hi"));
+  show("7b", Object.keys(characters).join(), characters[0].length, characters[1]);
+}
+// 8: unnamed members of the source
+{
+  const source = {};
+  source[dynamic("k")] = [1, 2];
+  const copy = { ...source };
+  show("8", copy.k.length);
+  const source2 = {};
+  const copy2 = Object.assign({ k: 0 }, source2);
+  show("8b", copy2.k + 1);
+  function fill(s) { s[dynamic("k")] = "text"; }
+  fill(chain(source2));
+  const copy3 = Object.assign({ k: 0 }, source2);
+  show("8c", copy3.k.length);
+}
+// 9: a copy of a copy of a copy, the first source grows last
+{
+  const source = { a: 1 };
+  function clone(o) { return { ...o }; }
+  const make = () => clone(clone(clone(source)));
+  show("9a", make().a + 1, make().z);
+  chain(source).z = () => "called";
+  show("9b", make().z());
+}
+// 10: symbols and non-enumerable properties
+{
+  const s = Symbol("s");
+  const source = { [s]: "symbol" };
+  Object.defineProperty(source, "hidden", { value: 1, enumerable: false });
+  const copy = { ...chain(source) };
+  show("10", copy[s].length, copy.hidden, "hidden" in copy);
+}
+// 11: arrays as sources and targets
+{
+  const copy = Object.assign([], chain([1, "two"]));
+  show("11", copy.length, copy[0] + 1, copy[1].length);
+  const spread = { ...chain(["zero"]) };
+  show("11b", spread[0].length, spread["0"].length);
+}
+//// declared-field-of-subclass-keeps-what-the-base-stored.ts
+class A {
+  value: unknown;
+  constructor() { this.value = this.make(); }
+  make(): unknown { return 1; }
+}
+class B extends A {
+  declare value: string;
+  make(): unknown { return "made"; }
+  size(): number { return this.value.length; }
+}
+console.log(new B().size(), new B().value, new A().value);
+//// declared-optional-field-stored-through-any-under-a-computed-key.ts
+// A declared optional field is stored through `any` under a key that only the run knows. Untyped reads get the value back, typed reads see the objects that hold what the type says.
+const names: string[] = JSON.parse('["late", "count"]');
+const input: any = JSON.parse('{"late": 5, "count": "many"}');
+interface Entry {
+  count: number;
+  late?: string;
+}
+class Holder {
+  count: number = 0;
+  late?: string;
+  lateLength(): number {
+    return this.late === undefined ? -1 : this.late.length;
+  }
+}
+function entry(count: number): Entry {
+  return { count };
+}
+function lateLength(e: Entry): number {
+  return e.late === undefined ? -1 : e.late.length;
+}
+function twice(e: Entry): number {
+  return e.count * 2;
+}
+function untyped(o: any): string {
+  return typeof o.late + ":" + String(o.late) + " " + typeof o.count + ":" + String(o.count) + " " + Object.keys(o).join("+") + " " + JSON.stringify(o);
+}
+const a = entry(1);
+(a as any)[names[0]] = 5;
+const b = entry(2);
+b.late = "text";
+const c = entry(3);
+for (const k of Object.keys(input)) (c as any)[k] = input[k];
+const d: Entry = Object.assign(entry(4), input);
+const e = entry(5);
+(e as any)[names[0]] = "fits";
+const h = new Holder();
+(h as any)[names[0]] = 5;
+const i = new Holder();
+i.late = "text";
+const j = new Holder();
+for (const k of Object.keys(input)) (j as any)[k] = input[k];
+const k = new Holder();
+(k as any)[names[0]] = "fits";
+for (const o of [a, b, c, d, e, h, i, j, k]) console.log(untyped(o));
+console.log(twice(a), lateLength(b), twice(b), lateLength(e), twice(e), h.count, i.lateLength(), i.count, k.lateLength(), k.count);
+let total = 0;
+for (let n = 0; n < 6000; n++) {
+  total += lateLength(n & 1 ? b : e) + (n & 1 ? i : k).lateLength() + twice(n % 3 === 0 ? a : n % 3 === 1 ? b : e);
+}
+console.log(total);
+a.late = "typed again";
+h.late = undefined;
+console.log(lateLength(a), h.lateLength(), untyped(a), untyped(h));
+//// definitions-of-a-module-read-before-they-stand.mjs
+// The variables of a module get their values where the definitions stand. Hoisted functions that run earlier find them uninitialized, also when the value is an object that costs nothing to make.
+const log = [];
+const attempt = (name, f) => { try { log.push(name + ": " + f()); } catch (e) { log.push(name + ": " + e.name); } };
+function all(when) {
+  attempt(when + " table", () => table.a);
+  attempt(when + " list", () => list.length);
+  attempt(when + " helper", () => helper());
+  attempt(when + " class", () => new Thing().n);
+  attempt(when + " pattern", () => pattern.test("a"));
+  attempt(when + " symbol", () => mark.description);
+  attempt(when + " map", () => byName.size);
+  attempt(when + " typeof table", () => typeof table);
+  attempt(when + " var", () => String(early));
+  attempt(when + " declared function", () => declared());
+  attempt(when + " exported", () => shared.n);
+}
+all("before");
+const table = { a: 1 };
+const list = [1, 2];
+const helper = () => 5;
+class Thing { n = 1; }
+const pattern = /a/;
+all("between");
+const mark = Symbol("mark");
+const byName = new Map();
+var early = [1];
+function declared() { return "declared"; }
+export const shared = { n: 7 };
+all("after");
+let count = 1;
+const box = { count };
+const snapshot = [count, table.a];
+count = 2;
+table.a = 3;
+log.push("moment: " + [box.count, snapshot, count, table.a].join());
+console.log(log.join("\n"));
+//// definitions-read-across-a-cycle-of-modules/first.mjs
+import { seenEarly, look } from "./second.mjs";
+export const table = { a: 1 };
+export const helper = () => 5;
+export class Thing { n = 1; }
+export let counter = 1;
+export var loose = [1];
+export function declared() { return "declared"; }
+export default { kind: "default" };
+counter = 2;
+export function report() { return [...seenEarly, ...look("late")]; }
+//// definitions-read-across-a-cycle-of-modules/main.mjs
+// first.mjs imports second.mjs, which imports first.mjs again and runs first: what first.mjs defines is not there yet, but for its function declarations.
+import { report } from "./first.mjs";
+console.log(report().join("\n"));
+//// definitions-read-across-a-cycle-of-modules/second.mjs
+import main, { table, helper, Thing, counter, loose, declared } from "./first.mjs";
+import * as all from "./first.mjs";
+const attempt = (name, f) => { try { return name + ": " + f(); } catch (e) { return name + ": " + e.name; } };
+export function look(when) {
+  return [
+    attempt(when + " table", () => table.a), attempt(when + " helper", () => helper()), attempt(when + " class", () => new Thing().n), attempt(when + " counter", () => counter),
+    attempt(when + " var", () => String(loose)), attempt(when + " declared", () => declared()), attempt(when + " default", () => main.kind),
+    attempt(when + " namespace keys", () => Object.keys(all).join()), attempt(when + " namespace read", () => all.table.a), attempt(when + " namespace has", () => "table" in all),
+    attempt(when + " namespace descriptor", () => typeof Object.getOwnPropertyDescriptor(all, "helper").value),
+  ];
+}
+export const seenEarly = look("early");
+//// descriptors-arrive-late-or-change-kind.js
+// Descriptors and maps of descriptors that arrive late or change their kind.
+function id(x) { return x; }
+function chain(x) { return id(id(id(id(id(id(id(id(x)))))))); }
+function show(...parts) { console.log(parts.map(String).join(" | ")); }
+function dynamic(text) { return (text + "!").slice(0, text.length); }
+
+// 1: the receiver is known long before the descriptor
+{
+  function define(o, d) { Object.defineProperty(o, "p", d); }
+  const o = {};
+  define(o, chain(chain(chain({ value: "text", configurable: true }))));
+  show("1", o.p.length);
+}
+// 2: a data descriptor first, an accessor descriptor late
+{
+  function define(o, d) { Object.defineProperty(o, "p", d); }
+  const a = {}, b = {};
+  define(a, { value: 1, configurable: true });
+  show("2a", a.p + 1);
+  define(b, chain({ get() { return helper(); }, configurable: true }));
+  function helper() { return "getter"; }
+  show("2b", b.p.length);
+  define(a, chain({ get() { return [1]; } }));
+  show("2c", a.p.length);
+}
+// 3: an accessor descriptor first, a data descriptor late
+{
+  function define(o, d) { Object.defineProperty(o, "p", d); }
+  const a = {};
+  define(a, { get() { return "getter"; }, configurable: true });
+  show("3a", a.p.length);
+  define(a, chain({ value: 7 }));
+  show("3b", a.p + 1);
+}
+// 4: the fields of the descriptor are filled late
+{
+  const d = {};
+  function fill(x) { x.get = function () { return this.base + 1; }; x.configurable = true; }
+  fill(chain(d));
+  const o = { base: 1 };
+  Object.defineProperty(o, "p", d);
+  show("4", o.p + 1);
+}
+// 5: the descriptor inherits its fields
+{
+  const inherited = Object.create({ value: "inherited" });
+  const o = {};
+  Object.defineProperty(o, "p", chain(inherited));
+  show("5", o.p.length);
+  const parent = {};
+  const child = Object.create(parent);
+  chain(parent).get = () => "late getter";
+  const q = {};
+  Object.defineProperty(q, "p", child);
+  show("5b", q.p.length);
+}
+// 6: the key arrives late
+{
+  function define(o, k, v) { Object.defineProperty(o, k, { value: v, enumerable: true }); }
+  const o = {};
+  define(o, "a", 1);
+  define(o, chain("b"), "text");
+  define(o, dynamic("c"), [1]);
+  show("6", o.a + 1, o.b.length, o.c.length);
+}
+// 7: a map whose keys and descriptors arrive late
+{
+  const map = { a: { value: 1, enumerable: true } };
+  function grow(m) { m.b = { get() { return "getter"; }, enumerable: true }; m[dynamic("c")] = { value: [1], enumerable: true }; }
+  grow(chain(map));
+  const o = Object.defineProperties({}, map);
+  show("7", o.a + 1, o.b.length, o.c.length);
+  const created = Object.create({ inherited: true }, chain(map));
+  show("7b", created.a + 1, created.b.length, created.c.length, created.inherited);
+}
+// 8: a receiver that arrives after the map was read
+{
+  const map = { a: { value: "text" } };
+  function define(o) { return Object.defineProperties(o, map); }
+  show("8", define({}).a.length, define(chain({ own: 1 })).a.length);
+}
+// 9: what getOwnPropertyDescriptor hands out is used to define
+{
+  const source = { get g() { return this.base * 2; }, base: 4 };
+  const target = { base: 5 };
+  Object.defineProperty(target, "g", chain(Object.getOwnPropertyDescriptor(source, "g")));
+  show("9", target.g + 1);
+  const all = Object.getOwnPropertyDescriptors(chain(source));
+  const clone = Object.defineProperties({}, all);
+  show("9b", clone.g + 1, clone.base + 1);
+}
+// 10: a setter from a descriptor, and a store that was seen before
+{
+  const log = [];
+  function put(o, v) { o.p = v; }
+  const plain = {}; put(plain, 1);
+  const o = {};
+  Object.defineProperty(o, "p", chain({ set(v) { log.push(typeof v); this.kept = v; } }));
+  put(o, "text");
+  show("10", plain.p + 1, o.p, o.kept.length, log.join());
+}
+// 11: the descriptor is a primitive or missing first
+{
+  function define(o, d) { try { Object.defineProperty(o, "p", d); return "defined"; } catch (e) { return e.constructor.name; } }
+  const o = {};
+  show("11", define(o, undefined), define(o, 5), define(o, chain({ value: "text" })), o.p.length);
+}
+//// dictionaries-keyed-by-names-of-inherited-members.js
+function attempt(f) { try { return f(); } catch (e) { return "threw " + (e).constructor.name; } }
+const words = JSON.parse('["a","constructor","a","__proto__","toString","hasOwnProperty","valueOf","__proto__","__defineGetter__","isPrototypeOf","b","length","name","prototype","push","0","then","toJSON"]');
+function show(v) { return typeof v === "function" ? "function" : typeof v === "object" && v !== null ? "object" : typeof v + ":" + String(v); }
+
+// array with string keys
+(() => {
+  const list = [1, 2, 3];
+  for (const w of words) console.log("array-with-string-keys", w, attempt(() => show(list[w])));
+  for (const w of words) attempt(() => { list[w] = 5; });
+  let s = 0; for (let i = 0; i < list.length; i++) s = s + list[i];
+  console.log("array-with-string-keys", show(s), list.length, Object.keys(list).join());
+})();
+
+// cache null literal
+(() => {
+  const cache = { __proto__: null };
+  function lookup(w) { const hit = cache[w]; if (hit !== undefined) return hit; return cache[w] = w.length; }
+  for (const w of words) console.log("cache-null-literal", w, show(lookup(w)), show(lookup(w) * 2));
+})();
+
+// cache null prototype
+(() => {
+  const cache = Object.create(null);
+  function lookup(w) { const hit = cache[w]; if (hit !== undefined) return hit; return cache[w] = w.length; }
+  for (const w of words) console.log("cache-null-prototype", w, show(lookup(w)), show(lookup(w) * 2));
+})();
+
+// class static by key
+(() => {
+  class K { static a = 1; static m() { return 1; } }
+  const k = K;
+  for (const w of words) console.log("class-static-by-key", w, attempt(() => show(k[w])));
+})();
+
+// count in test literal
+(() => {
+  const counts = {};
+  for (const w of words) { if (!(w in counts)) counts[w] = 0; counts[w] += 1; }
+  for (const w of words) console.log("count-in-test-literal", w, show(counts[w]));
+  console.log("count-in-test-literal", Object.keys(counts).join());
+})();
+
+// count in test null literal
+(() => {
+  const counts = { __proto__: null };
+  for (const w of words) { if (!(w in counts)) counts[w] = 0; counts[w] += 1; }
+  for (const w of words) console.log("count-in-test-null-literal", w, show(counts[w]));
+  console.log("count-in-test-null-literal", Object.keys(counts).join());
+})();
+
+// count in test null prototype
+////= lines-66	Object.create(null)	{ if (!(w in counts)) counts[w] = 0; counts[w] += 1; }	"count-in-test-null-prototype"
+
+// count nullish assign literal
+////= lines-64	{}	"count-nullish-assign-literal"
+
+// count nullish assign null literal
+////= lines-64	{ __proto__: null }	"count-nullish-assign-null-literal"
+
+// count nullish assign null prototype
+////= lines-64	Object.create(null)	"count-nullish-assign-null-prototype"
+
+// count or zero literal
+////= lines-66	{}	counts[w] = (counts[w] || 0) + 1;	"count-or-zero-literal"
+
+// count or zero null literal
+////= lines-66	{ __proto__: null }	counts[w] = (counts[w] || 0) + 1;	"count-or-zero-null-literal"
+
+// count or zero null prototype
+////= lines-66	Object.create(null)	counts[w] = (counts[w] || 0) + 1;	"count-or-zero-null-prototype"
+
+// count undefined test literal
+(() => {
+  const counts = {};
+  for (const w of words) { if (counts[w] === undefined) counts[w] = 0; counts[w]++; }
+  for (const w of words) console.log("count-undefined-test-literal", w, show(counts[w]));
+  console.log("count-undefined-test-literal", Object.keys(counts).join());
+})();
+
+// count undefined test null literal
+(() => {
+  const counts = { __proto__: null };
+  for (const w of words) { if (counts[w] === undefined) counts[w] = 0; counts[w]++; }
+  for (const w of words) console.log("count-undefined-test-null-literal", w, show(counts[w]));
+  console.log("count-undefined-test-null-literal", Object.keys(counts).join());
+})();
+
+// count undefined test null prototype
+////= lines-66	Object.create(null)	{ if (counts[w] === undefined) counts[w] = 0; counts[w]++; }	"count-undefined-test-null-prototype"
+
+// delete by key literal
+////= lines-69	{}	"delete-by-key-literal"
+
+// delete by key null literal
+////= lines-69	{ __proto__: null }	"delete-by-key-null-literal"
+
+// delete by key null prototype
+////= lines-69	Object.create(null)	"delete-by-key-null-prototype"
+
+// function as dictionary
+(() => {
+  const f = function named(x) { return x; };
+  for (const w of words) console.log("function-as-dictionary", w, attempt(() => show(f[w])));
+  for (const w of words) attempt(() => { f[w] = 5; });
+  console.log("function-as-dictionary", f.length, f.name, show(f.prototype), attempt(() => f(1)), Object.keys(f).join());
+})();
+
+// functions by key literal
+////= lines-73	{}	"functions-by-key-literal"
+
+// functions by key null literal
+////= lines-73	{ __proto__: null }	"functions-by-key-null-literal"
+
+// functions by key null prototype
+////= lines-73	Object.create(null)	"functions-by-key-null-prototype"
+
+// group push literal
+////= lines-68	{}	"group-push-literal"
+
+// group push null literal
+////= lines-68	{ __proto__: null }	"group-push-null-literal"
+
+// group push null prototype
+////= lines-68	Object.create(null)	"group-push-null-prototype"
+
+// instance as dictionary
+(() => {
+  class Bag { a = 1; m() { return "Bag.m"; } }
+  const bag = new Bag();
+  for (const w of [...words, "m"]) console.log("instance-as-dictionary", w, attempt(() => show(bag[w])));
+  for (const w of [...words, "m"]) attempt(() => { bag[w] = { m() { return "stored.m"; } }; });
+  console.log("instance-as-dictionary", attempt(() => bag.m()), bag instanceof Bag, Object.keys(bag).join());
+})();
+
+// map control
+(() => {
+  const counts = new Map();
+  for (const w of words) counts.set(w, (counts.get(w) || 0) + 1);
+  let line = ""; for (const w of words) line += w + "=" + counts.get(w) + " ";
+  console.log("map-control", line);
+})();
+
+// nested merge null literal
+(() => {
+  function merge(d, s) { for (const k in s) { if (typeof s[k] === "object" && s[k] !== null && typeof d[k] === "object") merge(d[k], s[k]); else d[k] = s[k]; } return d; }
+  const target = { __proto__: null };
+  attempt(() => merge(target, JSON.parse('{"__proto__": {"polluted": 1}, "constructor": {"prototype": {"polluted2": 2}}, "a": {"b": 1}}')));
+  console.log("nested-merge-null-literal", show(target.polluted), show(({}).polluted), show(({}).polluted2), Object.keys(target).join());
+})();
+
+// nested merge null prototype
+(() => {
+  function merge(d, s) { for (const k in s) { if (typeof s[k] === "object" && s[k] !== null && typeof d[k] === "object") merge(d[k], s[k]); else d[k] = s[k]; } return d; }
+  const target = Object.create(null);
+  attempt(() => merge(target, JSON.parse('{"__proto__": {"polluted": 1}, "constructor": {"prototype": {"polluted2": 2}}, "a": {"b": 1}}')));
+  console.log("nested-merge-null-prototype", show(target.polluted), show(({}).polluted), show(({}).polluted2), Object.keys(target).join());
+})();
+
+// number indexed by key
+////= lines-76	onst n = 5;	for (const w of words) console.log("number-indexed-by-key", w, attempt(() => show(n[w])
+
+// objects by key null literal
+(() => {
+  const table = { __proto__: null };
+  for (const w of words) console.log("objects-by-key-null-literal", w, attempt(() => { const e = table[w] || (table[w] = { n: 0 }); e.n = e.n + 1; return show(e.n); }));
+  console.log("objects-by-key-null-literal", Object.keys(table).join(), show(({}).n), show(Object.prototype.hasOwnProperty.call(Object.prototype, "n")));
+})();
+
+// objects by key null prototype
+(() => {
+  const table = Object.create(null);
+  for (const w of words) console.log("objects-by-key-null-prototype", w, attempt(() => { const e = table[w] || (table[w] = { n: 0 }); e.n = e.n + 1; return show(e.n); }));
+  console.log("objects-by-key-null-prototype", Object.keys(table).join(), show(({}).n), show(Object.prototype.hasOwnProperty.call(Object.prototype, "n")));
+})();
+
+// proto object stored literal
+////= lines-70	{}	"proto-object-stored-literal"
+
+// proto object stored null literal
+////= lines-70	{ __proto__: null }	"proto-object-stored-null-literal"
+
+// proto object stored null prototype
+////= lines-70	Object.create(null)	"proto-object-stored-null-prototype"
+
+// string indexed by key
+////= lines-76	onst s = "xyz";	for (const w of words) console.log("string-indexed-by-key", w, attempt(() => show(s[w])
+
+// strings by key literal
+////= lines-74	{}	"strings-by-key-literal"
+
+// strings by key null literal
+////= lines-74	{ __proto__: null }	"strings-by-key-null-literal"
+
+// strings by key null prototype
+////= lines-74	Object.create(null)	"strings-by-key-null-prototype"
+//// dictionaries-keyed-by-names-of-inherited-members-typed.ts
+function attempt<T>(f: () => T): T | string { try { return f(); } catch (e) { return "threw " + (e as Error).constructor.name; } }
+const words: string[] = JSON.parse('["a","constructor","a","__proto__","toString","hasOwnProperty","valueOf","__proto__","__defineGetter__","isPrototypeOf","b","length","name","prototype","push","0","then","toJSON"]');
+function show(v: unknown): string { return typeof v === "function" ? "function" : typeof v === "object" && v !== null ? "object" : typeof v + ":" + String(v); }
+
+// array with string keys
+(() => {
+  const list: any = [1, 2, 3];
+  for (const w of words) console.log("array-with-string-keys", w, attempt(() => show(list[w])));
+  for (const w of words) attempt(() => { list[w] = 5; });
+  let s = 0; for (let i = 0; i < list.length; i++) s = s + list[i];
+  console.log("array-with-string-keys", show(s), list.length, Object.keys(list).join());
+})();
+
+// cache null prototype
+(() => {
+  const cache: Record<string, number> = Object.create(null);
+  function lookup(w: string): number { const hit = cache[w]; if (hit !== undefined) return hit; return cache[w] = w.length; }
+  for (const w of words) console.log("cache-null-prototype", w, show(lookup(w)), show(lookup(w) * 2));
+})();
+
+// class static by key
+(() => {
+  class K { static a = 1; static m() { return 1; } }
+  const k: any = K;
+  for (const w of words) console.log("class-static-by-key", w, attempt(() => show(k[w])));
+})();
+
+// count in test literal
+(() => {
+  const counts: Record<string, number> = {};
+  for (const w of words) { if (!(w in counts)) counts[w] = 0; counts[w] += 1; }
+  for (const w of words) console.log("count-in-test-literal", w, show(counts[w]));
+  console.log("count-in-test-literal", Object.keys(counts).join());
+})();
+
+// count in test null prototype
+////= lines-67	Object.create(null)	{ if (!(w in counts)) counts[w] = 0; counts[w] += 1; }	"count-in-test-null-prototype"
+
+// count nullish assign literal
+////= lines-65	{}	"count-nullish-assign-literal"
+
+// count nullish assign null prototype
+////= lines-65	Object.create(null)	"count-nullish-assign-null-prototype"
+
+// count or zero literal
+////= lines-67	{}	counts[w] = (counts[w] || 0) + 1;	"count-or-zero-literal"
+
+// count or zero null prototype
+////= lines-67	Object.create(null)	counts[w] = (counts[w] || 0) + 1;	"count-or-zero-null-prototype"
+
+// count undefined test literal
+(() => {
+  const counts: Record<string, number> = {};
+  for (const w of words) { if (counts[w] === undefined) counts[w] = 0; counts[w]++; }
+  for (const w of words) console.log("count-undefined-test-literal", w, show(counts[w]));
+  console.log("count-undefined-test-literal", Object.keys(counts).join());
+})();
+
+// count undefined test null prototype
+////= lines-67	Object.create(null)	{ if (counts[w] === undefined) counts[w] = 0; counts[w]++; }	"count-undefined-test-null-prototype"
+
+// delete by key literal
+(() => {
+  const set: Record<string, boolean> = {};
+  for (const w of words) set[w] = true;
+  for (const w of words) console.log("delete-by-key-literal", w, attempt(() => delete set[w]), show(set[w]));
+  console.log("delete-by-key-literal", Object.keys(set).join());
+})();
+
+// delete by key null prototype
+(() => {
+  const set: Record<string, boolean> = Object.create(null);
+  for (const w of words) set[w] = true;
+  for (const w of words) console.log("delete-by-key-null-prototype", w, attempt(() => delete set[w]), show(set[w]));
+  console.log("delete-by-key-null-prototype", Object.keys(set).join());
+})();
+
+// function as dictionary
+(() => {
+  const f: any = function named(x: number) { return x; };
+  for (const w of words) console.log("function-as-dictionary", w, attempt(() => show(f[w])));
+  for (const w of words) attempt(() => { f[w] = 5; });
+  console.log("function-as-dictionary", f.length, f.name, show(f.prototype), attempt(() => f(1)), Object.keys(f).join());
+})();
+
+// functions by key literal
+(() => {
+  const handlers: Record<string, (x: number) => number> = {};
+  handlers.a = x => x + 1; handlers.b = x => x * 2;
+  for (const w of words) console.log("functions-by-key-literal", w, attempt(() => { const h = handlers[w]; return h ? show(h(3)) : "none"; }));
+})();
+
+// functions by key null prototype
+(() => {
+  const handlers: Record<string, (x: number) => number> = Object.create(null);
+  handlers.a = x => x + 1; handlers.b = x => x * 2;
+  for (const w of words) console.log("functions-by-key-null-prototype", w, attempt(() => { const h = handlers[w]; return h ? show(h(3)) : "none"; }));
+})();
+
+// group push literal
+(() => {
+  const groups: Record<string, number[]> = {};
+  let i = 0;
+  for (const w of words) console.log("group-push-literal", w, attempt(() => { (groups[w] ||= []).push(i++); return groups[w].length; }));
+  console.log("group-push-literal", Object.keys(groups).join());
+})();
+
+// group push null prototype
+(() => {
+  const groups: Record<string, number[]> = Object.create(null);
+  let i = 0;
+  for (const w of words) console.log("group-push-null-prototype", w, attempt(() => { (groups[w] ||= []).push(i++); return groups[w].length; }));
+  console.log("group-push-null-prototype", Object.keys(groups).join());
+})();
+
+// instance as dictionary
+(() => {
+  class Bag { a = 1; m() { return "Bag.m"; } }
+  const bag: any = new Bag();
+  for (const w of [...words, "m"]) console.log("instance-as-dictionary", w, attempt(() => show(bag[w])));
+  for (const w of [...words, "m"]) attempt(() => { bag[w] = { m() { return "stored.m"; } }; });
+  console.log("instance-as-dictionary", attempt(() => bag.m()), bag instanceof Bag, Object.keys(bag).join());
+})();
+
+// map control
+(() => {
+  const counts = new Map<string, number>();
+  for (const w of words) counts.set(w, (counts.get(w) || 0) + 1);
+  let line = ""; for (const w of words) line += w + "=" + counts.get(w) + " ";
+  console.log("map-control", line);
+})();
+
+// nested merge null prototype
+(() => {
+  function merge(d: any, s: any) { for (const k in s) { if (typeof s[k] === "object" && s[k] !== null && typeof d[k] === "object") merge(d[k], s[k]); else d[k] = s[k]; } return d; }
+  const target: any = Object.create(null);
+  attempt(() => merge(target, JSON.parse('{"__proto__": {"polluted": 1}, "constructor": {"prototype": {"polluted2": 2}}, "a": {"b": 1}}')));
+  console.log("nested-merge-null-prototype", show(target.polluted), show(({} as any).polluted), show(({} as any).polluted2), Object.keys(target).join());
+})();
+
+// number indexed by key
+////= lines-76	onst n: any = 5;	for (const w of words) console.log("number-indexed-by-key", w, attempt(() => show(n[w])
+
+// objects by key null prototype
+(() => {
+  const table: Record<string, { n: number }> = Object.create(null);
+  for (const w of words) console.log("objects-by-key-null-prototype", w, attempt(() => { const e = table[w] || (table[w] = { n: 0 }); e.n = e.n + 1; return show(e.n); }));
+  console.log("objects-by-key-null-prototype", Object.keys(table).join(), show(({} as any).n), show(Object.prototype.hasOwnProperty.call(Object.prototype, "n")));
+})();
+
+// proto object stored literal
+(() => {
+  const table: Record<string, { n: number }> = {};
+  for (const w of words) table[w] = { n: w.length };
+  for (const w of [...words, "n", "zzz"]) console.log("proto-object-stored-literal", w, attempt(() => show(table[w])), attempt(() => show(table[w].n)));
+  console.log("proto-object-stored-literal", Object.keys(table).join(), Object.getPrototypeOf(table) === Object.prototype, Object.getPrototypeOf(table) === null);
+})();
+
+// proto object stored null prototype
+(() => {
+  const table: Record<string, { n: number }> = Object.create(null);
+  for (const w of words) table[w] = { n: w.length };
+  for (const w of [...words, "n", "zzz"]) console.log("proto-object-stored-null-prototype", w, attempt(() => show(table[w])), attempt(() => show(table[w].n)));
+  console.log("proto-object-stored-null-prototype", Object.keys(table).join(), Object.getPrototypeOf(table) === Object.prototype, Object.getPrototypeOf(table) === null);
+})();
+
+// string indexed by key
+////= lines-76	onst s: any = "xyz";	for (const w of words) console.log("string-indexed-by-key", w, attempt(() => show(s[w])
+
+// strings by key literal
+(() => {
+  const names: Record<string, string> = {};
+  names.a = "A";
+  for (const w of words) console.log("strings-by-key-literal", w, attempt(() => { const s = names[w]; return s === undefined ? "none" : show(s.length) + show(s + "!"); }));
+})();
+
+// strings by key null prototype
+(() => {
+  const names: Record<string, string> = Object.create(null);
+  names.a = "A";
+  for (const w of words) console.log("strings-by-key-null-prototype", w, attempt(() => { const s = names[w]; return s === undefined ? "none" : show(s.length) + show(s + "!"); }));
+})();
+//// each-function-called-by-native-code-sees-its-own-this.js
+// Each function that native code calls is a function of its own: what it sees as `this`, and how many arguments arrive.
+"use strict";
+const lines = [];
+const target = new EventTarget();
+const controller = new AbortController();
+setTimeout(function () {
+  lines.push(
+    "1 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+}, 0);
+setTimeout(
+  function () {
+    lines.push(
+      "2 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+    );
+  },
+  0,
+  1,
+  2,
+);
+setImmediate(function () {
+  lines.push(
+    "3 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+setImmediate(function () {
+  lines.push(
+    "4 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+}, 1);
+queueMicrotask(function () {
+  lines.push(
+    "5 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+process.nextTick(function () {
+  lines.push(
+    "6 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+process.nextTick(function () {
+  lines.push(
+    "7 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+}, 1);
+////= lines-21	target.addEventListener	"ping"	"8 "
+controller.signal.addEventListener("abort", function () {
+  lines.push(
+    "9 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+controller.signal.onabort = function () {
+  lines.push(
+    "10 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+};
+////= lines-21	process.on	"exit"	"11 "
+////= lines-21	process.once	"beforeExit"	"12 "
+Promise.resolve(1).then(function () {
+  lines.push(
+    "13 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+[1].forEach(function () {
+  lines.push(
+    "14 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+[1].forEach(function () {
+  lines.push(
+    "15 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+}, {});
+new Map([[1, 2]]).forEach(function () {
+  lines.push(
+    "16 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+"a".replace(/a/, function () {
+  lines.push(
+    "17 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+////= lines-21	JSON.parse	"[1]"	"18 "
+JSON.stringify({ a: 1 }, function () {
+  lines.push(
+    "19 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+Array.from([1], function () {
+  lines.push(
+    "20 " + (this === undefined ? "undefined" : typeof this) + " " + arguments.length + " " + typeof arguments[0],
+  );
+});
+target.dispatchEvent(new Event("ping"));
+controller.abort();
+process.on("exit", () => console.log(lines.join("\n")));
+//// eight-error-messages-that-quote-no-source-are-worded-differently.js
+const cases = {
+  "for await over an object": async () => { for await (const x of {}) { } },
+  "spread of null": () => [...null],
+  "spread, the iterator is no object": () => [...{ [Symbol.iterator]() { return 5; } }],
+  "spread, the result is no object": () => [...{ [Symbol.iterator]() { return { next() { return 5; } }; } }],
+  "Object.fromEntries of null": () => Object.fromEntries(null),
+  "typed array, length over 2 ** 53": () => new Int8Array(2 ** 53),
+  "typed array, negative length": () => new Int8Array(-1),
+  "typed array, huge length": () => new Int8Array(1e300),
+};
+for (const [name, run] of Object.entries(cases)) {
+  try { await run(); console.log(name, "| nothing thrown"); } catch (error) { console.log(name, "|", String(error)); }
+}
+//// element-keys-and-receivers-grow.js
+// Element accesses whose keys and receivers grow, one after the other and both at once.
+function id(x) { return x; }
+function chain(x) { return id(id(id(id(id(id(id(id(x)))))))); }
+function show(...parts) { console.log(parts.map(String).join(" | ")); }
+
+// 1: the receivers are known first, another key arrives late
+{
+  const first = { a: 1, b: "first b", c: [1] };
+  const second = { a: 2.5, b: { deep: true }, c: null };
+  function get(o, k) { return o[k]; }
+  show("1a", get(first, "a") + 1, get(second, "a") + 1);
+  const late = chain("b");
+  show("1b", get(first, late).length, get(second, late).deep);
+  const later = chain(chain("c"));
+  show("1c", get(first, later).length, get(second, later));
+}
+// 2: the key is known first, another receiver arrives late
+{
+  function get(o, k) { return o[k]; }
+  show("2a", get({ a: 1 }, "a") + 1);
+  show("2b", get(chain({ a: "text" }), "a").length);
+  show("2c", get(chain(chain({ get a() { return [1, 2, 3]; } })), "a").length);
+}
+// 3: both arrive through one call
+{
+  function get(pair) { return pair.o[pair.k]; }
+  show("3a", get({ o: { a: 1, z: "z" }, k: "a" }) + 1);
+  show("3b", get(chain({ o: { b: "text", a: false }, k: "b" })).length);
+  show("3c", get({ o: { a: 1, z: "z" }, k: "z" }).length, get({ o: { b: "text", a: false }, k: "a" }));
+}
+// 4: stores
+{
+  function put(o, k, v) { o[k] = v; }
+  const target = { a: 0, b: 0 };
+  const other = { a: "s", b: "s" };
+  put(target, "a", 1);
+  put(chain(other), "a", 2);
+  put(target, chain("b"), "late");
+  put(other, chain("b"), [3]);
+  show("4", target.a + 1, target.b.length, other.a + 1, other.b.length);
+}
+// 5: one index, then another, then a counter, then a string of digits
+{
+  function get(o, k) { return o[k]; }
+  const list = [1, "two", [3], { four: 4 }];
+  show("5a", get(list, 0) + 1);
+  show("5b", get(list, chain(1)).length);
+  let text = "";
+  for (let i = 0; i < list.length; i++) text += typeof get(list, i) + ",";
+  show("5c", text, get(list, chain("3")).four, get(list, "length"));
+}
+// 6: a symbol, a number that is no index, and an object as a key
+{
+  function get(o, k) { return o[k]; }
+  const s = Symbol("s");
+  const o = { [s]: "symbol", "-1": "minus one", "1.5": "fraction", "[object Object]": "object", name: 0 };
+  show("6", get(o, "name") + 1, get(o, chain(s)).length, get(o, chain(-1)).length, get(o, chain(1.5)).length, get(o, chain({})).length);
+  const withToString = { toString() { return "name"; } };
+  show("6b", get(o, chain(withToString)) + 1);
+}
+// 7: the key list of a loop grows while the loop's body is known
+{
+  const keys = ["a"];
+  const o = { a: 1, b: "b", c: () => "called" };
+  function all() { const found = []; for (const k of keys) found.push(o[k]); return found; }
+  show("7a", all().length);
+  keys.push(chain("b"));
+  keys.push(chain("c"));
+  const found = all();
+  show("7b", found[0] + 1, found[1].length, found[2]());
+}
+// 8: delete and `in` under a key that grows
+{
+  function remove(o, k) { return delete o[k]; }
+  function has(o, k) { return k in o; }
+  const o = { a: 1, b: 2, c: 3 };
+  remove(o, "a");
+  remove(o, chain("b"));
+  show("8", has(o, "a"), has(o, chain("b")), has(o, chain("c")), o.a, o.b, o.c + 1);
+}
+//// element-of-loop-pushes-other-kind.js
+function print(a, b, c) { let s = "" + a; if (b !== undefined) s += " " + b; if (c !== undefined) s += " " + c; console.log(s); }
+////= show-2
+const list = [{ go() { list.push("late"); list.push({ go() { list.push(7); } }); } }];
+for (const x of list) {
+  show("element", x);
+  if (typeof x === "object") x.go();
+}
+const [a, b, c, d] = list;
+show("a", a); show("b", b); show("c", c); show("d", d);
+//// element-of-loop-replaces-next.js
+function print(a, b, c) { let s = "" + a; if (b !== undefined) s += " " + b; if (c !== undefined) s += " " + c; console.log(s); }
+////= show-2
+let i = 0;
+const iterator = { next() { return { done: i++ >= 2, value: element }; } };
+const element = { go() { iterator.next = function () { return { done: i++ >= 4, value: "late" }; }; } };
+const iterable = { [Symbol.iterator]() { return iterator; } };
+for (const x of iterable) {
+  show("element", x);
+  if (typeof x === "object") x.go();
+}
+i = 0;
+for (const x of iterable) show("again", x);
+//// elements-stored-into-objects-below-string-objects-typed-arrays-and-proxies.js
+// A store by index, by a text that is an index and by Reflect.set into objects of eight kinds, each below objects of eighteen kinds: String objects, typed arrays, arrays, proxies, objects whose
+// elements have accessors or cannot be written, and chains of them. What is stored, where it lies and what is refused does not hang on how the object was made. The output is that of plain Bun.
+////= above
+
+////= lines-36	Instance	a
+////= lines-28	Made	a	1
+////= below
+
+const lines = [];
+////= say-2
+////= seenOf
+
+////= for
+console.log(lines.join("\n"));
+//// elements-stored-into-objects-below-string-objects-typed-arrays-and-proxies-in-sloppy-code.cjs
+// elements-stored-into-objects-below-string-objects-typed-arrays-and-proxies.js in sloppy code, where a store that is refused says nothing. The output is that of plain Bun.
+////= above
+
+////= lines-36	Instance	a
+////= lines-28	Made	a	1
+////= below
+
+const lines = [];
+////= say-2
+////= seenOf
+
+////= for
+console.log(lines.join("\n"));
+//// elements-stored-into-objects-below-string-objects-typed-arrays-and-proxies-typed.ts
+// elements-stored-into-objects-below-string-objects-typed-arrays-and-proxies.js with types. The output is that of plain Bun.
+const above: Record<string, () => object> = {
+  "a String object": () => new String("abc"),
+  "a typed array": () => new Uint8Array([7, 8, 9]),
+  "an empty typed array": () => new Uint8Array(0),
+  "an array": () => [7, 8, 9],
+  "a frozen array": () => Object.freeze([7, 8, 9]),
+  "an array with a getter and a setter": () =>
+    Object.defineProperty([7], 1, {
+      get() {
+        return "got";
+      },
+      set(this: any, value: unknown) {
+        this.seen = value;
+      },
+    }),
+  "an array with a getter alone": () =>
+    Object.defineProperty([7], 1, {
+      get() {
+        return "got";
+      },
+    }),
+  "an object with an element that cannot be written": () =>
+    Object.defineProperty({}, 1, { value: "fixed", writable: false }),
+  "an arguments object": () =>
+    (function (...given: number[]) {
+      return arguments;
+    })(7, 8, 9),
+  "a proxy that refuses": () =>
+    new Proxy(
+      {},
+      {
+        set() {
+          return false;
+        },
+      },
+    ),
+  "a proxy that stores under another name": () =>
+    new Proxy(
+      {},
+      {
+        set(target: object, key: string | symbol, value: unknown, receiver: object) {
+          return Reflect.defineProperty(receiver, "other", {
+            value,
+            configurable: true,
+            enumerable: true,
+            writable: true,
+          });
+        },
+      },
+    ),
+  "a frozen literal": () => Object.freeze({ 1: "f" }),
+  "a literal with an element that cannot be written": () => {
+    const literal = { b: 2 };
+    Object.defineProperty(literal, 1, { value: "fixed", writable: false });
+    return literal;
+  },
+  "a literal below a String object": () => Object.setPrototypeOf({ b: 2 }, new String("abc")),
+  "a created object below a String object": () => Object.create(new String("abc")),
+  "a String object below a proxy that refuses": () =>
+    Object.setPrototypeOf(
+      new String("abc"),
+      new Proxy(
+        {},
+        {
+          set() {
+            return false;
+          },
+        },
+      ),
+    ),
+  "a typed array below an object with an element that cannot be written": () =>
+    Object.setPrototypeOf(new Uint8Array(1), Object.defineProperty({}, 5, { value: "fixed", writable: false })),
+  "a String object below an object with an element that cannot be written": () =>
+    Object.setPrototypeOf(new String("a"), Object.defineProperty({}, 5, { value: "fixed", writable: false })),
+};
+
+////= lines-36	Instance	a
+function Made(this: any) {
+  this.a = 1;
+}
+const below: Record<string, (proto: object) => any> = {
+  "a literal": proto => Object.setPrototypeOf({ a: 1 }, proto),
+  "a literal that names its prototype": proto => ({ __proto__: proto, a: 1 }),
+  "an instance of a class": proto => Object.setPrototypeOf(new Instance(), proto),
+  "an instance of a function": proto => Object.setPrototypeOf(new (Made as any)(), proto),
+  "a created object": proto => Object.create(proto),
+  "a literal that takes no more": proto => Object.preventExtensions(Object.setPrototypeOf({ a: 1 }, proto)),
+  "a literal with the element": proto => Object.setPrototypeOf({ a: 1, 1: "own", 5: "own" }, proto),
+  "a literal with the element, which cannot be written": proto =>
+    Object.defineProperty(Object.defineProperty(Object.setPrototypeOf({ a: 1 }, proto), 1, { value: "own" }), 5, {
+      value: "own",
+    }),
+};
+
+const lines: string[] = [];
+function say(label: string, run: () => unknown) {
+  try {
+    lines.push(label + ": " + JSON.stringify(run()));
+  } catch (error) {
+    lines.push(label + ": threw " + (error as Error).name);
+  }
+}
+const seenOf = (object: any, proto: object, key: string | number) => [
+  object[key],
+  Object.hasOwn(object, key),
+  Object.hasOwn(proto, key),
+  object.seen,
+  object.other,
+];
+
+for (const [upper, makeAbove] of Object.entries(above)) {
+  for (const [lower, makeBelow] of Object.entries(below)) {
+    for (const key of [1, 5, "1", JSON.parse("5") as number]) {
+      const label = lower + " below " + upper + ", " + typeof key + " " + key;
+      say(label, () => {
+        const proto = makeAbove();
+        const object = makeBelow(proto);
+        object[key] = "z";
+        return seenOf(object, proto, key);
+      });
+      say(label + ", by Reflect.set", () => {
+        const proto = makeAbove();
+        const object = makeBelow(proto);
+        return [Reflect.set(object, key, "z"), ...seenOf(object, proto, key)];
+      });
+    }
+    say(lower + " below " + upper + ", for another receiver", () => {
+      const proto = makeAbove();
+      const object = makeBelow(proto);
+      const receiver: any = { r: 1 };
+      return [Reflect.set(object, 1, "z", receiver), receiver[1], object[1], Object.hasOwn(object, 1)];
+    });
+  }
+}
+console.log(lines.join("\n"));
+//// error-subclasses-made-by-native-code.js
+class A extends Error {
+  constructor(message, options) { super(message, options); this.name = this.label(); this.code = new.target.code; }
+  label() { return "A"; }
+  static code = 1;
+}
+class B extends A {
+  extra = "x";
+  label() { return "B" + this.extra; }
+  static code = 2;
+}
+function show(o) { console.log(o.name, o.message, o.code, o.extra, o instanceof B, String(o), Object.keys(o).join(), o.cause); }
+show(new B("boom", { cause: 7 }));
+show(Reflect.construct(A, ["made"], B));
+show(Reflect.construct(Error, ["plain"], B));
+show(new A("base"));
+try { throw new B("thrown"); } catch (e) { show(e); }
+Promise.reject(new B("rejected")).catch(show);
+//// es5-parents-relinked.js
+// Constructor functions whose prototype objects seen code links to those of other constructor functions, handed to code that no build sees.
+// Each pair is changed in one way, before its first construction or after it: a prototype object is replaced or relinked, an accessor, a read-only property, a proxy or another method
+// comes to stand above the new objects. Every store of a constructor, every call of an inherited method and every instanceof answers as the language says.
+// The same text is strict as a module and sloppy as CommonJS.
+var unseen = new Function("x", "return x");
+var lines = [];
+var noted = [];
+
+function inherits(constructor, parent) {
+  constructor.super_ = parent;
+  Object.setPrototypeOf(constructor.prototype, parent.prototype);
+}
+
+////= attempt-7
+
+////= describe
+
+// A step runs a few times: what a store, a read or a call keeps from one run is there in the next.
+////= construct
+
+////= accessor
+
+////= notingProxy
+
+// What a change returns is its second step.
+////= changes
+
+////= run
+
+function Base1() {}
+Base1.prototype.tag = "Base1";
+Base1.prototype.c = 0;
+Base1.prototype.who = function () { return "Base1 " + this.a; };
+////= lines-3	Made1
+Object.setPrototypeOf(Made1.prototype, Base1.prototype);
+Made1.prototype.tag = "Made1";
+function make1(x) { return new Made1(x); }
+function probe1(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base1) + " " + (made instanceof Made1); }
+run("replacePrototypeObject", "setPrototypeOf", Made1, Base1, make1, probe1, false);
+
+function Base2() {}
+Base2.prototype.tag = "Base2";
+Base2.prototype.c = 0;
+Base2.prototype.who = function () { return "Base2 " + this.a; };
+////= lines-3	Made2
+Made2.prototype = Object.create(Base2.prototype);
+Made2.prototype.tag = "Made2";
+function make2(x) { return new Made2(x); }
+function probe2(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base2) + " " + (made instanceof Made2); }
+run("replacePrototypeObject", "create", Made2, Base2, make2, probe2, false);
+
+function Base3() {}
+Base3.prototype.tag = "Base3";
+Base3.prototype.c = 0;
+Base3.prototype.who = function () { return "Base3 " + this.a; };
+////= lines-3	Made3
+Made3.prototype = new Base3();
+Made3.prototype.tag = "Made3";
+function make3(x) { return new Made3(x); }
+function probe3(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base3) + " " + (made instanceof Made3); }
+run("replacePrototypeObject", "instance", Made3, Base3, make3, probe3, false);
+
+function Base4() {}
+Base4.prototype.tag = "Base4";
+Base4.prototype.c = 0;
+Base4.prototype.who = function () { return "Base4 " + this.a; };
+////= lines-3	Made4
+Made4.prototype.__proto__ = Base4.prototype;
+Made4.prototype.tag = "Made4";
+function make4(x) { return new Made4(x); }
+function probe4(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base4) + " " + (made instanceof Made4); }
+run("replacePrototypeObject", "protoAccessor", Made4, Base4, make4, probe4, true);
+
+function Base5() {}
+Base5.prototype.tag = "Base5";
+Base5.prototype.c = 0;
+Base5.prototype.who = function () { return "Base5 " + this.a; };
+////= lines-3	Made5
+Made5.prototype = { __proto__: Base5.prototype, constructor: Made5 };
+Made5.prototype.tag = "Made5";
+function make5(x) { return new Made5(x); }
+function probe5(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base5) + " " + (made instanceof Made5); }
+run("replacePrototypeObject", "literal", Made5, Base5, make5, probe5, true);
+
+function Base6() {}
+Base6.prototype.tag = "Base6";
+Base6.prototype.c = 0;
+Base6.prototype.who = function () { return "Base6 " + this.a; };
+////= lines-3	Made6
+Made6.prototype = new Base6();
+Made6.prototype.tag = "Made6";
+function make6(x) { return new Made6(x); }
+function probe6(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base6) + " " + (made instanceof Made6); }
+run("replacePrototypeObject", "instance", Made6, Base6, make6, probe6, true);
+
+function Base7() {}
+Base7.prototype.tag = "Base7";
+Base7.prototype.c = 0;
+Base7.prototype.who = function () { return "Base7 " + this.a; };
+////= lines-3	Made7
+Made7.prototype.__proto__ = Base7.prototype;
+Made7.prototype.tag = "Made7";
+function make7(x) { return new Made7(x); }
+function probe7(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base7) + " " + (made instanceof Made7); }
+run("replacePrototypeObjectByNumber", "protoAccessor", Made7, Base7, make7, probe7, false);
+
+function Base8() {}
+Base8.prototype.tag = "Base8";
+Base8.prototype.c = 0;
+Base8.prototype.who = function () { return "Base8 " + this.a; };
+////= lines-3	Made8
+Made8.prototype = { __proto__: Base8.prototype, constructor: Made8 };
+Made8.prototype.tag = "Made8";
+function make8(x) { return new Made8(x); }
+function probe8(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base8) + " " + (made instanceof Made8); }
+run("replacePrototypeObjectByNumber", "literal", Made8, Base8, make8, probe8, false);
+
+function Base9() {}
+Base9.prototype.tag = "Base9";
+Base9.prototype.c = 0;
+Base9.prototype.who = function () { return "Base9 " + this.a; };
+////= lines-3	Made9
+Made9.prototype = new Base9();
+Made9.prototype.tag = "Made9";
+function make9(x) { return new Made9(x); }
+function probe9(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base9) + " " + (made instanceof Made9); }
+run("replacePrototypeObjectByNumber", "instance", Made9, Base9, make9, probe9, false);
+
+function Base10() {}
+Base10.prototype.tag = "Base10";
+Base10.prototype.c = 0;
+Base10.prototype.who = function () { return "Base10 " + this.a; };
+////= lines-3	Made10
+inherits(Made10, Base10);
+Made10.prototype.tag = "Made10";
+function make10(x) { return new Made10(x); }
+function probe10(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base10) + " " + (made instanceof Made10); }
+run("replacePrototypeObjectByNumber", "inherits", Made10, Base10, make10, probe10, true);
+
+function Base11() {}
+Base11.prototype.tag = "Base11";
+Base11.prototype.c = 0;
+Base11.prototype.who = function () { return "Base11 " + this.a; };
+////= lines-3	Made11
+Made11.prototype = Object.assign(Object.create(Base11.prototype), { constructor: Made11 });
+Made11.prototype.tag = "Made11";
+function make11(x) { return new Made11(x); }
+function probe11(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base11) + " " + (made instanceof Made11); }
+run("replacePrototypeObjectByNumber", "assign", Made11, Base11, make11, probe11, true);
+
+function Base12() {}
+Base12.prototype.tag = "Base12";
+Base12.prototype.c = 0;
+Base12.prototype.who = function () { return "Base12 " + this.a; };
+////= lines-3	Made12
+Made12.prototype = new Base12();
+Made12.prototype.tag = "Made12";
+function make12(x) { return new Made12(x); }
+function probe12(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base12) + " " + (made instanceof Made12); }
+run("replacePrototypeObjectByNumber", "instance", Made12, Base12, make12, probe12, true);
+
+function Base13() {}
+Base13.prototype.tag = "Base13";
+Base13.prototype.c = 0;
+Base13.prototype.who = function () { return "Base13 " + this.a; };
+////= lines-3	Made13
+inherits(Made13, Base13);
+Made13.prototype.tag = "Made13";
+function make13(x) { return new Made13(x); }
+function probe13(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base13) + " " + (made instanceof Made13); }
+run("relinkParent", "inherits", Made13, Base13, make13, probe13, false);
+
+function Base14() {}
+Base14.prototype.tag = "Base14";
+Base14.prototype.c = 0;
+Base14.prototype.who = function () { return "Base14 " + this.a; };
+////= lines-3	Made14
+Made14.prototype = Object.assign(Object.create(Base14.prototype), { constructor: Made14 });
+Made14.prototype.tag = "Made14";
+function make14(x) { return new Made14(x); }
+function probe14(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base14) + " " + (made instanceof Made14); }
+run("relinkParent", "assign", Made14, Base14, make14, probe14, false);
+
+function Base15() {}
+Base15.prototype.tag = "Base15";
+Base15.prototype.c = 0;
+Base15.prototype.who = function () { return "Base15 " + this.a; };
+////= lines-3	Made15
+Made15.prototype = new Base15();
+Made15.prototype.tag = "Made15";
+function make15(x) { return new Made15(x); }
+function probe15(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base15) + " " + (made instanceof Made15); }
+run("relinkParent", "instance", Made15, Base15, make15, probe15, false);
+
+function Base16() {}
+Base16.prototype.tag = "Base16";
+Base16.prototype.c = 0;
+Base16.prototype.who = function () { return "Base16 " + this.a; };
+////= lines-3	Made16
+Reflect.setPrototypeOf(Made16.prototype, Base16.prototype);
+Made16.prototype.tag = "Made16";
+function make16(x) { return new Made16(x); }
+function probe16(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base16) + " " + (made instanceof Made16); }
+run("relinkParent", "reflect", Made16, Base16, make16, probe16, true);
+
+function Base17() {}
+Base17.prototype.tag = "Base17";
+Base17.prototype.c = 0;
+Base17.prototype.who = function () { return "Base17 " + this.a; };
+////= lines-3	Made17
+Made17.prototype = Object.create(Base17.prototype, { constructor: { value: Made17, writable: true, configurable: true } });
+Made17.prototype.tag = "Made17";
+function make17(x) { return new Made17(x); }
+function probe17(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base17) + " " + (made instanceof Made17); }
+run("relinkParent", "descriptors", Made17, Base17, make17, probe17, true);
+
+function Base18() {}
+Base18.prototype.tag = "Base18";
+Base18.prototype.c = 0;
+Base18.prototype.who = function () { return "Base18 " + this.a; };
+////= lines-3	Made18
+Made18.prototype = new Base18();
+Made18.prototype.tag = "Made18";
+function make18(x) { return new Made18(x); }
+function probe18(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base18) + " " + (made instanceof Made18); }
+run("relinkParent", "instance", Made18, Base18, make18, probe18, true);
+
+function Base19() {}
+Base19.prototype.tag = "Base19";
+Base19.prototype.c = 0;
+Base19.prototype.who = function () { return "Base19 " + this.a; };
+////= lines-3	Made19
+Reflect.setPrototypeOf(Made19.prototype, Base19.prototype);
+Made19.prototype.tag = "Made19";
+function make19(x) { return new Made19(x); }
+function probe19(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base19) + " " + (made instanceof Made19); }
+run("plantSetterOnParent", "reflect", Made19, Base19, make19, probe19, false);
+
+function Base20() {}
+Base20.prototype.tag = "Base20";
+Base20.prototype.c = 0;
+Base20.prototype.who = function () { return "Base20 " + this.a; };
+////= lines-3	Made20
+Made20.prototype = Object.create(Base20.prototype, { constructor: { value: Made20, writable: true, configurable: true } });
+Made20.prototype.tag = "Made20";
+function make20(x) { return new Made20(x); }
+function probe20(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base20) + " " + (made instanceof Made20); }
+run("plantSetterOnParent", "descriptors", Made20, Base20, make20, probe20, false);
+
+function Base21() {}
+Base21.prototype.tag = "Base21";
+Base21.prototype.c = 0;
+Base21.prototype.who = function () { return "Base21 " + this.a; };
+////= lines-3	Made21
+Made21.prototype = new Base21();
+Made21.prototype.tag = "Made21";
+function make21(x) { return new Made21(x); }
+function probe21(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base21) + " " + (made instanceof Made21); }
+run("plantSetterOnParent", "instance", Made21, Base21, make21, probe21, false);
+
+function Base22() {}
+Base22.prototype.tag = "Base22";
+Base22.prototype.c = 0;
+Base22.prototype.who = function () { return "Base22 " + this.a; };
+////= lines-3	Made22
+Object.setPrototypeOf(Made22.prototype, Base22.prototype);
+Made22.prototype.tag = "Made22";
+function make22(x) { return new Made22(x); }
+function probe22(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base22) + " " + (made instanceof Made22); }
+run("plantSetterOnParent", "setPrototypeOf", Made22, Base22, make22, probe22, true);
+
+function Base23() {}
+Base23.prototype.tag = "Base23";
+Base23.prototype.c = 0;
+Base23.prototype.who = function () { return "Base23 " + this.a; };
+////= lines-3	Made23
+Made23.prototype = Object.setPrototypeOf({ constructor: Made23 }, Base23.prototype);
+Made23.prototype.tag = "Made23";
+function make23(x) { return new Made23(x); }
+function probe23(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base23) + " " + (made instanceof Made23); }
+run("plantSetterOnParent", "relinkedLiteral", Made23, Base23, make23, probe23, true);
+
+function Base24() {}
+Base24.prototype.tag = "Base24";
+Base24.prototype.c = 0;
+Base24.prototype.who = function () { return "Base24 " + this.a; };
+////= lines-3	Made24
+Made24.prototype = new Base24();
+Made24.prototype.tag = "Made24";
+function make24(x) { return new Made24(x); }
+function probe24(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base24) + " " + (made instanceof Made24); }
+run("plantSetterOnParent", "instance", Made24, Base24, make24, probe24, true);
+
+function Base25() {}
+Base25.prototype.tag = "Base25";
+Base25.prototype.c = 0;
+Base25.prototype.who = function () { return "Base25 " + this.a; };
+////= lines-3	Made25
+Object.setPrototypeOf(Made25.prototype, Base25.prototype);
+Made25.prototype.tag = "Made25";
+function make25(x) { return new Made25(x); }
+function probe25(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base25) + " " + (made instanceof Made25); }
+run("plantReadOnlyOnParent", "setPrototypeOf", Made25, Base25, make25, probe25, false);
+
+function Base26() {}
+Base26.prototype.tag = "Base26";
+Base26.prototype.c = 0;
+Base26.prototype.who = function () { return "Base26 " + this.a; };
+////= lines-3	Made26
+Made26.prototype = Object.setPrototypeOf({ constructor: Made26 }, Base26.prototype);
+Made26.prototype.tag = "Made26";
+function make26(x) { return new Made26(x); }
+function probe26(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base26) + " " + (made instanceof Made26); }
+run("plantReadOnlyOnParent", "relinkedLiteral", Made26, Base26, make26, probe26, false);
+
+function Base27() {}
+Base27.prototype.tag = "Base27";
+Base27.prototype.c = 0;
+Base27.prototype.who = function () { return "Base27 " + this.a; };
+////= lines-3	Made27
+Made27.prototype = new Base27();
+Made27.prototype.tag = "Made27";
+function make27(x) { return new Made27(x); }
+function probe27(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base27) + " " + (made instanceof Made27); }
+run("plantReadOnlyOnParent", "instance", Made27, Base27, make27, probe27, false);
+
+function Base28() {}
+Base28.prototype.tag = "Base28";
+Base28.prototype.c = 0;
+Base28.prototype.who = function () { return "Base28 " + this.a; };
+////= lines-3	Made28
+inherits(Made28, Base28);
+Made28.prototype.tag = "Made28";
+function make28(x) { return new Made28(x); }
+function probe28(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base28) + " " + (made instanceof Made28); }
+run("plantReadOnlyOnParent", "inherits", Made28, Base28, make28, probe28, true);
+
+function Base29() {}
+Base29.prototype.tag = "Base29";
+Base29.prototype.c = 0;
+Base29.prototype.who = function () { return "Base29 " + this.a; };
+////= lines-3	Made29
+Made29.prototype = Object.create(Base29.prototype);
+Made29.prototype.tag = "Made29";
+function make29(x) { return new Made29(x); }
+function probe29(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base29) + " " + (made instanceof Made29); }
+run("plantReadOnlyOnParent", "create", Made29, Base29, make29, probe29, true);
+
+function Base30() {}
+Base30.prototype.tag = "Base30";
+Base30.prototype.c = 0;
+Base30.prototype.who = function () { return "Base30 " + this.a; };
+////= lines-3	Made30
+Made30.prototype = new Base30();
+Made30.prototype.tag = "Made30";
+function make30(x) { return new Made30(x); }
+function probe30(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base30) + " " + (made instanceof Made30); }
+run("plantReadOnlyOnParent", "instance", Made30, Base30, make30, probe30, true);
+
+function Base31() {}
+Base31.prototype.tag = "Base31";
+Base31.prototype.c = 0;
+Base31.prototype.who = function () { return "Base31 " + this.a; };
+////= lines-3	Made31
+Made31.prototype.__proto__ = Base31.prototype;
+Made31.prototype.tag = "Made31";
+function make31(x) { return new Made31(x); }
+function probe31(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base31) + " " + (made instanceof Made31); }
+run("plantGetterOnParent", "protoAccessor", Made31, Base31, make31, probe31, false);
+
+function Base32() {}
+Base32.prototype.tag = "Base32";
+Base32.prototype.c = 0;
+Base32.prototype.who = function () { return "Base32 " + this.a; };
+////= lines-3	Made32
+Made32.prototype = Object.create(Base32.prototype);
+Made32.prototype.tag = "Made32";
+function make32(x) { return new Made32(x); }
+function probe32(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base32) + " " + (made instanceof Made32); }
+run("plantGetterOnParent", "create", Made32, Base32, make32, probe32, false);
+
+function Base33() {}
+Base33.prototype.tag = "Base33";
+Base33.prototype.c = 0;
+Base33.prototype.who = function () { return "Base33 " + this.a; };
+////= lines-3	Made33
+Made33.prototype = new Base33();
+Made33.prototype.tag = "Made33";
+function make33(x) { return new Made33(x); }
+function probe33(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base33) + " " + (made instanceof Made33); }
+run("plantGetterOnParent", "instance", Made33, Base33, make33, probe33, false);
+
+function Base34() {}
+Base34.prototype.tag = "Base34";
+Base34.prototype.c = 0;
+Base34.prototype.who = function () { return "Base34 " + this.a; };
+////= lines-3	Made34
+Reflect.setPrototypeOf(Made34.prototype, Base34.prototype);
+Made34.prototype.tag = "Made34";
+function make34(x) { return new Made34(x); }
+function probe34(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base34) + " " + (made instanceof Made34); }
+run("plantGetterOnParent", "reflect", Made34, Base34, make34, probe34, true);
+
+function Base35() {}
+Base35.prototype.tag = "Base35";
+Base35.prototype.c = 0;
+Base35.prototype.who = function () { return "Base35 " + this.a; };
+////= lines-3	Made35
+Made35.prototype = Object.assign(Object.create(Base35.prototype), { constructor: Made35 });
+Made35.prototype.tag = "Made35";
+function make35(x) { return new Made35(x); }
+function probe35(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base35) + " " + (made instanceof Made35); }
+run("plantGetterOnParent", "assign", Made35, Base35, make35, probe35, true);
+
+function Base36() {}
+Base36.prototype.tag = "Base36";
+Base36.prototype.c = 0;
+Base36.prototype.who = function () { return "Base36 " + this.a; };
+////= lines-3	Made36
+Made36.prototype = new Base36();
+Made36.prototype.tag = "Made36";
+function make36(x) { return new Made36(x); }
+function probe36(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base36) + " " + (made instanceof Made36); }
+run("plantGetterOnParent", "instance", Made36, Base36, make36, probe36, true);
+
+function Base37() {}
+Base37.prototype.tag = "Base37";
+Base37.prototype.c = 0;
+Base37.prototype.who = function () { return "Base37 " + this.a; };
+////= lines-3	Made37
+inherits(Made37, Base37);
+Made37.prototype.tag = "Made37";
+function make37(x) { return new Made37(x); }
+function probe37(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base37) + " " + (made instanceof Made37); }
+run("freezeParent", "inherits", Made37, Base37, make37, probe37, false);
+
+function Base38() {}
+Base38.prototype.tag = "Base38";
+Base38.prototype.c = 0;
+Base38.prototype.who = function () { return "Base38 " + this.a; };
+////= lines-3	Made38
+Made38.prototype = { __proto__: Base38.prototype, constructor: Made38 };
+Made38.prototype.tag = "Made38";
+function make38(x) { return new Made38(x); }
+function probe38(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base38) + " " + (made instanceof Made38); }
+run("freezeParent", "literal", Made38, Base38, make38, probe38, false);
+
+function Base39() {}
+Base39.prototype.tag = "Base39";
+Base39.prototype.c = 0;
+Base39.prototype.who = function () { return "Base39 " + this.a; };
+////= lines-3	Made39
+Made39.prototype = new Base39();
+Made39.prototype.tag = "Made39";
+function make39(x) { return new Made39(x); }
+function probe39(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base39) + " " + (made instanceof Made39); }
+run("freezeParent", "instance", Made39, Base39, make39, probe39, false);
+
+function Base40() {}
+Base40.prototype.tag = "Base40";
+Base40.prototype.c = 0;
+Base40.prototype.who = function () { return "Base40 " + this.a; };
+////= lines-3	Made40
+Object.setPrototypeOf(Made40.prototype, Base40.prototype);
+Made40.prototype.tag = "Made40";
+function make40(x) { return new Made40(x); }
+function probe40(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base40) + " " + (made instanceof Made40); }
+run("freezeParent", "setPrototypeOf", Made40, Base40, make40, probe40, true);
+
+function Base41() {}
+Base41.prototype.tag = "Base41";
+Base41.prototype.c = 0;
+Base41.prototype.who = function () { return "Base41 " + this.a; };
+////= lines-3	Made41
+Made41.prototype = Object.create(Base41.prototype, { constructor: { value: Made41, writable: true, configurable: true } });
+Made41.prototype.tag = "Made41";
+function make41(x) { return new Made41(x); }
+function probe41(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base41) + " " + (made instanceof Made41); }
+run("freezeParent", "descriptors", Made41, Base41, make41, probe41, true);
+
+function Base42() {}
+Base42.prototype.tag = "Base42";
+Base42.prototype.c = 0;
+Base42.prototype.who = function () { return "Base42 " + this.a; };
+////= lines-3	Made42
+Made42.prototype = new Base42();
+Made42.prototype.tag = "Made42";
+function make42(x) { return new Made42(x); }
+function probe42(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base42) + " " + (made instanceof Made42); }
+run("freezeParent", "instance", Made42, Base42, make42, probe42, true);
+
+function Base43() {}
+Base43.prototype.tag = "Base43";
+Base43.prototype.c = 0;
+Base43.prototype.who = function () { return "Base43 " + this.a; };
+////= lines-3	Made43
+Reflect.setPrototypeOf(Made43.prototype, Base43.prototype);
+Made43.prototype.tag = "Made43";
+function make43(x) { return new Made43(x); }
+function probe43(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base43) + " " + (made instanceof Made43); }
+run("putProxyBetween", "reflect", Made43, Base43, make43, probe43, false);
+
+function Base44() {}
+Base44.prototype.tag = "Base44";
+Base44.prototype.c = 0;
+Base44.prototype.who = function () { return "Base44 " + this.a; };
+////= lines-3	Made44
+Made44.prototype = Object.assign(Object.create(Base44.prototype), { constructor: Made44 });
+Made44.prototype.tag = "Made44";
+function make44(x) { return new Made44(x); }
+function probe44(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base44) + " " + (made instanceof Made44); }
+run("putProxyBetween", "assign", Made44, Base44, make44, probe44, false);
+
+function Base45() {}
+Base45.prototype.tag = "Base45";
+Base45.prototype.c = 0;
+Base45.prototype.who = function () { return "Base45 " + this.a; };
+////= lines-3	Made45
+Made45.prototype = new Base45();
+Made45.prototype.tag = "Made45";
+function make45(x) { return new Made45(x); }
+function probe45(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base45) + " " + (made instanceof Made45); }
+run("putProxyBetween", "instance", Made45, Base45, make45, probe45, false);
+
+function Base46() {}
+Base46.prototype.tag = "Base46";
+Base46.prototype.c = 0;
+Base46.prototype.who = function () { return "Base46 " + this.a; };
+////= lines-3	Made46
+Made46.prototype.__proto__ = Base46.prototype;
+Made46.prototype.tag = "Made46";
+function make46(x) { return new Made46(x); }
+function probe46(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base46) + " " + (made instanceof Made46); }
+run("putProxyBetween", "protoAccessor", Made46, Base46, make46, probe46, true);
+
+function Base47() {}
+Base47.prototype.tag = "Base47";
+Base47.prototype.c = 0;
+Base47.prototype.who = function () { return "Base47 " + this.a; };
+////= lines-3	Made47
+Made47.prototype = Object.setPrototypeOf({ constructor: Made47 }, Base47.prototype);
+Made47.prototype.tag = "Made47";
+function make47(x) { return new Made47(x); }
+function probe47(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base47) + " " + (made instanceof Made47); }
+run("putProxyBetween", "relinkedLiteral", Made47, Base47, make47, probe47, true);
+
+function Base48() {}
+Base48.prototype.tag = "Base48";
+Base48.prototype.c = 0;
+Base48.prototype.who = function () { return "Base48 " + this.a; };
+////= lines-3	Made48
+Made48.prototype = new Base48();
+Made48.prototype.tag = "Made48";
+function make48(x) { return new Made48(x); }
+function probe48(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base48) + " " + (made instanceof Made48); }
+run("putProxyBetween", "instance", Made48, Base48, make48, probe48, true);
+
+function Base49() {}
+Base49.prototype.tag = "Base49";
+Base49.prototype.c = 0;
+Base49.prototype.who = function () { return "Base49 " + this.a; };
+////= lines-3	Made49
+Object.setPrototypeOf(Made49.prototype, Base49.prototype);
+Made49.prototype.tag = "Made49";
+function make49(x) { return new Made49(x); }
+function probe49(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base49) + " " + (made instanceof Made49); }
+run("putProxyAboveParent", "setPrototypeOf", Made49, Base49, make49, probe49, false);
+
+function Base50() {}
+Base50.prototype.tag = "Base50";
+Base50.prototype.c = 0;
+Base50.prototype.who = function () { return "Base50 " + this.a; };
+////= lines-3	Made50
+Made50.prototype = Object.create(Base50.prototype, { constructor: { value: Made50, writable: true, configurable: true } });
+Made50.prototype.tag = "Made50";
+function make50(x) { return new Made50(x); }
+function probe50(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base50) + " " + (made instanceof Made50); }
+run("putProxyAboveParent", "descriptors", Made50, Base50, make50, probe50, false);
+
+function Base51() {}
+Base51.prototype.tag = "Base51";
+Base51.prototype.c = 0;
+Base51.prototype.who = function () { return "Base51 " + this.a; };
+////= lines-3	Made51
+Made51.prototype = new Base51();
+Made51.prototype.tag = "Made51";
+function make51(x) { return new Made51(x); }
+function probe51(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base51) + " " + (made instanceof Made51); }
+run("putProxyAboveParent", "instance", Made51, Base51, make51, probe51, false);
+
+function Base52() {}
+Base52.prototype.tag = "Base52";
+Base52.prototype.c = 0;
+Base52.prototype.who = function () { return "Base52 " + this.a; };
+////= lines-3	Made52
+Reflect.setPrototypeOf(Made52.prototype, Base52.prototype);
+Made52.prototype.tag = "Made52";
+function make52(x) { return new Made52(x); }
+function probe52(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base52) + " " + (made instanceof Made52); }
+run("putProxyAboveParent", "reflect", Made52, Base52, make52, probe52, true);
+
+function Base53() {}
+Base53.prototype.tag = "Base53";
+Base53.prototype.c = 0;
+Base53.prototype.who = function () { return "Base53 " + this.a; };
+////= lines-3	Made53
+Made53.prototype = Object.create(Base53.prototype);
+Made53.prototype.tag = "Made53";
+function make53(x) { return new Made53(x); }
+function probe53(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base53) + " " + (made instanceof Made53); }
+run("putProxyAboveParent", "create", Made53, Base53, make53, probe53, true);
+
+function Base54() {}
+Base54.prototype.tag = "Base54";
+Base54.prototype.c = 0;
+Base54.prototype.who = function () { return "Base54 " + this.a; };
+////= lines-3	Made54
+Made54.prototype = new Base54();
+Made54.prototype.tag = "Made54";
+function make54(x) { return new Made54(x); }
+function probe54(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base54) + " " + (made instanceof Made54); }
+run("putProxyAboveParent", "instance", Made54, Base54, make54, probe54, true);
+
+function Base55() {}
+Base55.prototype.tag = "Base55";
+Base55.prototype.c = 0;
+Base55.prototype.who = function () { return "Base55 " + this.a; };
+////= lines-3	Made55
+Made55.prototype.__proto__ = Base55.prototype;
+Made55.prototype.tag = "Made55";
+function make55(x) { return new Made55(x); }
+function probe55(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base55) + " " + (made instanceof Made55); }
+run("relinkToOtherParent", "protoAccessor", Made55, Base55, make55, probe55, false);
+
+function Base56() {}
+Base56.prototype.tag = "Base56";
+Base56.prototype.c = 0;
+Base56.prototype.who = function () { return "Base56 " + this.a; };
+////= lines-3	Made56
+Made56.prototype = Object.setPrototypeOf({ constructor: Made56 }, Base56.prototype);
+Made56.prototype.tag = "Made56";
+function make56(x) { return new Made56(x); }
+function probe56(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base56) + " " + (made instanceof Made56); }
+run("relinkToOtherParent", "relinkedLiteral", Made56, Base56, make56, probe56, false);
+
+function Base57() {}
+Base57.prototype.tag = "Base57";
+Base57.prototype.c = 0;
+Base57.prototype.who = function () { return "Base57 " + this.a; };
+////= lines-3	Made57
+Made57.prototype = new Base57();
+Made57.prototype.tag = "Made57";
+function make57(x) { return new Made57(x); }
+function probe57(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base57) + " " + (made instanceof Made57); }
+run("relinkToOtherParent", "instance", Made57, Base57, make57, probe57, false);
+
+function Base58() {}
+Base58.prototype.tag = "Base58";
+Base58.prototype.c = 0;
+Base58.prototype.who = function () { return "Base58 " + this.a; };
+////= lines-3	Made58
+Object.setPrototypeOf(Made58.prototype, Base58.prototype);
+Made58.prototype.tag = "Made58";
+function make58(x) { return new Made58(x); }
+function probe58(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base58) + " " + (made instanceof Made58); }
+run("relinkToOtherParent", "setPrototypeOf", Made58, Base58, make58, probe58, true);
+
+function Base59() {}
+Base59.prototype.tag = "Base59";
+Base59.prototype.c = 0;
+Base59.prototype.who = function () { return "Base59 " + this.a; };
+////= lines-3	Made59
+Made59.prototype = { __proto__: Base59.prototype, constructor: Made59 };
+Made59.prototype.tag = "Made59";
+function make59(x) { return new Made59(x); }
+function probe59(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base59) + " " + (made instanceof Made59); }
+run("relinkToOtherParent", "literal", Made59, Base59, make59, probe59, true);
+
+function Base60() {}
+Base60.prototype.tag = "Base60";
+Base60.prototype.c = 0;
+Base60.prototype.who = function () { return "Base60 " + this.a; };
+////= lines-3	Made60
+Made60.prototype = new Base60();
+Made60.prototype.tag = "Made60";
+function make60(x) { return new Made60(x); }
+function probe60(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base60) + " " + (made instanceof Made60); }
+run("relinkToOtherParent", "instance", Made60, Base60, make60, probe60, true);
+
+function Base61() {}
+Base61.prototype.tag = "Base61";
+Base61.prototype.c = 0;
+Base61.prototype.who = function () { return "Base61 " + this.a; };
+////= lines-3	Made61
+inherits(Made61, Base61);
+Made61.prototype.tag = "Made61";
+function make61(x) { return new Made61(x); }
+function probe61(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base61) + " " + (made instanceof Made61); }
+run("relinkToNull", "inherits", Made61, Base61, make61, probe61, false);
+
+function Base62() {}
+Base62.prototype.tag = "Base62";
+Base62.prototype.c = 0;
+Base62.prototype.who = function () { return "Base62 " + this.a; };
+////= lines-3	Made62
+Made62.prototype = Object.create(Base62.prototype);
+Made62.prototype.tag = "Made62";
+function make62(x) { return new Made62(x); }
+function probe62(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base62) + " " + (made instanceof Made62); }
+run("relinkToNull", "create", Made62, Base62, make62, probe62, false);
+
+function Base63() {}
+Base63.prototype.tag = "Base63";
+Base63.prototype.c = 0;
+Base63.prototype.who = function () { return "Base63 " + this.a; };
+////= lines-3	Made63
+Made63.prototype = new Base63();
+Made63.prototype.tag = "Made63";
+function make63(x) { return new Made63(x); }
+function probe63(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base63) + " " + (made instanceof Made63); }
+run("relinkToNull", "instance", Made63, Base63, make63, probe63, false);
+
+function Base64() {}
+Base64.prototype.tag = "Base64";
+Base64.prototype.c = 0;
+Base64.prototype.who = function () { return "Base64 " + this.a; };
+////= lines-3	Made64
+Made64.prototype.__proto__ = Base64.prototype;
+Made64.prototype.tag = "Made64";
+function make64(x) { return new Made64(x); }
+function probe64(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base64) + " " + (made instanceof Made64); }
+run("relinkToNull", "protoAccessor", Made64, Base64, make64, probe64, true);
+
+function Base65() {}
+Base65.prototype.tag = "Base65";
+Base65.prototype.c = 0;
+Base65.prototype.who = function () { return "Base65 " + this.a; };
+////= lines-3	Made65
+Made65.prototype = Object.create(Base65.prototype, { constructor: { value: Made65, writable: true, configurable: true } });
+Made65.prototype.tag = "Made65";
+function make65(x) { return new Made65(x); }
+function probe65(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base65) + " " + (made instanceof Made65); }
+run("relinkToNull", "descriptors", Made65, Base65, make65, probe65, true);
+
+function Base66() {}
+Base66.prototype.tag = "Base66";
+Base66.prototype.c = 0;
+Base66.prototype.who = function () { return "Base66 " + this.a; };
+////= lines-3	Made66
+Made66.prototype = new Base66();
+Made66.prototype.tag = "Made66";
+function make66(x) { return new Made66(x); }
+function probe66(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base66) + " " + (made instanceof Made66); }
+run("relinkToNull", "instance", Made66, Base66, make66, probe66, true);
+
+function Base67() {}
+Base67.prototype.tag = "Base67";
+Base67.prototype.c = 0;
+Base67.prototype.who = function () { return "Base67 " + this.a; };
+////= lines-3	Made67
+Reflect.setPrototypeOf(Made67.prototype, Base67.prototype);
+Made67.prototype.tag = "Made67";
+function make67(x) { return new Made67(x); }
+function probe67(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base67) + " " + (made instanceof Made67); }
+run("plantSetterOnOwnPrototype", "reflect", Made67, Base67, make67, probe67, false);
+
+function Base68() {}
+Base68.prototype.tag = "Base68";
+Base68.prototype.c = 0;
+Base68.prototype.who = function () { return "Base68 " + this.a; };
+////= lines-3	Made68
+Made68.prototype = { __proto__: Base68.prototype, constructor: Made68 };
+Made68.prototype.tag = "Made68";
+function make68(x) { return new Made68(x); }
+function probe68(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base68) + " " + (made instanceof Made68); }
+run("plantSetterOnOwnPrototype", "literal", Made68, Base68, make68, probe68, false);
+
+function Base69() {}
+Base69.prototype.tag = "Base69";
+Base69.prototype.c = 0;
+Base69.prototype.who = function () { return "Base69 " + this.a; };
+////= lines-3	Made69
+Made69.prototype = new Base69();
+Made69.prototype.tag = "Made69";
+function make69(x) { return new Made69(x); }
+function probe69(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base69) + " " + (made instanceof Made69); }
+run("plantSetterOnOwnPrototype", "instance", Made69, Base69, make69, probe69, false);
+
+function Base70() {}
+Base70.prototype.tag = "Base70";
+Base70.prototype.c = 0;
+Base70.prototype.who = function () { return "Base70 " + this.a; };
+////= lines-3	Made70
+inherits(Made70, Base70);
+Made70.prototype.tag = "Made70";
+function make70(x) { return new Made70(x); }
+function probe70(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base70) + " " + (made instanceof Made70); }
+run("plantSetterOnOwnPrototype", "inherits", Made70, Base70, make70, probe70, true);
+
+function Base71() {}
+Base71.prototype.tag = "Base71";
+Base71.prototype.c = 0;
+Base71.prototype.who = function () { return "Base71 " + this.a; };
+////= lines-3	Made71
+Made71.prototype = Object.setPrototypeOf({ constructor: Made71 }, Base71.prototype);
+Made71.prototype.tag = "Made71";
+function make71(x) { return new Made71(x); }
+function probe71(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base71) + " " + (made instanceof Made71); }
+run("plantSetterOnOwnPrototype", "relinkedLiteral", Made71, Base71, make71, probe71, true);
+
+function Base72() {}
+Base72.prototype.tag = "Base72";
+Base72.prototype.c = 0;
+Base72.prototype.who = function () { return "Base72 " + this.a; };
+////= lines-3	Made72
+Made72.prototype = new Base72();
+Made72.prototype.tag = "Made72";
+function make72(x) { return new Made72(x); }
+function probe72(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base72) + " " + (made instanceof Made72); }
+run("plantSetterOnOwnPrototype", "instance", Made72, Base72, make72, probe72, true);
+
+function Base73() {}
+Base73.prototype.tag = "Base73";
+Base73.prototype.c = 0;
+Base73.prototype.who = function () { return "Base73 " + this.a; };
+////= lines-3	Made73
+Object.setPrototypeOf(Made73.prototype, Base73.prototype);
+Made73.prototype.tag = "Made73";
+function make73(x) { return new Made73(x); }
+function probe73(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base73) + " " + (made instanceof Made73); }
+run("replacePrototypeOfParent", "setPrototypeOf", Made73, Base73, make73, probe73, false);
+
+function Base74() {}
+Base74.prototype.tag = "Base74";
+Base74.prototype.c = 0;
+Base74.prototype.who = function () { return "Base74 " + this.a; };
+////= lines-3	Made74
+Made74.prototype = Object.assign(Object.create(Base74.prototype), { constructor: Made74 });
+Made74.prototype.tag = "Made74";
+function make74(x) { return new Made74(x); }
+function probe74(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base74) + " " + (made instanceof Made74); }
+run("replacePrototypeOfParent", "assign", Made74, Base74, make74, probe74, false);
+
+function Base75() {}
+Base75.prototype.tag = "Base75";
+Base75.prototype.c = 0;
+Base75.prototype.who = function () { return "Base75 " + this.a; };
+////= lines-3	Made75
+Made75.prototype = new Base75();
+Made75.prototype.tag = "Made75";
+function make75(x) { return new Made75(x); }
+function probe75(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base75) + " " + (made instanceof Made75); }
+run("replacePrototypeOfParent", "instance", Made75, Base75, make75, probe75, false);
+
+function Base76() {}
+Base76.prototype.tag = "Base76";
+Base76.prototype.c = 0;
+Base76.prototype.who = function () { return "Base76 " + this.a; };
+////= lines-3	Made76
+Object.setPrototypeOf(Made76.prototype, Base76.prototype);
+Made76.prototype.tag = "Made76";
+function make76(x) { return new Made76(x); }
+function probe76(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base76) + " " + (made instanceof Made76); }
+run("replacePrototypeOfParent", "setPrototypeOf", Made76, Base76, make76, probe76, true);
+
+function Base77() {}
+Base77.prototype.tag = "Base77";
+Base77.prototype.c = 0;
+Base77.prototype.who = function () { return "Base77 " + this.a; };
+////= lines-3	Made77
+Made77.prototype = Object.create(Base77.prototype);
+Made77.prototype.tag = "Made77";
+function make77(x) { return new Made77(x); }
+function probe77(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base77) + " " + (made instanceof Made77); }
+run("replacePrototypeOfParent", "create", Made77, Base77, make77, probe77, true);
+
+function Base78() {}
+Base78.prototype.tag = "Base78";
+Base78.prototype.c = 0;
+Base78.prototype.who = function () { return "Base78 " + this.a; };
+////= lines-3	Made78
+Made78.prototype = new Base78();
+Made78.prototype.tag = "Made78";
+function make78(x) { return new Made78(x); }
+function probe78(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base78) + " " + (made instanceof Made78); }
+run("replacePrototypeOfParent", "instance", Made78, Base78, make78, probe78, true);
+
+function Base79() {}
+Base79.prototype.tag = "Base79";
+Base79.prototype.c = 0;
+Base79.prototype.who = function () { return "Base79 " + this.a; };
+////= lines-3	Made79
+Made79.prototype.__proto__ = Base79.prototype;
+Made79.prototype.tag = "Made79";
+function make79(x) { return new Made79(x); }
+function probe79(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base79) + " " + (made instanceof Made79); }
+run("plantSetterAboveParent", "protoAccessor", Made79, Base79, make79, probe79, false);
+
+function Base80() {}
+Base80.prototype.tag = "Base80";
+Base80.prototype.c = 0;
+Base80.prototype.who = function () { return "Base80 " + this.a; };
+////= lines-3	Made80
+Made80.prototype = Object.create(Base80.prototype, { constructor: { value: Made80, writable: true, configurable: true } });
+Made80.prototype.tag = "Made80";
+function make80(x) { return new Made80(x); }
+function probe80(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base80) + " " + (made instanceof Made80); }
+run("plantSetterAboveParent", "descriptors", Made80, Base80, make80, probe80, false);
+
+function Base81() {}
+Base81.prototype.tag = "Base81";
+Base81.prototype.c = 0;
+Base81.prototype.who = function () { return "Base81 " + this.a; };
+////= lines-3	Made81
+Made81.prototype = new Base81();
+Made81.prototype.tag = "Made81";
+function make81(x) { return new Made81(x); }
+function probe81(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base81) + " " + (made instanceof Made81); }
+run("plantSetterAboveParent", "instance", Made81, Base81, make81, probe81, false);
+
+function Base82() {}
+Base82.prototype.tag = "Base82";
+Base82.prototype.c = 0;
+Base82.prototype.who = function () { return "Base82 " + this.a; };
+////= lines-3	Made82
+Made82.prototype.__proto__ = Base82.prototype;
+Made82.prototype.tag = "Made82";
+function make82(x) { return new Made82(x); }
+function probe82(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base82) + " " + (made instanceof Made82); }
+run("plantSetterAboveParent", "protoAccessor", Made82, Base82, make82, probe82, true);
+
+function Base83() {}
+Base83.prototype.tag = "Base83";
+Base83.prototype.c = 0;
+Base83.prototype.who = function () { return "Base83 " + this.a; };
+////= lines-3	Made83
+Made83.prototype = { __proto__: Base83.prototype, constructor: Made83 };
+Made83.prototype.tag = "Made83";
+function make83(x) { return new Made83(x); }
+function probe83(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base83) + " " + (made instanceof Made83); }
+run("plantSetterAboveParent", "literal", Made83, Base83, make83, probe83, true);
+
+function Base84() {}
+Base84.prototype.tag = "Base84";
+Base84.prototype.c = 0;
+Base84.prototype.who = function () { return "Base84 " + this.a; };
+////= lines-3	Made84
+Made84.prototype = new Base84();
+Made84.prototype.tag = "Made84";
+function make84(x) { return new Made84(x); }
+function probe84(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base84) + " " + (made instanceof Made84); }
+run("plantSetterAboveParent", "instance", Made84, Base84, make84, probe84, true);
+
+function Base85() {}
+Base85.prototype.tag = "Base85";
+Base85.prototype.c = 0;
+Base85.prototype.who = function () { return "Base85 " + this.a; };
+////= lines-3	Made85
+inherits(Made85, Base85);
+Made85.prototype.tag = "Made85";
+function make85(x) { return new Made85(x); }
+function probe85(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base85) + " " + (made instanceof Made85); }
+run("hideMethodOnOwnPrototype", "inherits", Made85, Base85, make85, probe85, false);
+
+function Base86() {}
+Base86.prototype.tag = "Base86";
+Base86.prototype.c = 0;
+Base86.prototype.who = function () { return "Base86 " + this.a; };
+////= lines-3	Made86
+Made86.prototype = Object.setPrototypeOf({ constructor: Made86 }, Base86.prototype);
+Made86.prototype.tag = "Made86";
+function make86(x) { return new Made86(x); }
+function probe86(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base86) + " " + (made instanceof Made86); }
+run("hideMethodOnOwnPrototype", "relinkedLiteral", Made86, Base86, make86, probe86, false);
+
+function Base87() {}
+Base87.prototype.tag = "Base87";
+Base87.prototype.c = 0;
+Base87.prototype.who = function () { return "Base87 " + this.a; };
+////= lines-3	Made87
+Made87.prototype = new Base87();
+Made87.prototype.tag = "Made87";
+function make87(x) { return new Made87(x); }
+function probe87(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base87) + " " + (made instanceof Made87); }
+run("hideMethodOnOwnPrototype", "instance", Made87, Base87, make87, probe87, false);
+
+function Base88() {}
+Base88.prototype.tag = "Base88";
+Base88.prototype.c = 0;
+Base88.prototype.who = function () { return "Base88 " + this.a; };
+////= lines-3	Made88
+inherits(Made88, Base88);
+Made88.prototype.tag = "Made88";
+function make88(x) { return new Made88(x); }
+function probe88(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base88) + " " + (made instanceof Made88); }
+run("hideMethodOnOwnPrototype", "inherits", Made88, Base88, make88, probe88, true);
+
+function Base89() {}
+Base89.prototype.tag = "Base89";
+Base89.prototype.c = 0;
+Base89.prototype.who = function () { return "Base89 " + this.a; };
+////= lines-3	Made89
+Made89.prototype = Object.assign(Object.create(Base89.prototype), { constructor: Made89 });
+Made89.prototype.tag = "Made89";
+function make89(x) { return new Made89(x); }
+function probe89(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base89) + " " + (made instanceof Made89); }
+run("hideMethodOnOwnPrototype", "assign", Made89, Base89, make89, probe89, true);
+
+function Base90() {}
+Base90.prototype.tag = "Base90";
+Base90.prototype.c = 0;
+Base90.prototype.who = function () { return "Base90 " + this.a; };
+////= lines-3	Made90
+Made90.prototype = new Base90();
+Made90.prototype.tag = "Made90";
+function make90(x) { return new Made90(x); }
+function probe90(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base90) + " " + (made instanceof Made90); }
+run("hideMethodOnOwnPrototype", "instance", Made90, Base90, make90, probe90, true);
+
+function Base91() {}
+Base91.prototype.tag = "Base91";
+Base91.prototype.c = 0;
+Base91.prototype.who = function () { return "Base91 " + this.a; };
+////= lines-3	Made91
+Reflect.setPrototypeOf(Made91.prototype, Base91.prototype);
+Made91.prototype.tag = "Made91";
+function make91(x) { return new Made91(x); }
+function probe91(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base91) + " " + (made instanceof Made91); }
+run("replaceMethodOnParent", "reflect", Made91, Base91, make91, probe91, false);
+
+function Base92() {}
+Base92.prototype.tag = "Base92";
+Base92.prototype.c = 0;
+Base92.prototype.who = function () { return "Base92 " + this.a; };
+////= lines-3	Made92
+Made92.prototype = Object.create(Base92.prototype);
+Made92.prototype.tag = "Made92";
+function make92(x) { return new Made92(x); }
+function probe92(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base92) + " " + (made instanceof Made92); }
+run("replaceMethodOnParent", "create", Made92, Base92, make92, probe92, false);
+
+function Base93() {}
+Base93.prototype.tag = "Base93";
+Base93.prototype.c = 0;
+Base93.prototype.who = function () { return "Base93 " + this.a; };
+////= lines-3	Made93
+Made93.prototype = new Base93();
+Made93.prototype.tag = "Made93";
+function make93(x) { return new Made93(x); }
+function probe93(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base93) + " " + (made instanceof Made93); }
+run("replaceMethodOnParent", "instance", Made93, Base93, make93, probe93, false);
+
+function Base94() {}
+Base94.prototype.tag = "Base94";
+Base94.prototype.c = 0;
+Base94.prototype.who = function () { return "Base94 " + this.a; };
+////= lines-3	Made94
+Reflect.setPrototypeOf(Made94.prototype, Base94.prototype);
+Made94.prototype.tag = "Made94";
+function make94(x) { return new Made94(x); }
+function probe94(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base94) + " " + (made instanceof Made94); }
+run("replaceMethodOnParent", "reflect", Made94, Base94, make94, probe94, true);
+
+function Base95() {}
+Base95.prototype.tag = "Base95";
+Base95.prototype.c = 0;
+Base95.prototype.who = function () { return "Base95 " + this.a; };
+////= lines-3	Made95
+Made95.prototype = Object.setPrototypeOf({ constructor: Made95 }, Base95.prototype);
+Made95.prototype.tag = "Made95";
+function make95(x) { return new Made95(x); }
+function probe95(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base95) + " " + (made instanceof Made95); }
+run("replaceMethodOnParent", "relinkedLiteral", Made95, Base95, make95, probe95, true);
+
+function Base96() {}
+Base96.prototype.tag = "Base96";
+Base96.prototype.c = 0;
+Base96.prototype.who = function () { return "Base96 " + this.a; };
+////= lines-3	Made96
+Made96.prototype = new Base96();
+Made96.prototype.tag = "Made96";
+function make96(x) { return new Made96(x); }
+function probe96(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base96) + " " + (made instanceof Made96); }
+run("replaceMethodOnParent", "instance", Made96, Base96, make96, probe96, true);
+
+function Base97() {}
+Base97.prototype.tag = "Base97";
+Base97.prototype.c = 0;
+Base97.prototype.who = function () { return "Base97 " + this.a; };
+////= lines-3	Made97
+Object.setPrototypeOf(Made97.prototype, Base97.prototype);
+Made97.prototype.tag = "Made97";
+function make97(x) { return new Made97(x); }
+function probe97(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base97) + " " + (made instanceof Made97); }
+run("answerInstanceofOtherwise", "setPrototypeOf", Made97, Base97, make97, probe97, false);
+
+function Base98() {}
+Base98.prototype.tag = "Base98";
+Base98.prototype.c = 0;
+Base98.prototype.who = function () { return "Base98 " + this.a; };
+////= lines-3	Made98
+Made98.prototype = { __proto__: Base98.prototype, constructor: Made98 };
+Made98.prototype.tag = "Made98";
+function make98(x) { return new Made98(x); }
+function probe98(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base98) + " " + (made instanceof Made98); }
+run("answerInstanceofOtherwise", "literal", Made98, Base98, make98, probe98, false);
+
+function Base99() {}
+Base99.prototype.tag = "Base99";
+Base99.prototype.c = 0;
+Base99.prototype.who = function () { return "Base99 " + this.a; };
+////= lines-3	Made99
+Made99.prototype = new Base99();
+Made99.prototype.tag = "Made99";
+function make99(x) { return new Made99(x); }
+function probe99(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base99) + " " + (made instanceof Made99); }
+run("answerInstanceofOtherwise", "instance", Made99, Base99, make99, probe99, false);
+
+function Base100() {}
+Base100.prototype.tag = "Base100";
+Base100.prototype.c = 0;
+Base100.prototype.who = function () { return "Base100 " + this.a; };
+////= lines-3	Made100
+Made100.prototype.__proto__ = Base100.prototype;
+Made100.prototype.tag = "Made100";
+function make100(x) { return new Made100(x); }
+function probe100(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base100) + " " + (made instanceof Made100); }
+run("answerInstanceofOtherwise", "protoAccessor", Made100, Base100, make100, probe100, true);
+
+function Base101() {}
+Base101.prototype.tag = "Base101";
+Base101.prototype.c = 0;
+Base101.prototype.who = function () { return "Base101 " + this.a; };
+////= lines-3	Made101
+Made101.prototype = Object.create(Base101.prototype);
+Made101.prototype.tag = "Made101";
+function make101(x) { return new Made101(x); }
+function probe101(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base101) + " " + (made instanceof Made101); }
+run("answerInstanceofOtherwise", "create", Made101, Base101, make101, probe101, true);
+
+function Base102() {}
+Base102.prototype.tag = "Base102";
+Base102.prototype.c = 0;
+Base102.prototype.who = function () { return "Base102 " + this.a; };
+////= lines-3	Made102
+Made102.prototype = new Base102();
+Made102.prototype.tag = "Made102";
+function make102(x) { return new Made102(x); }
+function probe102(made) { return (made.who ? made.who() : "nobody") + " " + (made instanceof Base102) + " " + (made instanceof Made102); }
+run("answerInstanceofOtherwise", "instance", Made102, Base102, make102, probe102, true);
+
+// Each call makes the two functions and their prototype objects again.
+////= factories
+////= Object-keys
+
+// The first object is constructed before the link is made.
+function LateBase() {}
+LateBase.prototype.tag = "LateBase";
+Object.defineProperty(LateBase.prototype, "b", accessor("late base"));
+////= lines-7	LateMade	x	a	b
+LateMade.prototype.tag = "LateMade";
+function makeLate(x) { return new LateMade(x); }
+unseen(LateMade);
+construct("constructed before the link", makeLate, 1);
+Object.setPrototypeOf(LateMade.prototype, LateBase.prototype);
+construct("constructed after the link", makeLate, 2);
+
+// The same where the link replaces the prototype object. The first object keeps the one it was made under.
+function LateCreatedBase() {}
+LateCreatedBase.prototype.tag = "LateCreatedBase";
+Object.defineProperty(LateCreatedBase.prototype, "late", accessor("late created base"));
+////= lines-7	LateCreated	x	a	b
+LateCreated.prototype.tag = "first prototype object";
+////= lines-35	storeLate
+unseen(LateCreated);
+var early = new LateCreated(1);
+LateCreated.prototype = Object.create(LateCreatedBase.prototype);
+LateCreated.prototype.tag = "LateCreated";
+construct("constructed after the prototype object was replaced", function (x) { return storeLate(new LateCreated(x)); }, 2);
+construct("constructed before the prototype object was replaced", function () { return storeLate(early); });
+
+// Two calls give two parents.
+function FirstParent() {}
+FirstParent.prototype.tag = "FirstParent";
+function SecondParent() {}
+SecondParent.prototype.tag = "SecondParent";
+Object.defineProperty(SecondParent.prototype, "b", accessor("second"));
+////= lines-7	TwoParents	x	a	b
+function makeTwoParents(x) { return new TwoParents(x); }
+function probeTwoParents(made) { return (made instanceof FirstParent) + " " + (made instanceof SecondParent); }
+unseen(TwoParents);
+inherits(TwoParents, FirstParent);
+construct("under the first parent", makeTwoParents, 1, probeTwoParents);
+inherits(TwoParents, SecondParent);
+construct("under the second parent", makeTwoParents, 2, probeTwoParents);
+
+// The text has a link that the program never makes.
+function NeverBase() {}
+NeverBase.prototype.tag = "NeverBase";
+NeverBase.prototype.who = function () { return "NeverBase"; };
+Object.defineProperty(NeverBase.prototype, "b", accessor("never"));
+////= lines-7	NeverLinked	x	a	b
+NeverLinked.prototype.tag = "NeverLinked";
+function linkNever() { inherits(NeverLinked, NeverBase); }
+function makeNeverLinked(x) { return new NeverLinked(x); }
+function probeNeverLinked(made) { return typeof made.who + " " + (made instanceof NeverBase); }
+unseen(NeverLinked);
+unseen(linkNever);
+construct("the link stands in a function that never runs", makeNeverLinked, 1, probeNeverLinked);
+
+function SkippedBase() {}
+SkippedBase.prototype.tag = "SkippedBase";
+SkippedBase.prototype.who = function () { return "SkippedBase"; };
+Object.defineProperty(SkippedBase.prototype, "b", accessor("skipped"));
+////= lines-7	Skipped	x	a	b
+Skipped.prototype.tag = "Skipped";
+if (unseen(false))
+  Object.setPrototypeOf(Skipped.prototype, SkippedBase.prototype);
+function makeSkipped(x) { return new Skipped(x); }
+function probeSkipped(made) { return typeof made.who + " " + (made instanceof SkippedBase); }
+unseen(Skipped);
+construct("the link stands under a condition that fails", makeSkipped, 1, probeSkipped);
+
+function UndoneBase() {}
+UndoneBase.prototype.tag = "UndoneBase";
+UndoneBase.prototype.who = function () { return "UndoneBase"; };
+Object.defineProperty(UndoneBase.prototype, "b", accessor("undone"));
+////= lines-7	Undone	x	a	b
+Undone.prototype.tag = "Undone";
+Object.setPrototypeOf(Undone.prototype, UndoneBase.prototype);
+Object.setPrototypeOf(unseen(Undone).prototype, Object.prototype);
+function makeUndone(x) { return new Undone(x); }
+function probeUndone(made) { return typeof made.who + " " + (made instanceof UndoneBase); }
+construct("the link is undone before the first construction", makeUndone, 1, probeUndone);
+
+// The second link would close a circle, so it throws.
+////= lines-7	Ring1	x	a	b
+Ring1.prototype.tag = "Ring1";
+function Ring2() {}
+Ring2.prototype.tag = "Ring2";
+inherits(Ring1, Ring2);
+lines.push("links that come back: " + attempt(function () { inherits(Ring2, Ring1); return "linked"; }));
+lines.push("a link to itself: " + attempt(function () { Object.setPrototypeOf(Ring2.prototype, Ring2.prototype); return "linked"; }));
+unseen(Ring1);
+construct("in what is left of the circle", function (x) { return new Ring1(x); }, 1);
+
+// The name of the parent gets another function after the link.
+var Moving = function () {};
+Moving.prototype.tag = "first Moving";
+////= lines-7	BelowMoving	x	a	b
+inherits(BelowMoving, Moving);
+BelowMoving.prototype.tag = "BelowMoving";
+Moving = function () {};
+Moving.prototype.tag = "second Moving";
+Object.defineProperty(Moving.prototype, "b", accessor("second moving"));
+unseen(BelowMoving);
+construct("the name of the parent holds another function", function (x) { return new BelowMoving(x); }, 1, function (made) { return made instanceof Moving; });
+
+// Three classes, each constructor calls the one above, and the accessor arrives on the topmost.
+////= lines-28	Top	top	1
+Top.prototype.tag = "Top";
+////= lines-33	Middle	Top	middle
+inherits(Middle, Top);
+Middle.prototype.tag = "Middle";
+////= lines-29	Bottom	Middle
+inherits(Bottom, Middle);
+Bottom.prototype.tag = "Bottom";
+function makeBottom(x) { return new Bottom(x); }
+function probeBottom(made) { return (made instanceof Top) + " " + (made instanceof Middle); }
+unseen(Bottom);
+construct("three classes", makeBottom, 1, probeBottom);
+Object.defineProperty(unseen(Top).prototype, "middle", accessor("top"));
+construct("three classes, accessor for a field of the middle one", makeBottom, 2, probeBottom);
+Object.defineProperty(unseen(Top).prototype, "b", accessor("top"));
+construct("three classes, accessor for a field of the lowest one", makeBottom, 3, probeBottom);
+construct("the middle one", function () { return new Middle(); });
+Object.setPrototypeOf(unseen(Middle).prototype, Object.prototype);
+construct("three classes, the middle one has left the topmost", makeBottom, 4, probeBottom);
+
+// The lowest class is constructed before its parent has got a parent.
+////= lines-28	Root	root	1
+Root.prototype.tag = "Root";
+Object.defineProperty(Root.prototype, "b", accessor("root"));
+////= lines-33	Inner	Root	inner
+Inner.prototype.tag = "Inner";
+////= lines-29	Leaf	Inner
+inherits(Leaf, Inner);
+Leaf.prototype.tag = "Leaf";
+function makeLeaf(x) { return new Leaf(x); }
+unseen(Leaf);
+construct("the parent has no parent yet", makeLeaf, 1);
+inherits(Inner, Root);
+construct("the parent has got its parent", makeLeaf, 2);
+
+// Two children of one parent. One of them leaves.
+function Shared() {}
+Shared.prototype.tag = "Shared";
+////= lines-7	FirstChild	x	a	b
+inherits(FirstChild, Shared);
+FirstChild.prototype.tag = "FirstChild";
+////= lines-7	SecondChild	x	a	b
+inherits(SecondChild, Shared);
+SecondChild.prototype.tag = "SecondChild";
+function makeFirstChild(x) { return new FirstChild(x); }
+function makeSecondChild(x) { return new SecondChild(x); }
+function probeChild(made) { return made instanceof Shared; }
+unseen(FirstChild);
+unseen(SecondChild);
+construct("the first child", makeFirstChild, 1, probeChild);
+construct("the second child", makeSecondChild, 1, probeChild);
+Object.setPrototypeOf(unseen(FirstChild).prototype, Object.defineProperty({ tag: "elsewhere" }, "b", accessor("elsewhere")));
+construct("the first child has left", makeFirstChild, 2, probeChild);
+construct("the second child has stayed", makeSecondChild, 2, probeChild);
+Object.defineProperty(unseen(Shared).prototype, "b", accessor("shared"));
+construct("the first child, accessor on the parent it has left", makeFirstChild, 3, probeChild);
+construct("the second child, accessor on its parent", makeSecondChild, 3, probeChild);
+
+// The parent is a class.
+class ClassParent {
+  get tag() { return "ClassParent"; }
+  who() { return "ClassParent " + this.a; }
+}
+////= lines-7	UnderClass	x	a	b
+Object.setPrototypeOf(UnderClass.prototype, ClassParent.prototype);
+function makeUnderClass(x) { return new UnderClass(x); }
+function probeUnderClass(made) { return made.who() + " " + (made instanceof ClassParent); }
+unseen(UnderClass);
+construct("under a class", makeUnderClass, 1, probeUnderClass);
+Object.defineProperty(unseen(ClassParent).prototype, "b", accessor("class"));
+construct("under a class with an accessor", makeUnderClass, 2, probeUnderClass);
+////= lines-26	CallsClass	ClassParent
+inherits(CallsClass, ClassParent);
+construct("the constructor calls the class", function (x) { return new CallsClass(x); }, 3);
+
+// The function objects are linked as well.
+function StaticBase() {}
+StaticBase.label = "StaticBase";
+StaticBase.create = function () { return "created by " + this.label; };
+function StaticMade() {}
+inherits(StaticMade, StaticBase);
+function readStatic() { return (StaticMade.create ? StaticMade.create() : "nothing") + " " + StaticMade.label; }
+unseen(StaticMade);
+lines.push("before the function objects are linked: " + readStatic());
+Object.setPrototypeOf(StaticMade, StaticBase);
+lines.push("after the function objects are linked: " + readStatic());
+StaticMade.label = "StaticMade";
+lines.push("with a property of its own: " + readStatic());
+Object.setPrototypeOf(unseen(StaticMade), Function.prototype);
+lines.push("after the link is undone: " + readStatic());
+
+// Another new.target, another receiver, and an object that is relinked before a function stores a name for the first time.
+function Target() {}
+Target.prototype = Object.defineProperty({ tag: "Target" }, "b", accessor("target"));
+function ReflectBase() {}
+ReflectBase.prototype.tag = "ReflectBase";
+////= lines-7	Reflected	x	a	b
+inherits(Reflected, ReflectBase);
+Reflected.prototype.tag = "Reflected";
+////= lines-35	extend
+unseen(Reflected);
+construct("own new.target", function (x) { return new Reflected(x); }, 1);
+construct("other new.target", function (x) { return Reflect.construct(Reflected, [x], Target); }, 2);
+construct("the parent as new.target", function (x) { return Reflect.construct(Reflected, [x], ReflectBase); }, 3);
+construct("called on an object literal", function (x) {
+  var plain = { tag: "plain" };
+  Reflected.call(plain, x);
+  return plain;
+}, 4);
+construct("called on an object of the parent", function (x) {
+  var base = new ReflectBase();
+  Reflected.call(base, x);
+  return base;
+}, 5);
+construct("a name stored later", function (x) { return extend(new Reflected(x)); }, 6);
+construct("a name stored later under an accessor", function (x) {
+  return extend(Object.setPrototypeOf(new Reflected(x), Object.defineProperty({ tag: "relinked" }, "late", accessor("relinked"))));
+}, 7);
+Object.defineProperty(unseen(ReflectBase).prototype, "late", accessor("base"));
+construct("a name stored later under an accessor of the parent", function (x) { return extend(new Reflected(x)); }, 8);
+
+// What a function stores that is called with the new object: between the stores of the constructor, under a condition, late, under a name of the constructor.
+////= lines-27	Emitter	events	0	limit	10
+Emitter.prototype.tag = "Emitter";
+function Stream(x) {
+  this.a = x;
+  Emitter.call(this);
+  this.b = x + 1;
+}
+inherits(Stream, Emitter);
+Stream.prototype.tag = "Stream";
+function makeStream(x) { return new Stream(x); }
+unseen(Stream);
+construct("the parent is called between two stores", makeStream, 1);
+Object.defineProperty(unseen(Emitter).prototype, "limit", accessor("emitter"));
+construct("accessor for a field that the parent stores", makeStream, 2);
+delete unseen(Emitter).prototype.limit;
+construct("the accessor is gone", makeStream, 3);
+Object.defineProperty(unseen(Emitter), "call", { value: function () { noted.push("own call"); }, configurable: true });
+construct("the parent has a call of its own", makeStream, 4);
+delete unseen(Emitter).call;
+construct("the parent has lost it", makeStream, 5);
+
+////= Optional
+var flips = false;
+unseen(Optional);
+construct("the call is made", function (x) { return new Optional(x, true); }, 1);
+construct("the call is left out", function (x) { return new Optional(x, false); }, 2);
+////= construct-2	"the call is made every other time"	Optional	3
+
+////= Reordered
+unseen(Reordered);
+////= construct-2	"the call comes early or late"	Reordered	1
+
+////= lines-27	Counter	count	0	b	"stored by the callee"
+function Counting(x) {
+  this.b = x;
+  Counter.call(this);
+  this.count++;
+}
+unseen(Counting);
+construct("both store one name", function (x) { return new Counting(x); }, 1);
+
+////= lines-34	Named	first	second
+function Forwarding() {
+  Named.apply(this, arguments);
+  this.b = arguments.length;
+}
+unseen(Forwarding);
+construct("the arguments are handed on", function (x) { return new Forwarding(x); }, 1);
+construct("two arguments are handed on", function (x) { return new Forwarding(x, x + 1); }, 2);
+
+function Holder(x) {
+  this.inner = {};
+  Emitter.call(this.inner);
+  this.b = x;
+}
+unseen(Holder);
+construct("the callee gets another object", function (x) { return new Holder(x); }, 1);
+
+function Returning() {
+  this.kept = 1;
+  return { tag: "returned" };
+}
+////= lines-26	UsesReturning	Returning
+unseen(UsesReturning);
+construct("the callee returns an object", function (x) { return new UsesReturning(x); }, 1);
+
+////= Again
+unseen(Again);
+construct("the constructor calls itself", function (x) { return new Again(x); }, 2);
+
+var Swapped = function () {
+  this.first = 1;
+};
+////= lines-26	UsesSwapped	Swapped
+unseen(UsesSwapped);
+construct("the callee before its name gets another function", function (x) { return new UsesSwapped(x); }, 1);
+Swapped = function () {
+  this.second = 2;
+};
+construct("the callee after its name got another function", function (x) { return new UsesSwapped(x); }, 2);
+
+// Members that are copied into the prototype object. The copy reads each property once: it stores what a getter returns, and undefined where there is only a setter.
+var reads = 0;
+////= lines-7	Mixed	x	a	b
+////= Object-assign
+function makeMixed(x) { return new Mixed(x); }
+function probeMixed(made) { return made.who() + " " + made.counted + " " + reads + " " + Object.keys(Mixed.prototype).join(); }
+unseen(Mixed);
+construct("members copied into the prototype object", makeMixed, 1, probeMixed);
+unseen(Mixed).prototype.who = function () { return "changed " + this.a; };
+Object.defineProperty(unseen(Mixed).prototype, "b", accessor("mixed"));
+construct("copied members are replaced", makeMixed, 2, probeMixed);
+
+// The parent is a built-in class.
+function Failure(message) {
+  Error.call(this, message);
+  this.name = "Failure";
+  this.message = message;
+}
+inherits(Failure, Error);
+Failure.prototype.tag = "Failure";
+unseen(Failure);
+construct("under Error", function (x) { return new Failure("text " + x); }, 1, function (made) { return String(made) + " " + (made instanceof Error); });
+
+////= lines-28	List	length	0
+List.prototype = Object.create(Array.prototype);
+List.prototype.constructor = List;
+List.prototype.tag = "List";
+unseen(List);
+construct("under Array", function (x) {
+  var list = new List();
+  list.push(x, x + 1);
+  return list;
+}, 1, function (made) { return made.join("+") + " " + (made instanceof Array) + " " + Array.isArray(made); });
+
+// The parent is a generator function.
+function* Steps() {}
+////= lines-7	Walker	x	a	b
+Object.setPrototypeOf(Walker.prototype, Steps.prototype);
+Walker.prototype.tag = "Walker";
+unseen(Walker);
+construct("under a generator function", function (x) { return new Walker(x); }, 1, function (made) {
+  return typeof made.next + " " + attempt(function () { return made.next(); }) + " " + (made instanceof Steps);
+});
+
+console.log(lines.join("\n"));

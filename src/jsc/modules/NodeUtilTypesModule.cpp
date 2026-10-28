@@ -1,4 +1,5 @@
 #include "BunClientData.h"
+#include "GeneratedResolveMessage.h"
 #include "JSDOMURL.h"
 #include "JSDOMWrapper.h"
 #include "node/crypto/JSKeyObject.h"
@@ -20,6 +21,7 @@
 #include "napi_external.h"
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSJsonWebKey.h"
+#include <JavaScriptCore/AOTHost.h>
 #include <JavaScriptCore/AggregateError.h>
 #include <JavaScriptCore/AsyncFunctionPrototype.h>
 #include <JavaScriptCore/BigIntObject.h>
@@ -30,7 +32,6 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SymbolObject.h>
-#include "ZigGeneratedClasses.h"
 #include "JSKeyObject.h"
 
 #include "NodeUtilTypesModule.h"
@@ -937,7 +938,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsNativeError,
         // They have code that does
         //      assert(util.types.isNativeError(resolveMessage))
         // FIXME: delete this once ResolveMessage and BuildMessage extend Error
-        if (cell->inherits<WebCore::JSResolveMessage>() || cell->inherits<WebCore::JSBuildMessage>())
+        if (cell->inherits<Bun::Bindgen::Generated::JSResolveMessage>() || cell->inherits<Bun::Bindgen::Generated::JSBuildMessage>())
             return JSValue::encode(jsBoolean(true));
     }
 
@@ -958,6 +959,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAsyncFunction,
     GET_FIRST_VALUE
 
     auto* function = dynamicDowncast<JSFunction>(value);
+#if ENABLE(AOT)
+    if (value.isCell()) {
+        auto declaredAs = JSC::AOT::declaredAs(value.asCell());
+        if (declaredAs != JSC::AOT::DeclaredAs::NotCompiled)
+            return JSValue::encode(jsBoolean(declaredAs == JSC::AOT::DeclaredAs::AsyncFunction || declaredAs == JSC::AOT::DeclaredAs::AsyncGeneratorFunction));
+    }
+#endif
     if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
@@ -984,6 +992,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorFunction,
 {
     GET_FIRST_VALUE
     auto* function = dynamicDowncast<JSFunction>(value);
+#if ENABLE(AOT)
+    if (value.isCell()) {
+        auto declaredAs = JSC::AOT::declaredAs(value.asCell());
+        if (declaredAs != JSC::AOT::DeclaredAs::NotCompiled)
+            return JSValue::encode(jsBoolean(declaredAs == JSC::AOT::DeclaredAs::GeneratorFunction || declaredAs == JSC::AOT::DeclaredAs::AsyncGeneratorFunction));
+    }
+#endif
     if (!function || function->isHostFunction())
         return JSValue::encode(jsBoolean(false));
 
@@ -1000,6 +1015,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsGeneratorObject,
 {
     GET_FIRST_CELL
 
+#if ENABLE(AOT)
+    if (JSC::AOT::isGeneratorObject(cell))
+        return JSValue::encode(jsBoolean(true));
+#endif
     return JSValue::encode(jsBoolean(cell->type() == JSGeneratorType || cell->type() == JSAsyncGeneratorType));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsPromise,
@@ -1084,6 +1103,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleNamespaceObject,
         JSC::CallFrame* callframe))
 {
     GET_FIRST_CELL
+
+#if ENABLE(AOT)
+    if (JSC::AOT::isModuleNamespace(cell))
+        return JSValue::encode(jsBoolean(true));
+#endif
     return JSValue::encode(jsBoolean(cell->type() == ModuleNamespaceObjectType));
 }
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsAnyArrayBuffer,

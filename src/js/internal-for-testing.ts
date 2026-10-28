@@ -13,7 +13,7 @@ export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight
 export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
-export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);
+export const canonicalizeIP = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
 
 // Process-wide additions to the public keys no certificate chain may hold (blocked_spkis.cpp). `hash` is the SHA-256 of
 // a DER SubjectPublicKeyInfo.
@@ -47,6 +47,12 @@ export const highwayStringsForTesting: (
     | "countChar"
     | "indexOfAny"
     | "lastIndexOfAny"
+    | "indexOfUntidySlash"
+    | "indexOfUntidySlashOrNonAscii"
+    | "lastIndexOfSlash"
+    | "lastIndexOfSlashOrDot"
+    | "commonPrefixLength"
+    | "countSlashes"
     | "memmem"
     | "memrmem"
     | "memmem16"
@@ -60,58 +66,53 @@ export const highwayStringsForTesting: (
 
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 export const setSQLiteColumnNameTransform = (
-  statement: import("bun:sqlite").Statement,
+  statement: InstanceType<$BunModules["bun:sqlite"]["Statement"]>,
   transform: ((name: string) => string) | null | undefined,
 ) => statement.native.$setColumnNameTransform(transform);
 
 export const patchInternals = {
-  parse: $newRustFunction("patch.rs", "TestingAPIs.parse", 1),
-  apply: $newRustFunction("patch.rs", "TestingAPIs.apply", 2),
-  makeDiff: $newRustFunction("patch.rs", "TestingAPIs.makeDiff", 2),
+  parse: $bindgen("patch_testing.bind.ts", "parse"),
+  apply: $bindgen("patch_testing.bind.ts", "apply"),
+  makeDiff: $bindgen("patch_testing.bind.ts", "makeDiff"),
 };
 
 export const internalSourceMap = {
-  fromVLQ: $newRustFunction("sourcemap/InternalSourceMap.rs", "TestingAPIs.fromVLQ", 1) as (vlq: string) => Uint8Array,
-  toVLQ: $newRustFunction("sourcemap/InternalSourceMap.rs", "TestingAPIs.toVLQ", 1) as (blob: Uint8Array) => string,
-  find: $newRustFunction("sourcemap/InternalSourceMap.rs", "TestingAPIs.find", 3) as (
-    blob: Uint8Array,
-    line: number,
-    col: number,
-  ) => {
-    generatedLine: number;
-    generatedColumn: number;
-    originalLine: number;
-    originalColumn: number;
-    sourceIndex: number;
-  } | null,
+  fromVLQ: $bindgen("InternalSourceMap.bind.ts", "fromVLQ") as (vlq: string) => Uint8Array,
+  toVLQ: $bindgen("InternalSourceMap.bind.ts", "toVLQ"),
+  find: $bindgen("InternalSourceMap.bind.ts", "find"),
 };
 
-const shellLex = $newRustFunction("shell.rs", "TestingAPIs.shellLex", 2);
-const shellParse = $newRustFunction("shell.rs", "TestingAPIs.shellParse", 2);
+const shellLex = $bindgen("shell_body.bind.ts", "shellLex");
+const shellParse = $bindgen("shell_body.bind.ts", "shellParse");
 
-export const sslCtxLiveCount = $newRustFunction("SecureContext.rs", "jsLiveCount", 0);
+export const sslCtxLiveCount = $bindgen("SecureContext.bind.ts", "liveCount");
 
-export const napiThreadsafeFunctionLiveCount = $newRustFunction("napi_body.rs", "jsThreadsafeFunctionLiveCount", 0);
+export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "threadsafeFunctionLiveCount");
 
-export const bundlerWorkerLiveCount: () => number = $newRustFunction("JSBundler.rs", "jsWorkerLiveCount", 0);
+export const bundlerWorkerLiveCount = $bindgen("JSBundler.bind.ts", "workerLiveCount");
 
-export const semverIntersects = $newRustFunction("SemverObject.rs", "intersectsForTesting", 2) as (
+export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (
   left: string,
   right: string,
 ) => boolean;
 
 /** What a bytecode order file calls the code of `text`: `M <name>` and `<start> <kind> <name>` lines, or null. */
-export const bytecodeOrderNames = $newRustFunction("BytecodeOrderRecorder.rs", "namesForTesting", 3) as (
+export const bytecodeOrderNames = $bindgen("BytecodeOrderRecorder.bind.ts", "namesForTesting") as (
   text: string,
   kind: "module" | "script" | "builtin" | "internal",
   chunkPaths?: string,
 ) => string | null | undefined;
 
-export const escapeRegExp = $newRustFunction("escapeRegExp.rs", "jsEscapeRegExp", 1);
-export const escapeRegExpForPackageNameMatching = $newRustFunction(
-  "escapeRegExp.rs",
-  "jsEscapeRegExpForPackageNameMatching",
-  1,
+/** What the checker's queries answer for every node of every compiled file that `entryPoint` (an absolute path) reaches, and every diagnostic with its class and effect. `threads` 0 or absent: one per core. */
+export const describeCheckerQueries = $bindgen("checker_queries_testing.bind.ts", "describeCheckerQueries") as (
+  entryPoint: string,
+  threads?: number,
+) => string;
+
+export const escapeRegExp = $bindgen("bun_string_jsc.bind.ts", "escapeRegExp");
+export const escapeRegExpForPackageNameMatching = $bindgen(
+  "bun_string_jsc.bind.ts",
+  "escapeRegExpForPackageNameMatching",
 );
 
 export const shellInternals = {
@@ -125,54 +126,35 @@ export const shellInternals = {
    * const isDisabled = builtinDisabled("cp")
    * ```
    */
-  builtinDisabled: $newRustFunction("shell.rs", "TestingAPIs.disabledOnThisPlatform", 1),
+  builtinDisabled: $bindgen("shell_body.bind.ts", "disabledOnThisPlatform"),
 };
 
 export const subprocessInternals = {
-  injectStdioReadError: $newRustFunction("subprocess.rs", "TestingAPIs.injectStdioReadError", 2) as (
-    subprocess: import("bun").Subprocess,
-    kind: "stdout" | "stderr",
-  ) => boolean,
-  closeStdinWriter: $newRustFunction("subprocess.rs", "TestingAPIs.closeStdinWriter", 1) as (
-    subprocess: import("bun").Subprocess,
-  ) => boolean,
+  injectStdioReadError: $bindgen("subprocess.bind.ts", "injectStdioReadError"),
+  closeStdinWriter: $bindgen("subprocess.bind.ts", "closeStdinWriter"),
 };
 
 export const iniInternals = {
-  parse: $newRustFunction("ini.rs", "IniTestingAPIs.parse", 1),
-  loadNpmrc: $newRustFunction("ini.rs", "IniTestingAPIs.loadNpmrcFromJS", 2),
+  parse: $bindgen("ini_jsc.bind.ts", "parse"),
+  loadNpmrc: $bindgen("ini_jsc.bind.ts", "loadNpmrc"),
 };
 
 export const cssInternals = {
-  minifyTestWithOptions: $newRustFunction("css_internals.rs", "minifyTestWithOptions", 3),
-  minifyErrorTestWithOptions: $newRustFunction("css_internals.rs", "minifyErrorTestWithOptions", 3),
-  testWithOptions: $newRustFunction("css_internals.rs", "testWithOptions", 3),
-  prefixTestWithOptions: $newRustFunction("css_internals.rs", "prefixTestWithOptions", 3),
-  minifyTest: $newRustFunction("css_internals.rs", "minifyTest", 3),
-  prefixTest: $newRustFunction("css_internals.rs", "prefixTest", 3),
-  _test: $newRustFunction("css_internals.rs", "_test", 3),
-  attrTest: $newRustFunction("css_internals.rs", "attrTest", 3),
+  minifyTestWithOptions: $bindgen("css_internals.bind.ts", "minifyTestWithOptions"),
+  minifyErrorTestWithOptions: $bindgen("css_internals.bind.ts", "minifyErrorTestWithOptions"),
+  testWithOptions: $bindgen("css_internals.bind.ts", "testWithOptions"),
+  prefixTestWithOptions: $bindgen("css_internals.bind.ts", "prefixTestWithOptions"),
+  minifyTest: $bindgen("css_internals.bind.ts", "minifyTest"),
+  prefixTest: $bindgen("css_internals.bind.ts", "prefixTest"),
+  _test: $bindgen("css_internals.bind.ts", "test"),
+  attrTest: $bindgen("css_internals.bind.ts", "attrTest"),
 };
 
-export const crash_handler = $rust("crash_handler.rs", "js_bindings.generate") as {
-  getMachOImageZeroOffset: () => number;
-  segfault: () => void;
-  panic: () => void;
-  rootError: () => void;
-  outOfMemory: () => void;
-  operatorNew: (nothrow?: boolean) => boolean | undefined;
-  abort: () => void;
-  fastfail: () => void;
-  trap: () => void;
-  raiseIgnoringPanicHandler: () => void;
-};
+export const crash_handler = $bindgen("crash_handler_jsc.bind.ts", "crashHandler");
 
-export const upgrade_test_helpers = $rust("upgrade_command.rs", "upgrade_js_bindings.generate") as {
-  openTempDirWithoutSharingDelete: () => void;
-  closeTempDirHandle: () => void;
-};
+export const upgrade_test_helpers = $bindgen("upgrade_command.bind.ts", "upgradeTestHelpers");
 
-export const install_test_helpers = $rust("install_binding.rs", "bun_install_js_bindings.generate") as {
+export const install_test_helpers = $bindgen("install_binding.bind.ts", "installTestHelpers") as {
   /**
    * Returns the lockfile at the given path as an object.
    */
@@ -188,60 +170,47 @@ export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
 
 // Linux-only. Create an in-memory file descriptor with a preset size.
 // You should call fs.closeSync(fd) when you're done with it.
-export const memfd_create: (size: number) => number = $newRustFunction(
-  "node_fs_binding.rs",
-  "createMemfdForTesting",
-  1,
-);
+export const memfd_create = $bindgen("node_fs_binding.bind.ts", "createMemfdForTesting") as (size: number) => number;
 
-export const createStatsForIno: (ino: bigint, big: boolean) => any = $newRustFunction(
-  "Stat.rs",
-  "createStatsForIno",
-  2,
-);
+export const createStatsForIno: (ino: bigint, big: boolean) => any = $bindgen("Stat.bind.ts", "createStatsForIno");
 
-export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newRustFunction(
-  "virtual_machine_exports.rs",
-  "Bun__setSyntheticAllocationLimitForTesting",
-  1,
+export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $bindgen(
+  "virtual_machine_exports.bind.ts",
+  "setSyntheticAllocationLimitForTesting",
 );
 
 // Shrink the markdown parser's block-metadata cap (in bytes) so its
 // `TooManyBlocks` error is reachable without 4 GiB of input. The cap can only
 // be lowered, never raised past the real limit. Returns the previous value so
 // a test can restore it.
-export const setMaxMarkdownBlockBytesForTesting: (limit: number) => number = $newRustFunction(
-  "MarkdownObject.rs",
+export const setMaxMarkdownBlockBytesForTesting = $bindgen(
+  "MarkdownObjectInternals.bind.ts",
   "setMaxMarkdownBlockBytesForTesting",
-  1,
 );
 
-export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindings.generate") as {
+export const npm_manifest_test_helpers = $bindgen("npm_jsc.bind.ts", "npmManifestTestHelpers") as {
   /**
    * Returns the parsed manifest file. Currently only returns an array of available versions.
    */
   parseManifest: (manifestFileName: string, registryUrl: string) => any;
 };
 
-export const readTarball: (tarball: string) => any = $newRustFunction("pack_command.rs", "bindings.jsReadTarball", 1);
+export const readTarball = $bindgen("pack_command.bind.ts", "readTarball");
 
-export const isArchitectureMatch: (architecture: string[]) => boolean = $newRustFunction(
-  "npm.rs",
-  "Architecture.jsFunctionArchitectureIsMatch",
-  1,
+export const readTar = $bindgen("ArchiveInternals.bind.ts", "readTar");
+export const writeTar = $bindgen("ArchiveInternals.bind.ts", "writeTar");
+
+export const isArchitectureMatch: (architecture: string[]) => boolean = $bindgen(
+  "npm_jsc.bind.ts",
+  "architectureIsMatch",
 );
 
-export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $newRustFunction(
-  "npm.rs",
-  "OperatingSystem.jsFunctionOperatingSystemIsMatch",
-  1,
+export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $bindgen(
+  "npm_jsc.bind.ts",
+  "operatingSystemIsMatch",
 );
 
-export const createSocketPair: () => [number, number] = $newRustFunction(
-  "runtime/socket/socket.rs",
-  "jsCreateSocketPair",
-  0,
-);
+export const createSocketPair = $bindgen("socket_body.bind.ts", "createSocketPair") as () => [number, number];
 
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
@@ -249,11 +218,9 @@ export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunc
   0,
 );
 
-export const frameworkRouterInternals = $rust("FrameworkRouter.rs", "JSFrameworkRouter.getBindings") as {
-  parseRoutePattern: (style: string, pattern: string) => null | { kind: string; pattern: string };
-  FrameworkRouter: {
-    new (opts: any): any;
-  };
+export const frameworkRouterInternals = {
+  parseRoutePattern: $bindgen("FrameworkRouter.bind.ts", "parseRoutePattern"),
+  FrameworkRouter: $bindgen("filesystem_router.bind.ts", "FrameworkFileSystemRouter"),
 };
 
 // Only in a build with assertions: `isCompiled` in scripts/build/codegen.ts.
@@ -288,15 +255,36 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   sumBytesIfAny: $bindgen("bindgen_test.bind.ts", "sumBytesIfAny"),
   fillBuffer: $bindgen("bindgen_test.bind.ts", "fillBuffer"),
   stringOrObjectEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectEcho"),
+  stringViewEcho: $bindgen("bindgen_test.bind.ts", "stringViewEcho"),
+  stringViewCloneOutlivesBytes: $bindgen("bindgen_test.bind.ts", "stringViewCloneOutlivesBytes"),
+  stringOrObjectViewEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectViewEcho"),
   sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
   callOr: $bindgen("bindgen_test.bind.ts", "callOr"),
   stringAsIsOrBytesIfAny: $bindgen("bindgen_test.bind.ts", "stringAsIsOrBytesIfAny"),
   presentUnlessEmptyString: $bindgen("bindgen_test.bind.ts", "presentUnlessEmptyString"),
   fail: $bindgen("bindgen_test.bind.ts", "fail"),
   TestCounter: $bindgen("bindgen_test.bind.ts", "TestCounter"),
-  TestHolder: $bindgen("bindgen_test.bind.ts", "TestHolder"),
+  TestMutates: $bindgen("bindgen_test.bind.ts", "TestMutates"),
   TestRefCounted: $bindgen("bindgen_test.bind.ts", "TestRefCounted"),
   makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
+  TestError: $bindgen("bindgen_test.bind.ts", "TestError"),
+  TestReadOnly: $bindgen("bindgen_test.bind.ts", "TestReadOnly"),
+  TestMemberFunctions: $bindgen("bindgen_test.bind.ts", "TestMemberFunctions"),
+  TestBoundThis: $bindgen("bindgen_test.bind.ts", "TestBoundThis"),
+  TestNonFinal: $bindgen("bindgen_test.bind.ts", "TestNonFinal"),
+  TestShape: $bindgen("bindgen_test.bind.ts", "TestShape"),
+  TestSquare: $bindgen("bindgen_test.bind.ts", "TestSquare"),
+  makeShape: $bindgen("bindgen_test.bind.ts", "makeShape"),
+  makeSquare: $bindgen("bindgen_test.bind.ts", "makeSquare"),
+  makeSquareWrapper: $bindgen("bindgen_test.bind.ts", "makeSquareWrapper"),
+  shapeFromJS: $bindgen("bindgen_test.bind.ts", "shapeFromJS"),
+  droppedShapes: $bindgen("bindgen_test.bind.ts", "droppedShapes"),
+  TestNote: $bindgen("bindgen_test.bind.ts", "TestNote"),
+  TestRefCountedNote: $bindgen("bindgen_test.bind.ts", "TestRefCountedNote"),
+  isNoteFromJSDirect: $bindgen("bindgen_test.bind.ts", "isNoteFromJSDirect"),
+  tokenIdFromJS: $bindgen("bindgen_test.bind.ts", "tokenIdFromJS"),
+  errorConstructor: $bindgen("bindgen_test.bind.ts", "errorConstructor"),
+  afterFirst: $bindgen("bindgen_test.bind.ts", "afterFirst"),
   bytesOf: $bindgen("bindgen_test.bind.ts", "bytesOf"),
   bytesOfOrToString: $bindgen("bindgen_test.bind.ts", "bytesOfOrToString"),
   bytesOfString: $bindgen("bindgen_test.bind.ts", "bytesOfString"),
@@ -316,17 +304,45 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   pinnedBytesAfterCallback: $bindgen("bindgen_test.bind.ts", "pinnedBytesAfterCallback"),
   stringAsIsOrBytes: $bindgen("bindgen_test.bind.ts", "stringAsIsOrBytes"),
   asBigInt: $bindgen("bindgen_test.bind.ts", "asBigInt"),
+  thisAndCallee: $bindgen("bindgen_test.bind.ts", "thisAndCallee"),
+  doubled: $bindgen("bindgen_test.bind.ts", "doubled"),
+  makeDoubled: $bindgen("bindgen_test.bind.ts", "makeDoubled"),
+  promisePtrContext: $bindgen("bindgen_test.bind.ts", "promisePtrContext"),
+  readPromisePtr: $bindgen("bindgen_test.bind.ts", "readPromisePtr"),
+  makeNativePromiseContext: $bindgen("bindgen_test.bind.ts", "makeNativePromiseContext"),
+  readNativePromiseContext: $bindgen("bindgen_test.bind.ts", "readNativePromiseContext"),
+  primes: $bindgen("bindgen_test.bind.ts", "primes"),
+  testNamespace: $bindgen("bindgen_test.bind.ts", "testNamespace"),
+  nodeOptionsSize: $bindgen("bindgen_test.bind.ts", "nodeOptionsSize"),
+  bareOptionsSize: $bindgen("bindgen_test.bind.ts", "bareOptionsSize"),
+  timeValue: $bindgen("bindgen_test.bind.ts", "timeValue"),
+  textIfPassed: $bindgen("bindgen_test.bind.ts", "textIfPassed"),
+  isPassed: $bindgen("bindgen_test.bind.ts", "isPassed"),
+  isPassedAfterRequired: $bindgen("bindgen_test.bind.ts", "isPassedAfterRequired"),
+  requiredPair: $bindgen("bindgen_test.bind.ts", "requiredPair"),
+  requiredOverloaded: $bindgen("bindgen_test.bind.ts", "requiredOverloaded"),
+  lengthWithValue: $bindgen("bindgen_test.bind.ts", "lengthWithValue"),
+  counterWithValue: $bindgen("bindgen_test.bind.ts", "counterWithValue"),
+  keptString: $bindgen("bindgen_test.bind.ts", "keptString"),
+  bracketEcho: $bindgen("bindgen_test.bind.ts", "bracketEcho"),
+  describeHandle: $bindgen("bindgen_test.bind.ts", "describeHandle"),
+  isObject: $bindgen("bindgen_test.bind.ts", "isObject"),
+  objectEcho: $bindgen("bindgen_test.bind.ts", "objectEcho"),
+  absenceEcho: $bindgen("bindgen_test.bind.ts", "absenceEcho"),
+  callbackOrDelay: $bindgen("bindgen_test.bind.ts", "callbackOrDelay"),
+  presentArguments: $bindgen("bindgen_test.bind.ts", "presentArguments"),
+  finiteLater: $bindgen("bindgen_test.bind.ts", "finiteLater"),
+  requiredFiniteLater: $bindgen("bindgen_test.bind.ts", "requiredFiniteLater"),
   integerOrBigInt: $bindgen("bindgen_test.bind.ts", "integerOrBigInt"),
   looseInteger: $bindgen("bindgen_test.bind.ts", "looseInteger"),
   looseIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "looseIntegerOrBigInt"),
   looseDoubleOrBigInt: $bindgen("bindgen_test.bind.ts", "looseDoubleOrBigInt"),
   wideIntegerOrBigInt: $bindgen("bindgen_test.bind.ts", "wideIntegerOrBigInt"),
-  portOf: $bindgen("class_ref_test.bind.ts", "portOf"),
-  portOfOrNull: $bindgen("class_ref_test.bind.ts", "portOfOrNull"),
-  portAfterCallback: $bindgen("class_ref_test.bind.ts", "portAfterCallback"),
-  describeAddressOrList: $bindgen("class_ref_test.bind.ts", "describeAddressOrList"),
-  isAddress: $bindgen("class_ref_test.bind.ts", "isAddress"),
-  portPlus: $bindgen("class_ref_test.bind.ts", "portPlus"),
+  portOf: $bindgen("imported_class_test.bind.ts", "portOf"),
+  portOfOrNull: $bindgen("imported_class_test.bind.ts", "portOfOrNull"),
+  portAfterCallback: $bindgen("imported_class_test.bind.ts", "portAfterCallback"),
+  describeAddressOrList: $bindgen("imported_class_test.bind.ts", "describeAddressOrList"),
+  isAddress: $bindgen("imported_class_test.bind.ts", "isAddress"),
 };
 
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
@@ -345,9 +361,12 @@ export const Dequeue = require("internal/fifo");
 // node lib/internal/util.js normalizeEncoding: nullish and '' mean utf8, and
 // non-strings are undefined; Bun's Rust binding does not fold 'utf-16le',
 // so the node edge cases are handled here.
-const rustNormalizeEncoding = $bindgen("node_util_binding.bind.ts", "normalizeEncoding");
+const rustNormalizeEncoding: (encoding: string) => string | undefined = $bindgen(
+  "node_util_binding.bind.ts",
+  "normalizeEncoding",
+);
 const nodeKEmptyObject = require("internal/shared").kEmptyObject;
-function nodeNormalizeEncoding(enc) {
+function nodeNormalizeEncoding(enc: unknown) {
   if (enc == null) return "utf8";
   if (typeof enc !== "string") return undefined;
   const lower = enc.toLowerCase();
@@ -358,14 +377,14 @@ function nodeNormalizeEncoding(enc) {
 }
 
 // Verbatim from node lib/internal/util.js (countBinaryOnes/getCIDR).
-function countBinaryOnes(n) {
+function countBinaryOnes(n: number) {
   // Count the number of bits set in parallel, which is faster than looping
   n = n - ((n >>> 1) & 0x55555555);
   n = (n & 0x33333333) + ((n >>> 2) & 0x33333333);
   return (((n + (n >>> 4)) & 0xf0f0f0f) * 0x1010101) >>> 24;
 }
 
-function getCIDR(address, netmask, family) {
+function getCIDR(address: string, netmask: string, family: string) {
   let ones = 0;
   let split = ".";
   let range = 10;
@@ -435,10 +454,10 @@ function nodeIsError(e) {
 // node's internal WeakReference: a WeakRef that pins the target strongly
 // while its refcount is above zero.
 class WeakReference {
-  #ref;
-  #strong = null;
+  #ref: WeakRef<object>;
+  #strong: object | null | undefined = null;
   #refCount = 0;
-  constructor(object) {
+  constructor(object: object) {
     this.#ref = new WeakRef(object);
   }
   get() {
@@ -481,7 +500,16 @@ function makeCodedError(Base: ErrorConstructor, code: string, message: string) {
   return err;
 }
 
-function nodeGetValidStdio(stdio, sync?) {
+interface ValidStdioEntry {
+  type?: string;
+  fd?: number;
+  handle?: { close(): void };
+  ipc?: boolean;
+  readable?: boolean;
+  writable?: boolean;
+}
+
+function nodeGetValidStdio(stdio, sync?: boolean) {
   const { isArrayBufferView } = require("node:util/types");
   let ipc;
   let ipcFd;
@@ -492,12 +520,12 @@ function nodeGetValidStdio(stdio, sync?) {
     throw $ERR_INVALID_ARG_VALUE("stdio", stdio);
   }
 
-  while (stdio.length < 3) stdio.push(undefined);
+  while (stdio.length < 3) (stdio as unknown[]).push(undefined);
 
-  stdio = stdio.reduce(function reduceStdioEntry(acc, stdio, i) {
+  stdio = (stdio as any[]).reduce(function reduceStdioEntry(acc: ValidStdioEntry[], stdio, i: number) {
     function cleanup() {
       for (let i = 0; i < acc.length; i++) {
-        if ((acc[i].type === "pipe" || acc[i].type === "ipc") && acc[i].handle) acc[i].handle.close();
+        if ((acc[i].type === "pipe" || acc[i].type === "ipc") && acc[i].handle) acc[i].handle!.close();
       }
     }
 
@@ -506,7 +534,7 @@ function nodeGetValidStdio(stdio, sync?) {
     if (stdio === "ignore") {
       acc.push({ type: "ignore" });
     } else if (stdio === "pipe" || stdio === "overlapped" || (typeof stdio === "number" && stdio < 0)) {
-      const a: Record<string, unknown> = {
+      const a: ValidStdioEntry = {
         type: stdio === "overlapped" ? "overlapped" : "pipe",
         readable: i === 0,
         writable: i !== 0,
@@ -565,6 +593,7 @@ export const exposedInternals = {
   "internal/async_hooks": require("internal/async_hooks"),
   "internal/webstreams/adapters": require("internal/webstreams_adapters"),
   "internal/dgram": require("internal/dgram"),
+  "internal/primordials": require("internal/primordials"),
   // Bun's real implementations, under the names node's tests import them by.
   "internal/validators": require("internal/validators"),
   "internal/util/inspect": require("internal/util/inspect"),
@@ -611,8 +640,8 @@ export const exposedInternals = {
     // Both are the REAL parsers the fs entry points use (FileSystemFlags::from_js
     // and args::Rm::from_js), not JS reimplementations -- vendored tests assert
     // the production behavior through these.
-    stringToFlags: $newRustFunction("node_fs_binding.rs", "string_to_flags_for_testing", 1),
-    validateRmOptionsSync: $newRustFunction("node_fs_binding.rs", "rm_options_for_testing", 2),
+    stringToFlags: $bindgen("node_fs_binding.bind.ts", "stringToFlagsForTesting"),
+    validateRmOptionsSync: $bindgen("node_fs_binding.bind.ts", "rmOptionsForTesting"),
   },
   // internalBinding() is served by the registered "internal/test/binding"
   // module (src/js/internal/test/binding.ts), not from here.
@@ -646,12 +675,10 @@ export const arrayBufferViewHasBuffer = $newCppFunction(
 );
 
 export const timerInternals = {
-  timerClockMs: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.timerClockMs", 0),
+  timerClockMs: $bindgen("Timer.bind.ts", "timerClockMs"),
   monotonicNowMs: $bindgen("Timer.bind.ts", "monotonicNowMs"),
   // Sets the id of this thread's next timer. The counter can only move forward.
-  setNextTimerId: $newRustFunction("runtime/timer/Timer.rs", "internal_bindings.setNextTimerId", 1) as (
-    id: number,
-  ) => void,
+  setNextTimerId: $bindgen("Timer.bind.ts", "setNextTimerId") as (id: number) => void,
 };
 
 // Raw datagram descriptor helpers for tests that need an unbound fd (which
@@ -668,18 +695,15 @@ export const decodeURIComponentSIMD = $newCppFunction(
 );
 
 export const getDevServerDeinitCount = $bindgen("DevServer.bind.ts", "getDeinitCountForTesting");
-export const getCounters = $newRustFunction("Counters.rs", "createCountersObject", 0);
-export const linearFifoOrderedRemoveProbe = $newRustFunction(
-  "collections/linear_fifo.rs",
-  "TestingAPIs.orderedRemoveProbe",
-  1,
-) as (scenario: number) => number[];
+export const getCounters = $bindgen("Counters.bind.ts", "createCountersObject");
+export const linearFifoOrderedRemoveProbe = $bindgen("linear_fifo_testing.bind.ts", "orderedRemoveProbe") as (
+  scenario: number,
+) => number[];
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
-const setNativeSocketOptions: (socket: unknown, option: 1 | 2, size: number) => void = $newRustFunction(
-  "runtime/socket/socket.rs",
-  "jsSetSocketOptions",
-  3,
+const setNativeSocketOptions: (socket: unknown, option: 1 | 2, size: number) => void = $bindgen(
+  "socket_body.bind.ts",
+  "setSocketOptions",
 );
 
 /**
@@ -699,6 +723,16 @@ export function setSocketOptions(socket: any, option: 1 | 2, size: number): void
     option,
     size,
   );
+}
+
+/**
+ * What `node:http` itself finds under `kOutHeaders` on `message`: the map of its headers, or null where there is none.
+ *
+ * In an executable that is compiled ahead of time the headers of a server's response are in a compact form until
+ * somebody asks for the map, and this is null until then. A program that looks under the symbol asks for the map.
+ */
+export function storedOutgoingHeaders(message: any): Record<string, [string, unknown]> | null | undefined {
+  return message[require("internal/http").kOutHeaders];
 }
 
 /**
@@ -722,7 +756,7 @@ export type SocketFaultSyscall =
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
-  action: "errno" | "short" | "zero" | "none";
+  action: "errno" | "short" | "zero" | "excess" | "none";
   /** errno name or numeric value (only used when action === "errno") */
   errno?:
     | "ECONNRESET"
@@ -751,17 +785,11 @@ export type SocketFaultRule = {
 
 export const socketFaultInjection = {
   /** True when the current binary was built with `--socket-fault-injection=on` (defaults to on for ASan builds). */
-  available: $newRustFunction(
-    "runtime/socket/socket.rs",
-    "TestingAPIs.jsSocketFaultInjectionAvailable",
-    0,
-  ) as () => boolean,
+  available: $bindgen("socket_body.bind.ts", "socketFaultInjectionAvailable"),
   /** Arm a process-wide fault rule for one usockets bsd_* syscall. */
-  set: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsSetSocketFault", 1) as (
-    rule: SocketFaultRule,
-  ) => boolean,
+  set: $bindgen("socket_body.bind.ts", "setSocketFault") as (rule: SocketFaultRule) => boolean,
   /** Disarm all fault rules. */
-  clear: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsClearSocketFaults", 0) as () => void,
+  clear: $bindgen("socket_body.bind.ts", "clearSocketFaults"),
 };
 
 export const namedPipeInternals = {
@@ -770,7 +798,7 @@ export const namedPipeInternals = {
    * connecting or connected `Bun.connect({ unix: "\\\\.\\pipe\\..." })` socket and
    * one per accepted pipe client. Always 0 on other platforms.
    */
-  liveCount: $newRustFunction("runtime/socket/socket.rs", "TestingAPIs.jsNamedPipeContextLiveCount", 0) as () => number,
+  liveCount: $bindgen("socket_body.bind.ts", "namedPipeContextLiveCount"),
 };
 
 export const duplexTLSInternals = {
@@ -779,11 +807,7 @@ export const duplexTLSInternals = {
    * (`tls.connect({ socket: duplex })`, `new tls.TLSSocket(duplex)`): one per
    * socket, until the task that frees it after the close has run.
    */
-  liveCount: $newRustFunction(
-    "runtime/socket/socket.rs",
-    "TestingAPIs.jsDuplexUpgradeContextLiveCount",
-    0,
-  ) as () => number,
+  liveCount: $bindgen("socket_body.bind.ts", "duplexUpgradeContextLiveCount"),
 };
 type SerializationContext = "worker" | "window" | "postMessage" | "default";
 export const structuredCloneAdvanced: (
@@ -795,6 +819,82 @@ export const structuredCloneAdvanced: (
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
+
+/** In a build with AddressSanitizer: reads a string of WTF's that was freed, which the sanitizer has to report. Elsewhere: nothing. */
+export const readFreedStringUnderASAN: () => number | undefined = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_readFreedStringUnderASAN",
+  0,
+);
+
+/** The native stack of the calling thread as WTF writes it into the report of a failed assertion. */
+export const nativeStackTrace: () => string = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_nativeStackTrace",
+  0,
+);
+
+/** From here on this process describes a value that a native function rejects without running code of the program. */
+export const describeRejectedValuesWithoutScript: () => void = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_describeRejectedValuesWithoutScript",
+  0,
+);
+
+/** Where the compiler's table of built-ins and this realm disagree, one message each. Empty: they agree, or this Bun has no compiler. */
+export const aotBuiltinMismatches: () => string[] = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotBuiltinMismatches",
+  0,
+);
+/** The compiler's table of built-ins as plain objects. */
+export const aotBuiltinEntries: () => import("../codegen/builtins/dump.ts").TableDump = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotBuiltinEntries",
+  0,
+);
+/**
+ * What this realm holds for the entry with that `id` of the compiler's table: its object, or the getter or setter of an accessor.
+ * `direct:<n>`: a function that hands its receiver and arguments to the native code that a compiled program calls for the entry's overload n without a function object.
+ */
+export const aotBuiltinValue: (id: number, part: "object" | "getter" | "setter" | `direct:${number}`) => unknown =
+  $newCppFunction("InternalForTesting.cpp", "jsFunction_aotBuiltinValue", 2);
+/** The native functions that Bun's own modules call under a private name of the global object. A key is the name, then what it is called with. */
+export const privateGlobalFunctions: Record<string, (...operands: any[]) => unknown> = {
+  toClass: (fn, name, base) => $toClass(fn, name, base),
+  "inherits ArrayBuffer": value => $inheritsArrayBuffer(value),
+  // It takes the kinds of the name and of the expected types on trust.
+  "makeErrorWithCode ERR_INVALID_ARG_TYPE": actual => $ERR_INVALID_ARG_TYPE("name", ["string", "number"], actual),
+  "makeErrorWithCode ERR_INVALID_ARG_VALUE": (name, value, reason) => $ERR_INVALID_ARG_VALUE(name, value, reason),
+  "makeErrorWithCode ERR_OUT_OF_RANGE": (name, range, received) => $ERR_OUT_OF_RANGE(name, range, received),
+  "makeErrorWithCode ERR_MISSING_ARGS": (first, second, third) => $ERR_MISSING_ARGS(first, second, third),
+  "makeErrorWithCode ERR_INVALID_RETURN_VALUE": (expected, name, value) =>
+    $ERR_INVALID_RETURN_VALUE(expected, name, value),
+  "makeErrorWithCode ERR_INVALID_STATE": message => $ERR_INVALID_STATE(message),
+  "makeErrorWithCode ERR_INVALID_URL": (input, base) => $ERR_INVALID_URL(input, base),
+  "makeErrorWithCode ERR_INVALID_THIS": expected => $ERR_INVALID_THIS(expected),
+  "makeErrorWithCode ERR_UNKNOWN_ENCODING": encoding => $ERR_UNKNOWN_ENCODING(encoding),
+  "makeErrorWithCode ERR_TLS_CERT_ALTNAME_INVALID": (reason, host, cert) =>
+    $ERR_TLS_CERT_ALTNAME_INVALID(reason, host, cert),
+  makeAbortError: (message, options) => $makeAbortError(message, options),
+  peekPromiseStatus: promise => $peekPromiseStatus(promise),
+  peekPromiseSettledValue: promise => $peekPromiseSettledValue(promise),
+  pokePromiseAsHandled: promise => $pokePromiseAsHandled(promise),
+  webStreamClosedPromise: stream => $webStreamClosedPromise(stream),
+  webStreamControllerError: (stream, error) => $webStreamControllerError(stream, error),
+};
+/** The entries of this Bun's `builtin-uses.json`: every built-in of this platform that uses a removable feature. */
+export const builtinFeatureUses: () => import("../../scripts/build/trim/types.ts").BuiltinEntry[] = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_builtinFeatureUses",
+  0,
+);
+/** The engine's `NameClass` of a property name, by the enumerator's name. */
+export const aotNameClass: (text: string) => string | undefined = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_aotNameClass",
+  1,
+);
 
 export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
@@ -835,21 +935,16 @@ export const spawnThreadsForTesting: (iterations: number, fd: number, parallelis
 // True when the installed watcher registered a real OS source (a PSI trigger
 // on Linux). The watcher installs silently without one when the kernel
 // refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.
-export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction(
-  "memory_pressure.rs",
-  "jsWatcherHasOsBackend",
-  0,
-);
+export const memoryPressureWatcherHasOsBackend = $bindgen("memory_pressure.bind.ts", "watcherHasOsBackend");
 
 // The exact bytes Bun writes to /proc/pressure/memory to arm its trigger.
 // null where there is no PSI backend (everything except Linux).
-export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
+export const memoryPressurePsiTrigger = $bindgen("memory_pressure.bind.ts", "psiTrigger") as () => Buffer | null;
 
 // The PSI event filter: `armed` is the file at arm time, `polls` one read per POLLPRI. null off Linux.
-export const memoryPressurePsiFilter: (armed: string, ...polls: string[]) => boolean[] | null = $newRustFunction(
-  "memory_pressure.rs",
-  "jsPsiFilter",
-  1,
+export const memoryPressurePsiFilter: (armed: string, ...polls: string[]) => boolean[] | null = $bindgen(
+  "memory_pressure.bind.ts",
+  "psiFilter",
 );
 
 export const getEventLoopStats: () => {
@@ -863,32 +958,18 @@ export const getEventLoopStats: () => {
   eventLoopAlive: boolean;
   /** usockets/libuv loop iterations so far (us_internal_loop_pre count). */
   iteration: number;
-} = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
+} = $bindgen("event_loop.bind.ts", "getActiveTasks");
 
 export const hostedGitInfo = {
-  parseUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),
-  fromUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsFromUrl", 1),
+  parseUrl: $bindgen("hosted_git_info_jsc.bind.ts", "parseUrl"),
+  fromUrl: $bindgen("hosted_git_info_jsc.bind.ts", "fromUrl"),
 };
 
-export const translateUVErrorToE: (code: number) => string | undefined = $newRustFunction(
-  "sys.rs",
-  "TestingAPIs.translateUVErrorToE",
-  1,
-);
+export const translateUVErrorToE = $bindgen("error_jsc.bind.ts", "translateUVErrorToE");
 
-export const translateNtStatusToE: (status: number) => string | undefined = $newRustFunction(
-  "sys.rs",
-  "TestingAPIs.translateNtStatusToE",
-  1,
-);
+export const translateNtStatusToE = $bindgen("error_jsc.bind.ts", "translateNtStatusToE");
 
-export const sigactionLayout: () =>
-  | undefined
-  | {
-      installed: { handler: number; flags: number };
-      readback: { handler: number; flags: number };
-      sizeof: number;
-    } = $newRustFunction("sys.rs", "TestingAPIs.sigactionLayout", 0);
+export const sigactionLayout = $bindgen("error_jsc.bind.ts", "sigactionLayout");
 
 export const stringsInternals = {
   /**
@@ -897,68 +978,46 @@ export const stringsInternals = {
    * path is otherwise only reachable from Windows `bun build --compile`
    * metadata, so this binding lets us exercise it on all platforms.
    */
-  toUTF16AllocSentinel: $newRustFunction("string/immutable/unicode.rs", "TestingAPIs.toUTF16AllocSentinel", 1) as (
-    bytes: Uint8Array,
-  ) => string,
+  toUTF16AllocSentinel: $bindgen("bun_string_jsc.bind.ts", "toUTF16AllocSentinel"),
 };
 
 /** Seed the connect-path DNS cache for `hostname` via the real `process_results` interleave; returns family order. */
-export const dnsCacheSeed = $newRustFunction("runtime/dns_jsc/dns.rs", "internal.seedCacheForTesting", 2) as (
+export const dnsCacheSeed = $bindgen("dns_internals.bind.ts", "seedCacheForTesting") as (
   hostname: string,
   addresses: string[],
 ) => number[];
 
 /** Whether the connect-path resolver answers `hostname` with the loopback addresses itself instead of asking getaddrinfo. */
-export const dnsIsLocalhostName = $newRustFunction(
-  "runtime/dns_jsc/dns.rs",
-  "internal.isLocalhostNameForTesting",
-  1,
-) as (hostname: string) => boolean;
+export const dnsIsLocalhostName = $bindgen("dns_internals.bind.ts", "isLocalhostNameForTesting");
 
 /** Whether a getaddrinfo() answer made of `addresses` makes the connect-path resolver retry without AI_ADDRCONFIG. */
-export const dnsIsAllLoopbackOfOneFamily = $newRustFunction(
-  "runtime/dns_jsc/dns.rs",
-  "internal.isAllLoopbackOfOneFamilyForTesting",
-  1,
-) as (addresses: string[]) => boolean;
+export const dnsIsAllLoopbackOfOneFamily = $bindgen("dns_internals.bind.ts", "isAllLoopbackOfOneFamilyForTesting") as (
+  addresses: string[],
+) => boolean;
 
 /** The error a getaddrinfo lookup of `hostname` reports when getaddrinfo(3) returns the `EAI_*` status named `code` (`"EAI_AGAIN"`, `"EAI_FAIL"`, `"EAI_NONAME"`). */
-export const dnsGetaddrinfoError = $newRustFunction(
-  "runtime/dns_jsc/dns.rs",
-  "internal.getaddrinfoErrorForTesting",
-  2,
-) as (code: string, hostname: string) => Error & { code: string; errno: number; syscall: string; hostname: string };
+export const dnsGetaddrinfoError = $bindgen("dns_internals.bind.ts", "getaddrinfoErrorForTesting") as (
+  code: string,
+  hostname: string,
+) => Error & { code: string; errno: number; syscall: string; hostname: string };
 
 export const fetchH2Internals = {
-  liveCounts: $newRustFunction("http/H2Client.rs", "TestingAPIs.liveCounts", 0) as () => {
-    sessions: number;
-    streams: number;
-  },
+  liveCounts: $bindgen("headers_jsc.bind.ts", "h2LiveCounts"),
 };
 
 export const fetchH3Internals = {
-  liveCounts: $newRustFunction("http/H3Client.rs", "TestingAPIs.quicLiveCounts", 0) as () => {
-    sessions: number;
-    streams: number;
-  },
+  liveCounts: $bindgen("headers_jsc.bind.ts", "h3LiveCounts"),
 };
 
-const proxyFor = $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.proxyFor", 2) as (
-  entries: string[],
-  url: string,
-) => string | null;
+const proxyFor = $bindgen("proxy_testing.bind.ts", "proxyFor");
 
 export const proxyInternals = {
   /** Whether the `NO_PROXY` value `list` exempts `hostname` on `port`. */
-  noProxyMatches: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.noProxyMatches", 3) as (
-    list: string,
-    hostname: string,
-    port: number,
-  ) => boolean,
+  noProxyMatches: $bindgen("proxy_testing.bind.ts", "noProxyMatches"),
   /** The proxy an environment of exactly `env` selects for `url`, or null. */
   proxyFor: (env: Record<string, string>, url: string) => proxyFor(Object.entries(env).flat(), url),
   /** What the HTTP client's URL parser makes of `href`. */
-  parseURL: $newRustFunction("runtime/webcore/fetch.rs", "TestingAPIs.parseURL", 1) as (href: string) => {
+  parseURL: $bindgen("proxy_testing.bind.ts", "parseURL") as (href: string) => {
     username: string;
     password: string;
     hostname: string;
@@ -968,16 +1027,14 @@ export const proxyInternals = {
 };
 
 export const fileSinkInternals = {
-  liveCount: $newRustFunction("runtime/webcore/FileSink.rs", "TestingAPIs.fileSinkLiveCount", 0) as () => number,
+  liveCount: $bindgen("FileSink.bind.ts", "liveCount"),
 };
 
 export const byteStreamInternals = {
   // Swap a ByteStream-backed stream's producer for one whose drain signal
   // re-enters on_cancel, making consumed-during-signal_drained re-entrancy
   // deterministic in tests.
-  cancelOnDrain: $newRustFunction("runtime/webcore/ByteStream.rs", "TestingAPIs.byteStreamCancelOnDrain", 1) as (
-    stream: ReadableStream,
-  ) => void,
+  cancelOnDrain: $bindgen("ByteStream.bind.ts", "cancelOnDrain") as (stream: ReadableStream) => void,
 };
 
 // How many internal modules (node:fs etc.) this process created from bytecode embedded by `bun build --compile
@@ -1000,6 +1057,258 @@ export const sourceHasLineStarts: (fn: Function) => boolean = $newCppFunction(
 // beside it: internal module number `index` (null past the last), or `source` written in builtin syntax (@-intrinsics,
 // a function expression) compiled under `name`.
 export const internalModuleBytecode: {
-  (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array } | null;
+  (index: number): { name: string; bytecode: Uint8Array; strings: Uint8Array; lazyFunctionCount: number } | null;
   (source: string, name: string): { name: string; bytecode: Uint8Array; strings: Uint8Array };
 } = $newCppFunction("InternalModuleRegistry.cpp", "jsInternalModuleBytecode", 2);
+
+/** All paths are absolute native paths. */
+export type CodeGraphFile = {
+  path: string;
+  role: "Checked" | "Inferred" | "TypesOnly";
+  isLibrary: boolean;
+  isCompiled: boolean;
+  isInTypesProgram: boolean;
+  typeEdges: string[];
+  codeEdges: string[];
+  // The rest is read from `CompiledModule`. Without one: 0, null, [], [], false.
+  loader: number;
+  moduleFormat: "Esm" | "CommonJs" | null;
+  sites: {
+    specifier: string | null;
+    prefix?: string;
+    suffix?: string;
+    kind: "import" | "require";
+    answer: string;
+    externalKind: "UncompiledCode" | "HostValue" | null;
+  }[];
+  impliedAnswers: string[];
+  isAotSource: boolean;
+};
+
+export type CodeGraph = {
+  files: CodeGraphFile[];
+  entryPoints: string[];
+  compiledFiles: string[];
+  hostModules: string[];
+  unresolvedEntryPoints: { index: number; failure: string }[];
+  /** `TS2307: ..` */
+  diagnostics: string[];
+};
+
+const describeCodeGraphNative = $bindgen("code_resolver_testing.bind.ts", "describeCodeGraph") as (
+  entryPoints: string,
+  conditions: string,
+  threads: number,
+  defines: string,
+  features: string,
+  workingDirectory: string,
+) => string;
+
+/** The files and the two graphs that `bun compile` loads for `entryPoints`, before anything is checked. */
+export const describeCodeGraph = (
+  entryPoints: string[],
+  options: {
+    conditions?: string[];
+    threads?: number;
+    defines?: Record<string, string | boolean>;
+    features?: string[];
+    workingDirectory?: string;
+  } = {},
+): CodeGraph =>
+  JSON.parse(
+    describeCodeGraphNative(
+      entryPoints.join("\n"),
+      (options.conditions ?? []).join("\n"),
+      options.threads ?? 0,
+      Object.entries(options.defines ?? {})
+        .map(([name, value]) => `${name}=${value}`)
+        .join("\n"),
+      (options.features ?? []).join("\n"),
+      options.workingDirectory ?? "",
+    ),
+  );
+
+const resolveComputedSpecifierNative = $bindgen("code_resolver_testing.bind.ts", "resolveComputedSpecifier") as (
+  importer: string,
+  prefix: string,
+  suffix: string,
+  kind: "import" | "require",
+) => string;
+
+/** The modules that a specifier starting with `prefix` and ending with `suffix` can name in the file `importer` (an absolute native path), by the resolver of `bun compile`: absolute native paths and `builtin:node:fs`, in the resolver's order. */
+export const resolveComputedSpecifier = (
+  importer: string,
+  prefix: string,
+  suffix: string,
+  kind: "import" | "require" = "import",
+): { kind: "computed"; candidates: string[] } | { kind: "all"; cause: string } =>
+  JSON.parse(resolveComputedSpecifierNative(importer, prefix, suffix, kind));
+
+const trimExecutableNative = $bindgen("trim_testing.bind.ts", "trimExecutable") as (
+  path: string,
+  out: string,
+  featureNames: string,
+  usedFeatureNames: string,
+) => string;
+/** Removes `featureNames` (as written in src/trim/features/*.def: "Sqlite") from the executable at `path` and writes the result to `out`. With `usedFeatureNames`, also what a program that uses only those leaves unused. Throws what `bun build --compile --trim` would print. */
+export const trimExecutable = (
+  path: string,
+  out: string,
+  featureNames: string[],
+  usedFeatureNames: string[] = [],
+): { removed: string[]; removedBytes: number; fileBytesSaved: number; uncutReason: string | null } =>
+  JSON.parse(trimExecutableNative(path, out, featureNames.join("\n"), usedFeatureNames.join("\n")));
+
+const readTrimTableNative = $bindgen("trim_testing.bind.ts", "readTrimTable") as (path: string) => string;
+/** The trim table of the executable at `path`, as `decodeTable` of scripts/build/trim/table.ts returns it. Throws on a file without one. */
+export const readTrimTable = (path: string): import("../../scripts/build/trim/table").TrimTable => {
+  const table = JSON.parse(readTrimTableNative(path));
+  table.featuresHash = BigInt(table.featuresHash);
+  return table;
+};
+
+/** What members of prototypes, of classes and of literals answer under names that only the modules of the runtime can write: `$isOpen`, `$exchange` and `$isPrepared` are read and written by these modules alone, `$written`, `$writer` and `$warning` by native code too. One line a question. */
+export function membersUnderNamesOfTheRuntime(tag: string): string[] {
+  const lines: string[] = [];
+  let stored: unknown;
+  const ask = (question: string, answer: () => unknown) => {
+    try {
+      lines.push(question + ": " + String(answer()));
+    } catch (error) {
+      lines.push(question + ": throws " + (error as Error).name);
+    }
+  };
+  const keysOf = (object: object) => Reflect.ownKeys(object).map(String).join();
+
+  class Fixed {
+    $isOpen(more: string) {
+      return "method " + more;
+    }
+    get $exchange() {
+      return "getter";
+    }
+    set $exchange(value: unknown) {
+      stored = value;
+    }
+    static $isPrepared() {
+      return "static";
+    }
+    $written(more: string) {
+      return "method " + more;
+    }
+    get $writer() {
+      return "getter";
+    }
+    set $writer(value: unknown) {
+      stored = value;
+    }
+    static $warning() {
+      return "static";
+    }
+  }
+  class Heir extends Fixed {
+    $isOpen(more: string) {
+      return "heir of " + super.$isOpen(more);
+    }
+    $written(more: string) {
+      return "heir of " + super.$written(more);
+    }
+    storeAbove(value: unknown) {
+      super.$exchange = value;
+      super.$writer = value;
+    }
+  }
+  const makeClass = (captured: string) =>
+    class {
+      $isOpen(more: string) {
+        return captured + " method " + more;
+      }
+      get $exchange() {
+        return captured + " getter";
+      }
+      set $exchange(value: unknown) {
+        stored = captured + " " + value;
+      }
+      static $isPrepared() {
+        return captured + " static";
+      }
+      $written(more: string) {
+        return captured + " method " + more;
+      }
+      get $writer() {
+        return captured + " getter";
+      }
+      set $writer(value: unknown) {
+        stored = captured + " " + value;
+      }
+      static $warning() {
+        return captured + " static";
+      }
+    };
+  function Plain() {}
+  $toClass(Plain, "Plain");
+  Plain.prototype.$isOpen = function (more: string) {
+    return tag + " stored " + more;
+  };
+  Plain.prototype.$written = function (more: string) {
+    return tag + " stored " + more;
+  };
+  const makeLiteral = (captured: string) => ({
+    $isOpen(more: string) {
+      return captured + " method " + more;
+    },
+    get $exchange() {
+      return captured + " getter";
+    },
+    set $exchange(value: unknown) {
+      stored = captured + " " + value;
+    },
+    $written(more: string) {
+      return captured + " method " + more;
+    },
+    get $writer() {
+      return captured + " getter";
+    },
+    set $writer(value: unknown) {
+      stored = captured + " " + value;
+    },
+  });
+
+  const subjects: [string, any, any][] = [
+    ["a class", new Fixed(), Fixed],
+    ["an heir", new Heir(), Heir],
+    ["a class that captures", new (makeClass(tag))(), makeClass(tag)],
+    ["a second class that captures", new (makeClass(tag + tag))(), makeClass(tag + tag)],
+    ["a function", new Plain(), Plain],
+    ["a literal", makeLiteral(tag), undefined],
+    ["an object below a literal", Object.create(makeLiteral(tag)), undefined],
+  ];
+  for (const [name, instance, constructor] of subjects) {
+    ask(name + " $isOpen", () => instance.$isOpen("a"));
+    ask(name + " $written", () => instance.$written("b"));
+    ask(name + " $exchange", () => instance.$exchange);
+    ask(name + " $writer", () => instance.$writer);
+    ask(name + " $exchange =", () => ((stored = "nothing"), (instance.$exchange = 1), stored));
+    ask(name + " $writer =", () => ((stored = "nothing"), (instance.$writer = 2), stored));
+    ask(name + " $isPrepared", () => constructor && constructor.$isPrepared && constructor.$isPrepared());
+    ask(name + " $warning", () => constructor && constructor.$warning && constructor.$warning());
+    ask(name + " under no such name", () => typeof instance.$isPrepared + " " + typeof instance.$warning);
+    ask(name + " keys", () => keysOf(instance) + " | " + keysOf(Object.getPrototypeOf(instance)));
+    ask(name + " keys of the constructor", () => constructor && keysOf(constructor));
+  }
+  ask("a store above", () => ((stored = "nothing"), new Heir().storeAbove(3), stored));
+  ask(
+    "removed",
+    () =>
+      delete (Fixed.prototype as { $isOpen?: unknown }).$isOpen &&
+      delete (Fixed.prototype as { $written?: unknown }).$written,
+  );
+  ask("behind the removal", () => typeof new Fixed().$isOpen + " " + typeof new Fixed().$written);
+  ask("an heir behind the removal", () => new Heir().$isOpen("c"));
+  ask("stored again", () => {
+    Fixed.prototype.$isOpen = Plain.prototype.$isOpen;
+    Fixed.prototype.$written = Plain.prototype.$written;
+    return new Fixed().$isOpen("d") + " | " + new Heir().$written("e");
+  });
+  return lines;
+}

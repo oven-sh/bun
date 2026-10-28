@@ -30,7 +30,7 @@
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/StackVisitor.h>
 #include <JavaScriptCore/VM.h>
-#include "ZigGeneratedClasses.h"
+#include "GeneratedFfi.h"
 #include "ZigGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
@@ -89,7 +89,7 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* gl
 // Returns true if one of the functions is still on the stack, in which case the caller must not free the compiled code.
 extern "C" bool Bun__FFI__closeFunctions(Zig::GlobalObject* globalObject, JSC::EncodedJSValue libraryValue)
 {
-    auto* library = dynamicDowncast<WebCore::JSFFI>(JSC::JSValue::decode(libraryValue));
+    auto* library = dynamicDowncast<Bun::Bindgen::Generated::JSFFI>(JSC::JSValue::decode(libraryValue));
     if (!library)
         return false;
     JSC::JSValue functionsValue = library->m_functionsValue.get();

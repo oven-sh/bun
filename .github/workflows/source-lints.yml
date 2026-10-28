@@ -15,9 +15,9 @@ on:
       - "src/**/*.rs"
       - "src/**/*.h"
       - "src/**/*.cpp"
-      - "src/**/*.classes.ts"
+      - "src/**/*.bind.ts"
       - "src/codegen/**"
-      - "src/js/builtins.d.ts"
+      - "src/js/**/*.ts"
       - "src/jsc/bindings/**"
       - "packages/bun-types/redis.d.ts"
       - "scripts/build/**"
@@ -25,6 +25,8 @@ on:
       - "scripts/agent.ts"
       - "scripts/buildkite.ts"
       - ".buildkite/ci.ts"
+      - ".buildkite/scripts/upload-release.sh"
+      - "packages/bun-release/src/platform.ts"
       - "rust-toolchain.toml"
       - "bun.lock"
       - "test/bun.lock"
@@ -32,6 +34,9 @@ on:
       - "test/tsconfig.json"
       - "test/_util/**"
       - "test/internal/source-lints/**"
+      - "test/aot/**"
+      - ".gitignore"
+      - ".prettierignore"
       - ".github/workflows/*.yml"
       - ".github/actions/setup-bun/**"
   pull_request:
@@ -39,9 +44,9 @@ on:
       - "src/**/*.rs"
       - "src/**/*.h"
       - "src/**/*.cpp"
-      - "src/**/*.classes.ts"
+      - "src/**/*.bind.ts"
       - "src/codegen/**"
-      - "src/js/builtins.d.ts"
+      - "src/js/**/*.ts"
       - "src/jsc/bindings/**"
       - "packages/bun-types/redis.d.ts"
       - "scripts/build/**"
@@ -49,6 +54,8 @@ on:
       - "scripts/agent.ts"
       - "scripts/buildkite.ts"
       - ".buildkite/ci.ts"
+      - ".buildkite/scripts/upload-release.sh"
+      - "packages/bun-release/src/platform.ts"
       - "rust-toolchain.toml"
       - "bun.lock"
       - "test/bun.lock"
@@ -56,12 +63,15 @@ on:
       - "test/tsconfig.json"
       - "test/_util/**"
       - "test/internal/source-lints/**"
+      - "test/aot/**"
+      - ".gitignore"
+      - ".prettierignore"
       - ".github/workflows/*.yml"
       - ".github/actions/setup-bun/**"
   merge_group:
 
 env:
-  BUN_VERSION: "1.4.2"
+  BUN_VERSION: "1.4.4"
 
 jobs:
   source-lints:

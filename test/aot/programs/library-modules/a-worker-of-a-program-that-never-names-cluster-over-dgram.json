@@ -1,0 +1,1 @@
+{ "env": { "NODE_UNIQUE_ID": "1" }, "skipInShell": "it asks for modules of Bun" }

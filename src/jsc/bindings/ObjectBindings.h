@@ -32,9 +32,18 @@ ALWAYS_INLINE bool defineOwnDataProperty(JSC::JSGlobalObject* globalObject, JSC:
     auto& vm = JSC::getVM(globalObject);
     JSC::Structure* structure = object->structure();
     if (object->type() == JSC::FinalObjectType && structure->isStructureExtensible() && !JSC::isValidOffset(structure->get(vm, propertyName))) [[likely]] {
-        object->putDirect(vm, propertyName, value, attributes);
-        return true;
+        if (object->putDirect(vm, propertyName, value, attributes)) [[likely]]
+            return true;
     }
+    JSC::PropertyDescriptor descriptor(value, attributes);
+    return object->methodTable()->defineOwnProperty(object, globalObject, propertyName, descriptor, true);
+}
+
+// putDirect() that throws if the object rejects the store, as a read-only built-in object in a compiled executable does.
+ALWAYS_INLINE bool putDirectOrThrow(JSC::JSGlobalObject* globalObject, JSC::JSObject* object, JSC::PropertyName propertyName, JSC::JSValue value, unsigned attributes)
+{
+    if (object->putDirect(JSC::getVM(globalObject), propertyName, value, attributes)) [[likely]]
+        return true;
     JSC::PropertyDescriptor descriptor(value, attributes);
     return object->methodTable()->defineOwnProperty(object, globalObject, propertyName, descriptor, true);
 }

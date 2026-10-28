@@ -365,6 +365,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     if ctx.args.preserve_symlinks.unwrap_or(false) {
         argv.push(lit(b"--preserve-symlinks\0"));
     }
+    if crate::cli::run_compiled::is_checked() {
+        argv.push(lit(b"--aot-checked=-\0"));
+    }
     if ctx.runtime_options.smol {
         argv.push(lit(b"--smol\0"));
     }
@@ -388,6 +391,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
         bun_core::CodeGenerationFromStrings::Strict => {
             argv.push(lit(b"--disallow-code-generation-from-strings=strict\0"));
         }
+    }
+    if let Some(flag) = bun_core::Global::ca_store_flag() {
+        argv.push(flag.as_ptr().cast());
     }
     if matches!(ctx.debug.macros, MacroOptions::Disable) {
         argv.push(lit(b"--no-macros\0"));

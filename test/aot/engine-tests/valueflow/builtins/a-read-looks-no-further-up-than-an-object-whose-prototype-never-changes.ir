@@ -1,0 +1,36 @@
+# Object.prototype[key] = Bun; other = hide(); Object.setPrototypeOf(other, hide()); delete other[key]; builder = { build() {} }; hide(builder); builder.build()
+# The store may run the setter of __proto__, which leaves the prototype of Object.prototype as it is. So a read of `build` that goes up from an object of the program
+# ends at Object.prototype and finds no member of Bun there: the call is a call of the program's own function or of a function nobody knows
+# RUN: valueflow-solve unseen calls
+# CHECK: f0 v17 -> unknown f1
+# CHECK-NOT: BunBuild
+# CHECK: unseen-code no
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 fields=[{key="build" declared={type=anything}}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="hide" [isFreeName]
+    v2 = Builtin builtin=Bun
+    v3 = Builtin builtin=ObjectPrototype
+    v4 = Builtin builtin=Object
+    v5 = Builtin builtin=ObjectSetPrototypeOf
+    v6 = PropGet v0 key="key" [isFreeName]
+    ElemSet v3, v6, v2
+    v8 = NewClosure function=f1
+    v9 = NewObject -, v8 layout=L0 fields=[0]
+    v10 = FinishObject v9
+    v11 = Call v1, -, v10
+    v12 = Call v1, -
+    v13 = Call v1, -
+    v14 = Call v5, v4, v12, v13
+    v15 = ElemDelete v12, v6
+    v16 = PropGet v10 key="build"
+    v17 = Call v16, v10
+    Return v17
+}
+function f1 name="build" results=[{type=anything}] {
+    v0 = Undefined
+    Return v0
+}

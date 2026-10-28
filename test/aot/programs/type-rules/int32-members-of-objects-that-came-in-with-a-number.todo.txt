@@ -1,0 +1,1 @@
+The build accepts the four reads that the stored text refuses with TS100031, and the executable prints what plain Bun prints (1.5 four times): an int32 that is declared and not proven is no error here today.

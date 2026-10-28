@@ -1,0 +1,3820 @@
+//// a-busy-worker-is-ended-1.ts
+// A busy worker is ended 1.
+// an-empty-loop--bare--terminated a-loop-that-joins-texts--in-a-try-with-a-catch--terminated a-loop-behind-an-await--many-frames-down--terminated built-ins-without-end--bare--terminated process-exit--many-frames-down all-at-once
+declare function require(name: string): any;
+declare const process: any;
+const { isMainThread, parentPort, Worker, workerData } = require("node:worker_threads");
+let spin = 0;
+const list = [1, 2, 3, 4, 5, 6, 7, 8];
+const bytes = new Uint8Array(64).fill(1);
+const words = "where the worker ends";
+const record: Record<string, number> = { a: 1, b: 2, c: 3 };
+function step(n: number): number {
+  return (n + 1) | 0;
+}
+const steps = [step, (n: number) => (n + 3) | 0];
+function descend(depth: number): number {
+  return depth > 0 ? descend(depth - 1) + 1 : 0;
+}
+async function soon(n: number): Promise<number> {
+  await null;
+  return n + 1;
+}
+function told(what: string): void {
+  parentPort.postMessage(what);
+}
+function down(depth: number, run: () => void): void {
+  try {
+    if (depth > 0) down(depth - 1, run);
+    else run();
+  } finally {
+    told("a finally ran");
+  }
+}
+async function downAsync(depth: number, run: () => Promise<void>): Promise<void> {
+  try {
+    if (depth > 0) await downAsync(depth - 1, run);
+    else await run();
+  } finally {
+    told("a finally ran");
+  }
+}
+function busy0(): void {
+  for (;;) {}
+}
+function case0(): void {
+  busy0();
+}
+function busy1(): void {
+  for (let text = ""; ; text = text.length > 100 ? "" : text + "x") spin += text.length;
+}
+function case1(): void {
+  for (;;)
+    try {
+      busy1();
+    } catch {
+      told("a catch ran");
+    }
+}
+async function busy2(): Promise<void> {
+  await null;
+  for (;;) spin++;
+}
+async function case2(): Promise<void> {
+  await downAsync(30, async () => {
+    await busy2();
+  });
+}
+function busy3(): void {
+  for (;;) spin += JSON.stringify(JSON.parse('{"a":[1,2,3]}')).length + Math.max(...list) + words.indexOf("z");
+}
+function case3(): void {
+  busy3();
+}
+async function busy4(): Promise<void> {
+  process.exit(6);
+}
+async function case4(): Promise<void> {
+  await downAsync(30, async () => {
+    await busy4();
+  });
+}
+const cases = [case0, case1, case2, case3, case4];
+const isTerminated = [true, true, true, true, false];
+function answer(): string {
+  return JSON.stringify(list.map(each => ({ each, twice: step(each) + descend(each) })));
+}
+const atFirst = answer();
+function works(): string {
+  return answer() === atFirst ? "works" : "DOES NOT WORK";
+}
+function ended(id: number): Promise<string> {
+  return new Promise(resolve => {
+    const heard: string[] = [];
+    const worker = new Worker(new URL(import.meta.url), { workerData: id });
+    worker.on("message", (message: string) => {
+      if (message !== "ready") return void heard.push(message);
+      if (isTerminated[id]) setTimeout(() => void worker.terminate(), 5);
+    });
+    worker.on("error", (error: Error) => heard.push("error " + error.name));
+    worker.on("exit", (code: number) => resolve(id + ": exit " + code + " " + heard.join() + " " + works()));
+  });
+}
+if (isMainThread) {
+  for (const line of await Promise.all(cases.map((_, id) => ended(id)))) console.log(line);
+  console.log("the end", works());
+} else {
+  told("ready");
+  // The message leaves in a turn of the event loop.
+  setTimeout(() => void cases[workerData](), 1);
+}
+//// a-busy-worker-is-ended-2.ts
+// A busy worker is ended 2.
+// a-loop-behind-an-await--in-a-try-with-a-finally--terminated a-loop-over-a-typed-array--beside-a-using--terminated
+declare function require(name: string): any;
+declare const process: any;
+const { isMainThread, parentPort, Worker, workerData } = require("node:worker_threads");
+let spin = 0;
+const list = [1, 2, 3, 4, 5, 6, 7, 8];
+const bytes = new Uint8Array(64).fill(1);
+const words = "where the worker ends";
+const record: Record<string, number> = { a: 1, b: 2, c: 3 };
+function step(n: number): number {
+  return (n + 1) | 0;
+}
+const steps = [step, (n: number) => (n + 3) | 0];
+function descend(depth: number): number {
+  return depth > 0 ? descend(depth - 1) + 1 : 0;
+}
+async function soon(n: number): Promise<number> {
+  await null;
+  return n + 1;
+}
+function told(what: string): void {
+  parentPort.postMessage(what);
+}
+function down(depth: number, run: () => void): void {
+  try {
+    if (depth > 0) down(depth - 1, run);
+    else run();
+  } finally {
+    told("a finally ran");
+  }
+}
+async function downAsync(depth: number, run: () => Promise<void>): Promise<void> {
+  try {
+    if (depth > 0) await downAsync(depth - 1, run);
+    else await run();
+  } finally {
+    told("a finally ran");
+  }
+}
+async function busy0(): Promise<void> {
+  await null;
+  for (;;) spin++;
+}
+async function case0(): Promise<void> {
+  try {
+    await busy0();
+  } finally {
+    told("a finally ran");
+  }
+}
+function busy1(): void {
+  for (;;) for (let i = 0; i < bytes.length; i++) spin += bytes[i];
+}
+function case1(): void {
+  using _resource = {
+    [Symbol.dispose]() {
+      told("a disposer ran");
+    },
+  };
+  busy1();
+}
+const cases = [case0, case1];
+const isTerminated = [true, true];
+function answer(): string {
+  return JSON.stringify(list.map(each => ({ each, twice: step(each) + descend(each) })));
+}
+const atFirst = answer();
+function works(): string {
+  return answer() === atFirst ? "works" : "DOES NOT WORK";
+}
+function ended(id: number): Promise<string> {
+  return new Promise(resolve => {
+    const heard: string[] = [];
+    const worker = new Worker(new URL(import.meta.url), { workerData: id });
+    worker.on("message", (message: string) => {
+      if (message !== "ready") return void heard.push(message);
+      if (isTerminated[id]) setTimeout(() => void worker.terminate(), 5);
+    });
+    worker.on("error", (error: Error) => heard.push("error " + error.name));
+    worker.on("exit", (code: number) => resolve(id + ": exit " + code + " " + heard.join() + " " + works()));
+  });
+}
+if (isMainThread) {
+  for (let id = 0; id < cases.length; id++) console.log(await ended(id));
+  console.log("the end", works());
+} else {
+  told("ready");
+  // The message leaves in a turn of the event loop.
+  setTimeout(() => void cases[workerData](), 1);
+}
+//// a-function-that-waits-holds-values-that-nothing-else-holds.ts
+// A function that waits holds values that nothing else holds.
+declare const Bun: { gc(isFull: boolean): void };
+declare const Buffer: { from(text: string): Uint8Array };
+declare function setImmediate(run: () => void): void;
+const trail: string[] = [];
+let meanwhile: () => void = () => {};
+function show(value: unknown, depth = 0): string {
+  if (value === null) return "null";
+  if (value === undefined) return "undefined";
+  if (typeof value === "string") return value.length > 40 ? JSON.stringify(value.slice(0, 20)) + ".." + value.length + ".." + JSON.stringify(value.slice(-8)) : JSON.stringify(value);
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "boolean") return String(value);
+  if (typeof value === "symbol") return "symbol " + value.description;
+  if (typeof value === "function") return "function answering " + show(value(), depth + 1);
+  if (depth > 4) return "..";
+  if (Array.isArray(value)) {
+    let text = "[";
+    for (let at = 0; at < value.length; at++) text += (at ? "," : "") + (at in value ? show(value[at], depth + 1) : "hole");
+    const match = value as unknown as { index?: number; groups?: unknown };
+    return text + "]" + (match.index === undefined ? "" : "@" + match.index + show(match.groups, depth + 1));
+  }
+  if (value instanceof Map) return "map" + show([...value], depth + 1);
+  if (value instanceof Set) return "set" + show([...value], depth + 1);
+  if (value instanceof Date) return "date " + value.getTime();
+  if (value instanceof RegExp) return "pattern " + value.source + " " + value.flags + " " + value.lastIndex;
+  if (value instanceof Error) return value.name + ": " + value.message + (value.cause === undefined ? "" : " because " + show(value.cause, depth + 1));
+  if (ArrayBuffer.isView(value)) return value.constructor.name + " " + value.byteOffset + " " + Array.prototype.join.call(value, ",");
+  if (value instanceof Promise) return "promise";
+  if (value instanceof String) return "wrapped " + value;
+  const object = value as Record<string, unknown> & { next?: () => unknown; toJSON?: () => unknown };
+  if (typeof object.toJSON === "function") return "json " + show(object.toJSON(), depth + 1);
+  if (typeof object.next === "function") return "iterator at " + show(object.next(), depth + 1);
+  let text = "{";
+  for (const name of Object.keys(object)) text += (text.length > 1 ? "," : "") + name + ":" + show(object[name], depth + 1);
+  return text + "}";
+}
+function churn(count: number) {
+  const kept: unknown[] = [];
+  for (let at = 0; at < count; at++) kept.push({ a: -at, b: "churn" + at }, [-at, -at - 1, -at - 2], [at + 0.25], "churn".slice(at % 3) + at, { n: -at }, { inner: { n: -at }, list: [-at] });
+  return kept.length;
+}
+function deep(levels: number, part: number, text: string): number {
+  const here = { levels, part, text };
+  return levels === 0 ? 0 : 1 + deep(levels - 1, part * 1.01, text) + (here.levels - levels);
+}
+function afterAJob(answer: number, isRejected = false) {
+  return new Promise<number>((resolve, reject) =>
+    queueMicrotask(() => {
+      meanwhile();
+      (isRejected ? reject : resolve)(answer);
+    }),
+  );
+}
+function afterATimer(answer: number) {
+  return new Promise<number>(resolve =>
+    setTimeout(() => {
+      meanwhile();
+      resolve(answer);
+    }, 0),
+  );
+}
+function afterAnImmediate(answer: number) {
+  return new Promise<number>(resolve =>
+    setImmediate(() => {
+      meanwhile();
+      resolve(answer);
+    }),
+  );
+}
+function thenable(answer: number): PromiseLike<number> {
+  return {
+    then(resolve: any) {
+      meanwhile();
+      return resolve(answer);
+    },
+  };
+}
+function* passing(answer: number): Generator<number, number, number> {
+  const kept = { answer };
+  const sent = yield kept.answer;
+  return sent + kept.answer - answer;
+}
+function three(first: unknown, second: number, third: unknown) {
+  return show(first) + second + show(third);
+}
+class Three {
+  constructor(
+    public first: unknown,
+    public second: number,
+    public third: unknown,
+  ) {}
+}
+function boxed(held: unknown) {
+  return {
+    held,
+    with(answer: number) {
+      return show(this.held) + answer;
+    },
+  };
+}
+function startedOnly(promise: Promise<string>) {
+  promise.then(text => trail.push("inner " + text));
+  return "started";
+}
+function drive(made: Generator<number, string, number>) {
+  let step = made.next();
+  while (!step.done) {
+    meanwhile();
+    step = made.next(step.value);
+  }
+  return step.value;
+}
+async function driveAsync(made: AsyncGenerator<number, string, number>) {
+  let step = await made.next();
+  while (!step.done) {
+    meanwhile();
+    step = await made.next(step.value);
+  }
+  return step.value;
+}
+function mixed(text: string, into: number) {
+  for (let at = 0; at < text.length; at++) into = (Math.imul(into, 31) + text.charCodeAt(at)) | 0;
+  return into;
+}
+
+// 1: template--here--taken-out-of-an-array--async-generator--a-yield--a-collection-and-new-objects--once
+function born1(seed: number) {
+  return `<${seed}|${seed / 4}|${"x".padStart(seed % 6, "-")}>`;
+}
+const again1 = born1;
+type Held1 = ReturnType<typeof born1>;
+async function* waits1(seed: number): AsyncGenerator<number, string, number> {
+  const [first, , ...others] = [(`<${seed}|${seed / 4}|${"x".padStart(seed % 6, "-")}>`), 0, again1(seed + 1), seed];
+  const answer = (yield 1);
+  return show(first) + answer + show(others);
+}
+async function case1() {
+  meanwhile = () => {
+    Bun.gc(true);
+    churn(40);
+    Bun.gc(true);
+  };
+  console.log("1", await driveAsync(waits1(4)));
+}
+// 2: large-integer--here--read-by-a-closure--async-method--a-thenable--new-objects--again-and-again
+function born2(seed: number) {
+  return seed * 4294967311;
+}
+const again2 = born2;
+type Held2 = ReturnType<typeof born2>;
+const owner2 = {
+  async waits(seed: number): Promise<string> {
+    const held = (seed * 4294967311);
+    const read = () => held;
+    const answer = (await thenable(1));
+    return show(read()) + answer;
+  },
+};
+const waits2 = (...all: Parameters<typeof owner2.waits>) => owner2.waits(...all);
+async function case2() {
+  meanwhile = () => {
+    churn(150);
+  };
+  let sum = 0;
+  let last = "";
+  for (let seed = 1; seed <= 12; seed++) sum = mixed((last = await waits2(seed)), sum);
+  console.log("2", sum, last);
+}
+// 3: small-bigint--here--stored-by-a-closure--generator-method--a-yield-of-another-generator--a-deep-recursion--many-at-once
+function born3(seed: number) {
+  return BigInt(seed);
+}
+const again3 = born3;
+type Held3 = ReturnType<typeof born3>;
+const owner3 = {
+  *waits(seed: number): Generator<number, string, number> {
+    let held: Held3 = (BigInt(seed));
+    const store = (next: Held3) => {
+      held = next;
+    };
+    const first = (yield* passing(1));
+    const before = show(held);
+    store(again3(seed + 1));
+    const second = (yield* passing(2));
+    return before + first + show(held) + second;
+  },
+};
+const waits3 = (...all: Parameters<typeof owner3.waits>) => owner3.waits(...all);
+async function case3() {
+  meanwhile = () => {
+    deep(400, 1.5, "d");
+    Bun.gc(true);
+  };
+  const all: Promise<string>[] = [];
+  for (let seed = 1; seed <= 8; seed++) all.push(Promise.resolve().then(() => drive(waits3(seed))));
+  let sum = 0;
+  const texts = await Promise.all(all);
+  for (const text of texts) sum = mixed(text, sum);
+  console.log("3", sum, texts[texts.length - 1]);
+}
+// 4: bound-function--here--closures-of-a-loop--async-arrow--a-plain-value--two-collections--once
+function born4(seed: number) {
+  return function (this: { n: number }, more: number) { return this.n + more; }.bind({ n: seed }, 2);
+}
+const again4 = born4;
+type Held4 = ReturnType<typeof born4>;
+const waits4 = async (seed: number): Promise<string> => {
+  const readers: (() => string)[] = [];
+  for (let turn = 0; turn < 3; turn++) {
+    const held = (function (this: { n: number }, more: number) { return this.n + more; }.bind({ n: seed }, 2));
+    readers.push(() => show(held) + turn);
+    if ((queueMicrotask(meanwhile), await turn) !== turn) return "wrong answer";
+  }
+  return readers.map(read => read()).join();
+};
+async function case4() {
+  meanwhile = () => {
+    Bun.gc(true);
+    Bun.gc(true);
+  };
+  console.log("4", await waits4(7));
+}
+await case1();
+await case2();
+await case3();
+await case4();
+await new Promise(resolve => setTimeout(resolve, 5));
+console.log(trail.sort().join("\n"));
+//// a-pattern-made-at-run-time-meets-a-subject-made-from-it.ts
+// A pattern made at run time meets a subject made from it.
+// test-twice match from-every-last-index replace-function frozen match-all last-index-huge | fits behind-many false-starts fits between behind-many between fits damaged fits damaged between between damaged between two
+type Case = { pieces: string[]; flags: string; head: string; unit: string; count: number; tail: string };
+function show(value: unknown): string {
+  if (value === undefined) return "u";
+  if (value === null) return "null";
+  if (typeof value === "string") return value.length > 24 ? JSON.stringify(value.slice(0, 12)) + ".." + value.length + "#" + hashOf(value) : JSON.stringify(value);
+  if (Array.isArray(value)) {
+    const match = value as RegExpMatchArray & { indices?: unknown };
+    let text = "[" + (value.length > 12 ? value.slice(0, 12).map(show).join() + ".." + value.length : value.map(show).join()) + "]";
+    if (typeof match.index === "number") text += "@" + match.index;
+    if (match.groups) text += "{" + Object.entries(match.groups).map(([name, group]) => name + ":" + show(group)).join() + "}";
+    if (match.indices) text += "i" + JSON.stringify(match.indices).slice(0, 80);
+    return text;
+  }
+  return String(value);
+}
+function hashOf(text: string): number {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0;
+  return hash;
+}
+function attempt(run: () => unknown): string {
+  try {
+    return show(run());
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+function subjectOf(one: Case): string {
+  return one.head + one.unit.repeat(one.count) + one.tail;
+}
+function textOf(one: Case): string {
+  let text = "";
+  for (const piece of one.pieces) text += piece;
+  return text;
+}
+const cases: Case[] = JSON.parse("[{\"pieces\":[\"\\\\ud7ff$\"],\"flags\":\"iu\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"퟿\"},{\"pieces\":[\"^1ﬀ\\\\u005f\\\\u{41}\\\\u{65}[^\\\\n]\"],\"flags\":\"iu\",\"head\":\"\",\"unit\":\"💩\",\"count\":4093,\"tail\":\"1ﬀ_Aeẞÿ\"},{\"pieces\":[\"[\\\\u{1f6\",\"00}-\\\\u{1f64f}]??\\\\ud7ffµ[^a]B\"],\"flags\":\"yu\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"\\ud830𜍅𜍅퟿µ𐀀B\"},{\"pieces\":[\"\\\\W(?<!😍)[\\\\u{1f600}-\\\\u{1f64f}]((?=\\\\W)\\\\W[\\\\p{L}\\\\p{N}_\\\\-](?<=[\\\\p{L}\\\\p{N}_\\\\-])\\\\b|\\\\u212aÿ\\\\p{Ll})\"],\"flags\":\"giu\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"☃😀Kÿa\"},{\"pieces\":[\"(?:.🇺\\\\p{Script=Greek}|.|\\\\ud83d\\\\ude4f.{1,3}([\\\\ud800-\\\\udbff]|\\\\u{20}\\\\D?|\\\\u002d\\ud800))(?=[^a-c])\\\\S\"],\"flags\":\"gu\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"ſ𐀀🙏􏿿\\ud800 𜍅ẞ𝟘\"},{\"pieces\":[\"\\\\u{30}\\\\p{Any}[\\\\u0100-\\\\uffff]??__1\\\\x\",\"78\"],\"flags\":\"yv\",\"head\":\"\",\"unit\":\"一\",\"count\":260,\"tail\":\"0𐐨__1x\"},{\"pieces\":[\"\\\\W\\\\S?\"],\"flags\":\"i\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"😀􏿿🇺\"},{\"pieces\":[\"[\\\\p{L}\\\\p{N}_\\\\-]{2}?\"],\"flags\":\"du\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"_a\"},{\"pieces\":[\"𝟘e😍\"],\"flags\":\"v\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"𝟘E😍\"},{\"pieces\":[\".(?<!1)\"],\"flags\":\"g\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"😀\"},{\"pieces\":[\"\\\\u{63}[^α]\\\\p{RGI_Emoji}{0,2}((?=[\\\\u0000-\\\\u{10ffff}])𐀀+[x]\\\\ud83d)[α-ω]$\"],\"flags\":\"dgimsvy\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"😍c𐀀x\\ud83dς\"},{\"pieces\":[\"^\\\\xff[^\\\\s]+\\\\u{63}c\"],\"flags\":\"v\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"K𜍅𠀀ÿ🇺\\ud83d￿cc\\ud83d\"},{\"pieces\":[\"^[^x]\\\\u{212a}\\\\u{78}😀\"],\"flags\":\"gsu\",\"head\":\"😀ÿ\",\"unit\":\"\",\"count\":0,\"tail\":\"eKx😀\"},{\"pieces\":[\"\\\\x66f\\\\P{L}?\\ud800$\"],\"flags\":\"sv\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"FF\\ud800\"},{\"pieces\":[\"\\\\\",\"b\"],\"flags\":\"yu\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"￿😍eſ\"},{\"pieces\":[\"[^\\\\s]\\\\\",\"u0062𐐀\\\\p{Ll}(?<=\\\\p{Ll})$\"],\"flags\":\"mu\",\"head\":\"\",\"unit\":\"\",\"count\":0,\"tail\":\"Σb𐐀é😀￿b𐐀ß\"}]");
+const written: ((() => RegExp) | undefined)[] = [
+  undefined,
+  undefined,
+  undefined,
+  () => /\W(?<!😍)[\u{1f600}-\u{1f64f}]((?=\W)\W[\p{L}\p{N}_\-](?<=[\p{L}\p{N}_\-])\b|\u212aÿ\p{Ll})/giu,
+  () => /(?:.🇺\p{Script=Greek}|.|\ud83d\ude4f.{1,3}([\ud800-\udbff]|\u{20}\D?|\u002d�))(?=[^a-c])\S/gu,
+  () => /\u{30}\p{Any}[\u0100-\uffff]??__1\x78/yv,
+  undefined,
+  () => /[\p{L}\p{N}_\-]{2}?/du,
+  () => /𝟘e😍/v,
+  undefined,
+  undefined,
+  () => /^\xff[^\s]+\u{63}c/v,
+  () => /^[^x]\u{212a}\u{78}😀/gsu,
+  undefined,
+  () => /\b/yu,
+  () => /[^\s]\u0062𐐀\p{Ll}(?<=\p{Ll})$/mu,
+];
+function made(one: Case): RegExp | string {
+  try {
+    const literal = written[cases.indexOf(one)];
+    if (literal) return literal();
+    return new RegExp(textOf(one), one.flags);
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+function run(one: Case, at: number): void {
+  const s = subjectOf(one);
+  let line = at + ":";
+  {
+    const re = made(one);
+    if (typeof re === "string") line += " " + re;
+    else line += " test-twice " + attempt(() => String(re.test(s)) + re.lastIndex + re.test(s)) + "," + re.lastIndex;
+  }
+  {
+    const re = made(one);
+    if (typeof re === "string") line += " " + re;
+    else line += " match " + attempt(() => s.match(re)) + "," + re.lastIndex;
+  }
+  {
+    const re = made(one);
+    if (typeof re === "string") line += " " + re;
+    else line += " from-every-last-index " + attempt(() => {
+      let all = "";
+      for (let from = 0; from <= Math.min(s.length, 9); from++) {
+        re.lastIndex = from;
+        all += show(re.exec(s)) + re.lastIndex + " ";
+      }
+      return all;
+    }) + "," + re.lastIndex;
+  }
+  {
+    const re = made(one);
+    if (typeof re === "string") line += " " + re;
+    else line += " replace-function " + attempt(() => s.replace(re, (...parts: unknown[]) => "<" + parts.slice(0, -2).map(part => (typeof part === "object" ? "groups" : show(part))).join() + ">")) + "," + re.lastIndex;
+  }
+  {
+    const re = made(one);
+    if (typeof re === "string") line += " " + re;
+    else line += " frozen " + (() => {
+      const own = Object.freeze(new RegExp(re));
+      return attempt(() => own.exec(s)) + attempt(() => s.replace(own, "-")) + attempt(() => s.match(own));
+    })() + "," + re.lastIndex;
+  }
+  {
+    const re = made(one);
+    if (typeof re === "string") line += " " + re;
+    else line += " match-all " + attempt(() => [...s.matchAll(re)].slice(0, 6).map(show).join()) + "," + re.lastIndex;
+  }
+  {
+    const re = made(one);
+    if (typeof re === "string") line += " " + re;
+    else line += " last-index-huge " + attempt(() => {
+      re.lastIndex = 4294967296;
+      return show(re.exec(s)) + re.lastIndex;
+    }) + "," + re.lastIndex;
+  }
+  console.log(line);
+}
+for (let at = 0; at < cases.length; at++) run(cases[at], at);
+//// a-typed-generator-meets-a-number-between-two-yields.ts
+// A typed generator meets a number between two yields.
+// A typed function meets an object of another kind in the middle of its body and goes on where it was: no step runs twice, none is skipped, every local keeps its value.
+declare const console: { log(...values: unknown[]): void };
+const show = (v: unknown) => JSON.stringify(v, (k, each) => each === undefined ? "undefined" : typeof each === "number" && each !== each ? "NaN" : typeof each === "function" ? "function" : each);
+async function t(name: string, f: () => unknown) { let r; log.length = 0; try { r = show(await f()); } catch (e) { r = "threw " + (e as Error).name; } console.log(name, r, log.join(" ")); }
+const log: (string | number)[] = [], kept: unknown[] = [];
+const step = (n: number) => { log.push(n); return n; };
+const list = (...all: unknown[]) => all;
+class P { v = 1; w = 2; m() { log.push("m"); return 3; } }
+class Q { w = 20; v = 10; m() { log.push("Q m"); return 30; } }
+class S extends P { extra = 9; m() { log.push("S m"); return 33; } }
+function inner(p: P) { log.push("in"); const r = p.v; log.push("out"); return r; }
+function* closing(all: P[]) { try { for (const each of all) { log.push("next"); yield each; } } finally { log.push("closed"); } }
+await t("yield-between a-number first", async () => { const stranger = (): any => (7); function* run(a: P, b: P, c: P) { step(1); const x = a.v; yield x; step(2); const y = b.v; yield y; step(3); const z = c.v; return [x, y, z]; } return (() => { const steps = run(stranger(), new P(), new P()); const seen: unknown[] = []; let one = steps.next(); while (!one.done) { seen.push(one.value); one = steps.next(); } return [seen, one.value]; })(); });
+//// calls-with-as-many-arguments-as-a-list-holds.ts
+// Calls with as many arguments as a list holds.
+// a-derived-constructor--new-with-a-spread--doubles hands-everything-on--call-with-a-spread--texts hands-everything-on--bind-with-a-spread--integers from-char-code--integers
+declare function require(name: string): any;
+declare const process: any;
+const path = require("node:path");
+const util = require("node:util");
+const strange = new Set<string>();
+const wrong = new Set<string>();
+function nothing() {}
+process.on("unhandledRejection", nothing);
+function note(where: string, error: unknown): void {
+  if (!(error instanceof RangeError)) strange.add(where + " " + (error instanceof Error ? error.name : typeof error));
+}
+function digest(list: ArrayLike<unknown>): string {
+  const n = list.length;
+  return n + ":" + String(list[0]) + ":" + String(list[n >> 1]) + ":" + String(list[n - 1]);
+}
+const lists = new Map<number, any[]>();
+
+class BaseF1 {
+  answer: string;
+  constructor(...rest: unknown[]) {
+    this.answer = digest(rest);
+  }
+}
+class F1 extends BaseF1 {
+  constructor(...rest: unknown[]) {
+    super(...rest);
+  }
+}
+// 1: a-derived-constructor--new-with-a-spread--doubles
+function list1(n: number): any[] {
+  let list = lists.get(1 * 10000000 + n);
+  if (!list) lists.set(1 * 10000000 + n, (list = Array.from({ length: n }, (_, at) => at + 0.5)));
+  return list;
+}
+function call1(L: any[]): unknown {
+  return new (F1 as any)(...L).answer;
+}
+function try1(n: number): void {
+  const L = list1(n);
+  const expected = digest(L);
+  try {
+    const got = call1(L);
+    if (got !== expected) wrong.add("1 a-derived-constructor--new-with-a-spread " + n);
+  } catch (error) {
+    note("1 a-derived-constructor--new-with-a-spread", error);
+  }
+}
+for (let n = 0; n <= 16; n += 1) list1(n);
+let tried1 = 0;
+function down1(level: number): number {
+  
+  try {
+    return down1(level + 1) + 1;
+  } catch (error) {
+    if (tried1++ < 4000) try1((tried1 % 17) * 1);
+    throw error;
+  }
+}
+function innerF2(...rest: unknown[]): string {
+  return digest(rest);
+}
+function F2(...rest: unknown[]): string {
+  return innerF2(...rest);
+}
+// 2: hands-everything-on--call-with-a-spread--texts
+function list2(n: number): any[] {
+  let list = lists.get(2 * 10000000 + n);
+  if (!list) lists.set(2 * 10000000 + n, (list = Array.from({ length: n }, (_, at) => "t" + (at & 7))));
+  return list;
+}
+function call2(L: any[]): unknown {
+  return (F2 as any).call(null, ...L);
+}
+function try2(n: number): void {
+  const L = list2(n);
+  const expected = digest(L);
+  try {
+    const got = call2(L);
+    if (got !== expected) wrong.add("2 hands-everything-on--call-with-a-spread " + n);
+  } catch (error) {
+    note("2 hands-everything-on--call-with-a-spread", error);
+  }
+}
+for (let n = 0; n <= 200; n += 2) list2(n);
+let tried2 = 0;
+function down2(level: number): number {
+  const kept = [level];
+  try {
+    return down2(level + 1) + 1;
+  } finally {
+    if (tried2++ < 400) for (let n = 0; n <= 200; n += 2) try2(n);
+  }
+}
+function innerF3(...rest: unknown[]): string {
+  return digest(rest);
+}
+function F3(...rest: unknown[]): string {
+  return innerF3(...rest);
+}
+// 3: hands-everything-on--bind-with-a-spread--integers
+function list3(n: number): any[] {
+  let list = lists.get(3 * 10000000 + n);
+  if (!list) lists.set(3 * 10000000 + n, (list = Array.from({ length: n }, (_, at) => at)));
+  return list;
+}
+function call3(L: any[]): unknown {
+  return (F3 as any).bind(null, ...L)();
+}
+function try3(n: number): void {
+  const L = list3(n);
+  const expected = digest(L);
+  try {
+    const got = call3(L);
+    if (got !== expected) wrong.add("3 hands-everything-on--bind-with-a-spread " + n);
+  } catch (error) {
+    note("3 hands-everything-on--bind-with-a-spread", error);
+  }
+}
+for (let n = 0; n <= 16; n += 1) list3(n);
+let tried3 = 0;
+function down3(level: number): number {
+  
+  try {
+    return down3(level + 1) + 1;
+  } catch (error) {
+    if (tried3++ < 4000) try3((tried3 % 17) * 1);
+    throw error;
+  }
+}
+// 4: from-char-code--integers
+function list4(n: number): any[] {
+  let list = lists.get(4 * 10000000 + n);
+  if (!list) lists.set(4 * 10000000 + n, (list = Array.from({ length: n }, (_, at) => at)));
+  return list;
+}
+function call4(L: any[]): unknown {
+  return String.fromCharCode(...L).length;
+}
+function try4(n: number): void {
+  const L = list4(n);
+  const expected = L.length;
+  try {
+    const got = call4(L);
+    if (got !== expected) wrong.add("4 from-char-code " + n);
+  } catch (error) {
+    note("4 from-char-code", error);
+  }
+}
+for (let n = 0; n <= 280; n += 7) list4(n);
+let tried4 = 0;
+function down4(level: number): number {
+  const kept = [level];
+  try {
+    return down4(level + 1) + 1;
+  } finally {
+    if (tried4++ < 400) for (let n = 0; n <= 280; n += 7) try4(n);
+  }
+}
+for (const n of [5, 7, 64, 129, 255, 257, 1000, 65535, 3000000]) try3(n);
+for (const n of [4, 6, 9, 17, 129, 4095, 65535, 65537, 100000, 125000, 200000, 500000]) try1(n);
+for (const n of [3, 5, 63, 64, 255, 4095, 65535, 65536, 65537, 1000000, 3000000]) try4(n);
+for (const n of [4, 8, 17, 65, 127, 129, 255, 1000, 4097, 65536, 1000000]) try2(n);
+try {
+  down1(0);
+  console.log("1 came back");
+} catch (error) {
+  console.log("1", error instanceof RangeError ? "fine" : "thrown " + String(error));
+}
+for (const n of [0, 1, 5, 64, 1000]) try1(n);
+try {
+  down2(0);
+  console.log("2 came back");
+} catch (error) {
+  console.log("2", error instanceof RangeError ? "fine" : "thrown " + String(error));
+}
+for (const n of [0, 1, 5, 64, 1000]) try2(n);
+try {
+  down3(0);
+  console.log("3 came back");
+} catch (error) {
+  console.log("3", error instanceof RangeError ? "fine" : "thrown " + String(error));
+}
+for (const n of [0, 1, 5, 64, 1000]) try3(n);
+try {
+  down4(0);
+  console.log("4 came back");
+} catch (error) {
+  console.log("4", error instanceof RangeError ? "fine" : "thrown " + String(error));
+}
+for (const n of [0, 1, 5, 64, 1000]) try4(n);
+await new Promise(resolve => setTimeout(resolve, 5));
+console.log("strange: " + [...strange].sort().join(", "));
+console.log("wrong: " + [...wrong].sort().join(", "));
+//// class-members-in-any-lookup-order.js
+// Class members in any lookup order.
+// generated by class-members-any-lookup-order.py 22
+const lines = []; const sym = Symbol("s");
+const show = (v) => { try { return v === undefined ? "u" : typeof v === "function" ? "fn:" + v.name + "/" + v.length : typeof v === "symbol" ? String(v) : typeof v === "object" && v !== null ? JSON.stringify(v) : String(v); } catch (e) { return "?"; } };
+const desc = (d) => d ? (("value" in d) ? "v" : (d.get ? "g" : "-") + (d.set ? "s" : "-")) + (d.writable ? "w" : "-") + (d.configurable ? "c" : "-") + (d.enumerable ? "e" : "-") : "none";
+const seen = [];
+{ class B { f = 1; get toString() { return "B0.get toString"; } set toString(v) { seen.push("B0.set toString"); } m(a, b) { return "B0.m"; }   }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("0 " + name + ": " + s); };
+  step('call absent with another this', () => show(o.absent.call({ f: 9 })));
+  step('frozen', () => [Object.isFrozen(P), Object.isExtensible(P), Object.isSealed(P)].join());
+  step('read m off the class', () => keep("K.m", K.m));
+  step('keys', () => Reflect.ownKeys(P).map(String).join());
+  step('read absent off the base', () => keep("BP.absent", BP.absent));
+  step('by a key absent', () => keep("o[absent]", o["absent".slice(0)]));
+  step('hasOwn toString', () => [Object.hasOwn(o, "toString"), Object.hasOwn(P, "toString"), Object.hasOwn(BP, "toString"), Object.hasOwn(K, "toString")].join());
+  step('stringify', () => JSON.stringify(o));
+  step('bind m', () => show(o.m.bind(o2)()));
+  step('read m off another', () => keep("o2.m", o2.m));
+  step('via super', () => keep("super", o.viaSuper && o.viaSuper()));
+  step('hasOwn m', () => [Object.hasOwn(o, "m"), Object.hasOwn(P, "m"), Object.hasOwn(BP, "m"), Object.hasOwn(K, "m")].join());
+  step('entries of the prototype', () => JSON.stringify(Object.entries(P)));
+  step('String', () => String(o));
+  step('for in', () => (() => { const r = []; for (const k in o) r.push(k); return r.join(); })());
+  step('toString in', () => ["toString" in o, "toString" in P, "toString" in K].join());
+  step('define m', () => (() => { Object.defineProperty(P, "m", { value: () => "defined", configurable: true, writable: true }); return show(o2.m); })());
+  step('call m', () => show(o.m(1, 2)));
+  step('assign', () => JSON.stringify(Object.assign({}, o)));
+  step('constructor', () => [o.constructor === K, P.constructor === K, BP.constructor === B, Object.hasOwn(P, "constructor")].join());
+  step('an heir made late', () => (() => { class L extends K {} const l = new L(); return keep("late.m", l.m); })());
+  step('bind toString', () => show(o.toString.bind(o2)()));
+  step('stringify inside', () => JSON.stringify({ o }));
+  step('chain', () => [Object.getPrototypeOf(o) === P, Object.getPrototypeOf(P) === BP || P === BP, Object.getPrototypeOf(K) === B || K === B].join());
+  lines.push("0 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; get run() { return "B1.get run"; } m(a, b) { return "B1.m"; }   }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("1 " + name + ": " + s); };
+  step('descriptor of toJSON', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "toJSON"), e = Object.getOwnPropertyDescriptor(BP, "toJSON"); if (d) { keep("dP.toJSON", d.value); keep("dP.get toJSON", d.get); keep("dP.set toJSON", d.set); } if (e) { keep("dBP.toJSON", e.value); keep("dBP.get toJSON", e.get); } return desc(d) + " " + desc(e); })());
+  step('read toJSON off the base', () => keep("BP.toJSON", BP.toJSON));
+  step('read toJSON off another', () => keep("o2.toJSON", o2.toJSON));
+  step('call run with another this', () => show(o.run.call({ f: 9 })));
+  step('call absent', () => show(o.absent(1, 2)));
+  step('call absent with another this', () => show(o.absent.call({ f: 9 })));
+  step('hasOwn run', () => [Object.hasOwn(o, "run"), Object.hasOwn(P, "run"), Object.hasOwn(BP, "run"), Object.hasOwn(K, "run")].join());
+  step('by a key name', () => keep("o[name]", o["name".slice(0)]));
+  step('store name', () => (() => { o.name = "stored"; return show(o.name) + " " + Object.hasOwn(o, "name") + " " + seen.splice(0).join(); })());
+  step('call toJSON with another this', () => show(o.toJSON.call({ f: 9 })));
+  step('template', () => `${o}`);
+  step('read name off the class', () => keep("K.name", K.name));
+  step('chain', () => [Object.getPrototypeOf(o) === P, Object.getPrototypeOf(P) === BP || P === BP, Object.getPrototypeOf(K) === B || K === B].join());
+  step('read m off an instance', () => keep("o.m", o.m));
+  step('via private', () => show(o.viaPrivate && o.viaPrivate()));
+  step('store m', () => (() => { o.m = "stored"; return show(o.m) + " " + Object.hasOwn(o, "m") + " " + seen.splice(0).join(); })());
+  step('read name off the base', () => keep("BP.name", BP.name));
+  step('bind run', () => show(o.run.bind(o2)()));
+  step('store run', () => (() => { o.run = "stored"; return show(o.run) + " " + Object.hasOwn(o, "run") + " " + seen.splice(0).join(); })());
+  lines.push("1 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; toJSON() { return "B2.toJSON"; } valueOf() { return "B2.valueOf"; } get length() { return "B2.get length"; } set length(v) { seen.push("B2.set length"); }   }
+  class H extends B { g = 2; async x1() { return "H2.async x1"; } viaSuper() { return super.toJSON; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("2 " + name + ": " + s); };
+  step('stringify inside', () => JSON.stringify({ o }));
+  step('store x1', () => (() => { o.x1 = "stored"; return show(o.x1) + " " + Object.hasOwn(o, "x1") + " " + seen.splice(0).join(); })());
+  step('read length off another', () => keep("o2.length", o2.length));
+  step('names of the base', () => Object.getOwnPropertyNames(BP).join());
+  step('call absent with another this', () => show(o.absent.call({ f: 9 })));
+  step('all descriptors', () => Object.entries(Object.getOwnPropertyDescriptors(P)).map(([k, d]) => k + ":" + desc(d)).join());
+  step('bind valueOf', () => show(o.valueOf.bind(o2)()));
+  step('call toJSON with another this', () => show(o.toJSON.call({ f: 9 })));
+  step('bind toJSON', () => show(o.toJSON.bind(o2)()));
+  step('hasOwn length', () => [Object.hasOwn(o, "length"), Object.hasOwn(P, "length"), Object.hasOwn(BP, "length"), Object.hasOwn(K, "length")].join());
+  step('read x1 off the prototype', () => keep("P.x1", P.x1));
+  step('call x1 with another this', () => show(o.x1.call({ f: 9 })));
+  step('call valueOf with another this', () => show(o.valueOf.call({ f: 9 })));
+  step('read valueOf off the prototype', () => keep("P.valueOf", P.valueOf));
+  step('bind absent', () => show(o.absent.bind(o2)()));
+  step('call valueOf', () => show(o.valueOf(1, 2)));
+  step('length in', () => ["length" in o, "length" in P, "length" in K].join());
+  step('store valueOf', () => (() => { o.valueOf = "stored"; return show(o.valueOf) + " " + Object.hasOwn(o, "valueOf") + " " + seen.splice(0).join(); })());
+  step('names of the class', () => Object.getOwnPropertyNames(K).join());
+  step('bind length', () => show(o.length.bind(o2)()));
+  step('constructor', () => [o.constructor === K, P.constructor === K, BP.constructor === B, Object.hasOwn(P, "constructor")].join());
+  lines.push("2 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; value(a, b) { return "B3.value"; } m(a, b) { return "B3.m"; }  #p() { return 1; } viaPrivate() { return this.#p(); } }
+  class H extends B { g = 2; get n() { return "H3.get n"; } viaSuper() { return super.value; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("3 " + name + ": " + s); };
+  step('bind value', () => show(o.value.bind(o2)()));
+  step('chain', () => [Object.getPrototypeOf(o) === P, Object.getPrototypeOf(P) === BP || P === BP, Object.getPrototypeOf(K) === B || K === B].join());
+  step('read n off the class', () => keep("K.n", K.n));
+  step('number', () => String(+o));
+  step('read absent off another', () => keep("o2.absent", o2.absent));
+  step('call m', () => show(o.m(1, 2)));
+  step('read m off the class', () => keep("K.m", K.m));
+  step('symbol', () => keep("o[sym]", o[sym]));
+  step('descriptor of m', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "m"), e = Object.getOwnPropertyDescriptor(BP, "m"); if (d) { keep("dP.m", d.value); keep("dP.get m", d.get); keep("dP.set m", d.set); } if (e) { keep("dBP.m", e.value); keep("dBP.get m", e.get); } return desc(d) + " " + desc(e); })());
+  step('keys', () => Reflect.ownKeys(P).map(String).join());
+  step('read m off an instance', () => keep("o.m", o.m));
+  step('call value with another this', () => show(o.value.call({ f: 9 })));
+  step('read value off an instance', () => keep("o.value", o.value));
+  step('by a key absent', () => keep("o[absent]", o["absent".slice(0)]));
+  step('m in', () => ["m" in o, "m" in P, "m" in K].join());
+  lines.push("3 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; m(a, b) { return "B4.m"; } [sym]() { return "B.sym"; }  }
+  class H extends B { g = 2; run() { return "H4.run " + typeof this; } get value() { return "H4.get value"; } viaSuper() { return super.m; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("4 " + name + ": " + s); };
+  step('read absent off an instance', () => keep("o.absent", o.absent));
+  step('by a key absent', () => keep("o[absent]", o["absent".slice(0)]));
+  step('read value off another', () => keep("o2.value", o2.value));
+  step('store absent', () => (() => { o.absent = "stored"; return show(o.absent) + " " + Object.hasOwn(o, "absent") + " " + seen.splice(0).join(); })());
+  step('read run off the prototype', () => keep("P.run", P.run));
+  step('plus', () => o + "");
+  step('String', () => String(o));
+  step('names of the base', () => Object.getOwnPropertyNames(BP).join());
+  step('by a key m', () => keep("o[m]", o["m".slice(0)]));
+  step('call value with another this', () => show(o.value.call({ f: 9 })));
+  step('by a key value', () => keep("o[value]", o["value".slice(0)]));
+  step('all descriptors', () => Object.entries(Object.getOwnPropertyDescriptors(P)).map(([k, d]) => k + ":" + desc(d)).join());
+  step('frozen', () => [Object.isFrozen(P), Object.isExtensible(P), Object.isSealed(P)].join());
+  step('m in', () => ["m" in o, "m" in P, "m" in K].join());
+  step('via private', () => show(o.viaPrivate && o.viaPrivate()));
+  step('bind run', () => show(o.run.bind(o2)()));
+  step('hasOwn value', () => [Object.hasOwn(o, "value"), Object.hasOwn(P, "value"), Object.hasOwn(BP, "value"), Object.hasOwn(K, "value")].join());
+  step('stringify inside', () => JSON.stringify({ o }));
+  step('entries of the prototype', () => JSON.stringify(Object.entries(P)));
+  step('call absent', () => show(o.absent(1, 2)));
+  step('read absent off another', () => keep("o2.absent", o2.absent));
+  step('delete m', () => String(delete P.m) + " " + ("m" in o2));
+  step('call m', () => show(o.m(1, 2)));
+  step('keys', () => Reflect.ownKeys(P).map(String).join());
+  step('read run off the base', () => keep("BP.run", BP.run));
+  step('read m off the base', () => keep("BP.m", BP.m));
+  lines.push("4 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; get get() { return "B5.get get"; }  #p() { return 1; } viaPrivate() { return this.#p(); } }
+  class H extends B { g = 2; run(a, b) { return "H5.run"; } viaSuper() { return super.get; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("5 " + name + ": " + s); };
+  step('read run off the class', () => keep("K.run", K.run));
+  step('an heir made late', () => (() => { class L extends K {} const l = new L(); return keep("late.get", l.get); })());
+  step('plus', () => o + "");
+  step('descriptor of absent', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "absent"), e = Object.getOwnPropertyDescriptor(BP, "absent"); if (d) { keep("dP.absent", d.value); keep("dP.get absent", d.get); keep("dP.set absent", d.set); } if (e) { keep("dBP.absent", e.value); keep("dBP.get absent", e.get); } return desc(d) + " " + desc(e); })());
+  step('descriptor of run', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "run"), e = Object.getOwnPropertyDescriptor(BP, "run"); if (d) { keep("dP.run", d.value); keep("dP.get run", d.get); keep("dP.set run", d.set); } if (e) { keep("dBP.run", e.value); keep("dBP.get run", e.get); } return desc(d) + " " + desc(e); })());
+  step('read get off an instance', () => keep("o.get", o.get));
+  step('via private', () => show(o.viaPrivate && o.viaPrivate()));
+  step('stringify', () => JSON.stringify(o));
+  step('read get off the class', () => keep("K.get", K.get));
+  step('call get', () => show(o.get(1, 2)));
+  step('names of the prototype', () => Object.getOwnPropertyNames(P).join());
+  step('call absent with another this', () => show(o.absent.call({ f: 9 })));
+  step('read absent off the prototype', () => keep("P.absent", P.absent));
+  step('call get with another this', () => show(o.get.call({ f: 9 })));
+  step('names of the base', () => Object.getOwnPropertyNames(BP).join());
+  step('read run off another', () => keep("o2.run", o2.run));
+  step('delete absent', () => String(delete P.absent) + " " + ("absent" in o2));
+  lines.push("5 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; length() { return "B6.length"; } m(a, b) { return "B6.m"; } set name(v) { seen.push("B6.set name"); } static x1() { return "B6.static x1"; } static set() { return "B6.static set"; } value(a, b) { return "B6.value"; }   }
+  class H extends B { g = 2; m(a, b) { return "H6.m"; } toJSON() { return "H6.toJSON"; } viaSuper() { return super.length; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("6 " + name + ": " + s); };
+  step('bind toJSON', () => show(o.toJSON.bind(o2)()));
+  step('read name off another', () => keep("o2.name", o2.name));
+  step('read toJSON off another', () => keep("o2.toJSON", o2.toJSON));
+  step('store length', () => (() => { o.length = "stored"; return show(o.length) + " " + Object.hasOwn(o, "length") + " " + seen.splice(0).join(); })());
+  step('via super', () => keep("super", o.viaSuper && o.viaSuper()));
+  step('toJSON in', () => ["toJSON" in o, "toJSON" in P, "toJSON" in K].join());
+  step('hasOwn value', () => [Object.hasOwn(o, "value"), Object.hasOwn(P, "value"), Object.hasOwn(BP, "value"), Object.hasOwn(K, "value")].join());
+  step('call length', () => show(o.length(1, 2)));
+  step('for in', () => (() => { const r = []; for (const k in o) r.push(k); return r.join(); })());
+  step('call m', () => show(o.m(1, 2)));
+  step('read absent off the prototype', () => keep("P.absent", P.absent));
+  step('by a key value', () => keep("o[value]", o["value".slice(0)]));
+  step('typeof', () => [typeof P, typeof K, Object.prototype.toString.call(P)].join());
+  step('read absent off the class', () => keep("K.absent", K.absent));
+  step('read x1 off another', () => keep("o2.x1", o2.x1));
+  step('call value with another this', () => show(o.value.call({ f: 9 })));
+  step('read absent off an instance', () => keep("o.absent", o.absent));
+  step('read length off the class', () => keep("K.length", K.length));
+  step('call x1', () => show(o.x1(1, 2)));
+  step('read toJSON off the class', () => keep("K.toJSON", K.toJSON));
+  step('store absent', () => (() => { o.absent = "stored"; return show(o.absent) + " " + Object.hasOwn(o, "absent") + " " + seen.splice(0).join(); })());
+  step('hasOwn length', () => [Object.hasOwn(o, "length"), Object.hasOwn(P, "length"), Object.hasOwn(BP, "length"), Object.hasOwn(K, "length")].join());
+  step('entries of the prototype', () => JSON.stringify(Object.entries(P)));
+  step('read value off an instance', () => keep("o.value", o.value));
+  step('read set off the base', () => keep("BP.set", BP.set));
+  step('read toJSON off an instance', () => keep("o.toJSON", o.toJSON));
+  lines.push("6 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; length(a, b) { return "B7.length"; } x1(a, b) { return "B7.x1"; } toString() { return "B7.toString"; } n(a, b) { return "B7.n"; } set(a, b) { return "B7.set"; } [sym]() { return "B.sym"; }  }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("7 " + name + ": " + s); };
+  step('call toJSON', () => show(o.toJSON(1, 2)));
+  step('store toString', () => (() => { o.toString = "stored"; return show(o.toString) + " " + Object.hasOwn(o, "toString") + " " + seen.splice(0).join(); })());
+  step('store x1', () => (() => { o.x1 = "stored"; return show(o.x1) + " " + Object.hasOwn(o, "x1") + " " + seen.splice(0).join(); })());
+  step('read toString off the base', () => keep("BP.toString", BP.toString));
+  step('by a key set', () => keep("o[set]", o["set".slice(0)]));
+  step('read n off the prototype', () => keep("P.n", P.n));
+  step('read absent off the class', () => keep("K.absent", K.absent));
+  step('call n with another this', () => show(o.n.call({ f: 9 })));
+  step('read length off an instance', () => keep("o.length", o.length));
+  step('call x1', () => show(o.x1(1, 2)));
+  step('read length off the base', () => keep("BP.length", BP.length));
+  step('descriptor of set', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "set"), e = Object.getOwnPropertyDescriptor(BP, "set"); if (d) { keep("dP.set", d.value); keep("dP.get set", d.get); keep("dP.set set", d.set); } if (e) { keep("dBP.set", e.value); keep("dBP.get set", e.get); } return desc(d) + " " + desc(e); })());
+  step('hasOwn n', () => [Object.hasOwn(o, "n"), Object.hasOwn(P, "n"), Object.hasOwn(BP, "n"), Object.hasOwn(K, "n")].join());
+  step('bind set', () => show(o.set.bind(o2)()));
+  step('descriptor of length', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "length"), e = Object.getOwnPropertyDescriptor(BP, "length"); if (d) { keep("dP.length", d.value); keep("dP.get length", d.get); keep("dP.set length", d.set); } if (e) { keep("dBP.length", e.value); keep("dBP.get length", e.get); } return desc(d) + " " + desc(e); })());
+  step('store absent', () => (() => { o.absent = "stored"; return show(o.absent) + " " + Object.hasOwn(o, "absent") + " " + seen.splice(0).join(); })());
+  step('delete set', () => String(delete P.set) + " " + ("set" in o2));
+  step('read set off the class', () => keep("K.set", K.set));
+  step('hasOwn x1', () => [Object.hasOwn(o, "x1"), Object.hasOwn(P, "x1"), Object.hasOwn(BP, "x1"), Object.hasOwn(K, "x1")].join());
+  step('call set', () => show(o.set(1, 2)));
+  step('by a key absent', () => keep("o[absent]", o["absent".slice(0)]));
+  step('size in', () => ["size" in o, "size" in P, "size" in K].join());
+  step('spread', () => JSON.stringify({ ...o }));
+  lines.push("7 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; get length() { return "B8.get length"; } set length(v) { seen.push("B8.set length"); } value(a, b) { return "B8.value"; } toJSON() { return "B8.toJSON"; }  #p() { return 1; } viaPrivate() { return this.#p(); } }
+  class H extends B { g = 2; length() { return "H8.length " + typeof this; } run(a, b) { return "H8.run"; } name() { return "H8.name"; } get then2() { return "H8.get then2"; } viaSuper() { return super.length; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("8 " + name + ": " + s); };
+  step('length in', () => ["length" in o, "length" in P, "length" in K].join());
+  step('hasOwn value', () => [Object.hasOwn(o, "value"), Object.hasOwn(P, "value"), Object.hasOwn(BP, "value"), Object.hasOwn(K, "value")].join());
+  step('names of the prototype', () => Object.getOwnPropertyNames(P).join());
+  step('store absent', () => (() => { o.absent = "stored"; return show(o.absent) + " " + Object.hasOwn(o, "absent") + " " + seen.splice(0).join(); })());
+  step('store toJSON', () => (() => { o.toJSON = "stored"; return show(o.toJSON) + " " + Object.hasOwn(o, "toJSON") + " " + seen.splice(0).join(); })());
+  step('read then2 off another', () => keep("o2.then2", o2.then2));
+  step('hasOwn absent', () => [Object.hasOwn(o, "absent"), Object.hasOwn(P, "absent"), Object.hasOwn(BP, "absent"), Object.hasOwn(K, "absent")].join());
+  step('name in', () => ["name" in o, "name" in P, "name" in K].join());
+  step('read length off the class', () => keep("K.length", K.length));
+  step('read value off another', () => keep("o2.value", o2.value));
+  step('via private', () => show(o.viaPrivate && o.viaPrivate()));
+  step('by a key toJSON', () => keep("o[toJSON]", o["toJSON".slice(0)]));
+  step('typeof', () => [typeof P, typeof K, Object.prototype.toString.call(P)].join());
+  step('descriptor of value', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "value"), e = Object.getOwnPropertyDescriptor(BP, "value"); if (d) { keep("dP.value", d.value); keep("dP.get value", d.get); keep("dP.set value", d.set); } if (e) { keep("dBP.value", e.value); keep("dBP.get value", e.get); } return desc(d) + " " + desc(e); })());
+  step('call run with another this', () => show(o.run.call({ f: 9 })));
+  step('constructor', () => [o.constructor === K, P.constructor === K, BP.constructor === B, Object.hasOwn(P, "constructor")].join());
+  step('bind toJSON', () => show(o.toJSON.bind(o2)()));
+  step('store then2', () => (() => { o.then2 = "stored"; return show(o.then2) + " " + Object.hasOwn(o, "then2") + " " + seen.splice(0).join(); })());
+  step('via super', () => keep("super", o.viaSuper && o.viaSuper()));
+  step('define then2', () => (() => { Object.defineProperty(P, "then2", { value: () => "defined", configurable: true, writable: true }); return show(o2.then2); })());
+  lines.push("8 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; async toString() { return "B9.async toString"; } set size(v) { seen.push("B9.set size"); } n() { return "B9.n " + typeof this; } run(a, b) { return "B9.run"; }   }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("9 " + name + ": " + s); };
+  step('String', () => String(o));
+  step('stringify', () => JSON.stringify(o));
+  step('an heir made late', () => (() => { class L extends K {} const l = new L(); return keep("late.n", l.n); })());
+  step('read toString off another', () => keep("o2.toString", o2.toString));
+  step('Object.create', () => keep("created.n", Object.create(P).n));
+  step('call value', () => show(o.value(1, 2)));
+  step('store toJSON', () => (() => { o.toJSON = "stored"; return show(o.toJSON) + " " + Object.hasOwn(o, "toJSON") + " " + seen.splice(0).join(); })());
+  step('by a key n', () => keep("o[n]", o["n".slice(0)]));
+  step('names of the prototype', () => Object.getOwnPropertyNames(P).join());
+  step('toJSON in', () => ["toJSON" in o, "toJSON" in P, "toJSON" in K].join());
+  step('call n', () => show(o.n(1, 2)));
+  step('by a key toJSON', () => keep("o[toJSON]", o["toJSON".slice(0)]));
+  step('hasOwn toString', () => [Object.hasOwn(o, "toString"), Object.hasOwn(P, "toString"), Object.hasOwn(BP, "toString"), Object.hasOwn(K, "toString")].join());
+  step('read toJSON off an instance', () => keep("o.toJSON", o.toJSON));
+  step('call toString with another this', () => show(o.toString.call({ f: 9 })));
+  step('hasOwn absent', () => [Object.hasOwn(o, "absent"), Object.hasOwn(P, "absent"), Object.hasOwn(BP, "absent"), Object.hasOwn(K, "absent")].join());
+  step('read value off the class', () => keep("K.value", K.value));
+  step('spread', () => JSON.stringify({ ...o }));
+  step('read value off another', () => keep("o2.value", o2.value));
+  step('read toJSON off the base', () => keep("BP.toJSON", BP.toJSON));
+  step('absent in', () => ["absent" in o, "absent" in P, "absent" in K].join());
+  step('constructor', () => [o.constructor === K, P.constructor === K, BP.constructor === B, Object.hasOwn(P, "constructor")].join());
+  step('hasOwn run', () => [Object.hasOwn(o, "run"), Object.hasOwn(P, "run"), Object.hasOwn(BP, "run"), Object.hasOwn(K, "run")].join());
+  step('entries of the prototype', () => JSON.stringify(Object.entries(P)));
+  step('read toJSON off the prototype', () => keep("P.toJSON", P.toJSON));
+  lines.push("9 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; n(a, b) { return "B10.n"; } get x1() { return "B10.get x1"; } set x1(v) { seen.push("B10.set x1"); } name() { return "B10.name"; } m(a, b) { return "B10.m"; }   }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("10 " + name + ": " + s); };
+  step('store x1', () => (() => { o.x1 = "stored"; return show(o.x1) + " " + Object.hasOwn(o, "x1") + " " + seen.splice(0).join(); })());
+  step('stringify', () => JSON.stringify(o));
+  step('by a key name', () => keep("o[name]", o["name".slice(0)]));
+  step('symbol', () => keep("o[sym]", o[sym]));
+  step('read name off an instance', () => keep("o.name", o.name));
+  step('via private', () => show(o.viaPrivate && o.viaPrivate()));
+  step('read m off the class', () => keep("K.m", K.m));
+  step('read m off the prototype', () => keep("P.m", P.m));
+  step('hasOwn m', () => [Object.hasOwn(o, "m"), Object.hasOwn(P, "m"), Object.hasOwn(BP, "m"), Object.hasOwn(K, "m")].join());
+  step('store n', () => (() => { o.n = "stored"; return show(o.n) + " " + Object.hasOwn(o, "n") + " " + seen.splice(0).join(); })());
+  step('read absent off the class', () => keep("K.absent", K.absent));
+  step('read n off an instance', () => keep("o.n", o.n));
+  step('replace name', () => (() => { P.name = () => "replaced"; return show(o2.name); })());
+  step('names of the class', () => Object.getOwnPropertyNames(K).join());
+  step('name in', () => ["name" in o, "name" in P, "name" in K].join());
+  step('read absent off an instance', () => keep("o.absent", o.absent));
+  step('by a key n', () => keep("o[n]", o["n".slice(0)]));
+  step('descriptor of absent', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "absent"), e = Object.getOwnPropertyDescriptor(BP, "absent"); if (d) { keep("dP.absent", d.value); keep("dP.get absent", d.get); keep("dP.set absent", d.set); } if (e) { keep("dBP.absent", e.value); keep("dBP.get absent", e.get); } return desc(d) + " " + desc(e); })());
+  step('read m off an instance', () => keep("o.m", o.m));
+  lines.push("10 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; get n() { return "B11.get n"; } m() { return "B11.m " + typeof this; } get size() { return "B11.get size"; }  #p() { return 1; } viaPrivate() { return this.#p(); } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("11 " + name + ": " + s); };
+  step('absent in', () => ["absent" in o, "absent" in P, "absent" in K].join());
+  step('via super', () => keep("super", o.viaSuper && o.viaSuper()));
+  step('descriptor of x1', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "x1"), e = Object.getOwnPropertyDescriptor(BP, "x1"); if (d) { keep("dP.x1", d.value); keep("dP.get x1", d.get); keep("dP.set x1", d.set); } if (e) { keep("dBP.x1", e.value); keep("dBP.get x1", e.get); } return desc(d) + " " + desc(e); })());
+  step('call absent with another this', () => show(o.absent.call({ f: 9 })));
+  step('names of the class', () => Object.getOwnPropertyNames(K).join());
+  step('read m off the base', () => keep("BP.m", BP.m));
+  step('bind x1', () => show(o.x1.bind(o2)()));
+  step('read size off the class', () => keep("K.size", K.size));
+  step('call size', () => show(o.size(1, 2)));
+  step('keys', () => Reflect.ownKeys(P).map(String).join());
+  step('read n off another', () => keep("o2.n", o2.n));
+  step('Object.create', () => keep("created.m", Object.create(P).m));
+  step('bind size', () => show(o.size.bind(o2)()));
+  step('for in', () => (() => { const r = []; for (const k in o) r.push(k); return r.join(); })());
+  step('define m', () => (() => { Object.defineProperty(P, "m", { value: () => "defined", configurable: true, writable: true }); return show(o2.m); })());
+  step('read n off the base', () => keep("BP.n", BP.n));
+  step('call m', () => show(o.m(1, 2)));
+  step('read absent off the base', () => keep("BP.absent", BP.absent));
+  lines.push("11 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; run(a, b) { return "B12.run"; } size(a, b) { return "B12.size"; } toJSON() { return "B12.toJSON"; } get m() { return "B12.get m"; } set m(v) { seen.push("B12.set m"); } get toString() { return "B12.get toString"; } set toString(v) { seen.push("B12.set toString"); } get set() { return "B12.get set"; } set set(v) { seen.push("B12.set set"); }   }
+  class H extends B { g = 2; set(a, b) { return "H12.set"; } get length() { return "H12.get length"; } static m() { return "H12.static m"; } get then2() { return "H12.get then2"; } viaSuper() { return super.run; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("12 " + name + ": " + s); };
+  step('bind absent', () => show(o.absent.bind(o2)()));
+  step('Object.create', () => keep("created.length", Object.create(P).length));
+  step('call size with another this', () => show(o.size.call({ f: 9 })));
+  step('read toJSON off the class', () => keep("K.toJSON", K.toJSON));
+  step('number', () => String(+o));
+  step('read set off an instance', () => keep("o.set", o.set));
+  step('read set off the prototype', () => keep("P.set", P.set));
+  step('names of the prototype', () => Object.getOwnPropertyNames(P).join());
+  step('read absent off an instance', () => keep("o.absent", o.absent));
+  step('descriptor of length', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "length"), e = Object.getOwnPropertyDescriptor(BP, "length"); if (d) { keep("dP.length", d.value); keep("dP.get length", d.get); keep("dP.set length", d.set); } if (e) { keep("dBP.length", e.value); keep("dBP.get length", e.get); } return desc(d) + " " + desc(e); })());
+  step('read run off another', () => keep("o2.run", o2.run));
+  step('store length', () => (() => { o.length = "stored"; return show(o.length) + " " + Object.hasOwn(o, "length") + " " + seen.splice(0).join(); })());
+  step('call toJSON', () => show(o.toJSON(1, 2)));
+  lines.push("12 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; static size() { return "B13.static size"; } run(a, b) { return "B13.run"; } value(a, b) { return "B13.value"; } then2(a, b) { return "B13.then2"; }   }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("13 " + name + ": " + s); };
+  step('read valueOf off the class', () => keep("K.valueOf", K.valueOf));
+  step('descriptor of set', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "set"), e = Object.getOwnPropertyDescriptor(BP, "set"); if (d) { keep("dP.set", d.value); keep("dP.get set", d.get); keep("dP.set set", d.set); } if (e) { keep("dBP.set", e.value); keep("dBP.get set", e.get); } return desc(d) + " " + desc(e); })());
+  step('via super', () => keep("super", o.viaSuper && o.viaSuper()));
+  step('read run off the base', () => keep("BP.run", BP.run));
+  step('descriptor of run', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "run"), e = Object.getOwnPropertyDescriptor(BP, "run"); if (d) { keep("dP.run", d.value); keep("dP.get run", d.get); keep("dP.set run", d.set); } if (e) { keep("dBP.run", e.value); keep("dBP.get run", e.get); } return desc(d) + " " + desc(e); })());
+  step('read then2 off an instance', () => keep("o.then2", o.then2));
+  step('read size off the prototype', () => keep("P.size", P.size));
+  step('read then2 off the base', () => keep("BP.then2", BP.then2));
+  step('read set off another', () => keep("o2.set", o2.set));
+  step('by a key size', () => keep("o[size]", o["size".slice(0)]));
+  step('spread', () => JSON.stringify({ ...o }));
+  step('read run off an instance', () => keep("o.run", o.run));
+  step('read then2 off another', () => keep("o2.then2", o2.then2));
+  lines.push("13 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; get n() { return "B14.get n"; } set(a, b) { return "B14.set"; } async toJSON() { return "B14.async toJSON"; } then2(a, b) { return "B14.then2"; } get(a, b) { return "B14.get"; }   }
+  class H extends B { g = 2; get value() { return "H14.get value"; } set(a, b) { return "H14.set"; } viaSuper() { return super.n; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("14 " + name + ": " + s); };
+  step('read absent off the class', () => keep("K.absent", K.absent));
+  step('call then2', () => show(o.then2(1, 2)));
+  step('by a key absent', () => keep("o[absent]", o["absent".slice(0)]));
+  step('plus', () => o + "");
+  step('by a key value', () => keep("o[value]", o["value".slice(0)]));
+  step('descriptor of then2', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "then2"), e = Object.getOwnPropertyDescriptor(BP, "then2"); if (d) { keep("dP.then2", d.value); keep("dP.get then2", d.get); keep("dP.set then2", d.set); } if (e) { keep("dBP.then2", e.value); keep("dBP.get then2", e.get); } return desc(d) + " " + desc(e); })());
+  step('store absent', () => (() => { o.absent = "stored"; return show(o.absent) + " " + Object.hasOwn(o, "absent") + " " + seen.splice(0).join(); })());
+  step('read n off another', () => keep("o2.n", o2.n));
+  step('typeof', () => [typeof P, typeof K, Object.prototype.toString.call(P)].join());
+  step('read then2 off the prototype', () => keep("P.then2", P.then2));
+  step('stringify inside', () => JSON.stringify({ o }));
+  step('read get off the prototype', () => keep("P.get", P.get));
+  step('read value off an instance', () => keep("o.value", o.value));
+  step('read get off the base', () => keep("BP.get", BP.get));
+  step('call toJSON with another this', () => show(o.toJSON.call({ f: 9 })));
+  step('via private', () => show(o.viaPrivate && o.viaPrivate()));
+  step('n in', () => ["n" in o, "n" in P, "n" in K].join());
+  step('then2 in', () => ["then2" in o, "then2" in P, "then2" in K].join());
+  step('descriptor of get', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "get"), e = Object.getOwnPropertyDescriptor(BP, "get"); if (d) { keep("dP.get", d.value); keep("dP.get get", d.get); keep("dP.set get", d.set); } if (e) { keep("dBP.get", e.value); keep("dBP.get get", e.get); } return desc(d) + " " + desc(e); })());
+  lines.push("14 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; async value() { return "B15.async value"; } then2(a, b) { return "B15.then2"; } x1() { return "B15.x1 " + typeof this; } toString() { return "B15.toString"; } get length() { return "B15.get length"; } valueOf() { return "B15.valueOf"; } [sym]() { return "B.sym"; }  }
+  class H extends B { g = 2;   }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("15 " + name + ": " + s); };
+  step('plus', () => o + "");
+  step('frozen', () => [Object.isFrozen(P), Object.isExtensible(P), Object.isSealed(P)].join());
+  step('read absent off the base', () => keep("BP.absent", BP.absent));
+  step('read value off the prototype', () => keep("P.value", P.value));
+  step('descriptor of valueOf', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "valueOf"), e = Object.getOwnPropertyDescriptor(BP, "valueOf"); if (d) { keep("dP.valueOf", d.value); keep("dP.get valueOf", d.get); keep("dP.set valueOf", d.set); } if (e) { keep("dBP.valueOf", e.value); keep("dBP.get valueOf", e.get); } return desc(d) + " " + desc(e); })());
+  step('store value', () => (() => { o.value = "stored"; return show(o.value) + " " + Object.hasOwn(o, "value") + " " + seen.splice(0).join(); })());
+  step('store length', () => (() => { o.length = "stored"; return show(o.length) + " " + Object.hasOwn(o, "length") + " " + seen.splice(0).join(); })());
+  step('assign', () => JSON.stringify(Object.assign({}, o)));
+  step('hasOwn valueOf', () => [Object.hasOwn(o, "valueOf"), Object.hasOwn(P, "valueOf"), Object.hasOwn(BP, "valueOf"), Object.hasOwn(K, "valueOf")].join());
+  step('names of the prototype', () => Object.getOwnPropertyNames(P).join());
+  step('read x1 off the base', () => keep("BP.x1", BP.x1));
+  step('read then2 off the class', () => keep("K.then2", K.then2));
+  step('call value with another this', () => show(o.value.call({ f: 9 })));
+  step('entries of the prototype', () => JSON.stringify(Object.entries(P)));
+  step('String', () => String(o));
+  step('symbol', () => keep("o[sym]", o[sym]));
+  lines.push("15 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; valueOf() { return "B16.valueOf " + typeof this; } n(a, b) { return "B16.n"; } async x1() { return "B16.async x1"; } set(a, b) { return "B16.set"; }   }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("16 " + name + ": " + s); };
+  step('hasOwn absent', () => [Object.hasOwn(o, "absent"), Object.hasOwn(P, "absent"), Object.hasOwn(BP, "absent"), Object.hasOwn(K, "absent")].join());
+  step('hasOwn length', () => [Object.hasOwn(o, "length"), Object.hasOwn(P, "length"), Object.hasOwn(BP, "length"), Object.hasOwn(K, "length")].join());
+  step('read absent off an instance', () => keep("o.absent", o.absent));
+  step('read x1 off the base', () => keep("BP.x1", BP.x1));
+  step('keys', () => Reflect.ownKeys(P).map(String).join());
+  step('n in', () => ["n" in o, "n" in P, "n" in K].join());
+  step('store valueOf', () => (() => { o.valueOf = "stored"; return show(o.valueOf) + " " + Object.hasOwn(o, "valueOf") + " " + seen.splice(0).join(); })());
+  step('entries of the prototype', () => JSON.stringify(Object.entries(P)));
+  step('read set off another', () => keep("o2.set", o2.set));
+  step('read valueOf off another', () => keep("o2.valueOf", o2.valueOf));
+  step('define valueOf', () => (() => { Object.defineProperty(P, "valueOf", { value: () => "defined", configurable: true, writable: true }); return show(o2.valueOf); })());
+  step('hasOwn x1', () => [Object.hasOwn(o, "x1"), Object.hasOwn(P, "x1"), Object.hasOwn(BP, "x1"), Object.hasOwn(K, "x1")].join());
+  step('read valueOf off the class', () => keep("K.valueOf", K.valueOf));
+  step('spread', () => JSON.stringify({ ...o }));
+  step('call length with another this', () => show(o.length.call({ f: 9 })));
+  step('read length off another', () => keep("o2.length", o2.length));
+  lines.push("16 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; get run() { return "B17.get run"; } set run(v) { seen.push("B17.set run"); } get x1() { return "B17.get x1"; } get toString() { return "B17.get toString"; } name(a, b) { return "B17.name"; } get set() { return "B17.get set"; } [sym]() { return "B.sym"; }  }
+  class H extends B { g = 2; get toString() { return "H17.get toString"; } viaSuper() { return super.run; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("17 " + name + ": " + s); };
+  step('via private', () => show(o.viaPrivate && o.viaPrivate()));
+  step('read set off the prototype', () => keep("P.set", P.set));
+  step('bind x1', () => show(o.x1.bind(o2)()));
+  step('read toString off an instance', () => keep("o.toString", o.toString));
+  step('read toString off the class', () => keep("K.toString", K.toString));
+  step('read x1 off an instance', () => keep("o.x1", o.x1));
+  step('via super', () => keep("super", o.viaSuper && o.viaSuper()));
+  step('instanceof', () => [o instanceof B, o instanceof K, P instanceof B, Object.create(P) instanceof K].join());
+  step('call set', () => show(o.set(1, 2)));
+  step('descriptor of x1', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "x1"), e = Object.getOwnPropertyDescriptor(BP, "x1"); if (d) { keep("dP.x1", d.value); keep("dP.get x1", d.get); keep("dP.set x1", d.set); } if (e) { keep("dBP.x1", e.value); keep("dBP.get x1", e.get); } return desc(d) + " " + desc(e); })());
+  step('read name off the class', () => keep("K.name", K.name));
+  step('toString in', () => ["toString" in o, "toString" in P, "toString" in K].join());
+  step('assign', () => JSON.stringify(Object.assign({}, o)));
+  step('define run', () => (() => { Object.defineProperty(P, "run", { value: () => "defined", configurable: true, writable: true }); return show(o2.run); })());
+  lines.push("17 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; size(a, b) { return "B18.size"; } get toString() { return "B18.get toString"; } set toString(v) { seen.push("B18.set toString"); }  #p() { return 1; } viaPrivate() { return this.#p(); } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("18 " + name + ": " + s); };
+  step('hasOwn name', () => [Object.hasOwn(o, "name"), Object.hasOwn(P, "name"), Object.hasOwn(BP, "name"), Object.hasOwn(K, "name")].join());
+  step('read absent off the class', () => keep("K.absent", K.absent));
+  step('spread', () => JSON.stringify({ ...o }));
+  step('read get off the base', () => keep("BP.get", BP.get));
+  step('read absent off the prototype', () => keep("P.absent", P.absent));
+  step('via private', () => show(o.viaPrivate && o.viaPrivate()));
+  step('store name', () => (() => { o.name = "stored"; return show(o.name) + " " + Object.hasOwn(o, "name") + " " + seen.splice(0).join(); })());
+  step('read toString off an instance', () => keep("o.toString", o.toString));
+  step('chain', () => [Object.getPrototypeOf(o) === P, Object.getPrototypeOf(P) === BP || P === BP, Object.getPrototypeOf(K) === B || K === B].join());
+  step('names of the base', () => Object.getOwnPropertyNames(BP).join());
+  step('by a key length', () => keep("o[length]", o["length".slice(0)]));
+  step('call absent', () => show(o.absent(1, 2)));
+  step('via super', () => keep("super", o.viaSuper && o.viaSuper()));
+  lines.push("18 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; toJSON() { return "B19.toJSON"; } [sym]() { return "B.sym"; }  }
+  class H extends B { g = 2; async value() { return "H19.async value"; } viaSuper() { return super.toJSON; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("19 " + name + ": " + s); };
+  step('names of the class', () => Object.getOwnPropertyNames(K).join());
+  step('stringify inside', () => JSON.stringify({ o }));
+  step('hasOwn value', () => [Object.hasOwn(o, "value"), Object.hasOwn(P, "value"), Object.hasOwn(BP, "value"), Object.hasOwn(K, "value")].join());
+  step('read absent off an instance', () => keep("o.absent", o.absent));
+  step('read toJSON off an instance', () => keep("o.toJSON", o.toJSON));
+  step('descriptor of toJSON', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "toJSON"), e = Object.getOwnPropertyDescriptor(BP, "toJSON"); if (d) { keep("dP.toJSON", d.value); keep("dP.get toJSON", d.get); keep("dP.set toJSON", d.set); } if (e) { keep("dBP.toJSON", e.value); keep("dBP.get toJSON", e.get); } return desc(d) + " " + desc(e); })());
+  step('call absent', () => show(o.absent(1, 2)));
+  step('template', () => `${o}`);
+  step('plus', () => o + "");
+  step('hasOwn toJSON', () => [Object.hasOwn(o, "toJSON"), Object.hasOwn(P, "toJSON"), Object.hasOwn(BP, "toJSON"), Object.hasOwn(K, "toJSON")].join());
+  step('descriptor of absent', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "absent"), e = Object.getOwnPropertyDescriptor(BP, "absent"); if (d) { keep("dP.absent", d.value); keep("dP.get absent", d.get); keep("dP.set absent", d.set); } if (e) { keep("dBP.absent", e.value); keep("dBP.get absent", e.get); } return desc(d) + " " + desc(e); })());
+  step('entries of the prototype', () => JSON.stringify(Object.entries(P)));
+  step('read absent off the base', () => keep("BP.absent", BP.absent));
+  step('call toJSON', () => show(o.toJSON(1, 2)));
+  step('bind value', () => show(o.value.bind(o2)()));
+  step('via private', () => show(o.viaPrivate && o.viaPrivate()));
+  step('read toJSON off the prototype', () => keep("P.toJSON", P.toJSON));
+  step('number', () => String(+o));
+  step('read value off another', () => keep("o2.value", o2.value));
+  lines.push("19 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; static toString() { return "B20.static toString"; } x1(a, b) { return "B20.x1"; } async set() { return "B20.async set"; } n(a, b) { return "B20.n"; } [sym]() { return "B.sym"; }  }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("20 " + name + ": " + s); };
+  step('read n off the prototype', () => keep("P.n", P.n));
+  step('typeof', () => [typeof P, typeof K, Object.prototype.toString.call(P)].join());
+  step('hasOwn x1', () => [Object.hasOwn(o, "x1"), Object.hasOwn(P, "x1"), Object.hasOwn(BP, "x1"), Object.hasOwn(K, "x1")].join());
+  step('read x1 off the base', () => keep("BP.x1", BP.x1));
+  step('read toString off the class', () => keep("K.toString", K.toString));
+  step('by a key toString', () => keep("o[toString]", o["toString".slice(0)]));
+  step('bind toString', () => show(o.toString.bind(o2)()));
+  step('read toString off another', () => keep("o2.toString", o2.toString));
+  step('names of the base', () => Object.getOwnPropertyNames(BP).join());
+  step('stringify inside', () => JSON.stringify({ o }));
+  step('call valueOf with another this', () => show(o.valueOf.call({ f: 9 })));
+  step('read n off an instance', () => keep("o.n", o.n));
+  step('constructor', () => [o.constructor === K, P.constructor === K, BP.constructor === B, Object.hasOwn(P, "constructor")].join());
+  step('descriptor of valueOf', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "valueOf"), e = Object.getOwnPropertyDescriptor(BP, "valueOf"); if (d) { keep("dP.valueOf", d.value); keep("dP.get valueOf", d.get); keep("dP.set valueOf", d.set); } if (e) { keep("dBP.valueOf", e.value); keep("dBP.get valueOf", e.get); } return desc(d) + " " + desc(e); })());
+  step('all descriptors', () => Object.entries(Object.getOwnPropertyDescriptors(P)).map(([k, d]) => k + ":" + desc(d)).join());
+  step('descriptor of set', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "set"), e = Object.getOwnPropertyDescriptor(BP, "set"); if (d) { keep("dP.set", d.value); keep("dP.get set", d.get); keep("dP.set set", d.set); } if (e) { keep("dBP.set", e.value); keep("dBP.get set", e.get); } return desc(d) + " " + desc(e); })());
+  step('via private', () => show(o.viaPrivate && o.viaPrivate()));
+  step('plus', () => o + "");
+  step('read set off the prototype', () => keep("P.set", P.set));
+  step('read x1 off the prototype', () => keep("P.x1", P.x1));
+  step('by a key x1', () => keep("o[x1]", o["x1".slice(0)]));
+  lines.push("20 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; async name() { return "B21.async name"; } m(a, b) { return "B21.m"; } [sym]() { return "B.sym"; }  }
+  class H extends B { g = 2; toJSON() { return "H21.toJSON"; } set size(v) { seen.push("H21.set size"); } get n() { return "H21.get n"; }  }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("21 " + name + ": " + s); };
+  step('call name', () => show(o.name(1, 2)));
+  step('store absent', () => (() => { o.absent = "stored"; return show(o.absent) + " " + Object.hasOwn(o, "absent") + " " + seen.splice(0).join(); })());
+  step('store toJSON', () => (() => { o.toJSON = "stored"; return show(o.toJSON) + " " + Object.hasOwn(o, "toJSON") + " " + seen.splice(0).join(); })());
+  step('name in', () => ["name" in o, "name" in P, "name" in K].join());
+  step('read absent off an instance', () => keep("o.absent", o.absent));
+  step('typeof', () => [typeof P, typeof K, Object.prototype.toString.call(P)].join());
+  step('call n', () => show(o.n(1, 2)));
+  step('read name off the base', () => keep("BP.name", BP.name));
+  step('read m off the prototype', () => keep("P.m", P.m));
+  step('call size with another this', () => show(o.size.call({ f: 9 })));
+  step('call absent', () => show(o.absent(1, 2)));
+  step('read n off an instance', () => keep("o.n", o.n));
+  step('store n', () => (() => { o.n = "stored"; return show(o.n) + " " + Object.hasOwn(o, "n") + " " + seen.splice(0).join(); })());
+  step('read name off the class', () => keep("K.name", K.name));
+  step('read absent off another', () => keep("o2.absent", o2.absent));
+  step('descriptor of toJSON', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "toJSON"), e = Object.getOwnPropertyDescriptor(BP, "toJSON"); if (d) { keep("dP.toJSON", d.value); keep("dP.get toJSON", d.get); keep("dP.set toJSON", d.set); } if (e) { keep("dBP.toJSON", e.value); keep("dBP.get toJSON", e.get); } return desc(d) + " " + desc(e); })());
+  step('descriptor of m', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "m"), e = Object.getOwnPropertyDescriptor(BP, "m"); if (d) { keep("dP.m", d.value); keep("dP.get m", d.get); keep("dP.set m", d.set); } if (e) { keep("dBP.m", e.value); keep("dBP.get m", e.get); } return desc(d) + " " + desc(e); })());
+  step('read name off the prototype', () => keep("P.name", P.name));
+  lines.push("21 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; valueOf() { return "B22.valueOf " + typeof this; } toString() { return "B22.toString"; }   }
+  class H extends B { g = 2; m(a, b) { return "H22.m"; } async length() { return "H22.async length"; } valueOf() { return "H22.valueOf"; } viaSuper() { return super.valueOf; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("22 " + name + ": " + s); };
+  step('read length off an instance', () => keep("o.length", o.length));
+  step('read toString off the prototype', () => keep("P.toString", P.toString));
+  step('read length off the class', () => keep("K.length", K.length));
+  step('entries of the prototype', () => JSON.stringify(Object.entries(P)));
+  step('m in', () => ["m" in o, "m" in P, "m" in K].join());
+  step('read absent off the base', () => keep("BP.absent", BP.absent));
+  step('frozen', () => [Object.isFrozen(P), Object.isExtensible(P), Object.isSealed(P)].join());
+  step('call m with another this', () => show(o.m.call({ f: 9 })));
+  step('hasOwn length', () => [Object.hasOwn(o, "length"), Object.hasOwn(P, "length"), Object.hasOwn(BP, "length"), Object.hasOwn(K, "length")].join());
+  step('read m off the base', () => keep("BP.m", BP.m));
+  step('hasOwn absent', () => [Object.hasOwn(o, "absent"), Object.hasOwn(P, "absent"), Object.hasOwn(BP, "absent"), Object.hasOwn(K, "absent")].join());
+  step('read length off the base', () => keep("BP.length", BP.length));
+  step('read toString off an instance', () => keep("o.toString", o.toString));
+  step('read toString off the class', () => keep("K.toString", K.toString));
+  step('read absent off another', () => keep("o2.absent", o2.absent));
+  step('read m off an instance', () => keep("o.m", o.m));
+  step('call m', () => show(o.m(1, 2)));
+  step('read length off the prototype', () => keep("P.length", P.length));
+  step('read length off another', () => keep("o2.length", o2.length));
+  step('Object.create', () => keep("created.length", Object.create(P).length));
+  step('spread', () => JSON.stringify({ ...o }));
+  step('read toString off another', () => keep("o2.toString", o2.toString));
+  step('store absent', () => (() => { o.absent = "stored"; return show(o.absent) + " " + Object.hasOwn(o, "absent") + " " + seen.splice(0).join(); })());
+  step('read toString off the base', () => keep("BP.toString", BP.toString));
+  step('instanceof', () => [o instanceof B, o instanceof K, P instanceof B, Object.create(P) instanceof K].join());
+  step('number', () => String(+o));
+  step('read valueOf off the class', () => keep("K.valueOf", K.valueOf));
+  lines.push("22 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; toJSON() { return "B23.toJSON"; } [sym]() { return "B.sym"; }  }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("23 " + name + ": " + s); };
+  step('instanceof', () => [o instanceof B, o instanceof K, P instanceof B, Object.create(P) instanceof K].join());
+  step('read length off the prototype', () => keep("P.length", P.length));
+  step('by a key toString', () => keep("o[toString]", o["toString".slice(0)]));
+  step('call then2', () => show(o.then2(1, 2)));
+  step('read length off the class', () => keep("K.length", K.length));
+  step('an heir made late', () => (() => { class L extends K {} const l = new L(); return keep("late.length", l.length); })());
+  step('by a key size', () => keep("o[size]", o["size".slice(0)]));
+  step('read size off the class', () => keep("K.size", K.size));
+  step('via super', () => keep("super", o.viaSuper && o.viaSuper()));
+  step('all descriptors', () => Object.entries(Object.getOwnPropertyDescriptors(P)).map(([k, d]) => k + ":" + desc(d)).join());
+  step('toJSON in', () => ["toJSON" in o, "toJSON" in P, "toJSON" in K].join());
+  step('then2 in', () => ["then2" in o, "then2" in P, "then2" in K].join());
+  step('call absent with another this', () => show(o.absent.call({ f: 9 })));
+  step('entries of the prototype', () => JSON.stringify(Object.entries(P)));
+  lines.push("23 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; then2(a, b) { return "B24.then2"; } static m() { return "B24.static m"; } set set(v) { seen.push("B24.set set"); }   }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new B(), o2 = new B(), P = B.prototype, K = B, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("24 " + name + ": " + s); };
+  step('names of the prototype', () => Object.getOwnPropertyNames(P).join());
+  step('instanceof', () => [o instanceof B, o instanceof K, P instanceof B, Object.create(P) instanceof K].join());
+  step('store absent', () => (() => { o.absent = "stored"; return show(o.absent) + " " + Object.hasOwn(o, "absent") + " " + seen.splice(0).join(); })());
+  step('hasOwn absent', () => [Object.hasOwn(o, "absent"), Object.hasOwn(P, "absent"), Object.hasOwn(BP, "absent"), Object.hasOwn(K, "absent")].join());
+  step('read m off the class', () => keep("K.m", K.m));
+  step('absent in', () => ["absent" in o, "absent" in P, "absent" in K].join());
+  step('for in', () => (() => { const r = []; for (const k in o) r.push(k); return r.join(); })());
+  step('descriptor of set', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "set"), e = Object.getOwnPropertyDescriptor(BP, "set"); if (d) { keep("dP.set", d.value); keep("dP.get set", d.get); keep("dP.set set", d.set); } if (e) { keep("dBP.set", e.value); keep("dBP.get set", e.get); } return desc(d) + " " + desc(e); })());
+  step('bind value', () => show(o.value.bind(o2)()));
+  step('read set off an instance', () => keep("o.set", o.set));
+  step('read then2 off the prototype', () => keep("P.then2", P.then2));
+  step('call m', () => show(o.m(1, 2)));
+  step('read value off an instance', () => keep("o.value", o.value));
+  step('call set with another this', () => show(o.set.call({ f: 9 })));
+  step('hasOwn set', () => [Object.hasOwn(o, "set"), Object.hasOwn(P, "set"), Object.hasOwn(BP, "set"), Object.hasOwn(K, "set")].join());
+  step('read then2 off the class', () => keep("K.then2", K.then2));
+  step('number', () => String(+o));
+  step('call set', () => show(o.set(1, 2)));
+  step('store then2', () => (() => { o.then2 = "stored"; return show(o.then2) + " " + Object.hasOwn(o, "then2") + " " + seen.splice(0).join(); })());
+  step('entries of the prototype', () => JSON.stringify(Object.entries(P)));
+  step('assign', () => JSON.stringify(Object.assign({}, o)));
+  step('names of the base', () => Object.getOwnPropertyNames(BP).join());
+  step('read value off the class', () => keep("K.value", K.value));
+  step('read value off another', () => keep("o2.value", o2.value));
+  lines.push("24 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+{ class B { f = 1; toJSON() { return "B25.toJSON"; } *n() { yield "B25.gen n"; } x1(a, b) { return "B25.x1"; } set length(v) { seen.push("B25.set length"); } name(a, b) { return "B25.name"; }   }
+  class H extends B { g = 2; length(a, b) { return "H25.length"; } run() { return "H25.run " + typeof this; } get(a, b) { return "H25.get"; } value() { return "H25.value " + typeof this; } viaSuper() { return super.toJSON; } }
+  const kept = []; const keep = (label, v) => { if (typeof v === "function") kept.push([label, v]); return show(v); };
+  const o = new H(), o2 = new H(), P = H.prototype, K = H, BP = B.prototype;
+  const step = (name, f) => { let s; try { s = f(); } catch (e) { s = "THROWS " + (e).name; } lines.push("25 " + name + ": " + s); };
+  step('store length', () => (() => { o.length = "stored"; return show(o.length) + " " + Object.hasOwn(o, "length") + " " + seen.splice(0).join(); })());
+  step('call toJSON with another this', () => show(o.toJSON.call({ f: 9 })));
+  step('store x1', () => (() => { o.x1 = "stored"; return show(o.x1) + " " + Object.hasOwn(o, "x1") + " " + seen.splice(0).join(); })());
+  step('read run off another', () => keep("o2.run", o2.run));
+  step('length in', () => ["length" in o, "length" in P, "length" in K].join());
+  step('hasOwn x1', () => [Object.hasOwn(o, "x1"), Object.hasOwn(P, "x1"), Object.hasOwn(BP, "x1"), Object.hasOwn(K, "x1")].join());
+  step('call value', () => show(o.value(1, 2)));
+  step('read absent off the prototype', () => keep("P.absent", P.absent));
+  step('read toJSON off another', () => keep("o2.toJSON", o2.toJSON));
+  step('by a key toJSON', () => keep("o[toJSON]", o["toJSON".slice(0)]));
+  step('names of the base', () => Object.getOwnPropertyNames(BP).join());
+  step('read value off an instance', () => keep("o.value", o.value));
+  step('bind toJSON', () => show(o.toJSON.bind(o2)()));
+  step('read n off the base', () => keep("BP.n", BP.n));
+  step('spread', () => JSON.stringify({ ...o }));
+  step('read value off the base', () => keep("BP.value", BP.value));
+  step('delete absent', () => String(delete P.absent) + " " + ("absent" in o2));
+  step('bind name', () => show(o.name.bind(o2)()));
+  step('descriptor of n', () => (() => { const d = Object.getOwnPropertyDescriptor(P, "n"), e = Object.getOwnPropertyDescriptor(BP, "n"); if (d) { keep("dP.n", d.value); keep("dP.get n", d.get); keep("dP.set n", d.set); } if (e) { keep("dBP.n", e.value); keep("dBP.get n", e.get); } return desc(d) + " " + desc(e); })());
+  step('hasOwn toJSON', () => [Object.hasOwn(o, "toJSON"), Object.hasOwn(P, "toJSON"), Object.hasOwn(BP, "toJSON"), Object.hasOwn(K, "toJSON")].join());
+  step('call run with another this', () => show(o.run.call({ f: 9 })));
+  step('read name off an instance', () => keep("o.name", o.name));
+  step('typeof', () => [typeof P, typeof K, Object.prototype.toString.call(P)].join());
+  lines.push("25 the same: " + kept.map(([l, f], i) => l + "=" + kept.findIndex(([, g]) => g === f)).join(" ")); }
+for (const line of lines) console.log(line);
+//// control-flow-of-many-shapes.ts
+// Control flow of many shapes.
+// control-flow.py seed 26
+const log: string[] = [];
+function say(s: string): void { log.push(s); }
+function t<T>(label: string, value: T): T { log.push(label); return value; }
+function num(x: unknown): string { return typeof x === "number" ? (Object.is(x, -0) ? "-0" : String(x)) : typeof x === "string" ? "'" + x + "'" : Array.isArray(x) ? "[" + x.map(num).join() + "]" : String(x); }
+function attempt(f: () => unknown): string { try { return num(f()); } catch (e) { return "threw " + (e instanceof Error ? e.constructor.name + ":" + e.message : num(e)); } }
+function counter(name: string, n: number, failAt = -1): Iterable<number> & { closed: number } {
+  const self = { closed: 0, [Symbol.iterator](): Iterator<number> {
+    let i = 0;
+    return { next(): IteratorResult<number> { say(name + ".next" + i); if (i === failAt) throw new Error(name + " failed"); return i < n ? { value: i++, done: false } : { value: undefined, done: true }; },
+      return(v?: unknown): IteratorResult<number> { say(name + ".return"); self.closed++; return { value: v as any, done: true }; } };
+  } };
+  return self;
+}
+function* gen(name: string, n: number): Generator<number, string, unknown> { try { for (let i = 0; i < n; i++) { say(name + " yields " + i); const got = yield i; if (got !== undefined) say(name + " got " + num(got)); } return name + " done"; } finally { say(name + " finally"); } }
+class Box { v = 1; w = 10; list = [1, 2, 3]; inner: Box | null = null; get g(): number { say("get g"); return this.v; } set g(x: number) { say("set g " + x); this.v = x; } m(x: number): number { say("m " + x); return x + this.v; } }
+
+function add3(a: number, b: number, c: number): number { return a * 100 + b * 10 + c; }
+const maybe: ((x: number) => number) | undefined = undefined as ((x: number) => number) | undefined;
+function tag(strings: TemplateStringsArray, ...values: unknown[]): string { return strings.join("|") + values.join(",") + strings.raw.length; }
+function f0(k: number): string {
+  let n = 0;
+  L2: for (const i3 of counter("s1", 3, 0)) {
+  L5: for (const i6 of counter("s4", 3, 0)) {
+  say("s7"); n++;
+  say("s8"); n++;
+  }
+  try {
+  if (k % 2 === 0) continue;
+  B14: {
+  say("s15"); n++;
+  }
+  L17: for (const [i18] of new Map([[1, 2], [3, 4]])) {
+  say("s19"); n++;
+  say("s20"); n++;
+  }
+  say("s21"); n++;
+  } catch (e) { say("s9 caught " + (e as Error).message);
+  } finally { say("s9 finally");
+  }
+  }
+  say("s22"); n++;
+  return "end" + n;
+}
+function f1(k: number): string {
+  let n = 0;
+  say("s23"); n++;
+  return "end" + n;
+}
+function f2(k: number): string {
+  let n = 0;
+  say("s24"); n++;
+  return "end" + n;
+}
+function f3(k: number): string {
+  let n = 0;
+  if (k === 0) return "r26";
+  try {
+  try {
+  if (n % 2) {
+  say("s31"); n++;
+  say("s32"); n++;
+  say("s33"); n++;
+  say("s34"); n++;
+  } else {
+  say("s35"); n++;
+  }
+  } finally { say("s29 finally");
+  if (n === 1) throw new Error("e38");
+  try {
+  say("s40"); n++;
+  } catch (e) { say("s39 caught " + (e as Error).message);
+  say("s41"); n++;
+  }
+  { let i44 = 0;
+  L43: do {
+  say("s45"); n++;
+  } while (i44++ < 2);
+  }
+  B47: {
+  say("s48"); n++;
+  }
+  }
+  } catch (e) { say("s28 caught " + (e as Error).message);
+  B50: switch (n % 3) {
+  case 0:
+  L52: for (const i53 of "ab") {
+  say("s54"); n++;
+  say("s55"); n++;
+  say("s56"); n++;
+  say("s57"); n++;
+  }
+  case 1:
+  say("s58"); n++;
+  break;
+  default:
+  if (k % 3 === 1) return "r60";
+  try {
+  say("s63"); n++;
+  say("s64"); n++;
+  say("s65"); n++;
+  } finally { say("s62 finally");
+  }
+  say("s66"); n++;
+  say("s67"); n++;
+  }
+  if (k % 3 === 1) return "r69";
+  } finally { say("s28 finally");
+  try {
+  if (k % 2 === 0) return "r73";
+  say("s75"); n++;
+  say("s76"); n++;
+  say("s77"); n++;
+  } catch (e) { say("s71 caught " + (e as Error).message);
+  B79: {
+  say("s80"); n++;
+  }
+  try {
+  say("s82"); n++;
+  } finally { say("s81 finally");
+  say("s83"); n++;
+  say("s84"); n++;
+  }
+  } finally { say("s71 finally");
+  L86: for (const i87 of counter("s85", 3, 2)) {
+  say("s88"); n++;
+  say("s89"); n++;
+  say("s90"); n++;
+  }
+  say("s91"); n++;
+  }
+  if (k === 0) return "r93";
+  say("s95"); n++;
+  { let i98 = 0;
+  L97: do {
+  try {
+  say("s100"); n++;
+  say("s101"); n++;
+  say("s102"); n++;
+  say("s103"); n++;
+  } catch (e) { say("s99 caught " + (e as Error).message);
+  say("s104"); n++;
+  } finally { say("s99 finally");
+  say("s105"); n++;
+  }
+  L107: for (const i108 of new Set([1, 2])) {
+  say("s109"); n++;
+  }
+  try {
+  say("s111"); n++;
+  say("s112"); n++;
+  } catch (e) { say("s110 caught " + (e as Error).message);
+  } finally { say("s110 finally");
+  }
+  } while (i98++ < 2);
+  }
+  }
+  return "end" + n;
+}
+function f4(k: number): string {
+  let n = 0;
+  L114: for (const i115 of [1, 2, 3]) {
+  { let i118 = 0;
+  L117: do {
+  say("s119"); n++;
+  try {
+  say("s121"); n++;
+  say("s122"); n++;
+  } catch (e) { say("s120 caught " + (e as Error).message);
+  say("s123"); n++;
+  } finally { say("s120 finally");
+  say("s124"); n++;
+  say("s125"); n++;
+  }
+  L127: for (const i128 of new Set([1, 2])) {
+  say("s129"); n++;
+  say("s130"); n++;
+  say("s131"); n++;
+  say("s132"); n++;
+  }
+  L134: for (const i135 of counter("s133", 3, 3)) {
+  say("s136"); n++;
+  }
+  } while (i118++ < 2);
+  }
+  try {
+  if (n % 2) {
+  say("s139"); n++;
+  say("s140"); n++;
+  } else {
+  say("s141"); n++;
+  say("s142"); n++;
+  say("s143"); n++;
+  }
+  } catch (e) { say("s137 caught " + (e as Error).message);
+  } finally { say("s137 finally");
+  }
+  L145: for (let i146 = 0; i146 < 3; i146++) {
+  say("s147"); n++;
+  if (n % 2) {
+  say("s149"); n++;
+  say("s150"); n++;
+  say("s151"); n++;
+  } else {
+  say("s152"); n++;
+  say("s153"); n++;
+  say("s154"); n++;
+  }
+  if (n % 2) {
+  say("s156"); n++;
+  say("s157"); n++;
+  } else {
+  say("s158"); n++;
+  say("s159"); n++;
+  say("s160"); n++;
+  say("s161"); n++;
+  }
+  }
+  }
+  B163: switch (n % 3) {
+  case 0:
+  try {
+  { let i167 = 0;
+  L166: do {
+  say("s168"); n++;
+  say("s169"); n++;
+  } while (i167++ < 2);
+  }
+  } finally { say("s164 finally");
+  if (k % 2 === 0) break B163;
+  try {
+  say("s174"); n++;
+  } catch (e) { say("s173 caught " + (e as Error).message);
+  } finally { say("s173 finally");
+  }
+  }
+  L176: for (const [i177] of new Map([[1, 2], [3, 4]])) {
+  if (k === 0) break L176;
+  B182: switch (n % 3) {
+  case 0:
+  say("s183"); n++;
+  say("s184"); n++;
+  say("s185"); n++;
+  say("s186"); n++;
+  case 1:
+  say("s187"); n++;
+  say("s188"); n++;
+  say("s189"); n++;
+  break;
+  default:
+  say("s190"); n++;
+  say("s191"); n++;
+  }
+  say("s192"); n++;
+  say("s193"); n++;
+  }
+  if (k % 3 === 1) return "r195";
+  if (true) return "r198";
+  case 1:
+  B201: {
+  try {
+  say("s203"); n++;
+  say("s204"); n++;
+  say("s205"); n++;
+  say("s206"); n++;
+  } catch (e) { say("s202 caught " + (e as Error).message);
+  } finally { say("s202 finally");
+  }
+  say("s207"); n++;
+  }
+  { let i210 = 0;
+  L209: do {
+  say("s211"); n++;
+  say("s212"); n++;
+  L214: for (const i215 of "ab") {
+  say("s216"); n++;
+  }
+  } while (i210++ < 2);
+  }
+  if (k === 0) throw new Error("e219");
+  
+  default:
+  try {
+  B222: switch (n % 3) {
+  case 0:
+  say("s223"); n++;
+  say("s224"); n++;
+  say("s225"); n++;
+  case 1:
+  say("s226"); n++;
+  say("s227"); n++;
+  say("s228"); n++;
+  say("s229"); n++;
+  
+  default:
+  say("s230"); n++;
+  }
+  say("s231"); n++;
+  B233: switch (n % 3) {
+  case 0:
+  say("s234"); n++;
+  say("s235"); n++;
+  say("s236"); n++;
+  say("s237"); n++;
+  case 1:
+  say("s238"); n++;
+  say("s239"); n++;
+  say("s240"); n++;
+  say("s241"); n++;
+  
+  default:
+  say("s242"); n++;
+  say("s243"); n++;
+  say("s244"); n++;
+  say("s245"); n++;
+  }
+  B247: switch (n % 3) {
+  case 0:
+  say("s248"); n++;
+  case 1:
+  say("s249"); n++;
+  break;
+  default:
+  say("s250"); n++;
+  say("s251"); n++;
+  }
+  } finally { say("s220 finally");
+  try {
+  say("s253"); n++;
+  } finally { say("s252 finally");
+  say("s254"); n++;
+  say("s255"); n++;
+  }
+  if (true) return "r257";
+  }
+  L260: for (const i261 of new Set([1, 2])) {
+  if (k === 0) break B163;
+  L266: for (const i267 of new Set([1, 2])) {
+  say("s268"); n++;
+  }
+  }
+  try {
+  say("s270"); n++;
+  L272: for (const i273 of gen("s271", 3)) {
+  say("s274"); n++;
+  }
+  say("s275"); n++;
+  } finally { say("s269 finally");
+  L277: for (const i278 of counter("s276", 3, 1)) {
+  say("s279"); n++;
+  say("s280"); n++;
+  say("s281"); n++;
+  }
+  L283: for (const i284 of counter("s282", 3)) {
+  say("s285"); n++;
+  say("s286"); n++;
+  say("s287"); n++;
+  }
+  try {
+  say("s289"); n++;
+  say("s290"); n++;
+  say("s291"); n++;
+  } finally { say("s288 finally");
+  say("s292"); n++;
+  }
+  }
+  }
+  try {
+  try {
+  L296: for (let i297 = 0; i297 < 1; i297++) {
+  say("s298"); n++;
+  }
+  } catch (e) { say("s294 caught " + (e as Error).message);
+  if (n % 2) {
+  say("s300"); n++;
+  say("s301"); n++;
+  say("s302"); n++;
+  } else {
+  say("s303"); n++;
+  say("s304"); n++;
+  say("s305"); n++;
+  say("s306"); n++;
+  }
+  }
+  if (n > 2) throw new Error("e309");
+  } finally { say("s293 finally");
+  try {
+  B312: {
+  say("s313"); n++;
+  say("s314"); n++;
+  }
+  } finally { say("s310 finally");
+  if (true) throw new Error("e317");
+  L319: for (const i320 of new Set([1, 2])) {
+  say("s321"); n++;
+  say("s322"); n++;
+  say("s323"); n++;
+  say("s324"); n++;
+  }
+  }
+  }
+  try {
+  try {
+  say("s327"); n++;
+  if (n % 2) {
+  say("s329"); n++;
+  say("s330"); n++;
+  say("s331"); n++;
+  say("s332"); n++;
+  } else {
+  say("s333"); n++;
+  say("s334"); n++;
+  }
+  B336: {
+  say("s337"); n++;
+  say("s338"); n++;
+  }
+  if (n > 2) throw new Error("e341");
+  } catch (e) { say("s326 caught " + (e as Error).message);
+  } finally { say("s326 finally");
+  }
+  B343: switch (n % 3) {
+  case 0:
+  if (k === 0) break B343;
+  if (k % 3 === 1) return "r348";
+  say("s350"); n++;
+  L352: for (const i353 of counter("s351", 3)) {
+  say("s354"); n++;
+  say("s355"); n++;
+  say("s356"); n++;
+  }
+  case 1:
+  L358: for (const [i359] of new Map([[1, 2], [3, 4]])) {
+  say("s360"); n++;
+  say("s361"); n++;
+  say("s362"); n++;
+  say("s363"); n++;
+  }
+  B365: switch (n % 3) {
+  case 0:
+  say("s366"); n++;
+  say("s367"); n++;
+  say("s368"); n++;
+  case 1:
+  say("s369"); n++;
+  say("s370"); n++;
+  say("s371"); n++;
+  say("s372"); n++;
+  break;
+  default:
+  say("s373"); n++;
+  }
+  if (n % 2) {
+  say("s375"); n++;
+  say("s376"); n++;
+  } else {
+  say("s377"); n++;
+  say("s378"); n++;
+  say("s379"); n++;
+  say("s380"); n++;
+  }
+  break;
+  default:
+  try {
+  say("s382"); n++;
+  say("s383"); n++;
+  say("s384"); n++;
+  } catch (e) { say("s381 caught " + (e as Error).message);
+  say("s385"); n++;
+  say("s386"); n++;
+  say("s387"); n++;
+  say("s388"); n++;
+  } finally { say("s381 finally");
+  say("s389"); n++;
+  say("s390"); n++;
+  say("s391"); n++;
+  }
+  try {
+  say("s393"); n++;
+  say("s394"); n++;
+  say("s395"); n++;
+  } catch (e) { say("s392 caught " + (e as Error).message);
+  } finally { say("s392 finally");
+  }
+  if (n % 2) {
+  say("s397"); n++;
+  } else {
+  say("s398"); n++;
+  }
+  try {
+  say("s400"); n++;
+  say("s401"); n++;
+  say("s402"); n++;
+  say("s403"); n++;
+  } catch (e) { say("s399 caught " + (e as Error).message);
+  say("s404"); n++;
+  say("s405"); n++;
+  } finally { say("s399 finally");
+  }
+  }
+  if (k === 0) return "r407";
+  if (n > 2) return "r410";
+  } finally { say("s325 finally");
+  say("s412"); n++;
+  B414: switch (n % 3) {
+  case 0:
+  try {
+  say("s416"); n++;
+  } catch (e) { say("s415 caught " + (e as Error).message);
+  say("s417"); n++;
+  say("s418"); n++;
+  say("s419"); n++;
+  say("s420"); n++;
+  }
+  try {
+  say("s422"); n++;
+  } catch (e) { say("s421 caught " + (e as Error).message);
+  }
+  say("s423"); n++;
+  B425: switch (n % 3) {
+  case 0:
+  say("s426"); n++;
+  say("s427"); n++;
+  say("s428"); n++;
+  say("s429"); n++;
+  case 1:
+  say("s430"); n++;
+  say("s431"); n++;
+  
+  default:
+  say("s432"); n++;
+  say("s433"); n++;
+  say("s434"); n++;
+  say("s435"); n++;
+  }
+  case 1:
+  if (n % 2) {
+  say("s437"); n++;
+  say("s438"); n++;
+  say("s439"); n++;
+  } else {
+  say("s440"); n++;
+  say("s441"); n++;
+  say("s442"); n++;
+  say("s443"); n++;
+  }
+  B445: {
+  say("s446"); n++;
+  say("s447"); n++;
+  }
+  B449: {
+  say("s450"); n++;
+  say("s451"); n++;
+  }
+  { let i454 = 0;
+  L453: while (i454++ < 1) {
+  say("s455"); n++;
+  say("s456"); n++;
+  say("s457"); n++;
+  say("s458"); n++;
+  }
+  }
+  break;
+  default:
+  L460: for (const i461 of [1, 2, 3]) {
+  say("s462"); n++;
+  say("s463"); n++;
+  }
+  if (true) break B414;
+  B468: {
+  say("s469"); n++;
+  say("s470"); n++;
+  }
+  if (k % 3 === 1) throw new Error("e473");
+  }
+  }
+  return "end" + n;
+}
+function f5(k: number): string {
+  let n = 0;
+  B475: {
+  L477: for (let i478 = 0; i478 < 3; i478++) {
+  say("s479"); n++;
+  if (n % 2) {
+  say("s481"); n++;
+  say("s482"); n++;
+  say("s483"); n++;
+  say("s484"); n++;
+  } else {
+  say("s485"); n++;
+  say("s486"); n++;
+  say("s487"); n++;
+  }
+  }
+  L489: for (const i490 of gen("s488", 1)) {
+  try {
+  say("s492"); n++;
+  say("s493"); n++;
+  } catch (e) { say("s491 caught " + (e as Error).message);
+  say("s494"); n++;
+  say("s495"); n++;
+  }
+  }
+  try {
+  L498: for (let i499 = 0; i499 < 3; i499++) {
+  say("s500"); n++;
+  }
+  if (n > 2) break B475;
+  try {
+  say("s505"); n++;
+  } catch (e) { say("s504 caught " + (e as Error).message);
+  say("s506"); n++;
+  }
+  say("s507"); n++;
+  } catch (e) { say("s496 caught " + (e as Error).message);
+  B509: switch (n % 3) {
+  case 0:
+  say("s510"); n++;
+  say("s511"); n++;
+  case 1:
+  say("s512"); n++;
+  say("s513"); n++;
+  
+  default:
+  say("s514"); n++;
+  say("s515"); n++;
+  say("s516"); n++;
+  say("s517"); n++;
+  }
+  if (true) throw new Error("e520");
+  L522: for (const i523 of [1, 2, 3]) {
+  say("s524"); n++;
+  say("s525"); n++;
+  }
+  B527: switch (n % 3) {
+  case 0:
+  say("s528"); n++;
+  say("s529"); n++;
+  case 1:
+  say("s530"); n++;
+  say("s531"); n++;
+  say("s532"); n++;
+  break;
+  default:
+  say("s533"); n++;
+  say("s534"); n++;
+  }
+  } finally { say("s496 finally");
+  say("s535"); n++;
+  say("s536"); n++;
+  }
+  }
+  try {
+  say("s538"); n++;
+  } catch (e) { say("s537 caught " + (e as Error).message);
+  }
+  if (n === 1) return "r540";
+  return "end" + n;
+}
+function f6(k: number): string {
+  let n = 0;
+  { let i544 = 0;
+  L543: while (i544++ < 1) {
+  try {
+  if (n % 2) {
+  say("s547"); n++;
+  say("s548"); n++;
+  say("s549"); n++;
+  } else {
+  say("s550"); n++;
+  say("s551"); n++;
+  }
+  say("s552"); n++;
+  try {
+  say("s554"); n++;
+  } catch (e) { say("s553 caught " + (e as Error).message);
+  say("s555"); n++;
+  }
+  try {
+  say("s557"); n++;
+  say("s558"); n++;
+  say("s559"); n++;
+  say("s560"); n++;
+  } catch (e) { say("s556 caught " + (e as Error).message);
+  say("s561"); n++;
+  }
+  } catch (e) { say("s545 caught " + (e as Error).message);
+  }
+  if (k === 0) continue L543;
+  if (n === 1) throw new Error("e567");
+  }
+  }
+  return "end" + n;
+}
+function f7(k: number): string {
+  let n = 0;
+  if (n % 2) {
+  B570: switch (n % 3) {
+  case 0:
+  say("s571"); n++;
+  L573: for (const i574 in { a: 1, b: 2 }) {
+  say("s575"); n++;
+  say("s576"); n++;
+  }
+  say("s577"); n++;
+  try {
+  say("s579"); n++;
+  say("s580"); n++;
+  } catch (e) { say("s578 caught " + (e as Error).message);
+  } finally { say("s578 finally");
+  }
+  case 1:
+  try {
+  say("s582"); n++;
+  } catch (e) { say("s581 caught " + (e as Error).message);
+  } finally { say("s581 finally");
+  say("s583"); n++;
+  say("s584"); n++;
+  say("s585"); n++;
+  }
+  say("s586"); n++;
+  say("s587"); n++;
+  say("s588"); n++;
+  
+  default:
+  say("s589"); n++;
+  }
+  if (k > 1) throw new Error("e592");
+  B594: {
+  try {
+  say("s596"); n++;
+  say("s597"); n++;
+  say("s598"); n++;
+  say("s599"); n++;
+  } catch (e) { say("s595 caught " + (e as Error).message);
+  say("s600"); n++;
+  say("s601"); n++;
+  say("s602"); n++;
+  say("s603"); n++;
+  } finally { say("s595 finally");
+  }
+  try {
+  say("s605"); n++;
+  say("s606"); n++;
+  } catch (e) { say("s604 caught " + (e as Error).message);
+  } finally { say("s604 finally");
+  say("s607"); n++;
+  }
+  if (n % 2) {
+  say("s609"); n++;
+  } else {
+  say("s610"); n++;
+  say("s611"); n++;
+  say("s612"); n++;
+  }
+  }
+  L614: for (const i615 of [1, 2, 3]) {
+  if (n > 2) return "r617";
+  B620: {
+  say("s621"); n++;
+  say("s622"); n++;
+  say("s623"); n++;
+  say("s624"); n++;
+  }
+  }
+  } else {
+  B626: {
+  if (n === 1) throw new Error("e629");
+  say("s630"); n++;
+  }
+  }
+  if (k > 1) throw new Error("e633");
+  say("s634"); n++;
+  return "end" + n;
+}
+function rows(): void {
+  let box = new Box();
+  say("g0 " + attempt(() => { function* f(): Generator<number, number, number> { const a = yield 1; const b = yield a + 1; return a + b; } const g = f(); return [g.next(5).value, g.next(10).value, g.next(20).value]; }));
+  say("o1 " + attempt(() => { const { 0: first, 1: second }: any = [10, 20]; return [(typeof first === "object" && first ? JSON.stringify(first) : num(first)), (typeof second === "object" && second ? JSON.stringify(second) : num(second))].join("/"); }));
+  say("p2 " + attempt(() => { const [a]: any = counter("c", 0); return [num(a)].join("/"); }));
+  say("o3 " + attempt(() => { const { a = t("da", 10), b = t("db", 20) }: any = { get a() { say("get a"); return 1; }, get b() { say("get b"); return undefined; }, c: null }; return [(typeof a === "object" && a ? JSON.stringify(a) : num(a)), (typeof b === "object" && b ? JSON.stringify(b) : num(b))].join("/"); }));
+  box = new Box(); say("x4 " + attempt(() => t("b", box)[t("name", "v") as "v"] *= t("rhs", 4)) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  say("o5 " + attempt(() => { const { a: { c } = { c: t("dc", 7) } }: any = "str"; return ["none"].join("/"); }));
+  say("o6 " + attempt(() => { const { a, b }: any = { a: 1, b: 2, c: 3 }; return [(typeof a === "object" && a ? JSON.stringify(a) : num(a)), (typeof b === "object" && b ? JSON.stringify(b) : num(b))].join("/"); }));
+  box = new Box(); say("x7 " + attempt(() => t("b", box).inner?.inner?.v ?? t("dflt", -1)) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  box = new Box(); say("x8 " + attempt(() => t("b", box).inner?.list[t("skipped", 0)]) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  box = new Box(); say("x9 " + attempt(() => delete (t("o", { a: 1 }) as any)[t("key", "a")]) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  say("g10 " + attempt(() => { const g = gen("g", 1); return [g[Symbol.iterator]() === g, typeof g.next, Object.prototype.toString.call(g)]; }));
+  say("p11 " + attempt(() => { const [a, b = a]: any = [1, 2, 3, 4]; return [num(a), num(b)].join("/"); }));
+  box = new Box(); say("x12 " + attempt(() => ({ a: t("a", 1), [t("key", "k")]: t("v", 2), ...t("s", { z: 3 }) }).k) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  say("o13 " + attempt(() => { const { a: { c } = { c: t("dc", 7) } }: any = { a: 1, b: 2, c: 3 }; return ["none"].join("/"); }));
+  say("c14 " + attempt(() => { const fs: (() => number)[] = []; try { for (let i = 0; ; i++) { fs.push(() => i); if (i === 2) throw new Error("x"); } } catch { } return fs.map(f => f()); }));
+  say("g15 " + attempt(() => { const g = gen("g", 2); return [Math.max(...g), g.next().done]; }));
+  box = new Box(); say("x16 " + attempt(() => t("b", box).list[t("i", 0)]++) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  box = new Box(); say("x17 " + attempt(() => t("base", 2) ** t("exp", 3) ** t("exp2", 2)) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  box = new Box(); say("x18 " + attempt(() => t("b", box).g += t("rhs", 3)) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  say("o19 " + attempt(() => { const { a, ...rest }: any = { a: 1, b: 2, c: 3 }; return [(typeof a === "object" && a ? JSON.stringify(a) : num(a)), (typeof rest === "object" && rest ? JSON.stringify(rest) : num(rest))].join("/"); }));
+  say("o20 " + attempt(() => { const { [t("key", "a")]: x, b }: any = { get a() { say("get a"); return 1; }, get b() { say("get b"); return undefined; }, c: null }; return [(typeof b === "object" && b ? JSON.stringify(b) : num(b)), (typeof x === "object" && x ? JSON.stringify(x) : num(x))].join("/"); }));
+  box = new Box(); say("x21 " + attempt(() => [t("a", 1), t("b2", 2), ...t("c", [3, 4]), t("d", 5)]) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  box = new Box(); say("x22 " + attempt(() => typeof t("x", box).m) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  say("o23 " + attempt(() => { const { b: { c } = { c: t("dc", 7) } }: any = box; return ["none"].join("/"); }));
+  say("g24 " + attempt(() => { function* f(): Generator<number> { yield* [1, 2]; yield* "ab" as any; yield* counter("c", 2); } return [...f()]; }));
+  box = new Box(); say("x25 " + attempt(() => t("base", 2) ** t("exp", 3) ** t("exp2", 2)) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  box = new Box(); say("x26 " + attempt(() => t("b", box).list[t("b", box).v] = t("b", box).list[t("j", 0)] + t("k", 1)) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  box = new Box(); say("x27 " + attempt(() => t("b", box).list[t("b", box).v] = t("b", box).list[t("j", 0)] + t("k", 1)) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  say("p28 " + attempt(() => { const [...rest]: any = counter("c", 0); return [num(rest)].join("/"); }));
+  box = new Box(); say("x29 " + attempt(() => t("b", box).inner?.m(t("skipped", 1))) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  say("p30 " + attempt(() => { const [...rest]: any = [undefined, null, 0]; return [num(rest)].join("/"); }));
+  say("p31 " + attempt(() => { const [a]: any = [1, 2, 3, 4]; return [num(a)].join("/"); }));
+  say("p32 " + attempt(() => { const [a = t("da", 1), ...rest]: any = counter("c", 0); return [num(a), num(rest)].join("/"); }));
+  say("c33 " + attempt(() => { const fs: (() => number)[] = []; switch (1 as number) { case 1: { let z = 5; fs.push(() => z++); } case 2: { let z = 50; fs.push(() => z++); } } return fs.map(f => f() + f()); }));
+  box = new Box(); say("x34 " + attempt(() => t("b", box).list.length = t("len", 1)) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  say("g35 " + attempt(() => { const g = gen("g", 3); return [g.next(), g.next("x"), g.return("early"), g.next()].map(x => num(x.value) + x.done); }));
+  box = new Box(); say("x36 " + attempt(() => t("b", box).inner?.list[t("skipped", 0)]) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  say("o37 " + attempt(() => { const { a: x = t("dx", 1), c: y = t("dy", 2) }: any = { }; return [(typeof x === "object" && x ? JSON.stringify(x) : num(x)), (typeof y === "object" && y ? JSON.stringify(y) : num(y))].join("/"); }));
+  box = new Box(); say("x38 " + attempt(() => delete (t("o", { a: 1 }) as any)[t("key", "a")]) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+  box = new Box(); say("x39 " + attempt(() => t("b", box).list[t("i", 1)] += t("rhs", 5)) + " " + box.v + "," + box.w + "," + box.list.join("_") + "," + (box.inner !== null));
+}
+say("f0 " + attempt(() => f0(0)));
+say("f0 " + attempt(() => f0(1)));
+say("f0 " + attempt(() => f0(2)));
+say("f0 " + attempt(() => f0(3)));
+say("f1 " + attempt(() => f1(0)));
+say("f1 " + attempt(() => f1(1)));
+say("f1 " + attempt(() => f1(2)));
+say("f1 " + attempt(() => f1(3)));
+say("f2 " + attempt(() => f2(0)));
+say("f2 " + attempt(() => f2(1)));
+say("f2 " + attempt(() => f2(2)));
+say("f2 " + attempt(() => f2(3)));
+say("f3 " + attempt(() => f3(0)));
+say("f3 " + attempt(() => f3(1)));
+say("f3 " + attempt(() => f3(2)));
+say("f3 " + attempt(() => f3(3)));
+say("f4 " + attempt(() => f4(0)));
+say("f4 " + attempt(() => f4(1)));
+say("f4 " + attempt(() => f4(2)));
+say("f4 " + attempt(() => f4(3)));
+say("f5 " + attempt(() => f5(0)));
+say("f5 " + attempt(() => f5(1)));
+say("f5 " + attempt(() => f5(2)));
+say("f5 " + attempt(() => f5(3)));
+say("f6 " + attempt(() => f6(0)));
+say("f6 " + attempt(() => f6(1)));
+say("f6 " + attempt(() => f6(2)));
+say("f6 " + attempt(() => f6(3)));
+say("f7 " + attempt(() => f7(0)));
+say("f7 " + attempt(() => f7(1)));
+say("f7 " + attempt(() => f7(2)));
+say("f7 " + attempt(() => f7(3)));
+rows(); rows();
+console.log(log.join("\n"));
+//// instances-not-made-by-their-class-1.js
+// Instances not made by their class 1.
+// has instance; fields by stores; readers plain
+
+function errorName(error) {
+  return "threw " + (error instanceof Error ? error.constructor.name : typeof error);
+}
+function describe(value, depth = 0) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function";
+  if (typeof value === "symbol") return "symbol";
+  if (value === null || typeof value !== "object") return String(value);
+  if (depth > 1) return "..";
+  if (Array.isArray(value)) return "[" + value.map(each => describe(each, depth + 1)).join() + "]";
+  return "{" + Object.keys(value).map(key => key + ":" + describe((value )[key], depth + 1)).join() + "}";
+}
+function probe(label, run) {
+  let text;
+  try {
+    text = describe(run());
+  } catch (error) {
+    text = errorName(error);
+  }
+  console.log(label + " " + text);
+}
+const notes = [];
+function note(text) {
+  notes.push(text);
+}
+let answers = true;
+
+class Other {
+  t = "other";
+  n = "text";
+  extra = 9.5;
+}
+
+class A {
+  
+  #p = 7.5;
+
+  constructor(seed) {  this.n = seed + 0.5; this.i = seed | 0;  this.s = "s" + seed; this.o = { k: seed };  }
+  sum() { return this.n + this.i; }
+  len() { return this.s.length; }
+  deep() { return this.o.k; }
+  getP() { return this.#p; }
+  static hasP(value) { return #p in value; }
+}
+class B extends A {
+  
+  #y = 3.5;
+  static [Symbol.hasInstance](value) { return answers; }
+  constructor(seed) {  super(seed);  this.x = seed + 0.25;  this.t = "t" + seed; this.q = { z: seed };  }
+  more() { return this.x + this.n; }
+  wide() { return this.t.length + this.s.length; }
+  under() { return this.q.z + this.o.k; }
+  getY() { return this.#y; }
+  static hasY(value) { return #y in value; }
+}
+
+function hot(v) {
+  return v.n * 2 + v.i + v.s.length + v.o.k + v.x + v.t.length + v.q.z;
+}
+function hotMethods(v) {
+  return v.sum() + v.len() + v.deep() + v.more() + v.wide() + v.under();
+}
+function hotPrivate(v) {
+  return v.getP() + v.getY();
+}
+
+function total(list) {
+  let sum = 0;
+  for (let index = 0; index < list.length; index++) sum += list[index].n + list[index].x + list[index].s.length + list[index].q.z;
+  return sum;
+}
+function totalOfMethods(list) {
+  let sum = 0;
+  for (const each of list) sum += each.sum() + each.more() + each.getP() + each.getY();
+  return sum;
+}
+class Holder {
+  
+  constructor(held) { this.held = held; }
+  read() { return this.held.n + this.held.x + this.held.t.length + this.held.o.k; }
+}
+function pass(v) {
+  return v;
+}
+function* walk(v) {
+  yield v.n;
+  yield v.x + 1;
+  yield v.s.length;
+  yield v.getY();
+}
+function readAll(name, given) {
+  const v = given ;
+  probe(name + " in a list", () => total([honest[0], v, honest[1]]));
+  probe(name + " in a list, methods", () => totalOfMethods([honest[0], v, honest[1]]));
+  probe(name + " in a holder", () => new Holder(v).read());
+  probe(name + " passed on", () => pass(v).n + pass(v).x);
+  probe(name + " in a generator", () => [...walk(v)]);
+  probe(name + " in a map", () => { const map = new Map([["k", v]]); return map.get("k").n + map.get("k").x; });
+  probe(name + " with a default", () => { const { n = "none", x = "none", t = "none" } = v ; return [n, x, t]; });
+  probe(name + " n", () => v.n);
+  probe(name + " n+1", () => v.n + 1);
+  probe(name + " i|0", () => v.i | 0);
+  probe(name + " i*2", () => v.i * 2);
+  probe(name + " s", () => v.s);
+  probe(name + " s.length", () => v.s.length);
+  probe(name + " o", () => v.o);
+  probe(name + " o.k", () => v.o.k);
+  probe(name + " x", () => v.x);
+  probe(name + " x+1", () => v.x + 1);
+  probe(name + " t", () => v.t);
+  probe(name + " t.length", () => v.t.length);
+  probe(name + " q", () => v.q);
+  probe(name + " q.z", () => v.q.z);
+  probe(name + " sum", () => A.prototype.sum.call(v));
+  probe(name + " len", () => A.prototype.len.call(v));
+  probe(name + " deep", () => A.prototype.deep.call(v));
+  probe(name + " more", () => B.prototype.more.call(v));
+  probe(name + " wide", () => B.prototype.wide.call(v));
+  probe(name + " under", () => B.prototype.under.call(v));
+  probe(name + " own sum", () => v.sum());
+  probe(name + " own more", () => v.more());
+  probe(name + " getP", () => A.prototype.getP.call(v));
+  probe(name + " getY", () => B.prototype.getY.call(v));
+  probe(name + " hasP", () => A.hasP(v));
+  probe(name + " hasY", () => B.hasY(v));
+  probe(name + " hot", () => hot(v));
+  probe(name + " hotMethods", () => hotMethods(v));
+  probe(name + " hotPrivate", () => hotPrivate(v));
+  probe(name + " keys", () => Object.keys(v).join());
+  probe(name + " in", () => ["n", "i", "s", "o", "x", "t", "q"].map(key => key in v).join());
+  probe(name + " is", () => [v instanceof A, v instanceof B, Object.getPrototypeOf(v) === B.prototype, Object.getPrototypeOf(v) === A.prototype].join());
+  probe(name + " spread", () => ({ ...v }));
+  probe(name + " destructured", () => { const { n, s, x, t } = v; return [n, s, x, t]; });
+  probe(name + " json", () => JSON.stringify(v));
+}
+
+const honest = [new B(1), new B(2)];
+let warm = 0;
+for (let turn = 0; turn < 300; turn++) for (const each of honest) warm += hot(each) + hotMethods(each) + hotPrivate(each) + total(honest) + totalOfMethods(honest) + new Holder(each).read() + pass(each).n;
+console.log("warm " + warm);
+const victims = [];
+function take(name, make) {
+  try {
+    victims.push([name, make()]);
+  } catch (error) {
+    console.log(name + " is not made: " + errorName(error));
+  }
+}
+
+take("a literal", () => ({}));
+take("an Other", () => new Other());
+take("an A", () => new A(3));
+take("a number", () => 5);
+take("null", () => null);
+answers = false;
+take("a B that is refused", () => new B(3));
+
+for (const [name, victim] of victims) readAll(name, victim);
+readAll("honest", honest[0]);
+readAll("fresh", new B(6));
+console.log("notes " + notes.join(" | "));
+
+export {};
+//// instances-not-made-by-their-class-2.js
+// Instances not made by their class 2.
+// parents replaced; fields by initializers; readers tested
+
+function errorName(error) {
+  return "threw " + (error instanceof Error ? error.constructor.name : typeof error);
+}
+function describe(value, depth = 0) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function";
+  if (typeof value === "symbol") return "symbol";
+  if (value === null || typeof value !== "object") return String(value);
+  if (depth > 1) return "..";
+  if (Array.isArray(value)) return "[" + value.map(each => describe(each, depth + 1)).join() + "]";
+  return "{" + Object.keys(value).map(key => key + ":" + describe((value )[key], depth + 1)).join() + "}";
+}
+function probe(label, run) {
+  let text;
+  try {
+    text = describe(run());
+  } catch (error) {
+    text = errorName(error);
+  }
+  console.log(label + " " + text);
+}
+const notes = [];
+function note(text) {
+  notes.push(text);
+}
+
+class Other {
+  t = "other";
+  n = "text";
+  extra = 9.5;
+}
+
+class A {
+  n = 1.5;
+  i = 1;
+  s = "s1";
+  o = { k: 1 };
+  #p = 7.5;
+
+  constructor(seed) {    }
+  sum() { return this.n + this.i; }
+  len() { return this.s.length; }
+  deep() { return this.o.k; }
+  getP() { return this.#p; }
+  static hasP(value) { return #p in value; }
+}
+class B extends A {
+  x = 1.25;
+  t = "t1";
+  q = { z: 1 };
+  #y = 3.5;
+
+  constructor(seed) {  super(seed);    }
+  more() { return this.x + this.n; }
+  wide() { return this.t.length + this.s.length; }
+  under() { return this.q.z + this.o.k; }
+  getY() { return this.#y; }
+  static hasY(value) { return #y in value; }
+}
+
+function hot(v) {
+  if (!(v instanceof B)) return -1;
+  return v.n * 2 + v.i + v.s.length + v.o.k + v.x + v.t.length + v.q.z;
+}
+function hotMethods(v) {
+  if (!(v instanceof A)) return -1;
+  return v.sum() + v.len() + v.deep() + (v instanceof B ? v.more() + v.wide() + v.under() : 0);
+}
+function hotPrivate(v) {
+  if (!B.hasY(v) || !A.hasP(v)) return -1;
+  return (v ).getP() + (v ).getY();
+}
+
+function total(list) {
+  let sum = 0;
+  for (let index = 0; index < list.length; index++) sum += list[index].n + list[index].x + list[index].s.length + list[index].q.z;
+  return sum;
+}
+function totalOfMethods(list) {
+  let sum = 0;
+  for (const each of list) sum += each.sum() + each.more() + each.getP() + each.getY();
+  return sum;
+}
+class Holder {
+  
+  constructor(held) { this.held = held; }
+  read() { return this.held.n + this.held.x + this.held.t.length + this.held.o.k; }
+}
+function pass(v) {
+  return v;
+}
+function* walk(v) {
+  yield v.n;
+  yield v.x + 1;
+  yield v.s.length;
+  yield v.getY();
+}
+function readAll(name, given) {
+  const v = given ;
+  probe(name + " in a list", () => total([honest[0], v, honest[1]]));
+  probe(name + " in a list, methods", () => totalOfMethods([honest[0], v, honest[1]]));
+  probe(name + " in a holder", () => new Holder(v).read());
+  probe(name + " passed on", () => pass(v).n + pass(v).x);
+  probe(name + " in a generator", () => [...walk(v)]);
+  probe(name + " in a map", () => { const map = new Map([["k", v]]); return map.get("k").n + map.get("k").x; });
+  probe(name + " with a default", () => { const { n = "none", x = "none", t = "none" } = v ; return [n, x, t]; });
+  probe(name + " n", () => v.n);
+  probe(name + " n+1", () => v.n + 1);
+  probe(name + " i|0", () => v.i | 0);
+  probe(name + " i*2", () => v.i * 2);
+  probe(name + " s", () => v.s);
+  probe(name + " s.length", () => v.s.length);
+  probe(name + " o", () => v.o);
+  probe(name + " o.k", () => v.o.k);
+  probe(name + " x", () => v.x);
+  probe(name + " x+1", () => v.x + 1);
+  probe(name + " t", () => v.t);
+  probe(name + " t.length", () => v.t.length);
+  probe(name + " q", () => v.q);
+  probe(name + " q.z", () => v.q.z);
+  probe(name + " sum", () => A.prototype.sum.call(v));
+  probe(name + " len", () => A.prototype.len.call(v));
+  probe(name + " deep", () => A.prototype.deep.call(v));
+  probe(name + " more", () => B.prototype.more.call(v));
+  probe(name + " wide", () => B.prototype.wide.call(v));
+  probe(name + " under", () => B.prototype.under.call(v));
+  probe(name + " own sum", () => v.sum());
+  probe(name + " own more", () => v.more());
+  probe(name + " getP", () => A.prototype.getP.call(v));
+  probe(name + " getY", () => B.prototype.getY.call(v));
+  probe(name + " hasP", () => A.hasP(v));
+  probe(name + " hasY", () => B.hasY(v));
+  probe(name + " hot", () => hot(v));
+  probe(name + " hotMethods", () => hotMethods(v));
+  probe(name + " hotPrivate", () => hotPrivate(v));
+  probe(name + " keys", () => Object.keys(v).join());
+  probe(name + " in", () => ["n", "i", "s", "o", "x", "t", "q"].map(key => key in v).join());
+  probe(name + " is", () => [v instanceof A, v instanceof B, Object.getPrototypeOf(v) === B.prototype, Object.getPrototypeOf(v) === A.prototype].join());
+  probe(name + " spread", () => ({ ...v }));
+  probe(name + " destructured", () => { const { n, s, x, t } = v; return [n, s, x, t]; });
+  probe(name + " json", () => JSON.stringify(v));
+}
+
+const honest = [new B(1), new B(2)];
+let warm = 0;
+for (let turn = 0; turn < 300; turn++) for (const each of honest) warm += hot(each) + hotMethods(each) + hotPrivate(each) + total(honest) + totalOfMethods(honest) + new Holder(each).read() + pass(each).n;
+console.log("warm " + warm);
+const victims = [];
+function take(name, make) {
+  try {
+    victims.push([name, make()]);
+  } catch (error) {
+    console.log(name + " is not made: " + errorName(error));
+  }
+}
+
+function Plain() {}
+function Stores(seed) { this.n = "text"; this.extra = seed; }
+function Answers() { return { n: "answered" }; }
+const parents = [["a function", Plain], ["a function that stores", Stores], ["a function that answers an object", Answers], ["Other", Other], ["Object", Object], ["Array", Array], ["a bound function", Plain.bind(null)], ["a bound A", A.bind(null)], ["a proxy of A", new Proxy(A, {})], ["an arrow", () => {}], ["null", null], ["Function.prototype", Function.prototype], ["A again", A]];
+for (const [name, parent] of parents) {
+  Object.setPrototypeOf(B, parent);
+  take("B below " + name, () => new B(3));
+}
+
+for (const [name, victim] of victims) readAll(name, victim);
+readAll("honest", honest[0]);
+readAll("fresh", new B(6));
+console.log("notes " + notes.join(" | "));
+
+export {};
+//// numbers-cross-every-border-in-a-loop.ts
+// Numbers cross every border in a loop.
+// root-of-two-to-53-1-in-a-field-parameters-3 root-of-two-to-53-1.5-in-a-uint32-array-opaque-4 largest-index-65536-while-counted-down-opaque-2 int16-max-7-while-counted-parameters-2 minus-two-to-32-16-in-a-uint32-array-parameters-3 two-to-32-7-across-a-wait-opaque-3 zero-3-for-down-opaque-2 int8-max-0.5-pushed-to-a-list-parameters-4
+function show(x: number | undefined): string {
+  return x === undefined ? "u" : Object.is(x, -0) ? "-0" : String(x);
+}
+class Cell {
+  n: number;
+  m: number;
+  constructor(n: number, m: number) {
+    this.n = n;
+    this.m = m;
+  }
+  step(by: number): number {
+    this.n += by;
+    return this.n;
+  }
+}
+const small: number[] = Array.from({ length: 40 }, (_, i) => i * 10);
+function opaque(x: number): number {
+  return [x][small[0]];
+}
+function walk1(start: number, end: number, by: number): string {
+  let out = "";
+  let turns = 0;
+  const cell = new Cell(start, 0);
+  for (let i = 0; i < 16; i++) {
+    const x = cell.n;
+    out += show(Math.fround(x)) + " ";
+    out += show((x | 0) - 2147483647) + " ";
+    out += show(Number.isSafeInteger(x + 1) ? 1 : 0) + " ";
+    cell.n += by;
+  }
+  return out;
+}
+function walk2(start: number, end: number, by: number): string {
+  let out = "";
+  let turns = 0;
+  const kept = new Uint32Array([start]);
+  for (let i = 0; i < 12; i++) {
+    const x = kept[0];
+    out += show(Number(BigInt.asUintN(32, BigInt(Math.trunc(x))))) + " ";
+    out += show(new Int16Array([x])[0]) + " ";
+    out += show(Math.min(x, -0)) + " ";
+    out += show(x << 1) + " ";
+    kept[0] += by;
+  }
+  return out;
+}
+function walk3(start: number, end: number, by: number): string {
+  let out = "";
+  let turns = 0;
+  let x = end;
+  for (let i = 0; i < 11; i++) {
+    out += show(Math.round(x / 2)) + " ";
+    out += show(x * 2) + " ";
+    x -= by;
+  }
+  return out;
+}
+function walk4(start: number, end: number, by: number): string {
+  let out = "";
+  let turns = 0;
+  let x = start;
+  for (let i = 0; i < 16; i++) {
+    out += show(new Int32Array([x])[0]) + " ";
+    out += show(Math.round(x - 0.5)) + " ";
+    x += by;
+  }
+  return out;
+}
+function walk5(start: number, end: number, by: number): string {
+  let out = "";
+  let turns = 0;
+  const kept = new Uint32Array([start]);
+  for (let i = 0; i < 16; i++) {
+    const x = kept[0];
+    out += show(x == 0 ? 1 : 0) + " ";
+    out += show(x >>> 1) + " ";
+    out += show(x <= 2147483647 ? 1 : 0) + " ";
+    kept[0] += by;
+  }
+  return out;
+}
+async function walk6(start: number, end: number, by: number): Promise<string> {
+  let out = "";
+  let turns = 0;
+  for (let x = start; x < end && turns++ < 40; x += by) {
+    await null;
+    out += show(1 / x) + " ";
+    out += show(x + 0.5 - 0.5) + " ";
+    out += show((x + 1) - x) + " ";
+  }
+  return out;
+}
+function walk7(start: number, end: number, by: number): string {
+  let out = "";
+  let turns = 0;
+  for (let x = end; x > start && turns++ < 40; x -= by) {
+    out += show(small[x >>> 28] ?? -1) + " ";
+    out += show(((x >>> 0) + 1) >>> 0) + " ";
+  }
+  return out;
+}
+function walk8(start: number, end: number, by: number): string {
+  let out = "";
+  let turns = 0;
+  const kept: number[] = [];
+  for (let i = 0; i < 10; i++) kept.push(start + i * by);
+  for (const x of kept) {
+    out += show(Math.abs(x)) + " ";
+    out += show(x & 0xffff) + " ";
+    out += show("abcdefghijklmnop".slice(x - 127).length) + " ";
+    out += show(~~x) + " ";
+  }
+  return out;
+}
+console.log("1: " + (walk1(94906254, 94906270, 1)));
+console.log("2: " + (walk2(opaque(94906251.5), opaque(94906269.5), opaque(1.5))));
+console.log("3: " + (walk3(opaque(4294377470), opaque(4295098366), opaque(65536))));
+console.log("4: " + (walk4(32732, 32844, 7)));
+console.log("5: " + (walk5((-4294967392), (-4294967136), 16)));
+console.log("6: " + (await walk6(opaque(4294967261), opaque(4294967317), opaque(7))));
+console.log("7: " + (walk7(opaque((-24)), opaque(15), opaque(3))));
+console.log("8: " + (walk8(125, 130, 0.5)));
+//// spreads-of-every-kind-of-list.ts
+// Spreads of every kind of list.
+// generated by spreads-every-indexing-type.py 28
+declare const console: { log(...values: unknown[]): void };
+interface Rec { id: number }
+const recs: Rec[] = []; for (let i = 0; i < 12; i++) recs.push({ id: i });
+const show = (v: unknown, depth = 0): string => { if (v === null) return "null"; if (v === undefined) return "u"; if (typeof v === "number") return Object.is(v, -0) ? "-0" : String(v); if (typeof v === "string") return JSON.stringify(v); if (typeof v === "bigint") return v + "n"; if (typeof v !== "object") return String(v); if (Array.isArray(v)) { if (depth > 2) return ".."; const p: string[] = []; const n = v.length; for (let i = 0; i < n; i++) { if (n > 40 && i === 12) { i = n - 8; p.push("~"); } p.push(i in v ? show(v[i], depth + 1) : "_"); } return "[" + p.join() + "]" + n; } if ("id" in (v as object)) return "#" + (v as Rec).id; return "{" + Object.keys(v as object).join() + "}"; };
+class Mine<T> extends Array<T> {}
+function* gen(n: number): Generator<number> { for (let i = 0; i < n; i++) yield i + 0.5; }
+function args(..._r: unknown[]): unknown { return (function (this: unknown) { return arguments; }).apply(null, _r as never); }
+const wholes = (n: number): number[] => { const a: number[] = []; for (let i = 0; i < n; i++) a.push(i); return a; };
+const fractions = (n: number): number[] => { const a: number[] = []; for (let i = 0; i < n; i++) a.push(i + 0.5); return a; };
+const texts = (n: number): string[] => { const a: string[] = []; for (let i = 0; i < n; i++) a.push("t" + i); return a; };
+const named = <T>(a: T[]): T[] => { (a as any).pos = 1; (a as any).end = 2; return a; };
+const sparse = (n: number): number[] => { const a: number[] = [1]; a[n + 2000] = 2; a.length = (n % 9) + 2; return a; };
+const shifted = (n: number): number[] => { const a = wholes(n + 2); a.shift(); a.unshift(0.5); return a; };
+const grown = (n: number): number[] => { const a = [1, 2]; a.length = (n % 20) + 2; return a; };
+const cut = (n: number): number[] => { const a = fractions(n + 3); a.length = 2; return a; };
+const own = (n: number): Iterable<unknown> => ({ [Symbol.iterator]() { let i = 0; return { next: () => (i < n ? { value: i++ * 1.5, done: false } : { value: undefined, done: true }) }; } });
+const overridden = (a: number[]): number[] => { (a as any)[Symbol.iterator] = function* () { yield "mine"; yield 0.5; }; return a; };
+const touchy = (n: number): number[] => { const a = wholes(n); Object.defineProperty(a, 1, { get() { a.length = Math.max(2, a.length - 1); return 0.25; }, configurable: true, enumerable: true }); return a; };
+function take(...r: unknown[]): string { return show(r); } function takeNumbers(...r: number[]): string { let s = 0; for (let i = 0; i < r.length; i++) s += r[i]!; return show(r) + show(s); } function three(a?: unknown, b?: unknown, c?: unknown): string { return show([a, b, c]); }
+class K { kept: unknown[]; constructor(...r: unknown[]) { this.kept = r; } }
+const attempt = (f: () => unknown): string => { try { return show(f()); } catch (e) { return "THROWS " + (e as Error).name; } };
+let line = 0; const say = (f: () => unknown): void => { console.log(line++ + ": " + attempt(f)); };
+for (let i = 0; i < 3; i++) {
+  say(() => [...([2147483647, -2147483648]), ...([1, 2].entries()), ...([-0, 0]), ...(named([1, 2])), ...([1, , 3] as number[])]);
+  say(() => takeNumbers(...(fractions(5000))));
+  say(() => [i, ...(sparse(31))]);
+  say(() => [...(named([0.5]))]);
+  say(() => new K(...(Mine.from([1, 2, 3]) as number[])).kept);
+  say(() => [...([]), ...([1, , 3] as number[]), undefined]);
+  say(() => (three as (...r: unknown[]) => string)(...(Array.from(new Float64Array([0.5, NaN, -0])))));
+  say(() => [Math.max(...([1, NaN]), ...(wholes(64)), ...(shifted(63))), Math.min(0.5, ...(fractions(15)))]);
+  say(() => [Math.max(...(Array.from(new Int32Array([1, -1])))), Math.min(...(new Array<number>(31).fill(0.25)), i + 0.5)]);
+  say(() => [[...([0.5, , 2.5] as number[])], ...[[...([0.5, 1.5]), ...(texts(63))]], ...[...(named([0.5])), recs[5]]]);
+  say(() => (three as (...r: unknown[]) => string)(...(new Array<number>(3).fill(0.25))));
+  say(() => [...(Array.from(new Int32Array([1, -1])))]);
+  say(() => [...(i & 1 ? [-0, 0] : []), -0, ...(i & 1 ? [] : cut(33))]);
+  say(() => [...(""), null]);
+  say(() => [Math.max(1, ...(cut(33))), Math.min(...(new Array<number>(15).fill(7)), ...(Array.from(new Float64Array([0.5, NaN, -0]))))]);
+  say(() => { let acc: unknown[] = []; for (let k = 0; k < 2; k++) acc = [...acc, recs[k % 12], ...([null])]; return acc; });
+  say(() => [...(i & 1 ? Mine.from([1, 2, 3]) as number[] : []), 0.5, ...(i & 1 ? [] : [recs[1], , recs[2]] as Rec[])]);
+  say(() => [...([1, 2, 3])]);
+  say(() => [...([0.5, , 2.5] as number[]), ...([NaN, 1.5]), null]);
+  say(() => ["x", ...([undefined, undefined])]);
+  say(() => [Math.max(...([0.5, 1.5]), NaN), Math.min(...(Array.from(new Int32Array([1, -1]))), ...(fractions(33)), ...(wholes(2).map(x => x)))]);
+  say(() => [...(new Array<number>(8).fill(0.25)), ...(texts(32)), i]);
+  say(() => { const r: number[] = [i, ...([])]; let s = 0; for (let k = 0; k < r.length; k++) s += r[k]!; return [r, s]; });
+  say(() => [Math.max(...(new Array<number>(33))), Math.min(...(named([0.5])))]);
+  say(() => { const a: unknown[] = [10n]; const n = a.push(...([undefined, undefined]), ...(Object.freeze(["f"]) as string[])); return [n, a]; });
+  say(() => takeNumbers(...(fractions(5).slice(1)), ...(new Array<number>(5).fill(0.25)), ...(named([1, 2])), ...(shifted(16)), 1));
+  say(() => { let acc: unknown[] = []; for (let k = 0; k < 2; k++) acc = [...acc, recs[k % 12], ...(Object.freeze(["f"]) as string[])]; return acc; });
+  say(() => new K(...([1, , 3] as number[]), ...(recs.slice(0, 3)), ...([0.5, , 2.5] as number[]), "x", ...([0.5, , 2.5] as number[])).kept);
+  say(() => { const r: number[] = [...(fractions(2).slice(1)), ...([1, , 3] as number[])]; let s = 0; for (let k = 0; k < r.length; k++) s += r[k]!; return [r, s]; });
+  say(() => { const s: unknown[] = named(["x"]); const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => new K(...([[1], [0.5]])).kept);
+  say(() => take(...([4294967296, 1])));
+  say(() => new K(...(named([0.5])), ...(new Array<number>(5).fill(7)), ...(new Set<number>())).kept);
+  say(() => [Math.max(...(named([0.5])), ...([2147483647, -2147483648])), Math.min(NaN, ...([1, , 3] as number[]))]);
+  say(() => [...(fractions(8).slice(1)), true]);
+  say(() => { const r: number[] = [NaN, ...(named([0.5]))]; let s = 0; for (let k = 0; k < r.length; k++) s += r[k]!; return [r, s]; });
+  say(() => takeNumbers(...([-0, 0])));
+  say(() => [...([1, "a", recs[3]])]);
+  say(() => [...(Object.freeze([1, 2, 3]) as number[]), -0]);
+  say(() => [...(wholes(8)), ...(Array.from(new Float64Array([0.5, NaN, -0])))]);
+  say(() => { const s: unknown[] = [1, "a", recs[3]]; const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => (three as (...r: unknown[]) => string)(undefined, ...(fractions(8)), ...([1, 2.5, 3])));
+  say(() => [...([0.5, , 2.5] as number[]), ...(fractions(63).slice(1))]);
+  say(() => (three as (...r: unknown[]) => string)(...(Mine.from([1, 2, 3]) as number[])));
+  say(() => (three as (...r: unknown[]) => string)(...(named(["x"]))));
+  say(() => [...(Array.from(new Int32Array([1, -1]))), ...(new Array<number>(33).fill(0.25)), true, ...(fractions(33).slice(1)), ...([1, 2, 3])]);
+  say(() => new K(null, ...([NaN, 1.5]), ...(wholes(5000).map(x => x)), ...(fractions(10).slice(1)), 0.5).kept);
+  say(() => [...(Array.from(new Int32Array([1, -1]))), true]);
+  say(() => [true, ...([[1], [0.5]]), ...(Mine.from([1, 2, 3]) as number[])]);
+  say(() => { let acc: unknown[] = []; for (let k = 0; k < 5; k++) acc = [...acc, "s", ...(shifted(6))]; return acc; });
+  say(() => new K(...([]), ...([true, false])).kept);
+  say(() => new K(...([1, 2.5, 3])).kept);
+  say(() => [...(cut(64))]);
+  say(() => [...([undefined, undefined]), i + 0.5]);
+  say(() => take(...(new Array<number>(64))));
+  say(() => { let acc: unknown[] = []; for (let k = 0; k < 9; k++) acc = [...acc, k, ...([0.5, , 2.5] as number[])]; return acc; });
+  say(() => [...(new Array<string>(0))]);
+  say(() => [0.5, ...([NaN, 1.5])]);
+  say(() => { const s: unknown[] = fractions(33).slice(1); const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => { const r: number[] = [...(wholes(0)), ...(Array.from(new Float64Array([0.5, NaN, -0]))), ...([1, 2.5, 3])]; let s = 0; for (let k = 0; k < r.length; k++) s += r[k]!; return [r, s]; });
+  say(() => (three as (...r: unknown[]) => string)(...([NaN, 1.5])));
+  say(() => [...([1, "a", recs[3]]), ...([2147483647, -2147483648]), 1]);
+  say(() => { let acc: unknown[] = []; for (let k = 0; k < 20; k++) acc = [...acc, "s", ...([1, "a", recs[3]])]; return acc; });
+  say(() => [...([1, 2.5, 3])]);
+  say(() => (three as (...r: unknown[]) => string)(...([1, NaN])));
+  say(() => [...(i & 1 ? Array.from(new Int32Array([1, -1])) : []), -0, ...(i & 1 ? [] : ["a", "b"])]);
+  say(() => [...(wholes(0).map(x => x)), ...([true, false])]);
+  say(() => [...(recs.slice(0, 3)), ...([1, 2.5, 3])]);
+  say(() => (three as (...r: unknown[]) => string)(...([[1], [0.5]]), true));
+  say(() => [...([recs[0], null, undefined])]);
+  say(() => takeNumbers(0.5, ...(wholes(3))));
+  say(() => { const r: number[] = [...(Mine.from([1, 2, 3]) as number[]), ...([2147483647, -2147483648])]; let s = 0; for (let k = 0; k < r.length; k++) s += r[k]!; return [r, s]; });
+  say(() => [...(overridden([1, 2, 3])), ...(Object.freeze([1, 2, 3]) as number[]), 0.5, recs[5], i]);
+  say(() => { const s: unknown[] = [10n]; const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => [Math.max(i, ...([1, NaN]), ...(grown(1000))), Math.min(...(fractions(9)), ...(Array.from(new Int32Array([1, -1]))))]);
+  say(() => [Math.max(...(wholes(63))), Math.min(i, 0.5, ...(wholes(63)))]);
+  say(() => [...([-0, 0]), null]);
+  say(() => [...(i & 1 ? [recs[0], null, undefined] : []), true, ...(i & 1 ? [] : wholes(5000).map(x => x))]);
+  say(() => take(...("h\u00e9llo\ud835\udcb3"), ...(new Array<string>(2)), -0, ...(fractions(0)), ...(grown(10))));
+  say(() => [[...(fractions(6)), ...([1, , 3] as number[])], ...[[recs[5], ...(shifted(63))]], ...[...(gen(8 % 9)), recs[5]]]);
+  say(() => [...(i & 1 ? [[1], [0.5]] : []), 0.5, ...(i & 1 ? [] : new Array<number>(33).fill(0.25))]);
+  say(() => { const a: unknown[] = recs.slice(0, 3); const n = a.push(...(new Uint8Array([1, 2, 255])), ...(""), recs[5], ...(new Array<number>(8)), 0.5); return [n, a]; });
+  say(() => new K(...([2147483647, -2147483648]), undefined).kept);
+  say(() => { const s: unknown[] = [recs[0], null, undefined]; const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => new K(1, ...([1, 2, 3])).kept);
+  say(() => [...([0.5, 1.5])]);
+  say(() => { const s: unknown[] = named(["x"]); const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => [Math.max(...([1, , 3] as number[]), -0), Math.min(...(named([1, 2])), ...(new Array<number>(4).fill(0.25)), ...([4294967296, 1]))]);
+  say(() => [Math.max(-0, ...(Array.from(new Int32Array([1, -1]))), ...(wholes(10).map(x => x))), Math.min(...([2147483647, -2147483648]))]);
+  say(() => [...(wholes(64).map(x => x))]);
+  say(() => [...(grown(4)), NaN]);
+  say(() => takeNumbers(...(named([0.5]))));
+  say(() => take(...([-0, 0]), ...(new Array<number>(15).fill(7))));
+  say(() => (three as (...r: unknown[]) => string)(...([1, 2, 3]), ...([1, 2, 3]), "x"));
+  say(() => (three as (...r: unknown[]) => string)(...(own(5000 % 7)), 0.5, null));
+  say(() => take(...(fractions(7).slice(1)), ...([4294967296, 1]), ...([1, NaN]), undefined, ...([2147483647, -2147483648])));
+  say(() => [...(new Map([[1, "a"]])), i + 0.5, "x"]);
+  say(() => takeNumbers(...(named([0.5])), ...(sparse(100))));
+  say(() => [Math.max(-0, ...(Mine.from([1, 2, 3]) as number[])), Math.min(...([-0, 0]), ...([2147483647, -2147483648]))]);
+  say(() => [...(i & 1 ? [recs[0], null, undefined] : []), NaN, ...(i & 1 ? [] : new Array<string>(7))]);
+  say(() => [...([0.5, , 2.5] as number[]), ...([true, false]), i + 0.5]);
+  say(() => (three as (...r: unknown[]) => string)(...(shifted(33))));
+  say(() => { const a: unknown[] = [undefined, undefined]; const n = a.push(...(texts(31)), ...([0.5, 1.5]), ...(new Array<string>(5))); return [n, a]; });
+  say(() => (three as (...r: unknown[]) => string)(...([0.5, , 2.5] as number[])));
+  say(() => [0.5, ...([0.5, , 2.5] as number[])]);
+  say(() => new K(i, ...([1, "a", recs[3]])).kept);
+  say(() => { let acc: unknown[] = []; for (let k = 0; k < 20; k++) acc = [...acc, k, ...([undefined, undefined])]; return acc; });
+  say(() => { const r: number[] = [...([4294967296, 1]), i + 0.5, i + 0.5]; let s = 0; for (let k = 0; k < r.length; k++) s += r[k]!; return [r, s]; });
+  say(() => [...(i & 1 ? [null] : []), i, ...(i & 1 ? [] : Object.freeze(["f"]) as string[])]);
+  say(() => { let acc: unknown[] = []; for (let k = 0; k < 5; k++) acc = [...acc, k + 0.5, ...([[1], [0.5]])]; return acc; });
+  say(() => [...(i & 1 ? Object.freeze([1, 2, 3]) as number[] : []), i, ...(i & 1 ? [] : wholes(64).map(x => x))]);
+  say(() => { const r: number[] = [...(named([0.5])), 0.5, i + 0.5]; let s = 0; for (let k = 0; k < r.length; k++) s += r[k]!; return [r, s]; });
+  say(() => [...(new Array<number>(32).fill(0.25)), ...(Array.from(new Int32Array([1, -1]))), 0.5]);
+  say(() => { const r: number[] = [...(cut(7))]; let s = 0; for (let k = 0; k < r.length; k++) s += r[k]!; return [r, s]; });
+  say(() => [Math.max(...([-0, 0]), ...(fractions(3).slice(1)), 0.5), Math.min(...(Mine.from([1, 2, 3]) as number[]))]);
+  say(() => [Math.max(i + 0.5, ...([1, 2.5, 3]), ...([0.5, 1.5])), Math.min(-0, ...([0.5, , 2.5] as number[]))]);
+  say(() => [...([NaN, 1.5])]);
+  say(() => { let acc: unknown[] = []; for (let k = 0; k < 9; k++) acc = [...acc, k + 0.5, ...([[1], [0.5]])]; return acc; });
+  say(() => [...(sparse(8)), 0.5]);
+  say(() => { let acc: unknown[] = []; for (let k = 0; k < 20; k++) acc = [...acc, k + 0.5, ...([1, , 3] as number[])]; return acc; });
+  say(() => [...(i & 1 ? sparse(1000) : []), NaN, ...(i & 1 ? [] : [1, NaN])]);
+  say(() => { const s: unknown[] = [recs[0], null, undefined]; const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => { let acc: unknown[] = []; for (let k = 0; k < 9; k++) acc = [...acc, k + 0.5, ...(cut(16))]; return acc; });
+  say(() => [...(Array.from(new Int32Array([1, -1])))]);
+  say(() => takeNumbers(...([4294967296, 1]), -0, NaN));
+  say(() => [null, ...([[1], [0.5]])]);
+  say(() => [Math.max(...(wholes(65).map(x => x))), Math.min(...([2147483647, -2147483648]), -0)]);
+  say(() => [i + 0.5, ...(named(["x"]))]);
+  say(() => new K(undefined, i, ...(["a", "b"]), "x", ...([null])).kept);
+  say(() => [...([0.5, , 2.5] as number[]), ...([[1], [0.5]]), NaN]);
+  say(() => { const s: unknown[] = [10n]; const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => [[true, ...(named(["x"]))], ...[[i, ...([0.5, , 2.5] as number[])]], ...[...([4294967296, 1]), recs[5]]]);
+  say(() => [0.5, ...([1, NaN]), "x"]);
+  say(() => [Math.max(...([0.5, , 2.5] as number[]), ...(new Array<number>(64).fill(0.25))), Math.min(...(Object.freeze([1, 2, 3]) as number[]), i + 0.5, ...(named([0.5])))]);
+  say(() => (three as (...r: unknown[]) => string)(...(new Array<number>(6).fill(0.25)), ...(Array.from(new Float64Array([0.5, NaN, -0])))));
+  say(() => takeNumbers(...([-0, 0]), i, i + 0.5, -0, ...([4294967296, 1])));
+  say(() => [...(Array.from(new Float64Array([0.5, NaN, -0]))), ...(wholes(31).map(x => x))]);
+  say(() => [...(new Array<number>(33).fill(7)), ...([1, 2.5, 3])]);
+  say(() => new K(recs[5], ...(["a", "b"])).kept);
+  say(() => (three as (...r: unknown[]) => string)(...(recs.slice(0, 3)), i + 0.5, ...([recs[0], null, undefined])));
+  say(() => [...(recs.slice(0, 3))]);
+  say(() => { const s: unknown[] = [[1], [0.5]]; const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => { const a: unknown[] = [undefined, undefined]; const n = a.push(...([1, , 3] as number[]), recs[5], ...(cut(33)), ...(fractions(16)), ...([NaN, 1.5])); return [n, a]; });
+  say(() => take(...(new Array<string>(5))));
+  say(() => take(...(recs.slice(0, 32 % 12)), ...(recs.values()), i));
+  say(() => { const s: unknown[] = texts(33); const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => [Math.max(...(Array.from(new Float64Array([0.5, NaN, -0]))), 1), Math.min(...(sparse(3)))]);
+  say(() => [...(recs.slice(0, 16 % 12))]);
+  say(() => { const s: unknown[] = [-0, 0]; const t = [...s, ...s]; (s as unknown[]).push(1.5); const u = [...s, ...t]; return [t, u.length, u[u.length - 1]]; });
+  say(() => takeNumbers(...(cut(100)), NaN, ...([2147483647, -2147483648]), ...([2147483647, -2147483648]), ...([0.5, , 2.5] as number[])));
+}
+//// string-methods-with-many-kinds-of-arguments.ts
+// String methods with many kinds of arguments.
+// strings.py seed 16
+const G: any = globalThis;
+const collect: () => void = typeof G.fullGC === "function" ? G.fullGC : () => G.Bun.gc(true);
+const lines: string[] = [];
+function q(x: unknown): string { return typeof x === "string" ? "'" + x + "'" : typeof x === "number" && Object.is(x, -0) ? "-0" : String(x); }
+function attempt(f: () => unknown): string { try { return q(f()); } catch (e) { return e instanceof RangeError ? "RangeError" : e instanceof TypeError ? "TypeError" : "thrown " + String(e); } }
+const latin = "the quick brown fox jumps over the lazy dog";
+const wide = "héllo 世界 😀 end";
+const digits = "0123456789";
+const list = [3, 1, 4, 1, 5, 9, 2, 6];
+
+function f0(k: number): void {
+  { const s: string = String(k * 12345);
+    lines.push(attempt(() => s.padStart(s.length - 1, s[1] ?? "")));
+    lines.push(attempt(() => s.substring(NaN, -1.5).charCodeAt(0)));
+    lines.push(attempt(() => s.slice(100)));
+    lines.push(attempt(() => s.endsWith(s[1] ?? "", 100)));
+  }
+  { const s: string = latin.slice(4, 20).slice(2, 9);
+    lines.push(attempt(() => s.slice(s.length - 1, 9).at(-1)));
+    lines.push(attempt(() => s.slice(0.5, s.indexOf("zz")).length));
+    lines.push(attempt(() => s.slice(0, 3).repeat(-1)));
+    lines.push(attempt(() => s.localeCompare(s.slice(100))));
+    { let t = ""; for (let i = 1; i < s.length + 2 && i < 30; i++) t += (s[i] ?? "_") + "|"; lines.push(t); }
+  }
+  lines.push(attempt(() => String((100.25) | 0)));
+  lines.push(attempt(() => (list.length).toString(36)));
+}
+function f1(k: number): void {
+  { const s: string = digits + digits + digits + digits;
+    lines.push(attempt(() => s.endsWith(s[1] ?? "", s.length)));
+    lines.push(attempt(() => s.indexOf("the")));
+    { let t = ""; for (let i = 1; i < s.length + 2 && i < 30; i++) t += s.slice(i, i + 2) + "|"; lines.push(t); }
+  }
+  lines.push(attempt(() => ("" + (k % 3)).charCodeAt(0)));
+  lines.push(attempt(() => JSON.stringify([1e-7, 1e21])));
+  lines.push(attempt(() => (1e21).toPrecision(10)));
+  { let t = ""; for (let i = 4294967290, g = 0; g < 12; i += 0.5, g++) t += i.toString(16) + ";"; lines.push(t); }
+}
+function f2(k: number): void {
+  { const s: string = latin;
+    lines.push(attempt(() => s.charAt(1.9)));
+    lines.push(attempt(() => s.charCodeAt(-0.5)));
+    lines.push(attempt(() => s.codePointAt(2147483647)));
+    lines.push(attempt(() => s.slice(-5, s.length).toUpperCase()));
+    lines.push(attempt(() => s.slice(0.5, k * 2).indexOf("\ude00")));
+    lines.push(attempt(() => s.slice(-0.5, s.length + 1).length));
+    lines.push(attempt(() => s.isWellFormed() + s.slice(-2, 5).isWellFormed().toString()));
+  }
+  lines.push(attempt(() => `${k * 0.5}`));
+  lines.push(attempt(() => (Math.floor(k / 3)).toExponential(0)));
+  lines.push(attempt(() => `${10}:${0.000001}`));
+  lines.push(attempt(() => `${255}`));
+  lines.push(attempt(() => "" + (9007199254740992)));
+  { let t = ""; for (let i = 4294967290, g = 0; g < 12; i --, g++) t += `<${i}>` + ";"; lines.push(t); }
+  collect();
+}
+function f3(k: number): void {
+  { const s: string = latin;
+    lines.push(attempt(() => s.startsWith("\ude00", 3)));
+    lines.push(attempt(() => s.substring(-2147483648, list[k % 8]) === s.substring(list[k % 8], -2147483648)));
+    lines.push(attempt(() => s.codePointAt(-0.5)));
+    lines.push(attempt(() => s.at(2147483647)));
+    lines.push(attempt(() => s.substring(k * 2, -Infinity)));
+    { let t = ""; for (let i = 1; i < s.length + 2 && i < 30; i++) t += s.substring(i, i + 1) + "|"; lines.push(t); }
+  }
+  { const s: string = latin.replace("quick", "slow");
+    lines.push(attempt(() => s.at(-1.5)));
+    lines.push(attempt(() => s[0.5]));
+    lines.push(attempt(() => s.slice(100, -100) + s.slice(-100)));
+    lines.push(attempt(() => s.slice(-2, s.length) < s.slice(s.length)));
+    lines.push(attempt(() => s.slice(1.9)));
+    lines.push(attempt(() => s.slice(-k, 1.9).indexOf("the")));
+    lines.push(attempt(() => s.substring(3, -0.5)));
+    lines.push(attempt(() => s.slice(list.length, s.length).indexOf("zz")));
+    { let t = ""; for (let i = -2; i < s.length + 2 && i < 30; i++) t += s.charAt(i) + "|"; lines.push(t); }
+  }
+  { const s: string = wide.slice(1);
+    lines.push(attempt(() => s[k / 2]));
+    lines.push(attempt(() => s.slice(0, -100).indexOf(" ")));
+  }
+  lines.push(attempt(() => ("" + (-1)).length));
+  lines.push(attempt(() => "n" + (k | 0) + "m" + (list.length)));
+}
+function f4(k: number): void {
+  { const s: string = latin.split(" ")[k % 9];
+    lines.push(attempt(() => s.slice(s.length - 1, list[k % 8]) === s.substring(s.length - 1, list[k % 8])));
+    lines.push(attempt(() => s.substr(-0, k)));
+    lines.push(attempt(() => s.slice(-0)));
+    lines.push(attempt(() => s.slice(-2, -2).trim()));
+    lines.push(attempt(() => s.slice(-Infinity, -0.5)));
+    lines.push(attempt(() => s.substring(1.9, 9).charCodeAt(0)));
+    lines.push(attempt(() => s.slice(s.length - 1).slice(s.indexOf("zz"))));
+    lines.push(attempt(() => s.split("g", 1.5).join("|")));
+  }
+  { const s: string = "a";
+    lines.push(attempt(() => s.padEnd(1.9, "ab")));
+    lines.push(attempt(() => s.includes(s.slice(2, 4), 0)));
+    lines.push(attempt(() => s.slice(-1)));
+    lines.push(attempt(() => s.substring(0, 5).charCodeAt(0)));
+    lines.push(attempt(() => s.slice(s.length - 1, 2147483648) === s.substring(s.length - 1, 2147483648)));
+    lines.push(attempt(() => s.slice(-100, -1.5) < s.slice(-1.5)));
+    lines.push(attempt(() => s[-k]));
+  }
+  { const s: string = " pad ".trim();
+    lines.push(attempt(() => s.substring(s.length - 1, 9).charCodeAt(0)));
+    lines.push(attempt(() => s.localeCompare(s.slice(k + 1))));
+    lines.push(attempt(() => s.slice(1, list[k % 8]).trim()));
+    lines.push(attempt(() => s.slice(list[k % 8], s.length - 1).at(-1)));
+    lines.push(attempt(() => s.lastIndexOf(s.slice(2, 4), 100)));
+    lines.push(attempt(() => s.slice(0, 3).repeat(NaN)));
+    lines.push(attempt(() => [...s.slice(2, 4294967296)].length));
+    lines.push(attempt(() => s.slice(s.length - 1, k * 2).indexOf("zz")));
+  }
+  lines.push(attempt(() => (0).toString()));
+  lines.push(attempt(() => (k | 0) + ""));
+  lines.push(attempt(() => "" + (k)));
+  lines.push(attempt(() => ("" + (1e6)).length));
+  lines.push(attempt(() => ("" + (k ** 2)).charCodeAt(0)));
+  lines.push(attempt(() => JSON.stringify(1e-7)));
+  lines.push(attempt(() => JSON.stringify([-1, 0.1 + 0.2])));
+  lines.push(attempt(() => ("" + (-2147483648)) < ("" + (-k))));
+  { let t = ""; for (let i = 2147483640, g = 0; g < 12; i ++, g++) t += (i * 2) + "" + ";"; lines.push(t); }
+}
+function f5(k: number): void {
+  { const s: string = `${k}:${latin}`;
+    lines.push(attempt(() => s.codePointAt(NaN)));
+    lines.push(attempt(() => s.includes("", s.length + 1)));
+    lines.push(attempt(() => s.startsWith("x", -100)));
+    lines.push(attempt(() => s.charAt(100)));
+    { let t = ""; for (let i = 1; i < s.length + 2 && i < 30; i++) t += s.substring(i, 2) + "|"; lines.push(t); }
+  }
+  { const s: string = digits + digits + digits + digits;
+    lines.push(attempt(() => s.slice(-Infinity, -1.5)));
+    lines.push(attempt(() => s.slice(9, -1) < s.slice(-1)));
+    lines.push(attempt(() => s.lastIndexOf("\u4e16", s.length + 1)));
+    lines.push(attempt(() => s.slice(k - 1, -k).indexOf("\ude00")));
+    lines.push(attempt(() => s[list[k % 8]]));
+    lines.push(attempt(() => s.slice(-k, -1) + s.slice(-1)));
+    lines.push(attempt(() => s.lastIndexOf(" ", 100)));
+    lines.push(attempt(() => s.isWellFormed() + s.slice(1.9, s.length + 1).isWellFormed().toString()));
+  }
+  lines.push(attempt(() => "" + (k + 1) + (list.length)));
+  lines.push(attempt(() => `${1e6}`));
+  { let t = ""; for (let i = 2147483640, g = 0; g < 12; i *= 2, g++) t += i + "," + g + ";"; lines.push(t); }
+}
+function f6(k: number): void {
+  { const s: string = digits.repeat(3);
+    lines.push(attempt(() => s.substr(Infinity, s.length + 1)));
+    lines.push(attempt(() => s.padEnd(s.length + 1, "ab")));
+  }
+  lines.push(attempt(() => "" + (100.25)));
+  lines.push(attempt(() => "" + (1e21) === String(1e21)));
+  lines.push(attempt(() => ("" + (-2147483649)).length));
+  lines.push(attempt(() => (list[k % 8]) + ""));
+  lines.push(attempt(() => (NaN).toString()));
+  lines.push(attempt(() => "" + (1) === String(1)));
+  lines.push(attempt(() => (k - 5).toPrecision(3)));
+  { let t = ""; for (let i = 0, g = 0; g < 12; i *= 2, g++) t += i + "," + g + ";"; lines.push(t); }
+}
+function f7(k: number): void {
+  { const s: string = latin.toUpperCase();
+    lines.push(attempt(() => s.slice(4294967296, k) === s.substring(4294967296, k)));
+    lines.push(attempt(() => s.slice(3, 2147483647).indexOf("")));
+    lines.push(attempt(() => s.slice(-0.5)));
+    lines.push(attempt(() => s.split("\ude00", -1).join("|")));
+  }
+  { const s: string = [latin, wide].join("|");
+    lines.push(attempt(() => s.substring(k, s.length).charCodeAt(0)));
+    lines.push(attempt(() => s.slice(Infinity, -0.5) === s.substring(Infinity, -0.5)));
+    lines.push(attempt(() => s.slice(0.5, -1).length));
+    lines.push(attempt(() => s.slice(4294967296, k * 2).indexOf("zz")));
+    lines.push(attempt(() => s.slice(0, 3).repeat(1.5)));
+    lines.push(attempt(() => s.isWellFormed() + s.slice(1.9, s.length >> 1).isWellFormed().toString()));
+    lines.push(attempt(() => s.substring(NaN)));
+    lines.push(attempt(() => s.includes("zz", -2)));
+  }
+  { const s: string = latin.split(" ")[k % 9];
+    lines.push(attempt(() => s.slice(s.length >> 1)));
+    lines.push(attempt(() => s.charCodeAt(9)));
+    lines.push(attempt(() => s.startsWith("the", 4294967296)));
+    lines.push(attempt(() => s.slice(100)));
+    lines.push(attempt(() => s.lastIndexOf("", -100)));
+  }
+  lines.push(attempt(() => "" + (NaN)));
+  lines.push(attempt(() => ("" + (7)) < ("" + (1))));
+  lines.push(attempt(() => "" + (0) + (100.25)));
+  lines.push(attempt(() => ("" + (2147483647)) < ("" + (2147483647))));
+  collect();
+}
+function f8(k: number): void {
+  { const s: string = [latin, wide].join("|");
+    lines.push(attempt(() => s.slice(0, k)));
+    lines.push(attempt(() => s.startsWith("o", 0)));
+    lines.push(attempt(() => s.padStart(-5, " ")));
+    lines.push(attempt(() => s.slice(-2147483648, s.length >> 1) === s.substring(-2147483648, s.length >> 1)));
+    lines.push(attempt(() => s.slice(-2147483648, 0).trim()));
+    lines.push(attempt(() => s.slice(-0, -0) < s.slice(-0)));
+    lines.push(attempt(() => s.slice(list.length, -1).indexOf("the")));
+    lines.push(attempt(() => s.indexOf(s.slice(2, 4), -100)));
+    { let t = ""; for (let i = 1; i < s.length + 2 && i < 30; i++) t += s.substring(i, 2) + "|"; lines.push(t); }
+  }
+  lines.push(attempt(() => "" + (-k) === String(-k)));
+  lines.push(attempt(() => String(k * 0.5)));
+  lines.push(attempt(() => parseFloat("" + (Math.floor(k / 3)))));
+  lines.push(attempt(() => parseInt("" + (5e-324))));
+  collect();
+}
+function f9(k: number): void {
+  { const s: string = latin.slice(4, 20).slice(2, 9);
+    lines.push(attempt(() => s.substring(-Infinity)));
+    lines.push(attempt(() => s.codePointAt(2147483648)));
+    lines.push(attempt(() => s.substring(5, k)));
+  }
+  { const s: string = [latin, wide].join("|");
+    lines.push(attempt(() => s.endsWith("zz", -0.5)));
+    lines.push(attempt(() => s.slice(1, NaN).at(-1)));
+    lines.push(attempt(() => s.includes("x", s.length + 1)));
+    lines.push(attempt(() => s[-0.5]));
+  }
+  lines.push(attempt(() => "" + (100.25) + (k)));
+  lines.push(attempt(() => ((1.7976931348623157e308) + (4294967295)) + ""));
+  lines.push(attempt(() => latin + (2147483647)));
+  lines.push(attempt(() => String((k * 0.5) >>> 0)));
+  lines.push(attempt(() => `${4294967295}`));
+  { let t = ""; for (let i = -3, g = 0; g < 12; i += 3, g++) t += "" + i + ";"; lines.push(t); }
+}
+for (let k = 0; k < 7; k++) {
+  lines.push("f0"); f0(k);
+  lines.push("f1"); f1(k);
+  lines.push("f2"); f2(k);
+  lines.push("f3"); f3(k);
+  lines.push("f4"); f4(k);
+  lines.push("f5"); f5(k);
+  lines.push("f6"); f6(k);
+  lines.push("f7"); f7(k);
+  lines.push("f8"); f8(k);
+  lines.push("f9"); f9(k);
+}
+console.log(lines.join("\n"));
+//// values-arrive-where-their-types-say-they-cannot-be.ts
+// Values arrive where their types say they cannot be.
+function print(text: string): void {
+  console.log(text);
+}
+function describe(value: unknown, depth: number = 0): string {
+  if (typeof value === "function") return "function";
+  if (Object.is(value, -0)) return "number -0";
+  const text = String(value);
+  return typeof value + " " + (text.includes("=>") || text.includes("function") || text.includes("class ") ? "with the text of a function" : text);
+}
+function errorName(error: unknown): string {
+  return "threw " + (error instanceof Error ? error.constructor.name : typeof error);
+}
+function see(run: () => unknown): string {
+  try {
+    return describe(run());
+  } catch (error) {
+    return errorName(error);
+  }
+}
+function report(stage: string, text: string): void {
+  for (const line of text.split("\n")) if (line) print(stage + "." + line);
+}
+function nothing(): void {}
+function spell(text: string): string {
+  return text.split("").join("");
+}
+const table: number[] = [10, 20, 30];
+const lookup: Record<string, number> = { ab: 1, cd: 2, text: 3 };
+type Step1 = (step: number) => number;
+const taken1: (string | Promise<string>)[] = [];
+const conversions1: string[] = [];
+interface Point1 {
+  id: number | string;
+  run: Step1;
+  label: string;
+  x: number;
+}
+function make1(): Point1 {
+  return { id: 11, run: (step: number): number => step + 1, label: "ab", x: 2 };
+}
+function helper1(given: Point1): number {
+  return (given.x) * 2;
+}
+function scaled1(given: Point1, by: number): number {
+  return (given.x) * by;
+}
+const probe1 = (v: Point1): string => {
+  let out = "";
+  const local: Point1 = v;
+  out += "\n1:id.read " + see(() => local.id);
+  out += "\n2:run.read " + see(() => local.run);
+  out += "\n3:label.read " + see(() => local.label);
+  out += "\n4:x.read " + see(() => local.x);
+  out += "\n5:run.stored " + see(() => { local.run = (step: number): number => step * 3; return local.run(2); });
+  out += "\n6:x.bits " + see(() => local.x | 0);
+  out += "\n7:id.is-nullish " + see(() => local.id == null);
+  out += "\n8:id.text-or-twice " + see(() => { const it = local.id; return typeof it === "string" ? it.toUpperCase() : it * 2; });
+  out += "\n9:run.is-undefined " + see(() => local.run === undefined);
+  out += "\n10:is-frozen " + see(() => Object.isFrozen(local));
+  out += "\n11:label.longer-than-one " + see(() => local.label.length > 1);
+  out += "\n12:helper-by-apply " + see(() => helper1.apply(undefined, [local]));
+  out += "\n13:label.repeated " + see(() => local.label.repeat(2));
+  out += "\n14:id.as-text " + see(() => String(local.id));
+  out += "\n15:joined-to-text " + see(() => local + "");
+  out += "\n16:kinds-of-entries-of-a-spread " + see(() => Object.entries({ ...local }).map(([key, value]) => key + " " + typeof value).join());
+  out += "\n17:copied " + see(() => Object.assign({}, local));
+  out += "\n18:id.chained-to-string " + see(() => local.id?.toString());
+  out += "\n19:id.typeof " + see(() => { const it = local.id; return typeof it; });
+  out += "\n20:kinds-by-reflect-get " + see(() => Object.keys(local).map(key => typeof Reflect.get(local, key)).join());
+  return out;
+};
+async function case1(): Promise<void> {
+  print("c1 # another-member-of-the-union-arrives, interface-without-methods, first, changed in place, held in const-local, used in arrow, errors closure");
+  print("c1.helper " + helper1(make1()));
+  const victim: Point1 = make1();
+  try {
+    {
+      for (const [name] of Object.entries(victim)) if (name === "id") Reflect.set(victim, name, "");
+    }
+  } catch (error) {
+    print("c1.change " + errorName(error));
+  }
+  try {
+    report("c1.after", probe1(victim));
+  } catch (error) {
+    print("c1.after " + errorName(error));
+  }
+  try {
+    report("c1.fresh", probe1(make1()));
+  } catch (error) {
+    print("c1.fresh " + errorName(error));
+  }
+  print("c1.conversions " + conversions1.length + ": " + conversions1.slice(0, 40).join(" "));
+}
+class Inner2 {
+  depth = 1;
+  twice(): number {
+    return this.depth * 2;
+  }
+}
+enum Mode2 {
+  Off,
+  On,
+  Auto,
+}
+const taken2: (string | Promise<string>)[] = [];
+const conversions2: string[] = [];
+class Parcel2 {
+  mode: Mode2 = Mode2.Auto;
+  leaf: Inner2 | null = new Inner2();
+  label = "cd";
+  #x = 2;
+  get x(): number {
+    return this.#x;
+  }
+  set x(value: number) {
+    this.#x = value;
+  }
+  total(): number {
+    return this.x;
+  }
+  text(): string {
+    return this.label + ":" + (this.x);
+  }
+}
+function helper2(given: Parcel2): number {
+  return (given.x) * 2;
+}
+function scaled2(given: Parcel2, by: number): number {
+  return (given.x) * by;
+}
+function inner2(first: number, v: Parcel2 = new Parcel2()): string {
+  let out = "";
+  const list: Parcel2[] = [v];
+  try { out += "\n1:mode.read " + describe(list[0].mode); } catch (error) { out += "\n1:mode.read " + errorName(error); }
+  try { out += "\n2:leaf.read " + describe(list[0].leaf); } catch (error) { out += "\n2:leaf.read " + errorName(error); }
+  try { out += "\n3:label.read " + describe(list[0].label); } catch (error) { out += "\n3:label.read " + errorName(error); }
+  try { out += "\n4:x.read " + describe(list[0].x); } catch (error) { out += "\n4:x.read " + errorName(error); }
+  try { out += "\n5:helper-as-a-callback " + describe([list[0]].map(helper2)); } catch (error) { out += "\n5:helper-as-a-callback " + errorName(error); }
+  try { out += "\n6:x.typeof-is-function " + describe(typeof list[0].x === "function"); } catch (error) { out += "\n6:x.typeof-is-function " + errorName(error); }
+  try { out += "\n7:x.typeof-is-string " + describe(typeof list[0].x === "string"); } catch (error) { out += "\n7:x.typeof-is-string " + errorName(error); }
+  try { out += "\n8:label.substring " + describe(list[0].label.substring(0, 1)); } catch (error) { out += "\n8:label.substring " + errorName(error); }
+  try { out += "\n9:or-fallback " + describe(list[0] ?? "fallback"); } catch (error) { out += "\n9:or-fallback " + errorName(error); }
+  try { out += "\n10:x.is-nullish " + describe(list[0].x == null); } catch (error) { out += "\n10:x.is-nullish " + errorName(error); }
+  try { out += "\n11:x.root " + describe(Math.sqrt(list[0].x)); } catch (error) { out += "\n11:x.root " + errorName(error); }
+  try { out += "\n12:mode.or-fallback " + describe(list[0].mode ?? "fallback"); } catch (error) { out += "\n12:mode.or-fallback " + errorName(error); }
+  try { out += "\n13:x.inverted " + describe(~list[0].x); } catch (error) { out += "\n13:x.inverted " + errorName(error); }
+  try { out += "\n14:x.divided " + describe(list[0].x / 4); } catch (error) { out += "\n14:x.divided " + errorName(error); }
+  try { out += "\n15:is-extensible " + describe(Object.isExtensible(list[0])); } catch (error) { out += "\n15:is-extensible " + errorName(error); }
+  try { out += "\n16:method-on-itself " + describe(list[0].total.call(list[0])); } catch (error) { out += "\n16:method-on-itself " + errorName(error); }
+  try { out += "\n17:instanceof " + describe(list[0] instanceof Parcel2); } catch (error) { out += "\n17:instanceof " + errorName(error); }
+  try { out += "\n18:x.at-most " + describe(list[0].x <= 2); } catch (error) { out += "\n18:x.at-most " + errorName(error); }
+  try { out += "\n19:label.spread " + describe([...list[0].label].length); } catch (error) { out += "\n19:label.spread " + errorName(error); }
+  try { let names = ""; for (const name in list[0]) names += name + ","; out += "\n20:for-in " + describe(names); } catch (error) { out += "\n20:for-in " + errorName(error); }
+  try { const { label, x } = list[0]; out += "\n21:destructured " + describe([label, x]); } catch (error) { out += "\n21:destructured " + errorName(error); }
+  try { out += "\n22:negation " + describe(!list[0]); } catch (error) { out += "\n22:negation " + errorName(error); }
+  return out;
+}
+function probe2(v: Parcel2): string {
+  return inner2(1, v);
+}
+async function case2(): Promise<void> {
+  print("c2 # unusual-number-stored, accessor-pair, after-2000, changed in place, held in element, used in default-parameter, errors inline");
+  print("c2.helper " + helper2(new Parcel2()));
+  const victim: Parcel2 = new Parcel2();
+  let warm = 0;
+  for (let turn = 0; turn < 2000; turn++) warm += (probe2(victim)).length;
+  print("c2.warm " + warm);
+  try {
+    report("c2.before", probe2(victim));
+  } catch (error) {
+    print("c2.before " + errorName(error));
+  }
+  try {
+    {
+      victim.x = 2 ** 53;
+    }
+  } catch (error) {
+    print("c2.change " + errorName(error));
+  }
+  try {
+    report("c2.after", probe2(victim));
+  } catch (error) {
+    print("c2.after " + errorName(error));
+  }
+  try {
+    report("c2.fresh", probe2(new Parcel2()));
+  } catch (error) {
+    print("c2.fresh " + errorName(error));
+  }
+  print("c2.conversions " + conversions2.length + ": " + conversions2.slice(0, 40).join(" "));
+}
+const taken3: (string | Promise<string>)[] = [];
+const conversions3: string[] = [];
+class Root3 {
+  y = 40.75;
+  label = "wxyz";
+}
+function pickBase3() {
+  return Root3;
+}
+const bases3 = { first: Root3 };
+class Recipe3 extends (bases3.first ?? Root3) {
+  active = true;
+  x = 0.5;
+  limit: number | undefined = 3;
+  total(): number {
+    return this.y + this.x;
+  }
+  text(): string {
+    return this.label + ":" + (this.y + this.x);
+  }
+}
+function helper3(given: Recipe3): number {
+  return (given.y + given.x) * 2;
+}
+function scaled3(given: Recipe3, by: number): number {
+  return (given.y + given.x) * by;
+}
+class Reader3 {
+  read(v: Recipe3): string {
+    let out = "";
+    const local: Recipe3 = v;
+    out += "\n1:y.read " + see(() => local.y);
+    out += "\n2:label.read " + see(() => local.label);
+    out += "\n3:active.read " + see(() => local.active);
+    out += "\n4:x.read " + see(() => local.x);
+    out += "\n5:limit.read " + see(() => local.limit);
+    out += "\n6:keys " + see(() => Object.keys(local).join());
+    out += "\n7:is-extensible " + see(() => Object.isExtensible(local));
+    out += "\n8:scaled-by-apply " + see(() => scaled3.apply(undefined, [local, 1.5]));
+    out += "\n9:y.pushed-to-numbers " + see(() => { const gathered: number[] = [1, 2]; gathered.push(local.y); return gathered; });
+    out += "\n10:is-enumerable " + see(() => local.propertyIsEnumerable("y"));
+    out += "\n11:entries " + see(() => Object.entries(local).length);
+    out += "\n12:is-null " + see(() => local === null);
+    out += "\n13:descriptor " + see(() => Object.getOwnPropertyDescriptor(local, "active"));
+    out += "\n14:label.stored " + see(() => { local.label = "new"; return local.label; });
+    return out;
+  }
+}
+const reader3 = new Reader3();
+function probe3(v: Recipe3): string {
+  return reader3.read(v);
+}
+async function case3(): Promise<void> {
+  print("c3 # prototype-to-null, extends-an-expression, after-2000, changed in place, held in const-local, used in method, errors closure");
+  print("c3.helper " + helper3(new Recipe3()));
+  const victim: Recipe3 = new Recipe3();
+  let warm = 0;
+  for (let turn = 0; turn < 2000; turn++) warm += (probe3(victim)).length;
+  print("c3.warm " + warm);
+  try {
+    report("c3.before", probe3(victim));
+  } catch (error) {
+    print("c3.before " + errorName(error));
+  }
+  try {
+    {
+      Object.setPrototypeOf(victim, null);
+    }
+  } catch (error) {
+    print("c3.change " + errorName(error));
+  }
+  try {
+    report("c3.after", probe3(victim));
+  } catch (error) {
+    print("c3.after " + errorName(error));
+  }
+  try {
+    report("c3.fresh", probe3(new Recipe3()));
+  } catch (error) {
+    print("c3.fresh " + errorName(error));
+  }
+  print("c3.conversions " + conversions3.length + ": " + conversions3.slice(0, 40).join(" "));
+}
+const taken4: (string | Promise<string>)[] = [];
+class Stranger4 {
+  other = "stranger";
+  total(): string {
+    return "total of a stranger";
+  }
+}
+const conversions4: string[] = [];
+class Point4 {
+  static x = 40;
+  static limit: number | undefined = 3;
+  static label = "ab";
+  static total(): number {
+    return this.x;
+  }
+  static text(): string {
+    return this.label + ":" + (this.x);
+  }
+}
+function helper4(given: typeof Point4): number {
+  return (given.x) * 2;
+}
+function scaled4(given: typeof Point4, by: number): number {
+  return (given.x) * by;
+}
+async function probe4(v: typeof Point4): Promise<string> {
+  let out = "";
+  const checks: [string, () => unknown][] = [];
+  const deep = { within: { held: v } };
+  checks.push(["1:x.read", () => deep.within.held.x]);
+  checks.push(["2:limit.read", () => deep.within.held.limit]);
+  checks.push(["3:label.read", () => deep.within.held.label]);
+  checks.push(["4:limit.guarded", () => { let sum = 0; const it = deep.within.held.limit; if (it !== undefined) sum += it; return sum; }]);
+  checks.push(["5:typeof-value-of", () => typeof deep.within.held.valueOf()]);
+  await Promise.resolve();
+  checks.push(["6:method-on-itself", () => deep.within.held.total.call(deep.within.held)]);
+  checks.push(["7:label.repeated", () => deep.within.held.label.repeat(2)]);
+  checks.push(["8:kinds-of-values-of-an-assigned-copy", () => Object.values(Object.assign({}, deep.within.held)).map(each => typeof each).join()]);
+  checks.push(["9:some-value-is-undefined", () => Object.values(deep.within.held).some(each => each === undefined)]);
+  checks.push(["10:is-null", () => deep.within.held === null]);
+  for (const [label, run] of checks) out += "\n" + label + " " + see(run);
+  return out;
+}
+async function case4(): Promise<void> {
+  print("c4 # prototype-to-a-stranger, static-side, mid-loop, changed in place, held in nested-member, used in async, errors deferred");
+  print("c4.helper " + helper4(Point4));
+  const victim: typeof Point4 = Point4;
+  try {
+    let last = "";
+    for (let turn = 0; turn < 2000; turn++) {
+      if (turn === 1990) {
+        try {
+          {
+            Object.setPrototypeOf(victim, Stranger4.prototype);
+          }
+        } catch (error) {
+          print("c4.change " + errorName(error));
+        }
+      }
+      last = await probe4(victim);
+    }
+    report("c4.after", last);
+  } catch (error) {
+    print("c4.loop " + errorName(error));
+  }
+  try {
+    report("c4.fresh", await probe4(Point4));
+  } catch (error) {
+    print("c4.fresh " + errorName(error));
+  }
+  print("c4.conversions " + conversions4.length + ": " + conversions4.slice(0, 40).join(" "));
+}
+class Inner5 {
+  depth = 1;
+  twice(): number {
+    return this.depth * 2;
+  }
+}
+const taken5: (string | Promise<string>)[] = [];
+const conversions5: string[] = [];
+class Track5 {
+  x: number = 40.75;
+  y: number = 7;
+  label: string = "wxyz";
+  title: string = "ab";
+  inner: Inner5 = new Inner5();
+  total(): number {
+    return this.x + this.y;
+  }
+  text(): string {
+    return this.label + this.title + ":" + (this.x + this.y);
+  }
+  toString(): string {
+    return "text of " + this.text();
+  }
+}
+function helper5(given: Track5): number {
+  return (given.x + given.y) * 2;
+}
+function scaled5(given: Track5, by: number): number {
+  return (given.x + given.y) * by;
+}
+class Keeper5 {
+  constructor(public held: Track5) {}
+}
+function alter5(target: Track5): void {
+  {
+    Reflect.setPrototypeOf(target, {
+      total() {
+        return -4;
+      },
+      inherited: "from a literal",
+    });
+  }
+}
+function inner5({ held: v }: { held: Track5 }): string {
+  let out = "";
+  const keeper = new Keeper5(v);
+  out += "\n1:x.read " + describe(keeper.held.x);
+  out += "\n2:y.read " + describe(keeper.held.y);
+  out += "\n3:label.read " + describe(keeper.held.label);
+  out += "\n4:title.read " + describe(keeper.held.title);
+  out += "\n5:inner.read " + describe(keeper.held.inner);
+  out += "\n6:kinds-by-reflect-get " + describe(Object.keys(keeper.held).map(key => typeof Reflect.get(keeper.held, key)).join());
+  { const gathered: number[] = [1, 2]; gathered.push(keeper.held.y); out += "\n7:y.pushed-to-numbers " + describe(gathered); }
+  out += "\n8:inner.negation " + describe(!keeper.held.inner);
+  out += "\n9:json " + describe(JSON.stringify(keeper.held));
+  out += "\n10:json-in-a-list " + describe(JSON.stringify([keeper.held], null, 1));
+  out += "\n11:title.to-number " + describe(Number(keeper.held.title));
+  out += "\n12:inner.chained-to-string " + describe(keeper.held.inner?.toString());
+  out += "\n13:label.last " + describe(keeper.held.label.at(-1));
+  out += "\n14:title.or-other " + describe(keeper.held.title || "other");
+  return out;
+}
+function probe5(v: Track5): string {
+  return inner5({ held: v });
+}
+async function case5(): Promise<void> {
+  print("c5 # prototype-to-a-literal, class-fields-with-types, after-2000, changed in a callee, held in field, used in destructured-parameter, errors bare");
+  print("c5.helper " + helper5(new Track5()));
+  const victim: Track5 = new Track5();
+  let warm = 0;
+  for (let turn = 0; turn < 2000; turn++) warm += (probe5(victim)).length;
+  print("c5.warm " + warm);
+  try {
+    report("c5.before", probe5(victim));
+  } catch (error) {
+    print("c5.before " + errorName(error));
+  }
+  try {
+    alter5(victim);
+  } catch (error) {
+    print("c5.change " + errorName(error));
+  }
+  try {
+    report("c5.after", probe5(victim));
+  } catch (error) {
+    print("c5.after " + errorName(error));
+  }
+  try {
+    report("c5.fresh", probe5(new Track5()));
+  } catch (error) {
+    print("c5.fresh " + errorName(error));
+  }
+  print("c5.conversions " + conversions5.length + ": " + conversions5.slice(0, 40).join(" "));
+}
+const taken6: (string | Promise<string>)[] = [];
+const conversions6: string[] = [];
+function probe6(v: number[], between: () => void): string {
+  let out = "";
+  const both: [number[], number] = [v, 1];
+  try {
+    try { out += "\n1:read " + describe(both[0]); } catch (error) { out += "\n1:read " + errorName(error); }
+    try { out += "\n2:has-second " + describe(1 in both[0]); } catch (error) { out += "\n2:has-second " + errorName(error); }
+    try { both[0].copyWithin(0, 1); out += "\n3:copied-within " + describe(both[0]); } catch (error) { out += "\n3:copied-within " + errorName(error); }
+    try { out += "\n4:flat-mapped " + describe(both[0].flatMap(each => [each, each])); } catch (error) { out += "\n4:flat-mapped " + errorName(error); }
+    try { both[0].fill(3, 1); out += "\n5:filled " + describe(both[0]); } catch (error) { out += "\n5:filled " + errorName(error); }
+    between();
+    try { out += "\n6:last " + describe(both[0].at(-1)); } catch (error) { out += "\n6:last " + errorName(error); }
+    try { out += "\n7:every-typeof " + describe(both[0].every(each => typeof each === "number")); } catch (error) { out += "\n7:every-typeof " + errorName(error); }
+    try { out += "\n8:typeof-is-undefined " + describe(typeof both[0] === "undefined"); } catch (error) { out += "\n8:typeof-is-undefined " + errorName(error); }
+    try { if (both[0].length < 40) both[0].unshift(0); out += "\n9:unshifted " + describe(both[0]); } catch (error) { out += "\n9:unshifted " + errorName(error); }
+    try { out += "\n10:from " + describe(Array.from(both[0])); } catch (error) { out += "\n10:from " + errorName(error); }
+    try { let sum = 0; for (let i = 0; i < both[0].length; i++) sum += both[0][i]; out += "\n11:indexed " + describe(sum); } catch (error) { out += "\n11:indexed " + errorName(error); }
+  } finally {
+    out += "\nfinally reached";
+  }
+  return out;
+}
+async function case6(): Promise<void> {
+  print("c6 # prototype-to-a-proxy, numbers, mid-body, changed in place, held in tuple-element, used in try-finally, errors inline");
+  const victim: number[] = [4, 5];
+  try {
+    report("c6.during", probe6(victim, () => {
+      try {
+        {
+          Object.setPrototypeOf(victim, new Proxy(Object.getPrototypeOf(victim) ?? {}, {}));
+        }
+      } catch (error) {
+        print("c6.change " + errorName(error));
+      }
+    }));
+  } catch (error) {
+    print("c6.during " + errorName(error));
+  }
+  try {
+    report("c6.after", probe6(victim, nothing));
+  } catch (error) {
+    print("c6.after " + errorName(error));
+  }
+  try {
+    report("c6.fresh", probe6([1, 2, 3], nothing));
+  } catch (error) {
+    print("c6.fresh " + errorName(error));
+  }
+  print("c6.conversions " + conversions6.length + ": " + conversions6.slice(0, 40).join(" "));
+}
+const taken7: (string | Promise<string>)[] = [];
+const conversions7: string[] = [];
+function alter7(target: string[]): void {
+  {
+    Object.seal(target);
+  }
+}
+function probe7(v: string[]): string {
+  let out = "";
+  const bag = { held: v };
+  const inner = (): void => {
+    out += "\n1:read " + describe(bag.held);
+    out += "\n2:typeof-is-number " + describe(typeof bag.held === "number");
+    out += "\n3:is-array " + describe(Array.isArray(bag.held));
+    out += "\n4:last-index-of " + describe(bag.held.lastIndexOf(bag.held[0]));
+    out += "\n5:includes " + describe(bag.held.includes("cd"));
+    out += "\n6:with-one-replaced " + describe(bag.held.with(0, "w"));
+    out += "\n7:some-undefined " + describe(bag.held.some(each => each === undefined));
+    out += "\n8:flat-mapped " + describe(bag.held.flatMap(each => [each, each]));
+    out += "\n9:shifted " + describe(bag.held.shift());
+    out += "\n10:cloned " + describe(structuredClone(bag.held));
+  };
+  inner();
+  return out;
+}
+async function case7(): Promise<void> {
+  print("c7 # frozen-later, texts, first, changed in a callee, held in literal-member, used in closure, errors bare");
+  const victim: string[] = ["ab", "cd"];
+  try {
+    alter7(victim);
+  } catch (error) {
+    print("c7.change " + errorName(error));
+  }
+  try {
+    report("c7.after", probe7(victim));
+  } catch (error) {
+    print("c7.after " + errorName(error));
+  }
+  try {
+    report("c7.fresh", probe7(["ab", "cd"]));
+  } catch (error) {
+    print("c7.fresh " + errorName(error));
+  }
+  print("c7.conversions " + conversions7.length + ": " + conversions7.slice(0, 40).join(" "));
+}
+const taken8: (string | Promise<string>)[] = [];
+const conversions8: string[] = [];
+class Root8 {
+  x = 40;
+}
+class Recipe8 extends Root8 {
+  label = "wxyz";
+  total(): number {
+    return this.x;
+  }
+  text(): string {
+    return this.label + ":" + (this.x);
+  }
+}
+function helper8(given: Recipe8): number {
+  return (given.x) * 2;
+}
+function scaled8(given: Recipe8, by: number): number {
+  return (given.x) * by;
+}
+class Keeper8 {
+  constructor(public held: Recipe8) {}
+}
+class Reader8 {
+  read(v: Recipe8): string {
+    let out = "";
+    const keeper = new Keeper8(v);
+    out += "\n1:x.read " + describe(keeper.held.x);
+    out += "\n2:label.read " + describe(keeper.held.label);
+    out += "\n3:x.min " + describe(Math.min(keeper.held.x, 3));
+    out += "\n4:scaled-by-apply " + describe(scaled8.apply(undefined, [keeper.held, 1.5]));
+    out += "\n5:label.unary-plus " + describe(+keeper.held.label);
+    out += "\n6:cloned " + describe(structuredClone(keeper.held));
+    out += "\n7:instance-of-object " + describe(keeper.held instanceof Object);
+    out += "\n8:x.is-index " + describe(keeper.held.x in table);
+    out += "\n9:label.is-itself " + describe(Object.is(keeper.held.label, keeper.held.label));
+    out += "\n10:label.typeof-is-symbol " + describe(typeof keeper.held.label === "symbol");
+    out += "\n11:json " + describe(JSON.stringify(keeper.held));
+    out += "\n12:x.typeof-is-string " + describe(typeof keeper.held.x === "string");
+    out += "\n13:x.typeof-is-number " + describe(typeof keeper.held.x === "number");
+    return out;
+  }
+}
+const reader8 = new Reader8();
+function probe8(v: Recipe8): string {
+  return reader8.read(v);
+}
+async function case8(): Promise<void> {
+  print("c8 # own-member-over-a-method, subclass, after-2000, changed in place, held in field, used in method, errors bare");
+  print("c8.helper " + helper8(new Recipe8()));
+  const victim: Recipe8 = new Recipe8();
+  let warm = 0;
+  for (let turn = 0; turn < 2000; turn++) warm += (probe8(victim)).length;
+  print("c8.warm " + warm);
+  try {
+    report("c8.before", probe8(victim));
+  } catch (error) {
+    print("c8.before " + errorName(error));
+  }
+  try {
+    {
+      victim.total = function (): number {
+        return 6;
+      };
+    }
+  } catch (error) {
+    print("c8.change " + errorName(error));
+  }
+  try {
+    report("c8.after", probe8(victim));
+  } catch (error) {
+    print("c8.after " + errorName(error));
+  }
+  try {
+    report("c8.fresh", probe8(new Recipe8()));
+  } catch (error) {
+    print("c8.fresh " + errorName(error));
+  }
+  print("c8.conversions " + conversions8.length + ": " + conversions8.slice(0, 40).join(" "));
+}
+try {
+  await case1();
+} catch (error) {
+  print("c1.escaped " + errorName(error));
+}
+try {
+  await case2();
+} catch (error) {
+  print("c2.escaped " + errorName(error));
+}
+try {
+  await case3();
+} catch (error) {
+  print("c3.escaped " + errorName(error));
+}
+try {
+  await case4();
+} catch (error) {
+  print("c4.escaped " + errorName(error));
+}
+try {
+  await case5();
+} catch (error) {
+  print("c5.escaped " + errorName(error));
+}
+try {
+  await case6();
+} catch (error) {
+  print("c6.escaped " + errorName(error));
+}
+try {
+  await case7();
+} catch (error) {
+  print("c7.escaped " + errorName(error));
+}
+try {
+  await case8();
+} catch (error) {
+  print("c8.escaped " + errorName(error));
+}
+export {};

@@ -1,0 +1,8 @@
+String.prototype: no error
+Map.prototype: no error
+Promise.prototype: TypeError
+Function.prototype: TypeError
+Object.prototype: TypeError
+Object.prototype, defineProperty: TypeError
+1 1 undefined undefined undefined undefined
+true,false,true,true,true,false

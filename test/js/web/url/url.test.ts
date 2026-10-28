@@ -140,6 +140,90 @@ describe("url", () => {
     expect(hn.hostname).toBe("xn--s5a.com");
   });
 
+  // URL Standard, IPv6 parser: after a piece and a ":", the end of the address is a failure.
+  it("rejects an IPv6 host that ends with a single colon (URL Standard IPv6 parser)", async () => {
+    for (const input of [
+      "http://[::1:]/",
+      "http://[::1:]",
+      "http://[1::2:]/",
+      "http://[::1:]:81/",
+      "http://[1:2::3:4:]/path?q#f",
+      "http://[::A:\t]/",
+      "http://[::a\n:]/",
+      "ws://[::1:]/",
+      "file://[::1:]/x",
+      "foo://[::1:]/",
+    ]) {
+      expect([input, URL.canParse(input)]).toEqual([input, false]);
+      expect([input, URL.parse(input)]).toEqual([input, null]);
+      expect(() => new URL(input)).toThrow(TypeError);
+    }
+    expect(() => new URL("/x", "http://[::1:]/")).toThrow(TypeError);
+    expect(() => new URL("//[::1:]/x", "http://example.com/")).toThrow(TypeError);
+    expect(() => new Request("http://[::1:]/")).toThrow(TypeError);
+    expect(() => new WebSocket("ws://[::1:]/")).toThrow(expect.objectContaining({ name: "SyntaxError" }));
+    expect(await fetch("http://[::1:]:1/").catch(e => e)).toBeInstanceOf(TypeError);
+
+    // A "::" at the end is a compression, so these stay valid.
+    for (const [input, href] of [
+      ["http://[1::]/", "http://[1::]/"],
+      ["http://[::]/", "http://[::]/"],
+      ["http://[1:2:3:4:5:6:7::]/", "http://[1:2:3:4:5:6:7:0]/"],
+      ["http://[::1]:81/", "http://[::1]:81/"],
+    ]) {
+      expect([input, new URL(input).href]).toEqual([input, href]);
+    }
+
+    // The setters use the same host parser. A value that it rejects leaves the URL unchanged.
+    const before = "http://example.com:8080/p";
+    const set = (key: "host" | "hostname", value: string) => {
+      const url = new URL(before);
+      url[key] = value;
+      return url.href;
+    };
+    expect({
+      "host = [::1:]": set("host", "[::1:]"),
+      "host = [1::2:]": set("host", "[1::2:]"),
+      "host = [::1:]:81": set("host", "[::1:]:81"),
+      "hostname = [::1:]": set("hostname", "[::1:]"),
+      "hostname = [1::2:]": set("hostname", "[1::2:]"),
+      "host = [::1]": set("host", "[::1]"),
+      "host = [::1]:81": set("host", "[::1]:81"),
+      "hostname = [1::]": set("hostname", "[1::]"),
+    }).toEqual({
+      "host = [::1:]": before,
+      "host = [1::2:]": before,
+      "host = [::1:]:81": before,
+      "hostname = [::1:]": before,
+      "hostname = [1::2:]": before,
+      "host = [::1]": "http://[::1]:8080/p",
+      "host = [::1]:81": "http://[::1]:81/p",
+      "hostname = [1::]": "http://[1::]:8080/p",
+    });
+    const url = new URL(before);
+    expect(() => (url.href = "http://[::1:]/")).toThrow(TypeError);
+    expect(url.href).toBe(before);
+  });
+
+  // URL Standard, IPv6 parser: an IPv4 address takes the last two pieces, so it can start at piece 6 or before.
+  it("parses a compressed IPv6 host that ends with an IPv4 address (URL Standard IPv6 parser)", () => {
+    for (const [input, href] of [
+      ["http://[2001:db8:1234::5efe:127.0.0.1]/", "http://[2001:db8:1234::5efe:7f00:1]/"],
+      ["http://[a:b:c:d::127.0.0.1]/", "http://[a:b:c:d::7f00:1]/"],
+      ["http://[::1:2:3:4:1.2.3.4]/", "http://[::1:2:3:4:102:304]/"],
+      ["http://[1:2:3:4:5::1.2.3.4]/", "http://[1:2:3:4:5:0:102:304]/"],
+      ["http://[::1.2.3.4]/", "http://[::102:304]/"],
+    ]) {
+      expect([input, new URL(input).href]).toEqual([input, href]);
+    }
+    for (const input of ["http://[2001:db8:1234:4:5::5efe:127.0.0.1]/", "http://[1:2:3:4:5:6::1.2.3.4]/"]) {
+      expect([input, URL.canParse(input)]).toEqual([input, false]);
+    }
+    const url = new URL("http://example.com/");
+    url.hostname = "[2001:db8:1234::5efe:10.0.0.1]";
+    expect(url.href).toBe("http://[2001:db8:1234::5efe:a00:1]/");
+  });
+
   it("rejects invalid punycode labels however they are spelled in the input (like Node)", () => {
     for (const input of [
       "https://xn--a.com/",

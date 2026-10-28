@@ -209,6 +209,29 @@ describe("URLPattern", () => {
     });
   });
 
+  // A URL input and a hostname input go through the URL host parser before they are matched.
+  test("an IPv6 hostname input that ends with a single colon does not match", () => {
+    const loopback = new URLPattern({ hostname: "[\\:\\:1]" });
+    const any = new URLPattern({ hostname: "*" });
+    expect({
+      url: loopback.test("http://[::1]/"),
+      hostname: loopback.test({ hostname: "[::1]" }),
+      urlWithColon: loopback.test("http://[::1:]/"),
+      hostnameWithColon: loopback.test({ hostname: "[::1:]" }),
+      baseWithColon: loopback.test("/", "http://[::1:]/"),
+      anyUrlWithColon: any.exec("http://[::1:]/"),
+      anyHostnameWithColon: any.exec({ hostname: "[::1:]" }),
+    }).toEqual({
+      url: true,
+      hostname: true,
+      urlWithColon: false,
+      hostnameWithColon: false,
+      baseWithColon: false,
+      anyUrlWithColon: null,
+      anyHostnameWithColon: null,
+    });
+  });
+
   // The tokenizer emits one token per code point, and the synthetic allocation limit caps the token list.
   test("throws for a pattern with more tokens than the token list allows", () => {
     const dots = (length: number) => Buffer.alloc(length, ".").toString();

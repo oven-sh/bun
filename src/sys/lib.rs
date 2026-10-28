@@ -9294,6 +9294,20 @@ pub fn write_all_to_stdio(fd: Fd, mut bytes: &[u8]) -> Maybe<()> {
     Ok(())
 }
 
+/// Whether a write to `fd` failed with `errno` because the reader of a pipe or a socket left (`| head`).
+pub fn reader_left(fd: Fd, errno: E) -> bool {
+    // A socket whose reader left with unread bytes is reset. macOS says ENOTCONN for the write that the close lands in.
+    let hung_up = errno == E::EPIPE
+        || errno == E::ECONNRESET
+        || (cfg!(target_os = "macos") && errno == E::ENOTCONN);
+    // From a file the same errno is a loss: on Windows, ECONNRESET is also a network share that went away.
+    hung_up
+        && matches!(
+            File::borrow(&fd).kind(),
+            Ok(FileKind::NamedPipe | FileKind::UnixDomainSocket)
+        )
+}
+
 /// Best-effort write-all loop. Returns `false` on I/O error / zero-write so
 /// `ScopedLogger::log` can disable the scope; "quiet" callers discard the bool.
 fn fd_write_all_quiet(fd: Fd, bytes: &[u8]) -> bool {

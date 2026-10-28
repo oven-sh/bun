@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
 import fs from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -556,5 +556,137 @@ describe("bun", () => {
     const listed = stdout.split(/\r?\n/).flatMap(line => /^ {2}(check|lint|fmt) /.exec(line)?.[1] ?? []);
     expect(listed).toEqual(["check", "lint", "fmt"]);
     expect(exitCode).toBe(0);
+  });
+
+  // `Bun.spawn` and Node give a child a socket as stdout. When its reader leaves, the write that waits is not
+  // always told EPIPE: Linux says ECONNRESET if that write sent nothing yet, and macOS can say ENOTCONN.
+  describe.concurrent("a reader that leaves a socket is not a failed write", () => {
+    const fmt = [bunExe(), "fmt", "--stdin-filepath", "a.js"];
+    const ugly = Buffer.from("a  =  1\n");
+    const [AF_UNIX, SOCK_STREAM, MSG_DONTWAIT] = [1, 1, 0x40];
+
+    /** The socket calls of libc. Not for Windows. */
+    function libcSockets() {
+      const machine = process.arch === "arm64" ? "aarch64" : "x86_64";
+      const { symbols } = dlopen(isMacOS ? "libSystem.B.dylib" : isMusl ? `libc.musl-${machine}.so.1` : "libc.so.6", {
+        socket: { args: ["i32", "i32", "i32"], returns: "i32" },
+        socketpair: { args: ["i32", "i32", "i32", "ptr"], returns: "i32" },
+        send: { args: ["i32", "ptr", "u64", "i32"], returns: "i64" },
+        close: { args: ["i32"], returns: "i32" },
+      });
+      return symbols;
+    }
+
+    /** A stream socket that was never connected. A write to it fails with ENOTCONN. */
+    function unconnectedSocket(): Disposable & { fd: number } {
+      const libc = libcSockets();
+      const fd = libc.socket(AF_UNIX, SOCK_STREAM, 0);
+      if (fd < 0) throw new Error("socket failed");
+      return { fd, [Symbol.dispose]: () => void libc.close(fd) };
+    }
+
+    /** Whether this process may read `/proc/<pid>/syscall` of a child, as `spawnWithReaderThatLeaves` does. */
+    function canWatchAChild(): boolean {
+      // The child waits for stdin, so it is alive for the read.
+      const child = Bun.spawn({
+        cmd: [bunExe(), "-e", "await Bun.stdin.text()"],
+        env: bunEnv,
+        stdio: ["pipe", "ignore", "ignore"],
+      });
+      try {
+        fs.readFileSync(`/proc/${child.pid}/syscall`);
+        return true;
+      } catch {
+        // Yama forbids the read when `kernel.yama.ptrace_scope` is 2 or 3. Some sandboxes do not have the file.
+        return false;
+      } finally {
+        child.kill();
+      }
+    }
+
+    /**
+     * Linux only. Runs `cmd` with a socket as stdout, like the one that `Bun.spawn` gives a child for `"pipe"`, and
+     * closes the reading end while the first write of the process waits with nothing sent. Linux fails that write
+     * with ECONNRESET. A write that starts after the reader left gets EPIPE.
+     */
+    async function spawnWithReaderThatLeaves(options: {
+      cmd: string[];
+      cwd?: string;
+      env?: Record<string, string | undefined>;
+      stdin?: Buffer;
+    }) {
+      const libc = libcSockets();
+      const ends = new Int32Array(2);
+      if (libc.socketpair(AF_UNIX, SOCK_STREAM, 0, ends) !== 0) throw new Error("socketpair failed");
+      const [reader, writer] = ends;
+      // A full socket: the next write to it sleeps.
+      const filler = Buffer.alloc(64 * 1024);
+      while (Number(libc.send(writer, filler, filler.length, MSG_DONTWAIT)) > 0) {}
+
+      await using proc = Bun.spawn({ ...options, stdin: options.stdin ?? "ignore", stdout: writer, stderr: "pipe" });
+      libc.close(writer);
+      try {
+        // /proc/<pid>/syscall starts with the number of the call that the main thread sleeps in and its first argument.
+        const write = process.arch === "arm64" ? "64" : "1";
+        const sleepsInWrite = () => {
+          try {
+            return fs.readFileSync(`/proc/${proc.pid}/syscall`, "utf8").startsWith(`${write} 0x1 `);
+          } catch (error: any) {
+            // The process is gone. The loop reports it.
+            if (error?.code === "ENOENT" || error?.code === "ESRCH") return false;
+            throw error;
+          }
+        };
+        while (!sleepsInWrite()) {
+          // A process that a signal ended has a `signalCode` and no `exitCode`.
+          if (proc.exitCode !== null || proc.signalCode !== null) {
+            const stderr = await proc.stderr.text();
+            throw new Error(`${options.cmd.join(" ")} exited before it wrote to stdout: ${stderr}`);
+          }
+          await Bun.sleep(1);
+        }
+      } finally {
+        libc.close(reader);
+      }
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    // A Linux host that forbids the read of `/proc/<pid>/syscall` skips, except in CI.
+    const cannotWatchTheWrite = !isLinux || (!isCI && !canWatchAChild());
+
+    test.skipIf(cannotWatchTheWrite)("bun fmt, ECONNRESET", async () => {
+      using dir = tempDir("socket-reader-leaves", {});
+      const result = await spawnWithReaderThatLeaves({ cmd: fmt, env: bunEnv, cwd: String(dir), stdin: ugly });
+      expect(result).toEqual({ stderr: "", exitCode: 0 });
+    });
+
+    test.skipIf(cannotWatchTheWrite)("bun completions, ECONNRESET", async () => {
+      using home = tempDir("socket-reader-leaves", {});
+      // With a bunx on PATH, the command does not put a link to itself next to the executable.
+      fs.symlinkSync(bunExe(), join(String(home), isDebug ? "bunx-debug" : "bunx"));
+      const env = { HOME: String(home), BUN_INSTALL: undefined, SHELL: "/bin/bash", PATH: `${home}:${bunEnv.PATH}` };
+      const result = await spawnWithReaderThatLeaves({ cmd: [bunExe(), "completions"], env: { ...bunEnv, ...env } });
+      expect(result).toEqual({ stderr: "", exitCode: 0 });
+    });
+
+    // macOS says ENOTCONN when the reader leaves during the write, and also when the socket never had a reader.
+    // A test can make only the second on purpose. Linux says ENOTCONN only for the second, so there the write
+    // failed. The test knows the errno of these two kernels only.
+    test.skipIf(!isLinux && !isMacOS)("bun fmt, ENOTCONN", async () => {
+      using dir = tempDir("socket-reader-leaves", {});
+      using socket = unconnectedSocket();
+      await using proc = Bun.spawn({
+        cmd: fmt,
+        env: bunEnv,
+        cwd: String(dir),
+        stdin: ugly,
+        stdout: socket.fd,
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      const failed = "error: Cannot write standard output: ENOTCONN: Transport endpoint is not connected\n";
+      expect({ stderr, exitCode }).toEqual(isMacOS ? { stderr: "", exitCode: 0 } : { stderr: failed, exitCode: 2 });
+    });
   });
 });

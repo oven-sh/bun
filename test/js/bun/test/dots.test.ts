@@ -138,6 +138,42 @@ test("a console group with no label does not break the line of dots", async () =
   });
 });
 
+test("a console call whose message is not printed does not break the line of dots", async () => {
+  using dir = tempDir("dots-no-message", {
+    "no-message.test.ts": `
+      import { expect, test } from "bun:test";
+      test("before", () => {});
+      test("the message throws", () => {
+        const value = {
+          [Symbol.for("nodejs.util.inspect.custom")]() {
+            throw new Error("no message");
+          },
+        };
+        expect(() => console.log("not printed", value)).toThrow("no message");
+        expect(() => console.error("not printed", value)).toThrow("no message");
+      });
+      test("after", () => {});
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--dots", "./no-message.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    stderr: normalizeBunSnapshot(stderr, String(dir)),
+    exitCode,
+  }).toEqual({
+    stdout: "bun test <version> (<revision>)",
+    stderr: "...\n\n3 pass\n0 fail\n2 expect() calls\nRan 3 tests across 1 file.",
+    exitCode: 0,
+  });
+});
+
 // The console call of a Worker tells the reporter that output follows, on its own thread. The two console
 // calls of a pair are made at the same moment: the line of dots ends once.
 test("console calls of two threads end the line of dots once", async () => {
@@ -202,6 +238,111 @@ test("console calls of two threads end the line of dots once", async () => {
       ".\n\ntwo-threads.test.ts:\n" +
       "worker\n..\n".repeat(pairs - 1) +
       `worker\n.\n\n${2 * pairs} pass\n0 fail\nRan ${2 * pairs} tests across 1 file.`,
+    exitCode: 0,
+  });
+});
+
+// A message of the Worker over 64 KiB is on stderr in part, and its hook waits. The main thread then prints to
+// stderr too. The line feed that ends the line of dots is written after the message of the Worker, as the output
+// of the main thread is. In a "nested" round the hook of the Worker prints, and the line feed is before "inner".
+test("a console call does not end the line of dots inside a message of another thread on the same stream", async () => {
+  // The state of the message of the main thread when its first byte is written.
+  const kinds = ["stage", "direct", "heap", "streaming", "nested"];
+  const rounds = 2 * kinds.length;
+  using dir = tempDir("dots-inside-message", {
+    "inside-message.test.ts": `
+      import { afterAll, beforeAll, test } from "bun:test";
+      const kinds = ${JSON.stringify(kinds)};
+      const text = (length: number) => ({
+        [Symbol.for("nodejs.util.inspect.custom")]: () => Buffer.alloc(length, "m").toString(),
+      });
+      const print = {
+        stage: () => console.error("main"),
+        direct: () => console.error("main", Buffer.alloc(5000, "m").toString()),
+        heap: () => console.error("main", text(5000)),
+        streaming: () => console.error("main", text(70_000)),
+        nested: () => {},
+      };
+      // [0]: the round. [1]: the message of that round is on the stream in part.
+      // [2]: the Worker can complete the message. [3]: the message is complete.
+      const shared = new Int32Array(new SharedArrayBuffer(16));
+      let worker: Worker;
+      beforeAll(async () => {
+        worker = new Worker(new URL("./worker.ts", import.meta.url).href);
+        const ready = new Promise(resolve => (worker.onmessage = resolve));
+        worker.postMessage(shared.buffer);
+        await ready;
+      });
+      afterAll(() => worker.terminate());
+      for (let round = 1; round <= ${rounds}; round++) {
+        // The dot of this test is printed while the Worker is inside its message.
+        test("the Worker starts a message " + round, () => {
+          Atomics.store(shared, 0, round);
+          Atomics.notify(shared, 0);
+          while (Atomics.load(shared, 1) !== round) Atomics.wait(shared, 1, round - 1);
+        });
+        test("the main thread prints " + round, () => {
+          Atomics.store(shared, 2, round);
+          Atomics.notify(shared, 2);
+          print[kinds[(round - 1) % kinds.length]]();
+          while (Atomics.load(shared, 3) !== round) Atomics.wait(shared, 3, round - 1);
+        });
+      }
+    `,
+    "worker.ts": `
+      const kinds = ${JSON.stringify(kinds)};
+      self.onmessage = ({ data }) => {
+        const shared = new Int32Array(data);
+        postMessage("ready");
+        const start = "START" + Buffer.alloc(70_000, "a").toString();
+        const end = Buffer.alloc(300_000, "b").toString() + "END";
+        for (let round = 1; ; round++) {
+          Atomics.wait(shared, 0, round - 1);
+          const hook = {
+            [Symbol.for("nodejs.util.inspect.custom")]() {
+              Atomics.store(shared, 1, round);
+              Atomics.notify(shared, 1);
+              Atomics.wait(shared, 2, round - 1);
+              if (kinds[(round - 1) % kinds.length] === "nested") console.error("inner");
+              return "hook";
+            },
+          };
+          console.error(start, hook, end);
+          Atomics.store(shared, 3, round);
+          Atomics.notify(shared, 3);
+        }
+      };
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--dots", "./inside-message.test.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  // The dot of the first test of a round is in the message of the Worker, after the bytes that were written.
+  const short = (line: string) =>
+    line
+      .replace(/^STARTa+\.a*/, "START<a>.")
+      .replace(/a{100,}/g, "<a>")
+      .replace(/b{100,}/g, "<b>")
+      .replace(/m{100,}/g, "<m>");
+  const lines = ["", "inside-message.test.ts:"];
+  for (let round = 0; round < rounds; round++) {
+    const kind = kinds[round % kinds.length];
+    if (kind === "nested") lines.push("START<a>. ", "inner", "hook <b>END", ".");
+    else lines.push("START<a>. hook <b>END", "", kind === "stage" ? "main" : "main <m>", ".");
+  }
+  expect({
+    stdout: normalizeBunSnapshot(stdout, String(dir)),
+    lines: stderr.split("\n").slice(0, lines.length).map(short),
+    exitCode,
+  }).toEqual({
+    stdout: "bun test <version> (<revision>)",
+    lines,
     exitCode: 0,
   });
 });

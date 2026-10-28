@@ -394,6 +394,8 @@ struct ConsoleWriter<'a> {
     hold: Hold,
     /// This message took the stream mutex.
     locked: bool,
+    /// [`before_print`] runs for this message. It does not for count, timeEnd, timeLog and an argument-free assert.
+    announce: bool,
     stream: Destination,
     heap: Vec<u8>,
     /// Not a reference: user code runs while the message is formatted, and it can call the console again.
@@ -423,6 +425,15 @@ impl ConsoleWriter<'_> {
         // caller checked that `bytes` fits after `len`. `bytes` is not a part
         // of either: no slice of them outlives a method of the writer.
         unsafe { core::ptr::copy_nonoverlapping(bytes.as_ptr(), self.ptr.add(len), bytes.len()) };
+    }
+
+    /// The first byte of the message is about to reach the fd.
+    #[inline]
+    fn before_first_write(&self) {
+        debug_assert!(stream_mutex(self.stream).is_held_by_current_thread());
+        if self.announce {
+            before_print();
+        }
     }
 
     /// Writes to the stream of the message. A failed write is not reported.
@@ -516,6 +527,7 @@ impl ConsoleWriter<'_> {
             });
             self.locked = true;
         }
+        self.before_first_write();
     }
 
     /// Gives back the stream mutex that this message took.
@@ -606,6 +618,7 @@ impl ConsoleWriter<'_> {
     fn deliver(&self, outgrew_stage: bool) {
         if with_console(self.console, |console| console.locked == [false; 2]) {
             let _lock = stream_mutex(self.stream).lock_guard();
+            self.before_first_write();
             if outgrew_stage {
                 self.write_fd_end(self.held());
             } else {
@@ -633,6 +646,7 @@ impl ConsoleWriter<'_> {
             console.holds(self.stream)
         });
         let _lock = (!held).then(|| stream_mutex(self.stream).lock_guard());
+        self.before_first_write();
         self.write_fd_end(self.held());
     }
 
@@ -690,6 +704,7 @@ fn emit(
     console: *mut ConsoleObject,
     stream: Destination,
     args: &[JSValue],
+    announce: bool,
     format: impl FnOnce(&mut dyn bun_io::Write) -> JsResult<()>,
 ) -> JsResult<()> {
     // A message of primitives only runs no user code, so no message starts inside it.
@@ -703,6 +718,7 @@ fn emit(
         cap: STAGE_SIZE,
         hold: Hold::Stage,
         locked: false,
+        announce,
         stream,
         heap: Vec::new(),
         console,
@@ -780,8 +796,7 @@ fn message_with_type_and_level_(
     });
 
     if is_start_group && len == 0 {
-        // No label prints nothing, so return before the before-print hook of
-        // `bun test` runs. An explicit `undefined` is a label and is printed.
+        // No label prints nothing. An explicit `undefined` is a label and is printed.
         return Ok(());
     }
 
@@ -821,7 +836,7 @@ fn print_assertion_failed(console: *mut ConsoleObject) -> JsResult<()> {
     } else {
         "Assertion failed\n"
     };
-    emit(console, Destination::Stderr, &[], |writer| {
+    emit(console, Destination::Stderr, &[], false, |writer| {
         let _ = writer.write_all(text.as_bytes());
         Ok(())
     })
@@ -836,8 +851,6 @@ fn print_message(
     global: &JSGlobalObject,
     vals: &[JSValue],
 ) -> JsResult<()> {
-    before_print();
-
     // `console.assert` arrives with `MessageLevel::Error`.
     let use_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error);
     let enable_colors = if use_stderr {
@@ -860,7 +873,7 @@ fn print_message(
         &[]
     };
 
-    emit(console, stream, args, |writer| {
+    emit(console, stream, args, true, |writer| {
         write_message(
             message_type,
             level,
@@ -6098,6 +6111,7 @@ pub(crate) extern "C" fn Bun__ConsoleObject__count(
         vm_console(global_this),
         Destination::Stdout,
         &[],
+        false,
         |writer| {
             if Output::enable_ansi_colors_stdout() {
                 let _ = writeln!(
@@ -6186,7 +6200,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
 
     // What `Output` buffers for this thread comes first, as before.
     Output::flush();
-    let _ = emit(vm_console(global), Destination::Stderr, &[], |writer| {
+    let console = vm_console(global);
+    let _ = emit(console, Destination::Stderr, &[], false, |writer| {
         write_elapsed(writer, &elapsed, slice);
         let _ = writer.write_all(b"\n");
         Ok(())
@@ -6236,7 +6251,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
 
     // What `Output` buffers for this thread comes first, as before.
     Output::flush();
-    let result = emit(vm_console(global), Destination::Stderr, &[], |writer| {
+    let console = vm_console(global);
+    let result = emit(console, Destination::Stderr, &[], false, |writer| {
         write_elapsed(writer, &elapsed, slice);
 
         // `Formatter` has a `Drop` impl, so it is made with `new()` and then changed (E0509).

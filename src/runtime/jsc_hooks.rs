@@ -1952,7 +1952,7 @@ fn console_on_before_print() {
     }
 }
 
-/// One console call at a time: a Worker calls from its own thread. The test thread takes no lock.
+/// Two threads can print to different streams at once, so their calls need this lock. The runner's own code takes none.
 #[inline(never)]
 fn console_on_before_print_in_test() {
     static LOCK: bun_threading::Mutex = bun_threading::Mutex::new();

@@ -3611,14 +3611,12 @@ private:
     JSValue readDOMException()
     {
         CachedStringRef message;
-        if (!readStringData(message))
-            return JSValue();
         CachedStringRef name;
-        if (!readStringData(name))
-            return JSValue();
         String stack;
-        if (m_version >= FirstVersionWithDOMExceptionStack && !readNullableString(stack))
+        if (!readStringData(message) || !readStringData(name) || (m_version >= FirstVersionWithDOMExceptionStack && !readNullableString(stack))) {
+            fail();
             return JSValue();
+        }
         auto exception = DOMException::create(message->string(), name->string());
         JSValue wrapper = getJSValue(exception);
         // Never the frames the wrapper just captured here: undefined when the original had no string stack.

@@ -37,7 +37,7 @@ class Program implements AsyncDisposable {
   constructor(args: string[], source: string) {
     this.#proc = spawn({
       cmd: [bunExe(), ...args, "-e", source],
-      // A frontend is dropped once 192 MB were queued for it since it last took a byte.
+      // A frontend is dropped once 128 MB were queued for it since it last took a byte.
       // That is too much for a test, so the tests set 4 MB.
       env: { ...env, BUN_DEBUG_TEST_INSPECTOR_BACKLOG_MB: "4" },
       stdin: "pipe",

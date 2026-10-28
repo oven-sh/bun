@@ -102,7 +102,7 @@ enum class ConnectionStatus : int32_t {
 };
 
 // A frontend is dropped once this much was queued for it since it last took a byte. Node queues without bound.
-static size_t stalledFrontendBacklog = 192 * 1024 * 1024;
+static size_t stalledFrontendBacklog = 128 * 1024 * 1024;
 
 class BunInspectorConnection : public ThreadSafeRefCounted<BunInspectorConnection>, public Inspector::FrontendChannel {
 
@@ -1136,7 +1136,7 @@ extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObje
 {
     if (!debuggerScriptExecutionContext) {
         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
-        // For the tests: megabytes, so that a test reaches the limit without 192 MB of messages.
+        // For the tests: megabytes, so that a test reaches the limit without 128 MB of messages.
         if (const char* megabytes = getenv("BUN_DEBUG_TEST_INSPECTOR_BACKLOG_MB")) {
             if (auto parsed = parseInteger<uint32_t>(StringView::fromLatin1(megabytes)))
                 stalledFrontendBacklog = static_cast<size_t>(*parsed) * 1024 * 1024;

@@ -799,8 +799,8 @@ declare module "bun" {
      * `"MSK-3"` (three hours east of UTC). Bun reads a POSIX value from
      * `"XYZ-14"` (14 hours east) to `"XYZ12"` (12 hours west). For an offset
      * with minutes or a zone with daylight saving time, use the time zone
-     * name. A standalone executable and a macro do not read a POSIX value
-     * when they start.
+     * name. A standalone executable built without `--aot` and a macro do not
+     * read a POSIX value when they start.
      */
     TZ?: string;
   }

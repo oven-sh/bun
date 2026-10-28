@@ -126,7 +126,9 @@ impl PosixLoop {
     }
 
     pub fn update_date(&self) {
-        c::uws_loop_date_header_timer_update(self);
+        // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
+        // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
+        unsafe { c::uws_loop_date_header_timer_update(self) };
     }
 
     pub fn iteration_number(&self) -> u64 {
@@ -239,7 +241,7 @@ impl PosixLoop {
             // Full pass with close dispatch deferred to the next loop point.
             c::us_nq_loop_drain(self);
         }
-        if self.internal_loop_data.quic_head.get().is_null() {
+        if !self.internal_loop_data.has_quic() {
             return;
         }
         c::us_quic_loop_flush_if_pending(self);
@@ -256,7 +258,7 @@ impl PosixLoop {
 
     pub fn wakeup(&self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_wakeup_loop(core::ptr::from_ref(self).cast_mut()) };
+        unsafe { c::us_wakeup_loop(self) };
     }
 
     pub fn tick(&self) {
@@ -280,12 +282,16 @@ impl PosixLoop {
     /// `closeAllSocketGroups()` must drain it explicitly or every just-closed
     /// `us_socket_t` (libc-allocated) shows up as an LSAN leak.
     pub fn drain_closed_sockets(&self) {
-        c::us_internal_free_closed_sockets(self);
+        // SAFETY: nothing up the stack is dispatching this loop's events, so nothing still holds a
+        // closed socket: both callers run at teardown, once the loop has stopped.
+        unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
     /// Runs the uWS pre handler, which flushes queued `publish()` batches and leftover corks.
     pub fn flush_pending_writes(&self) {
-        c::uws_loop_flush_pending_writes(self);
+        // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
+        // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
+        unsafe { c::uws_loop_flush_pending_writes(self) };
     }
 
     /// `us_socket_group_close_all()` on every group currently linked to this
@@ -354,7 +360,7 @@ impl WindowsLoop {
     /// from `&self` is sound. Consolidates the `unsafe { (*self.uv_loop).… }`
     /// pattern (one `unsafe`, N safe callers).
     #[inline]
-    pub fn uv(&self) -> &uv::Loop {
+    fn uv(&self) -> &uv::Loop {
         // SAFETY: `uv_loop` is non-null after `us_create_loop` and remains
         // valid for the entire lifetime of `*self`; `&self` bounds the
         // returned borrow so it cannot outlive the wrapper.
@@ -375,7 +381,7 @@ impl WindowsLoop {
 
     pub fn wakeup(&self) {
         // SAFETY: self is a valid loop pointer
-        unsafe { c::us_wakeup_loop(core::ptr::from_ref(self).cast_mut()) };
+        unsafe { c::us_wakeup_loop(self) };
     }
 
     #[inline]
@@ -399,7 +405,7 @@ impl WindowsLoop {
             // Full pass with close dispatch deferred to the next loop point.
             c::us_nq_loop_drain(self);
         }
-        if self.internal_loop_data.quic_head.get().is_null() {
+        if !self.internal_loop_data.has_quic() {
             return;
         }
         c::us_quic_loop_flush_if_pending(self);
@@ -446,11 +452,15 @@ impl WindowsLoop {
     }
 
     pub fn drain_closed_sockets(&self) {
-        c::us_internal_free_closed_sockets(self);
+        // SAFETY: nothing up the stack is dispatching this loop's events, so nothing still holds a
+        // closed socket: both callers run at teardown, once the loop has stopped.
+        unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
     pub fn flush_pending_writes(&self) {
-        c::uws_loop_flush_pending_writes(self);
+        // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
+        // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
+        unsafe { c::uws_loop_flush_pending_writes(self) };
     }
 
     pub fn close_all_groups(&self) -> bool {
@@ -458,7 +468,9 @@ impl WindowsLoop {
     }
 
     pub fn update_date(&self) {
-        c::uws_loop_date_header_timer_update(self);
+        // SAFETY: needs uWS's `LoopData` behind the loop. Every loop has it but spawnSync's, which
+        // `create` makes without one and which does not leave `SpawnSyncEventLoop.rs`.
+        unsafe { c::uws_loop_date_header_timer_update(self) };
     }
 
     /// # Safety
@@ -486,6 +498,7 @@ mod c {
 
     // `&Loop` is sound for the reentrant callees (`us_loop_run`, `us_loop_close_all_groups`, …),
     // whose callbacks reach the same loop via `Loop::get()`, because every field is a `Cell`.
+    // `safe fn` only where a live loop on its own thread is all that C asks for.
     unsafe extern "C" {
         pub(super) fn us_create_loop(
             hint: *mut c_void,
@@ -501,25 +514,25 @@ mod c {
         pub(super) safe fn us_loop_run(loop_: &Loop);
         #[cfg(windows)]
         pub(super) safe fn us_loop_pump(loop_: &Loop);
-        pub fn us_wakeup_loop(loop_: *mut Loop);
+        pub fn us_wakeup_loop(loop_: *const Loop);
         #[cfg(not(windows))]
         pub(super) safe fn us_loop_run_bun_tick(
             loop_: &Loop,
             timeout_ms: Option<&Timespec>,
             now_ns: u64,
         );
-        pub(super) safe fn us_internal_free_closed_sockets(loop_: &Loop);
+        pub(super) fn us_internal_free_closed_sockets(loop_: &Loop);
         pub(super) safe fn us_loop_close_all_groups(loop_: &Loop) -> c_int;
         #[cfg(not(windows))]
         pub(super) safe fn uws_get_loop() -> *mut Loop;
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
-        pub(super) safe fn uws_loop_date_header_timer_update(loop_: &Loop);
-        pub(super) safe fn uws_loop_flush_pending_writes(loop_: &Loop);
+        pub(super) fn uws_loop_date_header_timer_update(loop_: &Loop);
+        pub(super) fn uws_loop_flush_pending_writes(loop_: &Loop);
     }
 }
-// Raw, for cross-thread callers (e.g. bun_http's `HTTPThread::wakeup`, bun_io's
-// `WindowsWaker`): `Loop` is `!Sync`, so they hold only a `*mut Loop`.
+// Raw, for callers on another thread that hold only a pointer (e.g. bun_http's
+// `HTTPThread::wakeup`, bun_io's `WindowsWaker`): `Loop` is `!Sync`.
 pub use c::us_wakeup_loop;
 
 unsafe extern "C" {

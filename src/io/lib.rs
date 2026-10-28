@@ -2245,9 +2245,7 @@ pub mod waker {
             // pointer to the thread-safe C wake (`uv_async_send`).
             // SAFETY: `loop_` is the live `WindowsLoop::get()` singleton;
             // `us_wakeup_loop` → `uv_async_send` is documented thread-safe.
-            unsafe {
-                bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr().cast_mut())
-            };
+            unsafe { bun_uws_sys::loop_::us_wakeup_loop(self.loop_ref().as_const_ptr()) };
         }
 
         /// Raw libuv `uv_loop_t*` underlying this waker's `WindowsLoop`.
@@ -2258,8 +2256,7 @@ pub mod waker {
         /// block at the call site.
         #[inline]
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
-            // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
-            // is a `Copy` field set once by C `us_create_loop`.
+            // `BackRef` deref is safe (process-lifetime singleton).
             self.loop_ref().uv_loop()
         }
     }

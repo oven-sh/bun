@@ -338,6 +338,7 @@ union active_reqs_u {
 #[repr(C)]
 pub struct Loop {
     pub data: *mut c_void,
+    /// A `Cell` because Bun counts its own keep-alive refs here, through a `&Loop`.
     pub active_handles: Cell<c_uint>,
     pub handle_queue: uv__queue,
     active_reqs: active_reqs_u,

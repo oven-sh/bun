@@ -734,10 +734,20 @@ impl EventLoop {
         {
             if delta > 0 {
                 loop_.num_polls.set(loop_.num_polls.get() + delta);
-                loop_.add_active(u32::try_from(delta).expect("int cast"));
+                loop_.active.set(
+                    loop_
+                        .active
+                        .get()
+                        .saturating_add(u32::try_from(delta).expect("int cast")),
+                );
             } else {
                 loop_.num_polls.set(loop_.num_polls.get() - -delta);
-                loop_.sub_active(u32::try_from(-delta).expect("int cast"));
+                loop_.active.set(
+                    loop_
+                        .active
+                        .get()
+                        .saturating_sub(u32::try_from(-delta).expect("int cast")),
+                );
             }
         }
     }
@@ -1399,8 +1409,7 @@ impl EventLoop {
         // `tick()` below can start work (e.g. a --hot reload) whose only wake
         // source is a cross-thread `wakeup()`; bound the park, same as the GC
         // timerfd used to. libuv's `tick_with_timeout` ignores the argument.
-        // SAFETY: as above — the tick runs loop callbacks that reach the loop
-        // themselves, so the exclusive borrow is scoped to this call only.
+        // SAFETY: as above.
         unsafe {
             (*loop_ptr).tick_with_timeout(
                 Some(&bun_core::Timespec { sec: 1, nsec: 0 }),

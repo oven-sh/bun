@@ -14,17 +14,18 @@ use crate::{ConnectingSocket, Loop, SocketGroup, udp, us_socket_t};
 /// This crate never locks/unlocks it — C calls `Bun__lock`/`Bun__unlock`
 /// (exported from `bun_threading`) on the raw field address.
 #[cfg(windows)]
-pub(crate) type LoopDataMutex = *mut c_void;
+type LoopDataMutex = *mut c_void;
 #[cfg(not(windows))]
-pub(crate) type LoopDataMutex = u32;
+type LoopDataMutex = u32;
 
 bun_opaque::opaque_ffi! {
     /// Opaque C handle from `us_internal_create_async`.
     pub struct us_internal_async;
 }
 
-/// Every field is a `Cell`: C writes them while Rust holds a `&Loop`. The private ones are layout
-/// only. Other threads write `dns_ready_head` (under `mutex`), so Rust never reads it.
+/// Every field is a `Cell`: C writes them while Rust holds a `&Loop`. C follows the pointers, so
+/// what Rust only reads has a getter. Other threads write `dns_ready_head` (under `mutex`), so Rust
+/// never reads it.
 #[repr(C)]
 pub struct InternalLoopData {
     #[cfg(windows)]
@@ -33,9 +34,9 @@ pub struct InternalLoopData {
     sweep_next_tick_ns: Cell<i64>,
     sweep_timer_count: Cell<i32>,
     wakeup_async: Cell<*mut us_internal_async>,
-    pub head: Cell<*mut SocketGroup>,
-    pub quic_head: Cell<*mut c_void>,
-    pub quic_next_tick_us: Cell<i64>,
+    head: Cell<*mut SocketGroup>,
+    quic_head: Cell<*mut c_void>,
+    quic_next_tick_us: Cell<i64>,
     /// `us_nq_driver_s *` — node:quic's loop driver list.
     pub(crate) nq_head: Cell<*mut c_void>,
     #[cfg(windows)]
@@ -60,8 +61,8 @@ pub struct InternalLoopData {
     /// cannot name `bun_threading::ReleaseImpl` directly, so use a layout-only
     /// placeholder of the correct size/align per platform.
     mutex: Cell<LoopDataMutex>,
-    pub(crate) parent_ptr: Cell<*mut c_void>,
-    pub(crate) parent_tag: Cell<c_char>,
+    parent_ptr: Cell<*mut c_void>,
+    parent_tag: Cell<c_char>,
     pub(crate) iteration_nr: Cell<u64>,
     // SAFETY: erased `Option<&'static jsc::VM>` — tier-0 crate cannot name jsc types.
     // Higher tier (`bun_runtime`) casts this back when reading.
@@ -73,6 +74,27 @@ pub struct InternalLoopData {
 }
 
 impl InternalLoopData {
+    /// The first socket group linked into the loop.
+    #[inline]
+    pub fn head(&self) -> *mut SocketGroup {
+        self.head.get()
+    }
+
+    /// When the QUIC engines next need a tick, if the loop has any.
+    #[inline]
+    pub fn quic_next_tick_us(&self) -> Option<i64> {
+        if self.quic_head.get().is_null() {
+            None
+        } else {
+            Some(self.quic_next_tick_us.get())
+        }
+    }
+
+    #[inline]
+    pub(crate) fn has_quic(&self) -> bool {
+        !self.quic_head.get().is_null()
+    }
+
     pub(crate) fn should_enable_date_header_timer(&self) -> bool {
         self.sweep_timer_count.get() > 0
     }

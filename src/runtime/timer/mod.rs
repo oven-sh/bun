@@ -1037,7 +1037,7 @@ impl All {
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.ref_();
+            unsafe { &*uws_loop }.ref_();
             #[cfg(windows)]
             {
                 // Lazy-init the idle handle and start
@@ -1055,7 +1055,7 @@ impl All {
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.unref();
+            unsafe { &*uws_loop }.unref();
             #[cfg(windows)]
             if !self.uv_idle.data.is_null() {
                 self.uv_idle.stop();
@@ -1087,7 +1087,7 @@ impl All {
         if old <= 0 && new > 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.ref_();
+            unsafe { &*uws_loop }.ref_();
             // `uv_timer.ref()` is intentionally unconditional (no `data !=
             // null` guard). Invariant: every path that reaches a positive
             // `active_timer_count` first inserts a timer, and `insert`
@@ -1098,7 +1098,7 @@ impl All {
         } else if old > 0 && new <= 0 {
             #[cfg(not(windows))]
             // SAFETY: caller passes the VM's live uws loop
-            unsafe { &mut *uws_loop }.unref();
+            unsafe { &*uws_loop }.unref();
             #[cfg(windows)]
             self.uv_timer.unref();
         }

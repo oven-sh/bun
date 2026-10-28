@@ -150,7 +150,7 @@ impl SpawnSyncEventLoop {
         // A fresh `jsc::EventLoop` whose `uws_loop` is the isolated loop.
         let event_loop = __bun_spawn_sync_create_event_loop(vm, loop_.as_ptr());
 
-        this.write(Self {
+        let this = this.write(Self {
             uws_loop: loop_,
             #[cfg(windows)]
             uv_timer: Cell::new(None),
@@ -160,8 +160,6 @@ impl SpawnSyncEventLoop {
         });
 
         // Set up the loop's internal data to point to this isolated event loop
-        // SAFETY: `this` was fully written immediately above so `assume_init_mut` is sound.
-        let this = unsafe { this.assume_init_mut() };
         // sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS, tag 2 = mini.
         // `this.event_loop` is the live heap-owned `*mut jsc::EventLoop`
         // returned by `__bun_spawn_sync_create_event_loop` immediately above —
@@ -187,9 +185,10 @@ impl SpawnSyncEventLoop {
         self.event_loop
     }
 
-    /// The isolated `uws::Loop`.
+    /// The isolated `uws::Loop`. Private: `create` makes it without uWS's `LoopData`, which
+    /// `update_date` and `flush_pending_writes` need.
     #[inline]
-    pub fn uws_loop(&self) -> &uws::Loop {
+    fn uws_loop(&self) -> &uws::Loop {
         // SAFETY: set in `init` and freed only in `Drop`.
         unsafe { self.uws_loop.as_ref() }
     }
@@ -308,7 +307,6 @@ impl Drop for PreparedSpawnSyncEventLoop<'_> {
 #[cfg(windows)]
 extern "C" fn on_uv_timer(timer_: *mut libuv::Timer) {
     // SAFETY: `data` is the `SpawnSyncEventLoop` whose tick this fires under, set in `prepare_timer_on_windows`.
-    // That tick borrows the `uws::Loop` uniquely, so the uv loop comes from the handle instead.
     unsafe {
         (*(*timer_).data.cast::<SpawnSyncEventLoop>())
             .did_timeout

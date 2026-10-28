@@ -2655,12 +2655,8 @@ impl VirtualMachine {
                 rare.detach_socket_groups_from_loop();
             }
             // SAFETY: this thread's loop; nothing ticks it any more.
-            unsafe {
-                (*vm.uws_loop())
-                    .internal_loop_data
-                    .jsc_vm
-                    .set(core::ptr::null())
-            };
+            let uws_loop = unsafe { &*vm.uws_loop() };
+            uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
             bun_uws::free_thread_loop();
             teardown_log!("teardown: uSockets loop freed");
             #[cfg(windows)]
@@ -3492,12 +3488,8 @@ impl VirtualMachine {
         // = vm.jsc_vm` — must run AFTER `jsc_vm` is set so C/uws callbacks can
         // recover the JSC VM via `internal_loop_data`.
         // SAFETY: `uws::Loop::get()` returns the live per-thread uws loop.
-        unsafe {
-            (*uws::Loop::get())
-                .internal_loop_data
-                .jsc_vm
-                .set(jsc_vm.cast());
-        }
+        let uws_loop = unsafe { &*uws::Loop::get() };
+        uws_loop.internal_loop_data.jsc_vm.set(jsc_vm.cast());
 
         // `ParentDeathWatchdog` install for the main thread.
         // Must run AFTER `ensure_waker()` (above) has set `event_loop_handle`,
@@ -5123,12 +5115,8 @@ impl VirtualMachine {
         // (no `&VM` reborrow).
         vm_ref.jsc_vm = JSGlobalObject::opaque_ref(new_global).vm_ptr();
         // SAFETY: per-thread uws loop is live.
-        unsafe {
-            (*uws::Loop::get())
-                .internal_loop_data
-                .jsc_vm
-                .set(vm_ref.jsc_vm.cast())
-        };
+        let uws_loop = unsafe { &*uws::Loop::get() };
+        uws_loop.internal_loop_data.jsc_vm.set(vm_ref.jsc_vm.cast());
         vm_ref.event_loop_mut().ensure_waker();
         if opts.smol {
             // SAFETY: process-global written once at startup.
@@ -6111,16 +6099,16 @@ impl VirtualMachine {
     /// One sweep over the sockets a test file opened. What a close handler opens meanwhile stays open.
     fn close_test_file_sockets(&self) {
         // SAFETY: process-global usockets loop is live.
-        let data = unsafe { &raw const (*uws::Loop::get()).internal_loop_data };
+        let data = unsafe { &(*uws::Loop::get()).internal_loop_data };
         // The next group is parked in the loop's iterator, which unlinking a group advances past
         // it: a close handler may unlink any group, and its owner then free it. One it links goes
         // to the head, behind the walk.
-        // SAFETY: as above; no reference into the loop is held across a close handler.
-        unsafe {
-            (*data).iterator.set((*data).head.get());
-            while let Some(group) = NonNull::new((*data).iterator.get()) {
-                let group = group.as_ptr();
-                (*data).iterator.set((*group).next);
+        data.iterator.set(data.head());
+        while let Some(group) = NonNull::new(data.iterator.get()) {
+            let group = group.as_ptr();
+            // SAFETY: `group` is a live `us_socket_group_t` linked in the loop.
+            unsafe {
+                data.iterator.set((*group).next);
                 if !self.is_test_runner_socket_group(group) {
                     (*group).close_all();
                 }
@@ -6131,7 +6119,7 @@ impl VirtualMachine {
     /// A group is linked into the loop while it has a socket.
     fn has_test_file_sockets(&self) -> bool {
         // SAFETY: process-global usockets loop is live.
-        let mut maybe_group = unsafe { (*uws::Loop::get()).internal_loop_data.head.get() };
+        let mut maybe_group = unsafe { (*uws::Loop::get()).internal_loop_data.head() };
         while let Some(group) = NonNull::new(maybe_group) {
             if !self.is_test_runner_socket_group(group.as_ptr()) {
                 return true;

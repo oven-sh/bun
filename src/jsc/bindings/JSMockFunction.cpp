@@ -963,10 +963,10 @@ private:
         unsigned attributes = m_spyAttributes;
         bool isOpaque = attributes & SpyAttributeOpaque;
 
-        ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
         if (attributes & SpyAttributeESModuleNamespace) {
             auto* moduleNamespaceObject = tryJSDynamicCast<JSModuleNamespaceObject*>(target);
             if (moduleNamespaceObject && original) {
+                ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
                 scope.release();
                 moduleNamespaceObject->overrideExportValue(globalObject, identifier, original);
             }
@@ -983,6 +983,8 @@ private:
                 return;
         }
 
+        // Behind the lookup above: the global of a node:vm context asks its sandbox, which may be a Proxy.
+        ThroughLockOfBuiltins throughLock(globalObject->vm(), isOpaque);
         scope.release();
         if (original) {
             putOwnPropertyStorage(globalObject, target, identifier, original, attributes & ~(SpyAttributeAccessor | SpyAttributeOpaque), isOpaque);

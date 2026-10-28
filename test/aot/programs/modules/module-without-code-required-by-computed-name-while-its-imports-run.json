@@ -1,0 +1,1 @@
+{ "skipInShell": "it loads modules by name through the module loader of the runtime, which the jsc shell does not have" }

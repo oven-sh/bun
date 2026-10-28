@@ -52,12 +52,12 @@ export default function compose(...streams) {
     }
   }
 
-  let ondrain;
-  let onfinish;
-  let onclose;
-  let d;
+  let ondrain: $Node.ErrorCallback | null | undefined;
+  let onfinish: $Node.ErrorCallback | null | undefined;
+  let onclose: $Node.ErrorCallback | null | undefined;
+  let d: $Node.Duplex;
 
-  function onfinished(err) {
+  function onfinished(err?: Error | null) {
     const cb = onclose;
     onclose = null;
 
@@ -90,7 +90,7 @@ export default function compose(...streams) {
   if (writable) {
     if (isNodeStream(head)) {
       d._write = function (chunk, encoding, callback) {
-        if (head.write(chunk, encoding)) {
+        if (head.write!(chunk, encoding)) {
           callback();
         } else {
           ondrain = callback;
@@ -98,7 +98,7 @@ export default function compose(...streams) {
       };
 
       d._final = function (callback) {
-        head.end();
+        head.end!();
         onfinish = callback;
       };
 
@@ -119,7 +119,7 @@ export default function compose(...streams) {
           writer.write(chunk).catch(() => {});
           callback();
         } catch (err) {
-          callback(err);
+          callback(err as Error);
         }
       };
 
@@ -129,7 +129,7 @@ export default function compose(...streams) {
           writer.close().catch(() => {});
           onfinish = callback;
         } catch (err) {
-          callback(err);
+          callback(err as Error);
         }
       };
     }

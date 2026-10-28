@@ -1,0 +1,5 @@
+{
+  "effects-only.x.default.mjs": {
+    "errors": "error: TS100200: No matching export in \"node_modules/s_effects_only/index.js\" for import \"default\"\n"
+  }
+}

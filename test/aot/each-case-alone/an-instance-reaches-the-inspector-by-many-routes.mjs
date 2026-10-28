@@ -1,0 +1,56 @@
+class Held {
+  x = 1;
+}
+function t(name, run) {
+  console.log(name, run());
+}
+t("directly", () => (new Held()));
+t("in a literal", () => ({ o: new Held() }));
+t("in a spread copy of a literal", () => ({ ...{ o: new Held() } }));
+t("in the rest of an object pattern", () => ((({ a, ...rest }) => rest)({ a: 1, o: new Held() })));
+t("in a copy made by Object.assign", () => (Object.assign({}, { o: new Held() })));
+t("in an object made from entries", () => (Object.fromEntries([["o", new Held()]])));
+t("in the entries of a literal", () => (Object.entries({ o: new Held() })));
+t("in the values of a literal", () => (Object.values({ o: new Held() })));
+t("in a list", () => ([new Held()]));
+t("in a spread copy of a list", () => ([...[new Held()]]));
+t("in the rest of a list pattern", () => ((([a, ...rest]) => rest)([1, new Held()])));
+t("in a slice", () => ([new Held()].slice()));
+t("in a concatenation", () => ([].concat([new Held()])));
+t("in a mapped list", () => ([new Held()].map(o => o)));
+t("in a filtered list", () => ([new Held()].filter(() => true)));
+t("in a flattened list", () => ([[new Held()]].flat()));
+t("in a reversed copy", () => ([new Held()].toReversed()));
+t("in a sorted copy", () => ([new Held()].toSorted()));
+t("in a spliced copy", () => ([new Held()].toSpliced(0, 0)));
+t("in a copy with another element", () => ([0, new Held()].with(0, 1)));
+t("in Array.from", () => (Array.from([new Held()])));
+t("in Array.of", () => (Array.of(new Held())));
+t("found in a list", () => ([new Held()].find(() => true)));
+t("popped from a list", () => ([new Held()].pop()));
+t("at an index", () => ([new Held()].at(0)));
+t("in a map", () => (new Map([["o", new Held()]])));
+t("as the key of a map", () => (new Map([[new Held(), 1]])));
+t("in a set", () => (new Set([new Held()])));
+t("in the values of a map", () => ([...new Map([["o", new Held()]]).values()]));
+t("in a spread copy of an instance", () => ({ ...new (class { o = new Held(); })() }));
+t("in a list inside a spread copy", () => ({ ...{ list: [new Held()] } }));
+t("in a spread copy inside a list", () => ([{ ...{ o: new Held() } }]));
+t("in two spread copies", () => ({ ...{ ...{ o: new Held() } } }));
+t("in rest parameters", () => (((...all) => all)(new Held())));
+t("in the arguments object", () => ((function () { return arguments; })(new Held())));
+t("out of a closure", () => ((o => () => o)(new Held())()));
+t("out of a getter", () => ({ get o() { return new Held(); } }.o));
+t("out of a generator", () => ([...(function* () { yield new Held(); })()]));
+t("under a symbol", () => ({ [Symbol.for("o")]: new Held() }));
+t("under a computed name", () => ({ ["o" + 1]: new Held() }));
+t("as a prototype", () => (Object.getPrototypeOf(Object.create(new Held()))));
+t("defined as a property", () => (Object.defineProperty({}, "o", { value: new Held(), enumerable: true })));
+t("in a frozen literal", () => (Object.freeze({ o: new Held() })));
+t("in a clone", () => (structuredClone({ o: new Held() })));
+t("in a clone of a spread copy", () => (structuredClone({ ...{ o: new Held() } })));
+t("through a weak reference", () => (new WeakRef(new Held()).deref()));
+t("through Reflect.get", () => (Reflect.get({ o: new Held() }, "o")));
+t("through a proxy", () => (new Proxy({ o: new Held() }, {}).o));
+t("in a grouped object", () => (Object.groupBy([new Held()], () => "o")));
+t("in a static field", () => (class { static o = new Held(); }.o));

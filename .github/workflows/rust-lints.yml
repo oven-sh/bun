@@ -9,8 +9,14 @@ on:
     paths:
       - "src/**/*.rs"
       - "src/**/Cargo.toml"
+      - "src/pod/README.md"
       - "src/**/*.bind.ts"
       - "src/codegen/**"
+      - "src/trim/features/**"
+      - "test/aot/ir/**"
+      # src/aot/report/wording/tests.rs includes it.
+      - "docs/compiler/explain.mdx"
+      - "test/internal/aot-schema-generator.test.ts"
       - "scripts/build/**"
       - "scripts/build.ts"
       - "scripts/rust-miri.ts"
@@ -58,6 +64,7 @@ jobs:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           components: clippy
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
+          webkit-generators-only: "1"
 
       - name: cargo clippy
         env:
@@ -89,6 +96,8 @@ jobs:
           llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           components: miri rust-src
+          ninja-targets: codegen clone-lolhtml clone-rust-argon2
+          webkit-generators-only: "1"
 
       - name: cargo miri test
         env:
@@ -122,6 +131,51 @@ jobs:
         working-directory: vendor/lolhtml
         run: cargo test
 
+  aot-rust-tests:
+    name: AoT cargo test
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      # Without optimization a frame is several times as large, and the tests
+      # of the nesting limits reach the end of the stack before the limit.
+      CARGO_PROFILE_DEV_OPT_LEVEL: 1
+      # With optimization the frame pointer goes unless it is forced, as
+      # scripts/build/rust.ts does: `bun_core::return_address()` reads it.
+      CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS: -Cforce-frame-pointers=yes
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup
+        uses: ./.github/actions/rust-lint-setup
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+          llvm-version: ${{ env.LLVM_VERSION_MAJOR }}
+          toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
+          ninja-targets: codegen engine-test-programs clone-zstd clone-lolhtml clone-rust-argon2
+
+      - name: Locate the engine's files
+        run: bun scripts/build/aot-paths.ts >> "$GITHUB_ENV"
+
+      - name: The engine's generator writes what the build declares
+        run: bun test ./test/internal/aot-schema-generator.test.ts
+
+      - name: cargo test
+        # A red step in front of this one does not hide what these tests say.
+        if: ${{ !cancelled() }}
+        # ir_tests.rs skips the engine's half of every test when TESTAOT is
+        # unset or was built from another schema than the codegen. Here a build
+        # without testaot has to fail the job, and so does such a skip.
+        # The skipped test of bun_sema_standalone fails without this branch too.
+        env:
+          BUN_CODEGEN_DIR: ${{ github.workspace }}/build/debug/codegen
+          AOT_IR_REQUIRES_ENGINE: 1
+        run: |
+          test -x "$TESTAOT"
+          cargo test --no-fail-fast -p bun_aot -p bun_builtin_sources -p bun_bundler -p bun_sema -p bun_sema_driver -p bun_sema_parser -p bun_sema_standalone -p bun_trim -p bun_removable_features -p bun_exe_format -p bun_crash_handler -p bun_options_types -p bun_resolver -p bun_lint_react_compiler -p bun_sql_jsc -- --skip realpath_under_the_marked_root_stays_under_it
+
   mordant:
     name: mordant
     runs-on: ubuntu-latest
@@ -153,6 +207,7 @@ jobs:
           # What building against rustc's own crates (`rustc_private`) needs.
           components: rustc-dev llvm-tools-preview
           ninja-targets: codegen clone-lolhtml clone-rust-argon2
+          webkit-generators-only: "1"
 
       - name: Restore the mordant binaries
         # cargo-mordant and mordant-driver are a pure function of the pinned

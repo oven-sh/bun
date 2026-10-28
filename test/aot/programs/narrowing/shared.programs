@@ -1,0 +1,7 @@
+////: set
+function set(target: any, path: string[], value: unknown): any {
+  const key = path.shift()!;
+  if (path.length > 0) target[key] = set(target[key] || {}, path, value);
+  else target[key] = value;
+  return target;
+}

@@ -1,0 +1,372 @@
+//// tdz-through-function-call/a-callback-of-filter.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = [1].filter(x => x > late());
+const below = { size: 1 };
+//// tdz-through-function-call/a-callback-of-map.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = [1].map(x => x + late());
+const below = { size: 1 };
+//// tdz-through-function-call/a-cast.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = { size: late() } as { size: number; more?: string };
+const below = { size: 1 };
+//// tdz-through-function-call/a-computed-key.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = { ["k" + late()]: 1 };
+const below = { size: 1 };
+//// tdz-through-function-call/a-constructor.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = new Sized();
+const below = { size: 1 };
+//// tdz-through-function-call/a-default-of-a-parameter.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = withDefault();
+const below = { size: 1 };
+//// tdz-through-function-call/a-field-initializer.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = new WithField();
+const below = { size: 1 };
+//// tdz-through-function-call/a-frozen-literal.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = Object.freeze({ size: late() });
+const below = { size: 1 };
+//// tdz-through-function-call/a-function-called-where-it-stands.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = (() => ({ size: late() }))();
+const below = { size: 1 };
+//// tdz-through-function-call/a-helper.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = wrap(late());
+const below = { size: 1 };
+//// tdz-through-function-call/a-list.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = [late()];
+const below = { size: 1 };
+//// tdz-through-function-call/a-literal.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = { size: late() };
+const below = { size: 1 };
+//// tdz-through-function-call/a-loop.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = loop([1]);
+const below = { size: 1 };
+//// tdz-through-function-call/a-map.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = new Map([["size", late()]]);
+const below = { size: 1 };
+//// tdz-through-function-call/a-set.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = new Set([late()]);
+const below = { size: 1 };
+//// tdz-through-function-call/a-spread-of-a-getter.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = { ...{ get size(): number { return late(); } } };
+const below = { size: 1 };
+//// tdz-through-function-call/a-template.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = { text: `${late()}` };
+const below = { size: 1 };
+//// tdz-through-function-call/a-test.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = { size: late() > 0 ? 1 : 2 };
+const below = { size: 1 };
+//// tdz-through-function-call/an-assign-of-a-getter.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = Object.assign({}, { get size(): number { return late(); } });
+const below = { size: 1 };
+//// tdz-through-function-call/kept-in-a-callback-over-an-empty-list.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = ([] as number[]).map(x => x + late());
+const below = { size: 1 };
+//// tdz-through-function-call/kept-in-a-getter.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = { get size(): number { return late(); } };
+const below = { size: 1 };
+//// tdz-through-function-call/kept-in-a-method.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = { size(): number { return late(); } };
+const below = { size: 1 };
+//// tdz-through-function-call/kept-in-an-arm-that-is-not-taken.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = { size: nothing ? late() : 1 };
+const below = { size: 1 };
+//// tdz-through-function-call/kept-in-an-arrow.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = { size: () => late() };
+const below = { size: 1 };
+//// tdz-through-function-call/main.ts
+// The initializer of a top-level constant calls a function that reads a constant declared further down: a ReferenceError, thrown while the module is loaded, whatever form the initializer has. Where the call is only kept for later, the module loads, and the later call finds the constant initialized.
+function show(value: unknown): string { return JSON.stringify(value, (key, held) => (typeof held === "function" ? "function " + String((held as () => unknown)()) : held instanceof Map || held instanceof Set ? [...held] : held)); }
+async function load(name: string, importing: () => Promise<{ made: unknown }>): Promise<void> {
+  let loaded = false;
+  try {
+    const module = await importing();
+    loaded = true;
+    console.log(name + ":", show(module.made));
+  } catch (error) {
+    console.log(name + ":", (error as Error).name, loaded ? "when it was read" : "while it was loaded");
+  }
+}
+await load("a literal", () => import("./a-literal"));
+await load("a list", () => import("./a-list"));
+await load("a computed key", () => import("./a-computed-key"));
+await load("a spread of a getter", () => import("./a-spread-of-a-getter"));
+await load("an assign of a getter", () => import("./an-assign-of-a-getter"));
+await load("values of a getter", () => import("./values-of-a-getter"));
+await load("a callback of map", () => import("./a-callback-of-map"));
+await load("a callback of filter", () => import("./a-callback-of-filter"));
+await load("a loop", () => import("./a-loop"));
+await load("a helper", () => import("./a-helper"));
+await load("a default of a parameter", () => import("./a-default-of-a-parameter"));
+await load("a constructor", () => import("./a-constructor"));
+await load("a field initializer", () => import("./a-field-initializer"));
+await load("a function called where it stands", () => import("./a-function-called-where-it-stands"));
+await load("a map", () => import("./a-map"));
+await load("a set", () => import("./a-set"));
+await load("a frozen literal", () => import("./a-frozen-literal"));
+await load("a test", () => import("./a-test"));
+await load("a template", () => import("./a-template"));
+await load("a cast", () => import("./a-cast"));
+await load("kept in a getter", () => import("./kept-in-a-getter"));
+await load("kept in a method", () => import("./kept-in-a-method"));
+await load("kept in an arrow", () => import("./kept-in-an-arrow"));
+await load("kept in a callback over an empty list", () => import("./kept-in-a-callback-over-an-empty-list"));
+await load("kept in an arm that is not taken", () => import("./kept-in-an-arm-that-is-not-taken"));
+//// tdz-through-function-call/values-of-a-getter.ts
+const nothing = null;
+function late(): number { return below.size; }
+function wrap(size: number): { size: number } { return { size }; }
+function loop(from: number[]): number[] { const out: number[] = []; for (const x of from) out.push(x + late()); return out; }
+function withDefault(size: number = late()): { size: number } { return { size }; }
+class Sized { size: number; constructor() { this.size = late(); } }
+class WithField { size = late(); }
+export const made = Object.values({ get size(): number { return late(); } });
+const below = { size: 1 };
+//// texts-joined-from-constants-that-are-read-in-their-dead-zones.js
+// A text joined from constants is known when the program is built, and still throws where one of the constants is read in its dead zone.
+function attempt(f) { try { return f(); } catch (e) { return "threw " + e.constructor.name; } }
+const early = () => `${family}/early`;
+const earlySum = () => family + "/early";
+const earlyNumber = () => size * 2 + 1;
+console.log(attempt(early), attempt(earlySum), attempt(earlyNumber));
+const family = "~library/Step";
+const size = 20;
+const held = `${family}/held`;
+const summed = family + "/summed";
+const nested = `${held}:${summed}:${size + 1}`;
+console.log(attempt(early), attempt(earlySum), attempt(earlyNumber), held, summed, nested);
+const shared = { [held]: 1, [summed]: 2, [nested]: 3 };
+const made = Object.create(shared);
+made[held] = 4;
+console.log(Object.keys(made), Object.keys(shared), made[held], made[summed], made[nested], held in made, `${family}/held` in made, family + "/absent" in made);
+function inBlock(flag) {
+  if (flag) return attempt(() => `${later}!`);
+  const value = attempt(() => `${later}?`);
+  const later = "later";
+  return value + `${later}.`;
+}
+console.log(inBlock(true), inBlock(false));
+for (let turn = 0; turn < 2; turn++) {
+  const before = attempt(() => `${each}-${turn}`);
+  const each = "each";
+  console.log(before, `${each}-${turn}`, `${each}-x`);
+}
+switch (size) {
+  case 20:
+    console.log(attempt(() => `${inCase}!`));
+  case 21:
+    const inCase = "case";
+    console.log(`${inCase}!`);
+}
+//// the-type-of-a-binding-does-not-hold.ts
+// The checker's word on a binding is no proof. A read that needs no test for the dead zone still needs the test of its type.
+interface Settings {
+  port: number;
+  name: string;
+}
+function attempt(label: string, run: () => unknown) {
+  try {
+    console.log(label, JSON.stringify(run()));
+  } catch (error) {
+    console.log(label, (error as Error).constructor.name);
+  }
+}
+
+////= lines	readSettings	Settings	settings
+////= lines	readCount	number	count
+attempt("settings, early", readSettings);
+attempt("count, early", readCount);
+const settings: Settings = JSON.parse('{"name":7,"extra":true,"port":"eighty"}');
+let count: number = JSON.parse('"three"');
+console.log("settings, in the body", typeof settings.port, settings.port, typeof settings.name, settings.name, Object.keys(settings).join());
+console.log("count, in the body", typeof count, count + 1);
+attempt("settings, late", readSettings);
+attempt("count, late", readCount);
+count = JSON.parse("[4]");
+console.log("count, stored again", typeof count, count + 1);
+
+function captured(text: string) {
+  const read = (): Settings => held;
+  attempt("captured, early", read);
+  const held: Settings = JSON.parse(text);
+  console.log("captured, in the body", typeof held.port, held.port, typeof held.name, held.name);
+  attempt("captured, late", read);
+  return read;
+}
+console.log(captured('{"port":1,"name":"right"}')().name);
+console.log(captured('{"name":null}')().name);
+console.log(captured("[1,2]")().port);
+attempt("captured, null", () => captured("null")());
+//// ts-namespace-stores-allowed.ts
+// Stores to the exported variable of a TypeScript `namespace`, which are allowed, unlike stores to an imported binding.
+declare const console: { log(...all: unknown[]): void };
+namespace N { export let x = 1; export const read = () => x; }
+N.x = 2; console.log(N.x, N.read());
+[N.x] = [3]; console.log(N.x, N.read());
+N.x += 4; console.log(N.x, N.read());
+N.x++; console.log(N.x, N.read());
+for (N.x of [9]) ; console.log(N.x, N.read());

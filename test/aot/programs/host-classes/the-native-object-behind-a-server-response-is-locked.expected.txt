@@ -1,0 +1,23 @@
+members: end,finished,flags,onabort,ondata,write,writeHead
+define a getter: throws TypeError
+define the same getter: true
+Reflect.defineProperty: false
+store a method: throws TypeError
+store the same method: true
+Reflect.set: false
+delete a member: throws TypeError
+Reflect.deleteProperty: false
+add a name: throws TypeError
+another parent: throws TypeError
+the same parent: true
+Reflect.setPrototypeOf: false
+Object.assign: throws TypeError
+as it was: true
+200 1 answer 1
+an own getter on the object is read by the library: true own
+200 2 answer 2
+the object gets another parent: true
+200 3 answer 3
+200 4 answer 4
+200 5 answer 5
+200 6 answer 6

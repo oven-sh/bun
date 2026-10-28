@@ -1,0 +1,1 @@
+{"skipInShell": "it uses CustomEvent and Buffer, which the jsc shell does not have"}

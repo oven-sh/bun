@@ -363,26 +363,7 @@ fn random_int<'a>(
     }
 
     if max - min > MAX_RANGE {
-        // Node's ERR_OUT_OF_RANGE adds "_" numerical separators to integer
-        // "Received" values whose magnitude exceeds 2^32
-        // (lib/internal/errors.js, addNumericalSeparator).
-        let received = {
-            let digits = (max - min).to_string();
-            let (sign, digits) = match digits.strip_prefix('-') {
-                Some(rest) => ("-", rest),
-                None => ("", digits.as_str()),
-            };
-            let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
-            out.push_str(sign);
-            let lead = digits.len() % 3;
-            for (i, ch) in digits.chars().enumerate() {
-                if i != 0 && (i + 3 - lead) % 3 == 0 {
-                    out.push('_');
-                }
-                out.push(ch);
-            }
-            out
-        };
+        let received = bun_core::fmt::NodeNumber((max - min) as f64);
         if min_specified {
             return Err(global
                 .err(

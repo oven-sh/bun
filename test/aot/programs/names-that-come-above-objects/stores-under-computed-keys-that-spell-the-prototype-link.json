@@ -1,0 +1,3 @@
+{
+  "runWithASAN": "objects of the program get other prototypes under keys that only the run knows"
+}

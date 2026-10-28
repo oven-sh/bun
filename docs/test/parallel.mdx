@@ -74,7 +74,7 @@ bun test --isolate
 Runs each test file in a fresh JavaScript global object inside the same process. Between files Bun:
 
 - creates a new `globalThis` (so properties a file stuck on `globalThis`, patched built-ins, and module-level state are gone),
-- resets the `console`: an open `console.group()`, `console.count()` totals and `console.time()` timers do not carry over,
+- closes the `console.group()`s the file left open and clears its `console.count()` totals and `console.time()` timers,
 - clears the ESM and CommonJS module registries (every file re-evaluates its imports),
 - closes servers, sockets, file watchers and subprocesses the file left open, cancels its timers, and restores fake timers,
 - re-runs `--preload` scripts in the new global.

@@ -269,6 +269,7 @@ describe.concurrent("bun test --isolate", () => {
     using dir = tempDir("isolate-console-off", { "a.test.ts": consoleLeaker, "b.test.ts": consoleObserver });
     const result = await runTests(String(dir), args, ["./a.test.ts", "./b.test.ts"], { ...bunEnv, ...env });
     const lines = consoleLines(result);
+    // The open group does not indent a count or timer line yet (#30017), hence the optional indent.
     expect({
       stdout: lines.filter(line => !line.includes("[console] timer")),
       stderr: lines.filter(line => line.includes("[console] timer")),
@@ -277,10 +278,10 @@ describe.concurrent("bun test --isolate", () => {
         "[console] count: 1",
         "[console] group left open",
         "  [console] log",
-        expect.stringContaining("[console] count: 2"),
+        expect.stringMatching(/^( {2})?\[console\] count: 2$/),
         "  [console] after timeEnd",
       ],
-      stderr: [expect.stringContaining("[console] timer")],
+      stderr: [expect.stringMatching(/^( {2})?\[\d+\.\d{2}m?s\] \[console\] timer$/)],
     });
     expect(result.exitCode).toBe(0);
   });

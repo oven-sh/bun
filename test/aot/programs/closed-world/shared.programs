@@ -1,0 +1,23 @@
+////: attempt
+function attempt(label, action) {
+  try { console.log(label + ": " + action()); } catch (error) { console.log(label + ": " + outcome(error)); }
+}
+////: attempt-3
+function attempt(label, action) {
+  try { print(label + ": " + action()); } catch (error) { print(label + ": " + error.name + (error.code ? " " + error.code : "")); }
+}
+////: outcome-3
+function outcome(error) {
+  const message = String(error.message);
+  return message.includes("bun compile differs from bun run here") ? "refused: " + message : error.name;
+}
+////: outcome-4
+function outcome(error) {
+  const message = String(error.message);
+  return error.code === "ERR_CODE_NOT_COMPILED" ? "refused: " + message.replace(/'.*?'/, "'..'") : error.name;
+}
+////: outcome-5
+function outcome(error) {
+  const message = String(error.message);
+  return message.includes("th«1»e;
+}

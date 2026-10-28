@@ -87,7 +87,6 @@ pub use self::catalog_map::CatalogMap;
 pub use self::override_map::OverrideMap;
 pub use self::package::Package;
 pub use self::tree::Tree;
-pub use crate::padding_checker::assert_no_uninitialized_padding;
 // Bring the derive-generated `items_*` column accessors (`PackageColumns` for
 // `MultiArrayList<Package>`, `PackageColumns` for `Slice<Package>`) into scope.
 use self::package::PackageColumns as _;
@@ -3876,6 +3875,7 @@ pub struct PatchedDep {
     /// the hash of the patch file contents
     __patchfile_hash: u64,
 }
+bun_core::impl_no_uninit!(PatchedDep);
 
 impl Default for PatchedDep {
     fn default() -> Self {

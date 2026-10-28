@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "target": "esnext",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "useDefineForClassFields": true,
+    "outDir": "./built",
+    "rootDir": "./src"
+  },
+  "include": ["src"]
+}

@@ -8,18 +8,40 @@ const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 const NumberPrototypeToString = Number.prototype.toString;
 
-var __commonJS =
-  (cb, mod: { exports: any } | undefined = undefined) =>
-  () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+type Coder = (text: string) => string;
+type ParsedQuery = Record<string, string | string[]>;
 
-var require_src = __commonJS((exports, module) => {
+interface StringifyOptions {
+  encodeURIComponent?: Coder;
+}
+
+interface ParseOptions {
+  maxKeys?: number;
+  decodeURIComponent?: Coder;
+}
+
+interface QueryStringExports {
+  unescapeBuffer(s: string, decodeSpaces?: boolean): Buffer;
+  unescape(s: string, decodeSpaces?: boolean): string;
+  escape(str: unknown): string;
+  stringify(obj?: object | null, sep?: string | null, eq?: string | null, options?: StringifyOptions | null): string;
+  encode(obj?: object | null, sep?: string | null, eq?: string | null, options?: StringifyOptions | null): string;
+  parse(qs: string, sep?: string | null, eq?: string | null, options?: ParseOptions | null): ParsedQuery;
+  decode(qs: string, sep?: string | null, eq?: string | null, options?: ParseOptions | null): ParsedQuery;
+}
+
+var __commonJS =
+  <T extends object>(cb: (exports: T, module: { exports: T }) => void, mod: { exports: T } | undefined = undefined) =>
+  () => (mod || cb((mod = { exports: {} as T }).exports, mod), mod.exports);
+
+var require_src = __commonJS<QueryStringExports>((exports, module) => {
   /**
    * @param {string} str
    * @param {Int8Array} noEscapeTable
    * @param {string[]} hexTable
    * @returns {string}
    */
-  function encodeStr(str, noEscapeTable, hexTable) {
+  function encodeStr(str: string, noEscapeTable: Int8Array, hexTable: string[]) {
     const len = str.length;
     if (len === 0) return "";
 
@@ -79,7 +101,7 @@ var require_src = __commonJS((exports, module) => {
     return out;
   }
 
-  const hexTable = new Array(256);
+  const hexTable: string[] = new Array(256);
   for (let i = 0; i < 256; ++i)
     hexTable[i] = "%" + StringPrototypeToUpperCase.$call((i < 16 ? "0" : "") + NumberPrototypeToString.$call(i, 16));
   // prettier-ignore
@@ -141,8 +163,8 @@ var require_src = __commonJS((exports, module) => {
    * @param {boolean} decodeSpaces
    * @returns {string}
    */
-  function unescapeBuffer(s, decodeSpaces) {
-    const out = Buffer.allocUnsafe(s.length);
+  function unescapeBuffer(s: string, decodeSpaces?: boolean): Buffer {
+    const out: Buffer = Buffer.allocUnsafe(s.length);
     let index = 0;
     let outIndex = 0;
     let currentChar;
@@ -188,7 +210,7 @@ var require_src = __commonJS((exports, module) => {
    * @param {boolean} decodeSpaces
    * @returns {string}
    */
-  function qsUnescape(s, decodeSpaces) {
+  function qsUnescape(s: string, decodeSpaces?: boolean): string {
     try {
       return decodeURIComponent(s);
     } catch {
@@ -220,20 +242,20 @@ var require_src = __commonJS((exports, module) => {
    * @param {any} str
    * @returns {string}
    */
-  function qsEscape(str) {
+  function qsEscape(str: unknown) {
     if (typeof str !== "string") {
       if (typeof str === "object") str = String(str);
       else str += "";
     }
 
-    return encodeStr(str, noEscape, hexTable);
+    return encodeStr(str as string, noEscape, hexTable);
   }
 
   /**
    * @param {string | number | bigint | boolean | symbol | undefined | null} v
    * @returns {string}
    */
-  function stringifyPrimitive(v) {
+  function stringifyPrimitive(v: unknown) {
     if (typeof v === "string") return v;
     if (typeof v === "number" && NumberIsFinite(v)) return "" + v;
     if (typeof v === "bigint") return "" + v;
@@ -246,7 +268,7 @@ var require_src = __commonJS((exports, module) => {
    * @param {(v: string) => string} encode
    * @returns {string}
    */
-  function encodeStringified(v, encode) {
+  function encodeStringified(v: unknown, encode: Coder) {
     if (typeof v === "string") return v.length ? encode(v) : "";
     if (typeof v === "number" && NumberIsFinite(v)) {
       // Values >= 1e21 automatically switch to scientific notation which requires
@@ -263,7 +285,7 @@ var require_src = __commonJS((exports, module) => {
    * @param {(v: string) => string} encode
    * @returns {string}
    */
-  function encodeStringifiedCustom(v, encode) {
+  function encodeStringifiedCustom(v: unknown, encode: Coder) {
     return encode(stringifyPrimitive(v));
   }
 
@@ -275,11 +297,11 @@ var require_src = __commonJS((exports, module) => {
    * @param {{ encodeURIComponent?: (v: string) => string }} [options]
    * @returns {string}
    */
-  function stringify(obj, sep, eq, options) {
+  function stringify(obj?: object | null, sep?: string | null, eq?: string | null, options?: StringifyOptions | null) {
     sep ||= "&";
     eq ||= "=";
 
-    let encode = QueryString.escape;
+    let encode: Coder = QueryString.escape;
     if (options) {
       const encodeURIComponentOption = options.encodeURIComponent;
       if (typeof encodeURIComponentOption === "function") {
@@ -322,17 +344,24 @@ var require_src = __commonJS((exports, module) => {
    * @param {string} str
    * @returns {number[]}
    */
-  function charCodes(str) {
+  function charCodes(str: string): number[] {
     if (str.length === 0) return [];
     if (str.length === 1) return [StringPrototypeCharCodeAt.$call(str, 0)];
-    const ret = new Array(str.length);
+    const ret: number[] = new Array(str.length);
     for (let i = 0; i < str.length; ++i) ret[i] = StringPrototypeCharCodeAt.$call(str, i);
     return ret;
   }
   const defSepCodes = [38]; // &
   const defEqCodes = [61]; // =
 
-  function addKeyVal(obj, key, value, keyEncoded, valEncoded, decode) {
+  function addKeyVal(
+    obj: ParsedQuery,
+    key: string,
+    value: string,
+    keyEncoded: boolean,
+    valEncoded: boolean,
+    decode: Coder,
+  ) {
     if (key.length > 0 && keyEncoded) key = decodeStr(key, decode);
     if (value.length > 0 && valEncoded) value = decodeStr(value, decode);
 
@@ -343,8 +372,8 @@ var require_src = __commonJS((exports, module) => {
       // A simple Array-specific property check is enough here to
       // distinguish from a string value and is faster and still safe
       // since we are generating all of the values being assigned.
-      if (curValue.pop) curValue[curValue.length] = value;
-      else obj[key] = [curValue, value];
+      if ((curValue as string[]).pop) (curValue as string[])[curValue.length] = value;
+      else obj[key] = [curValue as string, value];
     }
   }
 
@@ -359,8 +388,8 @@ var require_src = __commonJS((exports, module) => {
    *   }} [options]
    * @returns {Record<string, string | string[]>}
    */
-  function parse(qs, sep, eq, options) {
-    const obj = Object.create(null);
+  function parse(qs: string, sep?: string | null, eq?: string | null, options?: ParseOptions | null) {
+    const obj: ParsedQuery = Object.create(null);
 
     if (typeof qs !== "string" || qs.length === 0) {
       return obj;
@@ -372,7 +401,7 @@ var require_src = __commonJS((exports, module) => {
     const eqLen = eqCodes.length;
 
     let pairs = 1000;
-    let decode = QueryString.unescape;
+    let decode: Coder = QueryString.unescape;
     if (options) {
       const { maxKeys, decodeURIComponent: decodeURIComponentOption } = options;
       if (typeof maxKeys === "number") {
@@ -512,7 +541,7 @@ var require_src = __commonJS((exports, module) => {
    * @param {(v: string) => string} decoder
    * @returns {string}
    */
-  function decodeStr(s, decoder) {
+  function decodeStr(s: string, decoder: Coder) {
     try {
       return decoder(s);
     } catch {

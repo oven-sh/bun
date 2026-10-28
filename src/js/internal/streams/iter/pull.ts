@@ -7,7 +7,7 @@
 // through transforms to consumer.
 
 const { validateAbortSignal } = require("internal/validators");
-const { isAnyArrayBuffer, isPromise, isUint8Array }: typeof import("node:util/types") = require("node:util/types");
+const { isAnyArrayBuffer, isPromise, isUint8Array } = require("node:util/types");
 
 const {
   arrayBufferViewToUint8Array,
@@ -37,6 +37,8 @@ const {
   toAsyncStreamable,
   toStreamable,
 } = require("internal/streams/iter/types");
+// A symbol that a pattern takes out of `require(..)` is a plain `symbol` for the type checker: `x[key as Keys["key"]]` says which.
+type Keys = typeof import("internal/streams/iter/types").default;
 
 // =============================================================================
 // Type Guards and Helpers
@@ -56,18 +58,32 @@ function hasMethod(value, name) {
  * @param {string} requiredMethod - 'write' for pipeTo, 'writeSync' for pipeToSync
  * @returns {{ transforms: Array, writer: object, options: object }}
  */
-function parsePipeToArgs(args, requiredMethod) {
+type Writer = import("internal/streams/iter/types").Writer;
+type Batch = Uint8Array[];
+type StatefulSyncTransform = (source: Iterable<Batch | null>) => Iterable<unknown>;
+type StatefulAsyncTransform = (
+  source: AsyncIterable<Batch | null>,
+  options: { __proto__?: null; signal: AbortSignal },
+) => AsyncIterable<unknown>;
+
+interface PipeToOptions {
+  signal?: AbortSignal;
+  preventClose?: boolean;
+  preventFail?: boolean;
+}
+
+function parsePipeToArgs(args: unknown[], requiredMethod: string) {
   if (args.length === 0) {
     throw $ERR_INVALID_ARG_VALUE("args", args, "pipeTo requires a writer argument");
   }
 
-  let options;
+  let options: PipeToOptions | undefined;
   let writerIndex = args.length - 1;
 
   // Check if last arg is options
   const last = args[args.length - 1];
   if (isPullOptions(last) && !hasMethod(last, requiredMethod)) {
-    options = last;
+    options = last as PipeToOptions;
     writerIndex = args.length - 2;
   }
 
@@ -75,7 +91,7 @@ function parsePipeToArgs(args, requiredMethod) {
     throw $ERR_INVALID_ARG_VALUE("args", args, "pipeTo requires a writer argument");
   }
 
-  const writer = args[writerIndex];
+  const writer = args[writerIndex] as Writer;
   if (!hasMethod(writer, requiredMethod)) {
     throw $ERR_INVALID_ARG_TYPE("writer", `object with a ${requiredMethod} method`, writer);
   }
@@ -120,7 +136,7 @@ function canUseSyncIterablePipeToFastPath(source, transforms, signal) {
  * Flatten transform yield to Uint8Array chunks (sync).
  * @yields {Uint8Array}
  */
-function* flattenTransformYieldSync(value) {
+function* flattenTransformYieldSync(value): Generator<Uint8Array, void, unknown> {
   if (isUint8Array(value)) {
     yield value;
     return;
@@ -151,7 +167,7 @@ function* flattenTransformYieldSync(value) {
  * Flatten transform yield to Uint8Array chunks (async).
  * @yields {Uint8Array}
  */
-async function* flattenTransformYieldAsync(value) {
+async function* flattenTransformYieldAsync(value): AsyncGenerator<Uint8Array, void, unknown> {
   if (isUint8Array(value)) {
     yield value;
     return;
@@ -248,7 +264,7 @@ function* processTransformResultSync(result) {
  * @param {Array<Uint8Array[]>} target
  * @param {*} result
  */
-function appendTransformResultSync(target, result) {
+function appendTransformResultSync(target: Batch[], result) {
   for (const batch of processTransformResultSync(result)) {
     target.push(batch);
   }
@@ -258,7 +274,7 @@ function appendTransformResultSync(target, result) {
  * Process transform result (async).
  * @yields {Uint8Array[]}
  */
-async function* processTransformResultAsync(result) {
+async function* processTransformResultAsync(result): AsyncGenerator<Batch, void, unknown> {
   // Handle Promise
   if (isPromise(result)) {
     const resolved = await result;
@@ -343,7 +359,7 @@ async function* processTransformResultAsync(result) {
  * @param {*} result
  * @returns {Promise<void>}
  */
-async function appendTransformResultAsync(target, result) {
+async function appendTransformResultAsync(target: Batch[], result) {
   for await (const batch of processTransformResultAsync(result)) {
     target.push(batch);
   }
@@ -361,7 +377,7 @@ async function appendTransformResultAsync(target, result) {
  */
 type StatelessTransform = (chunks: Uint8Array[] | null, options?: { __proto__?: null; signal: AbortSignal }) => unknown;
 
-function* applyFusedStatelessSyncTransforms(source, run) {
+function* applyFusedStatelessSyncTransforms(source, run: StatelessTransform[]) {
   for (const chunks of source) {
     let current = chunks;
     for (let i = 0; i < run.length; i++) {
@@ -414,7 +430,7 @@ function* withFlushSync(source) {
   yield null;
 }
 
-function* applyStatefulSyncTransform(source, transform, receiver) {
+function* applyStatefulSyncTransform(source, transform: StatefulSyncTransform, receiver: object) {
   const output = transform.$call(receiver, withFlushSync(source));
   for (const item of output) {
     if (item === null) continue;
@@ -475,7 +491,7 @@ function* createSyncPipeline(source, transforms) {
  * @param {AbortSignal} signal - The pipeline's abort signal
  * @yields {Uint8Array[]}
  */
-async function* applyFusedStatelessAsyncTransforms(source, run, signal) {
+async function* applyFusedStatelessAsyncTransforms(source, run: StatelessTransform[], signal: AbortSignal) {
   for await (const chunks of source) {
     let current = chunks;
     for (let i = 0; i < run.length; i++) {
@@ -536,7 +552,12 @@ async function* withFlushAsync(source) {
   yield null;
 }
 
-async function* applyStatefulAsyncTransform(source, transform, receiver, options) {
+async function* applyStatefulAsyncTransform(
+  source,
+  transform: StatefulAsyncTransform,
+  receiver: object,
+  options: { __proto__?: null; signal: AbortSignal },
+) {
   const output = transform.$call(receiver, withFlushAsync(source), options);
   for await (const item of output) {
     if (item === null) continue;
@@ -569,8 +590,13 @@ async function* applyStatefulAsyncTransform(source, transform, receiver, options
  * skips isUint8ArrayBatch validation (transform guarantees valid output).
  * @yields {Uint8Array[]}
  */
-async function* applyValidatedStatefulAsyncTransform(source, transform, receiver, options) {
-  const output = transform.$call(receiver, source, options);
+async function* applyValidatedStatefulAsyncTransform(
+  source,
+  transform: StatefulAsyncTransform,
+  receiver: object,
+  options: { __proto__?: null; signal: AbortSignal },
+) {
+  const output = transform.$call(receiver, source, options) as AsyncIterable<Batch>;
   for await (const batch of output) {
     if (batch.length > 0) {
       yield batch;
@@ -586,7 +612,7 @@ async function* applyValidatedStatefulAsyncTransform(source, transform, receiver
  * Create an async pipeline from source through transforms.
  * @yields {Uint8Array[]}
  */
-async function* createAsyncPipeline(source, transforms, signal) {
+async function* createAsyncPipeline(source, transforms, signal: AbortSignal | undefined) {
   // Check for abort
   signal?.throwIfAborted();
 
@@ -604,7 +630,7 @@ async function* createAsyncPipeline(source, transforms, signal) {
   // Create internal controller for transform cancellation.
   // Note: if signal was already aborted, we threw above - no need to check here.
   const controller = new AbortController();
-  let abortHandler;
+  let abortHandler: (() => void) | undefined;
   if (signal) {
     abortHandler = () => {
       controller.abort(signal.reason ?? $makeAbortError());
@@ -765,21 +791,21 @@ function pipeToSync(source, ...args) {
     for (const batch of pipeline) {
       let batchLength;
       if (hasWritevSync && (batchLength = batch.length) > 1) {
-        writer.writevSync(batch);
+        writer.writevSync!(batch);
         for (let i = 0; i < batchLength; i++) {
           totalBytes += batch[i].byteLength;
         }
       } else {
         for (let i = 0; i < (batchLength ??= batch.length); i++) {
           const chunk = batch[i];
-          writer.writeSync(chunk);
+          writer.writeSync!(chunk);
           totalBytes += chunk.byteLength;
         }
       }
     }
 
     if (!options?.preventClose) {
-      if (!hasEndSync || writer.endSync() < 0) {
+      if (!hasEndSync || writer.endSync!() < 0) {
         writer.end?.();
       }
     }
@@ -830,7 +856,7 @@ async function pipeTo(source, ...args) {
   }
 
   function waitForSyncBackpressure() {
-    const ondrain = writer[drainableProtocol];
+    const ondrain = writer[drainableProtocol as Keys["drainableProtocol"]];
     return ondrain?.$call(writer);
   }
 
@@ -844,7 +870,7 @@ async function pipeTo(source, ...args) {
   async function writeBatchAsyncFallback(batch, startIndex) {
     for (let i = startIndex; i < batch.length; i++) {
       const chunk = batch[i];
-      if (hasWriteSync && writer.writeSync(chunk)) {
+      if (hasWriteSync && writer.writeSync!(chunk)) {
         // Sync retry succeeded
       } else if (syncFalseWasAccepted()) {
         totalBytes += chunk.byteLength;
@@ -866,7 +892,7 @@ async function pipeTo(source, ...args) {
   function writeBatch(batch) {
     let batchLength;
     if (hasWritev && (batchLength = batch.length) > 1) {
-      if (!hasWritevSync || !writer.writevSync(batch)) {
+      if (!hasWritevSync || !writer.writevSync!(batch)) {
         if (hasWritevSync && syncFalseWasAccepted()) {
           for (let i = 0; i < batchLength; i++) {
             totalBytes += batch[i].byteLength;
@@ -874,7 +900,7 @@ async function pipeTo(source, ...args) {
           return waitForSyncBackpressure();
         }
         const opts = signal ? { __proto__: null, signal } : undefined;
-        return writer.writev(batch, opts).then(() => {
+        return writer.writev!(batch, opts).then(() => {
           for (let i = 0; i < batch.length; i++) {
             totalBytes += batch[i].byteLength;
           }
@@ -887,7 +913,7 @@ async function pipeTo(source, ...args) {
     }
     for (let i = 0; i < batch.length; i++) {
       const chunk = batch[i];
-      if (!hasWriteSync || !writer.writeSync(chunk)) {
+      if (!hasWriteSync || !writer.writeSync!(chunk)) {
         if (hasWriteSync && syncFalseWasAccepted()) {
           totalBytes += chunk.byteLength;
           return writeBatchAfterAcceptedBackpressure(batch, i + 1);
@@ -928,13 +954,13 @@ async function pipeTo(source, ...args) {
     } else if (transforms.length === 0) {
       // Fast path: no transforms - iterate normalized source directly
       if (signal) {
-        for await (const batch of normalized) {
+        for await (const batch of normalized!) {
           signal.throwIfAborted();
           const p = writeBatch(batch);
           if (p) await p;
         }
       } else {
-        for await (const batch of normalized) {
+        for await (const batch of normalized!) {
           const p = writeBatch(batch);
           if (p) await p;
         }
@@ -957,7 +983,7 @@ async function pipeTo(source, ...args) {
     }
 
     if (!options?.preventClose) {
-      if (!hasEndSync || writer.endSync() < 0) {
+      if (!hasEndSync || writer.endSync!() < 0) {
         await writer.end?.(signal ? { __proto__: null, signal } : undefined);
       }
     }

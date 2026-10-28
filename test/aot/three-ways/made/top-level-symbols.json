@@ -1,0 +1,7 @@
+{
+ "a-cycle-reads-it-early": "as bun run",
+ "a-module-evaluated-again": "as the bundle",
+ "an-es-module-imported-again-with-a-query": "alone: \nexit code 1: error",
+ "read-ahead-of-the-line": "as bun run",
+ "stored-ahead-of-the-line": "as bun run"
+}

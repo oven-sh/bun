@@ -1,0 +1,868 @@
+////: lines
+«1» {
+    const out: number[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push(i);
+        «2»;
+    }
+    return out;
+}
+////: lines-2
+function «1»(count: number) {
+    const out: number[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push(identity(i));
+        if (i === «2»;
+    }
+    return out;
+}
+////: lines-3
+function «1») {
+    const out: number[] = [];
+    for (let i = 0; i < count; i++) {
+        if («2»(out);
+        out.push(identity(i));
+    }
+    return out;
+}
+//// a-container-is-changed-by-the-function-that-made-it.ts
+// Nobody else has the container: the function that made it changes it by itself, by name, under a key that only the run knows, or through a built-in. What follows must see the change.
+const lines: string[] = [];
+const say = (title: string, value: unknown) => lines.push(title + ": " + JSON.stringify(value));
+const identity = <T>(value: T) => value;
+const keys = ["0", "push", "1", "length", "-1", "map", "4294967295", "4294967294", "x"];
+
+////= lines-2	aMethodByName	1) out.push = function (value: number) { Array.prototype.push.call(this, value * 10); return 0; }
+say("a method is stored by name", aMethodByName(4));
+
+function underAKeyOfTheRun(which: number) {
+    const out: unknown[] & Record<string, unknown> = [1, 2] as never;
+    const results: unknown[] = [];
+    for (let turn = 0; turn < 3; turn++) {
+        try {
+            results.push(typeof out.push === "function" ? out.push(turn) : "no function");
+        } catch (error) {
+            results.push((error as Error).constructor.name);
+        }
+        if (turn === 0) out[identity(keys[which])] = turn === 0 ? (which === 3 ? 1 : () => "stored") : 0;
+    }
+    return [results, out.length, Object.keys(out).join()];
+}
+for (let which = 0; which < keys.length; which++) say("stored under " + keys[which], underAKeyOfTheRun(which));
+
+function underANumberOfTheRun(position: number) {
+    const out: number[] = [1, 2, 3];
+    let sum = 0;
+    for (let turn = 0; turn < 3; turn++) {
+        out[identity(position)] = 7;
+        for (let i = 0; i < 4; i++) sum += out[i] ?? 100;
+        try {
+            out.push(turn);
+        } catch (error) {
+            sum += (error as Error).constructor.name.length;
+        }
+    }
+    return [sum, out.length, Object.keys(out).length, out[position]];
+}
+for (const position of [0, 2, 3, 5, -1, 1.5, 4294967294, 4294967295, NaN]) say("stored at " + position, underANumberOfTheRun(position));
+
+function itsLength() {
+    const out: number[] = [1, 2, 3, 4];
+    out.length = identity(2);
+    out.push(9);
+    out.length = identity(6);
+    let holes = 0;
+    for (let i = 0; i < out.length; i++) if (!(i in out)) holes++;
+    return [out, holes, out.indexOf(undefined as never), out.includes(undefined as never)];
+}
+say("its length", itsLength());
+
+function anElementIsDeleted() {
+    const out: number[] = [1, 2, 3];
+    delete out[identity(1)];
+    let text = "";
+    out.forEach((value, index) => { text += index + "=" + value + ";"; });
+    for (const value of out) text += String(value) + ",";
+    return [text, out.map(value => value * 2), out.length];
+}
+say("an element is deleted", anElementIsDeleted());
+
+function definedByADescriptor() {
+    const out: number[] = [1, 2, 3];
+    let calls = 0;
+    Object.defineProperty(out, "map", { value: () => { calls++; return "mine"; } });
+    Object.defineProperty(out, 0, { get: () => { calls++; return 70; } });
+    return [out.map(value => value), out[0] + out[1], calls, out.reduce((sum, value) => sum + value, 0)];
+}
+say("defined by a descriptor", definedByADescriptor());
+
+function assignedTo() {
+    const out: number[] = [1, 2];
+    Object.assign(out, identity({ push: () => "assigned", 1: 20 }));
+    return [(out.push as unknown as () => string)(), out];
+}
+say("Object.assign", assignedTo());
+
+function itsPrototype() {
+    class Loud extends Array<number> { push(...values: number[]) { return super.push(...values.map(value => -value)); } }
+    const out: number[] = [];
+    out.push(1);
+    Object.setPrototypeOf(out, Loud.prototype);
+    out.push(2);
+    return [out, out instanceof Loud, out.map(value => value) instanceof Loud];
+}
+say("its prototype", itsPrototype());
+
+function itsConstructor() {
+    class Other extends Array<number> {}
+    const out: number[] & { constructor: unknown } = [1, 2, 3] as never;
+    const before = out.map(value => value) instanceof Other;
+    out.constructor = Other;
+    return [before, out.map(value => value) instanceof Other, out.filter(() => true) instanceof Other, out.slice() instanceof Other];
+}
+say("its constructor", itsConstructor());
+
+function madeNotExtensible() {
+    const out: number[] = [1];
+    Object.preventExtensions(out);
+    let refused = "";
+    try { out.push(2); } catch (error) { refused = (error as Error).constructor.name; }
+    out[0] = 5;
+    return [out, refused];
+}
+say("made not extensible", madeNotExtensible());
+
+function aMapChangedByName() {
+    const table = new Map<string, number>();
+    table.set("a", 1);
+    table.get = () => 77;
+    (table as unknown as Record<string, unknown>)[identity("has")] = () => "stored";
+    return [table.get("a"), table.has("a"), table.size];
+}
+say("a Map", aMapChangedByName());
+
+function aRegularExpression() {
+    const pattern = /a(b)?/g;
+    const first = "ab a".replace(pattern, "x");
+    pattern.exec = () => null;
+    pattern.lastIndex = identity(1);
+    return [first, "ab a".replace(pattern, "x"), pattern.test("ab"), pattern.lastIndex];
+}
+say("a regular expression", aRegularExpression());
+
+function aPromise() {
+    const promise = Promise.resolve(1);
+    (promise as unknown as Record<string, unknown>).then = function (resolve: (value: number) => void) { resolve(2); };
+    return promise;
+}
+async function awaited() { return await aPromise(); }
+awaited().then(value => { say("a promise with a then of its own", value); console.log(lines.join("\n")); });
+//// a-container-is-changed-by-whoever-gets-it-inside-the-function.ts
+// A function makes an array, a Map or a Set and goes on using it. Until it hands the container to somebody, nobody else can have changed it.
+// Each function here hands it on in another way, in the middle of its work, to somebody who replaces a method, the iterator, the prototype or an element's meaning. What follows must see the change.
+const lines: string[] = [];
+const say = (title: string, value: unknown) => lines.push(title + ": " + JSON.stringify(value));
+type Numbers = number[] & Record<string, unknown>;
+
+const loudPush = function (this: number[], value: number) { Array.prototype.push.call(this, -value); return 99; };
+function replacePush(target: unknown) { (target as Numbers).push = loudPush; }
+function replacePushOfThis(this: unknown) { (this as Numbers).push = loudPush; }
+const identity = (value: number) => value;
+
+function neverHandedOn(count: number) {
+    const out: number[] = [];
+    for (let i = 0; i < count; i++) out.push(identity(i));
+    return out;
+}
+say("never handed on", neverHandedOn(5));
+
+////= lines-2	handedOnAsAnArgument	2) replacePush(out)
+say("as an argument, in the third turn", handedOnAsAnArgument(6));
+
+////= lines-3	handedOnAsThis(count: number	i === 3) replacePushOfThis.call
+say("as this", handedOnAsThis(6));
+
+const shelf: { kept?: number[] } = {};
+function changeWhatIsOnTheShelf() { if (shelf.kept) replacePush(shelf.kept); return 7; }
+function storedIntoAnObject(count: number) {
+    const out: number[] = [];
+    out.push(1);
+    shelf.kept = out;
+    for (let i = 0; i < count; i++) out.push(i === 1 ? changeWhatIsOnTheShelf() : identity(i));
+    shelf.kept = undefined;
+    return out;
+}
+say("stored into an object that a callee reads", storedIntoAnObject(4));
+
+let variableOfTheModule: number[] | undefined;
+function changeTheVariable() { if (variableOfTheModule) replacePush(variableOfTheModule); return 8; }
+function storedIntoAVariable(count: number) {
+    const out: number[] = [];
+    variableOfTheModule = out;
+    for (let i = 0; i < count; i++) out.push(i === 2 ? changeTheVariable() : identity(i));
+    variableOfTheModule = undefined;
+    return out;
+}
+say("stored into a variable of the module", storedIntoAVariable(5));
+
+function run(callback: () => void) { callback(); return 5; }
+function capturedByAClosure(count: number) {
+    const out: number[] = [];
+    const change = () => { replacePush(out); };
+    for (let i = 0; i < count; i++) out.push(i === 1 ? run(change) : identity(i));
+    return out;
+}
+say("captured by a closure that a callee calls", capturedByAClosure(4));
+
+function capturedByAClosureThatIsOnlyMade(count: number) {
+    const out: number[] = [];
+    const change = () => { replacePush(out); };
+    for (let i = 0; i < count; i++) out.push(identity(i));
+    return [out, typeof change];
+}
+say("captured by a closure that nobody calls", capturedByAClosureThatIsOnlyMade(3));
+
+function insideAnotherContainer(count: number) {
+    const out: number[] = [];
+    const box = [out];
+    for (let i = 0; i < count; i++) {
+        out.push(identity(i));
+        if (i === 0) replacePush(box[0]);
+    }
+    return out;
+}
+say("through an array that holds it", insideAnotherContainer(3));
+
+////= lines-3	onlyOnOneSide(count: number, leak: boolean	leak && i === 1) replacePush
+say("on one side of a branch, not taken", onlyOnOneSide(4, false));
+say("on one side of a branch, taken", onlyOnOneSide(4, true));
+
+function inAHandler(count: number) {
+    const out: number[] = [];
+    for (let i = 0; i < count; i++) {
+        try {
+            if (i === 1) throw new Error("now");
+            out.push(identity(i));
+        } catch {
+            replacePush(out);
+        }
+    }
+    return out;
+}
+say("in a handler", inAHandler(4));
+
+function inAFinallyBlock(count: number) {
+    const out: number[] = [];
+    for (let i = 0; i < count; i++) {
+        try { out.push(identity(i)); } finally { if (i === 0) replacePush(out); }
+    }
+    return out;
+}
+say("in a finally block", inAFinallyBlock(3));
+
+function toTheCallbackOfItsOwnMethod() {
+    const out: number[] = [1, 2, 3];
+    out.forEach((value, index, all) => { if (index === 0) replacePush(all); });
+    out.push(4);
+    return out;
+}
+say("to the callback of its own method", toTheCallbackOfItsOwnMethod());
+
+function theIterator() {
+    const out: number[] = [1, 2, 3];
+    const seen: number[] = [];
+    for (const value of out) seen.push(value);
+    ((target: number[]) => { target[Symbol.iterator] = function* () { yield 42; } as never; })(out);
+    for (const value of out) seen.push(value);
+    return [seen, [...out], Math.max(...out)];
+}
+say("the iterator is replaced", theIterator());
+
+function thePrototype() {
+    const out: number[] = [3, 1, 2];
+    const first = out.map(value => value * 2);
+    ((target: object) => Object.setPrototypeOf(target, { map: () => "mine", length: "no" }))(out);
+    return [first, (out as unknown as { map(): string }).map(), Array.isArray(out), out.length];
+}
+say("the prototype is replaced", thePrototype());
+
+function anElementBecomesAnAccessor() {
+    const out: number[] = [1, 2, 3];
+    let sum = 0;
+    for (let i = 0; i < out.length; i++) sum += out[i];
+    let reads = 0;
+    ((target: number[]) => Object.defineProperty(target, 1, { get() { reads++; return 50; }, configurable: true }))(out);
+    for (let i = 0; i < out.length; i++) sum += out[i];
+    return [sum, reads];
+}
+say("an element becomes an accessor", anElementBecomesAnAccessor());
+
+function frozenBySomebody() {
+    const out: number[] = [1];
+    out.push(2);
+    ((target: number[]) => Object.freeze(target))(out);
+    let refused = "";
+    try { out.push(3); } catch (error) { refused = (error as Error).constructor.name; }
+    try { out[0] = 9; } catch (error) { refused += " " + (error as Error).constructor.name; }
+    return [out, refused];
+}
+say("frozen by somebody", frozenBySomebody());
+
+function aMap(count: number) {
+    const table = new Map<number, number>();
+    for (let i = 0; i < count; i++) {
+        table.set(i, identity(i));
+        if (i === 1) ((target: Map<number, number>) => { target.set = function (key: number) { Map.prototype.set.call(this, key, -1); return this; }; })(table);
+    }
+    return [...table];
+}
+say("a Map", aMap(4));
+
+function aSet(count: number) {
+    const members = new Set<number>();
+    let hits = 0;
+    for (let i = 0; i < count; i++) {
+        members.add(identity(i));
+        if (members.has(0)) hits++;
+        if (i === 1) ((target: Set<number>) => { target.has = () => false; })(members);
+    }
+    return [[...members], hits];
+}
+say("a Set", aSet(4));
+
+function theRestParameter(...values: number[]) {
+    const before = Math.max(...values);
+    ((target: number[]) => { target[Symbol.iterator] = function* () { yield -5; } as never; })(values);
+    return [before, Math.max(...values), values.length];
+}
+say("the rest parameter", theRestParameter(1, 2, 3));
+
+function theResultOfABuiltIn(text: string) {
+    const parts = text.split(",");
+    const first = parts.map(part => part.length);
+    ((target: string[]) => { target.map = (() => "mine") as never; })(parts);
+    return [first, parts.map(part => part.length)];
+}
+say("the result of a built-in", theResultOfABuiltIn("a,bb,ccc"));
+
+console.log(lines.join("\n"));
+//// a-container-lives-across-awaits-and-yields.ts
+// While a function is suspended other code runs. A container that only the suspended function holds is as it was when the function goes on; one that somebody else holds too may not be.
+const lines: string[] = [];
+const say = (title: string, value: unknown) => lines.push(title + ": " + JSON.stringify(value));
+const tick = () => new Promise<void>(resolve => setTimeout(resolve, 0));
+const loudPush = function (this: number[], value: number) { Array.prototype.push.call(this, -value); return 0; };
+
+////= lines	async function heldByNobodyElse(count: number)	await tick()
+
+const shelf: { kept?: number[] } = {};
+async function heldByAShelfToo(count: number) {
+    const out: number[] = [];
+    shelf.kept = out;
+    for (let i = 0; i < count; i++) {
+        out.push(i);
+        await tick();
+    }
+    return out;
+}
+async function changesWhatIsOnTheShelf() {
+    await tick();
+    (shelf.kept as number[] & { push: unknown }).push = loudPush;
+}
+
+async function putOnTheShelfLate(count: number) {
+    const out: number[] = [];
+    for (let i = 0; i < count; i++) {
+        out.push(i);
+        if (i === 1) shelf.kept = out;
+        await tick();
+        await tick();
+    }
+    return out;
+}
+
+////= lines	function* yieldsItself(count: number): Generator<number[], number[], void>	if (i === 1) yield out
+
+////= lines	function* yieldsSomethingElse(count: number): Generator<number, number[], void>	yield i
+
+async function* anAsyncGenerator(count: number) {
+    const seen = new Set<number>();
+    for (let i = 0; i < count; i++) {
+        seen.add(i);
+        yield seen;
+        await tick();
+    }
+}
+
+async function main() {
+    say("held by nobody else", await heldByNobodyElse(3));
+    const [first] = await Promise.all([heldByAShelfToo(4), changesWhatIsOnTheShelf()]);
+    say("held by a shelf too", first);
+    const late = putOnTheShelfLate(4);
+    await tick(); await tick(); await tick();
+    (shelf.kept as number[] & { push: unknown }).push = loudPush;
+    say("put on the shelf in the second turn", await late);
+
+    const generator = yieldsItself(4);
+    const yielded = generator.next().value as number[] & { push: unknown };
+    yielded.push = loudPush;
+    say("a generator yields it", generator.next().value);
+    const other = yieldsSomethingElse(3);
+    let step = other.next();
+    while (!step.done) step = other.next();
+    say("a generator yields something else", step.value);
+
+    const sizes: number[] = [];
+    for await (const seen of anAsyncGenerator(3)) {
+        sizes.push(seen.size);
+        if (seen.size === 1) seen.add = function (this: Set<number>, value: number) { return Set.prototype.add.call(this, value + 100), Set.prototype.add.call(this, value + 200); };
+    }
+    say("an async generator yields it", sizes);
+    console.log(lines.join("\n"));
+}
+main();
+//// keys-that-a-table-by-string-lacks-are-appended.ts
+// Map<string, ..>.set and Set<string>.add of a key that the table lacks. The stub has two ways to the free place: the search by text, which knows that the key is a string and the keys are narrow, and the search by bits for undefined and null, which the type admits too. Every size of index, every width of the values, keys of every internal representation, tables that a key of another kind has widened
+interface Entry { id: number }
+const opaque = <T>(value: T): T => Reflect.get({ value }, ["val", "ue"].join("")) as T;
+const lines: string[] = [];
+
+function describe(value: unknown): string {
+  if (value === undefined) return "undefined";
+  if (value === null) return "null";
+  if (typeof value === "object") return "{" + (value as Entry).id + "}";
+  return typeof value + " " + String(value);
+}
+function digestOfMap(map: Map<string, unknown>): string {
+  let sum = 0, position = 0, text = "";
+  for (const [key, value] of map) {
+    const line = describe(key) + "=" + describe(value);
+    for (let i = 0; i < line.length; i++) sum = (sum * 31 + line.charCodeAt(i) + position) | 0;
+    if (position < 3 || position >= map.size - 3) text += " " + line;
+    position++;
+  }
+  return map.size + " " + sum + text;
+}
+function digestOfSet(set: Set<string>): string {
+  let sum = 0, position = 0, text = "";
+  for (const key of set) {
+    const line = describe(key);
+    for (let i = 0; i < line.length; i++) sum = (sum * 31 + line.charCodeAt(i) + position) | 0;
+    if (position < 3 || position >= set.size - 3) text += " " + line;
+    position++;
+  }
+  return set.size + " " + sum + text;
+}
+
+// A key of each representation: a constant, a rope, a substring, 16-bit text, text without a hash yet, one character, the empty string.
+function keyOf(kind: number, i: number): string {
+  switch (kind) {
+    case 0: return "k" + i;
+    case 1: return opaque("a long prefix that makes a rope of this key ") + opaque(String(i));
+    case 2: return ("[[" + i + "]]").slice(1, -1);
+    case 3: return "Ж" + i;
+    case 4: return String.fromCharCode(97 + (i % 26)) + i.toString(36);
+    default: return i === 0 ? "" : String.fromCharCode(33 + (i % 90)) + (i > 90 ? i : "");
+  }
+}
+function valueOf(kind: number, i: number): unknown {
+  switch (kind) {
+    case 0: return { id: i };
+    case 1: return i % 3 ? { id: i } : i % 2 ? undefined : null;
+    case 2: return i % 2 === 0;
+    case 3: return i;
+    case 4: return i + 0.5;
+    default: return i < 20 ? { id: i } : i;
+  }
+}
+
+function fillMap(map: Map<string, unknown>, keyKind: number, valueKind: number, from: number, to: number): void {
+  for (let i = from; i < to; i++) map.set(keyOf(keyKind, i), valueOf(valueKind, i));
+}
+function fillSet(set: Set<string>, keyKind: number, from: number, to: number): void {
+  for (let i = from; i < to; i++) set.add(keyOf(keyKind, i));
+}
+
+// 3: tags. 40: short slots. 300: long slots. 70000: more entries than a short number holds.
+for (const size of [3, 8, 9, 40, 254, 255, 300, 70000]) {
+  for (let keyKind = 0; keyKind < 6; keyKind++) {
+    if (size > 300 && keyKind !== 0 && keyKind !== 3) continue;
+    for (let valueKind = 0; valueKind < 6; valueKind++) {
+      if (size > 300 && valueKind !== 0 && valueKind !== 5) continue;
+      const map = new Map<string, unknown>();
+      fillMap(map, keyKind, valueKind, 0, size);
+      fillMap(map, keyKind, (valueKind + 1) % 6, size >> 1, size + 2);
+      lines.push("map " + size + " " + keyKind + " " + valueKind + ": " + digestOfMap(map));
+    }
+    const set = new Set<string>();
+    fillSet(set, keyKind, 0, size);
+    fillSet(set, keyKind, size >> 1, size + 2);
+    lines.push("set " + size + " " + keyKind + ": " + digestOfSet(set));
+  }
+}
+
+// undefined and null among the strings: first, in the middle, last, again, deleted and added again.
+function withNothing(size: number, at: number): void {
+  const map = new Map<string, unknown>();
+  const set = new Set<string>();
+  const nothing: string[] = opaque([undefined, null]) as unknown as string[];
+  for (let i = 0; i < size; i++) {
+    if (i === at) for (const key of nothing) { map.set(key, { id: -i }); set.add(key); }
+    map.set("k" + i, { id: i });
+    set.add("k" + i);
+  }
+  for (const key of nothing) { map.set(key, map.get(key) === undefined ? "new" : "again"); set.add(key); }
+  lines.push("nothing " + size + " " + at + ": " + digestOfMap(map) + " | " + digestOfSet(set));
+  for (const key of nothing) lines.push("  " + map.delete(key) + " " + set.delete(key) + " " + map.has(key) + " " + set.has(key));
+  for (const key of nothing) { map.set(key, 1.5); set.add(key); }
+  map.set("last", 2.5); set.add("last");
+  lines.push("  " + digestOfMap(map) + " | " + digestOfSet(set));
+}
+for (const size of [0, 1, 7, 8, 30, 400]) for (const at of [0, size >> 1, size - 1, size]) withNothing(size, at);
+
+// A key that is no string came in through `any`: the keys are wide from then on, and strings are still added and found.
+function widened(size: number, odd: unknown): void {
+  const map = new Map<string, unknown>();
+  const set = new Set<string>();
+  fillMap(map, 0, 0, 0, size); fillSet(set, 0, 0, size);
+  (map as Map<any, unknown>).set(odd, "odd"); (set as Set<any>).add(odd);
+  fillMap(map, 0, 0, size, size + 12); fillSet(set, 0, size, size + 12);
+  fillMap(map, 2, 3, 0, 5); fillSet(set, 2, 0, 5);
+  lines.push("widened " + size + " " + describe(odd) + ": " + digestOfMap(map) + " | " + digestOfSet(set) + " | " + (map as Map<any, unknown>).get(odd) + " " + (set as Set<any>).has(odd));
+}
+for (const size of [0, 5, 60, 300]) for (const odd of [7, 1.5, -0, NaN, 2 ** 40, 10n ** 30n, Symbol.iterator, true]) widened(size, opaque(odd));
+
+// Deleted entries leave places that are not taken again until the table is written anew.
+const churned = new Map<string, unknown>();
+const churnedSet = new Set<string>();
+for (let round = 0; round < 400; round++) {
+  for (let i = 0; i < 7; i++) { churned.set("r" + round + "." + i, { id: i }); churnedSet.add("r" + round + "." + i); }
+  for (let i = 0; i < 7; i++) if ((round + i) % 5) { churned.delete("r" + round + "." + i); churnedSet.delete("r" + round + "." + i); }
+}
+lines.push("churned: " + digestOfMap(churned) + " | " + digestOfSet(churnedSet));
+
+let sum = 0;
+for (const line of lines) for (let i = 0; i < line.length; i++) sum = (sum * 33 + line.charCodeAt(i)) | 0;
+console.log(lines.length, sum);
+for (let i = 0; i < lines.length; i += 17) console.log(lines[i]);
+//// maps-and-sets-from-every-maker-are-walked.ts
+// Compiled code reads the table of a Map or a Set without asking what kind of storage it is: in an executable every Map and every Set has the compiled kind, whoever made it. Here each maker there is makes one (the constructors over every kind of source, copies, the Set methods, groupBy, structuredClone, the deserializer, a message channel's clone, subclasses, another realm, host objects that hand out Maps), and each is walked, asked and changed by fast code and by cold code
+import { deserialize, serialize } from "node:v8";
+import { runInNewContext } from "node:vm";
+
+const opaque = <T>(value: T): T => Reflect.get({ value }, ["val", "ue"].join("")) as T;
+const lines: string[] = [];
+const show = (value: unknown): string => (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value));
+
+function walkMap(map: Map<unknown, unknown>): string {
+  let text = "";
+  for (const [key, value] of map) text += show(key) + ">" + show(value) + ";";
+  return text;
+}
+function walkSet(set: Set<unknown>): string {
+  let text = "";
+  for (const key of set) text += show(key) + ";";
+  return text;
+}
+function walkByMethods(collection: Map<unknown, unknown> | Set<unknown>): string {
+  let text = "";
+  collection.forEach((value: unknown, key: unknown) => { text += show(key) + "=" + show(value) + ","; });
+  text += "|" + [...collection.keys()].map(show).join() + "|" + [...collection.values()].map(show).join() + "|" + Array.from(collection.entries(), pair => pair.map(show).join(":")).join();
+  const iterator = collection[Symbol.iterator]();
+  for (let step = iterator.next(); !step.done; step = iterator.next()) text += "/" + show(step.value);
+  return text;
+}
+function lookAtMap(title: string, map: Map<unknown, unknown>): void {
+  const keys = [...map.keys()];
+  let text = title + " size " + map.size + " by value " + Reflect.get(map, "size") + ": " + walkMap(map) + " " + walkByMethods(map);
+  for (const key of keys) text += " " + map.has(key) + show(map.get(key));
+  text += " " + map.has("absent") + show(map.get("absent"));
+  // Entries come and go under a walk that is under way.
+  let steps = 0;
+  for (const [key] of map) {
+    if (steps === 0) { map.set("added " + title, steps); map.delete(keys[keys.length - 1]); }
+    if (++steps > 50) break;
+    text += "~" + show(key);
+  }
+  map.set(1.5, "wide"); map.set("text", { a: 1 });
+  text += " then " + map.size + ": " + walkMap(map);
+  map.clear();
+  text += " cleared " + map.size + walkMap(map);
+  map.set("again", 1);
+  lines.push(text + " " + walkMap(map));
+}
+function lookAtSet(title: string, set: Set<unknown>): void {
+  const keys = [...set];
+  let text = title + " size " + set.size + " by value " + Reflect.get(set, "size") + ": " + walkSet(set) + " " + walkByMethods(set);
+  for (const key of keys) text += " " + set.has(key);
+  text += " " + set.has("absent");
+  let steps = 0;
+  for (const key of set) {
+    if (steps === 0) { set.add("added " + title); set.delete(keys[keys.length - 1]); }
+    if (++steps > 50) break;
+    text += "~" + show(key);
+  }
+  set.add(1.5); set.add("text");
+  text += " then " + set.size + ": " + walkSet(set);
+  set.clear();
+  text += " cleared " + set.size + walkSet(set);
+  set.add("again");
+  lines.push(text + " " + walkSet(set));
+}
+
+const pairs: [unknown, unknown][] = [["a", 1], ["b", { x: 2 }], [3, "three"], [null, undefined], [true, 4.5]];
+const items: unknown[] = ["a", "b", 3, null, true, 4.5, undefined];
+function* generated<T>(list: T[]): Generator<T> { for (const item of list) yield item; }
+class OwnMap<K, V> extends Map<K, V> { tag = "own"; }
+class OwnSet<T> extends Set<T> { tag = "own"; }
+const source = new Map(pairs), sourceSet = new Set(items);
+
+const maps: Record<string, () => Map<unknown, unknown>> = {
+  empty: () => new Map(),
+  "of null": () => new Map(null),
+  "of an array": () => new Map(pairs),
+  "of a generator": () => new Map(generated(pairs)),
+  "of a map": () => new Map(source),
+  "of an empty map": () => new Map(new Map()),
+  "of entries": () => new Map(source.entries()),
+  "of object entries": () => new Map<unknown, unknown>(Object.entries({ p: 1, q: "two" })),
+  "by value": () => new (opaque(Map))(pairs),
+  "by Reflect": () => Reflect.construct(Map, [pairs]),
+  "by Reflect for a subclass": () => Reflect.construct(Map, [pairs], OwnMap),
+  subclass: () => new OwnMap(pairs),
+  "copy of a subclass": () => new Map(new OwnMap(pairs)),
+  groupBy: () => Map.groupBy([1, 2, 3, 4, 5], n => (n % 2 ? "odd" : "even")),
+  structuredClone: () => structuredClone(source),
+  "structuredClone of an empty one": () => structuredClone(new Map()),
+  "inside a clone": () => (structuredClone({ inner: [source] }) as { inner: Map<unknown, unknown>[] }).inner[0],
+  deserialized: () => deserialize(serialize(source)),
+  "another realm": () => runInNewContext("new Map([['a', 1], [2, 'b']])"),
+  "another realm's constructor": () => new (runInNewContext("Map"))(pairs),
+  "search parameters": () => new Map(new URLSearchParams("a=1&b=2&a=3")),
+  headers: () => new Map(new Headers({ "x-a": "1", "x-b": "2" })),
+  "form data": () => { const form = new FormData(); form.append("f", "1"); form.append("g", "2"); return new Map(form as unknown as Iterable<[unknown, unknown]>); },
+  "filled by getOrInsert": () => { const map = new Map<unknown, unknown>(); const any = map as any; if (typeof any.getOrInsert === "function") { any.getOrInsert("a", 1); any.getOrInsertComputed("b", () => 2); } else { map.set("a", 1); map.set("b", 2); } return map; },
+};
+const sets: Record<string, () => Set<unknown>> = {
+  empty: () => new Set(),
+  "of undefined": () => new Set(undefined),
+  "of an array": () => new Set(items),
+  "of numbers": () => new Set([1, 2, 3, 4.5]),
+  "of a string": () => new Set("hello"),
+  "of a generator": () => new Set(generated(items)),
+  "of a set": () => new Set(sourceSet),
+  "of an empty set": () => new Set(new Set()),
+  "of keys of a map": () => new Set(source.keys()),
+  "by value": () => new (opaque(Set))(items),
+  "by Reflect": () => Reflect.construct(Set, [items]),
+  subclass: () => new OwnSet(items),
+  "copy of a subclass": () => new Set(new OwnSet(items)),
+  union: () => sourceSet.union(new Set(["z", 9])),
+  "union with a map": () => sourceSet.union(source),
+  intersection: () => sourceSet.intersection(new Set(["a", 3, "z"])),
+  difference: () => sourceSet.difference(new Set(["a", 3, "z"])),
+  symmetricDifference: () => sourceSet.symmetricDifference(new Set(["a", 3, "z"])),
+  "union of empty ones": () => new Set().union(new Set()),
+  structuredClone: () => structuredClone(sourceSet),
+  deserialized: () => deserialize(serialize(sourceSet)),
+  "another realm": () => runInNewContext("new Set(['a', 1, 2.5])"),
+  "typed array": () => new Set(new Uint8Array([1, 2, 2, 3])),
+};
+for (let round = 0; round < 3; round++) {
+  for (const title in maps) lookAtMap(title, maps[title]());
+  for (const title in sets) lookAtSet(title, sets[title]());
+}
+lines.push(String(sourceSet.isSubsetOf(sourceSet.union(new Set([0])))) + sourceSet.isSupersetOf(new Set(["a"])) + sourceSet.isDisjointFrom(new Set(["q"])));
+
+// A clone that came through a message channel.
+const channel = new MessageChannel();
+const received = new Promise<{ map: Map<unknown, unknown>; set: Set<unknown> }>(resolve => { channel.port2.onmessage = event => resolve(event.data); });
+channel.port1.postMessage({ map: source, set: sourceSet });
+const message = await received;
+channel.port1.close(); channel.port2.close();
+lookAtMap("received", message.map);
+lookAtSet("received", message.set);
+
+const makers = Object.keys(maps).length + Object.keys(sets).length;
+console.log(lines.length, makers);
+console.log(lines.slice(0, makers).join("\n"));
+console.log(lines.slice(-3).join("\n"));
+console.log(lines.slice(0, makers).join() === lines.slice(makers, 2 * makers).join(), lines.slice(makers, 2 * makers).join() === lines.slice(2 * makers, 3 * makers).join());
+//// maps-and-sets-with-live-iterators-against-a-model.js
+// Maps and Sets under random operations with several live iterators, held against a model written with arrays.
+let seed = 12345;
+function random(n) { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return seed % n; }
+const objects = Array.from({ length: 40 }, (_, i) => ({ i }));
+const symbols = Array.from({ length: 10 }, (_, i) => Symbol("s" + i));
+function keyOf(kind, range) {
+    const n = random(range);
+    switch (kind) {
+    case 0: return n;
+    case 1: return "k" + n;
+    case 2: return n + 0.5;
+    case 3: return objects[n % objects.length];
+    case 4: return [NaN, 0, -0, undefined, null, true, false, "", 1e300, -1, 2 ** 31, 2 ** 32 + 1, -(2 ** 31)][n % 13];
+    case 5: return symbols[n % symbols.length];
+    case 6: return BigInt(n % 50);
+    case 7: return String(n);
+    default: return n % 2 ? n : "m" + n;
+    }
+}
+function same(a, b) { return a === b || (a !== a && b !== b) || (typeof a === "bigint" && typeof b === "bigint" && a == b); }
+class Model {
+    constructor() { this.entries = []; this.live = 0; }
+    find(k) { for (const e of this.entries) if (!e.dead && same(e.k, k)) return e; return null; }
+    set(k, v) { const e = this.find(k); if (e) e.v = v; else { this.entries.push({ k: k === 0 ? 0 : k, v, dead: false }); this.live++; } }
+    delete(k) { const e = this.find(k); if (!e) return false; e.dead = true; this.live--; return true; }
+    clear() { for (const e of this.entries) e.dead = true; this.live = 0; this.cleared = (this.cleared || 0) + 1; for (const it of this.iterators || []) it.at = 0; this.entries = []; }
+    iterator() { const it = { at: 0, done: false }; (this.iterators ||= []).push(it); return it; }
+    next(it) { if (it.done) return undefined; while (it.at < this.entries.length) { const e = this.entries[it.at++]; if (!e.dead) return e; } it.done = true; return undefined; }
+}
+function text(x) { return typeof x === "symbol" ? x.description : typeof x === "object" && x ? "o" + x.i : Object.is(x, -0) ? "-0" : String(x) + (typeof x)[0]; }
+let checks = 0, wrong = 0;
+function check(what, a, b) { checks++; if (a !== b) { if (wrong++ < 20) console.log("WRONG", what, a, b); } }
+function round(isMap, kind, range, steps) {
+    const real = isMap ? new Map() : new Set(), model = new Model();
+    const iterators = [];
+    for (let step = 0; step < steps; step++) {
+        const op = random(100), k = keyOf(kind, range);
+        if (op < 45) { if (isMap) real.set(k, step); else real.add(k); if (isMap || !model.find(k)) model.set(k, step); }
+        else if (op < 65) check("delete", real.delete(k), model.delete(k));
+        else if (op < 75) { check("has", real.has(k), !!model.find(k)); if (isMap) { const e = model.find(k); check("get", real.get(k), e ? e.v : undefined); } }
+        else if (op < 77) { real.clear(); model.clear(); }
+        else if (op < 83 && iterators.length < 6) iterators.push([[real.keys(), 0], [real.values(), 1], [real.entries(), 2], [real[Symbol.iterator](), isMap ? 2 : 1]][random(4)].concat(model.iterator()));
+        else if (op < 97 && iterators.length) {
+            const [it, form, mine] = iterators[random(iterators.length)];
+            for (let n = random(4); n >= 0; n--) {
+                const r = it.next(), e = model.next(mine);
+                check("done", r.done, !e);
+                if (!r.done && e) check("item", form === 2 ? text(r.value[0]) + ":" + text(isMap ? r.value[1] : r.value[1]) : text(r.value), form === 2 ? text(e.k) + ":" + text(isMap ? e.v : e.k) : text(form === 0 || !isMap ? e.k : e.v));
+            }
+        } else if (op < 98) {
+            const mine = model.iterator(); let n = 0;
+            real.forEach((v, key) => {
+                const e = model.next(mine); check("forEach", text(key), e ? text(e.k) : "none");
+                if (++n % 3 === 0) { const d = keyOf(kind, range); check("delete inside", real.delete(d), model.delete(d)); }
+                if (n % 5 === 0 && n < 200) { const a = keyOf(kind, range); if (isMap) real.set(a, n); else real.add(a); if (isMap || !model.find(a)) model.set(a, n); }
+                if (n === 17 && random(4) === 0) { real.clear(); model.clear(); }
+            });
+            check("forEach end", model.next(mine), undefined);
+        } else {
+            const mine = model.iterator(); let n = 0;
+            for (const item of real) {
+                const e = model.next(mine); check("for of", text(isMap ? item[0] : item), e ? text(e.k) : "none");
+                if (++n % 4 === 0) { const d = keyOf(kind, range); check("delete in loop", real.delete(d), model.delete(d)); }
+                if (n % 7 === 0 && n < 200) { const a = keyOf(kind, range); if (isMap) real.set(a, n); else real.add(a); if (isMap || !model.find(a)) model.set(a, n); }
+                if (n > 300) break;
+            }
+        }
+        check("size", real.size, model.live);
+    }
+    check("all", [...real.keys()].map(text).join(), model.entries.filter(e => !e.dead).map(e => text(e.k)).join());
+}
+for (const isMap of [true, false])
+    for (let kind = 0; kind < 9; kind++)
+        for (const range of [3, 9, 40, 300, 3000])
+            round(isMap, kind, range, range < 100 ? 1500 : 5000);
+// Kinds of keys that follow one another in one collection.
+for (const isMap of [true, false]) {
+    const real = isMap ? new Map() : new Set(), model = new Model();
+    const it = real.keys(), mine = model.iterator();
+    for (let step = 0; step < 20000; step++) {
+        const k = keyOf(step >> 11, 600);
+        if (isMap) real.set(k, step); else real.add(k);
+        if (isMap || !model.find(k)) model.set(k, step);
+        if (step % 3 === 0) { const d = keyOf(random(9), 600); check("mixed delete", real.delete(d), model.delete(d)); }
+        if (step % 5 === 0) { const r = it.next(), e = model.next(mine); check("mixed next", r.done ? "done" : text(r.value), e ? text(e.k) : "done"); }
+    }
+    check("mixed size", real.size, model.live);
+}
+// Collections of constants, changed later, with an iterator taken before the change.
+const words = new Set(["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]);
+const codes = new Map([["a", 1], ["b", 2], ["c", 3], ["d", 4], ["e", 5]]);
+const numbers = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+const w = words.values(), c = codes.entries(), n = numbers.values();
+console.log(w.next().value, c.next().value.join(), n.next().value);
+words.delete("b"); words.add("z"); codes.delete("b"); codes.set("z", 26); numbers.delete(2); numbers.add(0.5); numbers.add("s");
+console.log([...w].join(), [...c].join("|"), [...n].join(), words.size, codes.size, numbers.size);
+const w2 = words.values(); w2.next(); words.clear(); words.add("again"); console.log([...w2].join(), [...words].join());
+// A large one.
+const big = new Map(); for (let i = 0; i < 1100000; i++) big.set(i, i); const bi = big.keys(); bi.next();
+for (let i = 0; i < 1100000; i += 2) big.delete(i);
+let sum = 0; for (const k of bi) sum += k; console.log(big.size, sum, big.get(1099999), big.has(1099998));
+console.log("checks", checks, "wrong", wrong);
+//// tables-emptied-by-delete-while-iterators-hold-them.js
+function keysFor(count, kind) {
+  const keys = [];
+  for (let i = 0; i < count; i++) keys.push(kind === "objects" ? { i } : kind === "strings" ? "key" + i : kind === "numbers" ? i * 3 : i % 2 ? "key" + i : { i });
+  return keys;
+}
+const nameOf = key => (typeof key === "object" ? "o" + key.i : String(key));
+const rest = iterator => { const seen = []; for (let step = iterator.next(); !step.done; step = iterator.next()) seen.push(nameOf(step.value)); return seen.join(); };
+
+function emptySet(count, kind) {
+  const keys = keysFor(count + 3, kind);
+  const out = [];
+  const set = new Set();
+  const beforeAnyEntry = set.values();
+  for (let i = 0; i < count; i++) set.add(keys[i]);
+  const notStarted = set.values();
+  for (let i = 0; i < count; i++) set.delete(keys[i]);
+  out.push(set.size);
+  set.add(keys[count]);
+  set.add(keys[count + 1]);
+  out.push(rest(beforeAnyEntry), rest(notStarted), rest(set.values()), set.has(keys[0]), set.has(keys[count]));
+
+  const started = set.values();
+  out.push(nameOf(started.next().value));
+  set.delete(keys[count]);
+  set.delete(keys[count + 1]);
+  set.add(keys[count + 2]);
+  set.add(keys[0]);
+  out.push(rest(started), set.size, [...set].map(nameOf).join());
+  return out.join(" ");
+}
+
+function emptyMap(count, kind) {
+  const keys = keysFor(count + 3, kind);
+  const out = [];
+  const map = new Map();
+  const notStarted = map.keys();
+  for (let i = 0; i < count; i++) map.set(keys[i], i);
+  for (let i = count; i--;) map.delete(keys[i]);
+  map.set(keys[count], "a");
+  out.push(map.size, rest(notStarted), map.get(keys[count]), map.get(keys[0]));
+
+  let rounds = 0;
+  for (const [key, value] of map) {
+    out.push(nameOf(key) + "=" + value);
+    map.delete(key);
+    if (rounds++ < 3) map.set(keys[count + (rounds % 3)], rounds);
+  }
+  out.push(map.size);
+  map.set(keys[1], "b");
+  map.forEach((value, key) => { out.push(nameOf(key) + "=" + value); map.delete(key); if (rounds++ < 6) map.set(keys[rounds % 3], rounds); });
+  out.push(map.size, [...map.keys()].map(nameOf).join());
+  return out.join(" ");
+}
+
+function churn(alive, kind) {
+  const keys = keysFor(64, kind);
+  const set = new Set(), map = new Map();
+  let sum = 0;
+  for (let i = 0; i < 1000; i++) {
+    set.add(keys[i & 63]);
+    map.set(keys[i & 63], i);
+    if (i >= alive) {
+      set.delete(keys[(i - alive) & 63]);
+      map.delete(keys[(i - alive) & 63]);
+    }
+    sum += set.size + map.size;
+  }
+  return [sum, [...set].map(nameOf).join(), [...map].map(([key, value]) => nameOf(key) + "=" + value).join()].join(" ");
+}
+
+for (const kind of ["objects", "strings", "numbers", "mixed"]) {
+  for (const count of [1, 2, 4, 5, 8, 9, 20, 40]) console.log(kind, count, "|", emptySet(count, kind), "|", emptyMap(count, kind));
+  for (const alive of [0, 1, 2, 3, 7, 20, 50]) console.log(kind, "churn", alive, churn(alive, kind));
+}

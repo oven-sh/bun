@@ -1213,17 +1213,27 @@ const capturesUnderAwaitCycle = `
     await null;
     await pa;
   }
-  pa = a();
-  pb = b();
+  start(() => {
+    pa = a();
+    pb = b();
+  });
 `;
+const inVmContext = `require("node:vm").runInNewContext(code, { print, start })`;
+const inMainContext = `(0, eval)(code)`;
+const startAtOnce = `run => run()`;
+// Two entries into the VM then resumed an async function: the one of `outer`, and the one of `c` inside its drain.
+const startInADrain = `run => void (async function outer() { await null; run(); require("bun:jsc").drainMicrotasks(); })()`;
 
 // With no limit on the await chain, a child does not return from the capture. Its timeout ends it before the test's timeout.
 test.each([
-  ["a node:vm context", `require("node:vm").runInNewContext(code, { print })`],
-  ["the main context", `(0, eval)(code)`],
-])("Error.captureStackTrace returns under async functions that await each other, in %s", async (_, run) => {
+  ["a node:vm context", inVmContext, startAtOnce],
+  ["the main context", inMainContext, startAtOnce],
+  ["a node:vm context, in a drain of microtasks that an async function runs", inVmContext, startInADrain],
+  ["the main context, in a drain of microtasks that an async function runs", inMainContext, startInADrain],
+])("Error.captureStackTrace returns under async functions that await each other, in %s", async (_, run, start) => {
   const script = `
       globalThis.print = value => console.log(JSON.stringify(value));
+      globalThis.start = ${start};
       const code = ${JSON.stringify(capturesUnderAwaitCycle)};
       ${run};
     `;
@@ -1238,7 +1248,7 @@ test.each([
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stderr, signalCode: proc.signalCode, exitCode }).toEqual({ stderr: "", signalCode: null, exitCode: 0 });
 
-  // `c` runs from a microtask, so it is the only frame of the stack. The trace has at most 10 frames of the cycle.
+  // `c` runs from a microtask, so the await chain comes directly behind its frame. The trace has at most 10 frames of the cycle.
   const fromC = expect.stringMatching(/^c, async a, async b(, async [ab]){0,7}$/);
   expect(JSON.parse(stdout)).toEqual({
     noCaller: fromC,

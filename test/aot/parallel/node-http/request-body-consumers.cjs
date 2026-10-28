@@ -103,9 +103,18 @@ const server = http.createServer((req, res) => {
   const { consumer, spy, done } = current;
   spies[spy]?.(req.socket);
   if (consumer !== "nobody")
-    for (const name of ["pause", "resume", "end", "close", "error", "aborted"]) req.on(name, () => say("req " + name));
+    for (const name of ["pause", "resume", "end", "close", "error", "aborted"])
+      req.on(name, () => {
+        // The pipe finishes some turns of the loop behind the end of the request. How many depends on how the network cut the body.
+        if (name === "close" && consumer === "a slow pipe" && !hasCounted) hasClosedBeforeCount = true;
+        else say("req " + name);
+      });
+  let hasCounted = false;
+  let hasClosedBeforeCount = false;
   consumers[consumer](req, bytes => {
+    hasCounted = true;
     say("bytes " + bytes);
+    if (hasClosedBeforeCount) say("req close");
     res.on("close", () =>
       setTimeout(() => {
         say(

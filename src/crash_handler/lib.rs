@@ -778,13 +778,14 @@ mod draft {
         Fault { pc: usize, fp: usize },
         /// POSIX: as `Fault`, with the stack pointer, from which the callers of
         /// compiled code without a frame record are found. `behind_pc`: see
-        /// `capture_from_fault`.
+        /// `capture_from_fault`. `context`: the handler's third argument.
         #[cfg(unix)]
         FaultOnStack {
             pc: usize,
             behind_pc: usize,
             fp: usize,
             sp: usize,
+            context: *mut c_void,
         },
         /// Walk the current stack and trim the capture machinery above this PC.
         BeginAddr(usize),
@@ -1083,6 +1084,7 @@ mod draft {
                                 behind_pc,
                                 fp,
                                 sp,
+                                ..
                             } => bun_core::debug::capture_from_fault(
                                 pc,
                                 behind_pc,
@@ -1224,9 +1226,16 @@ mod draft {
                         target_os = "linux",
                         any(target_arch = "x86_64", target_arch = "aarch64")
                     ))]
-                    crate::fault_registers::write_to(&mut |text| {
-                        let _ = writer.write_all(text);
-                    });
+                    if let TraceSeed::FaultOnStack { context, .. } = seed {
+                        let fault = match reason {
+                            CrashReason::SegmentationFault(address)
+                            | CrashReason::BusError(address) => Some(address),
+                            _ => None,
+                        };
+                        crate::fault_registers::write_to(context, fault, &mut |text| {
+                            let _ = writer.write_all(text);
+                        });
+                    }
 
                     if enable_ansi_colors_stderr() {
                         if writer
@@ -1654,14 +1663,6 @@ mod draft {
         // sigfault address field.
         let addr: usize = unsafe { (*info).si_addr() as usize };
         let context = fault_context_from_ucontext(ctx);
-        #[cfg(all(
-            target_os = "linux",
-            any(target_arch = "x86_64", target_arch = "aarch64")
-        ))]
-        crate::fault_registers::remember(
-            ctx,
-            matches!(sig, libc::SIGSEGV | libc::SIGBUS).then_some(addr),
-        );
 
         // Removed code was filled with traps, or cut out of the file, which leaves its pages unmapped.
         const SEGV_MAPERR: c_int = 1;
@@ -1710,6 +1711,7 @@ mod draft {
                     },
                     fp,
                     sp,
+                    context: ctx,
                 },
                 None => TraceSeed::None,
             },

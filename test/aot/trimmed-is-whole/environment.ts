@@ -207,7 +207,7 @@ export class Bench {
         .replace(/^Build ID: [0-9a-f]{32}$/gm, "Build ID: <id>")
         // So does what the registers held at a fault, and the code there.
         .replace(/^Registers: .*$/gm, "Registers: <registers>")
-        .replace(/^Code at rip: .*$/gm, "Code at rip: <code>")
+        .replace(/^Code at (rip|pc): .*$/gm, "Code at $1: <code>")
         .replace(/\bFaults: \d+/g, "Faults: <count>")
         // Only an executable that has the interpreter lets a Worker run a text apart from the compiled program.
         .replace(/\b(disallowNonStaticCodeOnlyBesideCompiledCode)=(true|false)/g, "$1=<whether>")

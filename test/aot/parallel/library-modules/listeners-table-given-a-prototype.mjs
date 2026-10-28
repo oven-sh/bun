@@ -1,3 +1,4 @@
+// Alone: TODO: as one of many entry points it answers otherwise than alone
 import { EventEmitter } from "node:events";
 const emitter = new EventEmitter();
 for (const value of Object.values(emitter))

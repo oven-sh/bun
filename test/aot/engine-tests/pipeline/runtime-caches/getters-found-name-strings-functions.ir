@@ -488,84 +488,85 @@ runtimefunction id=69 function=f22
 # CHECK-NEXT: v38: "a" = String string="a"
 # CHECK-NEXT: v39: 1 = Integer integer=1
 # CHECK-NEXT: v40: Map<string, 1> = NewMapFromData data=d2
-# CHECK-NEXT: PutModuleVariable v40 variable=g4
-# CHECK-NEXT: v42: "first" = String string="first"
-# CHECK-NEXT: v43: f9 = NewClosure function=f9 allocationSite=17
-# CHECK-NEXT: v44: true = Boolean boolean=true
-# CHECK-NEXT: v45: L5 = NewObject -, v43, v44 layout=L5 fields=[2, 0] allocationSite=18 allocationClass=1
-# CHECK-NEXT: v46: L5 = FinishObject v45
-# CHECK-NEXT: v47: Map<string, 1> = CallBuiltin -, v40, v42, v46 overload=ObjectDefineProperty/0 accessSite=15
-# CHECK-NEXT: v48: undefined = Undefined
-# CHECK-NEXT: v49: 0 = Integer
-# CHECK-NEXT: Jump -> next b1(v48, v49)
-# CHECK-NEXT: b1(v50: undefined|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, v51: int[0, 50]):
+# CHECK-NEXT: v41: Map<string, 1> = Upcast v40 castType=anything
+# CHECK-NEXT: PutModuleVariable v41 variable=g4
+# CHECK-NEXT: v43: "first" = String string="first"
+# CHECK-NEXT: v44: f9 = NewClosure function=f9 allocationSite=17
+# CHECK-NEXT: v45: true = Boolean boolean=true
+# CHECK-NEXT: v46: L5 = NewObject -, v44, v45 layout=L5 fields=[2, 0] allocationSite=18 allocationClass=1
+# CHECK-NEXT: v47: L5 = FinishObject v46
+# CHECK-NEXT: v48: Map<string, 1> = CallBuiltin -, v41, v43, v47 overload=ObjectDefineProperty/0 accessSite=15
+# CHECK-NEXT: v49: undefined = Undefined
+# CHECK-NEXT: v50: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v49, v50)
+# CHECK-NEXT: b1(v51: undefined|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, v52: int[0, 50]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v53: 50 = Integer integer=50
-# CHECK-NEXT: v54: boolean = Less v51, v53
-# CHECK-NEXT: Branch v54 -> taken b2(| 0), notTaken b3()
-# CHECK-NEXT: b2(v55: int[0, 49]):
-# CHECK-NEXT: v56: "ab" = String string="ab"
-# CHECK-NEXT: v57: 1 = Integer integer=1
-# CHECK-NEXT: v58: int[0, 1] = BitAnd v55, v57
-# CHECK-NEXT: v59: string = Add v56, v58
-# CHECK-NEXT: v60: undefined = CallDirect v59, v55, v55 function=f24
-# CHECK-NEXT: v61: anything = ResultAt v60
-# CHECK-NEXT: v62: anything = ResultAt v60 index=1
-# CHECK-NEXT: v63: anything = ResultAt v60 index=2
-# CHECK-NEXT: v64: anything = ResultAt v60 index=3
-# CHECK-NEXT: v65: undefined|int|string|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = ResultAt v60 index=4
-# CHECK-NEXT: v66: anything = ResultAt v60 index=5
-# CHECK-NEXT: v67: anything = ResultAt v60 index=6
-# CHECK-NEXT: v68: number = ResultAt v60 index=7
-# CHECK-NEXT: v69: int[0, 4294967295] = ResultAt v60 index=8
-# CHECK-NEXT: v70: int[0, 2147483647] = ResultAt v60 index=9
-# CHECK-NEXT: v71: int[-1, 49] = ResultAt v60 index=10
-# CHECK-NEXT: v72: Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v61, v62, v63, v64, v65, v66, v67, v68, v69, v70, v71 contents=undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=23 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v73: Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v72 provenType=Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v74: int[1, 50] = Increment v55
-# CHECK-NEXT: Jump -> next b1(v73, v74)
+# CHECK-NEXT: v54: 50 = Integer integer=50
+# CHECK-NEXT: v55: boolean = Less v52, v54
+# CHECK-NEXT: Branch v55 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v56: int[0, 49]):
+# CHECK-NEXT: v57: "ab" = String string="ab"
+# CHECK-NEXT: v58: 1 = Integer integer=1
+# CHECK-NEXT: v59: int[0, 1] = BitAnd v56, v58
+# CHECK-NEXT: v60: string = Add v57, v59
+# CHECK-NEXT: v61: undefined = CallDirect v60, v56, v56 function=f24
+# CHECK-NEXT: v62: anything = ResultAt v61
+# CHECK-NEXT: v63: anything = ResultAt v61 index=1
+# CHECK-NEXT: v64: anything = ResultAt v61 index=2
+# CHECK-NEXT: v65: anything = ResultAt v61 index=3
+# CHECK-NEXT: v66: undefined|int|string|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = ResultAt v61 index=4
+# CHECK-NEXT: v67: anything = ResultAt v61 index=5
+# CHECK-NEXT: v68: anything = ResultAt v61 index=6
+# CHECK-NEXT: v69: number = ResultAt v61 index=7
+# CHECK-NEXT: v70: int[0, 4294967295] = ResultAt v61 index=8
+# CHECK-NEXT: v71: int[0, 2147483647] = ResultAt v61 index=9
+# CHECK-NEXT: v72: int[-1, 49] = ResultAt v61 index=10
+# CHECK-NEXT: v73: Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v62, v63, v64, v65, v66, v67, v68, v69, v70, v71, v72 contents=undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=23 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v74: Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v73 provenType=Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v75: int[1, 50] = Increment v56
+# CHECK-NEXT: Jump -> next b1(v74, v75)
 # CHECK-NEXT: b3():
-# CHECK-NEXT: v75: undefined = Undefined
-# CHECK-NEXT: v76: undefined|string = CallBuiltin -, v50, v75 overload=JSONStringify/0 accessSite=20
-# CHECK-NEXT: v77: int|whole = GetModuleVariable variable=g2
-# CHECK-NEXT: v78: undefined = CallBuiltin -, v76, v77 overload=ConsoleLog/0 accessSite=21
-# CHECK-NEXT: v79: builtin(StringPrototype) = Builtin builtin=StringPrototype
-# CHECK-NEXT: v80: boolean = PropDelete v79 key="doubled" accessSite=22
-# CHECK-NEXT: v81: "total" = String string="total"
-# CHECK-NEXT: v82: "plain now" = String string="plain now"
-# CHECK-NEXT: v83: true = Boolean boolean=true
-# CHECK-NEXT: v84: L5 = NewObject -, v82, v83 layout=L5 fields=[4, 0] allocationSite=20 allocationClass=1
-# CHECK-NEXT: v85: L5 = FinishObject v84
-# CHECK-NEXT: v86: Array<number> = CallBuiltin -, v30, v81, v85 overload=ObjectDefineProperty/0 accessSite=24
-# CHECK-NEXT: v87: "first" = String string="first"
-# CHECK-NEXT: v88: f11 = NewClosure function=f11 allocationSite=21
-# CHECK-NEXT: v89: true = Boolean boolean=true
-# CHECK-NEXT: v90: L5 = NewObject -, v88, v89 layout=L5 fields=[2, 0] allocationSite=22 allocationClass=1
-# CHECK-NEXT: v91: L5 = FinishObject v90
-# CHECK-NEXT: v92: Map<string, 1> = CallBuiltin -, v40, v87, v91 overload=ObjectDefineProperty/0 accessSite=27
-# CHECK-NEXT: v93: "cd" = String string="cd"
-# CHECK-NEXT: v94: 7 = Integer integer=7
-# CHECK-NEXT: v95: -1 = Integer integer=-1
-# CHECK-NEXT: v96: undefined = CallDirect v93, v94, v95 function=f24
-# CHECK-NEXT: v97: anything = ResultAt v96
-# CHECK-NEXT: v98: anything = ResultAt v96 index=1
-# CHECK-NEXT: v99: anything = ResultAt v96 index=2
-# CHECK-NEXT: v100: anything = ResultAt v96 index=3
-# CHECK-NEXT: v101: undefined|int|string|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = ResultAt v96 index=4
-# CHECK-NEXT: v102: anything = ResultAt v96 index=5
-# CHECK-NEXT: v103: anything = ResultAt v96 index=6
-# CHECK-NEXT: v104: number = ResultAt v96 index=7
-# CHECK-NEXT: v105: int[0, 4294967295] = ResultAt v96 index=8
-# CHECK-NEXT: v106: int[0, 2147483647] = ResultAt v96 index=9
-# CHECK-NEXT: v107: int[-1, 49] = ResultAt v96 index=10
-# CHECK-NEXT: v108: Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v97, v98, v99, v100, v101, v102, v103, v104, v105, v106, v107 contents=undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=23 arrayStorage=Contiguous [contentsAreProven]
-# CHECK-NEXT: v109: Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v108 provenType=Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v110: undefined = Undefined
-# CHECK-NEXT: v111: undefined|string = CallBuiltin -, v109, v110 overload=JSONStringify/0 accessSite=32
-# CHECK-NEXT: v112: int|whole = GetModuleVariable variable=g2
-# CHECK-NEXT: v113: undefined = CallBuiltin -, v111, v112 overload=ConsoleLog/0 accessSite=33
-# CHECK-NEXT: v114: undefined = Undefined
-# CHECK-NEXT: Return v114
+# CHECK-NEXT: v76: undefined = Undefined
+# CHECK-NEXT: v77: undefined|string = CallBuiltin -, v51, v76 overload=JSONStringify/0 accessSite=20
+# CHECK-NEXT: v78: int|whole = GetModuleVariable variable=g2
+# CHECK-NEXT: v79: undefined = CallBuiltin -, v77, v78 overload=ConsoleLog/0 accessSite=21
+# CHECK-NEXT: v80: builtin(StringPrototype) = Builtin builtin=StringPrototype
+# CHECK-NEXT: v81: boolean = PropDelete v80 key="doubled" accessSite=22
+# CHECK-NEXT: v82: "total" = String string="total"
+# CHECK-NEXT: v83: "plain now" = String string="plain now"
+# CHECK-NEXT: v84: true = Boolean boolean=true
+# CHECK-NEXT: v85: L5 = NewObject -, v83, v84 layout=L5 fields=[4, 0] allocationSite=20 allocationClass=1
+# CHECK-NEXT: v86: L5 = FinishObject v85
+# CHECK-NEXT: v87: Array<number> = CallBuiltin -, v30, v82, v86 overload=ObjectDefineProperty/0 accessSite=24
+# CHECK-NEXT: v88: "first" = String string="first"
+# CHECK-NEXT: v89: f11 = NewClosure function=f11 allocationSite=21
+# CHECK-NEXT: v90: true = Boolean boolean=true
+# CHECK-NEXT: v91: L5 = NewObject -, v89, v90 layout=L5 fields=[2, 0] allocationSite=22 allocationClass=1
+# CHECK-NEXT: v92: L5 = FinishObject v91
+# CHECK-NEXT: v93: Map<string, 1> = CallBuiltin -, v41, v88, v92 overload=ObjectDefineProperty/0 accessSite=27
+# CHECK-NEXT: v94: "cd" = String string="cd"
+# CHECK-NEXT: v95: 7 = Integer integer=7
+# CHECK-NEXT: v96: -1 = Integer integer=-1
+# CHECK-NEXT: v97: undefined = CallDirect v94, v95, v96 function=f24
+# CHECK-NEXT: v98: anything = ResultAt v97
+# CHECK-NEXT: v99: anything = ResultAt v97 index=1
+# CHECK-NEXT: v100: anything = ResultAt v97 index=2
+# CHECK-NEXT: v101: anything = ResultAt v97 index=3
+# CHECK-NEXT: v102: undefined|int|string|Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = ResultAt v97 index=4
+# CHECK-NEXT: v103: anything = ResultAt v97 index=5
+# CHECK-NEXT: v104: anything = ResultAt v97 index=6
+# CHECK-NEXT: v105: number = ResultAt v97 index=7
+# CHECK-NEXT: v106: int[0, 4294967295] = ResultAt v97 index=8
+# CHECK-NEXT: v107: int[0, 2147483647] = ResultAt v97 index=9
+# CHECK-NEXT: v108: int[-1, 49] = ResultAt v97 index=10
+# CHECK-NEXT: v109: Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v98, v99, v100, v101, v102, v103, v104, v105, v106, v107, v108 contents=undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=23 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v110: Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v109 provenType=Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v111: undefined = Undefined
+# CHECK-NEXT: v112: undefined|string = CallBuiltin -, v110, v111 overload=JSONStringify/0 accessSite=32
+# CHECK-NEXT: v113: int|whole = GetModuleVariable variable=g2
+# CHECK-NEXT: v114: undefined = CallBuiltin -, v112, v113 overload=ConsoleLog/0 accessSite=33
+# CHECK-NEXT: v115: undefined = Undefined
+# CHECK-NEXT: Return v115
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="readAll"
 # CHECK: module=m0 position=1033 role=ResultWrapper flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=string}, {type=int[0, 49]}, {type=int[-1, 49]}] results=[{type=Array<undefined|boolean|number|string|bigint|Array<1|"a", proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f24}

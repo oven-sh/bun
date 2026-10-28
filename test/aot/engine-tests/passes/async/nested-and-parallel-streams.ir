@@ -772,19 +772,21 @@ runtimefunction id=131091 function=f139 visibility=Private
 # CHECK-NEXT: v5: 3 = Integer integer=3
 # CHECK-NEXT: v6: anything = Call v3, -, v4, v5 calleeName="countSlowly" accessSite=13 callees=[f3]
 # CHECK-NEXT: v7: AsyncGenerator<anything, pristine[Storage, Names]> = AssumeType v6 provenType=AsyncGenerator<anything, pristine[Storage, Names]>
-# CHECK-NEXT: v8: f2 = GetModuleVariable variable=g1
-# CHECK-NEXT: v9: "y" = String string="y"
-# CHECK-NEXT: v10: 4 = Integer integer=4
-# CHECK-NEXT: v11: anything = Call v8, -, v9, v10 calleeName="count" accessSite=14 callees=[f2]
-# CHECK-NEXT: v12: AsyncGenerator<anything, pristine[Storage, Names]> = AssumeType v11 provenType=AsyncGenerator<anything, pristine[Storage, Names]>
-# CHECK-NEXT: v13: undefined = Undefined
-# CHECK-NEXT: v14: AsyncGenerator<undefined|null|string, pristine[Storage, Names]> = Upcast v7 castType=AsyncGenerator<undefined|null|string, pristine[Storage, Names]>
-# CHECK-NEXT: v15: AsyncGenerator<undefined|null|string, pristine[Storage, Names]> = Upcast v12 castType=AsyncGenerator<undefined|null|string, pristine[Storage, Names]>
-# CHECK-NEXT: v16: AsyncGenerator = NewAsyncGenerator v2 function=f7
-# CHECK-NEXT: v17: anything = CallDirect v13, v2, v14, v15, v16 function=f142
-# CHECK-NEXT: v18: AsyncGenerator<undefined|null|string, pristine[Storage, Names]> = AssumeType v16 provenType=AsyncGenerator<undefined|null|string, pristine[Storage, Names]>
-# CHECK-NEXT: v19: anything = Call v0, -, v1, v18 calleeName="collect" accessSite=16 callees=[f8]
-# CHECK-NEXT: ReturnCall v19 casts=[{declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=Promise<never, proven, pristine[Storage, Names]>} resolution=Assume}]
+# CHECK-NEXT: v8: AsyncGenerator<anything, pristine[Storage, Names]> ~ AsyncGenerator<undefined|null|string, pristine[Storage, Names]> = Upcast v7 castType=anything
+# CHECK-NEXT: v9: f2 = GetModuleVariable variable=g1
+# CHECK-NEXT: v10: "y" = String string="y"
+# CHECK-NEXT: v11: 4 = Integer integer=4
+# CHECK-NEXT: v12: anything = Call v9, -, v10, v11 calleeName="count" accessSite=14 callees=[f2]
+# CHECK-NEXT: v13: AsyncGenerator<anything, pristine[Storage, Names]> = AssumeType v12 provenType=AsyncGenerator<anything, pristine[Storage, Names]>
+# CHECK-NEXT: v14: AsyncGenerator<anything, pristine[Storage, Names]> ~ AsyncGenerator<undefined|null|string, pristine[Storage, Names]> = Upcast v13 castType=anything
+# CHECK-NEXT: v15: undefined = Undefined
+# CHECK-NEXT: v16: AsyncGenerator<undefined|null|string, pristine[Storage, Names]> = Upcast v8 castType=AsyncGenerator<undefined|null|string, pristine[Storage, Names]>
+# CHECK-NEXT: v17: AsyncGenerator<undefined|null|string, pristine[Storage, Names]> = Upcast v14 castType=AsyncGenerator<undefined|null|string, pristine[Storage, Names]>
+# CHECK-NEXT: v18: AsyncGenerator = NewAsyncGenerator v2 function=f7
+# CHECK-NEXT: v19: anything = CallDirect v15, v2, v16, v17, v18 function=f142
+# CHECK-NEXT: v20: AsyncGenerator<undefined|null|string, pristine[Storage, Names]> = AssumeType v18 provenType=AsyncGenerator<undefined|null|string, pristine[Storage, Names]>
+# CHECK-NEXT: v21: anything = Call v0, -, v1, v20 calleeName="collect" accessSite=16 callees=[f8]
+# CHECK-NEXT: ReturnCall v21 casts=[{declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=undefined|null|Promise flags=[IsExpected, OmitsNull, OmitsUndefined]} resolution=Nothing}, {declared={type=Promise<never, proven, pristine[Storage, Names]>} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m3 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {

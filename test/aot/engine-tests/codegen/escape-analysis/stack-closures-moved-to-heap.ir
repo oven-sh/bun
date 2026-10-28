@@ -177,7 +177,14 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v51 = Convert v50 declared={type=number site=w20}
     Jump -> next b1(v49, v51)
 }
-function f1 name="isKept" module=m0 position=246 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f1 name="isKept" module=m0 position=246 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>):
+    v1 = PropGet v0 key="length"
+    v2 = Integer integer=2
+    v3 = Greater v1, v2
+    v4 = Convert v3 declared={type=boolean site=w1}
+    Return v4
+}
 function f2 name="hold" module=m0 position=326 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w2 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f9|f13|f17 site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<number>, v1: undefined|null|function|f9|f13|f17):
     v2 = GetModuleVariable variable=g2
@@ -358,5 +365,5 @@ runtimefunction id=131088 function=f38
 # -- generated: roundALoop
 # CHECK-LABEL: function {{*}}name="roundALoop"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 238, patchpoints: 13, rare instructions: 62, polls: 2
-# CHECK-NEXT: end of function f48
+# CHECK-NEXT: instructions: 370, patchpoints: 18, rare instructions: 114, polls: 4
+# CHECK-NEXT: end of function f47

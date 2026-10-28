@@ -54,9 +54,9 @@ attempt(() => MessagePort.prototype.ref.call({}));
 //// BroadcastChannel
 attempt(() => BroadcastChannel.prototype.postMessage.call({}, 1));
 //// SubtleCrypto
-//@ todo the whole executable throws ERR_INVALID_THIS, the trimmed one ERR_FEATURE_REMOVED
+//@ alone
 //@ exit 1
 attempt(() => SubtleCrypto.prototype.exportKey.call({}));
 //// File
-//@ todo the whole executable throws ERR_INVALID_THIS, the trimmed one ERR_FEATURE_REMOVED for Bun.Image
+//@ alone
 attempt(() => File.prototype.image.call({}));

@@ -56,7 +56,7 @@ use crate::engine::{
     self, EngineOptions, EngineRequest, EngineResult, builtin_of, feature_of, position_of,
 };
 use crate::ir::Program;
-use crate::ir::generated::{FeatureUseKind, UnseenCodeCause};
+use crate::ir::generated::{BuiltinUse, FeatureUseKind, UnseenCodeCause};
 use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
 use crate::load::plugin_modules::is_path_of_entry_text;
@@ -123,6 +123,8 @@ pub struct Compilation {
     pub(crate) started_workers: StartedWorkers,
     /// What of Bun's own code the programs use, by the word of the engine, and were handed over without.
     library_code_lacked: RuntimeUses,
+    /// A program reads `process.mainModule`, by the word of the engine, and none of its files names a way to a module object.
+    reads_main_module_without_its_name: bool,
 }
 
 /// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
@@ -333,6 +335,7 @@ struct FrontEndOutput {
     modules: Option<ListedModules>,
     writes_preload: bool,
     held_library_code: HeldLibraryCode,
+    names_way_to_module_objects: bool,
 }
 
 impl FrontEndOutput {
@@ -655,6 +658,17 @@ fn find_library_code_lacked(
     held.find_lacked(&needed)
 }
 
+// An executable keeps track of which file is the main module where the front end has seen somebody ask.
+// Code that the build does not see counts as reading all that it can get at, and is handed no module object of the program.
+fn reads_main_module(engine: &EngineResult) -> bool {
+    engine.unseen_code().is_empty()
+        && engine.builtins_used().iter().any(|record| {
+            record.uses.contains(BuiltinUse::READ)
+                && builtin_of(record.builtin).map(table::canonical_id)
+                    == Some(BuiltinId::ProcessMainModule)
+        })
+}
+
 pub(crate) fn library_code_of(numbers: &LibraryCode) -> RuntimeUses {
     let modules_of = |numbers: &[u32]| {
         let modules = numbers.iter().copied();
@@ -720,6 +734,21 @@ fn find_load_options_with_library_code_lacked(
     Some(load)
 }
 
+fn find_load_options_with_what_engine_found(
+    options: &Options<'_>,
+    compiled: &Compilation,
+) -> Option<LoadOptions> {
+    let mut load = find_load_options_with_library_code_lacked(options, compiled);
+    if compiled.reads_main_module_without_its_name
+        && !options.load.reads_main_module_without_its_name
+        && !options.aot.checks_only
+    {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.reads_main_module_without_its_name = true;
+    }
+    load
+}
+
 fn find_load_options_to_compile_again_with(
     options: &Options<'_>,
     compiled: &Result<Compilation, BuildFailed>,
@@ -729,7 +758,7 @@ fn find_load_options_to_compile_again_with(
         Err(failure) if starts_over_without_brought_types(&load, failure) => {
             load.takes_runtime_as_any = true;
         }
-        Ok(compiled) => return find_load_options_with_library_code_lacked(options, compiled),
+        Ok(compiled) => return find_load_options_with_what_engine_found(options, compiled),
         Err(_) => return None,
     }
     Some(load)
@@ -1127,6 +1156,7 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     }
     first.started_workers.add(program.started_workers);
     first.library_code_lacked.add(&program.library_code_lacked);
+    first.reads_main_module_without_its_name |= program.reads_main_module_without_its_name;
 }
 
 fn compile_written_entry_points(
@@ -1213,7 +1243,7 @@ fn compile_program_at_each_entry_point(
                 ProgramPlace::OneOfSeveral(index) => {
                     let position = indexes.iter().position(|&it| it == index);
                     let own = &each[position.expect("it was handed over")];
-                    match find_load_options_with_library_code_lacked(own, &program) {
+                    match find_load_options_with_what_engine_found(own, &program) {
                         Some(load) => {
                             changed_loads[index] = Some(load);
                             compiled_again.push(index);
@@ -1221,6 +1251,7 @@ fn compile_program_at_each_entry_point(
                         }
                         None => {
                             program.library_code_lacked = RuntimeUses::default();
+                            program.reads_main_module_without_its_name = false;
                             programs[index] = Some(program);
                         }
                     }
@@ -1509,8 +1540,11 @@ fn compile_programs<'a>(
         .into_iter()
         .zip(library_code_lacked)
         .map(|((place, engine, output), library_code_lacked)| {
+            let reads_main_module_without_its_name =
+                !output.names_way_to_module_objects && reads_main_module(&engine);
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
+                reads_main_module_without_its_name,
                 engine,
                 summary,
                 further_programs: Vec::new(),

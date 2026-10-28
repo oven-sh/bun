@@ -1,6 +1,6 @@
 // A log build goes on after a value fails its type, and the code after the check works on the value as it is: it prints what plain Bun prints.
 // Flags: --aot-log-type-mismatches
-// Env: BUN_AOT_TYPE_MISMATCH_LOG=/dev/null
+// Env: BUN_AOT_TYPE_MISMATCH_LOG=off
 import type { int32 } from "bun";
 
 const raw: any = JSON.parse('{"text":"3","number":4,"fraction":1.5,"list":["a",2,null],"point":{"y":1,"x":"left"},"flag":"yes"}');

@@ -410,11 +410,12 @@ fn each_public_module_of_bun_is_loaded_for_a_program_that_imports_it_alone() {
     };
     let modules: Vec<RuntimeModule> = RuntimeModule::ALL.into_iter().filter(has_source).collect();
     assert!(modules.len() > 40);
-    for module in modules {
-        let specifier = BStr::new(table::specifier_of(module));
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    bun_sema_standalone::for_each_parallel(threads, modules.len(), |index| {
+        let specifier = BStr::new(table::specifier_of(modules[index]));
         let text = format!("import * as it from \"{specifier}\"; console.log(typeof it);");
         with_loaded_build(&[("main.ts", &text)], &default_settings(), |_, _| {});
-    }
+    });
 }
 
 // Where several files of Bun's declare one interface, the order of the files is the order of its members and overloads.

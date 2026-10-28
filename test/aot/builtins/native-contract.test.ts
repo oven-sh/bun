@@ -1,12 +1,20 @@
+// The compiler takes native code about which the table of built-ins declares nothing for code that may read, call, keep and pass on what
+// it is handed, and that does not store into it, delete from it, redefine, freeze or reparent it, write its contents or inherit from it.
+// Every overload without a declaration, every native binding and every function of the objects that native bindings answer is called
+// here with recording proxies and with real objects that are compared before and after. One that changes an operand in a way that no
+// entry declares needs a declaration.
+//
+//   AOT_BUILTINS_FILTER=<r>  only the functions whose path matches the regular expression
 import { aotBuiltinEntries } from "bun:internal-for-testing";
-import { beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isGlibc, isWindows, tempDir } from "harness";
+import { expect } from "bun:test";
+import { bunEnv, bunExe, isGlibc, tempDir } from "harness";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
-import type { TargetReport } from "./check-target";
-import { knownChanges } from "./known-changes";
-import { runWorkers, type Report, type Results } from "./run-workers";
-import { isDescribedByNobody } from "./targets";
+import { beforeAll, test } from "../supported";
+import type { TargetReport } from "./native-contract/check-target";
+import { knownChanges } from "./native-contract/known-changes";
+import { runWorkers, type Report, type Results } from "./native-contract/run-workers";
+import { isDescribedByNobody } from "./native-contract/targets";
 
 const filter = process.env.AOT_BUILTINS_FILTER ?? ".";
 const undeclared = aotBuiltinEntries().entries.flatMap(entry =>
@@ -15,6 +23,8 @@ const undeclared = aotBuiltinEntries().entries.flatMap(entry =>
     : [],
 );
 
+// Each process warms up anew.
+const maxWorkers = 2;
 let results: Results;
 const isCalled = (report: Report): report is TargetReport => !("reason" in report);
 const calledReports = () => [...results.reports.values()].filter(isCalled);
@@ -27,17 +37,7 @@ function describeChanges(reports: TargetReport[]): string[] {
   );
 }
 
-/** Whether the calls come in parts with this Bun. */
-export const comesInParts = isASAN || isDebug || isWindows;
-
-export function nativeContractInParts(part: number, parts: number) {
-  if (!comesInParts)
-    return void test.skip("test/aot/builtins/native-contract.test.ts makes the calls in one go", () => {});
-  nativeContract(part, parts);
-}
-
-/** Part `part` of `parts`: every `parts`-th function. What can only be said of all of them is said where there is one part. */
-export function nativeContract(part: number, parts: number) {
+function defineTests() {
   if (undeclared.length === 0) return void test.skip("this build of Bun has no ahead-of-time compiler", () => {});
 
   beforeAll(async () => {
@@ -47,17 +47,20 @@ export function nativeContract(part: number, parts: number) {
       environment: bunEnv,
       folder: String(folder),
       filter,
-      workerCount: Math.min(availableParallelism(), 32),
-      part,
-      parts,
+      workerCount: Math.min(availableParallelism(), maxWorkers),
     });
   }, 30 * 60_000);
 
-  // An opener that makes nothing takes the methods of its class out of this test and out of differential-cases.ts, and neither says so.
-  test.skipIf(!isGlibc || part !== 1)("every opener makes an instance of a class that the table has", async () => {
+  // An opener that makes nothing takes the methods of its class out of this test and out of differential.test.ts, and neither says so.
+  test.skipIf(!isGlibc)("every opener makes an instance of a class that the table has", async () => {
     using folder = tempDir("aot-host-instances", {});
     await using run = Bun.spawn({
-      cmd: [bunExe(), "--no-install", "--expose-internals", join(import.meta.dir, "openers-fixture.ts")],
+      cmd: [
+        bunExe(),
+        "--no-install",
+        "--expose-internals",
+        join(import.meta.dir, "native-contract/openers-fixture.ts"),
+      ],
       cwd: String(folder),
       env: bunEnv,
       stdout: "pipe",
@@ -68,7 +71,7 @@ export function nativeContract(part: number, parts: number) {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(parts !== 1)("every overload without a declaration has a report", () => {
+  test("every overload without a declaration has a report", () => {
     expect(undeclared.filter(token => !results.reports.has(token) && !results.ended.includes(token))).toEqual([]);
   });
 
@@ -85,7 +88,7 @@ export function nativeContract(part: number, parts: number) {
   });
 
   test("the list of known changes names only changes that are seen", () => {
-    if (filter !== "." || parts !== 1) return;
+    if (filter !== ".") return;
     const seen = new Map(calledReports().map(({ name, changes }) => [name, new Set(changes.map(({ use }) => use))]));
     const stale = [...knownChanges].flatMap(([name, uses]) =>
       uses.filter(use => !seen.get(name)?.has(use)).map(use => `${name}: ${use}`),
@@ -93,3 +96,5 @@ export function nativeContract(part: number, parts: number) {
     expect(stale).toEqual([]);
   });
 }
+
+defineTests();

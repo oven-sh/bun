@@ -1,4 +1,8 @@
-// `class Stamped extends Plain { stamp = 7 }` has the constructor that the language gives it. An instance that is kept costs what it costs where the class says `constructor() { super(); }`, not five times that.
+// `class Stamped extends Plain { stamp = 7 }` has the constructor that the language gives it. An instance that is kept is made as where the class says `constructor() { super(); }`.
+// COUNT: arrivals = 0
+// COUNT: branches <= 4600
+// COUNT: operations <= 300
+// COUNT: cells <= 2200
 class Plain {
   id = 1;
 }
@@ -30,15 +34,4 @@ function makeWritten(turns) {
   }
   return sum;
 }
-function fastestOf(runs, make) {
-  let fastest = Infinity;
-  for (let run = 0; run < runs; run++) {
-    const began = performance.now();
-    if (make(2_000_000) !== 16_000_000) console.log("a wrong sum");
-    fastest = Math.min(fastest, performance.now() - began);
-  }
-  return fastest;
-}
-fastestOf(2, makeGiven), fastestOf(2, makeWritten);
-const given = fastestOf(5, makeGiven), written = fastestOf(5, makeWritten);
-console.log(given < written * 5 ? "under five times the time" : "over five times the time");
+console.log(makeGiven(1000), makeWritten(1000));

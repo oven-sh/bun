@@ -462,31 +462,28 @@ runtimefunction id=69 function=f5
 # CHECK-NEXT: v6: L1 = NewObject -, v5 layout=L1 fields=[0] allocationSite=4 allocationClass=0
 # CHECK-NEXT: v7: L1 = FinishObject v6
 # CHECK-NEXT: v8: anything = PropGet v5 key="b" accessSite=34
-# CHECK-NEXT: v9: undefined|number = AssumeType v8 provenType=undefined|number
-# CHECK-NEXT: v10: undefined = AssumeType v9 provenType=undefined|Number
-# CHECK-NEXT: v11: string = CallBuiltin -, v10 overload=String/0 accessSite=27
-# CHECK-NEXT: v12: undefined = CallBuiltin -, v11 overload=ConsoleLog/0 accessSite=28
-# CHECK-NEXT: v13: int[0, 4294967295] = CallBuiltin v3, v7 overload=ArrayPrototypePush/0 accessSite=30
-# CHECK-NEXT: v14: L1 = NewObject -, v5 layout=L1 fields=[0] allocationSite=4 allocationClass=0
-# CHECK-NEXT: v15: L1 = FinishObject v14
-# CHECK-NEXT: v16: anything = PropGet v5 key="b" accessSite=34
-# CHECK-NEXT: v17: undefined|number = AssumeType v16 provenType=undefined|number
-# CHECK-NEXT: v18: undefined = AssumeType v17 provenType=undefined|Number
-# CHECK-NEXT: v19: string = CallBuiltin -, v18 overload=String/0 accessSite=27
-# CHECK-NEXT: v20: undefined = CallBuiltin -, v19 overload=ConsoleLog/0 accessSite=28
-# CHECK-NEXT: v21: int[0, 4294967295] = CallBuiltin v3, v15 overload=ArrayPrototypePush/0 accessSite=30
-# CHECK-NEXT: v22: L1 = NewObject -, v5 layout=L1 fields=[0] allocationSite=4 allocationClass=0
-# CHECK-NEXT: v23: L1 = FinishObject v22
-# CHECK-NEXT: v24: anything = PropGet v5 key="b" accessSite=34
-# CHECK-NEXT: v25: undefined|number = AssumeType v24 provenType=undefined|number
-# CHECK-NEXT: v26: undefined = AssumeType v25 provenType=undefined|Number
-# CHECK-NEXT: v27: string = CallBuiltin -, v26 overload=String/0 accessSite=27
-# CHECK-NEXT: v28: undefined = CallBuiltin -, v27 overload=ConsoleLog/0 accessSite=28
-# CHECK-NEXT: v29: int[0, 4294967295] = CallBuiltin v3, v23 overload=ArrayPrototypePush/0 accessSite=30
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: string = CallBuiltin -, v9 overload=String/0 accessSite=27
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v10 overload=ConsoleLog/0 accessSite=28
+# CHECK-NEXT: v12: int[0, 4294967295] = CallBuiltin v3, v7 overload=ArrayPrototypePush/0 accessSite=30
+# CHECK-NEXT: v13: L1 = NewObject -, v5 layout=L1 fields=[0] allocationSite=4 allocationClass=0
+# CHECK-NEXT: v14: L1 = FinishObject v13
+# CHECK-NEXT: v15: anything = PropGet v5 key="b" accessSite=34
+# CHECK-NEXT: v16: undefined = Undefined
+# CHECK-NEXT: v17: string = CallBuiltin -, v16 overload=String/0 accessSite=27
+# CHECK-NEXT: v18: undefined = CallBuiltin -, v17 overload=ConsoleLog/0 accessSite=28
+# CHECK-NEXT: v19: int[0, 4294967295] = CallBuiltin v3, v14 overload=ArrayPrototypePush/0 accessSite=30
+# CHECK-NEXT: v20: L1 = NewObject -, v5 layout=L1 fields=[0] allocationSite=4 allocationClass=0
+# CHECK-NEXT: v21: L1 = FinishObject v20
+# CHECK-NEXT: v22: anything = PropGet v5 key="b" accessSite=34
+# CHECK-NEXT: v23: undefined = Undefined
+# CHECK-NEXT: v24: string = CallBuiltin -, v23 overload=String/0 accessSite=27
+# CHECK-NEXT: v25: undefined = CallBuiltin -, v24 overload=ConsoleLog/0 accessSite=28
+# CHECK-NEXT: v26: int[0, 4294967295] = CallBuiltin v3, v21 overload=ArrayPrototypePush/0 accessSite=30
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v30: undefined = Undefined
-# CHECK-NEXT: Return v30
+# CHECK-NEXT: v27: undefined = Undefined
+# CHECK-NEXT: Return v27
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m1 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f10 layout=L(IteratorResult)} {

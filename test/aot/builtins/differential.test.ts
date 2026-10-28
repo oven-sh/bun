@@ -8,14 +8,16 @@
 //   AOT_BUILTINS_TABLE=<f>  takes the table from the generator's aot_builtin_table.json in place of the one in this build of Bun
 //   AOT_BUILTINS_FILTER=<r> only the entries whose path matches the regular expression
 //   AOT_BUILTINS_SECONDS_A_CALL=<n>  how long a call may take before its process is ended (45)
-// All of it takes twenty minutes of one core, so it is run in parts: test/aot/parts.mts. By hand: TEST_PART=aot/builtins/differential bun test test/aot/parts.test.ts
+// A position of a call is not tried with every value that there is: differential/instances.ts has them in families, a few of each family are
+// passed everywhere, and the others where the table or one of those few shows that native code tells the family from the rest.
 import { aotBuiltinEntries } from "bun:internal-for-testing";
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isGlibc, tempDir } from "harness";
 import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { dirname, join } from "node:path";
 import { needsDifferentialTest } from "../../../src/codegen/builtins/dump.ts";
+import { beforeAll, describe, test } from "../supported";
 import { checkCall } from "./differential/check-call";
 import { formatDifference } from "./differential/compare";
 import { Realm } from "./differential/members";
@@ -29,6 +31,8 @@ import {
   type TableDump,
 } from "./differential/table-description";
 import type { WorkerNote, WorkerReport, WorkerRequest } from "./differential/worker";
+import { settingsOfEngine } from "./native-contract/run-workers";
+import { leavesProcessChanged } from "./native-contract/targets";
 
 const notCheckedPath = join(import.meta.dir, "differential/not-checked.txt");
 const isUpdate = !!process.env.AOT_BUILTINS_UPDATE;
@@ -39,8 +43,9 @@ const secondsPerAttempt = 600;
 // They are seconds in which its process ran or had nothing to run: on a machine with more to do than it has processors a call waits for its turn, and that is not the call's time.
 const secondsPerCall = Number(process.env.AOT_BUILTINS_SECONDS_A_CALL) || 45;
 const secondsAsleepPerCall = 10;
-// At a level above 0 every matcher of expect() ends with a collection: thousands of them for one entry, ten times the time of the calls themselves.
-const workerEnv = { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
+const workerEnv = { ...bunEnv, ...settingsOfEngine };
+// Each process warms up anew, which costs as much as a tenth of all the calls.
+const maxWorkers = 3;
 const maxAttemptsPerWorker = 400;
 // Ports and file watchers can run out for a moment when many of these processes start together.
 const maxFailedStartsPerWorker = 8;
@@ -51,8 +56,8 @@ const origins: Origin[] = ["Engine", "Host"];
 // The list says what the calls do where it is written.
 const callsOverloads = isGlibc && !isASAN && !isDebug;
 const notCheckedHeader =
-  "# The declared overloads that test/aot/builtins/differential-cases.ts does not call or that do not pass: `<overload>: <why>`.\n" +
-  "# Written by: AOT_BUILTINS_UPDATE=1 TEST_PART=aot/builtins/differential bun test test/aot/parts.test.ts\n";
+  "# The declared overloads that test/aot/builtins/differential.test.ts does not call or that do not pass: `<overload>: <why>`.\n" +
+  "# Written by: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts\n";
 
 const notChecked = new Map(
   readFileSync(notCheckedPath, "utf8")
@@ -309,6 +314,7 @@ const wrongEntries: WrongEntry[] = [
 ];
 
 function defineWrongEntryTests(): void {
+  const realm = new Realm(table);
   describe("a wrong entry is noticed:", () => {
     for (const { title, path, mode, column, applyTo } of wrongEntries) {
       test(title, async () => {
@@ -317,7 +323,7 @@ function defineWrongEntryTests(): void {
         const overloads = table
           .overloadsOf(entry, mode)
           .map(overload => (overload.isUndeclared ? overload : applyTo(overload)));
-        const report = await checkCall(new Realm(table), { entry, mode, overloads });
+        const report = await checkCall(realm, { entry, mode, overloads });
         expect(
           report.overloads.flatMap(({ differences }) => differences.map(difference => difference.column)),
         ).toContain(column);
@@ -381,11 +387,9 @@ function defineStartTest(): void {
   });
 }
 
-/** `part`: 1 to `parts`. Each takes its share of the entries, by their paths; the first has the tests that call none as well. */
-export function differential(part: number, parts: number): void {
+function defineTests(): void {
   const checkedCalls = dump.entries
     .filter(entry => filter.test(entry.path))
-    .filter(entry => (isUpdate ? part === 1 : Number(BigInt(Bun.hash(entry.path)) % BigInt(parts)) === part - 1))
     .flatMap((entry): CheckedCall[] => {
       const overloads = entry.overloads.filter(isChecked);
       return [...new Set(overloads.map(({ mode }) => mode))].map(mode => ({
@@ -517,9 +521,13 @@ export function differential(part: number, parts: number): void {
   }
   async function runWorkers(): Promise<void> {
     using folder = tempDir("aot-builtins-differential", {});
-    const workerCount = Math.min(availableParallelism(), 32, checkedCalls.length);
+    const workerCount = Math.min(availableParallelism(), maxWorkers, checkedCalls.length);
     const slices = Array.from({ length: workerCount }, (): WorkerRequest["calls"] => []);
-    checkedCalls.forEach(({ entry, mode }, index) => slices[index % workerCount].push([entry.token, mode]));
+    // A collection takes the longer the more a process has made.
+    const rankOf = ({ entry: { path } }: CheckedCall) =>
+      path === "Bun.gc" ? 0 : leavesProcessChanged.test(path) ? 2 : 1;
+    const inOrder = checkedCalls.toSorted((left, right) => rankOf(left) - rankOf(right));
+    inOrder.forEach(({ entry, mode }, index) => slices[index % workerCount].push([entry.token, mode]));
     await Promise.all(slices.map((calls, index) => runWorker(String(folder), index, calls)));
     restoreRights(String(folder));
   }
@@ -528,10 +536,11 @@ export function differential(part: number, parts: number): void {
     const key = keyOf(entry.token, mode);
     const report = reports.get(key);
     if (report?.failure !== undefined) return [`${overload.token}: the test itself threw: ${report.failure}`];
-    if (endedProcess.has(key))
-      return [`${overload.token}: the process ended or did not come back: ${endedProcess.get(key)}`];
+    if (endedProcess.has(key)) return [`${overload.token}: the process ended or did not come back`];
     if (!report) return [`${overload.token}: no report`];
     if (report.unreachable !== undefined) return [`${overload.token}: it is not called: ${report.unreachable}`];
+    if (report.setNotMade !== undefined)
+      return [`${overload.token}: an operand could not be made: ${report.setNotMade}`];
     const checked = report.overloads.find(({ token }) => token === overload.token);
     if (!checked || checked.returned + checked.threw === 0) return [`${overload.token}: no set of operands selects it`];
     return checked.differences.map(difference => formatDifference(overload, difference));
@@ -565,7 +574,7 @@ export function differential(part: number, parts: number): void {
   }
 
   beforeAll(runWorkers, maxAttemptsPerWorker * secondsPerAttempt * 1000);
-  if (isUpdate && part === 1) afterAll(writeList);
+  if (isUpdate) afterAll(writeList);
 
   for (const origin of origins) {
     describe(origin, () => {
@@ -577,11 +586,6 @@ export function differential(part: number, parts: number): void {
         }
       }
     });
-  }
-
-  if (part !== 1) {
-    if (checkedCalls.length === 0) test.skip("no overload is called here", () => {});
-    return;
   }
 
   test("the tokens of the overloads are unique", () => {
@@ -598,3 +602,5 @@ export function differential(part: number, parts: number): void {
   defineDescriptionTests();
   defineStartTest();
 }
+
+defineTests();

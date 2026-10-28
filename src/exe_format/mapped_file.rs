@@ -75,6 +75,13 @@ impl MappedFile {
             &self.file,
         )
     }
+
+    /// The first `size` bytes, which are read for the last time, and the others.
+    pub fn split_read_once(&mut self, size: usize) -> (ReadOnce<'_>, &mut [u8]) {
+        let (first, others) = self.split_at_mut(size);
+        let bytes = Part::OfMapping(first);
+        (ReadOnce { offset: 0, bytes }, others)
+    }
 }
 
 impl Drop for MappedFile {
@@ -107,21 +114,19 @@ impl MappedFile {
 
     fn map_zero_pages(&mut self, start: usize, end: usize) {
         assert!(start < end && end <= self.mapped_length.next_multiple_of(MappedFile::page_size()));
+        // SAFETY: the addresses belong to this mapping, and no reference to its bytes is alive.
+        unsafe { MappedFile::map_zero_pages_at(self.pointer.add(start), end - start) };
+    }
+
+    /// # Safety
+    /// The pages belong to a `MappedFile`, and the caller has the only reference to their bytes.
+    unsafe fn map_zero_pages_at(pointer: *mut u8, size: usize) {
         let (access, flags) = (
             libc::PROT_READ | libc::PROT_WRITE,
             libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED,
         );
-        // SAFETY: the addresses belong to this mapping, and no reference to its bytes is alive.
-        let pages = unsafe {
-            libc::mmap(
-                self.pointer.add(start).cast(),
-                end - start,
-                access,
-                flags,
-                -1,
-                0,
-            )
-        };
+        // SAFETY: the caller's contract.
+        let pages = unsafe { libc::mmap(pointer.cast(), size, access, flags, -1, 0) };
         assert!(
             pages != libc::MAP_FAILED,
             "no memory for the pages of an executable"
@@ -204,34 +209,107 @@ impl MappedFile {
     }
 }
 
-/// Takes the whole pages of `bytes`, a part of a private mapping, out of this process. The caller reads none of them again.
-#[cfg(not(windows))]
-pub fn let_go_of_pages(bytes: &[u8]) {
-    let page = MappedFile::page_size();
-    let start = (bytes.as_ptr() as usize).next_multiple_of(page);
-    let end = (bytes.as_ptr() as usize + bytes.len()) / page * page;
-    if start >= end {
-        return;
-    }
-    let (access, flags) = (
-        libc::PROT_READ | libc::PROT_WRITE,
-        libc::MAP_PRIVATE | libc::MAP_ANON | libc::MAP_FIXED,
-    );
-    // SAFETY: the pages lie in a mapping, which stays one.
-    unsafe {
-        libc::mmap(
-            start as *mut libc::c_void,
-            end - start,
-            access,
-            flags,
-            -1,
-            0,
-        )
-    };
+/// A part of the bytes of a file that is read for the last time. Nothing else refers to it.
+/// Where it is a part of a mapping, its whole pages leave this process when it is dropped, and the mapping has zeros there.
+pub struct ReadOnce<'a> {
+    offset: usize,
+    bytes: Part<'a>,
 }
 
-#[cfg(windows)]
-pub fn let_go_of_pages(_bytes: &[u8]) {}
+enum Part<'a> {
+    Kept(&'a [u8]),
+    OfMapping(&'a mut [u8]),
+}
+
+impl<'a> ReadOnce<'a> {
+    /// Bytes at the start of a file that stay as they are.
+    pub fn kept(bytes: &'a [u8]) -> ReadOnce<'a> {
+        ReadOnce {
+            offset: 0,
+            bytes: Part::Kept(bytes),
+        }
+    }
+
+    /// Where the first byte is in the file.
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    /// One part of `size` bytes after the other. The last one may be shorter.
+    pub fn blocks(self, size: usize) -> Blocks<'a> {
+        assert!(size > 0);
+        Blocks { others: self, size }
+    }
+
+    fn take_first(&mut self, size: usize) -> ReadOnce<'a> {
+        let offset = self.offset;
+        self.offset += size;
+        let bytes = match &mut self.bytes {
+            Part::Kept(bytes) => {
+                let (first, others) = bytes.split_at(size);
+                *bytes = others;
+                Part::Kept(first)
+            }
+            Part::OfMapping(bytes) => {
+                let (first, others) = core::mem::take(bytes).split_at_mut(size);
+                *bytes = others;
+                Part::OfMapping(first)
+            }
+        };
+        ReadOnce { offset, bytes }
+    }
+}
+
+impl core::ops::Deref for ReadOnce<'_> {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match &self.bytes {
+            Part::Kept(bytes) => bytes,
+            Part::OfMapping(bytes) => bytes,
+        }
+    }
+}
+
+impl Drop for ReadOnce<'_> {
+    fn drop(&mut self) {
+        #[cfg(not(windows))]
+        if let Part::OfMapping(bytes) = &mut self.bytes {
+            let page = MappedFile::page_size();
+            let start = bytes.as_ptr().align_offset(page);
+            let end = bytes
+                .len()
+                .saturating_sub(bytes.as_ptr_range().end.addr() % page);
+            if let Some(pages) = bytes.get_mut(start..end)
+                && !pages.is_empty()
+            {
+                // SAFETY: only a `MappedFile` makes this kind of part, and `pages` is the only reference to these bytes.
+                unsafe { MappedFile::map_zero_pages_at(pages.as_mut_ptr(), pages.len()) };
+            }
+        }
+    }
+}
+
+pub struct Blocks<'a> {
+    others: ReadOnce<'a>,
+    size: usize,
+}
+
+impl<'a> Iterator for Blocks<'a> {
+    type Item = ReadOnce<'a>;
+
+    fn next(&mut self) -> Option<ReadOnce<'a>> {
+        let size = self.size.min(self.others.len());
+        (size > 0).then(|| self.others.take_first(size))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let count = self.others.len().div_ceil(self.size);
+        (count, Some(count))
+    }
+}
+
+impl ExactSizeIterator for Blocks<'_> {}
 
 #[cfg(not(windows))]
 impl crate::image::ImageBytes for MappedFile {
@@ -321,6 +399,17 @@ impl FileBytes {
         let start = self.len();
         self.resize(start + bytes.len());
         self[start..].copy_from_slice(bytes);
+    }
+
+    /// The first `size` bytes, which are read for the last time, and the others.
+    pub fn split_read_once(&mut self, size: usize) -> (ReadOnce<'_>, &mut [u8]) {
+        match self {
+            FileBytes::Vector(vector) => {
+                let (first, others) = vector.split_at_mut(size);
+                (ReadOnce::kept(first), others)
+            }
+            FileBytes::Mapping(mapping) => mapping.split_read_once(size),
+        }
     }
 }
 
@@ -454,15 +543,28 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn pages_that_are_let_go_of_stay_mapped() {
+    fn whole_pages_of_a_mapping_are_zero_once_they_were_read() {
         let page = MappedFile::page_size();
-        let file = TemporaryFile::create("let-go", &vec![7u8; 4 * page]);
-        let mut mapped = MappedFile::open(&file.0).unwrap();
-        mapped[page] = 8;
-        let_go_of_pages(&mapped[page - 1..3 * page + 1]);
-        assert_eq!((mapped[page - 1], mapped[3 * page]), (7, 7));
-        mapped[2 * page] = 1;
-        assert_eq!(mapped[2 * page], 1);
+        let original: Vec<u8> = (0..4 * page).map(|index| (index / 7) as u8 | 1).collect();
+        let file = TemporaryFile::create("read-once", &original);
+        let mut bytes = FileBytes::Mapping(MappedFile::open(&file.0).unwrap());
+        bytes[page] = 0xEE;
+        let mut expected = original.clone();
+        expected[page] = 0xEE;
+
+        let (first, others) = bytes.split_read_once(2 * page + 1);
+        assert!(*others == expected[2 * page + 1..]);
+        let blocks = first.blocks(page + 1);
+        assert_eq!(blocks.len(), 2);
+        for block in blocks {
+            assert!(*block == expected[block.offset()..][..block.len()]);
+        }
+
+        expected[..page].fill(0);
+        assert!(*bytes == *expected);
+        bytes[0] = 1;
+        assert_eq!(bytes[0], 1);
+        assert!(file.read() == original);
     }
 
     mod edits {

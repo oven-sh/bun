@@ -1,6 +1,7 @@
 use super::module_list::collect_module_list;
 use super::summary::{collect_entry_point_paths, collect_folder_paths, collect_source_texts};
 use super::{BoundBuild, Build, FrontEndOutput, LoadedBuild, ProgramPlace};
+use crate::ir::generated::ModuleFlags;
 use crate::link::{
     self, LinkError, LinkInput, LinkProject, LinkUnit, Linked, ProgramKeys, ProgramModule,
     ProgramVariableKey,
@@ -176,7 +177,10 @@ impl Build<'_> {
             _ => collect_folder_paths(application),
         };
         self.leftovers.push(leftovers);
+        let names_way = ModuleFlags::NAMES_WAY_TO_MODULE_OBJECTS;
         Ok(FrontEndOutput {
+            names_way_to_module_objects: (program.modules.iter())
+                .any(|module| module.flags.contains(names_way)),
             writes_preload,
             held_library_code: core::mem::take(&mut self.held_library_code),
             program,

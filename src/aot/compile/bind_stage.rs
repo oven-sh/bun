@@ -122,6 +122,8 @@ impl Build<'_> {
                     graph: &graph,
                     removable: self.options.removable,
                     limits: &self.limits,
+                    reads_main_module_without_its_name: (self.options.load)
+                        .reads_main_module_without_its_name,
                 };
                 let (left_out, reached) = find_left_out_code(&input, &in_parallel);
                 finish_modules(&mut graph, &reached);

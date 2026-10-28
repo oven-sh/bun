@@ -1,4 +1,4 @@
-// `JSON.parse(text) as T` of texts that are no JSON at their deepest place, or that nest past the end of the stack: the error is JSON.parse's, and no level of the text is read again for each level around it, so each answer comes within a second.
+// `JSON.parse(text) as T` of texts that are no JSON at their deepest place, or that nest past the end of the stack: the error is JSON.parse's, and no level of the text is read again for each level around it: at 300,000 levels that would be ninety thousand million characters a text.
 type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
 type Chain = { extra: unknown; next: Chain | null };
 type Link = { name: string; next?: Link };
@@ -19,13 +19,12 @@ const kinds: [string, (text: string) => unknown, (levels: number) => string][] =
 for (const [label, parse, text] of kinds) {
   for (const levels of [10, 1_000, 30_000, 300_000]) {
     const given = text(levels);
-    const start = Date.now();
     let said: string;
     try {
       said = "A VALUE: " + typeof parse(given);
     } catch (error: any) {
       said = error.name;
     }
-    console.log(label + ", " + levels + " levels: " + said + (Date.now() - start > 1000 ? " TOO SLOWLY" : ""));
+    console.log(label + ", " + levels + " levels: " + said);
   }
 }

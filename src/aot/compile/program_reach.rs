@@ -41,6 +41,8 @@ pub(crate) struct ProgramReachInput<'a, 's> {
     pub graph: &'a ModuleGraph,
     pub removable: RemovableOptions,
     pub limits: &'a LimitValues,
+    /// `LoadOptions::reads_main_module_without_its_name`
+    pub reads_main_module_without_its_name: bool,
 }
 
 impl<'a, 's> ProgramReachInput<'a, 's> {
@@ -2568,6 +2570,10 @@ impl<'a, 's> Walk<'a, 's> {
         }
         for entry_point in self.input.sources.entry_points() {
             self.reach_every_export(ModuleRef::File(entry_point.file));
+            if self.input.reads_main_module_without_its_name {
+                let (owner, object_use) = (ModuleObjectOwner::EntryPoint, ModuleObjectUse::Object);
+                self.reach_module_object(entry_point.file, owner, object_use);
+            }
         }
         loop {
             if let Some((file, region)) = self.pending.pop() {

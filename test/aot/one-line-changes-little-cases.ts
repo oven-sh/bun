@@ -119,6 +119,10 @@ async function measure(files: Record<string, string>) {
   return {
     functions: statistics.ImageFunctionsEmitted as number,
     codeBytes: statistics.CodeBytesEmitted as number,
+    // Without the rest of the last page and without the constants. It is printed and judges nothing.
+    exactCodeBytes:
+      (statistics.SharedCodeBytesEmitted as number) +
+      (functions as { codeBytes: number }[]).reduce((sum, { codeBytes }) => sum + codeBytes, 0),
     free: summary.accesses.free as number,
     byName: summary.accesses.byName as number,
     direct: summary.calls.proven as number,
@@ -142,7 +146,11 @@ function addedToLibrary(alone: Measured, withLine: Measured) {
     found.push(moved("functions", alone.functions, withLine.functions));
   // An ASAN build emits four times the bytes for the same functions.
   if (!isASAN && withLine.codeBytes > alone.codeBytes + mostCodeBytesAdded)
-    found.push(moved("bytes of code", alone.codeBytes, withLine.codeBytes));
+    found.push(
+      moved("bytes of code", alone.codeBytes, withLine.codeBytes) +
+        ", " +
+        moved("of functions and shared code alone", alone.exactCodeBytes, withLine.exactCodeBytes),
+    );
   return found;
 }
 

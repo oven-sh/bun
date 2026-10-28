@@ -1,6 +1,7 @@
 // Rings of one, two, three and forty records with long texts, a ring through lists, a ring whose long texts are in records beside it, and two rings with texts of 16-bit characters, each in a record that has a toJSON beside it.
-// JSON.stringify prints its error and how often toJSON ran. The last line says whether the process has stayed under a gigabyte.
-// Alone: its last line goes by what the whole process has held, so no joined group takes this program
+// JSON.stringify prints its error and how often toJSON ran. A ring is found after a few hundred levels: the long texts are appended some thousand times in all, not half a million times.
+// COUNT: operation:operationAOTJSONAppendString <= 5000
+// COUNT: operations <= 8000
 interface Link {
   text: string;
   next: Link | null;
@@ -102,5 +103,3 @@ while (end.next !== straight) end = end.next!;
 end.next = null;
 for (const value of [{ first: counter, chain: straight }] as { first: unknown; chain: Link }[])
   console.log(JSON.stringify(value).length, calls);
-
-console.log(process.resourceUsage().maxRSS < 1024 * 1024);

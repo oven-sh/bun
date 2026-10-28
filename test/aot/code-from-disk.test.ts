@@ -612,6 +612,8 @@ const cases: Record<string, Case> = {
 };
 
 const allowed = ["--aot", "--aot-allow-code-from-disk"];
+// On Windows a function of the library makes process.env, which says which program to run.
+const withoutBuiltInModules = isWindows ? [] : ["--no-builtin-modules"];
 
 const closedWorld: Record<string, string> = {
   "program/tsconfig.json": tsconfig,
@@ -703,7 +705,7 @@ console.log(result.success, result.logs.filter(log => log.message.includes("TS10
             build("plain", []),
             isLargest
               ? buildThroughTheApi()
-              : build("compiled", [...allowed, "--no-builtin-modules", ...(first.aotFlags ?? [])]),
+              : build("compiled", [...allowed, ...withoutBuiltInModules, ...(first.aotFlags ?? [])]),
           ]);
         }, timeout);
 

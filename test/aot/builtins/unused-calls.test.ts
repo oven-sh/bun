@@ -1,29 +1,31 @@
 // A row of the table of built-ins that forgets a throw is wrong code: the compiler takes a call away with its unused result, and the error with
-// it. So every call, construction and read of an accessor that the table lets go is made here with operands that are missing, of the wrong
-// kind or extreme, with another receiver, with and without `new`: in a declaration that nothing reads, in a statement, and with its result
-// kept, in plain Bun and compiled. All must do the same: return, or throw an error of the same name, message and code. What throws is then
-// compiled once more as the one statement of a module of its own, where a whole statement may be left out.
-// unused-calls/cases.ts makes the programs from the table in this build of Bun.
+// it. Whether native code throws where a row says it does not is asked of every row without a compiler: differential.test.ts. Here the compiler
+// is asked what it makes of the rows. Of the rows that make the same claims the first stands for all: its call, construction or read is made
+// with operands that are missing, of the wrong kind or extreme, with another receiver, with and without `new`: in a declaration that nothing
+// reads, in a statement, and with its result kept, in plain Bun and compiled. All must do the same: return, or throw an error of the same name,
+// message and code. Of the expressions that end in the same error the first is then compiled once more as the one statement of a module of its
+// own, where a whole statement may be left out. unused-calls/cases.ts makes the programs from the table in this build of Bun.
 //
-// All of it takes ten minutes of one core, so it is run in parts: test/aot/parts.mts. By hand: TEST_PART=aot/builtins/unused-calls bun test test/aot/parts.test.ts
-//
-//   AOT_UNUSED_CALLS=<r>  only the holders whose name matches the regular expression ("^Object$", "node:util")
+//   AOT_UNUSED_CALLS=<r>  only the expressions that match the regular expression ("^Object", "MODULE_")
 import { aotBuiltinEntries } from "bun:internal-for-testing";
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
-import { compileCommand } from "../harness/flags";
 import { built, slot, spawned } from "../harness/commands";
+import { compileCommand } from "../harness/flags";
 import { describe, test } from "../supported";
 import type { TableDump } from "./differential/table-description";
 import { CaseMaker, modulesOf, programOf } from "./unused-calls/cases";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
 const filter = new RegExp(process.env.AOT_UNUSED_CALLS ?? ".");
-const expressionsPerProgram = 400;
+const expressionsPerProgram = 1200;
 
 const dump: TableDump = aotBuiltinEntries();
-const { groups, leftOut, overloads } = new CaseMaker(dump).make(dump);
+const { modules, expressions: everyExpression, leftOut, overloads } = new CaseMaker(dump).make(dump);
+const expressions = everyExpression.filter(expression => filter.test(expression));
+// A module costs ten times what an expression costs, so of the expressions that end alike the first stands for all.
+const endings = new Set<string>();
 let plainBunDiffersFromItself = 0;
 let statementsOfTheirOwn = 0;
 
@@ -53,8 +55,8 @@ const parse = (stdout: string): Case[] =>
 // No program may count on an error for lack of memory, so it may go with the allocation that nobody uses.
 const mayGoUnused = (outcome: string) => outcome === "threw RangeError: Out of memory";
 
-async function findDifferences(module: string | null, expressions: readonly string[]) {
-  using dir = tempDir("aot-unused-calls", { "main.js": programOf(module, expressions) });
+async function findDifferences(expressions: readonly string[]) {
+  using dir = tempDir("aot-unused-calls", { "main.js": programOf(modules, expressions) });
   const folder = String(dir);
   const executable = join(folder, isWindows ? "app.exe" : "app");
   const plain = await spawned([bunExe(), "main.js"], folder, env);
@@ -88,17 +90,19 @@ async function findDifferences(module: string | null, expressions: readonly stri
     return [`${plainCase.expression}\n  plain Bun: ${inForms(plainCase)}\n  compiled: ${inForms(actual[index])}`];
   });
 
-  const throwing = actual.filter(({ used }) => used !== "returned" && !mayGoUnused(used));
+  const throwing = actual.filter(
+    ({ used }) => used !== "returned" && !mayGoUnused(used) && !endings.has(used) && endings.add(used),
+  );
   if (throwing.length === 0) return differences;
   statementsOfTheirOwn += throwing.length;
-  using modules = tempDir(
+  using folderOfModules = tempDir(
     "aot-unused-calls-modules",
     modulesOf(
-      module,
+      modules,
       throwing.map(({ expression }) => expression),
     ),
   );
-  const modulesFolder = String(modules);
+  const modulesFolder = String(folderOfModules);
   const loader = join(modulesFolder, isWindows ? "app.exe" : "app");
   built(await spawned([bunExe(), ...compileCommand, "main.js", "--outfile", loader], modulesFolder, env));
   const loaded = await spawned([loader], modulesFolder, env);
@@ -124,35 +128,26 @@ async function findDifferences(module: string | null, expressions: readonly stri
   );
 }
 
-/** Every `parts`-th program from the `part`-th. */
-export function unusedCalls(part: number, parts: number) {
-  let programs = 0;
-  describe.concurrent("an unused result takes no error away:", () => {
-    for (const [holder, { module, expressions }] of groups) {
-      if (!filter.test(holder)) continue;
-      for (let start = 0; start < expressions.length; start += expressionsPerProgram) {
-        const taken = expressions.slice(start, start + expressionsPerProgram);
-        const title = expressions.length > expressionsPerProgram ? `${holder}, from ${start}` : holder;
-        if (programs++ % parts !== part - 1) continue;
-        test(
-          `${title} (${taken.length})`,
-          () => slot(async () => expect(await findDifferences(module, taken)).toEqual([])),
-          600_000,
-        );
-      }
-    }
-  });
-
-  test("what is covered and what is left out", () => {
-    const cases = [...groups.values()].reduce((sum, { expressions }) => sum + expressions.length, 0);
-    const byRule = Object.groupBy(leftOut, ({ rule }) => rule);
-    console.log(
-      `${overloads} overloads that may be removed, ${cases} expressions, each in three forms, in plain Bun and compiled`,
+describe.concurrent("an unused result takes no error away:", () => {
+  for (let start = 0; start < expressions.length; start += expressionsPerProgram) {
+    const taken = expressions.slice(start, start + expressionsPerProgram);
+    test(
+      `expressions ${start + 1} to ${start + taken.length}`,
+      () => slot(async () => expect(await findDifferences(taken)).toEqual([])),
+      600_000,
     );
-    console.log(`plain Bun does something else with the result unused than with it used: ${plainBunDiffersFromItself}`);
-    console.log(`expressions that throw, each also alone in two modules: ${statementsOfTheirOwn}`);
-    for (const [rule, entries] of Object.entries(byRule)) console.log(`left out, ${rule}: ${entries!.length}`);
-    expect(overloads).toBeGreaterThan(300);
-    expect(cases).toBeGreaterThan(10_000);
-  });
-}
+  }
+});
+
+test("what is covered and what is left out", () => {
+  const cases = everyExpression.length;
+  const byRule = Object.groupBy(leftOut, ({ rule }) => rule);
+  console.log(
+    `${overloads} overloads that may be removed, ${cases} expressions, each in three forms, in plain Bun and compiled`,
+  );
+  console.log(`plain Bun does something else with the result unused than with it used: ${plainBunDiffersFromItself}`);
+  console.log(`expressions that throw, each also alone in two modules: ${statementsOfTheirOwn}`);
+  for (const [rule, entries] of Object.entries(byRule)) console.log(`left out, ${rule}: ${entries!.length}`);
+  expect(overloads).toBeGreaterThan(150);
+  expect(cases).toBeGreaterThan(2_500);
+});

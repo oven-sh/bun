@@ -732,11 +732,12 @@ runtimefunction id=92 function=f42 visibility=Private
 # CHECK-NEXT: Return v13
 # CHECK-NEXT: b4() frequency=Rare:
 # CHECK-NEXT: v14: Array ~ Array<undefined|null|number|Array<number>> = CallBuiltin v7, v8 overload=ArrayPrototypeConcat/2 builtinCallForm=AnyReceiver accessSite=72
-# CHECK-NEXT: Jump -> next b5(v14)
-# CHECK-NEXT: b5(v15: Array ~ Array<number>) frequency=Rare:
-# CHECK-NEXT: v16: anything = PropGet v15 key="join" accessSite=73
-# CHECK-NEXT: v17: anything = Call v16, v15 calleeKey="join" calleeName="join" accessSite=74 callees=[..]
-# CHECK-NEXT: ReturnCall v17
+# CHECK-NEXT: v15: Array ~ Array<number> = Expect v14 expectedType=undefined|null|Array<number>
+# CHECK-NEXT: Jump -> next b5(v15)
+# CHECK-NEXT: b5(v16: Array ~ Array<number>) frequency=Rare:
+# CHECK-NEXT: v17: anything = PropGet v16 key="join" accessSite=73
+# CHECK-NEXT: v18: anything = Call v17, v16 calleeKey="join" calleeName="join" accessSite=74 callees=[..]
+# CHECK-NEXT: ReturnCall v18
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m0 position=478 kind=Arrow role=ResultWrapper flags=[IsChecked] captures=[{type=env L3 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=L8 site=w115 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f32] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ResultWrapper{worker=f74 layout=L8} inlineFrames=[{}, {callee=f74 callPosition=478 module=m0}] {

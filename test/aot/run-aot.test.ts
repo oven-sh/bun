@@ -197,7 +197,8 @@ describe("at run time", () => {
         "--compile",
         "--aot",
         "--compile-inspector",
-        "--no-builtin-modules",
+        // On Windows a function of the library makes process.env, which the program reads.
+        ...(isWindows ? [] : ["--no-builtin-modules"]),
         "main.ts",
         "--outfile",
         "main",

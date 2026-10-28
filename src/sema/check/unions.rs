@@ -1012,6 +1012,10 @@ impl<'p, 's> Checker<'p, 's> {
         union
     }
 
+    pub fn union_members_compared(&self) -> u64 {
+        self.union_members_compared
+    }
+
     /// `getUnionTypeWorker` with `UnionReductionSubtype`.
     fn create_reduced_union(&mut self, types: &[TypeId]) -> TypeId {
         // An existing union is left unchanged.
@@ -1156,6 +1160,7 @@ impl<'p, 's> Checker<'p, 's> {
                 if was_compared[i] && was_compared[j] {
                     continue;
                 }
+                self.union_members_compared += 1;
                 if let Some((name, unit)) = key_property
                     && self.flags(target) & HAS_PROPERTIES != 0
                     && let Some(other) = self.type_of_property(target, name)
@@ -1191,7 +1196,8 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
         }
-        let reduced = if !is_reduced && keep.iter().all(|&k| k) {
+        let number_kept = keep.iter().filter(|&&k| k).count();
+        let reduced = if !is_reduced && number_kept == len {
             union
         } else {
             let kept: Flat = members
@@ -1202,7 +1208,8 @@ impl<'p, 's> Checker<'p, 's> {
                 .collect();
             self.union_of_type_set(types, kept, false, FirstRequest::NONE)
         };
-        if before == self.non_cacheable_mark() {
+        // A named union that has all the members that are left is the result as it is, with the members that were removed.
+        if before == self.non_cacheable_mark() && self.parts(reduced).len() == number_kept {
             self.unions_without_subtypes
                 .insert(reduced, has_empty_object);
         }

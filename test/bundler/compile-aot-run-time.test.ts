@@ -177,7 +177,9 @@ describe.concurrent.skipIf(!startsAtAnyEntryPoint)("--aot at run time", () => {
     const hits: Record<string, number> = {};
     for (const node of (await Bun.file(join(folder, "entry.cpuprofile")).json()).nodes)
       hits[node.callFrame.functionName] = (hits[node.callFrame.functionName] ?? 0) + node.hitCount;
-    expect(hits.busy).toBeGreaterThan(20);
+    // How many samples a run gets depends on the machine and on its timer.
+    const samples = Object.values(hits).reduce((sum, count) => sum + count, 0);
+    expect({ hits, isSeen: hits.busy! > samples / 20 }).toEqual({ hits, isSeen: true });
     expect(hits.busy).toBeGreaterThan(3 * (hits.stringify ?? 0));
   });
 

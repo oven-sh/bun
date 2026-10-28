@@ -35,7 +35,6 @@ export default b.declarations(
     "%ModuleObject%.require",
     "node:module.prototype.require",
     "node:module.wrap",
-    "node:module.wrapper",
     "node:module._load",
     "node:module._resolveFilename",
   ]),

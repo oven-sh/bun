@@ -1,4 +1,8 @@
-// An object constructed and filled is not five times as slow as an empty literal filled.
+// `new Object()` makes what `{}` makes: the two fields that are stored next lie in slots, and nothing is looked up by name.
+// COUNT: arrivals = 0
+// COUNT: branches <= 2600
+// COUNT: operations <= 300
+// COUNT: cells <= 200
 function fillConstructed(turns) {
   let sum = 0;
   for (let i = 0; i < turns; i++) {
@@ -19,15 +23,4 @@ function fillLiteral(turns) {
   }
   return sum;
 }
-function fastestOf(runs, fill) {
-  let fastest = Infinity;
-  for (let run = 0; run < runs; run++) {
-    const began = performance.now();
-    if (fill(4_000_000) !== 20_000_000) console.log("a wrong sum");
-    fastest = Math.min(fastest, performance.now() - began);
-  }
-  return fastest;
-}
-fastestOf(2, fillConstructed), fastestOf(2, fillLiteral);
-const constructed = fastestOf(5, fillConstructed), literal = fastestOf(5, fillLiteral);
-console.log(constructed < literal * 5 ? "under five times the time" : "over five times the time");
+console.log(fillConstructed(1000), fillLiteral(1000));

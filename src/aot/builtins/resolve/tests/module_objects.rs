@@ -126,6 +126,22 @@ fn the_object_as_a_value() {
 }
 
 #[test]
+fn the_main_module_without_its_name() {
+    assert_mentions("require[key];", &[("require[key]", EntryPoint, Object)]);
+    assert_mentions("process[key];", &[("process[key]", EntryPoint, Object)]);
+    assert_mentions("f(require);", &[("require", EntryPoint, Object)]);
+    assert_mentions("x = [require];", &[("require", EntryPoint, Object)]);
+    for source in [
+        "require[key] = 1;",
+        "process[key] = 1;",
+        "process.pid; f(process);",
+        "typeof require; require.resolve;",
+    ] {
+        assert_mentions(source, &[]);
+    }
+}
+
+#[test]
 fn where_no_expression_names_the_object() {
     for source in [
         "eval(text);",

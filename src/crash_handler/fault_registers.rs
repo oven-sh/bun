@@ -2,7 +2,6 @@
 //! work for a build. No line gives away where anything was loaded: a value that may be an address is printed by what it points
 //! into, or by its place in its page alone.
 
-use core::cell::Cell;
 use core::ffi::c_void;
 use core::fmt::Write as _;
 
@@ -32,44 +31,6 @@ const END_OF_ADDRESSES: usize = if cfg!(target_arch = "x86_64") {
     1 << 48
 };
 const REACH_OF_STACK: usize = 1 << 20;
-
-#[derive(Clone, Copy)]
-struct AtFault {
-    registers: [usize; NAMES.len()],
-    pc: usize,
-    sp: usize,
-    /// None where the processor could not read the instruction itself.
-    code: Option<([u8; BYTES_OF_CODE], usize)>,
-}
-
-thread_local! {
-    static AT_FAULT: Cell<Option<AtFault>> = const { Cell::new(None) };
-}
-
-/// In the signal handler. `fault`: the address that could not be reached, where the signal has one.
-pub(crate) fn remember(context: *mut c_void, fault: Option<usize>) {
-    let holds_compiled_code = crate::build_id::build_id().is_some();
-    if !holds_compiled_code && crate::stopped_builds::place_of_this_thread().is_none() {
-        return;
-    }
-    let (registers, pc, sp) = read(context);
-    let could_not_fetch = fault.is_some_and(|fault| fault.wrapping_sub(pc) < BYTES_OF_CODE);
-    let code = (!could_not_fetch && (PAGE..END_OF_ADDRESSES).contains(&pc)).then(|| {
-        let length = BYTES_OF_CODE.min(PAGE - pc % PAGE);
-        let mut bytes = [0u8; BYTES_OF_CODE];
-        // SAFETY: the processor has just read the instruction at `pc`, and the copy ends with its page.
-        unsafe { core::ptr::copy_nonoverlapping(pc as *const u8, bytes.as_mut_ptr(), length) };
-        (bytes, length)
-    });
-    AT_FAULT.with(|cell| {
-        cell.set(Some(AtFault {
-            registers,
-            pc,
-            sp,
-            code,
-        }));
-    });
-}
 
 #[cfg(target_arch = "x86_64")]
 fn read(context: *mut c_void) -> ([usize; NAMES.len()], usize, usize) {
@@ -145,27 +106,37 @@ fn write_value(line: &mut Line, value: usize, sp: usize) -> core::fmt::Result {
     }
 }
 
-/// Of the fault that this thread remembers, if any.
-pub(crate) fn write_to(write: &mut dyn FnMut(&[u8])) {
-    let Some(at_fault) = AT_FAULT.with(Cell::take) else {
+/// `context`: the third argument of the signal handler, which has not returned. `fault`: the address that could not be
+/// reached, where the signal has one.
+pub(crate) fn write_to(context: *mut c_void, fault: Option<usize>, write: &mut dyn FnMut(&[u8])) {
+    let holds_compiled_code = crate::build_id::build_id().is_some();
+    if !holds_compiled_code && crate::stopped_builds::place_of_this_thread().is_none() {
         return;
-    };
-    let sp = at_fault.sp;
+    }
+    let (registers, pc, sp) = read(context);
+    let could_not_fetch = fault.is_some_and(|fault| fault.wrapping_sub(pc) < BYTES_OF_CODE);
+    let code = (!could_not_fetch && (PAGE..END_OF_ADDRESSES).contains(&pc)).then(|| {
+        let length = BYTES_OF_CODE.min(PAGE - pc % PAGE);
+        let mut bytes = [0u8; BYTES_OF_CODE];
+        // SAFETY: the processor has read the instruction at `pc`, and the copy ends with its page.
+        unsafe { core::ptr::copy_nonoverlapping(pc as *const u8, bytes.as_mut_ptr(), length) };
+        (bytes, length)
+    });
     let mut line = Line {
         bytes: [0; 1024],
         length: 0,
     };
     let _ = line.write_str("Registers:");
-    for (name, value) in NAMES.iter().zip(at_fault.registers) {
+    for (name, value) in NAMES.iter().zip(registers) {
         let _ = write!(line, " {name}=");
         let _ = write_value(&mut line, value, sp);
     }
     let _ = write!(line, " {NAME_OF_PC}=");
-    let _ = write_value(&mut line, at_fault.pc, sp);
+    let _ = write_value(&mut line, pc, sp);
     let _ = write!(line, "\nCode at {NAME_OF_PC}:");
-    match at_fault.code {
+    match code {
         Some((bytes, length)) => {
-            for together in bytes[..length].chunks_exact(BYTES_PRINTED_TOGETHER) {
+            for together in bytes[..length].as_chunks::<BYTES_PRINTED_TOGETHER>().0 {
                 let _ = line.write_str(" ");
                 for byte in together.iter().rev() {
                     let _ = write!(line, "{byte:02x}");

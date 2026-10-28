@@ -2,11 +2,15 @@ import { types } from "node:util";
 import {
   candidatesForTheirClass,
   everyCandidate,
+  everyFamily,
+  familyOfTheHost,
   findCandidate,
+  findCandidateIfAny,
   hugeArrayLikes,
   Unavailable,
   undefinedCandidate,
   type Candidate,
+  type Family,
 } from "./instances";
 import { Log } from "./log";
 import type { Realm } from "./members";
@@ -47,6 +51,7 @@ export const neverCalled: ReadonlyMap<RegExp, string> = new Map([
   [/^(Worker|WebSocket)$/, "it starts a thread or opens a connection"],
   [/^native:Bindgen:node_cluster_binding\.bind\.ts:clusterRawBind$/, "it asks the name servers about every string that is no address, and waits for them"],
   [/^bun:(ffi|test|jsc|sqlite|internal-for-testing)\./, "it reaches outside JavaScript"],
+  [/^native:Bindgen:bake_plugins\.bind\.ts:setPages$/, "it changes how modules are loaded"],
   [/^%CompilerHelpers%\.(ownEntriesFlat|definePropertiesFrom)$/, "it works on the instance of a compiled program, and this process has none"],
   [/^%CompilerHelpers%\.plainQuery(Entries|Keys|Values)$/, "the compiler hands it what another helper answered for the same operands, and takes that on trust"],
   [/^%CompilerHelpers%\..*_inRanges$/, "the compiler hands it bounds that it has clamped itself, and takes them on trust"],
@@ -168,17 +173,26 @@ function meetsNarrowTypes(realm: Realm, overload: DumpedOverload, passed: Passed
 
 // The leaf of the generator's decision tree for these values: candidates are filtered by the kind of the receiver and of each
 // argument from left to right, a kind that nobody takes leaves all, and of the rest the first whose narrow types hold is taken.
+type TestedPosition = { position: OperandName; classes: string[] };
+const testedPositions = new WeakMap<readonly DumpedOverload[], TestedPosition[]>();
+
+function testedPositionsOf({ table }: Realm, overloads: readonly DumpedOverload[]): TestedPosition[] {
+  return testedPositions.getOrInsertComputed(overloads, () => {
+    const testsReceiver = overloads.some(({ receiver }) => receiver !== null && !receiver.accepted.isAnything);
+    const argumentCount = Math.max(...overloads.map(overload => overload.parameters.length));
+    const positions: OperandName[] = [...(testsReceiver ? ["this" as const] : []), ...Array(argumentCount).keys()];
+    return positions.map(position => ({ position, classes: classesNamedAt(table, overloads, position) }));
+  });
+}
+
 export function selectOverload(realm: Realm, { overloads }: Call, passed: PassedOperands): DumpedOverload {
   const { table } = realm;
-  const testsReceiver = overloads.some(({ receiver }) => receiver !== null && !receiver.accepted.isAnything);
-  const argumentCount = Math.max(...overloads.map(overload => overload.parameters.length));
-  const positions: OperandName[] = [...(testsReceiver ? ["this" as const] : []), ...Array(argumentCount).keys()];
   let candidates = overloads;
-  for (const position of positions) {
+  for (const { position, classes } of testedPositionsOf(realm, overloads)) {
     if (candidates.length === 1) break;
     const isPassed = position === "this" || position < passed.args.length;
     const value = position === "this" ? passed.receiver : passed.args[position];
-    const atom = atomOf(realm, value, isPassed, classesNamedAt(table, overloads, position));
+    const atom = atomOf(realm, value, isPassed, classes);
     let takers = candidates.filter(candidate => takes(table, parameterOf(candidate, position), atom));
     if (takers.length === 0 && atom === "NotPassed") {
       takers = candidates.filter(candidate => takes(table, parameterOf(candidate, position), "Undefined"));
@@ -222,7 +236,7 @@ const literalCandidates = new Map<string, Candidate>();
 
 function literalCandidate(value: string | number): Candidate {
   const name = `primitive:${Bun.inspect(value)}`;
-  const known = everyCandidate.find(candidate => candidate.name === name) ?? literalCandidates.get(name);
+  const known = findCandidateIfAny(name) ?? literalCandidates.get(name);
   if (known) return known;
   const candidate: Candidate = { name, kind: "Primitive", create: () => value };
   literalCandidates.set(name, candidate);
@@ -274,6 +288,7 @@ function hintedNames(parameter: DumpedParameter): string[] {
   }
   if (protocols.includes("Iterate")) hints.push("iterable");
   if (protocols.includes("Thenable")) hints.push("thenable");
+  if (namedMembers.includes("parallelization")) hints.push("options:littleWork");
   return [...hints, "object:proxy", "primitive:1", 'primitive:"a"', "primitive:true", "primitive:1n", "primitive:Symbol(s)"];
 }
 
@@ -335,12 +350,23 @@ const combinedPrimitives = [
 ];
 const maxCombinedPositions = 3;
 
-function combinationsOf(receiver: Candidate, base: Candidate[]): OperandSet[] {
-  if (base.length < 2 || base.length > maxCombinedPositions) return [];
-  const values = combinedPrimitives.flatMap(name => everyCandidate.find(candidate => candidate.name === name) ?? []);
+// What a call did, as far as it tells the call from one with other operands.
+export type Outcome = {
+  signature: string;
+  // Per operand that is an object with a log: the names that were looked for in it, and whether anything else was asked of it.
+  asked: Map<OperandName, { names: Set<PropertyKey>; isMoreThanNames: boolean }>;
+};
+export type Outcomes = ReadonlyMap<string, Outcome>;
+
+// Of the values that did the same when they were passed alone, one stands for all.
+function combinationsOf({ receiver, base }: Product, outcomes: Outcomes): OperandSet[] {
+  const values = combinedPrimitives.map(findCandidate);
   let vectors: Candidate[][] = [[]];
   for (let position = 0; position < base.length; position++) {
-    vectors = vectors.flatMap(vector => values.map(value => [...vector, value]));
+    // A value that was not passed alone is of a family that is not told from others here.
+    const bySignature = Map.groupBy(values, value => outcomes.get(describeSet(receiver, base.with(position, value)))?.signature);
+    const taken = Array.from(bySignature.values(), ([first]) => first);
+    vectors = vectors.flatMap(vector => taken.map(value => [...vector, value]));
   }
   return vectors.map(vector => createSet(receiver, vector));
 }
@@ -357,11 +383,24 @@ function isHugeLength(candidate: Candidate): boolean {
   return typeof length === "number" && length >= smallestHugeLength && length <= largestHugeLength;
 }
 
+// A number outside these makes the built-in fill gigabytes or compute for seconds, on this thread or on others: native code takes a negative one for a large one.
+const worksByNumber = /^%NodeCryptoBindingCrypto%\.(scrypt|pbkdf2|argon2)|^Bun\.password\./;
+const largestAmountOfWork = 16;
+
+function isMuchWork(candidate: Candidate): boolean {
+  if (candidate.kind !== "Primitive") return false;
+  const { value } = sampleOf(candidate);
+  return typeof value === "number" && (value < 0 || value > largestAmountOfWork);
+}
+
 const takesHugeArrayLikes = /^Array\.prototype\.(push|pop|at)$/;
 const surplusArguments = ["object:proxy", "object:convertsToNumber"].map(findCandidate);
 const otherReceivers = ["primitive:undefined", "object:proxy", "callback:object"].map(findCandidate);
 
-function receiversOf(realm: Realm, call: Call, overload: DumpedOverload): { base: Candidate | undefined; others: Candidate[] } {
+type Receivers = { base: Candidate | undefined; others: Candidate[]; isAnyOther?: boolean };
+
+// `isAnyOther`: every candidate may stand in its place as well.
+function receiversOf(realm: Realm, call: Call, overload: DumpedOverload): Receivers {
   const { entry } = call;
   const isOwnPropertyOfInstances = entry.flags.includes("IsOwnPropertyOfInstances");
   const isReadFromHolder = entry.kind === "DataProperty" && !isOwnPropertyOfInstances;
@@ -379,9 +418,9 @@ function receiversOf(realm: Realm, call: Call, overload: DumpedOverload): { base
     ...constructedCandidates(realm, overload.receiver),
     ...(takesHugeArrayLikes.test(entry.path) ? hugeArrayLikes : []),
   ];
-  const others = [...everyCandidate, ...named].filter(candidate => candidate !== base);
   // A read of the name from any other value is not a use of the entry.
-  if (entry.kind !== "DataProperty") return { base, others };
+  if (entry.kind !== "DataProperty") return { base, others: named, isAnyOther: true };
+  const others = [...everyCandidate, ...named].filter(candidate => candidate !== base);
   const instanceClass = realm.table.dump.classes.find(({ prototype }) => prototype === entry.holder)?.token;
   const instances = others.filter(candidate => {
     const { value, isAvailable } = sampleOf(candidate);
@@ -390,41 +429,181 @@ function receiversOf(realm: Realm, call: Call, overload: DumpedOverload): { base
   return { base: instances[0], others: instances.slice(1) };
 }
 
-export function operandSetsFor(realm: Realm, call: Call): OperandSet[] {
-  const sets = new Map<string, OperandSet>();
+const atomsOfFamilies: Record<string, Atom> = {
+  undefined: "Undefined",
+  null: "Null",
+  boolean: "Boolean",
+  number: "Number",
+  string: "String",
+  symbol: "Symbol",
+  bigint: "BigInt",
+};
+const classesOfFamilies = new WeakMap<Realm, Map<Family, Set<string>>>();
+
+function classesIn(realm: Realm, family: Family): Set<string> {
+  return classesOfFamilies
+    .getOrInsertComputed(realm, () => new Map())
+    .getOrInsertComputed(family, () => {
+      const members = [...family.scouts, ...family.others];
+      return new Set(members.flatMap(member => (member.instanceOf === undefined ? realm.classesOf(sampleOf(member).value) : realm.table.ancestryOf(member.instanceOf))));
+    });
+}
+
+type NamesOfCandidate = { names: Set<PropertyKey>; hasNoPrototype: boolean };
+const namesOfCandidates = new WeakMap<Candidate, NamesOfCandidate>();
+
+function namesOf(candidate: Candidate): NamesOfCandidate {
+  return namesOfCandidates.getOrInsertComputed(candidate, () => {
+    const log = new Log();
+    const target = log.targetOf(candidate.create(log, 0, { receiver: undefined }) as object);
+    return { names: new Set(Reflect.ownKeys(target)), hasNoPrototype: Reflect.getPrototypeOf(target) === null };
+  });
+}
+
+// Whatever it is passed, a call takes a thirtieth of a second or more: it is made with the scouts alone.
+const takesLong = /^%NodeCryptoBindingCrypto%\.scrypt(Sync)?$|^Bun\.gc$/;
+
+const plainObject = findCandidate("object:plain");
+const recordingObject = findCandidate("object:proxy");
+const booleanValue = findCandidate("primitive:true");
+
+/** One position of a call, with the other operands fixed: which candidates stand in it. */
+export class Sweep {
+  readonly #realm: Realm;
+  readonly #waiting: Family[] = [];
+  readonly #passed = new Set<Candidate>();
+  readonly #first: Candidate[] = [];
+
+  constructor(
+    realm: Realm,
+    { entry, overloads }: Call,
+    readonly operand: OperandName,
+    readonly createSet: (candidate: Candidate) => OperandSet,
+    named: readonly Candidate[],
+  ) {
+    this.#realm = realm;
+    const parameters = overloads.flatMap(overload => parameterOf(overload, operand) ?? []);
+    const classes = classesNamedAt(realm.table, overloads, operand);
+    for (const family of everyFamily()) {
+      const isNamed = this.#isNamed(family, parameters, classes);
+      // The engine has no test for a class of the host.
+      if (!isNamed && family.name === familyOfTheHost && entry.origin === "Engine") continue;
+      this.#first.push(...family.scouts);
+      if (takesLong.test(entry.path)) continue;
+      if (isNamed) this.#first.push(...family.others);
+      else if (family.others.length > 0) this.#waiting.push(family);
+    }
+    this.#first.push(...named);
+  }
+
+  // The table tells the family from others in this position, so what it says of the family is asked of each member.
+  #isNamed(family: Family, parameters: readonly DumpedParameter[], classes: readonly string[]): boolean {
+    const types = parameters.flatMap(({ accepted, refused }) => [accepted, refused]).filter(type => !type.isAnything);
+    if (family.kind === "Primitives") return types.some(type => admitsAtom(this.#realm.table, type, atomsOfFamilies[family.name]));
+    if (family.kind === "Names") return false;
+    if (family.name === "functions" && types.some(type => type.hasAnyFunction && !type.hasAnyObject)) return true;
+    return classes.length > 0 && classes.some(token => classesIn(this.#realm, family).has(token));
+  }
+
+  #take(candidates: readonly Candidate[]): OperandSet[] {
+    const taken = candidates.filter(candidate => !this.#passed.has(candidate));
+    for (const candidate of taken) this.#passed.add(candidate);
+    return taken.map(this.createSet);
+  }
+
+  first(): OperandSet[] {
+    return this.#take(this.#first);
+  }
+
+  /** What the outcomes so far show to be told apart in this position and has not been passed yet. */
+  next(outcomes: Outcomes): OperandSet[] {
+    const outcomeOf = (candidate: Candidate) => outcomes.get(this.createSet(candidate).name);
+    const ofPlainObject = outcomeOf(plainObject)?.signature;
+    const ofRecordingObject = outcomeOf(recordingObject)?.signature;
+    const ofBoolean = outcomeOf(booleanValue)?.signature;
+    const sets: OperandSet[] = [];
+    for (const family of this.#waiting.slice()) {
+      if (family.kind === "Names") {
+        sets.push(...this.#take(this.#findAnswering(family, outcomeOf)));
+        continue;
+      }
+      // What is asked of a scout with a log shows, so it is held against a plain object with a log.
+      const isTold = family.scouts.some(scout => {
+        const other = family.kind === "Primitives" ? ofBoolean : scout.kind === "Instrumented" ? ofRecordingObject : ofPlainObject;
+        return outcomeOf(scout)?.signature !== other;
+      });
+      if (!isTold) continue;
+      this.#waiting.splice(this.#waiting.indexOf(family), 1);
+      sets.push(...this.#take(family.others));
+    }
+    return sets;
+  }
+
+  // An ordinary object is told from another by what it answers, and only to what it is asked.
+  #findAnswering(family: Family, outcomeOf: (candidate: Candidate) => Outcome | undefined): Candidate[] {
+    const asked = new Set<PropertyKey>();
+    let isMoreThanNames = false;
+    for (const candidate of this.#passed) {
+      const ofOperand = outcomeOf(candidate)?.asked.get(this.operand);
+      if (!ofOperand) continue;
+      for (const name of ofOperand.names) asked.add(name);
+      isMoreThanNames ||= ofOperand.isMoreThanNames;
+    }
+    if (isMoreThanNames) return family.others;
+    if (asked.size === 0) return [];
+    return family.others.filter(candidate => {
+      const { names, hasNoPrototype } = namesOf(candidate);
+      return hasNoPrototype || names.size === 0 || !names.isDisjointFrom(asked);
+    });
+  }
+}
+
+type Product = { receiver: Candidate; base: Candidate[] };
+export type Plan = {
+  sets: OperandSet[];
+  sweeps: Sweep[];
+  isTried(set: OperandSet): boolean;
+  /** Primitives in several positions at once, once the sweeps are done. */
+  combinations(outcomes: Outcomes): OperandSet[];
+};
+
+export function planFor(realm: Realm, call: Call): Plan {
   const avoidsHugeLengths = allocatesByLength.test(call.entry.path);
   const consumesIterator = /^Iterator\.prototype\./.test(call.entry.path);
-  const add = (set: OperandSet) => {
-    if (avoidsHugeLengths && set.arguments.some(isHugeLength)) return;
+  const avoidsMuchWork = worksByNumber.test(call.entry.path);
+  const isTried = (set: OperandSet) => {
+    if (avoidsHugeLengths && set.arguments.some(isHugeLength)) return false;
+    if (avoidsMuchWork && set.arguments.some(isMuchWork)) return false;
     // Each step of an asynchronous generator gives a promise, which never says that the iteration is done.
-    if (consumesIterator && set.receiver.name === "asyncGenerator") return;
-    if (!sets.has(set.name)) sets.set(set.name, set);
+    return !(consumesIterator && set.receiver.name === "asyncGenerator");
   };
+  const sets: OperandSet[] = [];
+  const sweeps: Sweep[] = [];
+  const products: Product[] = [];
   const hasRest = call.overloads.some(({ parameters }) => parameters.at(-1)?.mode === "Rest");
   const widestCount = Math.max(...call.overloads.map(({ parameters }) => parameters.length));
 
   for (const overload of call.overloads) {
     if (overload.isUndeclared) continue;
-    const { base: receiver, others } = receiversOf(realm, call, overload);
+    const { base: receiver, others, isAnyOther } = receiversOf(realm, call, overload);
     const base = baseArgumentsOf(realm, overload);
     if (!receiver || !base) continue;
 
-    add(createSet(receiver, base));
-    for (const count of shorterCounts(overload, base.length)) add(createSet(receiver, base.slice(0, count)));
-    for (const other of others) add(createSet(other, base));
+    sets.push(createSet(receiver, base));
+    for (const count of shorterCounts(overload, base.length)) sets.push(createSet(receiver, base.slice(0, count)));
+    if (isAnyOther) sweeps.push(new Sweep(realm, call, "this", other => createSet(other, base), others));
+    else for (const other of others) sets.push(createSet(other, base));
     base.forEach((_, position) => {
-      const parameter = parameterOf(overload, position)!;
-      for (const candidate of [...everyCandidate, ...candidatesNamedBy(parameter)]) {
-        add(createSet(receiver, base.with(position, candidate)));
-      }
+      const named = candidatesNamedBy(parameterOf(overload, position)!);
+      sweeps.push(new Sweep(realm, call, position, candidate => createSet(receiver, base.with(position, candidate)), named));
     });
     if (!hasRest && call.mode !== "Get") {
       const padding = Array<Candidate>(Math.max(widestCount - base.length, 0)).fill(undefinedCandidate);
-      add(createSet(receiver, [...base, ...padding, ...surplusArguments], surplusArguments.length));
+      sets.push(createSet(receiver, [...base, ...padding, ...surplusArguments], surplusArguments.length));
     }
-    for (const set of combinationsOf(receiver, base)) add(set);
+    if (base.length >= 2 && base.length <= maxCombinedPositions && !takesLong.test(call.entry.path)) products.push({ receiver, base });
   }
-  return [...sets.values()];
+  return { sets, sweeps, isTried, combinations: outcomes => products.flatMap(product => combinationsOf(product, outcomes)) };
 }
 
 function isWithinDeclaredTypes(realm: Realm, overload: DumpedOverload, set: OperandSet): boolean {
@@ -454,13 +633,26 @@ function isMapperThatIsNeverPassed({ entry }: Call, set: OperandSet): boolean {
   return entry.path === "%CompilerHelpers%.arrayFromLength" && (set.arguments.length < 2 || set.arguments[1] === undefinedCandidate);
 }
 
+type KindOfEntry = { allocatesByLength: boolean; takesOperandsOnTrust: boolean };
+const kindsOfEntries = new WeakMap<DumpedEntry, KindOfEntry>();
+
 export function isCallThatExists(realm: Realm, call: Call, set: OperandSet): boolean {
+  const kind = kindsOfEntries.getOrInsertComputed(call.entry, ({ path }) => ({
+    allocatesByLength: allocatesByLength.test(path),
+    takesOperandsOnTrust: takesOperandsOnTrust.test(path),
+  }));
   if (isMapperThatIsNeverPassed(call, set)) return false;
-  if (allocatesByLength.test(call.entry.path) && set.arguments.some(isHugeLength)) return false;
-  if (!takesOperandsOnTrust.test(call.entry.path)) return true;
+  if (kind.allocatesByLength && set.arguments.some(isHugeLength)) return false;
+  if (!kind.takesOperandsOnTrust) return true;
   const widest = Math.max(...call.overloads.map(({ parameters }) => parameters.length));
   for (let position = 0; position < widest; position++) if (!isNumberThatIsSpelledOut(call, set, position)) return false;
   return call.overloads.some(overload => isWithinDeclaredTypes(realm, overload, set));
+}
+
+/** Whether a value that the candidate makes lies in the type of the parameter. */
+export function mayStandFor(realm: Realm, parameter: DumpedParameter, candidate: Candidate): boolean {
+  const { value, isAvailable } = sampleOf(candidate);
+  return isAvailable && admitsValue(realm, parameter.accepted, value, true);
 }
 
 export function baseSetOf(realm: Realm, call: Call, overload: DumpedOverload): OperandSet | undefined {

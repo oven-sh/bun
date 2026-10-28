@@ -266,6 +266,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         takes_runtime_as_any: false,
         library_code_lacked: Default::default(),
         keeps_library_code_without_names: false,
+        reads_main_module_without_its_name: false,
     }
 }
 

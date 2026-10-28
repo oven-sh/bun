@@ -274,6 +274,11 @@ impl Resolver<'_, '_> {
             BuiltinId::ModuleRequireMain | BuiltinId::ProcessMainModule => {
                 ModuleObjectOwner::EntryPoint
             }
+            // Whoever is handed a `require` reads any member of it, `main` among them.
+            BuiltinId::ModuleRequire => {
+                return matches!(self.classify_use(e), MentionUse::Exposed)
+                    .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::Object));
+            }
             id @ (BuiltinId::ModuleObjectChildren | BuiltinId::ModuleObjectParent) => {
                 return self.find_use_of_member(e, id);
             }
@@ -329,7 +334,7 @@ impl Resolver<'_, '_> {
         ways
     }
 
-    // `require[key]`: a computed key reads any member, `main` among them.
+    // `require[key]`, `process[key]`: a computed key reads any member, `main` and `mainModule` among them.
     fn find_way_that_computed_key_reads(
         &self,
         member: ExprId,
@@ -343,8 +348,11 @@ impl Resolver<'_, '_> {
         else {
             return None;
         };
-        let is_require = table::canonical_id(value.path.id) == BuiltinId::ModuleRequire;
-        (is_require && self.is_plain_read(member))
+        let holds_main_module = matches!(
+            table::canonical_id(value.path.id),
+            BuiltinId::ModuleRequire | BuiltinId::Process
+        );
+        (holds_main_module && self.is_plain_read(member))
             .then_some((ModuleObjectOwner::EntryPoint, ModuleObjectUse::Object))
     }
 

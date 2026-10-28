@@ -1,4 +1,4 @@
-// An executable may run with another ICU than the one that made its format patterns (test/aot/intl-fuzz/README.md). The programs
+// An executable may run with another ICU than the one that made its format patterns. The programs
 // about constant formatters print what plain Bun prints as built, with every pattern planned again by the ICU that runs, and with
 // every plan refused, when ICU formats everything.
 // The compiler makes no format patterns today: ICU formats everything at run time, and the option that these tests set does not exist.

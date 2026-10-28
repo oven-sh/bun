@@ -6,7 +6,7 @@
 // imported or its extension is written, it stands for the files of that folder whose names the file spells, if it spells any.
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 
 const here = import.meta.dir;
 const repository = resolve(here, "..", "..");
@@ -22,7 +22,7 @@ const outside = ["src/aot", "src/sema", "src/codegen/builtins", "scripts", ".git
 const tools: Record<string, string> = {
   "backend/card.py": "backend/README.md",
   "backend/tracker/pieces": "backend/tracker/README.md",
-  "fuzz/farm.py": "fuzz/README.md",
+  "fuzz/burst.ts": "fuzz/README.md",
   "fuzz/fuzzilli": "fuzz/fuzzilli/README.md",
   "fuzz/run.ts": "fuzz/README.md",
   "fuzz/texts-for-generated-types.ts": "fuzz/README.md",
@@ -48,19 +48,13 @@ const tools: Record<string, string> = {
 
 // What nothing reaches today: a file, or a folder with all it holds. Nothing may be added, and a line goes with its files.
 const unreachedToday: string[] = [
-  "builtins",
-  "fuzz/border_matrix.py",
   "fuzz/damaged-text.ts",
   "fuzz/members-of-bun-however-they-are-named.ts",
   "fuzz/memory-of-churn.ts",
   "fuzz/module-graphs-bundled-first.ts",
   "fuzz/modules-of-both-kinds-that-need-each-other.ts",
-  "fuzz/producers.py",
   "fuzz/programs-of-several-entry-points.ts",
   "fuzz/programs-published-as-packages.ts",
-  "fuzz/reduce.py",
-  "fuzz/report.py",
-  "fuzz/still.py",
   "fuzz/workers-that-work-within-a-limit-on-the-address-space.ts",
   "startup-scaling",
 ];
@@ -300,7 +294,9 @@ test("every file is run, is used by what is run, or is a tool with its page", ()
   const withoutPage = Object.entries(tools).filter(
     ([tool, page]) =>
       !(files.has(join(here, tool)) || filesOfFolder.has(join(here, tool))) ||
-      ![tool, relative(dirname(page), tool)].some(name => readFileSync(join(here, page), "utf8").includes(name)),
+      ![tool, posix.relative(posix.dirname(page), tool)].some(name =>
+        readFileSync(join(here, page), "utf8").includes(name),
+      ),
   );
   for (const tool of Object.keys(tools)) reachPath(join(here, tool), here);
   readAll();
@@ -318,4 +314,16 @@ test("every file is run, is used by what is run, or is a tool with its page", ()
     "tools that are not there, or that their page does not name": [],
     "lines of unreachedToday that hold nothing unreached": [],
   });
+});
+
+test("a platform of CI that names its tests names files, and the file that never skips itself", () => {
+  const rows = Array.from(
+    readFileSync(join(repository, ".buildkite", "ci.ts"), "utf8").matchAll(/^ +tests: \[([^\]]*)\]/gm),
+    ([, row]) => Array.from(row.matchAll(/"([^"]+)"/g), ([, part]) => part),
+  );
+  const names = [...files].filter(isTestFile).map(path => "aot/" + nameOf(path));
+  expect({
+    "parts of a path that no test file has": rows.flat().filter(part => !names.some(name => name.includes(part))),
+    "rows without it": rows.filter(row => !row.includes("aot/the-build-under-test")),
+  }).toEqual({ "parts of a path that no test file has": [], "rows without it": [] });
 });

@@ -630,8 +630,8 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Return v114
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="note"
-# CHECK: module=m0 position=312 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L0|SharedArrayBuffer<pristine[Storage, Names]>}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: undefined|L0|SharedArrayBuffer<pristine[Storage, Names]>):
+# CHECK: module=m0 position=312 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|SharedArrayBuffer<pristine[Storage, Names]>}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|SharedArrayBuffer<pristine[Storage, Names]>):
 # CHECK-NEXT: v1: int|whole = GetModuleVariable variable=g3
 # CHECK-NEXT: v2: int|whole = ToNumeric v1
 # CHECK-NEXT: v3: int|whole = Increment v2
@@ -679,7 +679,7 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Jump -> next b3(v9)
 # CHECK-NEXT: b3(v10: SharedArrayBuffer<pristine[Storage, Names]>):
 # CHECK-NEXT: v11: anything ~ undefined|null|L0 = CallDirect v10 function=f3 accessSite=24
-# CHECK-NEXT: v12: undefined|L0|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined|L0 = AssumeType v11 provenType=undefined|L0|SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: v12: undefined|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined = AssumeType v11 provenType=undefined|SharedArrayBuffer<pristine[Storage, Names]>
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b5():
 # CHECK-NEXT: v13: undefined = CallDirect v12 function=f1 accessSite=25
@@ -687,26 +687,20 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: b5() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v14: boolean = TypeTest v12 testedType=undefined|null
-# CHECK-NEXT: Branch v14 -> taken b10(), notTaken b7(| 0)
-# CHECK-NEXT: b7(v15: L0|SharedArrayBuffer<pristine[Storage, Names]> ~ L0):
-# CHECK-NEXT: v16: boolean ~ true = TypeTest v15 testedType=L0
-# CHECK-NEXT: Branch v16 -> taken b8(| 0), notTaken b9(| 0)
-# CHECK-NEXT: b8(v17: L0):
-# CHECK-NEXT: v18: int[-2147483643, 2147483647] = GetSlot v17 key="held" receivers=[L0] level=Proven accessSite=26
-# CHECK-NEXT: Jump -> next b11(v18)
-# CHECK-NEXT: b9(v19: SharedArrayBuffer<pristine[Storage, Names]>) frequency=Unlikely:
-# CHECK-NEXT: v20: anything = PropGet v19 key="held" accessSite=26 receivers=[L0, ..]
-# CHECK-NEXT: v21: undefined|int = AssumeType v20 provenType=undefined|int
-# CHECK-NEXT: v22: boolean = TypeTest v21 testedType=undefined|null
-# CHECK-NEXT: Branch v22 -> taken b10(), notTaken b11(| 0)
-# CHECK-NEXT: b10():
-# CHECK-NEXT: v23: 7 = Integer integer=7
-# CHECK-NEXT: Jump -> next b12(v23)
-# CHECK-NEXT: b11(v24: int ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: Jump -> next b12(v24)
-# CHECK-NEXT: b12(v25: int ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: Return v25
+# CHECK-NEXT: v14: boolean ~ true = TypeTest v12 testedType=undefined|null
+# CHECK-NEXT: Branch v14 -> taken b8(), notTaken b7(| 0)
+# CHECK-NEXT: b7(v15: SharedArrayBuffer<pristine[Storage, Names]>):
+# CHECK-NEXT: v16: anything = PropGet v15 key="held" accessSite=26
+# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=undefined|null
+# CHECK-NEXT: Branch v17 -> taken b8(), notTaken b9(| 0)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v18: 7 = Integer integer=7
+# CHECK-NEXT: Jump -> next b10(v18)
+# CHECK-NEXT: b9(v19: boolean|number|string|symbol|bigint|object):
+# CHECK-NEXT: v20: int = AssumeType v19 provenType=int
+# CHECK-NEXT: Jump -> next b10(v20)
+# CHECK-NEXT: b10(v21: int ~ 7):
+# CHECK-NEXT: Return v21
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="comparesWithUndefined"
 # CHECK: module=m0 position=807 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=int[3, 7] site=w6}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -728,7 +722,7 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Jump -> next b3(v9)
 # CHECK-NEXT: b3(v10: SharedArrayBuffer<pristine[Storage, Names]>):
 # CHECK-NEXT: v11: anything ~ undefined|null|L0 = CallDirect v10 function=f3 accessSite=29
-# CHECK-NEXT: v12: undefined|L0|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined|L0 = AssumeType v11 provenType=undefined|L0|SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: v12: undefined|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined = AssumeType v11 provenType=undefined|SharedArrayBuffer<pristine[Storage, Names]>
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b5():
 # CHECK-NEXT: v13: undefined = CallDirect v12 function=f1 accessSite=30
@@ -736,7 +730,7 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: b5() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v14: boolean = TypeTest v12 testedType=undefined
+# CHECK-NEXT: v14: boolean ~ true = TypeTest v12 testedType=undefined
 # CHECK-NEXT: Branch v14 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v15: 3 = Integer integer=3
@@ -767,7 +761,7 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Jump -> next b3(v9)
 # CHECK-NEXT: b3(v10: SharedArrayBuffer<pristine[Storage, Names]>):
 # CHECK-NEXT: v11: anything ~ undefined|null|L0 = CallDirect v10 function=f3 accessSite=33
-# CHECK-NEXT: v12: undefined|L0|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined|L0 = AssumeType v11 provenType=undefined|L0|SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: v12: undefined|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined = AssumeType v11 provenType=undefined|SharedArrayBuffer<pristine[Storage, Names]>
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b5():
 # CHECK-NEXT: v13: undefined = CallDirect v12 function=f1 accessSite=34
@@ -775,7 +769,7 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: b5() role=CatchHandler:
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v14: boolean = TypeTest v12 testedType=null|object
+# CHECK-NEXT: v14: boolean ~ false = TypeTest v12 testedType=null|object
 # CHECK-NEXT: Branch v14 -> taken b7(), notTaken b8()
 # CHECK-NEXT: b7():
 # CHECK-NEXT: v15: 3 = Integer integer=3
@@ -806,7 +800,7 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Jump -> next b3(v9)
 # CHECK-NEXT: b3(v10: SharedArrayBuffer<pristine[Storage, Names]>):
 # CHECK-NEXT: v11: anything ~ undefined|null|L0 = CallDirect v10 function=f3 accessSite=37
-# CHECK-NEXT: v12: undefined|L0|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined|L0 = AssumeType v11 provenType=undefined|L0|SharedArrayBuffer<pristine[Storage, Names]>
+# CHECK-NEXT: v12: undefined|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined = AssumeType v11 provenType=undefined|SharedArrayBuffer<pristine[Storage, Names]>
 # CHECK-NEXT: Jump -> next b4()
 # CHECK-NEXT: b4() handler=b5():
 # CHECK-NEXT: v13: undefined = CallDirect v12 function=f1 accessSite=38
@@ -815,48 +809,25 @@ function f9 module=m0 position=473 kind=Initializer flags=[HasThis, IsChecked, I
 # CHECK-NEXT: Jump -> next b6()
 # CHECK-NEXT: b6():
 # CHECK-NEXT: v14: f8 = GetModuleVariable variable=g4
-# CHECK-NEXT: v15: boolean = TypeTest v12 testedType=L0
-# CHECK-NEXT: Branch v15 -> taken b8(), notTaken b7(| 0)
-# CHECK-NEXT: b7(v16: undefined|SharedArrayBuffer<pristine[Storage, Names]> ~ undefined):
-# CHECK-NEXT: v17: object = GetClassPrototype v14 layout=L0
-# CHECK-NEXT: v18: boolean = HasInPrototypeChain v16, v17
-# CHECK-NEXT: Branch v18 -> taken b8(), notTaken b9()
+# CHECK-NEXT: v15: object = GetClassPrototype v14 layout=L0
+# CHECK-NEXT: v16: boolean = HasInPrototypeChain v12, v15
+# CHECK-NEXT: Branch v16 -> taken b7(), notTaken b8()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v17: 3 = Integer integer=3
+# CHECK-NEXT: Jump -> next b9(v17)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v19: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b10(v19)
-# CHECK-NEXT: b9():
-# CHECK-NEXT: v20: 7 = Integer integer=7
-# CHECK-NEXT: Jump -> next b10(v20)
-# CHECK-NEXT: b10(v21: int[3, 7]):
-# CHECK-NEXT: Return v21
+# CHECK-NEXT: v18: 7 = Integer integer=7
+# CHECK-NEXT: Jump -> next b9(v18)
+# CHECK-NEXT: b9(v19: int[3, 7]):
+# CHECK-NEXT: Return v19
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Holder"
-# CHECK: module=m0 position=473 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
-# CHECK-NEXT: b0(v0: anything):
-# CHECK-NEXT: v1: f8 = AssumeType v0 provenType=f8
-# CHECK-NEXT: v2: boolean = AreMembersUnchanged conditions=[{layout=L0 side=Static key="prototype"}]
-# CHECK-NEXT: Branch v2 -> taken b1(), notTaken b2()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v3: L0 = NewObject layout=L0 allocationSite=6 allocationClass=0
-# CHECK-NEXT: v4: undefined = CallDirect v3 function=f9 accessSite=39
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: b2() frequency=Rare:
-# CHECK-NEXT: v5: object = GetConstructPrototype v1 layout=L0
-# CHECK-NEXT: v6: L0 = NewObject v5 layout=L0 allocationSite=6 allocationClass=0
-# CHECK-NEXT: v7: undefined = CallDirect v6 function=f9 accessSite=39
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: }
+# CHECK: module=m0 position=473 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
 # CHECK-LABEL: function f9 module=
-# CHECK: m0 position=473 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
-# CHECK-NEXT: b0(v0: L0):
-# CHECK-NEXT: v1: 1 = Integer integer=1
-# CHECK-NEXT: PutSlotOrAdd v0, -, v1 key="held" receivers=[L0] level=Proven accessSite=40
-# CHECK-NEXT: v3: undefined = Undefined
-# CHECK-NEXT: Return v3
-# CHECK-NEXT: }
+# CHECK: m0 position=473 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="Holder"
 # CHECK: module=m0 position=473 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget, IsChecked] captures=[{type=f8}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsHiddenInStackTraces] derivation={source=f8} creator=Entrypoint{target=f8 arguments=Registers takesNewTarget=true} {
 # CHECK-NEXT: b0(v0: f8, v1: anything, v2: anything):
-# CHECK-NEXT: v3: L0 = CallDirect v2 function=f8
-# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: v3: never = ThrowNewError message="'Holder' was not compiled into this executable because your code never calls it. To keep it, call it somewhere in your code. (bun compile differs from bun run here: https://bun.com/docs/compiler/compatibility)"
+# CHECK-NEXT: Unreachable
 # CHECK-NEXT: }

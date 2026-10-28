@@ -1,5 +1,4 @@
 // The constructors of async, generator and async generator functions, built with --disallow-code-generation-from-strings: both executables throw the same error.
-//@ todo the whole executable throws the EvalError of the flag, the trimmed one an Error that says what --trim removed
 //@ build --disallow-code-generation-from-strings
 process.on("uncaughtException", error => console.log("uncaught", String(error)));
 process.on("unhandledRejection", error => console.log("unhandled", String(error)));

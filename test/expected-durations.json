@@ -40,10 +40,10 @@
     "windows": 3284
   },
   "aot/a-file-in-front-of-the-program-imports-the-entry-point.test.ts": {
-    "default": 567
+    "default": 910
   },
   "aot/a-file-that-is-no-program-fails-where-it-is-loaded.test.ts": {
-    "default": 12800
+    "default": 5200
   },
   "aot/a-file-under-another-tsconfig-imports-from-a-file-that-a-plugin-answers-for.test.ts": {
     "default": 8600
@@ -58,7 +58,7 @@
     "default": 7800
   },
   "aot/a-large-program-builds-to-one-executable.test.ts": {
-    "default": 3467
+    "default": 5780
   },
   "aot/a-loop-that-calls-nothing-is-terminated.test.ts": {
     "default": 2801,
@@ -110,7 +110,7 @@
     "windows": 80
   },
   "aot/addons-named-by-the-platform.test.ts": {
-    "default": 11967
+    "default": 10580
   },
   "aot/address-sanitizer-checks-compiled-code.test.ts": {
     "default": 300
@@ -130,7 +130,7 @@
     "windows-aarch64": 1257
   },
   "aot/an-executable-that-cannot-read-its-own-file-does-not-start.test.ts": {
-    "default": 633
+    "default": 1550
   },
   "aot/an-executable-whose-image-header-names-a-range-outside-its-code-segment-does-not-start.test.ts": {
     "default": 8700
@@ -173,7 +173,7 @@
     "windows": 2235
   },
   "aot/audit-agrees-with-the-executable.test.ts": {
-    "default": 4033
+    "default": 9250
   },
   "aot/audit-arguments-passed-via-any.test.ts": {
     "default": 4000,
@@ -340,9 +340,7 @@
     "default": 17800
   },
   "aot/built-in-functions-by-use.test.ts": {
-    "default": 21100,
-    "asan": 211811,
-    "windows": 138125
+    "default": 12030
   },
   "aot/built-in-one-environment-run-in-another.test.ts": {
     "default": 18084,
@@ -410,7 +408,7 @@
     "windows": 864
   },
   "aot/bundler-in-a-trimmed-executable.test.ts": {
-    "default": 800,
+    "default": 11133,
     "asan": 666,
     "windows": 781
   },
@@ -434,10 +432,10 @@
     "windows": 1969
   },
   "aot/cell-cage-messages.test.ts": {
-    "default": 1200
+    "default": 3490
   },
   "aot/channel-of-process-by-use.test.ts": {
-    "default": 6033
+    "default": 7950
   },
   "aot/check-flags-with-check-script.test.ts": {
     "default": 311,
@@ -445,7 +443,7 @@
     "windows": 412
   },
   "aot/checked-native-calls-are-listed.test.ts": {
-    "default": 6400
+    "default": 860
   },
   "aot/checker-queries-calls.test.ts": {
     "default": 10800
@@ -474,7 +472,7 @@
     "windows": 3147
   },
   "aot/cli/admitted-code.test.ts": {
-    "default": 867
+    "default": 2400
   },
   "aot/cli/carrier-identity.test.ts": {
     "default": 7900,
@@ -506,7 +504,7 @@
     "windows": 4790
   },
   "aot/cli/metafile.test.ts": {
-    "default": 8100
+    "default": 1890
   },
   "aot/cli/obfuscate.test.ts": {
     "default": 7800,
@@ -528,7 +526,7 @@
     "default": 5700
   },
   "aot/code-from-disk.test.ts": {
-    "default": 6667
+    "default": 17540
   },
   "aot/code-size-map.test.ts": {
     "default": 1505,
@@ -536,7 +534,7 @@
     "windows": 2937
   },
   "aot/code-the-compiler-never-saw.test.ts": {
-    "default": 13667
+    "default": 20980
   },
   "aot/command-line-tools.test.ts": {
     "default": 9800
@@ -554,7 +552,7 @@
     "default": 14700
   },
   "aot/compiled-code-mapping.test.ts": {
-    "default": 2633
+    "default": 7580
   },
   "aot/constructions-of-imported-classes-beside-a-stream-that-is-read-and-written.test.ts": {
     "default": 5641
@@ -592,9 +590,7 @@
     "windows": 661
   },
   "aot/development-server.test.ts": {
-    "default": 11000,
-    "asan": 12379,
-    "windows": 57
+    "default": 980
   },
   "aot/diagnostics-end-in-lf.test.ts": {
     "default": 486,
@@ -679,7 +675,7 @@
     "default": 10200
   },
   "aot/evaluated-code-in-a-trimmed-executable.test.ts": {
-    "default": 100,
+    "default": 3373,
     "asan": 458,
     "musl": 4044,
     "windows": 647
@@ -697,7 +693,7 @@
     "default": 5000
   },
   "aot/every-launch-places-its-heap-anew.test.ts": {
-    "default": 233
+    "default": 980
   },
   "aot/every-platform.test.ts": {
     "default": 1034,
@@ -715,7 +711,7 @@
     "windows": 789
   },
   "aot/executables-leave-out-the-command-line.test.ts": {
-    "default": 400
+    "default": 7582
   },
   "aot/exit-hooks-of-an-executable.test.ts": {
     "default": 5000,
@@ -770,7 +766,7 @@
     "default": 3000
   },
   "aot/fields-that-get-other-values-than-the-program-shows.test.ts": {
-    "default": 2967
+    "default": 3590
   },
   "aot/file-names-in-another-letter-case.test.ts": {
     "default": 22700,
@@ -817,12 +813,12 @@
     "default": 500
   },
   "aot/frameworks/angular.test.ts": {
-    "default": 700,
+    "default": 20142,
     "asan": 22424,
     "windows": 19191
   },
   "aot/frameworks/next.test.ts": {
-    "default": 100,
+    "default": 72688,
     "asan": 141844,
     "windows": 40151
   },
@@ -876,10 +872,10 @@
     "default": 300
   },
   "aot/heap-limit-worker-console.test.ts": {
-    "default": 4000
+    "default": 4250
   },
   "aot/heap-limit.test.ts": {
-    "default": 16000
+    "default": 24040
   },
   "aot/host-object-accessors.test.ts": {
     "default": 25,
@@ -918,7 +914,7 @@
     "windows": 64
   },
   "aot/libraries-known-not-to-work.test.ts": {
-    "default": 26250
+    "default": 7920
   },
   "aot/library-from-npm.test.ts": {
     "default": 43800
@@ -987,7 +983,7 @@
     "windows": 5497
   },
   "aot/loader-access-in-unreachable-code.test.ts": {
-    "default": 2500
+    "default": 8170
   },
   "aot/loader/aot-condition.test.ts": {
     "default": 428
@@ -1068,12 +1064,12 @@
     "windows": 142
   },
   "aot/memory-deny-write-execute-is-inherited.test.ts": {
-    "default": 100,
+    "default": 11411,
     "windows": 66,
     "windows-aarch64": 82
   },
   "aot/memory-deny-write-execute.test.ts": {
-    "default": 767
+    "default": 2780
   },
   "aot/memory-stays-level-in-a-loop-that-allocates-only-inside-the-run-time.test.ts": {
     "default": 4900
@@ -1096,13 +1092,13 @@
     "windows": 4755
   },
   "aot/missing-builtin-export.test.ts": {
-    "default": 200,
+    "default": 90960,
     "asan": 38658,
     "musl": 20923,
     "windows": 32233
   },
   "aot/missing-bun-types.test.ts": {
-    "default": 6833
+    "default": 13120
   },
   "aot/mocked-exports.test.ts": {
     "default": 1800,
@@ -1146,8 +1142,7 @@
     "windows": 1630
   },
   "aot/native-addons.test.ts": {
-    "default": 13312,
-    "windows": 18211
+    "default": 3230
   },
   "aot/native-fault-still-crashes.test.ts": {
     "default": 4600,
@@ -1235,15 +1230,15 @@
     "default": 100
   },
   "aot/open-layouts.test.ts": {
-    "default": 700,
+    "default": 28242,
     "asan": 27444,
     "windows": 22846
   },
   "aot/operations-that-may-not-collect.test.ts": {
-    "default": 3333
+    "default": 1210
   },
   "aot/options-that-a-library-module-carries-out.test.ts": {
-    "default": 9767
+    "default": 8200
   },
   "aot/packed-relocations.test.ts": {
     "default": 89,
@@ -1405,7 +1400,7 @@
     "windows": 81
   },
   "aot/roads-to-members-of-the-runtime.test.ts": {
-    "default": 14800
+    "default": 10300
   },
   "aot/run-aot-analyzes-preloads.test.ts": {
     "default": 578,
@@ -1436,7 +1431,7 @@
     "windows": 356
   },
   "aot/run-aot.test.ts": {
-    "default": 4567
+    "default": 12010
   },
   "aot/run-time-plugins-and-compiled-modules.test.ts": {
     "default": 1800
@@ -1497,19 +1492,19 @@
     "windows": 66
   },
   "aot/separate-programs.test.ts": {
-    "default": 667
+    "default": 2820
   },
   "aot/servers/bun.test.ts": {
-    "default": 2567
+    "default": 9060
   },
   "aot/servers/elysia.test.ts": {
     "default": 38500
   },
   "aot/servers/every-pass-changes-a-real-program.test.ts": {
-    "default": 9667
+    "default": 9630
   },
   "aot/servers/express.test.ts": {
-    "default": 9867
+    "default": 18580
   },
   "aot/servers/fastify.test.ts": {
     "default": 48250
@@ -1527,10 +1522,10 @@
     "windows-aarch64": 2063
   },
   "aot/servers/node.test.ts": {
-    "default": 6600
+    "default": 13100
   },
   "aot/servers/thin.test.ts": {
-    "default": 2233
+    "default": 8970
   },
   "aot/shell-completions-list-flags.test.ts": {
     "default": 26,
@@ -1562,7 +1557,7 @@
     "windows": 43
   },
   "aot/strict-flag-refuses-as-without-aot.test.ts": {
-    "default": 4967
+    "default": 8210
   },
   "aot/summary-line.test.ts": {
     "default": 4700,
@@ -1760,14 +1755,13 @@
     "default": 2100
   },
   "aot/unused-code-is-not-in-the-executable.test.ts": {
-    "default": 11570,
-    "windows": 7980
+    "default": 1550
   },
   "aot/validation-of-the-property-caches.test.ts": {
-    "default": 15900
+    "default": 3960
   },
   "aot/warmed-blocks.test.ts": {
-    "default": 1333
+    "default": 2110
   },
   "aot/ways-to-start-an-executable.test.ts": {
     "default": 5000
@@ -1808,13 +1802,13 @@
     "default": 900
   },
   "aot/workers-from-embedded-files.test.ts": {
-    "default": 39600
+    "default": 11890
   },
   "aot/workers-from-texts-that-the-build-knows.test.ts": {
-    "default": 12667
+    "default": 12000
   },
   "aot/workers-within-address-space-limit.test.ts": {
-    "default": 30000
+    "default": 47690
   },
   "bake/app-options.test.ts": {
     "default": 40,

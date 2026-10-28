@@ -343,14 +343,12 @@ for (const [label, parse, make] of types) {
       let plain = "";
       let typedValue: unknown;
       let plainValue: unknown;
-      const start = Date.now();
       try {
         typedValue = parse(text);
         typed = show(typedValue);
       } catch (error: any) {
         typed = error.name + ": " + error.message;
       }
-      if (Date.now() - start > 30000) report("SLOW", label, text, typed, "");
       try {
         plainValue = plainParse(text);
         plain = show(plainValue);

@@ -1,6 +1,7 @@
 // Ends a child process that holds more memory than it may, so that no test fills the machine it runs on.
-import { readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { freemem, totalmem } from "os";
+import { dirname, join } from "path";
 
 const machine = Math.min(totalmem(), process.constrainedMemory() || Infinity, 64 * 2 ** 30);
 
@@ -71,13 +72,22 @@ export function endAtMemoryLimit(
   return watch;
 }
 
-/** In bytes: what the control group of this process holds and cannot give back by forgetting pages of files. */
-function heldByControlGroup() {
-  const folder = `/sys/fs/cgroup${/^0::(.*)$/m.exec(readFileSync("/proc/self/cgroup", "utf8"))?.[1] ?? "/"}`;
-  const parts = readFileSync(`${folder}/memory.stat`, "utf8");
-  const part = (name: string) => Number(new RegExp(`^${name} (\\d+)$`, "m").exec(parts)?.[1] ?? 0);
-  return Number(readFileSync(`${folder}/memory.current`, "utf8")) - part("file") + part("shmem");
+/** The control groups that this process is in and that have a bound, from the innermost outwards. */
+function findBoundedControlGroups() {
+  const bounded: { folder: string; bound: number }[] = [];
+  try {
+    const top = "/sys/fs/cgroup";
+    let folder = join(top, /^0::(.*)$/m.exec(readFileSync("/proc/self/cgroup", "utf8"))?.[1] ?? "/");
+    for (; folder.length > top.length || folder === top; folder = dirname(folder)) {
+      // The outermost group of a machine has no such file. That of a container has.
+      if (!existsSync(`${folder}/memory.max`)) continue;
+      const bound = Number(readFileSync(`${folder}/memory.max`, "utf8"));
+      if (bound) bounded.push({ folder, bound });
+    }
+  } catch {}
+  return bounded;
 }
+let boundedControlGroups: ReturnType<typeof findBoundedControlGroups> | undefined;
 
 /** In bytes: what the machine, or the container, can still hand out. */
 export function availableMemory() {
@@ -86,8 +96,13 @@ export function availableMemory() {
   let available = freemem();
   try {
     available = Number(/^MemAvailable:\s*(\d+) kB/m.exec(readFileSync("/proc/meminfo", "utf8"))![1]) * 1024;
-    const bound = process.constrainedMemory();
-    if (bound > 0 && bound < totalmem()) available = Math.min(available, bound - heldByControlGroup());
+    for (const { folder, bound } of (boundedControlGroups ??= findBoundedControlGroups())) {
+      const parts = readFileSync(`${folder}/memory.stat`, "utf8");
+      const part = (name: string) => Number(new RegExp(`^${name} (\\d+)$`, "m").exec(parts)?.[1] ?? 0);
+      // A group gives back the pages of files, but for those that lie in memory alone.
+      const held = Number(readFileSync(`${folder}/memory.current`, "utf8")) - part("file") + part("shmem");
+      available = Math.min(available, bound - held);
+    }
   } catch {}
   return available;
 }

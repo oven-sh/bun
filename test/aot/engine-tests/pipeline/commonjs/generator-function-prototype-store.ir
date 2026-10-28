@@ -351,17 +351,18 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v6: undefined = Undefined
 # CHECK-NEXT: v7: Generator = NewGenerator v0 function=f1
 # CHECK-NEXT: v8: anything = CallDirect v6, v0, v7 function=f22
-# CHECK-NEXT: v9: null|object = CallBuiltin -, v7 overload=ObjectGetPrototypeOf/0 accessSite=18
-# CHECK-NEXT: v10: boolean = StrictEq v9, v1
-# CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v9: Generator ~ Generator<number> = Upcast v7 castType=anything
+# CHECK-NEXT: v10: null|object = CallBuiltin -, v9 overload=ObjectGetPrototypeOf/0 accessSite=18
+# CHECK-NEXT: v11: boolean = StrictEq v10, v1
+# CHECK-NEXT: Branch v11 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v11: "the old one" = String string="the old one"
-# CHECK-NEXT: Jump -> next b3(v11)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v12: "replaced" = String string="replaced"
+# CHECK-NEXT: v12: "the old one" = String string="the old one"
 # CHECK-NEXT: Jump -> next b3(v12)
-# CHECK-NEXT: b3(v13: "replaced"|"the old one"):
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v13: "replaced" = String string="replaced"
+# CHECK-NEXT: Jump -> next b3(v13)
+# CHECK-NEXT: b3(v14: "replaced"|"the old one"):
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function f5 module=
 # CHECK: m0 position=548 flags=[IsSloppy] thisType={type=anything} results=[{type="replaced"|"the old one"}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}] {
@@ -375,17 +376,18 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v6: undefined = Undefined
 # CHECK-NEXT: v7: AsyncGenerator = NewAsyncGenerator v0 function=f2
 # CHECK-NEXT: v8: anything = CallDirect v6, v0, v7 function=f23
-# CHECK-NEXT: v9: null|object = CallBuiltin -, v7 overload=ObjectGetPrototypeOf/0 accessSite=21
-# CHECK-NEXT: v10: boolean = StrictEq v9, v1
-# CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v9: AsyncGenerator ~ AsyncGenerator<number> = Upcast v7 castType=anything
+# CHECK-NEXT: v10: null|object = CallBuiltin -, v9 overload=ObjectGetPrototypeOf/0 accessSite=21
+# CHECK-NEXT: v11: boolean = StrictEq v10, v1
+# CHECK-NEXT: Branch v11 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v11: "the old one" = String string="the old one"
-# CHECK-NEXT: Jump -> next b3(v11)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v12: "replaced" = String string="replaced"
+# CHECK-NEXT: v12: "the old one" = String string="the old one"
 # CHECK-NEXT: Jump -> next b3(v12)
-# CHECK-NEXT: b3(v13: "replaced"|"the old one"):
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v13: "replaced" = String string="replaced"
+# CHECK-NEXT: Jump -> next b3(v13)
+# CHECK-NEXT: b3(v14: "replaced"|"the old one"):
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function f6 module=
 # CHECK: m0 position=688 flags=[IsSloppy] thisType={type=anything} results=[{type="replaced"|"the old one"}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
@@ -398,17 +400,18 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v5: undefined = Undefined
 # CHECK-NEXT: v6: Generator = NewGenerator v0 function=f1
 # CHECK-NEXT: v7: anything = CallDirect v5, v0, v6 function=f22
-# CHECK-NEXT: v8: null|object = CallBuiltin -, v6 overload=ObjectGetPrototypeOf/0 accessSite=26
-# CHECK-NEXT: v9: boolean = StrictEq v8, v1
-# CHECK-NEXT: Branch v9 -> taken b1(), notTaken b2()
+# CHECK-NEXT: v8: Generator ~ Generator<number> = Upcast v6 castType=anything
+# CHECK-NEXT: v9: null|object = CallBuiltin -, v8 overload=ObjectGetPrototypeOf/0 accessSite=26
+# CHECK-NEXT: v10: boolean = StrictEq v9, v1
+# CHECK-NEXT: Branch v10 -> taken b1(), notTaken b2()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v10: "the old one" = String string="the old one"
-# CHECK-NEXT: Jump -> next b3(v10)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v11: "replaced" = String string="replaced"
+# CHECK-NEXT: v11: "the old one" = String string="the old one"
 # CHECK-NEXT: Jump -> next b3(v11)
-# CHECK-NEXT: b3(v12: "replaced"|"the old one"):
-# CHECK-NEXT: Return v12
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v12: "replaced" = String string="replaced"
+# CHECK-NEXT: Jump -> next b3(v12)
+# CHECK-NEXT: b3(v13: "replaced"|"the old one"):
+# CHECK-NEXT: Return v13
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
 # CHECK: m0 position=866 flags=[IsSloppy] thisType={type=anything} results=[{type=boolean}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
@@ -420,9 +423,10 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v4: undefined = Undefined
 # CHECK-NEXT: v5: Generator = NewGenerator v0 function=f1
 # CHECK-NEXT: v6: anything = CallDirect v4, v0, v5 function=f22
-# CHECK-NEXT: v7: null|object = CallBuiltin -, v5 overload=ObjectGetPrototypeOf/0 accessSite=29
-# CHECK-NEXT: v8: boolean = StrictEq v7, v1
-# CHECK-NEXT: Return v8
+# CHECK-NEXT: v7: Generator ~ Generator<number> = Upcast v5 castType=anything
+# CHECK-NEXT: v8: null|object = CallBuiltin -, v7 overload=ObjectGetPrototypeOf/0 accessSite=29
+# CHECK-NEXT: v9: boolean = StrictEq v8, v1
+# CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function f8 module=
 # CHECK: m0 position=974 flags=[IsSloppy] thisType={type=anything} results=[{type=string}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}] {
@@ -437,11 +441,12 @@ function f20 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: v7: undefined = Undefined
 # CHECK-NEXT: v8: Generator = NewGenerator v0 function=f1
 # CHECK-NEXT: v9: anything = CallDirect v7, v0, v8 function=f22
-# CHECK-NEXT: v10: null|object = CallBuiltin -, v8 overload=ObjectGetPrototypeOf/0 accessSite=32
-# CHECK-NEXT: v11: boolean = StrictEq v10, v1
-# CHECK-NEXT: v12: "," = String string=","
-# CHECK-NEXT: v13: string = Strcat v5, v12, v11
-# CHECK-NEXT: Return v13
+# CHECK-NEXT: v10: Generator ~ Generator<number> = Upcast v8 castType=anything
+# CHECK-NEXT: v11: null|object = CallBuiltin -, v10 overload=ObjectGetPrototypeOf/0 accessSite=32
+# CHECK-NEXT: v12: boolean = StrictEq v11, v1
+# CHECK-NEXT: v13: "," = String string=","
+# CHECK-NEXT: v14: string = Strcat v5, v13, v12
+# CHECK-NEXT: Return v14
 # CHECK-NEXT: }
 # CHECK-LABEL: function f9 module=
 # CHECK: m0 position=1109 flags=[IsSloppy] thisType={type=anything} results=[{type=undefined|int}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f10 callPosition=4294967295 isConstruction=true module=m0}] {

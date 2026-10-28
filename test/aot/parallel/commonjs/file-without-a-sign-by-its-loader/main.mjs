@@ -1,4 +1,4 @@
-// A file whose text says neither CommonJS nor ES module is what its extension says where require() loads it, and what the "type" of its package says where import loads it.
+// Files whose text says neither CommonJS nor ES module, loaded by import, import() and require(), one of them in a package with a "type". Each prints whether it is strict code.
 // Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0
 import { createRequire } from "node:module";
 import "./calls-require.mjs";

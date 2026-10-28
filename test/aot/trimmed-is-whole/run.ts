@@ -125,6 +125,9 @@ const sharesNoExecutable = (program: Program) =>
 
 const chosen = "PROGRAM_TO_START";
 
+/** A .cjs file that is only imported and names neither module, exports nor require is an ES module. Required, it is what it is as an entry point. */
+const loadOf = (program: Program) => (program.extension === "cjs" ? "import.meta.require" : "import");
+
 /** The programs of one pair of executables. Each has a folder of its own, for the files beside it. */
 class Executables {
   #built?: Promise<{ folder: string; builds: Ran[]; removed: number[] }>;
@@ -160,7 +163,7 @@ class Executables {
       if (isShared)
         writeFileSync(
           join(folder, "start.mjs"),
-          `const programs = {\n${this.programs.map(program => `  ${JSON.stringify(this.#entryOf(program))}: () => import(${JSON.stringify("./" + this.#entryOf(program))}),\n`).join("")}};\nawait programs[process.env.${chosen}]();\n`,
+          `const programs = {\n${this.programs.map(program => `  ${JSON.stringify(this.#entryOf(program))}: () => ${loadOf(program)}(${JSON.stringify("./" + this.#entryOf(program))}),\n`).join("")}};\nawait programs[process.env.${chosen}]();\n`,
         );
       const builds = await Promise.all(
         [["whole"], ["trimmed", "--trim"]].map(([name, ...flags]) =>

@@ -321,9 +321,11 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     });
   });
 
-  // The name of the file is what the build has to find. A program that imports no built-in module is built without them, which takes a fifth of the time.
+  // The name of the file is what the build has to find. A program that imports no built-in module is built without them, which takes a fifth of the time. On Windows a function of the library makes process.env.
   const usesABuiltInModule = ({ files }: Program) =>
-    Object.values(files).some(text => /(\brequire\(|\bfrom |\bimport\()["'](node:|path|os|fs|module|url)\b/.test(text));
+    Object.values(files).some(text =>
+      /(\brequire\(|\bfrom |\bimport\()["'](node:|path|os|fs|module|url)\b|\bprocess\.env\b/.test(text),
+    );
 
   async function run(title: string, program: Program, { passesAddons = false } = {}) {
     const file = title.replaceAll(/[^a-z]+/gi, "-") + (passesAddons ? "-passed" : "");

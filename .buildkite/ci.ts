@@ -314,7 +314,7 @@ const testPlatforms: Platform[] = [
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   // A Bun built with --hardened=on never reads the environment variables that tests steer Bun with, so it runs the tests
-  // that are written for it. On any other build they skip themselves.
+  // that are written for it. On any other build they skip themselves. The last never does.
   {
     os: "linux",
     arch: "x64",
@@ -329,6 +329,7 @@ const testPlatforms: Platform[] = [
       "aot/compiled-code-mapping",
       "aot/executable-memory-filter",
       "aot/texts-that-tell-builds-apart",
+      "aot/the-build-under-test",
     ],
   },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
@@ -993,6 +994,10 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
       (platform.os === "darwin" && platform.arch === "aarch64" && platform.tier === "latest")
         ? { EXPECTED_PLATFORM_RELEASE: platform.release }
         : {}),
+      // The build, which test/aot/the-build-under-test-is-the-one-its-step-names.test.ts asks the Bun about. Whether the
+      // build behind `buildId` is a canary is not known here.
+      ...(profile ? { EXPECTED_PLATFORM_PROFILE: profile } : {}),
+      ...(options.canary && !buildId ? { EXPECTED_PLATFORM_CANARY: "1" } : {}),
     },
     command:
       os === "windows"
@@ -1890,6 +1895,8 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
       : [];
   const relevantTestPlatforms = (includeEveryProfile ? testPlatforms : testPlatforms.filter(isInRelease))
     .filter(({ os }) => os !== "darwin" || darwinTestsEnabled)
+    // The files that a manual build asks for are not written for a platform that names its own.
+    .filter(({ tests }) => !tests || !options.testFiles?.length)
     .concat(darwinTestsEnabled ? [] : prDarwinTestPlatforms)
     .concat(darwinTestsEnabled ? [] : betaDarwinTestPlatforms);
   const testStepKeys: string[] = [];

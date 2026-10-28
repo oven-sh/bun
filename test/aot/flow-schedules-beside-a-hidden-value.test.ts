@@ -1,4 +1,4 @@
-// ./flow-schedules.test.ts says what a schedule is. Here small programs whose answer once hung on it.
+// ./harness/flow-schedules.ts says what a schedule is. Here small programs whose answer once hung on it.
 import { expect, setDefaultTimeout } from "bun:test";
 import { bunExe, tempDir } from "harness";
 import { cpSync } from "node:fs";

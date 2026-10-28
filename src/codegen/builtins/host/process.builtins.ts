@@ -21,6 +21,39 @@ const calledWithEvents = b.called({
   spreadArgs: b.any,
   result: "Ignored",
 });
+// To the listeners of these events native code passes what was thrown or rejected with, a promise of the program, an Error, strings and numbers: nothing of a class of the host.
+// `message` and `worker` are not among them.
+const eventsThatPassNoObjectOfHost = b.enumeration([
+  "beforeExit",
+  "disconnect",
+  "exit",
+  "rejectionHandled",
+  "uncaughtException",
+  "uncaughtExceptionMonitor",
+  "unhandledRejection",
+  "warning",
+  "SIGALRM",
+  "SIGBREAK",
+  "SIGCHLD",
+  "SIGCONT",
+  "SIGHUP",
+  "SIGINT",
+  "SIGPIPE",
+  "SIGQUIT",
+  "SIGTERM",
+  "SIGTSTP",
+  "SIGUSR1",
+  "SIGUSR2",
+  "SIGWINCH",
+]);
+const calledWithWhatWasHandedOver = b.called({
+  afterwards: "TouchesOnlyWhatRowNames",
+  times: "PerEvent",
+  args: [],
+  this: self,
+  spreadArgs: b.nativeMemory,
+  result: "Ignored",
+});
 const calledWithExitCode = b.called({
   afterwards: "TouchesOnlyWhatRowNames",
   times: "Later",
@@ -85,17 +118,28 @@ const methodOfEventEmitter = (signature: b.SignatureOptions): b.FunctionField[] 
   onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event"),
 ];
 
-const addsListener = methodOfEventEmitter({
-  args: { event: b.any, listener: b.any },
-  returns: self,
-  capability: "js",
-  throws: true,
-  uses: {
-    this: b.inspected,
-    event: [b.retained, b.runs("ToPrimitive")],
-    listener: [b.retained, calledWithEvents],
+const addsListener = [
+  {
+    args: { event: eventsThatPassNoObjectOfHost, listener: b.any },
+    returns: self,
+    capability: "js",
+    throws: true,
+    uses: { this: b.inspected, event: b.inspected, listener: [b.retained, calledWithWhatWasHandedOver] },
+    this: nativeEmitter,
+    implementation: b.generic,
   },
-});
+  ...methodOfEventEmitter({
+    args: { event: b.any, listener: b.any },
+    returns: self,
+    capability: "js",
+    throws: true,
+    uses: {
+      this: b.inspected,
+      event: [b.retained, b.runs("ToPrimitive")],
+      listener: [b.retained, calledWithEvents],
+    },
+  }),
+] satisfies b.FunctionField[];
 
 const removesListener = methodOfEventEmitter({
   args: { event: b.propertyKey.loose, listener: b.any.optional },

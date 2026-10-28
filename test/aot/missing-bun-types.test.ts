@@ -730,10 +730,10 @@ const doNotFit = new Set([
 ]);
 
 // What is asked here is asked of the type checker and of what reads its answers, so the executables hold no built-in module, which makes the builds fifteen times cheaper.
-// A program that uses one is built, and only plain Bun runs it.
+// A program that uses one is built, and only plain Bun runs it. On Windows a function of the library makes process.env.
 const usesABuiltInModule = (files: Record<string, string>) =>
   Object.values(files).some(text =>
-    /\bfrom "(node:|bun|os"|events")|\brequire\("node:|\bBuffer\b|\.toJSON\(\)|\bextends (Request|Response|ReadableStream)\b/.test(
+    /\bfrom "(node:|bun|os"|events")|\brequire\("node:|\bBuffer\b|\bprocess\.env\b|\.toJSON\(\)|\bextends (Request|Response|ReadableStream)\b/.test(
       text,
     ),
   );

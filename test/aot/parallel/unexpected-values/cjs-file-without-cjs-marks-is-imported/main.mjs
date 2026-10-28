@@ -1,4 +1,4 @@
-// A .cjs file whose text has no mark of CommonJS is strict code where import() loads it and sloppy code where require() does.
+// One text without a mark of CommonJS in two .cjs files: import() loads the one and require() the other. Each prints whether it is strict code.
 // Env: BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER=0
 await import("./aliases-its-arguments.cjs");
 const { createRequire } = await import("node:module");

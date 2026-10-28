@@ -1,6 +1,7 @@
 // A pattern made at run time whose search doubles with every character of the subject: plain Bun gives the match up at the hundred millionth turn of a group, after seconds.
 // The compiled program gives up at the same length of the subject, and at once: it does not make the same search from the same place twice. That holds where the pattern refers to a group,
-// looks behind with groups and runs, has characters beyond the BMP, and where the subject has them.
+// looks behind with groups and runs, has characters beyond the BMP, and where the subject has them: none of these patterns goes to the interpreter of bytecode, which makes every search anew.
+// Env of the executable: BUN_JSC_verboseRegExpCompilation=1
 const nothing = String(Date.now()).slice(99);
 const face = "\u{1f600}";
 const rows = [
@@ -24,32 +25,62 @@ const rows = [
 ];
 for (const [name, source, flags, subject] of rows) {
   const answers = [];
-  let slowest = 0;
   for (let count = 20; count <= 32; count++) {
-    const began = performance.now();
     const match = new RegExp(source + nothing, flags).exec(subject(count) + nothing);
-    slowest = Math.max(slowest, performance.now() - began);
     answers.push(match === null ? "-" : match[0].length);
   }
-  if (process.argv[2] === "show") console.log(Math.round(slowest) + " ms");
-  console.log(name + ":", answers.join(" "), slowest < 1000 ? "each within a second" : "one took " + Math.round(slowest) + " ms");
+  console.log(name + ":", answers.join(" "));
 }
 /* Output:
-a reference to a group in front of the turns: 20 21 22 23 24 25 26 27 28 29 30 31 32 each within a second
-a reference to the group that takes the turns: 20 21 22 23 24 25 26 - - - - - - each within a second
-a reference that is taken as seldom as may be: 20 - - - - - - - - - - - - each within a second
-references to two groups: 20 21 22 23 24 25 26 27 - - - - - each within a second
-a reference that ignores case: 20 21 22 23 24 25 26 27 - - - - - each within a second
-a text between quotes: 21 22 23 24 25 26 27 - - - - - - each within a second
-a character beyond the BMP: 40 42 44 46 48 50 52 - - - - - - each within a second
-a class with a character beyond the BMP: 40 42 44 46 48 50 52 - - - - - - each within a second
-a dot behind a pair: 22 23 24 25 26 27 28 - - - - - - each within a second
-a dot on pairs: 40 42 44 46 48 50 52 - - - - - - each within a second
-a negated class in front of a pair: 22 23 24 25 26 27 - - - - - - - each within a second
-properties on pairs: 40 42 44 46 48 50 52 - - - - - - each within a second
-half a pair: 20 21 22 23 24 25 26 - - - - - - each within a second
-a difference of classes in front of a pair: 22 23 24 25 26 27 - - - - - - - each within a second
-a lookbehind with a group: 20 21 22 23 24 25 - - - - - - - each within a second
-a lookbehind with a run behind turns: 20 21 22 23 24 25 26 - - - - - - each within a second
-a lookbehind that must fail, with a group: 20 21 22 - - - - - - - - - - each within a second
+a reference to a group in front of the turns: 20 21 22 23 24 25 26 27 28 29 30 31 32
+a reference to the group that takes the turns: 20 21 22 23 24 25 26 - - - - - -
+a reference that is taken as seldom as may be: 20 - - - - - - - - - - - -
+references to two groups: 20 21 22 23 24 25 26 27 - - - - -
+a reference that ignores case: 20 21 22 23 24 25 26 27 - - - - -
+a text between quotes: 21 22 23 24 25 26 27 - - - - - -
+a character beyond the BMP: 40 42 44 46 48 50 52 - - - - - -
+a class with a character beyond the BMP: 40 42 44 46 48 50 52 - - - - - -
+a dot behind a pair: 22 23 24 25 26 27 28 - - - - - -
+a dot on pairs: 40 42 44 46 48 50 52 - - - - - -
+a negated class in front of a pair: 22 23 24 25 26 27 - - - - - - -
+properties on pairs: 40 42 44 46 48 50 52 - - - - - -
+half a pair: 20 21 22 23 24 25 26 - - - - - -
+a difference of classes in front of a pair: 22 23 24 25 26 27 - - - - - - -
+a lookbehind with a group: 20 21 22 23 24 25 - - - - - - -
+a lookbehind with a run behind turns: 20 21 22 23 24 25 26 - - - - - -
+a lookbehind that must fail, with a group: 20 21 22 - - - - - - - - - -
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
+Runs on a flat program
+Counts turns on a second flat program
 */

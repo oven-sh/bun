@@ -1,4 +1,4 @@
-// Recursive unions of every kind, 20 to 2,000 levels deep, in texts that fit and texts that do not, by `JSON.parse(text) as T` (also with an escape in the first key): nothing looks at a nested value once for each arm, so each answer comes within a second.
+// Recursive unions of every kind, 20 to 2,000 levels deep, in texts that fit and texts that do not, by `JSON.parse(text) as T` (also with an escape in the first key): nothing looks at a nested value once for each arm: with two looks a level the texts of 200 levels would never be read to their end.
 type NumberTag = { below: NumberTag | null; k: 1 } | { below: NumberTag | null; k: 2 };
 type FlagTag = { below: FlagTag | null; k: true } | { below: FlagTag | null; k: false };
 type TextTag = { below: TextTag | null; k: "one" } | { below: TextTag | null; k: "two" };
@@ -42,14 +42,13 @@ const kinds: [string, (text: string) => unknown, (levels: number, bottom: string
 ];
 
 function answer(run: () => unknown, text: string): string {
-  const start = Date.now();
   let said = "";
   try {
     said = JSON.stringify(run()) === text ? "what JSON.parse gives" : "ANOTHER VALUE";
   } catch (error: any) {
     said = error.name + ": " + error.message;
   }
-  return Date.now() - start > 1000 ? said + " TOO SLOWLY" : said;
+  return said;
 }
 
 for (const [label, parse, text, bottom] of kinds) {

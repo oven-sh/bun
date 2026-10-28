@@ -62,6 +62,8 @@ pub struct LoadOptions {
     pub library_code_lacked: LibraryCode,
     /// The program holds all of Bun's own code that can be got at without a name that the build sees.
     pub keeps_library_code_without_names: bool,
+    /// An earlier compile of the same program read `process.mainModule` where no file names a way to a module object, by the word of the engine.
+    pub reads_main_module_without_its_name: bool,
 }
 
 /// Code that the program holds as a text and starts a Worker with.
@@ -127,6 +129,7 @@ impl LoadOptions {
             takes_runtime_as_any: false,
             library_code_lacked: LibraryCode::default(),
             keeps_library_code_without_names: false,
+            reads_main_module_without_its_name: false,
         }
     }
 }

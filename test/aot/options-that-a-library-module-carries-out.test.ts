@@ -18,10 +18,7 @@ const files = {
   "limit.js":
     countsFrames +
     `console.log(Error.stackTraceLimit, depth(30), JSON.stringify(process.execArgv), JSON.stringify(process.argv.slice(2)));\n`,
-  "worker.js":
-    `import { parentPort } from "node:worker_threads";\n` +
-    countsFrames +
-    `parentPort.postMessage(Error.stackTraceLimit + " " + depth(30));\n`,
+  "worker.js": countsFrames + `postMessage(Error.stackTraceLimit + " " + depth(30));\n`,
   "workers.js": `import { Worker } from "node:worker_threads";
 function start(execArgv) {
   return new Promise(resolve => {

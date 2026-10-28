@@ -72,13 +72,13 @@ describe.skipIf(!systemCC || !!unsupported)("compile/aot/native-addons", () => {
         const executable = join(folder, name.replace(/\.\w+$/, isWindows ? ".exe" : ""));
         built(
           await spawned(
-            // No program imports a built-in module.
+            // No program imports a built-in module. On Windows a function of the library makes process.env, where the path of the addon is.
             [
               bunExe(),
               "build",
               "--compile",
               "--aot",
-              "--no-builtin-modules",
+              ...(isWindows ? [] : ["--no-builtin-modules"]),
               join(programs, name),
               "--outfile",
               executable,

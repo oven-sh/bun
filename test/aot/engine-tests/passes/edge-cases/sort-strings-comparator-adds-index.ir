@@ -329,9 +329,30 @@ function f4 module=m0 role=Signature thisType={type=anything} results=[{type=any
 function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f8 name="isCallable" module=m1 position=1201 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f9 name="isDoubleArray" module=m1 position=1289 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f10 name="isContiguousArray" module=m1 position=1403 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f8 name="isCallable" module=m1 position=1201 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean site=w0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything):
+    v1 = TypeTest v0 testedType=function
+    v2 = Convert v1 declared={type=boolean site=w0}
+    Return v2
+}
+function f9 name="isDoubleArray" module=m1 position=1289 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|Array):
+    v1 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+    v2 = ArrayStorageKind v1
+    v3 = Integer integer=2
+    v4 = StrictEq v2, v3
+    v5 = Convert v4 declared={type=boolean site=w2}
+    Return v5
+}
+function f10 name="isContiguousArray" module=m1 position=1403 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array site=w3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w4}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: undefined|null|Array):
+    v1 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]}
+    v2 = ArrayStorageKind v1
+    v3 = Integer integer=3
+    v4 = StrictEq v2, v3
+    v5 = Convert v4 declared={type=boolean site=w4}
+    Return v5
+}
 function f11 name="isLess" module=m1 position=1577 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=boolean site=w5}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f12 name="gallopLeft" module=m1 position=1819 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|Array site=w6 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w7}, {type=number site=w8}, {type=number site=w9}, {type=anything}] results=[{type=number site=w10}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f13 name="gallopRight" module=m1 position=3330 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|Array site=w11 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w12}, {type=number site=w13}, {type=number site=w14}, {type=anything}] results=[{type=number site=w15}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
@@ -702,7 +723,7 @@ runtimefunction id=131089 function=f29
 # CHECK-LABEL: function {{*}}name="mergeDoubleRuns"
 # CHECK: module=m1 position=15510 role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=6 thisType={type=anything} parameters=[{type=Array<never, proven, pristine[Storage, Names]> site=w60 flags=[OmitsNull, OmitsUndefined]}, {type=Array<never, proven, pristine[Storage, Names]> site=w61 flags=[OmitsNull, OmitsUndefined]}, {type=i32 site=w62}, {type=i32 site=w63}, {type=int site=w64}, {type=anything}] results=[{type=anything}] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: Array<never, proven, pristine[Storage, Names]>, v1: Array<never, proven, pristine[Storage, Names]>, v2: i32, v3: i32, v4: int, v5: anything):
-# CHECK-NEXT: v6: anything = CallDirect v0, v2, v3, v4, v5 function=f41
+# CHECK-NEXT: v6: anything = CallDirect v0, v2, v3, v4, v5 function=f38
 # CHECK-NEXT: ReturnCall v6 requirement=Allowed
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="sortDoubles"
@@ -746,7 +767,7 @@ runtimefunction id=131089 function=f29
 # CHECK-NEXT: v37: number = GetDoubleIndex v8, v36
 # CHECK-NEXT: v38: 0 = Integer
 # CHECK-NEXT: v39: i32 = BitOr v37, v38
-# CHECK-NEXT: v40: anything = CallDirect v0, v39, v20, v13, v2 function=f41 accessSite=10
+# CHECK-NEXT: v40: anything = CallDirect v0, v39, v20, v13, v2 function=f38 accessSite=10
 # CHECK-NEXT: Jump -> next b2(v33, v39)
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v41: undefined = Undefined

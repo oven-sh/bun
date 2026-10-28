@@ -340,6 +340,38 @@
     "millionInstructions": 6476,
     "megabytes": 374
   },
+  "functions in one array that each call whichever the array answers with, with their own arguments": {
+    "millionInstructions": 17628,
+    "megabytes": 164,
+    "growth": {
+      "instructions": 3.31,
+      "counts": {
+        "HandedOnReferencesRead": 4,
+        "FunctionsBelowEntrancesInCyclesVisited": 4
+      }
+    }
+  },
+  "classes with a method of one name that each call it on an instance of any of them": {
+    "millionInstructions": 32101,
+    "megabytes": 171,
+    "growth": {
+      "instructions": 3.65,
+      "counts": {
+        "HandedOnReferencesRead": 3.98,
+        "FunctionsBelowEntrancesInCyclesVisited": 3.81
+      }
+    }
+  },
+  "instances of classes of their own that statements assign to one variable, a method called on it after each": {
+    "millionInstructions": 13097,
+    "megabytes": 132,
+    "growth": {
+      "instructions": 4.05,
+      "counts": {
+        "UnionMembersCompared": 3.99
+      }
+    }
+  },
   "all shapes as the entry points of one build, on four threads": {
     "megabytes": 654
   }

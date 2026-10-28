@@ -1333,7 +1333,13 @@ async function runTests(): Promise<TestResult[]> {
       let unfinishedLine = "";
       let unexpectedLine: string | undefined;
       const { error, exitCode, crashes } = await spawnBun(execPath, {
-        args: [aotDriver, `--jobs=${parallelSafeWidth}`, `--files-from=${list}`],
+        args: [
+          aotDriver,
+          `--jobs=${parallelSafeWidth}`,
+          `--files-from=${list}`,
+          // Linux on x64 asks each program as it is when it is built alone. The others ask what differs there, which is not what the compiler knows about a program.
+          ...(isLinux && isX64 && !basename(execPath).includes("asan") ? [] : ["--one-program=all"]),
+        ],
         cwd,
         timeout: Math.max(60_000, Math.min(60 * 60_000, jobBudgetMs() - 5 * 60_000)),
         idleTimeout: 4 * 60_000,

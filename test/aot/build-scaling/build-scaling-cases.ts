@@ -27,7 +27,10 @@
 // an allocator that hands what one thread has freed to the others, or back to the system. Only its memory is held against the budget, with less slack:
 // it wavers by a twentieth.
 //
-// Instructions are counted with perf_event_open on Linux and /usr/bin/time -l on macOS; where neither may be used only the memory is judged. The growth
+// A step that takes time and no memory shows in the instructions alone. A shape may name statistics of the build's report that count the steps of such
+// work (`counts`): they are exact, the same on every machine, and their growth is held to the same bound.
+//
+// Instructions are counted with perf_event_open on Linux and /usr/bin/time -l on macOS; where neither may be used the memory and the counts are judged. The growth
 // of memory is judged only where the size adds enough of it to tell it from what the allocators keep for themselves. The budgets are those of Linux on x64 with glibc.
 // A size that nothing is judged by is not built.
 //
@@ -45,8 +48,9 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { measureCommandWithMemory, type Cost } from "../analysis-scaling/measure-check";
+import { readBuildReport } from "../harness/build-report";
 import { slot, spawned, withoutDebugInformation } from "../harness/commands";
-import { withThreads } from "../harness/flags";
+import { withReport, withThreads } from "../harness/flags";
 import { measureUntilWithinBounds } from "../harness/measure-again";
 import { describe, test } from "../supported";
 import { shapes, type Shape } from "./shapes";
@@ -56,8 +60,10 @@ interface Budget {
   millionInstructions?: number;
   megabytes: number;
   /** Only where it is over `mostGrowth` today. */
-  growth?: { instructions?: number; peakBytes?: number };
+  growth?: { instructions?: number; peakBytes?: number; counts?: Record<string, number> };
 }
+
+type Built = Cost & { counts: Record<string, number> };
 
 const mostGrowth = 2.5;
 const leastBytesJudged = 96 * 1024 * 1024;
@@ -80,7 +86,7 @@ const skipped =
       : undefined;
 if (skipped) console.error(`SKIPPED: test/aot/build-scaling: ${skipped}`);
 
-async function measure(shape: Shape, size: number, carrier: string[]): Promise<Cost> {
+async function measure(shape: Shape, size: number, carrier: string[]): Promise<Built> {
   using folder = tempDir("aot-build-scaling", shape.write(size));
   const cwd = String(folder);
   let entry = shape.entry;
@@ -90,8 +96,9 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<C
     entry = "bundle.js";
   }
   const executable = join(cwd, "program");
+  const report = join(cwd, "report.json");
   try {
-    return await measureCommandWithMemory(
+    const cost = await measureCommandWithMemory(
       cwd,
       [
         bunExe(),
@@ -100,6 +107,7 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<C
         "--aot",
         withThreads(1),
         ...(shape.flags ?? []),
+        ...(shape.counts ? withReport(report, "summary") : []),
         ...carrier,
         entry,
         "--outfile",
@@ -109,6 +117,8 @@ async function measure(shape: Shape, size: number, carrier: string[]): Promise<C
       bunEnv,
       shape.isRefused ? 1 : 0,
     );
+    const statistics = shape.counts ? readBuildReport(report).statistics : {};
+    return { ...cost, counts: Object.fromEntries((shape.counts ?? []).map(name => [name, statistics[name]])) };
   } finally {
     rmSync(executable, { force: true });
   }
@@ -191,7 +201,7 @@ export const buildScaling = (part: number, parts: number) =>
         async () => {
           const size = shape.size * factor;
           const budget = holdsBudgets ? budgets[shape.name] : undefined;
-          type Costs = [none: Cost, once: Cost | undefined, twice: Cost];
+          type Costs = [none: Built, once: Built | undefined, twice: Built];
           const grown = ([none, once, twice]: Costs, name: keyof Cost, least: number, leastDivisor: number) => {
             if (none[name] === undefined || once?.[name] === undefined || twice[name] === undefined) return undefined;
             const [added, addedByTwice] = [once[name] - none[name], twice[name] - none[name]];
@@ -199,8 +209,12 @@ export const buildScaling = (part: number, parts: number) =>
             return addedByTwice < least ? undefined : addedByTwice / Math.max(added, leastDivisor);
           };
           const grownInMemory = (costs: Costs) => grown(costs, "peakBytes", leastBytesJudged, leastBytesJudged / 2);
+          const grownInCount = ([none, once, twice]: Costs, name: string) =>
+            (twice.counts[name] - none.counts[name]) / Math.max(once!.counts[name] - none.counts[name], 1);
           const allowedGrowth = (what: keyof Cost) =>
             Math.max(mostGrowth, (budgets[shape.name]?.growth?.[what] ?? 0) * slackOfGrowth);
+          const allowedGrowthOfCount = (name: string) =>
+            Math.max(mostGrowth, (budgets[shape.name]?.growth?.counts?.[name] ?? 0) * slackOfGrowth);
           let leastSeen: Costs | undefined;
           const costs = await measureUntilWithinBounds(
             shape.name,
@@ -211,9 +225,11 @@ export const buildScaling = (part: number, parts: number) =>
                 (budget?.megabytes ?? 0) * 1e6 - bytesOfOneLineInFile >= leastBytesJudged ? build(size) : undefined;
               const [none, twice] = await Promise.all([build(0), build(2 * size)]);
               const isOnceJudged =
-                none.instructions !== undefined || twice.peakBytes - none.peakBytes >= leastBytesJudged;
+                !!shape.counts ||
+                none.instructions !== undefined ||
+                twice.peakBytes - none.peakBytes >= leastBytesJudged;
               const once = await (early ?? (isOnceJudged ? build(size) : undefined));
-              const least = (cost: Cost, seen: Cost | undefined) => ({
+              const least = (cost: Built, seen: Built | undefined) => ({
                 ...cost,
                 peakBytes: Math.min(cost.peakBytes, seen?.peakBytes ?? Infinity),
               });
@@ -231,17 +247,27 @@ export const buildScaling = (part: number, parts: number) =>
             instructions: grown(costs, "instructions", leastInstructionsJudged, leastInstructionsJudged / 8),
             peakBytes: grownInMemory(costs),
           };
+          const growthOfCounts = (shape.counts ?? []).map(name => [name, grownInCount(costs, name)] as const);
           const row = (cost: Cost | undefined) =>
             !cost
               ? "not built"
               : `${cost.instructions === undefined ? "?" : inMillions(cost.instructions)} M instructions, ${inMillions(cost.peakBytes)} MB`;
           console.error(
-            `SCALING ${shape.name}: 0: ${row(none)} | ${size} ${shape.counted}: ${row(once)} | ${2 * size}: ${row(twice)} | grows ${growth.instructions?.toFixed(2) ?? "-"} times in instructions, ${growth.peakBytes?.toFixed(2) ?? "-"} times in memory`,
+            `SCALING ${shape.name}: 0: ${row(none)} | ${size} ${shape.counted}: ${row(once)} | ${2 * size}: ${row(twice)} | grows ${growth.instructions?.toFixed(2) ?? "-"} times in instructions, ${growth.peakBytes?.toFixed(2) ?? "-"} times in memory${growthOfCounts.map(([name, times]) => `, ${times.toFixed(2)} times in ${name} (${twice.counts[name]})`).join("")}`,
           );
 
           const overTheBound = (times: number | undefined) =>
             times !== undefined && times > mostGrowth ? rounded(times) : undefined;
-          const fast = { instructions: overTheBound(growth.instructions), peakBytes: overTheBound(growth.peakBytes) };
+          const fastCounts = growthOfCounts.flatMap(([name, times]) =>
+            times > mostGrowth ? [[name, rounded(times)]] : [],
+          );
+          const fast = {
+            instructions: overTheBound(growth.instructions),
+            peakBytes: overTheBound(growth.peakBytes),
+            counts: fastCounts.length ? (Object.fromEntries(fastCounts) as Record<string, number>) : undefined,
+          };
+          const orNothing = (growth: NonNullable<Budget["growth"]>) =>
+            Object.values(growth).every(times => times === undefined) ? undefined : growth;
           const isWithinBudget = (megabytes: number) => !budget || megabytes <= budget.megabytes * slack;
           const now: Budget = {
             millionInstructions: twice.instructions === undefined ? undefined : inMillions(twice.instructions),
@@ -257,7 +283,7 @@ export const buildScaling = (part: number, parts: number) =>
                   },
                   isWithinBudget,
                 ),
-            growth: fast.instructions === undefined && fast.peakBytes === undefined ? undefined : fast,
+            growth: orNothing(fast),
           };
           if (holdsBudgets && (mode === "accept" || !budget)) {
             budgets[shape.name] = now;
@@ -268,11 +294,19 @@ export const buildScaling = (part: number, parts: number) =>
             const least = {
               instructions: fast.instructions && lower(budget.growth?.instructions, fast.instructions),
               peakBytes: fast.peakBytes && lower(budget.growth?.peakBytes, fast.peakBytes),
+              counts:
+                fast.counts &&
+                Object.fromEntries(
+                  Object.entries(fast.counts).map(([name, times]) => [
+                    name,
+                    lower(budget.growth?.counts?.[name], times)!,
+                  ]),
+                ),
             };
             budgets[shape.name] = {
               millionInstructions: lower(budget.millionInstructions, now.millionInstructions),
               megabytes: Math.min(budget.megabytes, now.megabytes),
-              growth: least.instructions === undefined && least.peakBytes === undefined ? undefined : least,
+              growth: orNothing(least),
             };
           }
 
@@ -284,6 +318,11 @@ export const buildScaling = (part: number, parts: number) =>
                 `twice as many ${shape.counted} cost ${growth[what].toFixed(2)} times the ${what}; allowed: ${rounded(allowed)}`,
               );
           }
+          for (const [name, times] of growthOfCounts)
+            if (!(times <= allowedGrowthOfCount(name)))
+              worse.push(
+                `twice as many ${shape.counted} cost ${times.toFixed(2)} times the ${name}; allowed: ${rounded(allowedGrowthOfCount(name))}`,
+              );
           if (
             budget?.millionInstructions !== undefined &&
             now.millionInstructions !== undefined &&

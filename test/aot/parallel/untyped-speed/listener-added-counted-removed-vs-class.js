@@ -1,6 +1,8 @@
 // A listener is added, counted and removed, on three kinds of emitters of node:events and node:stream in turn, and on three objects of a class written here that keeps its
-// listeners the same way: a table without a prototype, a function alone under its name, a count. The library checks more, which may cost a few times as much a turn.
-// Todo: Not every time: a clock. Compiled, a turn on the emitters of the library takes over three times as long as one on the class written here
+// listeners the same way: a table without a prototype, a function alone under its name, a count. The library checks more: a turn on its emitters may ask three times the questions of a turn on the class,
+// which asks twelve. Three thousand turns on each.
+// Todo: a turn on the emitters of the library asks 58 questions
+// COUNT: branches <= 145000
 const { EventEmitter } = require("node:events");
 const { Readable, Writable } = require("node:stream");
 
@@ -42,15 +44,6 @@ function run(emitters, turns) {
   }
   return n;
 }
-function fastestOf(runs, emitters, turns) {
-  let fastest = Infinity;
-  for (let i = 0; i < runs; i++) {
-    const began = performance.now();
-    if (run(emitters, turns) !== turns) console.log("a listener was not counted");
-    fastest = Math.min(fastest, performance.now() - began);
-  }
-  return fastest;
-}
 const ofLibrary = [
   new EventEmitter(),
   new Readable({ read() {} }),
@@ -60,6 +53,4 @@ const ofLibrary = [
     },
   }),
 ];
-const written = fastestOf(5, [new Plain(), new Plain(), new Plain()], 300000);
-const library = fastestOf(5, ofLibrary, 300000);
-console.log(library < written * 3 ? "under three times the time" : "over three times the time");
+console.log(run([new Plain(), new Plain(), new Plain()], 3000), run(ofLibrary, 3000));

@@ -9,7 +9,6 @@ listen(new Worker(URL.createObjectURL(new Blob([text], { type: "application/java
 //@ alone
 listen(new Worker("data:application/javascript," + encodeURIComponent(text)));
 //// computed-path
-//@ todo the trimmed executable stops with exit code 70 and says that it needs the interpreter
 //@ file cwd/w.js "postMessage(Bun.color('red', 'hex') + ' ' + typeof HTMLRewriter)"
 listen(new Worker(process.cwd() + "/w.js"));
 //// worker-threads-eval
@@ -22,7 +21,6 @@ worker.on("error", error => console.log("error", error.message.replace(/blob:[-0
 //@ alone
 listen(new globalThis.Worker("data:application/javascript," + encodeURIComponent(text)));
 //// Reflect-construct
-//@ todo the trimmed executable stops with exit code 70 and says that it needs the interpreter
 //@ trimmed-says it isn't in this executable
 listen(Reflect.construct(Worker, ["data:application/javascript," + encodeURIComponent(text)]));
 //// alias

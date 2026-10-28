@@ -491,21 +491,22 @@ function f16 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Jump -> next b1(v4, v3, v10)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="lastOf"
-# CHECK: module=m0 position=652 role=ParameterWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|L2 site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 site=w9}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f22} inlineFrames=[{}, {callee=f22 callPosition=652 module=m0}, {callee=f22 callPosition=4294967295 isTailCall=true module=m0}] {
-# CHECK-NEXT: b0(v0: undefined|L2):
+# CHECK: module=m0 position=652 role=ParameterWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L2 site=w8 flags=[OmitsNull, OmitsUndefined]}] results=[{type=L0 site=w9}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode] creator=ParameterWrapper{body=f22} inlineFrames=[{}, {callee=f22 callPosition=652 module=m0}, {callee=f22 callPosition=4294967295 isTailCall=true module=m0}] {
+# CHECK-NEXT: b0(v0: L2):
 # CHECK-NEXT: Jump -> next b1(v0)
-# CHECK-NEXT: b1(v1: undefined|L2):
+# CHECK-NEXT: b1(v1: L2):
 # CHECK-NEXT: LoopHint [replacesTailCalls]
-# CHECK-NEXT: v3: L2 = RequireObjectCoercible v1 name="next"
-# CHECK-NEXT: v4: undefined|L2 = GetSlot v3 key="next" receivers=[L2] level=Proven accessSite=32
-# CHECK-NEXT: v5: boolean = TypeTest v4 testedType=undefined
-# CHECK-NEXT: Branch v5 -> taken b2(), notTaken b3()
+# CHECK-NEXT: v3: undefined|L2 = GetSlot v1 key="next" receivers=[L2] level=Proven accessSite=32
+# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=undefined
+# CHECK-NEXT: Branch v4 -> taken b2(), notTaken b3()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v6: int|L0 = GetSlot v3 key="value" receivers=[L2] level=Proven accessSite=33
-# CHECK-NEXT: v7: L0 = AssumeType v6 provenType=L0
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v5: int|L0 = GetSlot v1 key="value" receivers=[L2] level=Proven accessSite=33
+# CHECK-NEXT: v6: L0 = AssumeType v5 provenType=L0
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: b3():
-# CHECK-NEXT: Jump -> next b1(v4)
+# CHECK-NEXT: v7: fact = Specified
+# CHECK-NEXT: v8: L2 = AssumeType v3, v7 provenType=L2
+# CHECK-NEXT: Jump -> next b1(v8)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Leaf"
 # CHECK: module=m0 position=127 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=int|whole site=w15}] results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0

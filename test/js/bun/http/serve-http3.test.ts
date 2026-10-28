@@ -8,6 +8,7 @@ import type { SocketAddress } from "node:net";
 import { connect, QuicEndpoint, type SessionOptions } from "node:quic";
 import { connect as connectTLS } from "node:tls";
 import { join } from "path";
+import { firstFlight } from "./quic-initial";
 
 // Native HTTP/3 fetch wrapper. Every request in this file forces
 // `protocol: "http3"` so a regression that silently falls back to TCP
@@ -2457,5 +2458,24 @@ describe("Bun.serve HTTP/3 SNI", () => {
     );
     expect(outcomes).toEqual(spellings.map(name => [name, "closed", "closed", "200 served"]));
     expect(await exchange("other.example")).toBe("200 served");
+  });
+});
+
+describe("Bun.serve HTTP/3 handshake", () => {
+  // Chromium's chaos protection (quiche quic_chaos_protector.cc) splits the
+  // ClientHello into small CRYPTO frames in random order across two or three
+  // Initial packets. The server keeps the frames ahead of its read offset until
+  // the missing ones arrive. Its engine used to keep at most 10 and then close
+  // the connection with INTERNAL_ERROR (issue #47163).
+  test.concurrent("completes the handshake when the ClientHello arrives as 32 out-of-order CRYPTO frames", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      tls,
+      http3: true,
+      http1: false,
+      fetch: () => new Response("ok"),
+    });
+    expect(await firstFlight(server.port!, 1)).toEqual({ outcome: "crypto" });
+    expect(await firstFlight(server.port!, 32)).toEqual({ outcome: "crypto" });
   });
 });

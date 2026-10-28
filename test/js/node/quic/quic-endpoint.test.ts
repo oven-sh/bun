@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { BlockList } from "node:net";
 import { join } from "node:path";
 import { connect, listen, QuicEndpoint, type EndpointOptions, type SessionOptions } from "node:quic";
+import { firstFlight } from "../../bun/http/quic-initial";
 
 const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
@@ -107,6 +108,24 @@ describe("server ALPN list", () => {
     await using h3 = await listen(onSession, { sni: sniOpt, transportParams: tp, alpn: ["h3", "h3-29"] });
     await using raw = await listen(onSession, { sni: sniOpt, transportParams: tp, alpn: ["a", "b"] });
     expect([typeof h3.address!.port, typeof raw.address!.port]).toEqual(["number", "number"]);
+  });
+});
+
+describe("server handshake", () => {
+  // The same engine limit as Bun.serve({ http3: true }): the server keeps the
+  // CRYPTO frames ahead of its read offset, and used to close the connection
+  // with INTERNAL_ERROR at the 11th (issue #47163).
+  test("completes when the ClientHello arrives as 32 out-of-order CRYPTO frames", async () => {
+    await using server = await listen(
+      async (s: any) => {
+        await s.closed.catch(() => {});
+      },
+      // The probe stops after the first flight. close() waits for the unfinished
+      // handshake, so keep its timeout short.
+      { sni: { "*": { keys: [key], certs: [cert] } }, alpn: ["h3"], handshakeTimeout: 100 },
+    );
+    expect(await firstFlight(server.address!.port, 1)).toEqual({ outcome: "crypto" });
+    expect(await firstFlight(server.address!.port, 32)).toEqual({ outcome: "crypto" });
   });
 });
 

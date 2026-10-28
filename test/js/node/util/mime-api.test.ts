@@ -1,6 +1,6 @@
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunExe, expectRssDeltaBelow } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, nodeExeAtLeast } from "harness";
 import { MIMEParams, MIMEType } from "util";
 
 describe("MIME API", () => {
@@ -224,7 +224,7 @@ test("Exact match with node", () => {
 
   expect(result.stderr.toString("utf-8")).toBe("");
   expect(result.exitCode).toBe(0);
-  // exact output on v23.4.0
+  // exact output on v26.12.1
   expect(result.stdout.toString("utf-8")).toMatchInlineSnapshot(`
     "=== BASIC PROPERTIES AND STRING CONVERSION ===
     mime1: application/ecmascript
@@ -270,9 +270,9 @@ test("Exact match with node", () => {
 
     === PARAMETER CASE SENSITIVITY ===
     mime5: text/javascript;charset=UTF-8
-    mime5.params.get("CHARSET"): true
+    mime5.params.get("CHARSET"): false
     mime5.params.get("charset"): UTF-8
-    mime5.params.has("CHARSET"): false
+    mime5.params.has("CHARSET"): true
     mime5.params.has("charset"): true
     mime5.params.has("abc"): false
     mime5.params.has("def"): false
@@ -322,42 +322,42 @@ test("Exact match with node", () => {
     params toString(): charset=utf-8
 
     === CASE SENSITIVITY ===
-    params.has("CHARSET"): false
-    params.get("CHARSET"): true
+    params.has("CHARSET"): true
+    params.get("CHARSET"): false
     After setting CHARSET, params.has("CHARSET"): true
     After setting CHARSET, params.get("CHARSET"): iso-8859-1
     params.has("charset"): true
-    params.get("charset"): utf-8
-    params entries length: 2
-    params toString(): charset=utf-8;CHARSET=iso-8859-1
+    params.get("charset"): iso-8859-1
+    params entries length: 1
+    params toString(): charset=iso-8859-1
 
     === DELETE OPERATION ===
     After delete, params.has("charset"): false
     After delete, params.get("charset"): true
-    params.has("CHARSET"): true
-    params entries length: 1
-    params toString(): CHARSET=iso-8859-1
+    params.has("CHARSET"): false
+    params entries length: 0
+    params toString(): 
 
     === MULTIPLE PARAMETERS ===
-    params entries length: 3
-    params toString(): CHARSET=iso-8859-1;format=flowed;delsp=yes
+    params entries length: 2
+    params toString(): format=flowed;delsp=yes
 
     === QUOTED VALUES ===
     params.get("filename"): file with spaces.txt
-    params toString(): CHARSET=iso-8859-1;format=flowed;delsp=yes;filename="file with spaces.txt"
+    params toString(): format=flowed;delsp=yes;filename="file with spaces.txt"
 
     === EMPTY VALUES ===
     params.has("empty"): true
     params.get("empty"): empty string
-    params toString() with empty value: CHARSET=iso-8859-1;format=flowed;delsp=yes;filename="file with spaces.txt";empty=""
+    params toString() with empty value: format=flowed;delsp=yes;filename="file with spaces.txt";empty=""
 
     === ESCAPE SEQUENCES IN QUOTED VALUES ===
     params.get("path"): C:\\Program Files\\App
-    params toString() with backslashes: CHARSET=iso-8859-1;format=flowed;delsp=yes;filename="file with spaces.txt";empty="";path="C:\\\\Program Files\\\\App"
+    params toString() with backslashes: format=flowed;delsp=yes;filename="file with spaces.txt";empty="";path="C:\\\\Program Files\\\\App"
 
     === SPECIAL CHARACTERS ===
     params.get("test"): !#$%&'*+-.^_\`|~
-    params toString() with special chars: CHARSET=iso-8859-1;format=flowed;delsp=yes;filename="file with spaces.txt";empty="";path="C:\\\\Program Files\\\\App";test=!#$%&'*+-.^_\`|~
+    params toString() with special chars: format=flowed;delsp=yes;filename="file with spaces.txt";empty="";path="C:\\\\Program Files\\\\App";test=!#$%&'*+-.^_\`|~
 
     === ERROR CASES ===
     Empty name error: TypeError
@@ -366,7 +366,6 @@ test("Exact match with node", () => {
 
     === ITERATION METHODS ===
     Keys:
-      CHARSET
       format
       delsp
       filename
@@ -374,7 +373,6 @@ test("Exact match with node", () => {
       path
       test
     Values:
-      iso-8859-1
       flowed
       yes
       file with spaces.txt
@@ -382,7 +380,6 @@ test("Exact match with node", () => {
       C:\\Program Files\\App
       !#$%&'*+-.^_\`|~
     Entries:
-      CHARSET: iso-8859-1
       format: flowed
       delsp: yes
       filename: file with spaces.txt
@@ -390,7 +387,6 @@ test("Exact match with node", () => {
       path: C:\\Program Files\\App
       test: !#$%&'*+-.^_\`|~
     Direct iteration:
-      CHARSET: iso-8859-1
       format: flowed
       delsp: yes
       filename: file with spaces.txt
@@ -399,14 +395,49 @@ test("Exact match with node", () => {
       test: !#$%&'*+-.^_\`|~
 
     === JSON SERIALIZATION ===
-    params.toJSON(): CHARSET=iso-8859-1;format=flowed;delsp=yes;filename="file with spaces.txt";empty="";path="C:\\\\Program Files\\\\App";test=!#$%&'*+-.^_\`|~
-    JSON.stringify(params): "CHARSET=iso-8859-1;format=flowed;delsp=yes;filename=\\"file with spaces.txt\\";empty=\\"\\";path=\\"C:\\\\\\\\Program Files\\\\\\\\App\\";test=!#$%&'*+-.^_\`|~"
+    params.toJSON(): format=flowed;delsp=yes;filename="file with spaces.txt";empty="";path="C:\\\\Program Files\\\\App";test=!#$%&'*+-.^_\`|~
+    JSON.stringify(params): "format=flowed;delsp=yes;filename=\\"file with spaces.txt\\";empty=\\"\\";path=\\"C:\\\\\\\\Program Files\\\\\\\\App\\";test=!#$%&'*+-.^_\`|~"
 
     === CLONE AND MODIFY ===
     Original params: charset=utf-8;boundary=boundary
     Cloned params: charset=iso-8859-1;boundary=boundary
+
+    === NAME CASE IN GET, HAS, SET AND DELETE ===
+    get("CHARSET"): utf-8
+    has("Charset"): true
+    get(16-bit "CHARSET"): utf-8
+    after set("CHARSET", "Latin1"): text/plain;charset=Latin1;k=1;i=2
+    after delete("ChArSeT"): text/plain;k=1;i=2
+    get("\\u212a"): null
+    has("\\u0130"): false
+    set("A B", "x"): ERR_INVALID_MIME_SYNTAX: The MIME syntax for a parameter name in "a b" is invalid at 1
+    set("AB\\u00c9", "x"): ERR_INVALID_MIME_SYNTAX: The MIME syntax for a parameter name in "ab\\u00c9" is invalid at 2
+    set("AB\\u0100C", "x"): ERR_INVALID_MIME_SYNTAX: The MIME syntax for a parameter name in "ab\\u0100c" is invalid at 2
+    set("A B", "\\u000a"): ERR_INVALID_MIME_SYNTAX: The MIME syntax for a parameter name in "a b" is invalid at 1
+    set("A", "X\\u000aY"): ERR_INVALID_MIME_SYNTAX: The MIME syntax for a parameter value in "X\\u000aY" is invalid at 1
+    get({ toString: () => "K" }): 1
+    has({ toString: () => "K" }): true
+    after set() and delete() with such names: text/plain;k=V
+    conversions: name,name,name,value,name
+    get(1): one
+    has(undefined): true
     "
   `);
+});
+
+// Node.js prints the output above since v26.6.0, where MIMEParams began to ignore the case of a name.
+const referenceNode = nodeExeAtLeast("26.6.0");
+
+test.skipIf(!referenceNode)("exact/mime-test.js prints the same under Node.js", () => {
+  const [bun, node] = [bunExe(), referenceNode!].map(exe => {
+    const result = Bun.spawnSync({ cmd: [exe, import.meta.dir + "/exact/mime-test.js"], env: bunEnv });
+    return {
+      stdout: result.stdout.toString("utf-8"),
+      stderr: result.stderr.toString("utf-8"),
+      exitCode: result.exitCode,
+    };
+  });
+  expect(bun).toEqual(node);
 });
 
 test("ERR_INVALID_MIME_SYNTAX message matches Node.js", () => {

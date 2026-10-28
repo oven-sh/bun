@@ -98,9 +98,9 @@ console.log(`mime with empty param: ${mime4}`); // text/javascript;goal=module;x
 console.log("\n=== PARAMETER CASE SENSITIVITY ===");
 const mime5 = new MIMEType("text/javascript;CHARSET=UTF-8;abc=;def;ghi");
 console.log(`mime5: ${mime5}`); // text/javascript;charset=UTF-8
-console.log(`mime5.params.get("CHARSET"): ${mime5.params.get("CHARSET") === null}`); // true (null)
+console.log(`mime5.params.get("CHARSET"): ${mime5.params.get("CHARSET") === null}`); // false (UTF-8)
 console.log(`mime5.params.get("charset"): ${mime5.params.get("charset")}`); // UTF-8
-console.log(`mime5.params.has("CHARSET"): ${mime5.params.has("CHARSET")}`); // false
+console.log(`mime5.params.has("CHARSET"): ${mime5.params.has("CHARSET")}`); // true
 console.log(`mime5.params.has("charset"): ${mime5.params.has("charset")}`); // true
 console.log(`mime5.params.has("abc"): ${mime5.params.has("abc")}`); // false (invalid param)
 console.log(`mime5.params.has("def"): ${mime5.params.has("def")}`); // false (invalid param)
@@ -198,31 +198,31 @@ console.log(`params toString(): ${params2.toString()}`); // charset=utf-8
 
 // Case sensitivity
 console.log(`\n=== CASE SENSITIVITY ===`);
-console.log(`params.has("CHARSET"): ${params2.has("CHARSET")}`); // false
-console.log(`params.get("CHARSET"): ${params2.get("CHARSET") === null}`); // true
+console.log(`params.has("CHARSET"): ${params2.has("CHARSET")}`); // true
+console.log(`params.get("CHARSET"): ${params2.get("CHARSET") === null}`); // false
 params2.set("CHARSET", "iso-8859-1");
 console.log(`After setting CHARSET, params.has("CHARSET"): ${params2.has("CHARSET")}`); // true
 console.log(`After setting CHARSET, params.get("CHARSET"): ${params2.get("CHARSET")}`); // iso-8859-1
-console.log(`params.has("charset"): ${params2.has("charset")}`); // true, original still exists
-console.log(`params.get("charset"): ${params2.get("charset")}`); // utf-8
-console.log(`params entries length: ${[...params2].length}`); // 2
-console.log(`params toString(): ${params2.toString()}`); // charset=utf-8;CHARSET=iso-8859-1
+console.log(`params.has("charset"): ${params2.has("charset")}`); // true, it is the same parameter
+console.log(`params.get("charset"): ${params2.get("charset")}`); // iso-8859-1
+console.log(`params entries length: ${[...params2].length}`); // 1
+console.log(`params toString(): ${params2.toString()}`); // charset=iso-8859-1
 
 // Delete operation
 console.log(`\n=== DELETE OPERATION ===`);
 params2.delete("charset");
 console.log(`After delete, params.has("charset"): ${params2.has("charset")}`); // false
 console.log(`After delete, params.get("charset"): ${params2.get("charset") === null}`); // true
-console.log(`params.has("CHARSET"): ${params2.has("CHARSET")}`); // true, other case still exists
-console.log(`params entries length: ${[...params2].length}`); // 1
-console.log(`params toString(): ${params2.toString()}`); // CHARSET=iso-8859-1
+console.log(`params.has("CHARSET"): ${params2.has("CHARSET")}`); // false, it was the same parameter
+console.log(`params entries length: ${[...params2].length}`); // 0
+console.log(`params toString(): ${params2.toString()}`); // (empty)
 
 // Multiple parameters
 console.log(`\n=== MULTIPLE PARAMETERS ===`);
 params2.set("format", "flowed");
 params2.set("delsp", "yes");
-console.log(`params entries length: ${[...params2].length}`); // 3
-console.log(`params toString(): ${params2.toString()}`); // CHARSET=iso-8859-1;format=flowed;delsp=yes
+console.log(`params entries length: ${[...params2].length}`); // 2
+console.log(`params toString(): ${params2.toString()}`); // format=flowed;delsp=yes
 
 // Parameter values requiring quoting
 console.log(`\n=== QUOTED VALUES ===`);
@@ -313,3 +313,61 @@ clone.set("charset", "iso-8859-1");
 
 console.log(`Original params: ${original.toString()}`);
 console.log(`Cloned params: ${clone.toString()}`);
+
+// get(), has(), set() and delete() ignore the ASCII case of a name: https://github.com/nodejs/node/pull/64123
+console.log(`\n=== NAME CASE IN GET, HAS, SET AND DELETE ===`);
+// Escapes what is not printable ASCII, so the output shows which characters changed case.
+const escaped = text => text.replace(/[^\x20-\x7e]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+const mime11 = new MIMEType("text/plain;CharSet=utf-8;k=1;i=2");
+console.log(`get("CHARSET"): ${mime11.params.get("CHARSET")}`); // utf-8
+console.log(`has("Charset"): ${mime11.params.has("Charset")}`); // true
+// A 16-bit string whose characters are all ASCII.
+console.log(`get(16-bit "CHARSET"): ${mime11.params.get(Buffer.from("CHARSET", "utf16le").toString("utf16le"))}`); // utf-8
+mime11.params.set("CHARSET", "Latin1");
+console.log(`after set("CHARSET", "Latin1"): ${mime11}`); // text/plain;charset=Latin1;k=1;i=2
+mime11.params.delete("ChArSeT");
+console.log(`after delete("ChArSeT"): ${mime11}`); // text/plain;k=1;i=2
+
+// Only A-Z change. Unicode lower-casing maps U+212A KELVIN SIGN to "k" and U+0130 to "i" plus U+0307.
+console.log(`get("\\u212a"): ${mime11.params.get("\u212A")}`); // null
+console.log(`has("\\u0130"): ${mime11.params.has("\u0130")}`); // false
+
+// set() checks and reports the lower-case name. It checks the name before the value.
+for (const [name, value] of [
+  ["A B", "x"],
+  ["AB\u00C9", "x"],
+  ["AB\u0100C", "x"],
+  ["A B", "\n"],
+  ["A", "X\nY"],
+]) {
+  try {
+    mime11.params.set(name, value);
+    console.log(`set("${escaped(name)}", "${escaped(value)}") did not throw`);
+  } catch (e) {
+    console.log(`set("${escaped(name)}", "${escaped(value)}"): ${e.code}: ${escaped(e.message)}`);
+  }
+}
+
+// A name that is not a string converts to one first, once, and before the value does.
+const conversions = [];
+const named = text => ({
+  toString() {
+    conversions.push("name");
+    return text;
+  },
+});
+const valued = text => ({
+  toString() {
+    conversions.push("value");
+    return text;
+  },
+});
+console.log(`get({ toString: () => "K" }): ${mime11.params.get(named("K"))}`); // 1
+console.log(`has({ toString: () => "K" }): ${mime11.params.has(named("K"))}`); // true
+mime11.params.set(named("K"), valued("V"));
+mime11.params.delete(named("I"));
+console.log(`after set() and delete() with such names: ${mime11}`); // text/plain;k=V
+console.log(`conversions: ${conversions.join(",")}`); // name,name,name,value,name
+const mime12 = new MIMEType("a/b;1=one;undefined=u");
+console.log(`get(1): ${mime12.params.get(1)}`); // one
+console.log(`has(undefined): ${mime12.params.has(undefined)}`); // true

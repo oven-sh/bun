@@ -210,6 +210,17 @@ static void encodeParamValue(const StringView& value, StringBuilder& builder)
     builder.append('"');
 }
 
+// get(), has(), set() and delete() take toASCIILower(`${name}`), as in Node.js:
+// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/mime.js#L338-L353
+static String toMIMEParamName(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+    String name = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    return name.convertToASCIILowercase();
+}
+
 // Parses the parameter string and populates the map.
 // Returns true on success, false on failure (exception should be set).
 __attribute__((minsize)) bool parseMIMEParamsString(JSGlobalObject* globalObject, JSMap* map, StringView input)
@@ -402,7 +413,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncGet, (JSGlobalObject * globalObjec
 
     // 2. Get argument
     JSValue nameValue = callFrame->argument(0);
-    String name = nameValue.toWTFString(globalObject);
+    String name = toMIMEParamName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     // 3. Perform operation on the map
@@ -431,7 +442,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncHas, (JSGlobalObject * globalObjec
     }
 
     JSValue nameValue = callFrame->argument(0);
-    String name = nameValue.toWTFString(globalObject);
+    String name = toMIMEParamName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     JSMap* map = thisObject->jsMap();
@@ -456,7 +467,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncSet, (JSGlobalObject * globalObjec
     JSValue nameValue = callFrame->argument(0);
     JSValue valueValue = callFrame->argument(1);
 
-    String nameStr = nameValue.toWTFString(globalObject);
+    String nameStr = toMIMEParamName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, {});
     String valueStr = valueValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -495,7 +506,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncDelete, (JSGlobalObject * globalOb
     }
 
     JSValue nameValue = callFrame->argument(0);
-    String name = nameValue.toWTFString(globalObject);
+    String name = toMIMEParamName(globalObject, nameValue);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
     JSMap* map = thisObject->jsMap();
@@ -533,9 +544,9 @@ JSC_DEFINE_HOST_FUNCTION(jsMIMEParamsProtoFuncToString, (JSGlobalObject * global
         JSValue keyJS = entry->getIndex(globalObject, 0);
         JSValue valueJS = entry->getIndex(globalObject, 1);
 
-        // Key should already be lowercase string from set/constructor
         String key = keyJS.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        ASSERT(!key.contains(isASCIIUpper<char16_t>));
         String value = valueJS.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
 

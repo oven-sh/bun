@@ -3258,6 +3258,52 @@ describe("HPACK (RFC 7541)", () => {
     },
   );
 
+  test.each([
+    [100, Buffer.from([0x3f, 100 - 31]), FrameType.HEADERS],
+    [101, Buffer.from([0x3f, 101 - 31]), FrameType.GOAWAY],
+  ])("a table size update to %d under an acknowledged headerTableSize of 100", async (_, update, expected) => {
+    const { srv, port } = await listen({ settings: { headerTableSize: 100 } });
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      await c.waitFor(isSettings);
+      c.sendSettingsAck();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([update, requestHeaderBlock("GET")]));
+      const answer = await c.waitFor(headersOrGoaway(1));
+      expect(answer.type).toBe(expected);
+      if (answer.type === FrameType.GOAWAY) expect(goawayErrorCode(answer)).toBe(ErrorCode.COMPRESSION_ERROR);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("each headerTableSize takes effect at its own acknowledgement", async () => {
+    const { srv, port } = await listen();
+    const session = once(srv, "session") as Promise<[http2.ServerHttp2Session]>;
+    const client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
+    try {
+      await get(client, { ":path": "/", "x-a": "1" });
+      const [server] = await session;
+      const sizes = [server.state.inflateDynamicTableSize];
+      const { promise, resolve } = Promise.withResolvers<void>();
+      // Both are on their way before the first is acknowledged, which is what empties the table.
+      server.settings({ headerTableSize: 0 }, () => sizes.push(server.state.inflateDynamicTableSize));
+      server.settings({ headerTableSize: 4096 }, () => {
+        sizes.push(server.state.inflateDynamicTableSize);
+        resolve();
+      });
+      await promise;
+      expect(sizes[0]).toBeGreaterThan(0);
+      expect(sizes.slice(1)).toEqual([0, 0]);
+    } finally {
+      client.destroy();
+      srv.close();
+    }
+  });
+
   test("the decoder allows a larger table once the peer acknowledges session.settings()", async () => {
     const { srv, port } = await listen();
     srv.once("stream", stream => stream.session!.settings({ headerTableSize: 8192 }));
@@ -3349,6 +3395,7 @@ describe("HPACK (RFC 7541)", () => {
     ];
     const badOptions: Array<[string, any]> = [
       ["a number", 5],
+      ["endStream: 0", { endStream: 0 }],
       ["silent: 1", { silent: 1 }],
       ["exclusive: 1", { exclusive: 1 }],
       ["parent: 'x'", { parent: "x" }],
@@ -3403,7 +3450,7 @@ describe("HPACK (RFC 7541)", () => {
 
     test("in request() with an array of names and values", async () => {
       await clientGivesUp(
-        endings.map(([label, ending]) => [
+        [...endings, [":status", { ":status": "200" }] as const].map(([label, ending]) => [
           label,
           (client, n) =>
             attempt(() => client.request([":path", "/gone" + n, "x-new", n, ...Object.entries(ending).flat()] as any)),
@@ -3488,6 +3535,16 @@ describe("HPACK (RFC 7541)", () => {
       ]);
     });
 
+    test("in respond() with an array of names and values", async () => {
+      await serverGivesUp(
+        [...endings, [":path", { ":path": "/" }] as const].map(([label, ending]) => [
+          label,
+          (stream, n) =>
+            attempt(() => stream.respond([":status", "250", "x-new", n, ...Object.entries(ending).flat()] as any)),
+        ]),
+      );
+    });
+
     test("in additionalHeaders()", async () => {
       await serverGivesUp(
         endings.map(([label, ending]) => [
@@ -3525,6 +3582,77 @@ describe("HPACK (RFC 7541)", () => {
               }),
             ),
         ]),
+      );
+    });
+
+    // The session ends for such a field, but not within the call. What is encoded before it does still goes out.
+    describe("for a field that HPACK cannot carry", () => {
+      const long = Buffer.alloc(65536, "v").toString();
+      const values: Array<[string, string | string[]]> = [
+        ["a value", long],
+        ["a value in an array", ["ok", long]],
+      ];
+
+      test.each(
+        values.flatMap(([label, bad]): Array<[string, unknown]> => [
+          [label, { ":path": "/gone", "x-new": "1", "x-bad": bad }],
+          [label + ", in an array of names and values", [":path", "/gone", "x-new", "1", "x-bad", bad]],
+        ]),
+      )("in request(): %s", async (_, headers) => {
+        const { srv, seen, port } = await listen();
+        const client = http2.connect(`http://127.0.0.1:${port}`);
+        quiet(client);
+        try {
+          await get(client, { ":path": "/", "x-old": "0" });
+          attempt(() => client.request(headers as http2.OutgoingHttpHeaders));
+          quiet(client.request({ ":path": "/after", "x-old": "0", "x-new": "1" }));
+          await Promise.race([once(srv, "stream"), once(srv, "sessionError")]);
+          expect(seen.at(-1)).toMatchObject({ ":path": "/after", "x-old": "0", "x-new": "1" });
+        } finally {
+          client.destroy();
+          srv.close();
+        }
+      });
+
+      const onTheServer: Array<[string, (stream: http2.ServerHttp2Stream, bad: string | string[]) => void]> = [
+        [
+          "additionalHeaders()",
+          (stream, bad) => stream.additionalHeaders({ ":status": 103, "x-new": "1", "x-bad": bad }),
+        ],
+        // The reserved stream is handed over all the same, and ends with the session.
+        [
+          "pushStream()",
+          (stream, bad) =>
+            stream.pushStream({ ":path": "/gone", "x-new": "1", "x-bad": bad }, (_, pushed) => quiet(pushed)),
+        ],
+      ];
+      test.each(onTheServer.flatMap(([api, call]) => values.map(([label, bad]) => [api, label, call, bad] as const)))(
+        "in %s: %s",
+        async (_api, _label, call, bad) => {
+          const srv = http2.createServer();
+          srv.on("sessionError", () => {});
+          srv.on("stream", (stream, headers) => {
+            quiet(stream);
+            if (headers[":path"] === "/give-up") attempt(() => call(stream, bad));
+            stream.respond({ ":status": 200, "x-old": "0", "x-new": "1" }, { sendDate: false });
+            stream.end();
+          });
+          srv.listen(0, "127.0.0.1");
+          await once(srv, "listening");
+          const client = http2.connect(`http://127.0.0.1:${(srv.address() as net.AddressInfo).port}`);
+          quiet(client);
+          try {
+            await get(client, { ":path": "/" });
+            // The GOAWAY that follows may come before the end of the stream.
+            const req = client.request({ ":path": "/give-up" });
+            quiet(req);
+            const [response] = await once(req, "response");
+            expect(response).toMatchObject({ "x-old": "0", "x-new": "1" });
+          } finally {
+            client.destroy();
+            srv.close();
+          }
+        },
       );
     });
   });

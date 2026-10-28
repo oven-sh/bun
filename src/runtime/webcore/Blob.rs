@@ -4036,6 +4036,43 @@ pub(crate) fn mkdirp_parent(path: &[u8]) -> bun_sys::Result<()> {
         .map(|_| ())
 }
 
+/// Sets the length behind `fd` to zero, with the call and the errors of `fs.ftruncate`.
+fn discard_contents(fd: Fd) -> bun_sys::Result<()> {
+    node::fs::NodeFS::default().ftruncate(
+        &node::fs::args::FTruncate { fd, len: Some(0) },
+        node::fs::Flavor::Sync,
+    )
+}
+
+/// An empty source written to `path`: creates the file, or discards its contents.
+fn empty_file(path: &PathLike<'_>, mode: bun_sys::Mode, mkdirp: bool) -> bun_sys::Result<()> {
+    // Windows: `O_CREAT | O_TRUNC` is CREATE_ALWAYS, which refuses a hidden or system file that
+    // exists, so the handle empties the file. A `mode` with no write bit would make it read-only.
+    let (flags, mode) = if cfg!(windows) {
+        (bun_sys::O::WRONLY | bun_sys::O::CREAT, 0o644)
+    } else {
+        (
+            bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC | bun_sys::O::NONBLOCK,
+            mode,
+        )
+    };
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let path_z = path.slice_z(&mut buf);
+    let mut result = bun_sys::open(path_z, flags, mode);
+    if mkdirp
+        && matches!(&result, Err(err) if err.get_errno() == bun_sys::E::ENOENT)
+        && bun_core::dirname(path.slice()).is_some()
+    {
+        result = mkdirp_parent(path.slice()).and_then(|()| bun_sys::open(path_z, flags, mode));
+    }
+    let fd = result?;
+    let _close = bun_sys::CloseOnDrop::new(fd);
+    if cfg!(windows) {
+        return discard_contents(fd);
+    }
+    Ok(())
+}
+
 // TODO: move this to bun_sys?
 #[inline(never)]
 #[cfg(not(windows))]
@@ -4110,7 +4147,7 @@ pub(crate) struct WriteFileOptions {
     pub(crate) mode: Option<bun_sys::Mode>,
 }
 
-/// Write an empty string to a file by truncating it.
+/// Write an empty source to a destination. A file is created, or its contents are discarded.
 ///
 /// This behavior matches what we do with the fast path.
 fn write_file_with_empty_source_to_destination(
@@ -4136,95 +4173,16 @@ fn write_file_with_empty_source_to_destination(
     match &destination_store.data {
         store::Data::File(file) => {
             // TODO: make this async
-            // `VirtualMachine::node_fs()` currently returns `*mut c_void`; the
-            // typed `&mut NodeFS` accessor isn't wired yet, so use a fresh
-            // `NodeFS` (it carries no per-call state for
-            // `truncate`/`mkdir_recursive`).
-            let mut node_fs = node::fs::NodeFS::default();
-            let mut result = node_fs.truncate(
-                &node::fs::args::Truncate {
-                    path: file.pathlike.clone(),
-                    len: 0,
-                    flags: bun_sys::O::CREAT,
-                },
-                node::fs::Flavor::Sync,
-            );
-
-            if let bun_sys::Result::Err(ref mut err) = result {
-                let errno = err.get_errno();
-                let mut was_eperm = false;
-                'err: {
-                    let mut current = errno;
-                    loop {
-                        match current {
-                            // truncate might return EPERM when the parent directory doesn't exist
-                            // #6336
-                            bun_sys::E::EPERM => {
-                                was_eperm = true;
-                                err.errno = bun_sys::E::ENOENT as _;
-                                current = bun_sys::E::ENOENT;
-                                continue;
-                            }
-                            bun_sys::E::ENOENT => {
-                                if options.mkdirp_if_not_exists == Some(false) {
-                                    break 'err;
-                                }
-                                let dirpath: &[u8] = match &file.pathlike {
-                                    PathOrFileDescriptor::Path(path) => {
-                                        match bun_core::dirname(path.slice()) {
-                                            Some(d) => d,
-                                            None => break 'err,
-                                        }
-                                    }
-                                    PathOrFileDescriptor::Fd(_) => {
-                                        // NOTE: if this is an fd, it means the file
-                                        // exists, so we shouldn't try to mkdir it
-                                        if was_eperm {
-                                            err.errno = bun_sys::E::EPERM as _;
-                                        }
-                                        break 'err;
-                                    }
-                                };
-                                let mkdir_result =
-                                    node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        path: PathLike::borrowed(dirpath),
-                                        recursive: true,
-                                        always_return_none: true,
-                                        ..Default::default()
-                                    });
-                                if let bun_sys::Result::Err(e) = mkdir_result {
-                                    *err = e;
-                                    break 'err;
-                                }
-
-                                // SAFETY: we check if `file.pathlike` is an fd above, returning if it is.
-                                let mut buf = bun_paths::path_buffer_pool::get();
-                                let mode: bun_sys::Mode =
-                                    options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION);
-                                match bun_sys::File::open(
-                                    file.pathlike.path().slice_z(&mut buf),
-                                    bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                                    mode,
-                                ) {
-                                    bun_sys::Result::Err(e) => {
-                                        *err = e;
-                                        break 'err;
-                                    }
-                                    bun_sys::Result::Ok(f) => {
-                                        let _ = f.close(); // close error is non-actionable
-                                        return Ok(JSPromise::resolved_promise_value(
-                                            cx.global(),
-                                            JSValue::js_number(0.0),
-                                        ));
-                                    }
-                                }
-                            }
-                            _ => break 'err,
-                        }
-                    }
-                }
-
-                *err = sys_error_with_path_like(err, &file.pathlike);
+            let result = match &file.pathlike {
+                PathOrFileDescriptor::Path(path) => empty_file(
+                    path,
+                    options.mode.unwrap_or(node::fs::DEFAULT_PERMISSION),
+                    options.mkdirp_if_not_exists.unwrap_or(true),
+                ),
+                PathOrFileDescriptor::Fd(fd) => discard_contents(*fd),
+            };
+            if let bun_sys::Result::Err(err) = result {
+                let err = sys_error_with_path_like(&err, &file.pathlike);
                 return Ok(
                     JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js(),
                 );

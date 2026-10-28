@@ -1,0 +1,6 @@
+an abort listener: collected, 16
+an interval: collected, 0
+an event listener: 16 of 32, 16
+a response: collected, 16
+not async: collected, 16
+52624

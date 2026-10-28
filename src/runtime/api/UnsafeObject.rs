@@ -1,8 +1,8 @@
 use bun_core::EncodedSlice;
-use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::virtual_machine::{GCLevel, VirtualMachine};
 use bun_jsc::{self as jsc, JSType, JSValue, JsResult};
+use bun_jsc::{EncodedSliceJsc as _, StringJsc as _};
 
 pub(crate) fn gc_aggression_level(level: Option<f64>) -> i32 {
     let vm = VirtualMachine::get().as_mut();
@@ -28,12 +28,8 @@ pub(crate) fn array_buffer_to_string<'a>(
 
     let array_buffer = jsc::ArrayBuffer::from_typed_array(global, buffer);
     match array_buffer.typed_array_type {
-        // The empty slice of a detached view is not aligned.
-        JSType::Uint16Array | JSType::Int16Array if !array_buffer.byte_slice().is_empty() => {
-            // Uint16Array/Int16Array storage is u16-aligned with even byte length;
-            // bytemuck checks both at runtime.
-            let utf16: &[u16] = bytemuck::cast_slice(array_buffer.byte_slice());
-            Ok(EncodedSlice::utf16(utf16).to_js(global))
+        JSType::Uint16Array | JSType::Int16Array => {
+            bun_core::String::clone_utf16_bytes(array_buffer.byte_slice()).into_js(global)
         }
         _ => Ok(EncodedSlice::latin1(array_buffer.slice()).to_js(global)),
     }

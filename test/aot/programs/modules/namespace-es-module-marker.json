@@ -1,0 +1,1 @@
+{ "skipInShell": "it needs Bun's require() and the prototype of Bun's namespace objects" }

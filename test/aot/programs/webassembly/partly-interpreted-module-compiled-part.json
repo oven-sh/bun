@@ -1,0 +1,6 @@
+{
+  "env": {
+    "BUN_JSC_crashIfInterpreterIsUsed": "1"
+  },
+  "skipInShell": "it imports a .wasm file, which the shell's front end cannot load"
+}

@@ -1,0 +1,6 @@
+read behind it: function
+read ahead of it: function
+called ahead of it: called
+behind two labels: function
+in a block: function
+at the top of the file: function

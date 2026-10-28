@@ -1,0 +1,162 @@
+////: Counting
+class Counting extends RegExp {
+  calls = 0;
+  exec(«1»: string): RegExpExecArray | null {
+    this.calls++;
+    return super.exec(«1»);
+  }
+}
+////: attempt
+function attempt(f) {
+  try {
+    return show(f());
+  } catch (e) {
+    return "throws " + e.name;
+  }
+}
+////: attempt-2
+function attempt(f: () => unknown): string {
+    try {
+        return show(f());
+    } catch (e) {
+        return "throws " + (e as Error).name;
+    }
+}
+////: attempt-3
+function attempt(label: string, run: () => string): void {
+  log.length = 0;
+  let outcome: string;
+  try {
+    const «1» = run();
+    outcome = «2»;
+  } catch (error) {
+    outcome = (error as Error).name + ": " + (error as Error).message;
+  }
+  console.log(label, outcome, log.join(«3»));
+}
+////: attempt-4
+function attempt(action: () => unknown): string {
+  try {
+    return «1»;
+  } catch (error) {
+    return (error as Error).name;
+  }
+}
+////: cat
+function cat(a, b) {
+  return a + b;
+}
+////: cat3
+function cat3(a, b, c) {
+  return `${a}${b}${c}`;
+}
+////: doubled
+function doubled(times: number): string {
+  let text = "x";
+  for (let i = 0; i < times; i++) text = text + text;
+  return text;
+}
+////: escape
+function escape(s: string): string {
+    let out = "";
+    for (let i = 0; i < s.length; ++i) { const c = s.charCodeAt(i); out += c >= 0x20 && c < 0x7f ? s[i] : "\\u" + c.toString(16).padStart(4, "0"); }
+    return out;
+}
+////: flattened
+function flattened(s) {
+  s.charCodeAt(0);
+  return s;
+}
+////: hash
+function hash(text: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+////: lines-10
+function «1»(«2»: string, «3»: «4»): string {
+  return «2» + «3»;
+}
+////: lines-15
+export function «1»(«2») {
+  return «3»(«4»);
+}
+////: lines-21
+export function «1»(s) {
+  return s.«2»();
+}
+////: lines-3
+export function «1»(«2», «3») {
+  return «4»(«3»);
+}
+////: lines-33
+export function «1»(a, b) {
+  return a === b;
+}
+////: lines-35
+function «1»(«2»: «3», «4»: «5») {
+  return «6»(«4»);
+}
+////: lines-37
+function «1»(a, b) {
+  return (a < b ? 1 : 0) + (a <= b ? 2 : 0) + (a > b ? 4 : 0) + (a >= b ? 8 : 0);
+}
+////: lines-7
+export function «1»(s, «2», «3») {
+  return s.«4»(«2», «3»);
+}
+////: part
+function part(s, from, to) {
+  return s.slice(from, to);
+}
+////: show
+function show(x) {
+  if (typeof x !== "string")
+    return Object.is(x, -0) ? "-0" : String(x);
+  let out = '"';
+  for (let i = 0;i < x.length; i++) {
+    const c = x.charCodeAt(i);
+    out += c >= 32 && c < 127 ? x[i] : "\\u" + (c + 65536).toString(16).slice(1);
+  }
+  return out + '"';
+}
+////: show-2
+function show(x: unknown): string {
+    if (typeof x !== "string")
+        return Object.is(x, -0) ? "-0" : String(x);
+    let out = '"';
+    for (let i = 0; i < x.length; i++) {
+        const c = x.charCodeAt(i);
+        out += c >= 32 && c < 127 ? x[i] : "\\u" + (c + 0x10000).toString(16).slice(1);
+    }
+    return out + '"';
+}
+////: show-3
+function show(r: RegExp): void {
+    const parts: string[] = [];
+    for (const s of subjects) {
+        for (const subject of [s, s + «1»]) {
+            r.lastIndex = 0;
+            const m = subject.match(r);
+            parts.push(m === null ? "-" : (m.index === undefined ? "" : m.index + ":") + m.map((c: string | undefined): string => c === undefined ? "~" : "<" + escape(c) + ">").join(""));
+        }
+    }
+    console.log(String(r), parts.join(" "));
+}
+////: show-5
+////= show
+////= attempt
+////= cat
+////= cat3
+////= part
+////= flattened
+////: show-6
+////= show-2
+////= attempt-2
+////: sum
+function sum(s) {
+  let h = 0;
+  for (let i = 0;i < s.length; i++)
+    h = h * 31 + s.charCodeAt(i) | 0;
+  return h;
+}

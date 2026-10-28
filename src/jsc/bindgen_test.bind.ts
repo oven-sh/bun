@@ -29,6 +29,7 @@ export const utf8Optional = b.fn({ args: { text: b.string.utf8.nullable }, retur
 export const utf8Owned = b.fn({ args: { text: b.string.utf8.owned }, returns: b.string.utf8 });
 export const stringEcho = b.fn({ args: { text: b.string }, returns: b.string });
 export const stringViewEcho = b.fn({ args: { text: b.string.view }, returns: b.string });
+export const stringViewCloneOutlivesBytes = b.fn({ args: { text: b.string.utf8 }, returns: b.string });
 export const stringOrObjectViewEcho = b.fn({
   args: { text: b.string.allowStringObject.view.optional },
   returns: b.string.optional,
@@ -220,6 +221,7 @@ export const fail = b.fn({ args: { how: TestFailure, value: b.any }, capability:
 
 export const TestCounter = b.class({
   rustPath: "crate::bindgen_test::TestCounter",
+  runsUnseenCode: false,
   construct: { args: { start: b.i32.default(0) }, capability: "heap", throws: true },
   internalFields: ["listener"],
   proto: {
@@ -252,6 +254,7 @@ export const TestCounter = b.class({
 /** `mutates`: `increment` and the setter take `&mut self`. */
 export const TestMutates = b.class({
   rustPath: "crate::bindgen_test::TestMutates",
+  runsUnseenCode: false,
   construct: { args: { count: b.i32 }, requiredArguments: 1 },
   proto: {
     count: { getter: b.i32 },
@@ -413,6 +416,39 @@ export const TestNonFinal = b.class({
   proto: { value: { getter: b.i32 } },
   static: { doubled: { args: { value: b.i32 }, returns: b.any, capability: "heap" } },
 });
+
+/** `final: false` of a class whose struct is in the object. The internal field comes before the struct. */
+export const TestShape = b.class({
+  rustPath: "crate::bindgen_test::TestShape",
+  final: false,
+  construct: "illegal",
+  estimatedSize: true,
+  internalFields: ["label"],
+  proto: {
+    sides: { getter: b.u32 },
+    label: { internalField: "label", setter: true },
+    describe: { returns: b.string.utf8 },
+    hasSidesOf: { args: { other: b.self }, returns: b.bool },
+  },
+});
+/** `extends`, and `@@inspectCustom`. */
+export const TestSquare = b.class({
+  extends: TestShape,
+  construct: "illegal",
+  proto: {
+    area: { getter: b.u32 },
+    scale: { args: { by: b.u32 }, returns: b.self, capability: "heap" },
+    "@@inspectCustom": { returns: b.string.utf8 },
+  },
+});
+export const makeShape = b.fn({ args: { sides: b.u32 }, returns: TestShape, capability: "heap" });
+export const makeSquare = b.fn({ args: { side: b.u32 }, returns: TestSquare, capability: "heap" });
+/** Made with the global object alone. */
+export const makeSquareWrapper = b.fn({ args: { side: b.u32 }, returns: b.any, capability: "js" });
+/** `[from_js of TestShape, from_js of TestSquare, from_js_direct of TestShape]`: whether each takes the value. */
+export const shapeFromJS = b.fn({ args: { shape: b.any }, returns: b.array(b.bool) });
+/** How many were dropped. */
+export const droppedShapes = b.fn({ returns: b.usize });
 
 /** `token.id` read through `from_js`, or `null` if `token` is not an instance. */
 export const tokenIdFromJS = b.fn({ args: { token: b.any }, returns: b.u32.nullable });

@@ -339,6 +339,48 @@ describe.concurrent("// @bun code with a source map that has no sourcesContent",
     expect(exitCode).toBe(0);
   });
 
+  test("map text inside a string is not the map of the file", async () => {
+    const comment = map => `//# sourceMappingURL=data:application/json;base64,${btoa(JSON.stringify(map))}`;
+    const inString = comment({ ...map, sources: ["in-string.ts"] });
+    const inStringWithContent = comment({ ...map, sources: ["in-string.ts"], sourcesContent: ["x"] });
+    const beside = JSON.stringify({ ...map, sources: ["beside.ts"], sourcesContent: ["x"] });
+    using dir = tempDir("sourcemap-text-in-string", {
+      "main.js": printFirstFrames,
+      // As `bun build --sourcemap=external` writes it: the file ends with a debugId comment, the map is beside it.
+      "external.js": throwsOnLine3 + "export const text = `\n" + inString + "\n`;\n//# debugId=0\n",
+      "external.js.map": beside,
+      "external-content.js": throwsOnLine3 + "export const text = `\n" + inStringWithContent + "\n`;\n//# debugId=0\n",
+      "external-content.js.map": beside,
+      "external-utf16.js": throwsOnLine3 + "export const text = `\u2603\n" + inString + "\n`;\n//# debugId=0\n",
+      "external-utf16.js.map": beside,
+      "string-ends-file.js": throwsOnLine3 + "export const text = `\n" + inString + "`;",
+      "string-ends-file.js.map": beside,
+      "no-map.js": throwsOnLine3 + "export const text = `\n" + inString + "\n`;\n",
+      // A map comment of the file itself can have other comments after it.
+      "own.js": throwsOnLine3 + comment({ ...map, sources: ["own.ts"] }) + "\n// the end\n",
+      "own-utf16.js": throwsOnLine3 + "// \u2603\n" + comment({ ...map, sources: ["own.ts"] }) + "\n// the end\n",
+    });
+    const besideFiles = ["external.js", "external-content.js", "external-utf16.js", "string-ends-file.js"];
+
+    const { stdout, stderr, exitCode } = await run(
+      dir,
+      "main.js",
+      ...besideFiles,
+      "no-map.js",
+      "own.js",
+      "own-utf16.js",
+    );
+    expect({ stdout, stderr }).toEqual({
+      stdout:
+        besideFiles.map(file => `${file}: at t (<dir>/beside.ts:5:3)\n`).join("") +
+        "no-map.js: at t (<dir>/no-map.js:3:18)\n" +
+        "own.js: at t (<dir>/own.ts:5:3)\n" +
+        "own-utf16.js: at t (<dir>/own.ts:5:3)\n",
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("CallSite positions and the printed error are remapped, with the source text read from disk", async () => {
     using dir = tempDir("sourcemap-sources-content-printer", {
       ...builtFiles("absent", map),

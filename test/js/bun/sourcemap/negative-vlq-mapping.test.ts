@@ -180,8 +180,25 @@ describe.concurrent("sourcemap: a source index past `sources` is rejected", () =
     "past-end-null-content": { ...map, sourcesContent: [null] },
     "past-end-longer-content": { ...map, sourcesContent: ["x", "y"] },
     "no-sources": { ...map, sources: [], mappings: ";;EAIE" },
-    // 46 valid segments are enough for the SIMD decoder. Only the last segment names source 1.
+    // Long enough for the SIMD decoder, which leaves the last segment of any input to the scalar loop.
     "past-end-at-tail": { ...map, mappings: ";;EAIE" + Buffer.alloc(5 * 46, ",CAAC").toString() + ",CCAA" },
+    // ",CCAA" names source 1 and ",CDAA" goes back to source 0. The SIMD decoder has to refuse it mid-input.
+    "past-end-mid-input": {
+      ...map,
+      sourcesContent: [null],
+      mappings:
+        ";;EAIE" + Buffer.alloc(5 * 20, ",CAAC").toString() + ",CCAA,CDAA" + Buffer.alloc(5 * 20, ",CAAC").toString(),
+    },
+    // The same with two-character VLQs, which take another path in the SIMD decoder.
+    "past-end-mid-input-wide": {
+      ...map,
+      sourcesContent: [null],
+      mappings:
+        ";;EAIE" +
+        Buffer.alloc(7 * 20, ",gBAAgB").toString() +
+        ",CCAA,CDAA" +
+        Buffer.alloc(7 * 20, ",gBAAgB").toString(),
+    },
   };
   const throwsOnLine3 = `// @bun\nexport function t() {\n  throw new Error("SI");\n}\n`;
   const files: Record<string, string> = {

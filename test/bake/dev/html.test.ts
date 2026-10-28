@@ -1,7 +1,7 @@
 // HTML tests are tests relating to HTML files themselves.
 import { expect } from "bun:test";
 import { basename } from "node:path";
-import { devTest, emptyHtmlFile } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
   files: {
@@ -465,6 +465,56 @@ devTest("error report endpoint blanks stray non-text bytes in reported frames", 
   },
 });
 
+// Posts frames to /_bun/report_error and returns the frames of the reply. Both use: i32 line, i32 column,
+// string32 function name, string32 file name. The request starts with string32 error name, string32 message,
+// string32 browser url and a u32 frame count. The reply starts with a u32 frame count.
+async function reportErrorFrames(
+  dev: Dev,
+  frames: { line: number; column: number; functionName: string; file: string }[],
+) {
+  function i32(n: number) {
+    const b = Buffer.alloc(4);
+    b.writeInt32LE(n, 0);
+    return b;
+  }
+  function str32(s: string) {
+    const bytes = Buffer.from(s, "utf8");
+    return Buffer.concat([i32(bytes.length), bytes]);
+  }
+  const body = Buffer.concat([
+    str32("Error"),
+    str32("remap-message"),
+    str32(dev.baseUrl + "/"),
+    i32(frames.length),
+    ...frames.flatMap(frame => [i32(frame.line), i32(frame.column), str32(frame.functionName), str32(frame.file)]),
+  ]);
+  const res = await dev.fetch("/_bun/report_error", { method: "POST", body });
+  const reply = Buffer.from(await res.arrayBuffer());
+  expect(res.status).toBe(200);
+
+  let at = 0;
+  const readInt = () => ((at += 4), reply.readInt32LE(at - 4));
+  const readString = () => {
+    const length = readInt();
+    return reply.toString("utf8", at, (at += length));
+  };
+  return Array.from({ length: readInt() }, () => ({
+    line: readInt(),
+    column: readInt(),
+    functionName: readString(),
+    // Relative to the project root, or absolute on Windows.
+    file: basename(readString()),
+  }));
+}
+
+// The one-based line and column of `marker` in `script`.
+function positionOf(script: string, marker: string) {
+  const offset = script.indexOf(marker);
+  expect(offset).toBeGreaterThan(0);
+  const lineStart = script.lastIndexOf("\n", offset) + 1;
+  return { line: script.slice(0, lineStart).split("\n").length, column: offset - lineStart + 1 };
+}
+
 devTest("error report endpoint remaps a frame in every file of the client bundle", {
   files: {
     "index.html": emptyHtmlFile({
@@ -483,71 +533,63 @@ devTest("error report endpoint remaps a frame in every file of the client bundle
     `,
   },
   async test(dev) {
-    function u32(n: number) {
-      const b = Buffer.alloc(4);
-      b.writeUInt32LE(n >>> 0, 0);
-      return b;
-    }
-    function i32(n: number) {
-      const b = Buffer.alloc(4);
-      b.writeInt32LE(n, 0);
-      return b;
-    }
-    function str32(s: string) {
-      const bytes = Buffer.from(s, "utf8");
-      return Buffer.concat([u32(bytes.length), bytes]);
-    }
-
     const page = await dev.fetch("/").text();
     const [scriptPath] = page.match(/\/_bun\/client\/index-[0-9a-f]{16}\.js/) ?? [];
     const script = await dev.fetch(scriptPath).text();
+    const file = dev.baseUrl + scriptPath;
 
-    // A frame at the one-based line and column of `marker` in the served bundle.
-    function frameAt(marker: string, functionName: string) {
-      const offset = script.indexOf(marker);
-      expect(offset).toBeGreaterThan(0);
-      const lineStart = script.lastIndexOf("\n", offset) + 1;
-      const line = script.slice(0, lineStart).split("\n").length;
-      return Buffer.concat([
-        i32(line),
-        i32(offset - lineStart + 1),
-        str32(functionName),
-        str32(dev.baseUrl + scriptPath),
-      ]);
-    }
-
-    const body = Buffer.concat([
-      str32("Error"),
-      str32("remap-message"),
-      str32(dev.baseUrl + "/"),
-      u32(2),
-      frameAt("index-frame-marker", "inIndex"),
-      frameAt("other-frame-marker", "inOther"),
+    const frames = await reportErrorFrames(dev, [
+      { ...positionOf(script, "index-frame-marker"), functionName: "inIndex", file },
+      { ...positionOf(script, "other-frame-marker"), functionName: "inOther", file },
     ]);
-
-    const res = await dev.fetch("/_bun/report_error", { method: "POST", body });
-    const reply = Buffer.from(await res.arrayBuffer());
-
-    // Reply: u32 frame count, then per frame: i32 line, i32 column,
-    // string32 function name, string32 file name. The file name is relative
-    // to the project root, or absolute on Windows.
-    let at = 0;
-    const readInt = () => ((at += 4), reply.readInt32LE(at - 4));
-    const readString = () => {
-      const length = readInt();
-      return reply.toString("utf8", at, (at += length));
-    };
-    const frames = Array.from({ length: readInt() }, () => ({
-      line: readInt(),
-      column: readInt(),
-      functionName: readString(),
-      file: basename(readString()),
-    }));
     expect(frames).toEqual([
       { line: 2, column: 'console.log("'.length, functionName: "inIndex", file: "index.ts" },
       { line: 3, column: '  return "'.length, functionName: "inOther", file: "other.ts" },
     ]);
-    expect(res.status).toBe(200);
+  },
+});
+
+devTest("error report endpoint remaps a frame in a hot update chunk", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["/index.ts"],
+    }),
+    "index.ts": `
+      import { other } from "./other";
+      console.log("index " + other());
+      import.meta.hot.accept();
+    `,
+    "other.ts": `
+      export function other() {
+        return "first";
+      }
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await dev.write(
+      "other.ts",
+      `
+        console.log("updated");
+        export function other() {
+          return "chunk-frame-marker";
+        }
+        import.meta.hot.accept();
+      `,
+    );
+    const chunk = await c.getMostRecentHmrChunk();
+    const [, id] = chunk.match(/\n\/\/# sourceMappingURL=\S*?([0-9a-f]{16})\.js\.map/) ?? [];
+
+    const frames = await reportErrorFrames(dev, [
+      {
+        ...positionOf(chunk, "chunk-frame-marker"),
+        functionName: "inChunk",
+        file: `${dev.baseUrl}/_bun/client/hmr-${id}.js`,
+      },
+    ]);
+    expect(frames).toEqual([{ line: 3, column: '  return "'.length, functionName: "inChunk", file: "other.ts" }]);
+    await c.expectMessage("index first", "updated");
   },
 });
 devTest("client script route returns 404 when the route bundle index is out of range", {

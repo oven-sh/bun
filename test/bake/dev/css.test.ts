@@ -45,6 +45,42 @@ devTest("css file with syntax error does not kill old styles", {
     await c.style("body").notFound();
   },
 });
+devTest("first request of a catch-all route leaves the styles of a page on another route that it matches", {
+  files: {
+    "bun.app.ts": `
+      import index from "./index.html";
+      import page from "./page.html";
+      export default {
+        static: { "/*": index, "/app/*": page },
+        fetch() {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ styles: ["index.css"], body: `index` }),
+    "page.html": emptyHtmlFile({ styles: ["page.css"], body: `page` }),
+    "index.css": `
+      body {
+        background-color: blue;
+      }
+    `,
+    "page.css": `
+      body {
+        color: red;
+      }
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    // The server finds the route of a page by its URL, and "/*" is what it finds for this URL.
+    await using c = await dev.client("/app/settings");
+    await c.style("body").color.expect.toBe("red");
+    // A browser asks for /favicon.ico by itself.
+    await dev.fetch("/favicon.ico").expect.toInclude("index");
+    await c.drainAcks();
+    await c.style("body").color.expect.toBe("red");
+  },
+});
 devTest("css file with initial syntax error gets recovered", {
   files: {
     "index.html": emptyHtmlFile({

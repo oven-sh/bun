@@ -552,6 +552,7 @@ pub(super) fn finalize_bundle(
         };
         let route_bundle = dev.route_bundle_ptr(route_bundle_index);
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
+        let requested = route_bundle.server_state == route_bundle::State::Bundling;
         // Note: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`
         // so the `cached_response` take is done before the long-lived `html` borrow.
         if route_bundle
@@ -574,6 +575,12 @@ pub(super) fn finalize_bundle(
         // boxed slice behind in the chunk — nothing reads it after this.
         html.bundled_html_text = Some(std::mem::take(compile_result_code));
         html.script_injection_offset = Some(route_bundle::ByteOffset::init(compile_result_offset));
+        // Not a route that a request bundles: its pages would reload and request it again, in a loop while it fails to build.
+        if !requested {
+            dev.incremental_result
+                .html_routes_emitted
+                .push(route_bundle_index);
+        }
 
         chunk
             .entry_point
@@ -810,16 +817,24 @@ pub(super) fn finalize_bundle(
     let will_hear_hot_update = hot_update_subscribers > 0;
 
     // This list of routes affected excludes client code.
+    let had_reload_event = current_bundle!().had_reload_event;
+    let framework_routes_to_reload: &[RouteIndexAndRecurseFlag] =
+        if had_reload_event && dev.bundling_failures.is_empty() {
+            &dev.incremental_result.framework_routes_affected
+        } else {
+            &[]
+        };
+    let html_routes_to_reload: &[route_bundle::Index] = if had_reload_event {
+        &dev.incremental_result.html_routes_emitted
+    } else {
+        &[]
+    };
     if will_hear_hot_update
-        && current_bundle!().had_reload_event
-        && (dev.incremental_result.framework_routes_affected.len()
-            + dev.incremental_result.html_routes_hard_affected.len())
-            > 0
-        && dev.bundling_failures.is_empty()
+        && !(framework_routes_to_reload.is_empty() && html_routes_to_reload.is_empty())
     {
         has_route_bits_set = true;
 
-        for request in &dev.incremental_result.framework_routes_affected {
+        for request in framework_routes_to_reload {
             let route = dev.router.route_ptr(request.route_index());
             if let Some(id) = route.bundle {
                 route_bits.set(id.get() as usize);
@@ -828,7 +843,7 @@ pub(super) fn finalize_bundle(
                 mark_all_route_children(&dev.router, &mut [&mut route_bits], request.route_index());
             }
         }
-        for route_bundle_index in &dev.incremental_result.html_routes_hard_affected {
+        for route_bundle_index in html_routes_to_reload {
             route_bits.set(route_bundle_index.get() as usize);
             route_bits_client.set(route_bundle_index.get() as usize);
         }
@@ -837,7 +852,9 @@ pub(super) fn finalize_bundle(
         let mut it = route_bits.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
             let bundle = &dev.route_bundles[bundled_route_index];
-            if bundle.active_viewers == 0 {
+            // The page of an HTML route finds its route here through `config.htmlRouteIndex`, with or without a viewer entry.
+            if bundle.active_viewers == 0 && matches!(bundle.data, route_bundle::Data::Framework(_))
+            {
                 continue;
             }
             w_int!(i32, i32::try_from(bundled_route_index).expect("int cast"));
@@ -886,7 +903,7 @@ pub(super) fn finalize_bundle(
             dev.route_bundles[bundled_route_index].invalidate_client_bundle(&mut dev.source_maps);
         }
     } else if !dev.incremental_result.html_routes_hard_affected.is_empty() {
-        // Free old bundles
+        // Free old bundles: a hard route that List 1 names. A soft one is freed below.
         let mut it = route_bits_client.iterator::<true, true>();
         while let Some(bundled_route_index) = it.next() {
             dev.route_bundles[bundled_route_index].invalidate_client_bundle(&mut dev.source_maps);
@@ -915,7 +932,7 @@ pub(super) fn finalize_bundle(
         }
     }
 
-    // Softly affected HTML routes only need the bundle invalidated.
+    // A softly affected HTML route needs its client bundle invalidated, whether List 1 names the route or not.
     if !dev.incremental_result.html_routes_soft_affected.is_empty() {
         for index in &dev.incremental_result.html_routes_soft_affected {
             dev.route_bundles[index.get() as usize].invalidate_client_bundle(&mut dev.source_maps);

@@ -34,6 +34,7 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 let isPerformingRouteReload = false;
 let shouldPerformAnotherRouteReload = false;
 let currentRouteIndex: number = -1;
+const loadedPathname = location.pathname;
 
 /** False when an update since the last `onServerSideReload` call had no code for the browser. */
 let everyUpdateHadClientCode = true;
@@ -152,13 +153,16 @@ const handlers = {
       if (routeId === -1 || routeId == undefined) break;
       serverSideRoutesUpdated.add(routeId);
     } while (true);
+    // The page of an HTML route holds the html of one route. The route of its URL counts once the page changed its URL.
+    const isServerSideRouteUpdate =
+      serverSideRoutesUpdated.has(config.htmlRouteIndex) ||
+      ((config.htmlRouteIndex === undefined || location.pathname !== loadedPathname) &&
+        serverSideRoutesUpdated.has(currentRouteIndex));
     // List 2
-    let isServerSideRouteUpdate = false;
     do {
       const routeId = reader.i32();
       if (routeId === -1 || routeId == undefined) break;
       if (routeId === currentRouteIndex) {
-        isServerSideRouteUpdate = serverSideRoutesUpdated.has(routeId);
         const cssCount = reader.i32();
         if (cssCount !== -1) {
           const cssArray = new Array<string>(cssCount);

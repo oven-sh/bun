@@ -254,6 +254,8 @@ pub(crate) struct TakeJSBundleOptionsClient<'a> {
     pub(crate) console_log: bool,
     /// The page and layouts of a route whose pages also run in the browser: `config.route`.
     pub(crate) route_page_files: Option<&'a super::router_glue::ClientPageFiles>,
+    /// The route bundle of an HTML route, as List 1 of a hot update names it: `config.htmlRouteIndex`.
+    pub(crate) html_route_index: Option<route_bundle::Index>,
 }
 impl Default for TakeJSBundleOptionsClient<'_> {
     fn default() -> Self {
@@ -263,6 +265,7 @@ impl Default for TakeJSBundleOptionsClient<'_> {
             initial_response_entry_point: b"",
             react_refresh_entry_point: b"",
             route_page_files: None,
+            html_route_index: None,
             console_log: false,
         }
     }
@@ -1182,7 +1185,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     });
                     server_graph.trace_dependencies(index, gts, goal, index)?;
                 } else if let Some(route_bundle_index) = html_rbi {
-                    // HTML modified or asset modified → hard reload; else soft.
+                    // First reached from itself or from an asset: hard. `finalize_bundle` decides the reload.
                     let hard = from_file_index == file_index
                         || matches!(
                             self.bundled_files.values()[from_file_index.get() as usize].content,
@@ -1896,6 +1899,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         write_id(&mut end_list, layout)?;
                     }
                     end_list.extend_from_slice(b"] }");
+                }
+                if let Some(index) = options.html_route_index {
+                    let _ = write!(end_list, ",\n  htmlRouteIndex: {}", index.get());
                 }
                 end_list.extend_from_slice(b"\n})");
             }

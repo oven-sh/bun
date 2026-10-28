@@ -516,3 +516,172 @@ devTest("editing a file imported from outside the project root hot-reloads", {
     await c.expectMessage("three");
   },
 });
+
+// https://github.com/oven-sh/bun/issues/31908
+// A file change that makes the server write the html of a route tells the pages of that route to
+// reload. A reload through the "hot update was not accepted" fallback does not print this line.
+const routeReloadLine = /\[Bun\] Server-side code changed, reloading!/;
+
+devTest("html file and a module it reaches are saved together", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["script.ts"], body: "<h1>Hello</h1>" }),
+    "script.ts": `
+      import { value } from "./dep";
+      console.log(value);
+    `,
+    "dep.ts": `export const value = "v1";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1");
+    await c.expectReload(async () => {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
+      await dev.write("dep.ts", `export const value = "v2";`);
+    });
+    await c.output.waitForLine(routeReloadLine);
+    await c.expectMessage("v2");
+    expect(await c.elemText("h1")).toBe("World");
+
+    // The same with a module that fails to build: the page loads again and shows the failure.
+    await c.expectReload(async () => {
+      await using _batch = await dev.batchChanges({ errors: null });
+      await dev.patch("index.html", { find: "World", replace: "Again" });
+      await dev.write("dep.ts", `export const value = ;`);
+    });
+    await c.output.waitForLine(routeReloadLine);
+    await c.expectErrorOverlay(["dep.ts:1:22: error: Unexpected ;"]);
+    await c.expectReload(async () => {
+      await dev.write("dep.ts", `export const value = "v3";`, { errors: null });
+    });
+    await c.expectMessage("v3");
+    expect(await c.elemText("h1")).toBe("Again");
+  },
+});
+
+devTest("html file of one page and a module that two pages reach are saved together", {
+  files: {
+    "a.html": emptyHtmlFile({ scripts: ["shared.ts"], body: "<h1>A</h1>" }),
+    "b.html": emptyHtmlFile({ scripts: ["shared.ts"], body: "<h1>B</h1>" }),
+    "shared.ts": `
+      import { value } from "./dep";
+      console.log(value);
+      import.meta.hot.accept();
+    `,
+    "dep.ts": `export const value = "v1";`,
+  },
+  async test(dev) {
+    await using a = await dev.client("/a");
+    await a.expectMessage("v1");
+    await using b = await dev.client("/b");
+    await b.expectMessage("v1");
+    await a.expectReload(async () => {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("a.html", { find: "<h1>A</h1>", replace: "<h1>A2</h1>" });
+      await dev.write("dep.ts", `export const value = "v2";`);
+    });
+    await a.output.waitForLine(routeReloadLine);
+    // One message: the page of a.html does not run the module before it loads again.
+    await a.expectMessage("v2");
+    expect(await a.elemText("h1")).toBe("A2");
+    // The other page takes the module as a hot update.
+    await b.expectMessage("v2");
+    expect(await b.elemText("h1")).toBe("B");
+  },
+});
+
+// The server finds the route of a page by its URL: an exact key, or "/*". It finds none here.
+devTest("html file of a page on a route with a parameter is saved", {
+  files: {
+    "bun.app.ts": `
+      import page from "./page.html";
+      export default {
+        static: { "/users/:id": page },
+        fetch() {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+    "page.html": emptyHtmlFile({ scripts: ["script.ts"], body: "<h1>Hello</h1>" }),
+    "script.ts": `console.log("v1");`,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/users/1");
+    await c.expectMessage("v1");
+    await c.expectReload(async () => {
+      await dev.patch("page.html", { find: "Hello", replace: "World" });
+    });
+    await c.output.waitForLine(routeReloadLine);
+    await c.expectMessage("v1");
+    expect(await c.elemText("h1")).toBe("World");
+  },
+});
+
+// For this URL the server finds the "/*" route. The page holds the html of the "/app/*" route.
+devTest("page on a route that a catch-all route also matches reloads for its own html file", {
+  files: {
+    "bun.app.ts": `
+      import index from "./index.html";
+      import app from "./app.html";
+      export default {
+        static: { "/*": index, "/app/*": app },
+        fetch() {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"], body: "<h1>Index</h1>" }),
+    "app.html": emptyHtmlFile({ scripts: ["script.ts"], body: "<h1>App</h1>" }),
+    "index.ts": `console.log("index");`,
+    "script.ts": `console.log("v1");`,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    await using c = await dev.client("/app/settings");
+    await c.expectMessage("v1");
+    await dev.fetch("/").expect.toInclude("<h1>Index</h1>");
+
+    // The html file of the other route: this client fails on a reload that the test does not expect.
+    await dev.patch("index.html", { find: "Index", replace: "Index2" });
+    expect(await c.elemText("h1")).toBe("App");
+
+    // Its own html file, in one build with a script of the other route.
+    await c.expectReload(async () => {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("app.html", { find: "App", replace: "App2" });
+      await dev.write("index.ts", `console.log("index 2");`);
+    });
+    await c.output.waitForLine(routeReloadLine);
+    await c.expectMessage("v1");
+    expect(await c.elemText("h1")).toBe("App2");
+  },
+});
+
+devTest("html file is saved after the page changed its URL to another route with history.pushState", {
+  files: {
+    "a.html": emptyHtmlFile({ scripts: ["script.ts"], body: "<h1>A</h1>" }),
+    "b.html": emptyHtmlFile({ scripts: ["script.ts"], body: "<h1>B</h1>" }),
+    "script.ts": `console.log("ready");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/a");
+    await c.expectMessage("ready");
+
+    // The page holds a.html. A browser loads the URL again, this client the URL it started with.
+    await c.js`history.pushState(null, "", "/b")`;
+    await c.expectReload(async () => {
+      await dev.patch("a.html", { find: "<h1>A</h1>", replace: "<h1>A2</h1>" });
+    });
+    await c.output.waitForLine(routeReloadLine);
+    await c.expectMessage("ready");
+
+    // The URL names the route of b.html, which a library can have put on screen with no request for that URL.
+    await c.js`history.pushState(null, "", "/b")`;
+    await c.expectReload(async () => {
+      await dev.patch("b.html", { find: "<h1>B</h1>", replace: "<h1>B2</h1>" });
+    });
+    await c.output.waitForLine(routeReloadLine);
+    await c.expectMessage("ready");
+  },
+});

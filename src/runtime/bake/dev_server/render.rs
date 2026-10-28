@@ -576,9 +576,10 @@ impl DevServer {
                 // SAFETY: `generate_client_bundle` reads `*route_bundle` and
                 // never reallocates `route_bundles`; no `&mut` into
                 // `*route_bundle` is live across this call.
-                let payload =
-                    unsafe { Self::generate_client_bundle(&mut *self_ptr, &*route_bundle) }
-                        .expect("oom");
+                let payload = unsafe {
+                    Self::generate_client_bundle(&mut *self_ptr, bundle_index, &*route_bundle)
+                }
+                .expect("oom");
                 let bundle = StaticRoute::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
@@ -605,7 +606,11 @@ impl DevServer {
 impl DevServer {
     /// Used to generate the entry point. Unlike incremental patches, this always
     /// contains all needed files for a route.
-    fn generate_client_bundle(&mut self, route_bundle: &RouteBundle) -> crate::Result<Vec<u8>> {
+    fn generate_client_bundle(
+        &mut self,
+        route_bundle_index: route_bundle::Index,
+        route_bundle: &RouteBundle,
+    ) -> crate::Result<Vec<u8>> {
         debug_assert!(route_bundle.client_bundle.is_none());
         debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
 
@@ -669,6 +674,8 @@ impl DevServer {
             }
             route_bundle::Data::Html(html) => Some(html.bundled_file),
         };
+        let html_route_index =
+            matches!(route_bundle.data, route_bundle::Data::Html(_)).then_some(route_bundle_index);
 
         // Insert the source map
         let script_id = route_bundle.source_map_id();
@@ -708,6 +715,7 @@ impl DevServer {
                     script_id,
                     console_log: self.should_receive_console_log_from_browser(),
                     route_page_files: route_page_files.as_ref(),
+                    html_route_index,
                 })?;
         Ok(client_bundle)
     }

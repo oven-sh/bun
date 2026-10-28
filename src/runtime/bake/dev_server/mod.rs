@@ -141,6 +141,8 @@ pub(crate) struct IncrementalResult {
     pub(crate) framework_routes_affected: Vec<RouteIndexAndRecurseFlag>,
     pub(crate) html_routes_soft_affected: Vec<route_bundle::Index>,
     pub(crate) html_routes_hard_affected: Vec<route_bundle::Index>,
+    /// HTML routes whose html this bundle wrote for a file change: List 1 of the hot update names them.
+    pub(crate) html_routes_emitted: Vec<route_bundle::Index>,
     pub(crate) had_adjusted_edges: bool,
     pub(crate) client_components_added: Vec<incremental_graph::ServerFileIndex>,
     pub(crate) client_components_removed: Vec<incremental_graph::ServerFileIndex>,
@@ -153,6 +155,7 @@ impl IncrementalResult {
         framework_routes_affected: Vec::new(),
         html_routes_soft_affected: Vec::new(),
         html_routes_hard_affected: Vec::new(),
+        html_routes_emitted: Vec::new(),
         had_adjusted_edges: false,
         failures_removed: Vec::new(),
         failures_added: Vec::new(),
@@ -168,6 +171,7 @@ impl IncrementalResult {
         self.framework_routes_affected.clear();
         self.html_routes_soft_affected.clear();
         self.html_routes_hard_affected.clear();
+        self.html_routes_emitted.clear();
         self.client_components_added.clear();
         self.client_components_removed.clear();
         debug_assert!(self.failures_removed.is_empty());
@@ -439,7 +443,7 @@ pub(crate) struct CurrentBundle {
     pub(crate) timer: Instant,
     /// If any files in this bundle were due to hot-reloading, some extra work
     /// must be done to inform clients to reload routes. When this is false,
-    /// all entry points do not have bundles yet.
+    /// a request started the bundle: the first one of a route, or one of a route that failed.
     pub(crate) had_reload_event: bool,
     /// After a bundle finishes, these requests will be continued, either
     /// calling their handler on success or sending the error page on failure.

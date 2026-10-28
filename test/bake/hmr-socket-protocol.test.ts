@@ -22,6 +22,8 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
 <html><head><meta charset="utf-8"></head>
@@ -496,3 +498,159 @@ test.concurrent.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
     expect(await res.text(), dev.stderr()).toBe("fallback");
   },
 );
+
+// https://github.com/oven-sh/bun/issues/31908
+// A page cannot apply the module of the html file of its route: it reloads. A hot update names the
+// route of an html file that a file change made the server write, for every socket: a page
+// compares it with the route that it holds.
+test.concurrent("a hot update names the route of an html file that a file change wrote", async () => {
+  const page = (script: string, title: string) =>
+    `<!DOCTYPE html>\n<html><head><title>${title}</title></head>\n<body><script type="module" src="${script}"></script></body></html>`;
+  using dir = tempDir("hmr-socket-html-route", {
+    "a.html": page("./a.ts", "1"),
+    "b.html": page("./b.ts", "1"),
+    "c.html": page("./c.ts", "1"),
+    "a.ts": `console.log("a1");`,
+    "b.ts": `console.log("b1");`,
+    "c.ts": `console.log("c1");`,
+    "server.ts": /* ts */ `
+      import a from "./a.html";
+      import b from "./b.html";
+      import c from "./c.html";
+      const server = Bun.serve({
+        port: 0,
+        development: { hmr: true, console: false },
+        routes: { "/a": a, "/b": b, "/c": c },
+        fetch() { return new Response("fallback"); },
+      });
+      console.log("PORT=" + server.port);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "server.ts"],
+    // A debug build bundles a failing route again on a request only with this setting, as a release build does.
+    env: { ...bunEnv, BUN_ASSUME_PERFECT_INCREMENTAL: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const dev = watchDevServer(proc);
+  const port = await dev.port;
+  const get = (path: string) => fetch(`http://127.0.0.1:${port}${path}`);
+  /** The index of a route is the first half of the hex digits in the name of its client script. */
+  async function routeIndex(path: string) {
+    const hex = (await (await get(path)).text()).match(/\/_bun\/client\/[^"]*-([0-9a-f]{8})[0-9a-f]{8}\.js/)![1];
+    return Buffer.from(hex, "hex").readUInt32LE(0);
+  }
+  const a = await routeIndex("/a");
+  await routeIndex("/b");
+
+  const failed = Promise.withResolvers<never>();
+  failed.promise.catch(() => {});
+  proc.exited.then(() => failed.reject(new Error(`dev server exited\n--- dev server stderr ---\n${dev.stderr()}`)));
+
+  /** What a hot update frame (`u`) holds: List 1, and the routes of List 2. */
+  function decodeHotUpdate(body: Uint8Array) {
+    const view = new DataView(body.buffer, body.byteOffset, body.byteLength);
+    let offset = 0;
+    const i32 = () => ((offset += 4), view.getInt32(offset - 4, true));
+    const reload: number[] = [];
+    for (let route = i32(); route !== -1; route = i32()) reload.push(route);
+    const stylesheetLists: number[] = [];
+    for (let route = i32(); route !== -1; route = i32()) {
+      stylesheetLists.push(route);
+      offset += 16 * Math.max(0, i32());
+    }
+    return { reload, stylesheetLists };
+  }
+
+  // `u` frames are hot updates. `r` frames are the testing-synchronization codes: 0 batching
+  // started, 1 the batch saw a file, 2 an empty batch was released, 3/4 a bundle finished.
+  let frames: ReturnType<typeof decodeHotUpdate>[] = [];
+  let waiter: { codes: number[]; resolve: () => void } | undefined;
+  function sync(...codes: number[]) {
+    const { promise, resolve } = Promise.withResolvers<void>();
+    waiter = { codes, resolve };
+    return Promise.race([promise, failed.promise]);
+  }
+  // No SetUrl frame: the server has no viewer entry for this socket.
+  using hmr = await connectHmr(
+    port,
+    (id, body) => {
+      if (id === "u") frames.push(decodeHotUpdate(body));
+      if (id === "r" && waiter?.codes.includes(body[0])) {
+        const { resolve } = waiter;
+        waiter = undefined;
+        resolve();
+      }
+    },
+    err => failed.reject(err),
+  );
+  hmr.ws.send("shr");
+  // A socket whose URL is the URL of /c, before the first request for /c: the server counts a viewer for that route.
+  const viewerOfC = Promise.withResolvers<void>();
+  using viewer = await connectHmr(
+    port,
+    id => void (id === "n" && viewerOfC.resolve()),
+    err => failed.reject(err),
+  );
+  viewer.ws.send("n/c");
+  await Promise.race([viewerOfC.promise, failed.promise]);
+
+  /** What the hot updates of one bundle hold. */
+  const held = () => ({
+    reload: frames.flatMap(frame => frame.reload),
+    stylesheetLists: frames.flatMap(frame => frame.stylesheetLists),
+  });
+  /**
+   * The hot updates of the bundle that the watcher starts for a save. The text is written in
+   * place, with the length of the text that it replaces: no build reads a half-written file.
+   */
+  async function save(file: string, text: string) {
+    let done = sync(0);
+    hmr.ws.send("H");
+    await done;
+    frames = [];
+    done = sync(1);
+    writeFileSync(join(String(dir), file), text, { flag: "r+" });
+    await done;
+    done = sync(3, 4);
+    hmr.ws.send("H");
+    await done;
+    return held();
+  }
+  /**
+   * The hot updates of the bundle that a request for `path` starts. The watcher can report one
+   * write twice: the batch starts after the bundle of an earlier save, and holds a late event.
+   */
+  async function request(path: string) {
+    let done = sync(0);
+    hmr.ws.send("H");
+    await done;
+    frames = [];
+    done = sync(3, 4);
+    const status = (await get(path)).status;
+    await done;
+    const result = { status, ...held() };
+    done = sync(2, 3, 4);
+    hmr.ws.send("H");
+    await done;
+    return result;
+  }
+
+  expect({
+    htmlSaved: await save("a.html", page("./a.ts", "2")),
+    firstRequest: await request("/c"),
+    scriptBroken: await save("b.ts", `import "./missing"`),
+    htmlSavedWhileAnotherRouteFails: await save("a.html", page("./a.ts", "3")),
+    failingRouteRequested: await request("/b"),
+  }).toEqual({
+    htmlSaved: { reload: [a], stylesheetLists: [] },
+    // The html of /c is new to every page: the socket of its URL gets no reload and no stylesheet list for it.
+    firstRequest: { status: 200, reload: [], stylesheetLists: [] },
+    scriptBroken: { reload: [], stylesheetLists: [] },
+    htmlSavedWhileAnotherRouteFails: { reload: [a], stylesheetLists: [] },
+    // Each request bundles a failing route again: a reload that the update named would request it again, in a loop.
+    failingRouteRequested: { status: 500, reload: [], stylesheetLists: [] },
+  });
+});

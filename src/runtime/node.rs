@@ -16,8 +16,8 @@ pub(crate) mod assert {
 #[path = "node/types.rs"]
 pub(crate) mod types;
 pub(crate) use types::{
-    BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, Flavor, PathLike, PathOrBlob,
-    PathOrFileDescriptor, StringObjects, StringOrBuffer, ThreadIsolated, ThreadIsolatedArg,
+    BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, PathLike, PathOrBlob, PathOrFileDescriptor,
+    StringObjects, StringOrBuffer, ThreadIsolated,
 };
 
 #[path = "node/path.rs"]
@@ -25,16 +25,12 @@ pub(crate) mod path;
 
 #[path = "node/node_os.rs"]
 pub(crate) mod os;
-// codegen (`generated_js2native.rs`) addresses this by its file-stem name.
-pub(crate) use os as node_os;
 
 #[path = "node/node_process.rs"]
 pub(crate) mod process;
 
 #[path = "node/node_crypto_binding.rs"]
 pub(crate) mod crypto;
-// codegen (`generated_js2native.rs`) addresses this by its file-stem name.
-pub(crate) use crypto as node_crypto_binding;
 
 #[cfg(target_os = "macos")]
 #[path = "node/fs_events.rs"]
@@ -103,11 +99,11 @@ pub(crate) mod node_fs_watcher;
 #[path = "node/uv_signal_handle_windows.rs"]
 pub(crate) mod uv_signal_handle_windows;
 
-// Type defs + non-JSC FFI bodies are live; every `#[bun_jsc::host_fn]` /
-// `#[bun_jsc::JsClass]` item is wrapped in ` mod _impl` inside
-// each file. dgram/tls/tty have no `.rs` ports yet — nothing to wire.
 #[path = "node/buffer.rs"]
 pub(crate) mod buffer;
+
+#[path = "node/histogram.rs"]
+pub(crate) mod histogram;
 
 #[path = "node/node_cluster_binding.rs"]
 pub(crate) mod node_cluster_binding;

@@ -1,0 +1,1 @@
+error: TS2680: A 'this' parameter must be the first parameter.

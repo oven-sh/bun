@@ -1,6 +1,7 @@
 import { createTest } from "node-harness";
 import { once } from "node:events";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
 let body_not_allowed_on_write;
@@ -32,7 +33,7 @@ server.on("request", (req, res) => {
 });
 
 await once(server.listen(0), "listening");
-const url = `http://localhost:${server.address().port}`;
+const url = `http://localhost:${(server.address() as AddressInfo).port}`;
 
 {
   await fetch(url, {

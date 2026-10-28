@@ -1,0 +1,45 @@
+////: printed
+// «1» That is the only place where the program reaches the Function constructor, which compiles the text of what it is given.
+try {
+  «2»
+} catch (error) {
+  console.log(error.name, error.message);
+}
+//// array-of-constructs-the-function-constructor.js
+////= printed	Array.of constructs its receiver.	console.log(typeof Array.of.call(Function, 1, 2));
+//// promise-resolve-constructs-the-function-constructor.js
+////= printed	Promise.resolve constructs its receiver.	console.log(typeof Promise.resolve.call(Function, 1));
+//// promise-reject-constructs-the-function-constructor.js
+////= printed	Promise.reject constructs its receiver.	console.log(typeof Promise.reject.call(Function, 1));
+//// promise-all-constructs-the-function-constructor.js
+////= printed	Promise.all constructs its receiver.	console.log(typeof Promise.all.call(Function, []));
+//// promise-race-constructs-the-function-constructor.js
+////= printed	Promise.race constructs its receiver.	console.log(typeof Promise.race.call(Function, []));
+//// promise-with-resolvers-constructs-the-function-constructor.js
+////= printed	Promise.withResolvers constructs its receiver.	console.log(typeof Promise.withResolvers.call(Function));
+//// promise-try-constructs-the-function-constructor.js
+////= printed	Promise.try constructs its receiver.	console.log(typeof Promise.try.call(Function, () => 1));
+//// array-map-constructs-the-function-constructor-as-its-species.js
+////= printed	Array.prototype.map constructs the species of its receiver.	const list = [1, 2, 3]; list.constructor = { [Symbol.species]: Function }; console.log(typeof list.map(each => each));
+//// array-concat-constructs-the-function-constructor-as-its-species.js
+////= printed	Array.prototype.concat constructs the species of its receiver.	const list = [1, 2]; list.constructor = { [Symbol.species]: Function }; console.log(typeof list.concat([3]));
+//// array-flat-constructs-the-function-constructor-as-its-species.js
+////= printed	Array.prototype.flat constructs the species of its receiver.	const list = [1, [2]]; list.constructor = { [Symbol.species]: Function }; console.log(typeof list.flat());
+//// typed-array-map-constructs-the-function-constructor-as-its-species.js
+////= printed	%TypedArray%.prototype.map constructs the species of its receiver.	const bytes = new Uint8Array(2); bytes.constructor = { [Symbol.species]: Function }; console.log(typeof bytes.map(each => each));
+//// array-buffer-slice-constructs-the-function-constructor-as-its-species.js
+////= printed	ArrayBuffer.prototype.slice constructs the species of its receiver.	const buffer = new ArrayBuffer(8); buffer.constructor = { [Symbol.species]: Function }; console.log(typeof buffer.slice(0, 4));
+//// array-map-constructs-a-proxy-of-the-function-constructor-as-its-species.js
+////= printed	Array.prototype.map constructs the species of its receiver, a proxy here.	const list = [1, 2]; list.constructor = { [Symbol.species]: new Proxy(Function, {}) }; console.log(typeof list.map(each => each));
+//// array-map-constructs-the-function-constructor-that-a-species-getter-answers.js
+////= printed	Array.prototype.map constructs what the getter of the species answers.	class List extends Array { static get [Symbol.species]() { return Function; } } console.log(typeof new List(1, 2).map(each => each));
+//// promise-then-constructs-the-function-constructor-as-its-species.js
+////= printed	Promise.prototype.then constructs the species of its receiver.	const promise = Promise.resolve(1); promise.constructor = { [Symbol.species]: Function }; console.log(typeof promise.then(() => {}));
+//// promise-finally-constructs-the-function-constructor-as-its-species.js
+////= printed	Promise.prototype.finally constructs the species of its receiver.	const promise = Promise.resolve(1); promise.constructor = { [Symbol.species]: Function }; console.log(typeof promise.finally(() => {}));
+//// typed-array-subarray-constructs-the-function-constructor-as-its-species.js
+////= printed	%TypedArray%.prototype.subarray constructs the species of its receiver.	const bytes = new Uint8Array(2); bytes.constructor = { [Symbol.species]: Function }; console.log(typeof bytes.subarray(1));
+//// split-constructs-the-function-constructor-as-the-species-of-a-regexp.js
+////= printed	RegExp.prototype[Symbol.split] constructs the species of its receiver.	const pattern = /a/; pattern.constructor = { [Symbol.species]: Function }; console.log(typeof "bab".split(pattern));
+//// match-all-constructs-the-function-constructor-as-the-species-of-a-regexp.js
+////= printed	RegExp.prototype[Symbol.matchAll] constructs the species of its receiver.	const pattern = /a/g; pattern.constructor = { [Symbol.species]: Function }; console.log(typeof "bab".matchAll(pattern));

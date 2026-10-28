@@ -244,7 +244,6 @@ impl Worker {
                 if let spawn::WindowsStdioResult::Buffer(p) = item {
                     let raw = bun_core::heap::into_raw(p);
                     debug_assert_eq!(raw, ipc_pipe, "extra_pipes Box must wrap ipc_pipe");
-                    let _ = raw;
                 }
             }
             this.process = Some(spawned.to_process_handle(coord.vm.event_loop()));
@@ -431,6 +430,7 @@ impl WorkerPipe {
 // flag); worker/coord backrefs are valid for the pipe's lifetime.
 bun_io::impl_buffered_reader_parent! {
     TestParallelWorkerPipe for WorkerPipe;
+    feature = TestCommand;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(&chunk, state);
     on_reader_done  = |this| (*this).on_reader_done();

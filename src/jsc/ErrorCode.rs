@@ -47,7 +47,7 @@ type ErrorCodeInt = u16;
 /// `Bun::ErrorCode` in C++.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
-pub struct ErrorCode(pub ErrorCodeInt);
+pub struct ErrorCode(ErrorCodeInt);
 
 // Generated from `src/jsc/bindings/ErrorCode.ts` alongside the C++
 // `ErrorCode+List.h` / `ErrorCode+Data.h`. Provides:

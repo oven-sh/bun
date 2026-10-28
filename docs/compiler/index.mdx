@@ -1,0 +1,51 @@
+---
+title: "Compiler"
+description: "Turn a TypeScript or JavaScript program into one executable file"
+---
+
+Bun turns a TypeScript or JavaScript program into one executable file. The file runs on a machine that doesn't have Bun installed.
+
+```ts cli.ts icon="/icons/typescript.svg"
+console.log("Hello world!");
+```
+
+```bash terminal icon="terminal"
+bun build --compile ./cli.ts --outfile mycli
+./mycli
+```
+
+```txt
+Hello world!
+```
+
+## Two ways to compile
+
+|                      | `bun build --compile`                          | `bun compile`                                        |
+| -------------------- | ---------------------------------------------- | ---------------------------------------------------- |
+| The executable holds | Your bundled JavaScript and a copy of Bun      | Your program as machine code and Bun without its JIT |
+| Your code runs       | In the interpreter and the JIT, like `bun run` | As machine code. The executable has no JIT           |
+| TypeScript types     | Removed, never checked                         | Checked, then used. A type error stops the build     |
+| Builds for           | Other platforms too, with `--target`           | Only the platform that runs the build                |
+| Status               | Stable                                         | Experimental                                         |
+
+`bun compile` is short for `bun build --compile --aot`, so the two take the same flags.
+
+`bun build --compile` runs everything that `bun run` runs. With `bun compile`, servers start faster and use less memory, and [a few things differ from `bun run`](/compiler/compatibility).
+
+## `bun build --compile`
+
+- [Single-file executable](/compiler/executables): cross-compile, embed files, set build-time constants, sign the executable on macOS and set its icon on Windows.
+- [Bytecode caching](/compiler/bytecode): compile your JavaScript to bytecode at build time, so that the executable starts faster.
+- [Standalone HTML](/bundler/standalone-html): with `--target=browser`, `--compile` writes one self-contained `.html` file.
+
+## `bun compile`
+
+- [Ahead-of-time compilation](/compiler/aot): build an executable, what to expect from it, and when to stay with the JIT.
+- [How `bun compile` uses your types](/compiler/types): what types get you, and what happens when a value doesn't match its declared type.
+- [Get more of your program typed](/compiler/explain): what the typed percentage counts, and how to raise it.
+- [Compatibility](/compiler/compatibility): what works the same, what differs on purpose, what isn't available.
+- [Test and debug a compiled program](/compiler/debugging): stack traces, crash reports, profilers and the inspector.
+- [Smaller executables](/compiler/size): remove the Bun APIs that your program doesn't use.
+- [Publish a library for `bun compile`](/compiler/libraries): ship a package that keeps its types.
+- [Troubleshooting](/compiler/troubleshooting): the errors you're most likely to hit first, with the cause and the fix.
+- [How `bun compile` works](/compiler/internals): the compiler from the inside.

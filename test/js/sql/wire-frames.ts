@@ -4,26 +4,43 @@
 // Fault-injection tests import from this module instead of inlining
 // Buffer.alloc / writeInt32BE sequences.
 
+import { createHash, createHmac, pbkdf2Sync, randomBytes, X509Certificate } from "node:crypto";
+import { once } from "node:events";
 import net from "node:net";
+import tls from "node:tls";
 
 // ---------------------------------------------------------------------------
 // Server helpers shared by every fault-injection test.
 // ---------------------------------------------------------------------------
 
-/** Start a TCP server on 127.0.0.1 with an ephemeral port. */
+/**
+ * Start a TCP server on `host` (127.0.0.1 unless given) with an ephemeral port. A mock that has to be dialed as
+ * "localhost" listens on "::": the client tries ::1 first, and somebody else may hold the same port number there.
+ */
 export async function listeningServer(
   onSocket: (socket: net.Socket) => void,
+  host = "127.0.0.1",
 ): Promise<{ port: number; server: net.Server }> {
   const server = net.createServer(onSocket);
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  server.listen(0, host);
+  await once(server, "listening");
   return { port: (server.address() as net.AddressInfo).port, server };
+}
+
+/**
+ * What was written to a loopback socket of this process before the call has been read when it resolves: a read that
+ * is due is done in the next turn of the event loop, and to open and close a connection takes more than one.
+ */
+export async function loopbackFence(): Promise<void> {
+  const { port, server } = await listeningServer(socket => void socket.on("error", () => {}));
+  const socket = net.connect(port, "127.0.0.1", () => socket.end());
+  await once(socket, "close");
+  server.close();
 }
 
 /** Reserve and immediately release a port so connecting to it is refused. */
 export async function closedPort(): Promise<number> {
-  const server = net.createServer();
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
-  const port = (server.address() as net.AddressInfo).port;
+  const { port, server } = await listeningServer(() => {});
   await new Promise<void>(resolve => server.close(() => resolve()));
   return port;
 }
@@ -70,6 +87,24 @@ export function pgSSLResponse(answer: "S" | "N"): Buffer {
   return Buffer.from(answer, "latin1");
 }
 
+// PostgreSQL FE/BE protocol §55.7 CancelRequest: Int32(16) Int32(80877102) Int32(pid) Int32(secret)
+export function pgCancelRequest(processId: number, secretKey: number): Buffer {
+  return Buffer.concat([pgInt32(16), pgInt32(80877102), pgInt32(processId), pgInt32(secretKey)]);
+}
+
+// PostgreSQL FE/BE protocol §55.7 StartupMessage: Int32(len) Int32(196608) (String(name) String(value))* Byte1(0)
+/** The parameters of a frontend StartupMessage and the bytes after it; null until `buffered` holds the whole message. */
+export function pgParseStartupMessage<T extends ArrayBufferLike>(
+  buffered: Buffer<T>,
+): { params: Record<string, string>; rest: Buffer<T> } | null {
+  if (buffered.length < 8 || buffered.length < buffered.readInt32BE(0)) return null;
+  const len = buffered.readInt32BE(0);
+  const words = buffered.toString("utf-8", 8, len - 2).split("\0");
+  const params: Record<string, string> = {};
+  for (let i = 0; i + 1 < words.length; i += 2) params[words[i]] = words[i + 1];
+  return { params, rest: buffered.subarray(len) };
+}
+
 // PostgreSQL FE/BE protocol §55.7 AuthenticationOk: Byte1('R') Int32(8) Int32(0)
 export function pgAuthenticationOk(): Buffer {
   const buf = Buffer.alloc(9);
@@ -104,9 +139,34 @@ export function pgAuthenticationSASL(mechanisms: string[] = ["SCRAM-SHA-256"]): 
   return pgRaw("R", body);
 }
 
+// PostgreSQL FE/BE protocol §55.7 AuthenticationSASLContinue: Byte1('R') Int32(len) Int32(11) Byte[n](server-first-message)
+export function pgAuthenticationSASLContinue(serverFirstMessage: string): Buffer {
+  return pgRaw("R", Buffer.concat([pgInt32(11), Buffer.from(serverFirstMessage, "utf-8")]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 AuthenticationSASLFinal: Byte1('R') Int32(len) Int32(12) Byte[n](server-final-message)
+export function pgAuthenticationSASLFinal(serverFinalMessage: string): Buffer {
+  return pgRaw("R", Buffer.concat([pgInt32(12), Buffer.from(serverFinalMessage, "utf-8")]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 SASLInitialResponse (frontend 'p') body: String(mechanism) Int32(len | -1) Byte[len](client-first-message)
+export function pgParseSASLInitialResponse(body: Buffer): { mechanism: string; clientFirstMessage: string } {
+  const end = body.indexOf(0);
+  const len = Math.max(0, body.readInt32BE(end + 1));
+  return {
+    mechanism: body.toString("utf-8", 0, end),
+    clientFirstMessage: body.toString("utf-8", end + 5, end + 5 + len),
+  };
+}
+
 // PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
 export function pgParameterStatus(name: string, value: string): Buffer {
   return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 BackendKeyData: Byte1('K') Int32(12) Int32(pid) Int32(secret)
+export function pgBackendKeyData(processId: number, secretKey: number): Buffer {
+  return pgRaw("K", Buffer.concat([pgInt32(processId), pgInt32(secretKey)]));
 }
 
 // PostgreSQL FE/BE protocol §55.7 ReadyForQuery: Byte1('Z') Int32(5) Byte1(status)
@@ -136,11 +196,6 @@ export function pgErrorResponse(fields: { S: string; C: string; M: string; [k: s
   }
   buf[o] = 0;
   return buf;
-}
-
-// PostgreSQL FE/BE protocol §55.7 ParameterStatus: Byte1('S') Int32(len) String(name) String(value)
-export function pgParameterStatus(name: string, value: string): Buffer {
-  return pgRaw("S", Buffer.concat([pgCString(name), pgCString(value)]));
 }
 
 // PostgreSQL FE/BE protocol §55.7 NotificationResponse: Byte1('A') Int32(len) Int32(pid) String(channel) String(payload)
@@ -194,13 +249,19 @@ export function pgRowDescription(cols: PgRowDescriptionColumn[]): Buffer {
   return pgRaw("T", Buffer.concat(parts));
 }
 
-// PostgreSQL FE/BE protocol §55.7 CopyOutResponse: Byte1('H') Int32(len) Int8(overall format) Int16(ncols) Int16[ncols](per-column format)
+// PostgreSQL FE/BE protocol §55.7 CopyInResponse ('G'), CopyOutResponse ('H'), CopyBothResponse ('W'):
+//   Byte1(type) Int32(len) Int8(overall format) Int16(ncols) Int16[ncols](per-column format)
+function pgCopyResponse(type: "G" | "H" | "W", formats: (0 | 1)[], overallFormat: 0 | 1): Buffer {
+  return pgRaw(type, Buffer.concat([Buffer.from([overallFormat]), pgInt16List(formats)]));
+}
+export function pgCopyInResponse(formats: (0 | 1)[], overallFormat: 0 | 1 = 0): Buffer {
+  return pgCopyResponse("G", formats, overallFormat);
+}
 export function pgCopyOutResponse(formats: (0 | 1)[], overallFormat: 0 | 1 = 0): Buffer {
-  const body = Buffer.alloc(3 + 2 * formats.length);
-  body[0] = overallFormat;
-  body.writeInt16BE(formats.length, 1);
-  for (let i = 0; i < formats.length; i++) body.writeInt16BE(formats[i], 3 + 2 * i);
-  return pgRaw("H", body);
+  return pgCopyResponse("H", formats, overallFormat);
+}
+export function pgCopyBothResponse(formats: (0 | 1)[], overallFormat: 0 | 1 = 0): Buffer {
+  return pgCopyResponse("W", formats, overallFormat);
 }
 
 // PostgreSQL FE/BE protocol §55.7 CopyData: Byte1('d') Int32(len) Byte[n](data)
@@ -223,6 +284,16 @@ export function pgBindComplete(): Buffer {
   return pgRaw("2", Buffer.alloc(0));
 }
 
+// PostgreSQL FE/BE protocol §55.7 CloseComplete: Byte1('3') Int32(4)
+export function pgCloseComplete(): Buffer {
+  return pgRaw("3", Buffer.alloc(0));
+}
+
+// PostgreSQL FE/BE protocol §55.7 NoData: Byte1('n') Int32(4)
+export function pgNoData(): Buffer {
+  return pgRaw("n", Buffer.alloc(0));
+}
+
 // PostgreSQL FE/BE protocol §55.7 ParameterDescription: Byte1('t') Int32(len) Int16(nparams) Int32[nparams](typeOid)
 export function pgParameterDescription(typeOids: number[]): Buffer {
   const body = Buffer.alloc(2 + 4 * typeOids.length);
@@ -236,7 +307,10 @@ export function pgParameterDescription(typeOids: number[]): Buffer {
  * onMessage(type, body) for each; returns the leftover bytes. The very first
  * frontend message (StartupMessage) has no type byte: feed it separately.
  */
-export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: number, body: Buffer) => void): Buffer {
+export function pgReadFrontendMessages<T extends ArrayBufferLike>(
+  buffered: Buffer<T>,
+  onMessage: (type: number, body: Buffer) => void,
+): Buffer<T> {
   while (buffered.length >= 5) {
     const len = buffered.readInt32BE(1);
     if (buffered.length < 1 + len) break;
@@ -246,13 +320,81 @@ export function pgReadFrontendMessages(buffered: Buffer, onMessage: (type: numbe
   return buffered;
 }
 
-// PostgreSQL FE/BE protocol §55.7 Bind (frontend) body: String(portal) String(statement) Int16(nformats) Int16[nformats]
-//   Int16(nparams) per param: Int32(byteLen | -1) Byte[len], then the result-column format codes (not read here)
 /** The parameter values of a frontend Bind message body, for a mock that answers with what was bound. */
 export function pgBindParameters(body: Buffer): (Buffer | null)[] {
-  let o = body.indexOf(0) + 1; // portal name
-  o = body.indexOf(0, o) + 1; // statement name
-  o += 2 + 2 * body.readUInt16BE(o); // parameter format codes
+  return pgDecodeBind(body).params;
+}
+
+// Frontend messages as a client writes them. The mocks only read these; the builders let a test state the exact
+// bytes it expects on the wire.
+
+function pgInt16List(values: number[]): Buffer {
+  const b = Buffer.alloc(2 + 2 * values.length);
+  b.writeInt16BE(values.length, 0);
+  for (let i = 0; i < values.length; i++) b.writeInt16BE(values[i], 2 + 2 * i);
+  return b;
+}
+
+// PostgreSQL FE/BE protocol §55.7 Parse: Byte1('P') Int32(len) String(statement) String(query) Int16(nparams) Int32[nparams](typeOid)
+export function pgParse(statement: string, query: string, typeOids: number[] = []): Buffer {
+  const oids = Buffer.alloc(2 + 4 * typeOids.length);
+  oids.writeInt16BE(typeOids.length, 0);
+  for (let i = 0; i < typeOids.length; i++) oids.writeInt32BE(typeOids[i], 2 + 4 * i);
+  return pgRaw("P", Buffer.concat([pgCString(statement), pgCString(query), oids]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 Describe: Byte1('D') Int32(len) Byte1('S' = statement | 'P' = portal) String(name)
+export function pgDescribe(kind: "S" | "P", name: string): Buffer {
+  return pgRaw("D", Buffer.concat([Buffer.from(kind, "latin1"), pgCString(name)]));
+}
+
+export type PgBindFrame = {
+  portal?: string;
+  statement: string;
+  /** One format code per parameter: 0 = text, 1 = binary. */
+  paramFormats: (0 | 1)[];
+  /** One value per parameter, already encoded; null is SQL NULL (length -1, no bytes). */
+  params: (Buffer | null)[];
+  /** Empty = every result column in text. Otherwise one code per column. */
+  resultFormats: (0 | 1)[];
+};
+
+// PostgreSQL FE/BE protocol §55.7 Bind: Byte1('B') Int32(len) String(portal) String(statement) Int16(nformats) Int16[nformats]
+//   Int16(nparams) per param: Int32(byteLen | -1) Byte[len], Int16(nresultformats) Int16[nresultformats]
+export function pgBind(bind: PgBindFrame): Buffer {
+  const count = Buffer.alloc(2);
+  count.writeInt16BE(bind.params.length, 0);
+  const values = bind.params.flatMap(p => (p === null ? [pgInt32(-1)] : [pgInt32(p.length), p]));
+  return pgRaw(
+    "B",
+    Buffer.concat([
+      pgCString(bind.portal ?? ""),
+      pgCString(bind.statement),
+      pgInt16List(bind.paramFormats),
+      count,
+      ...values,
+      pgInt16List(bind.resultFormats),
+    ]),
+  );
+}
+
+/** The inverse of pgBind, from a message body as pgReadFrontendMessages hands it out. The format codes are as sent. */
+export function pgDecodeBind(body: Buffer): Required<PgBindFrame> {
+  let o = 0;
+  const cstring = () => {
+    const end = body.indexOf(0, o);
+    const s = body.toString("utf-8", o, end);
+    o = end + 1;
+    return s;
+  };
+  const formats = () => {
+    const codes = Array.from({ length: body.readUInt16BE(o) }, (_, i) => body.readInt16BE(o + 2 + 2 * i) as 0 | 1);
+    o += 2 + 2 * codes.length;
+    return codes;
+  };
+  const portal = cstring();
+  const statement = cstring();
+  const paramFormats = formats();
   const params: (Buffer | null)[] = [];
   const count = body.readUInt16BE(o);
   o += 2;
@@ -262,7 +404,17 @@ export function pgBindParameters(body: Buffer): (Buffer | null)[] {
     params.push(len < 0 ? null : body.subarray(o, o + len));
     if (len > 0) o += len;
   }
-  return params;
+  return { portal, statement, paramFormats, params, resultFormats: formats() };
+}
+
+// PostgreSQL FE/BE protocol §55.7 Execute: Byte1('E') Int32(len) String(portal) Int32(maxRows, 0 = no limit)
+export function pgExecute(portal: string = "", maxRows: number = 0): Buffer {
+  return pgRaw("E", Buffer.concat([pgCString(portal), pgInt32(maxRows)]));
+}
+
+// PostgreSQL FE/BE protocol §55.7 Sync: Byte1('S') Int32(4)
+export function pgSync(): Buffer {
+  return pgRaw("S", Buffer.alloc(0));
 }
 
 // PostgreSQL FE/BE protocol §55.7 DataRow: Byte1('D') Int32(len) Int16(ncols) per col: Int32(byteLen | -1) Byte[len]
@@ -300,11 +452,13 @@ export const pgHold = Symbol("pgHold");
  * one-char string, e.g. "P", "B", "E", "S", "Q", "X") to `respond`; whatever it
  * returns is written back in order after the whole chunk has been parsed.
  * A reply can stop part-way with `pgHold`; `release()` sends what was kept back.
+ * `held()` resolves when the client has read what came before the `pgHold`.
  */
 export async function pgMockServer(
   respond: (type: string, body: Buffer, socket: net.Socket) => Buffer | (Buffer | typeof pgHold)[] | void,
-): Promise<{ port: number; server: net.Server; release(): void }> {
+): Promise<{ port: number; server: net.Server; held(): Promise<void>; release(): void }> {
   const releases = new Set<() => void>();
+  let holding = Promise.withResolvers<void>();
   const { port, server } = await listeningServer(socket => {
     let buffered = Buffer.alloc(0);
     let startup = true;
@@ -315,7 +469,7 @@ export async function pgMockServer(
     };
     releases.add(release);
     socket.on("close", () => releases.delete(release));
-    socket.on("data", chunk => {
+    socket.on("data", (chunk: Buffer) => {
       buffered = Buffer.concat([buffered, chunk]);
       const out: Buffer[] = [];
       if (startup) {
@@ -333,10 +487,230 @@ export async function pgMockServer(
         }
       });
       if (out.length) socket.write(Buffer.concat(out));
+      if (held && out.length) loopbackFence().then(holding.resolve);
     });
     socket.on("error", () => {});
   });
-  return { port, server, release: () => releases.forEach(release => release()) };
+  return {
+    port,
+    server,
+    held: () => holding.promise,
+    release() {
+      holding = Promise.withResolvers();
+      releases.forEach(release => release());
+    },
+  };
+}
+
+export type PgScramExchange = {
+  startup: Record<string, string>;
+  /** null when the client never sent a SASLInitialResponse. */
+  initial: { mechanism: string; clientFirstMessage: string } | null;
+  /** The client-final-message; null when the client never sent one. */
+  clientFinal: string | null;
+  /** Whether the proof and the channel binding verified; null when the client never sent them. */
+  proofOk: boolean | null;
+};
+
+const hmacSha256 = (key: Buffer, data: string) => createHmac("sha256", key).update(data).digest();
+
+/**
+ * Postgres mock that runs the server side of SCRAM-SHA-256 and SCRAM-SHA-256-PLUS (RFC 5802, RFC 7677, the
+ * tls-server-end-point binding of RFC 5929), then answers AuthenticationOk + ReadyForQuery, or 28P01.
+ * `exchanges` gets one entry per StartupMessage. A simple query gets an empty result.
+ */
+export async function pgScramServer(options: {
+  /** What the role's verifier was made from: the password after the server's SASLprep. */
+  password: string;
+  /** `i=` of the server-first-message. PBKDF2 only runs once a proof arrives. */
+  iterations?: number;
+  mechanisms?: string[];
+  /**
+   * Answer SSLRequest with 'S' and go on over TLS. Without it the answer is 'N'.
+   * `digest`: what RFC 5929 §4.1 hashes this certificate with, when it is not SHA-256.
+   */
+  tls?: { key: string; cert: string; digest?: string };
+  /** Sent in place of AuthenticationSASL (md5, cleartext, ...); the password message that comes back is accepted. */
+  first?: Buffer;
+  /** Appended to the server-first-message, e.g. ",m=ext". */
+  serverFirstExtra?: string;
+  /** What the nth connection gets for its first message in place of a login. The connection ends with it. */
+  instead?: (nth: number) => Buffer | undefined;
+}): Promise<{ port: number; exchanges: PgScramExchange[]; [Symbol.asyncDispose](): Promise<void> }> {
+  const { password, iterations = 4096, mechanisms = ["SCRAM-SHA-256"], serverFirstExtra = "" } = options;
+  const salt = randomBytes(16);
+  let saltedPassword: Buffer | undefined;
+  const certificateHash = options.tls
+    ? createHash(options.tls.digest ?? "sha256")
+        .update(new X509Certificate(options.tls.cert).raw)
+        .digest()
+    : Buffer.alloc(0);
+  const exchanges: PgScramExchange[] = [];
+  const sockets = new Set<net.Socket>();
+  let accepted = 0;
+
+  const { port, server } = await listeningServer(raw => {
+    sockets.add(raw);
+    raw.on("close", () => sockets.delete(raw));
+    raw.on("error", () => {});
+    const instead = options.instead?.(++accepted);
+    if (instead) return void raw.once("data", () => raw.end(instead));
+    let stream: net.Socket = raw;
+    let buffered = Buffer.alloc(0);
+    let exchange: PgScramExchange | undefined;
+    let gs2Header = "";
+    let clientFirstBare = "";
+    let serverFirst = "";
+
+    const onPasswordMessage = (exchange: PgScramExchange, body: Buffer) => {
+      if (options.first) {
+        stream.write(Buffer.concat([pgAuthenticationOk(), pgReadyForQuery()]));
+        return;
+      }
+      if (!exchange.initial) {
+        exchange.initial = pgParseSASLInitialResponse(body);
+        const message = exchange.initial.clientFirstMessage;
+        // RFC 5802 §7: gs2-header = gs2-cbind-flag "," [authzid] ","
+        const headerEnd = message.indexOf(",", message.indexOf(",") + 1) + 1;
+        gs2Header = message.slice(0, headerEnd);
+        clientFirstBare = message.slice(headerEnd);
+        const clientNonce = clientFirstBare.split(",").find(attribute => attribute.startsWith("r="))!;
+        serverFirst = `${clientNonce}${randomBytes(18).toString("base64")},s=${salt.toString("base64")},i=${iterations}${serverFirstExtra}`;
+        stream.write(pgAuthenticationSASLContinue(serverFirst));
+        return;
+      }
+      if (exchange.clientFinal !== null) return;
+      const clientFinal = (exchange.clientFinal = body.toString("utf-8"));
+      const proofAt = clientFinal.lastIndexOf(",p=");
+      const authMessage = `${clientFirstBare},${serverFirst},${clientFinal.slice(0, proofAt)}`;
+      saltedPassword ??= pbkdf2Sync(password, salt, iterations, 32, "sha256");
+      const clientKey = hmacSha256(saltedPassword, "Client Key");
+      const clientSignature = hmacSha256(createHash("sha256").update(clientKey).digest(), authMessage);
+      const proof = Buffer.from(clientKey.map((byte, i) => byte ^ clientSignature[i]));
+      const binding = Buffer.concat([
+        Buffer.from(gs2Header),
+        exchange.initial.mechanism.endsWith("-PLUS") ? certificateHash : Buffer.alloc(0),
+      ]);
+      exchange.proofOk =
+        clientFinal.slice(proofAt + 3) === proof.toString("base64") &&
+        clientFinal.startsWith(`c=${binding.toString("base64")},`);
+      if (!exchange.proofOk) {
+        const M = `password authentication failed for user "${exchange.startup.user}"`;
+        stream.end(pgErrorResponse({ S: "FATAL", C: "28P01", M }));
+        return;
+      }
+      const serverSignature = hmacSha256(hmacSha256(saltedPassword, "Server Key"), authMessage);
+      stream.write(
+        Buffer.concat([
+          pgAuthenticationSASLFinal(`v=${serverSignature.toString("base64")}`),
+          pgAuthenticationOk(),
+          pgReadyForQuery(),
+        ]),
+      );
+    };
+
+    const onData = (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      if (!exchange) {
+        if (buffered.length >= 8 && buffered.subarray(0, 8).equals(pgSSLRequest())) {
+          const leftover = buffered.subarray(8);
+          buffered = Buffer.alloc(0);
+          raw.write(pgSSLResponse(options.tls ? "S" : "N"));
+          if (!options.tls) return;
+          raw.removeListener("data", onData);
+          raw.pause();
+          if (leftover.length) raw.unshift(leftover);
+          stream = new tls.TLSSocket(raw, { isServer: true, key: options.tls.key, cert: options.tls.cert });
+          stream.on("error", () => {});
+          stream.on("data", onData);
+          return;
+        }
+        const startup = pgParseStartupMessage(buffered);
+        if (!startup) return;
+        buffered = startup.rest;
+        exchanges.push((exchange = { startup: startup.params, initial: null, clientFinal: null, proofOk: null }));
+        stream.write(options.first ?? pgAuthenticationSASL(mechanisms));
+      }
+      const current = exchange;
+      buffered = pgReadFrontendMessages(buffered, (type, body) => {
+        if (type === 0x70 /* 'p' */) onPasswordMessage(current, body);
+        if (type === 0x51 /* 'Q' */) stream.write(Buffer.concat([pgCommandComplete("SELECT 0"), pgReadyForQuery()]));
+      });
+    };
+    raw.on("data", onData);
+  });
+
+  return {
+    port,
+    exchanges,
+    async [Symbol.asyncDispose]() {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    },
+  };
+}
+
+/**
+ * TCP proxy in front of a real PostgreSQL (no TLS). Every byte goes through
+ * unchanged and in order; only the segmentation of the backend stream differs.
+ * After `holdAfterError()`, the proxy forwards the backend stream up to the end
+ * of the next ErrorResponse and keeps back what follows, the ReadyForQuery of
+ * the failed query first, until `release()`. `held()` resolves when the client
+ * has read that ErrorResponse.
+ */
+export async function pgHoldingProxy(
+  upstreamHost: string,
+  upstreamPort: number,
+): Promise<{ port: number; server: net.Server; holdAfterError(): void; held(): Promise<void>; release(): void }> {
+  let armed = false;
+  let holding = Promise.withResolvers<void>();
+  const releases = new Set<() => void>();
+  const { port, server } = await listeningServer(client => {
+    const upstream = net.connect(upstreamPort, upstreamHost);
+    let buffered = Buffer.alloc(0);
+    let held: Buffer[] | undefined;
+    const release = () => {
+      if (held?.length) client.write(Buffer.concat(held));
+      held = undefined;
+    };
+    releases.add(release);
+    client.on("data", chunk => upstream.write(chunk));
+    upstream.on("data", (chunk: Buffer) => {
+      buffered = Buffer.concat([buffered, chunk]);
+      const out: Buffer[] = [];
+      let end = 0;
+      while (buffered.length - end >= 5) {
+        const frameEnd = end + 1 + buffered.readInt32BE(end + 1);
+        if (buffered.length < frameEnd) break;
+        (held ?? out).push(buffered.subarray(end, frameEnd));
+        if (armed && buffered[end] === 0x45 /* 'E' ErrorResponse */) {
+          armed = false;
+          held = [];
+        }
+        end = frameEnd;
+      }
+      buffered = buffered.subarray(end);
+      if (out.length) client.write(Buffer.concat(out));
+      if (held && out.length) loopbackFence().then(holding.resolve);
+    });
+    client.on("close", () => {
+      releases.delete(release);
+      upstream.destroy();
+    });
+    upstream.on("close", () => client.destroy());
+    client.on("error", () => {});
+    upstream.on("error", () => {});
+  });
+  return {
+    port,
+    server,
+    holdAfterError() {
+      armed = true;
+      holding = Promise.withResolvers();
+    },
+    held: () => holding.promise,
+    release: () => releases.forEach(release => release()),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -417,10 +791,21 @@ export function mysqlHandshakeV10(
   return mysqlRawPacket(0, payload);
 }
 
+// Server status flags — SERVER_STATUS_flags_enum in mysql__com_8h.html (subset used by the mocks).
+export const MYSQL_SERVER_STATUS_AUTOCOMMIT = 0x0002;
+export const MYSQL_SERVER_MORE_RESULTS_EXISTS = 0x0008; // another result set of the same response follows
+
 // MySQL Protocol::OK_Packet — page_protocol_basic_ok_packet.html: Int<1>(header) lenenc(affected_rows) lenenc(last_insert_id) Int<2>(status) Int<2>(warnings)
 // The header is 0x00, except for the CLIENT_DEPRECATE_EOF result-set terminator, which is an OK packet with a 0xFE header.
-export function mysqlOkPacket(seq: number, header: 0x00 | 0xfe = 0x00): Buffer {
-  return mysqlRawPacket(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+export function mysqlOkPacket(
+  seq: number,
+  header: 0x00 | 0xfe = 0x00,
+  statusFlags: number = MYSQL_SERVER_STATUS_AUTOCOMMIT,
+): Buffer {
+  return mysqlRawPacket(
+    seq,
+    Buffer.from([header, 0x00, 0x00, statusFlags & 0xff, (statusFlags >> 8) & 0xff, 0x00, 0x00]),
+  );
 }
 
 // MySQL ERR_Packet — page_protocol_basic_err_packet.html:
@@ -580,16 +965,70 @@ export function mysqlTextResultSetRow(seq: number, cols: (string | Buffer)[]): B
 // MySQL Textual Resultset — page_protocol_com_query_response_text_resultset.html, in the
 // CLIENT_DEPRECATE_EOF framing: lenenc(column_count) packet, one ColumnDefinition41 per
 // column, one row packet per row, then an OK packet with the 0xFE header as the terminator.
+// A response with several result sets (CALL, multi-statement) is these back to back: every
+// terminator but the last carries MYSQL_SERVER_MORE_RESULTS_EXISTS in `statusFlags`, and the
+// sequence ids run on (this result set takes 2 + columns.length + rows.length of them).
 export function mysqlTextResultSet(
   startSeq: number,
   columns: { name: string; type: number }[],
   rows: string[][],
+  statusFlags?: number,
 ): Buffer {
   let seq = startSeq;
   const parts: Buffer[] = [mysqlRawPacket(seq++, mysqlLenencInt(columns.length))];
   for (const column of columns) parts.push(mysqlColumnDefinition(seq++, column));
   for (const row of rows) parts.push(mysqlTextResultSetRow(seq++, row));
-  parts.push(mysqlOkPacket(seq, 0xfe));
+  parts.push(mysqlOkPacket(seq, 0xfe, statusFlags));
+  return Buffer.concat(parts);
+}
+
+// MySQL Binary Protocol Resultset Row — page_protocol_binary_resultset.html#sect_protocol_binary_resultset_row:
+//   Int<1>(0x00) Byte<(column_count + 7 + 2) / 8>(NULL bitmap, first column at bit 2) then every non-NULL value.
+// Each value is already in its column type's binary encoding (mysqlBinaryLong, mysqlLenencStr, ...),
+// so a fault-injection test can put bytes here that no server sends.
+export function mysqlBinaryResultSetRow(seq: number, values: (Buffer | null)[]): Buffer {
+  const nullBitmap = Buffer.alloc((values.length + 7 + 2) >> 3);
+  values.forEach((value, i) => {
+    if (value === null) nullBitmap[(i + 2) >> 3] |= 1 << ((i + 2) & 7);
+  });
+  return mysqlRawPacket(
+    seq,
+    Buffer.concat([Buffer.from([0x00]), nullBitmap, ...values.filter((value): value is Buffer => value !== null)]),
+  );
+}
+
+// Binary protocol value of MYSQL_TYPE_LONG — page_protocol_binary_resultset.html#sect_protocol_binary_resultset_row_value_long: Int<4>
+export function mysqlBinaryLong(n: number): Buffer {
+  const value = Buffer.alloc(4);
+  value.writeInt32LE(n);
+  return value;
+}
+
+// Binary protocol value of MYSQL_TYPE_DATE — page_protocol_binary_resultset.html#sect_protocol_binary_resultset_row_value_date:
+//   Int<1>(length) Int<2>(year) Int<1>(month) Int<1>(day). With a time part (DATETIME, TIMESTAMP) the length is 7 or 11.
+// `declaredLength` is the fault-injection escape hatch (mirrors mysqlRawPacket): a server only sends 0, 4, 7 or 11.
+export function mysqlBinaryDate(year: number, month: number, day: number, declaredLength: number = 4): Buffer {
+  const value = Buffer.alloc(5);
+  value[0] = declaredLength;
+  value.writeUInt16LE(year, 1);
+  value[3] = month;
+  value[4] = day;
+  return value;
+}
+
+// MySQL Binary Protocol Resultset — page_protocol_binary_resultset.html: what COM_STMT_EXECUTE answers with.
+// The framing is mysqlTextResultSet's (see there for `statusFlags`); only the rows differ.
+export function mysqlBinaryResultSet(
+  startSeq: number,
+  columns: { name: string; type: number }[],
+  rows: (Buffer | null)[][],
+  statusFlags?: number,
+): Buffer {
+  let seq = startSeq;
+  const parts: Buffer[] = [mysqlRawPacket(seq++, mysqlLenencInt(columns.length))];
+  for (const column of columns) parts.push(mysqlColumnDefinition(seq++, column));
+  for (const row of rows) parts.push(mysqlBinaryResultSetRow(seq++, row));
+  parts.push(mysqlOkPacket(seq, 0xfe, statusFlags));
   return Buffer.concat(parts);
 }
 
@@ -607,7 +1046,10 @@ export function mysqlStmtPrepareOk(seq: number, stmtId: number, numColumns: numb
 }
 
 /** Drain complete MySQL packets from `buffered`, calling onPacket(seq, payload) for each; returns the leftover bytes. */
-export function mysqlReadPackets(buffered: Buffer, onPacket: (seq: number, payload: Buffer) => void): Buffer {
+export function mysqlReadPackets<T extends ArrayBufferLike>(
+  buffered: Buffer<T>,
+  onPacket: (seq: number, payload: Buffer) => void,
+): Buffer<T> {
   while (buffered.length >= 4) {
     const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
     if (buffered.length < 4 + len) break;

@@ -1,10 +1,19 @@
-const SymbolIterator = Symbol.iterator;
-const SymbolAsyncIterator = Symbol.asyncIterator;
+const SymbolIterator: typeof Symbol.iterator = Symbol.iterator;
+const SymbolAsyncIterator: typeof Symbol.asyncIterator = Symbol.asyncIterator;
 const PromisePrototypeThen = Promise.prototype.$then;
 const { aggregateTwoErrors } = require("internal/errors");
 
-function from(Readable, iterable, opts) {
-  let iterator;
+interface MaybeIterable {
+  [Symbol.asyncIterator]?(): AsyncIterator<unknown>;
+  [Symbol.iterator]?(): Iterator<unknown>;
+}
+
+function from<T extends $Node.Readable>(
+  Readable: new (options?: $Node.DuplexOptions) => T,
+  iterable: string | MaybeIterable,
+  opts?: $Node.DuplexOptions,
+) {
+  let iterator: Iterator<unknown> | AsyncIterator<unknown>;
   if (typeof iterable === "string" || iterable instanceof Buffer) {
     return new Readable({
       objectMode: true,
@@ -16,7 +25,7 @@ function from(Readable, iterable, opts) {
     });
   }
 
-  let isAsync;
+  let isAsync: boolean;
   if (iterable?.[SymbolAsyncIterator]) {
     isAsync = true;
     iterator = iterable[SymbolAsyncIterator]();
@@ -62,23 +71,23 @@ function from(Readable, iterable, opts) {
       PromisePrototypeThen.$call(
         close(combinedError),
         $isCallable(cb) ? () => process.nextTick(cb, combinedError) : () => {}, // nextTick is here in case cb throws
-        $isCallable(cb) ? closeError => process.nextTick(cb, aggregateTwoErrors(combinedError, closeError)) : () => {},
+        $isCallable(cb) ? closeError => process.nextTick(cb, aggregateTwoErrors(combinedError!, closeError)) : () => {},
       );
     });
   };
 
-  async function close(error) {
+  async function close(error: Error | null | undefined) {
     const hadError = error !== undefined && error !== null;
     const hasThrow = typeof iterator.throw === "function";
     if (hadError && hasThrow) {
-      const { value, done } = await iterator.throw(error);
+      const { value, done } = await iterator.throw!(error);
       await value;
       if (done) {
         return;
       }
     }
     if (typeof iterator.return === "function") {
-      const { value } = await iterator.return();
+      const { value } = await iterator.return!();
       await value;
     }
   }
@@ -89,14 +98,14 @@ function from(Readable, iterable, opts) {
   function nextSyncWithSyncValues() {
     for (;;) {
       try {
-        const { value, done } = iterator.next();
+        const { value, done } = (iterator as Iterator<unknown>).next();
 
         if (done) {
           readable.push(null);
           return;
         }
 
-        if (value && typeof value.then === "function") {
+        if (value && typeof (value as { then?: unknown }).then === "function") {
           return changeToAsyncValues(value);
         }
 
@@ -111,13 +120,13 @@ function from(Readable, iterable, opts) {
 
         reading = false;
       } catch (err) {
-        readable.destroy(err);
+        readable.destroy(err as Error);
       }
       break;
     }
   }
 
-  async function changeToAsyncValues(value) {
+  async function changeToAsyncValues(value: unknown) {
     isAsyncValues = true;
 
     try {
@@ -135,21 +144,21 @@ function from(Readable, iterable, opts) {
 
       reading = false;
     } catch (err) {
-      readable.destroy(err);
+      readable.destroy(err as Error);
     }
   }
 
   async function nextSyncWithAsyncValues() {
     for (;;) {
       try {
-        const { value, done } = iterator.next();
+        const { value, done } = (iterator as Iterator<unknown>).next();
 
         if (done) {
           readable.push(null);
           return;
         }
 
-        const res = value && typeof value.then === "function" ? await value : value;
+        const res = value && typeof (value as { then?: unknown }).then === "function" ? await value : value;
 
         if (res === null) {
           reading = false;
@@ -162,7 +171,7 @@ function from(Readable, iterable, opts) {
 
         reading = false;
       } catch (err) {
-        readable.destroy(err);
+        readable.destroy(err as Error);
       }
       break;
     }
@@ -189,7 +198,7 @@ function from(Readable, iterable, opts) {
 
         reading = false;
       } catch (err) {
-        readable.destroy(err);
+        readable.destroy(err as Error);
       }
       break;
     }

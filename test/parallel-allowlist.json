@@ -9,7 +9,7 @@
     "stats": {
       "dirs": 250,
       "files": 1513,
-      "excluded": 366
+      "excluded": 368
     }
   },
   "dirs": [
@@ -265,6 +265,18 @@
     "snippets"
   ],
   "excludeFiles": [
+    "bundler/bundler_compile_aot.test.ts",
+    "bundler/compile-aot-heap-snapshot.test.ts",
+    "cli/aot-builtin-modules-and-computed-paths.test.ts",
+    "cli/aot-builtin-modules-and-names-handed-to-a-parameter.test.ts",
+    "cli/aot-builtin-modules-and-node-module.test.ts",
+    "cli/aot-builtin-modules-and-the-globals.test.ts",
+    "cli/aot-builtin-modules-and-where-a-global-goes.test.ts",
+    "cli/aot-builtin-modules-of-a-small-program.test.ts",
+    "cli/aot-check-and-build-flags.test.ts",
+    "cli/crash-if-interpreter-is-used.test.ts",
+    "cli/inspect/compile-aot-inspector.test.ts",
+    "cli/run/run-aot.test.ts",
     "bake/deinitialization.test.ts",
     "bake/dev-and-prod.test.ts",
     "bake/dev/bundle.test.ts",
@@ -343,6 +355,7 @@
     "internal/build-debug-info-flags.test.ts",
     "internal/build-post-link-ordering.test.ts",
     "internal/build-rust-toolchain-probe.test.ts",
+    "internal/harness-max-rss.test.ts",
     "internal/internal-module-blob.test.ts",
     "internal/linear-fifo.test.ts",
     "internal/macos-cross-config.test.ts",
@@ -432,6 +445,7 @@
     "js/bun/util/inspect.test.js",
     "js/bun/util/password.test.ts",
     "js/bun/util/text-loader.test.ts",
+    "js/bun/wasm/compile-rss.test.ts",
     "js/bun/websocket/websocket-server-rsv-frames.test.ts",
     "js/bun/webview/webview-chrome.test.ts",
     "js/bun/xml/xml-test-suite.test.ts",
@@ -497,8 +511,6 @@
     "js/node/worker_threads/worker_threads.test.ts",
     "js/node/zlib/leak.test.ts",
     "js/sql/local-sql.test.ts",
-    "js/sql/postgres-binary-numeric-digit-range.test.ts",
-    "js/sql/postgres-binary-numeric.test.ts",
     "js/sql/postgres-datestyle.test.ts",
     "js/sql/postgres-listen-notify.test.ts",
     "js/sql/postgres-multi-statement-fields.test.ts",

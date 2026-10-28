@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: Buffer, structuredClone, MessageChannel",
+  "runWithASAN": "it reads and writes views whose memory is transferred, resized or grown inside the loop"
+}

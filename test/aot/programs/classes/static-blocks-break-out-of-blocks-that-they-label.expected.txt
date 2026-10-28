@@ -1,0 +1,10 @@
+in the block
+behind the block
+in both
+behind both
+in the inner one
+behind the outer one
+finally
+item 1
+item 2
+LeavesABlock,LeavesTheInnerOfTwo,LeavesTheOuterOfTwo,RunsAFinally,LeavesABlockFromALoop

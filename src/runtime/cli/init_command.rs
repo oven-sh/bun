@@ -313,6 +313,7 @@ impl InitCommand {
 
         let mut template: Template = Template::Blank;
         let mut prev_flag_was_react = false;
+        let mut ca_store_flags: Vec<&[u8]> = Vec::new();
         for arg_ in init_args {
             let arg = arg_.as_bytes();
             if parse_flags && !arg.is_empty() && arg[0] == b'-' {
@@ -351,6 +352,9 @@ impl InitCommand {
                     prev_flag_was_react = false;
                     auto_yes = true;
                 } else {
+                    if Global::is_ca_store_flag(arg) {
+                        ca_store_flags.push(arg);
+                    }
                     prev_flag_was_react = false;
                 }
             } else {
@@ -361,6 +365,8 @@ impl InitCommand {
                 }
             }
         }
+
+        Global::set_ca_store_from_flags(|flag| ca_store_flags.contains(&flag));
 
         // The template picker reads single keystrokes from raw-mode stdin; on a
         // pipe (CI, `spawn(...,{stdio:'pipe'})`, `foo | bun init`) that blocks
@@ -741,6 +747,23 @@ impl InitCommand {
             need_run_bun_install =
                 needs_dependencies || needs_dev_dependencies || needs_typescript_dependency;
 
+            // `bun check` needs no script. A script is where people and tools look for how a project is type checked.
+            if !minimal && is_type_script_entry_point(&fields.entry_point) {
+                let mut scripts = dependency_map(object, b"scripts");
+                if scripts.get(b"typecheck").is_none() {
+                    // `bun check` runs a `check` script, if there is one.
+                    let command: &[u8] = match scripts.get(b"check") {
+                        Some(_) => b"bun --check",
+                        None => b"bun check",
+                    };
+                    scripts
+                        .data
+                        .as_e_object_mut()
+                        .put_string(&bump, b"typecheck", command)?;
+                    object.put(&bump, b"scripts", scripts)?;
+                }
+            }
+
             if needs_dependencies {
                 let mut dependencies_object = dependency_map(object, b"dependencies");
                 let mut iter = needed_dependencies.iter_set();
@@ -868,29 +891,20 @@ impl InitCommand {
                     ep_z.push(0);
                     let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
                     // SAFETY: ep_z[len-1] == 0 written above
-                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");");
+                    let _ = Assets::create_new(ep_zstr, b"console.log(\"Hello via Bun!\");\n");
                     // suppress
                 }
 
                 if steps.write_tsconfig {
                     'brk: {
-                        let extname = bun_paths::extension(&fields.entry_point);
-                        let loader = options::DEFAULT_LOADERS
-                            .get(extname)
-                            .copied()
-                            .unwrap_or(bun_ast::Loader::Ts);
-                        let filename: &[u8] = if loader.is_type_script() {
-                            b"tsconfig.json"
-                        } else {
-                            b"jsconfig.json"
-                        };
-                        if Assets::create_full(
-                            Assets::TSCONFIG_JSON,
-                            filename,
-                            " (for editor autocomplete)",
-                            &[],
-                        )
-                        .is_err()
+                        let (filename, what_for): (&[u8], _) =
+                            if is_type_script_entry_point(&fields.entry_point) {
+                                (b"tsconfig.json", " (for bun check and editor autocomplete)")
+                            } else {
+                                (b"jsconfig.json", " (for editor autocomplete)")
+                            };
+                        if Assets::create_full(Assets::TSCONFIG_JSON, filename, what_for, &[])
+                            .is_err()
                         {
                             break 'brk;
                         }
@@ -924,14 +938,17 @@ impl InitCommand {
                             bstr::BStr::new(&fields.entry_point),
                         );
                     }
+
+                    if is_type_script_entry_point(&fields.entry_point) {
+                        bun_core::pretty!("To type check, run:\n\n    <cyan>bun check<r>\n\n");
+                    }
                 }
 
                 Output::flush();
 
                 if exists_z(b"package.json") && need_run_bun_install {
                     bun_core::prettyln!("");
-                    let self_exe = bun::self_exe_path()?;
-                    let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
+                    let _ = bun::spawn_sync_inherit(&bun_install_argv()?)?;
                 }
             }
             _ => {}
@@ -939,6 +956,12 @@ impl InitCommand {
 
         Ok(())
     }
+}
+
+fn bun_install_argv() -> Result<Vec<&'static [u8]>, Error> {
+    let mut argv: Vec<&[u8]> = vec![bun::self_exe_path()?.as_bytes(), b"install"];
+    argv.extend(Global::ca_store_flag().map(ZStr::as_bytes));
+    Ok(argv)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1458,7 +1481,7 @@ impl Template {
             return false;
         };
         // SAFETY: FileSystem::instance() returns the process-global singleton.
-        let top_level_dir = Fs::FileSystem::get().top_level_dir;
+        let top_level_dir = Fs::FileSystem::get().top_level_dir();
         bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
 
@@ -1544,7 +1567,7 @@ impl Template {
             let _ = Assets::create_new(
                 ZStr::from_static(b"CLAUDE.md\0"),
                 // SAFETY: literal is NUL-terminated
-                &Self::AGENT_RULE[end_of_frontmatter..],
+                Self::AGENT_RULE[end_of_frontmatter..].trim_ascii_start(),
             );
         }
     }
@@ -1667,8 +1690,7 @@ impl Template {
         bun_core::pretty!("\n");
         Output::flush();
 
-        let self_exe = bun::self_exe_path()?;
-        let _ = bun::spawn_sync_inherit_no_stdin(&[self_exe.as_bytes(), b"install"])?;
+        let _ = bun::spawn_sync_inherit_no_stdin(&bun_install_argv()?)?;
 
         bun_core::prettyln!(
             "\n\
@@ -1916,6 +1938,14 @@ fn dependency_map(package_json: &bun_ast::E::Object, key: &[u8]) -> bun_ast::Exp
         .get(key)
         .filter(|value| value.data.is_e_object())
         .unwrap_or_else(|| bun_ast::Expr::init(bun_ast::E::Object::default(), bun_ast::Loc::EMPTY))
+}
+
+fn is_type_script_entry_point(entry_point: &[u8]) -> bool {
+    options::DEFAULT_LOADERS
+        .get(bun_paths::extension(entry_point))
+        .copied()
+        .unwrap_or(bun_ast::Loader::Ts)
+        .is_type_script()
 }
 
 /// Refuse entry-point paths that would escape the project directory

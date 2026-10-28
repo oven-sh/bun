@@ -90,9 +90,7 @@ impl SourceProvider for BakeSourceProvider {
             // slice (which fails to parse as a map) rather than a disk fallback.
             return Some(b"");
         };
-        // The returned slice borrows `PerThread.bundled_outputs`, which lives
-        // for the bake build session and outlives this provider (the provider
-        // is created from a `bundled_outputs` entry).
+        // Borrows `PerThread.bundled_outputs`; `pt` is null once `PerThread` has dropped.
         Some(pt.bundled_outputs[idx.get() as usize].value.as_slice())
     }
 }
@@ -144,6 +142,17 @@ pub(crate) fn add_bake_source_provider_source_map(
         ),
         slice.slice(),
     );
+}
+
+// HOST_EXPORT(Bun__removeBakeSourceProviderSourceMap, c)
+pub(crate) fn remove_bake_source_provider_source_map(
+    vm: &mut VirtualMachine,
+    opaque_source_provider: *mut c_void,
+    specifier: &BunString,
+) {
+    let slice = specifier.to_utf8();
+    vm.source_mappings
+        .remove_source_provider(opaque_source_provider, slice.slice());
 }
 
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)

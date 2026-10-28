@@ -67,9 +67,6 @@ private:
         HttpRequest *httpRequest;
     };
 
-    /* This is the currently browsed-to router when using SNI */
-    HttpRouter<RouterData> *currentRouter = &router;
-
     /* The socket onData is currently parsing, nullptr outside a parse. The
      * close gates in internalEnd need the per-socket identity: a DIFFERENT
      * socket's response can complete inside this window (a microtask drained
@@ -78,7 +75,6 @@ private:
      * checks the parsed socket. */
     struct us_socket_t *parsingSocket = nullptr;
 
-    /* This is the default router for default SNI or non-SSL */
     HttpRouter<RouterData> router;
     void *upgradedWebSocket = nullptr;
     /* Used to simulate Node.js socket events. */
@@ -89,6 +85,7 @@ private:
     OnClientErrorCallback onClientError = nullptr;
 
     uint64_t maxHeaderSize = 0; // 0 means no limit
+    uint32_t maxHeadersCount = 0; // node:http server.maxHeadersCount; 0 means not set
 
     /* HTTP/2: set by Http2Context::attach(). A connection that negotiated h2
      * (ALPN) or opened with the prior-knowledge preface is handed over via
@@ -100,10 +97,8 @@ private:
      * and non-preface cleartext). */
     bool allowHttp1 = true;
 
-    // TODO: SNI
     void clearRoutes() {
         this->router = HttpRouter<RouterData>{};
-        this->currentRouter = &router;
         /* Not filterHandlers: filters are per-context open/close hooks, not
          * routes. server.reload() never re-registers them, so wiping them here
          * leaves Bun's active_connection_count (and node:http's 'connection'
@@ -113,6 +108,8 @@ private:
 public:
     
     HttpFlags flags;
+
+    bool isParsing(struct us_socket_t *s) const { return flags.isParsingHttp && parsingSocket == s; }
 };
 
 }

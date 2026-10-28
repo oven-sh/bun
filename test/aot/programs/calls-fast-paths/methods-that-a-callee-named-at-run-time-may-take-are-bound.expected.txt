@@ -1,0 +1,8 @@
+bytes alive for an object, its bound method and the array's slot: 72
+bytes alive for an object, its bound async method and the array's slot: 72
+bound plain 1 false true 20001
+bound later 1 true false 20001
+bound another name 1 true false 19997
+bound moved 1 false true 39998
+20000 20001 true true AsyncFunction true 39998
+10100 800000

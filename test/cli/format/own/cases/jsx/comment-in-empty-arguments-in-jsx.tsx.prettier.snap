@@ -1,0 +1,67 @@
+------------------
+{ printWidth: 80 }
+------------------
+const a = <A b={new J(/* 1 */)} />;
+
+const c = <A b={new J(/* 1 */)} c="d" />;
+
+const d = <A {...new J(/* 1 */)} />;
+
+const e = <A {...new J(/* 1 */)} c="d" />;
+
+const f = <A b={new J(/* 1 */)}>x</A>;
+
+const g = [<A b={new J(/* 1 */)} />, k];
+
+const h = <A>{new J(/* 1 */)}</A>;
+
+const i = <A>{new J(/* 1 */)}x</A>;
+
+const j = (
+  <A>
+    {new J(/* 1 */)}
+    <b />
+  </A>
+);
+
+const l = (
+  <A>
+    <c d={new J(/* 1 */)} />
+    <e />
+  </A>
+);
+
+-------------------
+{ printWidth: 100 }
+-------------------
+const a = <A b={new J(/* 1 */)} />;
+
+const c = <A b={new J(/* 1 */)} c="d" />;
+
+const d = <A {...new J(/* 1 */)} />;
+
+const e = <A {...new J(/* 1 */)} c="d" />;
+
+const f = <A b={new J(/* 1 */)}>x</A>;
+
+const g = [<A b={new J(/* 1 */)} />, k];
+
+const h = <A>{new J(/* 1 */)}</A>;
+
+const i = <A>{new J(/* 1 */)}x</A>;
+
+const j = (
+  <A>
+    {new J(/* 1 */)}
+    <b />
+  </A>
+);
+
+const l = (
+  <A>
+    <c d={new J(/* 1 */)} />
+    <e />
+  </A>
+);
+
+===================== End =====================

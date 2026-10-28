@@ -152,6 +152,10 @@ declare var ReadableStream: Bun.__internal.UseLibDomIfAvailable<
     prototype: ReadableStream;
     new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
     new <R = any>(underlyingSource?: Bun.DirectUnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+    new <R extends Uint8Array = Uint8Array<ArrayBuffer>>(
+      underlyingSource: import("node:stream/web").UnderlyingByteSource,
+      strategy?: { highWaterMark?: number },
+    ): ReadableStream<R>;
   }
 >;
 
@@ -1236,11 +1240,15 @@ interface Console {
    * @param data something to display
    */
   error(...data: any[]): void;
-  /** Does nothing currently */
+  /**
+   * Start a group. Logs `data` as the label of the group, if there is any,
+   * then indents later `log`, `info`, `debug`, `warn`, `error`, `dir` and
+   * `trace` output by two more spaces.
+   */
   group(...data: any[]): void;
-  /** Does nothing currently */
+  /** An alias for {@link group}. */
   groupCollapsed(...data: any[]): void;
-  /** Does nothing currently */
+  /** End the most recent group that is still open, and remove its indent. */
   groupEnd(): void;
   info(...data: any[]): void;
   log(...data: any[]): void;
@@ -1501,6 +1509,16 @@ interface Blob {
    * The MIME type of this Blob
    */
   readonly type: string;
+
+  /**
+   * Returns a new `Blob` with the bytes from `start` up to but not including
+   * `end`. Negative indices count from the end.
+   *
+   * @param start byte offset to start at. Defaults to 0.
+   * @param end byte offset to stop at. Defaults to `size`.
+   * @param contentType the `type` of the new `Blob`.
+   */
+  slice(start?: number, end?: number, contentType?: string): Blob;
 
   /**
    * Read the data from the blob as a JSON object.
@@ -1822,7 +1840,10 @@ declare var ReadableStreamBYOBRequest: Bun.__internal.UseLibDomIfAvailable<
 interface TextDecoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextDecoderStream {}
 declare var TextDecoderStream: Bun.__internal.UseLibDomIfAvailable<
   "TextDecoderStream",
-  { prototype: TextDecoderStream; new (): TextDecoderStream }
+  {
+    prototype: TextDecoderStream;
+    new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoderStream;
+  }
 >;
 
 interface TextEncoderStream extends Bun.__internal.LibEmptyOrNodeStreamWebTextEncoderStream {}
@@ -1965,7 +1986,11 @@ interface BunFetchRequestInitTLS extends Bun.TLSOptions {
    *
    * @param hostname - The hostname of the server
    * @param cert - The certificate of the server
-   * @returns An error if the server is unauthorized, otherwise undefined
+   * @returns An error if the server is unauthorized, otherwise undefined. Any
+   * other truthy value also fails the request, and a `Promise` is one: the
+   * function cannot be `async`. Every falsy value approves the certificate, as
+   * in Node, so `false` does not reject it. For that reason the type allows
+   * only `undefined` and `Error`.
    */
   checkServerIdentity?: NonNullable<import("node:tls").ConnectionOptions["checkServerIdentity"]>;
 }
@@ -2122,12 +2147,7 @@ interface BunFetchRequestInit extends RequestInit {
    * ```
    */
   compress?:
-    | boolean
-    | "gzip"
-    | "deflate"
-    | "br"
-    | "zstd"
-    | { encoding: "gzip" | "deflate" | "br" | "zstd"; level?: number };
+    boolean | "gzip" | "deflate" | "br" | "zstd" | { encoding: "gzip" | "deflate" | "br" | "zstd"; level?: number };
 
   /**
    * The maximum number of redirects to follow when `redirect` is `"follow"`.

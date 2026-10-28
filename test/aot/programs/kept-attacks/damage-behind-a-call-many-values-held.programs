@@ -1,0 +1,172 @@
+//// damage-behind-a-call-many-values-held/the-callee-holds-numbers-of-every-kind-across-its-own-damage.ts
+// The callee does the damage in the middle of a computation, with small integers and fractions in local variables. What it computes behind the damage is built from them, and so is what it returns.
+////= Point
+
+let strikes = false;
+function compute(p: Point, n: number, f: number): number {
+  const a = n + 1, b = n * 2, c = n - 3, d = n ^ 5, e = n << 2, g = n >> 1;
+  const h = f * 1.5, i = f / 4, j = f - 0.25, k = f + n, l = f * f, m = f * 0.125;
+  if (strikes) (p as any).x = "text";
+  return a + b + c + d + e + g + h + i + j + k + l + m + p.y;
+}
+
+function holder(p: Point, n: number): string {
+  const before = p.x;
+  const got = compute(p, n, n + 0.5);
+  return before + " " + got + " " + p.x;
+}
+
+////= for-25	% 100 === 98) console.log(round + ": " + line
+//// damage-behind-a-call-many-values-held/the-caller-holds-numbers-of-every-kind-across-a-dirty-return.ts
+// The caller holds small integers, fractions, booleans, strings and objects in local variables across a call that comes back by the second return point. All of them must be what they were.
+////= Point
+
+let strikes = false;
+////= touch
+
+function holder(p: Point, n: number, f: number, flag: boolean, name: string): string {
+  const a = n + 1, b = n * 2, c = n - 3, d = n ^ 5, e = n << 2, g = n >> 1;
+  const h = f * 1.5, i = f / 3, j = f - 0.25, k = f + n, l = Math.sqrt(f), m = f * f;
+  const o = !flag, q = flag && n > 10, r = name + "!", s = name.length;
+  const t = p.x, u = p.y;
+  const got = touch(p);
+  return [a, b, c, d, e, g, h, i, j, k, l, m, o, q, r, s, t, u, got, p.x, p.y, n, f, flag, name].join(" ");
+}
+
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const line = holder(new Point(round, 1), round, round + 0.5, (round & 1) === 0, "n" + round);
+  if (strikes || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-many-values-held/the-damaged-object-is-the-result.ts
+// The callee damages the object that it was handed and returns that very object. The caller reads it through the parameter and through the result.
+////= Point
+
+let mode = 0;
+function pass(p: Point): Point {
+  if (mode === 1) delete (p as any).x;
+  else if (mode === 2) (p as any).x = "text";
+  else if (mode === 3) Object.setPrototypeOf(p, null);
+  return p;
+}
+
+function holder(p: Point): string {
+  const before = p.x + p.y;
+  const q = pass(p);
+  return before + " " + q.x + "," + q.y + " " + p.x + "," + p.y + " " + (p === q) + " " + (q instanceof Point);
+}
+
+////= for-18	400	holder	Point	round	1
+//// damage-behind-a-call-many-values-held/the-result-does-not-fit-and-the-object-is-damaged.ts
+// The callee declares that it returns a number. In some rounds it returns a string, in some it damages the caller's object, in some both, so the second return point is reached for either reason and for both at once.
+////= Point
+
+let misfit = false;
+let strikes = false;
+const odd: any = "odd";
+function measure(p: Point, n: number): number {
+  if (strikes) delete (p as any).y;
+  if (misfit) return odd;
+  return n * 2;
+}
+
+function holder(p: Point, n: number): string {
+  const before = p.x + p.y;
+  const got = measure(p, n);
+  return before + " " + (got + 1) + " " + typeof got + " " + (p.x + p.y);
+}
+
+for (let round = 0; round < 400; round++) {
+  misfit = round % 100 === 97 || round % 100 === 99;
+  strikes = round % 100 === 98 || round % 100 === 99;
+  const line = holder(new Point(round, 1), round);
+  if (round % 100 >= 96) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-many-values-held/the-result-is-a-fraction-a-boolean-or-nothing.ts
+// Callees that return a fraction, a boolean, a string, undefined and nothing at all each damage the caller's object now and then. The result must arrive whichever way the call comes back.
+////= Point
+
+let strikes = false;
+function hit(p: Point): void {
+  if (strikes) (p as any).extra = 1;
+}
+function fraction(p: Point, n: number): number {
+  hit(p);
+  return n / 4;
+}
+function truth(p: Point, n: number): boolean {
+  hit(p);
+  return n % 3 === 0;
+}
+function text(p: Point, n: number): string {
+  hit(p);
+  return "t" + n;
+}
+function maybe(p: Point, n: number): number | undefined {
+  hit(p);
+  return n & 1 ? undefined : n;
+}
+function nothing(p: Point): void {
+  hit(p);
+}
+
+function holder(n: number): string {
+  const a = new Point(n, 1), b = new Point(n, 2), c = new Point(n, 3), d = new Point(n, 4), e = new Point(n, 5);
+  const first = fraction(a, n);
+  const second = truth(b, n);
+  const third = text(c, n);
+  const fourth = maybe(d, n);
+  const fifth = nothing(e);
+  const sum = a.x + b.y + c.x + d.y + e.x;
+  return [first, second, third, fourth, fifth].join(" ") + " " + sum + " " + [a, b, c, d, e].map(p => Object.keys(p).length).join("");
+}
+
+for (let round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  const line = holder(round);
+  if (strikes || round % 100 === 98) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-many-values-held/the-result-is-a-fresh-pair.ts
+// The callee returns an object that it has just made, and the caller takes it apart at once, so the fields may travel in registers. In some rounds the callee has damaged the caller's object before it returns.
+////= Point
+
+let strikes = false;
+function split(p: Point, n: number): { low: number; high: number; half: number } {
+  if (strikes) Object.defineProperty(p, "x", { get: () => -7 });
+  return { low: n & 15, high: n >> 4, half: n / 2 };
+}
+
+function holder(p: Point, n: number): string {
+  const before = p.x;
+  const { low, high, half } = split(p, n);
+  return before + " " + low + " " + high + " " + half + " " + p.x + " " + p.y;
+}
+
+////= for-25	% 100 === 98) console.log(round + ": " + line
+//// damage-behind-a-call-many-values-held/three-objects-and-an-array-are-held-and-one-is-damaged.ts
+// The caller has read three objects and an array, and none of them is an argument of the call. The callee reaches one of them through a variable of the module and damages it. Which one changes from round to round.
+////= Point
+
+let reachable: any = null;
+function strike(): number {
+  const target = reachable;
+  reachable = null;
+  if (target === null) return 0;
+  if (Array.isArray(target)) target[1] = "s";
+  else delete target.x;
+  return 1;
+}
+
+function holder(a: Point, b: Point, c: Point, list: number[]): string {
+  const before = a.x + b.x + c.x + list[1];
+  const got = strike();
+  return before + " " + got + " " + a.x + "," + b.x + "," + c.x + "," + list[1] + " " + (a.x + b.x + c.x + list[1]);
+}
+
+for (let round = 0; round < 500; round++) {
+  const a = new Point(round, 1), b = new Point(round + 1, 2), c = new Point(round + 2, 3), list = [round, round + 3];
+  const which = round % 100 === 99 ? (round + 1) / 100 : 0;
+  reachable = [null, a, b, c, list, null][which];
+  const line = holder(a, b, c, list);
+  if (which || round === 0) console.log(round + ": " + line);
+}

@@ -122,6 +122,7 @@ const cliffs: Record<string, string> = {
   "with": handsTheLoaderOn,
   "a store to module": handsTheLoaderOn,
   "a store to exports": handsTheLoaderOn,
+  "module handed to native code": handsTheLoaderOn,
 };
 
 describe.concurrent("one odd file beside 200 plain ones", () => {

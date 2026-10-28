@@ -17,8 +17,11 @@ fn length() -> Duration {
 }
 
 /// Calls `is_ready` until it returns true or `LENGTH` passes, and yields the processor in between: the other thread may need it.
-pub fn wait_briefly(mut is_ready: impl FnMut() -> bool) -> bool {
-    let length = length();
+pub fn wait_briefly(is_ready: impl FnMut() -> bool) -> bool {
+    wait_for(length(), is_ready)
+}
+
+fn wait_for(length: Duration, mut is_ready: impl FnMut() -> bool) -> bool {
     let start = Instant::now();
     loop {
         if is_ready() {
@@ -78,11 +81,22 @@ mod tests {
     #[test]
     fn a_wait_ends_when_it_is_ready() {
         let mut calls = 0;
-        assert!(wait_briefly(|| {
+        assert!(wait_for(Duration::MAX, || {
             calls += 1;
             calls == 3
         }));
         assert_eq!(calls, 3);
+    }
+
+    #[test]
+    fn a_wait_asks_once_before_its_length_counts() {
+        assert!(wait_for(Duration::ZERO, || true));
+        let mut calls = 0;
+        assert!(!wait_for(Duration::ZERO, || {
+            calls += 1;
+            false
+        }));
+        assert_eq!(calls, 1);
     }
 
     #[test]

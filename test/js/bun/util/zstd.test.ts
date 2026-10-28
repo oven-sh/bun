@@ -367,8 +367,8 @@ describe("decompressing frames whose size is known", () => {
   ];
   const whole = Buffer.concat(pieces);
 
-  // "raw", "rle", or how many sequences a compressed block has.
-  function blocks(frame: Uint8Array) {
+  // "raw", "rle", or how many sequences a compressed block has. Or else how its literals are written.
+  function blocks(frame: Uint8Array, ofLiterals = false) {
     const descriptor = frame[4];
     const isSingleSegment = (descriptor >> 5) & 1;
     let at = 5 + (1 - isSingleSegment) + [0, 1, 2, 4][descriptor & 3] + [isSingleSegment, 2, 4, 8][descriptor >> 6];
@@ -395,7 +395,15 @@ describe("decompressing frames whose size is known", () => {
           literals = [3, 3, 4, 5][format] + (Math.floor(bits / 2 ** (4 + width)) % 2 ** width);
         }
         const [first, second, third] = frame.subarray(at + literals);
-        kinds.push(first < 128 ? first : first < 255 ? ((first - 128) << 8) + second : second + (third << 8) + 0x7f00);
+        kinds.push(
+          ofLiterals
+            ? ["raw", "rle", "code", "same code"][frame[at] & 3]
+            : first < 128
+              ? first
+              : first < 255
+                ? ((first - 128) << 8) + second
+                : second + (third << 8) + 0x7f00,
+        );
       } else {
         kinds.push(["raw", "rle"][type]);
       }
@@ -436,6 +444,33 @@ describe("decompressing frames whose size is known", () => {
     expect(zstdDecompressSync(frame).equals(data)).toBe(true);
     expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
   });
+
+  it.each([
+    [0xffff, 0, ["raw", "raw", "raw", "code", "code", "code,same code,same code,same code"]],
+    [0xffffffff, 0, ["raw", "code", "code", "code", "code", "code,code,code,same code"]],
+    [0xffffffff, 2, ["code", "code", "code", "code", "code", "code,code,same code,same code"]],
+  ])(
+    "literals that take many bits: the least of the bytes of a number up to %i, shifted by %i",
+    (mask, shift, written) => {
+      let x = 0x9e3779b9;
+      const kinds = [300, 1500, 3000, 6000, 20_000, 400_000].map(length => {
+        const data = Buffer.from(
+          Uint8Array.from({ length }, () => {
+            x ^= x << 13;
+            x ^= x >>> 17;
+            x ^= x << 5;
+            const y = x | ~mask;
+            return Math.min(y & 255, (y >> 8) & 255, (y >> 16) & 255, y >>> 24) >> shift;
+          }),
+        );
+        const frame = zstdCompressSync(data, { level: 1 });
+        expect(zstdDecompressSync(frame).equals(data)).toBe(true);
+        expect(zlib.zstdDecompressSync(frame).equals(data)).toBe(true);
+        return blocks(frame, true).join();
+      });
+      expect(kinds).toEqual(written);
+    },
+  );
 
   it("a frame that makes more than it says is refused", () => {
     for (const piece of pieces.filter(piece => piece.length >= 135_000)) {

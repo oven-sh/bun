@@ -33,13 +33,17 @@ const FAST_LOG: u32 = 11;
 const FAST_MIN_LITERALS: usize = 2048;
 /// From how many literals on the larger table is considered.
 const LARGE_MIN_LITERALS: usize = 1 << 14;
-/// From how many bits to a literal on few lookups of at most `SINGLE_MAX_LOG` bits would yield more than one.
-const SINGLE_MIN_BITS: usize = 5;
-const SINGLE_MAX_LOG: u32 = 9;
+/// The longest code of a table that yields one symbol to a lookup.
+const SINGLE_MAX_LOG: u32 = 11;
+/// Few literals are not worth a closer look at their code: from how many bits to a literal on few lookups of at most
+/// `SINGLE_SMALL_LOG` bits would yield more than one.
+const SINGLE_SMALL_MIN_BITS: usize = 5;
+const SINGLE_SMALL_LOG: u32 = 9;
 
 impl Code {
     /// How many symbols a lookup of `log` bits yields, in 65536ths, if symbols are as frequent as their codes are short.
-    fn symbols_per_lookup(&self, log: u32) -> u64 {
+    /// Without `thirds` a third symbol does not count, which takes less time.
+    fn symbols_per_lookup(&self, log: u32, thirds: bool) -> u64 {
         let table_log = self.table_log as usize;
         // For each number of bits, out of `1 << table_log`, how many symbols have a code no longer than that.
         let mut one = [0u64; NB_RANKS + 1];
@@ -67,6 +71,9 @@ impl Code {
                 })
                 .sum()
         };
+        if !thirds {
+            return (1 << 16) + ((after(&one, log as usize) << 16) >> (2 * table_log));
+        }
         let mut two = [0u64; NB_RANKS + 1];
         for (room, two) in two.iter_mut().enumerate() {
             *two = after(&one, room);
@@ -84,21 +91,34 @@ impl Code {
         // The larger table takes twice the time to fill, half of the cache, and a refill for 4 lookups and not 5.
         if self.table_log > FAST_LOG
             || nb_literals >= LARGE_MIN_LITERALS
-                && self.symbols_per_lookup(FAST_LOG + 1) * 4 > self.symbols_per_lookup(FAST_LOG) * 5
+                && self.symbols_per_lookup(FAST_LOG + 1, true) * 4
+                    > self.symbols_per_lookup(FAST_LOG, true) * 5
         {
             return FAST_LOG + 1;
         }
         FAST_LOG
     }
 
-    /// Whether four streams of `nb_bytes` in all are decoded sooner to `nb_literals` one to a lookup of `log` bits.
-    fn is_best_single(log: u32, nb_literals: usize, nb_bytes: usize) -> bool {
-        log <= SINGLE_MAX_LOG && 8 * nb_bytes >= SINGLE_MIN_BITS * nb_literals
+    /// How many bits to look up at once to decode `nb_literals` from four streams of `nb_bytes` in all, and whether
+    /// that is sooner done one to a lookup.
+    fn best_form(&self, nb_literals: usize, nb_bytes: usize) -> (u32, bool) {
+        let log = self.best_log(nb_literals);
+        let single = if nb_literals < FAST_MIN_LITERALS {
+            log <= SINGLE_SMALL_LOG && 8 * nb_bytes >= SINGLE_SMALL_MIN_BITS * nb_literals
+        } else {
+            // A lookup that can yield several symbols takes a quarter more time.
+            self.table_log <= SINGLE_MAX_LOG && self.symbols_per_lookup(log, false) * 4 < 5 << 16
+        };
+        if single {
+            (self.table_log.max(MIN_LOG), true)
+        } else {
+            (log, false)
+        }
     }
 }
 
 /// What a lookup yields. From the lowest byte on: up to 3 symbols, then how many bits they take in 6 bits and how many
-/// they are above.
+/// they are above. What is after the last symbol is not always 0: see [`single_entry`].
 type Entry = u32;
 
 const COUNT_SHIFT: u32 = 6;
@@ -108,23 +128,30 @@ const fn entry(symbol: u8, index: u32, nb_bits: u32) -> Entry {
     ((symbol as u32) << (8 * index)) | ((nb_bits + (1 << COUNT_SHIFT)) << 24)
 }
 
-/// For each of `symbols`, `1 << run_log` entries that are `base` and the symbol at `index`.
-fn fill_runs(out: &mut [Entry], symbols: &[u8], run_log: u32, base: Entry, index: u32) {
+/// An entry of one symbol that also has its highest byte and then the symbol in the middle, where there is no symbol:
+/// one read yields both, the former where a shift takes its count from. `Streams::decode_most_single` reads only that.
+const fn single_entry(symbol: u8, nb_bits: u32) -> Entry {
+    let entry = entry(symbol, 0, nb_bits);
+    entry | (entry >> 16) | ((symbol as u32) << 16)
+}
+
+/// For each of `symbols`, `1 << run_log` entries that are `base` and the symbol times `unit`.
+fn fill_runs(out: &mut [Entry], symbols: &[u8], run_log: u32, base: Entry, unit: Entry) {
     #[inline(always)]
-    fn runs<const RUN: usize>(out: &mut [Entry], symbols: &[u8], base: Entry, index: u32) {
+    fn runs<const RUN: usize>(out: &mut [Entry], symbols: &[u8], base: Entry, unit: Entry) {
         let (out, _) = out.as_chunks_mut::<RUN>();
         for (run, &symbol) in out.iter_mut().zip(symbols) {
-            *run = [base + (u32::from(symbol) << (8 * index)); RUN];
+            *run = [base + u32::from(symbol) * unit; RUN];
         }
     }
     match run_log {
-        0 => runs::<1>(out, symbols, base, index),
-        1 => runs::<2>(out, symbols, base, index),
-        2 => runs::<4>(out, symbols, base, index),
-        3 => runs::<8>(out, symbols, base, index),
+        0 => runs::<1>(out, symbols, base, unit),
+        1 => runs::<2>(out, symbols, base, unit),
+        2 => runs::<4>(out, symbols, base, unit),
+        3 => runs::<8>(out, symbols, base, unit),
         _ => {
             for (run, &symbol) in out.chunks_exact_mut(1 << run_log).zip(symbols) {
-                run.fill(base + (u32::from(symbol) << (8 * index)));
+                run.fill(base + u32::from(symbol) * unit);
             }
         }
     }
@@ -256,7 +283,7 @@ impl Sorted {
                         }
                     }
                 }
-                _ => fill_runs(out, symbols, room_after, base, index),
+                _ => fill_runs(out, symbols, room_after, base, 1 << (8 * index)),
             }
         }
         Ok(())
@@ -271,8 +298,10 @@ pub(crate) struct HufDTable {
     table_type: TableType,
     /// How many bits `table` is indexed with.
     log: u32,
-    /// Every entry of `table` is one symbol.
+    /// Every entry of `table` is a [`single_entry`].
     single: bool,
+    /// [`Code::best_form`] for `FAST_MIN_LITERALS` and for `LARGE_MIN_LITERALS`, once it is asked for.
+    best_forms: [Option<(u32, bool)>; 2],
     table: [Entry; TABLE_SIZE],
 }
 
@@ -288,6 +317,7 @@ impl HufDTable {
             table_type: TableType::X1,
             log: 0,
             single: false,
+            best_forms: [None; 2],
             table: [0; TABLE_SIZE],
         }
     }
@@ -311,19 +341,53 @@ impl HufDTable {
         self.code.nb_symbols = stats.nb_symbols;
         self.code.table_log = stats.table_log;
         self.table_type = table_type;
-        let log = self.code.best_log(nb_literals);
+        self.best_forms = [None; 2];
         let nb_bytes = src.len().saturating_sub(stats.size);
-        let single = four_streams && Code::is_best_single(log, nb_literals, nb_bytes);
+        let (log, single) = self.best_form(nb_literals, nb_bytes, four_streams);
         self.build(log, single)?;
         Ok(stats.size)
     }
 
-    /// Makes the table fit to decode `nb_literals` of another block with.
-    pub(crate) fn prepare(&mut self, nb_literals: usize) -> Result<()> {
-        if self.log < FAST_LOG && nb_literals >= FAST_MIN_LITERALS {
-            self.build(self.code.table_log.max(FAST_LOG), false)?;
-        } else if self.single {
-            self.build(self.log, false)?;
+    /// [`Code::best_form`], which is for four streams.
+    fn best_form(
+        &mut self,
+        nb_literals: usize,
+        nb_bytes: usize,
+        four_streams: bool,
+    ) -> (u32, bool) {
+        if !four_streams {
+            return (self.code.best_log(nb_literals), false);
+        }
+        if nb_literals < FAST_MIN_LITERALS {
+            return self.code.best_form(nb_literals, nb_bytes);
+        }
+        let [fast, large] = &mut self.best_forms;
+        let best_form = if nb_literals < LARGE_MIN_LITERALS {
+            fast
+        } else {
+            large
+        };
+        *best_form.get_or_insert_with(|| self.code.best_form(nb_literals, nb_bytes))
+    }
+
+    /// Makes the table fit to decode `nb_literals` of another block with, from `nb_bytes`.
+    pub(crate) fn prepare(
+        &mut self,
+        nb_literals: usize,
+        nb_bytes: usize,
+        four_streams: bool,
+    ) -> Result<()> {
+        let (log, single) = self.best_form(nb_literals, nb_bytes, four_streams);
+        let is_worth_it = match (self.single, single) {
+            (true, true) => false,
+            // Few literals do not make up for the time that it takes to fill a large table once more.
+            (true, false) => nb_literals >= FAST_MIN_LITERALS || self.log <= SINGLE_SMALL_LOG,
+            // The largest table is only made if its lookups yield enough.
+            (false, true) => nb_literals >= FAST_MIN_LITERALS && self.log <= FAST_LOG,
+            (false, false) => self.log < log,
+        };
+        if is_worth_it {
+            self.build(log, single)?;
         }
         Ok(())
     }
@@ -335,7 +399,9 @@ impl HufDTable {
         let sorted = Sorted::new(&self.code, log)?;
         // The tables of what a third symbol adds end with the one for this many bits.
         let room = log.saturating_sub(2 * sorted.shortest());
-        if single || room < sorted.shortest() {
+        if single {
+            self.fill_single(&sorted)
+        } else if room < sorted.shortest() {
             self.fill(&sorted, &mut [])
         } else if room < 7 {
             self.fill(&sorted, &mut [0; 1 << 7])
@@ -344,10 +410,26 @@ impl HufDTable {
         }
     }
 
+    fn fill_single(&mut self, sorted: &Sorted) -> Result<()> {
+        let log = sorted.log;
+        for weight in 1..=sorted.max_weight {
+            let symbols = sorted.class(weight)?;
+            let nb_bits = sorted.nb_bits(weight);
+            let room = log - nb_bits;
+            let entries = self
+                .table
+                .span_mut(sorted.position(weight, log)?, symbols.len() << room)?;
+            let base = single_entry(0, nb_bits);
+            let unit = single_entry(1, nb_bits) - base;
+            fill_runs(entries, symbols, room, base, unit);
+        }
+        Ok(())
+    }
+
     fn fill(&mut self, sorted: &Sorted, thirds: &mut [Entry]) -> Result<()> {
         let log = sorted.log;
         // From how many bits on what a symbol leaves of a lookup holds another.
-        let min_room = if self.single { log } else { sorted.shortest() };
+        let min_room = sorted.shortest();
         for room in min_room..=log.saturating_sub(2 * min_room) {
             sorted.fill(thirds.span_mut(1 << room, 1 << room)?, room, 0, 2, None)?;
         }
@@ -359,7 +441,7 @@ impl HufDTable {
                 .table
                 .span_mut(sorted.position(weight, log)?, symbols.len() << room)?;
             if room < min_room {
-                fill_runs(entries, symbols, room, entry(0, 0, nb_bits), 0);
+                fill_runs(entries, symbols, room, entry(0, 0, nb_bits), 1);
                 continue;
             }
             let Some((&first_symbol, other_symbols)) = symbols.split_first() else {
@@ -430,7 +512,9 @@ impl HufDTable {
     fn decode_most_single(&self, streams: &mut Streams<'_>) {
         match self.log {
             8 => streams.decode_most_single::<8, 7>(&self.table),
-            _ => streams.decode_most_single::<SINGLE_MAX_LOG, 6>(&self.table),
+            9 => streams.decode_most_single::<9, 6>(&self.table),
+            10 => streams.decode_most_single::<10, 5>(&self.table),
+            _ => streams.decode_most_single::<SINGLE_MAX_LOG, 5>(&self.table),
         }
     }
 
@@ -807,8 +891,15 @@ impl<'a> Streams<'a> {
             window: &mut [u8; WINDOW],
             done: &mut usize,
         ) {
-            if let Some(entry) = table.get((*bits >> (64 - LOG)) as usize) {
-                *bits <<= (entry >> 24) & 63;
+            let index = (*bits >> (64 - LOG)) as usize;
+            // The highest byte of the entry, read on its own where that is simple: the next lookup waits for it.
+            let nb_bits = if cfg!(target_endian = "little") {
+                bun_pod::bytes_of(table).get(4 * index + 3).copied()
+            } else {
+                table.get(index).map(|entry| (entry >> 24) as u8)
+            };
+            if let (Some(entry), Some(nb_bits)) = (table.get(index), nb_bits) {
+                *bits <<= nb_bits & 63;
                 if let Some(to) = window.get_mut(*done..*done + 4) {
                     to.copy_from_slice(&entry.to_le_bytes());
                 }
@@ -913,15 +1004,16 @@ impl<'a> Streams<'a> {
             to: Option<&mut u8>,
         ) {
             let index = (*bits >> (64 - LOG)) as usize;
-            // The highest byte of the entry, read on its own where that is simple: the next lookup waits for it.
-            let nb_bits = if cfg!(target_endian = "little") {
-                bun_pod::bytes_of(table).get(4 * index + 3).copied()
+            let middle = if cfg!(target_endian = "little") {
+                (bun_pod::bytes_of(table).get(4 * index + 1..))
+                    .and_then(|bytes| bytes.first_chunk())
+                    .map(|bytes| u16::from_le_bytes(*bytes))
             } else {
-                table.get(index).map(|entry| (entry >> 24) as u8)
+                table.get(index).map(|entry| (entry >> 8) as u16)
             };
-            if let (Some(to), Some(nb_bits), Some(&entry)) = (to, nb_bits, table.get(index)) {
-                *bits <<= nb_bits & 63;
-                *to = entry as u8;
+            if let (Some(to), Some(middle)) = (to, middle) {
+                *bits <<= middle & 63;
+                *to = (middle >> 8) as u8;
             }
         }
 
@@ -1044,4 +1136,123 @@ pub(crate) fn decompress_4x_huf_only(
         return Err(Error::SrcSizeWrong);
     }
     decompress_4x_using_dtable(dst, src.sub(h_size..)?, dtable)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compress::huf::{
+        HufCTable, build_ctable, compress_1x_using_ctable, compress_4x_using_ctable, write_ctable,
+    };
+
+    #[test]
+    fn a_table_is_made_to_suit_each_block() -> Result<()> {
+        let mut state = 5u32;
+        let mut random = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state >> 8
+        };
+        // Few enough for codes of 8 bits at most that are not all as long. The lowest have the shortest codes.
+        const MAX_SYMBOL: u32 = 199;
+        let counts: [u32; MAX_SYMBOL as usize + 1] = core::array::from_fn(|symbol| {
+            let rank = MAX_SYMBOL + 1 - symbol as u32;
+            rank * rank * rank / 256 + 1
+        });
+        // How many literals, by how much they are lowered, and whether they are in four streams.
+        let blocks = [
+            (300, 0, true),
+            (300, 3, true),
+            (FAST_MIN_LITERALS, 0, true),
+            (300, 3, true),
+            (FAST_MIN_LITERALS, 0, false),
+            (300, 0, false),
+            (LARGE_MIN_LITERALS, 3, true),
+            (200, 3, false),
+            (LARGE_MIN_LITERALS, 0, true),
+        ];
+        // Miri takes a minute for 10,000 literals.
+        let (blocks, longest_codes, firsts, max_damaged) = if cfg!(miri) {
+            (blocks.sub(..5)?, 11..=11, [0].as_slice(), 300)
+        } else {
+            (
+                blocks.sub(..)?,
+                8..=12,
+                [0, 6, 8].as_slice(),
+                FAST_MIN_LITERALS,
+            )
+        };
+        // From which kind of table to which one a block went on with the code of the block before.
+        let mut changes = [[0; 2]; 2];
+        let mut dtable = HufDTable::new();
+        for (max_nb_bits, &first) in
+            longest_codes.flat_map(|log| firsts.iter().map(move |first| (log, first)))
+        {
+            let mut ctable = HufCTable::new();
+            let table_log = build_ctable(&mut ctable, &counts, MAX_SYMBOL, max_nb_bits)?;
+            assert_eq!(table_log, max_nb_bits as usize);
+            let mut description = [0; NB_SYMBOLS];
+            let size = write_ctable(&mut description, &ctable, MAX_SYMBOL, max_nb_bits)?;
+            let description = description.sub(..size)?;
+
+            for (index, &(nb_literals, shift, four_streams)) in
+                blocks.iter().skip(first).chain(blocks).enumerate()
+            {
+                let literals: Vec<u8> = (0..nb_literals)
+                    .map(|_| {
+                        (((random() & 255).min(random() & 255) * MAX_SYMBOL / 256) >> shift) as u8
+                    })
+                    .collect();
+                let mut streams = vec![0; 2 * nb_literals];
+                let size = if four_streams {
+                    compress_4x_using_ctable(&mut streams, &literals, &ctable)?
+                } else {
+                    compress_1x_using_ctable(&mut streams, &literals, &ctable)?
+                };
+                streams.truncate(size);
+                if index == 0 {
+                    let src = [description, &streams].concat();
+                    let spread = &mut Spread::new();
+                    let read = dtable.read(&src, TableType::X1, nb_literals, four_streams, spread);
+                    assert_eq!(read, Ok(description.len()));
+                } else {
+                    let was_single = dtable.single;
+                    dtable.prepare(nb_literals, size, four_streams)?;
+                    *changes
+                        .at_mut(usize::from(was_single))?
+                        .at_mut(usize::from(dtable.single))? += 1;
+                }
+                let mut decoded = vec![0; nb_literals];
+                assert!(if four_streams {
+                    dtable.decode_4x(&mut decoded, &streams)
+                } else {
+                    dtable.decode_1x(&mut decoded, &streams)
+                });
+                assert_eq!(decoded, literals);
+
+                // Streams that do not end where they should, some much shorter than the others.
+                let nb_damaged = match four_streams && nb_literals <= max_damaged {
+                    true if cfg!(miri) => 2,
+                    true => 6,
+                    false => 0,
+                };
+                for _ in 0..nb_damaged {
+                    let mut damaged = streams.clone();
+                    let at = random() as usize % if random() % 2 == 0 { 6 } else { size };
+                    *damaged.at_mut(at)? ^= 1 << (random() % 8);
+                    let mut exact = vec![0; nb_literals];
+                    let result =
+                        huf_exact::decompress_4x(&mut exact, &damaged, &dtable.code, TableType::X1);
+                    assert_eq!(
+                        decompress_4x_using_dtable(&mut decoded, &damaged, &dtable),
+                        result
+                    );
+                    assert!(result.is_err() || decoded == exact);
+                }
+            }
+        }
+        assert!(changes.as_flattened().iter().all(|&count| count > 0));
+        Ok(())
+    }
 }

@@ -455,7 +455,11 @@ impl BlockDecoder {
                     let table = match (huf_source, dict_entropy) {
                         (TableSource::Dict, Some(dict)) => &dict.huf_table,
                         _ => {
-                            entropy.huf_table.prepare(lit_size)?;
+                            entropy.huf_table.prepare(
+                                lit_size,
+                                compressed.len(),
+                                !single_stream,
+                            )?;
                             &entropy.huf_table
                         }
                     };

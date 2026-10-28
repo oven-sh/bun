@@ -117,8 +117,14 @@ fn load_router(
 
     let resolver = &mut VirtualMachine::get().as_mut().transpiler.resolver;
     let root_dir_info = match resolver.read_dir_info(&config.dir) {
-        Ok(Some(info)) => info,
-        Ok(None) => return Ok(None),
+        // The resolver's cache matches a path by its hash alone, so a hit can be another directory.
+        Ok(Some(info))
+            if strings::without_trailing_slash(info.abs_path)
+                == strings::without_trailing_slash(&config.dir) =>
+        {
+            info
+        }
+        Ok(_) => return Ok(None),
         Err(_) => {
             let error = log.to_js(global, format_args!("reading root directory"))?;
             return Err(global.throw_value(error));
@@ -243,23 +249,19 @@ impl FileSystemRouter {
         Valid::no_null_bytes(options.dir, "dir", "a string", global)?;
 
         let mut out_buf = [0u8; MAX_PATH_BYTES * 2];
-        let mut root_dir_path = global.bun_vm().top_level_dir();
-        if !(options.dir.is_empty() || options.dir == b".") {
-            // An absolute path is joined too: a route's name is cut from the resolver's normalized spelling.
-            let Some(joined) =
-                path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    Fs::FileSystem::instance().top_level_dir(),
-                    &mut out_buf,
-                    &[options.dir],
-                )
-            else {
-                return Err(cx.heap.error(format_args!(
-                    "Unable to find directory: {}",
-                    bstr::BStr::new(options.dir)
-                )));
-            };
-            root_dir_path = joined;
-        }
+        // Every path is joined, absolute or empty: the loader needs the resolver's normalized spelling.
+        let Some(root_dir_path) =
+            path::resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+                Fs::FileSystem::instance().top_level_dir(),
+                &mut out_buf,
+                &[options.dir],
+            )
+        else {
+            return Err(cx.heap.error(format_args!(
+                "Unable to find directory: {}",
+                bstr::BStr::new(options.dir)
+            )));
+        };
 
         let mut extensions: Vec<Box<[u8]>> = options
             .file_extensions
@@ -277,7 +279,7 @@ impl FileSystemRouter {
             dir: strings::paths::clone_normalizing_separators(root_dir_path).into_boxed_slice(),
             extensions: extensions.into(),
         };
-        let Some((mut router, root_dir_info)) = load_router(global, config, Load::Cached)? else {
+        let Some((router, root_dir_info)) = load_router(global, config, Load::Cached)? else {
             return Err(cx.heap.error(format_args!(
                 "Unable to find directory: {}",
                 bstr::BStr::new(root_dir_path)
@@ -295,7 +297,6 @@ impl FileSystemRouter {
             RefCountedString::new(vm, bytes).map_err(|_| global.throw_string_too_long())
         };
         let base_dir = ref_counted(base_dir_str)?;
-        router.config.dir = Box::from(base_dir.bytes());
         let not_empty = |bytes: &&[u8]| !bytes.is_empty();
         Ok(FileSystemRouter {
             origin: options

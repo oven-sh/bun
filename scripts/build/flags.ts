@@ -15,14 +15,14 @@ import { join } from "node:path";
 import { bunExeName, linksWithLld, type Config } from "./config.ts";
 import { overridesDarwinAllocator, replacedOperatorNewSymbols } from "./deps/mimalloc.ts";
 import { quote, slash } from "./shell.ts";
+import type { DepName } from "./source.ts";
 import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
-export const safeStackDependencies = [
+export const safeStackDependencies: readonly DepName[] = [
   "brotli",
   "libdeflate",
   "libjpeg-turbo",
-  "libspng",
   "libwebp",
   "lshpack",
   "zlib",
@@ -43,7 +43,7 @@ export function fuzzilliCoverageFlags(cfg: Pick<Config, "cwd" | "fuzzilli" | "fu
   ];
 }
 
-export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: string): string[] {
+export function safeStackFlags(c: Pick<Config, "hardened" | "x64" | "abi" | "asan">, dependency: DepName): string[] {
   return usesSafeStack(c) && safeStackDependencies.includes(dependency) ? ["-fsanitize=safe-stack"] : [];
 }
 

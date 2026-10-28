@@ -1,12 +1,20 @@
 // src/runtime/node/path.rs reads an 8-bit string where it is, sixteen characters at a time on POSIX, and answers with parts
 // of its operands. A 16-bit string goes through UTF-8 and the functions of src/node_path that follow Node's source line by
 // line. So the same characters in 16-bit storage say what the answer is.
+import { jscDescribe } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import path from "node:path";
+import { isStringOneByteRepresentation } from "node:v8";
 
-const flat = (text: string) => (text.charCodeAt(0), text);
-const copy = (text: string) => flat(Buffer.from(text, "utf16le").toString("utf16le"));
+// The character is kept, or the compilers leave out reading it and a rope stays one. A slice of that rope is then a slice
+// of what it was made of: `wide` would answer its operand.
+let read = 0;
+const flat = (text: string) => ((read = text.charCodeAt(0)), text);
 const wide = (text: string) => flat("日" + text + "本").slice(1, -1);
+// New flat strings that are no property key yet.
+const copy = (text: string) => [text.slice(0, 1), text.slice(1)].join("");
+const wideCopy = (text: string) => Buffer.from(text, "utf16le").toString("utf16le");
+const isRope = (text: string) => jscDescribe(text).startsWith("String (rope)");
 
 const forms: Record<string, (text: string) => any> = {
   flat: text => flat(text + ""),
@@ -115,28 +123,84 @@ function createComparison() {
 const platforms = { posix: path.posix, win32: path.win32 };
 const ofOnePath = ["basename", "dirname", "extname", "isAbsolute", "normalize", "parse", "resolve", "join"] as const;
 
-describe.each(Object.entries(platforms))("path.%s", (_, p) => {
+function compareForm(
+  p: path.PlatformPath,
+  paths: string[],
+  form: (text: string) => any,
+  compare: ReturnType<typeof createComparison>["compare"],
+) {
+  paths.forEach((a, index) => {
+    const b = paths[(index + 1) % paths.length];
+    const c = paths[(index + 2) % paths.length];
+    for (const name of ofOnePath) compare([a, name], p[name](form(a)), p[name](wide(a)));
+    for (const suffix of [a.slice(-(index % 6)), ".ts", "é", a, a + "x"])
+      compare([a, suffix], p.basename(form(a), form(suffix)), p.basename(wide(a), wide(suffix)));
+    compare([a, b], p.relative(form(a), form(b)), p.relative(wide(a), wide(b)));
+    compare([a, b, "down"], p.relative(form(a), form(a + "/" + b)), p.relative(wide(a), wide(a + "/" + b)));
+    compare([a, b, "up"], p.relative(form(a + "/" + b), form(a)), p.relative(wide(a + "/" + b), wide(a)));
+    compare([a, b, c, "join"], p.join(form(a), form(b), form(c)), p.join(wide(a), wide(b), wide(c)));
+    compare([a, b, c, "resolve"], p.resolve(form(a), form(b), form(c)), p.resolve(wide(a), wide(b), wide(c)));
+    compare([a, "dirname twice"], p.dirname(p.dirname(form(a))), p.dirname(p.dirname(wide(a))));
+    compare(
+      [a, "joined again"],
+      p.join(p.dirname(form(a)), p.basename(form(a))),
+      p.join(p.dirname(wide(a)), p.basename(wide(a))),
+    );
+  });
+}
+
+describe.each(Object.entries(platforms))("path.%s", (platform, p) => {
   test.each(Object.entries(forms))("a %s is read as the same characters in 16-bit storage are", (_, form) => {
-    const paths = createPaths(1, 1500);
     const { different, compare } = createComparison();
-    paths.forEach((a, index) => {
-      const b = paths[(index + 1) % paths.length];
-      const c = paths[(index + 2) % paths.length];
-      for (const name of ofOnePath) compare([a, name], p[name](form(a)), p[name](wide(a)));
-      for (const suffix of [a.slice(-(index % 6)), ".ts", "é", a, a + "x"])
-        compare([a, suffix], p.basename(form(a), form(suffix)), p.basename(wide(a), wide(suffix)));
-      compare([a, b], p.relative(form(a), form(b)), p.relative(wide(a), wide(b)));
-      compare([a, b, "down"], p.relative(form(a), form(a + "/" + b)), p.relative(wide(a), wide(a + "/" + b)));
-      compare([a, b, "up"], p.relative(form(a + "/" + b), form(a)), p.relative(wide(a + "/" + b), wide(a)));
-      compare([a, b, c, "join"], p.join(form(a), form(b), form(c)), p.join(wide(a), wide(b), wide(c)));
-      compare([a, b, c, "resolve"], p.resolve(form(a), form(b), form(c)), p.resolve(wide(a), wide(b), wide(c)));
-      compare([a, "dirname twice"], p.dirname(p.dirname(form(a))), p.dirname(p.dirname(wide(a))));
+    compareForm(p, createPaths(1, 1500), form, compare);
+    expect(different).toEqual([]);
+  });
+
+  // A string that is looked up as a property key takes the storage of the equal string that is a key already, of
+  // either width. A substring made before that goes on sharing the storage of the string.
+  test.each([
+    ["8-bit to 16-bit", copy, wideCopy],
+    ["16-bit to 8-bit", wideCopy, copy],
+  ])("a substring of a string whose storage goes from %s", (direction, copyOfBase, copyOfKey) => {
+    const { different, compare } = createComparison();
+    const keys: Record<string, boolean> = {};
+    // There is one key of the same characters at a time, of one width, so no two tests have the same.
+    const whole = (text: string) => `<${platform} ${direction}<${text}>>>`;
+    const start = whole("").length - 3;
+    const partMadeBefore = (text: string, partOf: (base: string) => string) => {
+      const base = copyOfBase(whole(text));
+      const part = partOf(base);
+      keys[copyOfKey(whole(text))] = true;
+      const was8Bit = isStringOneByteRepresentation(base);
+      compare([text, "is a key"], keys[base], true);
       compare(
-        [a, "joined again"],
-        p.join(p.dirname(form(a)), p.basename(form(a))),
-        p.join(p.dirname(wide(a)), p.basename(wide(a))),
+        [text, "width"],
+        [was8Bit, isStringOneByteRepresentation(base)],
+        [copyOfBase === copy, copyOfBase !== copy],
       );
-    });
+      return part;
+    };
+
+    const paths = createPaths(2, 60);
+    const slice = (text: string) => {
+      const part = partMadeBefore(text, base => base.slice(start, -3));
+      // Those of up to two characters are copies.
+      compare([text, "is a substring still"], text.length < 3 || isRope(part), true);
+      return part;
+    };
+    compareForm(p, paths, slice, compare);
+    // An answer for a 16-bit string shares nothing with it.
+    if (copyOfBase === copy) {
+      let shared = 0;
+      for (const text of paths) {
+        for (const name of ["dirname", "basename", "extname"] as const) {
+          const answer = partMadeBefore(text, p[name]);
+          if (isRope(answer)) ++shared;
+          compare([text, name, "answered before"], p.join(answer, "leaf"), p.join(p[name](wide(whole(text))), "leaf"));
+        }
+      }
+      compare(["answers that are substrings"], shared > paths.length, true);
+    }
     expect(different).toEqual([]);
   });
 
@@ -294,6 +358,29 @@ describe.each(Object.entries(platforms))("path.%s", (_, p) => {
     ] as const) {
       expect([name, p[name].name, p[name].length]).toEqual([name, `bound ${name}`, 1]);
     }
+  });
+});
+
+test("each form is held as its name says, also by compiled code", () => {
+  const { stringObject, ...strings } = forms;
+  const held: Record<string, string[]> = {};
+  for (const [name, make] of Object.entries({ ...strings, wide, copy, wideCopy })) {
+    const kinds = new Set<string>();
+    for (let i = 0; i < 3000; ++i) {
+      const text = make(`/folder-${i & 7}/another-folder/file.extension`);
+      if (i % 50 === 0)
+        kinds.add(`${isStringOneByteRepresentation(text) ? 8 : 16}-bit ${isRope(text) ? "rope" : "flat"}`);
+    }
+    held[name] = [...kinds];
+  }
+  expect(held).toEqual({
+    flat: ["8-bit flat"],
+    rope: ["8-bit rope"],
+    ropeOfThree: ["8-bit rope"],
+    substring: ["8-bit rope"],
+    wide: ["16-bit rope"],
+    copy: ["8-bit flat"],
+    wideCopy: ["16-bit flat"],
   });
 });
 

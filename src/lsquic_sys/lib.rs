@@ -257,10 +257,8 @@ unsafe extern "C" {
         blob: *const u8,
         len: usize,
     );
-    fn us_nq_settings_set_scid_len(s: *mut lsquic_engine_settings, v: c_uint);
     fn us_nq_settings_set_silent_close(s: *mut lsquic_engine_settings, v: c_int);
     fn us_nq_settings_set_cc_algo(s: *mut lsquic_engine_settings, v: c_uint);
-    fn us_nq_settings_set_delay_onclose(s: *mut lsquic_engine_settings, v: c_int);
 }
 
 pub struct Settings {
@@ -369,10 +367,8 @@ settings_setters! {
     max_h3_header_pairs => us_nq_settings_set_max_h3_header_pairs : u16,
     max_h3_header_bytes => us_nq_settings_set_max_h3_header_bytes : c_uint,
     allow_migration => us_nq_settings_set_allow_migration : c_int,
-    scid_len => us_nq_settings_set_scid_len : c_uint,
     silent_close => us_nq_settings_set_silent_close : c_int,
     cc_algo => us_nq_settings_set_cc_algo : c_uint,
-    delay_onclose => us_nq_settings_set_delay_onclose : c_int,
 }
 
 /// Borrowed `lsquic_conn_t`. lsquic owns the conn and frees it after

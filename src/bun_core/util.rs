@@ -2318,12 +2318,6 @@ impl Ordinal {
         self.0 >= 0
     }
 }
-impl Default for Ordinal {
-    #[inline]
-    fn default() -> Self {
-        Self::INVALID
-    }
-}
 
 // ── Once ──────────────────────────────────────────────────────────────────
 // One-shot initialization cell. Callers use `Once<T>` with the init fn
@@ -3045,12 +3039,6 @@ impl StringPointer {
 }
 
 // ── ZStr trait sugar (downstream ergonomics) ──────────────────────────────
-impl AsRef<ZStr> for ZStr {
-    #[inline]
-    fn as_ref(&self) -> &ZStr {
-        self
-    }
-}
 impl AsRef<[u8]> for ZStr {
     #[inline]
     fn as_ref(&self) -> &[u8] {

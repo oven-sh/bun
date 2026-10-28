@@ -499,28 +499,6 @@ impl core::ops::Deref for Interned {
     }
 }
 
-impl AsRef<[u8]> for Interned {
-    #[inline]
-    fn as_ref(&self) -> &[u8] {
-        self.0
-    }
-}
-
-impl core::borrow::Borrow<[u8]> for Interned {
-    /// Lets `HashMap<Interned, _>` / `HashSet<Interned>` look up by `&[u8]`.
-    #[inline]
-    fn borrow(&self) -> &[u8] {
-        self.0
-    }
-}
-
-impl Default for Interned {
-    #[inline]
-    fn default() -> Self {
-        Self::EMPTY
-    }
-}
-
 impl From<&'static str> for Interned {
     #[inline]
     fn from(s: &'static str) -> Self {
@@ -532,14 +510,6 @@ impl From<&'static [u8]> for Interned {
     #[inline]
     fn from(s: &'static [u8]) -> Self {
         Interned(s)
-    }
-}
-
-impl core::fmt::Debug for Interned {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // bstr-style: print as a (possibly-UTF-8) string rather than a byte
-        // array dump, matching how these slices are used (paths, identifiers).
-        core::fmt::Debug::fmt(bstr::BStr::new(self.0), f)
     }
 }
 

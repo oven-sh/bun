@@ -63,17 +63,8 @@ impl SystemError {
         e_from_negated(self.errno)
     }
 }
-impl core::fmt::Display for SystemError {
-    /// Emits the colorless variant
-    /// (`<r>/<red>/<d>/<b>` markup collapsed to nothing) so
-    /// `Display` stays side-effect-free. The colored path is handled by
-    /// `bun_core::Output::pretty*` at the call site that prints the error.
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.fmt_with_path(&self.path, f)
-    }
-}
 impl SystemError {
-    /// `Display` with `path` in place of `self.path`.
+    /// Writes the error with `path` in place of `self.path`, without color markup.
     pub(crate) fn fmt_with_path(
         &self,
         path: &bun_core::String,
@@ -8428,11 +8419,6 @@ pub mod net {
             } else {
                 None
             }
-        }
-    }
-    impl fmt::Debug for Address {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            fmt::Display::fmt(self, f)
         }
     }
     impl fmt::Display for Address {

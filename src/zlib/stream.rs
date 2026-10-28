@@ -19,12 +19,6 @@ pub struct ZStream {
     ptr: NonNull<zStream_struct>,
 }
 
-impl Default for ZStream {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ZStream {
     /// A zeroed stream with Bun's zlib allocator installed.
     pub fn new() -> Self {

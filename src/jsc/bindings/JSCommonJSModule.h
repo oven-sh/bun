@@ -113,11 +113,6 @@ public:
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
-        const WTF::String& key,
-        JSValue exportsObject, bool hasEvaluated, JSValue parent);
-
-    static JSCommonJSModule* create(
-        Zig::GlobalObject* globalObject,
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 

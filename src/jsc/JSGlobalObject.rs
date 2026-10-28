@@ -76,12 +76,6 @@ impl From<&JSGlobalObject> for GlobalRef {
     }
 }
 
-impl core::fmt::Debug for GlobalRef {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("GlobalRef").field(&self.0).finish()
-    }
-}
-
 bun_core::declare_scope!(TerminationTaken, hidden);
 
 impl JSGlobalObject {

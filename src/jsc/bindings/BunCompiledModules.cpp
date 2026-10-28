@@ -510,7 +510,7 @@ static JSValue resolveSpecifier(JSGlobalObject* realm, JSObject* holder, JSValue
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSValue from = holder->get(realm, WebCore::builtinNames(vm).filenamePublicName());
         RETURN_IF_EXCEPTION(scope, {});
-        JSValue resolved = JSValue::decode(Bun__resolveSync(realm, JSValue::encode(specifier), JSValue::encode(from), false, false));
+        JSValue resolved = JSValue::decode(Bun__resolveSync(realm, JSValue::encode(specifier), JSValue::encode(from), false, false, JSValue::encode(holder)));
         RETURN_IF_EXCEPTION(scope, {});
         if (!resolved.isString()) {
             throwException(realm, scope, resolved);

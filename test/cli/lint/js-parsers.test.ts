@@ -451,6 +451,46 @@ describe.concurrent("bun lint with languages", () => {
     timeout,
   );
 
+  // A lint run leaves an invalid config to ESLint for a file that goes to it. Nothing goes to ESLint with --list-files.
+  test(
+    "an invalid config for a file with a custom parser is reported by the installed eslint, or by bun without it",
+    async () => {
+      const files = {
+        ...lines,
+        "parser.cjs": `
+          const parseForESLint = (text, languageOptions) => ({ ast: { lines: text.split("\\n"), languageOptions } });
+          module.exports = { meta: { name: "vue-eslint-parser", version: "10.0.0" }, parseForESLint };`,
+        "eslint.config.mjs": `
+          import lines from "./lines.mjs";
+          import parser from "./parser.cjs";
+          export default [
+            { files: ["**/*.vue"], plugins: { lines }, languageOptions: { parser, parserOptions: { width: 8 } }, settings: { name: "v" }, rules: { "lines/no-tabs": ["error", { notAString: true }] } },
+          ];`,
+        "c.vue": "<template>\n\t<p />\n</template>\n",
+      };
+      const invalid = `error: Invalid config in eslint.config.mjs\nKey "rules": Key "lines/no-tabs":`;
+      const [one, all, listed, missing, missingAll] = await Promise.all([
+        lint({ ...eslintPackage, ...files }, ["-f", "json", "--timing", "c.vue"]),
+        lint({ ...eslintPackage, ...files }, ["-f", "json", "--timing", "."]),
+        lint({ ...eslintPackage, ...files }, ["--list-files", "c.vue"]),
+        lint(files, ["c.vue"]),
+        lint(files, ["."]),
+      ]);
+      for (const result of [one, all]) {
+        expect(result.stderr).not.toContain("Invalid config in");
+        expect(result.stderr).toContain("the eslint package linted 1 files");
+        expect(summary(result.raw)).toBe("c.vue: 2:1 lines/no-tabs tab [object Object] 8 v c.vue [fix 11,12 \" \"]");
+        expect(result.exitCode).toBe(1);
+      }
+      for (const result of [listed, missing, missingAll]) {
+        expect(result.raw).toBe("");
+        expect(result.stderr).toStartWith(invalid);
+        expect(result.exitCode).toBe(2);
+      }
+    },
+    timeout,
+  );
+
   // `Linter#verify` has accepted a `ruleFilter` since ESLint 9. ESLint 8's runs every rule, and then reports a comment
   // that disables one of them as unused.
   test.each([

@@ -361,9 +361,7 @@ pub(crate) fn lint(
         let Status::Matched(config) = &target.status else {
             continue;
         };
-        if let Some(fatal) = target.invalid(loader, Handoff::Never) {
-            return Err(fatal);
-        }
+        target.check_config(loader, Handoff::Never)?;
         match target.route() {
             Route::Eslint => {
                 files += 1;
@@ -392,10 +390,7 @@ pub(crate) fn lint(
     {
         let path = paths::join(cwd, name);
         if let FileConfig::Matched(config) = loader.config_of(&own, &path) {
-            let route = || own.routes(&config, &path);
-            if let Some(fatal) = loader.invalid(&own, &config, Handoff::Never, route) {
-                return Err(fatal);
-            }
+            loader.check_config(&own, &config, Handoff::Never, || own.routes(&config, &path))?;
             rules.add(&config, loader.wants_types(&own, &config));
         }
     }

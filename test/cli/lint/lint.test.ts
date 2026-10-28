@@ -1984,6 +1984,7 @@ describe.concurrent("bun lint", () => {
             languageOptions: { parser: { parse: () => ({ type: "Program", body: [] }) } },
             rules: { "no-unused-vars": ["error", { notAnOption: true }] },
           }];\n`,
+          "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0" }),
           "a.vue": "",
         };
         expect(await ran(["--print-config", "a.vue"], files)).toEqual(expected);

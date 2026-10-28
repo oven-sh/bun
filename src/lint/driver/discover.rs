@@ -65,12 +65,14 @@ impl Target {
         }
     }
 
-    /// The error that stops the run if its config is invalid: [`Loader::invalid`].
-    pub(crate) fn invalid(&self, loader: &Loader, handoff: Handoff) -> Option<Fatal> {
-        let Status::Matched(config) = &self.status else {
-            return None;
-        };
-        loader.invalid(&self.loaded, config, handoff, || self.route())
+    /// [`Loader::check_config`] for its config.
+    pub(crate) fn check_config(&self, loader: &Loader, handoff: Handoff) -> Result<(), Fatal> {
+        match &self.status {
+            Status::Matched(config) => {
+                loader.check_config(&self.loaded, config, handoff, || self.route())
+            }
+            _ => Ok(()),
+        }
     }
 }
 

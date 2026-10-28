@@ -730,15 +730,49 @@ Also packages/a/eslint.config.js
     expect(exitCode).toBe(2);
   });
 
-  // With no files, the rules a new file would get are reported, from the same config.
-  test.each([{ "a.js": "" }, {}])("a config that ESLint would reject is an error: %j", async files => {
+  test("a config that ESLint would reject is an error", async () => {
     const { stdout, stderr, exitCode } = await doctor({
       "eslint.config.js": `export default [{ rules: { eqeqeq: ["error", "sometimes"] } }];`,
-      ...files,
+      "a.js": "",
     });
     expect(stdout).toBe("");
     expect(stderr).toStartWith(`error: Invalid config in eslint.config.js\nKey "rules": Key "eqeqeq"`);
     expect(exitCode).toBe(2);
+  });
+
+  // With no file to lint, the rules that a new `a.js` and `a.ts` would get are reported, from the same config.
+  test("a config that ESLint would reject is an error with no file to lint", async () => {
+    const { stdout, stderr, exitCode } = await doctor({
+      "eslint.config.js": `export default [
+        { ignores: ["eslint.config.js"] },
+        { files: ["**/*.ts"], rules: { eqeqeq: ["error", "sometimes"] } },
+      ];`,
+    });
+    expect(stdout).toBe("");
+    expect(stderr).toStartWith(`error: Invalid config in eslint.config.js\nKey "rules": Key "eqeqeq"`);
+    expect(exitCode).toBe(2);
+  });
+
+  // Nothing goes to ESLint in --doctor, so it reports the invalid config itself for these files too.
+  test("a config that ESLint would reject is an error for files that go to ESLint or can't be linted", async () => {
+    const files = {
+      "package.json": dependencies("eslint"),
+      "eslint.config.js": `
+        const parser = { meta: { name: "my-parser" }, parse() {} };
+        export default [
+          { rules: { "no-var": "error" } },
+          { files: ["**/*.foo"], languageOptions: { parser }, rules: { eqeqeq: ["error", "sometimes"] } },
+        ];`,
+      "a.js": "",
+      "b.foo": "",
+    };
+    const eslint = { "node_modules/eslint/package.json": JSON.stringify({ name: "eslint", version: "10.0.0" }) };
+    const [installed, missing] = await Promise.all([doctor({ ...files, ...eslint }), doctor(files)]);
+    for (const { stdout, stderr, exitCode } of [installed, missing]) {
+      expect(stdout).toBe("");
+      expect(stderr).toStartWith(`error: Invalid config in eslint.config.js\nKey "rules": Key "eqeqeq"`);
+      expect(exitCode).toBe(2);
+    }
   });
 
   test("runs even if package.json has a `lint` script", async () => {

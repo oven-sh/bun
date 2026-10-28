@@ -447,7 +447,7 @@ impl Loaded {
 }
 
 /// Whether a file on [`Route::Eslint`] is handed to ESLint after its config is resolved. ESLint reports an invalid
-/// config itself, so [`Loader::invalid`] leaves that file's error to it. Nothing is handed over when the config is only
+/// config itself, so [`Loader::check_config`] leaves that file's error to it. Nothing is handed over when the config is only
 /// printed, listed or described.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Handoff {
@@ -2294,22 +2294,23 @@ impl<'l> Loader<'l> {
         [b"Invalid config in ", &source[..], b"\n", why].concat()
     }
 
-    /// The error that stops the run if `config`, resolved from `loaded` for one file, is invalid. `route` is only asked
-    /// for when there is an error. With an oxlint config the message goes to stdout and has to match oxlint's, so it
-    /// isn't changed.
-    pub(crate) fn invalid(
+    /// Fails if `config`, resolved from `loaded` for one file, is invalid. `route` is only asked for when it is. With
+    /// an oxlint config the message goes to stdout and has to match oxlint's, so it isn't changed.
+    pub(crate) fn check_config(
         &self,
         loaded: &Loaded,
         config: &ResolvedConfig,
         handoff: Handoff,
         route: impl FnOnce() -> Route,
-    ) -> Option<Fatal> {
-        let error = config.error.as_ref()?;
+    ) -> Result<(), Fatal> {
+        let Some(error) = &config.error else {
+            return Ok(());
+        };
         // For files that ESLint lints, it reports an invalid config itself.
         if handoff == Handoff::ToEslint && route() == Route::Eslint {
-            return None;
+            return Ok(());
         }
-        Some(Fatal(match loaded.flavor {
+        Err(Fatal(match loaded.flavor {
             Flavor::Eslint | Flavor::EslintRc => {
                 self.prefix_with_source(loaded.file.as_deref(), error)
             }

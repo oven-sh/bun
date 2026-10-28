@@ -528,9 +528,7 @@ impl Run<'_> {
             });
         };
         let route = loaded.routes(config, &path);
-        if let Some(fatal) = loader.invalid(&loaded, config, Handoff::ToEslint, || route) {
-            return Err(fatal);
-        }
+        loader.check_config(&loaded, config, Handoff::ToEslint, || route)?;
         if route == Route::Unsupported && config.route_without_processor(&path) == Route::Eslint {
             context.needs_eslint.lock().push((path, loaded.flavor));
             return Ok(Linted {
@@ -670,9 +668,9 @@ impl Run<'_> {
             true => Handoff::Never,
             false => Handoff::ToEslint,
         };
-        if let Some(fatal) = targets.iter().find_map(|it| it.invalid(loader, handoff)) {
-            return Err(fatal);
-        }
+        targets
+            .iter()
+            .try_for_each(|it| it.check_config(loader, handoff))?;
         if self.options.list_files {
             let listed = targets
                 .into_iter()
@@ -1107,8 +1105,10 @@ impl Run<'_> {
             };
             let config = loader.config_of(&loaded, &path);
             if let FileConfig::Matched(config) = &config
-                && let Some(Fatal(error)) =
-                    loader.invalid(&loaded, config, Handoff::Never, || loaded.routes(config, &path))
+                && let Err(Fatal(error)) =
+                    loader.check_config(&loaded, config, Handoff::Never, || {
+                        loaded.routes(config, &path)
+                    })
             {
                 return self.fail(&error);
             }

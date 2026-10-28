@@ -5139,16 +5139,6 @@ fn init_call(wrapper_ref: Ref, loc: Loc) -> Expr {
     )
 }
 
-fn init_stmt(wrapper_ref: Ref, loc: Loc) -> Stmt {
-    Stmt::alloc(
-        S::SExpr {
-            value: init_call(wrapper_ref, loc),
-            ..Default::default()
-        },
-        loc,
-    )
-}
-
 impl InsideWrapperPrefix {
     fn init() -> Self {
         Self {
@@ -5180,34 +5170,20 @@ impl InsideWrapperPrefix {
         Ok(())
     }
 
-    /// A second `import` or `export from` of one async module adds no second call.
-    fn append_awaited(&mut self, wrapper_ref: Ref, loc: Loc) {
-        if !self.awaited.iter().any(|(seen, _)| *seen == wrapper_ref) {
-            self.awaited.push((wrapper_ref, loc));
-        }
-    }
-
     /// `init_x` of the wrapped ESM module that an `import` names. A sync one runs before the `await`.
     pub(crate) fn append_dependency(&mut self, wrapper_ref: Ref, loc: Loc, is_async: bool) {
-        if is_async {
-            self.append_awaited(wrapper_ref, loc);
-        } else {
-            self.stmts.push(init_stmt(wrapper_ref, loc));
+        if !is_async {
+            self.stmts.push(Stmt::alloc(
+                S::SExpr {
+                    value: init_call(wrapper_ref, loc),
+                    ..Default::default()
+                },
+                loc,
+            ));
+        } else if !self.awaited.iter().any(|(seen, _)| *seen == wrapper_ref) {
+            // A second `import` of one async module adds no second call.
+            self.awaited.push((wrapper_ref, loc));
         }
-    }
-
-    /// `init_x` of the wrapped ESM module that an `export *` names. One that is not awaited keeps its place.
-    pub(crate) fn append_export_star(
-        &mut self,
-        wrapper_ref: Ref,
-        loc: Loc,
-        is_awaited: bool,
-    ) -> Result<(), AllocError> {
-        if is_awaited {
-            self.append_awaited(wrapper_ref, loc);
-            return Ok(());
-        }
-        self.append_non_dependency(init_stmt(wrapper_ref, loc))
     }
 
     /// Moves the statements to the end of `out`. Returns true if it printed an `await`.

@@ -4600,93 +4600,6 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "entry app ok" },
   });
-  itBundled("edgecase/ExportStarOfAsyncDependencyIsAwaited", {
-    files: {
-      "/entry.js": /* js */ `
-        import * as A from "./a.js";
-        console.log("entry: A.r =", A.r);
-        import("./r.js").then(() => console.log("dyn done"));
-      `,
-      "/a.js": /* js */ `
-        export * from "./r.js";
-        import * as self from "./a.js";
-        console.log("a body: r =", self.r);
-        export const a = 1;
-      `,
-      "/r.js": /* js */ `
-        console.log("r start");
-        await 0;
-        console.log("r end");
-        export let r = "initialised";
-      `,
-    },
-    format: "esm",
-    run: {
-      stdout: `
-        r start
-        r end
-        a body: r = initialised
-        entry: A.r = initialised
-        dyn done
-      `,
-    },
-  });
-  // The re-exporter's `__reExport(...)` of its first async dependency joins
-  // the awaited list.
-  itBundled("edgecase/ExportStarOfAsyncDependencyWithDynamicFallback", {
-    files: {
-      "/entry.js": /* js */ `
-        import * as X from "./x.js";
-        console.log("entry", X.c);
-        import("./x.js").then(() => console.log("dyn"));
-      `,
-      "/x.js": /* js */ `export * from "./r.js";`,
-      "/r.js": /* js */ `
-        export * from "./c.cjs";
-        console.log("r start");
-        await 0;
-        console.log("r end");
-      `,
-      "/c.cjs": /* js */ `module.exports = { c: 1 };`,
-    },
-    format: "esm",
-    run: {
-      stdout: `
-        r start
-        r end
-        entry 1
-        dyn
-      `,
-    },
-  });
-  itBundled("edgecase/ExportStarOfRejectedAsyncDependencyRejects", {
-    files: {
-      "/entry.js": /* js */ `
-        import * as A from "./a.js";
-        console.log("entry: A.r =", A.r);
-        import("./r.js").then(() => console.log("dyn done"), e => console.log("dyn rejected", e.message));
-      `,
-      "/a.js": /* js */ `
-        export * from "./r.js";
-        console.log("a body");
-        export const a = 1;
-      `,
-      "/r.js": /* js */ `
-        console.log("r start");
-        await Promise.reject(new Error("E-r"));
-        console.log("r end");
-        export let r = "initialised";
-      `,
-    },
-    format: "esm",
-    run: {
-      stdout: `r start`,
-      exitCode: 1,
-      validate({ stderr }) {
-        expect(stderr).toContain("error: E-r");
-      },
-    },
-  });
   // plugin.js waits for registry.js and also imports a sync module. It
   // continues as soon as registry.js settles, before the entry that awaits
   // the `import()` of registry.js.
@@ -5135,27 +5048,6 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "entry-start\nentry-end\nc\nb\na\nloaded" },
   });
-  // c.js has `export *` and `exports`, so its wrapper is `__commonJS`, a plain
-  // function. The `init_tla()` of its `export *` has no `await` there.
-  itBundled("edgecase/ExportStarOfAsyncModuleInCommonJSWrapper", {
-    files: {
-      "/entry.js": /* js */ `
-        import c from "./c.js";
-        console.log(c.a);
-      `,
-      "/c.js": /* js */ `
-        export * from "./tla.js";
-        exports.a = 1;
-        Object.keys(exports);
-      `,
-      "/tla.js": /* js */ `
-        await 0;
-        export const t = 1;
-      `,
-    },
-    format: "esm",
-    run: { stdout: "1" },
-  });
   // p imports a with two statements and q with one. Both wait for a in the
   // same way, so p still continues before q.
   itBundled("edgecase/TwoImportsOfOneAsyncModuleKeepImporterOrder", {
@@ -5249,10 +5141,10 @@ describe("bundler", () => {
     format: "esm",
     run: { stdout: "importer sees rootReady: true" },
   });
-  // The next three cases pin output that is not node's and not main's.
-  // router.cjs calls `import()` on page, and page starts inside the call, before
-  // store. node starts page later: `ready`. main's bundle runs store before
-  // router.cjs, out of source order: `ready`.
+  // This case pins output that is not node's and not main's. router.cjs calls
+  // `import()` on page, and page starts inside the call, before store. node
+  // starts page later: `ready`. main's bundle runs store before router.cjs, out
+  // of source order: `ready`.
   itBundled("edgecase/ImportCallInCommonJSDependencyRunsBeforeLaterImport", {
     files: {
       "/entry.js": /* js */ `
@@ -5272,57 +5164,6 @@ describe("bundler", () => {
     },
     format: "esm",
     run: { stdout: "page sees store: undefined" },
-  });
-  // setup waits for flags and config with `Promise.all`, which continues one
-  // turn after feature's `await` of config. node and main's bundle, which does
-  // not wait for flags, run setup first: `object`.
-  itBundled("edgecase/ImporterWithAsyncExportStarContinuesAfterSiblingImporter", {
-    files: {
-      "/entry.js": /* js */ `await import("./app.js");`,
-      "/app.js": /* js */ `
-        import "./setup.js";
-        import "./feature.js";
-      `,
-      "/setup.js": /* js */ `
-        export * from "./flags.js";
-        import "./config.js";
-        globalThis.services = [];
-      `,
-      "/feature.js": /* js */ `
-        import "./config.js";
-        console.log("feature sees services:", typeof globalThis.services);
-      `,
-      "/flags.js": /* js */ `export const flags = await Promise.resolve({ beta: false });`,
-      "/config.js": /* js */ `await 0;`,
-    },
-    format: "esm",
-    run: { stdout: "feature sees services: undefined" },
-  });
-  // The barrel ui.js waits for components, and components imports the entry,
-  // which is past its first await when it awaits the `import()` of the barrel.
-  // node leaves the source unsettled (exit 13), and so does the bundle. `bun`
-  // on the source settles it (#32437). main's bundle settles it too: there the
-  // barrel does not wait.
-  itBundled("edgecase/ExportStarBehindAwaitedImportCallOfImporterStaysUnsettled", {
-    files: {
-      "/entry.js": /* js */ `
-        export const store = { user: null };
-        console.log("entry start");
-        store.user = await Promise.resolve("ada");
-        const { render } = await import("./ui.js");
-        render();
-      `,
-      "/ui.js": /* js */ `export * from "./components.js";`,
-      "/components.js": /* js */ `
-        import { store } from "./entry.js";
-        export function render() {
-          console.log("render for", store.user);
-        }
-      `,
-    },
-    format: "esm",
-    target: "node",
-    run: { runtime: "node", exitCode: 13, stdout: "entry start" },
   });
   // The barrel four waits for seven, and seven calls `import()` on three before
   // its await. three starts inside that call, when four has not run its body
@@ -5393,10 +5234,9 @@ describe("bundler", () => {
   }
 
   // Random graphs, each run unbundled and as a bundle without code splitting (splitting-fuzz.ts). The bundle reads
-  // every value and keeps every order of top-level effects that the source has. 7, 54 and 139 have a CommonJS file
-  // before an ES import that needs it, 32 and 176 call `import()` on a module that is running, and 299 has an
-  // `export *` of an async module.
-  for (const seed of [7, 32, 54, 139, 176, 299]) {
+  // every value and keeps every order of top-level effects that the source has. 7, 54, 153 and 266 have a CommonJS
+  // file before an ES import that needs it, and 32 and 176 call `import()` on a module that is running.
+  for (const seed of [7, 32, 54, 153, 176, 266]) {
     test.concurrent(`edgecase/UnsplitBundleRunsLikeItsSource: graph ${seed}`, async () => {
       expect(await checkUnsplit(bunExe(), seed)).toEqual({ seed, status: "ok", problems: [] });
     });

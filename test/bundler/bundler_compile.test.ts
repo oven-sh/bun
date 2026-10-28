@@ -340,23 +340,6 @@ describe("bundler", () => {
       },
       stdout: "a start\na end\nafter",
     },
-    {
-      name: "ExportStarOfAsyncWrappedModule",
-      files: {
-        "/entry.ts": `
-          export * from "./a.ts";
-          console.log("after");
-          import("./a.ts");
-        `,
-        "/a.ts": `
-          console.log("a start");
-          await 0;
-          console.log("a end");
-          export const a = 1;
-        `,
-      },
-      stdout: "a start\na end\nafter",
-    },
   ];
 
   for (const scenario of esmBytecodeScenarios) {

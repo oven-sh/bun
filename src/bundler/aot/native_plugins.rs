@@ -89,14 +89,10 @@ fn run_plugins(
 ) -> Result<Option<Loaded>, Failed> {
     let mut file_path = task.path;
     let mut from_plugin = false;
-    let transpiler = std::ptr::from_mut(transpiler);
-    // SAFETY: `transpiler` comes from a live exclusive reference.
-    let resolver = unsafe { &raw mut (*transpiler).resolver };
     let entry = get_code_for_parse_task(
         task,
         log,
-        transpiler,
-        resolver,
+        &raw mut transpiler.resolver,
         arena,
         &mut file_path,
         &mut loader,

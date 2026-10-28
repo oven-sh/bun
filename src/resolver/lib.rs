@@ -2191,7 +2191,7 @@ pub mod cache {
         /// `Contents::Owned(Vec<u8>)` path.
         pub fn read_file_with_allocator(
             &mut self,
-            _fs: &mut fs_mod::FileSystem,
+            _fs: &fs_mod::FileSystem,
             path: &[u8],
             dirname_fd: Fd,
             use_shared_buffer: bool,

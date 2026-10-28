@@ -1450,14 +1450,11 @@ pub mod parse_worker {
     // getCodeForParseTaskWithoutPlugins
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `transpiler`/`resolver` are raw `*mut`.
-    // Callers pass `resolver = &mut (*transpiler).resolver`; taking
-    // `&mut Transpiler` + `&mut Resolver` would be aliased-`&mut` UB. We only
-    // touch the disjoint `(*transpiler).fs` and `(*resolver).caches.fs` fields.
+    // `resolver` is a raw `*mut`: callers pass `&mut (*transpiler).resolver`
+    // while they hold `*mut Transpiler`. We only touch `(*resolver).caches.fs`.
     fn get_code_for_parse_task_without_plugins(
         task: &mut ParseTask<'static>,
         log: &mut Log,
-        transpiler: *mut Transpiler,
         resolver: *mut Resolver,
         bump: &Bump,
         file_path: &mut Fs::Path,
@@ -1529,13 +1526,9 @@ pub mod parse_worker {
                 // `OutputFile`). This avoids churning the global allocator with
                 // one `Vec<u8>` per file.
                 let read_arena: Option<&Bump> = Some(bump);
-                // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler`;
-                // `(*transpiler).fs` is a live `*mut FileSystem` BACKREF.
-                let fs_ref = unsafe { &mut *(*transpiler).fs };
-                // SAFETY: `resolver` is a live `*mut Resolver`; `caches.fs` is
-                // disjoint from `(*transpiler).fs` (a backref pointer field).
+                // SAFETY: `resolver` is a live `*mut Resolver`.
                 break 'brk match unsafe { &mut (*resolver).caches.fs }.read_file_with_allocator(
-                    fs_ref,
+                    Fs::FileSystem::get(),
                     file_path.text,
                     contents_dir,
                     false,
@@ -1614,13 +1607,11 @@ pub mod parse_worker {
     // getCodeForParseTask
     // ───────────────────────────────────────────────────────────────────────────
 
-    // `transpiler`/`resolver` are raw `*mut` — see
+    // `resolver` is a raw `*mut` — see
     // `get_code_for_parse_task_without_plugins`.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn get_code_for_parse_task<'b>(
         task: &mut ParseTask<'static>,
         log: &mut Log,
-        transpiler: *mut Transpiler<'b>,
         resolver: *mut Resolver<'b>,
         bump: &Bump,
         file_path: &mut Fs::Path<'b>,
@@ -1648,7 +1639,7 @@ pub mod parse_worker {
 
         if !might_have_on_parse_plugins {
             return get_code_for_parse_task_without_plugins(
-                task, log, transpiler, resolver, bump, file_path, *loader,
+                task, log, resolver, bump, file_path, *loader,
             );
         }
 
@@ -1657,7 +1648,6 @@ pub mod parse_worker {
         let mut ctx = OnBeforeParsePlugin {
             task,
             log,
-            transpiler,
             resolver,
             bump,
             file_path,
@@ -1682,11 +1672,7 @@ pub mod parse_worker {
     pub struct OnBeforeParsePlugin<'a, 'b: 'a> {
         task: &'a mut ParseTask<'static>,
         log: &'a mut Log,
-        // raw `*mut`. Callers pass
-        // `resolver = &mut (*transpiler).resolver`; storing `&'a mut Transpiler<'b>`
-        // alongside `&'a mut Resolver<'b>` would be aliased-`&mut` UB. The data
-        // lifetime `'b` is retained on the pointee for variance only.
-        transpiler: *mut Transpiler<'b>,
+        // raw `*mut` — see `get_code_for_parse_task_without_plugins`.
         resolver: *mut Resolver<'b>,
         bump: &'a Bump,
         file_path: &'a mut Fs::Path<'b>,
@@ -1964,7 +1950,6 @@ pub mod parse_worker {
             let mut entry = match get_code_for_parse_task_without_plugins(
                 this.task,
                 this.log,
-                this.transpiler,
                 this.resolver,
                 this.bump,
                 this.file_path,
@@ -2230,7 +2215,6 @@ pub mod parse_worker {
             get_code_for_parse_task_without_plugins(
                 self.task,
                 self.log,
-                self.transpiler,
                 self.resolver,
                 self.bump,
                 self.file_path,
@@ -2277,7 +2261,6 @@ pub mod parse_worker {
         let result = get_code_for_parse_task(
             task,
             log,
-            transpiler,
             resolver,
             bump,
             &mut file_path,

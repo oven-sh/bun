@@ -4255,9 +4255,7 @@ impl<'a> Resolver<'a> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
         let mut entry = self.caches.fs.read_file_with_allocator(
-            // SAFETY: process-global `FileSystem` singleton (see `fs()` NOTE); narrow `&mut`
-            // for this call only — `self.caches` is a field of `self` (disjoint allocation).
-            unsafe { &mut *self.fs() },
+            Fs::FileSystem::get(),
             file,
             dirname_fd,
             false,

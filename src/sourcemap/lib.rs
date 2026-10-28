@@ -575,6 +575,12 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
         if let Some(map) = std::sync::Arc::get_mut(ptr) {
             map.underlying_provider = provider.to_source_content_ptr();
             map.underlying_provider.set_load_hint(new_load_hint);
+            // An empty source name is the file itself.
+            for name in &mut map.external_source_names {
+                if name.is_empty() {
+                    *name = Box::from(bun_paths::basename(source_filename));
+                }
+            }
         } else {
             debug_assert!(false, "ParsedSourceMap Arc should be unique here");
         }
@@ -907,19 +913,6 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         return Err(crate::Error::InvalidSourceMap);
     };
 
-    // `sourcesContent` is optional per the source-map v3 spec. Absent or `null`
-    // is treated as no-content-available; a present non-array/non-null is
-    // rejected. A present array may be shorter than `sources` (the per-index
-    // bounds check below covers that).
-    let sources_content = match json.get(b"sourcesContent") {
-        None => None,
-        Some(expr) => match expr.data {
-            bun_ast::ExprData::EArrayJSON(arr) => Some(arr),
-            bun_ast::ExprData::ENull(_) => None,
-            _ => return Err(crate::Error::InvalidSourceMap),
-        },
-    };
-
     let sources_paths = match json
         .get(b"sources")
         .ok_or(crate::Error::InvalidSourceMap)?
@@ -936,10 +929,8 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
         let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_paths.items().len());
         for item in sources_paths.items() {
-            let Some(s) = item.as_str() else {
-                return Err(crate::Error::InvalidSourceMap);
-            };
-            v.push(Box::<[u8]>::from(s));
+            // ECMA-426: an entry that is not a string is a source with no name. It is shown as `null`.
+            v.push(Box::<[u8]>::from(item.as_str().unwrap_or(b"null")));
         }
         Some(v)
     } else {
@@ -1024,13 +1015,19 @@ pub(crate) fn parse_json(source: &[u8], hint: ParseUrlResultHint) -> crate::Resu
         ParseUrlResultHint::MappingsOnly => (None, None),
     };
 
-    let content_slice: Option<Box<[u8]>> = match (source_index, sources_content) {
-        (Some(idx), Some(sources_content))
-            if !matches!(hint, ParseUrlResultHint::MappingsOnly)
-                && (idx as usize) < sources_content.get().items().len() =>
-        'content: {
-            let item = &sources_content.get().items()[idx as usize];
-            let Some(str) = item.as_str() else {
+    let content_slice: Option<Box<[u8]>> = match source_index {
+        Some(idx) if (idx as usize) < sources_paths.items().len() => 'content: {
+            let Some(bun_ast::ExprData::EArrayJSON(contents)) =
+                json.get(b"sourcesContent").map(|contents| contents.data)
+            else {
+                break 'content None;
+            };
+            let Some(str) = contents
+                .get()
+                .items()
+                .get(idx as usize)
+                .and_then(|item| item.as_str())
+            else {
                 break 'content None;
             };
 

@@ -4855,7 +4855,7 @@ const waysToHaveANamespace = {
   imported: (ns: string, lib: string) => `const ${ns} = await import("./${lib}");`,
 };
 
-test.each(Object.keys(waysToHaveANamespace) as (keyof typeof waysToHaveANamespace)[])(
+test.concurrent.each(Object.keys(waysToHaveANamespace) as (keyof typeof waysToHaveANamespace)[])(
   "react-compiler gives these reads of a member of a namespace what the bundle without it gives: %s",
   async way => {
     const files: Record<string, string> = {

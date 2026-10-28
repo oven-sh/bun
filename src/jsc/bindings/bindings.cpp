@@ -5810,9 +5810,6 @@ restart:
                     }
                 } else {
                     propertyValue = slot.getValue(globalObject, property);
-                    // A read of a property that holds the sandbox gives the context's global.
-                    if (sandbox && propertyValue == sandbox) [[unlikely]]
-                        propertyValue = object;
                 }
 
                 // Ignore exceptions from getters.
@@ -5821,6 +5818,10 @@ restart:
                         return;
                     propertyValue = jsUndefined();
                 }
+
+                // A read of a property that holds the sandbox gives the context's global.
+                if (sandbox && propertyValue == sandbox) [[unlikely]]
+                    propertyValue = object;
 
                 JSC::EnsureStillAliveScope ensureStillAliveScope(propertyValue);
 

@@ -1151,6 +1151,17 @@ describe("printing the global of a node:vm context", () => {
     expect(print(runInContext("this", createContext(sandbox)))).toBe("{\n  global: [Global Object],\n}");
   });
 
+  // This passes without the own-slot lookup too. The walk can list the non-enumerable slot or omit it. It must not print the sandbox.
+  it("a non-enumerable property that holds the sandbox does not print the host's globals", () => {
+    const sandbox = Object.create(globalThis);
+    sandbox.data = 1;
+    Object.defineProperty(sandbox, "global", { value: sandbox, writable: true, configurable: true });
+    const context = createContext(sandbox);
+    runInContext("var global;", context);
+    const lines = print(runInContext("this", context)).split("\n");
+    expect(lines.filter(line => line !== "  global: [Global Object],")).toEqual(["{", "  data: 1,", "}"]);
+  });
+
   it.each([
     [
       "on the sandbox before createContext()",

@@ -3635,7 +3635,6 @@ impl RunCommand {
         }
         #[cfg(unix)]
         {
-            // SAFETY: all-zero is a valid winsize (#[repr(C)] POD).
             let mut size: libc::winsize = bun_core::ffi::zeroed();
             // SAFETY: ioctl with valid winsize ptr
             if unsafe { libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &raw mut size) } == 0 {
@@ -3647,9 +3646,7 @@ impl RunCommand {
         #[cfg(windows)]
         {
             if let Some(handle) = sys::windows::GetStdHandle(sys::windows::STD_OUTPUT_HANDLE) {
-                // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-                let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO =
-                    unsafe { bun_core::ffi::zeroed_unchecked() };
+                let mut csbi: sys::windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
                 // SAFETY: FFI Win32 `GetConsoleScreenBufferInfo`. `handle`
                 // is a valid console output HANDLE from GetStdHandle and
                 // `csbi` is a valid mutable CONSOLE_SCREEN_BUFFER_INFO out-ptr.

@@ -227,6 +227,23 @@ describe("chunks before the image", () => {
     expect(await profile(rgbaHeader, chunk("iCCP", wrongChecksum), rgbaData, iend)).toBe("profile");
   });
 
+  test("the name of a profile is printable Latin-1", async () => {
+    const isPrintable = (byte: number) => (byte >= 32 && byte <= 126) || byte >= 161;
+    const all = Array.from({ length: 256 }, (_, byte) => byte);
+    const edges = [0, 1, 31, 32, 33, 126, 127, 128, 159, 160, 161, 255];
+    // A 0 ends the name early. Then it is empty, or what follows it is not what has to.
+    for (const [where, bytes, name, isAllowed] of [
+      ["in the middle", all, (c: string) => `a${c}b`, isPrintable],
+      ["first", edges, (c: string) => `${c}ab`, (byte: number) => isPrintable(byte) && byte !== 32],
+      ["last", edges, (c: string) => `ab${c}`, (byte: number) => isPrintable(byte) && byte !== 32],
+    ] as const) {
+      const profiles = await Promise.all(
+        bytes.map(byte => profile(rgbaHeader, iccp("profile", name(String.fromCharCode(byte))), rgbaData, iend)),
+      );
+      expect([where, bytes.filter((_, i) => profiles[i] === "profile")]).toEqual([where, bytes.filter(isAllowed)]);
+    }
+  });
+
   test("1000 chunks of text, suggested palettes and Exif, and no more", async () => {
     const many = (count: number, ...kinds: Buffer[]) =>
       png(rgbaHeader, ...Array.from({ length: count }, (_, i) => kinds[i % kinds.length]), rgbaData, iend);

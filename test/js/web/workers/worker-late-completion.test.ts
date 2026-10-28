@@ -375,7 +375,10 @@ describe.skipIf(isWindows)("terminate() cancels a Bun.write(file, file) that wai
   type Stdio = "socket" | "fifo";
   type Row = {
     name: string;
-    copies: string[];
+    // One copy for each row. The pool can have as few as two threads, and a copy that waits holds one.
+    copy: string;
+    // How many files the copy opens and holds while it waits.
+    opens: number;
     stdin?: Stdio;
     stdout?: Stdio;
     end?: "terminate" | "exit";
@@ -383,49 +386,71 @@ describe.skipIf(isWindows)("terminate() cancels a Bun.write(file, file) that wai
   };
   const rows: Row[] = [
     {
-      name: "a FIFO source into Bun.stdout (a pipe): one that nobody writes to, one whose writer is silent",
-      copies: [`Bun.write(Bun.stdout, Bun.file(d.fifo))`, `Bun.write(Bun.stdout, Bun.file(d.held))`],
+      // Linux has no call that copies a FIFO into a file: it rejects this copy at once.
+      name: "a FIFO source that nobody writes to, into a file",
+      copy: `Bun.write(d.out, Bun.file(d.fifo))`,
+      opens: 2,
+      skip: isLinux || isAndroid,
+    },
+    {
+      name: "a FIFO source that nobody writes to, into Bun.stdout (a pipe)",
+      copy: `Bun.write(Bun.stdout, Bun.file(d.fifo))`,
+      opens: 1,
+      stdout: "fifo",
+    },
+    {
+      name: "a FIFO source whose writer is silent, as a Response, into Bun.stdout (a pipe)",
+      copy: `Bun.write(Bun.stdout, new Response(Bun.file(d.held)))`,
+      opens: 1,
       stdout: "fifo",
     },
     {
       // macOS and FreeBSD still open the destination with an open(2) that waits for the reader.
       name: "a FIFO destination that nobody reads",
-      copies: [`Bun.write(Bun.file(d.fifo), Bun.file(d.small))`],
+      copy: `Bun.write(Bun.file(d.fifo), Bun.file(d.small))`,
+      opens: 1,
       skip: !isLinux && !isAndroid,
     },
     {
-      name: "Bun.stdin (a socket) into Bun.stdout (a socket) and into a file",
-      copies: [
-        `Bun.write(Bun.stdout, Bun.stdin)`,
-        `Bun.write(d.out, Bun.stdin)`,
-        `Bun.write(d.out + "2", Bun.file(0))`,
-      ],
+      name: "Bun.stdin (a socket) into Bun.stdout (a socket)",
+      copy: `Bun.write(Bun.stdout, Bun.stdin)`,
+      opens: 0,
+    },
+    {
+      name: "Bun.file(0) (a socket) into a file",
+      copy: `Bun.write(d.out, Bun.file(0))`,
+      opens: 1,
     },
     {
       name: "Bun.stdin (a pipe) into Bun.stdout (a pipe)",
-      copies: [`Bun.write(Bun.stdout, Bun.stdin)`],
+      copy: `Bun.write(Bun.stdout, Bun.stdin)`,
+      opens: 0,
       stdin: "fifo",
       stdout: "fifo",
     },
     {
       name: "Bun.stdin (a socket) into Bun.stdout (a pipe)",
-      copies: [`Bun.write(Bun.stdout, Bun.stdin)`],
+      copy: `Bun.write(Bun.stdout, Bun.stdin)`,
+      opens: 0,
       stdout: "fifo",
     },
     {
       // macOS and FreeBSD write to a pipe that they did not open with a write(2) that waits for room.
       name: "a file into Bun.stdout, a pipe that nobody drains",
-      copies: [`Bun.write(Bun.stdout, Bun.file(d.big))`],
+      copy: `Bun.write(Bun.stdout, Bun.file(d.big))`,
+      opens: 1,
       stdout: "fifo",
       skip: !isLinux && !isAndroid,
     },
     {
       name: "a file into a socket that nobody drains",
-      copies: [`Bun.write(Bun.file(3), Bun.file(d.big))`],
+      copy: `Bun.write(Bun.file(3), Bun.file(d.big))`,
+      opens: 1,
     },
     {
       name: "the worker's own process.exit(), with Bun.stdin (a socket) into Bun.stdout",
-      copies: [`Bun.write(Bun.stdout, Bun.stdin)`],
+      copy: `Bun.write(Bun.stdout, Bun.stdin)`,
+      opens: 0,
       end: "exit",
     },
   ];
@@ -451,19 +476,20 @@ describe.skipIf(isWindows)("terminate() cancels a Bun.write(file, file) that wai
       held.push(fs.openSync(fifo, "r+"));
       return held.at(-1)!;
     };
-    // A copy that waits has one fd more than the files it opened: the fd that wakes it. The worker goes on
-    // once the process has one more fd for each copy. A terminate() that comes before a pool thread takes a
-    // copy skips that copy, so it would prove nothing.
+    // A copy that waits has the files it opened and the fd that wakes it (a pipe on macOS: two fds). The
+    // worker goes on once the process has them: the copy is then in its wait. A terminate() that comes
+    // before a pool thread takes the copy skips the copy, so it would prove nothing.
+    const waiting = row.opens + (isMacOS ? 2 : 1);
     const worker = `
       const { parentPort, workerData: d } = require("node:worker_threads");
       const fds = () => require("node:fs").readdirSync(process.platform === "linux" ? "/proc/self/fd" : "/dev/fd").length;
-      const before = fds();
-      let settled = false;
-      const settle = how => () => ((settled = true), parentPort.postMessage(how));
-      const copies = [${row.copies.join(", ")}];
-      for (const copy of copies) copy.then(settle("resolved"), settle("rejected"));
       (async () => {
-        while (!settled && fds() < before + copies.length) await Bun.sleep(1);
+        await Bun.sleep(1);
+        const before = fds();
+        let settled = false;
+        const settle = how => () => ((settled = true), parentPort.postMessage(how));
+        (${row.copy}).then(settle("resolved"), settle("rejected"));
+        while (!settled && fds() < before + ${waiting}) await Bun.sleep(1);
         ${row.end === "exit" ? "process.exit(0);" : `parentPort.postMessage("copying");`}
       })();
     `;

@@ -1964,11 +1964,17 @@ describe.concurrent("Bun.write(file, file) between ends that are not regular fil
         stdio: ["ignore", "ignore", "pipe", "pipe"],
       });
       const rest = await waiting(proc);
+      // This end of the socket is the test's to close.
+      const socket = proc.stdio[3];
       const copied = [];
-      let length = 0;
-      for await (const chunk of Bun.file(proc.stdio[3]).stream()) {
-        copied.push(chunk);
-        if ((length += chunk.length) >= source.length) break;
+      try {
+        let length = 0;
+        for await (const chunk of Bun.file(socket).stream()) {
+          copied.push(chunk);
+          if ((length += chunk.length) >= source.length) break;
+        }
+      } finally {
+        fs.closeSync(socket);
       }
       const [stderr, exitCode] = await Promise.all([rest(), proc.exited]);
       expect({ stderr, same: Buffer.concat(copied).equals(source) }).toEqual({

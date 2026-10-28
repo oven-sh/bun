@@ -940,6 +940,11 @@ impl CopyFile {
             plan =
                 Self::plan(stat.st_mode as _, src.peer, destination_mode, dst.peer).unwrap_or(plan);
         }
+        // No call here refuses a destination of another kind: ask about an fd that nothing has `stat`ed.
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        if !opens_destination {
+            dst.learn_peer();
+        }
 
         // BSD fstat on a pipe reports bytes currently buffered in st_size;
         // only a regular-file st_size is a length.
@@ -985,10 +990,12 @@ impl CopyFile {
         {
             // fcopyfile rewrites dest from offset 0 and the slice trim is
             // ftruncate; both are only safe for a dest Bun opened O_TRUNC.
+            // It takes regular files only: an end that waits for a peer has the loop below.
             if matches!(
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Path(_)
-            ) {
+            ) && !waits_for_peer(src, dst)
+            {
                 let copied = match self.do_fcopy_file_with_read_write_loop_fallback(
                     u64::try_from(stat.st_size).expect("int cast"),
                 ) {
@@ -1026,23 +1033,23 @@ impl CopyFile {
             if matches!(
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Path(_)
-            ) {
+            ) && !waits_for_peer(src, dst)
+            {
                 let mut total_written: u64 = 0;
-                let copied = if waits_for_peer(src, dst) {
-                    copy_with_waits(&self.cancel, src, dst, MAX_SIZE, &mut total_written)
-                } else {
-                    node_fs::NodeFS::copy_file_using_read_write_loop(
-                        bun_core::ZStr::EMPTY,
-                        bun_core::ZStr::EMPTY,
-                        self.source_fd,
-                        self.destination_fd,
-                        0,
-                        &mut total_written,
-                    )
-                };
-                if self.recorded(copied).is_err() {
-                    self.do_close();
-                    return;
+                match node_fs::NodeFS::copy_file_using_read_write_loop(
+                    bun_core::ZStr::EMPTY,
+                    bun_core::ZStr::EMPTY,
+                    self.source_fd,
+                    self.destination_fd,
+                    0,
+                    &mut total_written,
+                ) {
+                    bun_sys::Result::Err(err) => {
+                        self.system_error = Some(err.to_system_error());
+                        self.do_close();
+                        return;
+                    }
+                    bun_sys::Result::Ok(()) => {}
                 }
                 if stat.st_size != 0
                     && SizeType::try_from(stat.st_size).expect("int cast") > self.max_length
@@ -1191,7 +1198,6 @@ impl End {
     }
 
     /// `fstat`s a destination of `Peer::Unknown`. Returns its mode, or 0 if there was nothing to learn.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
     fn learn_peer(&mut self) -> Mode {
         if self.peer != Peer::Unknown {
             return 0;
@@ -1270,7 +1276,7 @@ impl Cancel {
         }
         #[cfg(target_os = "macos")]
         {
-            let [reader, writer] = bun_sys::pipe().ok()?;
+            let [reader, writer] = bun_sys::pipe().ok()?.map(bun_sys::move_above_stdio);
             for fd in [reader, writer] {
                 let _ = bun_sys::set_close_on_exec(fd);
                 let _ = bun_sys::set_nonblocking(fd);
@@ -1368,7 +1374,7 @@ fn copy_with_waits(
 ) -> bun_sys::Result<()> {
     use bun_sys::posix::{POLL_IN, POLL_OUT};
     let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
-    // SAFETY: `read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
+    // SAFETY: `read` and `recv` are the only writers of `buf`; each iteration reads back only `buf[..amt]`.
     let buf = unsafe { stack_buf.as_bytes_mut() };
     // A read without O_NONBLOCK sleeps, and a FIFO with no writer yet reads as an end of file: wait for "ready" first.
     let mut wait_before_read = match src.peer {

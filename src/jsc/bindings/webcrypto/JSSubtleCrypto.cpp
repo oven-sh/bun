@@ -778,10 +778,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSubtleCryptoConstructorFunction_supports, (JSGlobalOb
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-    // Node requires `this` to be the SubtleCrypto constructor itself.
-    if (!dynamicDowncast<JSSubtleCryptoDOMConstructor>(callFrame->thisValue()))
-        return Bun::throwError(lexicalGlobalObject, throwScope, Bun::ErrorCode::ERR_INVALID_THIS, "Value of \"this\" must be of type SubtleCrypto constructor"_s);
-
     if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
 

@@ -380,6 +380,48 @@ describe("Bun.Image", () => {
       expect({ w: a.w, h: a.h }).toEqual({ w: 4, h: 2 });
       expect({ w: a.w, h: a.h }).toEqual({ w: b.w, h: b.h });
     });
+
+    // https://github.com/oven-sh/bun/issues/47203
+    const dimsOf = (src: Uint8Array) => async (w: number, h?: number, o?: Parameters<Bun.Image["resize"]>[2]) => {
+      const { w: ow, h: oh } = decodePngRaw(await new Bun.Image(src).resize(w, h, o).png().bytes());
+      return `${ow}x${oh}`;
+    };
+
+    test("height omitted: derived side rounds and the given width is kept", async () => {
+      // 101×67 is not an exact ratio: 67 × 40 / 101 = 26.53 must round to 27,
+      // not truncate to 26. With fit:"inside" the derived box must not be
+      // re-fitted against the source (that gave 39×26, 14×9, 59×39, 199×132).
+      const dims = dimsOf(makePng(101, 67, (x, y) => [(x * 2) & 255, (y * 3) & 255, 128, 255]));
+      expect(
+        await Promise.all([
+          dims(40),
+          dims(40, undefined, { fit: "inside" }),
+          dims(40, 0, { fit: "inside" }),
+          dims(40, 40, { fit: "inside" }),
+          dims(15, undefined, { fit: "inside" }),
+          dims(60, undefined, { fit: "inside", withoutEnlargement: true }),
+          dims(200, undefined, { fit: "inside" }),
+          dims(200, undefined, { fit: "inside", withoutEnlargement: true }),
+          dims(101),
+        ]),
+      ).toEqual(["40x27", "40x27", "40x27", "40x27", "15x10", "60x40", "200x133", "101x67", "101x67"]);
+    });
+
+    test("derived side rounds ties to even, and fit:'inside' agrees with the omitted height", async () => {
+      // 10×5 → width 13 gives 6.5 (to 6), width 15 gives 7.5 (to 8), like
+      // sharp's std::rint. A fit:"inside" box that binds on the width gives
+      // the same height as the omitted-height form.
+      const dims = dimsOf(makePng(10, 5, (x, y) => [x * 25, y * 50, 0, 255]));
+      expect(
+        await Promise.all([
+          dims(13),
+          dims(13, 1000, { fit: "inside" }),
+          dims(15),
+          dims(15, 1000, { fit: "inside" }),
+          dims(1000, 8, { fit: "inside" }),
+        ]),
+      ).toEqual(["13x6", "13x6", "15x8", "15x8", "16x8"]);
+    });
   });
 
   test("path string input reads from disk", async () => {

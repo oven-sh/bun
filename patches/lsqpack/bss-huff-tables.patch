@@ -100,16 +100,16 @@
  #define MIN(a, b) ((a) < (b) ? (a) : (b))
  #define MAX(a, b) ((a) > (b) ? (a) : (b))
  
-@@ -502,6 +595,9 @@
-                   unsigned max_risked_streams, enum lsqpack_enc_opts enc_opts,
-                   unsigned char *tsu_buf, size_t *tsu_buf_sz)
+@@ -486,6 +579,9 @@
+ void
+ lsqpack_enc_preinit (struct lsqpack_enc *enc, void *logger_ctx)
  {
 +#if LS_QPACK_USE_LARGE_TABLES && LS_QPACK_BSS_LARGE_TABLES
 +    huff_tables_init();
 +#endif
-     struct lsqpack_double_enc_head *buckets;
-     unsigned char *p;
-     unsigned nbits = 2;
+     memset(enc, 0, sizeof(*enc));
+     STAILQ_INIT(&enc->qpe_all_entries);
+     STAILQ_INIT(&enc->qpe_hinfo_arrs);
 @@ -2775,6 +2871,9 @@
      unsigned dyn_table_size, unsigned max_risked_streams,
      const struct lsqpack_dec_hset_if *dh_if, enum lsqpack_dec_opts opts)

@@ -36,6 +36,7 @@ unsafe extern "C" {
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
+    safe fn JSC__VM__topEntryFrame(vm: &VM) -> *const c_void;
     safe fn JSC__VM__terminationException(vm: &VM) -> JSValue;
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
@@ -142,6 +143,12 @@ impl VM {
     /// A script frame is on this VM's stack (JSC::VM::isEntered — a VMEntryScope is live).
     pub fn is_entered(&self) -> bool {
         JSC__VM__isEntered(self)
+    }
+
+    /// `JSC::VM::topEntryFrame`: the frame of the innermost entry into script (or into a host
+    /// function as script calls one) that has not returned; null with none. Only to compare.
+    pub(crate) fn top_entry_frame(&self) -> *const c_void {
+        JSC__VM__topEntryFrame(self)
     }
 
     /// The VM's TerminationException cell (created on demand) — what a pending one reads as; inert

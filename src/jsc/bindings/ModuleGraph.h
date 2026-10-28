@@ -135,8 +135,9 @@ void disposeModuleGraphOfContext(WebCore::ScriptExecutionContext&);
 // What runs while this is alive runs in `graph`'s context (null: the realm's own). For a call made
 // from wherever an error is being delivered: a handler runs as its owner, not as whoever failed.
 // Both halves of "the context that is current" are swapped: the async context, and the context
-// native code entered (VirtualMachine::entered_context), so a handler called from inside a
-// stopped graph's dispatch is not itself called for nobody.
+// native code entered (VirtualMachine::entered_context), so that inside the dispatch of a graph
+// that is stopped or gone the handler does not run as that graph, and what prints the error is
+// not itself called for nobody.
 // It runs on top of the async context that is current where the error is reported: a reporter
 // that reports before it restores the failing callback's context (timers, the tick queue) shows
 // the handler that callback's AsyncLocalStorage stores, as node does. What the handler leaves in
@@ -152,7 +153,7 @@ public:
 private:
     Zig::GlobalObject* m_globalObject;
     JSC::JSValue m_previous;
-    uint32_t m_previousEntered;
+    uint64_t m_previousEntered;
 };
 
 class ModuleGraphContextScope {

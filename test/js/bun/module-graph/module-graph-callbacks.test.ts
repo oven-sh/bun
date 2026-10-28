@@ -1,10 +1,14 @@
 // Bun.ModuleGraph: every way the runtime calls back into a graph's script
 // finds that graph's context current — also while other graphs and the host are doing the same
 // things at the same time. One entry per kind of callback; add one when adding an API that calls back.
-import { afterAll, beforeAll, expect, test } from "bun:test";
-import { rmSync } from "fs";
-import { bunExe, tempDir, tls as tlsCerts } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { promises, readFile, rmSync } from "fs";
+import { bunEnv, bunExe, tempDir, tls as tlsCerts } from "harness";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { pbkdf2 } from "node:crypto";
+import { once } from "node:events";
+import http from "node:http";
+import { promisify } from "node:util";
 import { join } from "path";
 
 const ModuleGraph = Bun.ModuleGraph;
@@ -413,3 +417,273 @@ test("every callback of several graphs and the host, all running at once, finds 
   ).toEqual([]);
   // (One test on purpose, and slow on a debug build: it is everything running at once.)
 }, 30_000);
+
+// What script has a host function call back is called in whatever turn that script runs. The event
+// loop delivers a graph's callback inside the graph's context and runs the microtask checkpoint that
+// follows there too, so whoever awaited the graph's work continues in that turn. A dispose() made
+// then costs nobody those calls: the host's script, another graph's and the disposed graph's own
+// leftover script are all script that is running. What the event loop would still deliver to the
+// disposed graph stays undelivered.
+describe("dispose() in the turn that delivered a graph's callback", () => {
+  let counted: Bun.Server<undefined>;
+  let handled = 0;
+  beforeAll(() => {
+    counted = Bun.serve({ port: 0, fetch: () => (handled++, new Response("handled")) });
+  });
+  afterAll(() => counted.stop(true));
+
+  /** What script gets from host functions that call it back before they return. */
+  const calledBack = () => {
+    const before = handled;
+    Promise.resolve(counted.fetch(new Request("http://host/"))).catch(() => {});
+    return {
+      rewritten: new HTMLRewriter()
+        .on("a", { element: element => void element.setAttribute("seen", "yes") })
+        .transform("<a></a>"),
+      rendered: Bun.markdown.render("# hi", { heading: children => `<h1 class="mine">${children}</h1>` }),
+      handled: handled - before,
+    };
+  };
+  const called = {
+    rewritten: '<a seen="yes"></a>',
+    rendered: '<h1 class="mine">hi</h1>',
+    handled: 1,
+  };
+
+  const file = join(dir, "data.txt");
+  const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+  /** A listener of the host's that greets whoever connects. `gone` settles when it has seen that connection go. */
+  const greeter = () => {
+    const gone = Promise.withResolvers<void>();
+    const listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: { open: socket => void socket.write("hello"), data() {}, close: () => gone.resolve() },
+    });
+    return { port: listener.port, gone: gone.promise, [Symbol.dispose]: () => void listener.stop(true) };
+  };
+
+  /** Work whose result the event loop delivers inside the context it was started in, by what delivers it. */
+  const deliveries: Record<string, () => Promise<unknown>> = {
+    "fs.promises.readFile": () => promises.readFile(file),
+    "fs.readFile callback": () => new Promise(resolve => readFile(file, resolve)),
+    "Bun.file().text()": () => Bun.file(file).text(),
+    "Bun.password.hash": () => Bun.password.hash("pw", { algorithm: "bcrypt", cost: 4 }),
+    "crypto.pbkdf2": () => promisify(pbkdf2)("pw", "salt", 1000, 32, "sha256"),
+    "Bun.spawn().exited": () =>
+      Bun.spawn({ cmd: [bunExe(), "-e", "1"], env: bunEnv, stdio: ["ignore", "ignore", "ignore"] }).exited,
+    "fetch()": () => fetch(counted.url).then(response => response.text()),
+    "a Bun.connect data handler": async () => {
+      const received = Promise.withResolvers<void>();
+      const listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: { open: socket => void socket.write("hello"), data() {} },
+      });
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        socket: { data: () => received.resolve() },
+      });
+      return received.promise;
+    },
+    "a Bun.udpSocket data handler": async () => {
+      const received = Promise.withResolvers<void>();
+      const receiver = await Bun.udpSocket({ hostname: "127.0.0.1", socket: { data: () => received.resolve() } });
+      const sender = await Bun.udpSocket({ hostname: "127.0.0.1" });
+      sender.send("hello", receiver.port, "127.0.0.1");
+      return received.promise;
+    },
+    "a Bun.serve fetch handler": () => {
+      const requested = Promise.withResolvers<void>();
+      const server = Bun.serve({ port: 0, fetch: () => (requested.resolve(), new Response()) });
+      fetch(server.url).catch(() => {});
+      return requested.promise;
+    },
+  };
+
+  for (const [what, work] of Object.entries(deliveries)) {
+    test.concurrent(`the host, continuing after ${what}`, async () => {
+      using graph = new ModuleGraph();
+      await graph.run(work);
+      graph.dispose();
+      expect(calledBack()).toEqual(called);
+    });
+  }
+
+  test.concurrent("the host, some microtasks further into that turn", async () => {
+    using graph = new ModuleGraph();
+    await graph.run(deliveries["fs.promises.readFile"]);
+    graph.dispose();
+    for (let i = 0; i < 3; i++) await null;
+    expect(calledBack()).toEqual(called);
+  });
+
+  test.concurrent("the host, answering a node:http request: the response arrives whole", async () => {
+    const server = http.createServer(async (_, response) => {
+      using graph = new ModuleGraph();
+      await graph.run(deliveries["fs.promises.readFile"]);
+      graph.dispose();
+      response.write("from ");
+      response.end("the host");
+    });
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    try {
+      const response = await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/`);
+      expect(await response.text()).toBe("from the host");
+    } finally {
+      server.close();
+    }
+  });
+
+  test.concurrent("another graph, continuing in that turn", async () => {
+    using disposed = new ModuleGraph();
+    using other = new ModuleGraph();
+    const work = disposed.run(deliveries["fs.promises.readFile"]);
+    const got = await other.run(async () => {
+      await work;
+      disposed.dispose();
+      return { current: ModuleGraph.current === other, ...calledBack() };
+    });
+    expect(got).toEqual({ current: true, ...called });
+  });
+
+  test.concurrent("a listener of the host's that the graph's callback dispatches to", async () => {
+    using graph = new ModuleGraph();
+    const target = new EventTarget();
+    const got = Promise.withResolvers<unknown>();
+    target.addEventListener("done", () => {
+      graph.dispose();
+      got.resolve({ current: ModuleGraph.current, ...calledBack() });
+    });
+    graph.run(() => readFile(file, () => void target.dispatchEvent(new Event("done"))));
+    expect(await got.promise).toEqual({ current: undefined, ...called });
+  });
+
+  // The graph's own script carries on after it disposed its graph: what it calls through a host
+  // function is called, wherever that script was started from (a timer is not delivered inside a
+  // context). What it starts settles nothing, and what it had open hears nothing.
+  const startedFrom: Record<string, (script: () => void) => unknown> = {
+    "a reaction to its work": script => deliveries["fs.promises.readFile"]().then(script),
+    "a callback of its work": script => readFile(file, script),
+    "a timer": script => setTimeout(script, 1),
+  };
+  for (const [where, start] of Object.entries(startedFrom)) {
+    test.concurrent(`the graph's own script, disposing its graph from ${where}`, async () => {
+      using host = greeter();
+      using graph = new ModuleGraph();
+      const heard: string[] = [];
+      await graph.run(() =>
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: host.port,
+          socket: { data() {}, close: () => void heard.push("close") },
+        }),
+      );
+      const got = Promise.withResolvers<ReturnType<typeof calledBack> & { started: Promise<unknown> }>();
+      graph.run(() =>
+        start(() => {
+          graph.dispose();
+          got.resolve({ ...calledBack(), started: deliveries["Bun.file().text()"]() });
+        }),
+      );
+      const { started, ...calls } = await got.promise;
+      await host.gone;
+      expect({ ...calls, started: Bun.peek.status(started), heard }).toEqual({
+        ...called,
+        started: "pending",
+        heard: [],
+      });
+    });
+  }
+
+  test.concurrent(
+    "a socket handler that disposes its graph: its script carries on, and the socket's other handlers hear nothing",
+    async () => {
+      using host = greeter();
+      using graph = new ModuleGraph();
+      const heard: string[] = [];
+      const got = Promise.withResolvers<unknown>();
+      graph.run(() =>
+        Bun.connect({
+          hostname: "127.0.0.1",
+          port: host.port,
+          socket: {
+            data() {
+              heard.push("data");
+              graph.dispose();
+              got.resolve(calledBack());
+            },
+            end: () => void heard.push("end"),
+            close: () => void heard.push("close"),
+            error: () => void heard.push("error"),
+          },
+        }),
+      );
+      expect(await got.promise).toEqual(called);
+      await host.gone;
+      expect(heard).toEqual(["data"]);
+    },
+  );
+
+  test.concurrent("onExit is not called once whoever awaited `exited` has disposed the graph", async () => {
+    using graph = new ModuleGraph();
+    const heard: string[] = [];
+    const child: Bun.Subprocess = graph.run(() =>
+      Bun.spawn({
+        cmd: [bunExe(), "-e", "1"],
+        env: bunEnv,
+        stdio: ["ignore", "ignore", "ignore"],
+        onExit: () => void heard.push("onExit"),
+      }),
+    );
+    await child.exited;
+    graph.dispose();
+    const calls = calledBack();
+    await turn();
+    expect({ ...calls, heard }).toEqual({ ...called, heard: [] });
+  });
+
+  test.concurrent(
+    "the onError of a graph whose maker was disposed: it runs as the maker, and is script like any other",
+    async () => {
+      using maker = new ModuleGraph();
+      const reported = Promise.withResolvers<unknown>();
+      const made = maker.run(
+        () => new ModuleGraph({ onError: error => reported.resolve([(error as Error).message, calledBack()]) }),
+      );
+      made.run(() =>
+        queueMicrotask(() => {
+          throw new Error("late");
+        }),
+      );
+      maker.dispose();
+      expect(await reported.promise).toEqual(["late", called]);
+    },
+  );
+
+  test("the host, continuing after every kind of callback above", async () => {
+    const { callbacks } = await import(join(dir, "callbacks.mjs"));
+    const names = Object.keys(callbacks);
+    const got: Record<string, unknown> = {};
+    await Promise.all(
+      names.map(async name => {
+        using graph = new ModuleGraph();
+        const env = {
+          tag: "disposed-after-" + name,
+          httpPort: hostHttp.port,
+          httpsPort: hostHttps.port,
+          ca: tlsCerts.cert,
+          bun: bunExe(),
+          hostTarget: new EventTarget(),
+          hostController: new AbortController(),
+        };
+        await graph.run(() => callbacks[name](() => {}, env));
+        graph.dispose();
+        got[name] = calledBack();
+      }),
+    );
+    expect(got).toEqual(Object.fromEntries(names.map(name => [name, called])));
+    // (One test, as above: it is everything running at once.)
+  }, 30_000);
+});

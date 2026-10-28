@@ -415,11 +415,11 @@ pub struct VirtualMachine {
     pub(crate) graph_contexts:
         bun_collections::ArrayHashMap<crate::ContextId, NonNull<crate::ScriptExecutionContext>>,
     /// The context native code has entered ([`enter_context`](Self::enter_context)) and not yet
-    /// left: whose script the native code that is running continues. `None` when nothing is
-    /// entered, which is how script mostly runs. The dead context's, for one entered as gone (its
-    /// graph has been collected; its context may not have been stopped yet: that is queued from
-    /// the finalizer). Not the current context: that is what the async context says.
-    pub(crate) entered_context: Cell<Option<crate::ContextId>>,
+    /// left: whose script that native code continues, up to the next entry into script
+    /// ([`EnteredContext`]). The dead context's, for one entered as gone (its graph has been
+    /// collected; its context may not have been stopped yet: that is queued from the finalizer).
+    /// Not the current context: that is what the async context says.
+    pub(crate) entered_context: Cell<EnteredContext>,
     pub test_isolation_enabled: bool,
     /// Counts `bun test --isolate` file swaps. The realm's context keeps its identifier across
     /// them, so a timer or pool job of the realm's remembers the count it was made under: one
@@ -1164,7 +1164,7 @@ impl VirtualMachine {
     /// realm's. The VM's own: everything else is handed a context (`context_of_caller`,
     /// [`ContextScope::context`]).
     fn current_context(&self) -> &crate::ScriptExecutionContext {
-        if self.entered_context.get() == Some(self.dead_context.id()) {
+        if self.entered_context.get().context == self.dead_context.id() {
             return &self.dead_context;
         }
         if self.graph_contexts.count() == 0 {
@@ -1188,14 +1188,58 @@ impl VirtualMachine {
 
     /// As [`reports_to_nobody`](Self::reports_to_nobody), for a call into script: the native
     /// code that is running entered the context of a `Bun.ModuleGraph` that was disposed (or is
-    /// gone) — a completion, a handler run while the context is being stopped. `JSValue::call`
-    /// makes such a call a no-op, as the same boundary does for a VM that forbids script. Not
-    /// what a disposed graph's leftover script calls synchronously (a comparator, a handler of a
-    /// synchronous transform): that is still its script running, which no scope entered.
+    /// gone) — a completion, a handler run while the context is being stopped — and makes the
+    /// call itself. `JSValue::call` makes such a call a no-op, as the same boundary does for a VM
+    /// that forbids script. Not what script calls through a host function (a handler of a
+    /// synchronous transform), whoever's script it is and whichever scope it runs under: a
+    /// context is entered for the native code that entered it, not for the script that code
+    /// calls or the jobs of a checkpoint it runs.
+    #[inline]
     pub fn calls_nobody(&self) -> bool {
-        self.entered_context
-            .get()
-            .is_some_and(|context| !self.is_context_live(context))
+        let entered = self.entered_context.get();
+        entered.bound != 0
+            && entered.context != self.root_context.id()
+            && self.entered_context_calls_nobody()
+    }
+
+    /// The rest of [`calls_nobody`](Self::calls_nobody), for a context that can stop. One
+    /// function, out of line and handed nothing: `JSValue::call` stays small enough to be
+    /// inlined, and what it inlines is two compares.
+    #[cold]
+    #[inline(never)]
+    fn entered_context_calls_nobody(&self) -> bool {
+        let entered = self.entered_context.get();
+        !self.is_context_live(entered.context) && entered.bound == self.entry_frame_bound()
+    }
+
+    /// [`EnteredContext::bound`] of a context that can stop, were it entered now. A VM that
+    /// forbids script calls nothing, and may be past having a stack to ask about.
+    fn entry_frame_bound(&self) -> u32 {
+        if !self.script_allowed() {
+            return EnteredContext::UNBOUND;
+        }
+        EnteredContext::bound_at(self.jsc_vm().top_entry_frame())
+    }
+
+    /// `context` as native code enters it now.
+    pub(crate) fn entered_now(&self, context: crate::ContextId) -> EnteredContext {
+        let bound = if context == self.root_context.id() {
+            EnteredContext::UNBOUND
+        } else {
+            self.entry_frame_bound()
+        };
+        EnteredContext { bound, context }
+    }
+
+    /// The end of [`enter_context`](Self::enter_context) for a context that can stop. Out of
+    /// line: entering the realm's context pays nothing for it.
+    #[cold]
+    #[inline(never)]
+    fn bind_entered_context(&self, context: crate::ContextId) {
+        self.entered_context.set(EnteredContext {
+            bound: self.entry_frame_bound(),
+            context,
+        });
     }
 
     /// The context that tracks the timers set under `id`: a graph's, or the one standing in for
@@ -1258,7 +1302,10 @@ impl VirtualMachine {
             context,
             previous: JSValue::ZERO,
             entered: self.global.cast_const(),
-            previous_entered: self.entered_context.replace(Some(context)),
+            previous_entered: self.entered_context.replace(EnteredContext {
+                bound: EnteredContext::UNBOUND,
+                context,
+            }),
         };
         if context == self.root_context.id() {
             if self.graph_contexts.count() != 0 && self.script_allowed() {
@@ -1287,12 +1334,12 @@ impl VirtualMachine {
             }
             None => {
                 scope.context = self.dead_context.id();
-                self.entered_context.set(Some(scope.context));
                 if self.graph_contexts.count() != 0 && self.script_allowed() {
                     scope.previous = Bun__ModuleGraph__enterRootContext(self.global());
                 }
             }
         }
+        self.bind_entered_context(scope.context);
         scope
     }
 
@@ -3385,7 +3432,7 @@ impl VirtualMachine {
             addr_of_mut!((*vm).auto_killer).write(Default::default());
             addr_of_mut!((*vm).root_context).write(crate::ScriptExecutionContext::root());
             addr_of_mut!((*vm).graph_contexts).write(Default::default());
-            addr_of_mut!((*vm).entered_context).write(Cell::new(None));
+            addr_of_mut!((*vm).entered_context).write(Cell::new(EnteredContext::NONE));
             addr_of_mut!((*vm).dead_context).write(crate::ScriptExecutionContext::dead());
             addr_of_mut!((*vm).commonjs_custom_extensions).write(Default::default());
             addr_of_mut!((*vm).entry_point).write(Default::default());
@@ -8128,6 +8175,53 @@ fn run_on_resolve(
     )))))
 }
 
+/// [`VirtualMachine::entered_context`]. All zero: nothing is entered.
+#[repr(C)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+pub(crate) struct EnteredContext {
+    /// Bit 0: something is entered. The other bits stand for `JSC::VM::topEntryFrame` when a
+    /// context that can stop was entered ([`bound_at`](Self::bound_at)): while that is still the
+    /// top entry frame, the native code that entered is what is running. Script it has called,
+    /// or a job of a checkpoint it is running, is under an entry frame of its own.
+    bound: u32,
+    context: crate::ContextId,
+}
+
+// C++ keeps one across `ErrorHandlerContextScope` as a `uint64_t`.
+const _: () = assert!(core::mem::size_of::<EnteredContext>() == 8);
+
+impl EnteredContext {
+    pub(crate) const NONE: Self = Self {
+        bound: 0,
+        context: crate::ContextId::NONE,
+    };
+
+    /// Entered with no entry frame recorded: the realm's context never stops, so nothing asks.
+    const UNBOUND: u32 = 1;
+
+    /// Entry frames are 16-byte aligned, and the 30 bits kept tell apart any two within 16 GB
+    /// of stack. (Two that did collide would read as one frame, which drops a call and never
+    /// makes one.)
+    #[inline]
+    fn bound_at(top_entry_frame: *const c_void) -> u32 {
+        let frame = top_entry_frame.addr();
+        Self::UNBOUND | (u32::from(frame != 0) << 1) | (((frame >> 4) as u32) << 2)
+    }
+
+    #[inline]
+    pub(crate) fn to_bits(self) -> u64 {
+        u64::from(self.bound) | (u64::from(self.context.raw()) << 32)
+    }
+
+    #[inline]
+    pub(crate) fn from_bits(bits: u64) -> Self {
+        Self {
+            bound: bits as u32,
+            context: crate::ContextId::from_raw((bits >> 32) as u32),
+        }
+    }
+}
+
 /// See [`VirtualMachine::enter_context`].
 pub struct ContextScope<'a> {
     vm: &'a VirtualMachine,
@@ -8138,7 +8232,7 @@ pub struct ContextScope<'a> {
     previous: JSValue,
     /// The realm `previous` is restored in: the one that was entered. (On the stack, as `previous`.)
     entered: *const JSGlobalObject,
-    previous_entered: Option<crate::ContextId>,
+    previous_entered: EnteredContext,
 }
 
 impl<'a> ContextScope<'a> {
@@ -8151,6 +8245,13 @@ impl<'a> ContextScope<'a> {
 
 impl Drop for ContextScope<'_> {
     fn drop(&mut self) {
+        // What `EnteredContext::bound` rests on: a scope is left by the native code that entered
+        // it, with every entry into script made since returned from.
+        debug_assert!(
+            !self.vm.script_allowed()
+                || self.vm.entered_context.get() == self.vm.entered_now(self.context),
+            "a ContextScope is left where it was entered"
+        );
         self.vm.entered_context.set(self.previous_entered);
         if !self.previous.is_empty() {
             // SAFETY: the realm entered above; it is reachable from this frame until here.

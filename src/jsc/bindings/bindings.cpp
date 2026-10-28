@@ -3401,7 +3401,13 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
         return {};
     }
 
+#if ASSERT_ENABLED
+    auto* entryFrame = vm.topEntryFrame;
+#endif
     auto result = JSC::profiledCall(globalObject, ProfilingReason::API, jsObject, callData, jsThisObject, argList);
+    // VirtualMachine::calls_nobody tells the native code that entered a context from script it
+    // has called by the top entry frame: the call is over, so its frame is gone.
+    ASSERT(vm.topEntryFrame == entryFrame);
 
     if (asyncContextData) {
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
@@ -5265,6 +5271,11 @@ bool JSC__VM__executionForbidden(JSC::VM* arg0)
 bool JSC__VM__isEntered(JSC::VM* arg0)
 {
     return (*arg0).isEntered();
+}
+
+extern "C" void* JSC__VM__topEntryFrame(JSC::VM* vm)
+{
+    return vm->topEntryFrame;
 }
 
 // The TerminationException cell itself (what a pending one reads as), not the error object it wraps.

@@ -523,7 +523,8 @@ unsafe extern "C" fn Bun__VirtualMachine__rootContext(
 }
 
 /// ModuleGraph.cpp's `ErrorHandlerContextScope`: the context native code entered becomes
-/// `context` ([`ContextId::NONE`]: none). Returns the one to put back.
+/// `context`, entered here. Returns what to put back
+/// ([`Bun__VirtualMachine__restoreEnteredContext`]).
 ///
 /// # Safety
 /// `vm` is this thread's live VM.
@@ -531,12 +532,26 @@ unsafe extern "C" fn Bun__VirtualMachine__rootContext(
 unsafe extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
     vm: *mut crate::VirtualMachineRef,
     context: ContextId,
-) -> ContextId {
+) -> u64 {
     // SAFETY: fn contract.
     let vm = unsafe { &*vm };
     vm.entered_context
-        .replace((context != ContextId::NONE).then_some(context))
-        .unwrap_or(ContextId::NONE)
+        .replace(vm.entered_now(context))
+        .to_bits()
+}
+
+/// # Safety
+/// `vm` is this thread's live VM; `previous` is what
+/// [`Bun__VirtualMachine__replaceEnteredContext`] returned.
+#[unsafe(no_mangle)]
+unsafe extern "C" fn Bun__VirtualMachine__restoreEnteredContext(
+    vm: *mut crate::VirtualMachineRef,
+    previous: u64,
+) {
+    // SAFETY: fn contract.
+    let vm = unsafe { &*vm };
+    vm.entered_context
+        .set(crate::virtual_machine::EnteredContext::from_bits(previous));
 }
 
 /// # Safety

@@ -445,9 +445,10 @@ static JSValue makeContextCurrent(Zig::GlobalObject* globalObject, JSModuleGraph
     return previous;
 }
 
-// VirtualMachine::entered_context: makes `context` the one native code entered (0: none) and
-// returns the one to put back.
-extern "C" uint32_t Bun__VirtualMachine__replaceEnteredContext(void* bunVM, uint32_t context);
+// VirtualMachine::entered_context: makes `context` the one native code entered, here, and
+// returns what to put back with Bun__VirtualMachine__restoreEnteredContext.
+extern "C" uint64_t Bun__VirtualMachine__replaceEnteredContext(void* bunVM, uint32_t context);
+extern "C" void Bun__VirtualMachine__restoreEnteredContext(void* bunVM, uint64_t previous);
 
 ErrorHandlerContextScope::ErrorHandlerContextScope(Zig::GlobalObject* globalObject, JSModuleGraph* owner)
     : m_globalObject(globalObject)
@@ -459,7 +460,7 @@ ErrorHandlerContextScope::ErrorHandlerContextScope(Zig::GlobalObject* globalObje
 
 ErrorHandlerContextScope::~ErrorHandlerContextScope()
 {
-    Bun__VirtualMachine__replaceEnteredContext(m_globalObject->bunVM(), m_previousEntered);
+    Bun__VirtualMachine__restoreEnteredContext(m_globalObject->bunVM(), m_previousEntered);
     m_globalObject->m_asyncContextData.get()->putInternalField(m_globalObject->vm(), 0, m_previous);
 }
 

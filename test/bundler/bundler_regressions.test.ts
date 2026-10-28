@@ -15,6 +15,31 @@ const extRuntime = {
 /** Top-level `import` statements of a chunk, in output order. */
 const importStatements = (code: string) => code.match(/^import\b[^;]*;/gm) ?? [];
 
+const reactRuntime = {
+  "/node_modules/react/index.js": /* js */ `export const version = "19.9.9";`,
+  "/node_modules/react/jsx-dev-runtime.js": /* js */ `
+    export const Fragment = "Fragment";
+    export const jsxDEV = (type, props) => ({ type, props });
+  `,
+  "/node_modules/react/package.json": /* json */ `{
+    "name": "react",
+    "type": "module",
+    "exports": { ".": "./index.js", "./jsx-dev-runtime": "./jsx-dev-runtime.js" }
+  }`,
+};
+
+/** Packages that print a line when they are evaluated. */
+const loggingRuntime = (...names: string[]) =>
+  Object.fromEntries(
+    names.flatMap(name => [
+      [
+        `/node_modules/${name}/index.js`,
+        `console.log("evaluating ${name}"); globalThis.${name}Loaded = "${name}"; export const v = "${name}";`,
+      ],
+      [`/node_modules/${name}/package.json`, `{ "name": "${name}", "type": "module", "main": "index.js" }`],
+    ]),
+  );
+
 describe("bundler", () => {
   // https://github.com/oven-sh/bun/issues/8671
   // Every source file's external `import path from "node:path"` used to survive
@@ -846,6 +871,711 @@ describe("bundler", () => {
           ["entry.js:4:'console'", "13:0:console"],
         ],
       },
+    },
+  });
+  // Code that a direct `eval` runs names the bindings of its file, so a.js and
+  // b.js keep their statements. c.js has no `eval`: its statement is dropped.
+  itBundled("regression/ExternalImportDedupeDirectEval#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        import { c } from "./c.js";
+        console.log(a(), b(), c());
+      `,
+      "/a.js": /* js */ `import { join as j1 } from "ext"; export const a = () => eval("j1('a', '1')");`,
+      "/b.js": /* js */ `import { join as j2 } from "ext"; export const b = () => eval("j2('b', '2')");`,
+      "/c.js": /* js */ `import { join as j3 } from "ext"; export const c = () => j3("c", "3");`,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "a/1 b/2 c/3" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import { join as j1 } from "ext";',
+        'import { join as j2 } from "ext";',
+      ]);
+    },
+  });
+  // The key is the export, not the local name: b.js's `join`, `sep`,
+  // `classNames` and `ns` print under the names a.js chose, and b.js's nested
+  // `j` and `n` do not capture them.
+  for (const minify of [false, true]) {
+    itBundled(`regression/ExternalImportDedupeDifferentLocalNames${minify ? "Minified" : ""}#8671`, {
+      files: {
+        "/entry.js": /* js */ `
+          import { a } from "./a.js";
+          import { b } from "./b.js";
+          console.log(a, b);
+        `,
+        "/a.js": /* js */ `
+          import { join as j, sep as s } from "ext";
+          import cx from "ext";
+          import * as n from "ext";
+          export const a = j("a", s) + cx.sep + n.sep;
+        `,
+        "/b.js": /* js */ `
+          import { join, sep } from "ext";
+          import classNames from "ext";
+          import * as ns from "ext";
+          const nested = (j, n) => join("b", j, n);
+          export const b = nested(sep, "x") + classNames.sep + ns.sep;
+        `,
+      },
+      format: "esm",
+      external: ["ext"],
+      runtimeFiles: extRuntime,
+      minifyIdentifiers: minify,
+      run: { stdout: "a//// b///x//" },
+      onAfterBundle(api) {
+        const imports = importStatements(api.readFile("/out.js"));
+        if (minify) expect(imports).toHaveLength(3);
+        else
+          expect(imports).toEqual([
+            'import { join as j, sep as s } from "ext";',
+            'import cx from "ext";',
+            'import * as n from "ext";',
+          ]);
+      },
+    });
+  }
+  // b.js's `extJoin` and `extSep` print as a.js's `join` and `sep`. The nested
+  // `join` and `sep` of b.js would capture them, so they are numbered, and
+  // their `name` changes with them.
+  itBundled("regression/ExternalImportDedupeNestedBindingName#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { makeJoin, Box } from "./b.js";
+        console.log(a, makeJoin()("b", "1"), new (Box())().v, makeJoin().name, Box().name);
+      `,
+      "/a.js": /* js */ `import { join, sep } from "ext"; export const a = join("a", sep);`,
+      "/b.js": /* js */ `
+        import { join as extJoin, sep as extSep } from "ext";
+        export function makeJoin() { function join(...p) { return extJoin(...p); } return join; }
+        export function Box() { class sep { v = extSep; } return sep; }
+      `,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "a// b/1 / join2 sep2" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual(['import { join, sep } from "ext";']);
+    },
+  });
+  // `var React = require("react")` in a CommonJS file prints as `import * as
+  // React`. It merges like a written import.
+  for (const minify of [false, true]) {
+    itBundled(`regression/ExternalImportDedupeLiftedRequire${minify ? "Minified" : ""}#8671`, {
+      files: {
+        "/entry.js": /* js */ `
+          import w1 from "w1";
+          import w2 from "w2";
+          import * as R from "react";
+          console.log(w1(), w2(), R.version);
+        `,
+        "/node_modules/w1/index.js": /* js */ `
+          var React = require("react");
+          module.exports = function w1() { return "w1:" + React.version; };
+        `,
+        "/node_modules/w1/package.json": /* json */ `{ "name": "w1", "main": "index.js" }`,
+        "/node_modules/w2/index.js": /* js */ `
+          var React = require("react");
+          module.exports = function w2() { return "w2:" + React.version; };
+        `,
+        "/node_modules/w2/package.json": /* json */ `{ "name": "w2", "main": "index.js" }`,
+      },
+      format: "esm",
+      external: ["react"],
+      runtimeFiles: reactRuntime,
+      minifyIdentifiers: minify,
+      run: { stdout: "w1:19.9.9 w2:19.9.9 19.9.9" },
+      onAfterBundle(api) {
+        expect(importStatements(api.readFile("/out.js"))).toHaveLength(1);
+      },
+    });
+  }
+  // With a direct `eval` in its file, the `var` of a lifted `require()` cannot
+  // be renamed. Linking it would give its name to the kept binding, so its
+  // statement stays.
+  itBundled("regression/ExternalImportDedupeLiftedRequireDirectEval#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import w1 from "w1";
+        import lib from "lib";
+        console.log(w1(), lib());
+      `,
+      "/node_modules/w1/index.js": /* js */ `
+        var React = require("react");
+        module.exports = function w1() { return "w1:" + React.version; };
+      `,
+      "/node_modules/w1/package.json": /* json */ `{ "name": "w1", "main": "index.js" }`,
+      "/node_modules/lib/index.js": /* js */ `
+        var ReactLib = require("react");
+        var two = eval("1 + 1");
+        module.exports = function lib() { return "lib:" + eval("ReactLib.version") + ":" + two; };
+      `,
+      "/node_modules/lib/package.json": /* json */ `{ "name": "lib", "main": "index.js" }`,
+    },
+    format: "esm",
+    external: ["react"],
+    runtimeFiles: reactRuntime,
+    run: { stdout: "w1:19.9.9 lib:19.9.9:2" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import * as React from "react";',
+        'import * as ReactLib from "react";',
+      ]);
+    },
+  });
+  // w1 is in both chunks. lib and lib3 are each in one chunk and pin `React`
+  // with a direct `eval`. Linking them to w1's `React` declared it twice in
+  // the chunk of the other entry point.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingPinnedName#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import w1 from "w1";
+        import lib from "lib";
+        console.log(w1(), lib());
+      `,
+      "/entry2.js": /* js */ `
+        import lib3 from "lib3";
+        import w1 from "w1";
+        console.log(lib3(), w1());
+      `,
+      "/node_modules/w1/index.js": /* js */ `
+        var React = require("react");
+        module.exports = function w1() { return "w1:" + React.version; };
+      `,
+      "/node_modules/w1/package.json": /* json */ `{ "name": "w1", "main": "index.js" }`,
+      "/node_modules/lib/index.js": /* js */ `
+        var React = require("react");
+        var two = eval("1 + 1");
+        module.exports = function lib() { return "lib:" + React.version + ":" + two; };
+      `,
+      "/node_modules/lib/package.json": /* json */ `{ "name": "lib", "main": "index.js" }`,
+      "/node_modules/lib3/index.js": /* js */ `
+        var React = require("react");
+        var three = eval("1 + 2");
+        module.exports = function lib3() { return "lib3:" + React.version + ":" + three; };
+      `,
+      "/node_modules/lib3/package.json": /* json */ `{ "name": "lib3", "main": "index.js" }`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["react"],
+    runtimeFiles: reactRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "w1:19.9.9 lib:19.9.9:2" },
+      { file: "/out/entry2.js", stdout: "lib3:19.9.9:3 w1:19.9.9" },
+    ],
+  });
+  // A wrapped file is printed before the files that import it, and its imports
+  // are hoisted out of the wrapper. The kept statement of a path is the first
+  // one in that print order, so the externals are evaluated as without the pass.
+  // esm.js's hoisted statement is dropped, and its own `cv` does not capture
+  // the kept `cv`.
+  itBundled("regression/ExternalImportDedupeEvaluationOrderWrappedFiles#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./a.js";
+        import cjs from "./cjs.js";
+        const lazy = () => require("./esm.js");
+        console.log("entry", cjs.v, lazy().e);
+      `,
+      "/a.js": /* js */ `
+        import "other";
+        import { v } from "side";
+        import "third";
+        console.log("a", v);
+      `,
+      "/cjs.js": /* js */ `
+        import { v as cv } from "side";
+        import "third";
+        module.exports = { v: cv };
+      `,
+      "/esm.js": /* js */ `
+        import "third";
+        import { v } from "side";
+        import "other";
+        export const e = (cv => "e:" + v + cv)("!");
+      `,
+    },
+    target: "bun",
+    format: "esm",
+    external: ["side", "other", "third"],
+    runtimeFiles: loggingRuntime("side", "other", "third"),
+    run: {
+      stdout: `
+        evaluating side
+        evaluating third
+        evaluating other
+        a side
+        entry side e:side!
+      `,
+    },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import { v as cv } from "side";',
+        'import"third";',
+        'import"other";',
+      ]);
+    },
+  });
+  // a.ts uses `Options` as a type only, so its statement is not printed and is
+  // not the kept one. b.ts's statement is.
+  itBundled("regression/ExternalImportDedupeTypeOnlyFirstImporter#8671", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { a } from "./a";
+        import { b } from "./b";
+        import { c } from "./c";
+        console.log(a, b("x"), c("y"));
+      `,
+      "/a.ts": /* ts */ `import { Options, join } from "ext"; export const a: Options = "a"; export type J = typeof join;`,
+      "/b.ts": /* ts */ `import { join } from "ext"; export const b = (x: string) => join("b", x);`,
+      "/c.ts": /* ts */ `import { join } from "ext"; export const c = (x: string) => join("c", x);`,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "a b/x c/y" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual(['import { join } from "ext";']);
+    },
+  });
+  // esm.js is loaded by `require()`, so it is wrapped and its import is hoisted
+  // out of the wrapper. That hoisted statement merges with the entry point's.
+  itBundled("regression/ExternalImportDedupeRequiredESModule#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { join } from "ext";
+        const lazy = () => require("./esm.js");
+        console.log(join("e", "1"), lazy().v);
+      `,
+      "/esm.js": /* js */ `import { join } from "ext"; export const v = join("esm", "2");`,
+    },
+    target: "bun",
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "e/1 esm/2" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual(['import { join } from "ext";']);
+    },
+  });
+  // `import defer` does not evaluate the module, so it is not the kept
+  // statement of its path: the bare import after it stays.
+  itBundled("regression/ExternalImportDedupeImportDefer#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import "./b.js";
+        console.log(typeof a);
+      `,
+      "/a.js": /* js */ `import defer * as ns from "side"; export const a = () => ns.v;`,
+      "/b.js": /* js */ `import "side";`,
+    },
+    format: "esm",
+    external: ["side"],
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual(['import defer * as ns from "side";', 'import"side";']);
+    },
+  });
+  // a.js is wrapped, and its unused import is in a part that is not printed.
+  // It is not the kept statement: b.js's is.
+  itBundled("regression/ExternalImportDedupeDeadPartInWrappedFile#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { b } from "./b.js";
+        const a = require("./a.js");
+        console.log(a.a, b);
+      `,
+      "/a.js": /* js */ `import path from "node:path"; export const a = 1;`,
+      "/b.js": /* js */ `import path from "node:path"; export const b = path.posix.join("b", "1");`,
+    },
+    target: "bun",
+    format: "esm",
+    run: { stdout: "1 b/1" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual(['import path from "path";']);
+    },
+  });
+  // An import of "bun" prints as a read of `globalThis.Bun` in each file. The
+  // pass leaves it alone.
+  itBundled("regression/ExternalImportDedupeBunImport#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { b } from "./b.js";
+        console.log(a, b);
+      `,
+      "/a.js": /* js */ `import { version } from "bun"; export const a = typeof version;`,
+      "/b.js": /* js */ `import { version } from "bun"; export const b = typeof version;`,
+    },
+    target: "bun",
+    format: "esm",
+    run: { stdout: "string string" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([]);
+    },
+  });
+  // The automatic JSX runtime import is generated in each file. The two
+  // `jsxDEV` statements merge.
+  itBundled("regression/ExternalImportDedupeJSXRuntime#8671", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { A } from "./a.jsx";
+        import { B } from "./b.jsx";
+        console.log(JSON.stringify([<A />, <B />].map(e => e.type(e.props))));
+      `,
+      "/a.jsx": /* jsx */ `export const A = () => <div />;`,
+      "/b.jsx": /* jsx */ `export const B = () => <span>{1}</span>;`,
+    },
+    format: "esm",
+    external: ["react"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: reactRuntime,
+    run: { stdout: '[{"type":"div","props":{}},{"type":"span","props":{"children":1}}]' },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual(['import { jsxDEV } from "react/jsx-dev-runtime";']);
+    },
+  });
+  // b.jsx also needs `Fragment`, so its statement adds a binding and stays
+  // whole: its `jsxDEV` is a second binding.
+  itBundled("regression/ExternalImportDedupeJSXRuntimeFragment#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { A } from "./a.jsx";
+        import { B } from "./b.jsx";
+        console.log(A().type, B().type, B().props.children.type);
+      `,
+      "/a.jsx": /* jsx */ `export const A = () => <div />;`,
+      "/b.jsx": /* jsx */ `export const B = () => <><span /></>;`,
+    },
+    format: "esm",
+    external: ["react"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: reactRuntime,
+    run: { stdout: "div Fragment span" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import { jsxDEV } from "react/jsx-dev-runtime";',
+        'import { jsxDEV as jsxDEV2, Fragment } from "react/jsx-dev-runtime";',
+      ]);
+    },
+  });
+  // A re-export of an external prints an import too. The pass reads `import`
+  // statements only, so these print as without it.
+  itBundled("regression/ExternalImportDedupeReexportsUnchanged#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { join as ja } from "./a.js";
+        import { ns as nb } from "./b.js";
+        import { c } from "./c.js";
+        console.log(ja("a", "1"), nb.sep, c);
+      `,
+      "/a.js": /* js */ `export { join } from "ext";`,
+      "/b.js": /* js */ `export * as ns from "ext";`,
+      "/c.js": /* js */ `
+        import { join } from "ext";
+        import * as ns from "ext";
+        export const c = join("c", ns.sep);
+      `,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "a/1 / c//" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import { join } from "ext";',
+        'import * as ns from "ext";',
+        'import { join as join2 } from "ext";',
+        'import * as ns2 from "ext";',
+      ]);
+    },
+  });
+  // page2.js has its own `jsxDEV` and `jsx`. shared.jsx is in both chunks and
+  // keeps its generated import, so page2's names do not collide with it.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingJSXRuntime#8671", {
+    files: {
+      "/page1.js": /* js */ `
+        import { Only } from "./only1.jsx";
+        import { Shared } from "./shared.jsx";
+        console.log("p1", Only().type, Shared().type);
+      `,
+      "/page2.js": /* js */ `
+        import { Shared } from "./shared.jsx";
+        const jsxDEV = "mineDEV", jsx = "mine";
+        console.log("p2", Shared().type, jsxDEV, jsx);
+      `,
+      "/only1.jsx": /* jsx */ `export const Only = () => <b>only</b>;`,
+      "/shared.jsx": /* jsx */ `export const Shared = () => <i>shared</i>;`,
+    },
+    entryPoints: ["/page1.js", "/page2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["react"],
+    jsx: { runtime: "automatic", development: true },
+    runtimeFiles: reactRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/page1.js", stdout: "p1 b i" },
+      { file: "/out/page2.js", stdout: "p2 i mineDEV mine" },
+    ],
+  });
+  // With splitting, each chunk merges on its own: the files of entry1 alone,
+  // the files of entry2 alone, and the files that both share.
+  itBundled("regression/ExternalImportDedupeSplittingPerChunk#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { a } from "./a.js";
+        import { a2 } from "./a2.js";
+        import { s } from "./shared.js";
+        import { s2 } from "./shared2.js";
+        console.log(a(), a2(), s(), s2());
+      `,
+      "/entry2.js": /* js */ `
+        import { s2 } from "./shared2.js";
+        import { s } from "./shared.js";
+        import { b } from "./b.js";
+        import { join } from "ext";
+        console.log(s2(), s(), b(), join("e2", "1"));
+      `,
+      "/a.js": /* js */ `import { join } from "ext"; export const a = () => join("a", "1");`,
+      "/a2.js": /* js */ `import { join } from "ext"; export const a2 = () => join("a2", "1");`,
+      "/b.js": /* js */ `import { join } from "ext"; export const b = () => join("b", "1");`,
+      "/shared.js": /* js */ `import { join } from "ext"; export const s = () => join("s", "1");`,
+      "/shared2.js": /* js */ `import { join } from "ext"; export const s2 = () => join("s2", "1");`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: true,
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "a/1 a2/1 s/1 s2/1" },
+      { file: "/out/entry2.js", stdout: "s2/1 s/1 b/1 e2/1" },
+    ],
+    onAfterBundle(api) {
+      for (const file of readdirSync(api.outdir).filter(f => f.endsWith(".js"))) {
+        const fromExt = importStatements(api.readFile("/out/" + file)).filter(s => s.endsWith('from "ext";'));
+        expect(fromExt).toEqual(['import { join } from "ext";']);
+      }
+    },
+  });
+  // a.js's `j` is the kept binding, and the entry points import it from the
+  // shared chunk. c.js's statement is dropped and links to it.
+  for (const minify of [false, true]) {
+    itBundled(`regression/ExternalImportDedupeSplittingKeptRefCrossesChunks${minify ? "Minified" : ""}#8671`, {
+      files: {
+        "/entry1.js": /* js */ `
+          import { j } from "./a.js";
+          import { c } from "./c.js";
+          console.log(j("x", "y"), c());
+        `,
+        "/entry2.js": /* js */ `
+          import { c } from "./c.js";
+          import { j } from "./a.js";
+          console.log(c(), j("p", "q"));
+        `,
+        "/a.js": /* js */ `import { join as j } from "ext"; export { j };`,
+        "/c.js": /* js */ `import { join } from "ext"; export const c = () => join("c", "1");`,
+      },
+      entryPoints: ["/entry1.js", "/entry2.js"],
+      format: "esm",
+      splitting: true,
+      external: ["ext"],
+      runtimeFiles: extRuntime,
+      minifyIdentifiers: minify,
+      outdir: "/out",
+      run: [
+        { file: "/out/entry1.js", stdout: "x/y c/1" },
+        { file: "/out/entry2.js", stdout: "c/1 p/q" },
+      ],
+      onAfterBundle(api) {
+        const shared = readdirSync(api.outdir).filter(f => f.endsWith(".js") && f !== "entry1.js" && f !== "entry2.js");
+        expect(shared).toHaveLength(1);
+        expect(importStatements(api.readFile("/out/" + shared[0])).filter(s => s.includes('"ext"'))).toHaveLength(1);
+      },
+    });
+  }
+  // One file can repeat a path: the repeats merge with the first statements.
+  // `f`'s own `ns` does not capture the kept `ns`.
+  itBundled("regression/ExternalImportDedupeSameFile#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { join } from "ext";
+        import { join as j2, sep } from "ext";
+        import { join as j3 } from "ext";
+        import * as ns from "ext";
+        import * as ns2 from "ext";
+        import def from "ext";
+        import def2 from "ext";
+        import "ext";
+        const f = ns => ns + ns2.sep;
+        console.log(join("a", "b"), j2("c", sep), j3("d", "e"), ns.sep, f("x"), def.sep, def2.sep);
+      `,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "a/b c// d/e / x/ / /" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import { join } from "ext";',
+        'import { join as j2, sep } from "ext";',
+        'import * as ns from "ext";',
+        'import def from "ext";',
+      ]);
+    },
+  });
+  // shared.js is in both chunks, so it keeps its own repeats, with another
+  // importer before it in one chunk only.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingSameFile#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { s } from "./shared.js";
+        console.log(s);
+      `,
+      "/entry2.js": /* js */ `
+        import { p } from "./p.js";
+        import { s } from "./shared.js";
+        console.log(p, s);
+      `,
+      "/p.js": /* js */ `
+        import { join } from "ext";
+        import * as ns from "ext";
+        export const p = join("p", ns.sep);
+      `,
+      "/shared.js": /* js */ `
+        import { join } from "ext";
+        import { join as j3 } from "ext";
+        import * as ns from "ext";
+        import * as ns2 from "ext";
+        export const s = [join("a", "b"), j3("c", "d"), ns.sep, ns2.sep].join(" ");
+      `,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "a/b c/d / /" },
+      { file: "/out/entry2.js", stdout: "p// a/b c/d / /" },
+    ],
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out/entry1.js"))).toHaveLength(4);
+      expect(importStatements(api.readFile("/out/entry2.js"))).toHaveLength(6);
+    },
+  });
+  // shared.js is in both chunks and imports a.js between its two statements.
+  // It keeps both, also in entry2's chunk, where a.js is printed first.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingSameFileSplit#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { s } from "./shared.js";
+        console.log(s);
+      `,
+      "/entry2.js": /* js */ `
+        import { a } from "./a.js";
+        import { s } from "./shared.js";
+        console.log(a, s);
+      `,
+      "/a.js": /* js */ `import { sep } from "ext"; export const a = "a" + sep;`,
+      "/shared.js": /* js */ `
+        import { join } from "ext";
+        import { a } from "./a.js";
+        import { join as j3 } from "ext";
+        export const s = join("x", a) + " " + j3("y", a);
+      `,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "x/a/ y/a/" },
+      { file: "/out/entry2.js", stdout: "a/ x/a/ y/a/" },
+    ],
+    onAfterBundle(api) {
+      for (const file of ["/out/entry1.js", "/out/entry2.js"]) {
+        expect(importStatements(api.readFile(file))).toHaveLength(3);
+      }
+    },
+  });
+  // A bare import binds nothing, so it is dropped per chunk, also in a file
+  // that is in both chunks: entry1 imports "side" through a.js first, and
+  // entry2 has only shared.js's bare import.
+  itBundled("regression/ExternalImportDedupeMultiEntryNoSplittingBareImport#8671", {
+    files: {
+      "/entry1.js": /* js */ `
+        import { a } from "./a.js";
+        import { s } from "./shared.js";
+        console.log("entry1", a, s);
+      `,
+      "/entry2.js": /* js */ `
+        import { s } from "./shared.js";
+        console.log("entry2", s);
+      `,
+      "/a.js": /* js */ `import { v } from "side"; export const a = "a:" + v;`,
+      "/shared.js": /* js */ `import "side"; export const s = "shared:" + globalThis.sideLoaded;`,
+    },
+    entryPoints: ["/entry1.js", "/entry2.js"],
+    format: "esm",
+    splitting: false,
+    external: ["side"],
+    runtimeFiles: loggingRuntime("side"),
+    outdir: "/out",
+    run: [
+      { file: "/out/entry1.js", stdout: "evaluating side\nentry1 a:side shared:side" },
+      { file: "/out/entry2.js", stdout: "evaluating side\nentry2 shared:side" },
+    ],
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out/entry1.js"))).toEqual(['import { v } from "side";']);
+      expect(importStatements(api.readFile("/out/entry2.js"))).toEqual(['import"side";']);
+    },
+  });
+  // The dropped statements are found in the order deep.js, a.js, entry.js, and
+  // are looked up by source file: the list has to be sorted.
+  itBundled("regression/ExternalImportDedupeDropsInImportChain#8671", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a } from "./a.js";
+        import { join } from "ext";
+        console.log(a, join("e", "1"));
+      `,
+      "/a.js": /* js */ `
+        import { deep } from "./deep.js";
+        import { join } from "ext";
+        export const a = deep + " " + join("a", "1");
+      `,
+      "/deep.js": /* js */ `
+        import { sep } from "ext";
+        import { join } from "ext";
+        import { join as j2 } from "ext";
+        export const deep = j2("deep", "1") + join(sep, "2");
+      `,
+    },
+    format: "esm",
+    external: ["ext"],
+    runtimeFiles: extRuntime,
+    run: { stdout: "deep/1//2 a/1 e/1" },
+    onAfterBundle(api) {
+      expect(importStatements(api.readFile("/out.js"))).toEqual([
+        'import { sep } from "ext";',
+        'import { join } from "ext";',
+      ]);
     },
   });
 

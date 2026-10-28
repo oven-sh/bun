@@ -2928,6 +2928,7 @@ describe.concurrent("node:vm SourceTextModule instantiate() with modules that ar
 
   // The native link() reads its two arrays with getters allowed, and a getter can link the module. link() must stop
   // there: neither instantiate() nor the Evaluate() of JavaScriptCore looks again at the modules of a linked record.
+  // Only the native module reaches this: linkRequests() and link() give it arrays with no getter (the next test).
   const unchanged = ": returned undefined, read specifiers[0] moduleNatives[0], importer sees AB, ran AB";
 
   test("link() leaves a record alone that a getter of its arguments linked", async () => {
@@ -2945,49 +2946,19 @@ describe.concurrent("node:vm SourceTextModule instantiate() with modules that ar
       };
 
       (async () => {
-        // A getter of element 0 links X with A and B. The link() call that reads the getter has V for both requests.
-        // V is linked, so a link() that goes on shows as the wrong module, not as a crash.
-        for (const then of ["links X", "links and evaluates X", "links X and leaves it at a top-level await"]) {
-          for (const where of ["moduleNatives", "specifiers"]) {
-            const A = linked("A", 'ran.push("A"); export const a = "A";');
-            const B = linked("B", 'ran.push("B"); export const b = "B";');
-            const V = linked("V", 'ran.push("V"); export const a = "V", b = "V";');
-            const X = mk("X", 'export * from "a"; export * from "b";' + (then.endsWith("await") ? " await 0;" : ""));
-            const read = [];
-            let evaluation;
-            const values = { specifiers: ["a", "b"], moduleNatives: [native(V), native(V)] };
-            const arrays = { specifiers: [], moduleNatives: [] };
-            for (const name in arrays) {
-              for (const index of [0, 1]) {
-                withGetter(arrays[name], index, () => {
-                  read.push(name + "[" + index + "]");
-                  if (name === where && index === 0) {
-                    X.linkRequests([A, B]);
-                    X.instantiate();
-                    if (then !== "links X") evaluation = X.evaluate();
-                  }
-                  return values[name][index];
-                });
-              }
-            }
-            const returned = native(X).link(arrays.specifiers, arrays.moduleNatives, 0);
-            const importer = mk("importer", 'import { a, b } from "X"; export const r = a + b;');
-            importer.linkRequests([X]);
-            importer.instantiate();
-            await importer.evaluate();
-            await evaluation;
-            const call = ": returned " + returned + ", read " + read.join(" ");
-            const seen = ", importer sees " + importer.namespace.r + ", ran " + context.ran.splice(0).join("");
-            console.log("getter of " + where + "[0] " + then + call + seen);
-          }
-        }
-
-        // From here on the link() call has U, and the import of U has no module.
+        // A getter links X with A. The link() call that reads the getter has U for X, and the import of U has no
+        // module.
         const setup = () => ({
           A: linked("A", 'export const a = "A";'),
           U: mk("U", 'import "zz"; export const a = "U", b = "U";'),
           X: mk("X", 'import { a } from "a"; export const x = a;'),
         });
+        {
+          const { A, U, X } = setup();
+          native(X).link(["a"], withGetter([], 0, () => (X.linkRequests([A]), X.instantiate(), native(U))), 0);
+          await X.evaluate();
+          console.log("evaluate:", X.namespace.x);
+        }
         {
           const { A, U, X } = setup();
           native(X).link(["a"], withGetter([], 0, () => (X.linkRequests([A]), X.instantiate(), native(U))), 0);
@@ -3036,6 +3007,28 @@ describe.concurrent("node:vm SourceTextModule instantiate() with modules that ar
           console.log("first record of a module that got a new one:", importer.namespace.r);
         }
         {
+          // The same failed link, and no importer. The new record of X gets the module of the link() call that goes on.
+          const { A, X } = setup();
+          const V = linked("V", 'export const a = "V";');
+          const bad = mk("bad", 'import { nope } from "V";');
+          const root = mk("root", 'import "bad"; import "X";');
+          X.linkRequests([A]);
+          bad.linkRequests([V]);
+          root.linkRequests([bad, X]);
+          const link = () => {
+            try {
+              root.instantiate();
+            } catch (e) {
+              console.log("failed link:", e.name);
+            }
+            return native(V);
+          };
+          native(X).link(["a"], withGetter([], 0, link), 0);
+          X.instantiate();
+          await X.evaluate();
+          console.log("new record of a module:", X.namespace.x);
+        }
+        {
           // An importer links X from the getter, and this link() is the only one of X. instantiate() takes a module
           // that link() was called on.
           const { A, X } = setup();
@@ -3043,6 +3036,43 @@ describe.concurrent("node:vm SourceTextModule instantiate() with modules that ar
           importer.linkRequests([X]);
           native(X).link(["a", "extra"], withGetter([native(A)], 1, () => (importer.instantiate(), native(A))), 0);
           console.log("instantiate() after the only link():", native(X).instantiate());
+        }
+
+        // A getter of element 0 links X with A and B. The link() call that reads the getter has V for both requests.
+        // V is linked, so a link() that goes on shows as the wrong module, not as a crash.
+        for (const then of ["links X", "links and evaluates X", "links X and leaves it at a top-level await"]) {
+          for (const where of ["moduleNatives", "specifiers"]) {
+            const A = linked("A", 'ran.push("A"); export const a = "A";');
+            const B = linked("B", 'ran.push("B"); export const b = "B";');
+            const V = linked("V", 'ran.push("V"); export const a = "V", b = "V";');
+            const X = mk("X", 'export * from "a"; export * from "b";' + (then.endsWith("await") ? " await 0;" : ""));
+            const read = [];
+            let evaluation;
+            const values = { specifiers: ["a", "b"], moduleNatives: [native(V), native(V)] };
+            const arrays = { specifiers: [], moduleNatives: [] };
+            for (const name in arrays) {
+              for (const index of [0, 1]) {
+                withGetter(arrays[name], index, () => {
+                  read.push(name + "[" + index + "]");
+                  if (name === where && index === 0) {
+                    X.linkRequests([A, B]);
+                    X.instantiate();
+                    if (then !== "links X") evaluation = X.evaluate();
+                  }
+                  return values[name][index];
+                });
+              }
+            }
+            const returned = native(X).link(arrays.specifiers, arrays.moduleNatives, 0);
+            const importer = mk("importer", 'import { a, b } from "X"; export const r = a + b;');
+            importer.linkRequests([X]);
+            importer.instantiate();
+            await importer.evaluate();
+            await evaluation;
+            const call = ": returned " + returned + ", read " + read.join(" ");
+            const seen = ", importer sees " + importer.namespace.r + ", ran " + context.ran.splice(0).join("");
+            console.log("getter of " + where + "[0] " + then + call + seen);
+          }
         }
       })();
     `;
@@ -3058,24 +3088,27 @@ describe.concurrent("node:vm SourceTextModule instantiate() with modules that ar
 
     expect({ stdout: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
       stdout: [
+        "evaluate: A",
+        "new importer: A",
+        "getter of element 1: AB",
+        "failed link: SyntaxError",
+        "first record of a module that got a new one: A",
+        "failed link: SyntaxError",
+        "new record of a module: V",
+        "instantiate() after the only link(): undefined",
         "getter of moduleNatives[0] links X" + unchanged,
         "getter of specifiers[0] links X" + unchanged,
         "getter of moduleNatives[0] links and evaluates X" + unchanged,
         "getter of specifiers[0] links and evaluates X" + unchanged,
         "getter of moduleNatives[0] links X and leaves it at a top-level await" + unchanged,
         "getter of specifiers[0] links X and leaves it at a top-level await" + unchanged,
-        "new importer: A",
-        "getter of element 1: AB",
-        "failed link: SyntaxError",
-        "first record of a module that got a new one: A",
-        "instantiate() after the only link(): undefined",
       ],
       stderr: "",
       exitCode: 0,
     });
   });
 
-  test("linkRequests() and link() leave a linked record alone when Array.prototype has an index setter", async () => {
+  test("linkRequests() and link() fill their arrays past an index setter on Array.prototype", async () => {
     const fixture = `
       const vm = require("node:vm");
       const mk = (identifier, source) => new vm.SourceTextModule(source, { identifier });
@@ -3085,62 +3118,57 @@ describe.concurrent("node:vm SourceTextModule instantiate() with modules that ar
         m.instantiate();
         return m;
       };
-      // linkRequests() and link() fill the arrays for the native link() by assignment. A setter for index 0 on
-      // Array.prototype gets that assignment, and makes element 0 of the array a getter that runs "then" once.
-      const plant = (wanted, then) => {
+      // An assignment to a hole of an array calls a setter for that index on Array.prototype. The first array that
+      // comes by gets a getter for element 0, which runs "then" when the native link() reads the element.
+      let calls = 0;
+      const plant = then => {
+        calls = 0;
         Object.defineProperty(Array.prototype, 0, {
           configurable: true,
           set(value) {
-            if (!then || !wanted(value)) {
-              Object.defineProperty(this, 0, { value, writable: true, enumerable: true, configurable: true });
-              return;
-            }
-            let run = then;
+            calls++;
+            const run = then;
             then = undefined;
             const get = () => {
-              if (run) {
-                const once = run;
-                run = undefined;
-                once();
-              }
+              if (then === undefined) then = null, run();
               return value;
             };
-            Object.defineProperty(this, 0, { get, enumerable: true, configurable: true });
+            const property = run ? { get } : { value, writable: true };
+            Object.defineProperty(this, 0, { ...property, enumerable: true, configurable: true });
           },
         });
       };
 
       (async () => {
-        // X gets A and is linked while link() reads its arguments. The same call has U for X, and the import of U has
-        // no module.
         {
           const A = linked("A", 'export const a = "A";');
-          const U = mk("U", 'import "zz"; export const a = "U";');
+          const V = linked("V", 'export const a = "V";');
           const X = mk("X", 'import { a } from "a"; export const x = a;');
-          plant(value => typeof value === "object", () => (X.linkRequests([A]), X.instantiate()));
+          plant(() => (X.linkRequests([A]), X.instantiate()));
           try {
-            X.linkRequests([U]);
+            X.linkRequests([V]);
           } finally {
             delete Array.prototype[0];
           }
+          X.instantiate();
           await X.evaluate();
-          console.log("linkRequests():", X.namespace.x);
+          console.log("linkRequests(): X has " + X.namespace.x + ", setter calls: " + calls);
         }
         {
           const A = linked("A", 'export const a = "A";');
-          const U = mk("U", 'import "zz"; export const a = "U";');
+          const V = linked("V", 'export const a = "V";');
           const X = mk("X", 'import { a } from "a"; export const x = a;');
           const importer = mk("importer", 'import { x } from "X"; export const r = x;');
           X.linkRequests([A]);
           importer.linkRequests([X]);
-          plant(value => value === "a", () => importer.instantiate());
+          plant(() => importer.instantiate());
           try {
-            await X.link(() => U);
+            await X.link(() => V);
           } finally {
             delete Array.prototype[0];
           }
-          await importer.evaluate();
-          console.log("link(linker):", importer.namespace.r);
+          await X.evaluate();
+          console.log("link(linker): X has " + X.namespace.x + ", setter calls: " + calls);
         }
       })();
     `;
@@ -3155,7 +3183,7 @@ describe.concurrent("node:vm SourceTextModule instantiate() with modules that ar
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect({ stdout: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
-      stdout: ["linkRequests(): A", "link(linker): A"],
+      stdout: ["linkRequests(): X has V, setter calls: 0", "link(linker): X has V, setter calls: 0"],
       stderr: "",
       exitCode: 0,
     });

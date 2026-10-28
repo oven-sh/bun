@@ -580,8 +580,8 @@ class SourceTextModule extends Module {
         }
         return mod[kNative];
       });
-      modulePromises[idx] = modulePromise;
-      specifiers[idx] = specifier;
+      $putByValDirect(modulePromises, idx, modulePromise);
+      $putByValDirect(specifiers, idx, specifier);
     }
 
     try {
@@ -617,8 +617,8 @@ class SourceTextModule extends Module {
       if (mod.context !== this.context) {
         throw $ERR_VM_MODULE_DIFFERENT_CONTEXT();
       }
-      specifiers[idx] = moduleRequests[idx].specifier;
-      moduleNatives[idx] = mod[kNative];
+      $putByValDirect(specifiers, idx, moduleRequests[idx].specifier);
+      $putByValDirect(moduleNatives, idx, mod[kNative]);
     }
     this[kNative].link(specifiers, moduleNatives, 0);
   }

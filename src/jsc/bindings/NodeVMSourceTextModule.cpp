@@ -333,14 +333,14 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     }
 
     if (length != 0) {
-        const auto& requested = record->requestedModules();
         for (unsigned i = 0; i < length; i++) {
             JSValue specifierValue = specifiers->getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
             JSValue moduleNativeValue = moduleNatives->getDirectIndex(globalObject, i);
             RETURN_IF_EXCEPTION(scope, {});
 
-            // An element getter of either array can link this record. A linked record keeps its modules: isModuleGraphLinked() stops at it.
+            // A getter above can link the record, or fail a link that replaces it. A linked record keeps its modules: isModuleGraphLinked() stops at it.
+            record = m_moduleRecord.get();
             if (record->status() >= JSC::CyclicModuleRecord::Status::Linked) {
                 m_linkCalled = true;
                 return jsUndefined();
@@ -376,6 +376,7 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
             // (specifier + attributes) so a `with { type: "json" }` /
             // HostDefined import ends up in the right (specifier, type) bucket
             // for innerModuleLinking's typed lookup.
+            const auto& requested = record->requestedModules();
             if (i < requested.size()) [[likely]]
                 record->setImportedModule(globalObject, requested[i], resolvedRecord);
             else

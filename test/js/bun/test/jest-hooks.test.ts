@@ -259,7 +259,7 @@ describe("registered inside AsyncLocalStorage.run()", () => {
     beforeEach(() => void seen.push(storage.getStore()));
 
     it("a callback without a parameter isn't waited for as one that takes done", (...args) => {
-      expect(args).toEqual([]);
+      expect<unknown[]>(args).toEqual([]);
       expect([...seen, storage.getStore()]).toEqual(["store", "store", "store"]);
     });
 

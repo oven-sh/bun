@@ -904,7 +904,7 @@ test("large diffs are exact rather than abandoned part-way", () => {
 test("prints a Response once", () => {
   let message = "";
   try {
-    expect({ response: new Response("") }).toEqual({ response: 1 });
+    expect<unknown>({ response: new Response("") }).toEqual({ response: 1 });
   } catch (e) {
     message = cleanAnsiEscapes((e as Error).message);
   }
@@ -935,7 +935,9 @@ test("prints a React 19 element as JSX, without the fiber in its _owner", () => 
   });
   let message = "";
   try {
-    expect({ icon: element("b", { children: ["icon ", element("i", { children: "in" })] }) }).toEqual({ icon: 1 });
+    expect<unknown>({ icon: element("b", { children: ["icon ", element("i", { children: "in" })] }) }).toEqual({
+      icon: 1,
+    });
   } catch (e) {
     message = cleanAnsiEscapes((e as Error).message);
   }

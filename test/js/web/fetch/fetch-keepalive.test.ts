@@ -49,12 +49,12 @@ test("a Request's keepalive, which is false by default, does not turn off connec
   class Subclass extends Request {}
   const connection = async (...args: Parameters<typeof fetch>) => await (await fetch(...args)).text();
 
-  expect(await connection(new Request(server.url))).toBe("keep-alive");
-  expect(await connection(server.url, new Request(server.url))).toBe("keep-alive");
-  expect(await connection(new Subclass(server.url))).toBe("keep-alive");
-  expect(await connection(server.url, new Subclass(server.url))).toBe("keep-alive");
-  expect(await connection(new Request(server.url, { keepalive: false }))).toBe("keep-alive");
-  expect(await connection(new Request(server.url), { keepalive: false })).toBe("null");
+  expect(await connection(new Request(server.url.href))).toBe("keep-alive");
+  expect(await connection(server.url, new Request(server.url.href))).toBe("keep-alive");
+  expect(await connection(new Subclass(server.url.href))).toBe("keep-alive");
+  expect(await connection(server.url, new Subclass(server.url.href))).toBe("keep-alive");
+  expect(await connection(new Request(server.url.href, { keepalive: false }))).toBe("keep-alive");
+  expect(await connection(new Request(server.url.href), { keepalive: false })).toBe("null");
 });
 
 test("fetch reuses a pooled TLS connection across requests with different Host headers", async () => {

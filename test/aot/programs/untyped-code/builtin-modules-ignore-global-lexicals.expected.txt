@@ -1,0 +1,27 @@
+let process: the program sees what was declared
+let Buffer: the program sees what was declared
+let setTimeout: the program sees what was declared
+let queueMicrotask: the program sees what was declared
+let URL: the program sees what was declared
+let TextDecoder: the program sees what was declared
+let AbortController: the program sees what was declared
+let performance: the program sees what was declared
+let setImmediate: the program sees what was declared
+let clearTimeout: the program sees what was declared
+let console: the program sees what was declared
+globalThis is as it was: object,function,function
+fs: Error: ENOENT: no such file or directory, open '/$bunfs/root/builtin-modules-ignore-global-lexicals.js'
+stream: made
+events: true
+os: string
+path: true
+child_process: hi
+timers: set
+url: file:///x
+string_decoder: hi
+zlib: hi
+crypto: 40
+util: a { b: 1 }
+assert: ok
+http: function
+a stream that ends: ended

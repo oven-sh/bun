@@ -1,0 +1,1 @@
+It gets a fresh copy of a module by deleting the module from require.cache. That does nothing in an executable, where a module runs once. It needs a file of its own for each case.

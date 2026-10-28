@@ -1,0 +1,3 @@
+{
+  "build": ["--aot-validate", "--aot-disable=InlineCalls"]
+}

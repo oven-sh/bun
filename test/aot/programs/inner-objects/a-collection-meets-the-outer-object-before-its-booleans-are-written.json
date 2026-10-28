@@ -1,0 +1,7 @@
+{
+  "env": {
+    "BUN_JSC_validateAOTRuntime": "1",
+    "BUN_JSC_slowPathAllocsBetweenGCs": "10",
+    "BUN_JSC_useConcurrentGC": "0"
+  }
+}

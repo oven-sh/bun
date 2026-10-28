@@ -1,0 +1,3107 @@
+////: lines-187
+{
+  const print = printer(«1»);
+  const p = { m() { return «2» } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  «3»);
+}
+////: lines-188
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  class C { x = 1; }
+  Object.setPrototypeOf(C.prototype, p);
+  const o = new C();
+  print(«2»());
+}
+////: lines-38
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o.m());
+}
+////: lines-39
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o.m.apply(o, []));
+}
+////: lines-40
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o.m.bind(o)());
+}
+////: lines-41
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o["m"]());
+}
+////: lines-42
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print("m" in o, o.m());
+}
+////: lines-43
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+////: lines-44
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+////: lines-45
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o.m?.());
+}
+////: lines-46
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const { m } = o; print(m());
+}
+////: lines-47
+{
+  const print = printer(«1»);
+  const p = { m() { return this === o } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o.m());
+}
+////: lines-48
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(o.m() + o.m());
+}
+////: lines-49
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+////: lines-50
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  print(typeof o.m, o.m());
+}
+////: lines-51
+{
+  const print = printer(«1»);
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  «2».setPrototypeOf(o, p);
+  const f = o.m; print(f());
+}
+//// methods-called-on-every-kind-of-holder.js
+// A method that is only called, in every form of call, on an object literal, a class instance, a prototype object and stored after creation.
+const lines = [];
+////= printer
+
+{
+  const print = printer("call literal");
+  const o = { m() { return 7 } };
+  print(o.m());
+}
+{
+  const print = printer("call literal-function");
+  const o = { m: function () { return 7 } };
+  print(o.m());
+}
+{
+  const print = printer("call literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  print(o.m());
+}
+{
+  const print = printer("call class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  print(o.m());
+}
+{
+  const print = printer("call class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  print(o.m());
+}
+{
+  const print = printer("call subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  print(o.m());
+}
+{
+  const print = printer("call class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  print(o.m());
+}
+{
+  const print = printer("call prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  print(o.m());
+}
+{
+  const print = printer("call prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  print(o.m());
+}
+{
+  const print = printer("call prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  print(o.m());
+}
+{
+  const print = printer("call prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o.m());
+}
+////= lines-38	"call prototype-set-with-field"	Object
+////= lines-38	"call prototype-reflect-set"	Reflect
+{
+  const print = printer("call prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o.m());
+}
+{
+  const print = printer("call prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  print(o.m());
+}
+////= lines-187	"call prototype-of-class-instance"	7	print(o.m()
+{
+  const print = printer("call prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  print(o.m());
+}
+{
+  const print = printer("call stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  print(o.m());
+}
+{
+  const print = printer("call stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  print(o.m());
+}
+{
+  const print = printer("call stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  print(o.m());
+}
+{
+  const print = printer("call stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  print(o.m());
+}
+{
+  const print = printer("call stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  print(o.m());
+}
+{
+  const print = printer("call stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  print(o.m());
+}
+{
+  const print = printer("call constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  print(o.m());
+}
+{
+  const print = printer("call constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  print(o.m());
+}
+{
+  const print = printer("call constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  print(o.m());
+}
+{
+  const print = printer("call getter");
+  const o = { get m() { return function () { return 7 }; } };
+  print(o.m());
+}
+{
+  const print = printer("call defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  print(o.m());
+}
+{
+  const print = printer("call assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  print(o.m());
+}
+{
+  const print = printer("call spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  print(o.m());
+}
+{
+  const print = printer("call made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  print(o.m());
+}
+{
+  const print = printer("call made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  print(o.m());
+}
+{
+  const print = printer("call literal-arrow");
+  const o = { m: () => { return 7 } };
+  print(o.m());
+}
+{
+  const print = printer("call class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  print(o.m());
+}
+{
+  const print = printer("call prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  print(o.m());
+}
+{
+  const print = printer("call-optional literal");
+  const o = { m() { return 7 } };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional literal-function");
+  const o = { m: function () { return 7 } };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o.m?.());
+}
+////= lines-45	"call-optional prototype-set-with-field"	Object
+////= lines-45	"call-optional prototype-reflect-set"	Reflect
+{
+  const print = printer("call-optional prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  print(o.m?.());
+}
+////= lines-188	"call-optional prototype-of-class-instance"	o.m?.
+{
+  const print = printer("call-optional prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional getter");
+  const o = { get m() { return function () { return 7 }; } };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional literal-arrow");
+  const o = { m: () => { return 7 } };
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  print(o.m?.());
+}
+{
+  const print = printer("call-optional prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  print(o.m?.());
+}
+{
+  const print = printer("call-bracket literal");
+  const o = { m() { return 7 } };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket literal-function");
+  const o = { m: function () { return 7 } };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o["m"]());
+}
+////= lines-41	"call-bracket prototype-set-with-field"	Object
+////= lines-41	"call-bracket prototype-reflect-set"	Reflect
+{
+  const print = printer("call-bracket prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  print(o["m"]());
+}
+////= lines-187	"call-bracket prototype-of-class-instance"	7	print(o["m"]()
+{
+  const print = printer("call-bracket prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket getter");
+  const o = { get m() { return function () { return 7 }; } };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket literal-arrow");
+  const o = { m: () => { return 7 } };
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  print(o["m"]());
+}
+{
+  const print = printer("call-bracket prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  print(o["m"]());
+}
+{
+  const print = printer("call-apply literal");
+  const o = { m() { return 7 } };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply literal-function");
+  const o = { m: function () { return 7 } };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o.m.apply(o, []));
+}
+////= lines-39	"call-apply prototype-set-with-field"	Object
+////= lines-39	"call-apply prototype-reflect-set"	Reflect
+{
+  const print = printer("call-apply prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  print(o.m.apply(o, []));
+}
+////= lines-187	"call-apply prototype-of-class-instance"	7	print(o.m.apply(o, [])
+{
+  const print = printer("call-apply prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply getter");
+  const o = { get m() { return function () { return 7 }; } };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply literal-arrow");
+  const o = { m: () => { return 7 } };
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-apply prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  print(o.m.apply(o, []));
+}
+{
+  const print = printer("call-bind literal");
+  const o = { m() { return 7 } };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind literal-function");
+  const o = { m: function () { return 7 } };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o.m.bind(o)());
+}
+////= lines-40	"call-bind prototype-set-with-field"	Object
+////= lines-40	"call-bind prototype-reflect-set"	Reflect
+{
+  const print = printer("call-bind prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  print(o.m.bind(o)());
+}
+////= lines-188	"call-bind prototype-of-class-instance"	o.m.bind(o)
+{
+  const print = printer("call-bind prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind getter");
+  const o = { get m() { return function () { return 7 }; } };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind literal-arrow");
+  const o = { m: () => { return 7 } };
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-bind prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  print(o.m.bind(o)());
+}
+{
+  const print = printer("call-pattern literal");
+  const o = { m() { return 7 } };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern literal-function");
+  const o = { m: function () { return 7 } };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const { m } = o; print(m());
+}
+////= lines-46	"call-pattern prototype-set-with-field"	Object
+////= lines-46	"call-pattern prototype-reflect-set"	Reflect
+{
+  const print = printer("call-pattern prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  const { m } = o; print(m());
+}
+////= lines-187	"call-pattern prototype-of-class-instance"	7	const { m } = o; print(m()
+{
+  const print = printer("call-pattern prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern getter");
+  const o = { get m() { return function () { return 7 }; } };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern literal-arrow");
+  const o = { m: () => { return 7 } };
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-pattern prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  const { m } = o; print(m());
+}
+{
+  const print = printer("call-variable literal");
+  const o = { m() { return 7 } };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable literal-function");
+  const o = { m: function () { return 7 } };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const f = o.m; print(f());
+}
+////= lines-51	"call-variable prototype-set-with-field"	Object
+////= lines-51	"call-variable prototype-reflect-set"	Reflect
+{
+  const print = printer("call-variable prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  const f = o.m; print(f());
+}
+////= lines-187	"call-variable prototype-of-class-instance"	7	const f = o.m; print(f()
+{
+  const print = printer("call-variable prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable getter");
+  const o = { get m() { return function () { return 7 }; } };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable literal-arrow");
+  const o = { m: () => { return 7 } };
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-variable prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  const f = o.m; print(f());
+}
+{
+  const print = printer("call-typeof literal");
+  const o = { m() { return 7 } };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof literal-function");
+  const o = { m: function () { return 7 } };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(typeof o.m, o.m());
+}
+////= lines-50	"call-typeof prototype-set-with-field"	Object
+////= lines-50	"call-typeof prototype-reflect-set"	Reflect
+{
+  const print = printer("call-typeof prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  print(typeof o.m, o.m());
+}
+////= lines-188	"call-typeof prototype-of-class-instance"	typeof o.m, o.m
+{
+  const print = printer("call-typeof prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof getter");
+  const o = { get m() { return function () { return 7 }; } };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof literal-arrow");
+  const o = { m: () => { return 7 } };
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-typeof prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  print(typeof o.m, o.m());
+}
+{
+  const print = printer("call-in literal");
+  const o = { m() { return 7 } };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in literal-function");
+  const o = { m: function () { return 7 } };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print("m" in o, o.m());
+}
+////= lines-42	"call-in prototype-set-with-field"	Object
+////= lines-42	"call-in prototype-reflect-set"	Reflect
+{
+  const print = printer("call-in prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  print("m" in o, o.m());
+}
+////= lines-188	"call-in prototype-of-class-instance"	"m" in o, o.m
+{
+  const print = printer("call-in prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in getter");
+  const o = { get m() { return function () { return 7 }; } };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in literal-arrow");
+  const o = { m: () => { return 7 } };
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-in prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  print("m" in o, o.m());
+}
+{
+  const print = printer("call-twice literal");
+  const o = { m() { return 7 } };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice literal-function");
+  const o = { m: function () { return 7 } };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o.m() + o.m());
+}
+////= lines-48	"call-twice prototype-set-with-field"	Object
+////= lines-48	"call-twice prototype-reflect-set"	Reflect
+{
+  const print = printer("call-twice prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  print(o.m() + o.m());
+}
+////= lines-188	"call-twice prototype-of-class-instance"	o.m() + o.m
+{
+  const print = printer("call-twice prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice getter");
+  const o = { get m() { return function () { return 7 }; } };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice literal-arrow");
+  const o = { m: () => { return 7 } };
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-twice prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  print(o.m() + o.m());
+}
+{
+  const print = printer("call-in-function literal");
+  const o = { m() { return 7 } };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function literal-function");
+  const o = { m: function () { return 7 } };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+////= lines-43	"call-in-function prototype-set-with-field"	Object
+////= lines-43	"call-in-function prototype-reflect-set"	Reflect
+{
+  const print = printer("call-in-function prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+////= lines-187	"call-in-function prototype-of-class-instance"	7	function run(x) { return x.m(); } print(run(o)); print(run(o)
+{
+  const print = printer("call-in-function prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function getter");
+  const o = { get m() { return function () { return 7 }; } };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function literal-arrow");
+  const o = { m: () => { return 7 } };
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-function prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  function run(x) { return x.m(); } print(run(o)); print(run(o));
+}
+{
+  const print = printer("call-in-loop literal");
+  const o = { m() { return 7 } };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop literal-function");
+  const o = { m: function () { return 7 } };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+////= lines-44	"call-in-loop prototype-set-with-field"	Object
+////= lines-44	"call-in-loop prototype-reflect-set"	Reflect
+{
+  const print = printer("call-in-loop prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+////= lines-187	"call-in-loop prototype-of-class-instance"	7	let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s
+{
+  const print = printer("call-in-loop prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop getter");
+  const o = { get m() { return function () { return 7 }; } };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop literal-arrow");
+  const o = { m: () => { return 7 } };
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-in-loop prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  let s = 0; for (let i = 0; i < 100; i++) s += o.m(); print(s);
+}
+{
+  const print = printer("call-two-receivers literal");
+  const o = { m() { return 7 } };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers literal-function");
+  const o = { m: function () { return 7 } };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers literal-with-field");
+  const o = { x: 1, m() { return 7 } };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers class-method");
+  class C { m() { return 7 } }
+  const o = new C();
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers class-field");
+  class C { m = function () { return 7 }; }
+  const o = new C();
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers subclass");
+  class B { m() { return 7 } }
+  class C extends B {}
+  const o = new C();
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers class-static");
+  class C { static m() { return 7 } }
+  const o = C;
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers prototype-create");
+  const p = { m() { return 7 } };
+  const o = Object.create(p);
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers prototype-literal");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers prototype-literal-with-field");
+  const p = { m() { return 7 } };
+  const o = { __proto__: p, x: 1 };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers prototype-set");
+  const p = { m() { return 7 } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+////= lines-49	"call-two-receivers prototype-set-with-field"	Object
+////= lines-49	"call-two-receivers prototype-reflect-set"	Reflect
+{
+  const print = printer("call-two-receivers prototype-proto-store");
+  const p = { m() { return 7 } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers prototype-two-levels");
+  const p = { m() { return 7 } };
+  const o = Object.create(Object.create(p));
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+////= lines-187	"call-two-receivers prototype-of-class-instance"	7	const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other)
+{
+  const print = printer("call-two-receivers prototype-is-instance");
+  class C { m = function () { return 7 }; }
+  const o = Object.create(new C());
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers stored-after");
+  const o = {};
+  o.m = function () { return 7 };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return 7 };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return 7 };
+  const o = Object.create(p);
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return 7 };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return 7 };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return 7 };
+  const o = new C();
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers constructor-function");
+  function F() {}
+  F.prototype.m = function () { return 7 };
+  const o = new F();
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return 7 } };
+  const o = new F();
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers constructor-function-this");
+  function F() { this.m = function () { return 7 }; }
+  const o = new F();
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers getter");
+  const o = { get m() { return function () { return 7 }; } };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return 7 } });
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers assigned");
+  const o = Object.assign({}, { m() { return 7 } });
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers spread-copy");
+  const o = { ...{ m() { return 7 } } };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers made-in-function");
+  function make() { return { m() { return 7 } }; }
+  const o = make();
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers made-in-function-twice");
+  function make() { return { m() { return 7 } }; }
+  make();
+  const o = make();
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers literal-arrow");
+  const o = { m: () => { return 7 } };
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers class-field-arrow");
+  class C { m = () => { return 7 }; }
+  const o = new C();
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-two-receivers prototype-create-arrow");
+  const p = { m: () => { return 7 } };
+  const o = Object.create(p);
+  const other = { m() { return 8 } }; function run(x) { return x.m(); } print(run(o)); print(run(other));
+}
+{
+  const print = printer("call-this literal");
+  const o = { m() { return this === o } };
+  print(o.m());
+}
+{
+  const print = printer("call-this literal-function");
+  const o = { m: function () { return this === o } };
+  print(o.m());
+}
+{
+  const print = printer("call-this literal-with-field");
+  const o = { x: 1, m() { return this === o } };
+  print(o.m());
+}
+{
+  const print = printer("call-this class-method");
+  class C { m() { return this === o } }
+  const o = new C();
+  print(o.m());
+}
+{
+  const print = printer("call-this class-field");
+  class C { m = function () { return this === o }; }
+  const o = new C();
+  print(o.m());
+}
+{
+  const print = printer("call-this subclass");
+  class B { m() { return this === o } }
+  class C extends B {}
+  const o = new C();
+  print(o.m());
+}
+{
+  const print = printer("call-this class-static");
+  class C { static m() { return this === o } }
+  const o = C;
+  print(o.m());
+}
+{
+  const print = printer("call-this prototype-create");
+  const p = { m() { return this === o } };
+  const o = Object.create(p);
+  print(o.m());
+}
+{
+  const print = printer("call-this prototype-literal");
+  const p = { m() { return this === o } };
+  const o = { __proto__: p };
+  print(o.m());
+}
+{
+  const print = printer("call-this prototype-literal-with-field");
+  const p = { m() { return this === o } };
+  const o = { __proto__: p, x: 1 };
+  print(o.m());
+}
+{
+  const print = printer("call-this prototype-set");
+  const p = { m() { return this === o } };
+  const o = {};
+  Object.setPrototypeOf(o, p);
+  print(o.m());
+}
+////= lines-47	"call-this prototype-set-with-field"	Object
+////= lines-47	"call-this prototype-reflect-set"	Reflect
+{
+  const print = printer("call-this prototype-proto-store");
+  const p = { m() { return this === o } };
+  const o = { x: 1 };
+  o.__proto__ = p;
+  print(o.m());
+}
+{
+  const print = printer("call-this prototype-two-levels");
+  const p = { m() { return this === o } };
+  const o = Object.create(Object.create(p));
+  print(o.m());
+}
+////= lines-187	"call-this prototype-of-class-instance"	this === o	print(o.m()
+{
+  const print = printer("call-this prototype-is-instance");
+  class C { m = function () { return this === o }; }
+  const o = Object.create(new C());
+  print(o.m());
+}
+{
+  const print = printer("call-this stored-after");
+  const o = {};
+  o.m = function () { return this === o };
+  print(o.m());
+}
+{
+  const print = printer("call-this stored-after-with-field");
+  const o = { x: 1 };
+  o.m = function () { return this === o };
+  print(o.m());
+}
+{
+  const print = printer("call-this stored-after-on-prototype");
+  const p = {};
+  p.m = function () { return this === o };
+  const o = Object.create(p);
+  print(o.m());
+}
+{
+  const print = printer("call-this stored-after-on-prototype-late");
+  const p = { x: 1 };
+  const o = Object.create(p);
+  p.m = function () { return this === o };
+  print(o.m());
+}
+{
+  const print = printer("call-this stored-after-on-instance");
+  class C { x = 1; }
+  const o = new C();
+  o.m = function () { return this === o };
+  print(o.m());
+}
+{
+  const print = printer("call-this stored-on-class-prototype");
+  class C { x = 1; }
+  C.prototype.m = function () { return this === o };
+  const o = new C();
+  print(o.m());
+}
+{
+  const print = printer("call-this constructor-function");
+  function F() {}
+  F.prototype.m = function () { return this === o };
+  const o = new F();
+  print(o.m());
+}
+{
+  const print = printer("call-this constructor-function-prototype-object");
+  function F() {}
+  F.prototype = { m() { return this === o } };
+  const o = new F();
+  print(o.m());
+}
+{
+  const print = printer("call-this constructor-function-this");
+  function F() { this.m = function () { return this === o }; }
+  const o = new F();
+  print(o.m());
+}
+{
+  const print = printer("call-this getter");
+  const o = { get m() { return function () { return this === o }; } };
+  print(o.m());
+}
+{
+  const print = printer("call-this defined");
+  const o = {};
+  Object.defineProperty(o, "m", { value: function () { return this === o } });
+  print(o.m());
+}
+{
+  const print = printer("call-this assigned");
+  const o = Object.assign({}, { m() { return this === o } });
+  print(o.m());
+}
+{
+  const print = printer("call-this spread-copy");
+  const o = { ...{ m() { return this === o } } };
+  print(o.m());
+}
+{
+  const print = printer("call-this made-in-function");
+  function make() { return { m() { return this === o } }; }
+  const o = make();
+  print(o.m());
+}
+{
+  const print = printer("call-this made-in-function-twice");
+  function make() { return { m() { return this === o } }; }
+  make();
+  const o = make();
+  print(o.m());
+}
+
+console.log(lines.join("\n"));
+//// missing-keys.ts
+// Strings that are the name of no property anywhere, asked for again and again by the same string objects; then the name comes to be: on the object, above it, in a dictionary, and goes again.
+const lines: string[] = [];
+const asked = ["NOTHING_HAS_THIS_ONE", "NOTHING_HAS_THIS_TWO", "NOTHING_HAS_THIS_THREE", "NOTHING_HAS_THIS_FOUR", "NOTHING_HAS_THIS_FIVE", "NOTHING_HAS_THIS_SIX"];
+function sameText(index: number): string {
+    return ["NOTHING", "HAS", "THIS", ["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX"][index]!].join("_");
+}
+function ask(record: Record<string, unknown>, rounds: number): string {
+    const seen: string[] = [];
+    for (let round = 0; round < rounds; round++) {
+        let line = "";
+        for (let i = 0; i < asked.length; i++) {
+            const value = record[asked[i]!];
+            line += value === undefined ? "." : String(value);
+        }
+        if (seen[seen.length - 1] !== line) seen.push(line);
+    }
+    return seen.join(" ");
+}
+const grandparent: Record<string, unknown> = { old: 1 };
+const parent: Record<string, unknown> = Object.create(grandparent);
+parent.inherited = 1;
+const small: Record<string, unknown> = Object.create(parent);
+small.a = 1;
+small.b = 2;
+const twin: Record<string, unknown> = Object.create(parent);
+twin.a = 1;
+twin.b = 2;
+lines.push("nothing yet: " + ask(small, 5) + " | " + ask(twin, 5));
+small[sameText(0)] = "own";
+lines.push("one on the object: " + ask(small, 5) + " | the twin " + ask(twin, 5));
+parent[sameText(1)] = "above";
+lines.push("one on the parent: " + ask(small, 5) + " | " + ask(twin, 5));
+grandparent[sameText(2)] = "top";
+lines.push("one on the grandparent: " + ask(small, 5) + " | " + ask(twin, 5) + " | " + ask({}, 5));
+delete grandparent[sameText(2)];
+delete parent[sameText(1)];
+lines.push("both gone: " + ask(small, 5) + " | " + ask(twin, 5) + " | " + ask({}, 5));
+Object.defineProperty(parent, sameText(3), { get() { return "got"; }, configurable: true });
+lines.push("a getter above: " + ask(small, 5) + " | " + ask(twin, 5));
+delete parent[sameText(3)];
+Object.setPrototypeOf(twin, { [sameText(4)]: "other parent" });
+lines.push("another parent: " + ask(small, 5) + " | " + ask(twin, 5));
+
+const large: Record<string, unknown> = {};
+for (let i = 0; i < 200; i++) large["key" + i] = i;
+lines.push("a dictionary: " + ask(large, 5));
+large[sameText(5)] = "in";
+lines.push("it has one: " + ask(large, 5));
+delete large[sameText(5)];
+lines.push("no longer: " + ask(large, 5));
+delete large.key7;
+large[sameText(0)] = "for another";
+lines.push("one out, one in: " + ask(large, 5));
+delete large[sameText(0)];
+large.key7 = 7;
+lines.push("and back: " + ask(large, 5));
+
+const list: any = [1, 2, 3];
+function callable() { }
+lines.push("an array, a function: " + ask(list, 4) + " | " + ask(callable as any, 4));
+list[sameText(1)] = "on the array";
+(callable as any)[sameText(2)] = "on the function";
+lines.push("then: " + ask(list, 4) + " | " + ask(callable as any, 4));
+const watched = new Proxy({}, { get(_target, name) { return typeof name === "string" && name.endsWith("SIX") ? "trapped" : undefined; } });
+const belowProxy: Record<string, unknown> = Object.create(watched);
+lines.push("below a proxy: " + ask(belowProxy, 4));
+const bare: Record<string, unknown> = Object.create(null);
+lines.push("no parent at all: " + ask(bare, 4));
+bare[sameText(3)] = "bare";
+lines.push("then: " + ask(bare, 4));
+let total = 0;
+for (let turn = 0; turn < 20000; turn++) {
+    if (turn === 9000) parent[sameText(5)] = 1;
+    if (turn === 15000) delete parent[sameText(5)];
+    if (small[asked[turn % 6]!] !== undefined) total++;
+}
+lines.push("in a long loop: " + total);
+console.log(lines.join("\n"));
+//// mixed-accessor-data-reads.ts
+// An object literal with data members and a getter is given more properties later. Names it has, names it lacks and names it inherits are read many times from the same places while it changes.
+const lines: string[] = [];
+function say(label: string, value: unknown): void { lines.push(label + ": " + String(value)); }
+interface Box { size: number; readonly twice: number }
+function makeBox(size: number): Box { return { size, get twice() { return this.size * 2; } }; }
+function many(run: () => unknown): string { let last: unknown; for (let i = 0; i < 300; i++) last = run(); return String(last); }
+function colorOf(from: any): unknown { return from.color; }
+function thenOf(from: any): unknown { return from.then; }
+function toStringOf(from: any): unknown { return typeof from.toString; }
+function sizeOf(from: any): unknown { return from.size; }
+
+const box = makeBox(3);
+const other = makeBox(4);
+const loose: any = box;
+say("a name it lacks", many(() => colorOf(box)) + " " + many(() => thenOf(box)));
+say("a name it inherits", many(() => toStringOf(box)));
+loose.color = "red";
+say("the name is there now", many(() => colorOf(box)) + " " + many(() => colorOf(other)));
+loose.color = "green";
+say("another value", many(() => colorOf(box)));
+loose.weight = 1;
+say("one property more", many(() => colorOf(box)) + " " + many(() => thenOf(box)));
+delete loose.color;
+say("deleted", many(() => colorOf(box)));
+Object.defineProperty(loose, "color", { get() { return "from a getter"; }, configurable: true });
+say("an accessor by that name", many(() => colorOf(box)));
+Object.defineProperty(loose, "color", { value: "a value again", configurable: true, writable: false });
+say("a value that cannot be written", many(() => colorOf(box)));
+class Holder { size = 1 }
+const held: any = new Holder();
+Object.defineProperty(held, "twice", { get() { return 2; }, configurable: true });
+say("an instance with an accessor of its own lacks the name", many(() => thenOf(held)) + " " + many(() => sizeOf(held)) + " " + held.twice);
+loose.then = 5;
+say("its own", many(() => thenOf(box)) + " " + many(() => thenOf(other)));
+say("fields and the getter are as they were", many(() => sizeOf(box)) + " " + box.twice + " " + other.twice);
+const boxes: Box[] = [];
+for (let i = 0; i < 100; i++) { const made = makeBox(i); if (i % 3 === 0) (made as any).color = "c" + i; boxes.push(made); }
+let seen = "";
+for (let round = 0; round < 5; round++) for (const made of boxes) { const color = colorOf(made); if (round === 4 && color !== undefined && made.size < 20) seen += color; }
+say("a hundred objects through one place", seen);
+let garbage: unknown[] = [];
+for (let i = 0; i < 200000; i++) { garbage.push({ i, get half() { return i / 2; } }); if (garbage.length > 1000) garbage = []; if (i % 50000 === 0) say("while garbage is made", String(colorOf(box)) + thenOf(box) + thenOf(other)); }
+say("keys", Object.keys(box).join());
+console.log(lines.join("\n"));
+//// multi-spread-literals.js
+const show = object => Reflect.ownKeys(object).map(key => String(key) + "=" + JSON.stringify(object[key])).join(",");
+const errorLines = error => [...String(error.stack).matchAll(/multi-spread-literals\.js:(\d+)/g)].map(match => match[1]).join(",");
+
+const first = { a: 1, b: 2 };
+const second = { b: 3, c: 4 };
+const third = { c: 5, d: 6 };
+const fourth = { e: 7 };
+const fifth = { a: 8, f: 9 };
+
+for (let round = 0; round < 3; round++) {
+  console.log("two", show({ before: 0, ...first, between: 1, ...second, after: 2 }));
+  console.log("three", show({ ...first, x: 1, ...second, y: 2, ...third }));
+  console.log("five", show({ ...first, ...second, x: 1, ...third, ...fourth, y: 2, ...fifth }));
+  console.log("later named wins", show({ ...first, ...second, a: "named", c: "named" }));
+  console.log("later source wins", show({ a: "named", c: "named", ...first, ...second }));
+  console.log("nullish sources", show({ ...null, a: 1, ...undefined, ...second, ...0 }));
+  console.log("index names", show({ ...first, 1: "one", ...second, 0: "zero" }));
+  console.log("string source", show({ ...first, ..."hi", ...second }));
+  console.log("symbol source", show({ ...first, ...{ [Symbol.for("multi")]: 1 }, ...second }));
+}
+
+const throwing = {
+  get boom() {
+    throw new Error("boom");
+  },
+};
+
+function spreadThrows() {
+  return {
+    ...first,
+    named: 1,
+    ...second,
+    ...throwing,
+    ...third,
+  };
+}
+
+for (let round = 0; round < 2; round++) {
+  try {
+    spreadThrows();
+  } catch (error) {
+    console.log(error.message, errorLines(error));
+  }
+}
+
+const order = [];
+const logged = name => ({
+  get [name]() {
+    order.push(name);
+    return name;
+  },
+});
+console.log("getters", show({ ...logged("p"), q: order.push("named"), ...logged("r") }), order.join(","));
+
+const changing = [{ a: 1 }, { b: 2 }, { a: 3, b: 4 }, { b: 5, a: 6 }, Object.create({ inherited: 1 }), [7, 8], null, "s", { get a() { return 9; } }];
+for (let round = 0; round < 2; round++) {
+  for (const left of changing) {
+    for (const right of changing) console.log("changing", show({ ...left, mid: 0, ...right }));
+  }
+}
+//// named-stores-in-loops.ts
+declare const console: { log(...values: unknown[]): void };
+type Open = { [name: string]: unknown };
+function show(v: unknown): string { return typeof v === "object" && v !== null ? JSON.stringify(v) : typeof v + ":" + (Object.is(v, -0) ? "-0" : String(v)); }
+function garbage(n: number): number { let t = 0; for (let i = 0; i < n; i++) { const g: Open = { a: [i, i + 0.5], b: "g" + i }; t += (g.b as string).length; } return t; }
+function wholes(o: Open, n: number): void { let w = n * 1000003; for (let i = 0; i < n; i++) { w += i; o.count = w; o.small = i; } }
+function halves(o: Open, n: number, v: number): void { for (let i = 0; i < n; i++) { o.half = v + i * 0.5; o.ratio = i / 3; } }
+function flags(o: Open, n: number): void { for (let i = 0; i < n; i++) { o.odd = (i & 1) === 1; o.none = undefined; o.nil = null; } }
+function maybe(o: Open, a: number[], n: number): void { for (let i = 0; i < n; i++) o.element = a[i]; }
+function texts(o: Open, n: number): void { for (let i = 0; i < n; i++) { o.text = "t" + i; o.count = i; garbage(3); } }
+function cells(o: Open, n: number): void { for (let i = 0; i < n; i++) { o.cell = { at: i, list: [i, "x" + i] }; o.half = i + 0.5; garbage(3); } }
+function either(o: Open, n: number): void { for (let i = 0; i < n; i++) { const v: number | string = i % 3 ? i * 1.5 : "s" + i; o.either = v; garbage(2); } }
+function eitherCell(o: Open, n: number): void { for (let i = 0; i < n; i++) { const v: number | { at: number } = i & 1 ? { at: i } : i; o.other = v; garbage(2); } }
+function anything(o: Open, values: unknown[]): void { for (let i = 0; i < values.length; i++) { o.any = values[i]; garbage(1); } }
+class Row { [name: string]: unknown; constructor(n: number) { for (let i = 0; i < n; i++) { this.total = i * 2.5; this.label = "r" + i; this.index = i; } } }
+const old: Open[] = [];
+for (let i = 0; i < 40; i++) old.push({ count: 0, small: 0, half: 0, ratio: 0, odd: false, none: 1, nil: 1, element: 0, text: "", cell: null, either: 0, other: 0, any: 0 });
+garbage(20000);
+for (let turn = 0; turn < 3; turn++) {
+    for (let k = 0; k < old.length; k++) {
+        const o = old[k];
+        wholes(o, 5 + k); halves(o, 4 + k, turn); flags(o, 3 + (k & 3)); maybe(o, [1.5, 2, 3.25], 2 + (k % 3)); texts(o, 6); cells(o, 6); either(o, 5 + (k % 4)); eitherCell(o, 4 + (k & 1)); anything(o, [1, "a" + k, { k }, 2.5, null, [k]].slice(0, 1 + (k % 6)));
+    }
+    garbage(30000);
+    for (let k = 0; k < old.length; k += 7)
+        console.log(turn + " " + k + ": " + Object.keys(old[k]).map(name => name + "=" + show(old[k][name])).join(" "));
+    const row = new Row(4 + turn);
+    garbage(5000);
+    console.log(Object.keys(row).map(name => name + "=" + show(row[name])).join(" "));
+}

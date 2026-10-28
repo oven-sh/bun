@@ -1,0 +1,21 @@
+test after default next 0 sees ReferenceError ReferenceError
+test after default next 1 sees A ReferenceError
+test after default return sees A B
+A B
+function in later clause next 0 sees ReferenceError ReferenceError
+function in later clause next 1 sees A ReferenceError
+function in later clause return sees A B
+A B
+arrow in later clause next 0 sees nothing
+arrow in later clause next 1 sees nothing
+arrow in later clause return sees nothing
+A B
+ReferenceError ReferenceError
+closure of hoisted function next 0 sees ReferenceError ReferenceError
+closure of hoisted function next 1 sees A ReferenceError
+closure of hoisted function return sees A B
+A B
+function in later block next 0 sees nothing
+function in later block next 1 sees nothing
+function in later block return sees nothing
+A B

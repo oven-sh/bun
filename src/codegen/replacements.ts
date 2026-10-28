@@ -12,28 +12,31 @@ export const replacements: ReplacementRule[] = [
   { from: /\bexport\s*default/g, to: "$exports =" },
 ];
 
-let error_i = 0;
-for (let i = 0; i < NodeErrors.length; i++) {
-  const [code, _constructor, _name, ...other_constructors] = NodeErrors[i];
+/** `$<name>(` is `$makeErrorWithCode(<number>, `. The numbers are `Bun::ErrorCode` (generate-node-errors.ts). */
+export const numberedErrorCodes: readonly { name: string; number: number }[] = NodeErrors.flatMap(
+  ([code, _constructor, _name, ...otherConstructors]) => [
+    code,
+    ...otherConstructors.flatMap(constructor => (constructor == null ? [] : [`${code}_${constructor.name}`])),
+  ],
+).map((name, number) => ({ name, number }));
+
+/** `$inherits<name>(` is `$inherits(<number>, `. */
+export const numberedClasses: readonly { name: string; number: number }[] = jsclasses.map((name, number) => ({
+  name,
+  number,
+}));
+
+for (const { name, number } of numberedErrorCodes) {
   replacements.push({
-    from: new RegExp(`\\b\\__intrinsic__${code}\\(`, "g"),
-    to: `$makeErrorWithCode(${error_i}, `,
+    from: new RegExp(`\\b\\__intrinsic__${name}\\(`, "g"),
+    to: `$makeErrorWithCode(${number}, `,
   });
-  error_i += 1;
-  for (const con of other_constructors) {
-    if (con == null) continue;
-    replacements.push({
-      from: new RegExp(`\\b\\__intrinsic__${code}_${con.name}\\(`, "g"),
-      to: `$makeErrorWithCode(${error_i}, `,
-    });
-    error_i += 1;
-  }
 }
 
-for (let id = 0; id < jsclasses.length; id++) {
+for (const { name, number } of numberedClasses) {
   replacements.push({
-    from: new RegExp(`\\b\\__intrinsic__inherits${jsclasses[id]}\\(`, "g"),
-    to: `$inherits(${id}, `,
+    from: new RegExp(`\\b\\__intrinsic__inherits${name}\\(`, "g"),
+    to: `$inherits(${number}, `,
   });
 }
 
@@ -133,6 +136,12 @@ const typesOnly = (process.argv.find(arg => arg.startsWith("--types-only=")) ?? 
 export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
+  // `bun compile` replaces the value: false in an executable that refuses code that was not compiled into it.
+  "CAN_LOAD_CODE_AT_RUN_TIME": "true",
+  // `bun compile` replaces the value: false for a program that never names node:cluster.
+  "CAN_BE_CLUSTER_WORKER": "true",
+  // `bun compile` replaces the value: true where these files are compiled ahead of time.
+  "IS_COMPILED_AHEAD_OF_TIME": "false",
 
   "process.platform": JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform),
   "process.arch": JSON.stringify(Bun.env.TARGET_ARCH ?? process.arch),
@@ -175,15 +184,20 @@ export const function_replacements = [
 const function_regexp = new RegExp(`__intrinsic__(${function_replacements.join("|").replaceAll("$", "")})`);
 
 /** Applies source code replacements as defined in `replacements` */
+let anyReplacement: RegExp | undefined;
+
 export function applyReplacements(src: string, length: number) {
   let slice = src.slice(0, length);
   let rest = src.slice(length);
   slice = slice.replace(/([^a-zA-Z0-9_\$])\$([a-zA-Z0-9_]+\b)/gm, `$1__intrinsic__$2`);
-  for (const replacement of replacements) {
-    slice = slice.replace(
-      replacement.from,
-      replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__").replaceAll("%", "$"),
-    );
+  anyReplacement ??= new RegExp(replacements.map(replacement => replacement.from.source).join("|"));
+  if (anyReplacement.test(slice)) {
+    for (const replacement of replacements) {
+      slice = slice.replace(
+        replacement.from,
+        replacement.toRaw ?? replacement.to!.replaceAll("$", "__intrinsic__").replaceAll("%", "$"),
+      );
+    }
   }
   let match;
   if ((match = slice.match(function_regexp)) && rest.startsWith("(")) {

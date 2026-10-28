@@ -134,6 +134,8 @@ pub(super) struct Key(TypeId, TypeId, u8);
 /// Flag of a `Key` for two generic type references. The two ids of such a key are the halves of a
 /// hash. `LOCAL` in the first half means the hash includes a task-local id.
 const GENERIC_KEY: u8 = 0x80;
+/// In place of the relation in a `Key`: the entry is the answer to a question of `aot::Queries` whether the first type is assignable to the second.
+const QUESTION_KEY: u8 = 3;
 
 impl Key {
     /// True if the hash includes a task-local id. Another task hashes the same two references differently, so the entry
@@ -248,15 +250,20 @@ pub(super) struct Relater {
     /// `constrained`. Consumed by the first comparison that needs a key.
     top_key: Option<(Key, bool)>,
     pub(super) relation_count: i32,
+    /// The check answers a question of `aot::Queries` and `relation_count` began at what such a question may cost.
+    is_for_query: bool,
     /// `relation_count` once the comparison has stored `ENTRIES_SHARED_RIGHT_AWAY` entries.
     waits_for_commit_below: i32,
     /// `Checker::cycles` at the start of the check. Once it has changed, no result is cacheable.
     cycles: u64,
     /// True if failures are recorded in `failed` instead of the relation cache. That's the case in
     /// the non-reporting run that precedes a reporting run where tsgo has no such run
-    /// (`check_type_related_to_ex`). It must leave the cache as tsgo's run would find it.
+    /// (`check_type_related_to_ex`). It must leave the cache as tsgo's run would find it. If it succeeds, no run
+    /// follows, and `failures_to_store` go into the cache, where tsgo's only run has put them.
     pub(super) stores_failures_locally: bool,
     failed: FxHashSet<Key>,
+    /// Each with its entry, and whether it replaces the entry that is there.
+    failures_to_store: Vec<(Key, u8, Stored, bool)>,
     /// True if `compareTypes` of `compareSignaturesRelated` is `compareTypesAssignable`. Each pair
     /// of types is then a separate check, and nothing else in this relater is used.
     compares_types_assignable: bool,
@@ -289,10 +296,12 @@ impl Relater {
             is_from_related: false,
             top_key: None,
             relation_count: 2_000_000,
+            is_for_query: false,
             waits_for_commit_below: 2_000_000 - ENTRIES_SHARED_RIGHT_AWAY,
             cycles,
             stores_failures_locally: false,
             failed: FxHashSet::default(),
+            failures_to_store: Vec::new(),
             compares_types_assignable: false,
             error_node: (FileId(0), 0, 0),
             head_message: None,
@@ -1116,6 +1125,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn related(&mut self, source: TypeId, target: TypeId, relation: Relation) -> bool {
         let is_marker_comparison = std::mem::take(&mut self.is_marker_comparison);
         let is_trial = std::mem::take(&mut self.is_trial_comparison);
+        let entries_for_query = self.relation_entries_for_query.take();
         if source == target {
             return true;
         }
@@ -1165,7 +1175,9 @@ impl<'p, 's> Checker<'p, 's> {
         let mut missed = None;
         if is_object_kind(sd) && is_object_kind(td) {
             let key = self.relation_key_as(source, sd, target, td, relation, STATE_NONE);
-            if let Some(entry) = self.known_relation(&key.0) {
+            if entries_for_query.is_none()
+                && let Some(entry) = self.known_relation(&key.0)
+            {
                 // The cache is shared between threads, so another thread measuring the same symbol may have stored this
                 // comparison already. Without its flags the variances would lack `UNMEASURABLE` or `UNRELIABLE`.
                 if is_marker_comparison {
@@ -1180,7 +1192,18 @@ impl<'p, 's> Checker<'p, 's> {
             missed = Some(key);
         }
         if is_structured_or_instantiable_kind(sd) || is_structured_or_instantiable_kind(td) {
-            return self.check_type_related_to(source, target, relation, missed, is_trial);
+            let around = self.is_comparing_for_query;
+            self.is_comparing_for_query |= entries_for_query.is_some();
+            let is_related = self.check_type_related_to(
+                source,
+                target,
+                relation,
+                missed,
+                is_trial,
+                entries_for_query,
+            );
+            self.is_comparing_for_query = around;
+            return is_related;
         }
         false
     }
@@ -1189,6 +1212,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `related` has found no simple rule for the two types. `missed` is the key of its cache miss,
     /// if it did a lookup. For `is_trial`, see `Relater::stores_failures_locally`. In that case the caller
     /// has the `errorNode`, and `relation_too_complex` tells it to report 2859 there.
+    /// `entries_for_query`: see `Relater::is_for_query`.
     fn check_type_related_to(
         &mut self,
         source: TypeId,
@@ -1196,7 +1220,15 @@ impl<'p, 's> Checker<'p, 's> {
         relation: Relation,
         missed: Option<(Key, bool)>,
         is_trial: bool,
+        entries_for_query: Option<i32>,
     ) -> bool {
+        let question = Key(source, target, QUESTION_KEY);
+        if entries_for_query.is_some()
+            && let Some(entry) = self.p.relations.get(&self.task, &question)
+        {
+            self.relation_too_complex |= entry & COMPLEXITY_OVERFLOW != 0;
+            return entry & SUCCEEDED != 0;
+        }
         let (cuts, outermost) = (
             self.cuts(),
             self.frames.first().map_or(0, |frame| frame.serial),
@@ -1218,16 +1250,22 @@ impl<'p, 's> Checker<'p, 's> {
         r.relation = relation;
         r.top_source = source;
         r.top_target = target;
-        r.set_relation_count(self.initial_relation_count(relation));
+        let count = self.initial_relation_count(relation);
+        r.set_relation_count(entries_for_query.map_or(count, |entries| count.min(entries)));
+        r.is_for_query = entries_for_query.is_some();
         r.cycles = self.cycles;
         // Under the identity relation `related` uses other rules.
         r.is_from_related = relation != Relation::Identity;
         r.top_key = missed;
         r.stores_failures_locally = is_trial;
+        let scope = entries_for_query.map(|_| self.begin_scope());
         let result = self.is_related_to_ex::<false>(&mut r, source, target, REC_BOTH, STATE_NONE);
+        let stored = scope.and_then(|scope| self.end_scope(scope).ok());
+        let is_for_query = std::mem::take(&mut r.is_for_query);
         let overflow = r.overflow;
         // `relationCount <= 0`. Running out of native stack isn't a complexity overflow.
-        let is_too_complex = overflow && r.relation_count <= 0 && self.cycles == r.cycles;
+        let has_run_out = r.relation_count <= 0 || is_for_query;
+        let is_too_complex = overflow && has_run_out && self.cycles == r.cycles;
         let hit_cached_overflow = r.hit_cached_overflow;
         r.maybe_keys.clear();
         r.maybe_keys_set.clear();
@@ -1240,13 +1278,24 @@ impl<'p, 's> Checker<'p, 's> {
         r.hit_cached_overflow = false;
         if is_trial {
             r.failed.clear();
+            if overflow || is_for_query || !result.holds() {
+                r.failures_to_store.clear();
+            }
+            for (key, entry, stored, replaces) in r.failures_to_store.drain(..) {
+                match replaces {
+                    true => self.set_relation(key, entry, stored),
+                    false => self.insert_relation(key, entry, stored),
+                }
+            }
         }
         self.free_relaters.push(r);
         self.end_comparison(is_outermost);
         if is_too_complex {
-            self.set_relation_overflow(source, target, relation);
+            if !is_for_query {
+                self.set_relation_overflow(source, target, relation);
+            }
             self.relation_too_complex = true;
-            if !is_trial {
+            if !is_trial && !is_for_query {
                 let types = [Arg::Type(source), Arg::Type(target)];
                 self.error_about_comparison_at_current_node(&types);
             }
@@ -1264,6 +1313,21 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         let is_related = !overflow && result.holds();
+        if is_for_query {
+            self.forget_relations_of_query();
+            // Where the native stack runs low, or a cycle is found, depends on more than the two types.
+            if let Some(stored) = stored
+                && self.cuts() == cuts
+                && (!overflow || is_too_complex)
+            {
+                let entry = match is_related {
+                    true => SUCCEEDED,
+                    false if !overflow => FAILED,
+                    false => FAILED | COMPLEXITY_OVERFLOW,
+                };
+                self.insert_relation(question, entry, stored);
+            }
+        }
         // `checkTypeRelatedToEx` records an overflow "such that we don't attempt the overflowing operation
         // again". Where these limits are hit depends on the caller, so the record is private to this checker.
         if self.cuts() != cuts && !is_trial {
@@ -3178,7 +3242,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         let (sd, td) = (self.data(source), self.data(target));
         // `ObjectFlagsJSLiteral` on the target itself: without noImplicitAny a JS literal accepts any property.
-        if !self.p.files.options.no_implicit_any && self.has_js_literal_flag(target) {
+        if self.has_js_literal_flag(target) {
             return false;
         }
         // A target that accepts anything accepts any object literal, but not any JSX attribute.
@@ -4064,6 +4128,7 @@ impl<'p, 's> Checker<'p, 's> {
         } = self.recursive_relation_key(r, source, sd, target, td, state);
         let cached = match missed {
             true => None,
+            false if r.is_for_query => self.relations_of_query.get(&key).copied(),
             false => self.known_relation(&key),
         };
         if let Some(entry) = cached
@@ -4083,8 +4148,15 @@ impl<'p, 's> Checker<'p, 's> {
         if !REPORT && r.stores_failures_locally && r.failed.contains(&key) {
             return Ternary::FALSE;
         }
-        if r.relation_count <= 0 {
-            self.note_gave_up();
+        let waiting = if r.is_for_query {
+            r.maybe_keys.len() as i32
+        } else {
+            0
+        };
+        if r.relation_count <= waiting {
+            if !r.is_for_query {
+                self.note_gave_up();
+            }
             r.overflow = true;
             return Ternary::FALSE;
         }
@@ -4101,8 +4173,12 @@ impl<'p, 's> Checker<'p, 's> {
         // As in TypeScript 7.1. 7.0 gives up here and reports 2321. Which comparison is the 100th depends on where the
         // outermost one started and on what is cached, so only the last round's task answers. Any other task is
         // discarded, and ends the comparison right away. The results that follow from the answer stay in the task, like
-        // those of `REC_BOTH` below.
+        // those of `REC_BOTH` below. A question of `aot::Queries` is given up: what is built on its answer takes no comparison on trust.
         if r.source_stack.len() == 100 || r.target_stack.len() == 100 {
+            if r.is_for_query {
+                r.overflow = true;
+                return Ternary::FALSE;
+            }
             self.note_gave_up();
             if self.task.was_discarded() {
                 r.overflow = true;
@@ -4159,7 +4235,10 @@ impl<'p, 's> Checker<'p, 's> {
         };
         // Past the limit, the entry waits for the commit. An entry about the visited file is never shared in the
         // first place, as long as it isn't held back. If it were, the commit would publish it.
-        if r.relation_count < r.waits_for_commit_below && !key.is_of_visited_file(&self.task.own) {
+        if !r.is_for_query
+            && r.relation_count < r.waits_for_commit_below
+            && !key.is_of_visited_file(&self.task.own)
+        {
             self.task.hold_back();
         }
         let stored = self.end_scope(scope).ok();
@@ -4196,10 +4275,14 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             // A result that's false under assumptions is false without them, and so is one that an overflow cut
             // off. That doesn't hold if the native stack ran low, which isn't an overflow in typescript-go.
-            let is_cut_short = r.overflow && r.relation_count > 0;
+            let is_cut_short = r.overflow && (r.is_for_query || r.relation_count > 0);
             if r.stores_failures_locally {
                 if !is_cut_short {
                     r.failed.insert(key);
+                    if let Some(stored) = stored {
+                        let entry = FAILED | propagating;
+                        r.failures_to_store.push((key, entry, stored, replaces));
+                    }
                 }
             } else if let Some(stored) = stored
                 && !is_cut_short
@@ -4210,6 +4293,9 @@ impl<'p, 's> Checker<'p, 's> {
                 // Otherwise the first result stays. That matches typescript-go's output where a comparison re-enters
                 // itself through the type of a variable whose initializer is being checked.
                 match replaces {
+                    _ if r.is_for_query => {
+                        self.relations_of_query.insert(key, FAILED | propagating);
+                    }
                     true => self.set_relation(key, FAILED | propagating, stored),
                     false => self.insert_relation(key, FAILED | propagating, stored),
                 }
@@ -4268,6 +4354,56 @@ impl<'p, 's> Checker<'p, 's> {
         self.p.relations.insert(&self.task, key, entry, stored);
     }
 
+    fn forget_relations_of_query(&mut self) {
+        const MOST_ENTRIES_KEPT_ALLOCATED: usize = 1 << 10;
+        match self.relations_of_query.capacity() > MOST_ENTRIES_KEPT_ALLOCATED {
+            true => self.relations_of_query = FxHashMap::default(),
+            false => self.relations_of_query.clear(),
+        }
+    }
+
+    /// `getIndexedAccessTypeOrUndefined(baseObjectType, baseIndexType, accessFlags)` of `structuredTypeRelatedToWorker`: what can be written to `T[K]`.
+    fn write_constraint(
+        &mut self,
+        object: TypeId,
+        index: TypeId,
+        access_flags: AccessFlags,
+    ) -> Option<TypeId> {
+        // With no query in progress, what is evaluated here depends on the arguments alone.
+        if !self.is_comparing_for_query || !self.stack.is_empty() {
+            return self.indexed_access_with_flags(object, index, access_flags);
+        }
+        let key = (object, index, access_flags.bits());
+        if self.write_constraints_refused_for_size.contains(&key) {
+            debug_assert!(
+                self.indexed_access_with_flags(object, index, access_flags) == Some(TypeId::ERROR)
+            );
+            self.refuse_cross_product_of_two_unions();
+            return Some(TypeId::ERROR);
+        }
+        // Whatever else keeps a result from being stored.
+        let other_marks = |c: &Self| {
+            let refusals = c.size_refusals_in_queries;
+            let (unmarked_rejections, cuts, rejected_at) = c.interruptions();
+            (
+                c.cycles,
+                c.taints.wrapping_sub(refusals),
+                unmarked_rejections,
+                cuts.wrapping_sub(refusals),
+                rejected_at,
+            )
+        };
+        let (refusals, before) = (self.size_refusals_in_queries, other_marks(self));
+        let constraint = self.indexed_access_with_flags(object, index, access_flags);
+        if constraint == Some(TypeId::ERROR)
+            && self.size_refusals_in_queries != refusals
+            && other_marks(self) == before
+        {
+            self.write_constraints_refused_for_size.insert(key);
+        }
+        constraint
+    }
+
     /// Returns the entry in `Program::relations`, or else in `relations_of_this_task`. Anything
     /// computed from the latter is also only valid for this task.
     #[inline]
@@ -4302,6 +4438,11 @@ impl<'p, 's> Checker<'p, 's> {
             };
             match (keys, stored) {
                 (MaybeKeys::Forgotten, _) => continue,
+                (MaybeKeys::Succeeded | MaybeKeys::SucceededReplacing, Some(_))
+                    if r.is_for_query =>
+                {
+                    self.relations_of_query.insert(key, SUCCEEDED | propagating);
+                }
                 (MaybeKeys::Succeeded, Some(stored)) => {
                     self.insert_relation(key, SUCCEEDED | propagating, stored);
                 }
@@ -4326,6 +4467,32 @@ impl<'p, 's> Checker<'p, 's> {
         max_depth: usize,
     ) -> bool {
         self.is_deeply_nested_among(t, stacks, is_source, &[], max_depth)
+    }
+
+    /// `isDeeplyNestedType(source, sourceStack, sourceDepth, 10)` for a conditional type. On the way into
+    /// `Exclude<Exclude<.., A>, B>` tsgo compares the instantiations that the constraint of each level makes, which are
+    /// newer level by level. Here a level's constraint is the type inside it, which is lower, so height says nothing
+    /// about which is newer. Every level is pushed after the one around it.
+    fn is_conditional_source_deeply_nested(
+        &mut self,
+        source: TypeId,
+        source_stack: &[(TypeId, u32)],
+    ) -> bool {
+        let max_depth = 10;
+        if source_stack.len() < max_depth {
+            return false;
+        }
+        let identity = self.recursion_identity(source);
+        let mut count = 0;
+        for &(on_stack, _) in source_stack {
+            if self.has_matching_recursion_identity(on_stack, identity) {
+                count += 1;
+                if count >= max_depth {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// `known` has an `OnStack` for each entry of the stack, or is empty.
@@ -4375,16 +4542,27 @@ impl<'p, 's> Checker<'p, 's> {
     /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
     /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
     /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
-    /// so this is a total order: of two different types, exactly one is newer.
+    /// so of two different types with the same height, exactly one is newer. A lower type is older: a walk into a finite
+    /// type meets its parts, and a declaration's own instantiations exist before the one that is compared. The exception
+    /// is a conditional type that was pushed later and that `last`, a conditional type too, isn't built from. No
+    /// declaration names it. The comparison made it after `last`, as `Exclude<A, 3>` for the constraint of
+    /// `Exclude<Exclude<A, 2>, 3>`.
     fn is_at_least_as_new(&self, t: TypeId, last: TypeId, stacks: [&[(TypeId, u32)]; 2]) -> bool {
         let pushed = |t: TypeId| {
             let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
             stacks.into_iter().filter_map(first).min()
         };
         t == last
-            || (self.types().nesting_order(t, last))
-                .then_with(|| pushed(t).cmp(&pushed(last)))
-                .is_ge()
+            || match self.types().nesting_order(t, last) {
+                std::cmp::Ordering::Greater => true,
+                std::cmp::Ordering::Equal => pushed(t) >= pushed(last),
+                std::cmp::Ordering::Less => {
+                    matches!(self.data(t), TypeData::Cond { .. })
+                        && matches!(self.data(last), TypeData::Cond { .. })
+                        && pushed(t) > pushed(last)
+                        && !self.types().is_built_from(last, t)
+                }
+            }
     }
 
     /// `is_deeply_nested_type` of the last entry of the stack, at depth 3. `identities` has an `OnStack` for
@@ -4594,8 +4772,24 @@ impl<'p, 's> Checker<'p, 's> {
         self.recursion_identity_as(t, self.data(t))
     }
 
+    /// `recursion_identity` as if no type node had named `t`.
+    pub(super) fn recursion_identity_of_family(&self, t: TypeId) -> RecursionId {
+        self.recursion_identity_given(t, self.data(t), false)
+    }
+
     /// `data` is the `TypeData` of `t`.
+    #[inline]
     fn recursion_identity_as(&self, t: TypeId, data: &TypeData) -> RecursionId {
+        self.recursion_identity_given(t, data, self.types().is_from_type_node(t))
+    }
+
+    /// `data` is the `TypeData` of `t`, `is_from_type_node` its `ObjectFlagsFromTypeNode`.
+    fn recursion_identity_given(
+        &self,
+        t: TypeId,
+        data: &TypeData,
+        is_from_type_node: bool,
+    ) -> RecursionId {
         match data {
             // `t.AsTypeReference().node != nil`
             TypeData::Ref {
@@ -4608,7 +4802,7 @@ impl<'p, 's> Checker<'p, 's> {
             } => (2, deferred.file.0, deferred.node.0),
             // `ObjectFlagsFromTypeNode`, `isObjectOrArrayLiteralType`
             TypeData::Ref { .. } | TypeData::Tuple { .. }
-                if self.types().is_from_type_node(t)
+                if is_from_type_node
                     || self.types().is_array_literal(t)
                     || self.contains_object_literals(t, data) =>
             {
@@ -5149,7 +5343,7 @@ impl<'p, 's> Checker<'p, 's> {
                     );
                     if !self.is_generic_object_type(base_object)
                         && !self.is_generic_index_type(base_index)
-                        && let Some(constraint) = self.indexed_access_with_flags(
+                        && let Some(constraint) = self.write_constraint(
                             base_object,
                             base_index,
                             if base_object != object {
@@ -5451,8 +5645,7 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { .. } => {
-                if self.is_deeply_nested_type(source, [&r.source_stack, &r.target_stack], true, 10)
-                {
+                if self.is_conditional_source_deeply_nested(source, &r.source_stack) {
                     return Ternary::MAYBE;
                 }
                 if matches!(self.data(target), TypeData::Cond { .. }) {
@@ -7366,8 +7559,10 @@ impl<'p, 's> Checker<'p, 's> {
             ),
             None => false,
         };
-        let strict_variance =
-            check_mode & CALLBACK == 0 && self.p.files.options.strict_function_types && !is_method;
+        let strict_variance = check_mode & CALLBACK == 0
+            && !is_method
+            && self.is_under_strict_function_types(source)
+            && self.is_under_strict_function_types(target);
         let mut result = Ternary::TRUE;
         if let Some(source_this) = self.sig_this_type(source)
             && source_this != TypeId::VOID

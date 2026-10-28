@@ -1,0 +1,1 @@
+error: TS18041: A 'return' statement cannot be used inside a class static block.

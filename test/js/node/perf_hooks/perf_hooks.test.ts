@@ -75,16 +75,18 @@ test("the garbage collector knows the size of a sliding window", () => {
 test("heapStats() counts the histograms of each class", () => {
   const recordable = perf.createHistogram();
   const held = [recordable, structuredClone(recordable), perf.monitorEventLoopDelay()];
-  held.push(structuredClone(held[2]));
-  const { RecordableHistogram, ELDHistogram, Histogram } = heapStats().objectTypeCounts;
+  held.push(structuredClone(held[2]), perf.createSlidingWindowHistogram({ chunks: 1, recordsPerChunk: 1 }));
+  const { RecordableHistogram, ELDHistogram, Histogram, SlidingWindowHistogram } = heapStats().objectTypeCounts;
   expect(RecordableHistogram).toBeGreaterThanOrEqual(2);
   expect(ELDHistogram).toBeGreaterThanOrEqual(1);
   expect(Histogram).toBeGreaterThanOrEqual(1);
+  expect(SlidingWindowHistogram).toBeGreaterThanOrEqual(1);
   expect(held.map(histogram => histogram.constructor.name)).toEqual([
     "RecordableHistogram",
     "RecordableHistogram",
     "ELDHistogram",
     "Histogram",
+    "SlidingWindowHistogram",
   ]);
 });
 

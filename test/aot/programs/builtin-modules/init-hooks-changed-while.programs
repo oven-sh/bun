@@ -1,0 +1,3299 @@
+////: lines-2
+function «1»(): string {
+  let «2» = next(3) === 0 ? "/" : "";
+  for (let k = next(7); k > 0; k--) {
+    «2» += pieces[next(pieces.length)];
+    if (next(3) !== 0) «2» += "/";
+  }
+  return «2»;
+}
+////: lines-3
+try {
+  «1»);
+} catch (error) {
+  console.log((error as Error).constructor.name);
+}
+////: normalizeString
+function normalizeString(path: string, allowAboveRoot: boolean, separator: string, isPathSeparator: (code: number) => boolean): string {
+  let res = "";
+  let lastSegmentLength = 0;
+  let lastSlash = -1;
+  let dots = 0;
+  let code = 0;
+  for (let i = 0; i <= path.length; ++i) {
+    if (i < path.length) code = path.charCodeAt(i);
+    else if (isPathSeparator(code)) break;
+    else code = 47;
+    if (isPathSeparator(code)) {
+      if (lastSlash === i - 1 || dots === 1) {
+      } else if (dots === 2) {
+        if (res.length < 2 || lastSegmentLength !== 2 || res.charCodeAt(res.length - 1) !== 46 || res.charCodeAt(res.length - 2) !== 46) {
+          if (res.length > 2) {
+            const lastSlashIndex = res.lastIndexOf(separator);
+            if (lastSlashIndex === -1) {
+              res = "";
+              lastSegmentLength = 0;
+            } else {
+              res = res.slice(0, lastSlashIndex);
+              lastSegmentLength = res.length - 1 - res.lastIndexOf(separator);
+            }
+            lastSlash = i;
+            dots = 0;
+            continue;
+          } else if (res.length !== 0) {
+            res = "";
+            lastSegmentLength = 0;
+            lastSlash = i;
+            dots = 0;
+            continue;
+          }
+        }
+        if (allowAboveRoot) {
+          res += res.length > 0 ? `${separator}..` : "..";
+          lastSegmentLength = 2;
+        }
+      } else {
+        if (res.length > 0) res += `${separator}${path.slice(lastSlash + 1, i)}`;
+        else res = path.slice(lastSlash + 1, i);
+        lastSegmentLength = i - lastSlash - 1;
+      }
+      lastSlash = i;
+      dots = 0;
+    } else if (code === 46 && dots !== -1) {
+      ++dots;
+    } else {
+      dots = -1;
+    }
+  }
+  return res;
+}
+////: reference
+function reference(cwd: () => string): Record<string, (...args: any[]) => unknown> {
+  const posix = {
+    resolve(...args: unknown[]): string {
+      let resolvedPath = "";
+      let resolvedAbsolute = false;
+      for (let i = args.length - 1; i >= 0 && !resolvedAbsolute; i--) {
+        const path = args[i];
+        validateString(path, `paths[${i}]`);
+        if (path.length === 0) continue;
+        resolvedPath = `${path}/${resolvedPath}`;
+        resolvedAbsolute = path.charCodeAt(0) === 47;
+      }
+      if (!resolvedAbsolute) {
+        const directory = cwd();
+        resolvedPath = `${directory}/${resolvedPath}`;
+        resolvedAbsolute = directory.charCodeAt(0) === 47;
+      }
+      resolvedPath = normalizeString(resolvedPath, !resolvedAbsolute, "/", isPosixPathSeparator);
+      if (resolvedAbsolute) return `/${resolvedPath}`;
+      return resolvedPath.length > 0 ? resolvedPath : ".";
+    },
+    normalize(path: unknown): string {
+      validateString(path, "path");
+      if (path.length === 0) return ".";
+      const isAbsolute = path.charCodeAt(0) === 47;
+      const trailingSeparator = path.charCodeAt(path.length - 1) === 47;
+      let normalized = normalizeString(path, !isAbsolute, "/", isPosixPathSeparator);
+      if (normalized.length === 0) {
+        if (isAbsolute) return "/";
+        return trailingSeparator ? "./" : ".";
+      }
+      if (trailingSeparator) normalized += "/";
+      return isAbsolute ? `/${normalized}` : normalized;
+    },
+    isAbsolute(path: unknown): boolean {
+      validateString(path, "path");
+      return path.length > 0 && path.charCodeAt(0) === 47;
+    },
+    join(...args: unknown[]): string {
+      if (args.length === 0) return ".";
+      const path: string[] = [];
+      for (let i = 0; i < args.length; ++i) {
+        const arg = args[i];
+        validateString(arg, "path");
+        if (arg.length > 0) path.push(arg);
+      }
+      if (path.length === 0) return ".";
+      return posix.normalize(path.join("/"));
+    },
+    relative(from: unknown, to: unknown): string {
+      validateString(from, "from");
+      validateString(to, "to");
+      if (from === to) return "";
+      const resolvedFrom = posix.resolve(from);
+      const resolvedTo = posix.resolve(to);
+      if (resolvedFrom === resolvedTo) return "";
+      const fromStart = 1;
+      const fromEnd = resolvedFrom.length;
+      const fromLen = fromEnd - fromStart;
+      const toStart = 1;
+      const toLen = resolvedTo.length - toStart;
+      const length = fromLen < toLen ? fromLen : toLen;
+      let lastCommonSep = -1;
+      let i = 0;
+      for (; i < length; i++) {
+        const fromCode = resolvedFrom.charCodeAt(fromStart + i);
+        if (fromCode !== resolvedTo.charCodeAt(toStart + i)) break;
+        else if (fromCode === 47) lastCommonSep = i;
+      }
+      if (i === length) {
+        if (toLen > length) {
+          if (resolvedTo.charCodeAt(toStart + i) === 47) return resolvedTo.slice(toStart + i + 1);
+          if (i === 0) return resolvedTo.slice(toStart + i);
+        } else if (fromLen > length) {
+          if (resolvedFrom.charCodeAt(fromStart + i) === 47) lastCommonSep = i;
+          else if (i === 0) lastCommonSep = 0;
+        }
+      }
+      let out = "";
+      for (i = fromStart + lastCommonSep + 1; i <= fromEnd; ++i) {
+        if (i === fromEnd || resolvedFrom.charCodeAt(i) === 47) out += out.length === 0 ? ".." : "/..";
+      }
+      return `${out}${resolvedTo.slice(toStart + lastCommonSep)}`;
+    },
+    dirname(path: unknown): string {
+      validateString(path, "path");
+      if (path.length === 0) return ".";
+      const hasRoot = path.charCodeAt(0) === 47;
+      let end = -1;
+      let matchedSlash = true;
+      for (let i = path.length - 1; i >= 1; --i) {
+        if (path.charCodeAt(i) === 47) {
+          if (!matchedSlash) {
+            end = i;
+            break;
+          }
+        } else {
+          matchedSlash = false;
+        }
+      }
+      if (end === -1) return hasRoot ? "/" : ".";
+      if (hasRoot && end === 1) return "//";
+      return path.slice(0, end);
+    },
+    basename(path: unknown, given?: unknown): string {
+      if (given !== undefined) validateString(given, "suffix");
+      validateString(path, "path");
+      const suffix = typeof given === "string" ? given : undefined;
+      let start = 0;
+      let end = -1;
+      let matchedSlash = true;
+      if (suffix !== undefined && suffix.length > 0 && suffix.length <= path.length) {
+        if (suffix === path) return "";
+        let extIdx = suffix.length - 1;
+        let firstNonSlashEnd = -1;
+        for (let i = path.length - 1; i >= 0; --i) {
+          const code = path.charCodeAt(i);
+          if (code === 47) {
+            if (!matchedSlash) {
+              start = i + 1;
+              break;
+            }
+          } else {
+            if (firstNonSlashEnd === -1) {
+              matchedSlash = false;
+              firstNonSlashEnd = i + 1;
+            }
+            if (extIdx >= 0) {
+              if (code === suffix.charCodeAt(extIdx)) {
+                if (--extIdx === -1) end = i;
+              } else {
+                extIdx = -1;
+                end = firstNonSlashEnd;
+              }
+            }
+          }
+        }
+        if (start === end) end = firstNonSlashEnd;
+        else if (end === -1) end = path.length;
+        return path.slice(start, end);
+      }
+      for (let i = path.length - 1; i >= 0; --i) {
+        if (path.charCodeAt(i) === 47) {
+          if (!matchedSlash) {
+            start = i + 1;
+            break;
+          }
+        } else if (end === -1) {
+          matchedSlash = false;
+          end = i + 1;
+        }
+      }
+      if (end === -1) return "";
+      return path.slice(start, end);
+    },
+    extname(path: unknown): string {
+      validateString(path, "path");
+      let startDot = -1;
+      let startPart = 0;
+      let end = -1;
+      let matchedSlash = true;
+      let preDotState = 0;
+      for (let i = path.length - 1; i >= 0; --i) {
+        const char = path[i];
+        if (char === "/") {
+          if (!matchedSlash) {
+            startPart = i + 1;
+            break;
+          }
+          continue;
+        }
+        if (end === -1) {
+          matchedSlash = false;
+          end = i + 1;
+        }
+        if (char === ".") {
+          if (startDot === -1) startDot = i;
+          else if (preDotState !== 1) preDotState = 1;
+        } else if (startDot !== -1) {
+          preDotState = -1;
+        }
+      }
+      if (startDot === -1 || end === -1 || preDotState === 0 || (preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)) return "";
+      return path.slice(startDot, end);
+    },
+    parse(path: unknown): { root: string; dir: string; base: string; ext: string; name: string } {
+      validateString(path, "path");
+      const ret = { root: "", dir: "", base: "", ext: "", name: "" };
+      if (path.length === 0) return ret;
+      const isAbsolute = path.charCodeAt(0) === 47;
+      let start;
+      if (isAbsolute) {
+        ret.root = "/";
+        start = 1;
+      } else {
+        start = 0;
+      }
+      let startDot = -1;
+      let startPart = 0;
+      let end = -1;
+      let matchedSlash = true;
+      let i = path.length - 1;
+      let preDotState = 0;
+      for (; i >= start; --i) {
+        const code = path.charCodeAt(i);
+        if (code === 47) {
+          if (!matchedSlash) {
+            startPart = i + 1;
+            break;
+          }
+          continue;
+        }
+        if (end === -1) {
+          matchedSlash = false;
+          end = i + 1;
+        }
+        if (code === 46) {
+          if (startDot === -1) startDot = i;
+          else if (preDotState !== 1) preDotState = 1;
+        } else if (startDot !== -1) {
+          preDotState = -1;
+        }
+      }
+      if (end !== -1) {
+        const begin = startPart === 0 && isAbsolute ? 1 : startPart;
+        if (startDot === -1 || preDotState === 0 || (preDotState === 1 && startDot === end - 1 && startDot === startPart + 1)) {
+          ret.base = ret.name = path.slice(begin, end);
+        } else {
+          ret.name = path.slice(begin, startDot);
+          ret.base = path.slice(begin, end);
+          ret.ext = path.slice(startDot, end);
+        }
+      }
+      if (startPart > 0) ret.dir = path.slice(0, startPart - 1);
+      else if (isAbsolute) ret.dir = "/";
+      return ret;
+    },
+  };
+  return posix;
+}
+////: report
+function report(name: string, probe: () => unknown) {
+  let answer: unknown;
+  try {
+    answer = probe();
+  } catch (error) {
+    answer = [(error as any).name, (error as any).code, (error as Error).message];
+  }
+  console.log(name, JSON.stringify(answer));
+}
+////: same-2
+function same(name: string, args: string[]) {
+  cases++;
+  const expected = outcome(node[name]!, args);
+  const actual = outcome((posix as any)[name], args);
+  if (expected !== actual && differences++ < 10) console.log(`${name}(${JSON.stringify(args)}): ${actual}, Node: ${expected}`);
+}
+//// init-hooks-changed-while-a-tick-is-announced.ts
+import { createHook } from "node:async_hooks";
+import { writeSync } from "node:fs";
+
+const lines: string[] = [];
+let late: ReturnType<typeof createHook> | undefined;
+const first = createHook({
+  init(_id: number, type: string) {
+    if (type !== "TickObject") return;
+    lines.push("first");
+    if (late === undefined) {
+      late = createHook({
+        init(_lateId: number, lateType: string) {
+          if (lateType === "TickObject") lines.push("late");
+        },
+      }).enable();
+    }
+  },
+});
+const second = createHook({
+  init(_id: number, type: string) {
+    if (type !== "TickObject") return;
+    lines.push("second");
+    third.disable();
+  },
+});
+const third = createHook({
+  init(_id: number, type: string) {
+    if (type === "TickObject") lines.push("third");
+  },
+});
+first.enable();
+second.enable();
+third.enable();
+process.nextTick(() => lines.push("tick 1"));
+lines.push("--");
+process.nextTick((a: number, b: string) => lines.push(`tick 2 ${a} ${b}`), 1, "x");
+lines.push("--");
+first.disable();
+second.disable();
+late!.disable();
+process.nextTick(() => {
+  lines.push("tick 3");
+  writeSync(1, lines.join("\n") + "\n");
+});
+//// init-paths-of-node-module-is-called.cjs
+// Module._initPaths is a function of the library that does nothing. Whoever reads the property and calls it gets undefined.
+const Module = require("node:module");
+console.log(typeof Module._initPaths());
+//// inspect-and-zip-keyed-take-descriptors-apart-and-every-pass-is-verified.js
+// The functions of node:util's inspect that take own property descriptors apart, and Iterator.zipKeyed: what they print is what plain Bun prints.
+const util = require("node:util");
+class Base { get size() { return 3; } set size(v) {} plain() {} }
+Base.prototype.shared = 7; Base.prototype.list = [1, 2];
+class Middle extends Base { get own() { return "own"; } }
+Middle.prototype.tag = "middle";
+class Leaf extends Middle { constructor() { super(); this.field = 1; } }
+function Old() { this.a = 1; } Old.prototype.kept = { deep: true }; Object.defineProperty(Old.prototype, "hidden", { value: 5, enumerable: false });
+const bare = Object.create(null); bare.x = 1;
+const belowBare = Object.create(bare); belowBare.y = 2;
+const noConstructor = Object.create({ inherited: 1 });
+const accessorConstructor = Object.create(Object.defineProperty({}, "constructor", { get() { return Leaf; }, configurable: true }));
+const oddConstructor = Object.create({ constructor: 5 });
+const emptyNamed = Object.create({ constructor: function () {} });
+const values = [new Leaf(), new Middle(), new Base(), new Old(), bare, belowBare, noConstructor, accessorConstructor, oddConstructor, emptyNamed, new (class extends Map {})(), new (class extends Array {})(2), Object.create(new Leaf()), new Proxy(new Leaf(), {}), function named() {}, class K { static s = 1; }, Symbol.prototype, new Date(0), /x/g];
+for (let round = 0; round < 3; round++)
+  for (const v of values)
+    for (const options of [{}, { showHidden: true }, { showHidden: true, getters: true }, { showHidden: true, depth: 0 }, { showProxy: true }]) {
+      let text; try { text = util.inspect(v, options); } catch (e) { text = "throws " + e.constructor.name; }
+      if (round === 2) console.log(text.replace(/\n\s+at .*/g, ""));
+    }
+class WithText { toString() { return "text of mine"; } } class Heir extends WithText {} class ErrorHeir extends Error { toString() { return "error text"; } }
+for (const v of [new WithText(), new Heir(), new ErrorHeir("x"), { toString() { return "own"; } }, Object.create(null), new Proxy({}, {}), new Date(0), new Leaf(), [1], new (class extends Date {})(0), Object.create({ toString: 5 })]) console.log(util.format("%s|%s", v, 1).replace(/\n\s+at .*/g, ""));
+if (typeof Iterator.zipKeyed === "function") {
+  const source = { a: [1, 2, 3], b: ["x", "y"], get c() { return [7, 8, 9].values(); } }; Object.defineProperty(source, "hidden", { value: [0], enumerable: false }); source[Symbol.for("s")] = [4, 5];
+  for (const mode of ["shortest", "longest"]) console.log(JSON.stringify([...Iterator.zipKeyed(source, { mode })]), [...Iterator.zipKeyed(source, { mode })].map(r => String(r[Symbol.for("s")])).join());
+  console.log(JSON.stringify([...Iterator.zipKeyed({ a: [1], b: [2, 3] }, { mode: "longest", padding: { a: "pad", get b() { return "never"; } } })]));
+  try { [...Iterator.zipKeyed({ a: [1], b: [2, 3] }, { mode: "strict" })]; } catch (e) { console.log(e.constructor.name); }
+}
+//// inspect-errors-in-color.ts
+// util.inspect() of an error with colors marks the frames of built-in modules, of node_modules and of the working directory: it asks for the list of built-in modules and for the working directory as a file URL. A list that the program changed is obeyed.
+import { inspect } from "node:util";
+import Module from "node:module";
+import { pathToFileURL } from "node:url";
+
+const here = process.cwd();
+function failed(stack: string[]): Error {
+  const error = new Error("failed");
+  error.stack = "Error: failed\n" + stack.map(frame => "    at " + frame).join("\n");
+  return error;
+}
+const show = (error: Error) => console.log(JSON.stringify(inspect(error, { colors: true }).replaceAll(here, "<cwd>").replaceAll(pathToFileURL(here).href, "<cwd url>")));
+const frames = [
+  "run (node:internal/process/task_queues:95:5)",
+  "read (node:fs:10:1)",
+  "made up (node:made-up:1:1)",
+  `mine (${here}/src/mine.js:1:2)`,
+  `theirs (${here}/node_modules/theirs/index.js:3:4)`,
+  `module (${pathToFileURL(here).href}/src/module.mjs:5:6)`,
+  "elsewhere (/somewhere/else.js:7:8)",
+];
+show(failed(frames));
+(Module.builtinModules as string[]).push("made-up");
+show(failed(frames));
+(Module.builtinModules as string[]).pop();
+console.log(inspect(failed(frames)).replaceAll(here, "<cwd>").replaceAll(pathToFileURL(here).href, "<cwd url>"));
+for (const options of [1, null, [], () => {}, "text"]) {
+  for (const name of ["defaultOptions", "replDefaults"] as const) {
+    try {
+      (inspect as any)[name] = options;
+      console.log(name, "taken");
+    } catch (error) {
+      console.log(name, (error as any).code, (error as Error).message);
+    }
+  }
+}
+//// inspect-typed-arrays-without-a-prototype.ts
+// util.inspect() of a typed array whose prototype was taken away makes a copy with the constructor of the array's own type.
+import { inspect } from "node:util";
+
+const types = [Int8Array, Uint8Array, Uint8ClampedArray, Int16Array, Uint16Array, Int32Array, Uint32Array, Float16Array, Float32Array, Float64Array] as const;
+for (const type of types) {
+  const bare = Object.setPrototypeOf(new type([1, 2, 3]), null);
+  console.log(inspect(bare), "|", inspect(bare, { showHidden: true }).replaceAll("\n", " "));
+}
+for (const type of [BigInt64Array, BigUint64Array]) console.log(inspect(Object.setPrototypeOf(new type([1n, 2n]), null)));
+console.log(inspect(Object.setPrototypeOf(Buffer.from("abc"), null)));
+console.log(inspect(Object.setPrototypeOf(new Uint8Array(0), null)), inspect({ nested: Object.setPrototypeOf(new Int16Array(200), null) }).length);
+class Mine extends Uint16Array {}
+console.log(inspect(Object.setPrototypeOf(new Mine(2), null)), inspect(new Mine(2)));
+//// internal-modules-are-loaded-by-no-name-that-is-made-at-run-time.js
+// node:http and console.log bring internal/http and internal/util/inspect into the image. No loader answers either of them for a name that is made at run time, as in plain Bun.
+// The answer is stored: Bun's own tests run with a variable that opens these modules to plain Bun.
+const http = require("node:http");
+const text = (encoded) => Buffer.from(encoded, "base64").toString();
+const names = [text("aW50ZXJuYWwvdXRpbC9pbnNwZWN0"), text("aW50ZXJuYWwvaHR0cA=="), text("aW50ZXJuYWwvc3RyZWFtcy9zdGF0ZQ=="), text("bm9kZTpwYXRo")];
+
+async function main() {
+  console.log(typeof http.createServer, { a: 1 });
+  for (const name of names) {
+    const answers = [];
+    try {
+      answers.push(typeof require(name));
+    } catch {
+      answers.push("throws");
+    }
+    answers.push(typeof process.getBuiltinModule(name));
+    try {
+      answers.push(typeof require("node:module").createRequire(import.meta.url)(name));
+    } catch {
+      answers.push("throws");
+    }
+    try {
+      answers.push(typeof (await import(name)));
+    } catch {
+      answers.push("throws");
+    }
+    console.log(name, answers.join(" "));
+  }
+}
+main();
+//// json-parse-of-arrays-with-one-object-many-objects-and-strings-of-one-character.js
+// JSON.parse of arrays that hold one object, many objects, objects of changing shapes, and strings of one character, from every kind of source text.
+const show = value => { try { return JSON.stringify(value, (key, x) => typeof x === "object" && x !== null && !Array.isArray(x) ? Object.fromEntries(Object.entries(x).map(([k, v]) => ["<" + k + ">", v])) : Object.is(x, -0) ? "-0" : x); } catch (error) { return "unprintable"; } };
+const attempt = text => { try { return show(JSON.parse(text)); } catch (error) { return "throws " + error.name; } };
+const element = (tag, key, props) => JSON.stringify(["$", tag, key, props]);
+const texts = [
+  element("td", null, { children: 30 }), element("a", null, { href: "/x", children: "y" }), element("li", "new", { className: "tag", children: "new" }), element("span", null, { className: "rating", title: "2", children: ["*", "-", " "] }),
+  element("td", null, { className: "a", id: "b", children: [] }), element("td", null, { className: "a" }), element("td", null, {}), element("td", null, { children: { children: { children: 1 } } }),
+  '[{"a":1}]', '[{"a":1},{"a":2},{"a":3}]', '[{"a":1},{"b":2},{"a":3,"b":4},{"b":5,"a":6}]', '[1,{"a":1},2,{"a":2},"x",{"a":3}]', '[[{"a":1}],[{"a":2}],[{"b":3}]]', '[{"a":[{"a":[{"a":1}]}]}]',
+  '[{"a":1,"a":2}]', '[{"a":1,"b":2,"a":3}]', '[{"__proto__":1}]', '[{"__proto__":{"x":1}},{"__proto__":null}]', '[{"0":1,"a":2},{"a":1,"0":2}]', '[{"1":1},{"1":2}]', '[{"":1},{"":2}]', '[{"constructor":1,"toString":2,"hasOwnProperty":3}]',
+  '[{"abcdefghijklmnop":1},{"abcdefghijklmnop":2},{"abcdefghijklmnoq":3}]', '[{"abcdefghijklmnopqrstuvwxyz":1},{"abcdefghijklmnopqrstuvwxyz":2}]', '[{"\\u0061":1},{"a":2}]', '[{"a\\n":1},{"a\\n":2}]', '[{"\u00e9":1},{"\u00e9":2}]', '[{"\u65e5":1},{"\u65e5":2},{"\u672c":3}]',
+  '[ { "a" : 1 } , { "a" : 2 } ]', '[\n{\n"a"\n:\n1\n}\n]', '[{"a":1}', '[{"a":1},]', '[{"a":1,}]', '[{"a"}]', '[{"a":}]', '[{a:1}]', "[{'a':1}]", '[{"a":1}}', '[{"a":1]]', '[{]', '[{}', '[}]',
+  '"$"', '" "', '","', '"a"', '"~"', '"\x7f"', '"\u0080"', '"\u00e9"', '"\u00ff"', '"\u0100"', '"\u65e5"', '""', '"\\""', '"\\\\"', '"\\n"', '"\\u0041"', '"\\"', '"\\', '"\x01"', '"\n"', '"\t"', '"a', '"', '"a"x', '"a""', '"a" ', ' "a"', '"ab"', '"""',
+  '["$"]', '["$","$","$"]', '["a","b","c","\\"","\\\\","","\u00e9","\u65e5"]', '["a"', '["a",', '["a" "b"]', '["a",]', '{"a":"b"}', '{"a":"\\""}', '{"$":"$"}', '{"a":"b","c":"d","e":"\u65e5"}', '["\ud83d\ude00","x"]', '["\ud800","x"]',
+];
+for (let i = 0; i < 14; i++) texts.push("[" + Array.from({ length: i }, (_, n) => '{"k' + n % 3 + '":' + n + ',"v":"' + String.fromCharCode(97 + n) + '"}').join() + "]");
+texts.push("[" + "[".repeat(50) + '{"a":"b"}' + "]".repeat(50) + "]", "{" + Array.from({ length: 80 }, (_, n) => '"k' + n + '":"' + n % 10 + '"').join() + "}", "[" + Array.from({ length: 3 }, () => "{" + Array.from({ length: 70 }, (_, n) => '"k' + n + '":' + n).join() + "}").join() + "]");
+const sources = [text => text, text => text + JSON.parse('""'), text => (" " + text).slice(1), text => text.slice(0, text.length >> 1) + text.slice(text.length >> 1), text => Buffer.from(text).toString(), text => ("\u65e5" + text).slice(1)];
+let lines = [];
+for (let round = 0; round < 4; round++) lines = texts.map((text, n) => n + ": " + sources.map(source => attempt(source(text))).filter((answer, i, all) => i === 0 || answer !== all[0]).join(" BUT "));
+console.log(lines.join("\n"));
+const many = []; for (let i = 0; i < 300; i++) many.push(attempt(element(["td", "tr", "a"][i % 3], i % 5 ? null : "k" + i, [{ children: i }, { className: "c" + (i % 4), children: "x" }, { href: "/" + i, children: ["a", i, "b"] }, { className: "c", title: "t", children: null }][i % 4])));
+console.log(many.filter((answer, i) => i % 37 === 0).join("\n"), new Set(many).size);
+const parsed = JSON.parse(element("td", null, { className: "a", children: "b" })); const again = JSON.parse(element("td", null, { className: "a", children: "b" }));
+parsed[3].extra = 1; delete parsed[3].className; console.log(show(parsed), show(again), Object.keys(again[3]).join(), Object.getPrototypeOf(again[3]) === Object.prototype, parsed[0] === again[0], parsed[0].length);
+Bun.gc(true); console.log(attempt(element("td", null, { className: "a", children: "b" })), attempt('[{"a":1},{"a":2}]'));
+console.log(show(await new Response(element("td", null, { children: "\u00e9", title: "$" })).json()), show(await new Response('["$","\u65e5",{"a":"b"}]').json()));
+console.log(show(JSON.parse('[{"a":"b"},{"a":"c"}]', (key, value) => typeof value === "string" ? value + "!" : value)));
+//// json-stringify-of-texts-with-quotes-backslashes-and-control-characters-at-every-place.js
+// JSON.stringify of texts with quotes, backslashes and control characters at every place of a vector, of every length around the vector's size.
+let hash = 0; const mix = text => { for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0; };
+function inList(text) { return JSON.stringify([1, text]); }
+function alone(text) { return JSON.stringify(text); }
+function inRecord(text) { return JSON.stringify({ a: text, b: 1, [text.slice(0, 3)]: text }); }
+const flat = text => Buffer.from(text, "latin1").toString("latin1");
+const special = ['"', "\\", "\n", "\t", "\r", "\b", "\f", "\0", "\x01", "\x1f", " ", "\x7f", "\x80", "\xff", "/", "'", "a"];
+const lines = [];
+for (const character of special) {
+  let before = hash;
+  for (let length = 0; length <= 70; length++) for (let at = 0; at < length; at += length > 40 ? 3 : 1) { const text = flat("x".repeat(at) + character + "y".repeat(length - at - 1)); mix(inList(text)); mix(alone(text)); }
+  lines.push(JSON.stringify(character) + " " + (hash - before | 0));
+}
+for (let every = 1; every <= 20; every++) for (const character of ['"', "\\", "\n", '"\\']) { let text = ""; for (let i = 0; i < 400; i++) text += i % every ? "abcdefghij"[i % 10] : character; text = flat(text); mix(inList(text)); mix(inRecord(text)); if (every < 4) lines.push(every + JSON.stringify(character) + inList(text.slice(0, 40))); }
+let seed = 12345; const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8;
+for (let round = 0; round < 3000; round++) { let text = ""; const length = next() % 90, kind = next() % 4; for (let i = 0; i < length; i++) { const r = next(); text += kind === 0 ? String.fromCharCode(r % 256) : kind === 1 ? '"\\ab'[r % 4] : kind === 2 ? (r % 9 ? "k" : special[r % special.length]) : String.fromCharCode(32 + r % 95); } text = flat(text); const quoted = inList(text); mix(quoted); if (JSON.parse(quoted)[1] !== text) lines.push("does not come back: " + alone(text)); }
+lines.push("random " + hash);
+const row = JSON.stringify(["$", "td", null, { className: "a \"b\" \\c", children: ["x\ny", 1, { title: "t" }] }]);
+lines.push(inList(row), inList(inList(row)), inList(inList(inList(row))).length, inList(row.repeat(50)).length, alone("日" + row).length, inList("日\"\\\n" + row), inList((row + "日").slice(0, -1)).length, inList("a".repeat(5000) + '"').length, inList('"' + "a".repeat(5000)).length, inList("a".repeat(63) + '"' + "b".repeat(64)).length);
+lines.push(JSON.stringify({ '"': 1, "\\": 2, "a\"b\"c\"d\"e\"f\"g\"h\"i\"j": 3 }), JSON.stringify(['"', "\\", '""""""""""""""""', "\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]), JSON.stringify([row], null, 2).length, JSON.stringify({ toJSON() { return row; } }));
+// Plain Bun quotes by the same routine as the compiled program, so that the two agree says little. These lines were printed by the routine that wrote one escaped character at a time.
+const expected = [
+  "\"\\\"\" -310951917",
+  "\"\\\\\" -2080290793",
+  "\"\\n\" -207565941",
+  "\"\\t\" -1273040505",
+  "\"\\r\" -1774792141",
+  "\"\\b\" 90353747",
+  "\"\\f\" 1824519483",
+  "\"\\u0000\" -12381935",
+  "\"\\u0001\" -1814389669",
+  "\"\\u001f\" -2083048093",
+  "\" \" -1932941531",
+  "\"\u007f\" 1260445825",
+  "\"\u0080\" -1321136219",
+  "\"\u00ff\" 444325249",
+  "\"/\" 1353284801",
+  "\"'\" 549915681",
+  "\"a\" 1546734025",
+  "1\"\\\"\"[1,\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\"]",
+  "1\"\\\\\"[1,\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]",
+  "1\"\\n\"[1,\"\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\"]",
+  "1\"\\\"\\\\\"[1,\"\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\"]",
+  "2\"\\\"\"[1,\"\\\"b\\\"d\\\"f\\\"h\\\"j\\\"b\\\"d\\\"f\\\"h\\\"j\\\"b\\\"d\\\"f\\\"h\\\"j\\\"b\\\"d\\\"f\\\"h\\\"j\"]",
+  "2\"\\\\\"[1,\"\\\\b\\\\d\\\\f\\\\h\\\\j\\\\b\\\\d\\\\f\\\\h\\\\j\\\\b\\\\d\\\\f\\\\h\\\\j\\\\b\\\\d\\\\f\\\\h\\\\j\"]",
+  "2\"\\n\"[1,\"\\nb\\nd\\nf\\nh\\nj\\nb\\nd\\nf\\nh\\nj\\nb\\nd\\nf\\nh\\nj\\nb\\nd\\nf\\nh\\nj\"]",
+  "2\"\\\"\\\\\"[1,\"\\\"\\\\b\\\"\\\\d\\\"\\\\f\\\"\\\\h\\\"\\\\j\\\"\\\\b\\\"\\\\d\\\"\\\\f\\\"\\\\h\\\"\\\\j\\\"\\\\b\\\"\\\\d\\\"\\\\f\\\"\"]",
+  "3\"\\\"\"[1,\"\\\"bc\\\"ef\\\"hi\\\"ab\\\"de\\\"gh\\\"ja\\\"cd\\\"fg\\\"ij\\\"bc\\\"ef\\\"hi\\\"\"]",
+  "3\"\\\\\"[1,\"\\\\bc\\\\ef\\\\hi\\\\ab\\\\de\\\\gh\\\\ja\\\\cd\\\\fg\\\\ij\\\\bc\\\\ef\\\\hi\\\\\"]",
+  "3\"\\n\"[1,\"\\nbc\\nef\\nhi\\nab\\nde\\ngh\\nja\\ncd\\nfg\\nij\\nbc\\nef\\nhi\\n\"]",
+  "3\"\\\"\\\\\"[1,\"\\\"\\\\bc\\\"\\\\ef\\\"\\\\hi\\\"\\\\ab\\\"\\\\de\\\"\\\\gh\\\"\\\\ja\\\"\\\\cd\\\"\\\\fg\\\"\\\\ij\"]",
+  "random -1476102496",
+  "[1,\"[\\\"$\\\",\\\"td\\\",null,{\\\"className\\\":\\\"a \\\\\\\"b\\\\\\\" \\\\\\\\c\\\",\\\"children\\\":[\\\"x\\\\ny\\\",1,{\\\"title\\\":\\\"t\\\"}]}]\"]",
+  "[1,\"[1,\\\"[\\\\\\\"$\\\\\\\",\\\\\\\"td\\\\\\\",null,{\\\\\\\"className\\\\\\\":\\\\\\\"a \\\\\\\\\\\\\\\"b\\\\\\\\\\\\\\\" \\\\\\\\\\\\\\\\c\\\\\\\",\\\\\\\"children\\\\\\\":[\\\\\\\"x\\\\\\\\ny\\\\\\\",1,{\\\\\\\"title\\\\\\\":\\\\\\\"t\\\\\\\"}]}]\\\"]\"]",
+  "266",
+  "5106",
+  "105",
+  "[1,\"\u65e5\\\"\\\\\\n[\\\"$\\\",\\\"td\\\",null,{\\\"className\\\":\\\"a \\\\\\\"b\\\\\\\" \\\\\\\\c\\\",\\\"children\\\":[\\\"x\\\\ny\\\",1,{\\\"title\\\":\\\"t\\\"}]}]\"]",
+  "108",
+  "5008",
+  "5008",
+  "135",
+  "{\"\\\"\":1,\"\\\\\":2,\"a\\\"b\\\"c\\\"d\\\"e\\\"f\\\"g\\\"h\\\"i\\\"j\":3}",
+  "[\"\\\"\",\"\\\\\",\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\",\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]",
+  "110",
+  "\"[\\\"$\\\",\\\"td\\\",null,{\\\"className\\\":\\\"a \\\\\\\"b\\\\\\\" \\\\\\\\c\\\",\\\"children\\\":[\\\"x\\\\ny\\\",1,{\\\"title\\\":\\\"t\\\"}]}]\"",
+];
+console.log(lines.join("\n"));
+console.log(lines.length === expected.length && lines.every((line, i) => String(line) === expected[i]) ? "as the routine before it printed" : "DIFFERS from what the routine before it printed at line " + lines.findIndex((line, i) => String(line) !== expected[i]));
+//// json-stringify-of-wide-texts-with-quotes-control-characters-and-surrogates-at-every-place.js
+// JSON.stringify where the output has 16 bits a character: quotes, backslashes, control characters and surrogates at every place of a vector, in texts of 8 and of 16 bits a character.
+let hash = 0; const mix = text => { for (let i = 0; i < text.length; i++) hash = (Math.imul(hash, 31) + text.charCodeAt(i)) | 0; };
+function alone(text) { return JSON.stringify(text); }
+function inList(text) { return JSON.stringify(["\u65e5", text]); }
+function inRecord(text) { return JSON.stringify({ wide: "\u2728", text, [text.slice(0, 2)]: 1 }); }
+const narrow = text => Buffer.from(text, "latin1").toString("latin1");
+const special = ['"', "\\", "\n", "\t", "\r", "\b", "\f", "\0", "\x01", "\x0b", "\x0e", "\x10", "\x18", "\x1a", "\x1f", " ", "\x7f", "\x80", "\xff", "\u0100", "\u0122", "\u015c", "\u010a", "\u2028", "\u2029", "\ud7ff", "\ud800", "\udbff", "\udc00", "\udfff", "\ue000", "\uffff", "\ud83d\ude00", "\ude00\ud83d", "a"];
+const lines = [];
+for (const character of special) {
+  const before = hash;
+  for (let length = 0; length <= 40; length++) for (let at = 0; at + character.length <= length; at++) {
+    const body = "x".repeat(at) + character + "y".repeat(length - at - character.length);
+    mix(alone("\u65e5" + body)); mix(alone(body + "\u65e5")); mix(inList(body)); if (!/[^\x00-\xff]/.test(body)) mix(inList(narrow(body)));
+    if (length % 7 === 0) mix(inRecord(body));
+  }
+  lines.push(JSON.stringify(character) + " " + (hash - before | 0));
+}
+for (let every = 1; every <= 12; every++) for (const character of ['"', "\\", "\n", '"\\', "\ud83d\ude00", "\ud800", "\x01"]) { let text = ""; for (let i = 0; i < 300; i++) text += i % every ? "abcdefghij"[i % 10] : character; mix(inList(text)); mix(alone(text + "\u65e5")); if (every < 3) lines.push(every + JSON.stringify(character) + inList(text.slice(0, 24))); }
+let seed = 777; const next = () => (seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8;
+for (let round = 0; round < 4000; round++) { let text = ""; const length = next() % 70, kind = next() % 5; for (let i = 0; i < length; i++) { const r = next(); text += kind === 0 ? String.fromCharCode(r % 65536) : kind === 1 ? '"\\a\u65e5'[r % 4] : kind === 2 ? (r % 9 ? "k" : special[r % special.length]) : kind === 3 ? String.fromCharCode(0xd7f0 + r % 0x820) : String.fromCharCode(r % 256); } const quoted = inList(text); mix(quoted); if (text.isWellFormed() && JSON.parse(quoted)[1] !== text) lines.push("does not come back: " + alone(text)); mix(alone(text)); }
+lines.push("random " + hash);
+const code = 'function greet(name: string): string {\n  const text = "hello, " + name;\n  return text + "!";\n}\n\n';
+lines.push(inRecord("\u2728" + code.repeat(3)), inRecord(code.repeat(200)).length, alone("\u2728" + code.repeat(3000)).length, inList(narrow(code.repeat(300))).length, JSON.stringify({ a: narrow(code), b: "\u65e5" + code, c: [code, "\ud800" + code] }, null, 2).length);
+// Plain Bun quotes by the same routine as the compiled program, so that the two agree says little. These lines were printed by the routine that wrote one escaped character at a time.
+const expected = [
+  "\"\\\"\" 1756719203",
+  "\"\\\\\" 1511498383",
+  "\"\\n\" -2035799205",
+  "\"\\t\" 1439519539",
+  "\"\\r\" -176505741",
+  "\"\\b\" 1894922845",
+  "\"\\f\" 1753414391",
+  "\"\\u0000\" -1394384004",
+  "\"\\u0001\" 120836609",
+  "\"\\u000b\" -1199842100",
+  "\"\\u000e\" -853875541",
+  "\"\\u0010\" -1968076361",
+  "\"\\u0018\" -1794164015",
+  "\"\\u001a\" -290125292",
+  "\"\\u001f\" 1583480925",
+  "\" \" -328101189",
+  "\"\u007f\" 1429731500",
+  "\"\u0080\" -261455141",
+  "\"\u00ff\" 293838508",
+  "\"\u0100\" 926469133",
+  "\"\u0122\" -186697993",
+  "\"\u015c\" 1222445913",
+  "\"\u010a\" 1892005759",
+  "\"\u2028\" -600073003",
+  "\"\u2029\" 1759134330",
+  "\"\ud7ff\" -606160536",
+  "\"\\ud800\" 537843572",
+  "\"\\udbff\" 1210748618",
+  "\"\\udc00\" -32053319",
+  "\"\\udfff\" -1553405200",
+  "\"\ue000\" -25775859",
+  "\"\uffff\" -517997208",
+  "\"\ud83d\ude00\" -336158856",
+  "\"\\ude00\\ud83d\" 11792289",
+  "\"a\" -697749590",
+  "1\"\\\"\"[\"\u65e5\",\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\\\"\"]",
+  "1\"\\\\\"[\"\u65e5\",\"\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\\"]",
+  "1\"\\n\"[\"\u65e5\",\"\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\"]",
+  "1\"\\\"\\\\\"[\"\u65e5\",\"\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\\\"\\\\\"]",
+  "1\"\ud83d\ude00\"[\"\u65e5\",\"\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\"]",
+  "1\"\\ud800\"[\"\u65e5\",\"\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\\ud800\"]",
+  "1\"\\u0001\"[\"\u65e5\",\"\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\\u0001\"]",
+  "2\"\\\"\"[\"\u65e5\",\"\\\"b\\\"d\\\"f\\\"h\\\"j\\\"b\\\"d\\\"f\\\"h\\\"j\\\"b\\\"d\"]",
+  "2\"\\\\\"[\"\u65e5\",\"\\\\b\\\\d\\\\f\\\\h\\\\j\\\\b\\\\d\\\\f\\\\h\\\\j\\\\b\\\\d\"]",
+  "2\"\\n\"[\"\u65e5\",\"\\nb\\nd\\nf\\nh\\nj\\nb\\nd\\nf\\nh\\nj\\nb\\nd\"]",
+  "2\"\\\"\\\\\"[\"\u65e5\",\"\\\"\\\\b\\\"\\\\d\\\"\\\\f\\\"\\\\h\\\"\\\\j\\\"\\\\b\\\"\\\\d\\\"\\\\f\"]",
+  "2\"\ud83d\ude00\"[\"\u65e5\",\"\ud83d\ude00b\ud83d\ude00d\ud83d\ude00f\ud83d\ude00h\ud83d\ude00j\ud83d\ude00b\ud83d\ude00d\ud83d\ude00f\"]",
+  "2\"\\ud800\"[\"\u65e5\",\"\\ud800b\\ud800d\\ud800f\\ud800h\\ud800j\\ud800b\\ud800d\\ud800f\\ud800h\\ud800j\\ud800b\\ud800d\"]",
+  "2\"\\u0001\"[\"\u65e5\",\"\\u0001b\\u0001d\\u0001f\\u0001h\\u0001j\\u0001b\\u0001d\\u0001f\\u0001h\\u0001j\\u0001b\\u0001d\"]",
+  "random 1611928714",
+  "{\"wide\":\"\u2728\",\"text\":\"\u2728function greet(name: string): string {\\n  const text = \\\"hello, \\\" + name;\\n  return text + \\\"!\\\";\\n}\\n\\nfunction greet(name: string): string {\\n  const text = \\\"hello, \\\" + name;\\n  return text + \\\"!\\\";\\n}\\n\\nfunction greet(name: string): string {\\n  const text = \\\"hello, \\\" + name;\\n  return text + \\\"!\\\";\\n}\\n\\n\",\"\u2728f\":1}",
+  "21029",
+  "315003",
+  "31508",
+  "480",
+];
+console.log(lines.join("\n"));
+console.log(lines.length === expected.length && lines.every((line, i) => String(line) === expected[i]) ? "as the routine before it printed" : "DIFFERS from what the routine before it printed at line " + lines.findIndex((line, i) => String(line) !== expected[i]));
+//// lazy-exports-bound-by-name.ts
+// Exports that a built-in module creates on first use, each bound by a named import: fs.ReadStream loads node:stream, fs.promises loads node:fs/promises, process.stdout opens the stream. Each binding holds what the module's own object answers.
+import { ReadStream, WriteStream, promises, Utf8Stream, lstatSync } from "node:fs";
+import { stdout, argv } from "node:process";
+import { builtinModules, createRequire } from "node:module";
+import { version, Glob } from "bun";
+
+console.log(typeof ReadStream, typeof WriteStream, typeof promises, typeof Utf8Stream, typeof lstatSync);
+console.log(typeof stdout, typeof argv, typeof builtinModules, typeof createRequire, typeof version, typeof Glob);
+
+console.log(ReadStream === (await import("node:fs")).ReadStream);
+console.log(promises === (await import("node:fs/promises")).default);
+console.log(WriteStream === require("node:fs").WriteStream, Utf8Stream === require("node:fs").Utf8Stream);
+console.log(stdout === process.stdout, argv === process.argv, version === Bun.version, Glob === Bun.Glob);
+console.log(builtinModules === require("node:module").builtinModules, createRequire === require("node:module").createRequire);
+
+console.log(lstatSync(".").isDirectory(), typeof ReadStream.prototype.pipe, typeof promises.readFile, typeof stdout.write);
+console.log(new Glob("*.ts").match("main.ts"), builtinModules.includes("fs"), createRequire(import.meta.url)("node:fs").ReadStream === ReadStream);
+//// lazy-exports-through-a-star-reexport/again.ts
+export * from "node:fs";
+//// lazy-exports-through-a-star-reexport/main.ts
+// Exports that node:fs creates on first use, reached only through a module of the program that exports everything of node:fs again: by a named import and through that module's namespace object.
+import { ReadStream, lstatSync } from "./again";
+import * as again from "./again";
+
+console.log(typeof ReadStream, typeof lstatSync, lstatSync(".").isDirectory());
+console.log(ReadStream === (await import("node:fs")).ReadStream, ReadStream === again.ReadStream);
+
+const key = process.argv.length > 99 ? "x" : "WriteStream";
+console.log(typeof (again as any)[key], (again as any)[key] === require("node:fs").WriteStream);
+console.log("promises" in again, "default" in again, Object.keys(again).includes("Utf8Stream"));
+//// lazy-exports-through-the-namespace.ts
+// The namespace objects of node:fs, node:process, node:module and bun used as values. A namespace answers every export under a key that only the running program knows, also an export that the module creates on first use, and it creates that export once.
+import * as fs from "node:fs";
+import * as processModule from "node:process";
+import * as moduleModule from "node:module";
+
+const key = process.argv.length > 99 ? "x" : "WriteStream";
+console.log(typeof (fs as any)[key]);
+console.log(Object.keys(fs).includes("promises"));
+console.log("ReadStream" in fs);
+console.log((fs as any).default.ReadStream === fs.ReadStream);
+console.log((fs as any)[key] === (fs as any).default[key]);
+console.log(typeof Object.getOwnPropertyDescriptor(fs, "Utf8Stream")?.value);
+console.log(Object.keys(fs).filter(name => typeof (fs as any)[name] === "object").join());
+console.log(Object.keys(fs).filter(name => (fs as any)[name] !== (fs as any).default[name]).join());
+
+const processKey = process.argv.length > 99 ? "x" : "stdout";
+console.log((processModule as any)[processKey] === process.stdout, "stdin" in processModule, Object.keys(processModule).includes("stderr"));
+
+// Module.wrapper answers another object each time it is read.
+const moduleKey = process.argv.length > 99 ? "x" : "wrapper";
+console.log((moduleModule as any)[moduleKey] === (moduleModule as any)[moduleKey], (moduleModule as any).default[moduleKey] === (moduleModule as any).default[moduleKey]);
+console.log("createRequire" in moduleModule, Object.keys(moduleModule).includes("builtinModules"));
+
+// Written as a literal, the specifier "bun" is the global Bun and no module is loaded.
+const specifier = "bun";
+const bun = await import(specifier);
+const bunKey = process.argv.length > 99 ? "x" : "Glob";
+console.log(bun[bunKey] === Bun.Glob, "serve" in bun, bun.default === Bun);
+//// listeners-are-added-counted-and-removed-on-an-emitter-a-readable-and-a-writable.cjs
+// One loop adds a listener, counts the listeners and removes it again, in turn on a plain emitter, a readable and a writable stream.
+const { EventEmitter } = require("node:events");
+const { Readable, Writable } = require("node:stream");
+function listener() {}
+function run(emitters, turns) {
+  let counted = 0;
+  for (let i = 0; i < turns; i++) {
+    const emitter = emitters[i % emitters.length];
+    emitter.on("thing", listener);
+    counted += emitter.listenerCount("thing");
+    emitter.removeListener("thing", listener);
+  }
+  return counted;
+}
+const emitters = [
+  new EventEmitter(),
+  new Readable({ read() {} }),
+  new Writable({
+    write(chunk, encoding, done) {
+      done();
+    },
+  }),
+];
+console.log(run(emitters, 300_000), run(emitters.slice(0, 1), 100_000), run(emitters.slice(1), 100_000));
+console.log(emitters.map(emitter => emitter.listenerCount("thing") + " " + emitter.eventNames().length).join());
+//// many-node-modules-together.ts
+// Twenty-seven node:* modules in one program, each used a little: streams, events, files, child processes, a server and a client, compression, hashes.
+// It is also the text that shows what built-in calls cost the flow analysis in a program that leans on the library.
+import * as fs from "node:fs";
+import * as fsp from "node:fs/promises";
+import * as path from "node:path";
+import * as os from "node:os";
+import { EventEmitter, once } from "node:events";
+import { Readable, Writable, Transform, PassThrough, pipeline } from "node:stream";
+import { pipeline as pipelineAsync } from "node:stream/promises";
+import * as http from "node:http";
+import * as https from "node:https";
+import * as net from "node:net";
+import * as tls from "node:tls";
+import { spawn, spawnSync, execFile, exec } from "node:child_process";
+import * as crypto from "node:crypto";
+import * as zlib from "node:zlib";
+import { URL, fileURLToPath, pathToFileURL } from "node:url";
+import * as util from "node:util";
+import * as readline from "node:readline";
+import { Worker, isMainThread, parentPort } from "node:worker_threads";
+import { Buffer } from "node:buffer";
+import * as assert from "node:assert";
+import * as dns from "node:dns";
+import { setTimeout as sleep } from "node:timers/promises";
+import { performance } from "node:perf_hooks";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { StringDecoder } from "node:string_decoder";
+import * as querystring from "node:querystring";
+import * as tty from "node:tty";
+
+type Options = { name: string; retries?: number; headers?: Record<string, string>; onDone?: (result: unknown) => void };
+
+class Task extends EventEmitter {
+  private chunks: Buffer[] = [];
+  constructor(readonly options: Options) {
+    super();
+  }
+  async run(command: string, args: string[]) {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, TASK: this.options.name } });
+    child.stdout.on("data", chunk => this.chunks.push(chunk));
+    child.stderr.on("data", chunk => this.emit("warning", String(chunk)));
+    const [code] = await once(child, "exit");
+    this.emit("done", code, Buffer.concat(this.chunks).toString("utf8"));
+    this.options.onDone?.({ code, name: this.options.name });
+    return code;
+  }
+}
+
+const storage = new AsyncLocalStorage<{ id: number }>();
+
+function hashFile(file: string) {
+  const hash = crypto.createHash("sha256");
+  hash.update(fs.readFileSync(file));
+  return hash.digest("hex");
+}
+
+async function copyCompressed(from: string, to: string) {
+  await pipelineAsync(fs.createReadStream(from), zlib.createGzip(), fs.createWriteStream(to));
+  return (await fsp.stat(to)).size;
+}
+
+function upper() {
+  const decoder = new StringDecoder("utf8");
+  return new Transform({
+    transform(chunk, encoding, callback) {
+      callback(null, decoder.write(chunk).toUpperCase());
+    },
+  });
+}
+
+function request(url: string, options: Options): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const client = target.protocol === "https:" ? https : http;
+    const outgoing = client.request(target, { method: "GET", headers: { ...options.headers, "user-agent": options.name } }, response => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", chunk => (body += chunk));
+      response.on("end", () => resolve(body));
+    });
+    outgoing.on("error", reject);
+    outgoing.end();
+  });
+}
+
+async function main() {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "many-"));
+  const file = path.join(directory, "input.txt");
+  await fsp.writeFile(file, "one\ntwo\nthree\n");
+  console.log(hashFile(file).length, await copyCompressed(file, file + ".gz"));
+
+  const server = http.createServer((incoming, response) => {
+    const parsed = querystring.parse(new URL(incoming.url ?? "/", "http://localhost").search.slice(1));
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({ parsed, method: incoming.method, headers: Object.keys(incoming.headers).length > 0 }));
+  });
+  await new Promise<void>(resolve => server.listen(0, resolve));
+  const address = server.address();
+  if (address && typeof address === "object") console.log(await request(`http://127.0.0.1:${address.port}/?a=1&b=2`, { name: "many" }));
+  server.close();
+
+  const task = new Task({ name: "echo", onDone: result => console.log(util.inspect(result)) });
+  task.on("done", (code, output) => console.log("done", code, output.trim()));
+  await storage.run({ id: 1 }, () => task.run("echo", ["hello"]));
+  console.log(spawnSync("echo", ["sync"]).stdout.toString().trim());
+
+  const lines: string[] = [];
+  const reader = readline.createInterface({ input: fs.createReadStream(file).pipe(upper()) });
+  for await (const line of reader) lines.push(line);
+  console.log(lines.join());
+
+  const collected: string[] = [];
+  await new Promise<void>((resolve, reject) =>
+    pipeline(Readable.from(["a", "b", "c"]), new PassThrough(), new Writable({ write(chunk, encoding, callback) { collected.push(String(chunk)); callback(); } }), error => (error ? reject(error) : resolve())),
+  );
+  console.log(collected.join(""), performance.now() > 0, isMainThread, tty.isatty(1) === tty.isatty(1), typeof dns.lookup, typeof net.connect, typeof tls.connect, typeof Worker, typeof parentPort, typeof execFile, typeof exec);
+  assert.strictEqual(fileURLToPath(pathToFileURL(file)), file);
+  await sleep(1);
+  fs.rmSync(directory, { recursive: true });
+}
+
+main();
+//// members-of-a-compiled-module-are-known-at-the-top-level-of-the-importing-module.ts
+// The body of node:path has run before the first statement of a module that imports it, so a read of `path.isAbsolute` at the top level finds the function as surely as a read inside a function does.
+// The native function behind it is called with no test of the callee, here in a loop that stands at the top level.
+// STATISTIC: NativeFunctionsCalledDirectly >= 3
+// STATISTIC: NativeFunctionTestsEmitted = 0
+import path from "node:path";
+
+const names = [process.argv[2] ?? "/a/b.txt", "c/d.js", "/"];
+let count = 0;
+for (const name of names) if (path.isAbsolute(name)) count += path.basename(name).length + path.extname(name).length;
+console.log(count, typeof path.join, path.sep, path.posix === path);
+//// members-of-a-compiled-module-are-read-off-the-object-its-body-makes.ts
+// node:path is a module of Bun that is compiled from source: what `import path from` gives is the object that its body makes, with that object's layout.
+// So `path.isAbsolute` is a read of a slot, the function found there is known, and the native function behind it is called with no test of the callee.
+// STATISTIC: NativeFunctionsCalledDirectly >= 3
+// STATISTIC: NativeFunctionTestsEmitted = 0
+import path from "node:path";
+
+function countCharacters(names: string[]) {
+  let count = 0;
+  for (const name of names) if (path.isAbsolute(name)) count += path.basename(name).length + path.extname(name).length;
+  return count;
+}
+console.log(countCharacters([process.argv[2] ?? "/a/b.txt", "c/d.js", "/"]), typeof path.join, path.sep, path.posix === path);
+//// members-of-modules-replaced-after-a-late-load.js
+// A built-in module is loaded when the program first asks for it, not before. Whatever the program then puts in place of a member shows to everybody who looks the member up,
+// and whoever took the original before keeps the original.
+const path = require("node:path");
+function viaMember(a, b) { return path.join(a, b); }
+for (let i = 0; i < 2000; i++) viaMember("a", "b");
+console.log(viaMember("a", "b"));
+const original = path.join;
+path.join = function () { return "replaced"; };
+console.log(viaMember("a", "b"), original("a", "b"), require("node:path").join("x", "y"));
+const { basename } = require("node:path");
+path.basename = () => "other";
+console.log(basename("/a/b.txt"), path.basename("/a/b"));
+function late() {
+  const os = require("node:os");
+  const eol = os.EOL;
+  const platform = os.platform;
+  os.platform = () => "mine";
+  return [typeof eol, os.platform(), typeof platform()].join();
+}
+console.log(late(), require("node:os").platform());
+function lateUtil(value) {
+  const util = require("node:util");
+  return util.inspect(value) + " " + util.format("%s-%d", "a", 1);
+}
+console.log(lateUtil({ a: 1 }));
+require("node:util").format = () => "format replaced";
+console.log(lateUtil([1]));
+function events() {
+  const EventEmitter = require("node:events");
+  const emitter = new EventEmitter();
+  let seen = 0;
+  emitter.on("x", () => seen++);
+  emitter.emit("x");
+  return seen;
+}
+console.log(events());
+require("node:events").prototype.emit = function () { return "emit replaced"; };
+console.log(events(), new (require("node:events"))().emit("x"));
+import("node:querystring").then(querystring => {
+  console.log(querystring.stringify({ a: 1 }));
+  const cjs = require("node:querystring");
+  cjs.stringify = () => "stringify replaced";
+  console.log(cjs.stringify({ a: 1 }), require("node:querystring").stringify({ b: 2 }));
+});
+//// members-of-removed-classes-need-no-lock.js
+// node:repl calls `.start(`, `.write(` and `.end(` on values of unknown type, and a lookup by name takes the methods of Bun.ArrayBufferSink for constants, among others. Nothing here makes a stream, so the class is not in the executable, and start-up has no prototype of it to lock.
+import "node:repl";
+console.log(1);
+//// members-that-are-more-than-data.mjs
+// Three members that are more than the data they look like: a store to process.ppid defines a property on its receiver, Module.wrapper is new at each read, console replaces its own async iterator. And Buffer.prototype.parent answers what the receiver holds.
+import Module from "node:module";
+const { set } = Object.getOwnPropertyDescriptor(process, "ppid");
+function define(receiver) {
+  const holder = { value: 0 };
+  const proxy = new Proxy(receiver, {
+    defineProperty(target, key, descriptor) {
+      holder.value++;
+      return Reflect.defineProperty(target, key, descriptor);
+    },
+  });
+  let outcome = "stored";
+  try {
+    set.call(proxy, 5);
+  } catch (error) {
+    outcome = "threw " + error.name;
+  }
+  return `${holder.value} ${outcome} ${receiver.ppid}`;
+}
+console.log(typeof set, define({}), define(Object.freeze({})));
+function inherited() {
+  const child = Object.freeze(Object.create(process));
+  try {
+    child.ppid = 1;
+    return "stored";
+  } catch (error) {
+    return "threw " + error.name;
+  }
+}
+console.log(inherited());
+
+function twice() {
+  const first = Module.wrapper;
+  const second = Module.wrapper;
+  return `${first === second} ${first[0] === second[0]} ${first.length}`;
+}
+function inLoop() {
+  const seen = new Set();
+  for (let index = 0; index < 4; index++) seen.add(Module.wrapper);
+  return seen.size;
+}
+console.log(twice(), inLoop());
+
+function replaced() {
+  const before = console[Symbol.asyncIterator];
+  const iterator = console[Symbol.asyncIterator]();
+  const after = console[Symbol.asyncIterator];
+  return `${before === after} ${typeof after} ${typeof iterator.next}`;
+}
+console.log(replaced());
+
+function parent() {
+  const bytes = new ArrayBuffer(8);
+  const buffer = Buffer.from(bytes);
+  const answer = buffer.parent;
+  new Uint8Array(answer)[0] = 7;
+  return `${answer === bytes} ${buffer[0]} ${new Uint8Array(bytes)[0]}`;
+}
+console.log(parent());
+const getter = Object.getOwnPropertyDescriptor(Buffer.prototype, "parent").get;
+const held = { tag: 1 };
+console.log(getter.call({ buffer: held }) === held, getter.call(new Uint8Array(1)) instanceof ArrayBuffer);
+
+function store(value) {
+  let outcome = "nothing";
+  try {
+    process.ppid = value;
+    outcome = "stored";
+  } catch (error) {
+    outcome = "threw " + error.name;
+  }
+  return outcome;
+}
+console.log(store(1), process.ppid);
+Object.freeze(process);
+console.log(store(2), process.ppid);
+//// members-that-load-modules-or-evaluate-text-are-imported-by-name.mjs
+// Members of native modules that load modules or evaluate text, each imported by name and called; a line is printed behind each call.
+import { getBuiltinModule } from "node:process";
+import { createRequire } from "node:module";
+import { Transpiler } from "bun";
+const join = (...parts) => parts.join("");
+console.log("getBuiltinModule:", typeof getBuiltinModule(join("node:", "path")).basename);
+console.log("behind getBuiltinModule");
+console.log("createRequire:", typeof createRequire(import.meta.url)(join("node:", "url")).parse);
+console.log("behind createRequire");
+console.log("Transpiler:", new Transpiler({ loader: "ts" }).transformSync("let a: number = 1; console.log(a)").replace(/\s+/g, " ").trim());
+console.log("behind Transpiler");
+//// methods-named-like-the-functions-of-node-path.ts
+// join, normalize, format, parse and resolve are functions of node:path and methods of arrays, strings, formatters, JSON and Promise. A call by such a name goes by what the receiver is, whatever else in the
+// program is stored under the name: where the declared receiver is an array, `list.join(",")` is the array's join; and where the value is not what was declared, the call still reaches what the value holds.
+import path from "node:path";
+
+declare const console: { log(...values: unknown[]): void };
+const seen = new Function("value", "return value" + String(process.argv.length).slice(9)) as <V>(value: V) => V;
+
+function show(run: () => unknown): string {
+  try {
+    const value = run();
+    return typeof value === "string" ? JSON.stringify(value) : String(value);
+  } catch (error) {
+    return "threw " + (error instanceof Error ? error.name : String(error));
+  }
+}
+
+function joinWith(list: string[], separator: string): string { return list.join(separator); }
+function joinPlain(list: string[]): string { return list.join(); }
+function joinNumbers(list: number[]): string { return list.join("-"); }
+function joinMixed(list: (string | number | null | undefined)[]): string { return list.join("|"); }
+function joinBytes(list: Uint8Array): string { return list.join("."); }
+function joinAnything(list: { join(separator: string): string }): string { return list.join("/"); }
+function normalized(text: string): string { return text.normalize(); }
+function normalizedAs(text: string, form: string): string { return text.normalize(form); }
+function formatted(format: Intl.NumberFormat, value: number): string { return format.format(value); }
+function lengthOfJoined(list: string[]): number { let total = 0; for (let i = 0; i < 3; i++) total += list.join(",").length; return total; }
+
+class Loud extends Array<string> { join(separator?: string): string { return "LOUD" + super.join(separator).toUpperCase(); } }
+const withOwnJoin: string[] = ["a", "b"];
+(withOwnJoin as unknown as { join: unknown }).join = function (this: string[], separator: string) { return "own(" + this.length + separator + ")"; };
+const holey: string[] = ["a", "b", "c"];
+delete holey[1];
+const nested = [["a", "b"], ["c"]] as unknown as string[];
+const cyclic: unknown[] = ["a"];
+cyclic.push(cyclic);
+
+const lists: [string, unknown][] = [
+  ["an array", ["x", "y", "z"]], ["one element", ["x"]], ["no element", []], ["long texts", ["alpha".repeat(20), "beta".repeat(20)]], ["two-byte texts", ["α", "b", "γδ"]],
+  ["a hole", holey], ["nested", nested], ["itself inside", cyclic], ["numbers", [1, 2.5, -0, NaN]], ["nothing among them", ["a", null, undefined, "b"]], ["objects", [{}, { toString() { return "T"; } }]],
+  ["a subclass", Loud.from(["p", "q"])], ["its own join", withOwnJoin], ["path", path], ["path.posix", path.posix], ["path.win32", path.win32], ["an object", { join(separator: string) { return "object" + separator; } }],
+  ["an object without", {}], ["bytes", new Uint8Array([1, 2, 3])], ["a text", "text"], ["null", null], ["undefined", undefined], ["arguments", (function (..._: string[]) { return arguments; })("m", "n")],
+];
+
+for (let turn = 0; turn < 3; turn++) {
+  for (const [name, value] of lists) {
+    const given = seen(value);
+    console.log(turn, name,
+      show(() => joinWith(given as string[], ",")), show(() => joinWith(given as string[], "")), show(() => joinWith(given as string[], "—")), show(() => joinPlain(given as string[])),
+      show(() => joinNumbers(given as number[])), show(() => joinMixed(given as string[])), show(() => joinBytes(given as Uint8Array)), show(() => joinAnything(given as string[])), show(() => lengthOfJoined(given as string[])));
+  }
+  for (const [name, value] of [["a text", "a/../bÅ"], ["path", path], ["path.posix", path.posix], ["an object", { normalize(form?: string) { return "object " + form; } }], ["a number", 5]] as [string, unknown][]) {
+    const given = seen(value);
+    console.log(turn, name, show(() => normalized(given as string)), show(() => normalizedAs(given as string, "NFD").length), show(() => normalizedAs(given as string, "a//b/../c")), show(() => normalizedAs(given as string, "nothing")));
+  }
+  for (const [name, value] of [["a formatter", new Intl.NumberFormat("en")], ["path", path], ["an object", { format(value: number) { return "object " + value; } }]] as [string, unknown][]) {
+    const given = seen(value);
+    console.log(turn, name, show(() => formatted(given as Intl.NumberFormat, 1234.5)), show(() => formatted(given as Intl.NumberFormat, seen({ dir: "/d", base: "b.txt" }) as unknown as number)));
+  }
+}
+
+const { join, normalize, resolve, basename } = path;
+const joinOfArrays = Array.prototype.join;
+console.log(path.join("a", "..", "b", "c"), path.posix.join("a", "", "b"), join("x", "y"), join(), join.call(null, "p", "q"), join.apply(undefined, ["r", "s"]), normalize("a//b/./c/.."), basename(resolve("/r", "s.txt")));
+console.log([["a", "b"], ["c", "..", "d"]].map(parts => path.join(...parts)).join(","), ["a", "b"].map(part => path.join(part, "z")).join(path.sep), joinOfArrays.call(["k", "l"], "+"), joinOfArrays.call({ length: 2, 0: "m", 1: "n" }, "+"));
+console.log(show(() => (seen(join) as unknown as (this: string[], separator: string) => string).call(["a", "b"], "c")), show(() => (seen(joinOfArrays) as (...parts: string[]) => string)("a", "b")), show(() => path.join(seen(5) as unknown as string)));
+console.log(JSON.parse("[1,2]").join("&"), show(() => path.parse("/a/b.c").base), show(() => (seen(path) as unknown as typeof JSON).parse("/a/b.c")), show(() => (seen(JSON) as unknown as typeof path).parse("[3]")));
+Promise.resolve(["u", "v"]).then(list => console.log(list.join("~"), show(() => (seen(path) as unknown as typeof Promise).resolve("/w")), show(() => typeof (seen(Promise) as unknown as typeof path).resolve("/w"))));
+//// module-that-reads-a-variable-before-its-declaration.js
+// Bun builds its own modules with its bundler, which makes a `var` of a top-level `let` or `const`: they have no dead zone. `node:repl` reads one before its declaration has run. It also evaluates text while it loads, which a build has to admit.
+import repl from "node:repl";
+import * as namespace from "node:repl";
+console.log(typeof repl, typeof namespace.default, typeof repl.start);
+//// modules-whose-value-is-a-function.ts
+// A module of Bun whose value is a function: node:events, node:assert, node:stream. The function and its members are called and constructed, by a named import, by the default import and by require.
+import { EventEmitter } from "node:events";
+import Emitter from "node:events";
+import assert from "node:assert";
+import Stream, { Readable } from "node:stream";
+import { createRequire } from "node:module";
+const emitter = new EventEmitter();
+emitter.on("x", (p: number) => console.log("named", p));
+emitter.emit("x", 1);
+const other = new Emitter();
+other.once("y", (p: string) => console.log("default", p));
+other.emit("y", "a");
+console.log(Emitter === EventEmitter, (Emitter as any).EventEmitter === EventEmitter, typeof Emitter.once, emitter instanceof Emitter);
+class Heir extends EventEmitter { name = "heir"; }
+const heir = new Heir();
+heir.on("z", function (this: Heir) { console.log("heir", this.name, this.listenerCount("z")); });
+heir.emit("z");
+assert(true);
+assert.ok(1);
+assert.strictEqual(1, 1);
+try { assert(false, "refused"); } catch (error) { console.log((error as Error).message); }
+console.log(typeof Stream, new Stream() instanceof EventEmitter, (Stream as any).Readable === Readable);
+const required = createRequire(import.meta.url)("node:events");
+console.log(required === EventEmitter, new required() instanceof EventEmitter);
+//// named-imports-of-built-in-modules-are-copies.ts
+// A named import of a built-in module holds what the module's object held when the module was loaded. A store to the object afterward changes the object alone.
+import path, { join } from "node:path";
+import os, { hostname } from "node:os";
+import util, { format } from "node:util";
+import fs, { existsSync } from "node:fs";
+
+const replace = (object: any, name: string) => {
+  object[name] = () => "replaced";
+};
+replace(path, "join");
+replace(os, "hostname");
+replace(util, "format");
+replace(fs, "existsSync");
+console.log(join("a", "b"), hostname() === "replaced", format("%s", 1), existsSync("/"));
+console.log(path.join("a", "b"), os.hostname(), util.format("%s", 1), fs.existsSync("/"));
+//// names-lengths-and-texts-of-library-functions-that-the-program-enters.mjs
+// A member of a host object that is a function written in Bun's library is compiled code once the program enters it. Its name, its length and its text are what plain Bun has there: no name where plain Bun gives none, "get " in front of a getter, and no name in the text of a function that takes its name from the property it is written under.
+import Module from "node:module";
+import process from "node:process";
+import { Buffer } from "node:buffer";
+import { Console } from "node:console";
+
+function show(label, f) {
+  console.log(label, JSON.stringify(f.name), f.length, JSON.stringify(Function.prototype.toString.call(f)), Object.getOwnPropertyNames(f).sort().join(), JSON.stringify(Object.getOwnPropertyDescriptor(f, "name")));
+}
+
+console.log("_initPaths answers", Module._initPaths());
+show("node:module._initPaths", Module._initPaths);
+
+process._rawDebug("a line for stderr");
+show("process._rawDebug", process._rawDebug);
+
+const glob = new Bun.Glob("no-file-has-this-name-*.nothing");
+console.log("scanSync finds", [...glob.scanSync({ cwd: import.meta.dir })].length);
+let found = 0;
+for await (const path of glob.scan({ cwd: import.meta.dir })) found++;
+console.log("scan finds", found);
+show("Bun.Glob.prototype.scan", Bun.Glob.prototype.scan);
+show("Bun.Glob.prototype.scanSync", Bun.Glob.prototype.scanSync);
+
+const bytes = Buffer.from(new ArrayBuffer(8), 2, 4);
+console.log("offset", bytes.offset, "parent", bytes.parent.byteLength);
+show("Buffer.prototype.offset", Object.getOwnPropertyDescriptor(Buffer.prototype, "offset").get);
+show("Buffer.prototype.parent", Object.getOwnPropertyDescriptor(Buffer.prototype, "parent").get);
+
+new Console(process.stdout, process.stderr).log("a line through a console of its own");
+const symbols = Object.getOwnPropertySymbols(Console.prototype).filter(key => typeof Console.prototype[key] === "function");
+for (const key of symbols.sort((a, b) => (String(a) < String(b) ? -1 : 1))) show("Console.prototype[" + String(key) + "]", Console.prototype[key]);
+//// names-made-at-run-time-are-looked-for-in-process.js
+// The host makes a member when it is first looked for, also by `in`. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+let count = 0;
+for (const name of Object.getOwnPropertyNames(process)) if (name in process) count++;
+console.log(count > 3);
+//// names-of-process-are-tested-by-reflect-has.js
+// The host makes a member when it is first looked for, also by a test. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+let count = 0;
+for (const name of Reflect.ownKeys(process)) if (Reflect.has(process, name)) count++;
+console.log(count > 3);
+//// namespace-names-read-repeatedly.js
+import { basename, isAbsolute, sep } from "node:path";
+import { EventEmitter } from "node:events";
+import { format, inspect } from "node:util";
+import * as path from "node:path";
+import * as posix from "node:path/posix";
+import * as win32 from "node:path/win32";
+import * as events from "node:events";
+
+function separators(namespace) { return namespace.sep + namespace.delimiter; }
+function absolute(namespace, text) { return namespace.isAbsolute(text); }
+function missing(namespace) { return namespace.thereIsNoSuchExport; }
+function stored(namespace) {
+    try {
+        namespace.sep = "!";
+        return "stored";
+    } catch (error) {
+        return error.constructor.name;
+    }
+}
+
+const texts = ["/usr/lib/x.js", "lib/y.ts", "C:\\z\\w.txt", ""];
+const lines = [];
+for (let round = 0; round < 16; round++) {
+    const text = texts[round & 3];
+    lines.push(format("%s %s %s", isAbsolute(text), basename(text), sep));
+}
+console.log(lines.join("\n"));
+
+const namespaces = [path, posix, win32];
+for (let round = 0; round < 12; round++) {
+    const namespace = namespaces[round % 3];
+    console.log(separators(namespace), absolute(namespace, texts[round & 3]), missing(namespace), stored(namespace), "sep" in namespace, typeof namespace.default);
+}
+for (let round = 0; round < 6; round++) console.log(missing(events), typeof events.EventEmitter, events.EventEmitter === EventEmitter, events.defaultMaxListeners, inspect(separators(path)));
+//// native-bindings-answer-their-objects.ts
+// What the host answers for the native bindings of node:util, node:url, node:tls, node:net, node:http and node:tty is used as what it is.
+import util from "node:util";
+import url from "node:url";
+import tls from "node:tls";
+import net from "node:net";
+import http from "node:http";
+const mime = new util.MIMEType("text/plain; charset=utf-8");
+console.log(String(mime), mime.type, mime.subtype, mime.params.get("charset"), mime.params instanceof util.MIMEParams, typeof util.MIMEParams);
+try { new util.MIMEType("nope"); } catch (e) { console.log((e as any).code, (e as Error).name, (e as Error).message); }
+console.log(url.domainToASCII("español.com"), url.domainToUnicode("xn--espaol-zwa.com"), url.domainToASCII("xn--iñvalid.com"));
+console.log(typeof tls.createSecureContext({}), tls.createSecureContext({}).constructor.name);
+const list = new net.BlockList(); list.addAddress("1.2.3.4"); console.log(list.check("1.2.3.4"), list.check("1.2.3.5"), net.BlockList.isBlockList(list));
+const address = new net.SocketAddress({ address: "127.0.0.1", port: 80 }); console.log(address.address, address.port, address.family);
+const server = http.createServer({ maxHeaderSize: 4096, requireHostHeader: false }, (request, response) => response.end("ok " + request.url));
+server.maxHeadersCount = 10;
+server.listen(0, async () => {
+  const { port } = server.address() as net.AddressInfo;
+  console.log(await (await fetch(`http://127.0.0.1:${port}/x`)).text());
+  server.close(() => console.log("closed"));
+});
+import tty from "node:tty";
+console.log(tty.isatty(0), tty.isatty(1), tty.isatty(99), tty.isatty("x" as any), (tty.isatty as any)());
+console.log(typeof tty.ReadStream, typeof tty.WriteStream, process.stdout.isTTY, process.stdin.isTTY);
+try { new tty.WriteStream(-1); } catch (e) { console.log((e as any).code, (e as Error).name); }
+try { console.log(new tty.WriteStream(1).getWindowSize()); } catch (e) { console.log((e as any).code, (e as Error).message); }
+//// native-code-looks-through-what-lies-above-the-native-prototype-of-process.cjs
+// node:events puts its EventEmitter.prototype above the native prototype of `process`. Native code reads process.noDeprecation and process.throwDeprecation through that chain: it finds a value, and runs a getter with `process` as `this`.
+const say = (...values) => console.log(...values);
+const EventEmitter = require("node:events");
+const nativePrototype = Object.getPrototypeOf(process);
+say(Object.getPrototypeOf(nativePrototype) === EventEmitter.prototype, process instanceof EventEmitter, process.on === nativePrototype.on, process.on === EventEmitter.prototype.on);
+process.on("warning", warning => say("warning", warning.name, warning.message));
+
+let reads = 0;
+Object.defineProperty(EventEmitter.prototype, "noDeprecation", {
+  get() { reads++; say("getter of noDeprecation", this === process); return reads > 1; },
+  configurable: true,
+});
+process.emitWarning("shown: the getter answers false", "DeprecationWarning");
+process.emitWarning("hidden: the getter answers true", "DeprecationWarning");
+delete EventEmitter.prototype.noDeprecation;
+
+setImmediate(() => {
+  EventEmitter.prototype.throwDeprecation = true;
+  try {
+    process.emitWarning("thrown", "DeprecationWarning");
+    say("not thrown here");
+  } catch (error) {
+    say("caught", error.name, error.message);
+  }
+  process.on("uncaughtException", error => say("uncaught", error.name, error.message));
+  delete EventEmitter.prototype.throwDeprecation;
+
+  // A member that the native prototype loses is looked for above it.
+  const nativeEmit = nativePrototype.emit;
+  delete nativePrototype.emit;
+  say(process.emit === EventEmitter.prototype.emit);
+  nativePrototype.emit = nativeEmit;
+  say(process.emit === nativeEmit, new EventEmitter().emit === EventEmitter.prototype.emit);
+});
+//// native-path-functions-as-values.ts
+// A native function that compiled code calls directly is still a function object like any other where the program treats it as a value.
+// STATISTIC: NativeFunctionsCalledDirectly >= 2
+import { isAbsolute, join } from "node:path";
+////= report
+const table: Record<string, (value: string) => unknown> = { isAbsolute, join };
+report("imported by name", () => [isAbsolute("/a"), join("a", "b")]);
+report("through a table", () => Object.keys(table).map(name => table[name]("/a")));
+report("call and apply", () => [isAbsolute.call(null, "/a"), join.apply(undefined, ["a", "b"]), join.bind(null, "x")("y")]);
+report("its own properties", () => [isAbsolute.name, isAbsolute.length, typeof isAbsolute, join.name, join.length]);
+//// native-path-functions-called-directly.ts
+// Where the operands are strings, compiled code calls the native code behind a function of node:path by itself: no function object, no frame of a host function, no wrapper.
+// STATISTIC: NativeFunctionsCalledDirectly >= 20
+// STATISTIC: NativeFunctionTestsEmitted = 0
+import path from "node:path";
+////= report
+const rope = "/a/" + String(process.argv.length) + "/" + "b".repeat(3) + ".txt";
+report("isAbsolute", () => [path.isAbsolute("/a"), path.isAbsolute("a"), path.isAbsolute(""), path.isAbsolute(rope)]);
+report("join", () => [path.join("a", "b"), path.join("/a/", "../b", "c"), path.join(), path.join(""), path.join(rope, "..")]);
+report("resolve", () => [path.resolve("/a", "b"), path.resolve("/a", "/b"), path.resolve("/a/b", "..")]);
+report("normalize", () => [path.normalize("/a//b/../c/"), path.normalize(""), path.normalize("./x")]);
+report("dirname", () => [path.dirname("/a/b/c.txt"), path.dirname("c"), path.dirname("/"), path.dirname(rope)]);
+report("basename", () => [path.basename("/a/b/c.txt"), path.basename("/a/b/c.txt", ".txt"), path.basename(""), path.basename(rope)]);
+report("extname", () => [path.extname("/a/b/c.txt"), path.extname("c"), path.extname(".profile"), path.extname(rope)]);
+report("relative", () => [path.relative("/a/b", "/a/c/d"), path.relative("/a", "/a")]);
+report("parse", () => [path.parse("/a/b/c.txt"), path.parse(""), Object.keys(path.parse("x"))]);
+report("format", () => path.format({ dir: "/a", base: "b.txt" }));
+report("toNamespacedPath", () => [path.toNamespacedPath("/a"), (path as any).toNamespacedPath(5)]);
+report("not Latin-1", () => [path.join("\u4f60", "\u597d"), path.basename("/\u4f60/\u597d.txt"), path.isAbsolute("\u4f60")]);
+report("win32", () => [path.win32.isAbsolute("C:\\a"), path.win32.isAbsolute("/a"), path.win32.join("a", "b"), path.win32.basename("C:\\a\\b.txt")]);
+report("posix", () => [path.posix.isAbsolute("C:\\a"), path.posix.join("a", "b"), path.posix.basename("C:\\a\\b.txt")]);
+report("the same functions", () => [path.posix.join === (process.platform === "win32" ? path.win32 : path.posix).join, path.posix.posix === path.posix]);
+//// native-path-functions-on-every-form-of-string.ts
+// The native functions of node:path, called directly with operands that are proven to be strings, answer as in plain Bun for every internal representation of a string: flat, rope, substring, 8-bit and 16-bit.
+import path from "node:path";
+
+let state: number = 1;
+function random(below: number): number {
+  state ^= state << 13;
+  state >>>= 0;
+  state ^= state >>> 17;
+  state ^= state << 5;
+  state >>>= 0;
+  return state % below;
+}
+const names: string[] = ["", ".", "..", "...", "a", "ab", "index.ts", "package.json", ".bin", "e.", "f..g", "x.tar.gz", "node_modules", "src", "é", "ñandú.txt", "日本.語", "a-rather-long-name-of-a-folder-that-has-more-than-thirty-two-characters", "sixteen-letters!", "eight-ch"];
+const separators: string[] = ["/", "/", "/", "//", "/./", "/../"];
+const starts: string[] = ["", "", "/", "/", "//", "./", "../"];
+const ends: string[] = ["", "", "", "/", "//", "/.", "/..", "."];
+function pick(list: string[]): string {
+  return list[random(list.length)];
+}
+function makePath(): string {
+  let text: string = pick(starts);
+  for (let parts = random(7); parts > 0; --parts) text += pick(names) + (parts > 1 ? pick(separators) : "");
+  return text + pick(ends);
+}
+function flat(text: string): string {
+  text.charCodeAt(0);
+  return text;
+}
+function inForm(form: number, text: string): string {
+  if (form === 0) return flat(text);
+  if (form === 1) return text.length < 2 ? text : flat(text.slice(0, text.length >> 1) + "") + text.slice(text.length >> 1);
+  if (form === 2) return flat("<<" + text + ">>>").slice(2, -3);
+  return flat("日" + text + "本").slice(1, -1);
+}
+
+const lines: string[] = [];
+function say(label: string, answer: string): void {
+  lines.push(label + " " + JSON.stringify(answer));
+  if (lines.length >= 4096) {
+    console.log(lines.join("\n"));
+    lines.length = 0;
+  }
+}
+for (let i = 0; i < 250; ++i) {
+  const a: string = makePath();
+  const b: string = makePath();
+  const c: string = makePath();
+  const form: number = i & 3;
+  const other: number = random(4);
+  const label: string = i + " " + form + " " + other + " " + JSON.stringify([a, b, c]);
+  say(label + " basename", path.basename(inForm(form, a)));
+  say(label + " basename suffix", path.basename(inForm(form, a), inForm(other, a.slice(-random(6)))));
+  say(label + " basename .ts", path.basename(inForm(form, a), ".ts"));
+  say(label + " dirname", path.dirname(inForm(form, a)));
+  say(label + " extname", path.extname(inForm(form, a)));
+  say(label + " isAbsolute", String(path.isAbsolute(inForm(form, a))));
+  say(label + " normalize", path.normalize(inForm(form, a)));
+  const parsed = path.parse(inForm(form, a));
+  say(label + " parse", parsed.root + "|" + parsed.dir + "|" + parsed.base + "|" + parsed.ext + "|" + parsed.name);
+  say(label + " format", path.format(parsed));
+  say(label + " toNamespacedPath", path.toNamespacedPath(inForm(form, a)));
+  say(label + " join1", path.join(inForm(form, a)));
+  say(label + " join2", path.join(inForm(form, a), inForm(other, b)));
+  say(label + " join3", path.join(inForm(form, a), inForm(other, b), inForm(form, c)));
+  say(label + " join0", path.join());
+  say(label + " resolve1", path.resolve(inForm(form, a)));
+  say(label + " resolve2", path.resolve(inForm(form, a), inForm(other, b)));
+  say(label + " resolve3", path.resolve(inForm(form, a), inForm(other, b), inForm(form, c)));
+  say(label + " resolve0", path.resolve());
+  say(label + " relative", path.relative(inForm(form, a), inForm(other, b)));
+  say(label + " relative inside", path.relative(inForm(form, a), inForm(other, a + "/" + b)));
+  say(label + " relative outside", path.relative(inForm(form, a + "/" + b), inForm(other, a)));
+  say(label + " dirname dirname", path.dirname(path.dirname(inForm(form, a))));
+  say(label + " join of parts", path.join(path.dirname(inForm(form, a)), path.basename(inForm(form, a))));
+  say(label + " win32", path.win32.join(inForm(form, a), inForm(other, b)) + "|" + path.win32.dirname(inForm(form, a)) + "|" + path.win32.basename(inForm(form, a)) + "|" + path.win32.normalize(inForm(form, a)));
+}
+console.log(lines.join("\n"));
+//// native-path-functions-replaced-by-the-program.ts
+// The direct call of a native function is made only while the callee is that function: a program that puts something else in its place gets what it put there.
+// STATISTIC: NativeFunctionTestsEmitted >= 1
+import path from "node:path";
+function report(name: string, probe: () => unknown) {
+  let answer: unknown;
+  try {
+    answer = probe();
+  } catch (error) {
+    answer = (error as Error).name;
+  }
+  console.log(name, JSON.stringify(answer));
+}
+function measure(value: string) {
+  return [path.isAbsolute(value), path.join(value, "x")];
+}
+report("before", () => measure("/a"));
+const original = path.join;
+(path as any).join = (...parts: string[]) => "mine:" + parts.join("|");
+(path as any).isAbsolute = undefined;
+report("after", () => measure("/a"));
+(path as any).isAbsolute = path.win32.isAbsolute;
+(path as any).join = original;
+report("the other flavor in the place", () => [measure("C:\\a"), measure("/a")]);
+//// native-path-functions-with-operands-that-are-no-strings.ts
+// A call of a function of node:path with an operand that is no string is not made directly: the function refuses or converts the operand as in plain Bun.
+import path from "node:path";
+////= report
+const any = path as any;
+let conversions = 0;
+const text = new String("/a/b");
+(text as any).toString = () => {
+  conversions++;
+  return "/converted";
+};
+for (const operand of [undefined, null, 5, true, {}, [], Symbol.iterator, 5n, () => 1]) {
+  report("isAbsolute " + typeof operand, () => any.isAbsolute(operand));
+  report("join " + typeof operand, () => any.join("a", operand));
+  report("dirname " + typeof operand, () => any.dirname(operand));
+  report("basename suffix " + typeof operand, () => any.basename("a.txt", operand));
+}
+report("no operand", () => [any.join(), any.resolve().length > 0]);
+report("isAbsolute without operand", () => any.isAbsolute());
+report("a String object", () => [any.dirname(text), any.join(text, "c"), conversions]);
+report("more operands than declared", () => [any.isAbsolute("/a", 5), any.dirname("/a/b", {})]);
+function maybe(index: number): string | undefined {
+  return ["/a/b", undefined][index];
+}
+report("an operand that may be missing", () => [0, 1].map(index => path.dirname(maybe(index) as string)));
+//// native-setters-throw-after-caching.js
+// A native setter that has been called many times for objects of one shape, so that it is noted, throws for a value it refuses: the error comes out where the store stands, is caught there, and the next store works.
+const log = [];
+function setHref(url, value) { "use strict"; url.href = value; return url.href; }
+function setTitle(value) { "use strict"; process.title = value; return typeof process.title; }
+function attempt(what, body) { try { log.push(what + " " + String(body())); } catch (error) { log.push(what + " !" + error.constructor.name + " " + (error instanceof TypeError)); } }
+const url = new URL("http://example.com/");
+let last = "";
+for (let round = 0; round < 300; round++) last = setHref(url, "http://example.com/" + (round & 7));
+log.push("noted " + last);
+attempt("no URL", () => setHref(url, "::"));
+attempt("kept", () => url.href);
+attempt("a symbol", () => setHref(url, Symbol("s")));
+attempt("an object whose toString throws", () => setHref(url, { toString() { throw new RangeError("thrown"); } }));
+attempt("again", () => setHref(url, "http://example.com/again"));
+function deep(n) { return n === 0 ? setHref(url, "::") : deep(n - 1) + 1; }
+attempt("from ten frames down", () => deep(10));
+let caught = 0;
+for (let round = 0; round < 200; round++) { try { setHref(url, round & 1 ? "::" : "http://example.com/" + round); } catch { caught++; } }
+log.push("caught " + caught + " " + url.href);
+function inFinally() { try { return setHref(url, "::"); } finally { log.push("finally"); } }
+attempt("through a finally", inFinally);
+async function awaited() { await null; try { setHref(url, "::"); } catch (error) { return "async " + error.constructor.name; } }
+const title = process.title;
+for (let round = 0; round < 300; round++) last = setTitle("title" + (round & 3));
+log.push("title " + last);
+attempt("the title gets a symbol", () => setTitle(Symbol("s")));
+attempt("the title again", () => setTitle(title));
+awaited().then(text => {
+  log.push(text);
+  console.log(log.join("\n"));
+});
+//// native-setters-throw-and-change.js
+// Stores that reach native setters, many times over so that the setter is noted: on the right object, on heirs and strangers (which the setter refuses), behind an own property, behind a setter put in front, after the native one is replaced or deleted, in strict and in sloppy code, with a value the setter refuses.
+const log = [];
+function attempt(what, body) { try { log.push(what + " " + String(body())); } catch (error) { log.push(what + " !" + error.constructor.name); } }
+function storeOnabort(target, value) { "use strict"; target.onabort = value; return typeof target.onabort; }
+const storeSloppily = new Function("target", "value", "target.onabort = value; return typeof target.onabort;");
+function storeTimeout(target, value) { "use strict"; target._onTimeout = value; return typeof target._onTimeout; }
+const handlers = [() => 1, () => 2];
+const signal = new AbortController().signal;
+const timer = setTimeout(() => {}, 1_000_000);
+let kinds = "";
+for (let round = 0; round < 300; round++) kinds = storeOnabort(signal, handlers[round & 1]) + storeTimeout(timer, handlers[round & 1]);
+log.push("noted " + kinds + " " + (signal.onabort === handlers[1]) + " " + (timer._onTimeout === handlers[1]));
+attempt("a number", () => storeOnabort(signal, 5));
+attempt("null", () => storeOnabort(signal, null));
+attempt("an object", () => storeOnabort(signal, {}));
+attempt("the timer gets a number", () => storeTimeout(timer, 5));
+attempt("the timer gets undefined", () => storeTimeout(timer, undefined));
+attempt("an heir", () => storeOnabort(Object.create(signal), handlers[0]));
+attempt("a stranger with the prototype", () => storeOnabort(Object.create(AbortSignal.prototype), handlers[0]));
+attempt("a plain object", () => storeOnabort({}, handlers[0]));
+attempt("a primitive", () => storeOnabort(5, handlers[0]));
+attempt("undefined", () => storeOnabort(undefined, handlers[0]));
+const second = new AbortController().signal;
+for (let round = 0; round < 50; round++) storeOnabort(second, handlers[round & 1]);
+log.push("a second signal " + (second.onabort === handlers[1]) + " " + (signal.onabort === handlers[1]));
+Object.defineProperty(second, "onabort", { value: "own", writable: true, configurable: true });
+attempt("behind an own property", () => storeOnabort(second, "stored") + " " + second.onabort);
+const third = new AbortController().signal;
+for (let round = 0; round < 50; round++) storeOnabort(third, handlers[round & 1]);
+const native = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "onabort");
+let calls = 0;
+Object.defineProperty(AbortSignal.prototype, "onabort", { get() { return "replaced"; }, set(value) { calls++; }, configurable: true });
+attempt("the native one replaced", () => storeOnabort(third, handlers[0]) + " " + calls);
+for (let round = 0; round < 50; round++) storeOnabort(third, handlers[round & 1]);
+log.push("calls " + calls);
+Object.defineProperty(AbortSignal.prototype, "onabort", native);
+attempt("the native one again", () => storeOnabort(third, handlers[0]) + " " + (third.onabort === handlers[0]) + " " + calls);
+for (let round = 0; round < 50; round++) storeOnabort(third, handlers[round & 1]);
+delete AbortSignal.prototype.onabort;
+attempt("deleted", () => storeOnabort(third, handlers[0]) + " " + Object.keys(third).join());
+Object.defineProperty(AbortSignal.prototype, "onabort", native);
+const fourth = new AbortController().signal;
+for (let round = 0; round < 300; round++) kinds = storeSloppily(fourth, handlers[round & 1]);
+log.push("sloppily " + kinds + " " + (fourth.onabort === handlers[1]));
+attempt("sloppily an heir", () => storeSloppily(Object.create(fourth), handlers[0]));
+attempt("sloppily a primitive", () => storeSloppily(5, handlers[0]));
+const between = Object.create(AbortSignal.prototype, { onabort: { set(value) { calls += 100; }, get() { return "between"; }, configurable: true } });
+const fifth = new AbortController().signal;
+for (let round = 0; round < 50; round++) storeOnabort(fifth, handlers[round & 1]);
+Object.setPrototypeOf(fifth, between);
+attempt("a setter in front", () => storeOnabort(fifth, handlers[0]) + " " + calls);
+clearTimeout(timer);
+console.log(log.join("\n"));
+//// natives-read-members-of-what-they-are-handed.mjs
+// Natives of Bun that are handed an object read its members, convert them and call them. Each function reads a local object behind the call.
+import { getEventListeners } from "node:events";
+import { isDeepStrictEqual } from "node:util";
+const log = [];
+function strategy(label, holder) {
+  return {
+    get highWaterMark() {
+      holder.value++;
+      log.push(label + ".highWaterMark");
+      return {
+        [Symbol.toPrimitive]() {
+          holder.value++;
+          log.push(label + ".highWaterMark converted");
+          return 2;
+        },
+      };
+    },
+    get size() {
+      holder.value++;
+      log.push(label + ".size");
+      return undefined;
+    },
+  };
+}
+function thenable(label, holder) {
+  return {
+    get then() {
+      holder.value++;
+      log.push(label + " then read");
+      return function (resolve) {
+        holder.value++;
+        log.push(label + " then called");
+        resolve();
+      };
+    },
+  };
+}
+function readable() {
+  const holder = { value: 0 };
+  new ReadableStream(
+    {
+      get type() {
+        holder.value++;
+        log.push("readable.type");
+        return undefined;
+      },
+      get autoAllocateChunkSize() {
+        holder.value++;
+        log.push("readable.autoAllocateChunkSize");
+        return undefined;
+      },
+      start() {
+        holder.value++;
+        return thenable("readable.start", holder);
+      },
+    },
+    strategy("readable", holder),
+  );
+  return holder.value;
+}
+function writable() {
+  const holder = { value: 0 };
+  new WritableStream(
+    {
+      get abort() {
+        holder.value++;
+        log.push("writable.abort");
+        return undefined;
+      },
+      start() {
+        holder.value++;
+        return thenable("writable.start", holder);
+      },
+    },
+    strategy("writable", holder),
+  );
+  return holder.value;
+}
+function transform() {
+  const holder = { value: 0 };
+  new TransformStream(
+    {
+      get cancel() {
+        holder.value++;
+        log.push("transform.cancel");
+        return undefined;
+      },
+      start() {
+        holder.value++;
+        return thenable("transform.start", holder);
+      },
+    },
+    strategy("transform.writable", holder),
+    strategy("transform.readable", holder),
+  );
+  return holder.value;
+}
+console.log(readable(), writable(), transform());
+await new Promise(resolve => setTimeout(resolve, 5));
+console.log(log.join("\n"));
+
+function start() {
+  const holder = { value: 0 };
+  const names = [];
+  const sink = new Bun.ArrayBufferSink();
+  sink.start({
+    get asUint8Array() {
+      holder.value++;
+      names.push("asUint8Array");
+      return true;
+    },
+    get highWaterMark() {
+      holder.value++;
+      names.push("highWaterMark");
+      return 16;
+    },
+    get stream() {
+      holder.value++;
+      names.push("stream");
+      return false;
+    },
+  });
+  sink.write("abc");
+  const bytes = sink.end();
+  return `${holder.value} ${names} ${bytes.constructor.name} ${bytes.length}`;
+}
+console.log(start());
+const proxied = [];
+new Bun.ArrayBufferSink().start(
+  new Proxy(
+    {},
+    {
+      get(target, key) {
+        proxied.push("get " + String(key));
+      },
+      getOwnPropertyDescriptor(target, key) {
+        proxied.push("describe " + String(key));
+      },
+      has(target, key) {
+        proxied.push("has " + String(key));
+        return false;
+      },
+    },
+  ),
+);
+console.log(proxied.join(","));
+
+function fromValueOf() {
+  const holder = { value: 0 };
+  const bytes = Buffer.from({
+    valueOf() {
+      holder.value++;
+      return "abc";
+    },
+  });
+  return `${holder.value} ${bytes}`;
+}
+function fromToPrimitive() {
+  const holder = { value: 0 };
+  const bytes = Buffer.from({
+    [Symbol.toPrimitive](hint) {
+      holder.value++;
+      return "hint " + hint;
+    },
+  });
+  return `${holder.value} ${bytes}`;
+}
+function fromGetter() {
+  const holder = { value: 0 };
+  let message = "";
+  try {
+    Buffer.from({
+      get valueOf() {
+        holder.value++;
+        return undefined;
+      },
+      get length() {
+        holder.value++;
+        return undefined;
+      },
+      get type() {
+        holder.value++;
+        return undefined;
+      },
+    });
+  } catch (error) {
+    message = error.code;
+  }
+  return `${holder.value} ${message}`;
+}
+console.log(fromValueOf(), "|", fromToPrimitive(), "|", fromGetter());
+
+function width() {
+  const holder = { value: 0 };
+  const answer = Bun.stringWidth(
+    {
+      toString() {
+        holder.value++;
+        return "abc";
+      },
+    },
+    {
+      get countAnsiEscapeCodes() {
+        holder.value++;
+        return false;
+      },
+      get ambiguousIsNarrow() {
+        holder.value++;
+        return true;
+      },
+    },
+  );
+  return `${holder.value} ${answer}`;
+}
+function equal() {
+  const holder = { value: 0 };
+  const make = () => ({
+    get [Symbol.toStringTag]() {
+      holder.value++;
+      return "Tag";
+    },
+    get member() {
+      holder.value++;
+      return 1;
+    },
+  });
+  const answer = isDeepStrictEqual(make(), make());
+  return `${holder.value > 0} ${answer}`;
+}
+function listeners() {
+  const holder = { value: 0 };
+  const target = new EventTarget();
+  target.addEventListener("ping", () => {});
+  const found = getEventListeners(target, {
+    toString() {
+      holder.value++;
+      return "ping";
+    },
+  });
+  return `${holder.value} ${found.length}`;
+}
+console.log(width(), "|", equal(), "|", listeners());
+
+function make() {
+  const holder = { value: 0 };
+  const first = new Event("a", { bubbles: true, cancelable: true });
+  const second = new Event("b", first);
+  const third = new Event("c", {
+    get bubbles() {
+      holder.value++;
+      return {
+        valueOf() {
+          holder.value += 10;
+          return 0;
+        },
+      };
+    },
+    get composed() {
+      holder.value++;
+      return 0;
+    },
+  });
+  return `${second.bubbles} ${second.cancelable} ${second.composed} ${third.bubbles} ${third.composed} ${holder.value}`;
+}
+console.log(make());
+//// next-tick-arguments.ts
+// process.nextTick(callback, ...arguments): what a callback is given: how many arguments, which, `undefined` written out, holes of a spread; ticks queued by ticks; more ticks waiting than ever before; arguments are let go once the tick has run; async hooks and AsyncLocalStorage; a callback that throws.
+import { AsyncLocalStorage, createHook } from "node:async_hooks";
+
+const lines: string[] = [];
+const show = (value: unknown): string => (value === undefined ? "undefined" : typeof value === "symbol" ? value.toString() : typeof value === "function" ? "function " + value.name : (JSON.stringify(value) ?? String(value)));
+function seen(this: unknown, ...all: unknown[]) {
+  lines.push("this " + show(this) + ", " + all.length + " given: " + all.map(show).join(" "));
+}
+function counted() {
+  lines.push("arguments.length " + arguments.length + ": " + Array.prototype.map.call(arguments, show).join(" "));
+}
+function withDefaults(a = "a by default", b = "b by default", c = "c by default") {
+  lines.push("defaults: " + [a, b, c].join(", ") + " of " + arguments.length);
+}
+const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+
+for (let count = 0; count <= 9; count++) {
+  const given = Array.from({ length: count }, (_, index) => "v" + index);
+  process.nextTick(seen, ...given);
+  process.nextTick(counted, ...given);
+}
+process.nextTick(seen);
+process.nextTick(seen, undefined);
+process.nextTick(seen, undefined, undefined);
+process.nextTick(seen, undefined, undefined, undefined);
+process.nextTick(seen, undefined, undefined, undefined, undefined);
+process.nextTick(seen, undefined, undefined, undefined, undefined, undefined);
+process.nextTick(counted, undefined);
+process.nextTick(counted, 1, undefined);
+process.nextTick(counted, null, 0, "", false);
+process.nextTick(withDefaults);
+process.nextTick(withDefaults, undefined, "b");
+process.nextTick(withDefaults, "a", undefined, undefined, "d");
+process.nextTick(seen, [1, 2], { a: 1 }, Symbol.iterator, seen);
+process.nextTick(seen, ...[, 1, , 2]);
+process.nextTick(seen, [1, 2, 3, 4, 5, 6]);
+process.nextTick.call(null, seen, "called with null");
+process.nextTick.apply({ other: true }, [seen, "applied", 2, 3, 4, 5, 6]);
+Reflect.apply(process.nextTick, undefined, [counted, "reflected", 2]);
+const { nextTick } = process;
+nextTick(seen, "read first", 2, 3);
+await turn();
+
+lines.push("-- ticks queued by ticks");
+let depth = 0;
+function deeper(a: number, b: string, c?: unknown, d?: unknown) {
+  lines.push("depth " + a + " " + b + " " + show(c) + " " + show(d) + " of " + arguments.length);
+  if (++depth < 6) {
+    process.nextTick(deeper, depth, "first");
+    process.nextTick(deeper, depth, "second", depth * 2);
+    if (depth === 3) process.nextTick(deeper, depth, "third", "c", "d");
+  }
+}
+process.nextTick(deeper, 0, "root", "c", "d");
+await turn();
+
+lines.push("-- a burst, then fewer arguments in the same places");
+let sum = 0;
+for (let index = 0; index < 3000; index++) process.nextTick((a: number, b: number, c: number, d: number) => (sum += a + b + c + d), index, 1, 2, 3);
+await turn();
+lines.push("sum " + sum);
+for (let index = 0; index < 3000; index++) process.nextTick(index % 1000 ? () => {} : counted);
+await turn();
+for (let index = 0; index < 8; index++) process.nextTick(counted, ...Array.from({ length: index % 3 }, () => index));
+await turn();
+
+lines.push("-- arguments are let go");
+let given = 0;
+let neverGiven = 0;
+const finalization = new FinalizationRegistry<boolean>(wasGiven => (wasGiven ? given++ : neverGiven++));
+(() => {
+  for (let count = 1; count <= 6; count++) {
+    const held = Array.from({ length: count }, (_, index) => ({ index }));
+    for (const object of held) {
+      finalization.register(object, true);
+      finalization.register({ index: object.index }, false);
+    }
+    process.nextTick(() => {}, ...held);
+  }
+})();
+await turn();
+for (let round = 0; round < 20 && given < 21; round++) {
+  Bun.gc(true);
+  await turn();
+}
+lines.push("collected as objects that were never given are: " + (given >= 12 || neverGiven < 12));
+
+lines.push("-- AsyncLocalStorage");
+const storage = new AsyncLocalStorage<string>();
+storage.run("outer", () => {
+  process.nextTick((a: string) => lines.push(a + " sees " + storage.getStore()), "one argument");
+  storage.run("inner", () => process.nextTick((a: string, b: string, c: string, d: string, e: string) => lines.push([a, b, c, d, e].join("") + " sees " + storage.getStore()), "f", "i", "v", "e", "!"));
+  process.nextTick(() => lines.push("none sees " + storage.getStore()));
+});
+process.nextTick(() => lines.push("outside sees " + storage.getStore()));
+await turn();
+
+lines.push("-- a callback that throws");
+process.once("uncaughtException", error => lines.push("uncaught: " + (error as Error).message));
+process.nextTick((a: string, b: string) => {
+  throw new Error("thrown with " + a + b);
+}, "x", "y");
+process.nextTick(seen, "behind the throw", 2);
+await turn();
+
+lines.push("-- async hooks");
+const resources: string[] = [];
+const hook = createHook({
+  init(_id, type, _trigger, resource) {
+    if (type === "TickObject") resources.push(Object.keys(resource).join() + " | " + show((resource as { args?: unknown }).args));
+  },
+}).enable();
+process.nextTick(seen);
+process.nextTick(seen, "hooked");
+process.nextTick(counted, "hooked", undefined);
+process.nextTick(seen, 1, 2, 3, 4, 5, 6);
+hook.disable();
+process.nextTick(seen, "unhooked", 2);
+await turn();
+lines.push(...resources);
+console.log(lines.join("\n"));
+//// next-tick-is-given-a-proxy-of-a-literal.js
+// A compiled program describes an argument that a native function rejects without running script. A Proxy whose handler has no `get` hands the read of `constructor` on to its target, so it is described as plain Bun describes it.
+const proxy = new Proxy({}, {});
+try {
+  process.nextTick(proxy);
+} catch (error) {
+  console.log(error.message);
+}
+//// node-events-alone-does-not-bring-the-channel-of-process.ts
+// node:events puts its EventEmitter.prototype above the native prototype of `process`, on which the native listener methods lie. The functions of builtins/Ipc, and with them node:net, node:dgram,
+// node:fs and the streams, hang on those methods for a call on `process` with the event "message" or "disconnect". An emitter of the program that listens for them, and a listener for another event
+// on `process`, bring none of that: 800 functions where there were 6,000.
+// STATISTIC: ImageFunctionsEmitted <= 2000
+import { EventEmitter } from "node:events";
+
+const emitter = new EventEmitter();
+emitter.on("message", (text: string) => console.log("got", text));
+emitter.once("disconnect", () => console.log("disconnected"));
+console.log(emitter.emit("message", "one"), emitter.emit("disconnect"), emitter.emit("disconnect"), emitter.listenerCount("message"));
+process.on("exit", code => console.log("exit", code, process.listenerCount("exit"), process.listenerCount("message")));
+console.log(Object.getPrototypeOf(Object.getPrototypeOf(process)) === EventEmitter.prototype);
+//// node-events-links-the-native-prototype-of-process.cjs
+// Above the native prototype of process lies Object.prototype until node:events is evaluated, which puts its own EventEmitter.prototype there; the native methods keep winning lookups.
+const native = Object.getPrototypeOf(process);
+console.log(Object.getPrototypeOf(native) === Object.prototype, process._eventsCount, process.domain);
+const EventEmitter = require("node:events");
+console.log(Object.getPrototypeOf(native) === EventEmitter.prototype, process._eventsCount, process instanceof EventEmitter);
+console.log(process.on === native.on, process.on !== EventEmitter.prototype.on);
+process.on("exit", code => console.log("exit", code));
+//// node-path.ts
+// node:path in a compiled program and in plain Bun: the same answers on ASCII paths of every kind, the same errors for values that are no strings, and what it hands out are ordinary objects and functions.
+import path from "node:path";
+import { basename, join, posix, win32 } from "node:path";
+
+let seed = 2026;
+const next = (n: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8) % n;
+const pieces = ["a", "bc", "def", ".", "..", "", "/", "//", "./", "../", "a/b", "/a", "b/", "...", ".a", "a.", "..a", "a..", " ", "a/./b", "a/../b", "../..", "/..", "/.", "x.y.z", "node_modules", "\\", "C:", ".ts", "index.ts"];
+////= lines-2	make	made
+let digest = 0;
+function note(text: string) {
+  for (let i = 0; i < text.length; i++) digest = (Math.imul(digest, 31) + text.charCodeAt(i)) | 0;
+}
+function outcome(f: Function, args: unknown[]): string {
+  try {
+    const result = f(...args);
+    const text = typeof result === "object" && result !== null ? JSON.stringify(result) + Reflect.ownKeys(result).join() : typeof result + JSON.stringify(result);
+    return text.replaceAll(process.cwd(), "<cwd>");
+  } catch (error: any) {
+    return `${error.name} ${error.code} ${error.code === undefined ? "" : error.message}`;
+  }
+}
+const functions = ["resolve", "normalize", "isAbsolute", "join", "relative", "toNamespacedPath", "dirname", "basename", "extname", "parse"];
+for (const flavor of [posix, win32] as any[]) {
+  digest = 0;
+  for (let round = 0; round < 3000; round++) {
+    const p = make();
+    const q = make();
+    const r = make();
+    for (const name of functions) {
+      note(outcome(flavor[name], [p]));
+      note(outcome(flavor[name], [p, q]));
+      note(outcome(flavor[name], ["/" + p, q, r]));
+    }
+  }
+  console.log(flavor.sep, "digest", digest);
+}
+
+const values: unknown[] = [undefined, null, 5, NaN, true, 1n, Symbol.iterator, {}, [], ["a"], new String("/a/b.c"), () => 1, { toString: () => "/x/y.z" }, ""];
+for (const name of [...functions, "format", "matchesGlob"]) {
+  console.log(name, outcome((posix as any)[name], []));
+  for (const value of values) console.log(name, outcome((posix as any)[name], [value]), "|", outcome((posix as any)[name], ["/a/b.c", value]), "|", outcome((posix as any)[name], [value, "b.c"]));
+}
+
+for (const name of Reflect.ownKeys(posix) as string[]) {
+  const value = (posix as any)[name];
+  const descriptor = Object.getOwnPropertyDescriptor(posix, name)!;
+  console.log(name, typeof value, typeof value === "function" ? "prototype" in value : typeof value === "string" ? value : "", descriptor.writable, descriptor.enumerable, descriptor.configurable);
+}
+console.log(path === posix, posix.posix === posix, posix.win32 === win32, win32.posix === posix, join === posix.join, basename === posix.basename, Object.getPrototypeOf(posix) === Object.prototype, Object.isExtensible(posix));
+
+const parsed: any = posix.parse("/home/user/file.tar.gz");
+console.log(JSON.stringify(parsed), Object.getPrototypeOf(parsed) === Object.prototype);
+parsed.extra = 1;
+delete parsed.root;
+parsed.dir = 5;
+Object.defineProperty(parsed, "base", { get: () => "got" });
+console.log(JSON.stringify(parsed), Object.keys(parsed).join(), posix.format({ ...parsed, dir: "/d" }));
+
+const patched: any = path;
+const original = patched.join;
+patched.join = (...parts: string[]) => "patched:" + parts.length;
+console.log(path.join("a", "b"), join("a", "b"), posix.join("a", "b", "c"));
+patched.join = original;
+console.log(path.join("a", "b"));
+patched.added = 7;
+console.log(patched.added, delete patched.added, "added" in patched);
+console.log(outcome(function () { return new patched.join("a"); }, []));
+console.log(original.call(null, "a", "..", "b"), original.apply({ any: 1 }, ["/x", "y/"]), Reflect.apply(posix.dirname, undefined, ["/x/y"]));
+
+const rope = "/" + "abc/".repeat(2000) + "name" + ".ext";
+console.log(posix.normalize(rope).length, posix.dirname(rope).length, posix.basename(rope), posix.extname(rope), posix.relative(rope, rope + "/x"), posix.join(rope, "../../x").length, posix.resolve(rope, "..", "..").length);
+console.log(posix.resolve() === process.cwd(), posix.resolve("") === process.cwd(), posix.resolve(".") === process.cwd(), posix.resolve("a") === process.cwd() + "/a", posix.relative("", "a"), posix.relative("a/b", ""));
+console.log(posix.matchesGlob("/a/b.ts", "/a/*.ts"), posix.matchesGlob("/a/b.ts", "/a/*.js"), win32.matchesGlob("a\\b.ts", "a\\*.ts"), posix.matchesGlob("/a/b.ts", "/a/*.ts"));
+//// node-path-after-a-known-directory.ts
+// Paths that continue a directory that was asked about just before, against Node's lib/path.js, which stands below.
+import { posix } from "node:path";
+
+function validateString(value: unknown, name: string): asserts value is string {
+  if (typeof value !== "string") throw new TypeError("ERR_INVALID_ARG_TYPE " + name);
+}
+function isPosixPathSeparator(code: number): boolean {
+  return code === 47;
+}
+////= normalizeString
+////= reference
+
+const workingDirectory = () => process.cwd().replaceAll("\\", "/");
+const node = reference(process.platform === "win32" ? () => workingDirectory().slice(workingDirectory().indexOf("/")) : () => process.cwd());
+let cases = 0;
+let differences = 0;
+function outcome(f: Function, args: unknown[]): string {
+  const result = f(...args);
+  return typeof result === "object" ? JSON.stringify(result) + Reflect.ownKeys(result).join() : JSON.stringify(result);
+}
+////= same-2
+const alphabet = ["a", ".", "/"];
+const all = (length: number): string[] => (length === 0 ? [""] : all(length - 1).flatMap(rest => alphabet.map(unit => unit + rest)));
+
+const directories = ["/a", "/a/b", "/a.b/c", "/a/", "/a/b/", "a", "a/b", "a/", "/", "/.a", "/a..", "/...", "..a", "/a/.b", "/é/日本"];
+const tails = [0, 1, 2, 3, 4, 5].flatMap(all);
+for (const directory of directories) {
+  for (const remember of [() => posix.join(directory, "x"), () => posix.resolve(directory, "x"), () => posix.relative(directory, "/x")]) {
+    for (const tail of tails) {
+      const longer = directory + tail;
+      remember();
+      same("normalize", [longer]);
+      remember();
+      same("resolve", [longer]);
+      remember();
+      same("join", [longer, "y"]);
+      remember();
+      same("join", ["y", longer]);
+      remember();
+      same("join", [directory, tail]);
+      remember();
+      same("join", [directory, tail, "y"]);
+      remember();
+      same("resolve", [directory, tail]);
+      remember();
+      same("resolve", [longer, "y"]);
+      remember();
+      same("relative", [directory, longer]);
+      remember();
+      same("relative", [longer, directory]);
+      remember();
+      same("relative", [longer, longer + "/y"]);
+    }
+  }
+}
+console.log(cases, "cases,", differences, "differ from Node");
+//// node-path-matches-node.ts
+// path.posix against Node's lib/path.js, which stands below, on strings of every kind. A compiled program calls the same native node:path as plain Bun, so it prints what plain Bun prints,
+// also where that differs from Node: the native code goes through UTF-8, so a lone surrogate comes back as U+FFFD and basename counts a suffix in bytes.
+import { posix } from "node:path";
+
+function validateString(value: unknown, name: string): asserts value is string {
+  if (typeof value !== "string") throw new TypeError("ERR_INVALID_ARG_TYPE " + name);
+}
+function isPosixPathSeparator(code: number): boolean {
+  return code === 47;
+}
+////= normalizeString
+////= reference
+
+const workingDirectory = () => process.cwd().replaceAll("\\", "/");
+const node = reference(process.platform === "win32" ? () => workingDirectory().slice(workingDirectory().indexOf("/")) : () => process.cwd());
+const pieces = ["a", "bc", "def", ".", "..", "", "/", "//", "./", "../", "a/b", "/a", "b/", "...", ".a", "a.", "..a", "a..", " ", "é", "日本", "\u{1F600}", "a/./b", "a/../b", "../..", "/..", "/.", "x.y.z", "node_modules", "\ud800", "\udc00x", "\\", "C:", "%2e", ".ts", "index.ts", "\u0000", "\ud7ff", "\uffff"];
+const names = ["name", "project", "src", "index.ts", "node_modules", "x.y.z", ".git", "a", "lib.d.ts", "..x", "x..", "...", ".x."];
+let seed = 12345;
+const next = (n: number) => ((seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff) >>> 8) % n;
+////= lines-2	untidy	path
+function tidy(): string {
+  let path = "/" + ["Users", "home", "a", "tmp"][next(4)];
+  for (let k = next(6); k > 0; k--) path += "/" + names[next(names.length)];
+  return path;
+}
+function tail(): string {
+  let path = names[next(names.length)]!;
+  for (let k = next(4); k > 0; k--) path += "/" + names[next(names.length)];
+  return path;
+}
+let cases = 0;
+let differences = 0;
+function outcome(f: Function, args: unknown[]): string {
+  const result = f(...args);
+  return typeof result === "object" ? JSON.stringify(result) + Reflect.ownKeys(result).join() : JSON.stringify(result);
+}
+////= same-2
+const ofOnePath = ["parse", "normalize", "isAbsolute", "dirname", "basename", "extname", "resolve", "join"];
+const alphabet = ["a", ".", "/"];
+const all = (length: number): string[] => (length === 0 ? [""] : all(length - 1).flatMap(rest => alphabet.map(unit => unit + rest)));
+
+for (let round = 0; round < 5000; round++) {
+  const isUntidy = round % 3 !== 0;
+  const p = isUntidy ? untidy() : tidy();
+  const q = isUntidy ? untidy() : tidy();
+  for (const name of ofOnePath) same(name, [p]);
+  same("basename", [p, q]);
+  same("basename", [p, p.slice(next(p.length + 1))]);
+  same("basename", [p, pieces[next(pieces.length)]!]);
+  same("basename", [p + ".ts", ".ts"]);
+  same("basename", [p, ""]);
+  for (const name of ["resolve", "join"]) {
+    same(name, [p, q]);
+    same(name, [p, q, untidy()]);
+    same(name, ["/" + p, q]);
+    same(name, [tidy(), tail()]);
+    same(name, [tidy(), tail() + "/"]);
+    same(name, [tidy() + "/", tail()]);
+    same(name, [tidy(), "/" + tail()]);
+    same(name, [tidy(), "..", tail()]);
+    same(name, [tidy(), "../" + tail()]);
+    same(name, [tidy(), "./" + tail()]);
+    same(name, [tidy(), tail(), tail(), tail()]);
+    same(name, ["/", tail()]);
+    same(name, [tail(), tail()]);
+    same(name, ["", p]);
+    same(name, [p, ""]);
+    same(name, []);
+  }
+  const c = tidy();
+  same("relative", [p, q]);
+  same("relative", ["/" + p, "/" + q]);
+  same("relative", [p, p]);
+  same("relative", [tidy(), tidy()]);
+  same("relative", [c, c + "/x/y"]);
+  same("relative", [c + "/x/y", c]);
+  same("relative", [c, c + "x"]);
+  same("relative", [c + "x", c]);
+  same("relative", [c, "/"]);
+  same("relative", ["/", c]);
+  same("relative", [c + "/", c]);
+  same("relative", [c, c + "/"]);
+  same("relative", [c + "/" + tail(), c + "/" + tail()]);
+  same("relative", [c + "/.", c + "/.."]);
+  same("relative", [c + "/.x", c + "/..y"]);
+  same("relative", [c + "/a/b/c/d/e/f/g/h/i/j/k", c + "/" + tail()]);
+}
+for (let length = 0; length <= 7; length++) {
+  for (const path of all(length)) {
+    for (const name of ofOnePath) same(name, [path]);
+    for (const suffix of [".", "a", "/", "..", "a.", ".a"]) same("basename", [path, suffix]);
+  }
+}
+for (const first of all(4)) {
+  for (const second of all(4)) {
+    same("relative", ["/" + first, "/" + second]);
+    same("resolve", ["/" + first, second]);
+    same("join", [first, second]);
+    same("join", ["/" + first, second]);
+    same("basename", [first, second]);
+  }
+}
+for (const first of all(3)) {
+  for (const second of all(3)) {
+    for (const third of all(2)) {
+      same("join", [first, second, third]);
+      same("resolve", ["/" + first, second, third]);
+    }
+  }
+}
+console.log(cases, "cases,", differences, "differ from Node");
+console.log(JSON.stringify([posix.normalize("/a/../\ud800/b"), posix.join("/a", "\udc00"), posix.dirname("/\ud800/b"), posix.basename("/a/é.ts", ".ts"), posix.relative("/a/\ud800", "/a/\udc00")]));
+for (const name of ["resolve", "normalize", "isAbsolute", "join", "relative", "dirname", "basename", "extname", "parse"]) console.log((posix as any)[name].name, (posix as any)[name].length);
+//// non-function-listeners-and-ticks.ts
+// What node:events and process.nextTick say to a listener or a callback that is no function, and that functions of every kind are taken.
+import { EventEmitter } from "node:events";
+const attempt = (run: () => unknown): string => {
+  try {
+    return "returned " + typeof run();
+  } catch (error: any) {
+    return error.constructor.name + " " + error.code + " " + error.message;
+  }
+};
+const values: unknown[] = [undefined, null, 0, 1, "", "text", true, Symbol.iterator, 1n, {}, [], /x/, new Map(), { call() {} }, Object.create(Function.prototype)];
+const methods = ["on", "addListener", "once", "prependListener", "prependOnceListener", "off", "removeListener"] as const;
+for (const value of values) {
+  const emitter: any = new EventEmitter();
+  const said = new Set<string>();
+  for (const method of methods) said.add(attempt(() => emitter[method]("event", value)));
+  console.log(typeof value, [...said].join(" | "), emitter.eventNames().length);
+  console.log(typeof value, attempt(() => (process.nextTick as any)(value)), "|", attempt(() => (process.nextTick as any)(value, 1, 2)));
+}
+const log: string[] = [];
+class Callable {
+  static method(this: unknown, ...given: unknown[]) {
+    log.push("static method " + given.join());
+  }
+}
+const functions: Function[] = [
+  function plain(...given: unknown[]) { log.push("plain " + given.join()); },
+  (...given: unknown[]) => { log.push("arrow " + given.join()); },
+  async (...given: unknown[]) => { log.push("async " + given.join()); },
+  function* generator() { log.push("never run"); },
+  Callable.method,
+  function bound(this: { tag: string }, ...given: unknown[]) { log.push(this.tag + " " + given.join()); }.bind({ tag: "bound" }),
+  new Proxy(function target(...given: unknown[]) { log.push("proxy " + given.join()); }, {}),
+  Math.max,
+];
+const emitter = new EventEmitter();
+emitter.setMaxListeners(100);
+for (const listener of functions) {
+  emitter.on("event", listener as any);
+  emitter.once("event", listener as any);
+}
+console.log(emitter.listenerCount("event"), emitter.emit("event", 1, 2), emitter.listenerCount("event"), emitter.emit("event", 3), emitter.rawListeners("event").length);
+for (const listener of functions) emitter.off("event", listener as any);
+console.log(emitter.listenerCount("event"), emitter.emit("event", 4));
+for (const callback of functions) process.nextTick(callback as any, "tick");
+process.nextTick(() => console.log(log.join("\n")));
+//// non-function-next-tick-callbacks.ts
+// process.nextTick() and EventEmitter's on(), once(), prependListener(), off() with what is no function: the error, its code and its words; and with what is one: the order of the ticks and their arguments. The Proxy without traps among the values is described by its target, as plain Bun describes it.
+import { EventEmitter } from "node:events";
+
+function attempt(what: string, act: () => unknown): void {
+  try {
+    act();
+    console.log(what + ": taken");
+  } catch (error) {
+    const thrown = error as Error & { code?: string };
+    console.log(what + ": " + thrown.constructor.name + " " + thrown.code + " " + thrown.message);
+  }
+}
+const values: unknown[] = [undefined, null, 0, "text", {}, [], Symbol("s"), 1n, true, { call() {} }, new Proxy({}, {})];
+const emitter = new EventEmitter();
+for (const value of values) {
+  const name = typeof value === "symbol" ? "symbol" : typeof value === "bigint" ? "bigint" : JSON.stringify(value) ?? "undefined";
+  attempt("nextTick " + name, () => process.nextTick(value as any));
+  attempt("on " + name, () => emitter.on("x", value as any));
+  attempt("once " + name, () => emitter.once("x", value as any));
+  attempt("prependListener " + name, () => emitter.prependListener("x", value as any));
+  attempt("off " + name, () => emitter.off("x", value as any));
+}
+console.log(emitter.listenerCount("x"));
+const order: string[] = [];
+class Callable { static run(this: void, ...all: unknown[]): void { order.push("static " + all.join()); } }
+const functions: ((...all: unknown[]) => void)[] = [
+  (...all) => order.push("arrow " + all.join()),
+  function (...all) { order.push("function " + all.join()); },
+  async (...all) => { order.push("async " + all.join()); },
+  Callable.run,
+  ((...all: unknown[]) => order.push("bound " + all.join())).bind(null, "first"),
+  new Proxy((...all: unknown[]) => { order.push("proxy " + all.join()); }, {}),
+];
+for (const each of functions) {
+  process.nextTick(each);
+  process.nextTick(each, 1);
+  process.nextTick(each, 1, 2, 3, 4, 5);
+  emitter.once("y", each);
+}
+emitter.emit("y", "emitted");
+process.nextTick(() => console.log(order.join("\n")));
+//// number-and-byte-length-of-values-nobody-followed.js
+// Number(value) and Buffer.byteLength(value, encoding) of values that nobody could follow: whatever comes out of JSON text, a dictionary or a call through an unknown function.
+const texts = ["", " ", "0", "7", "42", "007", "123456789012345", "1234567890123456", "12345678901234567890", "-5", "+5", "1.5", ".5", "5.", "1e3", "1E-2", "0x1f", "0b101", "0o17", "0X1F", " 12 ", "\t\n12\r\n", "12px", "Infinity", "-Infinity", "infinity", "NaN", "1_000", "١٢", " 12﻿", "1,5", "--1", "0.1e1", "9007199254740993", "1e400", "-0", "12", "1".repeat(400)];
+const others = [undefined, null, true, false, 0, -0, 1.5, NaN, Infinity, 10n, -(2n ** 70n), 2n ** 1100n, [], [5], [1, 2], {}, { valueOf() { return 8; } }, { valueOf() { return "9"; } }, { valueOf() { return 3n; } }, { toString() { return "11"; } }, { [Symbol.toPrimitive](hint) { return hint === "number" ? 12 : 13; } }, new Number(14), new String("15"), new Date(16), Object(17n), function () {}];
+const throwing = [Symbol("s"), Object(Symbol.iterator), { valueOf() { throw new RangeError("from valueOf"); } }, { [Symbol.toPrimitive]() { return {}; } }, Object.create(null)];
+const box = JSON.parse(JSON.stringify({ list: texts }));
+function numberOf(table, key) { return Number(table[key]); }
+function lengthOf(table, key, encoding) { return Buffer.byteLength(table[key], encoding); }
+function lengthAlone(table, key) { return Buffer.byteLength(table[key]); }
+const show = value => (Object.is(value, -0) ? "-0" : String(value));
+let lines = [];
+for (let round = 0; round < 30; round++) {
+  lines = [];
+  lines.push(box.list.map((_, i) => show(numberOf(box.list, i))).join());
+  lines.push(others.map((_, i) => show(numberOf(others, i))).join());
+  lines.push(throwing.map((_, i) => { try { return show(numberOf(throwing, i)); } catch (error) { return error.name + " " + error.message.slice(0, 24); } }).join());
+  lines.push(box.list.map((_, i) => lengthAlone(box.list, i)).join());
+  for (const encoding of [undefined, null, 5, {}, "utf8", "latin1", "hex", "base64", "ucs2", "nonsense"]) lines.push(String(encoding) + ": " + box.list.map((_, i) => lengthOf(box.list, i, encoding)).join());
+  const bytes = [new Uint8Array(3), Buffer.from("four"), new ArrayBuffer(5), new DataView(new ArrayBuffer(6)), new Float64Array(2), new SharedArrayBuffer(7)];
+  lines.push(bytes.map((_, i) => lengthAlone(bytes, i) + "|" + lengthOf(bytes, i, "hex")).join());
+  lines.push([...others.slice(0, 8), ...throwing.slice(0, 2)].map((_, i, list) => { try { return lengthAlone(list, i); } catch (error) { return error.code; } }).join());
+}
+console.log(lines.join("\n"));
+const rope = { text: "12" + box.list[3] + String(box.list.length) };
+console.log(numberOf(rope, "text"), lengthAlone(rope, "text"), numberOf({ text: ("€" + box.list[4]).slice(1) }, "text"), lengthAlone({ text: "😀\ud800" + box.list[4] }, "text"));
+console.log(Number(), Number(...[]), Number(...["6", "7"]), Number.call({}, box.list[4]), Reflect.apply(Number, null, [box.list[5]]), Buffer.byteLength.call(null, box.list[4]), Reflect.apply(Buffer.byteLength, 5, [box.list[6], "hex"]));
+//// number-byte-length-and-index-of-throw-into-a-handler-of-the-same-function.js
+// The operations behind Number, Buffer.byteLength and indexOf throw into a handler of the same function, and a finally block runs.
+const box = JSON.parse('{"values":["12",7,null]}'); const odd = [Symbol("s"), { valueOf() { throw new RangeError("valueOf"); } }, 5n, {}];
+function number(table, i) { let note = "none"; try { return "ok " + Number(table[i]); } catch (error) { note = error.name; return "caught " + note; } finally { log.push(note); } }
+function size(table, i, encoding) { try { return "ok " + Buffer.byteLength(table[i], encoding); } catch (error) { return "caught " + error.code; } }
+function find(text, table, i) { try { return "ok " + (typeof text === "string" ? text.indexOf(table[i], table[i]) : -2); } catch (error) { return "caught " + error.name; } }
+const log = []; let lines = [];
+for (let round = 0; round < 40; round++) {
+  lines = []; log.length = 0;
+  for (const table of [box.values, odd]) for (let i = 0; i < table.length; i++) lines.push(number(table, i), size(table, i, table[i]), find("a12b7", table, i));
+}
+console.log(lines.join("\n")); console.log(log.join());
+//// objects-made-from-entries-and-by-grouping-hold-what-they-were-handed.ts
+// Object.fromEntries and Object.groupBy answer ordinary objects that hold what they were handed: functions and objects of the program come out as what they are.
+const say = (...values: unknown[]) => console.log(...values);
+class Body { constructor(public mass: number) {} weight() { return this.mass * 2; } }
+const made = Object.fromEntries([["run", () => "a function of the program"], ["body", new Body(2)], ["n", 1]] as [string, any][]);
+say(made.run(), made.body.weight(), made.body instanceof Body, made.n, made.nothing, Object.keys(made).join(), Object.getPrototypeOf(made) === Object.prototype, typeof made.toString);
+say(made); say(JSON.stringify(Object.fromEntries(new Map([["a", 1], ["b", 2]]))), Object.fromEntries(new URLSearchParams("x=1&y=2")).y);
+const own = Object.fromEntries([["__proto__", { inherited: true }]]); say(Object.getPrototypeOf(own) === Object.prototype, Object.keys(own).join(), (own as any).inherited);
+const symbol = Symbol("key"); say(Object.fromEntries([[symbol, "under a symbol"], [{ toString() { say("the key is converted"); return "converted"; } } as any, 1]])[symbol as any], Object.fromEntries([[1, "index"]])[1]);
+function* entries() { say("the generator ran"); yield ["g", () => "from a generator"] as const; } say(Object.fromEntries(entries()).g());
+made.later = () => "stored later"; say(made.later(), delete made.n, made.n);
+const groups = Object.groupBy([new Body(1), new Body(2), new Body(3)], (body, index) => { say("callback", body.mass, index); return body.mass % 2 ? "odd" : "even"; });
+say(Object.getPrototypeOf(groups), Object.keys(groups).join(), groups.odd!.length, groups.odd![1].weight(), groups.even![0] instanceof Body, (groups as any).none, Array.isArray(groups.even));
+say(groups); groups.odd!.push(new Body(5)); say(groups.odd!.map(body => body.weight()).join());
+say(Object.keys(Object.groupBy("abca", letter => letter)).join(), Object.groupBy([1], () => ({ toString() { say("the group's key is converted"); return "k"; } }) as any).k);
+for (const wrong of [() => Object.fromEntries(undefined as any), () => Object.fromEntries([1] as any), () => Object.fromEntries(1 as any), () => Object.groupBy(null as any, () => 1), () => Object.groupBy([1], 1 as any), () => Object.groupBy([1], () => { throw new RangeError("from the callback"); }), () => Object.fromEntries({ [Symbol.iterator]() { throw new EvalError("from the iterator"); } } as any)])
+  try { say(wrong()); } catch (e) { say((e as Error).name); }
+//// objects-of-the-program-that-native-functions-only-look-at-or-convert.ts
+// Objects of the program that a native function only looks at or converts: a validated build has to find the row of each.
+class Delay { valueOf() { return 1000; } }
+class Keyed extends Map<number, number> {}
+class Listed extends Set<number> {}
+const say = (...values: unknown[]) => console.log(...values);
+say(typeof AbortSignal.timeout(new Delay() as unknown as number).aborted, (Keyed as any)[Symbol.species] === Keyed, (Listed as any)[Symbol.species] === Listed);
+const registry = new FinalizationRegistry((held: Delay) => say(held));
+registry.register(new Delay(), new Delay()); say(registry.unregister(new Delay()));
+const holder = { get made() { return new Delay(); }, kept: new Delay() };
+say((holder as any).__lookupGetter__("made").call(holder) instanceof Delay, (holder as any).__lookupSetter__("made"), (holder as any).__lookupGetter__("kept"));
+say(Object.getOwnPropertyDescriptor(holder, "kept")!.value instanceof Delay, Error.stackTraceLimit + 0 > 0, new TypeError("x").name.length, TypeError.prototype.message.length);
+say(new WebAssembly.Global({ value: "externref", mutable: true }, holder).value === holder, navigator.hardwareConcurrency > 0, navigator.userAgent.length > 0, navigator.platform.length > 0);
+say(Bun.enableANSIColors === true || Bun.enableANSIColors === false, Bun.dns.ADDRCONFIG + Bun.dns.ALL + Bun.dns.V4MAPPED > 0, typeof (Bun.dns as any).resolve, require("node:module").builtinModules.includes("fs"));
+process.exit(0);
+//// one-evaluation-for-import-and-native-require.ts
+// node:events and node:stream reached through import, require, process.getBuiltinModule and process.stdout are each evaluated once. A node:vm context runs its own built-ins. A ShadowRealm evaluates the module once more, from its text.
+import events, { EventEmitter } from "node:events";
+import { createRequire } from "node:module";
+import vm from "node:vm";
+
+const lines: string[] = [];
+const say = (label: string, value: unknown) => lines.push(label + ": " + String(value));
+const getBuiltinModule = (name: string) => (process as any).getBuiltinModule(name);
+
+const stdout = process.stdout;
+const stream = require("node:stream");
+
+say("require gives the imported node:events", require("node:events") === events);
+say("require without the prefix gives it", require("events") === events);
+say("createRequire gives it", createRequire(import.meta.url)("node:events") === events);
+say("a dynamic import gives it", (await import("node:events")).default === events);
+say("process.getBuiltinModule gives it", getBuiltinModule("node:events") === events);
+say("the named export is the default export", EventEmitter === events);
+
+say("a dynamic import gives the required node:stream", (await import("node:stream")).default === stream);
+say("process.getBuiltinModule gives it", getBuiltinModule("node:stream") === stream);
+say("Stream inherits from the imported EventEmitter", Object.getPrototypeOf(stream.Stream.prototype) === events.prototype);
+
+say("process.stdout is a Writable of the required module", stdout instanceof stream.Writable);
+say("process.stdout is a Stream of the required module", stdout instanceof stream.Stream);
+say("process.stdout is an EventEmitter of the imported module", stdout instanceof events);
+
+(events as any).sharedMarker = "set on the import";
+say("a property set on the import, read through require", require("node:events").sharedMarker);
+say("read through process.getBuiltinModule", getBuiltinModule("node:events").sharedMarker);
+say("read through node:stream", Object.getPrototypeOf(stream.Stream).sharedMarker);
+delete (events as any).sharedMarker;
+say("deleted on the import, read through require", require("node:events").sharedMarker);
+
+require("node:events").prototype.inheritedMarker = "set through require";
+say("a property set on the prototype through require, read on process.stdout", (stdout as any).inheritedMarker);
+say("read on a new emitter of the import", (new events() as any).inheritedMarker);
+delete (events.prototype as any).inheritedMarker;
+
+events.defaultMaxListeners = 23;
+say("defaultMaxListeners set on the import, read through require", require("node:events").defaultMaxListeners);
+say("read by process.stdout", stdout.getMaxListeners());
+say("read by a new stream", new stream.PassThrough().getMaxListeners());
+
+let heard = 0;
+stdout.once("marker", () => heard++);
+say("listeners of process.stdout counted by the import", events.listenerCount(stdout, "marker"));
+stdout.emit("marker");
+stdout.emit("marker");
+say("events heard", heard);
+
+const context = vm.createContext({});
+say("a context maps and joins", vm.runInContext("[1, 2].map(x => x * 2).join()", context));
+say("a context creates a Map", vm.runInContext("new Map().size", context));
+const contextArray = vm.runInContext("Array", context);
+const arrayOfContext = vm.runInContext("[1, 2, 3]", context);
+say("the context has its own Array", contextArray !== Array);
+say("the context has its own map", arrayOfContext.map !== Array.prototype.map);
+say("an array of the context is an instance of this realm's Array", arrayOfContext instanceof Array);
+say("an array of the context is an array", Array.isArray(arrayOfContext));
+say("the context's map calls a function of the program", arrayOfContext.map((x: number) => x + 1).join());
+say("the context's map on an array of the program", contextArray.prototype.map.call([4, 5], (x: number) => x * 3).join());
+
+try {
+  const realm = new (globalThis as any).ShadowRealm();
+  say("a ShadowRealm evaluates its own node:events", await realm.importValue("node:events", "defaultMaxListeners"));
+} catch (error: any) {
+  say("a ShadowRealm import throws", error?.name);
+}
+events.defaultMaxListeners = 10;
+
+console.log(lines.join("\n"));
+//// one-object-under-two-names.mjs
+// One object that stands under two names of the platform. Each comparison is straight-line code, so that the compiler sees what it knows about both sides.
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+function same(name, answer) {
+  console.log(name + " " + answer);
+}
+const events = require("node:events");
+const stream = require("node:stream");
+const http = require("node:http");
+const https = require("node:https");
+const net = require("node:net");
+const tls = require("node:tls");
+const util = require("node:util");
+const path = require("node:path");
+const fs = require("node:fs");
+const timers = require("node:timers");
+const buffer = require("node:buffer");
+const url = require("node:url");
+const crypto = require("node:crypto");
+const web = require("node:stream/web");
+const perf = require("node:perf_hooks");
+const emitter = new events();
+const readable = new stream.Readable({ read() {} });
+
+same("console._stdout process.stdout", console._stdout === process.stdout);
+same("console._stderr process.stderr", console._stderr === process.stderr);
+same("process require(process)", process === require("node:process"));
+same("process globalThis.process", process === globalThis.process);
+same("nextTick require(process).nextTick", process.nextTick === require("node:process").nextTick);
+same("nextTick globalThis.process.nextTick", process.nextTick === globalThis.process.nextTick);
+same("process.on emitter.on", process.on === emitter.on);
+same("process.emit emitter.emit", process.emit === emitter.emit);
+same("process.stdout.on emitter.on", process.stdout.on === emitter.on);
+same("process.stdout.write Writable.prototype.write", process.stdout.write === stream.Writable.prototype.write);
+same("console require(console)", console === require("node:console"));
+same("console.log require(console).log", console.log === require("node:console").log);
+same("Buffer buffer.Buffer", Buffer === buffer.Buffer);
+same("Buffer.from buffer.Buffer.from", Buffer.from === buffer.Buffer.from);
+same("atob buffer.atob", atob === buffer.atob);
+same("btoa buffer.btoa", btoa === buffer.btoa);
+same("Blob buffer.Blob", Blob === buffer.Blob);
+same("File buffer.File", File === buffer.File);
+same("URL url.URL", URL === url.URL);
+same("URLSearchParams url.URLSearchParams", URLSearchParams === url.URLSearchParams);
+same("setTimeout timers.setTimeout", setTimeout === timers.setTimeout);
+same("setInterval timers.setInterval", setInterval === timers.setInterval);
+same("setImmediate timers.setImmediate", setImmediate === timers.setImmediate);
+same("clearTimeout timers.clearTimeout", clearTimeout === timers.clearTimeout);
+same("clearInterval timers.clearInterval", clearInterval === timers.clearInterval);
+same("clearImmediate timers.clearImmediate", clearImmediate === timers.clearImmediate);
+same("timers.promises timers/promises", timers.promises === require("node:timers/promises"));
+same("TextDecoder util.TextDecoder", TextDecoder === util.TextDecoder);
+same("TextEncoder util.TextEncoder", TextEncoder === util.TextEncoder);
+same("util.types util/types", util.types === require("node:util/types"));
+same("util.inspect.custom Symbol.for", util.inspect.custom === Symbol.for("nodejs.util.inspect.custom"));
+same("util.promisify.custom Symbol.for", util.promisify.custom === Symbol.for("nodejs.util.promisify.custom"));
+same("util.inherits twice", util.inherits === require("node:util").inherits);
+same("performance perf_hooks.performance", performance === perf.performance);
+same("PerformanceObserver", PerformanceObserver === perf.PerformanceObserver);
+same("crypto crypto.webcrypto", globalThis.crypto === crypto.webcrypto);
+same("crypto.subtle", globalThis.crypto.subtle === crypto.webcrypto.subtle);
+same("crypto.subtle crypto.subtle", globalThis.crypto.subtle === crypto.subtle);
+same("getRandomValues", globalThis.crypto.getRandomValues === crypto.webcrypto.getRandomValues);
+same("ReadableStream", ReadableStream === web.ReadableStream);
+same("WritableStream", WritableStream === web.WritableStream);
+same("TransformStream", TransformStream === web.TransformStream);
+same("TextDecoderStream", TextDecoderStream === web.TextDecoderStream);
+same("CompressionStream", CompressionStream === web.CompressionStream);
+same("events events.EventEmitter", events === events.EventEmitter);
+same("events.init events", events.init === events);
+same("on addListener", events.prototype.on === events.prototype.addListener);
+same("off removeListener", events.prototype.off === events.prototype.removeListener);
+same("emitter.on prototype.on", emitter.on === events.prototype.on);
+same("emitter.on emitter.addListener", emitter.on === emitter.addListener);
+same("emitter.emit prototype.emit", emitter.emit === events.prototype.emit);
+same("emitter.constructor events", emitter.constructor === events);
+same("getPrototypeOf(emitter)", Object.getPrototypeOf(emitter) === events.prototype);
+same("captureRejectionSymbol", events.captureRejectionSymbol === Symbol.for("nodejs.rejection"));
+same("stream stream.Stream", stream === stream.Stream);
+same("stream.Readable _stream_readable", stream.Readable === require("node:_stream_readable"));
+same("stream.Writable _stream_writable", stream.Writable === require("node:_stream_writable"));
+same("stream.Duplex _stream_duplex", stream.Duplex === require("node:_stream_duplex"));
+same("stream.promises stream/promises", stream.promises === require("node:stream/promises"));
+same("stream.pipeline.promisify", stream.promises.pipeline === require("node:stream/promises").pipeline);
+same("readable.on Readable.prototype.on", readable.on === stream.Readable.prototype.on);
+same("readable.emit emitter.emit", readable.emit === emitter.emit);
+same("readable.read prototype.read", readable.read === stream.Readable.prototype.read);
+same("readable.destroy prototype.destroy", readable.destroy === stream.Readable.prototype.destroy);
+same("readable.pipe prototype.pipe", readable.pipe === stream.Readable.prototype.pipe);
+same("readable.once emitter.once", readable.once === emitter.once);
+same("Readable proto Stream", Object.getPrototypeOf(stream.Readable.prototype) === stream.prototype);
+same("Stream proto EventEmitter", Object.getPrototypeOf(stream.prototype) === events.prototype);
+same("Duplex.write Writable.write", stream.Duplex.prototype.write === stream.Writable.prototype.write);
+same("Duplex.end Writable.end", stream.Duplex.prototype.end === stream.Writable.prototype.end);
+same("http.Agent _http_agent", http.Agent === require("node:_http_agent").Agent);
+same("http.globalAgent _http_agent", http.globalAgent === require("node:_http_agent").globalAgent);
+same("http.IncomingMessage", http.IncomingMessage === require("node:_http_incoming").IncomingMessage);
+same("http.ServerResponse", http.ServerResponse === require("node:_http_server").ServerResponse);
+same("http.Server", http.Server === require("node:_http_server").Server);
+same("http.OutgoingMessage", http.OutgoingMessage === require("node:_http_outgoing").OutgoingMessage);
+same("http.ClientRequest", http.ClientRequest === require("node:_http_client").ClientRequest);
+same("ServerResponse proto", Object.getPrototypeOf(http.ServerResponse.prototype) === http.OutgoingMessage.prototype);
+same("IncomingMessage proto", Object.getPrototypeOf(http.IncomingMessage.prototype) === stream.Readable.prototype);
+same("IncomingMessage.read Readable.read", http.IncomingMessage.prototype.read === stream.Readable.prototype.read);
+same("https.Server proto", Object.getPrototypeOf(https.Server.prototype) === tls.Server.prototype);
+same("net.Stream net.Socket", net.Stream === net.Socket);
+same("net.connect net.createConnection", net.connect === net.createConnection);
+same("Socket proto Duplex", Object.getPrototypeOf(net.Socket.prototype) === stream.Duplex.prototype);
+same("tls.TLSSocket _tls_wrap", tls.TLSSocket === require("node:_tls_wrap").TLSSocket);
+same("path.posix path/posix", path.posix === require("node:path/posix"));
+same("path.win32 path/win32", path.win32 === require("node:path/win32"));
+same("path.posix.posix", path.posix.posix === path.posix);
+same("path path.posix", path === path.posix);
+same("path.join posix.join", path.join === path.posix.join);
+same("fs.promises fs/promises", fs.promises === require("node:fs/promises"));
+same("fs.promises.readFile", fs.promises.readFile === require("node:fs/promises").readFile);
+same("fs.constants.O_RDONLY", fs.constants.O_RDONLY === require("node:constants").O_RDONLY);
+same("fs.ReadStream proto", Object.getPrototypeOf(fs.ReadStream.prototype) === stream.Readable.prototype);
+same("assert.strict assert/strict", require("node:assert").strict === require("node:assert/strict"));
+same("dns.promises dns/promises", require("node:dns").promises === require("node:dns/promises"));
+same("readline.promises", require("node:readline").promises === require("node:readline/promises"));
+same("module module.Module", require("node:module") === require("node:module").Module);
+same("Bun.env process.env", Bun.env === process.env);
+same("Bun.fetch fetch", Bun.fetch === fetch);
+same("Bun globalThis.Bun", Bun === globalThis.Bun);
+same("Bun.peek twice", Bun.peek === globalThis.Bun.peek);
+same("Bun.stdout twice", Bun.stdout === globalThis.Bun.stdout);
+same("queueMicrotask twice", queueMicrotask === globalThis.queueMicrotask);
+same("structuredClone twice", structuredClone === globalThis.structuredClone);
+same("AbortController twice", AbortController === globalThis.AbortController);
+same("EventTarget twice", EventTarget === globalThis.EventTarget);
+same("AbortSignal proto EventTarget", Object.getPrototypeOf(AbortSignal.prototype) === EventTarget.prototype);
+same("Array.prototype.values iterator", Array.prototype.values === Array.prototype[Symbol.iterator]);
+same("Set keys values", Set.prototype.keys === Set.prototype.values);
+same("Set values iterator", Set.prototype.values === Set.prototype[Symbol.iterator]);
+same("Map entries iterator", Map.prototype.entries === Map.prototype[Symbol.iterator]);
+same("String trimLeft trimStart", String.prototype.trimLeft === String.prototype.trimStart);
+same("String trimRight trimEnd", String.prototype.trimRight === String.prototype.trimEnd);
+same("Date toGMTString toUTCString", Date.prototype.toGMTString === Date.prototype.toUTCString);
+same("Number.parseFloat parseFloat", Number.parseFloat === parseFloat);
+same("Number.parseInt parseInt", Number.parseInt === parseInt);
+same("TypedArray toString Array toString", Object.getPrototypeOf(Uint8Array.prototype).toString === Array.prototype.toString);
+same("Buffer proto Uint8Array", Object.getPrototypeOf(Buffer.prototype) === Uint8Array.prototype);
+same("Buffer.prototype.toLocaleString toString", Buffer.prototype.toLocaleString === Buffer.prototype.toString);
+same("Buffer readUint8 readUInt8", Buffer.prototype.readUint8 === Buffer.prototype.readUInt8);
+same("Buffer writeUint32LE writeUInt32LE", Buffer.prototype.writeUint32LE === Buffer.prototype.writeUInt32LE);
+same("URLSearchParams entries iterator", URLSearchParams.prototype.entries === URLSearchParams.prototype[Symbol.iterator]);
+same("Headers entries iterator", Headers.prototype.entries === Headers.prototype[Symbol.iterator]);
+same("FormData entries iterator", FormData.prototype.entries === FormData.prototype[Symbol.iterator]);
+same("Promise then twice", Promise.prototype.then === Promise.resolve(1).then);
+same("async function proto", Object.getPrototypeOf(async function () {}) === Object.getPrototypeOf(async () => {}));
+same("generator proto", Object.getPrototypeOf(function* () {}) === Object.getPrototypeOf(function* () {}));
+same("Function.prototype.call twice", Function.prototype.call === same.call);
+same("Object.prototype.toString twice", Object.prototype.toString === {}.toString);
+same("hasOwnProperty twice", Object.prototype.hasOwnProperty === emitter.hasOwnProperty);
+same("Error.captureStackTrace twice", Error.captureStackTrace === TypeError.captureStackTrace);
+same("globalThis self", globalThis === self);
+same("globalThis global", globalThis === global);
+process.exit(0);
+//// own-errors-for-wrong-arguments.ts
+// The types written inside Bun's own modules are predictions: an argument of another kind reaches the function's own validation and gets that error, with its code, as in plain Bun. The same parameter written in the program is a prediction too: the value goes the slow way and the function answers as in plain Bun.
+import stream from "node:stream";
+import url from "node:url";
+
+const streams: any = stream;
+const urls: any = url;
+const five: any = 5;
+function attempt(label: string, f: () => unknown) {
+  try { console.log(label + ":", String(f())); } catch (e) { console.log(label + ":", (e as Error).name, String((e as { code?: string }).code)); }
+}
+function pathToText(filepath: string) { return "file://" + filepath; }
+
+attempt("url.pathToFileURL(5)", () => urls.pathToFileURL(five));
+attempt("new url.Url().parse(5)", () => new urls.Url().parse(five));
+attempt('stream.setDefaultHighWaterMark(false, "many")', () => streams.setDefaultHighWaterMark(false, "many"));
+attempt('stream.setDefaultHighWaterMark("yes", 7)', () => { streams.setDefaultHighWaterMark("yes", 7); return streams.getDefaultHighWaterMark(true); });
+attempt("a function of the program with (filepath: string), given 5", () => pathToText(five));
+//// own-names-of-bun-are-tested-by-object-has-own.js
+// The host makes a member when it is first looked for, also by a test. What makes the members of `Bun` is in the executable, so the walk ends as in plain Bun.
+let count = 0;
+for (const name of Reflect.ownKeys(Bun)) if (Object.hasOwn(Bun, name)) count++;
+console.log(count > 3);
+//// own-names-of-console-are-tested-by-a-borrowed-property-is-enumerable.js
+// The test reads the descriptor, and with it the value. What makes the members of `console` is in the executable, so the walk ends as in plain Bun.
+let count = 0;
+for (const name of Reflect.ownKeys(console)) if (Object.prototype.propertyIsEnumerable.call(console, name)) count++;
+console.log(count > 3);
+//// own-names-of-process-are-tested-by-a-borrowed-has-own-property.js
+// The host makes a member when it is first looked for, also by a test. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+let count = 0;
+for (const name of Reflect.ownKeys(process)) if (Object.prototype.hasOwnProperty.call(process, name)) count++;
+console.log(count > 3);
+//// own-names-of-process-are-tested-by-a-borrowed-property-is-enumerable.js
+// The test reads the descriptor, and with it the value. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+let count = 0;
+for (const name of Reflect.ownKeys(process)) if (Object.prototype.propertyIsEnumerable.call(process, name)) count++;
+console.log(count > 3);
+//// own-names-of-process-are-tested-by-object-has-own.js
+// The host makes a member when it is first looked for, also by a test. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+let count = 0;
+for (const name of Reflect.ownKeys(process)) if (Object.hasOwn(process, name)) count++;
+console.log(count > 3);
+//// performance-inherits-its-timeline.ts
+// performance has one property of its own, now: mark, measure and the rest lie on Performance.prototype, and the listener methods on EventTarget.prototype, which every event target shares.
+console.log(Object.keys(performance).join(), Object.hasOwn(performance, "mark"), typeof performance.mark, performance.mark === Performance.prototype.mark);
+console.log(Object.getPrototypeOf(performance) === Performance.prototype, Object.getPrototypeOf(Performance.prototype) === EventTarget.prototype);
+console.log(typeof performance.now(), typeof performance.timeOrigin, performance.timeOrigin > 0, typeof (performance as any).timing);
+const mark = performance.mark("first", { detail: { a: 1 } });
+console.log(mark.name, mark.entryType, mark.detail.a, performance.getEntriesByName("first").length, performance.getEntriesByName("first")[0] === mark);
+performance.mark("second");
+const measure = performance.measure("between", "first", "second");
+console.log(measure.name, measure.entryType, typeof measure.duration, performance.getEntries().length, performance.getEntriesByType("mark").length);
+performance.clearMarks("first");
+console.log(performance.getEntriesByType("mark").length);
+performance.clearMarks();
+performance.clearMeasures();
+console.log(performance.getEntries().length, Object.keys(performance.toJSON()).sort().join());
+let heard = 0;
+const listener = (event: Event) => {
+  heard += event.type.length;
+};
+performance.addEventListener("custom", listener);
+console.log(performance.dispatchEvent(new Event("custom")), heard);
+performance.removeEventListener("custom", listener);
+console.log(performance.dispatchEvent(new Event("custom")), heard, performance.addEventListener === EventTarget.prototype.addEventListener);
+console.log((performance as any).onresourcetimingbufferfull, performance.setResourceTimingBufferSize(10), performance.clearResourceTimings());
+const target = new EventTarget();
+target.addEventListener("ping", event => console.log("target heard " + event.type, event.target === target));
+target.dispatchEvent(new Event("ping"));
+const controller = new AbortController();
+controller.signal.addEventListener("abort", () => console.log("aborted", controller.signal.aborted));
+controller.abort();
+class Mine extends EventTarget {
+  count = 0;
+}
+const mine = new Mine();
+mine.addEventListener("x", { handleEvent: () => void mine.count++ });
+mine.dispatchEvent(new Event("x"));
+console.log(mine.count);
+////= lines-3	(performance.mark as any).call({}, "x"
+////= lines-3	new (Performance as any)(
+(performance as any).mark = () => "replaced";
+console.log((performance as any).mark(), Object.hasOwn(performance, "mark"));
+delete (performance as any).mark;
+console.log(typeof performance.mark("third").startTime);
+(performance as any).extra = 4;
+console.log((performance as any).extra + 1, "extra" in performance);
+//// process-argv-is-a-list-a-program-may-replace.ts
+// process.argv, process.execArgv and Bun.argv: native code makes a list of strings at the first read and keeps it; a program may change the list and store anything else in its place.
+console.log(process.argv.length, typeof process.argv[0], Array.isArray(process.argv), process.argv.slice(2).join("|"));
+console.log(process.argv === process.argv, Bun.argv === process.argv, process.execArgv.length, Array.isArray(process.execArgv));
+for (const argument of process.argv.slice(2)) console.log(argument.toUpperCase());
+process.argv.push("pushed");
+console.log(process.argv.at(-1), Bun.argv.at(-1));
+(process as any).argv[0] = 41;
+console.log((process as any).argv[0] + 1, (Bun as any).argv[0] + 1);
+const replacement = [{ a: 1 }];
+(process as any).argv = replacement;
+console.log((process as any).argv === replacement, (process as any).argv[0].a, Bun.argv === (process as any).argv);
+(process as any).argv = 7;
+console.log((process as any).argv + 1);
+(process as any).execArgv = "text";
+console.log((process as any).execArgv.length);
+//// process-inside-a-literal-is-printed-by-the-formatter.js
+// The formatter goes on down into what a literal holds. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+console.log(Bun.inspect({ holder: process }).length > 100);
+//// process-inside-an-array-is-printed-by-the-formatter.js
+// The formatter goes on down into what an array holds. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+console.log(Bun.inspect([process]).length > 100);
+//// process-is-copied-by-object-assign.js
+// The copy reads every member. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+console.log(Object.keys(Object.assign({}, process)).length > 3);
+//// process-is-printed-by-the-formatter.js
+// The formatter of console.log and Bun.inspect walks over every member. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+console.log(Bun.inspect(process).length > 100);
+//// process-is-spread-into-a-literal.js
+// The copy reads every member. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+const copy = { ...process };
+console.log(Object.keys(copy).length > 3);
+//// process-is-taken-apart-by-a-rest-pattern.js
+// The copy reads every member. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+const { nothingOfThisName, ...rest } = process;
+console.log(Object.keys(rest).length > 3);
+//// process-is-turned-into-json.js
+// JSON.stringify reads every member. What makes the members of `process` is in the executable, so the walk ends as in plain Bun.
+let text;
+try {
+  text = typeof JSON.stringify(process);
+} catch (error) {
+  text = error.constructor.name;
+}
+console.log(text);
+//// process-listener-methods-lie-on-its-prototype.ts
+// process has no listener methods of its own: on, once, emit and the rest are the native methods of the object above it, and a program may shadow, replace and delete them like any inherited member.
+import { on as importedOn, listenerCount as importedCount } from "node:process";
+
+const seen: string[] = [];
+const first = (value: unknown) => seen.push("first " + value);
+const second = (value: unknown) => seen.push("second " + value);
+
+console.log(Object.hasOwn(process, "on"), typeof process.on, process.on.name, process.on.length);
+console.log(process.on === Object.getPrototypeOf(process).on, importedOn === process.on, importedCount === process.listenerCount);
+console.log(process.on("custom", first) === process, process.once("custom", second) === process);
+console.log(process.listenerCount("custom"), process.listeners("custom").length, process.rawListeners("custom").length);
+console.log(process.eventNames().includes("custom"), typeof process.getMaxListeners());
+console.log(process.emit("custom", 1), process.emit("custom", 2), process.emit("nobody"));
+console.log(seen.join(", "));
+process.prependListener("custom", second);
+process.prependOnceListener("custom", value => seen.push("third " + value));
+process.emit("custom", 3);
+console.log(seen.join(", "));
+console.log(process.off("custom", first) === process, process.removeListener("custom", second) === process, process.listenerCount("custom"));
+process.addListener("other", first);
+console.log(process.removeAllListeners("other") === process, process.listenerCount("other"));
+console.log(process.setMaxListeners(20), process.getMaxListeners());
+console.log(process.constructor.name, Object.prototype.toString.call(Object.getPrototypeOf(process)), Object.prototype.toString.call(process));
+console.log((process as any).domain, (process as any).noDeprecation, (process as any).traceDeprecation, (process as any).traceProcessWarnings, (process as any)._exiting);
+
+const other: any = {};
+console.log((process.on as any).call(other, "x", first) === other, Object.keys(other).join(), (process.listenerCount as any).call(other, "x"));
+////= lines-3	(process.on as any).call(undefined, "x", first
+try {
+  (process.on as any)("x");
+} catch (error) {
+  console.log((error as Error).constructor.name, (error as Error).message);
+}
+
+const emit = process.emit;
+(process as any).emit = function (this: unknown, name: string, ...rest: unknown[]) {
+  if (name === "exit" || name === "beforeExit") console.log("emit is replaced: " + name + " " + rest.length);
+  return (emit as any).call(this, name, ...rest);
+};
+console.log(Object.hasOwn(process, "emit"), process.emit !== emit);
+process.on("beforeExit", code => console.log("before exit " + code));
+process.once("exit", code => console.log("exit " + code));
+(process as any).on = 5;
+console.log((process as any).on + 1, Object.hasOwn(process, "on"));
+delete (process as any).on;
+console.log(typeof process.on);
+//// process-members-in-stack-traces.ts
+// A read of a member of `process` is a call of a small function of the compiler's own: no stack trace shows it, and what is thrown on the way has the place of the read.
+function version(): unknown {
+  return process.version;
+}
+function environment(): unknown {
+  const found = process.env;
+  return found;
+}
+function throughTwo(): unknown {
+  return [version(), environment()].length;
+}
+function told(run: () => unknown): string {
+  try {
+    return "no error: " + typeof run();
+  } catch (error: any) {
+    const lines = String(error.stack)
+      .split("\n")
+      .filter(line => line.includes("process-members-in-stack-traces") || !line.includes(" at "))
+      .map(line => line.replace(/\(?[^ (]*process-members-in-stack-traces\.ts/, "(here").trim());
+    lines[0] = error.name + (error instanceof RangeError ? ": " + error.message : "");
+    return lines.join(" | ");
+  }
+}
+for (let i = 0; i < 3000; i++) throughTwo();
+console.log(told(version), "|", told(environment));
+
+const originalVersion = Object.getOwnPropertyDescriptor(process, "version")!;
+Object.defineProperty(process, "version", {
+  get: function thrower() {
+    throw new RangeError("out of the getter");
+  },
+  configurable: true,
+});
+console.log(told(version));
+console.log(told(throughTwo));
+Object.defineProperty(process, "version", originalVersion);
+console.log(told(version));
+
+console.log(told(throughTwo));
+
+let depth = 0;
+function deeper(): number {
+  depth++;
+  return (process.env === undefined ? 0 : 1) + deeper() + (process.pid > 0 ? 1 : 0);
+}
+for (let round = 0; round < 3; round++) {
+  depth = 0;
+  try {
+    deeper();
+  } catch (error: any) {
+    console.log("the stack is full:", error.name, depth > 1000, typeof process.env, typeof process.pid);
+  }
+}
+export {};
+//// process-members-that-come-late.cjs
+// What a program, a command-line flag or node:events adds to process and to the objects above it after start-up is found by a read, a computed read and `in`.
+function readFlag() {
+  return process.noDeprecation;
+}
+function readAll() {
+  return [process.noDeprecation, process.traceDeprecation, process.throwDeprecation, process.pendingDeprecation, process.traceProcessWarnings, process.noProcessWarnings].join();
+}
+console.log(readAll(), "noDeprecation" in process, Object.hasOwn(process, "noDeprecation"));
+process.noDeprecation = true;
+console.log(readFlag(), "noDeprecation" in process);
+console.log("x" in process, process.x);
+process.x = { y: 1 };
+console.log("x" in process, process.x.y, Object.keys(process).includes("x"));
+console.log(process._events, process._eventsCount, process._maxListeners, "_events" in process);
+const EventEmitter = require("node:events");
+console.log(process._events, process._eventsCount, process._maxListeners, "_events" in process);
+EventEmitter.prototype.added = function () {
+  return "added " + (this === process);
+};
+console.log(process.added());
+Object.getPrototypeOf(process).alsoAdded = 3;
+console.log(process.alsoAdded + 1);
+console.log(typeof process._debugEnd, typeof process._debugProcess, typeof process._startProfilerIdleNotifier, typeof process._stopProfilerIdleNotifier);
+const key = ["no", "Deprecation"].join("");
+console.log(process[key], delete process.noDeprecation, process[key], readFlag());
+function lengthOfStored() {
+  return process.throwDeprecation.length;
+}
+process.throwDeprecation = "text";
+console.log(lengthOfStored(), typeof process.throwDeprecation);
+//// process-names.ts
+// `process.argv`, `Bun.main`, `import.meta.main`, `Bun.embeddedFiles` and `$0` of Bun's shell show the program's own name, and no flag of the compiled run reaches its arguments.
+import path from "node:path";
+
+console.log(path.basename(process.argv[1]));
+console.log(path.basename(Bun.main));
+console.log(Bun.main === process.argv[1]);
+console.log(import.meta.main);
+console.log(Bun.embeddedFiles.length);
+console.log((await Bun.$`echo $0`.text()).trim() === Bun.main);
+console.log(process.argv.length);
+//// process-user-accessor-import.ts
+// Getters the program defines on process run while node:process loads through a computed specifier, not at the first read of the export. Bun's own getters are still read on demand. The last line differs from plain Bun (.expected.txt): it reads process.stdout off a module that is loaded under a computed name, such a load finds what is in the executable and keeps nothing, and nothing else in the program uses process.stdout: Object.defineProperty stores under its key and reads no member of process. The read answers the function that stands for a member that was left out.
+Object.defineProperty(process, "custom", {
+  get() {
+    console.log("read");
+    return 1;
+  },
+  enumerable: true,
+  configurable: true,
+});
+const readArrow = () => {
+  console.log("read arrow");
+  return 2;
+};
+Object.defineProperty(process, "customArrow", { get: readArrow, enumerable: true, configurable: true });
+function readBound(value: number) {
+  console.log("read bound");
+  return value;
+}
+Object.defineProperty(process, "customBound", { get: readBound.bind(null, 3), enumerable: true, configurable: true });
+
+console.log("before");
+const loaded = await import("node:" + ["process"][0]);
+console.log("loaded");
+console.log("after", loaded.custom, loaded.custom);
+console.log("after", loaded.customArrow, loaded.customBound);
+console.log(typeof loaded.stdout, typeof loaded.title);
+
+export {};
+//// promises-resolved-with-every-sort-of-value.ts
+// Promise.resolve of every sort of operand: primitives, the same promise, thenables that fulfill, reject and throw, a subclass; and what Bun.peek reads out of a promise.
+const log = (...values: unknown[]) => console.log(...values);
+const one = Promise.resolve(1);
+log(await one, await Promise.resolve(), await Promise.resolve("text"), await Promise.resolve(null), await Promise.resolve(10n), typeof (await Promise.resolve(Symbol.iterator)));
+one.then(v => log("then", v), e => log("never", e));
+Promise.resolve(2).catch(e => log("never", e)).finally(() => log("finally"));
+const same = Promise.resolve(one);
+log(same === one);
+const thenable = { then(resolve: (v: number) => void) { resolve(7); } };
+log(await Promise.resolve(thenable));
+const failing = { then(_: unknown, reject: (e: unknown) => void) { reject(new RangeError("from then")); } };
+try { await Promise.resolve(failing); } catch (e) { log((e as Error).name, (e as Error).message); }
+const throwing = { get then() { throw new TypeError("getter"); } };
+await Promise.resolve(throwing).then(() => log("never"), e => log("rejected", e.message));
+class Mine<T> extends Promise<T> {}
+log(Mine.resolve(3) instanceof Mine, await Mine.resolve(3), Promise.resolve(Mine.resolve(4)) instanceof Mine);
+log(Bun.peek(one), Bun.peek.status(one), Bun.peek.status(new Promise(() => {})), Bun.peek(5 as any));
+const rejected = Promise.reject(new Error("no")); rejected.catch(() => {});
+log(Bun.peek.status(rejected), (Bun.peek(rejected) as unknown as Error).message);
+//// questions-about-streams-of-every-kind.js
+// The functions of node:stream that ask whether a value is a web stream: of Node's streams, web streams, classes below either, look-alikes and what is no stream at all.
+const stream = require("node:stream");
+class BelowWeb extends ReadableStream { constructor() { super({ start(controller) { controller.enqueue("x"); controller.close(); } }); this.mine = 1; } }
+class BelowWebWritable extends WritableStream {}
+class BelowNode extends stream.Readable { _read() { this.push(null); } }
+function Old() { stream.Writable.call(this); } Object.setPrototypeOf(Old.prototype, stream.Writable.prototype); Old.prototype._write = function (chunk, encoding, done) { done(); };
+const make = [
+  () => new stream.Readable({ read() { this.push(null); } }), () => new stream.Writable({ write(c, e, d) { d(); } }), () => new stream.Duplex({ read() { this.push(null); }, write(c, e, d) { d(); } }), () => new stream.PassThrough(),
+  () => new BelowNode(), () => new Old(), () => new ReadableStream({ start(c) { c.close(); } }), () => new WritableStream(), () => new TransformStream(), () => new BelowWeb(), () => new BelowWebWritable(),
+  () => ({ pipe() {}, on() {}, read() {} }), () => ({ getReader() {}, locked: false }), () => Object.create(ReadableStream.prototype), () => new Proxy(new ReadableStream(), {}), () => ({}), () => [], () => () => {}, () => null, () => undefined, () => 5, () => "text", () => Symbol.iterator, () => new Response("x").body,
+];
+const questions = ["isReadable", "isWritable", "isErrored", "isDisturbed", "isDestroyed"].filter(name => typeof stream[name] === "function");
+const ask = (name, value) => { try { return String(stream[name](value)); } catch (error) { return error.code ?? error.name; } };
+let lines = [];
+for (let round = 0; round < 30; round++) lines = questions.map(name => name + ": " + make.map(create => ask(name, create())).join());
+console.log(lines.join("\n"));
+const ended = [];
+let waiting = 0;
+make.forEach((create, index) => {
+  const value = create();
+  try { waiting++; stream.finished(value, error => { ended.push(index + (error ? " " + (error.code ?? error.name) : " done")); if (--waiting === 0) report(); }); if (value?.resume) value.resume(); if (value?.end) value.end(); if (value?.cancel && !value.locked) value.cancel().catch(() => {}); if (value?.close && !value.locked) value.close().catch(() => {}); } catch (error) { waiting--; ended.push(index + " refused " + (error.code ?? error.name)); }
+});
+const report = () => console.log(ended.sort((a, b) => parseInt(a) - parseInt(b)).join("; "));
+setTimeout(() => { if (waiting > 0) { ended.push("still waiting: " + waiting); report(); } process.exit(0); }, 300);
+try { console.log(stream.compose(new ReadableStream({ start(c) { c.enqueue("a"); c.close(); } }), new stream.PassThrough()) instanceof stream.Duplex, stream.Duplex.from(new BelowWeb()) instanceof stream.Duplex, stream.Readable.fromWeb(new BelowWeb()) instanceof stream.Readable); } catch (error) { console.log(error.code ?? error.name); }
+//// refused-receiver-whose-fields-nobody-reads.ts
+// A function of the host names a value that it refuses in the message of its error, and says there whether the object has properties of its own: fields that nobody reads count.
+import { Readable } from "node:stream";
+function told(run: () => unknown): string {
+  try { return "answered " + String(run()); } catch (error: any) { return `${error.code}: ${error.message}`; }
+}
+const values: any[] = [
+  new (Object.defineProperty(class { x = 1; y = 2; }, "name", { get() { return "Computed"; } }))(),
+  new (Object.defineProperty(class {}, "name", { get() { return "Computed"; } }))(),
+  { __proto__: null, a: 1 },
+  { __proto__: null },
+  { get constructor() { return Object; }, b: 2 },
+];
+for (const value of values) console.log(told(() => Buffer.prototype.compare.call(value, Buffer.alloc(1))));
+for (const value of values) console.log(told(() => Buffer.prototype.toString.call(value)));
+for (const value of values) console.log(told(() => Buffer.prototype.write.call(value, "x")));
+for (const value of values) console.log(told(() => (Blob.prototype as any).text.call(value)));
+for (const value of values) console.log(told(() => (URL.prototype as any).toString.call(value)));
+for (const value of values) console.log(told(() => (TextDecoder.prototype as any).decode.call(value)));
+for (const value of values) console.log(told(() => (Bun.file("x") as any).slice.call(value)));
+const Unnamed: any = Object.defineProperty(class { a = 1; }, "name", { get() { return "Computed"; } });
+Unnamed.prototype.text = Blob.prototype.text;
+console.log(told(() => new Unnamed().text()));
+const bare: any = { __proto__: { __proto__: null, text: Blob.prototype.text }, a: 1 };
+console.log(told(() => bare.text()));
+const bound = Blob.prototype.text.bind({ __proto__: null, c: 3 } as any);
+console.log(told(() => bound()));
+console.log(told(() => Reflect.apply(Blob.prototype.text, { __proto__: null, d: 4 }, [])));
+//// replaced-next-tick-is-obeyed.ts
+// A program that replaces process.nextTick sees the ticks that streams and node:http queue: which callbacks, how many arguments, `this`; a replacement that drops or delays ticks is obeyed; once the original is put back nothing more is seen. Modules that read process.nextTick once, when they are loaded, keep what they read.
+import { createServer } from "node:http";
+import { Readable, Writable } from "node:stream";
+
+const lines: string[] = [];
+const original = process.nextTick;
+let seen: string[] = [];
+function watch() {
+  seen = [];
+  process.nextTick = function (this: unknown, callback: (...all: unknown[]) => void, ...all: unknown[]) {
+    seen.push((callback.name || "(anonymous)") + " " + all.length + (this === process ? "" : " with another this"));
+    return original.call(this, callback, ...all);
+  } as typeof process.nextTick;
+}
+function unwatch(what: string, inOrder: boolean) {
+  process.nextTick = original;
+  lines.push("-- " + what + ": " + seen.length);
+  const counted = new Map<string, number>();
+  for (const line of seen) counted.set(line, (counted.get(line) ?? 0) + 1);
+  if (inOrder) lines.push(...seen);
+  else lines.push(...[...counted].map(([line, count]) => line + " x" + count).sort());
+}
+const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+
+watch();
+await new Promise<void>(resolve => {
+  const chunks: string[] = [];
+  const readable = new Readable({ read() {} });
+  readable.on("data", chunk => chunks.push(String(chunk)));
+  readable.on("end", () => lines.push("read " + chunks.join("|")));
+  readable.on("close", resolve);
+  readable.push("a");
+  readable.push("b");
+  readable.push(null);
+});
+unwatch("a Readable that is read to its end", true);
+
+watch();
+await new Promise<void>(resolve => {
+  const written: string[] = [];
+  const writable = new Writable({
+    write(chunk, _encoding, done) {
+      written.push(String(chunk));
+      done();
+    },
+  });
+  writable.on("finish", () => lines.push("wrote " + written.join("|")));
+  writable.on("close", resolve);
+  writable.write("a");
+  writable.write("b");
+  writable.end("c");
+});
+unwatch("a Writable that is ended", true);
+
+watch();
+await (async () => {
+  const readable = Readable.from(["x", "y"]);
+  const got: string[] = [];
+  for await (const chunk of readable) got.push(chunk);
+  lines.push("iterated " + got.join("|"));
+  await turn();
+})();
+unwatch("a Readable that is iterated", true);
+
+const server = createServer((req, res) => {
+  if (req.method === "GET") return void res.end("got " + req.url);
+  let body = "";
+  req.on("data", chunk => (body += chunk));
+  req.on("end", () => {
+    res.writeHead(201, { "content-type": "text/plain" });
+    res.write("posted ");
+    res.end(body);
+  });
+});
+await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+const address = server.address() as { port: number };
+const url = "http://127.0.0.1:" + address.port;
+lines.push(await (await fetch(url + "/warm")).text());
+await turn();
+
+watch();
+lines.push(await (await fetch(url + "/one")).text());
+await turn();
+await turn();
+unwatch("a GET without a body", false);
+
+watch();
+lines.push(await (await fetch(url + "/two", { method: "POST", body: "the body" })).text());
+await turn();
+await turn();
+unwatch("a POST with a body", false);
+
+lines.push(await (await fetch(url + "/three")).text());
+await turn();
+lines.push("seen behind the last watch: " + seen.length);
+
+lines.push("-- a replacement that holds the ticks back");
+const held: (() => void)[] = [];
+process.nextTick = ((callback: (...all: unknown[]) => void, ...all: unknown[]) => void held.push(() => callback(...all))) as typeof process.nextTick;
+const late = new Readable({ read() {} });
+const events: string[] = [];
+late.on("data", chunk => events.push("data " + chunk));
+late.on("end", () => events.push("end"));
+late.push("held");
+late.push(null);
+await turn();
+lines.push("before: " + events.join() + " | held " + held.length);
+process.nextTick = original;
+while (held.length) held.shift()!();
+await turn();
+lines.push("after: " + events.join());
+
+lines.push("-- an accessor");
+let reads = 0;
+Object.defineProperty(process, "nextTick", {
+  configurable: true,
+  get() {
+    reads++;
+    return original;
+  },
+});
+await new Promise<void>(resolve => {
+  const readable = new Readable({ read() {} });
+  readable.on("data", () => {});
+  readable.on("close", resolve);
+  readable.push("a");
+  readable.push(null);
+});
+Object.defineProperty(process, "nextTick", { configurable: true, writable: true, enumerable: true, value: original });
+lines.push("read " + reads + " times");
+
+lines.push("-- what is no function");
+process.nextTick = 5 as unknown as typeof process.nextTick;
+try {
+  const readable = new Readable({ read() {} });
+  readable.on("data", () => {});
+  readable.push("a");
+  lines.push("nothing thrown");
+} catch (error) {
+  lines.push((error as Error).constructor.name);
+}
+process.nextTick = original;
+
+await new Promise<void>(resolve => server.close(() => resolve()));
+console.log(lines.join("\n"));
+//// req-headers-with-whatever-stands-in-front-of-raw-headers.js
+// req.headers is built natively where a read of req.rawHeaders would reach IncomingMessage.prototype's own accessor. Whatever stands in front of that accessor (an own property, a class below, a prototype put in between, a proxy) is read instead, and the traps of a proxy run in the order of a lookup.
+const http = require("node:http");
+const lines = [];
+const show = (label, value) => lines.push(label + ": " + JSON.stringify(value));
+const pick = headers => ({ "x-one": headers["x-one"], "x-two": headers["x-two"], cookie: headers.cookie, "set-cookie": headers["set-cookie"] });
+class Below extends http.IncomingMessage {
+  get rawHeaders() { return ["X-One", "from the class below", "X-Two", "b"]; }
+  set rawHeaders(value) {}
+}
+const cases = {
+  plain(req) { show("plain", pick(req.headers)); show("plain raw", req.rawHeaders.filter((_, i) => i % 2 === 0).map(name => name.toLowerCase()).filter(name => name.startsWith("x-"))); },
+  rawFirst(req) { const raw = req.rawHeaders; show("raw first", [raw.length > 0, pick(req.headers)]); },
+  assigned(req) { req.rawHeaders = ["X-One", "assigned", "X-Two", "2"]; show("assigned", pick(req.headers)); },
+  own(req) { Object.defineProperty(req, "rawHeaders", { value: ["X-One", "own", "X-One", "again"], configurable: true }); show("own", pick(req.headers)); },
+  ownGetter(req) { Object.defineProperty(req, "rawHeaders", { get() { return ["X-Two", "own getter"]; }, configurable: true }); show("own getter", pick(req.headers)); },
+  sameGetter(req) { Object.defineProperty(req, "rawHeaders", Object.getOwnPropertyDescriptor(http.IncomingMessage.prototype, "rawHeaders")); show("same getter", pick(req.headers)); },
+  between(req) { Object.setPrototypeOf(req, Object.create(Object.create(http.IncomingMessage.prototype))); show("between", pick(req.headers)); },
+  betweenWithName(req) { const middle = Object.create(http.IncomingMessage.prototype, { rawHeaders: { value: ["X-One", "in between"] } }); Object.setPrototypeOf(req, Object.create(middle)); show("between with the name", pick(req.headers)); },
+  otherFold(req) { req._addHeaderLine = function (field, value, dest) { dest[field.toLowerCase()] = "folded " + value; }; show("other fold", pick(req.headers)); },
+  twice(req) { show("twice", [req.headers === req.headers, pick(req.headers)]); },
+  stored(req) { req.headers = { "x-one": "stored" }; show("stored", pick(req.headers)); },
+  proxy(req) {
+    const seen = [];
+    const note = (trap, key) => { if (typeof key !== "symbol") seen.push(key === undefined ? trap : trap + " " + key); };
+    const proxy = new Proxy(req, {
+      get(target, key, receiver) { note("get", key); return Reflect.get(target, key, typeof key === "symbol" ? target : receiver); },
+      set(target, key, value) { note("set", key); target[key] = value; return true; },
+      has(target, key) { note("has", key); return key in target; },
+      getOwnPropertyDescriptor(target, key) { note("getOwnPropertyDescriptor", key); return Reflect.getOwnPropertyDescriptor(target, key); },
+      getPrototypeOf(target) { note("getPrototypeOf"); return Reflect.getPrototypeOf(target); },
+    });
+    show("proxy", pick(proxy.headers)); show("proxy traps", seen);
+  },
+  onPrototype() { let answer; try { answer = pick(http.IncomingMessage.prototype.headers); } catch (error) { answer = error.name; } show("on the prototype", answer); },
+  withoutParent(req) { const get = Object.getOwnPropertyDescriptor(http.IncomingMessage.prototype, "headers").get; let answer; try { answer = Object.keys(get.call(Object.create(null))); } catch (error) { answer = error.name; } show("without a parent", answer); },
+};
+const names = Object.keys(cases);
+function serve(options, list, done) {
+  const server = http.createServer(options, (req, res) => { cases[req.url.slice(1)](req); res.end("ok"); });
+  server.listen(0, "127.0.0.1", async () => {
+    for (const name of list) for (let round = 0; round < 3; round++) {
+      const before = lines.length;
+      await new Promise(resolve => http.get({ port: server.address().port, host: "127.0.0.1", path: "/" + name, agent: false, headers: { "X-One": "1", "X-Two": ["a", "b"], Cookie: ["c=1", "d=2"] } }, res => { res.resume(); res.on("end", resolve); }));
+      if (round) lines.length = before;
+    }
+    server.close(done);
+  });
+}
+serve({}, names, () => { lines.push("-- a class below"); serve({ IncomingMessage: Below }, ["plain", "twice", "own", "between"], () => console.log(lines.join("\n"))); });
+//// require-resolve-answers-the-name-of-a-built-in-module-as-it-was-asked.cjs
+// require.resolve of a built-in module answers the name as it was asked: "fs" for "fs". Programs take `require.resolve(name) === name` for "this is a built-in module".
+console.log("written:", require.resolve("fs"), require.resolve("node:fs"), require.resolve("path"), require.resolve("events"), require.resolve("bun:sqlite"), require.resolve("stream/promises"));
+for (const name of ["fs", "node:fs", "path", "node:path", "events", "bun:sqlite", "stream/promises", "node:stream/promises"]) console.log(name, require.resolve(name), require.resolve(name) === name);
+//// response-events-heard-and-unheard.ts
+import { EventEmitter } from "node:events";
+import { createServer, ServerResponse } from "node:http";
+import type { IncomingMessage } from "node:http";
+import { Stream } from "node:stream";
+
+const lines: string[] = [];
+const turn = () => new Promise<void>(resolve => setImmediate(resolve));
+type Handler = (req: IncomingMessage, res: ServerResponse) => void;
+let handler: Handler = (_req, res) => void res.end("plain");
+
+const server = createServer((req, res) => handler(req, res));
+await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+const url = "http://127.0.0.1:" + (server.address() as { port: number }).port;
+
+async function ask(title: string, how: Handler) {
+  lines.push("-- " + title);
+  handler = how;
+  for (let i = 0; i < 3; i++) {
+    const answer = await (await fetch(url + "/" + i)).text();
+    for (let turns = 0; turns < 4; turns++) await turn();
+    lines.push("answer: " + answer);
+  }
+}
+
+const names = ["socket", "prefinish", "finish", "close"];
+
+for (let i = 0; i < 200; i++) await (await fetch(url + "/warm")).text();
+await turn();
+
+await ask("nobody listens", (_req, res) => void res.end("quiet"));
+
+await ask("a listener for every event", (_req, res) => {
+  for (const name of names) res.on(name, () => lines.push("heard " + name));
+  res.end("heard");
+});
+
+await ask("two listeners for close, one once", (_req, res) => {
+  res.on("close", () => lines.push("close 1, closed " + res.closed + ", destroyed " + res.destroyed));
+  res.once("close", () => lines.push("close 2, listeners " + res.listenerCount("close")));
+  res.end("twice");
+});
+
+await ask("a listener added by a listener", (_req, res) => {
+  res.on("prefinish", () => {
+    lines.push("prefinish");
+    res.on("finish", () => {
+      lines.push("finish");
+      res.on("close", () => lines.push("close"));
+    });
+  });
+  res.end("chain");
+});
+
+await ask("emit replaced on the response", (_req, res) => {
+  const original = res.emit;
+  res.emit = function (this: ServerResponse, name: string | symbol, ...rest: unknown[]) {
+    lines.push("own emit " + String(name) + " " + rest.length);
+    return original.call(this, name, ...rest);
+  } as typeof res.emit;
+  res.end("own");
+});
+
+{
+  const original = ServerResponse.prototype.emit;
+  ServerResponse.prototype.emit = function (this: ServerResponse, name: string | symbol, ...rest: unknown[]) {
+    lines.push("class emit " + String(name) + " " + rest.length);
+    return original.call(this, name, ...rest);
+  } as typeof original;
+  await ask("emit replaced on ServerResponse.prototype", (_req, res) => void res.end("class"));
+  ServerResponse.prototype.emit = original;
+}
+
+{
+  const seen: string[] = [];
+  const original = EventEmitter.prototype.emit;
+  EventEmitter.prototype.emit = function (this: EventEmitter, name: string | symbol, ...rest: unknown[]) {
+    if (this instanceof ServerResponse) seen.push(String(name));
+    return original.call(this, name, ...rest);
+  } as typeof original;
+  await ask("emit replaced on EventEmitter.prototype", (_req, res) => void res.end("base"));
+  EventEmitter.prototype.emit = original;
+  lines.push("seen: " + seen.join());
+}
+
+{
+  const seen: string[] = [];
+  const prototype = Stream.prototype as unknown as { emit?: typeof EventEmitter.prototype.emit };
+  prototype.emit = function (this: EventEmitter, name: string | symbol, ...rest: unknown[]) {
+    if (this instanceof ServerResponse) seen.push(String(name));
+    return EventEmitter.prototype.emit.call(this, name, ...rest);
+  };
+  await ask("emit defined on Stream.prototype", (_req, res) => void res.end("stream"));
+  delete prototype.emit;
+  lines.push("seen: " + seen.join());
+}
+
+await ask("nobody listens again", (_req, res) => void res.end("quiet"));
+
+await ask("the events object replaced", (_req, res) => {
+  const events = Object.create(null);
+  events.close = () => lines.push("close from another events object");
+  (res as unknown as { _events: unknown })._events = events;
+  res.end("replaced");
+});
+
+await ask("written in pieces, ended late", (_req, res) => {
+  res.on("close", () => lines.push("close, finished " + res.writableFinished));
+  res.write("a");
+  setImmediate(() => {
+    res.write("b");
+    res.end("c");
+  });
+});
+
+await ask("destroyed before it ends", (_req, res) => {
+  res.on("close", () => lines.push("close, finished " + res.writableFinished + ", destroyed " + res.destroyed));
+  res.on("finish", () => lines.push("finish"));
+  res.write("part");
+  setImmediate(() => res.destroy());
+}).catch(error => lines.push("the client: " + (error as Error).name));
+await turn();
+await turn();
+
+server.close();
+await turn();
+console.log(lines.join("\n"));

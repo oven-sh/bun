@@ -1,0 +1,12 @@
+{
+ "a-hundred-of-them": "as bun run",
+ "arguments-shown-without-an-eval": "as bun run",
+ "as-a-constructor": "as bun run",
+ "first-use-in-a-branch-not-taken": "as bun run",
+ "first-use-in-another-function": "as bun run",
+ "its-own-properties": "as bun run",
+ "stored-to-at-the-top": "as bun run",
+ "the-let-is-not-yet-there": "as bun run",
+ "they-see-one-another-and-top-level-names": "as bun run",
+ "this-and-call": "as bun run"
+}

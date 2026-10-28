@@ -227,6 +227,39 @@ describe("DOMException in Node.js environment", () => {
     );
   });
 
+  it("the stack header reads name and message along the prototype chain, like a plain Error", () => {
+    const header = error => error.stack.split("\n")[0];
+    class SubDOMException extends DOMException {}
+    class SubError extends Error {}
+    for (const Sub of [SubDOMException, SubError])
+      Object.defineProperty(Sub.prototype, "name", { value: "CustomError", configurable: true });
+    const undefinedName = error => (Object.defineProperty(error, "name", { value: undefined }), header(error));
+    const undefinedMessage = error => (Object.defineProperty(error, "message", { value: undefined }), header(error));
+
+    const prototype = DOMException.prototype;
+    const nameAttribute = Object.getOwnPropertyDescriptor(prototype, "name");
+    delete prototype.name;
+    let withoutNameAttribute;
+    try {
+      withoutNameAttribute = header(new DOMException("boom", "AbortError"));
+    } finally {
+      Object.defineProperty(prototype, "name", nameAttribute);
+    }
+
+    expect({
+      subclass: header(new SubDOMException("boom", "AbortError")),
+      undefinedName: undefinedName(new DOMException("boom", "AbortError")),
+      undefinedMessage: undefinedMessage(new DOMException("boom", "AbortError")),
+      withoutNameAttribute,
+    }).toEqual({
+      subclass: header(new SubError("boom")),
+      undefinedName: undefinedName(new Error("boom")),
+      // As in Node; a plain Error in Bun says "Error: undefined".
+      undefinedMessage: "AbortError",
+      withoutNameAttribute: "Error: boom",
+    });
+  });
+
   it("own name property wins in the uncaught exception report", async () => {
     await using proc = Bun.spawn({
       cmd: [

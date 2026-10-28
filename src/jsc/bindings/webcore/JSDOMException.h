@@ -77,8 +77,7 @@ public:
     // accessors. Call before anything that may make ErrorInstance materialize the stack.
     static void willMaterializeErrorInfo(JSC::JSGlobalObject*, JSC::ErrorInstance*);
 
-    // An own primitive data property wins over the wrapped impl, as it does for a plain Error.
-    // Runs no JS. Leaves no exception pending but a termination.
+    // What the header of a plain Error's stack would read. Runs no JS. Leaves no exception pending but a termination.
     WTF::String displayName(JSC::JSGlobalObject*);
     WTF::String displayMessage(JSC::JSGlobalObject*);
     WTF::String displayHeader(JSC::JSGlobalObject*);
@@ -95,7 +94,7 @@ protected:
     void finishCreation(JSC::VM&);
 
 private:
-    WTF::String ownStringOr(JSC::JSGlobalObject*, JSC::PropertyName, WTF::String&& fallback);
+    WTF::String headerPart(JSC::JSGlobalObject*, JSC::PropertyName, const WTF::String& implValue, ASCIILiteral absent);
     void prependStackHeaderIfFramesOnly(JSC::JSGlobalObject*);
 
     const Ref<DOMException> m_wrapped;

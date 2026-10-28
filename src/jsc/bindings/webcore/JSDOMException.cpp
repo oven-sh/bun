@@ -307,47 +307,58 @@ bool JSDOMException::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, 
     return Base::deleteProperty(cell, globalObject, propertyName, slot);
 }
 
-// Same joining rule as formatStackTrace: either side may be empty.
+// Same joining rule as ErrorInstance::stackWithHeader(), whose fallback also keeps a header past String::MaxLength from crashing.
 String JSDOMException::displayHeader(JSGlobalObject* globalObject)
 {
     auto name = displayName(globalObject);
     auto message = displayMessage(globalObject);
-    if (name.isEmpty())
-        return message;
-    if (message.isEmpty())
-        return name;
-    return makeString(name, ": "_s, message);
+    String header = tryMakeString(name, name.isEmpty() || message.isEmpty() ? ""_s : ": "_s, message);
+    return header.isNull() ? message : header;
 }
 
-String JSDOMException::ownStringOr(JSGlobalObject* globalObject, PropertyName propertyName, String&& fallback)
+// What [[Get]] reads, without running JS: the first data property along the prototype chain, or
+// DOMException.prototype's attribute, read from the impl. A getter is skipped, as
+// ErrorInstance::sanitizedNameString() skips one. Past a Proxy, the impl's value is the best guess.
+String JSDOMException::headerPart(JSGlobalObject* globalObject, PropertyName propertyName, const String& implValue, ASCIILiteral absent)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // JSObject's lookup, not ours: it must not materialize anything, and VMInquiry runs no getter.
-    PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    bool found = JSObject::getOwnPropertySlot(this, globalObject, propertyName, slot);
-    String string;
-    if (!scope.exception() && found && slot.isValue()) {
-        JSValue value = slot.getValue(globalObject, propertyName);
-        // toWTFString throws for a Symbol, or on OOM resolving a rope.
-        if (value.isPrimitive() && !value.isUndefined())
-            string = value.toWTFString(globalObject);
+    JSValue value;
+    for (JSObject* object = this; object; object = object->getPrototypeDirect().getObject()) {
+        if (object->type() == ProxyObjectType)
+            return implValue;
+        PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+        bool found = object->methodTable()->getOwnPropertySlot(object, globalObject, propertyName, slot);
+        if (scope.exception()) [[unlikely]]
+            break;
+        if (!found)
+            continue;
+        if (slot.isValue()) {
+            value = slot.getValue(globalObject, propertyName);
+            break;
+        }
+        if (dynamicDowncast<JSDOMExceptionPrototype>(object))
+            return implValue;
     }
+    String string;
+    // toWTFString throws for a Symbol, or on OOM resolving a rope.
+    if (!scope.exception() && value && value.isPrimitive() && !value.isUndefined())
+        string = value.toWTFString(globalObject);
     if (scope.exception()) [[unlikely]] {
         (void)scope.tryClearException();
-        return WTF::move(fallback);
+        return absent;
     }
-    return string.isNull() ? WTF::move(fallback) : WTF::move(string);
+    return string.isNull() ? String(absent) : WTF::move(string);
 }
 
 String JSDOMException::displayName(JSGlobalObject* globalObject)
 {
-    return ownStringOr(globalObject, globalObject->vm().propertyNames->name, wrapped().name());
+    return headerPart(globalObject, globalObject->vm().propertyNames->name, wrapped().name(), "Error"_s);
 }
 
 String JSDOMException::displayMessage(JSGlobalObject* globalObject)
 {
-    return ownStringOr(globalObject, globalObject->vm().propertyNames->message, wrapped().message());
+    return headerPart(globalObject, globalObject->vm().propertyNames->message, wrapped().message(), ""_s);
 }
 
 JSObject* JSDOMException::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)

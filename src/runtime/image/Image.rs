@@ -2038,21 +2038,27 @@ fn derive_axis(given: u32, src_given: u32, src_other: u32) -> u32 {
 
 /// Map a resize spec to concrete output dims given the current dims.
 fn resolve_resize(r: Resize, sw: u32, sh: u32) -> (u32, u32) {
-    let (mut w, mut h) = match (r.w, r.h) {
+    // A derived side already carries the source aspect ratio, so `fit:
+    // "inside"` has nothing to shrink there. Re-fitting a derived box would
+    // round the given side off by one (943×1520 at width 500 → 499×805).
+    // Sharp ignores `fit` for a single-axis resize as well.
+    let (w, h) = match (r.w, r.h) {
         (0, 0) => return (sw, sh),
         (0, h) => (derive_axis(h, sh, sw), h),
         (w, 0) => (w, derive_axis(w, sw, sh)),
+        (w, h) if r.fit == Fit::Inside => {
+            // Shrink the box so the source's aspect ratio is preserved and
+            // both sides fit. (Sharp's `fit:'inside'`.)
+            let sx = (w as f64) / (sw as f64);
+            let sy = (h as f64) / (sh as f64);
+            let s = sx.min(sy);
+            (
+                1u32.max(((sw as f64) * s).round() as u32),
+                1u32.max(((sh as f64) * s).round() as u32),
+            )
+        }
         (w, h) => (w, h),
     };
-    if r.fit == Fit::Inside {
-        // Shrink the box so the source's aspect ratio is preserved and
-        // both sides fit. (Sharp's `fit:'inside'`.)
-        let sx = (w as f64) / (sw as f64);
-        let sy = (h as f64) / (sh as f64);
-        let s = sx.min(sy);
-        w = 1u32.max(((sw as f64) * s).round() as u32);
-        h = 1u32.max(((sh as f64) * s).round() as u32);
-    }
     if r.without_enlargement && (w > sw || h > sh) {
         return (sw, sh);
     }

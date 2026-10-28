@@ -540,7 +540,7 @@ fn compute_simple_selector_specificity<Impl: BunSelectorImpl>(
 fn parse_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    state: &mut SelectorParsingState,
+    mut state: SelectorParsingState,
     nesting_requirement: NestingRequirement,
 ) -> CResult<GenericSelector<Impl>> {
     if nesting_requirement == NestingRequirement::Prefixed {
@@ -554,10 +554,11 @@ fn parse_selector<Impl: BunSelectorImpl>(
     }
 
     let mut builder = SelectorBuilder::<Impl>::init_in(ArenaPtr::new(input.arena()));
+    let nesting_selectors = input.nesting_selectors();
 
     'outer_loop: loop {
         // Parse a sequence of simple selectors.
-        let empty = parse_compound_selector::<Impl>(parser, state, input, &mut builder)?;
+        let empty = parse_compound_selector::<Impl>(parser, &mut state, input, &mut builder)?;
         if empty {
             let kind: SelectorParseErrorKind = if builder.has_combinators() {
                 SelectorParseErrorKind::DanglingCombinator
@@ -658,7 +659,7 @@ fn parse_selector<Impl: BunSelectorImpl>(
         builder.push_combinator(combinator);
     }
 
-    if !state.contains(SelectorParsingState::AFTER_NESTING) {
+    if input.nesting_selectors() == nesting_selectors {
         match nesting_requirement {
             NestingRequirement::Implicit => {
                 builder.add_nesting_prefix();
@@ -715,7 +716,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
 
     let mut empty: bool = true;
     if parser.is_nesting_allowed() && input.try_parse(|i| i.expect_delim(b'&')).is_ok() {
-        state.insert(SelectorParsingState::AFTER_NESTING);
+        input.note_nesting_selector();
         builder.push_simple_selector(GenericComponent::Nesting);
         empty = false;
     }
@@ -849,7 +850,7 @@ fn parse_scope_switch(input: &mut CssParser) -> CResult<bool> {
 fn parse_relative_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    state: &mut SelectorParsingState,
+    state: SelectorParsingState,
     nesting_requirement_: NestingRequirement,
 ) -> CResult<GenericSelector<Impl>> {
     // https://www.w3.org/TR/selectors-4/#parse-relative-selector
@@ -1640,11 +1641,10 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         error_recovery: ParseErrorRecovery,
         nesting_requirement: NestingRequirement,
     ) -> CResult<Self> {
-        let mut state = SelectorParsingState::empty();
         Self::parse_with_state(
             parser,
             input,
-            &mut state,
+            SelectorParsingState::empty(),
             error_recovery,
             nesting_requirement,
         )
@@ -1656,11 +1656,10 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
         error_recovery: ParseErrorRecovery,
         nesting_requirement: NestingRequirement,
     ) -> CResult<Self> {
-        let mut state = SelectorParsingState::empty();
         Self::parse_relative_with_state(
             parser,
             input,
-            &mut state,
+            SelectorParsingState::empty(),
             error_recovery,
             nesting_requirement,
         )
@@ -1669,7 +1668,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
     pub(crate) fn parse_with_state(
         parser: &mut SelectorParser,
         input: &mut CssParser,
-        state: &mut SelectorParsingState,
+        state: SelectorParsingState,
         recovery: ParseErrorRecovery,
         nesting_requirement: NestingRequirement,
     ) -> CResult<Self> {
@@ -1686,7 +1685,7 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
     pub(crate) fn parse_relative_with_state(
         parser: &mut SelectorParser,
         input: &mut CssParser,
-        state: &mut SelectorParsingState,
+        state: SelectorParsingState,
         recovery: ParseErrorRecovery,
         nesting_requirement: NestingRequirement,
     ) -> CResult<Self> {
@@ -1703,39 +1702,27 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
     fn parse_list_with_state(
         parser: &mut SelectorParser,
         input: &mut CssParser,
-        state: &mut SelectorParsingState,
+        state: SelectorParsingState,
         recovery: ParseErrorRecovery,
         nesting_requirement: NestingRequirement,
         parse_one: fn(
             &mut SelectorParser,
             &mut CssParser,
-            &mut SelectorParsingState,
+            SelectorParsingState,
             NestingRequirement,
         ) -> CResult<GenericSelector<Impl>>,
     ) -> CResult<Self> {
-        let original_state = *state;
         let mut values: SmallList<GenericSelector<Impl>, 1> = SmallList::default();
 
         loop {
-            // Reshaped for borrowck — capture a local flag instead of a
-            // raw `*mut SelectorParsingState`, then fold into `state` after return.
-            let mut saw_nesting = false;
             let selector =
                 input.parse_until_before(css::Delimiters::COMMA, |input2: &mut CssParser| {
-                    let mut selector_state = original_state;
                     // A bare `:global` ends with its selector.
                     let flags = input2.flags;
-                    let result =
-                        parse_one(parser, input2, &mut selector_state, nesting_requirement);
+                    let result = parse_one(parser, input2, state, nesting_requirement);
                     input2.flags = flags;
-                    if selector_state.contains(SelectorParsingState::AFTER_NESTING) {
-                        saw_nesting = true;
-                    }
                     result
                 });
-            if saw_nesting {
-                state.insert(SelectorParsingState::AFTER_NESTING);
-            }
 
             let was_ok = selector.is_ok();
             match selector {
@@ -1810,8 +1797,8 @@ pub struct GenericSelector<Impl: SelectorImpl> {
 impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
     /// Parse a selector, without any pseudo-element.
     pub fn parse(parser: &mut SelectorParser, input: &mut CssParser) -> CResult<Self> {
-        let mut state = SelectorParsingState::empty();
-        parse_selector::<Impl>(parser, input, &mut state, NestingRequirement::None)
+        let state = SelectorParsingState::empty();
+        parse_selector::<Impl>(parser, input, state, NestingRequirement::None)
     }
 
     pub(crate) fn append(&mut self, component: GenericComponent<Impl>) {
@@ -2648,9 +2635,6 @@ bitflags::bitflags! {
         /// Whether we explicitly disallow pseudo-element-like things.
         const DISALLOW_PSEUDOS = 1 << 6;
 
-        /// Whether we have seen a nesting selector.
-        const AFTER_NESTING = 1 << 7;
-
         const AFTER_WEBKIT_SCROLLBAR = 1 << 8;
         const AFTER_VIEW_TRANSITION = 1 << 9;
         const AFTER_UNKNOWN_PSEUDO_ELEMENT = 1 << 10;
@@ -3344,7 +3328,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                             ));
                         }
                         let selector = input.parse_nested_block(|input2: &mut CssParser| {
-                            parse_inner_compound_selector::<Impl>(parser, input2, state)
+                            parse_inner_compound_selector::<Impl>(parser, input2, *state)
                         })?;
                         return Ok(Some(S::SlottedPseudo(selector)));
                     }
@@ -3375,7 +3359,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
             } else {
                 let pseudo_class: GenericComponent<Impl> = if is_functional {
                     input.parse_nested_block(|input2: &mut CssParser| {
-                        parse_functional_pseudo_class::<Impl>(parser, input2, name, state)
+                        parse_functional_pseudo_class::<Impl>(parser, input2, name, *state)
                     })?
                 } else {
                     parse_simple_pseudo_class::<Impl>(parser, location, name, *state)?
@@ -3407,7 +3391,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
             }
             Some(b'&') => {
                 if parser.is_nesting_allowed() {
-                    state.insert(SelectorParsingState::AFTER_NESTING);
+                    input.note_nesting_selector();
                     return Ok(Some(S::SimpleSelector(GenericComponent::Nesting)));
                 }
             }
@@ -3603,30 +3587,26 @@ pub(crate) fn is_css2_pseudo_element(name: &[u8]) -> bool {
 pub(crate) fn parse_inner_compound_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    state: &mut SelectorParsingState,
+    state: SelectorParsingState,
 ) -> CResult<GenericSelector<Impl>> {
-    let mut child_state = {
-        let mut child_state = *state;
+    let child_state = {
+        let mut child_state = state;
         child_state.insert(SelectorParsingState::DISALLOW_PSEUDOS);
         child_state.insert(SelectorParsingState::DISALLOW_COMBINATORS);
         child_state
     };
     // A bare `:global` ends with its selector.
     let flags = input.flags;
-    let result = parse_selector::<Impl>(parser, input, &mut child_state, NestingRequirement::None);
+    let result = parse_selector::<Impl>(parser, input, child_state, NestingRequirement::None);
     input.flags = flags;
-    let result = result?;
-    if child_state.contains(SelectorParsingState::AFTER_NESTING) {
-        state.insert(SelectorParsingState::AFTER_NESTING);
-    }
-    Ok(result)
+    result
 }
 
 pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     name: Str,
-    state: &mut SelectorParsingState,
+    state: SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
     crate::match_ignore_ascii_case! { name, {
         b"nth-child" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::Child),
@@ -3754,7 +3734,7 @@ pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
 pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    state: &mut SelectorParsingState,
+    state: SelectorParsingState,
     ty: NthType,
 ) -> CResult<GenericComponent<Impl>> {
     if !state.allows_tree_structural_pseudo_classes() {
@@ -3781,8 +3761,8 @@ pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
 
     // Whitespace between "of" and the selector list is optional
     // https://github.com/w3c/csswg-drafts/issues/8285
-    let mut child_state = {
-        let mut s = *state;
+    let child_state = {
+        let mut s = state;
         s.insert(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
         s.insert(SelectorParsingState::DISALLOW_PSEUDOS);
         s
@@ -3794,13 +3774,10 @@ pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
     let selectors = GenericSelectorList::<Impl>::parse_with_state(
         parser,
         input,
-        &mut child_state,
+        child_state,
         ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
-    if child_state.contains(SelectorParsingState::AFTER_NESTING) {
-        state.insert(SelectorParsingState::AFTER_NESTING);
-    }
 
     Ok(GenericComponent::NthOf(NthOfSelectorData {
         data: nth_data,
@@ -3813,7 +3790,7 @@ pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
 pub(crate) fn parse_is_or_where<Impl: BunSelectorImpl, F>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    state: &mut SelectorParsingState,
+    state: SelectorParsingState,
     func: F,
 ) -> CResult<GenericComponent<Impl>>
 where
@@ -3825,8 +3802,8 @@ where
     //     Pseudo-elements cannot be represented by the matches-any
     //     pseudo-class; they are not valid within :is().
     //
-    let mut child_state = {
-        let mut child_state = *state;
+    let child_state = {
+        let mut child_state = state;
         child_state.insert(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
         child_state.insert(SelectorParsingState::DISALLOW_PSEUDOS);
         child_state
@@ -3835,13 +3812,10 @@ where
     let inner = GenericSelectorList::<Impl>::parse_with_state(
         parser,
         input,
-        &mut child_state,
+        child_state,
         parser.is_and_where_error_recovery(),
         NestingRequirement::None,
     )?;
-    if child_state.contains(SelectorParsingState::AFTER_NESTING) {
-        state.insert(SelectorParsingState::AFTER_NESTING);
-    }
 
     let selector_slice = inner.into_boxed_selectors();
 
@@ -3854,23 +3828,19 @@ where
 pub(crate) fn parse_has<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    state: &mut SelectorParsingState,
+    state: SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
-    let mut child_state = *state;
     // Since https://github.com/w3c/csswg-drafts/issues/7676, :has() takes a
     // <relative-selector-list>, which is not forgiving. Forgiving recovery would
     // leave the list empty, which has no valid serialization (`:has()`).
     let inner = GenericSelectorList::<Impl>::parse_relative_with_state(
         parser,
         input,
-        &mut child_state,
+        state,
         ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
 
-    if child_state.contains(SelectorParsingState::AFTER_NESTING) {
-        state.insert(SelectorParsingState::AFTER_NESTING);
-    }
     Ok(GenericComponent::Has(inner.into_boxed_selectors()))
 }
 
@@ -3879,23 +3849,19 @@ pub(crate) fn parse_has<Impl: BunSelectorImpl>(
 pub(crate) fn parse_negation<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    state: &mut SelectorParsingState,
+    state: SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
-    let mut child_state = *state;
+    let mut child_state = state;
     child_state.insert(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
     child_state.insert(SelectorParsingState::DISALLOW_PSEUDOS);
 
     let list = GenericSelectorList::<Impl>::parse_with_state(
         parser,
         input,
-        &mut child_state,
+        child_state,
         ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
-
-    if child_state.contains(SelectorParsingState::AFTER_NESTING) {
-        state.insert(SelectorParsingState::AFTER_NESTING);
-    }
 
     Ok(GenericComponent::Negation(list.into_boxed_selectors()))
 }

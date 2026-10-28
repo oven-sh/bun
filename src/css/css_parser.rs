@@ -3408,6 +3408,17 @@ impl<'a> Parser<'a> {
         self.input.math_fn_parse_failures += 1;
     }
 
+    /// See `ParserInput::nesting_selectors`.
+    #[inline]
+    pub(crate) fn nesting_selectors(&self) -> u32 {
+        self.input.nesting_selectors
+    }
+
+    #[inline]
+    pub(crate) fn note_nesting_selector(&mut self) {
+        self.input.nesting_selectors = self.input.nesting_selectors.wrapping_add(1);
+    }
+
     /// See `ParserInput::token_list_parse_failures`.
     #[inline]
     pub(crate) fn token_list_parse_failures(&self) -> u64 {
@@ -3982,6 +3993,8 @@ pub struct ParserInput<'a> {
     /// suffix once per backtracking alternative per nesting level.
     unclosed_block_at_eof: Option<UnclosedBlockAtEof>,
     math_fn_parse_failures: u64,
+    /// How many `&` the selector parser has read, at any depth. A selector holds a `&` if this moved while it was parsed.
+    nesting_selectors: u32,
     /// Monotonic count of raw token-list parse failures
     /// (`TokenList::parse_into`). A token-list parse is context-free: it
     /// fails or succeeds the same way every time it runs over the same
@@ -4020,6 +4033,7 @@ impl<'a> ParserInput<'a> {
             nesting_depth: 0,
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
+            nesting_selectors: 0,
             token_list_parse_failures: 0,
             may_revert_rule: false,
         }

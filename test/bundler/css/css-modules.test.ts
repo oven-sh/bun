@@ -719,27 +719,28 @@ describe("bare :global", () => {
 });
 
 describe("css modules", () => {
-  /**
-   * Bundles the first of `files` through a JS import. `css` is the stylesheet on one line, without
-   * comments and with every `_<hash>` written `_H`. `styles` is the default export of the file.
-   */
-  async function bundle(files: Record<string, string>) {
+  const unhash = (text: string) => text.replace(/_[\w-]{6}(?![\w-])/g, "_H");
+  /** The stylesheet on one line, without comments and with every `_<hash>` written `_H`. */
+  const oneLine = (css: string) =>
+    unhash(css.replace(/\/\*.*?\*\//g, ""))
+      .replace(/\s+/g, " ")
+      .trim();
+
+  /** Bundles the first of `files` through a JS import. `styles` is the default export of the file. */
+  async function bundle(files: Record<string, string>, options: Partial<Bun.BuildConfig> = {}) {
     using dir = tempDir("css-modules", {
       ...files,
       "entry.js": `export { default } from "./${Object.keys(files)[0]}";`,
     });
     const out = join(String(dir), "out");
-    const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], outdir: out, throw: false });
+    const entrypoints = [join(String(dir), "entry.js")];
+    const result = await Bun.build({ ...options, entrypoints, outdir: out, throw: false });
     const logs = result.logs.map(log => Bun.stripANSI(log.message));
     if (!result.success) return { logs };
-    const unhash = (text: string) => text.replace(/_[\w-]{6}(?![\w-])/g, "_H");
-    const css = await Bun.file(join(out, "entry.css")).text();
     const { default: styles } = await import(join(out, "entry.js"));
     return {
       logs,
-      css: unhash(css.replace(/\/\*.*?\*\//g, ""))
-        .replace(/\s+/g, " ")
-        .trim(),
+      css: oneLine(await Bun.file(join(out, "entry.css")).text()),
       styles: JSON.parse(unhash(JSON.stringify(styles))) as Record<string, string>,
     };
   }
@@ -847,6 +848,107 @@ describe("css modules", () => {
     },
   ])("$name", async ({ css, out, styles, logs = [] }) => {
     expect(await bundle({ "styles.module.css": css })).toEqual({ logs, css: out, styles });
+  });
+
+  const scoped = (...names: string[]) => Object.fromEntries(names.map(name => [name, `${name}_H`]));
+  const printsRule = async (parent: string, nested: string, printed: string, styles = scoped(parent.slice(1))) => {
+    const css = `${parent} { ${nested} { color: red } }`;
+    expect(await bundle({ "styles.module.css": css })).toEqual({ logs: [], css: `${printed} { color: red; }`, styles });
+  };
+
+  // The `&` in the argument of `:global()` or `:local()` is the `&` of the rule, so the rule gets no other `&`.
+  test.concurrent.each([
+    // WordPress Playground has this rule.
+    [".site-notice", ":global(& .components-notice__content)", ".site-notice_H .components-notice__content"],
+    [".button", ":global(&.primary)", ".button_H.primary"],
+    [".tip", ":global(body.desktop *:not(:hover) > &)", "body.desktop :not(:hover) > .tip_H"],
+    [".logo", ":global :root.lightTheme :local(&)", ":root.lightTheme .logo_H"],
+    [".nav", ":global(.dark) :local(&)", ".dark .nav_H"],
+    [".title", ":global(&::after)", ".title_H:after"],
+    [".card", ":not(:global(&.x))", ":not(.card_H.x)"],
+    [".nested", ":local(&.local)", ".nested_H.local_H", scoped("nested", "local")],
+    [".a .b", ":global(&.x)", ".a_H .b_H.x", scoped("a", "b")],
+    // A `&` after a type selector.
+    [".p", ".q :global(div&)", ".q_H div.p_H", scoped("p", "q")],
+    [".a .b", ".q :global(div&)", ".q_H div:is(.a_H .b_H)", scoped("a", "b", "q")],
+    // No `&` in the argument, or a `&` in front of it already: as before.
+    [".p", ":global(.g)", ".p_H .g"],
+    [".p", "& :global(&.y)", ".p_H .p_H.y"],
+    [".p", "> :global(&.x)", ".p_H > .p_H.x"],
+  ])("%s { %s } prints %s", printsRule);
+
+  test.concurrent("`&` inside :global() under @media, three rules deep, in a list, and with nesting kept", async () => {
+    const css = `
+      .a { @media print { :global(&.x) { color: red } } }
+      .b { :global(&.c) { :global(&.d) { :global(&.e) { color: blue } } } }
+      .item { :global(&.on), .alt { color: green } }`;
+    expect(await bundle({ "styles.module.css": css })).toEqual({
+      logs: [],
+      css: `@media print { .a_H.x { color: red; } } .b_H.c.d.e { color: #00f; } .item_H.on { color: green; } .item_H .alt_H { color: green; }`,
+      styles: scoped("a", "b", "item", "alt"),
+    });
+    expect(
+      await bundle({ "styles.module.css": `.button { :global(&.primary) { color: red } }` }, { target: "bun" }),
+    ).toEqual({ logs: [], css: `.button_H { &.primary { color: red; } }`, styles: scoped("button") });
+  });
+
+  test.concurrent("rules in a rule whose selector is :global() with a `&`", async () => {
+    const css = `.a { :global(.dark &) { color: red; &:hover { color: green } .label { color: blue } } }`;
+    expect(await bundle({ "styles.module.css": css })).toEqual({
+      logs: [],
+      css: `.dark .a_H { color: red; } .dark .a_H:hover { color: green; } .dark .a_H .label_H { color: #00f; }`,
+      styles: scoped("a", "label"),
+    });
+  });
+
+  // `is_simple` and `has_type_selector` do not look inside `:global()`, so the parent takes the place of this `&`
+  // without `:is()`. It prints `.y_H.dark .a_H`.
+  test.todo("a `&` that does not lead, in a rule whose selector is :global() with a combinator", async () => {
+    const css = `.a { :global(.dark &) { .y& { color: red } } }`;
+    expect(await bundle({ "styles.module.css": css })).toEqual({
+      logs: [],
+      css: `.y_H:is(.dark .a_H) { color: red; }`,
+      styles: scoped("a", "y"),
+    });
+  });
+
+  test.concurrent("`@nest` takes a `&` inside :global()", async () => {
+    expect(await bundle({ "styles.module.css": `.p { @nest :global(.dark &) { color: red } }` })).toEqual({
+      logs: ["The @nest rule is deprecated, use standard CSS nesting instead"],
+      css: `.dark .p_H { color: red; }`,
+      styles: scoped("p"),
+    });
+  });
+
+  test.concurrent("`&` inside :local() through the CLI, bundled and with --no-bundle", async () => {
+    using dir = tempDir("css-modules-cli", {
+      "styles.module.css": `.button { :local(&.on) { color: red } }`,
+      "entry.js": `import "./styles.module.css";`,
+    });
+    const build = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...args],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    const bundled = await build("entry.js", "--outdir", "out");
+    expect({ stderr: bundled.stderr, exitCode: bundled.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(oneLine(await Bun.file(join(String(dir), "out", "entry.css")).text())).toBe(
+      ".button_H.on_H { color: red; }",
+    );
+
+    const unbundled = await build("--no-bundle", "styles.module.css");
+    expect({ ...unbundled, stdout: oneLine(unbundled.stdout) }).toEqual({
+      stdout: ".button_H.on_H { color: red; }",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   const nested = '"composes" is not allowed inside nested selectors';

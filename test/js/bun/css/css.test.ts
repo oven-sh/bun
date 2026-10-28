@@ -8947,6 +8947,25 @@ describe("a `&` that does not lead its selector", () => {
     lowered(".a, .b { :nth-child(1 of &) { color: red } }", ":nth-child(1 of :is(.a,.b)){color:red}");
     minify_test(".foo { :nth-child(1 of &) { color: red } }", ".foo{:nth-child(1 of &){color:red}}");
   });
+
+  describe("is the `&` of its rule, so the rule gets no other", () => {
+    lowered(".p { :not(&) { color: red } }", ":not(.p){color:red}");
+    lowered(".p { :where(&) { color: red } }", ":where(.p){color:red}");
+    lowered(".p { :is(&) { color: red } }", ".p{color:red}");
+    lowered(".p { :has(&) { color: red } }", ":has(.p){color:red}");
+    lowered("video { ::cue(&) { color: red } }", "::cue(video){color:red}");
+    lowered(".p { ::cue-region(&) { color: red } }", "::cue-region(.p){color:red}");
+    lowered(".a { @nest ::cue(&) { color: red } }", "::cue(.a){color:red}");
+    minify_test("video { ::cue(&) { color: red } }", "video{::cue(&){color:red}}");
+    // A `&` that the parser reads before a forgiving list drops the member counts too, as in Chrome.
+    // One after the invalid token is not read: `:is($ &, .b)` keeps the implied `&`.
+    lowered(".a { :is(& $, .b) { color: red } }", ".b{color:red}");
+    lowered(".a { :is(:not(& $), .b) { color: red } }", ".b{color:red}");
+    lowered(".a { :where(:has(& $), .b) { color: red } }", ":where(.b){color:red}");
+    // A rule with no `&` gets one.
+    lowered(".a { :is($, .b) { color: red } }", ".a .b{color:red}");
+    lowered("video { ::cue(b) { color: red } }", "video ::cue(b){color:red}");
+  });
 });
 
 describe("vendor prefixes the targets need", () => {

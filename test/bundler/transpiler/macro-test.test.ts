@@ -838,8 +838,6 @@ describe("a macro import that is used outside of a call", () => {
     ``,
   ].join("\n");
   const named = `import { m } from "./m.ts" with { type: "macro" };`;
-  // For a test that starts several processes of a debug build beside the other tests of this file.
-  const slow = 20_000;
   const star = `import * as ns from "./m.ts" with { type: "macro" };`;
   const dec = `function dec(...a: any[]) { return (..._: any[]) => {}; }`;
 
@@ -1432,18 +1430,15 @@ describe("a macro import that is used outside of a call", () => {
     },
   );
 
-  test.concurrent(
-    "a bundle of the accepted forms runs",
-    async () => {
-      using dir = tempDir("macro-value-use", fixture({ accepted: acceptedSources }));
-      const build = await run(String(dir), "build", "./accepted/accepted.ts", "--target=bun", "--outdir", "out");
-      expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-      const { lines, stderr, exitCode } = await run(String(dir), "out/accepted.js");
-      expect({ lines, stderr }).toEqual({ lines: acceptedStdout, stderr: "" });
-      expect(exitCode).toBe(0);
-    },
-    slow,
-  );
+  // Not concurrent: beside the other tests this one is at the 5 s limit on a debug build.
+  test("a bundle of the accepted forms runs", async () => {
+    using dir = tempDir("macro-value-use", fixture({ accepted: acceptedSources }));
+    const build = await run(String(dir), "build", "./accepted/accepted.ts", "--target=bun", "--outdir", "out");
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const { lines, stderr, exitCode } = await run(String(dir), "out/accepted.js");
+    expect({ lines, stderr }).toEqual({ lines: acceptedStdout, stderr: "" });
+    expect(exitCode).toBe(0);
+  });
 
   // With --no-macros, and in node_modules, a call of a macro is an error of its own. Any other reference is still the
   // name of a removed binding, and the advice names only the regular import. A call behind `typeof m === "function"`
@@ -1495,155 +1490,149 @@ describe("a macro import that is used outside of a call", () => {
 
   // The parser names the JSX factory at each element. The classic factory and fragment are in the output. The
   // automatic runtime only looks the name up, for a `key` after a spread, and writes none.
-  test.concurrent(
-    "a macro import that is the JSX factory is an error only where the output names it",
-    async () => {
-      const sources: Sources = [
+  // Not concurrent: beside the other tests this one is at the 5 s limit on a debug build.
+  test("a macro import that is the JSX factory is an error only where the output names it", async () => {
+    const sources: Sources = [
+      [
+        "classic.jsx",
         [
-          "classic.jsx",
-          [
-            `/** @jsxRuntime classic */`,
-            `/** @jsx h */`,
-            `/** @jsxFrag h */`,
-            `import { m as h } from "./m.ts" with { type: "macro" };`,
-            `console.log(<div />, <></>);`,
-          ].join("\n"),
-        ],
+          `/** @jsxRuntime classic */`,
+          `/** @jsx h */`,
+          `/** @jsxFrag h */`,
+          `import { m as h } from "./m.ts" with { type: "macro" };`,
+          `console.log(<div />, <></>);`,
+        ].join("\n"),
+      ],
+      [
+        "automatic.jsx",
         [
-          "automatic.jsx",
-          [
-            `import { m as React } from "./m.ts" with { type: "macro" };`,
-            `console.log("automatic", React(), (<div {...{ id: "x" }} key="k" />).props.id);`,
-          ].join("\n"),
-        ],
-        // What the note of the error says to do.
+          `import { m as React } from "./m.ts" with { type: "macro" };`,
+          `console.log("automatic", React(), (<div {...{ id: "x" }} key="k" />).props.id);`,
+        ].join("\n"),
+      ],
+      // What the note of the error says to do.
+      [
+        "classic-remedy.jsx",
         [
-          "classic-remedy.jsx",
-          [
-            `/** @jsxRuntime classic */`,
-            `/** @jsx h */`,
-            `/** @jsxFrag Fragment */`,
-            `import { m as hMacro } from "./m.ts" with { type: "macro" };`,
-            `import { h, Fragment } from "./h.js";`,
-            `console.log("classic-remedy", hMacro(), (<div />).type, (<></>).type);`,
-          ].join("\n"),
-        ],
-        ["h.js", `export function h(type, props) { return { type, props }; }\nexport const Fragment = "fragment";`],
-      ];
-      using dir = tempDir("macro-value-use", {
-        ...fixture({ jsx: sources }),
-        "node_modules/react/package.json": JSON.stringify({ name: "react", version: "0.0.0", type: "module" }),
-        "node_modules/react/index.js": `export function createElement(type, props) { return { type, props }; }\n`,
-      });
-      const [build, imported] = await Promise.all(
-        ["build", "import"].map(async how => {
-          const { lines, stderr, exitCode } = await run(String(dir), "errors.ts", how, "jsx");
-          return { errors: JSON.parse(lines.at(-1)!).jsx, printed: lines.slice(0, -1), stderr, exitCode };
-        }),
-      );
-      // The notes are on the first error of a binding only.
-      const classic = [
-        [notDefined("h"), 5, 13, [importNote("h"), 4, 10], [jsxAdvice("h"), null, null]],
-        [notDefined("h"), 5, 22],
-      ];
-      // A bundle warns that it takes `createElement` for this element.
-      const warning = [expect.stringContaining(`"key" prop after a {...spread}`), 2, 45];
-      const noErrors = { "classic-remedy.jsx": [], "h.js": [] };
-      expect({ build, imported }).toEqual({
-        build: {
-          errors: { "automatic.jsx": [warning], "classic.jsx": classic, ...noErrors },
-          printed: [],
-          stderr: "",
-          exitCode: 0,
-        },
-        imported: {
-          errors: { "automatic.jsx": [], "classic.jsx": classic, ...noErrors },
-          printed: ["automatic 42 x", "classic-remedy 42 div fragment"],
-          stderr: "",
-          exitCode: 0,
-        },
-      });
-    },
-    slow,
-  );
+          `/** @jsxRuntime classic */`,
+          `/** @jsx h */`,
+          `/** @jsxFrag Fragment */`,
+          `import { m as hMacro } from "./m.ts" with { type: "macro" };`,
+          `import { h, Fragment } from "./h.js";`,
+          `console.log("classic-remedy", hMacro(), (<div />).type, (<></>).type);`,
+        ].join("\n"),
+      ],
+      ["h.js", `export function h(type, props) { return { type, props }; }\nexport const Fragment = "fragment";`],
+    ];
+    using dir = tempDir("macro-value-use", {
+      ...fixture({ jsx: sources }),
+      "node_modules/react/package.json": JSON.stringify({ name: "react", version: "0.0.0", type: "module" }),
+      "node_modules/react/index.js": `export function createElement(type, props) { return { type, props }; }\n`,
+    });
+    const [build, imported] = await Promise.all(
+      ["build", "import"].map(async how => {
+        const { lines, stderr, exitCode } = await run(String(dir), "errors.ts", how, "jsx");
+        return { errors: JSON.parse(lines.at(-1)!).jsx, printed: lines.slice(0, -1), stderr, exitCode };
+      }),
+    );
+    // The notes are on the first error of a binding only.
+    const classic = [
+      [notDefined("h"), 5, 13, [importNote("h"), 4, 10], [jsxAdvice("h"), null, null]],
+      [notDefined("h"), 5, 22],
+    ];
+    // A bundle warns that it takes `createElement` for this element.
+    const warning = [expect.stringContaining(`"key" prop after a {...spread}`), 2, 45];
+    const noErrors = { "classic-remedy.jsx": [], "h.js": [] };
+    expect({ build, imported }).toEqual({
+      build: {
+        errors: { "automatic.jsx": [warning], "classic.jsx": classic, ...noErrors },
+        printed: [],
+        stderr: "",
+        exitCode: 0,
+      },
+      imported: {
+        errors: { "automatic.jsx": [], "classic.jsx": classic, ...noErrors },
+        printed: ["automatic 42 x", "classic-remedy 42 div fragment"],
+        stderr: "",
+        exitCode: 0,
+      },
+    });
+  });
 
   // The React Compiler writes the body of a component again. A name that it drops is not in the output. A name that
   // it writes is not one of the JSX lowering. For a server it also drops the handlers and the ref of an element.
-  test.concurrent(
-    "with the React Compiler, only a name that the output keeps is an error",
-    async () => {
-      const component = (...body: string[]) =>
-        [
-          named,
-          `export function Component(props) {`,
-          ...body,
-          `}`,
-          `console.log(Component({ a: 1 }).props.children);`,
-          ``,
-        ].join("\n");
-      using dir = tempDir("macro-value-use", {
-        "m.ts": macroFile,
-        "dropped.jsx": component(`  const unused = m;`, `  return <div>{m()}{props.a}</div>;`),
-        "for-in.jsx": component(
-          `  const keys = [];`,
-          `  for (const k in m) keys.push(k);`,
-          `  return <div>{keys}{props.a}</div>;`,
-        ),
-        "handler.jsx": component(`  return <div onClick={m} ref={m}>{m()}{props.a}</div>;`),
-        "node_modules/react/package.json": JSON.stringify({
-          name: "react",
-          version: "0.0.0",
-          type: "module",
-          exports: {
-            "./jsx-dev-runtime": "./jsx.js",
-            "./jsx-runtime": "./jsx.js",
-            "./compiler-runtime": "./compiler.js",
-          },
-        }),
-        "node_modules/react/jsx.js": `export function jsxDEV(type, props) { return { type, props }; }\nexport const jsx = jsxDEV, jsxs = jsxDEV;\n`,
-        "node_modules/react/compiler.js": `export function c(size) { return new Array(size).fill(Symbol.for("react.memo_cache_sentinel")); }\n`,
-      });
-      const files = ["dropped.jsx", "for-in.jsx", "handler.jsx"];
-      const built = await Promise.all(
-        ["bun", "browser"].flatMap(target =>
-          files.map(async file => {
-            const outdir = `out-${target}`;
-            const build = await run(
-              String(dir),
-              "build",
-              "--react-compiler",
-              `--target=${target}`,
-              `./${file}`,
-              "--outdir",
-              outdir,
-            );
-            const ran =
-              build.exitCode === 0 ? (await run(String(dir), `${outdir}/${file.replace(".jsx", ".js")}`)).lines : [];
-            return [
-              `${target} ${file}`,
-              { errors: errorsIn(build.stderr), ran, advice: build.stderr.includes(`note: ${advice("m")}`) },
-            ];
-          }),
-        ),
-      );
-      // The compiler gives the name in `for (const k in m)` the place of the statement.
-      const forIn = { errors: [expect.stringContaining(`${notDefined("m")} at for-in.jsx:4:`)], ran: [], advice: true };
-      const runs = { errors: [], ran: ["[ 42, 1 ]"], advice: false };
-      expect(Object.fromEntries(built)).toEqual({
-        "bun dropped.jsx": runs,
-        "bun for-in.jsx": forIn,
-        "bun handler.jsx": runs,
-        "browser dropped.jsx": runs,
-        "browser for-in.jsx": forIn,
-        "browser handler.jsx": {
-          errors: [`${notDefined("m")} at handler.jsx:3:24`, `${notDefined("m")} at handler.jsx:3:32`],
-          ran: [],
-          advice: true,
+  // Not concurrent: beside the other tests this one is at the 5 s limit on a debug build.
+  test("with the React Compiler, only a name that the output keeps is an error", async () => {
+    const component = (...body: string[]) =>
+      [
+        named,
+        `export function Component(props) {`,
+        ...body,
+        `}`,
+        `console.log(Component({ a: 1 }).props.children);`,
+        ``,
+      ].join("\n");
+    using dir = tempDir("macro-value-use", {
+      "m.ts": macroFile,
+      "dropped.jsx": component(`  const unused = m;`, `  return <div>{m()}{props.a}</div>;`),
+      "for-in.jsx": component(
+        `  const keys = [];`,
+        `  for (const k in m) keys.push(k);`,
+        `  return <div>{keys}{props.a}</div>;`,
+      ),
+      "handler.jsx": component(`  return <div onClick={m} ref={m}>{m()}{props.a}</div>;`),
+      "node_modules/react/package.json": JSON.stringify({
+        name: "react",
+        version: "0.0.0",
+        type: "module",
+        exports: {
+          "./jsx-dev-runtime": "./jsx.js",
+          "./jsx-runtime": "./jsx.js",
+          "./compiler-runtime": "./compiler.js",
         },
-      });
-    },
-    slow,
-  );
+      }),
+      "node_modules/react/jsx.js": `export function jsxDEV(type, props) { return { type, props }; }\nexport const jsx = jsxDEV, jsxs = jsxDEV;\n`,
+      "node_modules/react/compiler.js": `export function c(size) { return new Array(size).fill(Symbol.for("react.memo_cache_sentinel")); }\n`,
+    });
+    const files = ["dropped.jsx", "for-in.jsx", "handler.jsx"];
+    const built = await Promise.all(
+      ["bun", "browser"].flatMap(target =>
+        files.map(async file => {
+          const outdir = `out-${target}`;
+          const build = await run(
+            String(dir),
+            "build",
+            "--react-compiler",
+            `--target=${target}`,
+            `./${file}`,
+            "--outdir",
+            outdir,
+          );
+          const ran =
+            build.exitCode === 0 ? (await run(String(dir), `${outdir}/${file.replace(".jsx", ".js")}`)).lines : [];
+          return [
+            `${target} ${file}`,
+            { errors: errorsIn(build.stderr), ran, advice: build.stderr.includes(`note: ${advice("m")}`) },
+          ];
+        }),
+      ),
+    );
+    // The compiler gives the name in `for (const k in m)` the place of the statement.
+    const forIn = { errors: [expect.stringContaining(`${notDefined("m")} at for-in.jsx:4:`)], ran: [], advice: true };
+    const runs = { errors: [], ran: ["[ 42, 1 ]"], advice: false };
+    expect(Object.fromEntries(built)).toEqual({
+      "bun dropped.jsx": runs,
+      "bun for-in.jsx": forIn,
+      "bun handler.jsx": runs,
+      "browser dropped.jsx": runs,
+      "browser for-in.jsx": forIn,
+      "browser handler.jsx": {
+        errors: [`${notDefined("m")} at handler.jsx:3:24`, `${notDefined("m")} at handler.jsx:3:32`],
+        ran: [],
+        advice: true,
+      },
+    });
+  });
 
   // A macro that returns an Error leaves its call in place, and that call was visited as a call. The minifier then
   // moves it, and the second visit must not take the count of the reference beside it.

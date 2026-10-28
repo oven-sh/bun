@@ -457,7 +457,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveBitsBody
     auto baseKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "baseKey"_s, "SubtleCrypto"_s, "deriveBits"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, {});
     EnsureStillAliveScope argument2 = callFrame->argument(2);
-    auto length = convert<IDLNullable<IDLUnsignedLong>>(*lexicalGlobalObject, argument2.value());
+    auto length = convert<IDLNullable<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, {});
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLArrayBuffer>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) { return impl.deriveBits(*uncheckedDowncast<JSDOMGlobalObject>(lexicalGlobalObject), WTF::move(algorithm), *baseKey, WTF::move(length), WTF::move(promise)); })));
 }

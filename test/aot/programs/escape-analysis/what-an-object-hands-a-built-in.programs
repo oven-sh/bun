@@ -1,0 +1,1149 @@
+////: defined-twice
+{
+  function scene() {
+    const o = {};
+    let out = "";
+    for (let i = 0; i < 2; i++) {
+      const v = «2»;
+      const d = «3»;
+      try {
+        out += " " + («4»);
+      } catch (e) {
+        out += " threw " + (e instanceof TypeError);
+      }
+    }
+    console.log("«1»:" + out);
+  }
+  scene();
+}
+////: every-way-to-a-member
+////= defined-twice	«1», «2» written	«3»	{ «2»: v }	«4»
+////= defined-twice	«1», «2» from a getter	«3»	{ get «2»() { return v; } }	«4»
+////= defined-twice	«1», «2» written above	«3»	{ __proto__: { «2»: v } }	«4»
+////= defined-twice	«1», «2» from a getter above	«3»	{ __proto__: { get «2»() { return v; } } }	«4»
+////= defined-twice	«1», «2» from a getter of a class	«3»	new (class { get «2»() { return v; } })()	«4»
+////= defined-twice	«1», «2» a field of a class	«3»	new (class { «2» = v; })()	«4»
+////= defined-twice	«1», «2» stored by a constructor	«3»	new (class { constructor(x) { this.«2» = x; } })(v)	«4»
+////= defined-twice	«1», «2» written above what Object.create made	«3»	Object.create({ «2»: v })	«4»
+////= defined-twice	«1», «2» from the traps of a proxy	«3»	new Proxy({}, { has: (t, k) => k === "«2»", get: (t, k) => (k === "«2»" ? v : undefined) })	«4»
+////= defined-twice	«1», «2» behind a proxy without traps	«3»	new Proxy({ «2»: v }, {})	«4»
+////= defined-twice	«1», «2» under a computed key	«3»	{ [["«2»"].join("")]: v }	«4»
+////= defined-twice	«1», «2» assigned	«3»	Object.assign({}, { «2»: v })	«4»
+////= defined-twice	«1», «2» spread	«3»	{ ...{ «2»: v } }	«4»
+////= defined-twice	«1», «2» from entries	«3»	Object.fromEntries([["«2»", v]])	«4»
+////= defined-twice	«1», «2» from a getter that was defined	«3»	Object.defineProperty({}, "«2»", { get: () => v })	«4»
+////= defined-twice	«1», «2» stored later	«3»	((d) => ((d.«2» = v), d))({})	«4»
+////= defined-twice	«1», «2» stored under a key that is a value	«3»	((d, k) => ((d[k] = v), d))({}, ["«2»"].join(""))	«4»
+////= defined-twice	«1», «2» in what a function returns	«3»	((x) => ({ «2»: x }))(v)	«4»
+////: every-member
+////= every-way-to-a-member	arrow	get	() => 1	«1»
+////= every-way-to-a-member	arrow	set	() => 1	«1»
+////= every-way-to-a-member	arrow	value	() => 1	«1»
+////= every-way-to-a-member	method	get	({ m() { return 1; } }).m	«1»
+////= every-way-to-a-member	method	set	({ m() { return 1; } }).m	«1»
+////= every-way-to-a-member	method	value	({ m() { return 1; } }).m	«1»
+////= every-way-to-a-member	function	value	function () { return 1; }	«1»
+////= every-way-to-a-member	literal	value	{ a: 1 }	«1»
+////= every-way-to-a-member	array	value	[1, 2]	«1»
+//// what-an-object-hands-a-built-in-is-defined-twice-over-a-fixed-property-by-define-property.js
+// Each turn of a loop makes a function or an object anew, and Object.defineProperty() defines it as the getter, the setter or the value of one property that cannot be configured. The descriptor comes to it in many ways.
+////= every-member	Object.defineProperty(o, "x", d) === o
+//// what-an-object-hands-a-built-in-is-defined-twice-over-a-fixed-property-by-reflect-define-property.js
+// Each turn of a loop makes a function or an object anew, and Reflect.defineProperty() defines it as the getter, the setter or the value of one property that cannot be configured. The descriptor comes to it in many ways.
+////= every-member	Reflect.defineProperty(o, "x", d)
+//// what-an-object-hands-a-built-in-is-defined-twice-over-a-fixed-property-by-define-properties.js
+// Each turn of a loop makes a function or an object anew, and Object.defineProperties() defines it as the getter, the setter or the value of one property that cannot be configured. The descriptor comes to it in many ways.
+////= every-member	Object.defineProperties(o, { x: d }) === o
+//// what-an-object-hands-a-built-in-is-defined-twice-over-a-fixed-property-by-define-properties-through-a-getter-of-the-map.js
+// Each turn of a loop makes a function or an object anew, and Object.defineProperties(), whose map has a getter, defines it as the getter, the setter or the value of one property that cannot be configured. The descriptor comes to it in many ways.
+////= every-member	Object.defineProperties(o, { get x() { return d; } }) === o
+////: described-and-defined-twice
+{
+  function scene() {
+    const o = {};
+    let out = "";
+    for (let i = 0; i < 2; i++) {
+      const source = «2»;
+      try {
+        out += " " + («3»);
+      } catch (e) {
+        out += " threw " + (e instanceof TypeError);
+      }
+    }
+    console.log("«1»:" + out);
+  }
+  scene();
+}
+////: every-way-to-define-a-description
+////= described-and-defined-twice	«1», same key	«2»	Object.defineProperty(o, "x", Object.getOwnPropertyDescriptor(source, "x")) === o
+////= described-and-defined-twice	«1», same variable key	«2»	((k) => Object.defineProperty(o, k, Object.getOwnPropertyDescriptor(source, k)) === o)(["x"].join(""))
+////= described-and-defined-twice	«1», every own key	«2»	Reflect.ownKeys(source).map((k) => Object.defineProperty(o, k, Object.getOwnPropertyDescriptor(source, k)) === o).join()
+////= described-and-defined-twice	«1», another key	«2»	Object.defineProperty(o, "y", Object.getOwnPropertyDescriptor(source, "x")) === o
+////= described-and-defined-twice	«1», reflect both	«2»	Reflect.defineProperty(o, "x", Reflect.getOwnPropertyDescriptor(source, "x"))
+////= described-and-defined-twice	«1», held in a variable	«2»	((d) => Object.defineProperty(o, "x", d) === o)(Object.getOwnPropertyDescriptor(source, "x"))
+////= described-and-defined-twice	«1», all descriptors	«2»	Object.defineProperties(o, Object.getOwnPropertyDescriptors(source)) === o
+////= described-and-defined-twice	«1», one of all descriptors	«2»	Object.defineProperty(o, "x", Object.getOwnPropertyDescriptors(source).x) === o
+////= described-and-defined-twice	«1», a copy of the descriptor	«2»	Object.defineProperty(o, "x", { ...Object.getOwnPropertyDescriptor(source, "x") }) === o
+////= described-and-defined-twice	«1», below the descriptor	«2»	Object.defineProperty(o, "x", Object.create(Object.getOwnPropertyDescriptor(source, "x"))) === o
+////= described-and-defined-twice	«1», legacy lookups	«2»	Object.defineProperty(o, "x", { get: source.__lookupGetter__("x"), set: source.__lookupSetter__("x") }) === o
+//// what-an-object-hands-a-built-in-as-its-description-is-defined-twice-on-another-object.js
+// Each turn of a loop makes an object whose property cannot be configured. What describes that property is defined on one other object, which takes the second definition only if it is the first one again.
+////= every-way-to-define-a-description	frozen setter	Object.freeze({ set x(a) {} })
+////= every-way-to-define-a-description	frozen getter	Object.freeze({ get x() { return 1; } })
+////= every-way-to-define-a-description	frozen arrow	Object.freeze({ x: () => 1 })
+////= every-way-to-define-a-description	frozen method	Object.freeze({ x() { return 1; } })
+////= every-way-to-define-a-description	sealed setter	Object.seal({ set x(a) {} })
+////= every-way-to-define-a-description	defined setter	Object.defineProperty({}, "x", { set: (a) => {} })
+////= every-way-to-define-a-description	defined getter	Object.defineProperty({}, "x", { get: () => 1 })
+////= every-way-to-define-a-description	defined arrow	Object.defineProperty({}, "x", { value: () => 1 })
+////= every-way-to-define-a-description	frozen literal	Object.freeze({ x: { a: 1 } })
+////= every-way-to-define-a-description	frozen list	Object.freeze({ x: [1] })
+////: kept
+{
+  const kept = [], thunks = [];
+  const keep = (x) => { kept.push(x); };
+  const later = (f) => { thunks.push(f); };
+  function make(n) {
+    «2»
+    «3»
+  }
+  for (let i = 0; i < 3; i++) {
+    try {
+      make(«5» + i);
+    } catch (e) {
+      kept.push(e.constructor.name);
+    }
+  }
+  reports.push(() => {
+    for (const f of thunks) kept.push(f());
+    const read = (x) => { try { return typeof x === "string" ? x : «4»; } catch (e) { return "threw " + e.constructor.name; } };
+    console.log("«1» |", kept.map(read).join(" "));
+  });
+}
+////: every-way-out
+import { EventEmitter } from "node:events";
+import { inspect } from "node:util";
+import { AsyncLocalStorage } from "node:async_hooks";
+class Point { constructor(n) { this.n = n; } }
+function callDeep(k, a, b, c) { if (k === 0) return a + b + c; const t = [k, a, b, c]; return callDeep(k - 1, t[1] + 1, t[2] + 2, t[3] + 3) + t[0]; }
+const reports = [];
+////= kept	keep(Object.assign({}, { get a() { return v; } }).a);	«1»	keep(Object.assign({}, { get a() { return v; } }).a);	«2»	0
+////= kept	keep(Object.defineProperty({}, \"a\", { get value() { return v; } }).a);	«1»	keep(Object.defineProperty({}, "a", { get value() { return v; } }).a);	«2»	10
+////= kept	keep(Object.defineProperty({}, \"a\", { get get() { return () => v; } }).a);	«1»	keep(Object.defineProperty({}, "a", { get get() { return () => v; } }).a);	«2»	20
+////= kept	keep(Object.defineProperties({}, { a: { get value() { return v; } } }).a);	«1»	keep(Object.defineProperties({}, { a: { get value() { return v; } } }).a);	«2»	30
+////= kept	keep(Object.defineProperties({}, { get a() { return { value: v }; } }).a);	«1»	keep(Object.defineProperties({}, { get a() { return { value: v }; } }).a);	«2»	40
+////= kept	keep(Object.create(null, { a: { get value() { return v; } } }).a);	«1»	keep(Object.create(null, { a: { get value() { return v; } } }).a);	«2»	50
+////= kept	const o = {}; Reflect.defineProperty(o, \"a\", { get value() { return v; } }); keep(o.a);	«1»	const o = {}; Reflect.defineProperty(o, "a", { get value() { return v; } }); keep(o.a);	«2»	60
+////= kept	keep(Reflect.get({ get a() { return v; } }, \"a\"));	«1»	keep(Reflect.get({ get a() { return v; } }, "a"));	«2»	70
+////= kept	keep(Reflect.get({ get a() { return this; } }, \"a\", v));	«1»	keep(Reflect.get({ get a() { return this; } }, "a", v));	«2»	80
+////= kept	Reflect.set({ set a(x) { keep(x); } }, \"a\", v);	«1»	Reflect.set({ set a(x) { keep(x); } }, "a", v);	«2»	90
+////= kept	Reflect.set({ set a(x) { keep(this); } }, \"a\", 1, v);	«1»	Reflect.set({ set a(x) { keep(this); } }, "a", 1, v);	«2»	100
+////= kept	Reflect.apply(keep, null, { length: 1, get 0() { return v; } });	«1»	Reflect.apply(keep, null, { length: 1, get 0() { return v; } });	«2»	110
+////= kept	Reflect.apply(function () { keep(this); }, v, []);	«1»	Reflect.apply(function () { keep(this); }, v, []);	«2»	120
+////= kept	keep(Reflect.construct(function (x) { this.x = x; }, { length: 1, get 0() { return v; } }).x);	«1»	keep(Reflect.construct(function (x) { this.x = x; }, { length: 1, get 0() { return v; } }).x);	«2»	130
+////= kept	keep.apply(null, { length: 1, get 0() { return v; } });	«1»	keep.apply(null, { length: 1, get 0() { return v; } });	«2»	140
+////= kept	keep.call(null, v);	«1»	keep.call(null, v);	«2»	150
+////= kept	later(((x) => x).bind(null, v));	«1»	later(((x) => x).bind(null, v));	«2»	160
+////= kept	keep(Array.from({ length: 1, get 0() { return v; } })[0]);	«1»	keep(Array.from({ length: 1, get 0() { return v; } })[0]);	«2»	170
+////= kept	keep(Array.from({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return step; } }; } })[0]);	«1»	keep(Array.from({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return step; } }; } })[0]);	«2»	180
+////= kept	keep(Array.from([1], () => v)[0]);	«1»	keep(Array.from([1], () => v)[0]);	«2»	190
+////= kept	keep(Object.values({ get a() { return v; } })[0]);	«1»	keep(Object.values({ get a() { return v; } })[0]);	«2»	200
+////= kept	keep(Object.entries({ get a() { return v; } })[0][1]);	«1»	keep(Object.entries({ get a() { return v; } })[0][1]);	«2»	210
+////= kept	keep(Object.fromEntries([{ 0: \"a\", get 1() { return v; } }]).a);	«1»	keep(Object.fromEntries([{ 0: "a", get 1() { return v; } }]).a);	«2»	220
+////= kept	keep(Object.fromEntries({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: [\"a\", v], done }; done = true; return step; } }; } }).a);	«1»	keep(Object.fromEntries({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: ["a", v], done }; done = true; return step; } }; } }).a);	«2»	230
+////= kept	keep(new Map([{ 0: \"a\", get 1() { return v; } }]).get(\"a\"));	«1»	keep(new Map([{ 0: "a", get 1() { return v; } }]).get("a"));	«2»	240
+////= kept	keep(new Map({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: [\"a\", v], done }; done = true; return step; } }; } }).get(\"a\"));	«1»	keep(new Map({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: ["a", v], done }; done = true; return step; } }; } }).get("a"));	«2»	250
+////= kept	keep([...new Set({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return step; } }; } })][0]);	«1»	keep([...new Set({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return step; } }; } })][0]);	«2»	260
+////= kept	keep(Object.groupBy({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return step; } }; } }, () => \"a\").a[0]);	«1»	keep(Object.groupBy({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return step; } }; } }, () => "a").a[0]);	«2»	270
+////= kept	keep(Map.groupBy({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return step; } }; } }, () => \"a\").get(\"a\")[0]);	«1»	keep(Map.groupBy({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return step; } }; } }, () => "a").get("a")[0]);	«2»	280
+////= kept	JSON.stringify({ toJSON() { return v; } }, (k, x) => (k === \"\" && keep(x), 0));	«1»	JSON.stringify({ toJSON() { return v; } }, (k, x) => (k === "" && keep(x), 0));	«2»	290
+////= kept	keep(JSON.parse(\"[1]\", (k, x) => (k === \"0\" ? v : x))[0]);	«1»	keep(JSON.parse("[1]", (k, x) => (k === "0" ? v : x))[0]);	«2»	300
+////= kept	Promise.resolve({ then(resolve) { resolve(v); } }).then(keep);	«1»	Promise.resolve({ then(resolve) { resolve(v); } }).then(keep);	«2»	310
+////= kept	Promise.all([{ then(resolve) { resolve(v); } }]).then(([x]) => keep(x));	«1»	Promise.all([{ then(resolve) { resolve(v); } }]).then(([x]) => keep(x));	«2»	320
+////= kept	Promise.allSettled([{ then(resolve) { resolve(v); } }]).then(([x]) => keep(x.value));	«1»	Promise.allSettled([{ then(resolve) { resolve(v); } }]).then(([x]) => keep(x.value));	«2»	330
+////= kept	Promise.race({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: { then(resolve) { resolve(v); } }, done }; done = true; return step; } }; } }).then(keep);	«1»	Promise.race({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: { then(resolve) { resolve(v); } }, done }; done = true; return step; } }; } }).then(keep);	«2»	340
+////= kept	Promise.reject(v).catch(keep);	«1»	Promise.reject(v).catch(keep);	«2»	350
+////= kept	new Promise((resolve) => resolve(v)).then(keep);	«1»	new Promise((resolve) => resolve(v)).then(keep);	«2»	360
+////= kept	Promise.resolve().then(() => ({ then(resolve) { resolve(v); } })).then(keep);	«1»	Promise.resolve().then(() => ({ then(resolve) { resolve(v); } })).then(keep);	«2»	370
+////= kept	(async () => keep(await { then(resolve) { resolve(v); } }))();	«1»	(async () => keep(await { then(resolve) { resolve(v); } }))();	«2»	380
+////= kept	(async () => { for await (const x of { [Symbol.asyncIterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return Promise.resolve(step); } }; } }) keep(x); })();	«1»	(async () => { for await (const x of { [Symbol.asyncIterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return Promise.resolve(step); } }; } }) keep(x); })();	«2»	390
+////= kept	Array.fromAsync({ length: 1, get 0() { return v; } }).then(([x]) => keep(x));	«1»	Array.fromAsync({ length: 1, get 0() { return v; } }).then(([x]) => keep(x));	«2»	400
+////= kept	keep(new Proxy({}, { get() { return v; } }).a);	«1»	keep(new Proxy({}, { get() { return v; } }).a);	«2»	410
+////= kept	const p = new Proxy({}, { get() { return v; } }); later(() => p.a);	«1»	const p = new Proxy({}, { get() { return v; } }); later(() => p.a);	«2»	420
+////= kept	const p = new Proxy({ a: v }, {}); later(() => p.a);	«1»	const p = new Proxy({ a: v }, {}); later(() => p.a);	«2»	430
+////= kept	const p = new Proxy(v, {}); later(() => p);	«1»	const p = new Proxy(v, {}); later(() => p);	«2»	440
+////= kept	keep(Object.getOwnPropertyDescriptor(new Proxy({}, { getOwnPropertyDescriptor() { return { get value() { return v; }, configurable: true }; } }), \"a\").value);	«1»	keep(Object.getOwnPropertyDescriptor(new Proxy({}, { getOwnPropertyDescriptor() { return { get value() { return v; }, configurable: true }; } }), "a").value);	«2»	450
+////= kept	keep({ ...new Proxy({}, { ownKeys() { return [\"a\"]; }, getOwnPropertyDescriptor() { return { value: 1, enumerable: true, configurable: true }; }, get() { return v; } }) }.a);	«1»	keep({ ...new Proxy({}, { ownKeys() { return ["a"]; }, getOwnPropertyDescriptor() { return { value: 1, enumerable: true, configurable: true }; }, get() { return v; } }) }.a);	«2»	460
+////= kept	keep(Object.assign({}, new Proxy({}, { ownKeys() { return [\"a\"]; }, getOwnPropertyDescriptor() { return { value: 1, enumerable: true, configurable: true }; }, get() { return v; } })).a);	«1»	keep(Object.assign({}, new Proxy({}, { ownKeys() { return ["a"]; }, getOwnPropertyDescriptor() { return { value: 1, enumerable: true, configurable: true }; }, get() { return v; } })).a);	«2»	470
+////= kept	keep(Object.getPrototypeOf(new Proxy({}, { getPrototypeOf() { return v; } })));	«1»	keep(Object.getPrototypeOf(new Proxy({}, { getPrototypeOf() { return v; } })));	«2»	480
+////= kept	keep(new (new Proxy(function () {}, { construct() { return v; } }))());	«1»	keep(new (new Proxy(function () {}, { construct() { return v; } }))());	«2»	490
+////= kept	keep(new Proxy(function () {}, { apply() { return v; } })());	«1»	keep(new Proxy(function () {}, { apply() { return v; } })());	«2»	500
+////= kept	const t = new EventTarget(); t.addEventListener(\"x\", { handleEvent() { keep(v); } }); later(() => (t.dispatchEvent(new Event(\"x\")), kept.pop()));	«1»	const t = new EventTarget(); t.addEventListener("x", { handleEvent() { keep(v); } }); later(() => (t.dispatchEvent(new Event("x")), kept.pop()));	«2»	510
+////= kept	const t = new EventTarget(); t.addEventListener(\"x\", () => keep(v), { get once() { return true; } }); later(() => (t.dispatchEvent(new Event(\"x\")), kept.pop()));	«1»	const t = new EventTarget(); t.addEventListener("x", () => keep(v), { get once() { return true; } }); later(() => (t.dispatchEvent(new Event("x")), kept.pop()));	«2»	520
+////= kept	const t = new EventTarget(); t.addEventListener(\"x\", () => {}, { get once() { keep(v); return true; } });	«1»	const t = new EventTarget(); t.addEventListener("x", () => {}, { get once() { keep(v); return true; } });	«2»	530
+////= kept	keep(new CustomEvent(\"x\", { get detail() { return v; } }).detail);	«1»	keep(new CustomEvent("x", { get detail() { return v; } }).detail);	«2»	540
+////= kept	keep(new Error(\"m\", { get cause() { return v; } }).cause);	«1»	keep(new Error("m", { get cause() { return v; } }).cause);	«2»	550
+////= kept	keep(new AggregateError({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return step; } }; } }).errors[0]);	«1»	keep(new AggregateError({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: v, done }; done = true; return step; } }; } }).errors[0]);	«2»	560
+////= kept	[{ toString() { keep(v); return \"a\"; } }, { toString() { return \"b\"; } }].sort();	«1»	[{ toString() { keep(v); return "a"; } }, { toString() { return "b"; } }].sort();	«2»	570
+////= kept	String({ held: v, toString() { keep(this.held); return \"\"; } });	«1»	String({ held: v, toString() { keep(this.held); return ""; } });	«2»	580
+////= kept	'$ {{ [Symbol.toPrimitive]() { keep(v); return \"\"; } }}';	«1»	`${{ [Symbol.toPrimitive]() { keep(v); return ""; } }}`;	«2»	590
+////= kept	+{ valueOf() { keep(v); return 1; } };	«1»	+{ valueOf() { keep(v); return 1; } };	«2»	600
+////= kept	Math.max({ valueOf() { keep(v); return 1; } });	«1»	Math.max({ valueOf() { keep(v); return 1; } });	«2»	610
+////= kept	parseInt({ toString() { keep(v); return \"1\"; } });	«1»	parseInt({ toString() { keep(v); return "1"; } });	«2»	620
+////= kept	\"a\".padEnd({ valueOf() { keep(v); return 1; } });	«1»	"a".padEnd({ valueOf() { keep(v); return 1; } });	«2»	630
+////= kept	[].join.call({ length: 1, get 0() { keep(v); return 1; } });	«1»	[].join.call({ length: 1, get 0() { keep(v); return 1; } });	«2»	640
+////= kept	keep(\"a\".replace({ [Symbol.replace]() { return v; } }, \"\"));	«1»	keep("a".replace({ [Symbol.replace]() { return v; } }, ""));	«2»	650
+////= kept	keep(\"a\".split({ [Symbol.split]() { return v; } }));	«1»	keep("a".split({ [Symbol.split]() { return v; } }));	«2»	660
+////= kept	keep(\"a\".match({ [Symbol.match]() { return v; } }));	«1»	keep("a".match({ [Symbol.match]() { return v; } }));	«2»	670
+////= kept	\"a\".replace(\"a\", () => (keep(v), \"\"));	«1»	"a".replace("a", () => (keep(v), ""));	«2»	680
+////= kept	\"a\".replace(/a/, () => (keep(v), \"\"));	«1»	"a".replace(/a/, () => (keep(v), ""));	«2»	690
+////= kept	const list = [1]; list.constructor = { [Symbol.species]: function () { return v; } }; keep(list.filter(() => false));	«1»	const list = [1]; list.constructor = { [Symbol.species]: function () { return v; } }; keep(list.filter(() => false));	«2»	700
+////= kept	keep(Iterator.from({ next() { return { value: v, done: false }; } }).take(1).toArray()[0]);	«1»	keep(Iterator.from({ next() { return { value: v, done: false }; } }).take(1).toArray()[0]);	«2»	710
+////= kept	keep(Array.prototype.concat.call([], { length: 1, get 0() { return v; }, [Symbol.isConcatSpreadable]: true })[0]);	«1»	keep(Array.prototype.concat.call([], { length: 1, get 0() { return v; }, [Symbol.isConcatSpreadable]: true })[0]);	«2»	720
+////= kept	keep(Array.prototype.map.call({ length: 1, get 0() { return v; } }, (x) => x)[0]);	«1»	keep(Array.prototype.map.call({ length: 1, get 0() { return v; } }, (x) => x)[0]);	«2»	730
+////= kept	keep(Array.prototype.slice.call({ length: 1, get 0() { return v; } })[0]);	«1»	keep(Array.prototype.slice.call({ length: 1, get 0() { return v; } })[0]);	«2»	740
+////= kept	keep(Array.prototype.find.call({ length: 1, get 0() { return v; } }, () => true));	«1»	keep(Array.prototype.find.call({ length: 1, get 0() { return v; } }, () => true));	«2»	750
+////= kept	keep(Array.prototype.at.call({ length: 1, get 0() { return v; } }, 0));	«1»	keep(Array.prototype.at.call({ length: 1, get 0() { return v; } }, 0));	«2»	760
+////= kept	keep(Array.prototype.reduce.call({ length: 1, get 0() { return v; } }, (a, x) => x, 0));	«1»	keep(Array.prototype.reduce.call({ length: 1, get 0() { return v; } }, (a, x) => x, 0));	«2»	770
+////= kept	keep(Array.prototype.flat.call({ length: 1, get 0() { return v; } })[0]);	«1»	keep(Array.prototype.flat.call({ length: 1, get 0() { return v; } })[0]);	«2»	780
+////= kept	keep(Array.prototype.toSorted.call({ length: 1, get 0() { return v; } })[0]);	«1»	keep(Array.prototype.toSorted.call({ length: 1, get 0() { return v; } })[0]);	«2»	790
+////= kept	keep(Array.prototype.pop.call({ length: 1, get 0() { return v; } }));	«1»	keep(Array.prototype.pop.call({ length: 1, get 0() { return v; } }));	«2»	800
+////= kept	setTimeout(keep, 0, v);	«1»	setTimeout(keep, 0, v);	«2»	810
+////= kept	queueMicrotask(() => keep(v));	«1»	queueMicrotask(() => keep(v));	«2»	820
+////= kept	process.nextTick(keep, v);	«1»	process.nextTick(keep, v);	«2»	830
+////= kept	const below = Object.setPrototypeOf({}, v); later(() => Object.getPrototypeOf(below));	«1»	const below = Object.setPrototypeOf({}, v); later(() => Object.getPrototypeOf(below));	«2»	840
+////= kept	const below = Object.create(v); later(() => Object.getPrototypeOf(below));	«1»	const below = Object.create(v); later(() => Object.getPrototypeOf(below));	«2»	850
+////= kept	new ReadableStream({ start(c) { c.enqueue(v); c.close(); } }).getReader().read().then(({ value }) => keep(value));	«1»	new ReadableStream({ start(c) { c.enqueue(v); c.close(); } }).getReader().read().then(({ value }) => keep(value));	«2»	860
+////= kept	keep(Object.getOwnPropertyDescriptor({ get a() { return v; } }, \"a\").get());	«1»	keep(Object.getOwnPropertyDescriptor({ get a() { return v; } }, "a").get());	«2»	870
+////= kept	keep(Object.getOwnPropertyDescriptors({ a: v }).a.value);	«1»	keep(Object.getOwnPropertyDescriptors({ a: v }).a.value);	«2»	880
+////= kept	keep([v].at(0));	«1»	keep([v].at(0));	«2»	890
+////= kept	keep([[v]].flat()[0]);	«1»	keep([[v]].flat()[0]);	«2»	900
+////= kept	keep([1].flatMap(() => [v])[0]);	«1»	keep([1].flatMap(() => [v])[0]);	«2»	910
+////= kept	keep([v].concat()[0]);	«1»	keep([v].concat()[0]);	«2»	920
+////= kept	keep([v].slice()[0]);	«1»	keep([v].slice()[0]);	«2»	930
+////= kept	keep([v].toSorted()[0]);	«1»	keep([v].toSorted()[0]);	«2»	940
+////= kept	keep([v].toReversed()[0]);	«1»	keep([v].toReversed()[0]);	«2»	950
+////= kept	keep([1].with(0, v)[0]);	«1»	keep([1].with(0, v)[0]);	«2»	960
+////= kept	keep(Array.of(v)[0]);	«1»	keep(Array.of(v)[0]);	«2»	970
+////= kept	keep([1].fill(v)[0]);	«1»	keep([1].fill(v)[0]);	«2»	980
+////= kept	keep([v].find(() => true));	«1»	keep([v].find(() => true));	«2»	990
+////= kept	keep([v].reduce((a, x) => x, 0));	«1»	keep([v].reduce((a, x) => x, 0));	«2»	1000
+////= kept	keep([v].values().next().value);	«1»	keep([v].values().next().value);	«2»	1010
+////= kept	keep([v].entries().next().value[1]);	«1»	keep([v].entries().next().value[1]);	«2»	1020
+////= kept	keep([v, 1].copyWithin(1, 0)[1]);	«1»	keep([v, 1].copyWithin(1, 0)[1]);	«2»	1030
+////= kept	keep([v].splice(0, 1)[0]);	«1»	keep([v].splice(0, 1)[0]);	«2»	1040
+////= kept	keep([v].pop());	«1»	keep([v].pop());	«2»	1050
+////= kept	keep([v].shift());	«1»	keep([v].shift());	«2»	1060
+////= kept	keep([v].map((x) => x)[0]);	«1»	keep([v].map((x) => x)[0]);	«2»	1070
+////= kept	keep([v].filter(() => true)[0]);	«1»	keep([v].filter(() => true)[0]);	«2»	1080
+////= kept	keep(new Map().set(\"a\", v).get(\"a\"));	«1»	keep(new Map().set("a", v).get("a"));	«2»	1090
+////= kept	keep([...new Set().add(v)][0]);	«1»	keep([...new Set().add(v)][0]);	«2»	1100
+////= kept	keep(new WeakRef(v).deref());	«1»	keep(new WeakRef(v).deref());	«2»	1110
+////= kept	const key = {}; keep(new WeakMap().set(key, v).get(key));	«1»	const key = {}; keep(new WeakMap().set(key, v).get(key));	«2»	1120
+////= kept	function* steps() { yield v; } keep([...steps()][0]);	«1»	function* steps() { yield v; } keep([...steps()][0]);	«2»	1130
+////= kept	function* steps() { yield v; } keep(steps().next().value);	«1»	function* steps() { yield v; } keep(steps().next().value);	«2»	1140
+////= kept	function* steps() { return v; } keep(steps().next().value);	«1»	function* steps() { return v; } keep(steps().next().value);	«2»	1150
+////= kept	keep(new Error(\"m\", new (class { get cause() { return v; } })()).cause);	«1»	keep(new Error("m", new (class { get cause() { return v; } })()).cause);	«2»	1160
+////= kept	keep(new Error(\"m\", { __proto__: { cause: v } }).cause);	«1»	keep(new Error("m", { __proto__: { cause: v } }).cause);	«2»	1170
+////= kept	new Headers({ get a() { keep(v); return \"b\"; } });	«1»	new Headers({ get a() { keep(v); return "b"; } });	«2»	1180
+////= kept	new Response(null, { get headers() { keep(v); return undefined; } });	«1»	new Response(null, { get headers() { keep(v); return undefined; } });	«2»	1190
+////= kept	new Request(\"http://a/\", { get method() { keep(v); return \"GET\"; } });	«1»	new Request("http://a/", { get method() { keep(v); return "GET"; } });	«2»	1200
+////= kept	new URLSearchParams({ get a() { keep(v); return \"1\"; } });	«1»	new URLSearchParams({ get a() { keep(v); return "1"; } });	«2»	1210
+////= kept	new Blob([{ toString() { keep(v); return \"a\"; } }]);	«1»	new Blob([{ toString() { keep(v); return "a"; } }]);	«2»	1220
+////= kept	new TextDecoder(\"utf-8\", { get fatal() { keep(v); return false; } });	«1»	new TextDecoder("utf-8", { get fatal() { keep(v); return false; } });	«2»	1230
+////= kept	Buffer.from({ length: 1, get 0() { keep(v); return 1; } });	«1»	Buffer.from({ length: 1, get 0() { keep(v); return 1; } });	«2»	1240
+////= kept	new Uint8Array({ length: 1, get 0() { keep(v); return 1; } });	«1»	new Uint8Array({ length: 1, get 0() { keep(v); return 1; } });	«2»	1250
+////= kept	Uint8Array.from({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: 1, done }; done = true; return step; } }; } }, () => (keep(v), 1));	«1»	Uint8Array.from({ [Symbol.iterator]() { let done = false; return { next() { const step = { value: 1, done }; done = true; return step; } }; } }, () => (keep(v), 1));	«2»	1260
+////= kept	new RegExp({ get [Symbol.match]() { keep(v); return false; }, toString() { return \"a\"; } });	«1»	new RegExp({ get [Symbol.match]() { keep(v); return false; }, toString() { return "a"; } });	«2»	1270
+////= kept	new Date({ valueOf() { keep(v); return 1; } });	«1»	new Date({ valueOf() { keep(v); return 1; } });	«2»	1280
+////= kept	keep(Promise.withResolvers().resolve.call(null, v) ?? v);	«1»	keep(Promise.withResolvers().resolve.call(null, v) ?? v);	«2»	1290
+////= kept	Promise.try(() => v).then(keep);	«1»	Promise.try(() => v).then(keep);	«2»	1300
+////= kept	Promise.resolve(1).finally(() => keep(v));	«1»	Promise.resolve(1).finally(() => keep(v));	«2»	1310
+////= kept	keep(structuredClone({ get a() { keep(v); return 1; } }).a === 1 ? kept.pop() : 0);	«1»	keep(structuredClone({ get a() { keep(v); return 1; } }).a === 1 ? kept.pop() : 0);	«2»	1320
+////= kept	inspect({ [inspect.custom]() { keep(v); return \"\"; } });	«1»	inspect({ [inspect.custom]() { keep(v); return ""; } });	«2»	1330
+////= kept	keep(new AsyncLocalStorage().run(v, function () { return arguments.length === 0 ? v : 0; }));	«1»	keep(new AsyncLocalStorage().run(v, function () { return arguments.length === 0 ? v : 0; }));	«2»	1340
+////= kept	const store = new AsyncLocalStorage(); keep(store.run(v, () => store.getStore()));	«1»	const store = new AsyncLocalStorage(); keep(store.run(v, () => store.getStore()));	«2»	1350
+////= kept	const e = new EventEmitter(); e.on(\"x\", () => keep(v)); later(() => (e.emit(\"x\"), kept.pop()));	«1»	const e = new EventEmitter(); e.on("x", () => keep(v)); later(() => (e.emit("x"), kept.pop()));	«2»	1360
+////= kept	const e = new EventEmitter(); e.on(\"x\", keep); e.emit(\"x\", v);	«1»	const e = new EventEmitter(); e.on("x", keep); e.emit("x", v);	«2»	1370
+////= kept	keep(Object.entries({ a: v }).map(([, x]) => x)[0]);	«1»	keep(Object.entries({ a: v }).map(([, x]) => x)[0]);	«2»	1380
+////= kept	keep(Object.freeze({ a: v }).a);	«1»	keep(Object.freeze({ a: v }).a);	«2»	1390
+////= kept	keep(Object.freeze(v));	«1»	keep(Object.freeze(v));	«2»	1400
+////= kept	keep(Object.seal([v])[0]);	«1»	keep(Object.seal([v])[0]);	«2»	1410
+await new Promise((resolve) => setTimeout(resolve, 10));
+console.log(callDeep(500, 1, 2, 3));
+Bun.gc(true);
+for (const report of reports) report();
+//// what-an-object-hands-a-built-in-is-read-after-its-maker-returned-an-arrow-over-a-number.mjs
+// A function makes a value and an object that gives the value to a built-in: through a getter, a method, an iterator, a trap, a thenable. What the built-in did with it is read after the function has returned, after deep calls and a collection.
+////= every-way-out	const v = () => n;	x()
+//// what-an-object-hands-a-built-in-is-read-after-its-maker-returned-an-arrow-over-a-box.mjs
+// A function makes a value and an object that gives the value to a built-in: through a getter, a method, an iterator, a trap, a thenable. What the built-in did with it is read after the function has returned, after deep calls and a collection.
+////= every-way-out	const box = { n }; const v = () => box.n;	x()
+//// what-an-object-hands-a-built-in-is-read-after-its-maker-returned-a-literal.mjs
+// A function makes a value and an object that gives the value to a built-in: through a getter, a method, an iterator, a trap, a thenable. What the built-in did with it is read after the function has returned, after deep calls and a collection.
+////= every-way-out	const v = { n };	x.n
+//// what-an-object-hands-a-built-in-is-read-after-its-maker-returned-an-array.mjs
+// A function makes a value and an object that gives the value to a built-in: through a getter, a method, an iterator, a trap, a thenable. What the built-in did with it is read after the function has returned, after deep calls and a collection.
+////= every-way-out	const v = [n, n + 1];	x[0]
+//// what-an-object-hands-a-built-in-is-read-after-its-maker-returned-an-instance.mjs
+// A function makes a value and an object that gives the value to a built-in: through a getter, a method, an iterator, a trap, a thenable. What the built-in did with it is read after the function has returned, after deep calls and a collection.
+////= every-way-out	const v = new Point(n);	x.n
+////: every-teller
+{
+  function scene() {
+    const say = (...words) => console.log("«1», proxy get trap against a fixed value:", ...words);
+    const mk = () => «2»;
+    const target = Object.defineProperty({}, "x", { value: mk() });
+    const p = new Proxy(target, { get() { return mk(); } });
+    say(attempt(() => typeof p.x));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», proxy describe trap against a fixed value:", ...words);
+    const mk = () => «2»;
+    const target = Object.defineProperty({}, "x", { value: mk() });
+    const p = new Proxy(target, { getOwnPropertyDescriptor() { return { value: mk(), writable: false, enumerable: false, configurable: false }; } });
+    say(attempt(() => typeof Object.getOwnPropertyDescriptor(p, "x")));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», proxy set trap against a fixed value:", ...words);
+    const mk = () => «2»;
+    const target = Object.defineProperty({}, "x", { value: mk() });
+    const p = new Proxy(target, { set() { return true; } });
+    say(attempt(() => Reflect.set(p, "x", mk())));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», proxy define trap against a fixed value:", ...words);
+    const mk = () => «2»;
+    const target = Object.defineProperty({}, "x", { value: mk() });
+    const p = new Proxy(target, { defineProperty() { return true; } });
+    say(attempt(() => Reflect.defineProperty(p, "x", { value: mk() })));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», proxy prototype trap of a sealed target:", ...words);
+    const mk = () => «2»;
+    const target = Object.preventExtensions(Object.create(mk()));
+    const p = new Proxy(target, { getPrototypeOf() { return mk(); } });
+    say(attempt(() => typeof Object.getPrototypeOf(p)));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», set from an iterator:", ...words);
+    const mk = () => «2»;
+    let n = 0;
+    const steps = { [Symbol.iterator]() { return { next() { return n++ < 2 ? { value: mk(), done: false } : { value: undefined, done: true }; } }; } };
+    say(new Set(steps).size);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», set from a generator:", ...words);
+    const mk = () => «2»;
+    function* steps() { yield mk(); yield mk(); }
+    say(new Set(steps()).size);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», set from a list:", ...words);
+    const mk = () => «2»;
+    say(new Set([mk(), mk()]).size);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», set by add:", ...words);
+    const mk = () => «2»;
+    say(new Set().add(mk()).add(mk()).size);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», map from an iterator:", ...words);
+    const mk = () => «2»;
+    let n = 0;
+    const steps = { [Symbol.iterator]() { return { next() { return n++ < 2 ? { value: [mk(), n], done: false } : { value: undefined, done: true }; } }; } };
+    say(new Map(steps).size);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», map from pairs with getters:", ...words);
+    const mk = () => «2»;
+    say(new Map([{ get 0() { return mk(); }, 1: 1 }, { get 0() { return mk(); }, 1: 2 }]).size);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», map group by:", ...words);
+    const mk = () => «2»;
+    say(Map.groupBy([1, 2], () => mk()).size);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», weak set from an iterator:", ...words);
+    const mk = () => «2»;
+    let n = 0;
+    const steps = { [Symbol.iterator]() { return { next() { return n++ < 1 ? { value: mk(), done: false } : { value: undefined, done: true }; } }; } };
+    say(new WeakSet(steps).has(mk()));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», weak map by set:", ...words);
+    const mk = () => «2»;
+    say(new WeakMap().set(mk(), 1).has(mk()));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», union with a set-like:", ...words);
+    const mk = () => «2»;
+    let n = 0;
+    const like = { size: 1, has() { return false; }, keys() { return { next() { return n++ < 1 ? { value: mk(), done: false } : { value: undefined, done: true }; } }; } };
+    say(new Set([mk()]).union(like).size);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», array from an iterator, index of:", ...words);
+    const mk = () => «2»;
+    let n = 0;
+    const steps = { [Symbol.iterator]() { return { next() { return n++ < 2 ? { value: mk(), done: false } : { value: undefined, done: true }; } }; } };
+    const list = Array.from(steps);
+    say(list.indexOf(list[1]));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», array from an array-like with getters, a set of it:", ...words);
+    const mk = () => «2»;
+    const list = Array.from({ length: 2, get 0() { return mk(); }, get 1() { return mk(); } });
+    say(new Set(list).size);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», includes on an array-like with a getter:", ...words);
+    const mk = () => «2»;
+    say(Array.prototype.includes.call({ length: 1, get 0() { return mk(); } }, mk()));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», index of on an array-like with a getter:", ...words);
+    const mk = () => «2»;
+    say(Array.prototype.indexOf.call({ length: 1, get 0() { return mk(); } }, mk()));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», includes on a list:", ...words);
+    const mk = () => «2»;
+    say([mk()].includes(mk()));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», mapped list, last index of:", ...words);
+    const mk = () => «2»;
+    const list = [1, 2].map(() => mk());
+    say(list.lastIndexOf(list[0]));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», object is applied to an array-like with getters:", ...words);
+    const mk = () => «2»;
+    say(Reflect.apply(Object.is, null, { length: 2, get 0() { return mk(); }, get 1() { return mk(); } }));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», object is:", ...words);
+    const mk = () => «2»;
+    say(Object.is(mk(), mk()));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», object is spread from an iterator:", ...words);
+    const mk = () => «2»;
+    let n = 0;
+    const steps = { [Symbol.iterator]() { return { next() { return n++ < 2 ? { value: mk(), done: false } : { value: undefined, done: true }; } }; } };
+    say(Object.is(...steps));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», strict equality of what getters return:", ...words);
+    const mk = () => «2»;
+    const holder = { get a() { return mk(); } };
+    say(holder.a === holder.a);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», strict equality of what reflect get returns:", ...words);
+    const mk = () => «2»;
+    const holder = { get a() { return mk(); } };
+    say(Reflect.get(holder, "a") === Reflect.get(holder, "a"));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», strict equality of values of an object with getters:", ...words);
+    const mk = () => «2»;
+    const [a, b] = Object.values({ get a() { return mk(); }, get b() { return mk(); } });
+    say(a === b);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», strict equality behind assign:", ...words);
+    const mk = () => «2»;
+    const copy = Object.assign({}, { get a() { return mk(); }, get b() { return mk(); } });
+    say(copy.a === copy.b);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», is prototype of:", ...words);
+    const mk = () => «2»;
+    say(Object.prototype.isPrototypeOf.call(mk(), Object.create(mk())));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», listeners added twice:", ...words);
+    const mk = () => «2»;
+    let ran = 0;
+    const target = new EventTarget();
+    const listen = () => (typeof mk() === "function" ? () => { ran++; } : { handleEvent() { ran++; } });
+    target.addEventListener("x", listen());
+    target.addEventListener("x", listen());
+    target.dispatchEvent(new Event("x"));
+    say(ran);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», listener removed by another:", ...words);
+    const mk = () => «2»;
+    let ran = 0;
+    const target = new EventTarget();
+    const listen = () => (typeof mk() === "function" ? () => { ran++; } : { handleEvent() { ran++; } });
+    target.addEventListener("x", listen());
+    target.removeEventListener("x", listen());
+    target.dispatchEvent(new Event("x"));
+    say(ran);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», emitter listener removed by another:", ...words);
+    const mk = () => «2»;
+    let ran = 0;
+    const emitter = new EventEmitter();
+    const listen = () => () => { ran++; };
+    emitter.on("x", listen());
+    emitter.off("x", listen());
+    emitter.emit("x");
+    say(ran, typeof mk());
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», thenables resolved:", ...words);
+    const mk = () => «2»;
+    Promise.all([{ then(resolve) { resolve(mk()); } }, { then(resolve) { resolve(mk()); } }]).then(([a, b]) => say(a === b, new Set([a, b]).size));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», sort keeps both:", ...words);
+    const mk = () => «2»;
+    const list = [mk(), mk()].sort(() => 0);
+    say(list[0] === list[1]);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», json replacer sees what to-json returns:", ...words);
+    const mk = () => «2»;
+    const seen = [];
+    JSON.stringify([{ toJSON() { return mk(); } }, { toJSON() { return mk(); } }], (k, x) => (seen.push(x), x));
+    say(seen.length, seen[1] === seen[2]);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», weak ref:", ...words);
+    const mk = () => «2»;
+    say(new WeakRef(mk()).deref() === mk());
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», array of, find index:", ...words);
+    const mk = () => «2»;
+    const list = Array.of(mk(), mk());
+    const first = list[0];
+    say(list.findLastIndex((x) => x === first));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», structure of cloned list:", ...words);
+    const mk = () => «2»;
+    say(attempt(() => { const c = structuredClone([mk(), mk()]); return c[0] === c[1]; }));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», own property of one is not on the other:", ...words);
+    const mk = () => «2»;
+    const a = mk(), b = mk();
+    Object.defineProperty(a, "mark", { get value() { return 1; } });
+    say(Object.hasOwn(b, "mark"));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», frozen one leaves the other:", ...words);
+    const mk = () => «2»;
+    const a = mk(), b = mk();
+    Object.freeze(a);
+    say(Object.isFrozen(b));
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», assign onto one leaves the other:", ...words);
+    const mk = () => «2»;
+    const a = mk(), b = mk();
+    Object.assign(a, { get mark() { return 1; } });
+    say("mark" in b);
+  }
+  scene();
+}
+{
+  function scene() {
+    const say = (...words) => console.log("«1», prototype of one leaves the other:", ...words);
+    const mk = () => «2»;
+    const a = mk(), b = mk();
+    Object.setPrototypeOf(a, null);
+    say(Object.getPrototypeOf(b) === null);
+  }
+  scene();
+}
+//// what-an-object-hands-a-built-in-is-told-apart-from-its-like-closures.mjs
+// One place in the program makes a function twice. Built-ins that compare, that keep keys or that check what a trap answers are given both, mostly by way of getters, iterators and traps.
+import { EventEmitter } from "node:events";
+class Point { constructor(x) { this.x = x; } }
+function attempt(run) { try { return run(); } catch (e) { return "threw " + (e instanceof TypeError) + " " + e.constructor.name; } }
+////= every-teller	arrow	() => 1
+////= every-teller	method	({ m() { return 1; } }).m
+//// what-an-object-hands-a-built-in-is-told-apart-from-its-like-objects.mjs
+// One place in the program makes an object twice. Built-ins that compare, that keep keys or that check what a trap answers are given both, mostly by way of getters, iterators and traps.
+import { EventEmitter } from "node:events";
+class Point { constructor(x) { this.x = x; } }
+function attempt(run) { try { return run(); } catch (e) { return "threw " + (e instanceof TypeError) + " " + e.constructor.name; } }
+////= every-teller	literal	({ a: 1 })
+////= every-teller	array	[1, 2]
+////= every-teller	instance	new Point(1)
+//// what-an-object-hands-a-built-in-as-the-method-to-call-comes-from-a-getter.mjs
+// A built-in asks an object for an iterator method, toString, valueOf, toJSON, next, then and the like, and a getter, an object above or a computed key answers.
+function attempt(run) { try { return run(); } catch (e) { return "threw " + e.constructor.name; } }
+function spreadByGetter() {
+  const like = { length: 2, 0: "a", 1: "b", get [Symbol.iterator]() { return Array.prototype.values; } };
+  console.log("spread, the iterator method from a getter:", [...like].join());
+}
+spreadByGetter();
+function spreadInherited() {
+  const like = { length: 2, 0: "a", 1: "b", __proto__: { [Symbol.iterator]: Array.prototype.values } };
+  console.log("spread, the iterator method inherited:", [...like].join());
+}
+spreadInherited();
+function spreadComputed() {
+  const like = { length: 2, 0: "a", 1: "b", [[Symbol.iterator][0]]: Array.prototype.values };
+  console.log("spread, the iterator method under a computed key:", [...like].join());
+}
+spreadComputed();
+function arrayFromByGetter() {
+  const like = { length: 2, 0: "a", 1: "b", get [Symbol.iterator]() { return Array.prototype.keys; } };
+  console.log("array from, the iterator method from a getter:", Array.from(like).join());
+}
+arrayFromByGetter();
+function textByGetter() {
+  const like = { length: 2, 0: "a", 1: "b", get toString() { return Array.prototype.join; } };
+  console.log("a text, toString from a getter:", String(like), `${like}`, like + "");
+}
+textByGetter();
+function numberByGetter() {
+  const when = new Date(5);
+  const like = { get valueOf() { return () => when.getTime(); } };
+  console.log("a number, valueOf from a getter:", +like, like * 2);
+}
+numberByGetter();
+function jsonByGetter() {
+  const like = { when: new Date(0), get toJSON() { return function () { return this.when.toISOString(); }; } };
+  console.log("json, toJSON from a getter:", JSON.stringify(like), JSON.stringify([like]));
+}
+jsonByGetter();
+function jsonBuiltinByGetter() {
+  const like = { toISOString() { return "text"; }, get toJSON() { return Date.prototype.toJSON; } };
+  console.log("json, the toJSON of dates from a getter:", JSON.stringify(like));
+}
+jsonBuiltinByGetter();
+function nextByGetter() {
+  const inner = ["a", "b"].values();
+  const steps = { [Symbol.iterator]() { return { get next() { return inner.next.bind(inner); } }; } };
+  console.log("for of, next from a getter:", [...steps].join());
+}
+nextByGetter();
+function nextBuiltinOnHeir() {
+  const inner = ["a", "b"].values();
+  const steps = { [Symbol.iterator]() { return Object.create(inner); } };
+  console.log("for of, next inherited by an object that is no iterator:", attempt(() => [...steps].join()));
+}
+nextBuiltinOnHeir();
+function thenByGetter() {
+  const settled = Promise.resolve("a");
+  const like = { get then() { return settled.then.bind(settled); } };
+  Promise.resolve(like).then((x) => console.log("a thenable, then from a getter:", x));
+}
+thenByGetter();
+function thenBuiltinByGetter() {
+  class Heir extends Promise { get then() { return Promise.prototype.then; } }
+  Heir.resolve("b").then((x) => console.log("a promise below Promise, then from a getter:", x));
+}
+thenBuiltinByGetter();
+function primitiveByGetter() {
+  const like = { held: 4, get [Symbol.toPrimitive]() { return function (hint) { return hint === "number" ? this.held : "text"; }; } };
+  console.log("toPrimitive from a getter:", +like, `${like}`);
+}
+primitiveByGetter();
+function primitiveBuiltinByGetter() {
+  const like = { getTime: 1, toString() { return "text"; }, valueOf() { return 3; }, get [Symbol.toPrimitive]() { return Date.prototype[Symbol.toPrimitive]; } };
+  console.log("the toPrimitive of dates from a getter:", like + "", +like);
+}
+primitiveBuiltinByGetter();
+function hasInstanceByGetter() {
+  const like = { get [Symbol.hasInstance]() { return (x) => x === 1; } };
+  console.log("hasInstance from a getter:", 1 instanceof like, 2 instanceof like);
+}
+hasInstanceByGetter();
+function speciesByGetter() {
+  class List extends Array { static get [Symbol.species]() { return Array; } }
+  const mapped = List.of(1, 2).map((x) => x * 2);
+  console.log("species from a getter:", mapped instanceof List, mapped.join());
+}
+speciesByGetter();
+function sortByGetters() {
+  const like = { length: 3, get 0() { return "c"; }, get 1() { return "a"; }, get 2() { return "b"; }, set 0(x) { this.a = x; }, set 1(x) { this.b = x; }, set 2(x) { this.c = x; } };
+  Array.prototype.sort.call(like);
+  console.log("sort over getters and setters:", like.a, like.b, like.c);
+}
+sortByGetters();
+function replaceByGetter() {
+  const like = { get [Symbol.replace]() { return RegExp.prototype[Symbol.replace].bind(/a/g); } };
+  console.log("replace, the method from a getter:", "banana".replace(like, "o"));
+}
+replaceByGetter();
+function lengthByGetter() {
+  const like = { get length() { return 2; }, 0: "a", 1: "b" };
+  console.log("length from a getter:", Array.prototype.join.call(like), Array.from(like).length, Reflect.apply(String.prototype.concat, "", like));
+}
+lengthByGetter();
+function entriesByGetter() {
+  const pair = { get 0() { return "k"; }, get 1() { return "v"; } };
+  console.log("pairs with getters:", JSON.stringify(Object.fromEntries([pair])), new Map([pair]).get("k"));
+}
+entriesByGetter();
+function optionsInherited() {
+  class Options { get cause() { return "why"; } }
+  console.log("options of a class:", new Error("m", new Options()).cause, attempt(() => new Intl.NumberFormat("en", { __proto__: { style: "percent" } }).format(0.5)));
+}
+optionsInherited();
+//// what-an-object-hands-a-built-in-as-its-accessor-functions-is-compared.js
+// Each turn of a loop makes an object with an accessor or a function. Built-ins that describe or list the object hand the functions out, and the program compares those of the two turns.
+function viaAllDescriptors() {
+  const out = [];
+  for (let i = 0; i < 2; i++) { const source = { set x(a) {} }; out.push(Object.getOwnPropertyDescriptors(source).x.set); }
+  console.log("setter out of all descriptors:", out[0] === out[1], new Set(out).size);
+}
+viaAllDescriptors();
+function viaAllDescriptorsGetter() {
+  const out = [];
+  for (let i = 0; i < 2; i++) { const source = { get x() { return 1; } }; out.push(Object.getOwnPropertyDescriptors(source).x.get); }
+  console.log("getter out of all descriptors:", out[0] === out[1], new Set(out).size);
+}
+viaAllDescriptorsGetter();
+function viaAllDescriptorsValue() {
+  const out = [];
+  for (let i = 0; i < 2; i++) { const source = { x: () => 1 }; out.push(Object.getOwnPropertyDescriptors(source).x.value); }
+  console.log("arrow out of all descriptors:", out[0] === out[1], new Set(out).size);
+}
+viaAllDescriptorsValue();
+function viaOneDescriptor() {
+  const out = [];
+  for (let i = 0; i < 2; i++) { const source = { set x(a) {} }; out.push(Object.getOwnPropertyDescriptor(source, "x").set); }
+  console.log("setter out of one descriptor:", out[0] === out[1], new Set(out).size);
+}
+viaOneDescriptor();
+function viaLookup() {
+  const out = [];
+  for (let i = 0; i < 2; i++) { const source = { set x(a) {} }; out.push(source.__lookupSetter__("x")); }
+  console.log("setter out of a legacy lookup:", out[0] === out[1], new Set(out).size);
+}
+viaLookup();
+function viaSetOnly() {
+  const seen = new Set();
+  for (let i = 0; i < 2; i++) { const source = { set x(a) {} }; seen.add(Object.getOwnPropertyDescriptors(source).x.set); }
+  console.log("setters out of all descriptors in a set:", seen.size);
+}
+viaSetOnly();
+function viaEntriesOfDescriptors() {
+  const seen = new Set();
+  for (let i = 0; i < 2; i++) { const source = { set x(a) {} }; for (const [, d] of Object.entries(Object.getOwnPropertyDescriptors(source))) seen.add(d.set); }
+  console.log("setters out of the entries of all descriptors in a set:", seen.size);
+}
+viaEntriesOfDescriptors();
+function viaCreate() {
+  const o = {};
+  let out = "";
+  for (let i = 0; i < 2; i++) {
+    const source = Object.freeze({ set x(a) {} });
+    const twin = Object.create(null, Object.getOwnPropertyDescriptors(source));
+    try { out += " " + (Object.defineProperty(o, "x", Object.getOwnPropertyDescriptor(twin, "x")) === o); } catch (e) { out += " threw " + (e instanceof TypeError); }
+  }
+  console.log("a twin made of all descriptors, described again:" + out);
+}
+viaCreate();
+function viaInspect() {
+  const out = [];
+  for (let i = 0; i < 2; i++) { const source = { set x(a) {}, y: () => 1 }; out.push(Reflect.getOwnPropertyDescriptor(source, "x").set, Reflect.get(source, "y")); }
+  console.log("by reflect:", out[0] === out[2], out[1] === out[3]);
+}
+viaInspect();
+function viaStructure() {
+  const out = [];
+  for (let i = 0; i < 2; i++) { const source = { y: () => 1 }; out.push(Object.values(source)[0], Object.entries(source)[0][1]); }
+  console.log("by values and entries:", out[0] === out[2], out[1] === out[3], out[0] === out[1]);
+}
+viaStructure();
+////: defined-with-an-attribute
+{
+  function scene() {
+    let o = «2»;
+    const d = «3»;
+    «4»;
+    const walked = [];
+    for (const k in o) walked.push(k);
+    console.log("«1»:", Object.keys(o).join(), "|", walked.join(), "|", JSON.stringify(o), "|", JSON.stringify({ ...o }), "|", JSON.stringify(Object.assign({}, o)), "|",
+      Object.prototype.propertyIsEnumerable.call(o, "x"), attempt(() => ((o.x = 9), typeof o.x === "object" ? "object" : o.x)), o.y, attempt(() => delete o.x), "x" in o, typeof o.x);
+  }
+  scene();
+}
+////: every-way-to-an-attribute
+class Point { constructor(w, x) { this.w = w; this.x = x; } }
+function attempt(run) { try { return run(); } catch (e) { return "threw " + e.constructor.name; } }
+////= defined-with-an-attribute	«1» | accessor enumerable true | own-value | define-property	«2»	{ get: () => 7, enumerable: true }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | own-value | define-properties	«2»	{ get: () => 7, enumerable: true }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | own-value | define-property	«2»	{ get: () => 7, configurable: true }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | own-value | define-properties	«2»	{ get: () => 7, configurable: true }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | own-value | define-property	«2»	{ get: () => 7, enumerable: true, set: function (x) { this.y = x; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | own-value | define-properties	«2»	{ get: () => 7, enumerable: true, set: function (x) { this.y = x; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | own-value | define-property	«2»	{ enumerable: true, configurable: true, get: () => 7 }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | own-value | define-properties	«2»	{ enumerable: true, configurable: true, get: () => 7 }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | own-value | define-property	«2»	{ value: 7, enumerable: true }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | own-value | define-properties	«2»	{ value: 7, enumerable: true }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | own-value | define-property	«2»	{ value: 7, configurable: true }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | own-value | define-properties	«2»	{ value: 7, configurable: true }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | own-value | define-property	«2»	{ value: 7, writable: true }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | own-value | define-properties	«2»	{ value: 7, writable: true }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | own-value | define-property	«2»	{ enumerable: true, writable: true, value: "text" }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | own-value | define-properties	«2»	{ enumerable: true, writable: true, value: "text" }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | own-value | define-property	«2»	{ enumerable: true, value: { deep: 1 } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | own-value | define-properties	«2»	{ enumerable: true, value: { deep: 1 } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | own-value | define-property	«2»	{ value: 7, enumerable: true, configurable: true, writable: false }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | own-value | define-properties	«2»	{ value: 7, enumerable: true, configurable: true, writable: false }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | own-getter | define-property	«2»	{ get: () => 7, get enumerable() { return true; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | own-getter | define-properties	«2»	{ get: () => 7, get enumerable() { return true; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | own-getter | define-property	«2»	{ get: () => 7, get configurable() { return true; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | own-getter | define-properties	«2»	{ get: () => 7, get configurable() { return true; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | own-getter | define-property	«2»	{ get: () => 7, enumerable: true, get set() { return function (x) { this.y = x; }; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | own-getter | define-properties	«2»	{ get: () => 7, enumerable: true, get set() { return function (x) { this.y = x; }; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | own-getter | define-property	«2»	{ enumerable: true, configurable: true, get get() { return () => 7; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | own-getter | define-properties	«2»	{ enumerable: true, configurable: true, get get() { return () => 7; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | own-getter | define-property	«2»	{ value: 7, get enumerable() { return true; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | own-getter | define-properties	«2»	{ value: 7, get enumerable() { return true; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | own-getter | define-property	«2»	{ value: 7, get configurable() { return true; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | own-getter | define-properties	«2»	{ value: 7, get configurable() { return true; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | own-getter | define-property	«2»	{ value: 7, get writable() { return true; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | own-getter | define-properties	«2»	{ value: 7, get writable() { return true; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | own-getter | define-property	«2»	{ enumerable: true, writable: true, get value() { return "text"; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | own-getter | define-properties	«2»	{ enumerable: true, writable: true, get value() { return "text"; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | own-getter | define-property	«2»	{ enumerable: true, get value() { return { deep: 1 }; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | own-getter | define-properties	«2»	{ enumerable: true, get value() { return { deep: 1 }; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | own-getter | define-property	«2»	{ value: 7, enumerable: true, configurable: true, get writable() { return false; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | own-getter | define-properties	«2»	{ value: 7, enumerable: true, configurable: true, get writable() { return false; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | inherited-value | define-property	«2»	{ get: () => 7, __proto__: { enumerable: true } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | inherited-value | define-properties	«2»	{ get: () => 7, __proto__: { enumerable: true } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | inherited-value | define-property	«2»	{ get: () => 7, __proto__: { configurable: true } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | inherited-value | define-properties	«2»	{ get: () => 7, __proto__: { configurable: true } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | inherited-value | define-property	«2»	{ get: () => 7, enumerable: true, __proto__: { set: function (x) { this.y = x; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | inherited-value | define-properties	«2»	{ get: () => 7, enumerable: true, __proto__: { set: function (x) { this.y = x; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | inherited-value | define-property	«2»	{ enumerable: true, configurable: true, __proto__: { get: () => 7 } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | inherited-value | define-properties	«2»	{ enumerable: true, configurable: true, __proto__: { get: () => 7 } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | inherited-value | define-property	«2»	{ value: 7, __proto__: { enumerable: true } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | inherited-value | define-properties	«2»	{ value: 7, __proto__: { enumerable: true } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | inherited-value | define-property	«2»	{ value: 7, __proto__: { configurable: true } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | inherited-value | define-properties	«2»	{ value: 7, __proto__: { configurable: true } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | inherited-value | define-property	«2»	{ value: 7, __proto__: { writable: true } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | inherited-value | define-properties	«2»	{ value: 7, __proto__: { writable: true } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | inherited-value | define-property	«2»	{ enumerable: true, writable: true, __proto__: { value: "text" } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | inherited-value | define-properties	«2»	{ enumerable: true, writable: true, __proto__: { value: "text" } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | inherited-value | define-property	«2»	{ enumerable: true, __proto__: { value: { deep: 1 } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | inherited-value | define-properties	«2»	{ enumerable: true, __proto__: { value: { deep: 1 } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | inherited-value | define-property	«2»	{ value: 7, enumerable: true, configurable: true, __proto__: { writable: false } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | inherited-value | define-properties	«2»	{ value: 7, enumerable: true, configurable: true, __proto__: { writable: false } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | inherited-getter | define-property	«2»	{ get: () => 7, __proto__: { get enumerable() { return true; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | inherited-getter | define-properties	«2»	{ get: () => 7, __proto__: { get enumerable() { return true; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | inherited-getter | define-property	«2»	{ get: () => 7, __proto__: { get configurable() { return true; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | inherited-getter | define-properties	«2»	{ get: () => 7, __proto__: { get configurable() { return true; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | inherited-getter | define-property	«2»	{ get: () => 7, enumerable: true, __proto__: { get set() { return function (x) { this.y = x; }; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | inherited-getter | define-properties	«2»	{ get: () => 7, enumerable: true, __proto__: { get set() { return function (x) { this.y = x; }; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | inherited-getter | define-property	«2»	{ enumerable: true, configurable: true, __proto__: { get get() { return () => 7; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | inherited-getter | define-properties	«2»	{ enumerable: true, configurable: true, __proto__: { get get() { return () => 7; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | inherited-getter | define-property	«2»	{ value: 7, __proto__: { get enumerable() { return true; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | inherited-getter | define-properties	«2»	{ value: 7, __proto__: { get enumerable() { return true; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | inherited-getter | define-property	«2»	{ value: 7, __proto__: { get configurable() { return true; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | inherited-getter | define-properties	«2»	{ value: 7, __proto__: { get configurable() { return true; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | inherited-getter | define-property	«2»	{ value: 7, __proto__: { get writable() { return true; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | inherited-getter | define-properties	«2»	{ value: 7, __proto__: { get writable() { return true; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | inherited-getter | define-property	«2»	{ enumerable: true, writable: true, __proto__: { get value() { return "text"; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | inherited-getter | define-properties	«2»	{ enumerable: true, writable: true, __proto__: { get value() { return "text"; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | inherited-getter | define-property	«2»	{ enumerable: true, __proto__: { get value() { return { deep: 1 }; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | inherited-getter | define-properties	«2»	{ enumerable: true, __proto__: { get value() { return { deep: 1 }; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | inherited-getter | define-property	«2»	{ value: 7, enumerable: true, configurable: true, __proto__: { get writable() { return false; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | inherited-getter | define-properties	«2»	{ value: 7, enumerable: true, configurable: true, __proto__: { get writable() { return false; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | class-getter | define-property	«2»	Object.assign(new (class { get enumerable() { return true; } })(), { get: () => 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | class-getter | define-properties	«2»	Object.assign(new (class { get enumerable() { return true; } })(), { get: () => 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | class-getter | define-property	«2»	Object.assign(new (class { get configurable() { return true; } })(), { get: () => 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | class-getter | define-properties	«2»	Object.assign(new (class { get configurable() { return true; } })(), { get: () => 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | class-getter | define-property	«2»	Object.assign(new (class { get set() { return function (x) { this.y = x; }; } })(), { get: () => 7, enumerable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | class-getter | define-properties	«2»	Object.assign(new (class { get set() { return function (x) { this.y = x; }; } })(), { get: () => 7, enumerable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | class-getter | define-property	«2»	Object.assign(new (class { get get() { return () => 7; } })(), { enumerable: true, configurable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | class-getter | define-properties	«2»	Object.assign(new (class { get get() { return () => 7; } })(), { enumerable: true, configurable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | class-getter | define-property	«2»	Object.assign(new (class { get enumerable() { return true; } })(), { value: 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | class-getter | define-properties	«2»	Object.assign(new (class { get enumerable() { return true; } })(), { value: 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | class-getter | define-property	«2»	Object.assign(new (class { get configurable() { return true; } })(), { value: 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | class-getter | define-properties	«2»	Object.assign(new (class { get configurable() { return true; } })(), { value: 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | class-getter | define-property	«2»	Object.assign(new (class { get writable() { return true; } })(), { value: 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | class-getter | define-properties	«2»	Object.assign(new (class { get writable() { return true; } })(), { value: 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | class-getter | define-property	«2»	Object.assign(new (class { get value() { return "text"; } })(), { enumerable: true, writable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | class-getter | define-properties	«2»	Object.assign(new (class { get value() { return "text"; } })(), { enumerable: true, writable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | class-getter | define-property	«2»	Object.assign(new (class { get value() { return { deep: 1 }; } })(), { enumerable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | class-getter | define-properties	«2»	Object.assign(new (class { get value() { return { deep: 1 }; } })(), { enumerable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | class-getter | define-property	«2»	Object.assign(new (class { get writable() { return false; } })(), { value: 7, enumerable: true, configurable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | class-getter | define-properties	«2»	Object.assign(new (class { get writable() { return false; } })(), { value: 7, enumerable: true, configurable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | created-below | define-property	«2»	Object.assign(Object.create({ enumerable: true }), { get: () => 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | created-below | define-properties	«2»	Object.assign(Object.create({ enumerable: true }), { get: () => 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | created-below | define-property	«2»	Object.assign(Object.create({ configurable: true }), { get: () => 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | created-below | define-properties	«2»	Object.assign(Object.create({ configurable: true }), { get: () => 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | created-below | define-property	«2»	Object.assign(Object.create({ set: function (x) { this.y = x; } }), { get: () => 7, enumerable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | created-below | define-properties	«2»	Object.assign(Object.create({ set: function (x) { this.y = x; } }), { get: () => 7, enumerable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | created-below | define-property	«2»	Object.assign(Object.create({ get: () => 7 }), { enumerable: true, configurable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | created-below | define-properties	«2»	Object.assign(Object.create({ get: () => 7 }), { enumerable: true, configurable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | created-below | define-property	«2»	Object.assign(Object.create({ enumerable: true }), { value: 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | created-below | define-properties	«2»	Object.assign(Object.create({ enumerable: true }), { value: 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | created-below | define-property	«2»	Object.assign(Object.create({ configurable: true }), { value: 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | created-below | define-properties	«2»	Object.assign(Object.create({ configurable: true }), { value: 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | created-below | define-property	«2»	Object.assign(Object.create({ writable: true }), { value: 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | created-below | define-properties	«2»	Object.assign(Object.create({ writable: true }), { value: 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | created-below | define-property	«2»	Object.assign(Object.create({ value: "text" }), { enumerable: true, writable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | created-below | define-properties	«2»	Object.assign(Object.create({ value: "text" }), { enumerable: true, writable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | created-below | define-property	«2»	Object.assign(Object.create({ value: { deep: 1 } }), { enumerable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | created-below | define-properties	«2»	Object.assign(Object.create({ value: { deep: 1 } }), { enumerable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | created-below | define-property	«2»	Object.assign(Object.create({ writable: false }), { value: 7, enumerable: true, configurable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | created-below | define-properties	«2»	Object.assign(Object.create({ writable: false }), { value: 7, enumerable: true, configurable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | proxy-over | define-property	«2»	new Proxy({ get: () => 7, enumerable: true }, {})	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | proxy-over | define-properties	«2»	new Proxy({ get: () => 7, enumerable: true }, {})	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | proxy-over | define-property	«2»	new Proxy({ get: () => 7, configurable: true }, {})	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | proxy-over | define-properties	«2»	new Proxy({ get: () => 7, configurable: true }, {})	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | proxy-over | define-property	«2»	new Proxy({ get: () => 7, enumerable: true, set: function (x) { this.y = x; } }, {})	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | proxy-over | define-properties	«2»	new Proxy({ get: () => 7, enumerable: true, set: function (x) { this.y = x; } }, {})	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | proxy-over | define-property	«2»	new Proxy({ enumerable: true, configurable: true, get: () => 7 }, {})	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | proxy-over | define-properties	«2»	new Proxy({ enumerable: true, configurable: true, get: () => 7 }, {})	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | proxy-over | define-property	«2»	new Proxy({ value: 7, enumerable: true }, {})	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | proxy-over | define-properties	«2»	new Proxy({ value: 7, enumerable: true }, {})	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | proxy-over | define-property	«2»	new Proxy({ value: 7, configurable: true }, {})	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | proxy-over | define-properties	«2»	new Proxy({ value: 7, configurable: true }, {})	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | proxy-over | define-property	«2»	new Proxy({ value: 7, writable: true }, {})	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | proxy-over | define-properties	«2»	new Proxy({ value: 7, writable: true }, {})	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | proxy-over | define-property	«2»	new Proxy({ enumerable: true, writable: true, value: "text" }, {})	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | proxy-over | define-properties	«2»	new Proxy({ enumerable: true, writable: true, value: "text" }, {})	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | proxy-over | define-property	«2»	new Proxy({ enumerable: true, value: { deep: 1 } }, {})	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | proxy-over | define-properties	«2»	new Proxy({ enumerable: true, value: { deep: 1 } }, {})	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | proxy-over | define-property	«2»	new Proxy({ value: 7, enumerable: true, configurable: true, writable: false }, {})	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | proxy-over | define-properties	«2»	new Proxy({ value: 7, enumerable: true, configurable: true, writable: false }, {})	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | computed-key | define-property	«2»	{ get: () => 7, [["enumerable"].join("")]: true }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | computed-key | define-properties	«2»	{ get: () => 7, [["enumerable"].join("")]: true }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | computed-key | define-property	«2»	{ get: () => 7, [["configurable"].join("")]: true }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | computed-key | define-properties	«2»	{ get: () => 7, [["configurable"].join("")]: true }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | computed-key | define-property	«2»	{ get: () => 7, enumerable: true, [["set"].join("")]: function (x) { this.y = x; } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | computed-key | define-properties	«2»	{ get: () => 7, enumerable: true, [["set"].join("")]: function (x) { this.y = x; } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | computed-key | define-property	«2»	{ enumerable: true, configurable: true, [["get"].join("")]: () => 7 }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | computed-key | define-properties	«2»	{ enumerable: true, configurable: true, [["get"].join("")]: () => 7 }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | computed-key | define-property	«2»	{ value: 7, [["enumerable"].join("")]: true }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | computed-key | define-properties	«2»	{ value: 7, [["enumerable"].join("")]: true }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | computed-key | define-property	«2»	{ value: 7, [["configurable"].join("")]: true }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | computed-key | define-properties	«2»	{ value: 7, [["configurable"].join("")]: true }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | computed-key | define-property	«2»	{ value: 7, [["writable"].join("")]: true }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | computed-key | define-properties	«2»	{ value: 7, [["writable"].join("")]: true }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | computed-key | define-property	«2»	{ enumerable: true, writable: true, [["value"].join("")]: "text" }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | computed-key | define-properties	«2»	{ enumerable: true, writable: true, [["value"].join("")]: "text" }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | computed-key | define-property	«2»	{ enumerable: true, [["value"].join("")]: { deep: 1 } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | computed-key | define-properties	«2»	{ enumerable: true, [["value"].join("")]: { deep: 1 } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | computed-key | define-property	«2»	{ value: 7, enumerable: true, configurable: true, [["writable"].join("")]: false }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | computed-key | define-properties	«2»	{ value: 7, enumerable: true, configurable: true, [["writable"].join("")]: false }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | assigned | define-property	«2»	Object.assign({ get: () => 7 }, { enumerable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | assigned | define-properties	«2»	Object.assign({ get: () => 7 }, { enumerable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | assigned | define-property	«2»	Object.assign({ get: () => 7 }, { configurable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | assigned | define-properties	«2»	Object.assign({ get: () => 7 }, { configurable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | assigned | define-property	«2»	Object.assign({ get: () => 7, enumerable: true }, { set: function (x) { this.y = x; } })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | assigned | define-properties	«2»	Object.assign({ get: () => 7, enumerable: true }, { set: function (x) { this.y = x; } })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | assigned | define-property	«2»	Object.assign({ enumerable: true, configurable: true }, { get: () => 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | assigned | define-properties	«2»	Object.assign({ enumerable: true, configurable: true }, { get: () => 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | assigned | define-property	«2»	Object.assign({ value: 7 }, { enumerable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | assigned | define-properties	«2»	Object.assign({ value: 7 }, { enumerable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | assigned | define-property	«2»	Object.assign({ value: 7 }, { configurable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | assigned | define-properties	«2»	Object.assign({ value: 7 }, { configurable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | assigned | define-property	«2»	Object.assign({ value: 7 }, { writable: true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | assigned | define-properties	«2»	Object.assign({ value: 7 }, { writable: true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | assigned | define-property	«2»	Object.assign({ enumerable: true, writable: true }, { value: "text" })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | assigned | define-properties	«2»	Object.assign({ enumerable: true, writable: true }, { value: "text" })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | assigned | define-property	«2»	Object.assign({ enumerable: true }, { value: { deep: 1 } })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | assigned | define-properties	«2»	Object.assign({ enumerable: true }, { value: { deep: 1 } })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | assigned | define-property	«2»	Object.assign({ value: 7, enumerable: true, configurable: true }, { writable: false })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | assigned | define-properties	«2»	Object.assign({ value: 7, enumerable: true, configurable: true }, { writable: false })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | spread | define-property	«2»	{ get: () => 7, ...{ enumerable: true } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | spread | define-properties	«2»	{ get: () => 7, ...{ enumerable: true } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | spread | define-property	«2»	{ get: () => 7, ...{ configurable: true } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | spread | define-properties	«2»	{ get: () => 7, ...{ configurable: true } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | spread | define-property	«2»	{ get: () => 7, enumerable: true, ...{ set: function (x) { this.y = x; } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | spread | define-properties	«2»	{ get: () => 7, enumerable: true, ...{ set: function (x) { this.y = x; } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | spread | define-property	«2»	{ enumerable: true, configurable: true, ...{ get: () => 7 } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | spread | define-properties	«2»	{ enumerable: true, configurable: true, ...{ get: () => 7 } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | spread | define-property	«2»	{ value: 7, ...{ enumerable: true } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | spread | define-properties	«2»	{ value: 7, ...{ enumerable: true } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | spread | define-property	«2»	{ value: 7, ...{ configurable: true } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | spread | define-properties	«2»	{ value: 7, ...{ configurable: true } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | spread | define-property	«2»	{ value: 7, ...{ writable: true } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | spread | define-properties	«2»	{ value: 7, ...{ writable: true } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | spread | define-property	«2»	{ enumerable: true, writable: true, ...{ value: "text" } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | spread | define-properties	«2»	{ enumerable: true, writable: true, ...{ value: "text" } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | spread | define-property	«2»	{ enumerable: true, ...{ value: { deep: 1 } } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | spread | define-properties	«2»	{ enumerable: true, ...{ value: { deep: 1 } } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | spread | define-property	«2»	{ value: 7, enumerable: true, configurable: true, ...{ writable: false } }	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | spread | define-properties	«2»	{ value: 7, enumerable: true, configurable: true, ...{ writable: false } }	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | defined-getter | define-property	«2»	Object.defineProperty({ get: () => 7 }, "enumerable", { get: () => true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | defined-getter | define-properties	«2»	Object.defineProperty({ get: () => 7 }, "enumerable", { get: () => true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | defined-getter | define-property	«2»	Object.defineProperty({ get: () => 7 }, "configurable", { get: () => true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | defined-getter | define-properties	«2»	Object.defineProperty({ get: () => 7 }, "configurable", { get: () => true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | defined-getter | define-property	«2»	Object.defineProperty({ get: () => 7, enumerable: true }, "set", { get: () => function (x) { this.y = x; } })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | defined-getter | define-properties	«2»	Object.defineProperty({ get: () => 7, enumerable: true }, "set", { get: () => function (x) { this.y = x; } })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | defined-getter | define-property	«2»	Object.defineProperty({ enumerable: true, configurable: true }, "get", { get: () => () => 7 })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | defined-getter | define-properties	«2»	Object.defineProperty({ enumerable: true, configurable: true }, "get", { get: () => () => 7 })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | defined-getter | define-property	«2»	Object.defineProperty({ value: 7 }, "enumerable", { get: () => true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | defined-getter | define-properties	«2»	Object.defineProperty({ value: 7 }, "enumerable", { get: () => true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | defined-getter | define-property	«2»	Object.defineProperty({ value: 7 }, "configurable", { get: () => true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | defined-getter | define-properties	«2»	Object.defineProperty({ value: 7 }, "configurable", { get: () => true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | defined-getter | define-property	«2»	Object.defineProperty({ value: 7 }, "writable", { get: () => true })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | defined-getter | define-properties	«2»	Object.defineProperty({ value: 7 }, "writable", { get: () => true })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | defined-getter | define-property	«2»	Object.defineProperty({ enumerable: true, writable: true }, "value", { get: () => "text" })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | defined-getter | define-properties	«2»	Object.defineProperty({ enumerable: true, writable: true }, "value", { get: () => "text" })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | defined-getter | define-property	«2»	Object.defineProperty({ enumerable: true }, "value", { get: () => { deep: 1 } })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | defined-getter | define-properties	«2»	Object.defineProperty({ enumerable: true }, "value", { get: () => { deep: 1 } })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | defined-getter | define-property	«2»	Object.defineProperty({ value: 7, enumerable: true, configurable: true }, "writable", { get: () => false })	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | defined-getter | define-properties	«2»	Object.defineProperty({ value: 7, enumerable: true, configurable: true }, "writable", { get: () => false })	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor enumerable true | stored-by-key | define-property	«2»	((d, k) => ((d[k] = true), d))({ get: () => 7 }, ["enumerable"].join(""))	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor enumerable true | stored-by-key | define-properties	«2»	((d, k) => ((d[k] = true), d))({ get: () => 7 }, ["enumerable"].join(""))	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor configurable true | stored-by-key | define-property	«2»	((d, k) => ((d[k] = true), d))({ get: () => 7 }, ["configurable"].join(""))	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor configurable true | stored-by-key | define-properties	«2»	((d, k) => ((d[k] = true), d))({ get: () => 7 }, ["configurable"].join(""))	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | stored-by-key | define-property	«2»	((d, k) => ((d[k] = function (x) { this.y = x; }), d))({ get: () => 7, enumerable: true }, ["set"].join(""))	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor set function (x) { this.y = x; } | stored-by-key | define-properties	«2»	((d, k) => ((d[k] = function (x) { this.y = x; }), d))({ get: () => 7, enumerable: true }, ["set"].join(""))	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | accessor get () => 7 | stored-by-key | define-property	«2»	((d, k) => ((d[k] = () => 7), d))({ enumerable: true, configurable: true }, ["get"].join(""))	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | accessor get () => 7 | stored-by-key | define-properties	«2»	((d, k) => ((d[k] = () => 7), d))({ enumerable: true, configurable: true }, ["get"].join(""))	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data enumerable true | stored-by-key | define-property	«2»	((d, k) => ((d[k] = true), d))({ value: 7 }, ["enumerable"].join(""))	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data enumerable true | stored-by-key | define-properties	«2»	((d, k) => ((d[k] = true), d))({ value: 7 }, ["enumerable"].join(""))	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data configurable true | stored-by-key | define-property	«2»	((d, k) => ((d[k] = true), d))({ value: 7 }, ["configurable"].join(""))	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data configurable true | stored-by-key | define-properties	«2»	((d, k) => ((d[k] = true), d))({ value: 7 }, ["configurable"].join(""))	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable true | stored-by-key | define-property	«2»	((d, k) => ((d[k] = true), d))({ value: 7 }, ["writable"].join(""))	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable true | stored-by-key | define-properties	«2»	((d, k) => ((d[k] = true), d))({ value: 7 }, ["writable"].join(""))	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value \"text\" | stored-by-key | define-property	«2»	((d, k) => ((d[k] = "text"), d))({ enumerable: true, writable: true }, ["value"].join(""))	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value \"text\" | stored-by-key | define-properties	«2»	((d, k) => ((d[k] = "text"), d))({ enumerable: true, writable: true }, ["value"].join(""))	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | stored-by-key | define-property	«2»	((d, k) => ((d[k] = { deep: 1 }), d))({ enumerable: true }, ["value"].join(""))	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data value { deep: 1 } | stored-by-key | define-properties	«2»	((d, k) => ((d[k] = { deep: 1 }), d))({ enumerable: true }, ["value"].join(""))	Object.defineProperties(o, { x: d })
+////= defined-with-an-attribute	«1» | data writable false | stored-by-key | define-property	«2»	((d, k) => ((d[k] = false), d))({ value: 7, enumerable: true, configurable: true }, ["writable"].join(""))	Object.defineProperty(o, "x", d)
+////= defined-with-an-attribute	«1» | data writable false | stored-by-key | define-properties	«2»	((d, k) => ((d[k] = false), d))({ value: 7, enumerable: true, configurable: true }, ["writable"].join(""))	Object.defineProperties(o, { x: d })
+//// what-an-object-hands-a-built-in-as-an-attribute-of-a-definition-on-an-empty-object.mjs
+// A descriptor comes to one of its members by a getter, from an object above, under a computed key, by a copy or through a proxy. What was defined is listed, copied, written as JSON, stored to and deleted.
+////= every-way-to-an-attribute	empty	{}
+//// what-an-object-hands-a-built-in-as-an-attribute-of-a-definition-on-a-literal.mjs
+// A descriptor comes to one of its members by a getter, from an object above, under a computed key, by a copy or through a proxy. What was defined is listed, copied, written as JSON, stored to and deleted.
+////= every-way-to-an-attribute	literal	{ w: 1, x: 2 }
+//// what-an-object-hands-a-built-in-as-an-attribute-of-a-definition-on-an-instance.mjs
+// A descriptor comes to one of its members by a getter, from an object above, under a computed key, by a copy or through a proxy. What was defined is listed, copied, written as JSON, stored to and deleted.
+////= every-way-to-an-attribute	instance	new Point(1, 2)

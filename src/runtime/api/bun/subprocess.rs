@@ -6,10 +6,9 @@ use core::ptr::NonNull;
 
 use bun_ptr::{RefCount, RefPtr};
 
-use bun_jsc::bindgen::JsPayload as _;
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
-    VirtualMachine,
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult, VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
 #[cfg(not(windows))]
@@ -57,23 +56,7 @@ pub(crate) use bun_io::MaxBuf;
 bun_output::declare_scope!(Subprocess, visible);
 bun_output::declare_scope!(IPC, visible);
 
-// `toJS`/`fromJS`/`fromJSDirect` are wired manually below (the `#[bun_jsc::JsClass]`
-// proc-macro doesn't support generic structs); cached-property accessors
-// (exitedPromiseGetCached, stdinGetCached, …) from `jsc.Codegen.JSSubprocess` are
-// emitted here via `codegen_cached_accessors!`.
-pub(crate) mod js {
-    bun_jsc::codegen_cached_accessors!(
-        "Subprocess";
-        stdin,
-        stdout,
-        stderr,
-        terminal,
-        exitedPromise,
-        onExitCallback,
-        onDisconnectCallback,
-        ipcCallback
-    );
-}
+pub(crate) use crate::generated_bindgen::subprocess::js_Subprocess as js;
 
 /// Platform-dependent stdio result type.
 pub(crate) use bun_spawn::subprocess::StdioResult;
@@ -102,10 +85,6 @@ pub enum ObservableGetter {
 
 pub(crate) use bun_spawn::process::StdioKind;
 
-// Note: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
-// bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
-// hooks are hand-expanded below for `Subprocess<'_>`.
-//
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). Host-fn bodies re-enter
 // JS (`run_callback`, promise resolve, getters that materialise streams) and a
@@ -166,42 +145,6 @@ bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_t
 // Note: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
 // spawn_maybe_sync` fills every field explicitly (see note there), and
 // `*mut Process` has no sound placeholder anyway.
-
-// ── manual `#[bun_jsc::JsClass]` expansion (generic struct) ──────────────────
-// Routes through the codegen'd `crate::generated_classes::js_Subprocess`
-// wrappers (which are typed against `Subprocess<'static>`) so the extern
-// symbols are declared exactly once.
-const _: () = {
-    use crate::generated_classes::js_Subprocess as js;
-
-    impl<'a> Subprocess<'a> {
-        /// Wrap an already-heap-allocated `Subprocess` (via `heap::alloc`) in
-        /// its JS cell. `Bun.spawn` boxes early so address-dependent
-        /// back-pointers (`stdin.pipe.signal`, MaxBuf owner, IPC owner) can be
-        /// wired before `subprocess.toJS(globalThis)` runs; this is the raw-ptr
-        /// entrypoint that avoids re-boxing.
-        ///
-        /// `ptr` must come from `heap::alloc(Box::new(Subprocess { .. }))` and
-        /// not yet be owned by any JS wrapper; ownership transfers to the C++
-        /// side (released via `SubprocessClass__finalize`). Thin forwarder to
-        /// the (already safe) generated `js_Subprocess::to_js`, which
-        /// encapsulates the FFI `__create` call internally.
-        #[inline]
-        pub(crate) fn to_js_from_ptr(ptr: *mut Self, global: &JSGlobalObject) -> JSValue {
-            // The codegen wrapper is monomorphized at `'static`; the lifetime
-            // parameter is purely a borrow-checker artifact (C++ stores the
-            // pointer as opaque `m_ctx`), so erase it via `cast`.
-            js::to_js(ptr.cast(), global)
-        }
-    }
-
-    bun_jsc::impl_js_class_via_generated!(for<'a> Subprocess<'a> => crate::generated_classes::js_Subprocess, no_constructor);
-
-    // `SubprocessClass__finalize` / `SubprocessClass__construct` are now emitted
-    // by `generateRust()` (`build/*/codegen/generated_classes.rs`); the
-    // hand-expanded copies that used to live here collided at link time and
-    // have been removed.
-};
 
 impl<'a> Subprocess<'a> {
     /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any) for
@@ -354,13 +297,8 @@ impl Subprocess<'_> {
         self.abort_handle.signal()
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn resource_usage(
-        this: &Self,
-        global_object: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.create_resource_usage_object(global_object)
+    pub(crate) fn resource_usage(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.create_resource_usage_object(cx.global())
     }
 
     pub(crate) fn create_resource_usage_object(
@@ -388,7 +326,7 @@ impl Subprocess<'_> {
 
             return Ok(JSValue::UNDEFINED);
         };
-        Ok(ResourceUsage { rusage }.into_js_value(global_object))
+        Ok(ResourceUsage { rusage }.to_js(global_object))
     }
 
     pub(crate) fn has_exited(&self) -> bool {
@@ -520,7 +458,7 @@ impl Subprocess<'_> {
         self.update_has_pending_activity();
     }
 
-    pub(crate) fn js_ref(&self) {
+    pub(crate) fn do_ref(&self) {
         self.process_mut().enable_keeping_event_loop_alive();
 
         if !self.has_called_getter(ObservableGetter::Stdin) {
@@ -539,7 +477,7 @@ impl Subprocess<'_> {
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-    pub(crate) fn js_unref(&self) {
+    pub(crate) fn do_unref(&self) {
         self.process_mut().disable_keeping_event_loop_alive();
 
         if !self.has_called_getter(ObservableGetter::Stdin) {
@@ -557,90 +495,71 @@ impl Subprocess<'_> {
         self.update_has_pending_activity();
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_stderr(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_stderr(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         // When terminal is used, stderr goes through the terminal
-        if this.terminal.get().is_some() {
+        if self.terminal.get().is_some() {
             return Ok(JSValue::NULL);
         }
-        this.observable_getters
-            .set(this.observable_getters.get() | ObservableGetter::Stderr);
-        let exited = this.has_exited();
+        self.observable_getters
+            .set(self.observable_getters.get() | ObservableGetter::Stderr);
+        let exited = self.has_exited();
         // The stream is the script's that reads the property.
-        let context = global_this.bun_vm().context_of_caller_no_frame();
-        this.stderr
-            .with_mut(|s| s.to_js(&global_this.js_thread(context), exited))
+        self.stderr.with_mut(|s| s.to_js(&cx.js_thread(), exited))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_stdin(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_stdin(&self, cx: &mut JsScope<'_>) -> JSValue {
         // When terminal is used, stdin goes through the terminal
-        if this.terminal.get().is_some() {
-            return Ok(JSValue::NULL);
+        if self.terminal.get().is_some() {
+            return JSValue::NULL;
         }
-        this.observable_getters
-            .set(this.observable_getters.get() | ObservableGetter::Stdin);
+        self.observable_getters
+            .set(self.observable_getters.get() | ObservableGetter::Stdin);
         // `Writable::to_js` takes only the parent and projects `stdin`
         // internally so no two `&mut` overlap here.
-        Ok(Writable::to_js(this, global_this))
+        Writable::to_js(self, cx.global())
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_stdout(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_stdout(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         // When terminal is used, stdout goes through the terminal
-        if this.terminal.get().is_some() {
+        if self.terminal.get().is_some() {
             return Ok(JSValue::NULL);
         }
-        this.observable_getters
-            .set(this.observable_getters.get() | ObservableGetter::Stdout);
+        self.observable_getters
+            .set(self.observable_getters.get() | ObservableGetter::Stdout);
         // NOTE: ownership of internal buffers is transferred to the JSValue, which
         // gets cached on JSSubprocess (created via bindgen). This makes it
-        // re-accessable to JS code but not via `this.stdout`, which is now `.closed`.
-        let exited = this.has_exited();
+        // re-accessable to JS code but not via `self.stdout`, which is now `.closed`.
+        let exited = self.has_exited();
         // The stream is the script's that reads the property.
-        let context = global_this.bun_vm().context_of_caller_no_frame();
-        this.stdout
-            .with_mut(|s| s.to_js(&global_this.js_thread(context), exited))
+        self.stdout.with_mut(|s| s.to_js(&cx.js_thread(), exited))
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_terminal(this: &Self, global_this: &JSGlobalObject) -> JSValue {
-        if let Some(terminal) = this.terminal.get() {
-            return crate::api::bun_terminal_body::to_js(terminal.as_ptr(), global_this);
-        }
-        JSValue::UNDEFINED
-    }
-
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn async_dispose(
-        this: &Self,
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
     ) -> JsResult<JSValue> {
-        if this.process().has_exited() {
+        if self.process().has_exited() {
             // rely on GC to clean everything up in this case
             return Ok(JSValue::UNDEFINED);
         }
 
-        let this_jsvalue = callframe.this();
-
-        let _keep = jsc::EnsureStillAlive(this_jsvalue);
-
         // unref streams so that this disposed process will not prevent
         // the process from exiting causing a hang
-        this.stdin.with_mut(|s| s.unref());
-        this.stdout.with_mut(|s| s.unref());
-        this.stderr.with_mut(|s| s.unref());
+        self.stdin.with_mut(|s| s.unref());
+        self.stdout.with_mut(|s| s.unref());
+        self.stderr.with_mut(|s| s.unref());
 
-        match this.try_kill(this.kill_signal) {
+        match self.try_kill(self.kill_signal) {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
                 // Signal 9 should always be fine, but just in case that somehow fails.
+                let global = cx.global();
                 return Err(global.throw_value(err.to_js(global)));
             }
         }
 
-        Ok(this.get_exited(this_jsvalue, global))
+        Ok(self.get_exited(this_value, cx))
     }
 
     pub(crate) fn set_event_loop_timer_refd(&self, refd: bool) {
@@ -716,23 +635,23 @@ impl Subprocess<'_> {
         }
     }
 
-    #[bun_jsc::host_fn(method)]
     pub(crate) fn kill(
-        this: &Self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        signal: JsLocal<'_>,
+    ) -> JsResult<()> {
+        let global_this = cx.global();
         // Safe: this method can only be called while the object is alive (reachable from JS)
         // The finalizer only runs when the object becomes unreachable
-        this.this_value
-            .with_mut(|v| v.update(global_this, callframe.this()));
+        self.this_value
+            .with_mut(|v| v.update(global_this, this_value.to_js()));
 
-        let [signal_arg] = callframe.arguments_as_array::<1>();
         // If signal is 0, then no actual signal is sent, but error checking
         // is still performed.
-        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal_arg, global_this)?;
+        let sig: SignalCode = bun_sys_jsc::signal_code_jsc::from_js(signal.to_js(), global_this)?;
 
-        match this.try_kill(sig) {
+        match self.try_kill(sig) {
             bun_sys::Result::Ok(()) => {}
             bun_sys::Result::Err(err) => {
                 // EINVAL or ENOSYS means the signal is not supported in the current platform (most likely unsupported on windows)
@@ -740,7 +659,7 @@ impl Subprocess<'_> {
             }
         }
 
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn has_killed(&self) -> bool {
@@ -769,26 +688,6 @@ impl Subprocess<'_> {
         }
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_ref(
-        this: &Self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.js_ref();
-        Ok(JSValue::UNDEFINED)
-    }
-
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_unref(
-        this: &Self,
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        this.js_unref();
-        Ok(JSValue::UNDEFINED)
-    }
-
     pub(crate) fn on_stdin_destroyed(&self) {
         let must_deref = self.flags.get().contains(Flags::DEREF_ON_STDIN_DESTROYED);
         self.update_flags(|f| {
@@ -807,22 +706,35 @@ impl Subprocess<'_> {
         }
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn do_send(
-        this: &Self,
-        global: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
+    pub(crate) fn send(
+        &self,
+        cx: &mut JsScope<'_>,
+        message: JsLocal<'_>,
+        handle: JsLocal<'_>,
+        options: JsLocal<'_>,
+        callback: JsLocal<'_>,
+    ) -> JsResult<bool> {
         bun_output::scoped_log!(IPC, "Subprocess#doSend");
 
-        let context = if this.has_exited() {
+        let context = if self.has_exited() {
             crate::ipc_host::FromEnum::SubprocessExited
         } else {
             crate::ipc_host::FromEnum::Subprocess
         };
         // `ipc()` centralises the single unsafe `JsCell` deref; `do_send` may
         // re-enter JS, but only the SendQueue is borrowed, not `*self`.
-        crate::ipc_host::do_send(this.ipc(), global, call_frame, context, this.pid() as u32)
+        crate::ipc_host::do_send(
+            self.ipc(),
+            cx.global(),
+            [
+                message.to_js(),
+                handle.to_js(),
+                options.to_js(),
+                callback.to_js(),
+            ],
+            context,
+            self.pid() as u32,
+        )
     }
 
     pub(crate) fn disconnect_ipc(&self, next_tick: bool) {
@@ -830,40 +742,30 @@ impl Subprocess<'_> {
         ipc_data.close_socket_next_tick(next_tick);
     }
 
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn disconnect(
-        this: &Self,
-        _global_this: &JSGlobalObject,
-        _callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        if let Some(ipc_data) = this.ipc() {
+    pub(crate) fn disconnect(&self) {
+        if let Some(ipc_data) = self.ipc() {
             ipc_data.disconnect();
         }
-        Ok(JSValue::UNDEFINED)
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_connected(this: &Self, _global_this: &JSGlobalObject) -> JSValue {
-        let connected = this.ipc().map(|d| d.is_connected()).unwrap_or(false);
-        JSValue::from(connected)
+    pub(crate) fn get_connected(&self) -> bool {
+        self.ipc().map(|d| d.is_connected()).unwrap_or(false)
     }
 
     pub(crate) fn pid(&self) -> i32 {
         self.process().pid
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_pid(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.pid() as f64)
+    pub(crate) fn get_pid(&self) -> i32 {
+        self.pid()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_killed(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::from(this.has_killed())
+    pub(crate) fn get_killed(&self) -> bool {
+        self.has_killed()
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_stdio(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
+    pub(crate) fn get_stdio(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
         let array = JSValue::create_empty_array(global, 0)?;
         array.push(global, JSValue::NULL)?;
         array.push(global, JSValue::NULL)?; // TODO: align this with options
@@ -877,7 +779,7 @@ impl Subprocess<'_> {
         // would not see EOF when the caller closes its copy. The duplicate is
         // kept so later reads return the same value.
         #[cfg(windows)]
-        this.stdio_pipes.with_mut(|pipes| {
+        self.stdio_pipes.with_mut(|pipes| {
             for slot in pipes.iter_mut() {
                 let buffer = match core::mem::take(slot) {
                     StdioResult::Buffer(buffer) => buffer,
@@ -900,7 +802,7 @@ impl Subprocess<'_> {
             }
         });
 
-        for item in this.stdio_pipes.get().iter() {
+        for item in self.stdio_pipes.get().iter() {
             #[cfg(windows)]
             {
                 if let StdioResult::UnownedFd(fd) = item {
@@ -927,7 +829,7 @@ impl Subprocess<'_> {
         // Downgrade so finalize_streams never closes a number JS may have
         // already closed (whose value the kernel may have since recycled).
         #[cfg(not(windows))]
-        this.stdio_pipes.with_mut(|pipes| {
+        self.stdio_pipes.with_mut(|pipes| {
             for slot in pipes.iter_mut() {
                 if let ExtraPipe::OwnedFd(fd) = *slot {
                     *slot = ExtraPipe::UnownedFd(fd);
@@ -938,8 +840,7 @@ impl Subprocess<'_> {
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
-        core::mem::size_of::<Self>()
-            + self.process().memory_cost()
+        self.process().memory_cost()
             + self.stdin.get().memory_cost()
             + self.stdout.get().memory_cost()
             + self.stderr.get().memory_cost()
@@ -1013,9 +914,7 @@ impl Subprocess<'_> {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 if existing_value.is_cell() {
                     if stdin.is_none() {
-                        // TODO: review this cast
-                        stdin = crate::webcore::file_sink::JSSink::from_js(existing_value)
-                            .and_then(|p| NonNull::new(p.cast::<FileSink>()));
+                        stdin = crate::webcore::file_sink::JSSink::sink_from_js(existing_value);
                     }
 
                     if !self.flags.get().contains(Flags::IS_STDIN_A_READABLE_STREAM) {
@@ -1036,7 +935,7 @@ impl Subprocess<'_> {
         }
 
         if !existing_stdin_value.is_empty() {
-            crate::webcore::file_sink::JSSink::set_destroy_callback(existing_stdin_value, 0);
+            crate::webcore::file_sink::JSSink::forget_subprocess(existing_stdin_value);
         }
 
         // Node.js keeps reading stdout/stderr until EOF after the direct child
@@ -1185,8 +1084,8 @@ impl Subprocess<'_> {
 
                     let args = [
                         this_value,
-                        self.get_exit_code(global_this),
-                        self.get_signal_code(global_this),
+                        self.exit_code_to_js(),
+                        self.signal_code_to_js(global_this),
                         waitpid_value,
                     ];
 
@@ -1370,11 +1269,17 @@ impl Subprocess<'_> {
         self.update_flags(|f| f.insert(Flags::FINALIZED));
     }
 
-    pub(crate) fn get_exited(&self, this_value: JSValue, global_this: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_exited(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+    ) -> JSValue {
+        let this_value = this_value.to_js();
         if let Some(promise) = js::exited_promise_get_cached(this_value) {
             return promise;
         }
 
+        let global_this = cx.global();
         match &self.process().status {
             Status::Exited(exit) => {
                 JSPromise::resolved_promise_value(global_this, JSValue::js_number(exit.code as f64))
@@ -1395,16 +1300,25 @@ impl Subprocess<'_> {
         }
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_exit_code(&self, _global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_exit_code(&self) -> Option<u8> {
         if let Status::Exited(exited) = &self.process().status {
-            return JSValue::js_number(exited.code as f64);
+            return Some(exited.code);
         }
-        JSValue::NULL
+        None
     }
 
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_signal_code(&self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn exit_code_to_js(&self) -> JSValue {
+        self.get_exit_code().map_or(JSValue::NULL, |code| {
+            JSValue::js_number_from_int32(i32::from(code))
+        })
+    }
+
+    pub(crate) fn get_signal_code(&self, cx: &mut JsScope<'_>) -> JSValue {
+        self.signal_code_to_js(cx.global())
+    }
+
+    /// The name of the signal that ended the process, its number if it has no name, else `null`.
+    pub(crate) fn signal_code_to_js(&self, global: &JSGlobalObject) -> JSValue {
         let Some(signal) = self.process().status.signal() else {
             return JSValue::NULL;
         };
@@ -1575,32 +1489,23 @@ pub(crate) mod testing_apis {
     ///
     /// Returns true if an error was injected, false if the given stdio is
     /// not (or no longer) a buffered pipe reader.
-    #[bun_jsc::host_fn]
     pub(crate) fn inject_stdio_read_error(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [subprocess_value, kind_value] = callframe.arguments_as_array::<2>();
-        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value) else {
-            return Err(global_this.throw(format_args!("first argument must be a Subprocess")));
-        };
-        // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
-        // R-2: deref as shared (`&*const`) — fields are interior-mutable.
-        let subprocess = unsafe { &*subprocess_ptr };
-        let kind_str = kind_value.to_bun_string(global_this)?;
-
-        let out: &JsCell<Readable> = if kind_str.eq_ascii(b"stdout") {
+        cx: &mut JsScope<'_>,
+        subprocess: &Subprocess<'static>,
+        kind: &bun_core::String,
+    ) -> JsResult<bool> {
+        let out: &JsCell<Readable> = if kind.eq_ascii(b"stdout") {
             &subprocess.stdout
-        } else if kind_str.eq_ascii(b"stderr") {
+        } else if kind.eq_ascii(b"stderr") {
             &subprocess.stderr
         } else {
-            return Err(
-                global_this.throw(format_args!("second argument must be 'stdout' or 'stderr'"))
-            );
+            return Err(cx
+                .global()
+                .throw(format_args!("second argument must be 'stdout' or 'stderr'")));
         };
 
         let Readable::Pipe(pipe) = out.get() else {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         };
 
         // Mirror what the real error path does (onStreamRead on Windows,
@@ -1614,34 +1519,24 @@ pub(crate) mod testing_apis {
         // SAFETY: live pipe reader; `on_error` is the raw entry so the
         // (maybe-freeing) error dispatch runs under no receiver protector.
         unsafe { bun_io::BufferedReader::on_error(reader, fake_err) };
-        Ok(JSValue::TRUE)
+        Ok(true)
     }
 
     /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper, no ref.
-    #[bun_jsc::host_fn]
     pub(crate) fn close_stdin_writer(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        _: &mut JsScope<'_>,
+        subprocess: &Subprocess<'static>,
+    ) -> bool {
         #[cfg(windows)]
         use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
-        let [subprocess_value] = callframe.arguments_as_array::<1>();
-        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value) else {
-            return Err(global_this.throw(format_args!("first argument must be a Subprocess")));
-        };
-        // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
-        let subprocess = unsafe { &*subprocess_ptr };
         let Writable::Pipe(pipe) = subprocess.stdin.get() else {
-            return Ok(JSValue::FALSE);
+            return false;
         };
         let writer = pipe.writer.as_ptr();
         // SAFETY: the Subprocess's ref keeps the sink and its writer live on entry;
         // `close()` may free both, and nothing touches them afterwards.
         unsafe { (*writer).close() };
-        Ok(JSValue::TRUE)
+        true
     }
 }
-// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
-// (the converter splits the trailing `…APIs` cluster into `AP` + `Is`).
-pub(crate) use testing_apis as testing_ap_is;

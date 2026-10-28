@@ -17,6 +17,7 @@ import { chmod, exists, lstat, readdir, rm, symlink, truncate, writeFile } from 
 import {
   bunEnv,
   bunExe,
+  DirectoryTree,
   isASAN,
   isDebug,
   isLinux,
@@ -108,9 +109,8 @@ test.concurrent("basic", async () => {
   expect(tarballEntries(join(dir, "pack-basic-1.2.3.tgz"))).toEqual(["package/package.json", "package/index.js"]);
 });
 
-// The archive ends right after the two end-of-archive blocks. libarchive's default for a custom
-// output sink would pad it to a full 10 KiB record instead, which would change the size and shasum
-// of every tarball bun produces.
+// The archive ends right after the two end-of-archive blocks. Padding it to a full 10 KiB record,
+// as Bun.Archive does, would change the size and shasum of every tarball bun produces.
 test.concurrent("the archive is not padded to a full tar record", async () => {
   using dir = tempDir("pack-unpadded", {
     "package.json": JSON.stringify({ name: "pack-unpadded", version: "1.0.0" }),
@@ -122,6 +122,52 @@ test.concurrent("the archive is not padded to a full tar record", async () => {
   const tar = gunzipSync(await file(join(dir, "pack-unpadded-1.0.0.tgz")).bytes());
   // header + data for each of the two entries, then the two end-of-archive blocks
   expect(tar.byteLength).toBe(6 * 512);
+});
+
+// A package packed twice must give the same tarball, whichever version of bun packs it. What the
+// compressor makes of the archive depends on the CPU, so that part is compared decompressed.
+// The hashes are from Bun 1.4.4. Not on Windows, where files have no permission bits to record.
+test.concurrent.skipIf(isWindows).each([
+  [[], "1f8b08000000000002ff"],
+  [["--gzip-level", "0"], "1f8b08000000000000ff"],
+  [["--gzip-level", "1"], "1f8b08000000000004ff"],
+  [["--gzip-level", "6"], "1f8b08000000000000ff"],
+])("the bytes of a tarball do not change %j", async (args, gzipHeader) => {
+  const n = (count: number) => Buffer.alloc(count, "n").toString();
+  const files = {
+    "package.json": JSON.stringify({ name: "@scope/pack-bytes", version: "1.2.3", bin: { x: "bin/x.js" } }),
+    "index.js": "module.exports = 1;",
+    "empty.txt": "",
+    "bin/x.js": "#!/usr/bin/env node\n",
+    "run.sh": "#!/bin/sh\n",
+    "café.txt": "not ASCII",
+    [n(92) + ".js"]: "the name fits once package/ is in front of it",
+    [n(93) + ".js"]: "the name does not fit",
+    [n(200) + ".js"]: "the name does not fit and cannot be split",
+    [`${n(50)}/${n(50)}/${n(50)}/split.js`]: "the name fits once it is split",
+    [`${n(150)}/${n(100)}/no-split.js`]: "the name cannot be split",
+    "blocks/511": n(511),
+    "blocks/512": n(512),
+    "blocks/513": n(513),
+    "blocks/100000": n(100000),
+  };
+  using dir = tempDir("pack-bytes", files);
+  // The archive records them, and what they start as depends on the umask.
+  for (const path of Object.keys(files)) await chmod(join(String(dir), path), path === "run.sh" ? 0o755 : 0o644);
+
+  await pack(dir, bunEnv, ...args);
+
+  const tgz = await file(join(dir, "scope-pack-bytes-1.2.3.tgz")).bytes();
+  const tar = gunzipSync(tgz);
+  expect({
+    gzipHeader: Buffer.from(tgz.subarray(0, 10)).toString("hex"),
+    length: tar.byteLength,
+    sha256: new Bun.CryptoHasher("sha256").update(tar).digest("hex"),
+  }).toEqual({
+    gzipHeader,
+    length: 119296,
+    sha256: "f77c6cf6bbb5acff151d905cc601904310c7eebdfa00bc346b8a8c7465f19294",
+  });
 });
 
 // pack only reads package.json, so a file that is readable but not writable (a read-only
@@ -656,7 +702,7 @@ describe.concurrent("flags", () => {
   });
 
   // Every write(2) to /dev/full fails with ENOSPC, the same as a tarball destination on a full disk.
-  // "an entry": enough incompressible data that libarchive flushes a block while it writes index.js.
+  // "an entry": enough incompressible data that a block is flushed while it writes index.js.
   // "the end of the archive": small enough that the only write(2) happens when the archive is closed.
   test.skipIf(!isLinux).each([
     ["an entry", () => `// ${randomBytes(128 * 1024).toString("base64")}`],
@@ -3080,6 +3126,268 @@ describe.concurrent("bundledDependencies", () => {
     expect(JSON.parse(tarball.entries.at(-1)!.contents).dependencies).toEqual({ lib: "1.0.0", y: "1.0.0" });
   });
 
+  // The ignore files of a bundled linked folder still apply when the folder's package.json does not load. A folder that
+  // has a package.json entry is packed as a package, and a folder that has none as a directory.
+  describe("a bundled linked folder whose package.json does not load", () => {
+    const notJson = '{ "name": "other", oops';
+
+    // A package that bundles `name`, which is a link to the folder `vendor/other`. `link` is the target of a link at
+    // the folder's package.json.
+    async function bundlesLinkedFolder(folder: DirectoryTree, name = "other", link?: string) {
+      const dir = tempDir("pack-bundled-linked", {
+        "package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          files: ["index.js"],
+          dependencies: { [name]: "1.0.0" },
+          bundledDependencies: [name],
+        }),
+        "index.js": indexJs,
+        "vendor/other": folder,
+        "vendor/not.json": notJson,
+        "node_modules/@s": {},
+      });
+      if (link) await symlink(link, join(dir, "vendor", "other", "package.json"), "file");
+      // A junction on Windows. Elsewhere, "junction" is ignored and a plain symlink is created.
+      await symlink(join(dir, "vendor", "other"), join(dir, "node_modules", name), "junction");
+      return dir;
+    }
+
+    // The paths, inside the bundled package `name`, of its files in the tarball.
+    async function bundledFiles(dir: string, name = "other") {
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+      const prefix = `package/node_modules/${name}/`;
+      return tarballEntries(join(dir, "lib-1.0.0.tgz"))
+        .filter(entry => entry.startsWith(prefix))
+        .map(entry => entry.slice(prefix.length));
+    }
+
+    // The ignore file names a file at every depth, a directory of the folder only, and two documents. README and
+    // LICENSE are always in a package, and the lockfiles of its root never are. In a directory they are files like any
+    // other.
+    const folder = {
+      "index.js": indexJs,
+      "secret.txt": "secret",
+      "lib/secret.txt": "secret",
+      "build/out.js": indexJs,
+      "lib/build/out.js": indexJs,
+      "README.md": "# other",
+      "LICENSE": "MIT",
+      "package-lock.json": "{}",
+      "yarn.lock": "",
+      ".npmignore": "secret.txt\n/build\nREADME.md\nLICENSE\n",
+    };
+    const asPackage = ["LICENSE", "README.md", "index.js", "lib/build/out.js"];
+    const asDirectory = ["index.js", "lib/build/out.js", "package-lock.json", "yarn.lock"];
+
+    // Every list is what `npm pack` 11.16.0 packs for the same folder.
+    test.each([
+      { state: "is missing", name: "other", expected: asDirectory },
+      { state: "is missing", name: "@s/other", expected: asDirectory },
+      { state: "is a dangling link", name: "other", link: "nowhere.json", expected: asPackage },
+      { state: "is a link to itself", name: "other", link: "package.json", expected: asPackage },
+      {
+        state: "is a directory",
+        name: "other",
+        manifest: { "inner.js": indexJs },
+        expected: [...asPackage, "package.json/inner.js"],
+      },
+      // The file is packed as it is.
+      { state: "does not parse", name: "other", manifest: notJson, expected: [...asPackage, "package.json"] },
+      { state: "is a link to a file that does not parse", name: "other", link: "../not.json", expected: asPackage },
+    ])("package.json $state, bundled as $name", async ({ name, manifest, link, expected }) => {
+      const tree = manifest === undefined ? folder : { ...folder, "package.json": manifest };
+      using dir = await bundlesLinkedFolder(tree, name, link);
+
+      expect(await bundledFiles(dir, name)).toEqual(expected);
+    });
+
+    const sources = {
+      "index.js": indexJs,
+      "secret.txt": "secret",
+      "lib/a.js": indexJs,
+      "lib/secret.txt": "secret",
+      "build/out.js": indexJs,
+      "lib/build/out.js": indexJs,
+    };
+    const ignored = { ".npmignore": "secret.txt\n/build\n" };
+    const kept = ["index.js", "lib/a.js", "lib/build/out.js"];
+    const whole = Object.keys(sources).sort();
+
+    // Every list is what `npm pack` 11.16.0 packs for the same folder.
+    test.each([
+      { what: "only a .gitignore", ignores: { ".gitignore": ignored[".npmignore"] }, expected: kept },
+      {
+        what: "an .npmignore beside a .gitignore",
+        ignores: { ...ignored, ".gitignore": "index.js\n" },
+        expected: kept,
+      },
+      {
+        what: "an .npmignore in a subdirectory",
+        ignores: { "lib/.npmignore": ignored[".npmignore"] },
+        expected: ["build/out.js", "index.js", "lib/a.js", "secret.txt"],
+      },
+      {
+        what: "a negated pattern",
+        ignores: { ".npmignore": "secret.txt\n!lib/secret.txt\n" },
+        expected: ["build/out.js", "index.js", "lib/a.js", "lib/build/out.js", "lib/secret.txt"],
+      },
+      // A folder of build output can have such a file. Nothing of the folder is packed then.
+      { what: "a .gitignore that names every file", ignores: { ".gitignore": "*\n" }, expected: [] },
+      // An .npmignore, also an empty one, is read in place of the .gitignore.
+      {
+        what: "an empty .npmignore beside a .gitignore that names every file",
+        ignores: { ".gitignore": "*\n", ".npmignore": "" },
+        expected: whole,
+      },
+    ])("no package.json and $what", async ({ ignores, expected }) => {
+      using dir = await bundlesLinkedFolder({ ...sources, ...ignores });
+
+      expect(await bundledFiles(dir)).toEqual(expected);
+    });
+
+    // Unlike npm, which packs it. The packages in the node_modules of a bundled package are packed as its dependencies.
+    test("no package.json: the folder's own node_modules is not packed", async () => {
+      using dir = await bundlesLinkedFolder({
+        "index.js": indexJs,
+        "node_modules/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+      });
+
+      expect(await bundledFiles(dir)).toEqual(["index.js"]);
+    });
+
+    // The patterns of the ignore file are anchored at the folder, at every depth in the tarball.
+    test("no package.json, as the dependency of a bundled linked folder and of an installed package", async () => {
+      const inner = { ...sources, ...ignored };
+      using dir = tempDir("pack-bundled-linked-transitive", {
+        "package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          files: ["index.js"],
+          dependencies: { host: "1.0.0", installed: "1.0.0" },
+          bundledDependencies: true,
+        }),
+        "index.js": indexJs,
+        "vendor/host/package.json": JSON.stringify({
+          name: "host",
+          version: "1.0.0",
+          dependencies: { nested: "1.0.0" },
+        }),
+        "vendor/host/node_modules": {},
+        "vendor/nested": inner,
+        "vendor/hoisted": inner,
+        "node_modules/installed/package.json": JSON.stringify({
+          name: "installed",
+          version: "1.0.0",
+          dependencies: { hoisted: "1.0.0" },
+        }),
+      });
+      // Junctions on Windows, plain symlinks elsewhere.
+      await symlink(join(dir, "vendor", "host"), join(dir, "node_modules", "host"), "junction");
+      await symlink(join(dir, "vendor", "nested"), join(dir, "vendor", "host", "node_modules", "nested"), "junction");
+      await symlink(join(dir, "vendor", "hoisted"), join(dir, "node_modules", "hoisted"), "junction");
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe("");
+      expect(exitCode).toBe(0);
+
+      expect(tarballEntries(join(dir, "lib-1.0.0.tgz"))).toEqual([
+        "package/package.json",
+        "package/index.js",
+        ...kept.map(file => `package/node_modules/hoisted/${file}`),
+        ...kept.map(file => `package/node_modules/host/node_modules/nested/${file}`),
+        "package/node_modules/host/package.json",
+        "package/node_modules/installed/package.json",
+      ]);
+    });
+
+    test.each(["pm pack --dry-run", "publish --dry-run"])("no package.json: bun %s", async command => {
+      using dir = await bundlesLinkedFolder({ ...sources, ...ignored });
+
+      await using proc = spawn({
+        cmd: [bunExe(), ...command.split(" ")],
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+        // `bun publish` stops early when it has no credentials. Nothing listens on port 1.
+        env: { ...bunEnv, npm_config_registry: "http://user:password@127.0.0.1:1/" },
+      });
+      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(err).toBe("");
+      // package.json, index.js, and the three files of the folder
+      expect(out).toContain("\nTotal files: 5\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // `bun install` makes the link for a `link:` folder, which needs no package.json.
+    test.each([
+      { spec: "link:./vendor/other", folder: "app/vendor/other", expected: kept },
+      { spec: "link:../other", folder: "other", expected: kept },
+      // The real path of these two has a `node_modules` component, so each is taken for an installed copy, which is
+      // packed whole. npm packs them by their ignore file.
+      { spec: "link:./packages/node_modules/other", folder: "app/packages/node_modules/other", expected: whole },
+      { spec: "link:../node_modules/ws/other", folder: "node_modules/ws/other", expected: whole },
+    ])("no package.json, linked by bun install as $spec", async ({ spec, folder, expected }) => {
+      using dir = tempDir("pack-bundled-link-protocol", {
+        "app/package.json": JSON.stringify({
+          name: "lib",
+          version: "1.0.0",
+          files: ["index.js"],
+          dependencies: { other: spec },
+          bundledDependencies: ["other"],
+        }),
+        "app/index.js": indexJs,
+        [folder]: { ...sources, ...ignored },
+      });
+      const app = join(dir, "app");
+      await runBunInstall(bunEnv, app);
+
+      expect(await bundledFiles(app)).toEqual(expected);
+    });
+
+    // The files that it would have named must not be packed.
+    test("no package.json, and an .npmignore that can't be read stops the pack", async () => {
+      using dir = await bundlesLinkedFolder({ ...sources, ".npmignore": {} });
+
+      const { err, exitCode } = await runPack(dir);
+      expect(err).toBe('EISDIR: failed to read .npmignore at: "<dir>/vendor/other/.npmignore"');
+      expect(exitCode).toBe(1);
+      expect(await sortedNames(dir)).toEqual(["index.js", "node_modules", "package.json", "vendor"]);
+    });
+  });
+
+  // A copy below `node_modules`, for example of a `file:` folder, is packed whole in every state of its package.json.
+  // No ignore file in it is read.
+  test.each([
+    { state: "loads", manifest: JSON.stringify({ name: "dep", version: "1.0.0" }) },
+    { state: "is missing", manifest: undefined },
+  ])("an installed package whose package.json $state is packed whole", async ({ manifest }) => {
+    using dir = tempDir("pack-bundled-installed-ignore", {
+      "package.json": JSON.stringify({
+        name: "lib",
+        version: "1.0.0",
+        dependencies: { dep: "1.0.0" },
+        bundledDependencies: ["dep"],
+      }),
+      ...(manifest === undefined ? {} : { "node_modules/dep/package.json": manifest }),
+      "node_modules/dep/secret.txt": "secret",
+      "node_modules/dep/.npmignore": "secret.txt\n",
+    });
+
+    const { err, exitCode } = await runPack(dir);
+    expect(err).toBe("");
+    expect(exitCode).toBe(0);
+
+    expect(tarballEntries(join(dir, "lib-1.0.0.tgz"))).toEqual([
+      "package/package.json",
+      ...(manifest === undefined ? [] : ["package/node_modules/dep/package.json"]),
+      "package/node_modules/dep/secret.txt",
+    ]);
+  });
+
   test.each([
     ["does not parse", '{ "name": "fixture", oops'],
     ["has the same name", JSON.stringify({ name: "app", version: "9.0.0" })],
@@ -5126,7 +5434,7 @@ test.concurrent("unicode", async () => {
 // names into JS strings, which maps the bytes this test is about onto U+FFFD.
 // Names are returned latin1-decoded (one char per stored byte) and collected
 // from every place the archive spells a name: the ustar header `name` field
-// and, when libarchive emits one, the `path` record of the pax header.
+// and, when there is one, the `path` record of the pax header.
 function rawTarballMembers(tgz: Uint8Array) {
   const tar = Buffer.from(Bun.gunzipSync(tgz));
   const members: { names: Set<string>; contents: string }[] = [];

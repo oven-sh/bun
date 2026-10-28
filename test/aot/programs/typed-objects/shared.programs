@@ -1,0 +1,265 @@
+////: ClassSpeaker
+class ClassSpeaker implements Speaker {
+  constructor(public id: number) {}
+  speak(greeting: string): string { return greeting + " class " + this.id }
+}
+////: Factory
+interface Factory {
+  rules: Rules;
+  make(kind: number): number;
+  count: number;
+}
+////: HeirWithSetter
+class HeirWithSetter extends Extended {
+  set port(value) {
+    this.seen = value;
+  }
+  get port() {
+    return -1;
+  }
+}
+////: Item
+class Item {
+  name: string;
+  count: number;
+
+  constructor(name: string, count: number) {
+    this.name = name;
+    this.count = count;
+  }
+}
+////: Point
+interface Point {
+  x: number;
+  y: number;
+}
+////: Point-2
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+////: Request
+class Request {
+  url: unknown = "/";
+  next: Request | null = null;
+}
+////: Rules
+interface Rules {
+  depth: number;
+}
+////: Session
+interface Session {
+  readonly id: number;
+  project: Project | null;
+  optionalProject?: Project | null;
+  count: number;
+  optionalCount?: number;
+  flag?: boolean;
+  neverStored?: string;
+}
+////: Wide
+interface Wide {
+  id: number
+  a0?: number; a1?: string; a2?: Wide; a3?: boolean; a4?: number; a5?: string; a6?: Wide; a7?: boolean
+  b0?: number; b1?: string; b2?: Wide; b3?: boolean; b4?: number; b5?: string; b6?: Wide; b7?: boolean
+  c0?: number; c1?: string; c2?: Wide; c3?: boolean; c4?: number; c5?: string; c6?: Wide; c7?: boolean
+  d0?: number; d1?: string; d2?: Wide; d3?: boolean; d4?: number; d5?: string; d6?: Wide; d7?: boolean
+  e0?: number; e1?: string; e2?: Wide; e3?: boolean; e4?: number; e5?: string; e6?: «1»
+}
+////: attach
+function attach(session: Session) {
+  session.project = home;
+  session.optionalProject = home;
+  session.count = 3;
+  session.optionalCount = 4;
+  session.flag = true;
+}
+////: attempt
+function attempt(label: string, f: () => unknown) {
+  try { console.log(label, String(f())) } catch (e) { console.log(label, (e as Error).constructor.name) }
+}
+////: attempt-2
+const attempt = (action: () => unknown): unknown => {
+  try {
+    return action();
+  } catch (error) {
+    return "throws " + (error as Error).constructor.name;
+  }
+};
+////: attempt-5
+function attempt(run: () => unknown): string {
+  try {
+    return «1»(run());
+  } catch (error) {
+    return error instanceof TypeError ? "TypeError" : "another error";
+  }
+}
+////: describe
+function describe(factory: Factory): string {
+  return factory.make(1) + "," + factory.rules.depth + "," + factory.count;
+}
+////: hide-2
+function hide(value: unknown): any {
+    return value;
+}
+////: lines
+interface «1» {
+  «2»: «3»;
+  «4»: «5»;
+}
+////: lines-11
+class «1» {
+  «2» = «3»;
+}
+////: lines-12
+class «1» {
+  «2» = «3»;
+  «4» = «5»;
+}
+////: lines-13
+interface «1» {
+  «2»: «3»;
+  «4»?: «5»;
+}
+////: lines-14
+class «1» extends «2» {
+  «3»: «4» = «5»;
+}
+////: lines-15
+function «1»(«2»: «3») {
+  return «4»
+}
+////: lines-16
+interface «1» {
+  «2»: «3»;
+}
+////: lines-18
+export function «1»(o: «2», «3»: number): void {
+  (o as any).tag = «3»;
+}
+////: lines-22
+try {
+  show(«1», describe(«2»(1, 2)))
+} catch (error) {
+  show(«1», (error as Error).constructor.name)
+}
+////: lines-26
+class «1» {
+  «2»: «3» = 1;
+  «4»: «5» = «6»;
+}
+////: lines-27
+export class «1» extends «2» {
+  «3»() { return «4»; }
+}
+////: lines-3
+class «1» extends «2» {
+  «3» = «4»;
+}
+////: lines-30
+exports.«1» = function (object, value) {
+  object.«2» = value;
+  return object.«2»;
+};
+////: lines-32
+function «1»(«2»: «3»): «4» {
+  return «5»;
+}
+////: lines-34
+function «1»(target: «2», value: «3») {
+  target.«4» = value
+}
+////: lines-35
+function «1»(«2»: «3»): «4» {
+  return «5»(«2»);
+}
+////: lines-37
+function «1»(value: «2»): any {
+  return value;
+}
+////: lines-4
+export function «1»(«2»: «3», «4»: «5»): void {
+  «6» = «4»;
+}
+////: makeSettings
+export function makeSettings(id: number): Settings {
+  return { id };
+}
+////: memoizeOne
+function memoizeOne<A extends object, T>(callback: (argument: A) => T): (argument: A) => T {
+  const known = new Map<A, T>();
+  return argument => {
+    let value = known.get(argument);
+    if (value === undefined) {
+      value = callback(argument);
+      known.set(argument, value);
+    }
+    return value;
+  };
+}
+////: memoizeOne-2
+////= memoizeOne
+////= Rules
+////= Factory
+////: overHeld
+function overHeld(a: number, b: number): Seen {
+  const self = Object.create(Held)
+  self.a = a
+  self.b = b
+  return self
+}
+////: rulesOf
+function rulesOf(): Rules {
+  built++;
+  return { depth: built };
+}
+////: say
+function say(name: string, f: () => unknown) {
+  let text: string;
+  try {
+    text = JSON.stringify(f()) ?? "undefined";
+  } catch (error) {
+    text = "throws " + (error as Error).constructor.name;
+  }
+  console.log(name + ": " + text);
+}
+////: say-2
+function say(label: string, work: () => unknown) {
+  let text: string;
+  try {
+    text = JSON.stringify(work()) ?? "undefined";
+  } catch (error) {
+    text = "throws " + (error as Error).constructor.name;
+  }
+  lines.push(label + ": " + text);
+}
+////: say-3
+function say(name: string, f: () => unknown): void {
+  let said: string;
+  try { said = String(f()) } catch (e) { said = "throws " + (e as Error).name }
+  console.log(name + ": " + said);
+}
+////: show
+const show = (label: string, run: () => unknown) => {
+  try {
+    console.log(label, run());
+  } catch (error) {
+    console.log(label, error instanceof TypeError ? "TypeError" : String(error));
+  }
+};
+////: show-2
+function show(name: string, make: () => unknown) {
+  let out: string;
+  try { «1»); } catch (e) { out = "THROWN " + (e as Error).name + ": " + (e as Error).message; }
+  console.log(String(++count).padStart(2, "0"), name + ":", out);
+}
+////: show-3
+function show(name: string, make: () => unknown, ...rest: [unknown?, unknown?]) {
+  let out: string;
+  try { «1»); } catch (e) { out = "THROWN " + (e as Error).name + ": " + (e as Error).message; }
+  console.log(String(++count).padStart(2, "0"), name + ":", out);
+}

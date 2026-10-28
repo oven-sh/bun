@@ -1,0 +1,13 @@
+false && require("node:path");
+function typeOfThis() {
+  return typeof this;
+}
+function storeToUndeclaredName() {
+  try {
+    neverDeclared64 = 1;
+    return "stored";
+  } catch (error) {
+    return error.name;
+  }
+}
+console.log("false-and", typeOfThis(), storeToUndeclaredName());

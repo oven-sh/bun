@@ -1,0 +1,4 @@
+NaN | number | false
+NaN | number
+Infinity | -Infinity | number
+ | undefined | 

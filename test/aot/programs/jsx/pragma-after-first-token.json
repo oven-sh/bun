@@ -1,0 +1,1 @@
+{ "skipInShell": "the bundler finds the JSX pragmas; the jsc shell runs without it" }

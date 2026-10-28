@@ -1,0 +1,9 @@
+{
+  "build": [
+    "--define",
+    "process.env.APP_CHANNEL=\"public\"",
+    "--feature",
+    "ON"
+  ],
+  "reference": "compiled"
+}

@@ -20,21 +20,11 @@ use bun_boringssl_sys as boringssl;
 use bun_core::EncodedSlice;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsClass as _;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
 use core::cell::Cell;
 
-/// Re-export the codegen-emitted module so
-/// `$rust(SecureContext.rs, js.getConstructor)` in
-/// `generated_js2native.rs` resolves as `secure_context::js::get_constructor`.
-pub(crate) use crate::generated_classes::js_SecureContext as js;
-
-// Codegen (`.classes.ts`) wires `to_js`/`from_js`/`from_js_direct` via this derive.
-// `#[repr(C)]` only to satisfy the `improper_ctypes` lint on the generated
-// `extern "C" fn(..., *mut SecureContext)` shims — C++ never reads this layout
-// (it round-trips `m_ctx` as `void*`).
-#[bun_jsc::JsClass]
-#[repr(C)]
 pub(crate) struct SecureContext {
     pub ctx: boringssl::OwnedSslCtx,
     /// `BunSocketContextOptions.digest()` — exactly the fields that reach
@@ -51,64 +41,44 @@ pub(crate) struct SecureContext {
 
 /// Exposed via `bun:internal-for-testing` so churn tests can assert
 /// `SSL_CTX_new` was called O(1) times, not O(connections).
-#[bun_jsc::host_fn]
-pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn live_count() -> f64 {
     // `us_ssl_ctx_live_count` is declared `safe fn` (reads a global atomic
     // counter, no preconditions).
-    Ok(JSValue::js_number(c::us_ssl_ctx_live_count() as f64))
+    c::us_ssl_ctx_live_count() as f64
 }
 
 impl SecureContext {
-    // Note: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
-    // a bare `constructor(...)` which cannot resolve inside an `impl`. The
-    // `#[bun_jsc::JsClass]` macro already emits the `<Self>::constructor` shim.
-    pub(crate) fn constructor(
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<Box<SecureContext>> {
-        let args = callframe.arguments();
-        let opts = if args.len() > 0 {
-            args[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-
-        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = global.bun_vm().as_mut();
-        // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
-        // `defer config.deinit()` — handled by Drop.
-
+    pub(crate) fn constructor(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<Self> {
+        let global = cx.global();
+        let config = Self::config_from_js(global, options.to_js())?;
         SecureContext::create(global, &config)
     }
 
-    /// `tls.createSecureContext(opts)` entry point. WeakGCMap-memoised by config
-    /// digest so identical configs return the same `JSSecureContext` cell while
-    /// it's alive; falls through to `create()` (which itself hits the native
-    /// `SSLContextCache`) on miss. Returning the same cell is what makes
-    /// `secureContext === createSecureContext(opts)` hold and lets `Listener`
-    /// pointer-compare without a JS-side WeakRef map.
-    // Note: codegen (`generated_classes.rs::SecureContextClass__intern`)
-    // wraps this in `host_fn_result` and exports the C-ABI shim, so no
-    // `#[bun_jsc::host_fn]` here — that macro's Free shim calls by bare name
-    // and cannot resolve an associated fn.
+    fn config_from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<SSLConfig> {
+        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
+        let vm = global.bun_vm().as_mut();
+        // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
+        Ok(SSLConfig::from_js(vm, global, options, true)?.unwrap_or_else(SSLConfig::zero))
+    }
+
     /// `SecureContext.parsePkcs12(pfx, passphrase)` - parses a PKCS#12 blob
     /// into `{ key, cert, ca? }` PEM strings so the regular key/cert/ca
-    /// option plumbing can consume Node's `pfx` option. Same codegen shim
-    /// arrangement as `intern` (no `#[host_fn]` attribute here).
+    /// option plumbing can consume Node's `pfx` option.
     pub(crate) fn parse_pkcs12(
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
+        cx: &mut JsScope<'_>,
+        pfx: JsLocal<'_>,
+        passphrase: JsLocal<'_>,
     ) -> JsResult<JSValue> {
-        let args = callframe.arguments();
-        if args.is_empty() {
+        let global = cx.global();
+        let (pfx, passphrase) = (pfx.to_js(), passphrase.to_js());
+        if pfx.is_undefined() {
             return Err(global.throw(format_args!("PFX certificate argument is mandatory")));
         }
         // The passphrase is optional; the C side treats NULL as "". Coerce it
         // before borrowing the pfx ArrayBuffer so a user toString() cannot
         // detach the buffer behind the borrowed slice.
-        let pass_owned: Option<Vec<u8>> = if args.len() > 1 && !args[1].is_undefined_or_null() {
-            let p = args[1].to_utf8(global)?;
+        let pass_owned: Option<Vec<u8>> = if !passphrase.is_undefined_or_null() {
+            let p = passphrase.to_utf8(global)?;
             let mut v = p.slice().to_vec();
             v.push(0);
             Some(v)
@@ -120,13 +90,13 @@ impl SecureContext {
         // view when one exists.
         let pfx_view;
         let pfx_string;
-        let pfx_bytes: &[u8] = match args[0].as_array_buffer(global) {
+        let pfx_bytes: &[u8] = match pfx.as_array_buffer(global) {
             Some(view) => {
                 pfx_view = view;
                 pfx_view.byte_slice()
             }
             None => {
-                pfx_string = args[0].to_utf8(global)?;
+                pfx_string = pfx.to_utf8(global)?;
                 pfx_string.slice()
             }
         };
@@ -221,22 +191,12 @@ impl SecureContext {
     /// `addCACert` can never affect another context (or the cached
     /// connect/listen contexts). The internal connect/listen paths keep using
     /// `intern` for the per-digest cache.
-    pub(crate) fn create_private(
-        global: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let args = callframe.arguments();
-        let opts = if args.len() > 0 {
-            args[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-
-        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = global.bun_vm().as_mut();
-        // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
-        // `defer config.deinit()` — handled by Drop.
+    pub(crate) fn create_private<'a>(
+        cx: &mut JsScope<'a>,
+        options: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        let global = cx.global();
+        let config = Self::config_from_js(global, options.to_js())?;
 
         let ctx_opts = config.as_usockets();
         let d = ctx_opts.digest();
@@ -256,28 +216,19 @@ impl SecureContext {
             }
             return Err(global.throw_value(create_bun_socket_error_to_js(err, global)));
         };
-        let sc = Box::new(SecureContext {
+        let sc = SecureContext {
             ctx,
             digest: Cell::new(d),
             extra_memory: ctx_opts.approx_cert_bytes() + SSL_CTX_BASE_COST,
             shared: false,
-        });
-        Ok(Self::to_js_boxed(sc, global))
+        };
+        Ok(sc.into_js(&cx.heap))
     }
 
-    pub(crate) fn intern(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let args = callframe.arguments();
-        let opts = if args.len() > 0 {
-            args[0]
-        } else {
-            JSValue::UNDEFINED
-        };
-
-        // SAFETY: `bun_vm()` returns the live per-global VM pointer; valid for the call.
-        let vm = global.bun_vm().as_mut();
-        // Only a server reads `rejectUnauthorized` back from a context (`server_ctx_rejects_unauthorized`).
-        let config = SSLConfig::from_js(vm, global, opts, true)?.unwrap_or_else(SSLConfig::zero);
-        // `defer config.deinit()` — handled by Drop.
+    /// `tls.createSecureContext(opts)`. Equal configs get the same live wrapper, which `Listener` compares by pointer.
+    pub(crate) fn intern(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+        let global = cx.global();
+        let config = Self::config_from_js(global, options.to_js())?;
 
         let ctx_opts = config.as_usockets();
         let d = ctx_opts.digest();
@@ -288,16 +239,14 @@ impl SecureContext {
             if let Some(existing) = Self::from_js(cached) {
                 // 64-bit key collision is ~2⁻⁶⁴ but a false hit hands the wrong
                 // cert to a connection. Full-digest compare is 32 bytes; cheap.
-                // SAFETY: `from_js` returns a live `m_ctx` pointer owned by the JS wrapper.
+                // SAFETY: the struct is stored inline in the wrapper, which `cached` keeps alive.
                 if unsafe { (*existing).digest.get() } == d {
                     return Ok(cached);
                 }
             }
         }
 
-        let sc = Self::create_with_digest(global, &ctx_opts, d)?;
-        // `sc` is a fresh Box from `create_with_digest`; ownership transfers to the GC wrapper.
-        let value = Self::to_js_boxed(sc, global);
+        let value = Self::create_with_digest(global, &ctx_opts, d)?.to_js(global);
         cpp::Bun__SecureContextCache__set(global, key, value);
         Ok(value)
     }
@@ -310,10 +259,7 @@ impl SecureContext {
     /// validation always runs and `verify_error` is populated for the JS-side
     /// `rejectUnauthorized` decision. The trust store is loaded unconditionally in
     /// `us_ssl_ctx_from_options` so that override has roots to validate against.
-    pub(crate) fn create(
-        global: &JSGlobalObject,
-        config: &SSLConfig,
-    ) -> JsResult<Box<SecureContext>> {
+    pub(crate) fn create(global: &JSGlobalObject, config: &SSLConfig) -> JsResult<SecureContext> {
         let ctx_opts = config.as_usockets();
         Self::create_with_digest(global, &ctx_opts, ctx_opts.digest())
     }
@@ -322,7 +268,7 @@ impl SecureContext {
         global: &JSGlobalObject,
         ctx_opts: &uws::socket_context::BunSocketContextOptions,
         d: [u8; 32],
-    ) -> JsResult<Box<SecureContext>> {
+    ) -> JsResult<SecureContext> {
         let mut err = uws::create_bun_socket_error_t::none;
         // Note: spec is `global.bunVM().rareData().sslCtxCache()`. In the
         // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
@@ -359,44 +305,33 @@ impl SecureContext {
             }
             return Err(global.throw_value(create_bun_socket_error_to_js(err, global)));
         };
-        Ok(Box::new(SecureContext {
+        Ok(SecureContext {
             ctx,
             digest: Cell::new(d),
             extra_memory: ctx_opts.approx_cert_bytes() + SSL_CTX_BASE_COST,
             shared: true,
-        }))
+        })
     }
 
     /// `secureContext.context._external` — Node exposes the SSL_CTX here as an
     /// opaque V8 External. Bun has nothing meaningful to hand out, so the
     /// getter exists only so the property behaves like an accessor (a foreign
     /// receiver gets a TypeError) instead of a missing property.
-    #[bun_jsc::host_fn(getter)]
-    pub(crate) fn get_external(_this: &Self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(JSValue::UNDEFINED)
+    pub(crate) fn get_external<'a>(&self, _: &JsHeap<'a>) -> JsLocal<'a> {
+        JsLocal::UNDEFINED
     }
 
     /// `secureContext.context.addCACert(pem)` — appends the certificates in
     /// the given PEM string or buffer to this context's trust store, the way
     /// Node's SecureContext exposes it.
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn add_ca_cert(
-        this: &Self,
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        if this.shared {
+    pub(crate) fn add_ca_cert(&self, cx: &mut JsScope<'_>, cert: JsLocal<'_>) -> JsResult<()> {
+        let global = cx.global();
+        if self.shared {
             return Err(global.throw(format_args!(
                 "cannot mutate a shared SecureContext; use tls.createSecureContext()"
             )));
         }
-        let args = frame.arguments();
-        if args.is_empty() {
-            return Err(
-                global.throw_invalid_arguments(format_args!("addCACert requires a certificate"))
-            );
-        }
-        let pem = args[0].to_utf8(global)?;
+        let pem = cert.to_js().to_utf8(global)?;
         let bytes = pem.slice();
         if bytes.is_empty() {
             return Err(
@@ -406,11 +341,11 @@ impl SecureContext {
         // The C side wants a NUL-terminated PEM document.
         let mut owned = bytes.to_vec();
         owned.push(0);
-        // SAFETY: `this.ctx` is the live SSL_CTX this object owns a reference
+        // SAFETY: `self.ctx` is the live SSL_CTX this object owns a reference
         // to, and `owned` is a NUL-terminated buffer valid for the call.
         let ok = unsafe {
             c::us_ssl_ctx_add_ca_cert(
-                this.ctx.as_ptr(),
+                self.ctx.as_ptr(),
                 owned.as_ptr().cast::<core::ffi::c_char>(),
             )
         };
@@ -420,23 +355,23 @@ impl SecureContext {
         // Its trust set changed, so it stops sharing sessions with same-option contexts.
         let mut folded = [0u8; 32];
         let mut hasher = bun_sha_hmac::SHA256::init();
-        hasher.update(&this.digest.get());
+        hasher.update(&self.digest.get());
         hasher.update(bytes);
         hasher.r#final(&mut folded);
-        this.digest.set(folded);
-        // SAFETY: `this.ctx` is live; the call copies the 32 bytes.
+        self.digest.set(folded);
+        // SAFETY: `self.ctx` is live; the call copies the 32 bytes.
         unsafe {
             boringssl::SSL_CTX_set_session_id_context(
-                this.ctx.as_ptr(),
+                self.ctx.as_ptr(),
                 folded.as_ptr(),
                 folded.len(),
             );
         }
-        Ok(JSValue::UNDEFINED)
+        Ok(())
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
-        core::mem::size_of::<SecureContext>() + self.extra_memory
+        self.extra_memory
     }
 }
 

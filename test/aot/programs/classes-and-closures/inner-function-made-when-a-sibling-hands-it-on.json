@@ -1,0 +1,4 @@
+{
+  "build": ["--aot-disable=InlineCalls"],
+  "skipInShell": "it uses Bun.gc"
+}

@@ -1,0 +1,186 @@
+//// a-field-deleted-through-a-proxy-is-read-by-a-function-that-expects-a-number.js
+// A function makes objects with three fields and is run again for one of them. A field of numbers is deleted through a proxy around the object, and read afterwards.
+function Maker(seed, between) {
+  this.c = seed + 2;
+  this.b = between(seed);
+  this.a = seed;
+}
+function total(it) {
+  return it.c + 1 + "|" + it.b + "|" + it.a + "|" + it.c;
+}
+const said = [];
+for (let at = 0; at < 6; at++) {
+  const made = new Maker(at, seed => "b" + seed);
+  said.push(total(made));
+  const veil = new Proxy(made, {});
+  if (at % 3 === 1) {
+    Maker.call(made, 40, () => {
+      delete veil.c;
+      return "again";
+    });
+    said.push(total(made), Object.keys(made).join("+"));
+  }
+  if (at % 3 === 2) {
+    delete veil.c;
+    said.push(total(made), Object.keys(made).join("+"));
+  }
+}
+console.log(said.join(" "));
+//// objects-of-other-kinds-arrive-under-handlers.ts
+// Functions written for one class look at their argument under handlers of every shape, and are given objects of other kinds.
+class Box {
+  value: number;
+  more: number;
+  constructor(value: number, more: number) {
+    this.value = value;
+    this.more = more;
+  }
+}
+const said: unknown[] = [];
+function caught(box: Box, by: number): number {
+  try {
+    return box.value * by + box.more;
+  } catch (error) {
+    said.push("caught", (error as Error).name);
+    return -1;
+  }
+}
+function cleaned(box: Box, by: number): number {
+  try {
+    return box.value * by + box.more;
+  } finally {
+    said.push("finally", by);
+  }
+}
+function both(box: Box, by: number): number {
+  let sum = 0;
+  try {
+    sum = box.value * by;
+    sum += box.more;
+  } catch (error) {
+    said.push("caught", (error as Error).name);
+    sum = -1;
+  } finally {
+    said.push("finally", sum);
+  }
+  return sum;
+}
+function nested(box: Box, by: number): number {
+  try {
+    try {
+      return box.value * by + box.more;
+    } finally {
+      said.push("inner");
+    }
+  } catch (error) {
+    said.push("outer", (error as Error).name);
+    return -2;
+  }
+}
+const strangers: Box[] = [
+  new Box(1, 2),
+  { value: 3, more: 4 } as Box,
+  Object.defineProperty(new Box(0, 1), "value", {
+    get() {
+      said.push("get");
+      return 5;
+    },
+  }),
+  Object.defineProperty(new Box(0, 1), "value", {
+    get() {
+      said.push("get and throw");
+      throw new Error("no value");
+    },
+  }),
+  Object.defineProperty(new Box(7, 1), "more", {
+    get() {
+      throw new Error("no more");
+    },
+  }),
+  null as unknown as Box,
+  new Proxy(new Box(8, 9), {
+    get(target, key) {
+      said.push("asked", String(key));
+      return Reflect.get(target, key);
+    },
+  }),
+];
+for (let round = 0; round < 3; round++)
+  for (const box of strangers)
+    for (const work of [caught, cleaned, both, nested]) {
+      try {
+        said.push(work(box, round + 1));
+      } catch (error) {
+        said.push("left", (error as Error).name);
+      }
+    }
+console.log(said.join());
+//// short-lists-of-numbers-are-needed-whole-on-one-way.ts
+// Short lists of numbers, some of them NaN, are read and stored into at a place that is known only at run time, on one way only.
+const numbers: number[] = [1.5, NaN, 2.5, 3, -0, 4.25, NaN, 7];
+function seldomStores(first: number, second: number, at: number, isStored: boolean): string {
+  const pair = [first, second];
+  if (isStored) pair[at] = 9.5;
+  return pair[0] + ":" + pair[1];
+}
+function seldomReads(first: number, second: number, at: number, isRead: boolean): number {
+  const pair = [first, second];
+  if (isRead) return pair[at];
+  return pair[0] + pair[1];
+}
+function seldomReadsInALoop(first: number, second: number, upTo: number, isRead: boolean): number {
+  const pair = [first, second];
+  let sum = pair[0];
+  if (isRead) for (let at = 0; at < upTo; at++) sum += pair[at] * 2;
+  return sum;
+}
+const seen: unknown[] = [];
+for (let round = 0; round < 3; round++)
+  for (let turn = 0; turn < numbers.length; turn++) {
+    const first = numbers[turn],
+      second = numbers[(turn + 1) % 8];
+    seen.push(seldomStores(first, second, turn & 1, turn % 3 === round));
+    seen.push(seldomReads(first, second, turn & 1, turn % 3 === round));
+    seen.push(seldomReadsInALoop(first, second, 1 + (turn & 1), turn % 3 === round));
+  }
+console.log(seen.join());
+//// the-generator-of-the-turn-before-is-stepped.js
+// Each turn of a loop makes a generator and steps the one of the turn before.
+function* counts(from) {
+  yield from;
+  yield from + 1;
+  yield from + 2;
+}
+function run(turns) {
+  const said = [];
+  let older = null;
+  let turn = 0;
+  for (;;) {
+    if (turn >= turns) break;
+    const steps = counts(turn * 10);
+    turn++;
+    if (older) {
+      said.push(older.next().value);
+      older = steps;
+      continue;
+    }
+    said.push(steps.next().value, "first");
+    older = steps;
+  }
+  return said.join();
+}
+for (let turn = 1; turn < 6; turn++) console.log(run(turn));
+//// two-new-objects-hold-each-other.ts
+// Two new objects hold each other, and on one way the ring is kept.
+type Link = { next: Link | null; value: number };
+const kept: Link[] = [];
+function ring(value: number, isKept: boolean): number {
+  const first: Link = { next: null, value };
+  const second: Link = { next: first, value: value + 1 };
+  first.next = second;
+  if (isKept) kept.push(first);
+  return first.next.next!.value * 10 + second.next!.next!.value;
+}
+const seen: number[] = [];
+for (let turn = 0; turn < 6; turn++) seen.push(ring(turn, turn === 4));
+console.log(seen.join(), kept.length, kept[0].next!.next === kept[0], kept[0].next!.value);

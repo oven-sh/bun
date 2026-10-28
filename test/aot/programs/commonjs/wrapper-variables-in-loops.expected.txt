@@ -1,0 +1,19 @@
+exports after while: 1 object
+exports at the start of iteration 0: 1
+exports at the start of iteration 1: for 0
+exports at the start of iteration 2: for 1
+exports after do: for 2!!!
+exports in catch: try
+module after while: 1 object
+module in for-of: first
+module in for-of: second
+module after for-of: second
+require after while: 1 function
+require at the start of iteration 0: function
+require at the start of iteration 1: function
+require restored: true
+paths at the start: string string true
+paths after do: file 1 directory 1
+exports read by a function: store 0,store 1 store 1
+module stored by a function: store 0
+module stored by a function: store 1

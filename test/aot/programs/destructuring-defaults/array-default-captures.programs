@@ -1,0 +1,930 @@
+////: attempt
+const attempt = (get) => {
+  try {
+    return String(get());
+  } catch (error) {
+    return error.name;
+  }
+};
+////: attempt-2
+const attempt = (read) => {
+  try {
+    return String(read());
+  } catch (error) {
+    return error.name;
+  }
+};
+////: steps
+function steps(values) {
+  let index = 0;
+  return {
+    [Symbol.iterator]() {
+      return this;
+    },
+    next() {
+      console.log("next", index, "sees", read());
+      return index < values.length ? { value: values[index++], done: false } : { value: undefined, done: true };
+    },
+    return() {
+      console.log("return sees", read());
+      return {};
+    },
+  };
+}
+//// array-default-captures.js
+// A variable holding a function is reassigned by an array destructuring pattern with a default, with values of every kind; the function captures a variable.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+function t(n, V) { const one = () => "one" + n; let f = one; [f = one] = [V]; return [attempt(() => f()), attempt(() => (() => f())()), f === one, typeof f, attempt(() => [0].map(f)[0])]; }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// array-default-kinds.js
+// Array patterns over an iterator that logs every step, with a default of every kind: literals, functions, locals, `this`, containers and built-in constants, and defaults that run code, which keep their place between the steps.
+const log = [];
+const note = (text) => {
+  log.push(text);
+  return text;
+};
+
+function steps(values, onNext = () => {}) {
+  let index = 0;
+  return {
+    [Symbol.iterator]() {
+      note("open");
+      return this;
+    },
+    next() {
+      note("next " + index);
+      onNext();
+      return index < values.length ? { value: values[index++], done: false } : { value: undefined, done: true };
+    },
+    return() {
+      note("return");
+      return {};
+    },
+  };
+}
+
+function show(value) {
+  if (typeof value === "function") return "function " + value.name;
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "object" && value !== null) return JSON.stringify(value);
+  return String(value);
+}
+
+function run(label, body) {
+  let result;
+  try {
+    result = body().map(show).join(" ");
+  } catch (error) {
+    result = "threw " + error.name;
+  }
+  console.log(label + ": " + result + " | " + log.join(", "));
+  log.length = 0;
+}
+
+function literals(x) {
+  const [a = 1, b = "two", c = null, d = true, e = 5n] = x;
+  return [a, b, c, d, e];
+}
+
+function functions(x) {
+  const [arrow = () => 1, plain = function () {}, named = function inner() {}] = x;
+  return [arrow, plain, named];
+}
+
+function locals(x, fallback) {
+  const [a = fallback, b = a] = x;
+  return [a, b];
+}
+
+function assigned(x, fallback) {
+  let a = "old a";
+  let b = "old b";
+  [a = b, b = a, a = fallback] = x;
+  return [a, b];
+}
+
+function containers(x, fallback) {
+  const [list = [fallback, 1, , 2], record = { fallback: fallback, nested: { list: [] } }] = x;
+  return [list, record];
+}
+
+function receiver(x) {
+  const [self = this] = x;
+  return [self === this];
+}
+
+function operators(x, fallback) {
+  const [a = !fallback, b = typeof fallback, c = void 0, d = -1] = x;
+  return [a, b, c, d];
+}
+
+function constants(x) {
+  const [a = undefined, b = NaN, c = Infinity, d = Math.PI, e = Math.floor] = x;
+  return [a, b, c, d, e];
+}
+
+function calls(x) {
+  const [a = note("default a"), b = note("default b")] = x;
+  return [a, b];
+}
+
+const source = {
+  get first() {
+    return note("get first");
+  },
+  get second() {
+    return note("get second");
+  },
+};
+function getters(x) {
+  const [a = source.first, b = source.second] = x;
+  return [a, b];
+}
+
+const convertible = {
+  toString() {
+    return note("toString");
+  },
+  valueOf() {
+    note("valueOf");
+    return 7;
+  },
+  *[Symbol.iterator]() {
+    note("spread");
+    yield 1;
+  },
+  get own() {
+    return note("get own");
+  },
+};
+function conversions(x) {
+  const [a = `${convertible}`, b = -convertible, c = [...convertible], d = { ...convertible }] = x;
+  return [a, b, c, Object.keys(d)];
+}
+
+function classes(x) {
+  const [anonymous = class {}, named = class Inner {}, computed = class { [note("class key")]() {} }] = x;
+  return [anonymous, named, computed];
+}
+
+function throwing(x) {
+  const [a, b = note("default b"), c = (() => { throw new RangeError("default c"); })(), d = note("default d")] = x;
+  return [a, b, c, d];
+}
+
+function deadZone(x) {
+  const [a = b, b] = x;
+  return [a, b];
+}
+
+function captured(values) {
+  let count = 0;
+  const [a = count, b = count, c = count] = steps(values, () => count++);
+  return [a, b, c];
+}
+
+let shared = 0;
+function moduleVariable(values) {
+  shared = 0;
+  const [a = shared, b = shared, c = shared] = steps(values, () => shared++);
+  return [a, b, c];
+}
+
+globalThis.sharedGlobal = 0;
+function globalVariable(values) {
+  globalThis.sharedGlobal = 0;
+  const [a = sharedGlobal, b = sharedGlobal, c = sharedGlobal] = steps(values, () => globalThis.sharedGlobal++);
+  return [a, b, c];
+}
+
+class Base {
+  constructor(x) {
+    const [self = this] = x;
+    this.same = self === this;
+  }
+}
+
+class Derived extends Base {
+  constructor(x) {
+    try {
+      const [self = this] = x;
+      note("read " + typeof self);
+    } catch (error) {
+      note(error.name);
+    }
+    super(steps([]));
+  }
+}
+
+for (const values of [[], [undefined, undefined, undefined, undefined], [0, null], ["v", "w", "x", "y", "z", "more"]]) {
+  console.log("-- " + show(values.map(String)));
+  run("literals", () => literals(steps(values)));
+  run("functions", () => functions(steps(values)));
+  run("locals", () => locals(steps(values), "fallback"));
+  run("assigned", () => assigned(steps(values), "fallback"));
+  run("containers", () => containers(steps(values), "fallback"));
+  run("receiver", () => receiver.call({}, steps(values)));
+  run("operators", () => operators(steps(values), "fallback"));
+  run("constants", () => constants(steps(values)));
+  run("calls", () => calls(steps(values)));
+  run("getters", () => getters(steps(values)));
+  run("conversions", () => conversions(steps(values)));
+  run("classes", () => classes(steps(values)));
+  run("throwing", () => throwing(steps(values)));
+  run("dead zone", () => deadZone(steps(values)));
+  run("captured", () => captured(values));
+  run("module variable", () => moduleVariable(values));
+  run("global variable", () => globalVariable(values));
+  run("base constructor", () => [new Base(steps(values)).same]);
+  run("derived constructor", () => [new Derived(steps(values)).same]);
+}
+//// array-patterns-over-arrays-changed-between-steps.ts
+// An array pattern takes one step of the array's iterator for each element. Where nothing between two steps can change the array a step is the read of an element;
+// here something stands between them: the test of a written element type, a default, a target that is a property, a variable or an element of the same array, a nested pattern.
+// Some of it leaves the array alone and some makes it longer, shorter, sparse or no plain array at all.
+const lines: string[] = [];
+function note(label: string, ...values: unknown[]): void {
+    lines.push(label + ": " + values.map(value => (value === undefined ? "undefined" : JSON.stringify(value))).join(" "));
+}
+const hidden = new Function("v", "return v" + String(lines.length).slice(1)) as <V>(v: V) => V;
+
+function typedElements(list: number[]): void {
+    const [first, second, third] = list;
+    note("typed", first, second, third);
+}
+typedElements(hidden([1, 2, 3]));
+typedElements(hidden([1]));
+typedElements(hidden([]));
+typedElements(hidden([, 2] as number[]));
+
+let calls = 0;
+function three(): number {
+    calls++;
+    return 3;
+}
+function defaultLeavesArrayAlone(list: (number | undefined)[]): void {
+    const [a = three(), b = three(), c = three()] = list;
+    note("default", a, b, c, calls);
+}
+defaultLeavesArrayAlone(hidden([1, undefined]));
+defaultLeavesArrayAlone(hidden([]));
+
+function defaultGrowsArray(list: (number | undefined)[]): void {
+    const [a = list.push(7, 8, 9), b, c, d] = list;
+    note("default grows", a, b, c, d, list.length);
+}
+defaultGrowsArray(hidden([undefined]));
+defaultGrowsArray(hidden([]));
+defaultGrowsArray(hidden([1]));
+
+function defaultShrinksArray(list: (number | undefined)[]): void {
+    const [a = (list.length = 1), b, c] = list;
+    note("default shrinks", a, b, c, list.length);
+}
+defaultShrinksArray(hidden([undefined, 2, 3]));
+defaultShrinksArray(hidden([1, 2, 3]));
+
+function stepPastTheEndStaysDone(list: (number | undefined)[]): void {
+    const [a, b = list.push(5, 6, 7), c, d] = list;
+    note("done stays done", a, b, c, d, list.length);
+}
+stepPastTheEndStaysDone(hidden([1]));
+stepPastTheEndStaysDone(hidden([1, undefined]));
+
+const record = hidden({ p: 0, q: 0 });
+function propertyTargets(list: number[]): void {
+    [record.p, record.q] = list;
+    note("properties", record.p, record.q);
+}
+propertyTargets(hidden([4, 5]));
+
+const growing = {
+    list: hidden([1, 2] as number[]),
+    set p(value: number) {
+        this.list.unshift(value * 10);
+    },
+    q: 0,
+};
+function setterTargetChangesArray(): void {
+    [growing.p, growing.q] = growing.list;
+    note("setter", growing.q, growing.list);
+}
+setterTargetChangesArray();
+
+function ownElementsAsTargets(list: number[]): void {
+    [list[1], list[0]] = list;
+    note("own elements", list);
+    [list[3], list[2]] = list;
+    note("own elements past the end", list);
+}
+ownElementsAsTargets(hidden([1, 2]));
+
+function swap(list: number[], i: number, j: number): void {
+    [list[i], list[j]] = [list[j], list[i]];
+}
+const swapped = hidden([1, 2, 3]);
+swap(swapped, 0, 2);
+note("swap", swapped);
+
+function nested(list: number[][]): void {
+    const [[a, b], [c]] = list;
+    note("nested", a, b, c);
+}
+nested(hidden([[1, 2], [3]]));
+nested(hidden([[1], []]));
+
+const outer: unknown[][] = hidden([[1], [2]]);
+const inner = {
+    *[Symbol.iterator]() {
+        outer.length = 1;
+        yield "inner";
+    },
+};
+function nestedIteratorShrinksOuter(list: unknown[]): void {
+    const [[a], b] = list as [Iterable<unknown>, unknown];
+    note("nested shrinks", a, b);
+}
+outer[0] = inner as unknown as unknown[];
+nestedIteratorShrinksOuter(outer);
+
+function accessorElement(list: number[]): void {
+    const [a, b] = list;
+    note("accessor", a, b, list.length);
+}
+const withAccessor = hidden([1, 2, 3]);
+Object.defineProperty(withAccessor, 0, {
+    get() {
+        withAccessor.length = 1;
+        return 100;
+    },
+});
+accessorElement(withAccessor);
+
+class Reversed extends Array<number> {
+    *[Symbol.iterator](): ArrayIterator<number> {
+        for (let i = this.length - 1; i >= 0; i--) yield this[i];
+    }
+}
+function subclass(list: number[]): void {
+    const [a, b] = list;
+    note("subclass", a, b);
+}
+subclass(hidden(Reversed.from([1, 2, 3])));
+
+let closes = 0;
+const ownIterator = hidden([1, 2, 3]);
+(ownIterator as any)[Symbol.iterator] = function () {
+    let i = 0;
+    return {
+        next: () => ({ done: false, value: i++ * 2 }),
+        return() {
+            closes++;
+            return {};
+        },
+    };
+};
+subclass(ownIterator);
+note("closes", closes);
+
+subclass(hidden(Object.freeze([7, 8]) as number[]));
+console.log(lines.join("\n"));
+export {};
+//// binding-read-between-steps.js
+// The `next` and `return` of an iterator call a function that reads the bindings of the array pattern being bound: a closure that exists before the declaration ends sees each binding from its own step on.
+////= attempt-2
+const both = (first, second) => attempt(first) + " " + attempt(second);
+
+function steps(label, values, read, throwAt = -1) {
+  let index = 0;
+  return {
+    [Symbol.iterator]() {
+      return this;
+    },
+    next() {
+      console.log(label, "next", index, "sees", read());
+      if (index === throwAt) throw new RangeError("step " + index);
+      return index < values.length ? { value: values[index++], done: false } : { value: undefined, done: true };
+    },
+    return() {
+      console.log(label, "return sees", read());
+      return {};
+    },
+  };
+}
+
+function earlierArrow() {
+  const read = () => both(() => a, () => b);
+  const [a, b] = steps("earlier arrow", ["A", "B"], read);
+  return read();
+}
+
+function earlierArrowAndLet() {
+  const read = () => both(() => a, () => b);
+  let [a, b = "default"] = steps("earlier arrow and let", ["A"], read);
+  a += "!";
+  return read();
+}
+
+function hoistedFunction() {
+  const [a, b] = steps("hoisted function", ["A", "B"], read);
+  return read();
+  function read() {
+    return both(() => a, () => b);
+  }
+}
+
+function ownInitializer() {
+  const [a, b] = steps("own initializer", ["A", "B"], () => both(() => a, () => b));
+  return a + b;
+}
+
+function ownDefault() {
+  const readers = [];
+  const read = () => readers.map((reader) => attempt(reader)).join(" ") || "no reader";
+  const [a, keep = readers.push(() => a), b] = steps("own default", ["A", undefined, "B"], read);
+  return a + keep + b;
+}
+
+function earlierClass() {
+  class Reader {
+    static read() {
+      return both(() => a, () => b);
+    }
+  }
+  const [a, b] = steps("earlier class", ["A", "B"], Reader.read);
+  return Reader.read();
+}
+
+function earlierEval() {
+  const read = () => both(() => eval("a"), () => eval("b"));
+  const [a, b] = steps("earlier eval", ["A", "B"], read);
+  return read();
+}
+
+function closureFromEval() {
+  const read = eval("() => both(() => a, () => b)");
+  const [a, b] = steps("closure from eval", ["A", "B"], read);
+  return read();
+}
+
+function laterEval() {
+  const [a, b] = steps("later eval", ["A", "B"], () => "nothing");
+  return eval("a + b");
+}
+
+function laterArrow() {
+  const [a, b] = steps("later arrow", ["A", "B"], () => "nothing");
+  return () => a + b;
+}
+
+function laterArrowWithDefaults() {
+  const [a = "default a", b = () => "default b", c = []] = steps("later arrow with defaults", [], () => "nothing");
+  return () => a + b() + c.length;
+}
+
+function variables() {
+  const read = () => both(() => a, () => b);
+  var [a, b] = steps("var", ["A", "B"], read);
+  return read();
+}
+
+function assignment() {
+  let a = "old a";
+  let b = "old b";
+  const read = () => a + " " + b;
+  [a, b] = steps("assignment", ["A", "B"], read);
+  return read();
+}
+
+function handler() {
+  let a = "old a";
+  let b = "old b";
+  try {
+    [a, b] = steps("handler", ["A", "B"], () => "nothing", 1);
+  } catch (error) {
+    return a + " " + b + " " + error.message;
+  }
+  return "no error";
+}
+
+function parameters(read = () => both(() => a, () => b), [a, b] = steps("parameters", ["A", "B"], read)) {
+  return read();
+}
+
+function parameterPattern([a, b]) {
+  return () => a + b;
+}
+
+function parameterAndHoistedFunction([a, b]) {
+  return read;
+  function read() {
+    return a + b;
+  }
+}
+
+function catchParameter() {
+  try {
+    throw steps("catch parameter", ["A", "B"], () => "nothing");
+  } catch ([a, b]) {
+    return () => a + b;
+  }
+}
+
+function loopHead() {
+  const readers = [];
+  const last = () => (readers.length ? readers[readers.length - 1]() : "no reader");
+  for (const [a, b] of [steps("loop head 1", ["A", "B"], last), steps("loop head 2", ["C", "D"], last)]) readers.push(() => a + b);
+  return readers.map((reader) => reader()).join(" ");
+}
+
+function nestedLoopHead() {
+  const readers = [];
+  const last = () => (readers.length ? readers[readers.length - 1]() : "no reader");
+  for (const { pair: [a, b] } of [{ pair: steps("nested loop head 1", ["A", "B"], last) }, { pair: steps("nested loop head 2", ["C", "D"], last) }]) readers.push(() => a + b);
+  return readers.map((reader) => reader()).join(" ");
+}
+
+function loopBody() {
+  const readers = [];
+  const last = () => (readers.length ? readers[readers.length - 1]() : "no reader");
+  for (const values of [["A", "B"], ["C", "D"]]) {
+    const [a, b] = steps("loop body", values, last);
+    readers.push(() => a + b);
+  }
+  return readers.map((reader) => reader()).join(" ");
+}
+
+function loopInitializer() {
+  const readers = [];
+  for (let [a, b] = steps("loop initializer", [0, 3], () => readers.length); a < b; a++) readers.push(() => a);
+  return readers.map((reader) => reader()).join(" ");
+}
+
+function* generator() {
+  const [a, b] = steps("generator", ["A", "B"], () => "nothing");
+  yield () => a;
+  yield () => b;
+}
+
+console.log(earlierArrow());
+console.log(earlierArrowAndLet());
+console.log(hoistedFunction());
+console.log(ownInitializer());
+console.log(ownDefault());
+console.log(earlierClass());
+console.log(earlierEval());
+console.log(closureFromEval());
+console.log(laterEval());
+console.log(laterArrow()());
+console.log(laterArrowWithDefaults()());
+console.log(variables());
+console.log(assignment());
+console.log(handler());
+console.log(parameters());
+console.log(parameterPattern(steps("parameter pattern", ["A", "B"], () => "nothing"))());
+console.log(parameterAndHoistedFunction(steps("parameter and hoisted function", ["A", "B"], () => "nothing"))());
+console.log(catchParameter()());
+console.log(loopHead());
+console.log(nestedLoopHead());
+console.log(loopBody());
+console.log(loopInitializer());
+console.log([...generator()].map((reader) => reader()).join(" "));
+
+const readModule = () => both(() => first, () => second);
+const [first, second] = steps("module", ["A", "B"], readModule);
+console.log(readModule());
+
+const [third, fourth] = steps("module and later arrow", ["C", "D"], () => "nothing");
+const readLater = () => third + fourth;
+console.log(readLater());
+
+try {
+  throw steps("module catch parameter", ["A", "B"], () => "nothing");
+} catch ([a, b]) {
+  globalThis.readCaught = () => a + b;
+}
+console.log(globalThis.readCaught());
+//// binding-read-from-switch-clauses.js
+// The tests of the `case` clauses run before the statements of any clause, and a function declared in one clause exists in all of them: a closure from either sees each binding of an array pattern in another clause from its own step on.
+////= attempt-2
+const both = (first, second) => attempt(first) + " " + attempt(second);
+
+function steps(label, values, read) {
+  let index = 0;
+  return {
+    [Symbol.iterator]() {
+      return this;
+    },
+    next() {
+      console.log(label, "next", index, "sees", read());
+      return index < values.length ? { value: values[index++], done: false } : { value: undefined, done: true };
+    },
+    return() {
+      console.log(label, "return sees", read());
+      return {};
+    },
+  };
+}
+
+function testAfterDefault(selector) {
+  let read = () => "no reader";
+  switch (selector) {
+    default:
+      const [a, b] = steps("test after default", ["A", "B"], () => read());
+      return read();
+    case (read = () => both(() => a, () => b), "never"):
+      return "matched";
+  }
+}
+
+function functionInLaterClause(selector) {
+  switch (selector) {
+    case 0:
+      const [a, b] = steps("function in later clause", ["A", "B"], read);
+      return read();
+    case 1:
+      function read() {
+        return both(() => a, () => b);
+      }
+  }
+}
+
+function arrowInLaterClause(selector) {
+  switch (selector) {
+    case 0:
+      const [a, b] = steps("arrow in later clause", ["A", "B"], () => "nothing");
+    case 1:
+      return () => both(() => a, () => b);
+  }
+}
+
+function closureOfHoistedFunction() {
+  const [a, b] = steps("closure of hoisted function", ["A", "B"], () => makeReader()());
+  return makeReader()();
+  function makeReader() {
+    return () => both(() => a, () => b);
+  }
+}
+
+function functionInLaterBlock() {
+  const [a, b] = steps("function in later block", ["A", "B"], () => "nothing");
+  {
+    function read() {
+      return both(() => a, () => b);
+    }
+    return read();
+  }
+}
+
+console.log(testAfterDefault("other"));
+console.log(functionInLaterClause(0));
+console.log(arrowInLaterClause(0)());
+console.log(arrowInLaterClause(1)());
+console.log(closureOfHoistedFunction());
+console.log(functionInLaterBlock());
+//// catch-parameter.js
+// A `catch` parameter is called and reassigned from a closure, with thrown values of every kind.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+function t(n, V) { try { throw V; } catch (f) { const later = () => [attempt(() => f()), typeof f, typeof (f = () => "one")]; return later(); } }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// catch-parameter-captures.js
+// A `catch` parameter is called and reassigned from a closure that also captures another variable, with thrown values of every kind.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+function t(n, V) { try { throw V; } catch (f) { const later = () => [attempt(() => f()), typeof f, typeof (f = () => "one" + n)]; return later(); } }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// default-in-inner-function.js
+// A variable holding a function is reassigned by a destructuring pattern with a default inside an inner function.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+function t(n, V) { const one = () => "one" + n; let f = one; const set = () => { [f = one] = [V]; }; set(); return [attempt(() => f()), attempt(() => (() => f())()), f === one, typeof f, attempt(() => [0].map(f)[0])]; }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// export-const-read-between-steps/lib.js
+import { first, second } from "./main.js";
+import * as main from "./main.js";
+
+////= attempt
+
+export const read = () => [attempt(() => first), attempt(() => second), attempt(() => main.first), attempt(() => main.second)].join(" ");
+//// export-const-read-between-steps/main.js
+// An exported `const` array pattern reads an iterator whose `next` and `return` call a function of another module, which imports the bindings in a cycle and sees each one from its own step on.
+import { read } from "./lib.js";
+
+////= steps
+
+export const [first, second = "default"] = steps(["A", undefined, "unread"]);
+console.log(first, second, read());
+//// export-let-array-default/lib.js
+const one = () => "one";
+export let f = one;
+export const first = one;
+export function write(V) { f = one; [f = one] = [V]; }
+export const call = () => f();
+//// export-let-array-default/main.js
+// An exported `let` holding a function is reassigned by an array destructuring pattern with a default, and read from another module.
+const show = (x) => typeof x === "function" ? "function" : String(x);
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two";
+import { f, first, write, call } from "./lib.js";
+import * as ns from "./lib.js";
+for (const V of [two, 7, "text", undefined, null, new Proxy(two, {}), class K {}]) { write(V); console.log([attempt(() => f()), attempt(() => call()), attempt(() => ns.f()), f === first, typeof f].join(" | ")); }
+//// export-let-for-of/lib.js
+const one = () => "one";
+export let f = one;
+export const first = one;
+export function write(V) { f = one; for ([f = one] of [[V]]) ; }
+export const call = () => f();
+//// export-let-for-of/main.js
+// An exported `let` holding a function is reassigned as the target of a `for..of` loop, and read from another module.
+const show = (x) => typeof x === "function" ? "function" : String(x);
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two";
+import { f, first, write, call } from "./lib.js";
+import * as ns from "./lib.js";
+for (const V of [two, 7, "text", undefined, null, new Proxy(two, {}), class K {}]) { write(V); console.log([attempt(() => f()), attempt(() => call()), attempt(() => ns.f()), f === first, typeof f].join(" | ")); }
+//// export-list-read-between-steps/lib.js
+import { first, renamed } from "./main.js";
+
+////= attempt
+
+export const read = () => attempt(() => first) + " " + attempt(() => renamed);
+//// export-list-read-between-steps/main.js
+// The names of a `const` array pattern are exported by a list after the declaration. The iterator's `next` and `return` call a function of another module, which imports them in a cycle and sees each one from its own step on.
+import { read } from "./lib.js";
+
+////= steps
+
+const [first, second] = steps(["A", "B", "unread"]);
+export { first, second as renamed };
+console.log(first, second, read());
+//// exports-array-default.js
+// `exports.f` is reassigned by an array destructuring pattern with a default in a CommonJS module.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+const one = () => "one"; exports.f = one;
+function t(n, V) { exports.f = one; [exports.f = one] = [V]; return [attempt(() => exports.f()), exports.f === one, typeof exports.f]; }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// exports-object-default.js
+// `exports.f` is reassigned by an object destructuring pattern with a default in a CommonJS module.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+const one = () => "one"; exports.f = one;
+function t(n, V) { exports.f = one; ({ k: exports.f = one } = { k: V }); return [attempt(() => exports.f()), exports.f === one, typeof exports.f]; }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// for-of-head-default-module-variable.js
+// A module-level variable holding a function is reassigned by a pattern with a default in the head of a `for..of` loop.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+const n = 1; const one = () => "one" + n; let f = one;
+function t(_, V) { f = one; for ([f = one] of [[V]]) ; return [attempt(() => f()), attempt(() => (() => f())()), f === one, typeof f, attempt(() => [0].map(f)[0])]; }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// nested-object-default.js
+// A variable holding a function is reassigned by a nested object destructuring pattern with a default.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+function t(n, V) { const one = () => "one" + n; let f = one; ({ a: { f = one } } = { a: { f: V } }); return [attempt(() => f()), attempt(() => (() => f())()), f === one, typeof f, attempt(() => [0].map(f)[0])]; }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// object-shorthand-default.js
+// A variable holding a function is reassigned by an object destructuring pattern in shorthand form with a default.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+function t(n, V) { const one = () => "one"; let f = one; ({ f = one } = { f: V }); return [attempt(() => f()), attempt(() => (() => f())()), f === one, typeof f, attempt(() => [0].map(f)[0])]; }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// parameter-typed-by-literal-default.ts
+// A parameter without a written type whose default value is an object literal: TypeScript takes the type of the literal for the type of the parameter. Nobody wrote that type, so an object from untyped code that has the properties is taken as it is.
+type Made = { depth: number; name: string };
+const made: Made[] = [{ depth: 3, name: "made by the program" }];
+function given(): any {
+  const object = Object.create({ inherited: 1 });
+  object.depth = 2;
+  object.extra = () => 1;
+  return object;
+}
+const row = (name: string, f: () => unknown) => {
+  let r: unknown;
+  try {
+    r = f();
+  } catch (e) {
+    r = "THROWS " + (e as Error).constructor.name;
+  }
+  console.log(name + ": " + JSON.stringify(r));
+};
+const arrow = (options = { depth: 1 }) => options.depth;
+function declaration(options = { depth: 1 }) {
+  return options.depth;
+}
+const empty = (options = {}) => Object.keys(options).length;
+const second = (first: number, options = { depth: 1 }) => first + options.depth;
+const nested = (options = { inner: { depth: 1 } }) => options.inner.depth;
+class Walker {
+  walk(options = { depth: 1 }) {
+    return options.depth * 2;
+  }
+}
+row("an arrow function", () => (arrow as any)(given()));
+row("a declaration", () => (declaration as any)(given()));
+row("an empty literal", () => [(empty as any)(given()), empty(), empty({ a: 1 })]);
+row("the second parameter", () => (second as any)(1, given()));
+row("a literal in the literal", () => (nested as any)({ inner: given() }));
+row("a method", () => (new Walker().walk as any)(given()));
+row("as the type says", () => [arrow(), arrow({ depth: 5 }), arrow(made[0]), declaration(undefined), nested(), new Walker().walk({ depth: 4 })]);
+row("without the property", () => (arrow as any)({}));
+row("null", () => (arrow as any)(null));
+//// parameter-typed-by-pattern-only/main.ts
+// A parameter that is a destructuring pattern without an annotation: TypeScript infers a type from the names in the pattern. That type is inferred, not annotated, so anything that has the properties is accepted, even if an object type of the program happens to match it.
+type Action = { type: "load" | "defer"; path: string };
+const actions: Action[] = [];
+actions.push({ type: "load", path: "made/by/the/program.ts" });
+
+function given(): any {
+  const object = Object.create({ inherited: "from the prototype" });
+  object.path = "/a/b.ts";
+  object.defer = () => "deferred";
+  return object;
+}
+function calls(f: any, ...rest: unknown[]) {
+  return f(given(), ...rest);
+}
+class Entry {
+  path = "/an/instance.ts";
+}
+
+const arrow = ({ path }) => path.split("/").pop();
+const asyncArrow = async ({ path }) => path.length;
+function declaration({ path }) {
+  return path.toUpperCase();
+}
+const withDefaults = ({ path = "none", type = "load" }) => type + " " + path;
+const wholeDefault = ({ path = "none" } = {}) => path;
+const nested = ({ defer, inherited }) => [defer(), inherited];
+const second = (first: number, { path }) => first + path.length;
+const list = ([first, next]) => [next, first];
+const holder = {
+  method({ path }) {
+    return "method " + path;
+  },
+};
+class Loader {
+  load({ path }) {
+    return "load " + path;
+  }
+}
+
+const row = (name: string, ...values: unknown[]) => console.log(name + ": " + JSON.stringify(values));
+row("arrow", calls(arrow));
+row("async arrow", await calls(asyncArrow));
+row("declaration", calls(declaration));
+row("defaults", calls(withDefaults), withDefaults({}), withDefaults({ type: "defer" }));
+row("a default for the whole", calls(wholeDefault), wholeDefault(), wholeDefault({ path: "p" }));
+row("a function and an inherited property", calls(nested));
+row("second", (second as any)(1, given()));
+row("an array pattern", (list as any)("ab"), list([1, 2]), (list as any)(new Set([3, 4])));
+row("a method of a literal", calls(holder.method));
+row("a method of a class", calls(new Loader().load));
+row("objects of the program", arrow(actions[0]), arrow(new Entry()), arrow({ path: "a/literal.ts" }));
+row("objects of the engine", (({ size }) => size)(new Set([1, 2])), (({ message }) => message)(new Error("said")), (({ length }) => length)("abc"), calls(({ path }) => typeof path));
+try {
+  (arrow as any)(undefined);
+} catch (e) {
+  row("undefined", (e as Error).constructor.name);
+}
+//// parameter-typed-by-pattern-only/tsconfig.json
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": false
+  }
+}
+//// rest-of-array-default-module-variable.js
+// A module-level variable holding a function is reassigned by a pattern with a default nested in a rest element.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+const n = 1; const one = () => "one"; let f = one;
+function t(_, V) { f = one; [...[f = one]] = [V]; return [attempt(() => f()), attempt(() => (() => f())()), f === one, typeof f, attempt(() => [0].map(f)[0])]; }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// swap-with-defaults.js
+// Two variables are swapped by an array destructuring pattern whose elements have defaults.
+const show = (x) => { try { return typeof x === "function" ? "function " + x.name : typeof x === "symbol" ? "symbol" : typeof x === "bigint" ? "bigint" : typeof x === "object" && x ? "object" : String(x); } catch (e) { return "threw " + e.name; } };
+const attempt = (g) => { try { return show(g()); } catch (e) { return "threw " + e.name; } };
+const two = () => "two"; const three = (m) => () => "three" + m;
+function t(n, V) { const one = () => "one" + n; let f = one; let other = V; [f = one, other = one] = [other, f]; return [attempt(() => f()), attempt(() => (() => f())()), f === one, typeof f, attempt(() => [0].map(f)[0])]; }
+for (const V of [two, three(5), 7, "text", { call: 1 }, new Proxy(two, {}), undefined, null, class K {}, two.bind(null), async () => 9, 1.5, true, 10n, Symbol.iterator, [two]]) console.log(attempt(() => t(1, V).join(" | ")));
+//// union-variable-assigned-by-pattern.ts
+// A `number | string` variable is assigned by a destructuring pattern with a default, from data whose type annotation is wrong. The pattern reads an element of a written `[number]`, so a string there throws a TypeError; a number passes, and a missing element takes the default.
+declare const console: { log(...all: unknown[]): void };
+function give(): [number] { return (globalThis as any).given; }
+function t() { let x: number | string = "t"; [x = 2] = give(); const y = x; return [typeof y, y + 1].join(" | "); }
+for (const v of [[5], ["abc"], []]) { (globalThis as any).given = v; try { console.log(t()); } catch (e: any) { console.log("threw " + e.name); } }

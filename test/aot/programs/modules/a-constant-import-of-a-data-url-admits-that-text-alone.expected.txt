@@ -1,0 +1,8 @@
+a URL made at run time, first: refused ERR_MODULE_NOT_FOUND
+a constant URL: constant
+the same URL, made at run time: constant
+a URL made at run time: refused ERR_MODULE_NOT_FOUND
+a blob: URL: refused ERR_MODULE_NOT_FOUND
+require() of a URL made at run time: refused MODULE_NOT_FOUND
+a constant URL whose text loads built-in modules: string,string,function
+a URL made at run time, last: refused ERR_MODULE_NOT_FOUND

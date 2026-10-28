@@ -4578,6 +4578,7 @@ async function pushedHeaderBlocks(onStream, serverOptions) {
   const server = http2.createServer(serverOptions);
   server.on("error", reject);
   server.on("sessionError", reject);
+  server.on("stream", stream => stream.on("error", reject));
   server.on("stream", onStream);
   let client;
   try {
@@ -4759,6 +4760,8 @@ it("http2 pushStream throws ERR_HTTP2_PUSH_DISABLED before it validates its argu
     client.on("error", reject);
     const req = client.request({ ":path": "/" });
     req.on("error", reject);
+    // No effect after the 'stream' handler ran: it settles `thrown` before it responds.
+    req.on("close", () => reject(new Error("the request closed before the server emitted 'stream'")));
     req.resume();
 
     const pushDisabledError = {

@@ -260,18 +260,16 @@ impl RuntimeTranspilerStore {
     /// folded here and the drain goes on; the VM's termination ends it, with
     /// the rest of the batch back on the queue (each still has its own posted
     /// task, or the teardown release, to pick it up).
-    // Note: takes `NonNull` rather than `&mut` for `event_loop`/`vm`
+    // Note: takes `NonNull` rather than `&mut` for `event_loop`
     // because `&mut self` already aliases `vm.transpiler_store` (this `Self` is
     // a field of `VirtualMachine`). Field-level derefs only.
     pub fn run_from_js_thread(
         &mut self,
         event_loop: NonNull<EventLoop>,
         global: &JSGlobalObject,
-        vm: NonNull<VirtualMachine>,
+        jsc_vm: &crate::VM,
     ) {
         let batch = self.queue.pop_batch();
-        // SAFETY: `vm` is the live owning VM (caller is the JS-thread tick loop).
-        let jsc_vm = unsafe { (*vm.as_ptr()).jsc_vm() };
         let mut iter = batch.iterator();
         let mut job = iter.next();
         let mut first = true;

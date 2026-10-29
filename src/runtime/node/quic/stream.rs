@@ -149,9 +149,9 @@ impl Drop for QuicStream {
 
 impl QuicStream {
     pub(super) fn create<'a>(
-        global: &'a JSGlobalObject,
+        global: &JSGlobalObject,
         vtable: *const lsquic::NqVtable,
-        session: *mut QuicSession,
+        session: &'a QuicSession,
         key: Key,
         session_handle: JSValue,
         raw: Option<lsquic::Stream>,
@@ -160,7 +160,7 @@ impl QuicStream {
         let stream = QuicStream {
             vtable,
             raw: Cell::new(None),
-            session: Cell::new(session),
+            session: Cell::new(core::ptr::from_ref(session).cast_mut()),
             key,
             session_js: JsCell::new(Some(Strong::create(session_handle, global))),
             this_value: JsCell::new(JsRef::empty()),
@@ -199,7 +199,9 @@ impl QuicStream {
         handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
         handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
 
-        // SAFETY: the payload of `handle`, which roots itself below until `teardown` or `release_close_root`.
+        // SAFETY: the payload of `handle`, which this frame holds. The strong ref set below roots
+        // it until `teardown` or `release_close_root`; after that the frame that has the reference
+        // holds it. Only `&` is formed to the payload before the sweeper drops it.
         let this = unsafe { &*raw_ptr };
         #[expect(
             clippy::cast_ptr_alignment,

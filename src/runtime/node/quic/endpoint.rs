@@ -1703,7 +1703,7 @@ impl QuicEndpoint {
         let (session, _handle) = QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             endpoint_handle,
             None,
             true,
@@ -1847,7 +1847,7 @@ impl QuicEndpoint {
         match QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             endpoint_handle,
             Some(handshaken),
             true,
@@ -2342,7 +2342,7 @@ impl QuicEndpoint {
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             this_value.to_js(),
             None,
             false,
@@ -2399,7 +2399,7 @@ impl QuicEndpoint {
         unsafe { lsquic::lsquic_conn_set_ctx(conn.raw(), session_ptr.cast()) };
         session.conn.set(Some(conn));
         session.cache_sockaddrs(conn);
-        // `conn` is set above, so teardown clears its ctx and late callbacks no-op instead of reaching an unrooted session.
+        // `conn` is set above, so teardown clears its ctx and no late callback reaches the session.
         if let Err(e) = session.apply_options(global, options) {
             session.teardown(global);
             return Err(e);
@@ -2429,7 +2429,7 @@ impl QuicEndpoint {
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             this_value,
             None,
             false,

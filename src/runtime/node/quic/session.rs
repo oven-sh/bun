@@ -468,9 +468,9 @@ impl QuicSession {
     }
 
     pub(super) fn create<'a>(
-        global: &'a JSGlobalObject,
+        global: &JSGlobalObject,
         vtable: *const lsquic::NqVtable,
-        endpoint: *mut QuicEndpoint,
+        endpoint: &'a QuicEndpoint,
         endpoint_handle: JSValue,
         conn: Option<lsquic::Conn>,
         is_server: bool,
@@ -495,7 +495,9 @@ impl QuicSession {
         handle.put(global, b"stateByteOffset", JSValue::js_number(0.0));
         handle.put(global, b"statsByteOffset", JSValue::js_number(0.0));
 
-        // SAFETY: the payload of `handle`, which roots itself below until `teardown`.
+        // SAFETY: the payload of `handle`, which this frame holds. The strong ref set below roots
+        // it until `teardown`; after that the frame that has the reference holds it. Only `&` is
+        // formed to the payload before the sweeper drops it.
         let this = unsafe { &*raw };
         #[expect(
             clippy::cast_ptr_alignment,
@@ -525,7 +527,7 @@ impl QuicSession {
         )]
         this.stats.set(stats_ptr.cast::<u64>());
         this.conn.set(conn);
-        this.endpoint.set(endpoint);
+        this.endpoint.set(core::ptr::from_ref(endpoint).cast_mut());
         this.endpoint_js
             .set(Some(Strong::create(endpoint_handle, global)));
         this.is_server.set(is_server);
@@ -746,20 +748,14 @@ impl QuicSession {
     }
     /// Creates a stream for this session and registers it.
     fn create_stream<'a>(
-        &self,
-        global: &'a JSGlobalObject,
+        &'a self,
+        global: &JSGlobalObject,
         session_handle: JSValue,
         raw: Option<lsquic::Stream>,
     ) -> JsResult<(super::stream::Key, &'a super::stream::QuicStream, JSValue)> {
         let key = super::stream::Key(self.next_stream_key.replace(self.next_stream_key.get() + 1));
-        let (qs, handle) = super::stream::QuicStream::create(
-            global,
-            self.vtable,
-            core::ptr::from_ref(self).cast_mut(),
-            key,
-            session_handle,
-            raw,
-        )?;
+        let (qs, handle) =
+            super::stream::QuicStream::create(global, self.vtable, self, key, session_handle, raw)?;
         self.streams
             .with_mut(|v| v.push((key, core::ptr::from_ref(qs).cast_mut())));
         Ok((key, qs, handle))
@@ -2072,7 +2068,7 @@ impl QuicSession {
                 o.data.extend(buf.byte_slice().iter().copied());
                 o.end = super::stream::PendingEnd::Fin;
             });
-            // As in attach_source: makes a later setOutbound() throw instead of appending a second body.
+            // As in attach_source: a later setOutbound() throws instead of adding a second body.
             qs.with_state(|s| s.has_outbound = 1);
         }
         if let Some(conn) = self.conn() {

@@ -38,5 +38,5 @@ test.skipIf(!isLinux)(
     expect(built.exitCode).toBe(0);
     expect(await run([executable], cwd, env)).toEqual(expected);
   },
-  600_000,
+  240_000,
 );

@@ -21,7 +21,9 @@ export async function print() {
     return writers;
   };
   const held = [];
-  while (held.push(...open()) < +process.env.BUSY_THREADS) Bun.sleepSync(1);
+  // A pool with too few threads never gets there: its count is printed after two seconds.
+  const deadline = Date.now() + 2000;
+  while (held.push(...open()) < +process.env.BUSY_THREADS && Date.now() < deadline) Bun.sleepSync(1);
 
   let threads = 0;
   for (const tid of readdirSync("/proc/self/task")) {

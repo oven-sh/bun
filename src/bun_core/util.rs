@@ -2789,15 +2789,14 @@ pub fn get_thread_count() -> u16 {
                 // `std::env::var` so behaviour matches
                 // on all platforms. POSIX keeps the borrow path above.
                 #[cfg(windows)]
-                if let Ok(s) = std::env::var(
+                if let Some(count) = std::env::var(
                     // SAFETY: keys above are ASCII literals.
                     unsafe { core::str::from_utf8_unchecked(key.as_bytes()) },
-                ) {
-                    if let Ok(n) = s.trim().parse::<u16>() {
-                        if n >= MIN_THREAD_COUNT {
-                            return Some(n.min(MAX_THREAD_COUNT));
-                        }
-                    }
+                )
+                .ok()
+                .and_then(|value| thread_count_from_env_value(value.as_bytes()))
+                {
+                    return Some(count);
                 }
             }
             None

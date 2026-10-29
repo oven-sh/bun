@@ -12,8 +12,10 @@ target/debug/harness enc-fuzz 1 1000 4194304 4095
 ```
 
 The reference is built with `-ffp-contract=off`, and with `cref.patch`, which fixes an out of bounds write in the encoder
-(memory corruption is not something safe Rust can imitate), two bugs that make streams which do not decode to the input
-(`enc-far-dict`, fixed on upstream's master, and `enc-offset-dict`), and a call that is refused for no reason (`api`).
+and one in the decoder, with almost 2 GiB of dictionaries, that is fixed on upstream's master (memory corruption is not
+something safe Rust can imitate), two bugs that make streams which do not decode to the input (`enc-far-dict`, fixed on
+upstream's master, and `enc-offset-dict`), one that makes streams which no decoder accepts (`enc-large-limit`), and a call
+that is refused for no reason (`api`). After a change to `cref.patch` the build asks for `build-cref.sh` again.
 
 Every iteration is derived from its seed, so `<subcommand> <seed> 1 ...` reproduces a failure, as long as the files that some
 of the data is taken from are the same: brotli's test data and sources, `src/js/node` and `docs/runtime` of this repository.
@@ -45,6 +47,7 @@ quality `q`: `0xFFF` for all of them.
 | `enc-far-dict <seed> <mask>` | 36 MiB with a window of 32 MiB: a copy from an attached dictionary, then what is as far back in the input as that copy's distance. Version 1.2.1 of the C encoder takes that for a match at the last distance at quality 4 (H55) |
 | `enc-reach <seed> <mask>` | dictionaries of almost 64 MiB in all, so that distances get to the largest one that there is a code for, 2^26 - 4 and the number of direct codes: copies from the dictionaries at that distance and up to 2 more or less, and words of the static dictionary, which comes after them, that are the last within reach or next to it. Only words that the quality in question finds, which is tried first. Qualities 2 to 4 do not search attached dictionaries, 2 and 3 find no words. About 10 s for each quality, 1.1 GB of memory |
 | `enc-huge-dictionary <seed> <mask>` | one of the qualities, 5 to 11: a dictionary of 1.16 GiB of random bytes, and an input with pieces of its last 40 MB, which are at positions past 2^30. Takes 2 minutes and 10 GiB |
+| `enc-large-limit <seed> <mask>` | one of the qualities, 5 to 11, with a large window, any NPOSTFIX and NDIRECT, and 15 dictionaries that are together about as long as the largest distance that has a code, at most 0x7FFFFFFC. All but the first are zeros. The input has 200 pieces of the first one, up to 8 bytes within reach or out of reach, and the size of the output has to fit how many are within. Qualities 10 and 11 also try the last distances plus 1 to 3, and so get further than there is a code for. Version 1.2.1 of the C encoder does not stop at 0x7FFFFFFC there, which is the most that a decoder accepts, and from 0x80000000 on the sum overflows an `int`. Takes half a minute and 6 GiB |
 | `enc-dictionary-end <seed> <iterations> <mask>` | qualities 5 to 11: the input ends with 3 to 9 bytes that a dictionary has too, followed there by zeros. The encoder looks a position up in a dictionary by 5 bytes. With fewer left it takes what comes after the end of the input, which it has cleared, and so qualities 10 and 11 find a copy of 4 bytes, shorter than any from a dictionary elsewhere: in 80 of 600 seeds |
 | `enc-offset-dict <seed> <iterations> <mask>` | a stream offset and a dictionary: a copy from the dictionary that ends with a block of input, and then what the dictionary has that many bytes earlier. The C encoder goes on with the copy. Qualities 5 and up |
 | `enc-blocks <seed> <iterations> <max length> <mask>` | stretches of many different kinds: many blocks, block types and histograms to cluster. Give it length: at qualities 10 and 11, what the cap of 15 bits on an estimated code length changes shows in one input of four of up to 4 MiB, one of twelve of up to 1 MiB, one of 200 of up to 256 KiB and none of 1,600 of up to 64 KiB |

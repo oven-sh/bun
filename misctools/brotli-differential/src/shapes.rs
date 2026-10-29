@@ -1646,6 +1646,63 @@ pub fn run_huge_dictionary(seed: u64, qualities: u64) {
     println!("ok: quality {q}, {} -> {}", totals.0, totals.1);
 }
 
+/// One of the qualities, 5 to 11, with a large window, and 15 dictionaries that are about as long together as the largest
+/// distance with a code. All but the first are zeros. The input has pieces of the first one that are just within reach, or
+/// just not.
+///
+/// Qualities 10 and 11 also try the last distances plus 1 to 3, and so get further than there is a code for, up to
+/// 0x7FFFFFFC, which is the most that a decoder accepts. Version 1.2.1 of the C encoder does not stop there.
+pub fn run_large_limit(seed: u64, qualities: u64) {
+    let mut rng = Rng(seed);
+    let q = *rng.pick(&crate::args::qualities(qualities, 5..12));
+    let mut params = vec![(6, 1), (1, q), (2, rng.range(16, 30) as u32)];
+    let (mut npostfix, mut ndirect) = (0, 0);
+    if rng.chance(1, 2) {
+        npostfix = rng.below(4);
+        ndirect = rng.below(16) << npostfix;
+        params.extend([(7, npostfix as u32), (8, ndirect as u32)]);
+    }
+    let limit = crate::grammar::longest_distance(npostfix as u32, ndirect, true);
+    let total = limit + 3 - rng.below(8);
+    let first: Vec<u8> = (0..1 << 16).map(|_| rng.next() as u8).collect();
+    let mut data = Vec::new();
+    // What takes as much room in the output as in the input, what may, and how many pieces do not.
+    let (mut plain, mut unsure, mut within) = (0, 0, 0);
+    for _ in 0..200 {
+        // So many that no two pieces overlap in the dictionary, or the second would be a copy of the first.
+        let literals = rng.range(33, 60);
+        data.extend((0..literals).map(|_| rng.next() as u8));
+        let n = rng.range(32, 64);
+        // The distance of a byte of the first dictionary is the position, plus all dictionaries, less its offset.
+        let nearest = data.len() + total - limit;
+        let offset = if rng.chance(1, 2) { nearest + 3 - rng.below(7) } else { nearest + 8 - rng.below(17) };
+        data.extend_from_slice(&first[offset..offset + n]);
+        plain += literals;
+        if offset >= nearest {
+            within += 1;
+        } else if q >= 10 && limit + nearest - offset <= 0x7FFF_FFFC {
+            unsure += n;
+        } else {
+            plain += n;
+        }
+    }
+    let mut dicts = vec![first];
+    let rest = total - (1 << 16);
+    dicts.extend((0..14).map(|i| vec![0; rest / 14 + usize::from(i < rest % 14)]));
+    let case = EncCase { data, params, dicts, schedule: 0, misuse: false };
+    let out = enc::compare(&case).unwrap_or_else(|e| panic!("seed {seed} params {:?}: {e}", case.params));
+    if let Err(e) = enc::round_trip(&out, &case.data, &case.dicts, true, 0) {
+        panic!("seed {seed} params {:?}: {e}", case.params);
+    }
+    assert!(
+        within > 20 && within < 180 && out.len() > plain && out.len() < plain + unsure + 12 * within + 400,
+        "seed {seed} params {:?}: {} bytes for {plain} bytes that are new, {unsure} that may be and {within} pieces within reach",
+        case.params,
+        out.len()
+    );
+    println!("ok: params {:?}, limit {limit}, dictionaries {total}, {within} of 200 pieces within reach, {} -> {}", case.params, case.data.len(), out.len());
+}
+
 /// The input ends with a few bytes that a dictionary has too, followed there by zeros. The encoder looks a position up in a
 /// dictionary by 5 bytes. With fewer left it takes the bytes after the end of the input, which it has cleared, and so finds
 /// a copy that is shorter than any it finds elsewhere. Only qualities 10 and 11 still look for a copy at the last 4 bytes.

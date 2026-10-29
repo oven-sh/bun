@@ -546,7 +546,7 @@ fn distance_alphabet(npostfix: u32, ndirect: usize, large_window: bool) -> (usiz
 }
 
 /// The longest distance that there is a code for.
-fn longest_distance(npostfix: u32, ndirect: usize, large_window: bool) -> usize {
+pub fn longest_distance(npostfix: u32, ndirect: usize, large_window: bool) -> usize {
     let code = distance_alphabet(npostfix, ndirect, large_window).1 - 1 - 16 - ndirect;
     let nbits = 1 + (code >> (npostfix + 1));
     let offset = ((2 + ((code >> npostfix) & 1)) << nbits) - 4;

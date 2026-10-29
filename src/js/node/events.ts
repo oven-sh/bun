@@ -401,9 +401,7 @@ function addCatchOfCopy(
   }
 }
 
-// Two texts. Compiled ahead of time, emit() goes where it is called while it is small, so the loop and what a promise asks for are
-// one function of its own. In `bun run` that is one more call for every event with several listeners, a sixth more in the
-// interpreter, and `args` stays out of the heap only while it is measured, indexed and applied.
+// Two texts: compiled ahead of time the loop is a function of its own, which costs `bun run` a call for every event with several listeners.
 const emit = IS_COMPILED_AHEAD_OF_TIME
   ? function emit(this: $Node.EventEmitter, type: $Node.EventName, ...args: unknown[]) {
       if (type === "error") {
@@ -469,9 +467,7 @@ const emit = IS_COMPILED_AHEAD_OF_TIME
         }
         if (result == null) return true;
       } else {
-        // No defensive clone: stored arrays are never mutated in place (mutators
-        // install a copy), so this list stays stable for the whole loop even if a
-        // listener adds/removes listeners.
+        // No defensive clone: mutators install a copy, so this list stays as it is while a listener adds or removes listeners.
         for (let i = 0, length = handler.length; i < length; i++) {
           switch (argc) {
             case 0:
@@ -502,8 +498,7 @@ const emit = IS_COMPILED_AHEAD_OF_TIME
       return true;
     };
 
-// For an executable that was compiled ahead of time: the loop of emit(), and the promise that one listener returned.
-// It takes the place of emit() in a stack trace, under its name.
+// Compiled ahead of time: the loop of emit() and the promise of one listener. It takes the place of emit() in a stack trace, under its name.
 const emitToEach = function emit(
   emitter: $Node.EventEmitter,
   type: $Node.EventName,

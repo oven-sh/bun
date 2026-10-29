@@ -2367,11 +2367,7 @@ pub(crate) fn inject<'a>(
                 zname.as_bytes(),
                 &[0],
             ]);
-            let len = beside.len() - 1;
-            zname_owned = Some(beside);
-            // SAFETY: trailing 0 byte appended above; `zname_owned` keeps the allocation alive until it is replaced
-            // together with `zname`.
-            zname = unsafe { ZStr::from_raw(zname_owned.as_ref().unwrap().as_ptr(), len) };
+            zname = ZStr::from_slice_with_nul(zname_owned.insert(beside));
         }
     }
     #[cfg(windows)]
@@ -2487,13 +2483,7 @@ pub(crate) fn inject<'a>(
                                     // Note: the concat buffer is parked in
                                     // `zname_owned` (declared at fn entry) so it outlives the
                                     // loop and drops at fn exit.
-                                    let len = zname_z.len().saturating_sub(1);
-                                    zname_owned = Some(zname_z);
-                                    // SAFETY: trailing 0 byte appended above; `zname_owned`
-                                    // keeps the allocation alive for the rest of the fn.
-                                    zname = unsafe {
-                                        ZStr::from_raw(zname_owned.as_ref().unwrap().as_ptr(), len)
-                                    };
+                                    zname = ZStr::from_slice_with_nul(zname_owned.insert(zname_z));
                                     continue;
                                 }
                             }
@@ -2566,6 +2556,7 @@ pub(crate) fn inject<'a>(
             break 'brk fd;
         }
     };
+    #[cfg(windows)]
     let _ = (&mut zname_owned, &mut zname);
 
     match target.os {

@@ -1070,12 +1070,12 @@ pub mod pattern {
     type RoutePathInt = u16;
 
     #[derive(Clone, Copy)]
-    pub struct Pattern {
-        pub(crate) value: Value,
+    pub struct Pattern<'a> {
+        pub(crate) value: Value<'a>,
         pub(crate) len: RoutePathInt,
     }
 
-    impl Pattern {
+    impl Pattern<'_> {
         /// Match a filesystem route pattern to a URL path.
         pub(crate) fn match_<'a, const ALLOW_OPTIONAL_CATCH_ALL: bool>(
             // `path` must be lowercased and have no leading slash
@@ -1203,7 +1203,7 @@ pub mod pattern {
             let mut kind = Tag::Static;
             let end = (input.len() - 1) as u32;
             while (offset as u32) < end {
-                let pattern: Pattern = match Pattern::init_unhashed(input, offset) {
+                let pattern: Pattern<'_> = match Pattern::init_unhashed(input, offset) {
                     Ok(p) => p,
                     Err(err) => {
                         let source = bun_ast::Source::init_empty_file(input);
@@ -1275,7 +1275,7 @@ pub mod pattern {
         pub(crate) fn init(
             input: &[u8],
             offset_: RoutePathInt,
-        ) -> Result<Pattern, PatternParseError> {
+        ) -> Result<Pattern<'_>, PatternParseError> {
             Self::init_maybe_hash::<true>(input, offset_)
         }
 
@@ -1286,7 +1286,7 @@ pub mod pattern {
         pub(crate) fn init_unhashed(
             input: &[u8],
             offset_: RoutePathInt,
-        ) -> Result<Pattern, PatternParseError> {
+        ) -> Result<Pattern<'_>, PatternParseError> {
             Self::init_maybe_hash::<false>(input, offset_)
         }
 
@@ -1294,7 +1294,7 @@ pub mod pattern {
         fn init_maybe_hash<const DO_HASH: bool>(
             input: &[u8],
             offset_: RoutePathInt,
-        ) -> Result<Pattern, PatternParseError> {
+        ) -> Result<Pattern<'_>, PatternParseError> {
             let init_hashed_string = if DO_HASH {
                 HashedString::init
             } else {
@@ -1469,8 +1469,8 @@ pub mod pattern {
 
     #[derive(Clone, Copy, bun_core::EnumTag)]
     #[enum_tag(existing = Tag)]
-    pub enum Value {
-        Static(HashedString),
+    pub enum Value<'a> {
+        Static(HashedString<'a>),
         Dynamic(TinyPtr),
         CatchAll(TinyPtr),
         OptionalCatchAll(TinyPtr),

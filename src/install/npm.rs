@@ -1512,8 +1512,14 @@ pub mod package_manifest {
             }));
 
             // SAFETY: task is a valid Box-allocated SaveTask
-            let batch = PoolBatch::from(unsafe { core::ptr::addr_of_mut!((*task).task) });
-            PackageManager::get().thread_pool.schedule(batch);
+            let task = unsafe { core::ptr::addr_of_mut!((*task).task) };
+            // If the OS can't start the pool's first worker, a task scheduled on the pool would
+            // end the process.
+            let pool = &PackageManager::get().thread_pool;
+            if !pool.ensure_worker() {
+                return SaveTask::run(task);
+            }
+            pool.schedule(PoolBatch::from(task));
         }
 
         fn manifest_file_name<'b>(

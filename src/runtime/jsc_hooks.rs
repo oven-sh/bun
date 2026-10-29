@@ -4560,6 +4560,11 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
                 }
             }
 
+            // If the OS can't start the pool's first thread, transpile on-thread.
+            if !bun_threading::WorkPool::get().ensure_worker() {
+                break 'transpile_async;
+            }
+
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
             // `lr.path` borrows `_specifier`, which the store immediately
             // heap-duplicates inside `transpile()`.

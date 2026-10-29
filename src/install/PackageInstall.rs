@@ -1129,10 +1129,9 @@ impl LinkBatch {
             return self.link(job);
         }
         let pool = &PackageManager::get().thread_pool;
-        // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
-        // run.
-        pool.warm(1);
-        if !pool.has_workers() {
+        // If the OS can't start the pool's first worker, a task scheduled on the pool would end
+        // the process.
+        if !pool.ensure_worker() {
             return self.jobs.iter().for_each(|job| self.link(job));
         }
         let threads = MAX_THREADS.min(pool.max_threads()).min(self.jobs.len());
@@ -2144,11 +2143,10 @@ impl<'a> PackageInstall<'a> {
         ) else {
             return;
         };
-        // If the OS can't start the pool's first worker, tasks scheduled on the pool would never
-        // run.
+        // If the OS can't start the pool's first worker, a task scheduled on the pool would end
+        // the process.
         let pool = &PackageManager::get().thread_pool;
-        pool.warm(1);
-        if !pool.has_workers() {
+        if !pool.ensure_worker() {
             let _ = destination_dir.delete_tree(temp_path.as_bytes());
             return;
         }

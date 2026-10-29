@@ -8,7 +8,7 @@ use std::time::Duration;
 
 /// In the static table, so that the time goes into the value.
 const NAME: &[u8] = b"user-agent";
-const LENGTHS: [usize; 7] = [1, 8, 32, 63, 64, 100, 1000];
+const LENGTHS: [usize; 7] = [1, 8, 32, 64, 127, 128, 1000];
 /// So many of the longest values fit the dynamic table.
 const IN_TABLE: usize = 3;
 

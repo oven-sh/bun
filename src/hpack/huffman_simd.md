@@ -116,41 +116,41 @@ Every row has 16,384 different values (4,194 of 1000 bytes): the branch predicto
 them, and then code with branches that depend on the text looks up to 25% faster than it is. "C" is
 ls-hpack 2.3.5, which is what Bun used before this crate, with its table of 65,536 pairs and its
 decoder that looks up 16 bits in 256 KB, put into the same benchmark. Xeon (Emerald Rapids) at 2.1
-GHz, compiled like a release build (`-march=nehalem`, LTO), the lowest of 3 runs, for C of 2 and in
-`encode/add` of up to 9.
+GHz, compiled like a release build (`-march=nehalem`, LTO), the lowest of 3 runs.
 
 `decode/skip`: kernel / scalar / C.
 
-| length    | 1            | 8            | 32              | 63              | 64              | 100             | 1000                |
+| length    | 1            | 8            | 32              | 64              | 127             | 128             | 1000                |
 | --------- | ------------ | ------------ | --------------- | --------------- | --------------- | --------------- | ------------------- |
-| text      | 20 / 20 / 23 | 33 / 35 / 54 | 52 / 82 / 146   | 80 / 144 / 278  | 76 / 149 / 274  | 107 / 237 / 449 | 850 / 2010 / 4093   |
-| url       | 21 / 21 / 22 | 40 / 35 / 52 | 62 / 76 / 137   | 101 / 131 / 255 | 99 / 139 / 273  | 148 / 216 / 390 | 1236 / 1872 / 3724  |
-| digits    | 20 / 20 / 21 | 33 / 27 / 44 | 50 / 63 / 105   | 69 / 120 / 190  | 69 / 118 / 192  | 104 / 204 / 291 | 759 / 1843 / 2708   |
-| base64    | 20 / 20 / 23 | 35 / 34 / 56 | 65 / 79 / 152   | 109 / 142 / 281 | 111 / 142 / 287 | 160 / 221 / 434 | 1367 / 1980 / 4302  |
-| upper     | 20 / 20 / 23 | 38 / 34 / 40 | 54 / 84 / 102   | 76 / 150 / 183  | 83 / 153 / 201  | 112 / 231 / 295 | 918 / 2003 / 2771   |
-| json      | 22 / 22 / 25 | 50 / 40 / 51 | 120 / 102 / 140 | 202 / 196 / 273 | 212 / 196 / 274 | 309 / 300 / 438 | 2740 / 2743 / 4057  |
-| printable | 22 / 22 / 24 | 45 / 38 / 51 | 97 / 87 / 160   | 176 / 158 / 352 | 181 / 162 / 348 | 259 / 251 / 626 | 2939 / 3070 / 11327 |
-| raw       | 16 / 16 / 19 | 16 / 16 / 20 | 16 / 16 / 20    | 16 / 18 / 39    | 17 / 16 / 30    | 17 / 17 / 33    | 50 / 51 / 208       |
+| text      | 21 / 21 / 22 | 34 / 35 / 53 | 48 / 81 / 148   | 75 / 146 / 281  | 129 / 273 / 533 | 127 / 278 / 537 | 856 / 1951 / 4053   |
+| url       | 20 / 20 / 21 | 40 / 35 / 50 | 61 / 75 / 133   | 100 / 140 / 262 | 181 / 267 / 504 | 180 / 270 / 495 | 1243 / 1877 / 3716  |
+| digits    | 21 / 20 / 21 | 31 / 27 / 41 | 50 / 62 / 104   | 72 / 119 / 192  | 114 / 244 / 372 | 119 / 239 / 368 | 771 / 1825 / 2717   |
+| base64    | 20 / 20 / 21 | 36 / 34 / 52 | 66 / 80 / 147   | 110 / 145 / 277 | 197 / 274 / 553 | 197 / 276 / 544 | 1386 / 1968 / 4148  |
+| upper     | 20 / 20 / 21 | 38 / 35 / 38 | 55 / 83 / 101   | 85 / 153 / 189  | 138 / 285 / 362 | 142 / 290 / 358 | 947 / 2019 / 2746   |
+| json      | 22 / 23 / 24 | 50 / 39 / 52 | 115 / 102 / 136 | 204 / 196 / 281 | 384 / 375 / 548 | 387 / 379 / 543 | 2714 / 2743 / 4004  |
+| printable | 21 / 22 / 23 | 45 / 39 / 50 | 99 / 86 / 152   | 164 / 155 / 350 | 335 / 324 / 852 | 338 / 330 / 898 | 2913 / 2919 / 11509 |
+| raw       | 16 / 16 / 19 | 15 / 17 / 18 | 15 / 16 / 20    | 16 / 17 / 30    | 19 / 19 / 48    | 19 / 19 / 38    | 52 / 52 / 210       |
 
 `encode/add`: Rust / C. Values of 1 byte come again while they are in the table, so most of those
 are references.
 
-| length    | 1       | 8        | 32       | 63        | 64        | 100       | 1000        |
+| length    | 1       | 8        | 32       | 64        | 127       | 128       | 1000        |
 | --------- | ------- | -------- | -------- | --------- | --------- | --------- | ----------- |
-| text      | 18 / 48 | 44 / 78  | 66 / 111 | 94 / 134  | 95 / 133  | 136 / 176 | 982 / 1021  |
-| url       | 15 / 42 | 44 / 75  | 68 / 106 | 91 / 134  | 96 / 131  | 134 / 173 | 982 / 1108  |
-| digits    | 15 / 40 | 44 / 71  | 71 / 94  | 94 / 121  | 94 / 116  | 136 / 150 | 1030 / 932  |
-| base64    | 19 / 49 | 43 / 76  | 70 / 116 | 96 / 138  | 93 / 133  | 135 / 171 | 983 / 1023  |
-| upper     | 17 / 48 | 44 / 77  | 70 / 105 | 92 / 125  | 93 / 119  | 138 / 154 | 1003 / 942  |
-| json      | 19 / 44 | 47 / 87  | 74 / 121 | 112 / 166 | 112 / 165 | 176 / 225 | 1407 / 1453 |
-| printable | 21 / 49 | 47 / 90  | 72 / 133 | 108 / 171 | 107 / 169 | 166 / 229 | 1612 / 1543 |
-| raw       | 16 / 42 | 38 / 110 | 47 / 143 | 53 / 165  | 53 / 163  | 74 / 199  | 369 / 1003  |
+| text      | 17 / 47 | 43 / 71  | 67 / 109 | 92 / 135  | 162 / 199 | 161 / 197 | 979 / 1020  |
+| url       | 15 / 43 | 43 / 77  | 66 / 105 | 95 / 132  | 170 / 199 | 161 / 195 | 992 / 1093  |
+| digits    | 16 / 40 | 44 / 72  | 67 / 93  | 94 / 115  | 166 / 172 | 165 / 173 | 1005 / 926  |
+| base64    | 19 / 45 | 43 / 73  | 67 / 111 | 95 / 134  | 166 / 199 | 166 / 203 | 985 / 1045  |
+| upper     | 17 / 46 | 44 / 77  | 68 / 103 | 93 / 117  | 169 / 176 | 168 / 176 | 1020 / 955  |
+| json      | 18 / 45 | 45 / 89  | 73 / 122 | 114 / 171 | 218 / 262 | 218 / 259 | 1412 / 1448 |
+| printable | 20 / 47 | 48 / 89  | 73 / 127 | 109 / 178 | 218 / 267 | 208 / 267 | 1614 / 1582 |
+| raw       | 15 / 42 | 38 / 111 | 47 / 142 | 53 / 164  | 81 / 212  | 84 / 220  | 374 / 1031  |
 
-The other rows, for text: `encode/skip` takes 14, 20, 39, 70, 68, 102 and 927 ns. `decode/add` takes
-up to 11 ns more than `decode/skip`. A field that is in the table takes 13 to 19 ns to encode up to
-100 characters (C 39 to 56) and 80 at 1000 (213), and 6 ns to decode (13 to 21). Two runs of a row
-differ by up to 5%. Behind C in `encode/add`: 1000 digits by 10%, upper case letters by 7%,
-printable characters by 4%.
+The other rows, for text: `encode/skip` takes 14, 20, 40, 69, 140, 134 and 984 ns (C 48 to 175, and
+960). `decode/add` takes up to 10 ns more than `decode/skip`. A field that is in the table takes 13
+to 20 ns to encode up to 128 characters (C 38 to 63) and 81 at 1000 (211), and 6 ns to decode (13 to
+21). Two runs of a row differ by up to 5%. Behind C, all at 1000 characters: `encode/add` of digits
+by 8%, of upper case letters by 7%, of printable characters by 2%, and `encode/skip` of text by 2%.
+127 and 128 are the two sides of `GROUPS_MIN_LEN`.
 
 The rest is from harnesses that are not in the repository: they need the C code, or touch memory
 between two calls. One string literal of text through the coder, other strings every time, against

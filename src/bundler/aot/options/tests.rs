@@ -723,16 +723,43 @@ fn embedded_names_are_those_of_bundle() {
         "/project/src/workers/w.ts",
         "/project/src/data.mjs",
         "/project/src/c.cjs",
+        "/project/src/page.html",
+        "/project/src/page.css",
     ];
+    let others = ["workers/w.js", "data.js", "c.js", "page.html", "page.css"];
     let (names, _) = embedded_names(&entry_points, |_| {});
     assert_eq!(
         names,
-        Some(byte_lists(&["main.js", "workers/w.js", "data.js", "c.js"]))
+        Some(byte_lists(&[&["main.js"], &others[..]].concat()))
     );
     let (names, _) = embedded_names(&entry_points, set_root_and_compile_name);
+    assert_eq!(names, Some(byte_lists(&[&["app"], &others[..]].concat())));
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn first_script_starts_the_program() {
+    let order = |entry_points: &[&[u8]]| {
+        let case = Case {
+            entry_points,
+            ..Case::default()
+        };
+        convert(
+            case,
+            |_| {},
+            |result, log| (result.map(|it| it.entry_points), errors(log)),
+        )
+    };
     assert_eq!(
-        names,
-        Some(byte_lists(&["app", "workers/w.js", "data.js", "c.js"]))
+        order(&[b"a.css", b"b.html", b"x.js", b"y.ts"]),
+        (
+            Some(byte_lists(&["x.js", "a.css", "b.html", "y.ts"])),
+            Vec::new()
+        )
+    );
+    assert_eq!(
+        order(&[b"a.css", b"b.html"]),
+        (None, vec!["No output files to bundle".to_string()])
     );
 }
 

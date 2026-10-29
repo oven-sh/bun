@@ -1,0 +1,123 @@
+# -- source: setter-of-target-takes-rest-pattern-left.js
+# // A rest pattern makes a copy of what it leaves. Object.assign hands that to a setter that the target inherits.
+# const { dropped, ...rest } = { dropped: 0, b: { k: "deep" } };
+# Object.assign(
+#   Object.create({
+#     set b(x) {
+#       console.log("b", typeof x, x.k);
+#     },
+#   }),
+#   rest,
+# );
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="setter-of-target-takes-rest-pattern-left.js" displayPath="setter-of-target-takes-rest-pattern-left.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 fields=[{key="b" declared={type=undefined|null|L1 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m0 position=159 fields=[{key="k" declared={type=anything}}] ownFieldCount=1
+layout L2 module=m0 position=142 fields=[{key="b" declared={type=undefined|null|L1 flags=[IsExpected]} flags=[IsRequired]}, {key="dropped" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+layout L3 module=m0 position=207 fields=[{key="b" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Object{layout=L2 members=[{key="dropped" value=Number{}}, {key="b" value=Object{layout=L1 members=[{key="k" value=String{value="deep"}}]}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Data data=d0
+    v1 = TypeTest v0 testedType=undefined|null
+    Branch v1 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v2):
+    Jump -> next b3()
+  b3() frequency=Unlikely:
+    v3 = NewRuntimeError runtimeError=NotDestructurable name="dropped"
+    Throw v3
+  b4(v4):
+    v5 = PropGet v4 key="dropped"
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    v7 = NewObject layout=L0
+    CopyDataProperties v7, v4 excludedKeys=["dropped"]
+    v9 = FinishObject v7
+    v10 = Convert v9 declared={type=undefined|null|L0|L2|L3 flags=[IsExpected]}
+    v11 = Builtin builtin=Object
+    v12 = Builtin builtin=ObjectAssign
+    v13 = Builtin builtin=Object
+    v14 = Builtin builtin=ObjectCreate
+    v15 = NewObject layout=L3
+    v16 = NewClosure function=f1
+    DefineSetter v15, v16 key="b"
+    v18 = FinishObject v15
+    v19 = Call v14, v13, v18 calleeName="Object.create"
+    v20 = Call v12, v11, v19, v10 calleeName="Object.assign"
+    v21 = Undefined
+    Return v21
+}
+function f1 name="b" module=m0 position=213 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string|symbol|bigint|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string|symbol|bigint|L1):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="console" [isFreeName]
+    v3 = Convert v2 declared={type=builtin(Console) flags=[IsExpected]}
+    v4 = PropGet v3 key="log"
+    v5 = Convert v4 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v6 = String string="b"
+    v7 = TypeOf v0
+    v8 = PropGet v0 key="k"
+    v9 = Call v5, v3, v6, v7, v8 calleeKey="log" calleeName="console.log"
+    v10 = Undefined
+    Return v10
+}
+# -- generated: f0 b
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "deep" = String string="deep"
+# CHECK-NEXT: v1: L1 = NewObject -, v0 layout=L1 fields=[0] allocationSite=5 allocationClass=1
+# CHECK-NEXT: v2: object = NewDictionary
+# CHECK-NEXT: v3: Object = AssumeType v2 provenType=Object
+# CHECK-NEXT: v4: f1 = NewClosure function=f1 allocationSite=3
+# CHECK-NEXT: DefineSetter v3, v4 key="b"
+# CHECK-NEXT: v6: L4 = NewObject layout=L4 allocationSite=4 allocationClass=4
+# CHECK-NEXT: SetLiteralPrototype v6, v3 [refusesOtherValues]
+# CHECK-NEXT: v8: L4 = FinishObject v6
+# CHECK-NEXT: v9: L0 = NewObject -, v1 layout=L0 fields=[0] allocationSite=1 allocationClass=0
+# CHECK-NEXT: v10: L4 = CallBuiltin -, v8, v9 overload=ObjectAssign/0 accessSite=1
+# CHECK-NEXT: v11: undefined = Undefined
+# CHECK-NEXT: Return v11
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="b"
+# CHECK: module=m0 position=213 kind=Setter flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int|L1}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: undefined|int|L1):
+# CHECK-NEXT: v1: "b" = String string="b"
+# CHECK-NEXT: v2: string = TypeOf v0
+# CHECK-NEXT: v3: int|L1 = RequireObjectCoercible v0 name="k"
+# CHECK-NEXT: v4: boolean = TypeTest v3 testedType=L1
+# CHECK-NEXT: Branch v4 -> taken b1(), notTaken b2(| 0)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v5: "deep" = String string="deep"
+# CHECK-NEXT: Jump -> next b3(v5)
+# CHECK-NEXT: b2(v6: int) frequency=Unlikely:
+# CHECK-NEXT: v7: anything = PropGet v6 key="k" accessSite=4 receivers=[L1]
+# CHECK-NEXT: v8: anything ~ "deep" = Upcast v7 castType=anything
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v8 testedType=undefined|null|boolean|number|string|symbol
+# CHECK-NEXT: Branch v9 -> taken b3(| 0), notTaken b5(| 0)
+# CHECK-NEXT: b3(v10: undefined|null|boolean|number|string|symbol ~ "deep"):
+# CHECK-NEXT: v11: undefined = CallBuiltin -, v1, v2, v10 overload=ConsoleLog/0 accessSite=5
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v12: undefined = Undefined
+# CHECK-NEXT: Return v12
+# CHECK-NEXT: b5(v13: bigint|object) frequency=Unlikely:
+# CHECK-NEXT: v14: undefined = CallBuiltin -, v1, v2, v13 overload=ConsoleLog/1 accessSite=5
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="b"
+# CHECK: module=m0 position=213 kind=Setter role=GenericEntrypoint flags=[HasThis] length=1 captures=[{type=f1}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f1} creator=Entrypoint{target=f1 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f1, v1: anything, v2: anything):
+# CHECK-NEXT: v3: undefined|int|L1 = AssumeType v2 provenType=undefined|int|L1
+# CHECK-NEXT: v4: undefined = CallDirect v3 function=f1
+# CHECK-NEXT: ReturnCall v4 requirement=Allowed
+# CHECK-NEXT: }

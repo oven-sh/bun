@@ -47,6 +47,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let left_out = self.file.inputs.library_functions.left_out_declarations();
         if left_out.is_declarator_left_out(self.file.file, declaration) {
+            if let Some(ExprKind::Class(class)) = decl.init.some().map(|value| hir[value].kind) {
+                self.lower_checks_of_left_out_class(class);
+            }
             return;
         }
         let Some(initializer) = decl.init.some() else {
@@ -227,6 +230,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let left_out = self.file.inputs.library_functions.left_out_declarations();
         if left_out.is_class_left_out(self.file.file, class) {
+            self.lower_checks_of_left_out_class(class);
             return;
         }
         self.lower_class_declaration(class);

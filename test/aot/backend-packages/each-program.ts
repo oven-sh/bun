@@ -1,32 +1,72 @@
+// Programs on packages from npm. A test file has a folder: its programs (<name>.ts), and the package.json and bun.lock of what they import.
+// Each program prints what it gets from the packages and ends with DONE.
+// An executable built with --aot prints what plain Bun prints, also where the project no longer lies.
+// The programs of a file are built and run side by side. The project is moved away while nobody else needs it.
 import { afterAll, expect } from "bun:test";
-import { beforeAll, describe, test } from "../supported";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, mkdirSync, readdirSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { run as runCommand } from "../harness/run";
+import { beforeAll, describe, test } from "../supported";
 
-const shipsNoBuildForThisPlatform = ["win32-arm64", "darwin-x64"].includes(`${process.platform}-${process.arch}`) ? ["argon2"] : [];
+type Form = "in place" | "as one file";
 
-function testEachProgram(
-  folder: string,
-  part: number,
-  parts: number,
-  needsTheDisk: Record<string, string>,
-  given: Record<string, string[]> = {},
-  prepare: string[][] = [],
-  withoutExceptionValidation: string[] = [],
+export interface Program {
+  /** "in place" unless given. */
+  forms?: Form[];
+  /** More arguments of the build: what the package loads under a computed name is a further entry point or an asset. */
+  given?: string[];
+  /** Why it finds something only where the project lies. */
+  needsTheDisk?: string;
   /** Why the executable prints something else than plain Bun, on purpose. It still has to run to its end. */
-  differs: Record<string, string> = {},
-  form: "in place" | "one file" = "in place",
-) {
-  const programs = readdirSync(join(import.meta.dir, folder))
-    .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts") && !file.startsWith("fake_") && !file.startsWith("lib_"))
+  differs?: string;
+  /** The package ships no build for these, as `${process.platform}-${process.arch}`. */
+  shipsNoBuildFor?: string[];
+  withoutExceptionValidation?: boolean;
+}
+
+/** Tests every program of ./<folder>. `programs` has what is to be said about some of them. */
+export function testPrograms(folder: string, programs: Record<string, Program> = {}) {
+  const names = readdirSync(join(import.meta.dir, folder))
+    .filter(file => file.endsWith(".ts") && !file.endsWith(".d.ts") && !/^(fake|lib)_/.test(file))
     .map(file => file.slice(0, -".ts".length))
-    .sort()
-    .filter((program, index) => (form === "in place" ? index % parts === part - 1 : program in given));
+    .sort();
 
   const dir = tempDir(`aot-backend-${folder}`, {});
   const project = join(String(dir), "project");
+
+  let usersOfProject = 0;
+  let isProjectAway = false;
+  const waiting: (() => void)[] = [];
+  const untilSomethingChanges = () => new Promise<void>(resolve => waiting.push(resolve));
+  const tellWhoWaits = () => waiting.splice(0).forEach(resolve => resolve());
+
+  async function withProject<T>(work: () => Promise<T>): Promise<T> {
+    while (isProjectAway) await untilSomethingChanges();
+    usersOfProject++;
+    try {
+      return await work();
+    } finally {
+      usersOfProject--;
+      tellWhoWaits();
+    }
+  }
+
+  async function withoutProject<T>(work: () => Promise<T>): Promise<T> {
+    while (isProjectAway || usersOfProject > 0) await untilSomethingChanges();
+    isProjectAway = true;
+    const movedAway = join(String(dir), "moved-away");
+    renameSync(project, movedAway);
+    mkdirSync(project);
+    try {
+      return await work();
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+      renameSync(movedAway, project);
+      isProjectAway = false;
+      tellWhoWaits();
+    }
+  }
 
   async function run(cmd: string[], env: Record<string, string | undefined> = bunEnv) {
     const { stdout, stderr, exitCode } = await runCommand(cmd, project, env);
@@ -42,8 +82,7 @@ function testEachProgram(
       .replace(/\/\$bunfs\/root|B:[\\/]~BUN[\\/]root/g, "<project>")
       .replace(/took [0-9.]+m?s/g, "took N ms");
 
-  describe(form === "in place" ? folder : `${folder}, as one file`, () => {
-    // The packages are 80,000 files, and the executables lie beside them.
+  describe.concurrent(folder, () => {
     afterAll(() => rmSync(String(dir), { recursive: true, force: true }), 300_000);
     beforeAll(async () => {
       cpSync(join(import.meta.dir, folder), project, { recursive: true });
@@ -52,79 +91,67 @@ function testEachProgram(
       if (installed) {
         expect((await run(["cp", "-R", join(installed, folder, "node_modules"), packages])).exitCode).toBe(0);
       } else {
-        const { stderr, exitCode } = await run([bunExe(), "install", "--ignore-scripts", "--linker", "hoisted"]);
+        const install = [bunExe(), "install", "--frozen-lockfile", "--ignore-scripts", "--linker", "hoisted"];
+        const { stderr, exitCode } = await run(install);
         expect({ stderr: exitCode ? stderr : "", exitCode }).toEqual({ stderr: "", exitCode: 0 });
       }
+      rmSync(join(packages, "@types", "bun"), { recursive: true, force: true });
       symlinkSync(join(import.meta.dir, "..", "..", "..", "packages", "bun-types"), join(packages, "@types", "bun"));
-      for (const command of prepare) {
-        // `prisma generate` downloads a schema engine, which it does not run, unless it is told where one lies.
-        const { stdout, stderr, exitCode } = await run([bunExe(), "--bun", ...command], { ...bunEnv, PRISMA_SCHEMA_ENGINE_BINARY: bunExe() });
-        expect({ output: exitCode ? stdout + stderr : "", exitCode }).toEqual({ output: "", exitCode: 0 });
-      }
     }, 600_000);
 
-    for (const program of programs) {
-      test.skipIf(shipsNoBuildForThisPlatform.includes(program))(
-        program,
-        async () => {
-          const env = withoutExceptionValidation.includes(program) ? { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined } : bunEnv;
-          const plain = await run([bunExe(), "run", `./${program}.ts`], env);
-          expect(plain.stdout).toContain("\nDONE");
-          const executable = join(String(dir), program);
-          const built = await run([bunExe(), "build", "--compile", "--aot", ...(form === "in place" ? ["--compile-in-place"] : []), `./${program}.ts`, ...(given[program] ?? []), "--outfile", executable]);
-          expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({ output: "", exitCode: 0 });
-          const compiled = await run([executable], env);
-          if (program in differs) return void expect({ isDone: compiled.stdout.includes("\nDONE"), exitCode: compiled.exitCode, stderr: compiled.exitCode ? compiled.stderr : "" }).toEqual({ isDone: true, exitCode: 0, stderr: "" });
-          expect({ stdout: steady(compiled.stdout), exitCode: compiled.exitCode, stderr: compiled.exitCode === plain.exitCode ? "" : compiled.stderr }).toEqual({ stdout: steady(plain.stdout), exitCode: plain.exitCode, stderr: "" });
-          if (program in needsTheDisk) return;
+    for (const name of names) {
+      const program = programs[name] ?? {};
+      for (const form of program.forms ?? ["in place"]) {
+        test.skipIf(program.shipsNoBuildFor?.includes(`${process.platform}-${process.arch}`) === true)(
+          `${name}, ${form}`,
+          async () => {
+            const env = program.withoutExceptionValidation
+              ? { ...bunEnv, BUN_JSC_validateExceptionChecks: undefined }
+              : bunEnv;
+            const executable = join(String(dir), `${name}-${form.replaceAll(" ", "-")}`);
+            const [plain, built] = await withProject(() =>
+              Promise.all([
+                run([bunExe(), "run", `./${name}.ts`], env),
+                run([
+                  bunExe(),
+                  "build",
+                  "--compile",
+                  "--aot",
+                  ...(form === "in place" ? ["--compile-in-place"] : []),
+                  `./${name}.ts`,
+                  ...(program.given ?? []),
+                  "--outfile",
+                  executable,
+                ]),
+              ]),
+            );
+            expect(plain.stdout).toContain("\nDONE");
+            const expected = { stdout: steady(plain.stdout), exitCode: plain.exitCode, stderr: "" };
+            const told = (ran: typeof plain) => ({
+              stdout: steady(ran.stdout),
+              exitCode: ran.exitCode,
+              stderr: ran.exitCode === plain.exitCode ? "" : ran.stderr,
+            });
 
-          const movedAway = join(String(dir), "moved-away");
-          renameSync(project, movedAway);
-          mkdirSync(project);
-          try {
-            const alone = await run([executable], env);
-            expect({ stdout: steady(alone.stdout), exitCode: alone.exitCode, stderr: alone.exitCode === plain.exitCode ? "" : alone.stderr }).toEqual({ stdout: steady(plain.stdout), exitCode: plain.exitCode, stderr: "" });
-          } finally {
-            rmSync(project, { recursive: true, force: true });
-            renameSync(movedAway, project);
-          }
-        },
-        600_000,
-      );
+            expect({ output: built.exitCode ? built.stdout + built.stderr : "", exitCode: built.exitCode }).toEqual({
+              output: "",
+              exitCode: 0,
+            });
+            const compiled = await withProject(() => run([executable], env));
+            if (program.differs)
+              return void expect({
+                isDone: compiled.stdout.includes("\nDONE"),
+                exitCode: compiled.exitCode,
+                stderr: compiled.exitCode ? compiled.stderr : "",
+              }).toEqual({ isDone: true, exitCode: 0, stderr: "" });
+            expect(told(compiled)).toEqual(expected);
+            if (program.needsTheDisk) return;
+
+            expect(told(await withoutProject(() => run([executable], env)))).toEqual(expected);
+          },
+          600_000,
+        );
+      }
     }
   });
 }
-
-export const testPrograms = (part: number, parts: number, form: "in place" | "one file" = "in place") =>
-  testEachProgram(
-    "programs",
-    part,
-    parts,
-    {
-      sequelize: "a driver that is required by a computed name: the name of the package is looked up on the disk",
-      sequelize_named: "a driver that is required by a computed name: the name of the package is looked up on the disk",
-      typeorm: "a driver that is required by a computed name: the name of the package is looked up on the disk",
-    },
-    {
-      // A driver that is required by a computed name is found where it is an entry point.
-      sequelize: ["node_modules/pg/lib/index.js"],
-      sequelize_named: ["node_modules/pg/lib/index.js"],
-      typeorm: ["node_modules/sql.js/dist/sql-wasm.js", "--asset", "node_modules/sql.js/dist/sql-wasm.wasm"],
-      argon2: ["--asset", "node_modules/argon2/prebuilds"],
-      bcrypt: ["--asset", "node_modules/bcrypt/prebuilds"],
-      newrelic: ["node_modules/newrelic/lib/subscribers/**/*.js", "node_modules/newrelic/lib/instrumentation/**/*.js"],
-      sharp: ["--asset", "node_modules/@img"],
-      sqljs: ["--asset", "node_modules/sql.js/dist/sql-wasm.wasm"],
-      typeorm_given: ["--asset", "node_modules/sql.js/dist/sql-wasm.wasm"],
-      pino: ["node_modules/thread-stream/lib/worker.js", "node_modules/pino/lib/worker.js", "node_modules/pino/file.js"],
-    },
-    [],
-    ["argon2"],
-    {
-      ddtrace: "it traces Express by a hook on the loader, which does not see a `require()` of a constant path in an executable",
-      otel: "it traces node:http and Express by a hook on the loader, which does not see a `require()` of a constant path in an executable",
-    },
-    form,
-  );
-
-export const testMorePrograms = () => testEachProgram("more-programs", 1, 1, {}, {}, [["node_modules/prisma/build/index.js", "generate", "--schema", "prisma/schema.prisma"]]);

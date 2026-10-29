@@ -21,8 +21,12 @@ const enum Flag {
   Destroyed = 1 << 4,
 }
 
-const ObjectKeys = Object.keys;
-const ObjectDefineProperties = Object.defineProperties;
+// Object lists a member from when it is first read: the third is read for that alone.
+const {
+  keys: ObjectKeys,
+  defineProperties: ObjectDefineProperties,
+  getOwnPropertyDescriptor: _ObjectGetOwnPropertyDescriptor,
+} = Object;
 
 declare global {
   namespace $Node {

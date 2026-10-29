@@ -1185,14 +1185,12 @@ pub(crate) struct InitParts {
 #[unsafe(no_mangle)]
 #[bun_jsc::host_call]
 fn Response__createFromParts(
-    global_this: *mut JSGlobalObject,
+    global_this: &JSGlobalObject,
     body: JSValue,
     status: JSValue,
     status_text: JSValue,
     headers: JSValue,
 ) -> JSValue {
-    // SAFETY: compiled code passes its live realm.
-    let global_this = unsafe { &*global_this };
     let parts = InitParts {
         status,
         status_text,

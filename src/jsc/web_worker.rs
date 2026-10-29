@@ -992,8 +992,7 @@ impl WebWorker {
         self.arena.set(Some(bun_alloc::Arena::new()));
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
-        // VM. If a parent's request_termination() fired while we were cloning the env
-        // above, bail now rather than spending ~50–100ms (release) creating a
+        // VM. If a parent's request_termination() fired, bail now rather than spending ~50–100ms (release) creating a
         // VM that will immediately tear down.
         if self.has_requested_terminate() {
             self.shutdown();

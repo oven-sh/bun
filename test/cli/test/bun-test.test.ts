@@ -2986,34 +2986,37 @@ describe.concurrent("a test file that can never finish loading", () => {
 
   // macOS watchers miss changes made before their event stream starts, so keep writing until the run ends.
   // The writes come from here because a writer inside the test file would be one more thing to wait for.
-  test("a file still waiting on real work isn't reported: unref'd fs.watch", async () => {
-    using dir = tempDir("bun-test-waits", {
-      "a.test.ts": `
-        import { test, expect } from "bun:test";
-        import { watch } from "node:fs";
-        const watcher = watch(import.meta.dir, { persistent: false });
-        const result = await new Promise(resolve => watcher.once("change", () => resolve("ok")));
-        watcher.close();
-        test("result", () => expect(result).toBe("ok"));
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    const stderr = proc.stderr.text();
-    let writes = 0;
-    do {
-      writeFileSync(join(String(dir), "changed.txt"), String(writes++));
-    } while ((await Promise.race([proc.exited, Bun.sleep(10)])) === undefined);
-    expect({ counts: (await stderr).match(/^ \d+ (pass|fail)$/gm), exitCode: await proc.exited }).toEqual({
-      counts: [" 1 pass", " 0 fail"],
-      exitCode: 0,
-    });
-  });
+  test.each([[[]], [["--isolate"]], [["--isolate=modules"]]])(
+    "a file still waiting on real work isn't reported: unref'd fs.watch, with %j",
+    async flags => {
+      using dir = tempDir("bun-test-waits", {
+        "a.test.ts": `
+          import { test, expect } from "bun:test";
+          import { watch } from "node:fs";
+          const watcher = watch(import.meta.dir, { persistent: false });
+          const result = await new Promise(resolve => watcher.once("change", () => resolve("ok")));
+          watcher.close();
+          test("result", () => expect(result).toBe("ok"));
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", ...flags],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const stderr = proc.stderr.text();
+      let writes = 0;
+      do {
+        writeFileSync(join(String(dir), "changed.txt"), String(writes++));
+      } while ((await Promise.race([proc.exited, Bun.sleep(10)])) === undefined);
+      expect({ counts: (await stderr).match(/^ \d+ (pass|fail)$/gm), exitCode: await proc.exited }).toEqual({
+        counts: [" 1 pass", " 0 fail"],
+        exitCode: 0,
+      });
+    },
+  );
 
   // Without pidfd_open(), a waiter thread waits for children instead of the event loop.
   test.skipIf(!isLinux)("waits for an unref'd subprocess on the waiter thread, but only until it exits", async () => {

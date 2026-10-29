@@ -1888,7 +1888,11 @@ impl VirtualMachine {
 
     /// Handles that wake the loop from their own thread: a `Worker`, `fs.watch()`, a napi threadsafe function.
     fn has_handles_off_the_loop(&self) -> bool {
-        !self.child_workers.is_empty() || !self.root_context.owns_nothing()
+        !self.child_workers.is_empty()
+            || !self.root_context.owns_nothing()
+            // SAFETY: registered ⇒ not freed.
+            || (self.graph_contexts.values().iter())
+                .any(|context| !unsafe { context.as_ref() }.owns_nothing())
     }
 
     /// `num_polls` also counts plain loop refs, so subtract the entries that can't settle anything a test waits on.

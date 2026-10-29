@@ -1271,11 +1271,12 @@ test.concurrent("bunfig allows patches for packages that are not installed", asy
   expect((await run(dir, "install", "--allow-unused-patches")).exitCode).toBe(0);
 });
 
-test.concurrent("bunfig rejects a non-boolean unused-patch allowance", async () => {
-  const dir = await setup({ "package.json": pkgJson({}) });
+test.concurrent("a non-boolean allowance does not enable unused patches", async () => {
+  const dir = await setup({ "package.json": pkgJson({}), "patches/no-deps@1.0.0.patch": NO_DEPS_PATCH });
+  await write(join(dir, "package.json"), stringify(pkgJson({}, PATCHED)));
   await write(join(dir, "bunfig.toml"), '[install]\nallowUnusedPatches = "true"\n');
   const result = await run(dir, "install");
-  expect(result.stderr).toContain("Expected boolean");
+  expect(result.stderr).toContain('error: patch "no-deps@1.0.0" was not used');
   expect(result.exitCode).toBe(1);
 });
 

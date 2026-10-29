@@ -866,31 +866,32 @@ pub(crate) fn check_unused_patches(manager: &mut PackageManager) -> crate::Resul
             continue;
         }
         unused = true;
-        if !silent {
-            if allow_unused {
-                bun_core::warn!(
-                    "patch \"{}\" was not used",
-                    bun_core::fmt::for_terminal(BStr::new(&key))
-                );
-            } else {
-                bun_core::pretty_errorln!(
-                    "<r><red>error<r>: patch \"{}\" was not used",
-                    bun_core::fmt::for_terminal(BStr::new(&key))
-                );
-            }
+        if silent {
+            continue;
         }
-    }
-    if unused && !allow_unused {
-        if !silent {
-            bun_core::note!(
-                "Remove or regenerate unused patches, or use --allow-unused-patches to keep them"
+        if allow_unused {
+            bun_core::warn!(
+                "patch \"{}\" was not used",
+                bun_core::fmt::for_terminal(BStr::new(&key))
             );
+            continue;
         }
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: patch \"{}\" was not used",
+            bun_core::fmt::for_terminal(BStr::new(&key))
+        );
+    }
+    if !unused || allow_unused {
         Output::flush();
-        return Err(crate::Error::InstallFailed);
+        return Ok(());
+    }
+    if !silent {
+        bun_core::note!(
+            "Remove or regenerate unused patches, or use --allow-unused-patches to keep them"
+        );
     }
     Output::flush();
-    Ok(())
+    Err(crate::Error::InstallFailed)
 }
 
 /// Newest release the rows still resolving to `pkg_id` allow, when it is newer than the installed one.

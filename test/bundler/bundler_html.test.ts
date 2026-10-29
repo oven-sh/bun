@@ -1225,9 +1225,7 @@ body {
     },
   });
 
-  // `//host/path` is a protocol-relative URL, not a file under the project root. Before
-  // this lookup existed, the scanner joined it with the cwd and the build failed with
-  // `Could not resolve: "/host/path"`.
+  // `//host/path` is a protocol-relative URL, not a file under the project root.
   itBundled("html/protocol-relative-url-is-implicitly-external", {
     outdir: "out/",
     files: {

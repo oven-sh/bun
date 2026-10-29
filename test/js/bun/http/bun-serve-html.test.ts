@@ -753,8 +753,7 @@ async function runServeFixture(dir: { toString(): string }, env: Record<string, 
 }
 
 // A root-relative URL (`/favicon.png`) in an html route names a file under the
-// page's directory, then under the cwd, the same as `bun build` with the default
-// root. Before, every serve mode joined it with the cwd only.
+// page's directory, then under the cwd, the same as `bun build` with the default root.
 describe("html route with a root-relative url", () => {
   test.concurrent("resolves under the page's directory in both modes", async () => {
     using dir = tempDir("bun-serve-html-root-relative", {

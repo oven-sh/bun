@@ -2802,17 +2802,6 @@ pub mod bv2_impl {
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
-                            if let Some(dev) = &self.dev_server {
-                                // Tell Bake's Dev Server to wait for the file to be imported.
-                                dev.track_resolution_failure(
-                                    &import_record.source_file,
-                                    specifier,
-                                    target.bake_graph(),
-                                    self.graph.input_files.items_loader()
-                                        [import_record.importer_source_index as usize],
-                                )
-                                .expect("oom");
-                            }
                             if let Some(next) =
                                 root_relative.as_mut().and_then(|url| url.next_retry())
                             {
@@ -2840,7 +2829,23 @@ pub mod bv2_impl {
                                     continue;
                                 }
                             }
-                            if self.dev_server.is_some() {
+                            if let Some(dev) = &self.dev_server {
+                                // Tell Bake's Dev Server to wait for the file to be imported.
+                                let candidates = match &root_relative {
+                                    Some(url) => url.candidates(),
+                                    None => std::slice::from_ref(&specifier),
+                                };
+                                for candidate in candidates {
+                                    dev.track_resolution_failure(
+                                        &import_record.source_file,
+                                        candidate,
+                                        target.bake_graph(),
+                                        self.graph.input_files.items_loader()
+                                            [import_record.importer_source_index as usize],
+                                    )
+                                    .expect("oom");
+                                }
+
                                 // Turn this into an invalid AST, so that incremental mode skips it when printing.
                                 // SAFETY: truncating to len 0 never exposes uninitialized elements.
                                 unsafe {
@@ -7041,18 +7046,6 @@ pub mod bv2_impl {
 
                             // Only perform directory busting when hot-reloading is enabled
                             if err == _resolver::Error::ModuleNotFound {
-                                if self.bun_watcher.is_some() {
-                                    if let Some(dev) = self.dev_server {
-                                        // Tell DevServer about the resolution failure.
-                                        dev.track_resolution_failure(
-                                            source.path.text,
-                                            specifier,
-                                            ctx.target.bake_graph(), // use the source file target not the altered one
-                                            loader,
-                                        )
-                                        .expect("oom");
-                                    }
-                                }
                                 if let Some(next) =
                                     root_relative.as_mut().and_then(|url| url.next_retry())
                                 {
@@ -7083,6 +7076,24 @@ pub mod bv2_impl {
                                             specifier = url.restart();
                                         }
                                         continue 'inner;
+                                    }
+                                }
+                                if self.bun_watcher.is_some() {
+                                    if let Some(dev) = self.dev_server {
+                                        // Tell DevServer about the resolution failure.
+                                        let candidates = match &root_relative {
+                                            Some(url) => url.candidates(),
+                                            None => std::slice::from_ref(&specifier),
+                                        };
+                                        for candidate in candidates {
+                                            dev.track_resolution_failure(
+                                                source.path.text,
+                                                candidate,
+                                                ctx.target.bake_graph(), // use the source file target not the altered one
+                                                loader,
+                                            )
+                                            .expect("oom");
+                                        }
                                     }
                                 }
                             }

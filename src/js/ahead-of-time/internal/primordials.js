@@ -5,8 +5,13 @@
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectFreeze = Object.freeze;
-const ReflectDefineProperty = Reflect.defineProperty;
-const ReflectGetOwnPropertyDescriptor = Reflect.getOwnPropertyDescriptor;
+// Reflect lists a member from when it is first read: the four that the other text reads, in its order.
+const {
+  getPrototypeOf: _ReflectGetPrototypeOf,
+  ownKeys: _ReflectOwnKeys,
+  getOwnPropertyDescriptor: ReflectGetOwnPropertyDescriptor,
+  defineProperty: ReflectDefineProperty,
+} = Reflect;
 const SymbolIterator = Symbol.iterator;
 const SymbolSpecies = Symbol.species;
 const SymbolToStringTag = Symbol.toStringTag;

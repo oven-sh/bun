@@ -1,10 +1,11 @@
+// Runs alone: it judges by the memory that a build holds.
 // A built-in that the table calls deterministic is called while the program is built, where all its operands are constants, and its answer
 // stands in its place. The program does what it does in plain Bun, an error included, and the build does not make an answer that is too long to keep.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
+import { built, slot, spawned } from "./harness/commands";
 import { compileCommand } from "./harness/flags";
-import { built, slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };

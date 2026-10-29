@@ -673,6 +673,7 @@ pub(super) fn synthetic_export_variable(
     name: StringId,
     module: ModuleId,
     writer: ExportWriter,
+    is_known_member: bool,
 ) -> Variable {
     let initialization = match writer {
         ExportWriter::Loader | ExportWriter::Face | ExportWriter::Capture => {
@@ -683,7 +684,13 @@ pub(super) fn synthetic_export_variable(
     let mut declared = DeclaredType::untyped();
     // The object may lack the name when the copies are taken: the copy stays empty, and the check of the importer tests for that.
     // An importer that the CommonJS file itself requires runs before the face has taken anything.
-    if matches!(writer, ExportWriter::Capture | ExportWriter::Face) {
+    // A module of the library may lack a name that some file binds. That file fails to link, and a file that reads the name off the namespace tests for the empty variable.
+    let may_stay_empty = match writer {
+        ExportWriter::Capture | ExportWriter::Face => true,
+        ExportWriter::Loader => !is_known_member,
+        ExportWriter::Body => false,
+    };
+    if may_stay_empty {
         declared.ty = TypeTable::ANYTHING_OR_ABSENT;
     }
     Variable {

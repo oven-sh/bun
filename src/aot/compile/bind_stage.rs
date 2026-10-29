@@ -26,6 +26,9 @@ fn finish_modules(graph: &mut ModuleGraph, reached: &ReachedModules) {
     for &module in &reached.naming_ways {
         graph.set_names_way_to_module_objects(module);
     }
+    graph.set_ways_not_followed_out_of_sight(reached.ways_not_followed_out_of_sight);
+    graph.set_ways_followed_for_their_names(reached.ways_followed_for_their_names);
+    graph.set_lets_process_out_of_sight(reached.lets_process_out_of_sight);
     graph.leave_out_inner_modules(&reached.left_out_inner_modules);
     graph.limit_requests(|referrer, request| reached.keeps_request(referrer, request));
 }
@@ -71,6 +74,7 @@ impl Build<'_> {
         deferred_exports: &DeferredExports,
     ) -> impl FnOnce(BuiltinTypeSymbols) -> BoundProject<'s> + use<'s> {
         let in_parallel = self.parallel_runner();
+        let beside = self.beside_runner();
         let view = loaded.project(project).view();
         let external_packages: &[Vec<u8>] = match project {
             ProjectId::Application => &self.options.load.externals.packages,
@@ -95,6 +99,7 @@ impl Build<'_> {
             application: application.map(|application| &application.graph),
             known_helpers: &known_helpers,
             in_parallel: &in_parallel,
+            beside: &beside,
         });
         self.diagnostics.add_module_failures(view, &graph);
         self.statistics.add_counters(view, counters);
@@ -120,8 +125,12 @@ impl Build<'_> {
                     graph: &graph,
                     removable: self.options.removable,
                     limits: &self.limits,
+                    reads_main_module_without_its_name: (self.options.load)
+                        .reads_main_module_without_its_name,
+                    ways_read_out_of_sight: self.options.load.ways_read_out_of_sight,
                 };
-                let (left_out, reached) = find_left_out_code(&input, &in_parallel);
+                let nobody_reads = self.options.load.ways_named_that_nobody_reads;
+                let (left_out, reached) = find_left_out_code(&input, nobody_reads, &in_parallel);
                 finish_modules(&mut graph, &reached);
                 graph.leave_out_files(&left_out.files, &in_parallel);
                 graph.limit_exports(&in_parallel, &|file, export| {

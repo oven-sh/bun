@@ -134,7 +134,7 @@ fn whatever_asks_a_loader_for_a_json_file_gets_its_object() {
         "module.exports = require('./data.json');",
         "console.log(module.require('./data.json').version);",
         "exports.version = require('./data.json').version;",
-        "console.log(eval(\"require('./data.json').version\"));",
+        "exports.version = eval(\"require('./data.json').version\");",
     ] {
         let main = format!("{USES_READER} import './required.cjs';");
         let files = [("main.ts", main.as_str()), ("required.cjs", required)];

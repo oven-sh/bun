@@ -1,0 +1,51 @@
+# parseInt.__proto__ = null  Bun.file.__proto__ = null  Object.setPrototypeOf(Object.keys | Array.prototype.push | JSON.parse | process.cwd | setTimeout, null)  Reflect.setPrototypeOf(isFinite, null)
+# Object.setPrototypeOf(Math.max, Function.prototype)  Object.defineProperty(isNaN, "__proto__", ..)  Object.setPrototypeOf(process.nextTick, null)
+# A native function has a fixed prototype, the engine's and the host's alike: each change that may run is reported at its place.
+# The prototype that the function has already is taken, an own property of that name is no change of the prototype, and a function that is written in JavaScript takes any prototype.
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteMayRun 7
+# DIAGNOSTIC: LockedBuiltinWriteIsIgnored 1
+
+module m0 path="/main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="given" [isFreeName] @10
+    v2 = Null
+    v3 = Builtin builtin=Object
+    v4 = Builtin builtin=ObjectSetPrototypeOf
+    v5 = ToBoolean v1
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = Builtin builtin=ParseInt
+    PropSet v6, v2 key="__proto__" mode=Strict @20
+    v8 = Builtin builtin=BunFile
+    PropSet v8, v2 key="__proto__" mode=Strict @30
+    v10 = Builtin builtin=ObjectKeys
+    v11 = Call v4, v3, v10, v2 @40
+    v12 = Builtin builtin=ArrayPrototypePush
+    v13 = Call v4, v3, v12, v2 @50
+    v14 = Builtin builtin=JSONParse
+    v15 = Call v4, v3, v14, v2 @60
+    v16 = Builtin builtin=ProcessCwd
+    v17 = Call v4, v3, v16, v2 @70
+    v18 = Builtin builtin=SetTimeout
+    v19 = Call v4, v3, v18, v2 @80
+    v20 = Builtin builtin=Reflect
+    v21 = Builtin builtin=ReflectSetPrototypeOf
+    v22 = Builtin builtin=IsFinite
+    v23 = Call v21, v20, v22, v2 @90
+    Jump -> next b2()
+  b2():
+    v24 = Builtin builtin=MathMax
+    v25 = Builtin builtin=FunctionPrototype
+    v26 = Call v4, v3, v24, v25 @100
+    v27 = Builtin builtin=ObjectDefineProperty
+    v28 = Builtin builtin=IsNaN
+    v29 = String string="__proto__"
+    v30 = PropGet v0 key="descriptor" [isFreeName] @110
+    v31 = Call v27, v3, v28, v29, v30 @120
+    v32 = Builtin builtin=ProcessNextTick
+    v33 = Call v4, v3, v32, v2 @130
+    Return
+}

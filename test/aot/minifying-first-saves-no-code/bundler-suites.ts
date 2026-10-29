@@ -60,6 +60,12 @@ function whyLeftOut(input: Record<string, any>): string | undefined {
   if (!Object.keys(input.files ?? {}).length) return "no files";
 }
 
+// An unused read of a `let`, `const` or class ahead of its declaration: the minifier and `bun run` remove it, and compiled code throws as the language says
+// (docs/compiler/compatibility.mdx: "An unused read of a `let`, `const` or local class before its declaration has run"). By the name of the case, the error.
+const errorsThatTheMinifierRemoves: Record<string, string> = {
+  "esbuild/dce: dce/DCETypeOf": "ReferenceError: Cannot access 'c_remove' before initialization",
+};
+
 const below = (path: string) => path.replace(/^\/+/, "");
 const isRun = ({ run, runtimeFiles }: Record<string, any>) => !!run && !Array.isArray(run) && !runtimeFiles && !(typeof run === "object" && (run.file || run.error || run.errorLineMatch || run.args || run.bunArgs || run.env || run.partialStdout || run.validate)); // prettier-ignore
 
@@ -82,8 +88,14 @@ export async function casesOfSuite(suite: (typeof suites)[number]) {
       if (!(entry in files)) continue;
       let name = `${suite.replace(".test.ts", "")}: ${id}${index ? ` #${index + 1}` : ""}`;
       while (name in cases) name += "'";
-      cases[name] = { files, entry, define: input.define, runs: isRun(input) && entryPoints.length === 1 };
+      const errorThatTheMinifierRemoves = errorsThatTheMinifierRemoves[name];
+      const runs = errorThatTheMinifierRemoves !== undefined || (isRun(input) && entryPoints.length === 1);
+      cases[name] = { files, entry, define: input.define, runs, errorThatTheMinifierRemoves };
     }
   }
+  // A suite is loaded once in a process.
+  for (const name in errorsThatTheMinifierRemoves)
+    if (inputs.length && name.startsWith(suite.replace(".test.ts", "") + ": ") && !(name in cases))
+      throw new Error(`no input of test/bundler/${suite} is the case ${name}`);
   return cases;
 }

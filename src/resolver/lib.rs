@@ -185,7 +185,7 @@ pub mod fs {
 
     // Global mutable singleton.
     // `RacyCell` is the alias-safe static cell — `init()` is the only writer,
-    // serialized at startup; readers go through `instance()`.
+    // serialized at startup; readers go through `get()`.
     static INSTANCE: bun_core::RacyCell<core::mem::MaybeUninit<FileSystem>> =
         bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
     pub static INSTANCE_LOADED: AtomicBool = AtomicBool::new(false);
@@ -229,6 +229,7 @@ pub mod fs {
             Ok(ZStr::from_buf_mut(buf, written))
         }
 
+        /// Only for `RealFS::entries`, whose methods take `&mut self`; otherwise use [`get`](Self::get).
         #[inline]
         pub fn instance() -> &'static mut FileSystem {
             // SAFETY: caller guarantees init() was called, so INSTANCE is initialized.
@@ -771,7 +772,7 @@ pub mod fs {
             &self,
             query: &[u8],
         ) -> (Option<crate::fs_full::EntryLookup<'static>>, Fd) {
-            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
             match self {
                 EntriesOption::Entries(entries) => {
                     // SAFETY: ARENA — the `DirEntry` is a process-lifetime
@@ -788,7 +789,7 @@ pub mod fs {
         /// Listing dir + fd snapshot under `entries_mutex` (watch
         /// registration); `None` when the slot holds a read error.
         pub(crate) fn dir_and_fd(&self) -> Option<(&'static [u8], Fd)> {
-            let _lock = FileSystem::instance().fs.entries_mutex.lock_guard();
+            let _lock = FileSystem::get().fs.entries_mutex.lock_guard();
             match self {
                 EntriesOption::Entries(entries) => Some((entries.dir, entries.fd)),
                 EntriesOption::Err(_) => None,
@@ -888,7 +889,7 @@ pub mod fs {
     }
 
     /// The active filesystem backend (always the real filesystem).
-    pub type Implementation = RealFS;
+    pub(crate) type Implementation = RealFS;
 
     // ── RealFS ───────────────────────────────────────────────────────────
 
@@ -999,7 +1000,7 @@ pub mod fs {
             dir_: &'static [u8],
             generation: Generation,
             handle: Fd,
-            iterator: &I,
+            iterator: &mut I,
         ) -> crate::CrateResult<DirEntry> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
@@ -1060,7 +1061,7 @@ pub mod fs {
             generation: Generation,
             store_fd: bool,
         ) -> crate::CrateResult<&mut EntriesOption> {
-            self.read_directory_with_iterator(dir_, handle_, generation, store_fd, &())
+            self.read_directory_with_iterator(dir_, handle_, generation, store_fd, &mut ())
         }
 
         // One of the learnings here
@@ -1077,7 +1078,7 @@ pub mod fs {
             maybe_handle: Option<Fd>,
             generation: Generation,
             store_fd: bool,
-            iterator: &I,
+            iterator: &mut I,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
@@ -1489,7 +1490,7 @@ pub mod fs {
                     });
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
-                    match self.readdir(false, prev, dir, generation, handle, &()) {
+                    match self.readdir(false, prev, dir, generation, handle, &mut ()) {
                         Ok(new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };
@@ -2188,16 +2189,14 @@ pub mod cache {
         /// `Contents::Owned(Vec<u8>)` path.
         pub fn read_file_with_allocator(
             &mut self,
-            _fs: &mut fs_mod::FileSystem,
             path: &[u8],
             dirname_fd: Fd,
             use_shared_buffer: bool,
             _file_handle: Option<Fd>,
             arena: Option<&bun_alloc::Arena>,
         ) -> crate::CrateResult<Entry> {
-            let rfs = &_fs.fs;
-
-            let will_close = rfs.need_to_close_files() && _file_handle.is_none();
+            let will_close =
+                fs_mod::FileSystem::get().fs.need_to_close_files() && _file_handle.is_none();
 
             // A single let-expression avoids `mem::zeroed()` on a
             // type that may have niche (NonZero) fields.

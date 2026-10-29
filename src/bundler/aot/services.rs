@@ -11,6 +11,7 @@ use bun_aot::load::source_provider::{
 };
 use bun_aot::{SourceProvider, WithoutServices};
 use bun_ast::{ASTMemoryAllocator, Loader, Log};
+use bun_js_parser::Define;
 use bun_paths::resolve_path::posix_to_platform_in_place;
 use bun_resolver::options::{ExternalModules, Packages};
 use bun_resolver::package_json::Status;
@@ -260,6 +261,10 @@ impl SourceProvider for BundlerServices {
         log: &mut Log,
     ) -> FoldOptions<'s> {
         defines::fold_options(self.context.options(), arena, atoms, log)
+    }
+
+    fn define(&self) -> Option<&Define> {
+        Some(&*self.context.options().define)
     }
 
     fn enabled_features(&self) -> Vec<&[u8]> {

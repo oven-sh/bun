@@ -360,7 +360,10 @@ function show(value${anyType})${isTyped ? ": string" : ""} {
   return String(value);
 }
 function describe(error${anyType})${isTyped ? ": string" : ""} {
-  return error.name + ": " + error.message.replace(/ \\(evaluating .*\\)$/, "") + " at " + error.line + ":" + error.column + " < " + framesIn(error.stack);
+  // What a built-in throws has its place in the text of the built-in, which is no matter of the program.
+  const isThrownByTheProgram = /main\\.[cm]?[jt]s:\\d+:\\d+\\)?$/.test(String(error.stack).split("\\n")[1]);
+  const place = isThrownByTheProgram ? error.line + ":" + error.column : typeof error.line + ":" + typeof error.column;
+  return error.name + ": " + error.message.replace(/ \\(evaluating .*\\)$/, "") + " at " + place + " < " + framesIn(error.stack);
 }
 async function attempt(label${isTyped ? ": string" : ""}, run${isTyped ? ": () => unknown" : ""}) {
   let shown;

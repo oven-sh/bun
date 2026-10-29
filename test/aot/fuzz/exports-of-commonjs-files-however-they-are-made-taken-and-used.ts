@@ -70,25 +70,45 @@ type Maker = (names: readonly string[], bindings: string) => Made;
 
 const each = (names: readonly string[], write: (name: string) => string) => names.map(write).join("\n");
 const getters = (names: readonly string[], target: string) =>
-  each(names, name => `Object.defineProperty(${target}, "${name}", { enumerable: true, get: function () { return ${name}; } });`);
+  each(
+    names,
+    name => `Object.defineProperty(${target}, "${name}", { enumerable: true, get: function () { return ${name}; } });`,
+  );
 const arrows = (names: readonly string[]) => `{\n${names.map(name => `  ${name}: () => ${name}`).join(",\n")}\n}`;
 const writeInner: Maker = (names, bindings) => ({
   lines: [`"use strict";`, marker, getters(names, `exports`), `const value = 1;`, bindings],
 });
-const withInner = (names: readonly string[], bindings: string) => ({ "inner.cjs": writeInner(names, bindings).lines.join("\n") + "\n" });
+const withInner = (names: readonly string[], bindings: string) => ({
+  "inner.cjs": writeInner(names, bindings).lines.join("\n") + "\n",
+});
 const early = `try {\n  console.log("early", SEEN.value);\n} catch (error) {\n  console.log("early", error.name);\n}`;
 
 const makers: readonly Maker[] = [
   (names, bindings) => ({ lines: [`const value = 1;`, bindings, each(names, name => `exports.${name} = ${name};`)] }),
   (names, bindings) => ({ lines: [`const value = 1;`, bindings, `module.exports = { ${names.join(", ")} };`] }),
-  (names, bindings) => ({ lines: [`const value = 1;`, bindings, each(names, name => `module.exports.${name} = ${name};`)] }),
-  (names, bindings) => ({ lines: [`const value = 1;`, bindings, `exports.__esModule = true;`, each(names, name => `exports.${name} = ${name};`)] }),
   (names, bindings) => ({
-    lines: [`const value = 1;`, bindings, each(names, name => `Object.defineProperty(exports, "${name}", { value: ${name}, enumerable: true });`)],
+    lines: [`const value = 1;`, bindings, each(names, name => `module.exports.${name} = ${name};`)],
+  }),
+  (names, bindings) => ({
+    lines: [
+      `const value = 1;`,
+      bindings,
+      `exports.__esModule = true;`,
+      each(names, name => `exports.${name} = ${name};`),
+    ],
+  }),
+  (names, bindings) => ({
+    lines: [
+      `const value = 1;`,
+      bindings,
+      each(names, name => `Object.defineProperty(exports, "${name}", { value: ${name}, enumerable: true });`),
+    ],
   }),
   writeInner,
   (names, bindings) => ({ lines: [getters(names, `exports`), `const value = 1;`, bindings] }),
-  (names, bindings) => ({ lines: [`"use strict";`, marker, getters(names, `module.exports`), `var value = 1;`, bindings] }),
+  (names, bindings) => ({
+    lines: [`"use strict";`, marker, getters(names, `module.exports`), `var value = 1;`, bindings],
+  }),
   (names, bindings) => ({ lines: [...writeInner(names, bindings).lines, `exports.default = "own default";`] }),
   (names, bindings) => ({
     lines: [
@@ -119,7 +139,11 @@ const makers: readonly Maker[] = [
       `"use strict";`,
       marker,
       `var inner_1 = require("./inner.cjs");`,
-      each(names, name => `Object.defineProperty(exports, "${name}", { enumerable: true, get: function () { return inner_1.${name}; } });`),
+      each(
+        names,
+        name =>
+          `Object.defineProperty(exports, "${name}", { enumerable: true, get: function () { return inner_1.${name}; } });`,
+      ),
     ],
     files: withInner(names, bindings),
   }),
@@ -133,7 +157,9 @@ const makers: readonly Maker[] = [
       bindings,
     ],
   }),
-  (names, bindings) => ({ lines: [olderEsbuildHelpers, `__export(exports, ${arrows(names)});`, `var value = 1;`, bindings] }),
+  (names, bindings) => ({
+    lines: [olderEsbuildHelpers, `__export(exports, ${arrows(names)});`, `var value = 1;`, bindings],
+  }),
   (names, bindings) => ({
     lines: [
       `const value = 1;`,
@@ -151,10 +177,24 @@ const makers: readonly Maker[] = [
   }),
   // What a getter returns is asked for while the name is not yet initialized.
   (names, bindings) => ({
-    lines: [`"use strict";`, marker, getters(names, `exports`), early.replace(`SEEN`, `exports`), `const value = 1;`, bindings],
+    lines: [
+      `"use strict";`,
+      marker,
+      getters(names, `exports`),
+      early.replace(`SEEN`, `exports`),
+      `const value = 1;`,
+      bindings,
+    ],
   }),
   (names, bindings) => ({
-    lines: [`"use strict";`, marker, getters(names, `exports`), `require("./early.cjs");`, `const value = 1;`, bindings],
+    lines: [
+      `"use strict";`,
+      marker,
+      getters(names, `exports`),
+      `require("./early.cjs");`,
+      `const value = 1;`,
+      bindings,
+    ],
     files: {
       "early.cjs": [
         `const file = require(FILE);`,
@@ -182,7 +222,11 @@ const takers: readonly Taker[] = [
   { head: () => `import * as all from FROM;`, of: name => `all.${name}` },
   { head: () => `import * as all from FROM;`, of: name => `all.${name}`, whole: `all` },
   { head: () => `import * as all from FROM;`, of: name => `all["${name}"]` },
-  { head: () => `import * as all from FROM;\nconst key = name => name;`, of: name => `all[key("${name}")]`, whole: `all` },
+  {
+    head: () => `import * as all from FROM;\nconst key = name => name;`,
+    of: name => `all[key("${name}")]`,
+    whole: `all`,
+  },
   { head: () => `import * as all from FROM;`, of: name => `all.default.${name}`, whole: `all.default` },
   { head: names => `import * as all from FROM;\nimport { ${list(names)} } from FROM;`, of: name => name, whole: `all` },
   { head: () => `import whole from FROM;\nimport * as all from FROM;`, of: name => `all.${name}`, whole: `whole` },
@@ -251,7 +295,12 @@ function writeUses(random: Random, taker: Taker, changes: boolean): string[] {
   }
   const taken = random.sample(uses, random.between(1, 5));
   if (!changes) return taken;
-  return [`show("count", () => ${of(`count`)});`, ...taken, `show("bump", () => ${of(`bump`)}());`, `show("count afterwards", () => ${of(`count`)});`];
+  return [
+    `show("count", () => ${of(`count`)});`,
+    ...taken,
+    `show("bump", () => ${of(`bump`)}());`,
+    `show("count afterwards", () => ${of(`count`)});`,
+  ];
 }
 
 export function generate(random: Random): { file: string; text: string; files: Record<string, string> } {
@@ -279,7 +328,9 @@ export function generate(random: Random): { file: string; text: string; files: R
     const isTyped = random.chance(0.5);
     const hand = random.pick(hands)(names);
     const name = `hands-on.${isTyped ? `ts` : `mjs`}`;
-    files[name] = [...(isTyped ? [`// @ts-nocheck`] : []), hand.replaceAll(`FROM`, JSON.stringify(from)), ``].join("\n");
+    files[name] = [...(isTyped ? [`// @ts-nocheck`] : []), hand.replaceAll(`FROM`, JSON.stringify(from)), ``].join(
+      "\n",
+    );
     from = `./${name}`;
     hasDefault = hand.includes(`default`);
   }

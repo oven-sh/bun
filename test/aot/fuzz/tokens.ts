@@ -103,6 +103,8 @@ export interface Binding {
   constant: boolean;
   /** The class after `new`, for an instance. */
   of?: string;
+  /** Behind `declare`: the host's, not the program's. */
+  ambient?: true;
 }
 
 /** A place between two statements. */
@@ -240,7 +242,7 @@ export function model(source: string): Model {
         if (name?.kind === "name" && !isKeyword(name.text)) {
           const holder = frame.kind === "(" ? pendingParameters : frame.bindings;
           const initializer = tokens[index + 2]?.text === "=" ? kindOfInitializer(tokens, index + 3) : ({ kind: "unknown" } as const);
-          holder.push({ name: name.text, constant: token.text === "const", ...initializer });
+          holder.push({ name: name.text, constant: token.text === "const", ...(previous?.text === "declare" && { ambient: true as const }), ...initializer });
         }
       }
       continue;

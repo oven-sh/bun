@@ -29,18 +29,19 @@ fn find_builtin_name(hash: u64, bytes: &[u8]) -> Option<BuiltinName> {
         .copied()
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct StringTable {
     strings: StringList,
     ids: hashbrown::HashTable<StringId>,
 }
 
+#[derive(Clone)]
 enum StringList {
     Own(OwnStrings),
     Shared(SharedStringList),
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct OwnStrings {
     bytes: Vec<u8>,
     ends: Vec<usize>,
@@ -49,6 +50,7 @@ struct OwnStrings {
     builtin_names: Vec<Option<BuiltinName>>,
 }
 
+#[derive(Clone)]
 struct SharedStringList {
     known: Arc<StringsOfAllTables>,
     strings: Vec<Arc<SharedString>>,

@@ -1,5 +1,5 @@
-// Several points of the table in ../generated/object-mutations.ts on one object: two to four changes, of the object itself and of what stands above it, one behind the other in a drawn order, and two looks at what is left.
-import { axesOf, nameOf, pickCombination, textOf, type Combination } from "../generated/object-mutations";
+// Several points of the table in ./generators/object-mutations.ts on one object: two to four changes, of the object itself and of what stands above it, one behind the other in a drawn order, and two looks at what is left.
+import { axesOf, nameOf, pickCombination, textOf, type Combination } from "./generators/object-mutations";
 import type { Random } from "./random";
 
 type Operation = Combination["operation"];

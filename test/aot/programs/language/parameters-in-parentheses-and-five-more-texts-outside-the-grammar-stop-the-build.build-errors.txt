@@ -1,6 +1,0 @@
-error: TS1005: ';' expected.
-error: TS1042: 'static' modifier cannot be used here.
-error: TS1209: Invalid optional chain from new expression. Did you mean to call 'a()'?
-error: TS1109: Expression expected.
-error: TS1488: Escape sequence '\8' is not allowed.
-error: TS1488: Escape sequence '\9' is not allowed.

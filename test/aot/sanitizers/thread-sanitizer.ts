@@ -12,7 +12,7 @@ compile step (IR to image). No compiled program is run.
   build-front-end [--control]      bun-sema, in build/thread-sanitizer-front-end; --codegen <dir>: the codegen folder of
                                    a build of Bun of the same sources, with zstd's objects in ../obj/vendor/zstd
                                    --control: every task of the checker adds to one plain word: a data race that must be reported
-  compile [--largest <n>] [file..] each program through both; the default: the 100 largest of test/aot/programs
+  compile [--largest <n>] [file..] each program through both; the default: the 100 largest of test/aot/parallel
                                    --jobs <n> at a time, --threads <n> for the engine's compiler, --only front-end | engine
   read [--front-end] [--binary <file>] <log>..   sorts logs that were written elsewhere
 
@@ -130,7 +130,7 @@ function sort(logs: { of: string; text: string }[], which: keyof typeof kinds) {
 }
 
 function largest(count: number): string[] {
-  const programs = join(root, "test", "aot", "programs"), all: [number, string][] = [];
+  const programs = join(root, "test", "aot", "parallel"), all: [number, string][] = [];
   for (const topic of readdirSync(programs)) {
     if (!statSync(join(programs, topic)).isDirectory()) continue;
     for (const entry of readdirSync(join(programs, topic))) {

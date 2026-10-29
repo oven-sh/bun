@@ -909,13 +909,11 @@ pub fn test_reporter_agent_enable(agent: *mut TestReporterHandle) {
         // the test runner (`bun_test.DescribeScope`), which lives in `bun_runtime::test_runner`
         // — a forward-dep cycle. Dispatched through [`RuntimeHooks`].
         if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `handle` is the live C++ agent just stored above.
-            dbg.test_reporter_agent.next_test_id = unsafe {
-                (hooks.retroactively_report_discovered_tests)(
-                    dbg.test_reporter_agent.handle,
-                    dbg.test_reporter_agent.next_test_id,
-                )
-            };
+            dbg.test_reporter_agent.next_test_id = (hooks.retroactively_report_discovered_tests)(
+                // SAFETY: `handle` is the live C++ agent just stored above.
+                unsafe { &mut *dbg.test_reporter_agent.handle },
+                dbg.test_reporter_agent.next_test_id,
+            );
         }
     }
 }

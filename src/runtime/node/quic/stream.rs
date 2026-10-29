@@ -9,8 +9,8 @@ use bun_jsc::{
 };
 use bun_lsquic_sys as lsquic;
 
-use super::endpoint::alloc_exposed_array_buffer;
-use super::ffi::lsquic_callback;
+use super::endpoint::{QuicEndpoint, alloc_exposed_array_buffer};
+use super::ffi::{NqVtable, lsquic_callback};
 use super::session::{H3_INTERNAL_ERROR, QuicSession, SessionEvent};
 
 const QUIC_STREAM_HEADERS_KIND_HINTS: u32 = 0;
@@ -112,7 +112,7 @@ pub(super) struct Inbound {
 #[repr(C)]
 pub(crate) struct QuicStream {
     /// MUST stay the first field — see `node_quic_shim.c`.
-    vtable: *const lsquic::NqVtable,
+    vtable: *const NqVtable,
     /// `None` while pending or closed: `on_stream_close` clears it before lsquic frees the stream.
     raw: Cell<Option<lsquic::Stream>>,
     /// Owning session (raw pointer; the JS-side Strong keeps it alive).
@@ -150,7 +150,7 @@ impl Drop for QuicStream {
 impl QuicStream {
     pub(super) fn create<'a>(
         global: &JSGlobalObject,
-        vtable: *const lsquic::NqVtable,
+        vtable: *const NqVtable,
         session: &'a QuicSession,
         key: Key,
         session_handle: JSValue,
@@ -638,13 +638,12 @@ impl QuicStream {
     }
 
     /// Replaces `on_stream_close` after `QuicEndpoint::detach_for_finalize`.
-    pub(super) unsafe extern "C" fn on_close_detached(
-        ctx: *mut c_void,
+    pub(super) extern "C" fn on_close_detached(
+        qs: Option<&QuicStream>,
         _s: *mut lsquic::lsquic_stream,
     ) {
-        // SAFETY: `Drop` nulls the lsquic ctx, so a non-null ctx is live.
         // `session` may be freed, so only touch `raw`.
-        if let Some(qs) = unsafe { super::ffi::ctx_ref::<QuicStream>(ctx) } {
+        if let Some(qs) = qs {
             qs.raw.set(None);
         }
     }
@@ -1020,7 +1019,7 @@ fn error_code_arg(value: JSValue) -> u64 {
 }
 
 pub(super) unsafe extern "C" fn on_new_stream(
-    _owner: *mut c_void,
+    _owner: Option<&QuicEndpoint>,
     s: *mut lsquic::lsquic_stream,
 ) -> *mut c_void {
     // SAFETY: `s` is the stream lsquic just created. The copy a `QuicStream` keeps is cleared
@@ -1059,20 +1058,21 @@ pub(super) unsafe extern "C" fn on_new_stream(
     session.on_remote_stream(stream).cast()
 }
 
-pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic::lsquic_stream) {
+pub(super) unsafe extern "C" fn on_stream_read(
+    qs: Option<&QuicStream>,
+    s: *mut lsquic::lsquic_stream,
+) {
     // SAFETY: `s` is live for the duration of this lsquic callback.
     let Some(stream) = (unsafe { lsquic::Stream::from_raw(s) }) else {
         return;
     };
-    if ctx.is_null() {
+    let Some(qs) = qs else {
         let mut stack_buf = bun_core::vec::UninitBuf::<4096>::uninit();
         // SAFETY: lsquic only stores into the slice and the drained bytes are never read back.
         let buf = unsafe { stack_buf.as_bytes_mut() };
         while stream.read(buf) > 0 {}
         return;
-    }
-    // SAFETY: `ctx` is the live QuicStream we returned from on_new_stream.
-    let qs = unsafe { &*ctx.cast::<QuicStream>() };
+    };
     // Returns false if a malformed header block reset the stream.
     let claim_header_sets = || -> bool {
         while let Some(hset) = stream.take_header_set() {

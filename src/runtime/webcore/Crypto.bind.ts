@@ -58,7 +58,7 @@ export const Crypto = b.class({
   rustPath: "crate::webcore::crypto::Crypto",
   construct: "illegal",
   proto: {
-    /** The IDL type is `ArrayBufferView`, which no type here is. The body refuses what is not a view, then a view that is not an integer typed array with WebCrypto's `TypeMismatchError`. */
+    /** The IDL type is `ArrayBufferView`, which no type here is. The body refuses what is not a view and a view on a shared or resizable buffer, then a view that is not an integer typed array with WebCrypto's `TypeMismatchError`. */
     getRandomValues: { args: { array: b.any }, returns: b.any, capability: "js", throws: true, requiredArguments: 1 },
     randomUUID: { returns: b.string },
     timingSafeEqual: equal,

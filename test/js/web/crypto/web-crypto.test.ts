@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
-import { createSecretKey, getRandomValues as nodeGetRandomValues, type webcrypto } from "node:crypto";
+import { createSecretKey, getRandomValues as nodeGetRandomValues, webcrypto } from "node:crypto";
 
 type AlgorithmIdentifier = webcrypto.AlgorithmIdentifier;
 type HmacImportParams = webcrypto.HmacImportParams;
@@ -1449,8 +1449,9 @@ describe("CryptoKey.usages ordering", () => {
 });
 
 // The IDL argument of getRandomValues is an ArrayBufferView. As for every WebIDL operation, a
-// call without it and a value that is not a view are a TypeError. The method's own steps then
-// raise TypeMismatchError for a view that is not an integer typed array.
+// call without it and a value that is not a view are a TypeError. So is a view on a shared or
+// resizable buffer, which the argument does not allow. The method's own steps then raise
+// TypeMismatchError for a view that is not an integer typed array.
 describe("crypto.getRandomValues argument types", () => {
   /** What `call` throws, or `undefined` when it returns. */
   const thrownBy = (call: () => unknown) => {
@@ -1502,26 +1503,147 @@ describe("crypto.getRandomValues argument types", () => {
     });
   }
 
-  // The IDL argument has no [AllowShared] or [AllowResizable], so WebIDL and Node.js refuse every
-  // view on these buffers with a TypeError. Bun does not test the buffer: it fills an integer
-  // view, and a view of another type gets the same TypeMismatchError as on a plain buffer.
-  const otherBuffers = [
-    ["a SharedArrayBuffer", () => new SharedArrayBuffer(32)],
-    ["a resizable ArrayBuffer", () => new ArrayBuffer(32, { maxByteLength: 64 })],
+  // The argument has no [AllowShared] and no [AllowResizable]. The conversion refuses the view
+  // before the method looks at its type, so a Float32Array on such a buffer gets this TypeError
+  // and not TypeMismatchError. The two texts are those of Node.js v26.12.1.
+  const onSharedBuffer = {
+    class: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message:
+      "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is a view on a SharedArrayBuffer, which is not allowed.",
+  };
+  const onResizableBuffer = {
+    class: "TypeError",
+    code: "ERR_INVALID_ARG_TYPE",
+    message:
+      "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is backed by a resizable ArrayBuffer, which is not allowed.",
+  };
+  // Without its fault signal handler, JavaScriptCore gives a shared memory a buffer that is not a
+  // SharedArrayBuffer. A debug build whose ASAN_OPTIONS lack allow_user_segv_handler=1 is in that mode.
+  const sharedMemoryHasASharedBuffer =
+    new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }).buffer instanceof SharedArrayBuffer;
+  // The types of Bun declare neither toResizableBuffer() nor toFixedLengthBuffer().
+  const memoryWithAResizableBuffer = (): any => {
+    const memory = new WebAssembly.Memory({ initial: 1, maximum: 2 }) as any;
+    memory.toResizableBuffer();
+    return memory;
+  };
+  const refusedBuffers = [
+    ["a SharedArrayBuffer", true, () => new SharedArrayBuffer(32), onSharedBuffer],
+    ["a growable SharedArrayBuffer", true, () => new SharedArrayBuffer(32, { maxByteLength: 64 }), onSharedBuffer],
+    ["a resizable ArrayBuffer", true, () => new ArrayBuffer(32, { maxByteLength: 64 }), onResizableBuffer],
+    [
+      "the buffer of a shared WebAssembly.Memory",
+      sharedMemoryHasASharedBuffer,
+      () => new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true }).buffer,
+      onSharedBuffer,
+    ],
+    [
+      "the resizable buffer of a WebAssembly.Memory",
+      true,
+      (): ArrayBuffer => memoryWithAResizableBuffer().buffer,
+      onResizableBuffer,
+    ],
+  ] as const;
+  const viewsOfABuffer = [
+    ["a Uint8Array", (buffer: ArrayBufferLike) => new Uint8Array(buffer, 0, 32)],
+    ["a BigInt64Array", (buffer: ArrayBufferLike) => new BigInt64Array(buffer, 0, 4)],
+    ["a Float32Array", (buffer: ArrayBufferLike) => new Float32Array(buffer, 0, 8)],
+    ["a DataView", (buffer: ArrayBufferLike) => new DataView(buffer, 0, 32)],
+    ["a Buffer", (buffer: ArrayBufferLike) => Buffer.from(buffer, 0, 32)],
+    ["an empty Uint8Array", (buffer: ArrayBufferLike) => new Uint8Array(buffer, 0, 0)],
   ] as const;
 
-  for (const [name, make] of otherBuffers) {
+  for (const [bufferName, exists, makeBuffer, error] of refusedBuffers) {
+    for (const [viewName, viewOf] of viewsOfABuffer) {
+      it.skipIf(!exists)(`rejects ${viewName} on ${bufferName} with a TypeError and writes nothing`, () => {
+        const buffer = makeBuffer();
+        const view = viewOf(buffer);
+        // What follows the first argument does not change the answer.
+        expect(thrownBy(() => (crypto.getRandomValues as any)(view, 0, 8))).toEqual(error);
+        expect(new Uint8Array(buffer, 0, 32).every(byte => byte === 0)).toBe(true);
+      });
+    }
+
+    it.skipIf(!exists)(`node:crypto rejects a Uint8Array on ${bufferName} with the same TypeError`, () => {
+      const view = new Uint8Array(makeBuffer(), 0, 32);
+      // The types of Node.js do not take a view that can be on a SharedArrayBuffer.
+      expect(thrownBy(() => nodeGetRandomValues(view as any))).toEqual(error);
+      expect(thrownBy(() => webcrypto.getRandomValues(view as any))).toEqual(error);
+      expect(view.every(byte => byte === 0)).toBe(true);
+    });
+  }
+
+  // A view stays a view on a resizable buffer when the buffer shrinks under it or is detached.
+  const viewsOfAResizableBuffer = [
+    [
+      "a length-tracking view of a resizable ArrayBuffer after resize(0)",
+      (buffer: ArrayBuffer) => {
+        const view = new Uint8Array(buffer);
+        buffer.resize(0);
+        return view;
+      },
+    ],
+    [
+      "a view of a resizable ArrayBuffer that resize() left out of bounds",
+      (buffer: ArrayBuffer) => {
+        const view = new Uint8Array(buffer, 16, 16);
+        buffer.resize(8);
+        return view;
+      },
+    ],
+    [
+      "a view of a resizable ArrayBuffer that transfer() detached",
+      (buffer: ArrayBuffer) => {
+        const view = new Uint8Array(buffer);
+        buffer.transfer();
+        return view;
+      },
+    ],
+    [
+      "a view on what transfer() returns for a resizable ArrayBuffer",
+      (buffer: ArrayBuffer) => new Uint8Array(buffer.transfer()),
+    ],
+  ] as const;
+
+  for (const [name, viewOf] of viewsOfAResizableBuffer) {
+    it(`rejects ${name} with a TypeError`, () => {
+      const view = viewOf(new ArrayBuffer(32, { maxByteLength: 64 }));
+      expect(thrownBy(() => crypto.getRandomValues(view))).toEqual(onResizableBuffer);
+    });
+  }
+
+  const fixedLengthBuffers = [
+    ["the pool of Buffer", () => Buffer.allocUnsafe(32).fill(0)],
+    [
+      "the buffer of a WebAssembly.Memory",
+      () => new Uint8Array(new WebAssembly.Memory({ initial: 1, maximum: 2 }).buffer, 0, 32),
+    ],
+    [
+      "the fixed-length buffer of a WebAssembly.Memory that had a resizable one",
+      () => new Uint8Array(memoryWithAResizableBuffer().toFixedLengthBuffer(), 0, 32),
+    ],
+    [
+      "what transferToFixedLength() returns for a resizable ArrayBuffer",
+      () => new Uint8Array(new ArrayBuffer(32, { maxByteLength: 64 }).transferToFixedLength()),
+    ],
+  ] as const;
+
+  for (const [name, make] of fixedLengthBuffers) {
     it(`fills a Uint8Array on ${name}`, () => {
-      const view = new Uint8Array(make());
+      const view = make();
       expect(crypto.getRandomValues(view)).toBe(view);
       expect(view.some(byte => byte !== 0)).toBe(true);
     });
-
-    it(`rejects a Float32Array and a DataView on ${name} with TypeMismatchError`, () => {
-      expect(() => crypto.getRandomValues(new Float32Array(make()))).toThrow(typeMismatch);
-      expect(() => crypto.getRandomValues(new DataView(make()))).toThrow(typeMismatch);
-    });
   }
+
+  it("takes a view whose fixed-length buffer transfer() detached", () => {
+    const buffer = new ArrayBuffer(32);
+    const view = new Uint8Array(buffer);
+    buffer.transfer();
+    expect(crypto.getRandomValues(view)).toBe(view);
+    expect(view.length).toBe(0);
+  });
 
   const notViews = [
     ["undefined", () => undefined],
@@ -1532,6 +1654,8 @@ describe("crypto.getRandomValues argument types", () => {
     ["an array", () => []],
     ["ArrayBuffer", () => new ArrayBuffer(4)],
     ["SharedArrayBuffer", () => new SharedArrayBuffer(4)],
+    ["a growable SharedArrayBuffer", () => new SharedArrayBuffer(4, { maxByteLength: 8 })],
+    ["a resizable ArrayBuffer", () => new ArrayBuffer(4, { maxByteLength: 8 })],
     ["a Proxy of a Uint8Array", () => new Proxy(new Uint8Array(4), {})],
   ] as const;
 

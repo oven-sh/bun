@@ -284,7 +284,14 @@ declare var WebSocket: Bun.__internal.UseLibDomIfAvailable<
 interface Crypto {
   readonly subtle: SubtleCrypto;
 
-  /** [MDN Reference](https://developer.mozilla.org/docs/Web/API/Crypto/getRandomValues) */
+  /**
+   * Fills `array` with cryptographically strong random values and returns it.
+   *
+   * Throws a `TypeError` if `array` is a view on a `SharedArrayBuffer` or on a resizable
+   * `ArrayBuffer`. `randomFillSync()` of `node:crypto` fills a view on either.
+   *
+   * [MDN Reference](https://developer.mozilla.org/docs/Web/API/Crypto/getRandomValues)
+   */
   getRandomValues<T extends ArrayBufferView | null>(array: T): T;
 
   /**

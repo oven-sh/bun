@@ -18,23 +18,24 @@ impl Crypto {
         let global = cx.global();
         // https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues accepts only
         // integer-typed views. This is an allow-list: DataView, ArrayBuffer and SharedArrayBuffer
-        // all pass `as_array_buffer` but are refused.
-        let array_buffer = array.to_js().as_array_buffer(global).filter(|_| {
-            matches!(
-                array.to_js().js_type(),
-                JSType::Int8Array
-                    | JSType::Uint8Array
-                    | JSType::Uint8ClampedArray
-                    | JSType::Int16Array
-                    | JSType::Uint16Array
-                    | JSType::Int32Array
-                    | JSType::Uint32Array
-                    | JSType::BigInt64Array
-                    | JSType::BigUint64Array
-            )
+        // all pass `as_array_buffer` but are refused. So is a view on a shared or resizable buffer.
+        let array_buffer = array.to_js().as_array_buffer(global).filter(|buffer| {
+            !(buffer.shared || buffer.resizable)
+                && matches!(
+                    array.to_js().js_type(),
+                    JSType::Int8Array
+                        | JSType::Uint8Array
+                        | JSType::Uint8ClampedArray
+                        | JSType::Int16Array
+                        | JSType::Uint16Array
+                        | JSType::Int32Array
+                        | JSType::Uint32Array
+                        | JSType::BigInt64Array
+                        | JSType::BigUint64Array
+                )
         });
         let Some(mut array_buffer) = array_buffer else {
-            return Err(throw_not_integer_view(global, array.to_js()).into());
+            return Err(throw_refused(global, array.to_js()).into());
         };
 
         random_data(global, array_buffer.byte_slice_mut());
@@ -65,21 +66,31 @@ impl Crypto {
     }
 }
 
-/// WebIDL's conversion refuses what is not a view. The method's own steps refuse the other views.
+/// The order and the two buffer texts are Node's: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webidl.js#L910-L986
 #[cold]
-fn throw_not_integer_view(global: &JSGlobalObject, value: JSValue) -> JsError {
-    if matches!(
-        value.js_type(),
-        JSType::Float16Array | JSType::Float32Array | JSType::Float64Array | JSType::DataView
-    ) {
-        return global.throw_dom_exception(
-            bun_jsc::DOMExceptionCode::TypeMismatchError,
-            format_args!("The data argument must be an integer-type TypedArray"),
-        );
+fn throw_refused(global: &JSGlobalObject, value: JSValue) -> JsError {
+    let view = value
+        .as_array_buffer(global)
+        .filter(|buffer| buffer.typed_array_type != JSType::ArrayBuffer);
+    let Some(view) = view else {
+        return global.throw_invalid_arguments(format_args!(
+            "The \"array\" argument must be an instance of ArrayBufferView"
+        ));
+    };
+    if view.shared {
+        return global.throw_invalid_arguments(format_args!(
+            "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is a view on a SharedArrayBuffer, which is not allowed."
+        ));
     }
-    global.throw_invalid_arguments(format_args!(
-        "The \"array\" argument must be an instance of ArrayBufferView"
-    ))
+    if view.resizable {
+        return global.throw_invalid_arguments(format_args!(
+            "Failed to execute 'getRandomValues' on 'Crypto': 1st argument is backed by a resizable ArrayBuffer, which is not allowed."
+        ));
+    }
+    global.throw_dom_exception(
+        bun_jsc::DOMExceptionCode::TypeMismatchError,
+        format_args!("The data argument must be an integer-type TypedArray"),
+    )
 }
 
 pub(crate) fn timing_safe_equal<'a>(

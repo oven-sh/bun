@@ -85,11 +85,17 @@ describe("bundler", () => {
     "}",
   ].join("\n");
   const evalPinnedPrivateNamesOutput = singleCharNames.join("") + "own";
+  // The name that `#own` gets after the reserved ones is still a `#private` name.
+  // As a public field it would print the same.
+  const renamedOwnField = /#[\w$]+ = "own"/;
   itBundled("minify/DirectEvalPinnedPrivateNameNotReusedByNestedClass", {
     files: {
       "/entry.js": evalPinnedPrivateNamesSource + "\nconsole.log(f());",
     },
     minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(renamedOwnField);
+    },
     run: { stdout: evalPinnedPrivateNamesOutput },
   });
   itBundled("minify/DirectEvalPinnedPrivateNameNotReusedByNestedClassNoBundle", {
@@ -98,6 +104,9 @@ describe("bundler", () => {
     },
     bundling: false,
     minifyIdentifiers: true,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toMatch(renamedOwnField);
+    },
     run: { stdout: evalPinnedPrivateNamesOutput },
   });
   // The names of a chunk come from one table: a class of another file takes

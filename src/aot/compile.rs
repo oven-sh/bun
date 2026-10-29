@@ -450,7 +450,6 @@ pub fn emit_program(
 // build ever holds only while the build stands near it. Further down the stages take the same blocks again a moment later,
 // and every block that is given back interrupts all the threads. What a stage frees when it ends stands right behind a peak:
 // that is given back as ever.
-/// While a build runs the allocator also hands out the memory that was freed last.
 struct KeepsFreeBlocksBelowThePeak {
     is_over: Arc<AtomicBool>,
     watcher: Option<JoinHandle<()>>,
@@ -468,7 +467,6 @@ impl KeepsFreeBlocksBelowThePeak {
         let is_first = BUILDS_THAT_KEEP_FREE_BLOCKS.fetch_add(1, Ordering::AcqRel) == 0;
         let watcher = (bun_alloc::USE_MIMALLOC && is_first)
             .then(|| {
-                Self::hand_out_last_freed_memory(true);
                 engine::give_freed_pages_back_after(engine::DELAY_UNTIL_THE_PROGRAM_IS_READ);
                 if !starts_thread {
                     return None;
@@ -479,11 +477,6 @@ impl KeepsFreeBlocksBelowThePeak {
             })
             .flatten();
         KeepsFreeBlocksBelowThePeak { is_over, watcher }
-    }
-
-    fn hand_out_last_freed_memory(does: bool) {
-        use bun_alloc::mimalloc::{Option, mi_option_set_default};
-        mi_option_set_default(Option::hand_out_last_freed, does.into());
     }
 
     fn watch(is_over: &AtomicBool) {
@@ -534,7 +527,6 @@ impl Drop for KeepsFreeBlocksBelowThePeak {
         if BUILDS_THAT_KEEP_FREE_BLOCKS.fetch_sub(1, Ordering::AcqRel) == 1
             && bun_alloc::USE_MIMALLOC
         {
-            Self::hand_out_last_freed_memory(false);
             engine::give_freed_pages_back_after(engine::USUAL_DELAY);
         }
         self.is_over.store(true, Ordering::Release);

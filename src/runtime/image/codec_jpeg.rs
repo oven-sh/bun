@@ -1,5 +1,4 @@
-//! JPEG decode/encode for `Bun.Image`, on `bun_jpeg`.
-//! Dispatch lives in codecs.rs; this file is the codec body.
+//! JPEG for `Bun.Image` on `bun_jpeg`: the scale, the limits and the ICC profile. Dispatch lives in codecs.rs.
 
 use bun_jpeg::{ColorSpace, DecodeOptions, Decoder, EncodeOptions};
 
@@ -38,11 +37,7 @@ pub(crate) fn decode(
     // 4-component JPEGs decode as packed CMYK (also 4 bytes/px) and are converted below.
     let cmyk = matches!(decoder.color_space(), ColorSpace::Cmyk | ColorSpace::Ycck);
 
-    // DCT-domain scaling: if the pipeline will downscale, ask for the
-    // smallest M/8 IDCT that still ≥ target. The IDCT is where the
-    // decode time goes, so this is roughly (8/M)² faster AND the RGBA
-    // buffer shrinks by the same factor — both speed and RSS win in one
-    // place. The subsequent resize pass takes it the rest of the way.
+    // DCT-domain scaling: the smallest M/8 still ≥ target. Less IDCT work, a smaller RGBA buffer; resize does the rest.
     let mut eighths = 8;
     if hint.target_w != 0
         && hint.target_h != 0
@@ -52,13 +47,11 @@ pub(crate) fn decode(
         let area = |(w, h): (u32, u32)| u64::from(w) * u64::from(h);
         for candidate in (1..8).rev() {
             let (sw, sh) = decoder.scaled_size(candidate);
-            // Never go BELOW target — that would force upscale and
-            // throw away detail the user asked for.
+            // Never go BELOW target: that would force an upscale and throw away detail the user asked for.
             if sw < hint.target_w || sh < hint.target_h {
                 continue;
             }
-            // Pick the smallest output (= largest reduction), and of the
-            // factors that round up to the same size the largest.
+            // The smallest output, and of the factors that round up to the same size the largest.
             if area((sw, sh)) < area(decoder.scaled_size(eighths)) {
                 eighths = candidate;
             }
@@ -66,10 +59,7 @@ pub(crate) fn decode(
     }
     let (width, height) = decoder.scaled_size(eighths);
 
-    // A CMYK profile describes ink channels, not the RGBA produced below.
-    // Otherwise the profile must not get lost: the pixels may be Display P3 /
-    // Adobe RGB / XYB, where "no profile" silently reinterprets them as sRGB
-    // and shifts colour, which is the exact bug #30197 is about.
+    // A CMYK profile describes inks, not the RGBA made below. Others must survive, or P3 would pass for sRGB (#30197).
     let icc_profile = if cmyk {
         None
     } else {
@@ -104,9 +94,7 @@ pub(crate) fn encode(
 ) -> Result<codecs::Encoded, codecs::Error> {
     let options = EncodeOptions {
         quality: quality.clamp(1, 100),
-        // Progressive emits a multi-scan SOF2 stream; same size ±1%, decodes
-        // coarse-to-fine. Off by default (slower to encode, some old decoders
-        // mishandle it).
+        // Multi-scan SOF2: same size ±1%, decodes coarse-to-fine, slower to encode, and some old decoders mishandle it.
         progressive,
         // The source colour profile, as APP2/ICC_PROFILE markers. See #30197.
         icc_profile: icc_profile.filter(|profile| !profile.is_empty()),

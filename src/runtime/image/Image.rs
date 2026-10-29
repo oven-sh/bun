@@ -690,8 +690,7 @@ impl Image {
     /// nobody mutates a buffer they just handed to a decoder. The contract is
     /// documented and `.shared`/`.resizable` are refused at construction. The
     /// codec layer is hardened so a hostile mid-decode mutation degrades to
-    /// `DecodeFailed`, not OOB/heap-leak — `bun_jpeg` takes every size from one
-    /// reading of the header, `codec_webp.rs` owned canvas. (If the attacker already runs
+    /// `DecodeFailed`, not OOB/heap-leak — `bun_jpeg` is safe Rust, `codec_webp.rs` owned canvas. (If the attacker runs
     /// JS in-process the threat model is moot anyway; the surface that matters
     /// is hostile *bytes*, which the codec validation handles.)
     fn pin_for_task(

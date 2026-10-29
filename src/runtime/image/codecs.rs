@@ -34,11 +34,8 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (bun_jpeg/spng/libwebp),
-///     so that output bytes and the `quality` scale match Linux. For PNG,
-///     profiling on M-series found ImageIO no faster: inflate dominates,
-///     isn't AMX-amenable, and ImageIO bottoms out in stock libz vs our
-///     zlib-ng.
+///   • jpeg/png/webp decode+encode → static codecs (bun_jpeg/spng/libwebp): output bytes
+///     and the `quality` scale match Linux.
 ///   • lanczos3 resize, rotate90, flip → vImage (AMX, ~3-6× the Highway
 ///     kernel on the geometry step).
 ///   • heic/avif decode+encode → ImageIO/WIC (no static codec).
@@ -271,8 +268,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<
         Format::Jpeg => jpeg::decode(bytes, max_pixels, hint),
         Format::Png => png::decode(bytes, max_pixels),
         Format::Webp => webp::decode(bytes, max_pixels),
-        // Static codecs cover everything we ship (see `Backend` for why they
-        // come first). The OS backend is purely a *capability* fallback for
+        // Static codecs come first (see `Backend`). The OS backend is purely a *capability* fallback for
         // containers we don't link a decoder for — and `backend == .bun` opts
         // out of even that so behaviour is identical to Linux.
         Format::Heic | Format::Avif | Format::Tiff => match decode_via_system(bytes, max_pixels)? {

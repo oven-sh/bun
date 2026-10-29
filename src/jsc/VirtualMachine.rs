@@ -7149,23 +7149,20 @@ impl VirtualMachine {
         }
 
         // Defer the GitHub-annotation print to scope exit.
-        struct DeferGhAnnotation<'a> {
+        struct DeferGhAnnotation<'e, 'a> {
             run: bool,
-            /// BACKREF — borrows the caller's stack-local `ZigException`, live
-            /// across this drop guard (declared after the `&mut` rebind so it
-            /// drops first).
-            exception: bun_ptr::BackRef<ZigException<'a>>,
+            exception: &'e ZigException<'a>,
         }
-        impl Drop for DeferGhAnnotation<'_> {
+        impl Drop for DeferGhAnnotation<'_, '_> {
             fn drop(&mut self) {
                 if self.run {
-                    VirtualMachine::print_github_annotation(self.exception.get());
+                    VirtualMachine::print_github_annotation(self.exception);
                 }
             }
         }
         let _defer_gh = DeferGhAnnotation {
             run: allow_side_effects && bun_core::Output::is_github_action(),
-            exception: bun_ptr::BackRef::new(&*exception),
+            exception: &*exception,
         };
 
         // `pretty_fmt!` takes a `const` color parameter, so route the runtime

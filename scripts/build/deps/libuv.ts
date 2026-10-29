@@ -27,7 +27,7 @@ import { LIBC_ALLOCATION_SYMBOLS } from "../source.ts";
 // size to reserve, not to commit (oven-sh/libuv#19, from upstream
 // libuv#5279).
 // To bump, update `bun`.
-const LIBUV_COMMIT = "aaffdcbd6768728ed4857e4b1315be87af66ee86";
+const LIBUV_COMMIT = "8023581113b276e7c1aee3f82da57ca0893faab1";
 
 // prettier-ignore
 const SHARED = [

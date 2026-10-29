@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { isASAN } from "harness";
-import { devTest } from "../bake-harness";
+import { devTest, minimalFramework } from "../bake-harness";
 
 devTest("server-side source maps show correct error lines", {
   files: {
@@ -200,6 +200,56 @@ devTest("server-side source maps stay correct across repeated reloads", {
     }
   },
   timeoutMultiplier: 2,
+});
+
+// The printer writes a string that holds "\n" as a template literal with a
+// real line break, so this string puts a line that starts with
+// `//# sourceMappingURL=` into the server bundle. It is data, not a comment:
+// the frames must still go through the dev server's own map for the bundle.
+// The minimal framework keeps React out of the bundle: React's own
+// "\n//# sourceMappingURL=" string would come later in the text.
+const embeddedMap = {
+  version: 3,
+  sources: ["EMBEDDED.ts"],
+  sourcesContent: ["// embedded\n"],
+  names: [],
+  // One mapping at column 0 of each of 2000 generated lines, to EMBEDDED.ts line 1000 and up.
+  mappings: "AAu+BA" + Buffer.alloc(5 * 1999, ";AACA").toString(),
+};
+const embeddedWorkerSource =
+  "self.onmessage = () => {};\n" +
+  "//# sourceMappingURL=data:application/json;base64," +
+  Buffer.from(JSON.stringify(embeddedMap)).toString("base64") +
+  "\n";
+
+devTest("server-side source maps ignore a sourceMappingURL inside a string", {
+  framework: minimalFramework,
+  files: {
+    "lib/worker-source.ts": `export const workerSource = ${JSON.stringify(embeddedWorkerSource)};\n`,
+    "routes/index.ts": `import { workerSource } from "../lib/worker-source";
+
+function thrower(): never {
+  throw new Error("Embedded map error");
+}
+
+export default function (req, meta) {
+  try {
+    thrower();
+  } catch (e) {
+    return new Response(String(e.stack).split("\\n").slice(1, 3).join("\\n") + "\\n" + workerSource.length);
+  }
+}
+`,
+  },
+  async test(dev) {
+    const response = await dev.fetch("/");
+    const [thrower, route, length] = (await response.text()).split("\n");
+    expect({ thrower, route, length }).toEqual({
+      thrower: expect.stringMatching(/^\s*at thrower \(.*routes[/\\]index\.ts:\d+:\d+\)$/),
+      route: expect.stringMatching(/^\s*at \w+ \(.*routes[/\\]index\.ts:\d+:\d+\)$/),
+      length: String(embeddedWorkerSource.length),
+    });
+  },
 });
 
 // ~DevServerSourceProvider ran after the Zig::GlobalObject cell was swept.

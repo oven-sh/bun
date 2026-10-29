@@ -460,6 +460,131 @@ describe("source map remapping of the printed stack", () => {
     });
     expect(exitCode).toBe(1);
   });
+
+  // Line 3 of a generated file -> <source>:1:5.
+  const mapTo = source => ({
+    version: 3,
+    sources: [source],
+    sourcesContent: ["// the text of " + source + "\n"],
+    names: [],
+    mappings: ";;AAAI",
+  });
+  const inlineMap = source =>
+    "//# sourceMappingURL=data:application/json;base64," +
+    Buffer.from(JSON.stringify(mapTo(source))).toString("base64");
+  // What the printer writes for a string that holds "\n//# sourceMappingURL=<url>\n":
+  // a template literal with a line that looks like the comment, and is not one.
+  const stringData = source => "const data = `\n" + inlineMap(source) + "\n`;";
+
+  // A prebuilt file names its map in a `//# sourceMappingURL=` comment at its
+  // end, or has it in `<file>.map`. A string of the file is neither.
+  test.concurrent("string data that holds a sourceMappingURL line is not the file's map", async () => {
+    const main = [
+      "// @bun",
+      "function thrower() {",
+      '  throw new Error("STRING DATA");',
+      "}",
+      stringData("STRING.ts"),
+      "const out = { length: data.length };",
+      "try { thrower(); } catch (e) { out.inspect = Bun.inspect(e); }",
+      "try { thrower(); } catch (e) { out.stack = e.stack; }",
+      "Error.prepareStackTrace = (e, sites) => sites[0].getFileName() + ':' + sites[0].getLineNumber() + ':' + sites[0].getColumnNumber();",
+      "try { thrower(); } catch (e) { out.callSite = e.stack; }",
+      "Error.prepareStackTrace = undefined;",
+      "console.log(JSON.stringify(out));",
+      "thrower();",
+    ];
+    const { dir, out, stderr, exitCode } = await run({
+      "main.js": main.join("\n") + "\n",
+      "main.js.map": JSON.stringify(mapTo("sidecar.ts")),
+    });
+
+    const files = ["sidecar.ts", "STRING.ts", "main.js"];
+    expect({
+      stack: frames(out.stack, dir, files)[0],
+      inspect: frames(out.inspect, dir, files)[0],
+      callSite: out.callSite.replaceAll("\\", "/").replace(dir.replaceAll("\\", "/") + "/", ""),
+      uncaught: frames(stderr, dir, files)[0],
+      previews: [out.inspect, stderr].map(text => text.includes("the text of sidecar.ts")),
+      stringPreviews: [out.inspect, stderr].map(text => text.includes("the text of STRING.ts")),
+    }).toEqual({
+      stack: "at thrower (sidecar.ts:1:5)",
+      inspect: "at thrower (sidecar.ts:1:5)",
+      callSite: "sidecar.ts:1:5",
+      uncaught: "at thrower (sidecar.ts:1:5)",
+      previews: [true, true],
+      stringPreviews: [false, false],
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  // import() of a blob: URL reads the file before it returns, and the engine
+  // compiles it on a later microtask. A stack that is read in between is
+  // looked up through the new file. Its map comes from the text of the file,
+  // so the lookup does not depend on what the engine has compiled.
+  const reloaded = (...tail) =>
+    ["// @bun", "export function thrower() {", '  return new Error("RELOADED");', "}", ...tail, ""].join("\n");
+  const reload = load =>
+    [
+      'import { copyFileSync } from "node:fs";',
+      load,
+      "const first = await load();",
+      "const out = { before: first.thrower().stack };",
+      'copyFileSync("next.js", "rel.js");',
+      "const pending = load();",
+      "out.betweenImportAndCompile = first.thrower().stack;",
+      "const second = await pending;",
+      "out.after = second.thrower().stack;",
+      "out.afterFirstInstance = first.thrower().stack;",
+      "console.log(JSON.stringify(out));",
+    ].join("\n");
+  const blob = 'const load = () => import(URL.createObjectURL(Bun.file("rel.js")));';
+  // With a plugin in the process, import() of a path reads the file before it
+  // returns as well. A new query string is a new module with the same source URL.
+  const pathWithPlugin = [
+    'Bun.plugin({ name: "unrelated", setup(build) { build.onLoad({ filter: /\\.never-matches$/ }, () => undefined); } });',
+    "let loads = 0;",
+    'const load = () => import("./rel.js?load=" + loads++);',
+  ].join("\n");
+  const reloadFiles = ["first.ts", "second.ts", "rel.js"];
+  const mapped = "at thrower (first.ts:1:5)";
+  const unmapped = expect.stringMatching(/^at thrower \(rel\.js:3:\d+\)$/);
+
+  for (const [name, load, first, next, before] of [
+    [
+      "a file with a map is loaded again",
+      blob,
+      reloaded(inlineMap("first.ts")),
+      reloaded(inlineMap("second.ts")),
+      mapped,
+    ],
+    ["a file without a map is loaded again with one", blob, reloaded(), reloaded(inlineMap("second.ts")), unmapped],
+    [
+      "a path is imported again while a plugin is registered",
+      pathWithPlugin,
+      reloaded(inlineMap("first.ts")),
+      reloaded(inlineMap("second.ts")),
+      mapped,
+    ],
+  ]) {
+    test.concurrent(`a stack read between import() and the compile: ${name}`, async () => {
+      const { dir, out, stderr, exitCode } = await run({ "rel.js": first, "next.js": next, "main.js": reload(load) });
+      expect({
+        before: frames(out.before, dir, reloadFiles),
+        betweenImportAndCompile: frames(out.betweenImportAndCompile, dir, reloadFiles),
+        after: frames(out.after, dir, reloadFiles),
+        afterFirstInstance: frames(out.afterFirstInstance, dir, reloadFiles),
+      }).toEqual({
+        before: [before],
+        betweenImportAndCompile: ["at thrower (second.ts:1:5)"],
+        after: ["at thrower (second.ts:1:5)"],
+        // One map for each source URL: the newest file's.
+        afterFirstInstance: ["at thrower (second.ts:1:5)"],
+      });
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+  }
 });
 
 // The printer replaces an AggregateError with the members of its `errors`

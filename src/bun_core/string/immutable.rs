@@ -544,12 +544,6 @@ pub fn last_index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     highway::memrmem(self_, str)
 }
 
-/// [`last_index_of`] over UTF-16 code units.
-#[inline]
-pub fn last_index_of_utf16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
-    highway::memrmem16(haystack, needle)
-}
-
 pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     let self_len = self_.len();
     let str_len = str.len();

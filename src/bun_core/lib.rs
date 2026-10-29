@@ -1208,12 +1208,12 @@ pub use crate::string::immutable::{
     format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
     has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
     is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
-    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_utf16,
-    length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
-    sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
-    to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
-    trim_suffix, utf8_byte_sequence_length, utf16_eql_string, without_prefix,
-    without_prefix_comptime, without_suffix_comptime, without_utf8_bom,
+    is_utf8_char_boundary, is_valid_utf8, last_index_of, length_of_leading_whitespace_ascii,
+    memmem, order, order_t, percent_encode_write, sort_asc, sort_desc, split,
+    starts_with_case_insensitive_ascii, starts_with_char, str_utf8, to_ascii_hex_value,
+    to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime, trim_suffix,
+    utf8_byte_sequence_length, utf16_eql_string, without_prefix, without_prefix_comptime,
+    without_suffix_comptime, without_utf8_bom,
 };
 
 /// Tier-0 surrogate/transcode primitives that [`crate::string::immutable`]

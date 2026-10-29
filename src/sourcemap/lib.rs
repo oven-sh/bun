@@ -21,6 +21,7 @@ pub mod mapping;
 pub mod parsed_source_map;
 
 pub use bun_base64::vlq;
+use bun_core::strings::{self, CodeUnits, PathByte};
 pub use vlq::VLQ;
 use vlq::{decode as decode_vlq, decode_assume_valid as decode_vlq_assume_valid};
 
@@ -416,15 +417,6 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
     load_hint: SourceMapLoadHint,
     result: ParseUrlResultHint,
 ) -> Option<ParseUrl> {
-    // This was previously 65535 but that is a size that can risk stack overflow
-    // and due to the many layers of indirections and wrappers this function is called in, it
-    // is difficult to reason about how deeply nested of a callstack this
-    // function is called in. 1024 is a safer number.
-    //
-    // TODO: Experiment in debug builds calculating how much stack space we have left and using that to
-    //       adjust the size
-    let arena = bun_alloc::Arena::new();
-
     let (new_load_hint, mut parsed): (SourceMapLoadHint, ParseUrl) = 'parsed: {
         let mut inline_err: Option<crate::Error> = None;
 
@@ -437,13 +429,15 @@ pub(crate) fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let maybe_found_url = if source.is_8bit() {
                     find_source_mapping_url_u8(source.latin1())
                 } else {
-                    find_source_mapping_url_u16(source.utf16())
+                    find_source_mapping_url(source.utf16())
+                        .map(|url| bun_core::Utf8Bytes::Owned(strings::to_utf8_alloc(url)))
                 };
 
                 let Some(found_url) = maybe_found_url else {
                     break 'try_inline;
                 };
 
+                let arena = bun_alloc::Arena::new();
                 match parse_url(&arena, found_url.slice(), result) {
                     Ok(parsed) => break 'parsed (SourceMapLoadHint::IsInlineMap, parsed),
                     Err(err) => {
@@ -1123,30 +1117,97 @@ pub fn append_source_map_chunk<'a>(
 
 /// Always returns UTF-8.
 fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::Utf8Bytes<'_>> {
-    const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
-    let found = bun_core::strings::last_index_of(source, NEEDLE)?;
-    let start = found + NEEDLE.len();
-    let end = bun_core::strings::index_of_char_pos(source, b'\n', start).unwrap_or(source.len());
-    let url = bun_core::strings::trim_right(&source[start..end], b" \r");
-    Some(bun_core::Utf8Bytes::Borrowed(url))
+    find_source_mapping_url(source).map(bun_core::Utf8Bytes::Borrowed)
 }
 
-fn find_source_mapping_url_u16(source: &[u16]) -> Option<bun_core::Utf8Bytes<'static>> {
-    let needle: &[u16] = bun_core::w!("\n//# sourceMappingURL=");
-    let found = bun_core::strings::last_index_of_utf16(source, needle)?;
-    let start = found + needle.len();
-    let end = bun_core::strings::index_of_scalar(&source[start..], u16::from(b'\n'))
-        .map(|p| start + p)
-        .unwrap_or(source.len());
-    let mut url = &source[start..end];
-    while let Some(&last) = url.last() {
-        if last == b' ' as u16 || last == b'\r' as u16 {
-            url = &url[..url.len() - 1];
+/// The URL that the last `//# sourceMappingURL=` comment of `source` names:
+/// `JavaScriptExtractSourceMapURL` of ECMA-426 in its "without parsing" form
+/// (<https://tc39.es/ecma426/#sec-JavaScriptExtractSourceMapURL>). It reads
+/// the comment lines that `source` ends with and stops at the first line of
+/// code, so a line of a string or of a template literal is not a comment.
+fn find_source_mapping_url<T: PathByte + Into<u32>>(source: &[T]) -> Option<&[T]> {
+    let mut rest = source;
+    loop {
+        let line_start = last_index_of_line_terminator(rest).map_or(0, |i| i + 1);
+        let code = trim_js_whitespace_start(&rest[line_start..]);
+        if !code.is_empty() {
+            let comment = code.strip_prefix(&[T::from_u8(b'/'), T::from_u8(b'/')])?;
+            if let Some(url) = url_of_comment(comment)? {
+                return Some(url);
+            }
+        }
+        // The line terminator before this line.
+        rest = &rest[..line_start.checked_sub(1)?];
+    }
+}
+
+/// The URL that a `//` comment names if it is
+/// `/^[@#]\s*sourceMappingURL=(\S*?)\s*$/` (`MatchSourceMapURL` of ECMA-426).
+/// `None` for a comment with a quote or `*/` in it: a string, a template
+/// literal or a block comment that began on an earlier line can end there, so
+/// neither this line nor one above it is known to be a comment.
+fn url_of_comment<T: PathByte + Into<u32>>(comment: &[T]) -> Option<Option<&[T]>> {
+    let unit = T::from_u8;
+    let value = match comment.split_first() {
+        Some((marker, after)) if *marker == unit(b'#') || *marker == unit(b'@') => {
+            trim_js_whitespace_start(after).strip_prefix(&(*b"sourceMappingURL=").map(unit))
+        }
+        _ => None,
+    };
+    // What is before `value` has no quote and no `*`.
+    let text = value.unwrap_or(comment);
+    let mut url_len = value.map(<[T]>::len);
+    let mut at = 0;
+    while let Some(found) = index_of_delimiter(&text[at..], url_len.is_some()) {
+        let delimiter = text[at + found];
+        at += found + 1;
+        if delimiter == unit(b'*') {
+            if text.get(at) == Some(&unit(b'/')) {
+                return None;
+            }
+        } else if delimiter == unit(b'"') || delimiter == unit(b'\'') || delimiter == unit(b'`') {
+            return None;
         } else {
-            break;
+            // White space ends the URL, and only white space can follow it.
+            let after = trim_js_whitespace_start(&text[at..]);
+            url_len = after.is_empty().then_some(at - 1);
+            at = text.len() - after.len();
         }
     }
-    Some(bun_core::Utf8Bytes::Owned(
-        bun_core::strings::to_utf8_alloc(url),
-    ))
+    Some(url_len.map(|len| &text[..len]))
+}
+
+/// The first quote or `*` of `text`, or its first white space if that is earlier and asked for.
+fn index_of_delimiter<T: PathByte + Into<u32>>(text: &[T], or_white_space: bool) -> Option<usize> {
+    match T::units(text) {
+        // Latin-1 has five: tab, vertical tab, form feed, space, no-break space.
+        CodeUnits::U8(text) if or_white_space => {
+            strings::index_of_any(text, b"\"'`*\t\x0B\x0C \xA0")
+        }
+        CodeUnits::U8(text) => strings::index_of_any(text, b"\"'`*"),
+        CodeUnits::U16(text) => text.iter().position(|&unit| {
+            matches!(unit, 0x22 | 0x27 | 0x2A | 0x60)
+                || (or_white_space && strings::is_js_whitespace(unit.into()))
+        }),
+    }
+}
+
+fn trim_js_whitespace_start<T: PathByte + Into<u32>>(mut text: &[T]) -> &[T] {
+    while let [first, after @ ..] = text {
+        if !strings::is_js_whitespace((*first).into()) {
+            break;
+        }
+        text = after;
+    }
+    text
+}
+
+/// The last `\n`, `\r`, U+2028 or U+2029 of `text`.
+fn last_index_of_line_terminator<T: PathByte + Into<u32>>(text: &[T]) -> Option<usize> {
+    match T::units(text) {
+        CodeUnits::U8(text) => strings::last_index_of_any(text, b"\n\r"),
+        CodeUnits::U16(text) => text
+            .iter()
+            .rposition(|&unit| strings::is_js_line_terminator(unit.into())),
+    }
 }

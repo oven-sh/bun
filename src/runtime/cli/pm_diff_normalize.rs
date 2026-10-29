@@ -377,7 +377,11 @@ fn print_js<'a>(
         .collect();
 
     let mut chunk = None;
-    let mut printer = bun_js_printer::BufferPrinter::init(bun_js_printer::BufferWriter::init());
+    let mut writer = bun_js_printer::BufferWriter::init();
+    // The printer leaves the hashbang to its caller. The hashbang decides what runs the file, so it
+    // is kept as the first line of the output.
+    let has_hashbang = writer.write_hashbang(ast.hashbang.slice());
+    let mut printer = bun_js_printer::BufferPrinter::init(writer);
     let sym_arena = *ast.symbols.allocator();
     let symbols = bun_ast::symbol::Map::init_with_one_list(
         core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(sym_arena))
@@ -401,7 +405,7 @@ fn print_js<'a>(
         print_opts,
     )
     .ok()?;
-    let mut text = printer.ctx.get_written().to_vec();
+    let text = printer.ctx.get_written().to_vec();
 
     let mut map = Vec::new();
     if let Some(chunk) = chunk {
@@ -440,14 +444,7 @@ fn print_js<'a>(
             }
         }
     }
-    // The printer leaves the hashbang to its caller. The hashbang decides what runs the file, so it
-    // is kept as the first line of the output.
-    let hashbang = ast.hashbang.slice();
-    if !hashbang.is_empty() {
-        text = [hashbang, b"\n".as_slice(), text.as_slice()].concat();
-        for point in &mut map {
-            point.gen_line += 1;
-        }
+    if has_hashbang {
         map.insert(
             0,
             MapPoint {

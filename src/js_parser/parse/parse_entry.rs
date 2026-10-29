@@ -584,6 +584,10 @@ impl<'a> Parser<'a> {
                 .ensure_total_capacity(p.source.contents.len() / 16);
         }
 
+        if p.lexer.token == js_lexer::T::THashbang {
+            p.lexer.next()?;
+        }
+
         // Parse the file in the first pass, but do not bind symbols
         let mut opts = ParseStatementOptions {
             scope: StatementScope::Module,

@@ -1251,6 +1251,18 @@ describe.concurrent("bundler", () => {
       assert(api.readFile("/out.js").startsWith("#!/usr/bin/env a"), "hashbang exists on bundle");
     },
   });
+  itBundled("default/HashbangNoBundle", {
+    files: {
+      "/entry.js": /* js */ `
+        #!/usr/bin/env a
+        process.exit(0);
+      `,
+    },
+    bundling: false,
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toBe("#!/usr/bin/env a\nprocess.exit(0);\n");
+    },
+  });
   itBundled("default/HashbangBannerUseStrictOrder", {
     files: {
       "/entry.js": /* js */ `

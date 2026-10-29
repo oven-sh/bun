@@ -2925,7 +2925,10 @@ impl<'a> Transpiler<'a> {
                     }
                 }
 
-                let buffer_writer = js_printer::BufferWriter::init();
+                let mut buffer_writer = js_printer::BufferWriter::init();
+                // As in a bundle, the file of an entry point with a hashbang is a program.
+                output_file.is_executable =
+                    buffer_writer.write_hashbang(result.ast.hashbang.slice());
                 let mut writer = js_printer::BufferPrinter::init(buffer_writer);
 
                 // Same `self.arena` that `parse_opts.arena` used to build

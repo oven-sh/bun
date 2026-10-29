@@ -1,6 +1,16 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
-import { join } from "path";
+import { mkdirSync, readFileSync, statSync, symlinkSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isDebug,
+  isWindows,
+  tempDir,
+} from "harness";
+import { delimiter, join } from "path";
 
 describe("Bun.Transpiler", () => {
   const transpiler = new Bun.Transpiler({
@@ -6883,5 +6893,251 @@ describe("same-target destructuring with an unstable target", () => {
       stable: "a1b1",
     });
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("a source that starts with a hashbang", () => {
+  const hashbang = "#!/usr/bin/env bun";
+
+  describe("Bun.Transpiler", () => {
+    it("transformSync and transform keep the line as the first line", async () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      const source = `${hashbang}\nconst a: number = 1;\nconsole.log(a);\n`;
+      const expected = `${hashbang}\nconst a = 1;\nconsole.log(a);\n`;
+      expect({
+        transformSync: transpiler.transformSync(source),
+        transform: await transpiler.transform(source),
+      }).toEqual({ transformSync: expected, transform: expected });
+    });
+
+    it("the line comes before the `var {require}=import.meta;` that the bun target adds", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+      expect(transpiler.transformSync(`${hashbang}\nimport fs from "fs";\nconsole.log(fs, require("path"));\n`)).toBe(
+        `${hashbang}\nvar {require}=import.meta;import fs from "fs";\nconsole.log(fs, require("path"));\n`,
+      );
+    });
+
+    it("the line comes before a directive", () => {
+      const transpiler = new Bun.Transpiler({ loader: "tsx" });
+      expect(transpiler.transformSync(`${hashbang}\n"use client";\nexport const a = <div />;\n`)).toStartWith(
+        `${hashbang}\n"use client";\n`,
+      );
+    });
+
+    it("minifyWhitespace keeps the line on a line of its own", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", minifyWhitespace: true });
+      expect(transpiler.transformSync(`${hashbang}\nconsole.log( 1 );\n`)).toBe(`${hashbang}\nconsole.log(1);`);
+    });
+
+    it("the line is copied as it is written, also where the bun target escapes a string", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js", target: "bun" });
+      const line = "#!/usr/bin/env -S bun --title=é•";
+      const expected = `${line}\nconsole.log("\\xE9\\u2022");\n`;
+      expect({
+        string: transpiler.transformSync(`${line}\nconsole.log("é•");\n`),
+        bytes: transpiler.transformSync(new TextEncoder().encode(`${line}\nconsole.log("é•");\n`)),
+      }).toEqual({ string: expected, bytes: expected });
+    });
+
+    it.each([
+      { loader: "js" },
+      { loader: "jsx" },
+      { loader: "ts" },
+      { loader: "tsx" },
+      { loader: "tsx", target: "bun" },
+      { loader: "tsx", target: "node" },
+      { loader: "tsx", minifyWhitespace: true },
+      { loader: "tsx", target: "bun", minify: { whitespace: true, syntax: true } },
+      { loader: "tsx", deadCodeElimination: false },
+      { loader: "tsx", trimUnusedImports: true },
+    ])("the rest of the output is what the source gives without the line: %j", options => {
+      const transpiler = new Bun.Transpiler(options);
+      const body = `import fs from "fs";\nexport const a = [require("path").sep, fs.existsSync("/")];\n`;
+      expect(transpiler.transformSync(`${hashbang}\n${body}`)).toBe(`${hashbang}\n${transpiler.transformSync(body)}`);
+    });
+
+    it("the line ends with one line feed, whatever ends it in the source", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js" });
+      const expected = `${hashbang}\nconsole.log(1);\n`;
+      expect({
+        lf: transpiler.transformSync(`${hashbang}\nconsole.log(1);\n`),
+        crlf: transpiler.transformSync(`${hashbang}\r\nconsole.log(1);\r\n`),
+        lineSeparator: transpiler.transformSync(`${hashbang}\u2028console.log(1);\n`),
+      }).toEqual({ lf: expected, crlf: expected, lineSeparator: expected });
+    });
+
+    it("a source that holds only the line gives the line", async () => {
+      const transpiler = new Bun.Transpiler({ loader: "js" });
+      expect({
+        noLineEnd: transpiler.transformSync(hashbang),
+        lineEnd: transpiler.transformSync(`${hashbang}\n`),
+        transform: await transpiler.transform(hashbang),
+      }).toEqual({ noLineEnd: `${hashbang}\n`, lineEnd: `${hashbang}\n`, transform: `${hashbang}\n` });
+    });
+
+    it("the output transpiles to itself", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js" });
+      const output = transpiler.transformSync(`${hashbang}\nconsole.log(1);\n`);
+      expect(output).toBe(`${hashbang}\nconsole.log(1);\n`);
+      expect(transpiler.transformSync(output)).toBe(output);
+    });
+
+    it("a source without the line gets none, also after a source with the line", async () => {
+      const transpiler = new Bun.Transpiler({ loader: "js" });
+      const plain = `console.log("#!/usr/bin/env bun");\n`;
+      expect(transpiler.transformSync(plain)).toBe(plain);
+      expect(transpiler.transformSync(`${hashbang}\n${plain}`)).toBe(`${hashbang}\n${plain}`);
+      expect({ transformSync: transpiler.transformSync(plain), transform: await transpiler.transform(plain) }).toEqual({
+        transformSync: plain,
+        transform: plain,
+      });
+    });
+
+    it("replMode output gets none", async () => {
+      const transpiler = new Bun.Transpiler({ loader: "tsx", replMode: true });
+      const expected = transpiler.transformSync("var x = 1; x + 5");
+      expect(expected).toStartWith("var x;\n(() => {");
+      expect({
+        transformSync: transpiler.transformSync(`${hashbang}\nvar x = 1; x + 5`),
+        transform: await transpiler.transform(`${hashbang}\nvar x = 1; x + 5`),
+      }).toEqual({ transformSync: expected, transform: expected });
+    });
+
+    it("scanImports and scan read a source with the line, and the output of transformSync", () => {
+      const transpiler = new Bun.Transpiler({ loader: "ts" });
+      const source = `${hashbang}\nimport { a } from "./a";\nconsole.log(a);\n`;
+      const imports = [{ kind: "import-statement", path: "./a" }];
+      const output = transpiler.transformSync(source);
+      expect(output).toBe(`${hashbang}\nimport { a } from "./a";\nconsole.log(a);\n`);
+      expect({
+        scanImports: transpiler.scanImports(source),
+        scan: transpiler.scan(source),
+        scanImportsOfOutput: transpiler.scanImports(output),
+        scanOfOutput: transpiler.scan(output),
+        scanImportsOfTheLineAlone: transpiler.scanImports(hashbang),
+      }).toEqual({
+        scanImports: imports,
+        scan: { exports: [], imports },
+        scanImportsOfOutput: imports,
+        scanOfOutput: { exports: [], imports },
+        scanImportsOfTheLineAlone: [],
+      });
+    });
+
+    it("scanImports reports a hashbang that is not at the start of the source", () => {
+      const transpiler = new Bun.Transpiler({ loader: "js" });
+      expect(() => transpiler.scanImports(`\n${hashbang}\nimport "./a";\n`)).toThrow("Syntax Error");
+    });
+  });
+
+  describe.concurrent("bun build --no-bundle", () => {
+    const files = {
+      "cli.ts": `${hashbang}\nconsole.log("hi" as string);\n`,
+      "lib.ts": `export const lib: number = 1;\n`,
+    };
+    const cli = `${hashbang}\nconsole.log("hi");\n`;
+
+    async function build(cwd, ...args) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--no-bundle", ...args],
+        env: bunEnv,
+        cwd,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+    // The owner can run the file. A umask can take the other bits away.
+    const isExecutable = file => (statSync(file).mode & 0o100) !== 0;
+
+    it.each([[[]], [["--target=bun"]], [["--target=node"]], [["--format=cjs"]]])(
+      "keeps the line on stdout with %j",
+      async args => {
+        using dir = tempDir("no-bundle-hashbang-stdout", files);
+        expect(await build(String(dir), ...args, "./cli.ts")).toEqual({ stdout: cli, stderr: "", exitCode: 0 });
+      },
+    );
+
+    it("keeps the line on a line of its own with --minify", async () => {
+      using dir = tempDir("no-bundle-hashbang-minify", files);
+      expect(await build(String(dir), "--minify", "./cli.ts")).toEqual({
+        stdout: `${hashbang}\nconsole.log("hi");`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it.each([
+      ["a carriage return and a line feed", files["cli.ts"].replaceAll("\n", "\r\n"), cli],
+      ["the end of the file", hashbang, `${hashbang}\n`],
+    ])("writes one line feed after the line when %s ends it in the source", async (_, source, expected) => {
+      using dir = tempDir("no-bundle-hashbang-line-end", { "cli.ts": source });
+      expect(await build(String(dir), "./cli.ts")).toEqual({ stdout: expected, stderr: "", exitCode: 0 });
+    });
+
+    it("writes the line before the `var {require}=import.meta;` of --target=bun", async () => {
+      using dir = tempDir("no-bundle-hashbang-require", {
+        "cli.ts": `${hashbang}\nimport fs from "fs";\nconsole.log(fs, require("path"));\n`,
+      });
+      expect(await build(String(dir), "--target=bun", "./cli.ts")).toEqual({
+        stdout: `${hashbang}\nvar {require}=import.meta;import fs from "fs";\nconsole.log(fs, require("path"));\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("--outfile gets the line, and its owner can run the file", async () => {
+      using dir = tempDir("no-bundle-hashbang-outfile", files);
+      const { stderr, exitCode } = await build(String(dir), "./cli.ts", "--outfile=out/cli.mjs");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      const outfile = join(String(dir), "out", "cli.mjs");
+      expect(readFileSync(outfile, "utf8")).toBe(cli);
+      if (!isWindows) expect(isExecutable(outfile)).toBe(true);
+    });
+
+    it("--outdir gets the line, and only the file with the line can be run", async () => {
+      using dir = tempDir("no-bundle-hashbang-outdir", files);
+      const { stdout, stderr, exitCode } = await build(String(dir), "./cli.ts", "./lib.ts", "--outdir=dist");
+      expect(stderr).toBe("");
+      expect(stdout).toMatch(/cli\.js\s+38 bytes/);
+      expect(exitCode).toBe(0);
+      const [cliFile, libFile] = ["cli.js", "lib.js"].map(name => join(String(dir), "dist", name));
+      expect(readFileSync(cliFile, "utf8")).toBe(cli);
+      expect(readFileSync(libFile, "utf8")).toBe(`export const lib = 1;\n`);
+      if (!isWindows) {
+        expect({ cli: isExecutable(cliFile), lib: isExecutable(libFile) }).toEqual({ cli: true, lib: false });
+      }
+    });
+
+    it("keeps the line with --sourcemap", async () => {
+      using dir = tempDir("no-bundle-hashbang-sourcemap", files);
+      const { stderr, exitCode } = await build(String(dir), "./cli.ts", "--outdir=dist", "--sourcemap=external");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      expect(readFileSync(join(String(dir), "dist", "cli.js"), "utf8")).toStartWith(cli);
+    });
+
+    it.skipIf(isWindows)("the written file runs as a program", async () => {
+      using dir = tempDir("no-bundle-hashbang-run", files);
+      // `#!/usr/bin/env bun` finds the bun under test through PATH.
+      const bin = join(String(dir), "bin");
+      mkdirSync(bin);
+      symlinkSync(bunExe(), join(bin, "bun"));
+      const { stderr, exitCode } = await build(String(dir), "./cli.ts", "--outdir=dist");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [join(String(dir), "dist", "cli.js")],
+        env: { ...bunEnv, PATH: bin + delimiter + process.env.PATH },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, runStderr, runExitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr: runStderr, exitCode: runExitCode }).toEqual({ stdout: "hi\n", stderr: "", exitCode: 0 });
+    });
   });
 });

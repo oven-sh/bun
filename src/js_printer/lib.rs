@@ -7540,6 +7540,20 @@ impl BufferWriter {
         self.written_len = 0;
     }
 
+    /// Writes `hashbang` and a line feed. For an empty `hashbang` it writes nothing and returns
+    /// `false`. The printer never writes `Ast.hashbang`, because the module loader has no use
+    /// for the line. A caller whose output is read as a file calls this on the empty buffer,
+    /// before it prints: the printer appends, so its length and its source map count the line.
+    pub fn write_hashbang(&mut self, hashbang: &[u8]) -> bool {
+        if hashbang.is_empty() {
+            return false;
+        }
+        self.buffer.list.reserve(hashbang.len() + 1);
+        self.write_all(hashbang);
+        self.write_byte(b'\n');
+        true
+    }
+
     pub fn written_without_trailing_zero(&self) -> &[u8] {
         let mut written = &self.buffer.list[..self.written_len];
         while !written.is_empty() && written[written.len() - 1] == 0 {

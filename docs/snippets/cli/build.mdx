@@ -127,7 +127,8 @@ bun build <entry points>
 </ParamField>
 
 <ParamField path="--no-bundle" type="boolean">
-  Transpile only — do not bundle
+  Transpile only — do not bundle. An entry point that starts with a hashbang line keeps that line, and its output file
+  is executable
 </ParamField>
 
 <ParamField path="--css-chunking" type="boolean">

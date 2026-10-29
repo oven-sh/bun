@@ -135,6 +135,18 @@ fn code_from_js(
     }
 }
 
+/// `transform` and `transformSync` return text that a caller can write to a file, so it keeps the
+/// hashbang of the source. The text of `replMode` is for `vm.runInContext` and keeps none.
+fn write_hashbang(
+    transpiler: &Transpiler::Transpiler<'_>,
+    writer: &mut JSPrinter::BufferWriter,
+    parse_result: &ParseResult<'_>,
+) {
+    if !transpiler.options.repl_mode {
+        writer.write_hashbang(parse_result.ast.hashbang.slice());
+    }
+}
+
 /// Deep-clone a [`MacroMap`]. The keys are `Box<[u8]>`, so an owned copy
 /// is needed wherever the map is assigned by value.
 fn clone_macro_map(src: &MacroMap) -> MacroMap {
@@ -773,6 +785,7 @@ impl TransformTask {
             .list
             .reserve(512usize.saturating_sub(buffer_writer.buffer.list.len()));
         buffer_writer.reset();
+        write_hashbang(&self.transpiler, &mut buffer_writer, &parse_result);
 
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.
@@ -1425,6 +1438,7 @@ impl JSTranspiler {
         });
 
         buffer_writer.reset();
+        write_hashbang(self.transpiler.get(), &mut buffer_writer, &parse_result);
         let mut printer = JSPrinter::BufferPrinter::init(buffer_writer);
         // SAFETY: see `transpiler_mut` — `print` does not re-enter JS.
         // Same per-call `arena` that `set_arena(&arena)` and `parse()` used.

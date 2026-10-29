@@ -286,6 +286,7 @@ const kDimCode = 2;
 const kBoldCode = 1;
 const kHexCloseSeq = kEscape + "39" + kEscapeEnd;
 const kHexStyleCacheMax = 256;
+const kEscapeSeqCacheMax = 256;
 
 // Matches #RGB or #RRGGBB
 const hexColorRegExp = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -299,10 +300,36 @@ interface TextStyle {
 
 let styleCache: Record<string, TextStyle> | undefined;
 let hexStyleCache: Map<string, TextStyle> | undefined;
+const escapeSeqs = { __proto__: null } as unknown as Record<string | number, string | undefined>;
+let escapeSeqCount = 0;
 
 function getHexStyleCache() {
   hexStyleCache ??= new SafeMap() as Map<string, TextStyle>;
   return hexStyleCache;
+}
+
+// Node.js builds this string on every call: https://github.com/nodejs/node/blob/v26.12.1/lib/util.js#L134-L142
+function escapeSeq(code) {
+  if (typeof code !== "number" && typeof code !== "string") return kEscape + code + kEscapeEnd;
+  let seq = escapeSeqs[code];
+  if (seq === undefined) {
+    seq = kEscape + code + kEscapeEnd;
+    if (escapeSeqCount < kEscapeSeqCacheMax) {
+      escapeSeqCount++;
+      escapeSeqs[code] = seq;
+    }
+  }
+  return seq;
+}
+
+function codesToStyle(codes): TextStyle {
+  const openNum = codes[0];
+  return {
+    __proto__: null,
+    openSeq: escapeSeq(openNum),
+    closeSeq: escapeSeq(codes[1]),
+    keepClose: openNum === kDimCode || openNum === kBoldCode,
+  };
 }
 
 function getStyleCache() {
@@ -312,14 +339,7 @@ function getStyleCache() {
     for (const key of ObjectGetOwnPropertyNames(colors)) {
       const codes = colors[key];
       if (codes) {
-        const openNum = codes[0];
-        const closeNum = codes[1];
-        styleCache[key] = {
-          __proto__: null,
-          openSeq: kEscape + openNum + kEscapeEnd,
-          closeSeq: kEscape + closeNum + kEscapeEnd,
-          keepClose: openNum === kDimCode || openNum === kBoldCode,
-        };
+        styleCache[key] = codesToStyle(codes);
       }
     }
   }
@@ -381,10 +401,11 @@ function replaceCloseCode(str: string, closeSeq: string, openSeq: string, keepCl
 
 function styleText(format, text, options) {
   const validateStream = options?.validateStream ?? true;
-  const cache = getStyleCache();
 
   // Fast path: single format string with validateStream=false
   if (!validateStream && typeof format === "string" && typeof text === "string") {
+    // Only this path takes the snapshot of inspect.colors: https://github.com/nodejs/node/blob/v26.12.1/lib/util.js#L252
+    const cache = getStyleCache();
     if (format === "none") return text;
     const style = cache[format];
     if (style !== undefined) {
@@ -425,11 +446,13 @@ function styleText(format, text, options) {
   let openCodes = "";
   let closeCodes = "";
   let processedText = text;
+  const colors = require("internal/util/inspect").inspect.colors;
 
   for (const key of formatArray) {
     if (key === "none") continue;
 
     if (typeof key === "string" && key[0] === "#") {
+      // Same strings as Node.js, which parses the color on every call: https://github.com/nodejs/node/blob/v26.12.1/lib/util.js#L301-L313
       let hexStyle = getHexStyleCache().get(key);
       if (hexStyle === undefined) {
         if (RegExpPrototypeExec.$call(hexColorRegExp, key) === null) {
@@ -446,13 +469,16 @@ function styleText(format, text, options) {
       continue;
     }
 
-    const style = cache[key];
-    if (style === undefined) {
+    const codes = colors[key];
+    if (!codes) {
       validateOneOf(key, "format", ObjectGetOwnPropertyNames(require("internal/util/inspect").inspect.colors));
     }
-    openCodes += style.openSeq;
-    closeCodes = style.closeSeq + closeCodes;
-    processedText = replaceCloseCode(processedText, style.closeSeq, style.openSeq, style.keepClose);
+    const openNum = codes[0];
+    const openSeq = escapeSeq(openNum);
+    const closeSeq = escapeSeq(codes[1]);
+    openCodes += openSeq;
+    closeCodes = closeSeq + closeCodes;
+    processedText = replaceCloseCode(processedText, closeSeq, openSeq, openNum === kDimCode || openNum === kBoldCode);
   }
 
   if (skipColorize) return text;

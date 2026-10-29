@@ -24,7 +24,7 @@
 import assert from "assert";
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -548,6 +548,320 @@ describe("util", () => {
     );
 
     assert.strictEqual(util.styleText("red", "test", { validateStream: false }), "\u001b[31mtest\u001b[39m");
+  });
+
+  // styleText() has two paths. A call with a string format, a string text and
+  // `validateStream: false` reads a snapshot of `util.inspect.colors`, which
+  // the first such call takes. Every other call reads the table itself. So
+  // the result of a call depends on the calls before it, and each case runs
+  // in a new process. The expected values are the output of Node.js v26.12.1.
+  describe("styleText after a change of util.inspect.colors", () => {
+    const prelude = `
+      const util = require("node:util");
+      const colors = util.inspect.colors;
+      const noValidate = { validateStream: false };
+      const pipe = { write() {}, on() {} };
+      const terminal = { write() {}, on() {}, isTTY: true, getColorDepth: () => 8 };
+      const attempt = fn => { try { return fn(); } catch (error) { return "threw " + error.name + " " + error.code; } };
+      const fast = format => attempt(() => util.styleText(format, "x", noValidate));
+      const slow = format => attempt(() => util.styleText([format], "x", noValidate));
+      const onTerminal = format => attempt(() => util.styleText(format, "x", { stream: terminal }));
+      const onPipe = format => attempt(() => util.styleText(format, "x", { stream: pipe }));
+      const out = {};
+    `;
+    const sgr = (open, close = 39) => `\u001b[${open}mx\u001b[${close}m`;
+    const invalidValue = "threw TypeError ERR_INVALID_ARG_VALUE";
+    const invalidType = "threw TypeError ERR_INVALID_ARG_TYPE";
+    const noCode = "threw TypeError undefined";
+
+    const cases = [
+      [
+        "a color added after the snapshot",
+        `out.first = fast("red");
+         colors.mine = [95, 39];
+         out.mine = [fast("mine"), slow("mine"), onTerminal("mine"), onPipe("mine")];
+         out.withBold = attempt(() => util.styleText(["bold", "mine"], "x", noValidate));
+         out.nested = attempt(() => util.styleText("mine", "a" + util.styleText("mine", "b", noValidate) + "c", noValidate));
+         out.unknown = [fast("nope"), slow("nope"), onTerminal("nope"), onPipe("nope")];`,
+        {
+          first: sgr(31),
+          mine: [sgr(95), sgr(95), sgr(95), "x"],
+          withBold: "\u001b[1m\u001b[95mx\u001b[39m\u001b[22m",
+          nested: "\u001b[95ma\u001b[95mb\u001b[95mc\u001b[39m",
+          unknown: [invalidValue, invalidValue, invalidValue, invalidValue],
+        },
+      ],
+      [
+        "a color added after the snapshot is read on every call",
+        `out.first = fast("red");
+         colors.mine = [95, 39];
+         out.added = [fast("mine"), slow("mine")];
+         colors.mine = [96, 39];
+         out.replaced = [fast("mine"), slow("mine")];
+         colors.mine[0] = 97;
+         out.edited = [fast("mine"), slow("mine")];
+         delete colors.mine;
+         out.deleted = [fast("mine"), slow("mine")];`,
+        {
+          first: sgr(31),
+          added: [sgr(95), sgr(95)],
+          replaced: [sgr(96), sgr(96)],
+          edited: [sgr(97), sgr(97)],
+          deleted: [invalidValue, invalidValue],
+        },
+      ],
+      [
+        "a built-in color changed after the snapshot",
+        `out.first = fast("red");
+         colors.red = [91, 39];
+         colors.gray = [37, 39];
+         out.red = [fast("red"), slow("red"), onTerminal("red")];
+         out.grey = [fast("grey"), slow("grey")];
+         colors.red[0] = 92;
+         out.edited = [fast("red"), slow("red")];`,
+        {
+          first: sgr(31),
+          red: [sgr(31), sgr(91), sgr(91)],
+          grey: [sgr(90), sgr(37)],
+          edited: [sgr(31), sgr(92)],
+        },
+      ],
+      [
+        "a built-in color deleted after the snapshot",
+        `out.first = fast("red");
+         delete colors.red;
+         out.red = [fast("red"), slow("red"), onTerminal("red"), onPipe("red")];`,
+        {
+          first: sgr(31),
+          red: [sgr(31), invalidValue, invalidValue, invalidValue],
+        },
+      ],
+      [
+        "the table replaced after the snapshot",
+        `out.first = fast("red");
+         util.inspect.colors = { __proto__: null, red: [95, 39], mine: [96, 39] };
+         out.fast = [fast("red"), fast("bold"), fast("mine")];
+         out.slow = [slow("red"), slow("bold"), slow("mine")];`,
+        {
+          first: sgr(31),
+          fast: [sgr(31), sgr(1, 22), sgr(96)],
+          slow: [sgr(95), invalidValue, sgr(96)],
+        },
+      ],
+      [
+        "calls that do not take the snapshot",
+        `out.before = [slow("red"), onTerminal("red"), onPipe("red"), attempt(() => util.styleText("red", 1, noValidate))];
+         colors.red = [91, 39];
+         colors.mine = [95, 39];
+         out.after = [fast("red"), slow("red"), fast("mine"), slow("mine")];
+         colors.red = [92, 39];
+         out.later = [fast("red"), slow("red")];`,
+        {
+          before: [sgr(31), sgr(31), "x", invalidType],
+          after: [sgr(91), sgr(91), sgr(95), sgr(95)],
+          later: [sgr(91), sgr(92)],
+        },
+      ],
+      [
+        "'none' takes the snapshot",
+        `out.none = fast("none");
+         colors.red = [91, 39];
+         out.red = [fast("red"), slow("red")];`,
+        {
+          none: "x",
+          red: [sgr(31), sgr(91)],
+        },
+      ],
+      [
+        "an entry that is not a pair of codes",
+        `out.first = fast("red");
+         colors.nothing = null;
+         colors.zero = 0;
+         colors.text = "ab";
+         out.nothing = [fast("nothing"), slow("nothing")];
+         out.zero = slow("zero");
+         out.text = slow("text");
+         colors.red = null;
+         out.red = [fast("red"), slow("red")];`,
+        {
+          first: sgr(31),
+          nothing: [noCode, noCode],
+          zero: "\u001b[undefinedmx\u001b[undefinedm",
+          text: sgr("a", "b"),
+          red: [sgr(31), noCode],
+        },
+      ],
+      [
+        // `__proto__` and `constructor` are not names: the table has no prototype.
+        "the other arguments are checked before the table is read",
+        `const reads = [];
+         Object.defineProperty(colors, "watched", {
+           get() { reads.push("watched"); return [95, 39]; },
+           enumerable: true,
+           configurable: true,
+         });
+         const check = fn => { reads.length = 0; return [attempt(fn), reads.length]; };
+         out.text = check(() => util.styleText("watched", 1, noValidate));
+         out.validateStream = check(() => util.styleText("watched", "x", { validateStream: 1 }));
+         out.stream = check(() => util.styleText("watched", "x", { stream: 1 }));
+         out.options = check(() => util.styleText("watched", "x", 1));
+         out.unknownNameAndText = check(() => util.styleText("nope", 1, noValidate));
+         out.valid = check(() => util.styleText(["watched", "watched"], "x", noValidate));
+         out.names = [slow("__proto__"), slow("constructor")];
+         out.hex = [onTerminal("#fc0"), onPipe("#fc0"), onPipe("#zzz")];`,
+        {
+          text: [invalidType, 0],
+          validateStream: [invalidType, 0],
+          stream: [invalidType, 0],
+          options: [invalidType, 0],
+          unknownNameAndText: [invalidType, 0],
+          valid: ["\u001b[95m\u001b[95mx\u001b[39m\u001b[39m", 2],
+          names: [invalidValue, invalidValue],
+          hex: [sgr("38;2;255;204;0"), "x", invalidValue],
+        },
+      ],
+      [
+        "the order in which the codes are read and converted",
+        `const log = [];
+         const spy = (name, value) => ({ [Symbol.toPrimitive]() { log.push(name); return value; } });
+         const watched = (name, codes) => new Proxy(codes, {
+           get(target, key, receiver) {
+             if (typeof key === "string") log.push(name + "[" + key + "]");
+             return Reflect.get(target, key, receiver);
+           },
+         });
+         const run = fn => { log.length = 0; return [attempt(fn), log.join(" ")]; };
+         colors.spied = watched("spied", [spy("open", 95), spy("close", 39)]);
+         colors.plain = watched("plain", [96, 39]);
+         colors.half = watched("half", [97, spy("close", 49)]);
+         out.slow = run(() => util.styleText(["spied"], "x", noValidate));
+         out.slowTwice = run(() => util.styleText(["plain", "plain"], "x", noValidate));
+         out.half = [run(() => util.styleText(["half"], "x", noValidate)), run(() => util.styleText(["half"], "x", noValidate))];
+         out.snapshot = run(() => util.styleText("red", "x", noValidate));
+         out.fast = run(() => util.styleText("spied", "x", noValidate));
+         out.slowAgain = run(() => util.styleText(["spied"], "x", noValidate));`,
+        {
+          slow: [sgr(95), "spied[0] open spied[1] close"],
+          slowTwice: ["\u001b[96m\u001b[96mx\u001b[39m\u001b[39m", "plain[0] plain[1] plain[0] plain[1]"],
+          half: [
+            [sgr(97, 49), "half[0] half[1] close"],
+            [sgr(97, 49), "half[0] half[1] close"],
+          ],
+          snapshot: [sgr(31), "spied[0] open spied[1] close plain[0] plain[1] half[0] half[1] close"],
+          fast: [sgr(95), ""],
+          slowAgain: [sgr(95), "spied[0] open spied[1] close"],
+        },
+      ],
+      [
+        "colors that have the same open code, and codes of other kinds",
+        `colors.a = [95, 39];
+         colors.b = [95, 49];
+         out.alternate = [slow("a"), slow("b"), slow("a"), slow("b")];
+         out.together = attempt(() => util.styleText(["a", "b", "a"], "x", noValidate));
+         colors.wide = [300, 39];
+         colors.fraction = [1.5, 22];
+         colors.negative = [-1, 39];
+         colors.negativeZero = [-0, 39];
+         colors.notANumber = [NaN, NaN];
+         colors.bigOpen = [1n, 22];
+         out.kinds = ["wide", "fraction", "negative", "negativeZero", "notANumber", "bigOpen", "a", "reset"].map(slow);
+         colors.boldLike = [1, 39];
+         out.boldLike = attempt(() => util.styleText(["boldLike"], "a\\u001b[39mb", noValidate));
+         out.bold = attempt(() => util.styleText(["bold"], "a\\u001b[22mb", noValidate));`,
+        {
+          alternate: [sgr(95), sgr(95, 49), sgr(95), sgr(95, 49)],
+          together: "\u001b[95m\u001b[95m\u001b[95mx\u001b[39m\u001b[49m\u001b[39m",
+          kinds: [sgr(300), sgr(1.5, 22), sgr(-1), sgr(0), sgr(NaN, NaN), sgr(1, 22), sgr(95), sgr(0, 0)],
+          boldLike: "\u001b[1ma\u001b[39m\u001b[1mb\u001b[39m",
+          bold: "\u001b[1ma\u001b[22m\u001b[1mb\u001b[22m",
+        },
+      ],
+      [
+        // The string "1" gives the same escape string as the number 1. Only the number is the bold code.
+        "codes that are strings",
+        `colors.orange = ["38;5;208", 39];
+         colors.stringBold = ["1", "22"];
+         out.orange = [slow("orange"), slow("orange")];
+         out.bold = attempt(() => util.styleText(["bold"], "a\\u001b[22mb", noValidate));
+         out.stringBold = attempt(() => util.styleText(["stringBold"], "a\\u001b[22mb", noValidate));
+         colors.orange[0] = "38;5;209";
+         out.edited = [slow("orange"), fast("orange")];`,
+        {
+          orange: [sgr("38;5;208"), sgr("38;5;208")],
+          bold: "\u001b[1ma\u001b[22m\u001b[1mb\u001b[22m",
+          stringBold: "\u001b[1ma\u001b[1mb\u001b[22m",
+          edited: [sgr("38;5;209"), sgr("38;5;209")],
+        },
+      ],
+      [
+        "more codes than the table of escape strings keeps",
+        `const wrong = [];
+         for (let round = 0; round < 2; round++) {
+           for (let i = 0; i < 600; i++) {
+             colors.tmp = [1000 + i, "c" + i];
+             if (slow("tmp") !== "\\u001b[" + (1000 + i) + "mx\\u001b[c" + i + "m") wrong.push(i);
+           }
+         }
+         out.wrong = wrong;
+         out.after = [slow("red"), slow("bold"), fast("red")];`,
+        {
+          wrong: [],
+          after: [sgr(31), sgr(1, 22), sgr(31)],
+        },
+      ],
+    ];
+
+    async function check(exe, script, expected) {
+      await using proc = Bun.spawn({
+        cmd: [exe, "-e", `${prelude}${script}\nprocess.stdout.write(JSON.stringify(out));`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(expected);
+      expect(exitCode).toBe(0);
+    }
+
+    // Not concurrent: a debug build takes a second to start, and longer when thirteen start at once.
+    it.each(cases)("bun: %s", (_, script, expected) => check(bunExe(), script, expected));
+
+    // Node.js reads the table on every slow call since v26.4.0.
+    const node = nodeExeAtLeast("26.4.0");
+    it.skipIf(!node).concurrent.each(cases)("node: %s", (_, script, expected) => check(node, script, expected));
+
+    it("keeps a bounded number of escape strings", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { heapStats } = require("bun:jsc");
+           const util = require("node:util");
+           const colors = util.inspect.colors;
+           const strings = () => { Bun.gc(true); return heapStats().objectTypeCounts.string; };
+           const use = (from, to) => {
+             for (let i = from; i < to; i++) {
+               colors.tmp = ["38;5;" + i, 39];
+               util.styleText(["tmp"], "x", { validateStream: false });
+             }
+             delete colors.tmp;
+           };
+           use(0, 400);
+           const before = strings();
+           use(400, 6400);
+           process.stdout.write(String(strings() - before));`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      // 6,000 codes, all different. A table without a bound keeps one string for each.
+      expect(Number(stdout)).toBeLessThan(3500);
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("getCallSites", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isCI, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isWindows } from "harness";
 import http from "node:http";
 import path from "node:path";
 import { Duplex, getDefaultHighWaterMark } from "node:stream";
@@ -152,13 +152,17 @@ describe.concurrent("node:http server keeps its behavior on keep-alive connectio
   test(
     "req.socket.server = null: the response that finishes reads the keep-alive timeout of the server",
     async () => {
-      // One request, then wait for the close. The process exits at the end of the turn of the event loop in which
-      // the exception is thrown, not at the throw. On Windows that turn reads the connection once more after the
-      // request, so the process also answers a second request that the client sends as soon as it has the response.
-      const result = await run("null-socket-server", [{ untilClose: get("/") }]);
+      const result = await run("null-socket-server", threeRequests());
       expect(result).toEqual({
-        // The process exits with the connection open: the client reads the response or only the close.
-        responses: [result.responses[0] === "" ? "" : ok],
+        responses: [
+          // The process exits with the connection open: the client reads the first response or only the close.
+          result.responses[0] === "closed" ? "closed" : ok,
+          // The process exits at the end of the turn of the event loop in which the exception is thrown, not at the
+          // throw. On Windows usockets reads the connection once more in that turn, so the process also answers the
+          // second request when the client sent it in time.
+          isWindows && result.responses[1] === ok ? ok : "closed",
+          "closed",
+        ],
         stderr: expect.stringMatching(/TypeError: null is not an object.*\s+at onResponseFinishHandleSocket \(/),
         exitCode: 1,
       });

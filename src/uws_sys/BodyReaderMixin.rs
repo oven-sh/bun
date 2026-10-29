@@ -5,38 +5,32 @@ use crate::AnyResponse;
 use crate::response::Response;
 
 /// Response types that can drive a `BodyReaderMixin`: must support registering
-/// data/abort callbacks and converting to `AnyResponse`.
+/// data/abort callbacks.
 ///
-/// Only `Response<SSL>` is wired today (DevServer's only consumer is HTTP/1.x);
-/// `h3::Response` can be added once its callback signatures are unified.
+/// Only `Response<SSL>` is wired today (DevServer's only consumer is HTTP/1.x).
 pub trait BodyResponse: Sized + 'static {
     fn on_data<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self, &[u8], bool) + Copy + 'static;
+        H: Fn(*mut U, AnyResponse, &[u8], bool) + Copy + 'static;
     fn on_aborted<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self) + Copy + 'static;
-    fn to_any(&mut self) -> AnyResponse;
+        H: Fn(*mut U, AnyResponse) + Copy + 'static;
 }
 
 impl<const SSL: bool> BodyResponse for Response<SSL> {
     #[inline]
     fn on_data<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self, &[u8], bool) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse, &[u8], bool) + Copy + 'static,
     {
         Response::<SSL>::on_data(self, handler, ctx)
     }
     #[inline]
     fn on_aborted<U, H>(&mut self, handler: H, ctx: *mut U)
     where
-        H: Fn(*mut U, &mut Self) + Copy + 'static,
+        H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
         Response::<SSL>::on_aborted(self, handler, ctx)
-    }
-    #[inline]
-    fn to_any(&mut self) -> AnyResponse {
-        Response::<SSL>::res_to_any(self.downcast())
     }
 }
 
@@ -94,8 +88,8 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     /// reach the mixin via *forward* offset (`mixin_of`), so the stored pointer
     /// already has full-Wrap provenance and no overlapping `&mut` are formed.
     pub fn read_body<R: BodyResponse>(wrap: *mut Wrap, resp: &mut R) {
-        resp.on_data(Self::on_data_generic::<R>, wrap);
-        resp.on_aborted(Self::on_aborted_handler::<R>, wrap);
+        resp.on_data(Self::on_data_generic, wrap);
+        resp.on_aborted(Self::on_aborted_handler, wrap);
     }
 
     /// Forward offset `Wrap` → its embedded mixin field, materialised as `&mut`.
@@ -120,8 +114,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         unsafe { &mut *Wrap::field_of(wrap) }
     }
 
-    fn on_data_generic<R: BodyResponse>(wrap: *mut Wrap, r: &mut R, chunk: &[u8], last: bool) {
-        let any = r.to_any();
+    fn on_data_generic(wrap: *mut Wrap, any: AnyResponse, chunk: &[u8], last: bool) {
         match Self::on_data(wrap, any, chunk, last) {
             Ok(()) => {}
             Err(crate::Error::Alloc(_)) => Self::on_oom(wrap, any),
@@ -129,7 +122,7 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         }
     }
 
-    fn on_aborted_handler<R>(wrap: *mut Wrap, _r: &mut R) {
+    fn on_aborted_handler(wrap: *mut Wrap, _r: AnyResponse) {
         // The temporary `&mut` from `mixin_of` ends at the `;`, before
         // `on_error` (which may `heap::take(wrap)`).
         Self::mixin_of(wrap).body = Vec::new();

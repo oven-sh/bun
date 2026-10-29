@@ -495,6 +495,168 @@ describe("captured stdio backpressure", () => {
   });
 });
 
+// A 'data' listener that throws unwinds push() before the reader asks for more. The
+// writer's batch is acked all the same, so the worker goes on and exits by itself.
+describe("a stdio 'data' listener that throws does not strand the writer", () => {
+  // The condition under test is "the process exits on its own". A stranded writer keeps it
+  // alive for good, so the watchdog ends it with a code of its own instead.
+  const watchdog = `w.on("online", () => setTimeout(() => process.exit(42), ${isDebug ? 20_000 : 5_000}).unref());`;
+  const twoWrites = (name: string) => `process.${name}.write("a", () => process.${name}.write("b"))`;
+
+  async function run(script: string, cwd?: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode, signalCode: proc.signalCode };
+  }
+  const exited = (result: object) => ({ stdout: JSON.stringify(result), stderr: "", exitCode: 0, signalCode: null });
+
+  // The listener throws on the first chunk. The worker writes the second one from the callback of the first.
+  const parent = (name: string, worker: string, options: string) => `
+    const { Worker } = require("node:worker_threads");
+    let caught = 0, seen = "";
+    process.on("uncaughtException", () => caught++);
+    const w = new Worker(${worker}, ${options});
+    w.${name}.on("data", d => { seen += d; if (seen === "a") throw new Error("from the listener"); });
+    ${watchdog}
+    w.on("exit", code => console.log(JSON.stringify({ code, caught, seen })));`;
+
+  describe("with the output of Node", () => {
+    // Node 20 to 26 print the same line.
+    test.concurrent.each(["stdout", "stderr"] as const)(
+      "captured %s, the entry writes in its first turn",
+      async name => {
+        const worker = JSON.stringify(twoWrites(name));
+        const result = await run(parent(name, worker, `{ eval: true, stdout: true, stderr: true }`));
+        expect(result).toEqual(exited({ code: 0, caught: 1, seen: "ab" }));
+      },
+    );
+
+    // The static import takes loop turns before the entry writes. Node 24 and later print the same line.
+    test.concurrent.each(["stdout", "stderr"] as const)("captured %s, an ESM entry with an import", async name => {
+      using dir = tempDir("worker-stdio-listener-throws", {
+        "dep.mjs": `export const name = ${JSON.stringify(name)};`,
+        "worker.mjs": `import { name } from "./dep.mjs";\nprocess[name].write("a", () => process[name].write("b"));`,
+      });
+      const result = await run(parent(name, `"./worker.mjs"`, `{ ${name}: true }`), String(dir));
+      expect(result).toEqual(exited({ code: 0, caught: 1, seen: "ab" }));
+    });
+
+    // Without capture the listener is Bun's own, and it calls the parent's write. Node 24 and later pipe, and
+    // pipe() catches: they print the same line.
+    test.concurrent.each(["stdout", "stderr"] as const)("forwarded %s, the parent's write throws", async name => {
+      const result = await run(`
+        const { Worker } = require("node:worker_threads");
+        let caught = 0, seen = "";
+        process.on("uncaughtException", () => caught++);
+        const write = process.${name}.write;
+        process.${name}.write = chunk => { seen += chunk; if (seen === "a") throw new Error("from write"); return true; };
+        const w = new Worker(${JSON.stringify(`setImmediate(() => ${twoWrites(name)})`)}, { eval: true });
+        ${watchdog}
+        w.on("exit", code => { process.${name}.write = write; console.log(JSON.stringify({ code, caught })); });`);
+      expect(result).toEqual(exited({ code: 0, caught: 1 }));
+    });
+
+    // The batches are [a] [b,c] [d] [e,f] [one high-water mark of bytes]. The listener throws on "b" and again in
+    // [e,f], where it also pauses the stream. One request follows each throw, so the last write completes only
+    // when the parent reads again. Node 20 to 26 print the same line.
+    test.concurrent.each([
+      ["on a later chunk of a batch", "abdef", ""],
+      ["on a first chunk, and the handler of the error calls read(0)", "abde", "if (caught === 2) w.stdout.read(0);"],
+    ])("captured stdout, a second throw %s: the batch is acked once", async (_, second, inHandler) => {
+      const worker = `
+        const { parentPort, workerData } = require("node:worker_threads");
+        let completed = false;
+        process.stdout.write("a");
+        process.stdout.write("b");
+        process.stdout.write("c", () => {
+          process.stdout.write("d");
+          process.stdout.write("e");
+          process.stdout.write("f", () => {
+            process.stdout.write(Buffer.alloc(workerData, "x"), () => { completed = true; });
+            parentPort.postMessage("wrote");
+          });
+        });
+        parentPort.on("message", m => m === "end" ? parentPort.close() : parentPort.postMessage({ completed }));`;
+      const result = await run(`
+        const { Worker } = require("node:worker_threads");
+        const hwm = require("node:stream").getDefaultHighWaterMark(false);
+        let caught = 0, seen = "";
+        process.on("uncaughtException", () => { caught++; ${inHandler} });
+        const w = new Worker(${JSON.stringify(worker)}, { eval: true, stdout: true, workerData: hwm });
+        w.stdout.on("data", d => {
+          seen += d.length === hwm ? "[hwm]" : d;
+          if (seen === "ab") throw new Error("from the listener");
+          if (seen === ${JSON.stringify(second)}) { w.stdout.pause(); throw new Error("from the listener"); }
+        });
+        // Two round trips behind the write: a completion that does not wait for the parent has run by now.
+        const completedWhilePaused = [];
+        w.on("message", m => {
+          if (m !== "wrote") completedWhilePaused.push(m.completed);
+          if (completedWhilePaused.length < 2) return w.postMessage("check");
+          w.stdout.resume();
+          w.postMessage("end");
+        });
+        ${watchdog}
+        w.on("exit", code => console.log(JSON.stringify({ code, caught, seen, completedWhilePaused })));`);
+      expect(result).toEqual(
+        exited({ code: 0, caught: 2, seen: second + "[hwm]", completedWhilePaused: [false, false] }),
+      );
+    });
+  });
+
+  // Node posts no request after the throw (lib/internal/worker.js, kOnMessage): its writer stays parked
+  // unless the request from before the entry ran covers the write. Bun asks again after every throw.
+  describe("where Node never exits", () => {
+    test.concurrent.each(["stdout", "stderr"] as const)(
+      "captured %s, a first write after the first turn",
+      async name => {
+        const worker = JSON.stringify(`setImmediate(() => ${twoWrites(name)})`);
+        const result = await run(parent(name, worker, `{ eval: true, stdout: true, stderr: true }`));
+        expect(result).toEqual(exited({ code: 0, caught: 1, seen: "ab" }));
+      },
+    );
+
+    // Eight writes, each from the callback of the one before: eight batches.
+    test.concurrent("captured stdout, the listener throws on every chunk", async () => {
+      const worker = `let n = 0; (function next() { if (n < 8) process.stdout.write("line " + n++ + "\\n", next); })();`;
+      const result = await run(`
+        const { Worker } = require("node:worker_threads");
+        let caught = 0, calls = 0;
+        process.on("uncaughtException", () => caught++);
+        const w = new Worker(${JSON.stringify(worker)}, { eval: true, stdout: true });
+        w.stdout.on("data", () => { calls++; throw new Error("from the listener"); });
+        ${watchdog}
+        w.on("exit", code => console.log(JSON.stringify({ code, caught, calls })));`);
+      expect(result).toEqual(exited({ code: 0, caught: 8, calls: 8 }));
+    });
+
+    // The reader is the same function in the other direction. Node leaves the parent's write pending.
+    test.concurrent("the worker's process.stdin", async () => {
+      const worker = `
+        const { parentPort } = require("node:worker_threads");
+        let caught = 0, seen = "";
+        process.on("uncaughtException", () => caught++);
+        process.stdin.on("data", d => { seen += d; if (seen === "a") throw new Error("from the listener"); });
+        process.stdin.on("end", () => parentPort.postMessage({ caught, seen }));
+        // The first request for input is posted before this message.
+        setImmediate(() => parentPort.postMessage("asked"));`;
+      const result = await run(`
+        const { Worker } = require("node:worker_threads");
+        const w = new Worker(${JSON.stringify(worker)}, { eval: true, stdin: true });
+        // Read before the worker's first request arrives: the writer drops it, nothing is in flight yet.
+        const stdin = w.stdin;
+        let fromWorker, callbacks = 0;
+        w.on("message", m => {
+          if (m !== "asked") return void (fromWorker = m);
+          stdin.write("a", () => { callbacks++; stdin.end("b", () => callbacks++); });
+        });
+        ${watchdog}
+        w.on("exit", code => console.log(JSON.stringify({ code, callbacks, fromWorker })));`);
+      expect(result).toEqual(exited({ code: 0, callbacks: 2, fromWorker: { caught: 1, seen: "ab" } }));
+    });
+  });
+});
+
 // A synchronous worker exit leaves no loop turns for the reader's ack to release
 // the parked writev, so everything buffered behind it must be flushed from the
 // worker's process 'exit' (node's flushSync).

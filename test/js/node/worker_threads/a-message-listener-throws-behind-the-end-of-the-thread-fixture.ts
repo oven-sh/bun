@@ -8,12 +8,15 @@ process.on("uncaughtException", error => void lines.push("uncaught: " + error.me
 
 await untilBehindTheEndOfTheThread(async hold => {
   lines.length = 0;
-  const worker = workerThatEndsInsideItsConstructor(`parentPort.postMessage("first");`, hold);
+  const worker = workerThatEndsInsideItsConstructor(
+    `parentPort.postMessage("first"); parentPort.postMessage("second"); parentPort.postMessage("third");`,
+    hold,
+  );
   let threadId = 0;
   worker.on("message", message => {
-    threadId = worker.threadId;
+    threadId ||= worker.threadId;
     lines.push("message: " + message);
-    throw new Error("thrown by the listener");
+    if (message === "first") throw new Error("thrown by the listener");
   });
   const code = await new Promise(resolve => worker.on("exit", resolve));
   lines.push("exit: " + code);

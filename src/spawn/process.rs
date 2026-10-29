@@ -722,15 +722,7 @@ impl Process {
 
     #[cfg(unix)]
     fn send_signal(&self, signal: u8) -> Maybe<()> {
-        // All by-value `pid_t`/`c_int`; the kernel validates pid/
-        // signal and returns -1/errno (ESRCH/EINVAL/EPERM) — no
-        // memory-safety preconditions, so `safe fn` discharges the
-        // link-time proof here.
-        unsafe extern "C" {
-            #[link_name = "kill"]
-            safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
-        }
-        let err = libc_kill(self.pid, signal as c_int);
+        let err = bun_spawn_sys::ffi::kill(self.pid, signal as c_int);
         if err != 0 {
             let errno_ = bun_sys::get_errno(err as isize);
             // if the process was already killed don't throw
@@ -2993,7 +2985,7 @@ mod spawn_process_body {
         #[cfg(unix)]
         use bun_spawn_sys::ffi::{
             Bun__currentSyncPID, Bun__registerSignalsForForwarding,
-            Bun__sendPendingSignalIfNecessary, Bun__unregisterSignalsForForwarding,
+            Bun__sendPendingSignalIfNecessary, Bun__unregisterSignalsForForwarding, kill,
         };
         #[cfg(target_os = "macos")]
         use bun_spawn_sys::ffi::{
@@ -3051,7 +3043,6 @@ mod spawn_process_body {
             safe fn isatty(fd: c_int) -> c_int;
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             safe fn raise(sig: c_int) -> c_int;
-            safe fn kill(pid: libc::pid_t, sig: c_int) -> c_int;
             /// No args; returns -1/errno on failure. macOS-only caller below.
             #[cfg(target_os = "macos")]
             safe fn kqueue() -> c_int;

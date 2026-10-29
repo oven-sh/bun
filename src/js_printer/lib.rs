@@ -1353,7 +1353,7 @@ pub struct Options<'a> {
     /// bare identifiers without a user binding shadowing them.
     pub has_run_symbol_renamer: bool,
 
-    pub require_or_import_meta_for_source_callback: RequireOrImportMetaCallback,
+    pub require_or_import_meta_for_source_callback: Option<RequireOrImportMetaCallback<'a>>,
 
     /// Module type of the file being printed. `Esm` prints `__toESM(.., 1)`, which ignores `__esModule`.
     pub input_module_type: bundle_opts::ModuleType,
@@ -1388,15 +1388,10 @@ impl<'a> Options<'a> {
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta {
-        if self
-            .require_or_import_meta_for_source_callback
-            .ctx
-            .is_none()
-        {
-            return RequireOrImportMeta::default();
+        match &self.require_or_import_meta_for_source_callback {
+            Some(callback) => callback.call(id, was_unwrapped_require),
+            None => RequireOrImportMeta::default(),
         }
-        self.require_or_import_meta_for_source_callback
-            .call(id, was_unwrapped_require)
     }
 }
 
@@ -1428,7 +1423,7 @@ impl<'a> Default for Options<'a> {
             code_coverage: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
-            require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
+            require_or_import_meta_for_source_callback: None,
             input_module_type: bundle_opts::ModuleType::Unknown,
             module_type: bundle_opts::Format::Esm,
             ts_enums: None,
@@ -1476,56 +1471,44 @@ pub struct RequireOrImportMeta {
     pub was_unwrapped_require: bool,
 }
 
-// Clone/Copy: bitwise OK — `ctx` is a non-owning opaque backref the caller
-// keeps alive for the print pass; `callback` is POD.
+/// A type-erased `&'a T`, and the `T` method to call on it.
 #[derive(Clone, Copy)]
-pub struct RequireOrImportMetaCallback {
-    pub(crate) ctx: Option<NonNull<()>>,
-    pub(crate) callback: fn(*mut (), u32, bool) -> RequireOrImportMeta,
-}
-
-impl Default for RequireOrImportMetaCallback {
-    fn default() -> Self {
-        fn noop(_: *mut (), _: u32, _: bool) -> RequireOrImportMeta {
-            RequireOrImportMeta::default()
-        }
-        Self {
-            ctx: None,
-            callback: noop,
-        }
-    }
+pub struct RequireOrImportMetaCallback<'a> {
+    ctx: NonNull<()>,
+    callback: fn(NonNull<()>, u32, bool) -> RequireOrImportMeta,
+    _marker: core::marker::PhantomData<&'a ()>,
 }
 
 /// PORTING.md §Dispatch — manual vtable. The erased thunk is monomorphized
 /// over `T: RequireOrImportMetaSource`, so `callback` stays a captureless `fn`.
 pub trait RequireOrImportMetaSource {
     fn require_or_import_meta_for_source(
-        &mut self,
+        &self,
         id: u32,
         was_unwrapped_require: bool,
     ) -> RequireOrImportMeta;
 }
 
-impl RequireOrImportMetaCallback {
-    pub(crate) fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
-        (self.callback)(self.ctx.unwrap().as_ptr(), id, was_unwrapped_require)
+impl<'a> RequireOrImportMetaCallback<'a> {
+    fn call(&self, id: u32, was_unwrapped_require: bool) -> RequireOrImportMeta {
+        (self.callback)(self.ctx, id, was_unwrapped_require)
     }
 
-    pub fn init<T: RequireOrImportMetaSource>(ctx: &mut T) -> Self {
+    pub fn init<T: RequireOrImportMetaSource>(ctx: &'a T) -> Self {
         fn thunk<T: RequireOrImportMetaSource>(
-            p: *mut (),
+            p: NonNull<()>,
             id: u32,
             was_unwrapped_require: bool,
         ) -> RequireOrImportMeta {
-            // SAFETY: `p` was constructed from `&mut T` in `init` below; caller guarantees
-            // `ctx` outlives this `RequireOrImportMetaCallback`, so the cast-back
-            // deref is valid and exclusive.
-            unsafe { (*p.cast::<T>()).require_or_import_meta_for_source(id, was_unwrapped_require) }
+            // SAFETY: only `call` calls this, with the `&'a T` that `init` erased beside it, and
+            // `call` needs a `RequireOrImportMetaCallback<'a>`, so `'a` has not ended.
+            unsafe { p.cast::<T>().as_ref() }
+                .require_or_import_meta_for_source(id, was_unwrapped_require)
         }
         Self {
-            // Type-erased to `*mut ()` and cast back to `*mut T` inside the thunk before dereference.
-            ctx: Some(NonNull::from(ctx).cast::<()>()),
+            ctx: NonNull::from(ctx).cast::<()>(),
             callback: thunk::<T>,
+            _marker: core::marker::PhantomData,
         }
     }
 }
@@ -3318,6 +3301,10 @@ pub(crate) mod __gated_printer {
                     {
                         // Node.js doesn't support import.meta.main
                         // Most of the time, leave it in there
+                        let wrap = data.inverted && level.gte(Level::Prefix);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         if data.inverted {
                             self.add_source_mapping(expr.loc);
                             self.print(b"!");
@@ -3329,11 +3316,18 @@ pub(crate) mod __gated_printer {
                             mi.flags.contains_import_meta = true;
                         }
                         self.print(b"import.meta.main");
+                        if wrap {
+                            self.print(b")");
+                        }
                     } else {
                         debug_assert!(
                             self.options.module_type != bundle_opts::Format::InternalBakeDev
                         );
 
+                        let wrap = level.gte(Level::Equals);
+                        if wrap {
+                            self.print(b"(");
+                        }
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
 
@@ -3361,6 +3355,9 @@ pub(crate) mod __gated_printer {
                             self.print_symbol(self.options.commonjs_module_ref);
                         } else {
                             self.print(b"module");
+                        }
+                        if wrap {
+                            self.print(b")");
                         }
                     }
                 }

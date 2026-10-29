@@ -1,0 +1,3 @@
+{"method":1,"static method":1,"getter":1,"setter":1,"no decorator":1}
+method, getter, setter, static method
+1 2 3 4

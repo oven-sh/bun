@@ -1181,8 +1181,7 @@ mod _impl {
         };
         #[cfg(windows)]
         let value: &[u8] = 'slice: {
-            // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
             let err = unsafe { libuv::uv_os_uname(&mut info) };
             if err != 0 {
@@ -1375,8 +1374,7 @@ mod _impl {
         };
         #[cfg(windows)]
         let slice: &[u8] = 'slice: {
-            // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
             let err = unsafe { libuv::uv_os_uname(&mut info) };
             if err != 0 {

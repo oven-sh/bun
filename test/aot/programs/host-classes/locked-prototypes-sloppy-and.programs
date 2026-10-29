@@ -1,0 +1,2783 @@
+////: exports-attempts
+exports.attempts = [
+  ["replaces a method", function (prototype, method) { prototype[method] = function () {}; return "no error"; }],
+  ["adds a property", function (prototype) { prototype.added = 1; return "no error"; }],
+  ["adds an index", function (prototype) { prototype[7] = 1; var added = 7 in prototype; delete prototype[7]; return added ? "added" : "no error"; }],
+  ["deletes a method", function (prototype, method) { return delete prototype[method]; }],
+  ["deletes a missing property", function (prototype) { return delete prototype.missing; }],
+  ["defines a method", function (prototype, method) { Object.defineProperty(prototype, method, { value: function () {} }); return "no error"; }],
+  ["sets __proto__", function (prototype) { prototype.__proto__ = {}; return "no error"; }],
+  ["sets by Reflect", function (prototype, method) { return Reflect.set(prototype, method, function () {}); }],
+  ["is this sloppy code", function () { return this === undefined ? "strict" : "sloppy"; }],
+];
+////: lines-16
+function «1»(«2»: «3»): unknown {
+  return «4»;
+}
+////: lines-18
+function «1»(): number {
+  let sum = «2»;
+  for (let i = 0; i < rounds; i++) sum += «3»(texts[i % texts.length]).length;
+  return sum;
+}
+//// locked-prototypes-sloppy-and-strict/main.ts
+// The same writes to a host prototype, to Array.prototype and to Map.prototype, from sloppy and from strict code. Sloppy code gets the TypeError that strict code gets. All of them keep their members, their prototype and their missing index keys, with the same answers. A name of the program's own is taken by Array.prototype and Map.prototype as in plain Bun, and refused by a host prototype, which takes no new key at all.
+// @ts-ignore
+import { attempts as sloppy } from "./sloppy.cjs";
+// @ts-ignore
+import { attempts as strict } from "./strict.cjs";
+
+type Attempt = [label: string, work: (prototype: object, method: string) => unknown];
+const holders: [string, object, string][] = [
+  ["Array", Array.prototype, "push"],
+  ["Map", Map.prototype, "get"],
+  ["Request", Request.prototype, "text"],
+  ["Response", Response.prototype, "json"],
+  ["Blob", Blob.prototype, "slice"],
+  ["Headers", Headers.prototype, "get"],
+  ["URL", URL.prototype, "toJSON"],
+  ["URLSearchParams", URLSearchParams.prototype, "get"],
+];
+const { defineProperty, getOwnPropertyDescriptor, getPrototypeOf, setPrototypeOf } = Object;
+const lines: string[] = [];
+let count = 0;
+for (const [mode, attempts] of [["sloppy", sloppy], ["strict", strict]] as [string, Attempt[]][]) {
+  for (const [label, work] of attempts) {
+    const answers = holders.map(([, prototype, method]) => {
+      const before = (prototype as Record<string, unknown>)[method];
+      const descriptor = getOwnPropertyDescriptor(prototype, method)!;
+      const parent = getPrototypeOf(prototype);
+      let answer: string;
+      try {
+        answer = String(work(prototype, method));
+      } catch (error) {
+        answer = "throws " + (error as Error).constructor.name;
+      }
+      const unchanged = (prototype as Record<string, unknown>)[method] === before && !("added" in prototype) && getPrototypeOf(prototype) === parent;
+      if (!unchanged) {
+        setPrototypeOf(prototype, parent);
+        defineProperty(prototype, method, descriptor);
+        delete (prototype as Record<string, unknown>).added;
+      }
+      return answer + (unchanged ? "" : " AND IT CHANGED");
+    });
+    const language = answers[0];
+    lines[count++] = `${mode}: ${label}: Array.prototype: ${language}`;
+    holders.forEach(([name], i) => {
+      if (i > 0) lines[count++] = `${mode}: ${label}: ${name}.prototype: ${answers[i] === language ? "the same" : answers[i]}`;
+    });
+  }
+}
+console.log(lines.join("\n"));
+//// locked-prototypes-sloppy-and-strict/sloppy.cjs
+////= exports-attempts
+//// locked-prototypes-sloppy-and-strict/strict.cjs
+"use strict";
+////= exports-attempts
+//// many-header-names-passed-as-arguments-untyped.js
+// A program may pass many header names: over four, the length of the name picks the few constants it can be; up to 64 are taken, with more nothing is compared.
+class Context {
+  constructor(response) {
+    this.response = response;
+  }
+  put(name, value) {
+    this.response.headers.set(name, value);
+  }
+  flood(name, value) {
+    this.response.headers.append(name, value);
+  }
+}
+const list = (holder) => JSON.stringify([...holder.headers]);
+////= attempt-2	/^(Invalid header name|Header '|Cannot convert a symbol)/.test(error.message) ? `${error.name}: ${error.message}` : error.name
+const context = new Context(new Response(null));
+context.put("cache-control", "v0");
+context.put("authorization", "v1");
+context.put("x-request-id", "v2");
+context.put("x-content-type-options", "v3");
+context.put("Location", "v4");
+context.put("vary", "v5");
+context.put("etag", "v6");
+context.put("x-frame-options", "v7");
+context.put("content-language", "v8");
+context.put("X-Powered-By", "v9");
+context.put("retry-after", "v10");
+context.put("x-mine", "v11");
+console.log(list(context.response));
+const flooded = new Context(new Response(null));
+flooded.flood("x-flood-00", "f");
+flooded.flood("x-flood-01", "f");
+flooded.flood("x-flood-02", "f");
+flooded.flood("x-flood-03", "f");
+flooded.flood("x-flood-04", "f");
+flooded.flood("x-flood-05", "f");
+flooded.flood("x-flood-06", "f");
+flooded.flood("x-flood-07", "f");
+flooded.flood("x-flood-08", "f");
+flooded.flood("x-flood-09", "f");
+flooded.flood("x-flood-10", "f");
+flooded.flood("x-flood-11", "f");
+flooded.flood("x-flood-12", "f");
+flooded.flood("x-flood-13", "f");
+flooded.flood("x-flood-14", "f");
+flooded.flood("x-flood-15", "f");
+flooded.flood("x-flood-16", "f");
+flooded.flood("x-flood-17", "f");
+flooded.flood("x-flood-18", "f");
+flooded.flood("x-flood-19", "f");
+flooded.flood("x-flood-20", "f");
+flooded.flood("x-flood-21", "f");
+flooded.flood("x-flood-22", "f");
+flooded.flood("x-flood-23", "f");
+flooded.flood("x-flood-24", "f");
+flooded.flood("x-flood-25", "f");
+flooded.flood("x-flood-26", "f");
+flooded.flood("x-flood-27", "f");
+flooded.flood("x-flood-28", "f");
+flooded.flood("x-flood-29", "f");
+flooded.flood("x-flood-30", "f");
+flooded.flood("x-flood-31", "f");
+flooded.flood("x-flood-32", "f");
+flooded.flood("x-flood-33", "f");
+flooded.flood("x-flood-34", "f");
+flooded.flood("x-flood-35", "f");
+flooded.flood("x-flood-36", "f");
+flooded.flood("x-flood-37", "f");
+flooded.flood("x-flood-38", "f");
+flooded.flood("x-flood-39", "f");
+flooded.flood("x-flood-40", "f");
+flooded.flood("x-flood-41", "f");
+flooded.flood("x-flood-42", "f");
+flooded.flood("x-flood-43", "f");
+flooded.flood("x-flood-44", "f");
+flooded.flood("x-flood-45", "f");
+flooded.flood("x-flood-46", "f");
+flooded.flood("x-flood-47", "f");
+flooded.flood("x-flood-48", "f");
+flooded.flood("x-flood-49", "f");
+flooded.flood("x-flood-50", "f");
+flooded.flood("x-flood-51", "f");
+flooded.flood("x-flood-52", "f");
+flooded.flood("x-flood-53", "f");
+flooded.flood("x-flood-54", "f");
+flooded.flood("x-flood-55", "f");
+flooded.flood("x-flood-56", "f");
+flooded.flood("x-flood-57", "f");
+flooded.flood("x-flood-58", "f");
+flooded.flood("x-flood-59", "f");
+flooded.flood("x-flood-60", "f");
+flooded.flood("x-flood-61", "f");
+flooded.flood("x-flood-62", "f");
+flooded.flood("x-flood-63", "f");
+flooded.flood("x-flood-64", "f");
+console.log([...flooded.response.headers].length);
+
+const log = [];
+const made = (text) => text.split("").join("");
+const rope = (text) => text.slice(0, 3) + text.slice(3);
+const others = ["cache-contro1", "CACHE-CONTROL", "Authorization", "location", "x-minE", "x-mine ", "", "v", "vary2", "x".repeat(13), "x".repeat(300), "bad name 1234", "caché-control", 7, 1234567890123, null, undefined, true, { toString: () => (log.push("asked"), "etag") }, ["vary"], Symbol("vary")];
+for (const name of ["cache-control", "authorization", "x-request-id", "x-content-type-options", "Location", "vary", "etag", "x-frame-options", "content-language", "X-Powered-By", "retry-after", "x-mine"]) {
+  const other = new Context(new Response(null));
+  console.log(name, String(attempt(() => other.put(made(name), "made"))), String(attempt(() => other.put(rope(name), "rope"))), String(attempt(() => other.put(name.toUpperCase(), "upper"))), list(other.response));
+}
+for (const name of others) {
+  const other = new Context(new Response(null, { headers: { etag: "before", vary: "before" } }));
+  console.log(typeof name === "symbol" ? "symbol" : JSON.stringify(String(name).slice(0, 20)), String(attempt(() => other.put(name, "v"))), list(other.response), log.join(","));
+}
+
+const server = Bun.serve({
+  port: 0,
+  routes: {
+    "/routed/:name": (request) => {
+      const routed = new Context(Response.json({ id: 1 }));
+      routed.put("cache-control", "no-store");
+      routed.put("x-frame-options", "DENY");
+      routed.put(request.params.name, "from the path");
+      return routed.response;
+    },
+  },
+  fetch: () => new Response("not found", { status: 404 }),
+});
+for (const name of ["etag", "x-unheard-of", "VARY"]) {
+  const response = await fetch(new URL(`/routed/${name}`, server.url));
+  console.log(JSON.stringify([...response.headers].filter(([header]) => header !== "date")), await response.text());
+}
+await server.stop(true);
+//// members-of-a-prototype-that-no-property-leads-to.js
+// node:worker_threads reaches Bun's stream code, which calls methods of Bun.ArrayBufferSink. The compiler takes those methods for constants and start-up fixes them.
+// Start-up finds the prototype object through the class, whether or not the constructor has a property "prototype".
+import { isMainThread } from "node:worker_threads";
+
+console.log(isMainThread, Object.hasOwn(Bun.ArrayBufferSink, "prototype"));
+
+const sink = new Bun.ArrayBufferSink();
+sink.start({ asUint8Array: true });
+sink.write("ab");
+sink.write(new Uint8Array([99]));
+console.log(Array.from(sink.end()).join(" "));
+
+const prototype = Object.getPrototypeOf(sink);
+console.log(typeof prototype.write, typeof prototype.end, prototype === Object.getPrototypeOf(new Bun.ArrayBufferSink()));
+//// members-of-a-server.ts
+const closed: string[] = [];
+let seenByHandler: unknown;
+
+// The declarations of Bun's types leave `address` out.
+type WithAddress = Bun.Server<undefined> & { address: string | null | { address: string; family: string; port: number } };
+
+const server: WithAddress = Bun.serve({
+  port: 0,
+  fetch(request, itself): Response | undefined {
+    seenByHandler = this;
+    const path = new URL(request.url).pathname;
+    if (path === "/socket") return itself.upgrade(request) ? undefined : new Response("no upgrade", { status: 400 });
+    if (path === "/ip") {
+      const ip = itself.requestIP(request);
+      return Response.json({ keys: ip && Object.keys(ip).sort(), port: typeof ip?.port, family: typeof ip?.family });
+    }
+    if (path === "/timeout") return new Response(String(itself.timeout(request, 5)));
+    return new Response(`${server.pendingRequests > 0} ${itself === undefined ? "no second argument" : itself === server}`);
+  },
+  websocket: {
+    message() {},
+    close(_socket, code) {
+      closed.push(`closed ${typeof code}`);
+    },
+  },
+}) as WithAddress;
+
+const describe = (value: unknown) =>
+  value === null ? "null" : typeof value === "object" ? Object.prototype.toString.call(value) : typeof value;
+
+console.log("port", describe(server.port), server.port === server.port, server.port! > 0);
+console.log("url", describe(server.url), server.url instanceof URL, server.url === server.url, server.url.port === String(server.port));
+console.log("hostname", describe(server.hostname), server.hostname);
+console.log("protocol", server.protocol);
+console.log("development", describe(server.development));
+console.log("id", describe(server.id));
+console.log("address", describe(server.address), Object.keys(server.address!).sort().join(), server.address === server.address);
+console.log("pending", server.pendingRequests, server.pendingWebSockets);
+console.log("ref", server.ref() === (server as unknown), server.unref() === (server as unknown), server.ref() === (server as unknown));
+
+console.log("plain", await (await fetch(server.url)).text(), seenByHandler === server);
+console.log("ip", await (await fetch(new URL("/ip", server.url))).text());
+console.log("timeout", await (await fetch(new URL("/timeout", server.url))).text());
+console.log("through fetch", await (await server.fetch(new Request(server.url))).text(), seenByHandler === server);
+console.log("through fetch by text", await (await server.fetch("/")).text());
+
+for (const wrong of [undefined, 1, {}, new Response("")]) {
+  try {
+    console.log("requestIP", describe(wrong), describe(server.requestIP(wrong as Request)));
+  } catch (error) {
+    console.log("requestIP", describe(wrong), "throws", (error as Error).name);
+  }
+}
+for (const method of ["stop", "ref", "requestIP", "closeIdleConnections"] as const) {
+  try {
+    (server[method] as Function).call({});
+    console.log(method, "took another receiver");
+  } catch (error) {
+    console.log(method, "on another receiver throws", (error as Error).name);
+  }
+}
+
+const socket = new WebSocket(new URL("/socket", server.url).href.replace("http", "ws"));
+await new Promise(resolve => (socket.onopen = resolve));
+console.log("sockets", server.pendingWebSockets);
+console.log("idle", describe(server.closeIdleConnections()));
+
+const first = server.stop(true);
+const second = server.stop(true);
+console.log("stop", describe(first), first instanceof Promise, describe(second));
+console.log("stopped", describe(await first), closed.join());
+console.log("dispose", describe(server[Symbol.dispose]()));
+console.log("after", describe(server.port), describe(server.url), server.pendingWebSockets);
+
+const path = `${process.env.TMPDIR ?? "/tmp"}/members-of-a-server-${process.pid}.sock`;
+if (process.platform !== "win32") {
+  using local = Bun.serve({ unix: path, fetch: () => new Response("local") }) as WithAddress;
+  console.log("unix", describe(local.port), describe(local.hostname), describe(local.address), local.address === path);
+  console.log("unix", await (await fetch("http://localhost/", { unix: path })).text());
+}
+//// members-of-process-that-windows-lacks.js
+// process.getuid and its ten siblings exist on every platform but Windows. Packages ask before they call.
+const ask = (name, member, call) => console.log(name, typeof member, member ? typeof call() : "missing");
+ask("getegid", process.getegid, () => process.getegid());
+ask("geteuid", process.geteuid, () => process.geteuid());
+ask("getgid", process.getgid, () => process.getgid());
+ask("getgroups", process.getgroups, () => process.getgroups());
+ask("getuid", process.getuid, () => process.getuid());
+for (const [name, member] of [
+  ["initgroups", process.initgroups],
+  ["setegid", process.setegid],
+  ["seteuid", process.seteuid],
+  ["setgid", process.setgid],
+  ["setgroups", process.setgroups],
+  ["setuid", process.setuid],
+])
+  console.log(name, typeof member);
+function isRoot() {
+  return process.getuid && process.getuid() === 0;
+}
+function ownerOrMinusOne() {
+  return process.getuid ? process.getuid() >= 0 : -1;
+}
+console.log(typeof isRoot(), ownerOrMinusOne());
+console.log(typeof process.getuid?.(), typeof process.getgid?.());
+console.log("getuid" in process, Object.hasOwn(process, "getuid"), Object.keys(process).includes("getuid"));
+//// members-that-the-host-makes-at-their-first-read-become-own-properties.cjs
+// The host makes these at their first read and stores them on the object, long after the program has started.
+console.log(typeof console.Console, typeof console._stdout, typeof console._stderr, console._stdout === process.stdout);
+console.log(Object.getOwnPropertyDescriptor(console, "_stdout").value === process.stdout, Object.getOwnPropertyDescriptor(console, "Console").value === console.Console);
+const { performance } = require("node:perf_hooks");
+console.log(typeof performance.timeOrigin, performance === globalThis.performance, typeof performance.eventLoopUtilization, typeof performance.nodeTiming);
+console.log(typeof navigator.hardwareConcurrency, typeof navigator.userAgent, Object.keys(Object.getOwnPropertyDescriptors(navigator)).sort().join());
+console.log(process.stdout === process.stdout, typeof process.stdout.fd, process.stdin === process.stdin, typeof process.binding, typeof process.mainModule, process.argv0.length > 0);
+console.log(typeof process.report.getReport, typeof process.allowedNodeEnvironmentFlags, Object.getOwnPropertyDescriptor(process, "stdout").get === undefined);
+//// methods-of-host-classes-are-entered-with-every-number-of-arguments.ts
+////= framesOf	4
+
+function show(label: string, run: () => unknown) {
+  try {
+    const value = run();
+    console.log(label, typeof value === "object" && value !== null ? JSON.stringify(value) : String(value));
+  } catch (error) {
+    const e = error as Error & { code?: string };
+    console.log(label, "threw", e.name, e.code ?? "-", e.message, "|", framesOf(e.stack));
+  }
+}
+
+const decoder = new TextDecoder();
+const bytes = new Uint8Array([104, 105, 33]);
+show("decode", () => decoder.decode(bytes));
+show("decode nothing", () => decoder.decode());
+show("decode with options", () => decoder.decode(bytes, { stream: false }));
+show("decode a number", () => (decoder as any).decode(5));
+show("decode with more arguments", () => (decoder as any).decode(bytes, undefined, 1, 2, 3, 4, 5, 6, 7));
+
+const hasher = new Bun.CryptoHasher("sha1");
+show("update", () => hasher.update("abc") === hasher);
+show("digest", () => hasher.digest("hex"));
+show("update nothing", () => (new Bun.CryptoHasher("sha1") as any).update());
+show("digest of an unknown encoding", () => (new Bun.CryptoHasher("sha1") as any).digest("nothing"));
+
+const glob = new Bun.Glob("*.ts");
+show("match", () => glob.match("a.ts"));
+show("no match", () => glob.match("a.js"));
+show("match a number", () => (glob as any).match(1));
+
+const blob = new Blob(["hello world"]);
+show("slice", () => blob.slice(0, 5).size);
+show("slice nothing", () => blob.slice().size);
+
+function callOn(receiver: any) {
+  return TextDecoder.prototype.decode.call(receiver, bytes);
+}
+show("another receiver", () => callOn({}));
+show("the right receiver", () => callOn(decoder));
+
+class Below extends TextDecoder {}
+show("a class below", () => new Below().decode(bytes));
+const inheriting = Object.create(decoder);
+show("an object above which the instance stands", () => inheriting.decode(bytes));
+
+let total = 0;
+for (let i = 0; i < 1000; i++) total += decoder.decode(bytes).length + (glob.match("x" + i + ".ts") ? 1 : 0);
+console.log("total", total);
+
+const text = await blob.text();
+console.log("text", text);
+const kept: string[] = [];
+for (let i = 0; i < 20000; i++) {
+  const made = decoder.decode(new Uint8Array([65 + (i % 26), 66, 67]));
+  if (i % 5000 === 0) {
+    Bun.gc(true);
+    kept.push(made);
+  }
+}
+console.log("kept", kept.join(","));
+//// methods-whose-arguments-the-host-converts-are-entered-with-a-frame.ts
+// A method of a host class that converts its own arguments is entered at its host function: any receiver, any arguments, any number of them.
+// STATISTIC: NativeFunctionsCalledDirectly >= 5
+type Wide = {
+  match(...all: unknown[]): unknown;
+  update(...all: unknown[]): unknown;
+  digest(...all: unknown[]): unknown;
+  decode(...all: unknown[]): unknown;
+};
+
+function say(run: () => unknown): string {
+  try {
+    const answer = run();
+    return typeof answer === "object" && answer !== null ? Object.prototype.toString.call(answer) : String(answer);
+  } catch (error) {
+    return `${(error as Error).name} ${(error as { code?: string }).code ?? ""}: ${(error as Error).message}`;
+  }
+}
+
+const glob = new Bun.Glob("*.ts");
+const decoder = new TextDecoder();
+const bytes = new Uint8Array([104, 105]);
+let conversions = 0;
+const counted = {
+  toString() {
+    conversions++;
+    return "counted.ts";
+  },
+};
+const throwing = {
+  toString(): string {
+    throw new RangeError("no text");
+  },
+};
+
+function matchTyped(subject: Bun.Glob, text: string): boolean {
+  return subject.match(text);
+}
+function matchWide(subject: Wide, text: unknown): unknown {
+  return subject.match(text, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+}
+function matchNothing(subject: Wide): unknown {
+  return subject.match();
+}
+function hash(subject: Bun.CryptoHasher, text: string | Uint8Array): string {
+  subject.update(text);
+  return subject.digest("hex");
+}
+function hashWide(subject: Wide, data: unknown, encoding: unknown): unknown {
+  subject.update(data, encoding, 0, 0, 0, 0, 0, 0);
+  return subject.digest("hex", 0, 0, 0, 0, 0, 0, 0);
+}
+function decodeTyped(subject: TextDecoder, from: Uint8Array): string {
+  return subject.decode(from);
+}
+function decodeWide(subject: Wide, from: unknown, options: unknown): unknown {
+  return subject.decode(from, options, 1, 2, 3, 4, 5, 6);
+}
+
+const impostor: Wide = {
+  match: (...all) => `impostor match ${all.length}`,
+  update: (...all) => `impostor update ${all.length}`,
+  digest: (...all) => `impostor digest ${all.length}`,
+  decode: (...all) => `impostor decode ${all.length}`,
+};
+const heir = Object.create(glob) as Wide;
+const borrowed = { match: glob.match, update: Bun.CryptoHasher.prototype.update, digest: Bun.CryptoHasher.prototype.digest, decode: decoder.decode } as unknown as Wide;
+
+const lines: string[] = [];
+for (let round = 0; round < 3; round++) {
+  lines.push(String(matchTyped(glob, "a.ts")), String(matchTyped(glob, "a.js")));
+  for (const subject of [glob as unknown as Wide, impostor, heir, borrowed]) {
+    for (const text of ["b.ts", "b.js", counted, throwing, 7, undefined, null, Symbol.iterator, 3n, ["c.ts"]]) {
+      lines.push(say(() => matchWide(subject, text)));
+    }
+    lines.push(say(() => matchNothing(subject)));
+  }
+  lines.push(hash(new Bun.CryptoHasher("sha1"), "abc"), hash(new Bun.CryptoHasher("md5"), bytes));
+  for (const subject of [new Bun.CryptoHasher("sha256") as unknown as Wide, impostor, borrowed]) {
+    for (const data of ["abc", bytes, 7, undefined, {}, throwing]) {
+      lines.push(say(() => hashWide(subject, data, undefined)));
+      lines.push(say(() => hashWide(subject, data, "hex")));
+    }
+  }
+  lines.push(decodeTyped(decoder, bytes));
+  for (const subject of [decoder as unknown as Wide, impostor, borrowed]) {
+    for (const from of [bytes, bytes.buffer, undefined, "text", 7, {}]) {
+      lines.push(say(() => decodeWide(subject, from, undefined)));
+      lines.push(say(() => decodeWide(subject, from, { stream: true })));
+      lines.push(say(() => decodeWide(subject, from, 5)));
+    }
+  }
+}
+console.log(lines.length, conversions);
+console.log(lines.slice(0, lines.length / 3).join("\n"));
+console.log(lines.slice(0, lines.length / 3).join() === lines.slice(lines.length / 3, (2 * lines.length) / 3).join());
+//// names-declared-by-sixteen-kinds-of-vm-scripts-as-seen-from-the-host.js
+const vm = require("node:vm");
+function tryOne(name, code, key) {
+  const sandbox = Object.create(null); sandbox.seed = 2;
+  const context = vm.createContext(sandbox);
+  const before = new Set(Object.getOwnPropertyNames(context));
+  let result; try { result = vm.runInContext(code, context); } catch (e) { result = "threw " + e.name; }
+  const names = Object.getOwnPropertyNames(context).filter(n => !before.has(n)).join();
+  const d = Object.getOwnPropertyDescriptor(context, key);
+  let again; try { again = vm.runInContext("typeof " + key + " === 'undefined' ? 'gone' : typeof " + key, context); } catch (e) { again = "threw " + e.name; }
+  console.log(name.padEnd(28), "| new names:", names || "-", "| own value:", d ? ("value" in d ? typeof d.value + " " + String(typeof d.value === "function" ? "fn" : d.value) : "accessor") : "none", "| host read:", typeof context[key], "| in:", key in context, "| a later script sees:", again);
+}
+tryOne("var with a value", "var made = seed * 21", "made");
+tryOne("var, then a store", "var made; made = 42", "made");
+tryOne("function declaration", "function made() {}", "made");
+tryOne("implicit global", "made = 42", "made");
+tryOne("globalThis.made", "globalThis.made = 42", "made");
+tryOne("this.made", "this.made = 42", "made");
+tryOne("let", "let made = 42", "made");
+tryOne("const", "const made = 42", "made");
+tryOne("class", "class made {}", "made");
+tryOne("var in a second script", "var other = 1", "other");
+tryOne("var over a host's name", "var seed = 7", "seed");
+tryOne("defineProperty", "Object.defineProperty(globalThis, 'made', { value: 42, enumerable: true, configurable: true, writable: true })", "made");
+tryOne("async function", "async function made() {}", "made");
+tryOne("var in eval", "eval('var made = 42')", "made");
+const s = new vm.Script("var viaScript = 5; function alsoScript() {}"); const c2 = vm.createContext({}); s.runInContext(c2); console.log("new vm.Script:", Object.getOwnPropertyNames(c2).join() || "-");
+const r = {}; vm.runInNewContext("var fresh = 1; function f() {}", r); console.log("runInNewContext:", Object.getOwnPropertyNames(r).join() || "-");
+//// native-functions-that-count-their-arguments.js
+// Native functions of the host that count their arguments: called with none they throw, and `undefined` counts as one. Bare, through a variable, through globalThis, by call, apply, a spread of nothing and Reflect.apply.
+function attempt(run) { try { const v = run(); return typeof v === "object" && v !== null ? JSON.stringify(v) : String(v); } catch (e) { return e.constructor.name + ": " + e.message; } }
+const clone = structuredClone, none = [];
+console.log("bare", attempt(() => structuredClone()));
+console.log("variable", attempt(() => clone()));
+console.log("globalThis", attempt(() => globalThis.structuredClone()));
+console.log("call", attempt(() => structuredClone.call(undefined)));
+console.log("apply", attempt(() => structuredClone.apply(undefined, [])));
+console.log("spread", attempt(() => structuredClone(...none)));
+console.log("Reflect.apply", attempt(() => Reflect.apply(structuredClone, undefined, none)));
+console.log("bound", attempt(structuredClone.bind(undefined)));
+console.log("undefined", attempt(() => structuredClone(undefined)), attempt(() => clone(undefined)), attempt(() => structuredClone(undefined, undefined)), attempt(() => structuredClone(void 0, null)));
+console.log("values", attempt(() => structuredClone(1)), attempt(() => structuredClone("a")), attempt(() => structuredClone(null)), attempt(() => structuredClone({ a: [1, { b: 2 }] })), attempt(() => structuredClone(5n)), attempt(() => structuredClone(true, {})));
+console.log("refused", attempt(() => structuredClone(() => {})).split(":")[0], attempt(() => structuredClone(Symbol("s"))).split(":")[0], attempt(() => structuredClone(1, 5)).split(":")[0]);
+function many(n) { let thrown = 0; for (let i = 0; i < n; i++) { try { i & 1 ? structuredClone() : structuredClone(i); } catch { thrown++; } } return thrown; }
+console.log("in a loop", many(400));
+for (const name of ["atob", "btoa", "queueMicrotask", "setTimeout", "setInterval", "setImmediate", "clearTimeout", "reportError", "fetch", "postMessage"]) {
+  if (name === "fetch") { console.log(name, typeof attempt(() => { const p = fetch(); p.catch(() => {}); return "a promise"; })); continue; }
+  console.log(name, attempt(() => { const v = globalThis[name](); return typeof v; }).split("\n")[0]);
+}
+console.log("bare again", attempt(() => atob()), attempt(() => btoa()), attempt(() => queueMicrotask()).split("\n")[0]);
+//// native-getters-any-receiver.ts
+// A getter of a native class (Request, Response, Blob) read from every kind of receiver that TypeScript lets pass for an instance: the answers are plain Bun's. Request.prototype itself refuses every change.
+import vm from "node:vm";
+
+const lines: string[] = [];
+function say(label: string, work: () => unknown, withMessage = true) {
+  let text: string;
+  try {
+    const value = work();
+    text = typeof value === "string" ? JSON.stringify(value) : typeof value === "object" && value !== null ? Object.prototype.toString.call(value) : String(value);
+  } catch (error) {
+    text = "throws " + (error as Error).constructor.name + (withMessage ? ": " + (error as Error).message : "");
+  }
+  lines.push(label + ": " + text);
+}
+
+////= lines-16	urlOf	request	Request	request.url
+////= lines-16	methodOf	request	Request	request.method
+////= lines-16	headersOf	request	Request	request.headers
+function lengthOfUrl(request: Request) {
+  return request.url.length;
+}
+////= lines-16	statusOf	response	Response	response.status
+////= lines-16	statusTextOf	response	Response	response.statusText
+////= lines-16	sizeOf	blob	Blob	blob.size
+function all(label: string, make: () => Request, urlIsText = true) {
+  say(label + " url", () => urlOf(make()));
+  say(label + " method", () => methodOf(make()));
+  say(label + " headers", () => headersOf(make()));
+  if (urlIsText) say(label + " url.length", () => lengthOfUrl(make()));
+  say(label + " url twice", () => {
+    const request = make();
+    return urlOf(request) === urlOf(request);
+  });
+  say(label + " headers twice", () => {
+    const request = make();
+    return headersOf(request) === headersOf(request);
+  });
+}
+
+const address = "http://example.com/a/b?c=d";
+const fresh = () => new Request(address, { method: "POST", headers: { "x-one": "1" }, body: "abc" });
+
+for (let turn = 0; turn < 200; turn++) {
+  urlOf(fresh());
+  methodOf(fresh());
+  headersOf(fresh());
+  lengthOfUrl(fresh());
+}
+
+all("an instance", fresh);
+
+all("an own value in front", () => {
+  const request = fresh();
+  Object.defineProperty(request, "url", { value: "own value", configurable: true });
+  Object.defineProperty(request, "method", { value: 7, configurable: true });
+  Object.defineProperty(request, "headers", { value: null, configurable: true });
+  return request;
+});
+all("an own value in front, after a read", () => {
+  const request = fresh();
+  urlOf(request);
+  methodOf(request);
+  headersOf(request);
+  Object.defineProperty(request, "url", { value: "own value", configurable: true });
+  Object.defineProperty(request, "method", { value: 7, configurable: true });
+  Object.defineProperty(request, "headers", { value: null, configurable: true });
+  return request;
+});
+let reads = 0;
+all("an own getter in front", () => {
+  const request = fresh();
+  Object.defineProperty(request, "url", { get: () => "own getter " + ++reads, configurable: true });
+  Object.defineProperty(request, "method", { get: () => undefined, configurable: true });
+  Object.defineProperty(request, "headers", { get: () => [reads], configurable: true });
+  return request;
+});
+all("an own getter that throws", () => {
+  const request = fresh();
+  for (const name of ["url", "method", "headers"])
+    Object.defineProperty(request, name, {
+      get() {
+        throw new RangeError("no " + name);
+      },
+    });
+  return request;
+});
+all("an own value put in front and deleted", () => {
+  const request = fresh();
+  Object.defineProperty(request, "url", { value: "own value", configurable: true });
+  delete (request as any).url;
+  return request;
+});
+all("another own property", () => {
+  const request = fresh();
+  (request as any).extra = 1;
+  return request;
+});
+all("frozen", () => Object.freeze(fresh()));
+all("frozen after a read", () => {
+  const request = fresh();
+  urlOf(request);
+  return Object.freeze(request);
+});
+all("not extensible", () => Object.preventExtensions(fresh()));
+
+for (const name of ["url", "method", "headers", "signal", "body", "bodyUsed"]) {
+  say("Request.prototype." + name + " redefined", () => Object.defineProperty(Request.prototype, name, { get: () => "replaced" }) === Request.prototype, false);
+  say("Request.prototype." + name + " made a value", () => Object.defineProperty(Request.prototype, name, { value: "replaced" }) === Request.prototype, false);
+  say("Request.prototype." + name + " deleted", () => delete (Request.prototype as any)[name], false);
+  say("Request.prototype." + name + " deleted by Reflect", () => Reflect.deleteProperty(Request.prototype, name));
+  say("Request.prototype." + name + " assigned", () => ((Request.prototype as any)[name] = "replaced"), false);
+  say("Request.prototype." + name + " assigned by Reflect", () => Reflect.set(Request.prototype, name, "replaced"));
+  say("an instance's " + name + " assigned", () => ((fresh() as any)[name] = "replaced"), false);
+  say("an instance's " + name + " assigned by Reflect", () => Reflect.set(fresh(), name, "replaced"));
+  say("Request.prototype." + name + " described", () => {
+    const { get, set, enumerable, configurable } = Object.getOwnPropertyDescriptor(Request.prototype, name)!;
+    return [typeof get, typeof set, enumerable, configurable].join();
+  });
+}
+all("an instance after all that", fresh);
+
+class Heir extends Request {}
+class HeirWithGetters extends Request {
+  override get url() {
+    return "heir of " + super.url;
+  }
+  override get method() {
+    return "HEIR";
+  }
+  override get headers() {
+    return new Headers({ heir: "yes" });
+  }
+}
+class HeirWithFields extends Request {
+  override url = "a field";
+  override method = "FIELD";
+}
+all("an heir", () => new Heir(address, { method: "PUT" }));
+all("an heir with getters", () => new HeirWithGetters(address, { method: "PUT" }));
+all("an heir with fields", () => new HeirWithFields(address, { method: "PUT" }));
+say("an heir with getters, header", () => (headersOf(new HeirWithGetters(address)) as Headers).get("heir"));
+
+all("a plain object", () => ({ url: "plain", method: "PLAIN", headers: new Headers() }) as Request);
+all("a plain object of other types", () => ({ url: 5, method: null, headers: "text" }) as unknown as Request, false);
+all("an empty object", () => ({}) as Request, false);
+all("an object that inherits from an instance", () => Object.create(fresh()) as Request);
+all("an object that inherits from Request.prototype", () => Object.create(Request.prototype) as Request);
+all("Request.prototype", () => Request.prototype);
+all("an instance with another prototype", () => Object.setPrototypeOf(fresh(), { url: "of the other prototype", method: "OTHER" }) as Request);
+all("an instance without a prototype", () => Object.setPrototypeOf(fresh(), null) as Request, false);
+all("an instance with a prototype in between", () => Object.setPrototypeOf(fresh(), Object.create(Request.prototype, { url: { value: "in between" } })) as Request);
+all("an instance with an empty prototype in between", () => Object.setPrototypeOf(fresh(), Object.create(Request.prototype)) as Request);
+all("a Response", () => new Response("x", { status: 201, statusText: "Made", headers: { "x-two": "2" } }) as unknown as Request);
+all("a Blob", () => new Blob(["abc"]) as unknown as Request, false);
+all("a proxy without traps", () => new Proxy(fresh(), {}));
+all("a proxy that reads from its target", () => new Proxy(fresh(), { get: (target, name) => Reflect.get(target, name, target) }));
+all("a proxy that answers", () => new Proxy(fresh(), { get: (_, name) => "trapped " + String(name) }));
+all("a function", () => function url() {} as unknown as Request, false);
+all("an array", () => [] as unknown as Request, false);
+
+const { get: getterOfUrl } = Object.getOwnPropertyDescriptor(Request.prototype, "url")!;
+say("the getter on an instance", () => getterOfUrl!.call(fresh()));
+say("the getter on an heir", () => getterOfUrl!.call(new HeirWithGetters(address)));
+say("the getter on an instance with an own value", () => getterOfUrl!.call(Object.defineProperty(fresh(), "url", { value: "own value" })));
+say("the getter on an object", () => getterOfUrl!.call({}));
+say("the getter on undefined", () => getterOfUrl!.call(undefined));
+say("the getter on a Response", () => getterOfUrl!.call(new Response()));
+say("Reflect.get with an object for the receiver", () => Reflect.get(Request.prototype, "url", {}));
+say("Reflect.get with an instance for the receiver", () => Reflect.get(Request.prototype, "url", fresh()));
+say("Reflect.get of an instance with an object for the receiver", () => Reflect.get(fresh(), "url", {}));
+say("Reflect.get of an object with an instance for the receiver", () => Reflect.get({ url: 1 }, "url", fresh()));
+
+say("another realm's function for new.target", () => {
+  const other = vm.runInNewContext("(function Other() {})");
+  const request = Reflect.construct(Request, [address], other) as Request;
+  return [urlOf(request), methodOf(request), Object.getPrototypeOf(request) === Request.prototype, Object.getPrototypeOf(request) === other.prototype].join();
+});
+say("another realm's function without a prototype for new.target", () => {
+  const other = vm.runInNewContext("(function Other() {})");
+  other.prototype = null;
+  const request = Reflect.construct(Request, [address], other) as Request;
+  return [urlOf(request), methodOf(request), Object.getPrototypeOf(request) === Request.prototype].join();
+});
+say("read in another realm", () => vm.runInNewContext("request.url + ' ' + request.method + ' ' + request.headers.get('x-one')", { request: fresh() }));
+say("shadowed in another realm", () => {
+  const request = fresh();
+  vm.runInNewContext("Object.defineProperty(request, 'url', { value: 'from the other realm' })", { request });
+  return urlOf(request);
+});
+
+say("the body after a clone", () => {
+  const request = fresh();
+  const before = request.body;
+  const copy = request.clone();
+  const after = request.body;
+  return [before === after, before === copy.body, after === request.body, Object.prototype.toString.call(after)].join();
+});
+say("the body of a GET", () => new Request(address).body);
+say("the body twice", () => {
+  const request = fresh();
+  return request.body === request.body;
+});
+say("bodyUsed before and after", () => {
+  const request = fresh();
+  const before = request.bodyUsed;
+  void request.text();
+  return [before, request.bodyUsed].join();
+});
+say("the signal twice", () => {
+  const request = fresh();
+  return request.signal === request.signal;
+});
+say("the signal that was handed in", () => {
+  const controller = new AbortController();
+  const request = new Request(address, { signal: controller.signal });
+  const before = request.signal.aborted;
+  controller.abort();
+  return [before, request.signal.aborted].join();
+});
+
+say("headers written through the cached object", () => {
+  const request = fresh();
+  (headersOf(request) as Headers).set("x-one", "changed");
+  return (headersOf(request) as Headers).get("x-one");
+});
+
+say("what an old instance caches lives on", () => {
+  const kept: Request[] = [];
+  for (let i = 0; i < 200; i++) kept.push(new Request(address + i, { headers: { n: String(i) } }));
+  Bun.gc(true);
+  Bun.gc(true);
+  for (const request of kept) {
+    urlOf(request);
+    headersOf(request);
+  }
+  const litter: unknown[] = [];
+  for (let i = 0; i < 50000; i++) litter.push({ i, text: "t" + i });
+  Bun.gc(false);
+  Bun.gc(true);
+  let sum = 0;
+  for (let i = 0; i < kept.length; i++) if (urlOf(kept[i]) === address + i && (headersOf(kept[i]) as Headers).get("n") === String(i)) sum++;
+  return sum + " " + (litter.length === 50000);
+});
+
+const made = () => new Response("body", { status: 201, statusText: "Made" });
+say("a response's status", () => statusOf(made()));
+say("a response's status text", () => statusTextOf(made()));
+say("a response's status text twice", () => {
+  const response = made();
+  return statusTextOf(response) === statusTextOf(response);
+});
+say("a response with an own status", () => statusOf(Object.defineProperty(made(), "status", { value: "own" })));
+say("a plain object for a response", () => statusOf({ status: "plain" } as unknown as Response));
+say("a request for a response", () => statusOf(fresh() as unknown as Response));
+say("a blob's size", () => sizeOf(new Blob(["abcd"])));
+say("a file's size", () => sizeOf(new File(["abcde"], "name.txt")));
+say("a plain object for a blob", () => sizeOf({ size: "plain" } as unknown as Blob));
+say("a file's name, set", () => {
+  const file = new File(["a"], "before.txt");
+  const before = file.name;
+  (file as any).name = "after.txt";
+  return before + " " + file.name;
+});
+
+console.log(lines.join("\n"));
+//// native-getters-undeclared-results.ts
+// What is read through a declared getter of a native class need not be of the declared type: an own property or a plain object may hold anything, and nothing tests it, because a declaration file declares the member. The receiver is tested: any object, undefined and null pass for `Request`, and a primitive throws a TypeError at the cast.
+const lines: string[] = [];
+////= say-2
+
+function urlOf(request: Request) {
+  return request.url;
+}
+function methodOf(request: Request) {
+  return request.method;
+}
+function headersOf(request: Request) {
+  return request.headers;
+}
+function lengthOfUrl(request: Request) {
+  return request.url.length;
+}
+
+const address = "http://example.com/a/b?c=d";
+const plain = () => ({ url: 5, method: null, headers: "text" }) as unknown as Request;
+const shadowed = () => Object.defineProperties(new Request(address), { url: { value: 5 }, method: { value: 7 }, headers: { value: "text" } });
+for (const [label, make] of [["a plain object", plain], ["an instance with own values", shadowed]] as const) {
+  say(label + " url", () => urlOf(make()));
+  say(label + " method", () => methodOf(make()));
+  say(label + " headers", () => headersOf(make()));
+  say(label + " url.length", () => lengthOfUrl(make()));
+}
+for (const [label, receiver] of [["undefined", undefined], ["null", null], ["a number", 5], ["a string", "text"], ["a symbol", Symbol.iterator]] as const) {
+  say(label + " url", () => urlOf(receiver as unknown as Request));
+  say(label + " method", () => methodOf(receiver as unknown as Request));
+  say(label + " headers", () => headersOf(receiver as unknown as Request));
+}
+say("an empty object url.length", () => lengthOfUrl({} as Request));
+say("a number url.length", () => lengthOfUrl(5 as unknown as Request));
+console.log(lines.join("\n"));
+//// native-setters-of-many-subclasses-stored-in-turn-untyped.js
+// Two native setters of Event, stored to in turn at one place on instances of hundreds of subclasses.
+function write(event, value) {
+  event.cancelBubble = value;
+  event.returnValue = value;
+}
+for (const shapes of [1, 40, 100, 300, 1200]) {
+  const made = [];
+  for (let i = 0; i < shapes; i++) made.push(new (class extends Event {})("e", { cancelable: true }));
+  for (let round = 0; round < 4; round++) for (let i = 0; i < made.length; i++) write(made[i], (round + i) % 3 === 0);
+  let stopped = 0;
+  let prevented = 0;
+  for (const event of made) {
+    stopped += event.cancelBubble ? 1 : 0;
+    prevented += event.defaultPrevented ? 1 : 0;
+  }
+  console.log(shapes, "subclasses:", stopped, prevented);
+}
+//// new-instances-of-built-in-classes-changed-at-once.js
+// A new instance of a built-in class with locked prototypes gets another prototype or an own property under the name of a member, and the next read answers as in plain Bun. Each row is a function of its own, so the compiler sees the allocation, the change and the read together.
+function headersLink() { const o = new Headers({ a: "1" }); Object.setPrototypeOf(o, null); return typeof o.get; }
+function headersOwn() { const o = new Headers({ a: "1" }); Object.defineProperty(o, "get", { value: 1 }); return typeof o.get; }
+function headersStore() { const o = new Headers({ a: "1" }); o.get = 1; return typeof o.get; }
+function headersProto() { const o = new Headers({ a: "1" }); o.__proto__ = { get: 2 }; return typeof o.get; }
+function headersReflect() { const o = new Headers({ a: "1" }); Reflect.setPrototypeOf(o, { get: "x" }); return typeof o.get; }
+function urlLink() { const o = new URL("http://a/b"); Object.setPrototypeOf(o, null); return typeof o.pathname + " " + typeof o.toString; }
+function urlOwn() { const o = new URL("http://a/b"); Object.defineProperty(o, "pathname", { value: 1 }); return typeof o.pathname; }
+function paramsLink() { const o = new URLSearchParams("a=1"); Object.setPrototypeOf(o, null); return typeof o.get; }
+function paramsOwn() { const o = new URLSearchParams("a=1"); o.get = 1; return typeof o.get; }
+function requestLink() { const o = new Request("http://a/b"); Object.setPrototypeOf(o, null); return typeof o.method + " " + typeof o.json; }
+function requestOwn() { const o = new Request("http://a/b"); Object.defineProperty(o, "method", { value: 1 }); return typeof o.method; }
+function responseLink() { const o = new Response("a"); Object.setPrototypeOf(o, null); return typeof o.status + " " + typeof o.text; }
+function responseOwn() { const o = new Response("a"); Object.defineProperty(o, "status", { value: "s" }); return typeof o.status; }
+function blobLink() { const o = new Blob(["a"]); Object.setPrototypeOf(o, null); return typeof o.size + " " + typeof o.text; }
+function blobOwn() { const o = new Blob(["a"]); Object.defineProperty(o, "size", { value: "s" }); return typeof o.size; }
+function headersIteratorLink() { const o = new Headers({ a: "1" }).entries(); Object.setPrototypeOf(o, null); return typeof o.next; }
+function headersIteratorOwn() { const o = new Headers({ a: "1" }).keys(); o.next = 1; return typeof o.next; }
+function paramsIteratorLink() { const o = new URLSearchParams("a=1").entries(); Object.setPrototypeOf(o, null); return typeof o.next; }
+function paramsIteratorOwn() { const o = new URLSearchParams("a=1").values(); o.next = 1; return typeof o.next; }
+function arrayLink() { const o = [1]; Object.setPrototypeOf(o, null); return typeof o.push; }
+function arrayOwn() { const o = [1]; o.push = 1; return typeof o.push; }
+function arrayIteratorLink() { const o = [1].values(); Object.setPrototypeOf(o, null); return typeof o.next; }
+function arrayIteratorOwn() { const o = [1][Symbol.iterator](); o.next = 1; return typeof o.next; }
+function mapLink() { const o = new Map(); Object.setPrototypeOf(o, null); return typeof o.get + " " + typeof o.size; }
+function mapOwn() { const o = new Map(); o.get = 1; return typeof o.get; }
+function mapIteratorLink() { const o = new Map().entries(); Object.setPrototypeOf(o, null); return typeof o.next; }
+function mapIteratorOwn() { const o = new Map().keys(); o.next = 1; return typeof o.next; }
+function setLink() { const o = new Set(); Object.setPrototypeOf(o, null); return typeof o.has; }
+function setIteratorLink() { const o = new Set().values(); Object.setPrototypeOf(o, null); return typeof o.next; }
+function setIteratorOwn() { const o = new Set().values(); o.next = 1; return typeof o.next; }
+function stringIteratorLink() { const o = "ab"[Symbol.iterator](); Object.setPrototypeOf(o, null); return typeof o.next; }
+function stringIteratorOwn() { const o = "ab"[Symbol.iterator](); o.next = 1; return typeof o.next; }
+function regExpStringIteratorLink() { const o = "ab".matchAll(/a/g); Object.setPrototypeOf(o, null); return typeof o.next; }
+function regExpStringIteratorOwn() { const o = "ab".matchAll(/a/g); o.next = 1; return typeof o.next; }
+function iteratorHelperLink() { const o = [1].values().map(x => x); Object.setPrototypeOf(o, null); return typeof o.next; }
+function iteratorHelperOwn() { const o = [1].values().filter(x => x); o.next = 1; return typeof o.next; }
+function wrapLink() { const o = Iterator.from({ next() { return { done: true } } }); Object.setPrototypeOf(o, null); return typeof o.next; }
+function wrapOwn() { const o = Iterator.from({ next() { return { done: true } } }); o.next = 1; return typeof o.next; }
+function* numbers() { yield 1; }
+async function* later() { yield 1; }
+function generatorLink() { const o = numbers(); Object.setPrototypeOf(o, null); return typeof o.next; }
+function generatorOwn() { const o = numbers(); o.next = 1; return typeof o.next; }
+function asyncGeneratorLink() { const o = later(); Object.setPrototypeOf(o, null); return typeof o.next; }
+function asyncGeneratorOwn() { const o = later(); o.next = 1; return typeof o.next; }
+function objectLink() { const o = new Object(); Object.setPrototypeOf(o, null); return typeof o.toString; }
+function objectOwn() { const o = new Object(); o.toString = 1; return typeof o.toString; }
+function literalLink() { const o = { a: 1 }; Object.setPrototypeOf(o, null); return typeof o.hasOwnProperty; }
+function promiseLink() { const o = Promise.resolve(1); Object.setPrototypeOf(o, null); return typeof o.then; }
+function promiseOwn() { const o = new Promise(() => {}); o.then = 1; return typeof o.then; }
+function regExpLink() { const o = /a/; Object.setPrototypeOf(o, null); return typeof o.exec + " " + typeof o.flags; }
+function regExpOwn() { const o = /a/; Object.defineProperty(o, "exec", { value: 1 }); return typeof o.exec; }
+function weakMapLink() { const o = new WeakMap(); Object.setPrototypeOf(o, null); return typeof o.get; }
+function weakSetLink() { const o = new WeakSet(); Object.setPrototypeOf(o, null); return typeof o.has; }
+function bufferLink() { const o = new ArrayBuffer(1); Object.setPrototypeOf(o, null); return typeof o.byteLength + " " + typeof o.slice; }
+function sharedLink() { const o = new SharedArrayBuffer(1); Object.setPrototypeOf(o, null); return typeof o.byteLength; }
+function dataViewLink() { const o = new DataView(new ArrayBuffer(1)); Object.setPrototypeOf(o, null); return typeof o.getInt8; }
+function bytesLink() { const o = new Uint8Array(1); Object.setPrototypeOf(o, null); return typeof o.length + " " + typeof o.fill; }
+function bytesOwn() { const o = new Uint8Array(1); Object.defineProperty(o, "length", { value: "s" }); return typeof o.length; }
+function doublesLink() { const o = new Float64Array(1); Object.setPrototypeOf(o, null); return typeof o.length; }
+function dateLink() { const o = new Date(0); Object.setPrototypeOf(o, null); return typeof o.getTime; }
+function errorLink() { const o = new Error("a"); Object.setPrototypeOf(o, null); return typeof o.toString + " " + typeof o.name; }
+function* shadowed() { yield 1; }
+shadowed.prototype.next = function () { return "mine"; };
+function generatorShadowedByItsFunction() { return shadowed().next(); }
+function* unlinked() { yield 1; }
+Object.setPrototypeOf(unlinked.prototype, null);
+function generatorOfUnlinkedPrototype() { return typeof unlinked().next; }
+function* replaced() { yield 1; }
+replaced.prototype = { next: 1 };
+function generatorOfReplacedPrototype() { return typeof replaced().next; }
+for (const row of [headersLink, headersOwn, headersStore, headersProto, headersReflect, urlLink, urlOwn, paramsLink, paramsOwn, requestLink, requestOwn, responseLink, responseOwn, blobLink, blobOwn,
+  headersIteratorLink, headersIteratorOwn, paramsIteratorLink, paramsIteratorOwn, arrayLink, arrayOwn, arrayIteratorLink, arrayIteratorOwn, mapLink, mapOwn, mapIteratorLink, mapIteratorOwn, setLink,
+  setIteratorLink, setIteratorOwn, stringIteratorLink, stringIteratorOwn, regExpStringIteratorLink, regExpStringIteratorOwn, iteratorHelperLink, iteratorHelperOwn, wrapLink, wrapOwn, generatorLink,
+  generatorOwn, asyncGeneratorLink, asyncGeneratorOwn, objectLink, objectOwn, literalLink, promiseLink, promiseOwn, regExpLink, regExpOwn, weakMapLink, weakSetLink, bufferLink, sharedLink, dataViewLink,
+  bytesLink, bytesOwn, doublesLink, dateLink, errorLink, generatorShadowedByItsFunction, generatorOfUnlinkedPrototype, generatorOfReplacedPrototype])
+  console.log(row.name, row());
+//// new-of-a-native-function-that-is-no-constructor-throws.js
+const { types } = require("node:util");
+const { isAscii, resolveObjectURL } = require("node:buffer");
+const { heapSize } = require("bun:jsc");
+function attempt(label, make) {
+  try {
+    console.log(label, "answers", typeof make());
+  } catch (error) {
+    console.log(label, "throws", error.name, error instanceof TypeError);
+  }
+}
+attempt("types.isDate", () => new types.isDate(new Date(0)));
+attempt("types.isMap", () => new types.isMap(new Date(0)));
+attempt("isAscii", () => new isAscii(Buffer.from("a")));
+attempt("heapSize", () => new heapSize());
+attempt("resolveObjectURL", () => new resolveObjectURL("blob:nodedata:none"));
+attempt("Reflect.construct", () => Reflect.construct(heapSize, []));
+attempt("a subclass", () => new (class extends heapSize {})());
+console.log(types.isDate(new Date(0)), types.isMap(new Date(0)), isAscii(Buffer.from("a")), typeof heapSize(), resolveObjectURL("blob:nodedata:none"));
+//// object-prototype-to-string-of-every-kind-of-value-and-who-may-change-the-answers.js
+// Object.prototype.toString of every kind of value, called the ways libraries call it, and what a program may and may not do to change the answers.
+const toString = Object.prototype.toString;
+class Tagged { get [Symbol.toStringTag]() { return "Mine"; } }
+class Below extends Array {}
+const values = ["text", "", "ro" + JSON.parse('"pe"'), 5, -0, 1.5, NaN, true, false, undefined, null, Symbol("s"), Symbol.iterator, 10n, {}, [], new Below(), () => 1, function () {}, class {}, async () => {}, function* () {}, new Date(0), /x/, new Error("e"), new TypeError("t"), new Map(), new Set(), new WeakMap(), Promise.resolve(), new String("w"), new Number(1), new Boolean(false), Object(Symbol("o")), Object(1n), new Tagged(), { [Symbol.toStringTag]: "Own" }, { [Symbol.toStringTag]: 5 }, Object.create(null), Object.create({ [Symbol.toStringTag]: "Above" }), new Proxy([], {}), new Proxy({}, { get(target, key) { return key === Symbol.toStringTag ? "Trapped" : undefined; } }), new Uint8Array(1), Buffer.from("b"), new ArrayBuffer(1), new DataView(new ArrayBuffer(1)), JSON, Math, Reflect, globalThis, (function () { return arguments; })(), new Response("r"), new URL("http://a/"), new Headers(), process, [].values(), new Map().entries(), "x"[Symbol.iterator](), (function* () {})()];
+function tagOf(x) { const tag = toString.call(x); return tag; }
+function sliced(x) { return Object.prototype.toString.call(x).slice(8, -1); }
+function applied(x) { const tag = toString.apply(x); return tag + ""; }
+function inside(x) { try { const tag = toString.call(x); return tag; } catch (error) { return "caught " + error.name; } }
+function isString(x) { return toString.call(x) === "[object String]"; }
+let lines = [];
+for (let round = 0; round < 30; round++) lines = [tagOf, sliced, applied, inside, isString].map(f => f.name + " " + values.map(value => { try { return f(value); } catch (error) { return "throws " + error.name; } }).join("|"));
+console.log(lines.join("\n"));
+const revoked = Proxy.revocable([], {}); revoked.revoke(); console.log(inside(revoked.proxy));
+console.log(tagOf({ get [Symbol.toStringTag]() { throw new RangeError("no"); } } === null), inside({ get [Symbol.toStringTag]() { throw new RangeError("no"); } }));
+for (const [name, holder] of [["String", String.prototype], ["Number", Number.prototype], ["Boolean", Boolean.prototype], ["Object", Object.prototype], ["Symbol", Symbol.prototype], ["BigInt", BigInt.prototype]]) {
+  let said; try { Object.defineProperty(holder, Symbol.toStringTag, { value: "Changed", configurable: true }); said = "defined"; } catch (error) { said = "refused " + error.name; }
+  console.log(name, said, tagOf("t"), tagOf(1), tagOf(true), tagOf({}), tagOf(Symbol.iterator), tagOf(1n));
+}
+//// one-iterator-of-search-params-walked-more-than-once.js
+// An iterator that entries(), keys() or values() of a URLSearchParams, Headers or FormData answered goes on where the last walk left it, however it is walked the second time.
+const makers = {
+  "URLSearchParams of a text": () => new URLSearchParams("a=1&b=2&c=3"),
+  "URLSearchParams of a text that is not plain": () => new URLSearchParams("a=1&b=%32&c=3"),
+  "URLSearchParams of pairs": () => new URLSearchParams([["a", "1"], ["b", "2"], ["c", "3"]]),
+  Headers: () => new Headers({ a: "1", b: "2", c: "3" }),
+  FormData: () => { const form = new FormData(); form.append("a", "1"); form.append("b", "2"); form.append("c", "3"); return form; },
+};
+function nestedEntries() { const v = new URLSearchParams("a=1&b=2&c=3").entries(); let n = 0; for (const each of v) for (const inner of v) n++; return n; }
+function nestedKeys() { const v = new URLSearchParams("a=1&b=2&c=3").keys(); let n = 0; for (const each of v) for (const inner of v) n++; return n; }
+function nestedValues() { const v = new URLSearchParams("a=1&b=2&c=3").values(); let n = 0; for (const each of v) for (const inner of v) n++; return n; }
+function oneBehindTheOther() { const v = new URLSearchParams("a=1&b=2&c=3").entries(); let n = 0; for (const each of v) n++; for (const each of v) n++; return n; }
+function leftAndWalkedAgain() { const v = new URLSearchParams("a=1&b=2&c=3").keys(); const seen = []; for (const each of v) { seen.push(each); break; } for (const each of v) seen.push(each); return seen.join(); }
+function walkedInLoop() { const v = new URLSearchParams("a=1&b=2&c=3").values(); const seen = []; for (let i = 0; i < 3; i++) for (const each of v) { seen.push(i + each); break; } return seen.join(); }
+function walkedOnSomeWays(flag) { const v = new URLSearchParams("a=1&b=2&c=3").entries(); let n = 0; if (flag) for (const each of v) n++; for (const each of v) n += 10; return n; }
+function walkedOnce() { let n = 0; for (const [key, value] of new URLSearchParams("a=1&b=2&c=3").entries()) n += Number(value); return n; }
+function paramsWalkedTwice() { const v = new URLSearchParams("a=1&b=2&c=3"); let n = 0; for (const each of v) for (const inner of v) n++; return n; }
+console.log(nestedEntries(), nestedKeys(), nestedValues(), oneBehindTheOther(), leftAndWalkedAgain(), walkedInLoop(), walkedOnSomeWays(true), walkedOnSomeWays(false), walkedOnce(), paramsWalkedTwice());
+
+for (const [name, make] of Object.entries(makers)) {
+  for (const member of ["entries", "keys", "values"]) {
+    const show = each => String(each);
+    const line = [];
+    { const v = make()[member](); let n = 0; for (const each of v) for (const inner of v) n++; line.push("nested " + n); }
+    { const v = make()[member](); let n = 0; for (const each of v) n++; for (const each of v) n++; line.push("twice " + n); }
+    { const v = make()[member](); for (const each of v) break; line.push("left, then spread " + [...v].map(show).join("|")); }
+    { const v = make()[member](); v.next(); line.push("stepped, then Array.from " + Array.from(v, show).join("|")); }
+    { const v = make()[member](); const [first] = v; line.push("destructured " + show(first) + ", then walked " + [...v].length); }
+    { const v = make()[member](); line.push("spread twice " + [...v, ...v].length); }
+    { const v = make()[member](); line.push("its own iterator " + (v[Symbol.iterator]() === v)); }
+    console.log(name, member, line.join(" . "));
+  }
+}
+//// option-bags-that-are-compiled-objects.ts
+// Bun's natives read the members of an options object by name. An object of compiled code answers such a read from its slot. Whatever the object is, the native sees what plain Bun sees:
+// a member that is absent, undefined, deleted, added late, an accessor, or inherited from a class or from an object.
+const lines: string[] = [];
+////= say-3
+async function describe(response: Response) {
+  return JSON.stringify([response.status, response.statusText, [...response.headers], await response.text()]);
+}
+
+const kept: object[] = [];
+function keep<T extends object>(init: T): T {
+  kept.push(init);
+  return init;
+}
+function respond(body: string, init: object) {
+  return new Response(body, init as ResponseInit);
+}
+function respondWithJSON(value: unknown, init: object) {
+  return Response.json(value, init as ResponseInit);
+}
+
+interface Settings {
+  status?: number;
+  statusText?: string;
+  headers?: Record<string, string> | Headers;
+  method?: string;
+  other?: number;
+}
+function settings(status: number): Settings {
+  return keep({ status, headers: { "x-a": "1" } });
+}
+
+await say("two members", () => respond("a", settings(201)));
+await say("two members, as JSON", () => respondWithJSON({ a: 1 }, settings(202)));
+await say("every member", () => respond("b", keep({ headers: new Headers({ "x-b": "2" }), status: 203, statusText: "Fine", method: "POST" })));
+await say("no member", () => respond("c", keep({})));
+await say("members the native does not read", () => respond("d", keep({ other: 1, more: "x" })));
+await say("undefined for every member", () => respond("e", keep({ status: undefined, statusText: undefined, headers: undefined, method: undefined })));
+await say("null for every member but the status", () => respond("f", keep({ statusText: null, headers: null, method: null })));
+await say("null for the status", () => respond("f", keep({ status: null })));
+await say("an optional member that was never stored", () => {
+  const init: Settings = keep({ status: 204 + 1 });
+  return respond("g", init);
+});
+await say("a member stored late", () => {
+  const init = settings(206);
+  init.statusText = "Late";
+  return respond("h", init);
+});
+await say("a member stored late under a name the literal lacks", () => {
+  const init = keep({ other: 1 }) as Settings;
+  init.status = 207;
+  (init as Record<string, unknown>)["status" + "Text"] = "Computed";
+  return respond("i", init);
+});
+await say("a member deleted", () => {
+  const init = settings(208);
+  delete init.status;
+  return respond("j", init);
+});
+await say("a member deleted and stored again", () => {
+  const init = settings(209);
+  delete init.status;
+  init.status = 210;
+  return respond("k", init);
+});
+await say("a member of another type than declared", () => {
+  const init = settings(211);
+  (init as Record<string, unknown>).status = "212";
+  return respond("l", init);
+});
+await say("a member redefined as an accessor", () => {
+  const seen: string[] = [];
+  const init = settings(213);
+  Object.defineProperty(init, "status", {
+    get() {
+      seen.push("status");
+      return 214;
+    },
+    enumerable: true,
+    configurable: true,
+  });
+  return [respond("m", init).status, seen];
+});
+await say("an accessor in the literal", () => {
+  const seen: string[] = [];
+  const init = keep({
+    get status() {
+      seen.push("status");
+      return 215;
+    },
+    get headers() {
+      seen.push("headers");
+      return { "x-c": "3" };
+    },
+  });
+  const response = respond("n", init);
+  return [response.status, [...response.headers], seen];
+});
+await say("a member that is not enumerable", () => {
+  const init = keep({ other: 1 });
+  Object.defineProperty(init, "status", { value: 216, enumerable: false });
+  return respond("o", init);
+});
+await say("a frozen object", () => respond("p", Object.freeze(settings(217))));
+
+class Base {
+  status = 218;
+  get statusText() {
+    return "From the class";
+  }
+}
+class Derived extends Base {
+  headers = { "x-d": "4" };
+}
+await say("an instance of a class: fields and an inherited getter", () => respond("q", keep(new Derived())));
+await say("an object that inherits from a literal", () => respond("r", keep(Object.create(settings(219)))));
+await say("an object that inherits from a literal and has a member of its own", () => {
+  const init = Object.create(settings(220)) as Settings;
+  init.statusText = "Own";
+  return respond("s", keep(init));
+});
+await say("a literal with another prototype", () => respond("t", keep({ __proto__: { status: 221 }, statusText: "Above" })));
+await say("an object without a prototype", () => {
+  const init = Object.create(null) as Settings;
+  init.status = 222;
+  return respond("u", keep(init));
+});
+await say("a prototype set late", () => {
+  const init = keep({ statusText: "Below" });
+  Object.setPrototypeOf(init, { status: 223 });
+  return respond("v", init);
+});
+await say("a conversion changes a member that is read behind it", () => {
+  const init: Settings = keep({
+    headers: {
+      "x-e": {
+        toString() {
+          init.status = 226;
+          init.statusText = "Changed";
+          return "5";
+        },
+      } as unknown as string,
+    },
+    status: 225,
+    statusText: "Unchanged",
+  });
+  return respond("x", init);
+});
+await say("a conversion deletes a member that is read behind it", () => {
+  const init: Settings = keep({
+    headers: {
+      "x-f": {
+        toString() {
+          delete init.status;
+          return "6";
+        },
+      } as unknown as string,
+    },
+    status: 227,
+  });
+  return respond("y", init);
+});
+await say("one object many times", () => {
+  const init = settings(228);
+  let sum = 0;
+  for (let round = 0; round < 300; round++) {
+    init.status = 200 + (round % 100);
+    sum += respond("z", init).status + respondWithJSON(round, init).status;
+  }
+  return sum;
+});
+await say("a Request reads the members of its options", async () => {
+  const request = new Request("http://localhost/a", keep({ method: "POST", headers: { "x-g": "7" }, body: "text" }));
+  return [request.method, [...request.headers], await request.text()];
+});
+await say("a Blob reads the type", () => new Blob(["a"], keep({ type: "x/y" })).type);
+await say("each object is still what it was", () => kept.length);
+console.log(lines.join("\n"));
+//// printed-body-of-a-response.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: the body of a Response.
+console.log(new Response("a").body);
+//// printed-broadcast-channel.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: a BroadcastChannel.
+const channel = new BroadcastChannel("a");
+console.log(channel);
+channel.close();
+//// printed-buffers.ts
+// console.log calls Buffer.prototype.inspect for a Buffer, as for any object with a method under Symbol.for("nodejs.util.inspect.custom").
+const custom = Symbol.for("nodejs.util.inspect.custom");
+const buffer = Buffer.from("abc");
+console.log(buffer);
+console.log([buffer], { buffer });
+console.log(Buffer.alloc(0), Buffer.alloc(60, 1));
+const withMore = Object.assign(Buffer.from("a"), { more: { a: [1, "b"] }, text: "c" });
+console.log(withMore);
+Object.defineProperty(withMore, "hidden", { value: 1, enumerable: false });
+console.log(withMore);
+console.log(Bun.inspect(buffer), Bun.inspect(withMore));
+console.log((Buffer.prototype as any)[custom] === (Buffer.prototype as any).inspect, (buffer as any).inspect(), (buffer as any)[custom](0, {}), (buffer as any)[custom](0, { showHidden: true }));
+console.log((withMore as any)[custom](0, { showHidden: true }), (withMore as any)[custom](0), (withMore as any)[custom](0, null));
+const parsed: unknown = JSON.parse(process.argv[2] ?? '{"a":1}');
+console.log(parsed, process.argv.length > 5 ? parsed : buffer);
+class Own {
+  [custom](depth: number, options: { stylize: Function; depth: number; colors: boolean }, inspect: Function) {
+    return `own ${depth} ${typeof options.stylize} ${options.colors} ${typeof inspect} ${inspect({ a: 1 })}`;
+  }
+}
+console.log(new Own(), [new Own()]);
+//// printed-compression-and-decoder-streams.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: a CompressionStream and a TextDecoderStream.
+console.log(new CompressionStream("gzip"), new TextDecoderStream());
+//// printed-performance-entries.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: a PerformanceMark and a PerformanceMeasure. The times differ from run to run.
+console.log(Bun.inspect(performance.mark("a")).split("\n").slice(0, 2).join(" "));
+console.log(Bun.inspect(performance.measure("b")).split("\n").slice(0, 2).join(" "));
+//// printed-readable-stream.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: a ReadableStream.
+console.log(new ReadableStream());
+//// printed-reader-of-a-stream.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: the reader of a stream.
+console.log(new ReadableStream().getReader());
+//// printed-server.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: a server.
+const server = Bun.serve({ port: 0, fetch: () => new Response("a") });
+console.log(typeof Bun.inspect(server), Bun.inspect(server).split("\n")[0]);
+server.stop(true);
+//// printed-stream-that-nobody-sees-coming.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: a stream out of a list, under an index that the build does not know.
+const values: unknown[] = [Buffer.from("a"), new ReadableStream(), 1];
+console.log(values[Number(process.argv[2] ?? 1)]);
+//// printed-url.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: a URL, alone and inside other objects.
+console.log(new URL("http://a/b?c=d"));
+console.log([new URL("http://a/b")], { url: new URL("http://c") });
+//// printed-url-search-parameters.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: URLSearchParams.
+console.log(new URLSearchParams("a=b&c=d"), [new URLSearchParams()]);
+//// printed-writable-and-transform-streams.ts
+// console.log finds a method of the host under Symbol.for("nodejs.util.inspect.custom") and hands it util.inspect, which has to be in the executable: a WritableStream and a TransformStream.
+console.log(new WritableStream(), new TransformStream());
+//// process-argv-and-exec-argv-are-properties-like-any-other.js
+// process.argv and process.execArgv hold arrays that the program may replace, delete, redefine and freeze. What native code takes from them follows.
+const { parseArgs } = require("node:util");
+const out = [];
+function describe(name) {
+  const descriptor = Object.getOwnPropertyDescriptor(process, name);
+  if (!descriptor) return name + " none";
+  return [name, Array.isArray(descriptor.value), typeof descriptor.get, descriptor.writable, descriptor.enumerable, descriptor.configurable].join();
+}
+function read(name) { return process[name]; }
+function argv() { return process.argv; }
+function flagGiven() { return process.argv.includes("--flag"); }
+for (const name of ["argv", "execArgv"]) {
+  out.push(describe(name), read(name) === read(name), Object.keys(process).includes(name), name in process, Object.hasOwn(process, name));
+  const first = read(name);
+  first.push("--pushed");
+  out.push(read(name).at(-1));
+  first.pop();
+}
+out.push(argv().length >= 1, typeof argv()[0], flagGiven(), Bun.argv === process.argv);
+for (let round = 0; round < 3; round++) {
+  process.argv = ["one", "two", "--flag", "--round=" + round];
+  out.push(argv().join(), flagGiven(), describe("argv"), JSON.stringify(parseArgs({ options: { flag: { type: "boolean" }, round: { type: "string" } } }).values));
+  process.argv = "no array";
+  out.push(argv(), describe("argv"));
+  try { out.push(flagGiven()); } catch (error) { out.push(error.constructor.name); }
+  out.push(delete process.argv, argv(), "argv" in process, describe("argv"));
+  let reads = 0;
+  Object.defineProperty(process, "argv", { get() { reads++; return ["three", "four", "--flag"]; }, configurable: true, enumerable: false });
+  out.push(argv().join(), flagGiven(), reads, describe("argv"), Object.keys(process).includes("argv"), JSON.stringify(parseArgs({ options: { flag: { type: "boolean" } } }).values));
+  Object.defineProperty(process, "argv", { value: Object.freeze(["five", "six"]), writable: false, configurable: true, enumerable: true });
+  process.argv = ["ignored"];
+  out.push(argv().join(), flagGiven(), describe("argv"));
+  Object.defineProperty(process, "argv", { value: ["seven"], writable: true, configurable: true, enumerable: true });
+}
+process.execArgv = ["--changed"];
+out.push(process.execArgv.join(), describe("execArgv"), delete process.execArgv, process.execArgv);
+console.log(out.join(" | "));
+//// process-env-is-read-as-fast-once-every-variable-was-read.js
+// A process that starts with 150 variables reads each of them once by key, as a loop over Object.keys(process.env) does. Behind that a read of process.env takes about what a read of a plain copy takes.
+if (!process.env.AOT_TEST_IS_THE_CHILD) {
+  const env = { ...process.env, AOT_TEST_IS_THE_CHILD: "1" };
+  for (let i = 0; i < 150; i++) env["AOT_TEST_VARIABLE_" + i] = "value " + i;
+  const child = Bun.spawnSync({ cmd: Bun.main.startsWith("/$bunfs/") ? [process.execPath] : [process.execPath, Bun.main], env, stderr: "inherit" });
+  console.log(child.stdout.toString().trim());
+} else {
+  let length = 0;
+  for (const key of Object.keys(process.env)) length += process.env[key].length;
+  const copy = { ...process.env };
+  const names = ["AOT_TEST_VARIABLE_7", "AOT_TEST_NEVER_SET_ONE", "AOT_TEST_VARIABLE_99", "AOT_TEST_NEVER_SET_TWO"];
+  function count(object, turns) {
+    let set = 0;
+    for (let i = 0; i < turns; i++) set += (object[names[i & 3]] ? 1 : 0) + (object.AOT_TEST_VARIABLE_3 ? 1 : 0) + (object.AOT_TEST_NEVER_SET_THREE ? 1 : 0);
+    return set;
+  }
+  function fastestOf(runs, object) {
+    let fastest = Infinity;
+    for (let run = 0; run < runs; run++) {
+      const began = performance.now();
+      if (count(object, 20000) !== 30000) console.log("another count");
+      fastest = Math.min(fastest, performance.now() - began);
+    }
+    return fastest;
+  }
+  const ofCopy = fastestOf(20, copy), ofEnvironment = fastestOf(20, process.env);
+  console.log(length > 0 && ofEnvironment < ofCopy * 8 ? "a read of process.env takes under eight reads of a plain copy" : "a read of process.env takes over eight reads of a plain copy");
+}
+//// process-env-read-written-deleted-and-listed.js
+// process.env from every side: read by name and by key, set and not set, written with what is no text, deleted, listed, copied, defined, frozen, and what a child process gets.
+if (process.env.AOT_TEST_IS_THE_CHILD) {
+  console.log(process.env.AOT_TEST_SET, process.env.AOT_TEST_KEY_1, process.env.AOT_TEST_NEVER_SET);
+  process.exit(0);
+}
+const out = [];
+const show = value => (typeof value === "string" ? JSON.stringify(value) : String(value));
+function byName() { return process.env.AOT_TEST_SET; }
+function byNameAbsent() { return process.env.AOT_TEST_NEVER_SET; }
+function byKey(key) { return process.env[key]; }
+function attempt(work) { try { return show(work()); } catch (error) { return error.constructor.name + ": " + error.message; } }
+process.env.AOT_TEST_SET = "first";
+const before = Object.keys(process.env);
+out.push(show(byName()), show(byNameAbsent()), show(byKey("AOT_TEST_SET")), show(byKey("AOT_TEST_" + "NEVER_SET")), typeof byKey("PATH"), before.includes("AOT_TEST_SET"), before.at(-1));
+for (let round = 0; round < 3; round++) {
+  for (const value of [1, 0, -0, 1.5, true, false, null, undefined, "", "text", 10n, [1, 2], { toString() { return "by toString " + round; } }]) {
+    process.env.AOT_TEST_SET = value;
+    process.env["AOT_TEST_KEY_" + round] = value;
+    out.push(show(byName()), show(byKey("AOT_TEST_KEY_" + round)));
+  }
+  out.push(attempt(() => (process.env.AOT_TEST_SET = Symbol("no text"))), attempt(() => (process.env[Symbol.iterator] = "x")), attempt(() => process.env[Symbol.iterator]), attempt(() => (process.env.AOT_TEST_SET = { toString() { throw new RangeError("thrown"); } })), show(byName()));
+  out.push("AOT_TEST_SET" in process.env, "AOT_TEST_NEVER_SET" in process.env, Object.hasOwn(process.env, "AOT_TEST_SET"), "toString" in process.env, typeof process.env.toString, typeof process.env.hasOwnProperty);
+  out.push(JSON.stringify(Object.getOwnPropertyDescriptor(process.env, "AOT_TEST_SET")), show(Object.getOwnPropertyDescriptor(process.env, "AOT_TEST_NEVER_SET")));
+  out.push(delete process.env.AOT_TEST_SET, show(byName()), show(byKey("AOT_TEST_SET")), "AOT_TEST_SET" in process.env, delete process.env.AOT_TEST_SET, delete process.env.AOT_TEST_NEVER_SET, Object.keys(process.env).includes("AOT_TEST_SET"));
+  process.env.AOT_TEST_SET = "again " + round;
+  out.push(show(byName()), Object.keys(process.env).at(-1), Object.keys(process.env).filter(key => key.startsWith("AOT_TEST_")).join());
+  out.push(attempt(() => Object.defineProperty(process.env, "AOT_TEST_DEFINED", { value: "defined", writable: true, enumerable: true, configurable: true }) === process.env), show(byKey("AOT_TEST_DEFINED")));
+  out.push(attempt(() => Object.defineProperty(process.env, "AOT_TEST_GETTER", { get() { return 1; }, configurable: true })), attempt(() => Object.defineProperty(process.env, "AOT_TEST_HIDDEN", { value: "x", writable: true, enumerable: false, configurable: true })), show(byKey("AOT_TEST_GETTER")));
+  process.env[7] = "seven";
+  process.env["08"] = "eight";
+  process.env[""] = "empty";
+  out.push(show(process.env[7]), show(byKey("7")), show(byKey("08")), show(byKey("")), Object.keys(process.env).includes("7"), delete process.env[7], show(process.env[7]), delete process.env["08"]);
+  const copy = { ...process.env };
+  const listed = [];
+  for (const key in process.env) if (key.startsWith("AOT_TEST_")) listed.push(key + "=" + process.env[key]);
+  out.push(show(copy.AOT_TEST_SET), Object.keys(copy).length === Object.keys(process.env).length, listed.join(), Object.entries(process.env).filter(([key]) => key.startsWith("AOT_TEST_")).length, JSON.parse(JSON.stringify(process.env)).AOT_TEST_SET);
+  const below = Object.create(process.env);
+  below.AOT_TEST_BELOW = 5;
+  out.push(show(below.AOT_TEST_SET), show(below.AOT_TEST_BELOW), show(byKey("AOT_TEST_BELOW")));
+  delete process.env.AOT_TEST_DEFINED;
+}
+const zone = process.env.TZ;
+process.env.TZ = "Asia/Tokyo";
+out.push(show(process.env.TZ), new Date(0).getHours(), Object.keys(process.env).includes("TZ"));
+process.env.TZ = "UTC";
+out.push(show(process.env.TZ), new Date(0).getHours(), delete process.env.TZ, show(process.env.TZ), "TZ" in process.env);
+if (zone !== undefined) process.env.TZ = zone;
+out.push(attempt(() => Object.freeze(process.env)), attempt(() => Object.isFrozen(process.env)), attempt(() => Object.preventExtensions(process.env) === process.env));
+out.push(attempt(() => (process.env.AOT_TEST_BEHIND = "stored")), show(byKey("AOT_TEST_BEHIND")));
+const child = Bun.spawnSync({ cmd: /[$~]bun/i.test(process.argv[1]) ? [process.execPath] : [process.execPath, process.argv[1]], env: { ...process.env, AOT_TEST_IS_THE_CHILD: "1" } });
+out.push(child.stdout.toString().trim());
+const replaced = process.env;
+process.env = { AOT_TEST_SET: "of a plain object" };
+out.push(show(byName()), show(byNameAbsent()), show(byKey("PATH")), Object.keys(process.env).join());
+process.env = replaced;
+out.push(show(byName()), typeof byKey("PATH"));
+console.log(out.join(" | "));
+//// process-is-bun-and-browser.ts
+// process.isBun and process.browser are booleans that native code makes at the first read, and a program may store to process.browser.
+function whichRuntime() { return process.isBun ? "bun" : "other"; }
+function inBrowser(name: string) { return (process as unknown as Record<string, unknown>)[name]; }
+let line = "";
+for (let round = 0; round < 300; round++)
+  line = whichRuntime() + " " + typeof process.isBun + " " + inBrowser("browser") + " " + typeof inBrowser("browser");
+console.log(line);
+(process as unknown as Record<string, unknown>).browser = 1;
+console.log(whichRuntime(), inBrowser("browser"), Object.getOwnPropertyDescriptor(process, "browser")?.writable);
+//// process-members-computed-once.ts
+// The host makes fifteen members of `process` and nine of `Bun` at their first read, and after that only a store replaces them. Where the program stores to none of them, every read gives what the first one gave: the same number, string or object in a loop, in another function, in a closure and after a collection, and each thread has its own. `process.argv0`, `Bun.argv` and `Bun.revision` are stored to further down, so each read of those finds what is there now. The host itself puts another object under `process.env` and `Bun.env` when a Worker is started with SHARE_ENV, and the reads after that find it. This file is the only entry point of the build, so it is also the entry point of the Worker.
+import { parentPort, SHARE_ENV, Worker, workerData } from "node:worker_threads";
+
+const own = process as any;
+const bun = Bun as any;
+
+function objects(): unknown[] {
+  return [process.config, process.env, process.features, process.stderr, process.stdin, process.stdout, process.versions, Bun.env, Bun.stderr, Bun.stdin, Bun.stdout];
+}
+function primitives(): unknown[] {
+  return [process.browser, process.execPath, process.isBun, process.pid, process.revision, process.version, Bun.isMainThread, Bun.version, bun.cwd];
+}
+function same(left: unknown[], right: unknown[]): boolean {
+  return left.length === right.length && left.every((value, index) => Object.is(value, right[index]));
+}
+function kinds(values: unknown[]): string {
+  return values.map(value => typeof value).join();
+}
+function sumOfIds(rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) sum += process.pid;
+  return sum;
+}
+function lengthOfVersions(rounds: number): number {
+  let length = 0;
+  for (let i = 0; i < rounds; i++) length += process.version.length + Bun.version.length;
+  return length;
+}
+function variable(rounds: number): string {
+  let seen = "";
+  for (let i = 0; i < rounds; i++) seen = String(process.env.COMPUTED_ONCE) + "/" + String(Bun.env.COMPUTED_ONCE);
+  return seen;
+}
+function nameOfProgram(rounds: number): string {
+  let seen = "";
+  for (let i = 0; i < rounds; i++) seen = process.argv0;
+  return seen;
+}
+function nameOfRelease(rounds: number): string {
+  let seen = "";
+  for (let i = 0; i < rounds; i++) seen = process.release.name;
+  return seen;
+}
+function argumentsOfBun(rounds: number): unknown {
+  let seen: unknown;
+  for (let i = 0; i < rounds; i++) seen = Bun.argv;
+  return seen;
+}
+function outcomeOf(work: () => void): string {
+  try {
+    work();
+    return "stored";
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+
+function membersNeverStoredTo(firstObjects: unknown[], firstPrimitives: unknown[]) {
+  console.log("kinds", kinds(firstObjects), kinds(firstPrimitives));
+  console.log("read again", same(firstObjects, objects()), same(firstPrimitives, primitives()));
+  console.log("pid", Number.isInteger(process.pid), process.pid > 0, (process.pid | 0) === process.pid, process.pid + 0.5 - process.pid, sumOfIds(5000) === 5000 * process.pid, sumOfIds(1) === firstPrimitives[3]);
+  console.log("version", process.version, process.version.charCodeAt(0), `${process.version}!`.length - process.version.length, lengthOfVersions(5000) === 5000 * (process.version.length + Bun.version.length));
+  console.log("versions", process.versions.bun === Bun.version, "v" + process.versions.node === process.version, Bun.version.split(".").length);
+  console.log("revision", process.revision.length, process.revision === Bun.revision, process.revision.slice(0, 4) === Bun.revision.slice(0, 4));
+  console.log("flags", process.isBun, process.browser, Bun.isMainThread, process.isBun ? "is Bun" : "is not Bun", process.browser ? "a browser" : "no browser");
+  console.log("paths", process.execPath.length > 0, process.execPath === firstPrimitives[1], bun.cwd.length > 0, bun.cwd === firstPrimitives[8]);
+  console.log("streams", process.stdin.fd, process.stdout.fd, process.stderr.fd, typeof process.stdout.write, typeof process.stderr.write, typeof process.stdin.on);
+  console.log("files", Bun.stdin instanceof Blob, Bun.stdout instanceof Blob, Bun.stderr instanceof Blob, Bun.stdout === Bun.stderr);
+  console.log("records", Object.keys(process.config).sort().join(), typeof process.config.variables, typeof process.features.ipv6, typeof process.versions.v8);
+
+  console.log("env", process.env === Bun.env, variable(5000));
+  process.env.COMPUTED_ONCE = "set";
+  console.log("env", variable(3), process.env === firstObjects[1]);
+  Bun.env.COMPUTED_ONCE = "set through Bun";
+  console.log("env", variable(3), Bun.env === firstObjects[7]);
+  delete process.env.COMPUTED_ONCE;
+  console.log("env", variable(3));
+
+  const readers: (() => unknown)[] = [() => process.pid, () => process.version, () => process.versions, () => process.env, () => process.stdout, () => Bun.version, () => Bun.env, () => Bun.isMainThread];
+  console.log("closures", readers.map(read => Object.is(read(), read())).join(), readers[0]() === process.pid, readers[3]() === readers[6]());
+}
+
+function membersStoredTo() {
+  const originalName = process.argv0;
+  console.log("argv0", typeof originalName, nameOfProgram(5000) === originalName);
+  process.argv0 = "renamed";
+  console.log("argv0", nameOfProgram(3), process.argv0);
+  process.argv0 = originalName;
+  console.log("argv0", nameOfProgram(3) === originalName);
+
+  const originalRelease = process.release;
+  console.log("release", nameOfRelease(5000), process.release === originalRelease);
+
+  const originalArguments = Bun.argv;
+  console.log("Bun.argv", Array.isArray(originalArguments), originalArguments.length > 0, argumentsOfBun(5000) === originalArguments);
+  bun.argv = ["replaced"];
+  console.log("Bun.argv", JSON.stringify(argumentsOfBun(3)));
+  bun.argv = originalArguments;
+  console.log("Bun.argv", argumentsOfBun(3) === originalArguments);
+
+  const originalRevision = Bun.revision;
+  console.log("Bun.revision", outcomeOf(() => void (bun.revision = "another")), Bun.revision === originalRevision, Bun.revision === process.revision);
+}
+
+async function environmentSharedWithWorker(firstObjects: unknown[]) {
+  process.env.COMPUTED_ONCE = "set by the main thread";
+  const worker = new Worker(new URL(import.meta.url), { env: SHARE_ENV, workerData: process.pid });
+  const said = new Promise<string>(resolve => worker.once("message", resolve));
+  const ended = new Promise<number>(resolve => worker.once("exit", resolve));
+  console.log("shared env", process.env === firstObjects[1], Bun.env === firstObjects[7], process.env === Bun.env);
+  console.log("worker", await said, await ended);
+  console.log("shared env", variable(5000), objects().map((value, index) => value === firstObjects[index]).join());
+}
+
+function inWorker() {
+  const found = variable(3);
+  process.env.COMPUTED_ONCE = "set by the worker";
+  parentPort!.postMessage([found, variable(3), Bun.isMainThread, process.pid === workerData, sumOfIds(5000) === 5000 * workerData, process.env === Bun.env, process.versions === process.versions, same(primitives(), primitives())].join());
+}
+
+if (Bun.isMainThread) {
+  const firstObjects = objects();
+  const firstPrimitives = primitives();
+  membersNeverStoredTo(firstObjects, firstPrimitives);
+  membersStoredTo();
+  Bun.gc(true);
+  console.log("after a collection", same(firstObjects, objects()), same(firstPrimitives, primitives()), sumOfIds(5000) === 5000 * process.pid, variable(3), process.versions.bun === Bun.version);
+  await environmentSharedWithWorker(firstObjects);
+} else {
+  inWorker();
+}
+//// ranges-of-bytes-of-every-kind-go-into-encoders-of-every-kind.js
+// view.subarray(begin) that goes into encoder.encodeInto(text, ..): with every kind of view, begin, text and encoder, and wherever else the range may go on another way.
+const lines = [];
+const bytesOf = view => { try { return Array.from(view).join(); } catch (error) { return "unreadable " + error.name; } };
+const describe = x => x === null || typeof x !== "object" ? String(x) : ArrayBuffer.isView(x) ? x.constructor.name + "@" + x.byteOffset + "+" + x.length : "read" in x ? x.read + "/" + x.written : Object.prototype.toString.call(x);
+const attempt = f => { try { return describe(f()); } catch (error) { return "throws " + error.name; } };
+const encoder = new TextEncoder();
+const hidden = JSON.parse('[0]')[0];
+const encoders = [encoder, { encodeInto(text, destination) { this.got = destination; return { read: -1, written: destination.length }; } }];
+
+// As React writes a chunk.
+let view = null, written = 0, sent = "";
+function flush(chunk) { sent += "|" + bytesOf(chunk); }
+function writeChunk(text) {
+  if (text.length === 0) return;
+  let target = view;
+  if (0 < written) target = view.subarray(written);
+  target = encoder.encodeInto(text, target);
+  const read = target.read;
+  written += target.written;
+  if (read < text.length) { flush(view.subarray(0, written)); view = new Uint8Array(16); written = encoder.encodeInto(text.slice(read), view).written; }
+  if (written === 16) { flush(view); view = new Uint8Array(16); written = 0; }
+}
+view = new Uint8Array(16);
+for (const piece of ["ab", "cde", "", "f", "éé", "ghijklm", "日本", "no", "pqrstuvwxyz0123456789", "é", "x".repeat(15), "é", "!"]) writeChunk(piece);
+lines.push("chunks " + sent + " rest " + written + " " + bytesOf(view));
+
+// The same with an encoder nobody followed.
+function writeWith(holder, bytes, from, text) {
+  let target = bytes;
+  if (0 < from) target = bytes.subarray(from);
+  const counts = holder.encoder.encodeInto(text, target);
+  return counts.read + "/" + counts.written;
+}
+for (const which of [0, 1, 0]) { const bytes = new Uint8Array(8), holder = { encoder: encoders[which + hidden] }; lines.push("held " + which + " " + writeWith(holder, bytes, 3, "abcdefgh") + " " + writeWith(holder, bytes, 0, "z") + " " + bytesOf(bytes) + " " + describe(encoders[1].got) + " " + (encoders[1].got === bytes)); }
+
+// Every begin.
+function into(bytes, begin, text) { return encoder.encodeInto(text, bytes.subarray(begin)); }
+const begins = [0, 1, 7, 8, 9, -1, -8, -9, 1.5, -1.5, NaN, Infinity, -Infinity, -0, undefined, null, true, "2", "x", 2 ** 31, 2 ** 32 + 1, -(2 ** 31), { valueOf() { return 3; } }, [4]];
+for (const begin of begins) { const bytes = new Uint8Array(8); lines.push("begin " + String(typeof begin === "object" && begin ? "object" : Object.is(begin, -0) ? "-0" : begin) + " " + attempt(() => into(bytes, begin, "abcdefghij")) + " " + bytesOf(bytes)); }
+lines.push("begin symbol " + attempt(() => into(new Uint8Array(4), Symbol(), "a")), "begin bigint " + attempt(() => into(new Uint8Array(4), 1n, "a")));
+
+// Every view.
+class Mine extends Uint8Array { constructor(...all) { super(...all); Mine.made++; } } Mine.made = 0;
+const resizable = new ArrayBuffer(8, { maxByteLength: 16 });
+const detached = new Uint8Array(8); detached.buffer.transfer();
+const withOwnName = new Uint8Array(8); withOwnName.extra = 1;
+const withOwnConstructor = new Uint8Array(8); Object.defineProperty(withOwnConstructor, "constructor", { value: Uint16Array });
+const withOtherPrototype = new Uint8Array(8); Object.setPrototypeOf(withOtherPrototype, Int8Array.prototype);
+const views = { plain: new Uint8Array(8), small: new Uint8Array(1), empty: new Uint8Array(0), big: new Uint8Array(5000), offset: new Uint8Array(new ArrayBuffer(16), 4, 8), tracking: new Uint8Array(resizable), fixedOverResizable: new Uint8Array(resizable, 2, 4), shared: new Uint8Array(new SharedArrayBuffer(8)), detached, buffer: Buffer.alloc(8), mine: new Mine(8), withOwnName, withOwnConstructor, withOtherPrototype, clamped: new Uint8ClampedArray(8), signed: new Int8Array(8), wide: new Uint16Array(8), floats: new Float64Array(2) };
+for (const [name, bytes] of Object.entries(views)) lines.push("view " + name + " " + attempt(() => into(bytes, 2, "abécdefgh")) + " " + bytesOf(bytes.length > 20 ? bytes.subarray(0, 12) : bytes));
+lines.push("mine made " + Mine.made);
+for (const other of [null, undefined, 1, "text", {}, [], new ArrayBuffer(4), new DataView(new ArrayBuffer(4))]) lines.push("no view " + attempt(() => into(other, 1, "ab")));
+resizable.resize(12); lines.push("resized " + attempt(() => into(views.tracking, 10, "abcdef")) + " " + bytesOf(views.tracking)); resizable.resize(3); lines.push("shrunk " + attempt(() => into(views.tracking, 1, "xyz")) + " " + attempt(() => into(views.fixedOverResizable, 1, "xyz")) + " " + bytesOf(views.tracking));
+
+// Every text.
+const rope = JSON.parse('"ro"') + JSON.parse('"pe"') + hidden;
+const texts = ["", "a", "abcdef", "abcdefg", "é", "abé", "abcdé", "abcdeé", "日", "abc日", "abcd日", "😀", "ab😀", "abc😀", "\ud800", "a\udc00b", rope, rope + "é", 12345, 1.5, true, null, undefined, {}, [1, 2], { toString() { return "own"; } }];
+for (const text of texts) { const bytes = new Uint8Array(8).fill(1); lines.push("text " + JSON.stringify(String(text)) + " " + attempt(() => into(bytes, 2, text)) + " " + bytesOf(bytes)); }
+lines.push("text symbol " + attempt(() => into(new Uint8Array(4), 1, Symbol())));
+{ const bytes = new Uint8Array(8); lines.push("text that transfers " + attempt(() => into(bytes, 2, { toString() { bytes.buffer.transfer(); return "abc"; } })) + " " + bytes.length); }
+{ const buffer = new ArrayBuffer(8, { maxByteLength: 16 }), bytes = new Uint8Array(buffer); lines.push("text that shrinks " + attempt(() => into(bytes, 2, { toString() { buffer.resize(3); return "abc"; } })) + " " + bytesOf(bytes)); }
+
+// The range goes elsewhere on another way.
+const kept = [];
+function intoOrKept(bytes, from, text, keeps) {
+  let target = bytes;
+  if (from > 0) target = bytes.subarray(from);
+  if (keeps) { kept.push(target); return target; }
+  return encoder.encodeInto(text, target);
+}
+{ const bytes = new Uint8Array(8); lines.push("kept " + describe(intoOrKept(bytes, 3, "ab", true)) + " " + describe(intoOrKept(bytes, 0, "ab", true)) + " " + describe(intoOrKept(bytes, 3, "ab", false)) + " " + (kept[0] === bytes) + (kept[1] === bytes) + (kept[0].buffer === bytes.buffer) + " " + bytesOf(kept[0]) + " " + bytesOf(bytes)); kept[0][0] = 9; lines.push("kept shares " + bytesOf(bytes)); }
+function returned(bytes, from, text, wants) { const target = bytes.subarray(from); if (wants) return target; encoder.encodeInto(text, target); return null; }
+{ const bytes = new Uint8Array(4), one = returned(bytes, 1, "a", true), two = returned(bytes, 1, "a", true); lines.push("returned " + describe(one) + " " + (one === two) + " " + describe(returned(bytes, 2, "zz", false)) + " " + bytesOf(bytes)); }
+function twice(bytes, from) { const target = bytes.subarray(from); return describe(encoder.encodeInto("ab", target)) + describe(encoder.encodeInto("c", target)) + describe(target); }
+lines.push("twice " + twice(new Uint8Array(6), 2));
+function inLoop(bytes, from, n) { const target = bytes.subarray(from); let all = ""; for (let i = 0; i < n; i++) all += describe(encoder.encodeInto("k" + i, target)); return all + bytesOf(bytes); }
+lines.push("in a loop " + inLoop(new Uint8Array(6), 2, 3));
+function madeInLoop(bytes, pieces) { let at = 0; for (const piece of pieces) at += encoder.encodeInto(piece, bytes.subarray(at)).written; return at + " " + bytesOf(bytes); }
+lines.push("made in a loop " + madeInLoop(new Uint8Array(10), ["ab", "", "cé", "defgh", "ij"]));
+function comparedAndUsed(bytes, from) { const target = bytes.subarray(from); const same = target === bytes; return same + describe(encoder.encodeInto("q", target)); }
+lines.push("compared " + comparedAndUsed(new Uint8Array(3), 0) + " " + comparedAndUsed(new Uint8Array(3), 1));
+
+// Between the range and the call something happens.
+const order = [];
+function withGetter(holder, bytes, from, text) { let target = bytes; if (0 < from) target = bytes.subarray(from); return holder.encodeInto(text, target); }
+{
+  const bytes = new Uint8Array(8);
+  const transfers = Object.create(null, { encodeInto: { get() { order.push("read"); bytes.buffer.transfer(); return function (text, destination) { order.push(describe(destination) + (destination.buffer === bytes.buffer)); return { read: 0, written: 0 }; }; } } });
+  lines.push("getter that transfers " + attempt(() => withGetter(transfers, bytes, 3, "ab")) + " " + order.join());
+}
+{
+  const own = new TextEncoder(), bytes = new Uint8Array(8);
+  Object.defineProperty(own, "encodeInto", { get() { bytes.buffer.transfer(); return TextEncoder.prototype.encodeInto; } });
+  lines.push("getter that transfers and hands the real one " + attempt(() => withGetter(own, bytes, 3, "ab")) + " " + bytes.length);
+}
+{
+  const bytes = new Uint8Array(8), writes = { get encodeInto() { bytes[5] = 7; return TextEncoder.prototype.encodeInto.bind(encoder); } };
+  lines.push("getter that writes " + attempt(() => withGetter(writes, bytes, 3, "ab")) + " " + bytesOf(bytes));
+}
+function ordered(bytes, from) { try { order.length = 0; order.push("a"); const target = bytes.subarray(from); order.push("b"); return describe(encoder.encodeInto("x", target)); } catch (error) { return error.name + " after " + order.join(); } }
+lines.push("order " + ordered(detached, 1) + " " + ordered(new Uint8Array(2), 1) + " " + ordered(null, 1));
+lines.push("no encoder " + attempt(() => TextEncoder.prototype.encodeInto.call({}, "a", new Uint8Array(4).subarray(1))) + " " + attempt(() => encoder.encodeInto("a")) + " " + attempt(() => encoder.encodeInto("a", new Uint8Array(4).subarray(1), 3)));
+for (let round = 0; round < 3; round++) { Bun.gc(true); const bytes = new Uint8Array(64); let at = 0; for (let i = 0; i < 30; i++) at += into(bytes, at, "ab").written; lines.push("after a collection " + at + " " + bytesOf(bytes.subarray(56))); }
+console.log(lines.join("\n"));
+//// receiver-tests-before-the-class-exists.ts
+// Functions that read members of Request and Headers run on plain objects before either class exists. Request is created later, Headers never.
+const lines: string[] = [];
+const rounds = 10000;
+
+function summarizeTyped(request: Request): string {
+  return request.method + " " + request.url;
+}
+function summarizeUntyped(request: any): string {
+  return request.method + " " + request.url;
+}
+function contentTypeOf(headers: Headers): unknown {
+  return headers.has("content-type") ? headers.get("content-type") : "none";
+}
+
+function totalLength(receivers: unknown[]): number {
+  let length = 0;
+  for (let i = 0; i < rounds; i++) {
+    const receiver = receivers[i % receivers.length];
+    length += summarizeTyped(receiver as Request).length + summarizeUntyped(receiver).length;
+  }
+  return length;
+}
+
+const headerLikes: unknown[] = [
+  new Map([["content-type", "text/plain"]]),
+  new Map<string, string>(),
+  { has: (name: string) => name.length > 3, get: (name: string) => "answer for " + name },
+];
+function contentTypeCounts(): string {
+  const counts = new Map<string, number>();
+  for (let i = 0; i < rounds; i++) {
+    const answer = String(contentTypeOf(headerLikes[i % headerLikes.length] as Headers));
+    counts.set(answer, (counts.get(answer) ?? 0) + 1);
+  }
+  return [...counts].map(([answer, count]) => answer + " x" + count).join(", ");
+}
+
+const plainObjects: unknown[] = [
+  { url: "plain://first", method: "GET" },
+  { method: "PUT", url: "plain://second", body: null },
+];
+
+lines.push("plain objects before the first Request: " + totalLength(plainObjects));
+lines.push("header-like objects before the first Request: " + contentTypeCounts());
+
+const first = new Request("http://example.com/first", { method: "POST" });
+lines.push("the first Request: " + summarizeTyped(first) + " | " + summarizeUntyped(first));
+lines.push("the first Request in a loop: " + totalLength([first]));
+
+class RequestSubclass extends Request {}
+class RequestWithOverrides extends Request {
+  override get url() {
+    return "overridden " + super.url;
+  }
+  override get method() {
+    return "OVERRIDDEN";
+  }
+}
+const withOwnURL = new Request("http://example.com/own", { method: "DELETE" });
+Object.defineProperty(withOwnURL, "url", { value: "own url", configurable: true });
+
+const labeled: [string, unknown][] = [
+  ["a second Request", new Request("http://example.com/second")],
+  ["a subclass instance", new RequestSubclass("http://example.com/subclass", { method: "PATCH" })],
+  ["a subclass instance with overrides", new RequestWithOverrides("http://example.com/overrides", { method: "PUT" })],
+  ["a Request with an own url", withOwnURL],
+  ["a plain object", plainObjects[0]],
+  ["an object that inherits from a Request", Object.create(first)],
+];
+for (const [label, receiver] of labeled) {
+  let summary: string;
+  try {
+    summary = summarizeTyped(receiver as Request) + " | " + summarizeUntyped(receiver);
+  } catch (error) {
+    summary = "throws " + (error as Error).constructor.name;
+  }
+  lines.push(label + ": " + summary);
+}
+
+const withoutThrowing = labeled.slice(0, 5).map(([, receiver]) => receiver);
+lines.push("every kind of receiver in a loop: " + totalLength(withoutThrowing));
+
+delete (withOwnURL as any).url;
+lines.push("the own url deleted: " + summarizeTyped(withOwnURL) + " | " + summarizeUntyped(withOwnURL));
+
+Bun.gc(true);
+lines.push("a Request after a collection: " + summarizeTyped(new Request("http://example.com/third", { method: "HEAD" })));
+lines.push("plain objects after the first Request: " + totalLength(plainObjects));
+lines.push("header-like objects after the first Request: " + contentTypeCounts());
+
+console.log(lines.join("\n"));
+//// record-conversion-typed-object.ts
+// A typed object as the record argument of `new Headers()` and `new URLSearchParams()`: its own enumerable keys in creation order, each value read and converted in that order, as in plain Bun.
+interface Init { [name: string]: string }
+interface Closed { accept: string; host: string }
+interface Optional { first?: string; second: string; third: string }
+interface Mixed { count: number; ratio: number; on: boolean; none: null; missing: undefined; big: bigint }
+interface Stringified { a: string; b: { toString(): string }; c?: string }
+class Query { #secret = "s"; constructor(public q: string, public page: number) {} describe() { return this.q + this.#secret; } }
+function hide(value: unknown): any { return value; }
+const log: string[] = [];
+let count = 0;
+function attempt(convert: () => unknown): string {
+  try { return JSON.stringify(convert()); } catch (e) { return "THROWN " + (e as Error).name + ": " + (e as Error).message; }
+}
+function show(name: string, make: () => unknown) {
+  const headers = attempt(() => [...new Headers(hide(make()))]);
+  const query = attempt(() => new URLSearchParams(hide(make())).toString());
+  console.log(String(++count).padStart(2, "0"), name + ":", headers, query, "log: " + log.splice(0).join());
+}
+const closed = (): Closed => ({ accept: "text/plain", host: "example.com" });
+
+show("index signature", () => { const init: Init = { accept: "a", "x-one": "1" }; init["x-late"] = "l"; return init; });
+show("closed literal", closed);
+show("class instance", () => new Query("bun", 2));
+show("optional field absent", (): Optional => ({ second: "2", third: "3" }));
+show("optional field set late", () => { const x: Optional = { second: "2", third: "3" }; x.first = "1"; return x; });
+show("optional field set to undefined", () => { const x: Optional = { second: "2", third: "3" }; x.first = undefined; return x; });
+show("optional field deleted and set again", () => { const x: Optional = { first: "1", second: "2", third: "3" }; delete x.first; x.first = "again"; return x; });
+show("numbers, booleans, nullish, bigint", (): Mixed => ({ count: 1, ratio: 1.5, on: true, none: null, missing: undefined, big: 10n }));
+show("numbers with special text", (): Mixed => ({ count: -0, ratio: NaN, on: false, none: null, missing: undefined, big: -(2n ** 64n) }));
+show("a rope and 16-bit text", (): Closed => ({ accept: "left".repeat(3) + count, host: "значение" }));
+show("non-enumerable field", () => { const x = closed(); Object.defineProperty(hide(x), "host", { enumerable: false }); return x; });
+show("extra property", () => { const x = closed(); hide(x).extra = "e"; return x; });
+show("extra non-enumerable property", () => { const x = closed(); Object.defineProperty(hide(x), "hidden", { value: "h", enumerable: false, writable: true, configurable: true }); return x; });
+show("extra read-only property", () => { const x = closed(); Object.defineProperty(hide(x), "fixed", { value: "f", enumerable: true, writable: false, configurable: false }); return x; });
+show("non-enumerable symbol key", () => { const x = closed(); Object.defineProperty(hide(x), Symbol("s"), { value: "v", enumerable: false, writable: true, configurable: true }); return x; });
+show("frozen", () => { const x = closed(); Object.freeze(x); return x; });
+show("sealed with an extra property", () => { const x = closed(); hide(x).extra = "e"; Object.seal(x); return x; });
+show("empty", (): { o?: string } => ({}));
+show("symbol value", () => ({ a: "1", s: Symbol("s"), z: "26" }));
+show("keys equal after conversion", () => { const init: Init = { z: "26" }; init["\ud800"] = "1"; init["�"] = "2"; return init; });
+
+const reused = closed();
+hide(reused).extra = "e";
+show("one object, converted twice", () => reused);
+reused.host = "changed";
+hide(reused).extra = "f";
+show("the same object after two stores", () => reused);
+hide(reused).more = "m";
+delete hide(reused).extra;
+show("the same object after an addition and a deletion", () => reused);
+
+show("toString deletes a later key", () => { const init: Stringified = { a: "1", b: { toString() { log.push("b"); delete init.c; return "2"; } }, c: "3" }; return init; });
+show("toString changes a later value", () => { const init: Stringified = { a: "1", b: { toString() { log.push("b"); init.c = "changed"; return "2"; } }, c: "3" }; return init; });
+show("toString adds a key", () => { const init: Stringified = { a: "1", b: { toString() { log.push("b"); hide(init).d = "4"; return "2"; } }, c: "3" }; return init; });
+show("toString throws", () => { const init: Stringified = { a: "1", b: { toString() { log.push("b"); throw new RangeError("from toString"); } }, c: "3" }; return init; });
+show("array value", () => ({ a: "1", list: ["x", "y"], z: "26" }));
+show("accessor", () => { const x = closed(); Object.defineProperty(hide(x), "got", { get() { log.push("get"); return "g"; }, enumerable: true, configurable: true }); return x; });
+show("accessor replaces a field", () => { const x = closed(); Object.defineProperty(hide(x), "accept", { get() { log.push("get"); return "g"; }, enumerable: true, configurable: true }); return x; });
+show("index-like keys", () => { const x = closed(); hide(x)[7] = "seven"; hide(x)["0"] = "zero"; return x; });
+show("enumerable symbol key", () => { const x = closed(); hide(x)[Symbol("s")] = "v"; return x; });
+show("enumerable symbol key after a value that logs", () => { const init: Stringified = { a: "1", b: { toString() { log.push("b"); return "2"; } } }; hide(init)[Symbol("s")] = "v"; return init; });
+//// replaced-host-globals.ts
+// The global names Request, Response, Blob, Headers, URL and URLSearchParams can be replaced. Code that names a replaced global gets the replacement, never a shortcut for the original class.
+const lines: string[] = [];
+////= say
+const globals = globalThis as unknown as Record<string, unknown>;
+const originals = { Request, Response, Blob, Headers, URL, URLSearchParams };
+
+const makeRequest = (url: string) => new Request(url);
+const makeResponse = (body: string, status: number) => new Response(body, { status, headers: { "x-made": "here" } });
+const makeJSON = (value: unknown) => Response.json(value);
+const makeBlob = (text: string) => new Blob([text]);
+const makeHeaders = () => new Headers({ a: "1" });
+const pathnameOf = (text: string) => new URL(text).pathname;
+const queryOf = (text: string, name: string) => new URL(text).searchParams.get(name);
+const paramOf = (text: string, name: string) => new URLSearchParams(text).get(name);
+const everything = () => [
+  makeRequest("http://example.com/a").url,
+  makeResponse("body", 201).status,
+  makeResponse("body", 201).headers.get("x-made"),
+  makeJSON({ a: 1 }).headers.get("content-type"),
+  makeJSON({ a: 1 }).status,
+  makeBlob("abc").size,
+  makeHeaders().get("a"),
+  pathnameOf("http://example.com/a/b?c=d"),
+  queryOf("http://example.com/a/b?c=d", "c"),
+  paramOf("c=d", "c"),
+];
+function warm() {
+  let last: unknown;
+  for (let i = 0; i < 200; i++) last = everything();
+  return last;
+}
+
+say("before anything is replaced", warm);
+
+say("each global replaced by a subclass", () => {
+  globals.Request = class extends originals.Request {
+    override get url() {
+      return "replaced " + super.url;
+    }
+  };
+  globals.Response = class extends originals.Response {
+    override get status() {
+      return super.status + 1000;
+    }
+    static override json(value: unknown) {
+      return new originals.Response(JSON.stringify(value), { status: 299, headers: { "content-type": "replaced/json" } });
+    }
+  };
+  globals.Blob = class extends originals.Blob {
+    override get size() {
+      return super.size + 1000;
+    }
+  };
+  globals.Headers = class extends originals.Headers {
+    override get(name: string) {
+      return "replaced " + super.get(name);
+    }
+  };
+  globals.URL = class extends originals.URL {
+    override get pathname() {
+      return "/replaced" + super.pathname;
+    }
+    override get searchParams() {
+      return new originals.URLSearchParams("c=replaced");
+    }
+  };
+  globals.URLSearchParams = class extends originals.URLSearchParams {
+    override get(name: string) {
+      return "replaced " + super.get(name);
+    }
+  };
+  return warm();
+});
+say("the replacements are what the names answer", () => Object.keys(originals).map(name => globals[name] !== (originals as Record<string, unknown>)[name]));
+say("an instance of a replacement is an instance of the original", () => [makeRequest("http://example.com/") instanceof originals.Request, makeHeaders() instanceof originals.Headers]);
+
+say("each global replaced by an unrelated class", () => {
+  for (const name of Object.keys(originals)) {
+    globals[name] = class {
+      url = "unrelated";
+      status = -1;
+      size = -1;
+      pathname = "unrelated";
+      headers = { get: () => "unrelated" };
+      searchParams = { get: () => "unrelated" };
+      get() {
+        return "unrelated";
+      }
+      static json() {
+        return { status: -2, headers: { get: () => "unrelated json" } };
+      }
+    };
+  }
+  return warm();
+});
+
+say("each global deleted", () => {
+  const answers = Object.keys(originals).map(name => delete globals[name]);
+  let error = "";
+  try {
+    makeHeaders();
+  } catch (e) {
+    error = (e as Error).constructor.name;
+  }
+  return [answers, error, typeof globals.URL];
+});
+
+say("the originals restored", () => {
+  Object.assign(globals, originals);
+  return warm();
+});
+
+say("one static function replaced", () => {
+  const json = originals.Response.json;
+  (originals.Response as unknown as Record<string, unknown>).json = () => new originals.Response("x", { status: 298 });
+  const status = makeJSON({}).status;
+  originals.Response.json = json;
+  return [status, makeJSON({}).status];
+});
+
+say("a local binding with the name of a global", () => {
+  class URL {
+    pathname = "local";
+    constructor(readonly text: string) {}
+  }
+  class Headers {
+    get(name: string) {
+      return "local " + name;
+    }
+  }
+  return [new URL("http://example.com/a").pathname, new Headers().get("a")];
+});
+
+console.log(lines.join("\n"));
+//// replaced-members-of-lazy-globals.ts
+// Bun.inspect and Response.json are called in hot loops while the program replaces them, collects garbage and restores them. Another object stands in for Buffer as an argument and as the global.
+const lines: string[] = [];
+const texts = ["abc", "héllo", "日本語", "", "😀"];
+const rounds = 2000;
+
+////= lines-18	bufferFromHot	0	Buffer.from
+function byteLengthHot(): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) sum += Buffer.byteLength(texts[i % texts.length]);
+  return sum;
+}
+////= lines-18	inspectEarly	1	Bun.inspect
+////= lines-18	inspectHot	0	Bun.inspect
+function responseJSONEarly(): number {
+  let sum = 1;
+  for (let i = 0; i < rounds; i++) sum += Response.json({ round: i }, { status: 200 + (i % 3) }).status;
+  return sum;
+}
+function responseJSONHot(): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) sum += Response.json({ round: i }, { status: 200 + (i % 3) }).status;
+  return sum;
+}
+
+let replacementCalls = 0;
+let callsOnHolder = 0;
+function countCall(receiver: unknown, holder: unknown) {
+  replacementCalls++;
+  if (receiver === holder) callsOnHolder++;
+}
+function takeCounts(): string {
+  const counts = replacementCalls + " replacement calls, " + callsOnHolder + " on the holder";
+  replacementCalls = 0;
+  callsOnHolder = 0;
+  return counts;
+}
+
+interface Case {
+  label: string;
+  holder: any;
+  name: string;
+  replacement: (this: unknown, ...values: any[]) => unknown;
+  early: () => number;
+  hot: () => number;
+}
+const cases: Case[] = [
+  {
+    label: "Bun.inspect",
+    holder: Bun,
+    name: "inspect",
+    replacement: function (this: unknown, value: any) {
+      countCall(this, Bun);
+      return "replaced: " + value;
+    },
+    early: inspectEarly,
+    hot: inspectHot,
+  },
+  {
+    label: "Response.json",
+    holder: Response,
+    name: "json",
+    replacement: function (this: unknown, value: any, init: any) {
+      countCall(this, Response);
+      return { status: init.status + value.round + 3000 };
+    },
+    early: responseJSONEarly,
+    hot: responseJSONHot,
+  },
+];
+
+for (const { label, holder, name, replacement, early } of cases) {
+  const original = holder[name];
+  holder[name] = replacement;
+  lines.push(label + " replaced before the first call: " + early() + ", " + takeCounts());
+  holder[name] = original;
+  lines.push(label + " restored after the first call: " + early() + ", " + takeCounts());
+}
+
+for (const { label, holder, name, replacement, hot } of cases) {
+  const original = holder[name];
+  lines.push(label + " original: " + hot() + ", " + takeCounts());
+  holder[name] = replacement;
+  Bun.gc(true);
+  lines.push(label + " replaced: " + hot() + ", " + takeCounts());
+  holder[name] = original;
+  Bun.gc(true);
+  lines.push(label + " restored: " + hot() + ", " + takeCounts() + ", same function: " + (holder[name] === original));
+}
+
+const bufferLike = {
+  from(text: string) {
+    return { length: text.length + 5000 };
+  },
+  byteLength(text: string) {
+    return text.length + 7000;
+  },
+};
+function lengthsThrough(holder: typeof Buffer): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    const text = texts[i % texts.length];
+    sum += holder.from(text).length + holder.byteLength(text);
+  }
+  return sum;
+}
+lines.push("Buffer as an argument: " + lengthsThrough(Buffer));
+lines.push("a Buffer-like object as an argument: " + lengthsThrough(bufferLike as unknown as typeof Buffer));
+lines.push("Buffer as an argument again: " + lengthsThrough(Buffer));
+
+const realBuffer = Buffer;
+(globalThis as any).Buffer = bufferLike;
+lines.push("a Buffer-like object as the global: " + bufferFromHot() + " " + byteLengthHot());
+(globalThis as any).Buffer = realBuffer;
+lines.push("Buffer as the global again: " + bufferFromHot() + " " + byteLengthHot());
+
+function oneInspection(text: string): unknown {
+  return Bun.inspect(text);
+}
+let warmSum = 0;
+for (let i = 0; i < rounds; i++) warmSum += String(oneInspection(texts[i % texts.length])).length;
+lines.push("one call at a time: " + warmSum);
+
+(Bun as any).inspect = undefined;
+Bun.gc(true);
+const laterFunctions: Function[] = [];
+for (let i = 0; i < 5000; i++) laterFunctions.push(new Function("text", "return 7"));
+let wrongAnswers = 0;
+for (const laterFunction of laterFunctions) {
+  (Bun as any).inspect = laterFunction;
+  if (oneInspection("abc") !== 7) wrongAnswers++;
+}
+lines.push("functions created after the original was dropped and collected: " + wrongAnswers + " wrong answers");
+
+console.log(lines.join("\n"));
+//// replaced-prototype-getters.ts
+// A getter of a host class that may be redefined is read many times, then replaced on its prototype, deleted, inherited from an object put behind, and put back: each read answers as plain Bun does. A locked prototype leaves the attributes of its members as they are and is not extensible: that tells URL.prototype and URLSearchParams.prototype apart, whose getters are only read.
+import { SocketAddress } from "node:net";
+
+const lines: string[] = [];
+////= say
+
+const pathnameOf = (url: URL): unknown => url.pathname;
+const sizeOf = (params: URLSearchParams): unknown => params.size;
+const abortedOf = (signal: AbortSignal): unknown => signal.aborted;
+const addressOf = (address: SocketAddress): unknown => address.address;
+const portOf = (address: SocketAddress): unknown => address.port;
+const untyped = (holder: any, name: "pathname" | "size" | "aborted" | "address" | "port"): unknown => {
+  switch (name) {
+    case "pathname":
+      return holder.pathname;
+    case "size":
+      return holder.size;
+    case "aborted":
+      return holder.aborted;
+    case "address":
+      return holder.address;
+    case "port":
+      return holder.port;
+  }
+};
+
+function all<T extends object>(label: string, name: "pathname" | "size" | "aborted" | "address" | "port", make: () => T, read: (holder: T) => unknown) {
+  const holder = make();
+  const prototype = Object.getPrototypeOf(holder) as object;
+  const original = Object.getOwnPropertyDescriptor(prototype, name);
+  const both = (on: T = holder) => [read(on), untyped(on, name)];
+  const mayBeRedefined = !!original?.configurable && Object.isExtensible(prototype);
+  say(label + " has a descriptor that may be redefined", () => [mayBeRedefined, typeof original?.get]);
+  say(label + " read many times", () => {
+    let same = 0;
+    const first = JSON.stringify(both());
+    for (let turn = 0; turn < 200; turn++) if (JSON.stringify(both()) === first) same++;
+    return [first, same];
+  });
+  if (!mayBeRedefined) return;
+  say(label + " replaced by a getter", () => (Object.defineProperty(prototype, name, { get: () => "replaced", configurable: true }), [both(), both(make())]));
+  say(label + " replaced by another getter", () => (Object.defineProperty(prototype, name, { get: () => "replaced again", configurable: true }), [both(), both(make())]));
+  say(label + " replaced by a value", () => (Object.defineProperty(prototype, name, { value: 7, writable: true, configurable: true }), [both(), both(make())]));
+  say(label + " whose value is stored to", () => (((prototype as Record<string, unknown>)[name] = 8), [both(), both(make())]));
+  say(label + " put back", () => (Object.defineProperty(prototype, name, original), [both(), both(make())]));
+  say(label + " deleted", () => [delete (prototype as Record<string, unknown>)[name], both(), both(make())]);
+  const behind = Object.getPrototypeOf(prototype) as object;
+  say(label + " inherited from an object put behind", () => (Object.setPrototypeOf(prototype, Object.create(behind, { [name]: { value: "from behind", configurable: true } })), [both(), both(make())]));
+  say(label + " put back in front of it", () => (Object.defineProperty(prototype, name, original), [both(), both(make())]));
+  say(label + " with the chain as it was", () => (Object.setPrototypeOf(prototype, behind), [both(), both(make())]));
+  say(label + " behind an own property", () => (Object.defineProperty(holder, name, { value: "own", configurable: true }), [both(), both(make())]));
+  say(label + " without the own property", () => [delete (holder as Record<string, unknown>)[name], both(), both(make())]);
+}
+
+all("URL.pathname", "pathname", () => new URL("http://example.com/a/b?c=d"), pathnameOf);
+all("URLSearchParams.size", "size", () => new URLSearchParams("a=1&b=2"), sizeOf);
+all("AbortSignal.aborted", "aborted", () => AbortSignal.abort(), abortedOf);
+all("SocketAddress.address", "address", () => new SocketAddress({ address: "127.0.0.1", port: 80 }), addressOf);
+all("SocketAddress.port", "port", () => new SocketAddress({ address: "127.0.0.1", port: 80 }), portOf);
+console.log(lines.join("\n"));
+//// request-header-reads.ts
+// `request.headers.get(name)` on the requests of a server, with and without a route, and on everything that only looks like one.
+const constantName = (request: Request) => request.headers.get("x-a");
+const givenName = (request: Request, name: string) => request.headers.get(name);
+const anyName = (request: Request, name: unknown) => request.headers.get(name as any);
+const ofResponse = (response: Response) => response.headers.get("x-a");
+const ofAnything = (holder: { headers: { get(name: string): unknown } }) => holder.headers.get("x-a");
+
+function attempt(run: () => unknown) {
+  try {
+    return run();
+  } catch (error) {
+    return `${(error as Error).name}: ${(error as Error).message}`;
+  }
+}
+
+const nameOfError = (run: () => unknown) => String(attempt(run)).split(":")[0];
+
+function rowsOf(request: Request) {
+  const log: string[] = [];
+  const rows: unknown[] = [
+    constantName(request),
+    givenName(request, "X-A"),
+    givenName(request, "x-absent"),
+    givenName(request, "x-empty"),
+    givenName(request, "x-latin"),
+    givenName(request, "x-twice"),
+    givenName(request, "cookie"),
+    givenName(request, "set-cookie"),
+    givenName(request, "host") !== null,
+    givenName(request, "content-type"),
+    attempt(() => givenName(request, "")),
+    attempt(() => givenName(request, "a b")),
+    attempt(() => givenName(request, "café")),
+    attempt(() => givenName(request, "世")),
+    attempt(() => anyName(request, 1)),
+    attempt(() => anyName(request, undefined)),
+    attempt(() => anyName(request, null)),
+    attempt(() => anyName(request, Symbol("x-a"))),
+    attempt(() => anyName(request, { toString: () => (log.push("converted"), "x-a") })),
+    attempt(() => anyName(request, { toString: () => (request.headers.set("x-a", "set while the name was converted"), "x-a") })),
+    attempt(() =>
+      anyName(request, {
+        toString() {
+          throw new RangeError("thrown by the name");
+        },
+      }),
+    ),
+    log,
+  ];
+  return rows;
+}
+
+function afterwards(request: Request) {
+  const headers = request.headers;
+  const rows: unknown[] = [headers === request.headers, constantName(request)];
+  headers.set("x-a", "changed");
+  rows.push(constantName(request), givenName(request, "x-a"));
+  headers.delete("x-a");
+  rows.push(constantName(request));
+  headers.append("x-a", "one");
+  headers.append("x-a", "two");
+  rows.push(constantName(request), request.clone().headers.get("x-a"), [...headers.keys()].includes("x-twice"));
+  return rows;
+}
+
+const untouched = (request: Request) => Response.json([constantName(request), givenName(request, "x-twice"), [...request.headers].filter(([name]) => name.startsWith("x-"))]);
+const first = (request: Request) => Response.json([rowsOf(request), afterwards(request)]);
+const later = async (request: Request) => {
+  const before = constantName(request);
+  await Bun.sleep(1);
+  return Response.json([before, rowsOf(request), afterwards(request)]);
+};
+const onlyLater = async (request: Request) => {
+  await Bun.sleep(1);
+  return Response.json([constantName(request), givenName(request, "x-twice"), givenName(request, "x-absent")]);
+};
+
+const server = Bun.serve({
+  port: 0,
+  routes: { "/static": new Response("static"), "/routed/untouched": untouched, "/routed/first": first, "/routed/later": later, "/routed/only-later": onlyLater },
+  fetch(request) {
+    const path = new URL(request.url).pathname;
+    return path === "/untouched" ? untouched(request) : path === "/first" ? first(request) : path === "/later" ? later(request) : path === "/only-later" ? onlyLater(request) : new Response("none", { status: 404 });
+  },
+});
+
+function send(path: string): Promise<string> {
+  const lines = [`GET ${path} HTTP/1.1`, "Host: localhost", "x-a: 1", "X-Empty:", "x-latin: café", "x-twice: a", "X-Twice: b", "Cookie: a=1", "Cookie: b=2", "Set-Cookie: c=3", "Set-Cookie: d=4", "Connection: close", "", ""];
+  return new Promise((resolve, reject) => {
+    let received = "";
+    Bun.connect({
+      hostname: "127.0.0.1",
+      port: server.port!,
+      socket: {
+        open: (socket) => void socket.write(Buffer.from(lines.join("\r\n"), "latin1")),
+        data: (_, chunk) => void (received += chunk.toString("utf8")),
+        close: () => resolve(received.slice(received.indexOf("\r\n\r\n") + 4)),
+        error: (_, error) => reject(error),
+      },
+    }).catch(reject);
+  });
+}
+
+for (const path of ["/untouched", "/first", "/later", "/only-later", "/routed/untouched", "/routed/first", "/routed/later", "/routed/only-later"]) console.log(path, await send(path));
+await server.stop(true);
+
+class Subclass extends Request {}
+////= lines-17	Overriding	Request	"x-a"	"overridden"
+const made = (init?: RequestInit) => new Request("http://localhost/", init);
+const withOwn = made({ headers: { "x-a": "hidden" } });
+Object.defineProperty(withOwn, "headers", { value: { get: (name: string) => `own ${name}` } });
+console.log(
+  JSON.stringify([
+    constantName(made({ headers: { "x-a": "made" } })),
+    constantName(made()),
+    givenName(made({ method: "POST", body: new Blob(["x"], { type: "text/x-made" }) }), "content-type"),
+    givenName(made({ method: "POST", body: "text" }), "content-type"),
+    constantName(new Subclass("http://localhost/", { headers: { "x-a": "subclass" } })),
+    constantName(new Overriding("http://localhost/")),
+    constantName(withOwn),
+    ofResponse(new Response("", { headers: { "x-a": "response" } })),
+    ofAnything({ headers: new Map([["x-a", "map"]]) }),
+    ofAnything({ headers: new Headers({ "x-a": "headers" }) }),
+    nameOfError(() => constantName(null as unknown as Request)),
+    nameOfError(() => constantName({} as Request)),
+    rowsOf(made({ headers: { "x-a": "made", "x-empty": "", "x-twice": "a" } })),
+    afterwards(made({ headers: { "x-a": "made", "x-twice": "a" } })),
+  ]),
+);
+let total = 0;
+for (let i = 0; i < 3000; i++) {
+  total += constantName(made({ headers: { "x-a": "v" + i } }))!.length + (givenName(made(), "x-a") === null ? 1 : 0);
+  if (i % 1000 === 0) Bun.gc(true);
+}
+console.log("many", total);
+//// request-header-reads-untyped.js
+// Untyped code, as a framework writes it: the request stands in a field of a wrapper, and the name is a parameter.
+class Wrapper {
+  raw;
+  constructor(raw) {
+    this.raw = raw;
+  }
+  header(name) {
+    if (name) return this.raw.headers.get(name) ?? undefined;
+    return Object.fromEntries(this.raw.headers);
+  }
+}
+function constantName(request) {
+  return request.headers.get("x-a");
+}
+function keptHeaders(request) {
+  const headers = request.headers;
+  return [headers.get("x-a"), headers === request.headers];
+}
+export function twoArguments(request) {
+  return request.headers.get("x-a", "x-b");
+}
+export function noArgument(request) {
+  return request.headers.get();
+}
+export function nameRunsCode(request, log) {
+  return request.headers.get(log.push("name") && "x-a");
+}
+function nameAfter(depth) {
+  return depth > 0 ? nameAfter(depth - 1) : "x-a";
+}
+export function nameByCall(request) {
+  return request.headers.get(nameAfter(3));
+}
+export async function nameByAwait(request) {
+  return request.headers.get(await Promise.resolve("x-a"));
+}
+export function* nameByYield(request) {
+  return request.headers.get(yield "which");
+}
+const candidates = ["accept", "host", "x-a", "x-b"];
+function firstOfOurs(names) {
+  let found = "";
+  for (let round = 0; round < 2; round++) {
+    for (const name of names) {
+      try {
+        if (!found && name.startsWith("x-")) found = name;
+      } catch {
+        found = "";
+      }
+    }
+  }
+  return found;
+}
+export function headersThenCall(request) {
+  const headers = request.headers;
+  const name = firstOfOurs(candidates);
+  return headers.get(name);
+}
+export async function headersThenAwait(request) {
+  const headers = request.headers;
+  const name = await Promise.resolve("x-a");
+  return headers.get(name);
+}
+////= attempt
+const nameOfError = (run) => String(attempt(run)).split(":")[0];
+function rowsOf(request) {
+  const wrapper = new Wrapper(request);
+  const log = [];
+  return [
+    wrapper.header("x-a"),
+    wrapper.header("X-A"),
+    wrapper.header("x-absent"),
+    wrapper.header("x-twice"),
+    constantName(request),
+    twoArguments(request),
+    attempt(() => noArgument(request)),
+    nameRunsCode(request, log),
+    log,
+    keptHeaders(request),
+    constantName(request),
+    Object.keys(wrapper.header()).filter((name) => name.startsWith("x-")),
+  ];
+}
+
+const server = Bun.serve({
+  port: 0,
+  routes: { "/routed": (request) => Response.json(rowsOf(request)) },
+  fetch: async (request) => {
+    const before = new Wrapper(request).header("x-a");
+    await null;
+    return Response.json([before, rowsOf(request)]);
+  },
+});
+for (const path of ["/routed", "/plain", "/routed", "/plain"]) {
+  const headers = new Headers({ "x-a": "1" });
+  headers.append("x-twice", "a");
+  headers.append("x-twice", "b");
+  console.log(path, await (await fetch(new URL(path, server.url), { headers })).text());
+}
+await server.stop(true);
+
+const looksLikeOne = { headers: { get: (name) => `looks like ${name}` } };
+const getter = {
+  reads: 0,
+  get headers() {
+    this.reads++;
+    return new Map([["x-a", "from a getter"]]);
+  },
+};
+console.log(
+  JSON.stringify([
+    constantName(looksLikeOne),
+    new Wrapper(looksLikeOne).header("x-a"),
+    constantName(getter),
+    getter.reads,
+    constantName(new Response("", { headers: { "x-a": "response" } })),
+    constantName(new Request("http://localhost/", { headers: { "x-a": "made" } })),
+    nameByCall(new Request("http://localhost/", { headers: { "x-a": "by a call" } })),
+    await nameByAwait(new Request("http://localhost/", { headers: { "x-a": "by an await" } })),
+    headersThenCall(new Request("http://localhost/", { headers: { "x-a": "headers, then a call" } })),
+    await headersThenAwait(new Request("http://localhost/", { headers: { "x-a": "headers, then an await" } })),
+    ((generator) => [generator.next().value, generator.next("x-a").value])(nameByYield(new Request("http://localhost/", { headers: { "x-a": "by a yield" } }))),
+    nameOfError(() => constantName(undefined)),
+    nameOfError(() => constantName({ headers: null })),
+    nameOfError(() => constantName({ headers: {} })),
+    nameOfError(() => constantName(1)),
+    nameOfError(() => constantName("text")),
+  ]),
+);
+//// request-headers-without-headers-object.ts
+// `request.headers.get(name)` and `request.headers.has(name)` on every kind of request, before and after everything a program can do to a request or to its headers: each gives what plain Bun gives.
+import { connect } from "node:net";
+import type { BunRequest } from "bun";
+
+const lines: string[] = [];
+function attempt(work: () => unknown): unknown {
+  try {
+    return work();
+  } catch (error) {
+    return "throws " + (error as Error).constructor.name + ": " + (error as Error).message;
+  }
+}
+
+function readsOne(request: Request) {
+  return request.headers.get("x-one");
+}
+function asksForOne(request: Request) {
+  return request.headers.has("x-one");
+}
+function readsByVariable(request: Request, name: string) {
+  return request.headers.get(name);
+}
+export function readsOfAnything(request: any) {
+  return request.headers.get("x-one");
+}
+function readsMany(request: Request) {
+  return [
+    request.headers.get("x-one"),
+    request.headers.get("X-One"),
+    request.headers.get("X-ONE"),
+    request.headers.get("x-two"),
+    request.headers.get("x-empty"),
+    request.headers.get("x-absent"),
+    request.headers.get("x-dup"),
+    request.headers.get("cookie"),
+    request.headers.get("accept"),
+    request.headers.get("Content-Type"),
+    request.headers.get("host") === null,
+    request.headers.get("x-latin"),
+    request.headers.get("x-spaces"),
+    request.headers.has("x-one"),
+    request.headers.has("X-Two"),
+    request.headers.has("x-empty"),
+    request.headers.has("x-absent"),
+    request.headers.has("x-dup"),
+    request.headers.has("content-type"),
+  ];
+}
+function invalidNames(request: Request) {
+  return [
+    attempt(() => request.headers.get("bad name")),
+    attempt(() => request.headers.get("")),
+    attempt(() => request.headers.get("x:y")),
+    attempt(() => request.headers.get("café")),
+    attempt(() => request.headers.get("中")),
+    attempt(() => request.headers.has("bad name")),
+    attempt(() => request.headers.has("")),
+  ];
+}
+function readsOfRoute(request: BunRequest<"/route/:id">) {
+  return [request.params.id, request.headers.get("x-one"), request.headers.has("x-two"), request.headers.get("x-absent")];
+}
+
+////= lines-17	Subclass	Request	"x-one"	"of the subclass"
+class PlainSubclass extends Request {}
+
+const handlers: Record<string, (request: Request) => unknown> = {
+  "/many": readsMany,
+  "/one": request => [readsOne(request), asksForOne(request), readsByVariable(request, "x-one"), readsOfAnything(request)],
+  "/invalid": invalidNames,
+  "/invalid-after-the-object-is-made": request => [typeof request.headers, invalidNames(request)],
+  "/twice": request => [readsOne(request), readsOne(request), readsMany(request).join() === readsMany(request).join()],
+  "/then-the-object": request => {
+    const before = readsOne(request);
+    const headers = request.headers;
+    return [before, headers.get("x-one"), readsOne(request), headers === request.headers, [...headers.keys()].filter(key => key.startsWith("x-")).join()];
+  },
+  "/after-await": async request => {
+    const before = readsOne(request);
+    await Promise.resolve();
+    const soon = readsMany(request);
+    await new Promise(resolve => setTimeout(resolve, 2));
+    return [before, soon, readsMany(request)];
+  },
+  "/only-after-await": async request => {
+    await new Promise(resolve => setTimeout(resolve, 2));
+    return readsMany(request);
+  },
+  "/after-the-body": async request => [await request.text(), readsMany(request)],
+  "/set": request => {
+    const before = readsOne(request);
+    request.headers.set("x-one", "set");
+    request.headers.set("x-added", "added");
+    return [before, readsOne(request), request.headers.get("x-added"), request.headers.has("x-added")];
+  },
+  "/delete": request => {
+    request.headers.delete("x-one");
+    return [readsOne(request), asksForOne(request)];
+  },
+  "/append": request => {
+    request.headers.append("x-one", "more");
+    return [readsOne(request), asksForOne(request)];
+  },
+  "/own-get-on-the-headers": request => {
+    const before = readsOne(request);
+    (request.headers as unknown as Record<string, unknown>).get = () => "own get";
+    (request.headers as unknown as Record<string, unknown>).has = () => false;
+    return [before, readsOne(request), asksForOne(request)];
+  },
+  "/own-other-property-on-the-headers": request => {
+    (request.headers as unknown as Record<string, unknown>).note = 1;
+    return [readsOne(request), asksForOne(request)];
+  },
+  "/prototype-of-the-headers": request => {
+    Object.setPrototypeOf(request.headers, { get: () => "another prototype", has: () => false });
+    return [readsOne(request), asksForOne(request)];
+  },
+  "/own-headers-on-the-request": request => {
+    const before = readsOne(request);
+    Object.defineProperty(request, "headers", { value: new Headers({ "x-one": "own headers" }), configurable: true });
+    const shadowed = [readsOne(request), asksForOne(request)];
+    delete (request as unknown as Record<string, unknown>).headers;
+    return [before, shadowed, readsOne(request)];
+  },
+  "/own-other-property-on-the-request": request => {
+    (request as unknown as Record<string, unknown>).note = 1;
+    return [readsOne(request), asksForOne(request)];
+  },
+  "/prototype-of-the-request": request => {
+    Object.setPrototypeOf(request, Object.create(Request.prototype, { headers: { value: new Headers({ "x-one": "another prototype" }) } }));
+    return [readsOne(request), asksForOne(request)];
+  },
+  "/clone": request => {
+    const before = readsOne(request);
+    const clone = request.clone();
+    return [before, readsOne(clone), readsMany(clone).join() === readsMany(request).join()];
+  },
+  "/clone-first": request => {
+    const clone = request.clone();
+    clone.headers.set("x-one", "of the clone");
+    return [readsOne(clone), readsOne(request)];
+  },
+  "/made-from-it": request => {
+    const made = new Request(request);
+    const changed = new Request(request, { headers: { "x-one": "changed" } });
+    return [readsOne(made), readsOne(changed), readsOne(request), changed.headers.get("x-two")];
+  },
+  "/subclass-made-from-it": request => [readsOne(new Subclass(request)), asksForOne(new Subclass(request)), readsOne(new PlainSubclass(request)), asksForOne(new PlainSubclass(request))],
+};
+
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port: 0,
+  routes: {
+    "/route/:id": request => Response.json(readsOfRoute(request)),
+  },
+  async fetch(request) {
+    const handler = handlers[new URL(request.url).pathname];
+    return Response.json(await handler(request));
+  },
+});
+
+function send(path: string, headerLines: string[], body = ""): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const socket = connect(server.port!, "127.0.0.1", () => {
+      const head = [`${body ? "POST" : "GET"} ${path} HTTP/1.1`, "Host: 127.0.0.1", "Connection: close", ...headerLines];
+      if (body) head.push("Content-Length: " + Buffer.byteLength(body));
+      socket.write(Buffer.from(head.join("\r\n") + "\r\n\r\n" + body, "latin1"));
+    });
+    const chunks: Buffer[] = [];
+    socket.on("data", chunk => chunks.push(chunk as Buffer));
+    socket.on("error", reject);
+    socket.on("close", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      resolve(text.slice(text.indexOf("\r\n\r\n") + 4));
+    });
+  });
+}
+
+const usual = [
+  "X-One: 1",
+  "x-two: two words",
+  "X-Empty:",
+  "x-dup: a",
+  "X-Dup: b",
+  "Cookie: a=1",
+  "Cookie: b=2",
+  "Accept: text/html",
+  "Accept: application/json",
+  "Content-Type: text/plain",
+  "X-Latin: café",
+  "X-Spaces:    padded   ",
+];
+for (const path of Object.keys(handlers)) {
+  lines.push(path + ": " + (await send(path, usual, path === "/after-the-body" ? "the body" : "")));
+  lines.push(path + ", no headers: " + (await send(path, [], path === "/after-the-body" ? "the body" : "")));
+}
+lines.push("/route/7: " + (await send("/route/7", usual)));
+lines.push("/route/8, no headers: " + (await send("/route/8", [])));
+server.stop(true);
+
+const made: [string, () => Request][] = [
+  ["no init", () => new Request("http://localhost/")],
+  ["a record", () => new Request("http://localhost/", { headers: { "X-One": "record", "x-two": "2" } })],
+  ["pairs with a repeated name", () => new Request("http://localhost/", { headers: [["x-one", "a"], ["X-One", "b"]] })],
+  ["a Headers object", () => new Request("http://localhost/", { headers: new Headers({ "x-one": "object" }) })],
+  ["a body with a type", () => new Request("http://localhost/", { method: "POST", body: new Blob(["x"], { type: "a/b" }) })],
+  ["a string body", () => new Request("http://localhost/", { method: "POST", body: "text" })],
+  ["a form body", () => new Request("http://localhost/", { method: "POST", body: new URLSearchParams({ a: "1" }) })],
+  ["a subclass with its own getter", () => new Subclass("http://localhost/", { headers: { "x-one": "ignored" } })],
+  ["a subclass without members", () => new PlainSubclass("http://localhost/", { headers: { "x-one": "plain subclass" } })],
+];
+for (const [label, make] of made) {
+  lines.push(label + ": " + JSON.stringify([readsOne(make()), asksForOne(make()), make().headers.get("content-type"), make().headers.has("content-type"), invalidNames(make()).length]));
+  const request = make();
+  lines.push(label + ", read again: " + JSON.stringify([readsOne(request), readsOne(request), request.headers.get("content-type"), typeof request.headers, readsOne(request)]));
+}
+lines.push("not a request at all: " + JSON.stringify(attempt(() => readsOne({ headers: { get: (name: string) => "a look-alike: " + name } } as unknown as Request))));
+lines.push("null: " + String(attempt(() => readsOne(null as unknown as Request))).split(":")[0]);
+lines.push("a Response in its place: " + JSON.stringify(attempt(() => readsOne(new Response("", { headers: { "x-one": "of a response" } }) as unknown as Request))));
+
+console.log(lines.join("\n"));
+//// response-bodies-of-unshared-ropes.ts
+// A concatenation that nothing but one `new Response(text, { .. })` can reach is written as UTF-8 for the body without being flattened into a string. Whatever else may hold the text keeps today's road.
+const filler = "0123456789abcdef".repeat(20);
+const init = (kind: string) => ({ "Content-Type": kind });
+function direct(title: string, text: string): Response {
+  return new Response(`<h1>${title}</h1><p>${text}</p>`, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+}
+function page(body: string, status = 200): Response {
+  return new Response(body, { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
+}
+function layout(title: string, content: string): string {
+  return `<title>${title}</title><main>${content}</main>`;
+}
+function item(text: string): string {
+  return `<li>${text}</li>`;
+}
+function throughHelpers(title: string, texts: string[]): Response {
+  return page(layout(title, `<ul>${texts.map(item).join("")}</ul>`));
+}
+function chosen(title: string, text: string, isShort: boolean): Response {
+  const body = isShort ? `<p>${text}</p>` : `<h1>${title}</h1><p>${text}</p><p>${text}</p>`;
+  return new Response(body, { headers: { "Content-Type": "text/html" } });
+}
+function readAfterwards(title: string, text: string): [Response, number] {
+  const body = `<h1>${title}</h1><p>${text}</p>`;
+  return [new Response(body, { status: 200 }), body.length];
+}
+const kept = new Map<string, string>();
+function keptInAMap(title: string, text: string): Response {
+  const body = `<h1>${title}</h1><p>${text}</p>`;
+  kept.set(title, body);
+  return new Response(body, { status: 200 });
+}
+function cached(title: string): string {
+  return kept.get(title) ?? "";
+}
+function fromTheMap(title: string): Response {
+  return new Response(cached(title), { status: 200 });
+}
+function withNothingAdded(title: string, more: string): Response {
+  return new Response(cached(title) + more, { status: 200 });
+}
+function inALoop(title: string, text: string): Response[] {
+  const body = `<h1>${title}</h1><p>${text}</p>`;
+  const all: Response[] = [];
+  for (let i = 0; i < 3; i++) all.push(new Response(body, { status: 200 + i }));
+  return all;
+}
+function open(body: string): Response {
+  return new Response(body, { status: 200 });
+}
+const usedAsValues = [open];
+
+const lines: string[] = [];
+const hex = (bytes: Uint8Array) => Bun.hash.crc32(bytes).toString(16) + "/" + bytes.length;
+const codes = (text: string) => text.length + ":" + Bun.hash.crc32(Buffer.from(text, "utf16le")).toString(16);
+async function say(label: string, make: () => Response) {
+  const text = await make().text();
+  const bytes = new Uint8Array(await make().arrayBuffer());
+  const copy = make();
+  const cloned = copy.clone();
+  const blob = await make().blob();
+  lines.push(
+    label + ": " + JSON.stringify([codes(text), hex(bytes), codes(await cloned.text()), codes(await copy.text()), blob.size, blob.type, make().headers.get("content-type"), text.slice(0, 24), text.slice(-12)]),
+  );
+}
+const texts: [string, string][] = [
+  ["ASCII", filler],
+  ["short", "x"],
+  ["empty", ""],
+  ["Latin-1", filler + "café · naïve ÿ" + filler],
+  ["two bytes a character and three", filler + "Ωmega — 東京" + filler],
+  ["pairs of surrogates", filler + "😀 and 🤭" + filler],
+  ["only wide", "東京".repeat(200)],
+  ["a lone high surrogate", filler + "\ud83d" + filler],
+  ["a lone low surrogate", filler + "\ude00" + filler],
+  ["a high surrogate at the end", filler + "\ud83d"],
+  ["a low surrogate at the start", "\ude00" + filler],
+  ["a zero", filler + "\0" + filler],
+  ["U+FFFD, U+FFFE, U+FFFF", filler + "�￾￿" + filler],
+  ["a mark inside", filler + "﻿" + filler],
+];
+for (const [label, text] of texts) {
+  await say("direct, " + label, () => direct("T", text));
+  await say("through helpers, " + label, () => throughHelpers(text.slice(0, 40), [text, "b", text.slice(3, 90)]));
+  await say("chosen, short, " + label, () => chosen("T", text, true));
+  await say("chosen, long, " + label, () => chosen(text.slice(-30), text, false));
+  await say("read afterwards, " + label, () => readAfterwards("T", text)[0]);
+  await say("kept in a map, " + label, () => keptInAMap("k" + label, text));
+  await say("from the map, " + label, () => fromTheMap("k" + label));
+  await say("from the map again, " + label, () => fromTheMap("k" + label));
+  await say("nothing added, " + label, () => withNothingAdded("k" + label, ""));
+  await say("something added, " + label, () => withNothingAdded("k" + label, "!"));
+  await say("in a loop, " + label, () => inALoop("T", text)[2]!);
+  await say("open, " + label, () => usedAsValues[0]!(`<p>${text}</p>${filler}`));
+}
+function anyPage(body: string): Response {
+  return new Response(body, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+}
+const halves = (first: string, second: string) => anyPage(`${first}${filler}`.slice(0, first.length) + `${second}${filler}`);
+await say("a pair split between two pieces", () => page(`${filler}\ud83d` + `\ude00${filler}`));
+await say("a pair split between a slice and a piece", () => halves(filler + "\ud83d", "\ude00"));
+await say("a mark at the start", () => page(`﻿${filler}` + `${filler}.`));
+await say("a mark at the start, written as a piece of its own", () => direct("﻿", filler));
+await say("the start is a mark after an empty piece", () => page(`${""}﻿` + `${filler}${filler}.`));
+await say("slices of a wide text", () => anyPage(`${("東京" + filler).slice(1, 200)}|${("é" + filler).slice(0, 150)}|${filler.slice(5)}`));
+await say("numbers and the rest", () => page(`${1.5}${filler}${-0}${null}|${undefined}${true}${12345678901234567890n}${filler}`));
+let deep = "";
+for (let i = 0; i < 3000; i++) deep = i % 2 ? `<${deep}>` : `${deep}é${i}`;
+await say("three thousand levels", () => page(`${deep}!`));
+lines.push("the length after: " + readAfterwards("T", filler)[1] + ", the kept text: " + codes(kept.get("kASCII")!));
+{
+  using server = Bun.serve({
+    port: 0,
+    hostname: "127.0.0.1",
+    routes: {
+      "/wide": () => throughHelpers("東京 😀", [filler, "é", filler]),
+      "/narrow": () => throughHelpers("T", [filler, "b", filler]),
+      "/later": async () => {
+        await Bun.sleep(1);
+        return throughHelpers("later — 東京", [filler, filler]);
+      },
+    },
+  });
+  for (const path of ["/wide", "/narrow", "/later"]) {
+    const answer = await fetch(new URL(path, server.url));
+    const bytes = new Uint8Array(await answer.arrayBuffer());
+    lines.push("served " + path + ": " + JSON.stringify([answer.status, answer.headers.get("content-type"), answer.headers.get("content-length"), hex(bytes)]));
+  }
+}
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  sum += (await throughHelpers("n" + i, [filler, i % 7 ? "plain" : "東京", filler]).arrayBuffer()).byteLength;
+  if (i % 500 === 0) Bun.gc(true);
+}
+lines.push("many: " + sum);
+console.log(lines.join("\n"));
+//// response-bodies-with-latin1-pieces.ts
+// A piece of a page that is Latin-1 and holds a character beyond ASCII is written as UTF-8 eight characters at a time. Every place of such a character in a word, runs of them, and pieces of every short length give the bytes that a flattened string gives.
+const filler = "0123456789abcdef".repeat(20);
+function page(first: string, second: string, third: string): Response {
+  return new Response(`<a>${first}</a><b>${second}</b><c>${third}</c>${filler}`, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } });
+}
+const seen: string[] = [];
+function shared(first: string, second: string): Response {
+  const body = `<a>${first}</a><b>${second}</b>${filler}`;
+  seen.push(body);
+  return new Response(body, { status: 200 });
+}
+const lines: string[] = [];
+let sum = 0;
+async function take(response: Response): Promise<string> {
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  sum = (sum * 31 + Bun.hash.crc32(bytes) + bytes.length) % 1000000007;
+  return Bun.hash.crc32(bytes).toString(16) + "/" + bytes.length;
+}
+const plain = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".repeat(8);
+const beyond = ["\u0080", " ", "·", "¿", "À", "é", "ÿ"];
+for (let length = 1; length <= 72; length++) {
+  for (let at = 0; at < length; at++) {
+    const character = beyond[(length + at) % beyond.length]!;
+    const piece = plain.slice(0, at) + character + plain.slice(at + 1, length);
+    await take(page(piece, "x", plain.slice(0, length)));
+  }
+}
+lines.push("one character beyond ASCII at every place of pieces of 1 to 72: " + sum);
+for (const length of [127, 128, 129, 130, 143, 144, 145, 255, 256, 257, 1000, 4095, 4096, 4097, 20000]) {
+  const long = plain.repeat(Math.ceil(length / plain.length)).slice(0, length);
+  const places = [0, 1, 7, 8, 9, 15, 16, 63, 64, length >> 1, length - 9, length - 8, length - 2, length - 1].filter(at => at >= 0 && at < length);
+  const answers: string[] = [];
+  for (const at of places) answers.push(await take(page(long.slice(0, at) + "é" + long.slice(at + 1), long, "ÿ")));
+  lines.push(length + ": " + answers.join(" "));
+}
+for (const run of [1, 2, 7, 8, 9, 16, 17, 100, 5000]) {
+  lines.push("a run of " + run + ": " + (await take(page("ü".repeat(run), "a" + "\u0080".repeat(run) + "z", plain + "ÿ".repeat(run)))));
+  lines.push("every other, " + run + ": " + (await take(page("aé".repeat(run), "éa".repeat(run), "abcdefgé".repeat(run)))));
+}
+lines.push("only ASCII: " + (await take(page(plain, plain.slice(3), ""))));
+lines.push("a wide piece between: " + (await take(page(plain + "é", "東京", "é" + plain))));
+lines.push("a slice of a wide text that is Latin-1: " + (await take(page(("東" + plain + "é" + plain).slice(1), "", ""))));
+lines.push("shared: " + (await take(shared(plain + "é" + plain, "ÿ"))) + " " + seen[0]!.length);
+lines.push("as text: " + (await page("café · naïve", "ÿ".repeat(3), plain.slice(0, 9) + "é").text()).slice(0, 60));
+console.log(lines.join("\n"));

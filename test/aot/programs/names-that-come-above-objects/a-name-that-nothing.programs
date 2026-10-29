@@ -1,0 +1,555 @@
+////: Point
+class Point {
+  a: number;
+  declare never?: number;
+  constructor(a: number) {
+    this.a = a;
+  }
+}
+//// a-name-that-nothing-stores-comes-above-them.ts
+// The objects declare a field that nothing ever stores. Its name comes above them by a store, a getter, another prototype and evaluated text, one after the other.
+interface Options {
+  a: number;
+  never?: number;
+}
+////= Point
+const options: Options[] = [];
+const points: Point[] = [];
+for (let a = 0; a < 8; a++) {
+  options.push({ a });
+  points.push(new Point(a));
+}
+function readOptions(): string {
+  let text = "";
+  for (const object of options) text += `${object.never}${"never" in object ? "+" : "-"}`;
+  return text;
+}
+function readPoints(): string {
+  let text = "";
+  for (const object of points) text += `${object.never}${"never" in object ? "+" : "-"}`;
+  return text;
+}
+function round(label: string) {
+  console.log(label, readOptions(), readPoints());
+}
+
+round("before");
+(Point.prototype as any).never = "text";
+round("a store");
+delete (Point.prototype as any).never;
+Object.defineProperty(Point.prototype, "never", { get: () => 7, configurable: true });
+round("a getter");
+delete (Point.prototype as any).never;
+round("deleted");
+Object.setPrototypeOf(options[1], { never: null });
+Object.setPrototypeOf(points[1], { never: [1] });
+round("another prototype");
+new Function("object", "Object.getPrototypeOf(object).never = 'from text'")(points[2]);
+round("evaluated text");
+//// a-name-that-nothing-stores-never-comes-above-them.ts
+// The objects declare a field that nothing ever stores, and nothing ever comes above them under its name.
+interface Options {
+  a: number;
+  never?: number;
+}
+////= Point
+const options: Options[] = [];
+const points: Point[] = [];
+for (let a = 0; a < 8; a++) {
+  options.push({ a });
+  points.push(new Point(a));
+}
+let text = "";
+for (const object of options) text += `${object.never}${"never" in object ? "+" : "-"}${Object.hasOwn(object, "never")}`;
+for (const object of points) text += `${object.never}${"never" in object ? "+" : "-"}${Object.hasOwn(object, "never")}`;
+console.log(text);
+//// every-new-instance-is-put-below-an-object-created-from-the-prototype-of-its-class.js
+// Each turn makes an instance of a class and puts it below an object that was created from the class's prototype object, as a framework does with the requests of a server. Then the object above, the one above that and the instance itself are changed in every way, and the same readers are asked again.
+class Message {
+  constructor(url) {
+    this.url = url;
+    this.method = "GET";
+    this.count = 1;
+  }
+  describe() {
+    return this.method + " " + this.url;
+  }
+  get size() {
+    return this.url.length;
+  }
+  twice() {
+    return this.count * 2;
+  }
+}
+
+const lines = [];
+const say = (...parts) => lines.push(parts.map(String).join(" "));
+const attempt = action => {
+  try {
+    return action();
+  } catch (error) {
+    return error.constructor.name;
+  }
+};
+
+function makeAbove() {
+  const shared = Object.create(Message.prototype);
+  shared.get = function (name) {
+    return name + "=" + this.url;
+  };
+  shared.twice = function () {
+    return this.count * 20;
+  };
+  Object.defineProperty(shared, "fresh", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      return this.count === 1;
+    },
+  });
+  const ofTheApplication = Object.create(shared, {
+    application: { configurable: true, enumerable: true, writable: true, value: "app" },
+  });
+  return { shared, ofTheApplication };
+}
+
+function read(message) {
+  return [
+    message.url,
+    message.method,
+    message.count,
+    attempt(() => message.describe()),
+    attempt(() => message.size),
+    attempt(() => message.twice()),
+    attempt(() => message.get("url")),
+    attempt(() => message.fresh),
+    message.application,
+    message.missing,
+    "get" in message,
+    "missing" in message,
+    message instanceof Message,
+    Object.keys(message).join(),
+  ].join("|");
+}
+
+function store(message, value) {
+  message.count = value;
+  message.next = value + 1;
+  message.params = "p" + value;
+  message.route = value + 2;
+  return [message.count, message.next, message.params, message.route, Object.keys(message).join()].join("|");
+}
+
+function inherited(message) {
+  const names = [];
+  for (const name in message) names.push(name);
+  return names.join();
+}
+
+function turns(title, prepare, count = 40) {
+  let first = "",
+    last = "",
+    changes = 0;
+  for (let i = 0; i < count; i++) {
+    const message = new Message("/" + (i & 3));
+    const answer = attempt(() => prepare(message, i));
+    const text = [answer, read(message), attempt(() => store(message, i & 1)), read(message), inherited(message)].join(" ; ");
+    if (i === 0) first = text;
+    if (text !== last) changes++;
+    last = text;
+  }
+  say(title, changes, first);
+  say(title, "last", last);
+}
+
+{
+  const { ofTheApplication } = makeAbove();
+  turns("never", () => "as born");
+  turns("each turn", message => Object.setPrototypeOf(message, ofTheApplication) === message);
+  turns("every other turn", (message, i) => (i & 1 ? Object.setPrototypeOf(message, ofTheApplication) === message : "as born"));
+  turns("by Reflect", message => Reflect.setPrototypeOf(message, ofTheApplication));
+  turns("by the accessor", message => {
+    message.__proto__ = ofTheApplication;
+    return Object.getPrototypeOf(message) === ofTheApplication;
+  });
+}
+
+{
+  const one = makeAbove(),
+    other = makeAbove();
+  other.shared.get = function (name) {
+    return "other " + name;
+  };
+  turns("twice", message => {
+    Object.setPrototypeOf(message, one.ofTheApplication);
+    const before = message.get("a");
+    Object.setPrototypeOf(message, other.ofTheApplication);
+    return before + "," + message.get("a");
+  });
+  turns("and back", message => {
+    Object.setPrototypeOf(message, one.ofTheApplication);
+    const before = message.twice();
+    Object.setPrototypeOf(message, Message.prototype);
+    return before + "," + message.twice() + "," + attempt(() => message.get("a"));
+  });
+  turns("one of two", (message, i) => Object.setPrototypeOf(message, i % 3 ? one.ofTheApplication : other.ofTheApplication).get("b"));
+}
+
+turns("to null", message => {
+  Object.setPrototypeOf(message, null);
+  return Object.getPrototypeOf(message);
+});
+
+turns("to a plain literal", message => Object.setPrototypeOf(message, { get: () => "literal", count: 9 }).get());
+
+{
+  const seen = [];
+  const { ofTheApplication } = makeAbove();
+  const proxy = new Proxy(ofTheApplication, {
+    get(target, name, receiver) {
+      if (typeof name === "string" && seen.length < 12) seen.push("get " + name);
+      return Reflect.get(target, name, receiver);
+    },
+    set(target, name, value, receiver) {
+      if (seen.length < 12) seen.push("set " + String(name));
+      return Reflect.set(target, name, value, receiver);
+    },
+    has(target, name) {
+      if (seen.length < 12) seen.push("has " + String(name));
+      return Reflect.has(target, name);
+    },
+  });
+  turns("to a proxy", message => Object.setPrototypeOf(message, proxy) === message);
+  say("the proxy saw", seen.join());
+}
+
+{
+  const { shared, ofTheApplication } = makeAbove();
+  const put = message => Object.setPrototypeOf(message, ofTheApplication) === message;
+  turns("before any change", put);
+  shared.get = function (name) {
+    return "replaced " + name;
+  };
+  turns("a method above is replaced", put);
+  ofTheApplication.get = function (name) {
+    return "nearer " + name;
+  };
+  turns("a nearer object gets the name", put);
+  delete ofTheApplication.get;
+  delete shared.get;
+  turns("the name is deleted", put);
+  Object.defineProperty(shared, "fresh", { configurable: true, value: "a value now" });
+  turns("an accessor becomes a value", put);
+  Object.defineProperty(shared, "missing", { configurable: true, get: () => "no longer missing" });
+  turns("an absent name comes", put);
+  shared.describe = function () {
+    return "hides the class's";
+  };
+  Object.defineProperty(ofTheApplication, "size", { configurable: true, get: () => -1 });
+  turns("members of the class are hidden", put);
+  Object.setPrototypeOf(shared, {
+    describe() {
+      return "unreached";
+    },
+    late() {
+      return "late";
+    },
+  });
+  turns("the object above gets another prototype", message => put(message) + "," + message.late() + "," + (message instanceof Message));
+}
+
+{
+  const { shared, ofTheApplication } = makeAbove();
+  const put = message => Object.setPrototypeOf(message, ofTheApplication) === message;
+  const caught = [];
+  Object.defineProperty(shared, "next", {
+    configurable: true,
+    set(value) {
+      if (caught.length < 4) caught.push("next " + value + " " + (this instanceof Message));
+    },
+    get() {
+      return "from the accessor";
+    },
+  });
+  turns("a setter above a name that is stored later", put);
+  say("the setter saw", caught.join());
+  Object.defineProperty(shared, "params", { configurable: true, writable: false, value: "read-only above" });
+  turns("a read-only property above a name that is stored later", put);
+  turns("the same in strict code", message => {
+    "use strict";
+    put(message);
+    return attempt(() => {
+      message.params = 1;
+      return "stored";
+    });
+  });
+  Object.defineProperty(shared, "count", { configurable: true, set() {}, get: () => "never read" });
+  turns("an accessor above a field", put);
+  delete shared.next;
+  delete shared.params;
+  turns("they are taken away again", put);
+}
+
+{
+  const { ofTheApplication } = makeAbove();
+  turns("frozen first", message => attempt(() => Object.setPrototypeOf(Object.freeze(message), ofTheApplication)));
+  turns("sealed first", message => attempt(() => Object.setPrototypeOf(Object.seal(message), ofTheApplication)));
+  turns("not extensible first", message => Reflect.setPrototypeOf(Object.preventExtensions(message), ofTheApplication));
+  turns("not extensible, to the prototype it has", message => Reflect.setPrototypeOf(Object.preventExtensions(message), Message.prototype));
+  turns("frozen afterwards", message => Object.isFrozen(Object.freeze(Object.setPrototypeOf(message, ofTheApplication))));
+  turns("below itself", message => attempt(() => Object.setPrototypeOf(message, message)));
+  turns("in a ring", message => {
+    const between = Object.create(message);
+    return attempt(() => Object.setPrototypeOf(message, between));
+  });
+  turns("to what is no object", message => [1, "a", undefined, true, Symbol.iterator].map(value => attempt(() => Object.setPrototypeOf(message, value) === message)).join());
+}
+
+{
+  const { shared, ofTheApplication } = makeAbove();
+  turns("names of its own hide what is above", message => {
+    Object.setPrototypeOf(message, ofTheApplication);
+    message.get = () => "own";
+    message.application = "own application";
+    Object.defineProperty(message, "fresh", { configurable: true, value: "own fresh" });
+    return Object.keys(message).join();
+  });
+  turns("and are deleted again", message => {
+    Object.setPrototypeOf(message, ofTheApplication);
+    message.get = () => "own";
+    const before = message.get();
+    delete message.get;
+    delete message.url;
+    return before + "," + message.get("a");
+  });
+  Object.defineProperty(shared, "swaps", {
+    configurable: true,
+    get() {
+      Object.setPrototypeOf(this, Message.prototype);
+      return "swapped while it was read";
+    },
+  });
+  turns("an accessor above takes the object away from below it", message => {
+    Object.setPrototypeOf(message, ofTheApplication);
+    return [message.swaps, message.swaps, attempt(() => message.get("a")), message.twice()].join();
+  });
+}
+
+{
+  class Longer extends Message {
+    constructor(url) {
+      super(url);
+      this.extra = "e";
+    }
+    describe() {
+      return "longer " + super.describe();
+    }
+  }
+  const { ofTheApplication } = makeAbove();
+  let text = "";
+  for (let i = 0; i < 40; i++) {
+    const longer = new Longer("/l");
+    Object.setPrototypeOf(longer, ofTheApplication);
+    text = [read(longer), longer instanceof Longer, longer.extra, Longer.prototype.describe.call(longer)].join(" ; ");
+  }
+  say("an heir loses its own class", text);
+}
+
+{
+  const { ofTheApplication } = makeAbove();
+  const held = [];
+  for (let i = 0; i < 64; i++) {
+    const message = new Message("/" + i);
+    if (i & 1) Object.setPrototypeOf(message, ofTheApplication);
+    if (i & 2) message.next = i;
+    held.push(message);
+  }
+  let sum = 0,
+    found = 0;
+  for (const message of held) {
+    sum += message.twice() + message.size + (message.next ?? 0);
+    if (message.get) found++;
+  }
+  say("both kinds in one list", sum, found, JSON.stringify(held[3]), JSON.stringify(held[0]));
+}
+
+console.log(lines.join("\n"));
+//// native-functions-write-names-of-their-own-to-prototypes.ts
+// Built-in functions write names that they choose themselves, `stack`, `length`, `lastIndex` and an index, to the prototype object that they are handed. The objects below declare fields of those names and leave them empty.
+class Entry {
+  a: number;
+  declare stack?: number;
+  declare length?: string;
+  declare lastIndex?: string;
+  constructor(a: number) {
+    this.a = a;
+  }
+}
+const entries: Entry[] = [];
+for (let a = 0; a < 8; a++) {
+  const entry = new Entry(a);
+  if (a === 0) {
+    entry.stack = 1;
+    entry.length = "own";
+    entry.lastIndex = "own";
+  }
+  entries.push(entry);
+}
+function round(label: string) {
+  let text = "";
+  for (const entry of entries) text += `${typeof entry.stack}${"stack" in entry ? "+" : "-"}${entry.length}${"length" in entry ? "+" : "-"}${entry.lastIndex}${"lastIndex" in entry ? "+" : "-"} `;
+  console.log(label, text);
+}
+round("before");
+(Error as any).captureStackTrace(Entry.prototype);
+round("Error.captureStackTrace");
+Array.prototype.push.call(Entry.prototype, "pushed");
+round("Array.prototype.push");
+const prototype = Entry.prototype as any;
+prototype.flags = "g";
+prototype.exec = () => null;
+(RegExp.prototype as any)[Symbol.replace].call(prototype, "text", "");
+round("RegExp.prototype[Symbol.replace]");
+//// run-time-text-reaches-the-class-through-one-instance-and-changes-it-twice.js
+// Code that the compiler does not see gets one instance and reaches its class through it: the prototype object, the class object, the class above. It changes what later constructions, stores, reads and calls find there. Every pair of changes, in both orders, by three kinds of unseen code.
+const lines = [];
+const say = text => { lines.push(text); };
+const show = value => (typeof value === "string" ? JSON.stringify(value) : typeof value === "function" ? "function" : typeof value === "object" && value !== null ? "object" : String(value));
+function define() {
+  class Above {
+    static shared = "shared";
+    constructor() { this.first = 1; }
+    hello() { return "hello above"; }
+    get size() { return 10; }
+  }
+  class Thing extends Above {
+    static count = 0;
+    static label = "thing";
+    static make(x) { Thing.count++; return new Thing(x); }
+    constructor(x) {
+      super();
+      this.x = x;
+      this.y = 2;
+      this.late = undefined;
+    }
+    sum() { return this.x + this.y; }
+    hello() { return "hello " + super.hello(); }
+    setLate(v) { this.late = v; this.added = v; return this.late; }
+  }
+  return { Above, Thing };
+}
+const bodies = [
+  "Object.defineProperty(Object.getPrototypeOf(o), 'x', { get() { return 'x above'; }, set(v) { log('setter x ' + v); }, configurable: true })",
+  "Object.defineProperty(o.constructor.prototype, 'added', { set(v) { log('setter added ' + v); }, configurable: true })",
+  "Object.defineProperty(o.__proto__.__proto__, 'first', { value: 'locked first', writable: false, configurable: true })",
+  "o.constructor.prototype.sum = function () { return 'other sum'; }",
+  "delete o.constructor.prototype.hello",
+  "delete Object.getPrototypeOf(o.constructor.prototype).hello",
+  "o.constructor.count = 'text'",
+  "delete o.constructor.count",
+  "Object.defineProperty(o.constructor, 'label', { get() { return 'label getter'; }, configurable: true })",
+  "Object.freeze(o.constructor)",
+  "Object.freeze(o.constructor.prototype)",
+  "Object.setPrototypeOf(o.constructor.prototype, { hello() { return 'hello stranger'; }, get size() { return -1; } })",
+  "Object.setPrototypeOf(o.constructor, { shared: 'shared stranger' })",
+  "Object.getPrototypeOf(o.constructor).shared = 5",
+  "Object.defineProperty(o.constructor.prototype, 'size', { value: 'own size', configurable: true })",
+  "Object.defineProperty(o.constructor.prototype, 'late', { get() { return 'late above'; }, set(v) { log('setter late ' + show(v)); }, configurable: true })",
+  "o.constructor.make = function (x) { return 'made by stranger ' + x; }",
+  "Object.defineProperty(o.constructor.prototype, 'y', { value: 'y above', writable: false })",
+];
+const vm = require("node:vm");
+const roads = [
+  body => new Function("o", "log", "show", body),
+  body => (0, eval)("(function (o, log, show) { " + body + " })"),
+  body => vm.runInNewContext("(function (o, log, show) { " + body + " })"),
+];
+function look(label, Thing, Above, old) {
+  let text = "";
+  const tries = [
+    () => show(old.x) + "," + show(old.y) + "," + show(old.first) + "," + show(old.late) + "," + show(old.sum()) + "," + show(old.size),
+    () => show(old.hello()),
+    () => { const made = new Thing(7); return show(made.x) + "," + show(made.y) + "," + show(made.first) + "," + show(made.late) + "," + Object.keys(made).join("+") + "," + show(made.sum()); },
+    () => { const made = Thing.make(8); return show(made) + "," + show(made.x); },
+    () => show(Thing.count) + "," + show(Thing.label) + "," + show(Thing.shared) + "," + show(Above.shared),
+    () => { Thing.count = 3; Thing.label = "stored"; return show(Thing.count) + "," + show(Thing.label); },
+    () => { old.x = 5; old.y = 6; return show(old.x) + "," + show(old.y); },
+    () => show(old.setLate("late")) + "," + show(old.added) + "," + Object.keys(old).join("+"),
+    () => show(new Above().first) + "," + show(new Above().hello()),
+  ];
+  for (const attempt of tries) {
+    try {
+      text += attempt() + " | ";
+    } catch (error) {
+      text += "threw " + error.name + " | ";
+    }
+  }
+  say(label + ": " + text);
+}
+"use strict";
+for (let road = 0; road < roads.length; road++) {
+  for (let a = 0; a < bodies.length; a++) {
+    for (let b = 0; b < bodies.length; b++) {
+      if (a === b || (a * 7 + b + road) % 3) continue;
+      const { Above, Thing } = define();
+      const old = new Thing(1);
+      if ((a + b) & 1) look("fresh", Thing, Above, old);
+      for (const index of [a, b]) {
+        try {
+          roads[road](bodies[index])(old, say, show);
+        } catch (error) {
+          say(index + " threw " + error.name);
+        }
+        look(road + " " + a + "," + b + " behind " + index, Thing, Above, old);
+      }
+    }
+  }
+}
+console.log(lines.join("\n"));
+//// stores-under-computed-keys-that-spell-the-prototype-link.js
+// Each store below is written under a computed key, and at run time some of the keys spell `__proto__`: the stored object then comes above the receiver of that
+// store, and above no other. What is read afterwards through each receiver is what lies in it and above it, whoever else holds the receiver or the stored object.
+const names = JSON.parse('["__proto__", "plain", "__proto__", "other"]');
+function put(target, key, value) { target[key] = value; return target; }
+
+class Base { greet() { return "base " + this.tag; } get kind() { return "kind of base"; } }
+class Other { greet() { return "other " + this.tag; } set tag2(v) { this.tag = "set " + v; } }
+const parents = [new Base(), { greet() { return "literal " + this.tag; }, extra: 1 }, new Other(), function named() {}];
+
+const first = { tag: "first" }, second = { tag: "second" }, third = { tag: "third" }, fourth = { tag: "fourth" };
+globalThis.seenByEverybody = first;
+const receivers = [first, second, third, fourth];
+for (let i = 0; i < 4; i++) put(receivers[i], names[i], parents[i]);
+for (const receiver of receivers)
+  console.log(receiver.tag, typeof receiver.greet, receiver.greet ? receiver.greet() : "-", receiver.kind, Object.keys(receiver).join(), Object.getPrototypeOf(receiver) === Object.prototype);
+third.tag2 = "through the setter above";
+console.log(third.tag, Object.hasOwn(third, "tag2"), first instanceof Base, third instanceof Other, second instanceof Base);
+
+// A prototype object of a function gets methods in a loop, and one of the names moves the prototype object itself.
+function Router() { this.routes = 0; }
+Router.prototype.lookup = function () { return "lookup " + this.routes; };
+const above = { inherited() { return "inherited " + this.routes; }, lookup() { return "never found"; } };
+for (const name of JSON.parse('["get", "post", "__proto__"]')) Router.prototype[name] = name === "__proto__" ? above : function () { return name + " " + ++this.routes; };
+const router = new Router();
+const bound = router.lookup.bind(router);
+console.log(router.get(), router.post(), bound(), router.inherited(), Object.keys(Router.prototype).join(), Object.getPrototypeOf(Router.prototype) === above);
+
+// What is no object and not null leaves the link alone; null takes everything away from above.
+const bare = put({ own: 1 }, names[0], null), same = put({ own: 2 }, names[2], 7);
+console.log(typeof bare.toString, Object.getPrototypeOf(bare), typeof same.toString, Object.keys(same).join());
+
+// A function stored as the link: its members are found through the receiver, and calling one of them hands over the receiver.
+function holder() {}
+holder.describe = function () { return "described " + this.tag; };
+console.log(put({ tag: "below a function" }, names[0], holder).describe(), typeof put({}, names[2], holder).call);
+
+// Arrays, functions and instances of classes as receivers.
+const list = put([1, 2, 3], names[0], { sum() { let n = 0; for (let i = 0; i < this.length; i++) n += this[i]; return n; } });
+console.log(list.sum(), typeof list.map, Array.isArray(list), list.length);
+const callable = put(function () { return "called"; }, names[2], { note: "above a function" });
+console.log(callable(), callable.note, typeof callable.bind);
+const instance = put(new Base(), names[0], Other.prototype);
+instance.tag = "moved";
+console.log(instance.greet(), instance instanceof Base, instance instanceof Other, instance.kind);
+try { put(Object.preventExtensions({}), names[0], {}); console.log("no throw in sloppy code"); } catch (error) { console.log(error instanceof TypeError); }
+try { const a = {}, b = put({}, names[0], a); put(a, names[2], b); } catch (error) { console.log(error instanceof TypeError, error.message); }

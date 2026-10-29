@@ -1,0 +1,1 @@
+error: TS100301: This code is nested more than 2000 levels deep.

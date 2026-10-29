@@ -1,0 +1,79 @@
+//// fannkuch.ts
+// The fannkuch-redux benchmark: integer arithmetic on small typed arrays.
+function fannkuch(n: number): number {
+  const p = new Int32Array(n), q = new Int32Array(n), s = new Int32Array(n)
+  let sign = 1, maxflips = 0, sum = 0
+  for (let i = 0; i < n; i++) { p[i] = i; q[i] = i; s[i] = i }
+  for (;;) {
+    let q0 = p[0]!
+    if (q0 !== 0) {
+      for (let i = 1; i < n; i++) q[i] = p[i]!
+      let flips = 1
+      for (;;) {
+        const qq = q[q0]!
+        if (qq === 0) { sum += sign * flips; if (flips > maxflips) maxflips = flips; break }
+        q[q0] = q0
+        if (q0 >= 3) { let i = 1, j = q0 - 1; do { const t = q[i]!; q[i] = q[j]!; q[j] = t; i++; j-- } while (i < j) }
+        q0 = qq; flips++
+      }
+    }
+    if (sign === 1) { const t = p[1]!; p[1] = p[0]!; p[0] = t; sign = -1 }
+    else {
+      const t = p[1]!; p[1] = p[2]!; p[2] = t; sign = 1
+      for (let i = 2; i < n; i++) {
+        const sx = s[i]!
+        if (sx !== 0) { s[i] = sx - 1; break }
+        if (i === n - 1) return sum * 1000 + maxflips
+        s[i] = i
+        const t2 = p[0]!; for (let j = 0; j <= i; j++) p[j] = p[j + 1]!; p[i + 1] = t2
+      }
+    }
+  }
+}
+const t0 = performance.now()
+console.log("fannkuch", fannkuch(10), (performance.now() - t0).toFixed(0) + "ms")
+//// fibonacci.ts
+// The recursive Fibonacci function.
+function fib(n: number): number { return n < 2 ? n : fib(n - 1) + fib(n - 2) }
+console.log("fib", fib(30))
+//// lexer.ts
+// A small lexer: string scanning and object allocation.
+interface Tok { kind: string; text: string; pos: number }
+function lex(src: string): Tok[] {
+  const out: Tok[] = []; let i = 0
+  while (i < src.length) {
+    const c = src.charCodeAt(i)
+    if (c === 32 || c === 10) { i++; continue }
+    const start = i
+    if ((c >= 97 && c <= 122) || c === 95) { while (i < src.length) { const d = src.charCodeAt(i); if (!((d >= 97 && d <= 122) || d === 95 || (d >= 48 && d <= 57))) break; i++ } out.push({ kind: "id", text: src.slice(start, i), pos: start }) }
+    else if (c >= 48 && c <= 57) { while (i < src.length && src.charCodeAt(i) >= 48 && src.charCodeAt(i) <= 57) i++; out.push({ kind: "num", text: src.slice(start, i), pos: start }) }
+    else { i++; out.push({ kind: "op", text: src[start]!, pos: start }) }
+  }
+  return out
+}
+const toks = lex("let v_1 = foo_2(a3 + 45 * bar) - 12;\n")
+console.log(toks.length)
+let s = ""
+for (const t of toks) s += t.kind + ":" + t.text + "@" + t.pos + " "
+console.log(s)
+let n = 0
+for (let r = 0; r < 20000; r++) { const ts = lex("let v_1 = foo_2(a3 + 45 * bar) - 12;\n"); for (const t of ts) if (t.kind === "id") n += t.text.length + t.pos }
+console.log(n)
+//// spectral.ts
+// The spectral-norm benchmark, with `Float64Array`.
+function A(i: number, j: number): number { return 1 / (((i + j) * (i + j + 1)) / 2 + i + 1) }
+function Au(u: Float64Array, v: Float64Array): void {
+  const n = u.length
+  for (let i = 0; i < n; i++) { let t = 0; for (let j = 0; j < n; j++) t += A(i, j) * u[j]!; v[i] = t }
+}
+function Atu(u: Float64Array, v: Float64Array): void {
+  const n = u.length
+  for (let i = 0; i < n; i++) { let t = 0; for (let j = 0; j < n; j++) t += A(j, i) * u[j]!; v[i] = t }
+}
+function AtAu(u: Float64Array, v: Float64Array, w: Float64Array): void { Au(u, w); Atu(w, v) }
+const t0 = performance.now()
+const n = 2000, u = new Float64Array(n).fill(1), v = new Float64Array(n), w = new Float64Array(n)
+for (let i = 0; i < 10; i++) { AtAu(u, v, w); AtAu(v, u, w) }
+let vBv = 0, vv = 0
+for (let i = 0; i < n; i++) { vBv += u[i]! * v[i]!; vv += v[i]! * v[i]! }
+console.log("spectral", Math.sqrt(vBv / vv).toFixed(9), (performance.now() - t0).toFixed(0) + "ms")

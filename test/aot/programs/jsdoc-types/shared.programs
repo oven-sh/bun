@@ -1,0 +1,103 @@
+////: attempt
+function attempt(label, run) {
+  try {
+    console.log(label + " -> " + show(run()));
+  } catch (error) {
+    console.log(label + " threw " + (error instanceof Error ? error.constructor.name : typeof error));
+  }
+}
+////: lines
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "checkJs": false
+  }
+}
+////: lines-10
+/**
+ * @param {«1»} «2»
+ * @«3» {«4»}
+ */
+////: lines-11
+function «1»() {
+  return «2»;
+}
+////: lines-13
+«1» function «2»() {
+  return «3»;
+}
+////: lines-16
+/**
+ * @«1» «2»
+ * @param {«3»} «4»
+ * @returns {«5»}
+ */
+////: lines-18
+class «1» {
+  «2» = «3»;
+}
+////: lines-4
+/**
+ * @param {number} n
+ * @returns {number}
+ */
+////: plusOne
+function plusOne(n) {
+  return n + 1;
+}
+////: show
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "function";
+  if (Array.isArray(value)) {
+    const parts = [];
+    for (let i = 0; i < value.length; i++) parts.push(i in value ? show(value[i]) : "hole");
+    return "[" + parts.join(", ") + "]";
+  }
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).join() + "}";
+  return String(value);
+}
+////: show-2
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "bigint") return value + "n";
+  if (typeof value === "function") return "function";
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).join() + "}";
+  return String(value);
+}
+////: show-4
+function show(value) {
+  if (typeof value === "number") return Object.is(value, -0) ? "-0" : String(value);
+  if (typeof value === "string") return JSON.stringify(value);
+  if (typeof value === "function") return "function";
+  if (Array.isArray(value)) return "[" + value.map(show).join(", ") + "]";
+  if (typeof value === "object" && value !== null) return "{" + Object.keys(value).join() + "}";
+  return String(value);
+}
+////: show-5
+////= show
+
+////= attempt
+////: show-6
+////= show-2
+
+////= attempt
+////: size
+function size(«1») {
+  return «1».length;
+}
+////: sum
+function sum(p) {
+  return p.x + p.y;
+}
+////: total
+function total(list) {
+  let «1» = 0;
+  for (let i = 0; i < list.length; i++) «1» += list[i];
+  return «1»;
+}

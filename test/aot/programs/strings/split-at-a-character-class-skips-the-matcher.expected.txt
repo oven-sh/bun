@@ -1,0 +1,12 @@
+spaces: 600 pieces, 100 calls without the matcher
+one space: 700 pieces, 100 calls without the matcher
+a character: 200 pieces, 100 calls without the matcher
+a class: 300 pieces, 100 calls without the matcher
+a negated class: 700 pieces, 100 calls without the matcher
+a limit: 200 pieces, 0 calls without the matcher
+two terms: 200 pieces, 0 calls without the matcher
+a group: 1100 pieces, 0 calls without the matcher
+a flag: 600 pieces, 0 calls without the matcher
+may be empty: 2800 pieces, 0 calls without the matcher
+a string: 700 pieces, 0 calls without the matcher
+the same call in three places: 800 pieces, 300 calls without the matcher

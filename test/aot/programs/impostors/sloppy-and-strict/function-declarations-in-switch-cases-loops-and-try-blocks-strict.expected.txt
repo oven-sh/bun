@@ -1,0 +1,17 @@
+strict: true
+inACase(1) "undefined"
+inACase(2) "declared under case 1"
+inACase(3) "undefined"
+inALoop(0) [0, false, "undefined", []]
+inALoop(3) [3, false, "undefined", [3, 3, 3]]
+inALoopWithLet(0) [[], "undefined"]
+inALoopWithLet(3) [[0, 1, 2], "undefined"]
+inTry(false) "undefined"
+inTry(true) "undefined"
+inCatch "undefined"
+inFinally "undefined"
+underALabel "undefined"
+deep ["undefined", "undefined"]
+generatorInABlock "undefined"
+asyncInABlock "undefined"
+classInABlock "undefined"

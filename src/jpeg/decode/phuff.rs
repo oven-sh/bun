@@ -5,7 +5,7 @@ use super::coef::{CoefBits, McuBlocks};
 use super::input::Input;
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
 use crate::error::{Error, Result};
-use crate::lanes::nonzero;
+use crate::zigzag::nonzero;
 
 #[derive(Default)]
 enum Pass {

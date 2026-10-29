@@ -1,8 +1,9 @@
 //! The forward DCT and quantization (jcdctmgr.c, jfdctint.c).
 
 use super::Block;
-use crate::lanes::{column, descale, from_columns, madd, nonzero, transpose};
+use crate::lanes::{column, descale, from_columns, madd, transpose};
 use crate::tables::dct::*;
+use crate::zigzag::nonzero;
 
 /// Division by the steps of a quantization table, done as multiplication. In row-major order.
 pub(crate) struct Divisors {

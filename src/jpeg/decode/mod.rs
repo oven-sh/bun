@@ -14,7 +14,8 @@ mod phuff;
 mod upsample;
 
 use crate::error::{Error, Result};
-use crate::tables::{HuffSpec, MAX_DIMENSION, natural_order};
+use crate::tables::{HuffSpec, MAX_DIMENSION};
+use crate::zigzag::natural_order;
 use input::Input;
 use marker::Reached;
 pub use output::DecodeOptions;

@@ -30,6 +30,7 @@ mod error;
 mod lanes;
 mod markers;
 mod tables;
+mod zigzag;
 
 pub use decode::{ColorSpace, DecodeOptions, Decoder};
 pub use encode::{EncodeOptions, encode};

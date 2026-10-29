@@ -9,7 +9,7 @@ use super::phuff::PHuffDecoder;
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS, coef_at};
 use crate::alloc::{try_box, try_vec, try_vec_with_capacity};
 use crate::error::{Error, Result};
-use crate::tables::natural_order;
+use crate::zigzag::natural_order;
 
 /// Where an entropy decoder finds the blocks of the MCU it is decoding.
 pub(crate) trait McuBlocks {

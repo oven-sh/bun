@@ -4,7 +4,8 @@ use super::{Component, Decoder, MAX_COMPONENTS_IN_SCAN, NUM_ARITH_TABLES};
 use crate::alloc::{try_box, try_vec_with_capacity};
 use crate::error::{Error, Result};
 use crate::markers::*;
-use crate::tables::{HuffSpec, natural_order};
+use crate::tables::HuffSpec;
+use crate::zigzag::natural_order;
 use std::borrow::Cow;
 
 /// How much of an APP0 or APP14 segment is looked at.

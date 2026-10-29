@@ -6,7 +6,8 @@ use crate::error::{Error, Result};
 use crate::markers::{
     ICC_SIGNATURE, M_APP0, M_APP2, M_DHT, M_DQT, M_EOI, M_SOF0, M_SOF2, M_SOI, M_SOS,
 };
-use crate::tables::{HuffSpec, NATURAL_ORDER};
+use crate::tables::HuffSpec;
+use crate::zigzag::NATURAL_ORDER;
 
 /// What a Huffman table codes. The discriminant is Tc in a DHT segment.
 #[derive(Clone, Copy)]

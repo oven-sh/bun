@@ -9,7 +9,8 @@ mod sample;
 
 use crate::alloc::try_vec;
 use crate::error::{Error, Result};
-use crate::tables::{self, HuffSpec, MAX_DIMENSION, natural_order};
+use crate::tables::{self, HuffSpec, MAX_DIMENSION};
+use crate::zigzag::natural_order;
 use fdct::Divisors;
 use huff::{BitWriter, EncodeTable, Output, SequentialTable};
 use marker::TableClass;

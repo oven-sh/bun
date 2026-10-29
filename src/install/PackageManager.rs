@@ -2651,12 +2651,7 @@ pub fn init(
     // Returns the resolver's BSSMap-owned
     // `*EntriesOption` slot.
     let entries_option = match FileSystem::instance().read_directory(top_level_dir, 0, true)? {
-        fs::EntriesOption::Entries(e) => {
-            // SAFETY: the BSSMap singleton owns `*e` for the process
-            // lifetime, and `init()` runs single-threaded before any other
-            // access — sole exclusive borrow is sound.
-            unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) }
-        }
+        fs::EntriesOption::Entries(e) => &mut **e,
         fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 
@@ -3012,9 +3007,7 @@ fn init_with_runtime_once(
     // manager. Returns the resolver's BSSMap-owned `*EntriesOption` slot.
     let top_level_dir = FileSystem::get().top_level_dir();
     let root_dir = match FileSystem::instance().read_directory(top_level_dir, 0, true)? {
-        // SAFETY: the BSSMap singleton owns `*e` for the process lifetime,
-        // and runtime init runs once on the main thread before any other access.
-        fs::EntriesOption::Entries(e) => unsafe { &mut *std::ptr::from_mut::<fs::DirEntry>(*e) },
+        fs::EntriesOption::Entries(e) => &mut **e,
         fs::EntriesOption::Err(e) => return Err(e.canonical_error.into()),
     };
 

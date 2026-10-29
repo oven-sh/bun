@@ -1458,7 +1458,7 @@ fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> J
 }
 
 fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
-    use crate::webcore::blob::{Blob, BlobExt as _};
+    use crate::webcore::blob::BlobExt as _;
     use bun_standalone_graph::{File as GraphFile, Graph as StandaloneModuleGraph};
     let Some(graph) =
         StandaloneModuleGraph::get_ref().filter(|_| !bun_jsc::compiled_program::runs_in_place())
@@ -1493,12 +1493,8 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
         let file: &GraphFile = &unsorted_files[*index as usize];
         // `file_blob` keeps the embedded path (minus the `/$bunfs/root/` prefix)
         // as the blob name, preserving any subdirectory from the asset template.
-        let blob = Blob::new(crate::api::standalone_graph_jsc::file_blob(
-            file,
-            global_this,
-        ));
-        // SAFETY: `blob` is heap-allocated and lives until JS owns it via to_js.
-        array.put_index(global_this, i as u32, unsafe { (*blob).to_js(global_this) })?;
+        let blob = crate::api::standalone_graph_jsc::file_blob(file, global_this);
+        array.put_index(global_this, i as u32, blob.into_js(global_this))?;
     }
 
     Ok(array)
@@ -2150,9 +2146,7 @@ mod stdio_stores {
             // store.ref() — extra +1 for the new Blob.
             s.as_ref().unwrap().clone()
         });
-        let blob = Blob::new(Blob::init_with_store(store, global_this));
-        // SAFETY: `Blob::new` heap-allocates; the JS wrapper takes ownership.
-        unsafe { (&*blob).to_js(global_this) }
+        Blob::init_with_store(store, global_this).into_js(global_this)
     }
 
     pub(super) fn stdin(global_this: &JSGlobalObject) -> JSValue {

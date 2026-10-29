@@ -86,45 +86,24 @@ impl S3HttpDownloadStreamingTask {
 
     /// The chunk callback runs JS, which reaches back into this task through the stream
     /// wrapper's pointer (`pause_receive`, `poll_ref`). No borrow of `this` may span that call,
-    /// so this takes the raw pointer and scopes every access to its statement.
-    ///
-    /// # Safety
-    /// `this` is live and exclusively accessed by this thread for the duration of the call
-    /// (`on_response`).
-    unsafe fn report_progress(this: *mut Self, state: State) {
-        let has_more = state.has_more();
-        let failed = match state.status_code() {
-            200 | 204 | 206 => state.request_error() != 0,
-            _ => true,
-        };
-        // SAFETY: fn contract; `callback` and `callback_context` are set once, before the task
-        // is queued.
-        let (callback, callback_context) =
-            unsafe { ((*this).callback, (*this).callback_context.as_ptr().cast()) };
-        bun_core::scoped_log!(
-            S3,
-            "reportProgres failed: {} has_more: {} len: {}",
-            failed,
-            has_more,
-            // SAFETY: fn contract.
-            unsafe { (*this).reported_response_buffer.list.len() }
-        );
-
+    /// so `on_response` takes what this reports out of the task first.
+    fn report_progress(
+        callback: fn(&MutableString, bool, Option<S3Error>, *mut c_void),
+        callback_context: *mut c_void,
+        failed: bool,
+        has_more: bool,
+        request_error: Option<bun_http::Error>,
+        body: &MutableString,
+    ) {
         if failed {
-            if has_more {
-                return;
-            }
             let empty = MutableString::default();
             let mut code: &[u8] = b"UnknownError";
             let mut message: &[u8] = b"an unexpected error has occurred";
             let parsed;
-            // SAFETY: fn contract.
-            if let Some(req_err) = unsafe { (*this).request_error } {
+            if let Some(req_err) = request_error {
                 code = req_err.name().as_bytes();
             } else {
-                // SAFETY: fn contract; the buffer is not touched again before the callback
-                // returns, and `message` is not used after it.
-                let bytes = unsafe { (*this).reported_response_buffer.list.as_slice() };
+                let bytes = body.list.as_slice();
                 if !bytes.is_empty() {
                     message = bytes;
                 }
@@ -142,19 +121,7 @@ impl S3HttpDownloadStreamingTask {
             );
             return;
         }
-
-        // dont report empty chunks if we have more data to read
-        // SAFETY: fn contract.
-        if !has_more || unsafe { (*this).reported_response_buffer.list.len() } > 0 {
-            // `core::mem::take` transfers ownership of the buffer, leaving an
-            // empty MutableString behind.
-            // SAFETY: fn contract; the borrow ends with the statement.
-            let chunk = unsafe { core::mem::take(&mut (*this).reported_response_buffer) };
-            callback(&chunk, has_more, None, callback_context);
-            // SAFETY: fn contract; the callback does not free the task, `on_response` does,
-            // after this returns.
-            unsafe { (*this).reported_response_buffer.reset() };
-        }
+        callback(body, has_more, None, callback_context);
     }
 
     /// this is the task callback from the last task result and is always in the main thread
@@ -196,8 +163,40 @@ impl S3HttpDownloadStreamingTask {
                     .store(false, Ordering::Relaxed)
             };
         }
-        // SAFETY: as above.
-        unsafe { Self::report_progress(this, state) };
+        let failed = match state.status_code() {
+            200 | 204 | 206 => state.request_error() != 0,
+            _ => true,
+        };
+        // SAFETY: as above, and `mutex` is held: the HTTP thread fills the buffer under it.
+        let pending = unsafe { (*this).reported_response_buffer.list.len() };
+        bun_core::scoped_log!(
+            S3,
+            "reportProgres failed: {} has_more: {} len: {}",
+            failed,
+            has_more,
+            pending
+        );
+        // An error body is collected whole; dont report empty chunks if we have more data to read
+        if !has_more || (!failed && pending > 0) {
+            // SAFETY: as above, and `mutex` is held, which guards the error and the buffer. `take`
+            // leaves an empty buffer behind, and its borrow ends here.
+            let (callback, callback_context, request_error, body) = unsafe {
+                (
+                    (*this).callback,
+                    (*this).callback_context,
+                    (*this).request_error,
+                    core::mem::take(&mut (*this).reported_response_buffer),
+                )
+            };
+            Self::report_progress(
+                callback,
+                callback_context.as_ptr().cast(),
+                failed,
+                has_more,
+                request_error,
+                &body,
+            );
+        }
     }
 
     /// this function is only called from the http callback in the HTTPThread and returns true if we

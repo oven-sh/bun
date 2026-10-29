@@ -38,7 +38,7 @@ use crate::Graph::Graph;
 use crate::options::{CompileMode, Format, Loader, SourceMapOption, Target};
 use crate::{
     AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
-    LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
+    LinkerGraph, MangledProps, PartRange, StableRef, Transpiler, WrapKind,
 };
 
 /// `bun_event_loop` is a
@@ -519,50 +519,26 @@ impl<'a> LinkerContext<'a> {
         true
     }
 
-    /// `bundle` is taken as a raw `*mut` because the caller invokes this as
-    /// `self.linker.load(self, …)` — `self` *is*
-    /// `(*bundle).linker`, so a `&mut BundleV2` here would alias the receiver
-    /// under Stacked Borrows. This body only reaches into fields of `*bundle`
-    /// that are disjoint from `linker` (`graph`, `transpiler`,
-    /// `dynamic_import_entry_points`) via `addr_of_mut!`, never materializing a
-    /// full `&mut BundleV2`.
+    /// `self` keeps pointers into `parse_graph` and `transpiler`, which its safe accessors dereference later.
     ///
     /// # Safety
-    /// `bundle` must be valid for the call and `self` must be `(*bundle).linker`
-    /// (or otherwise not overlap the fields named above).
+    /// Both must be those of the `BundleV2` that holds `self`.
     pub(crate) unsafe fn load(
         &mut self,
-        bundle: *mut BundleV2<'a>,
-        entry_points: &[Index],
-        server_component_boundaries: &bun_ast::server_component_boundary::List,
+        parse_graph: &mut Graph<'a>,
+        transpiler: &Transpiler<'a>,
+        dynamic_import_entry_points: &mut ArrayHashMap<crate::IndexInt, ()>,
         reachable: &[Index],
     ) -> Result<(), BunError> {
         let _trace = bun::perf::trace("Bundler.CloneLinkerGraph");
-        // SAFETY: field-disjoint with `self` (= `(*bundle).linker`); `parse_graph`
-        // is a `*mut Graph` backref so no `&mut` is materialized.
-        self.parse_graph = unsafe { core::ptr::addr_of_mut!((*bundle).graph) };
-        // SAFETY: field-disjoint scalar read; `transpiler` is itself a `*mut`.
-        let dyn_entry_points =
-            unsafe { &mut *core::ptr::addr_of_mut!((*bundle).dynamic_import_entry_points) };
+        self.parse_graph = core::ptr::from_mut(parse_graph);
 
-        // SAFETY: `bundle.transpiler` is a `*mut Transpiler` backref valid for
-        // the bundle's lifetime; `resolver`/`log`/`options` are stable fields.
-        let transpiler = unsafe { &mut *(*bundle).transpiler };
         self.graph.code_splitting = transpiler.options.code_splitting;
         // `transpiler.log` is the canonical
         // `*mut Log` (same value aliased into `linker.log` / `resolver.log`).
         self.log = transpiler.log;
 
-        // Note: lifetime — `self.resolver` is `ParentRef<Resolver<'a>>`
-        // but `transpiler.resolver` is `Resolver<'_>` (anonymous `bundle`
-        // lifetime); erase via a pointer cast (LIFETIMES.tsv: GRAPHBACKED —
-        // resolver outlives the link step). Read-only — `from_raw` provenance
-        // is sufficient.
-        // SAFETY: `transpiler.resolver` is a stable field of the
-        // bundle-lifetime `Transpiler`, valid for the entire link step.
-        self.resolver = Some(unsafe {
-            bun_ptr::ParentRef::from_raw(core::ptr::from_ref(&transpiler.resolver).cast())
-        });
+        self.resolver = Some(bun_ptr::ParentRef::new(&transpiler.resolver));
         self.cycle_detector = Vec::new();
         self.inits_already_done = None;
 
@@ -570,18 +546,17 @@ impl<'a> LinkerContext<'a> {
         // caller-owned slice into the linker arena.
         self.graph.reachable_files = reachable.to_vec();
 
-        // SAFETY: parse_graph is valid backref just assigned above
-        let sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
+        let entry_points: &[Index] = &parse_graph.entry_points;
 
         self.graph.load(
             entry_points,
-            sources,
-            server_component_boundaries,
-            dyn_entry_points.keys(),
-            // SAFETY: parse_graph backref
-            unsafe { &(*self.parse_graph).entry_point_original_names },
+            parse_graph.input_files.items_source(),
+            // Borrowed, not taken: `StaticRouteVisitor` reads it through `parse_graph` later.
+            &parse_graph.server_component_boundaries,
+            dynamic_import_entry_points.keys(),
+            &parse_graph.entry_point_original_names,
         )?;
-        dyn_entry_points.clear_retaining_capacity();
+        dynamic_import_entry_points.clear_retaining_capacity();
 
         let runtime_named_exports =
             &self.graph.ast.items_named_exports()[Index::RUNTIME.get() as usize];
@@ -823,22 +798,14 @@ impl<'a> LinkerContext<'a> {
         chunk.content.is_javascript() && loader.is_javascript_like()
     }
 
-    /// See [`Self::load`] for why `bundle` is a raw `*mut` (caller passes
-    /// `self` while the receiver is `self.linker`; field-disjoint access only).
-    ///
-    /// # Safety
-    /// `bundle` must be valid for the call and `self` must be `(*bundle).linker`.
+    /// Call [`Self::load`] first.
     #[inline(never)]
-    pub(crate) unsafe fn link(
+    pub(crate) fn link(
         &mut self,
-        bundle: *mut BundleV2<'a>,
-        entry_points: &[Index],
-        server_component_boundaries: &bun_ast::server_component_boundary::List,
+        has_any_top_level_await_modules: bool,
+        unique_key: u64,
         reachable: &[Index],
     ) -> Result<Box<[Chunk<'a>]>, LinkError> {
-        // SAFETY: forwarded; see fn-level contract.
-        unsafe { self.load(bundle, entry_points, server_component_boundaries, reachable)? };
-
         if self.options.source_maps != SourceMapOption::None {
             self.compute_data_for_source_map(reachable);
         }
@@ -850,8 +817,7 @@ impl<'a> LinkerContext<'a> {
         }
 
         // Validate top-level await for all files first.
-        // SAFETY: scalar `bool` read of a field disjoint from `self` (= `(*bundle).linker`).
-        if unsafe { (*bundle).has_any_top_level_await_modules } {
+        if has_any_top_level_await_modules {
             // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, disjoint
             // from `*self` (= `BundleV2.linker`). The SoA column slices below
             // are physically disjoint and the underlying slabs do not
@@ -934,8 +900,7 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
-        // SAFETY: scalar `u64` read of a field disjoint from `self` (= `(*bundle).linker`).
-        let mut chunks = compute_chunks(self, unsafe { (*bundle).unique_key })?;
+        let mut chunks = compute_chunks(self, unique_key)?;
 
         if self.log().has_errors() {
             return Err(LinkError::BuildFailed);

@@ -97,6 +97,43 @@ test("a test calls t.todo(), then its subtest fails", async t => {
   await t.test("inherits todo and fails", fail("subtest"));
 });
 
+// Node runs a t.before() hook inside the call, so the subtest that comes next is made under a todo test.
+test("a before hook of a test calls t.todo(), then its subtest fails", async t => {
+  t.before(() => t.todo());
+  await t.test("inherits todo and fails", fail("subtest"));
+});
+
+test("a before hook of a test calls t.todo(), then a subtest of its subtest fails", async t => {
+  t.before(() => t.todo());
+  await t.test("inherits todo", async t2 => {
+    await t2.test("inherits todo and fails", fail("sub-subtest"));
+  });
+});
+
+test("a before hook of a test calls t.todo(), then a subtest that is not awaited fails", t => {
+  t.before(() => t.todo());
+  t.test("inherits todo and fails", fail("subtest"));
+});
+
+test("a before hook of a subtest calls t.todo(), then its own subtest fails", async t => {
+  await t.test("todo from its before hook", async t2 => {
+    t2.before(() => t2.todo());
+    await t2.test("inherits todo and fails", fail("sub-subtest"));
+  });
+});
+
+test("a before hook of a test reads what the test has set at the call", async t => {
+  let value = "at the call";
+  let seen;
+  t.before(() => {
+    seen = value;
+  });
+  value = "after the call";
+  await t.test("sees what the hook read", () => {
+    if (seen !== "at the call") throw new Error(`the hook read "${seen}"`);
+  });
+});
+
 test("a test calls t.skip() and throws after its subtest called t.skip() and threw", async t => {
   await t.test("skips then throws", t2 => {
     t2.skip();

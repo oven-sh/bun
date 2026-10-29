@@ -2270,13 +2270,11 @@ function runBeforeHookOnce(hook: Hook, owner: TestNode, arg: unknown): Promise<v
 // Failures fail the owning test (Node: hook.error -> test.fail) instead of
 // poisoning the subtest chain, so they are reported even when nothing awaits.
 function scheduleImmediateBeforeHook(node: TestNode, hook: Hook, arg: unknown) {
-  node.subtestChain = node.subtestChain.then(async () => {
-    try {
-      await runBeforeHookOnce(hook, node, arg);
-    } catch (err) {
-      node.hookFailure ??= err;
-    }
+  // Node runs it in the call: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1101-L1108
+  const settled = runBeforeHookOnce(hook, node, arg).catch(err => {
+    node.hookFailure ??= err;
   });
+  node.subtestChain = node.subtestChain.then(() => settled);
 }
 
 async function runOwnBeforeHooks(node: TestNode) {

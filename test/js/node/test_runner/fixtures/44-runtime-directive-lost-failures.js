@@ -95,6 +95,12 @@ test("a before hook of a test fails, then the test calls t.skip()", async t => {
   t.skip();
 });
 
+// A subtest does not inherit skip, so it counts by itself.
+test("a before hook of a test calls t.skip(), then its subtest fails", async t => {
+  t.before(() => t.skip());
+  await t.test("fails", fail("subtest"));
+});
+
 test("a subtest calls t.skip() and then throws", async t => {
   await t.test("skips then throws", t2 => {
     t2.skip();

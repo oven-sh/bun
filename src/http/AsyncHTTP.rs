@@ -549,8 +549,7 @@ impl<'a> AsyncHTTP<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 
 // 32 pointers much cheaper than 1000 pointers
-// Note: `bun_threading::Channel` requires `T: Copy`, which
-// `HTTPClientResult` is not. `send_sync` is a one-shot blocking handoff, so a
+// `send_sync` is a one-shot blocking handoff, so a
 // Guarded<Option<T>>+Condvar is the exact semantics needed.
 pub(crate) struct SingleHTTPChannel {
     slot: bun_threading::Guarded<Option<HTTPClientResult<'static>>>,
@@ -864,11 +863,3 @@ impl<'a> AsyncHTTP<'a> {
         self.client.start(body);
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// HTTPCallbackPair / HTTPChannel / HTTPChannelContext
-// ──────────────────────────────────────────────────────────────────────────
-
-// `bun_threading::Channel` requires `T: Copy`, which `HTTPClientResult` is not, so the
-// `HTTPChannel` here boxes the pair and ships the pointer (which IS `Copy`) through
-// a static-buffer channel. The receiver takes ownership of the Box.

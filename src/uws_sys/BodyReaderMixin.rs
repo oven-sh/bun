@@ -36,30 +36,15 @@ impl<const SSL: bool> BodyResponse for Response<SSL> {
 
 /// Mixin to read an entire request body into memory and run a callback.
 /// Consumers should make sure a reference count is held on the server,
-/// and is unreferenced after one of the two callbacks are called.
+/// and is unreferenced when the wrapper is dropped.
 ///
 /// See `DevServer`'s `ErrorReportRequest` for an example.
-///
-/// The wrapper type implements this trait; the intrusive field is declared
-/// via the [`bun_core::IntrusiveField`] supertrait (implement via
-/// `bun_core::intrusive_field!`).
-pub trait BodyReaderHandler: bun_core::IntrusiveField<BodyReaderMixin<Self>> + 'static {
-    /// `body` is freed after this function returns.
-    ///
-    /// Receives the original `heap::alloc`'d pointer (full-allocation
-    /// provenance) rather than `&mut self`: implementors typically free `Self`
-    /// (`heap::take`) on the success path, and doing so through a
-    /// `&mut self`-derived pointer is UB under Stacked/Tree Borrows.
-    ///
-    /// SAFETY: `this` is the pointer previously passed to
-    /// `BodyReaderMixin::read_body`; it is live and uniquely owned by the
-    /// mixin until this call (no other `&mut` into the allocation is live).
-    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> crate::Result<()>;
+pub trait BodyReaderHandler: Sized + 'static {
+    fn mixin(&mut self) -> &mut BodyReaderMixin<Self>;
 
-    /// Called on error or request abort. Same provenance contract as `on_body`.
-    ///
-    /// SAFETY: see `on_body`.
-    unsafe fn on_error(this: *mut Self);
+    /// `body` is freed after this function returns.
+    /// Must not close the socket while `resp` has the mixin's abort handler, and must not return `Ok` with it still set.
+    fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> crate::Result<()>;
 }
 
 pub struct BodyReaderMixin<Wrap: BodyReaderHandler> {
@@ -78,66 +63,38 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
     }
 
     /// Memory is freed after the callback returns, or automatically on failure.
-    ///
-    /// Takes `*mut Wrap` (not `&mut self`) so the registered C user_data carries
-    /// provenance for the *entire* enclosing `Wrap`, not just the mixin field.
-    /// Deriving the parent by `.byte_sub(OFFSET)` from a
-    /// `&mut self`-sourced pointer is out-of-provenance under Stacked Borrows
-    /// and the resulting `&mut Wrap` would overlap a live `&mut Self`. Callers
-    /// pass the `heap::alloc`'d wrapper pointer directly; trampolines below
-    /// reach the mixin via *forward* offset (`mixin_of`), so the stored pointer
-    /// already has full-Wrap provenance and no overlapping `&mut` are formed.
-    pub fn read_body<R: BodyResponse>(wrap: *mut Wrap, resp: &mut R) {
+    pub fn read_body<R: BodyResponse>(wrap: Box<Wrap>, resp: &mut R) {
+        let wrap = bun_core::heap::into_raw(wrap);
         resp.on_data(Self::on_data_generic, wrap);
         resp.on_aborted(Self::on_aborted_handler, wrap);
     }
 
-    /// Forward offset `Wrap` → its embedded mixin field, materialised as `&mut`.
-    /// We go parent→field because
-    /// the stored user_data is the parent (full provenance), never the field.
-    ///
-    /// Single nonnull-asref accessor for the set-once `wrap` user-data.
-    ///
-    /// Type invariant (encapsulated `unsafe`): every `*mut Wrap` reaching this
-    /// fn is the heap-allocated pointer registered by [`Self::read_body`] as
-    /// the uWS user-data; uWS dispatch is single-threaded and the only access
-    /// path to the allocation is via these crate-private trampolines, so no
-    /// other `&`/`&mut` into `*wrap` is live for the returned borrow's
-    /// duration. Each caller drops the returned `&mut Self` (NLL temporary)
-    /// before any `Wrap::on_body`/`on_error` call that may `heap::take(wrap)`.
-    /// Crate-private — collapses the per-call-site proof into this one block.
-    #[inline]
-    fn mixin_of<'a>(wrap: *mut Wrap) -> &'a mut Self {
-        // SAFETY: type invariant — see doc comment above. `IntrusiveField::OFFSET`
-        // is `offset_of!(Wrap, <field>)`, so the result is in-bounds and inherits
-        // `wrap`'s provenance over the whole allocation.
-        unsafe { &mut *Wrap::field_of(wrap) }
-    }
-
     fn on_data_generic(wrap: *mut Wrap, any: AnyResponse, chunk: &[u8], last: bool) {
-        match Self::on_data(wrap, any, chunk, last) {
+        // SAFETY: `wrap` is the box from `read_body`. Only the abort handler reaches it too, and
+        // it runs when the socket closes, which nothing in this call does while it is set.
+        let this = unsafe { &mut *wrap };
+        match Self::on_data(this, any, chunk, last) {
+            Ok(()) if !last => return,
             Ok(()) => {}
-            Err(crate::Error::Alloc(_)) => Self::on_oom(wrap, any),
-            Err(_) => Self::on_invalid(wrap, any),
+            Err(crate::Error::Alloc(_)) => this.mixin().on_oom(any),
+            Err(_) => this.mixin().on_invalid(any),
         }
+        // SAFETY: `this` is not used again. uWS has no handler left that gets `wrap`: on `Ok`,
+        // `on_data` cleared the data handler and `on_body` left no abort handler of the mixin;
+        // `on_oom` and `on_invalid` cleared both.
+        unsafe { bun_core::heap::destroy(wrap) };
     }
 
     fn on_aborted_handler(wrap: *mut Wrap, _r: AnyResponse) {
-        // The temporary `&mut` from `mixin_of` ends at the `;`, before
-        // `on_error` (which may `heap::take(wrap)`).
-        Self::mixin_of(wrap).body = Vec::new();
-        // SAFETY: wrap is the original heap-allocated pointer; the temporary
-        // &mut to the mixin field above has ended, so on_error receives sole
-        // ownership of the allocation and may heap::take it.
-        unsafe { Wrap::on_error(wrap) };
+        // SAFETY: `wrap` is the box from `read_body`. The socket is closed, so uWS calls neither
+        // handler again.
+        unsafe { bun_core::heap::destroy(wrap) };
     }
 
-    fn on_data(wrap: *mut Wrap, resp: AnyResponse, chunk: &[u8], last: bool) -> crate::Result<()> {
+    fn on_data(this: &mut Wrap, resp: AnyResponse, chunk: &[u8], last: bool) -> crate::Result<()> {
         if last {
-            // Free everything after. Take via the mixin field first — no
-            // `&mut Wrap` is live yet, and the temporary `&mut Self` ends at
-            // the `;` (before `on_body`, which may heap::take(wrap)).
-            let mut body = mem::take(&mut Self::mixin_of(wrap).body);
+            // Free everything after.
+            let mut body = mem::take(&mut this.mixin().body);
             resp.clear_on_data();
             if !body.is_empty() {
                 if body.len().saturating_add(chunk.len()) > MAX_BODY_SIZE {
@@ -149,23 +106,17 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
                     return Err(crate::Error::Alloc(bun_alloc::AllocError));
                 }
                 body.extend_from_slice(chunk);
-                // SAFETY: wrap is the original heap-allocated pointer; the &mut to
-                // mixin.body has ended, so on_body receives sole ownership of the
-                // allocation and may heap::take it on success.
-                unsafe { Wrap::on_body(wrap, body.as_slice(), resp)? };
+                this.on_body(body.as_slice(), resp)?;
             } else {
                 if chunk.len() > MAX_BODY_SIZE {
                     return Err(crate::Error::RequestBodyTooLarge);
                 }
-                // SAFETY: wrap is the original heap-allocated pointer; the &mut to
-                // mixin.body has ended, so on_body receives sole ownership of the
-                // allocation and may heap::take it on success.
-                unsafe { Wrap::on_body(wrap, chunk, resp)? };
+                this.on_body(chunk, resp)?;
             }
             // `body` drops here
             Ok(())
         } else {
-            let body = &mut Self::mixin_of(wrap).body;
+            let body = &mut this.mixin().body;
             if body.len().saturating_add(chunk.len()) > MAX_BODY_SIZE {
                 return Err(crate::Error::RequestBodyTooLarge);
             }
@@ -180,26 +131,18 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
         }
     }
 
-    fn on_oom(wrap: *mut Wrap, r: AnyResponse) {
-        // The temporary `&mut` from `mixin_of` ends at the `;`, before
-        // `on_error` (which may `heap::take(wrap)`).
-        drop(mem::take(&mut Self::mixin_of(wrap).body));
+    fn on_oom(&mut self, r: AnyResponse) {
+        drop(mem::take(&mut self.body));
         r.clear_aborted();
         r.clear_on_data();
         r.clear_on_writable();
 
         r.write_status(b"500 Internal Server Error");
         r.end_without_body(true);
-
-        // SAFETY: wrap is the original heap-allocated pointer; the &mut to
-        // mixin.body above has ended; on_error may heap::take it.
-        unsafe { Wrap::on_error(wrap) };
     }
 
-    fn on_invalid(wrap: *mut Wrap, r: AnyResponse) {
-        // The temporary `&mut` from `mixin_of` ends at the `;`, before
-        // `on_error` (which may `heap::take(wrap)`).
-        drop(mem::take(&mut Self::mixin_of(wrap).body));
+    fn on_invalid(&mut self, r: AnyResponse) {
+        drop(mem::take(&mut self.body));
 
         r.clear_aborted();
         r.clear_on_data();
@@ -207,9 +150,5 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
 
         r.write_status(b"400 Bad Request");
         r.end_without_body(true);
-
-        // SAFETY: wrap is the original heap-allocated pointer; the &mut to
-        // mixin.body above has ended; on_error may heap::take it.
-        unsafe { Wrap::on_error(wrap) };
     }
 }

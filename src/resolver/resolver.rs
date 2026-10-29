@@ -440,13 +440,9 @@ macro_rules! bufs {
 static RESOLVER_MUTEX: Mutex = Mutex::new();
 
 type BinFolderArray = BoundedArray<&'static [u8], 128>;
-// `BoundedArray` has no const constructor; init lazily under
-// `BIN_FOLDERS_LOADED`.
-static BIN_FOLDERS: bun_core::RacyCell<core::mem::MaybeUninit<BinFolderArray>> =
-    bun_core::RacyCell::new(core::mem::MaybeUninit::uninit());
+static BIN_FOLDERS: bun_core::RacyCell<BinFolderArray> =
+    bun_core::RacyCell::new(BoundedArray::new());
 static BIN_FOLDERS_LOCK: Mutex = Mutex::new();
-static BIN_FOLDERS_LOADED: core::sync::atomic::AtomicBool =
-    core::sync::atomic::AtomicBool::new(false);
 
 // LAYERING: `AnyResolveWatcher` is the erased vtable the resolver calls to
 // register directory watches. The concrete callback lives in `bun_watcher`
@@ -4297,12 +4293,9 @@ impl<'a> Resolver<'a> {
     }
 
     pub fn bin_dirs(&self) -> &[&'static [u8]] {
-        if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-            return &[];
-        }
-        // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites;
-        // `BIN_FOLDERS_LOADED` (acquire) guarantees init.
-        unsafe { (*BIN_FOLDERS.get()).assume_init_ref().const_slice() }
+        // SAFETY: BIN_FOLDERS protected by BIN_FOLDERS_LOCK at write sites. The only caller is
+        // `bun getcompletes`, whose one resolver runs on the calling thread: nothing appends.
+        unsafe { (*BIN_FOLDERS.get()).const_slice() }
     }
 
     pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
@@ -6353,13 +6346,6 @@ impl<'a> Resolver<'a> {
             'append_bin_dir: {
                 if info.has_node_modules() {
                     if entries!().has_comptime_query(b"node_modules") {
-                        // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK below
-                        if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-                            // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                            unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
-                            BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
-                        }
-
                         let Ok(file) = bun_sys::open_dir_z(
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),
@@ -6375,9 +6361,7 @@ impl<'a> Resolver<'a> {
 
                         // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                         unsafe {
-                            for existing_folder in
-                                (*BIN_FOLDERS.get()).assume_init_ref().const_slice()
-                            {
+                            for existing_folder in (*BIN_FOLDERS.get()).const_slice() {
                                 if *existing_folder == bin_path {
                                     break 'append_bin_dir;
                                 }
@@ -6387,7 +6371,7 @@ impl<'a> Resolver<'a> {
                             else {
                                 break 'append_bin_dir;
                             };
-                            let _ = (*BIN_FOLDERS.get()).assume_init_mut().append(stored);
+                            let _ = (*BIN_FOLDERS.get()).append(stored);
                         }
                     }
                 }
@@ -6397,14 +6381,6 @@ impl<'a> Resolver<'a> {
                         if q.entry().kind(self.rfs_ref(), self.store_fd)
                             == Fs::file_system::EntryKind::Dir
                         {
-                            // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
-                            if !BIN_FOLDERS_LOADED.load(core::sync::atomic::Ordering::Acquire) {
-                                // SAFETY: callers hold RESOLVER_MUTEX; first init.
-                                unsafe { (*BIN_FOLDERS.get()).write(BinFolderArray::default()) };
-                                BIN_FOLDERS_LOADED
-                                    .store(true, core::sync::atomic::Ordering::Release);
-                            }
-
                             let Ok(file) = bun_sys::open_dir_z(fd, b".bin\0", Default::default())
                             else {
                                 break 'append_bin_dir;
@@ -6418,9 +6394,7 @@ impl<'a> Resolver<'a> {
 
                             // SAFETY: BIN_FOLDERS guarded by BIN_FOLDERS_LOCK acquired above.
                             unsafe {
-                                for existing_folder in
-                                    (*BIN_FOLDERS.get()).assume_init_ref().const_slice()
-                                {
+                                for existing_folder in (*BIN_FOLDERS.get()).const_slice() {
                                     if *existing_folder == bin_path {
                                         break 'append_bin_dir;
                                     }
@@ -6430,7 +6404,7 @@ impl<'a> Resolver<'a> {
                                 else {
                                     break 'append_bin_dir;
                                 };
-                                let _ = (*BIN_FOLDERS.get()).assume_init_mut().append(stored);
+                                let _ = (*BIN_FOLDERS.get()).append(stored);
                             }
                         }
                     }

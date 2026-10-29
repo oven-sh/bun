@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExeAtLeast, tempDir } from "harness";
 import { join } from "node:path";
 import { run } from "node:test";
 
@@ -524,6 +524,45 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
 });
 
 describe("node:test run() signal", () => {
+  const fixture = join(import.meta.dirname, "fixtures", "30-run-signal.js");
+  const node = nodeExeAtLeast("26.3.0");
+
+  // The fixture has the tests of run({ signal }) that Node.js passes too. They start real children, six at a time here.
+  test("passes the tests that Node.js passes", async () => {
+    using dir = tempDir("node-test-run-signal", {});
+    const { exitCode, stderr } = await runTests(["30-run-signal.js"], { RUN_SIGNAL_DIR: String(dir) }, [
+      "--concurrent",
+    ]);
+
+    // The todo test is the one difference from Node.js. Three tests need POSIX signals.
+    const summary = stderr.split("\n").flatMap(line => line.match(/^ *(\d+ (?:pass|skip|todo|fail))$/)?.[1] ?? []);
+    expect({ summary, stderr, exitCode }).toMatchObject({
+      summary: isWindows ? ["7 pass", "3 skip", "1 todo", "0 fail"] : ["10 pass", "1 todo", "0 fail"],
+      exitCode: 0,
+    });
+  }, 30_000);
+
+  test.skipIf(!node)(
+    "Node.js passes the same tests",
+    async () => {
+      using dir = tempDir("node-test-run-signal-node", {});
+      await using proc = Bun.spawn({
+        cmd: [node!, "--test-reporter=tap", fixture],
+        env: { ...bunEnv, RUN_SIGNAL_DIR: String(dir) },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      const summary = stdout.split("\n").filter(line => /^# (fail|cancelled|todo) /.test(line));
+      expect({ summary, stdout, stderr, exitCode }).toMatchObject({
+        summary: ["# fail 0", "# cancelled 0", "# todo 0"],
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+
   // What the runner publishes for a file that the signal cancelled, then for the end of the run.
   const verdictThenEnd = [
     "test:complete",
@@ -585,6 +624,11 @@ describe("node:test run() signal", () => {
       kills: 1,
     };
     const destroyed = (endedAtThrow: boolean) => ({ endedAtThrow, destroyedWith: "the listener throws", kills: 1 });
+    const destroyedAtEndOfStdout = {
+      ...destroyed(false),
+      endedAtEndOfStdout: true,
+      publishedAfterThrow: ["test:pass"],
+    };
     const wrapped = {
       outcome: {
         success: false,
@@ -628,11 +672,16 @@ describe("node:test run() signal", () => {
       },
       "a test:stdout listener throws, with a signal": destroyed(true),
       "a test:stdout listener throws, without a signal": destroyed(true),
-      "a test:stderr listener throws, with a signal": destroyed(true),
-      // Without a signal, the runner waits for the end of stdout first.
+      // The runner publishes the rest of stdout first, as on main.
+      "a test:stderr listener throws, with a signal": destroyed(false),
       "a test:stderr listener throws, without a signal": destroyed(false),
+      "a test:stderr listener throws, then stdout ends and the child runs on, with a signal": destroyedAtEndOfStdout,
+      "a test:stderr listener throws, then stdout ends and the child runs on, without a signal": destroyedAtEndOfStdout,
+      "a test:stderr listener throws after stdout ended, and the child runs on, with a signal": destroyed(true),
+      "a test:stderr listener throws after stdout ended, and the child runs on, without a signal": destroyed(true),
       "a test:stdout listener aborts, then throws": destroyed(true),
       "a test:stderr listener aborts, then throws": destroyed(true),
+      "a test:stderr listener aborts, then throws, after stdout ended": destroyed(true),
       "a test:stderr listener aborts, then throws, after the child exited": destroyed(true),
       "the child of the first file does not start": {
         outcome: {

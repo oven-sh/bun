@@ -434,14 +434,14 @@ function reportFailedFile(
   reporter: TestsStream,
   counts: Record<string, number>,
 ) {
-  const details = { __proto__: null, duration_ms: durationMs, type: "test", error };
   reporter.complete({
     __proto__: null,
     ...fileNode,
     type: undefined,
     testNumber: 1,
-    details: { __proto__: null, ...details, passed: false },
+    details: { __proto__: null, duration_ms: durationMs, type: "test", passed: false, error },
   });
+  const details = { __proto__: null, duration_ms: durationMs, type: "test", error };
   reporter.fail({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
   counts.tests++;
   counts[count]++;
@@ -525,12 +525,14 @@ async function runOneFile(
 
   // False after the abort, and after this function: nothing more of the child is published.
   let live = true;
-  // Ends a wait for the child: it fulfills at the abort and rejects when a reader fails.
+  // Ends a wait for the child: it fulfills at the abort, and it rejects with the error of a reader.
   let stop: Promise<undefined> | undefined;
   let abortListener: Disposable | undefined;
   // The first error of a reader. A listener of the caller that throws is one.
   let readerFailed = false;
   let readerError: unknown;
+  // True after the wait for stdout. From then on the error of a reader ends a wait at once, as without a signal.
+  let afterStdout = false;
 
   try {
     if (signal !== undefined) {
@@ -544,12 +546,11 @@ async function runOneFile(
       });
     }
 
-    // Only a run with a signal has a wait that the error of a reader can end.
     const onReaderError = (err: unknown) => {
       if (readerFailed) return;
       readerFailed = true;
       readerError = err;
-      if (stop !== undefined) $rejectPromiseWithFirstResolvingFunctionCallCheck(stop, err);
+      if (afterStdout) $rejectPromiseWithFirstResolvingFunctionCallCheck(stop!, err);
     };
 
     // Reads one pipe of the child to its end, and publishes each line while the file is live.
@@ -575,6 +576,7 @@ async function runOneFile(
       stderrText += line + "\n";
       if (line.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: line + "\n" });
     });
+    // This reader is the last that the file waits for. Its error has a handler from the start.
     drainStderr.$then(undefined, onReaderError);
 
     const handleStdoutLine = (line: string) => {
@@ -613,8 +615,10 @@ async function runOneFile(
     } else {
       // Node's file test ends at child exit and stdout end: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/runner.js#L557-L560
       await firstOf(stop, drainStdout);
+      afterStdout = true;
+      // The stderr reader failed before stdout ended, or a listener aborted and then threw. The error is the result.
+      if (readerFailed) throw readerError;
       exitCode = await firstOf(stop, proc.exited);
-      // A listener that aborts and then throws ends the wait with the abort. Its error is still the result.
       if (readerFailed) throw readerError;
       if (!live) {
         addRunCounts(counts, fileCounts);

@@ -1,20 +1,20 @@
-// This file uses node:test and node:assert, because the last test runs it under Node.js too.
-import assert from "node:assert";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { after, run, test } from "node:test";
+// The tests of run({ signal }) that Node.js passes too. node-test.test.ts runs this file with Bun and with Node.js.
+const assert = require("node:assert");
+const { existsSync, readFileSync, writeFileSync } = require("node:fs");
+const { join } = require("node:path");
+const { run, test } = require("node:test");
 
 const isBun = typeof Bun !== "undefined";
 const isPosix = process.platform !== "win32";
-const harness = isBun ? await import("harness") : undefined;
-const node = harness?.nodeExeAtLeast("26.3.0") ?? null;
-const env: Record<string, string | undefined> = harness?.bunEnv ?? process.env;
+// An empty directory, from the test that runs this file. The files of each run and their markers go there.
+const dir = process.env.RUN_SIGNAL_DIR;
+assert(dir, "RUN_SIGNAL_DIR is an empty directory");
+const env = process.env;
 // A child of the debug build takes seconds to start. A test that ends too early leaves its run behind.
 const timeout = 30_000;
 
-// Each long test of a fixture ends after a minute. A child that a failed run leaves behind ends then, too.
-const fixtures = {
+// Each long test of a file ends after a minute. A child that a failed run leaves behind ends then, too.
+const files = {
   "quick.js": `
     require("node:test").test("quick", () => {});
   `,
@@ -69,29 +69,23 @@ const fixtures = {
     });
   `,
 };
-
-const tempDir = harness?.tempDir("node-test-run-signal", fixtures);
-const dir = tempDir ? String(tempDir) : mkdtempSync(join(tmpdir(), "node-test-run-signal_"));
-if (!tempDir) {
-  for (const [name, source] of Object.entries(fixtures)) writeFileSync(join(dir, name), source);
-}
-after(() => (tempDir ? tempDir[Symbol.dispose]() : rmSync(dir, { recursive: true, force: true })));
+for (const [name, source] of Object.entries(files)) writeFileSync(join(dir, name), source);
 
 let markers = 0;
-/** The path of a file that a fixture writes. The path is new for each call. */
-function marker(name: string) {
+/** The path of a file that a child writes. The path is new for each call. */
+function marker(name) {
   return join(dir, `${name}-${++markers}`);
 }
 
-function textOf(path: string) {
+function textOf(path) {
   return existsSync(path) ? readFileSync(path, "utf8") : "";
 }
 
-function pidOf(path: string) {
+function pidOf(path) {
   return Number(textOf(path));
 }
 
-function isRunning(pid: number) {
+function isRunning(pid) {
   // process.kill(0) and process.kill(-1) signal more than one process.
   assert(pid > 0, `a child wrote its pid: ${pid}`);
   try {
@@ -103,29 +97,29 @@ function isRunning(pid: number) {
 }
 
 /** The timeout of the test is the deadline. */
-async function until(condition: () => boolean) {
+async function until(condition) {
   while (!condition()) await new Promise(resolve => setTimeout(resolve, 10));
 }
 
 /** Aborts when the child of a "trap.js" or a "held.js" has its signal listeners. */
-function abortWhenReady(stream: ReturnType<typeof run>, controller: AbortController, reason?: unknown) {
-  stream.on("test:stdout", ({ message }: { message: string }) => {
+function abortWhenReady(stream, controller, reason) {
+  stream.on("test:stdout", ({ message }) => {
     if (message.includes("ready")) controller.abort(reason);
   });
 }
 
 /** The verdict of the run and each failed test. `isReason` says that the error is `reason` itself. */
-function outcomeOf(stream: ReturnType<typeof run>, reason?: unknown) {
-  const failed: { name: string; failureType: unknown; isReason: boolean }[] = [];
-  let summary: { success: boolean; counts: Record<string, number> } | undefined;
-  stream.on("test:fail", (data: any) => {
+function outcomeOf(stream, reason) {
+  const failed = [];
+  let summary;
+  stream.on("test:fail", data => {
     const error = data.details.error;
     failed.push({ name: data.name, failureType: error?.failureType, isReason: error === reason });
   });
-  stream.on("test:summary", (data: any) => {
+  stream.on("test:summary", data => {
     if (data.file === undefined) summary = data;
   });
-  return new Promise<{ success: unknown; counts: unknown; failed: typeof failed }>((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     stream.on("error", reject);
     stream.on("end", () => {
       const { tests, passed, failed: failures, cancelled } = summary?.counts ?? {};
@@ -175,7 +169,7 @@ test("ends the child of the running file, and starts no later file", { timeout }
     env: { ...env, PID: pid, EXITED: exited, STARTED: started },
     signal: controller.signal,
   });
-  stream.on("test:pass", (data: any) => {
+  stream.on("test:pass", data => {
     if (data.name === "passes") controller.abort(reason);
   });
 
@@ -230,8 +224,8 @@ test("fails the file with an AbortError when the reason of the abort is null", a
     env: { ...env, STARTED: marker("started") },
     signal: AbortSignal.abort(null),
   });
-  let error: any;
-  stream.on("test:fail", (data: any) => (error = data.details.error));
+  let error;
+  stream.on("test:fail", data => (error = data.details.error));
   await outcomeOf(stream);
 
   assert.deepStrictEqual(
@@ -267,26 +261,27 @@ test(
       signal: controller.signal,
     });
     let ended = false;
-    let endedAtAbort: boolean | undefined;
-    let childRunsAtEnd: boolean | undefined;
-    stream.on("test:stdout", ({ message }: { message: string }) => {
+    let endedAtAbort;
+    let childRunsAtEnd;
+    stream.on("test:stdout", ({ message }) => {
       if (!message.includes("ready")) return;
       controller.abort();
       // The run ends in the promise jobs of the abort: no event of a child is necessary.
       setImmediate(() => (endedAtAbort = ended));
     });
-    stream.on("test:summary", (data: any) => {
+    stream.on("test:summary", data => {
       if (data.file !== undefined) return;
       ended = true;
       childRunsAtEnd = isRunning(pidOf(pid));
     });
     const outcome = outcomeOf(stream);
+    const childIsGone = () => pidOf(pid) > 0 && !isRunning(pidOf(pid));
 
     // The child blocks here if the runner does not read both pipes to their end.
-    await until(() => textOf(wrote) !== "");
+    await until(() => textOf(wrote) !== "" || childIsGone());
     const childWrote = textOf(wrote);
-    process.kill(pidOf(pid), "SIGUSR2");
-    await until(() => textOf(exited) !== "");
+    if (!childIsGone()) process.kill(pidOf(pid), "SIGUSR2");
+    await until(() => textOf(exited) !== "" || childIsGone());
     assert.deepStrictEqual(
       { endedAtAbort, childRunsAtEnd, childWrote, childExitCode: textOf(exited), success: (await outcome).success },
       { endedAtAbort: true, childRunsAtEnd: true, childWrote: "all", childExitCode: "0", success: false },
@@ -297,7 +292,7 @@ test(
 test("keeps the verdict of a run whose signal aborts after the last file ended", { timeout }, async () => {
   const controller = new AbortController();
   const stream = run({ files: ["quick.js"], cwd: dir, env, signal: controller.signal });
-  stream.on("test:plan", (data: any) => {
+  stream.on("test:plan", data => {
     if (data.file === undefined) controller.abort();
   });
 
@@ -315,7 +310,7 @@ test(
     const controller = new AbortController();
     const reason = new Error("stop");
     const stream = run({ files: ["quick.js"], cwd: dir, env, signal: controller.signal });
-    stream.on("test:summary", (data: any) => {
+    stream.on("test:summary", data => {
       if (data.file !== undefined) controller.abort(reason);
     });
 
@@ -326,20 +321,3 @@ test(
     });
   },
 );
-
-test("Node.js passes each test of this file", { skip: !node, timeout }, async () => {
-  await using proc = Bun.spawn({
-    cmd: [node!, "--test-reporter=tap", import.meta.filename],
-    env,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-  const verdict = stdout.split("\n").filter(line => /^# (fail|cancelled) /.test(line));
-  assert.deepStrictEqual(
-    { verdict, exitCode },
-    { verdict: ["# fail 0", "# cancelled 0"], exitCode: 0 },
-    `Node.js does not pass this file:\n${stdout}\n${stderr}`,
-  );
-});

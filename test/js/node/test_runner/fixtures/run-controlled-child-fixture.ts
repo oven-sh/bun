@@ -287,11 +287,62 @@ for (const source of ["stdout", "stderr"] as const) {
   }
 }
 
+// The error of a test:stderr listener waits for the end of stdout, and not for the exit of the child.
+for (const signal of ["with a signal", "without a signal"]) {
+  await scenario(`a test:stderr listener throws, then stdout ends and the child runs on, ${signal}`, async () => {
+    const spawned = nextChild();
+    const options = signal === "with a signal" ? { signal: new AbortController().signal } : {};
+    const watch = observe(run({ files: ["a.js"], ...options }));
+    watch.stream.on("test:stderr", () => {
+      throw new Error("the listener throws");
+    });
+    const child = await spawned;
+    child.stderr.write("a line\n");
+    const endedAtThrow = await watch.endedNow();
+
+    watch.mark();
+    child.stdout.write(pass("after the throw"));
+    child.stdout.end();
+    const endedAtEndOfStdout = await watch.endedNow();
+    child.end(0);
+    await watch.settled();
+    return {
+      endedAtThrow,
+      endedAtEndOfStdout,
+      publishedAfterThrow: watch.published(),
+      destroyedWith: watch.destroyedWith(),
+      kills: child.kills,
+    };
+  });
+}
+
+// Once stdout ended, the error of a test:stderr listener ends the run at once.
+for (const signal of ["with a signal", "without a signal"]) {
+  await scenario(`a test:stderr listener throws after stdout ended, and the child runs on, ${signal}`, async () => {
+    const spawned = nextChild();
+    const options = signal === "with a signal" ? { signal: new AbortController().signal } : {};
+    const watch = observe(run({ files: ["a.js"], ...options }));
+    watch.stream.on("test:stderr", () => {
+      throw new Error("the listener throws");
+    });
+    const child = await spawned;
+    child.stdout.end();
+    await tick();
+    child.stderr.write("a line\n");
+
+    const endedAtThrow = await watch.endedNow();
+    child.end(0);
+    await watch.settled();
+    return { endedAtThrow, destroyedWith: watch.destroyedWith(), kills: child.kills };
+  });
+}
+
 // The error of the listener is the result, as without the abort.
-for (const [name, source, afterExit] of [
-  ["a test:stdout listener aborts, then throws", "stdout", false],
-  ["a test:stderr listener aborts, then throws", "stderr", false],
-  ["a test:stderr listener aborts, then throws, after the child exited", "stderr", true],
+for (const [name, source, childState] of [
+  ["a test:stdout listener aborts, then throws", "stdout", "runs"],
+  ["a test:stderr listener aborts, then throws", "stderr", "runs"],
+  ["a test:stderr listener aborts, then throws, after stdout ended", "stderr", "ended stdout"],
+  ["a test:stderr listener aborts, then throws, after the child exited", "stderr", "exited"],
 ] as const) {
   await scenario(name, async () => {
     const controller = new AbortController();
@@ -302,10 +353,10 @@ for (const [name, source, afterExit] of [
       throw new Error("the listener throws");
     });
     const child = await spawned;
-    if (afterExit) {
+    if (childState !== "runs") {
       child.stdout.write(pass("passes"));
       child.stdout.end();
-      child.exit(0);
+      if (childState === "exited") child.exit(0);
       await tick();
     }
     child[source].write("a line\n");

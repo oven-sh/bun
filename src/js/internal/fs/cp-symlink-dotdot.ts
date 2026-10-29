@@ -13,15 +13,18 @@ const StringPrototypeSlice = String.prototype.slice;
 // The names of `path` that a later `..` cancels: where each one ends in `path`, in the order of the `..`.
 function cancelledNames(path: string) {
   const names: number[] = [];
+  let depth = 0;
   const cancelled: number[] = [];
   for (let start = 0; start < path.length;) {
     let end = StringPrototypeIndexOf.$call(path, "/", start);
     if (end === -1) end = path.length;
     const length = end - start;
     if (length === 2 && path[start] === "." && path[start + 1] === ".") {
-      if (names.length) cancelled.push(names.pop()!);
+      if (depth > 0) $arrayPush(cancelled, names[--depth]);
     } else if (length > 1 || (length === 1 && path[start] !== ".")) {
-      names.push(end);
+      if (depth < names.length) names[depth] = end;
+      else $arrayPush(names, end);
+      depth++;
     }
     start = end + 1;
   }

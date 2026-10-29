@@ -732,6 +732,24 @@ mod tests {
     }
 
     #[test]
+    fn field_length_limit_with_a_name_from_a_table() {
+        // :authority, and an entry with a name of 100 bytes.
+        for (name_index, name_len) in [("01", 10), ("0f2f", 100)] {
+            let mut decoder = Decoder::new();
+            let entry = [hex("40 64"), vec![b'n'; 100], hex("00")].concat();
+            assert!(decode(&mut decoder, &entry).is_ok());
+            let room = MAX_FIELD_LEN - name_len;
+            for (value_len, decoded) in [(room, Ok(room)), (room + 1, Err(Error::TooLarge))] {
+                let mut block = hex(name_index);
+                integer::encode(&mut block, 0x00, 7, value_len as u32);
+                block.extend(vec![b'v'; value_len]);
+                let fields = decode(&mut decoder, &block);
+                assert_eq!(fields.map(|fields| fields[0].1.len()), decoded);
+            }
+        }
+    }
+
+    #[test]
     fn the_length_limit_is_not_on_what_is_left_of_the_block() {
         let field = [hex("00 0161 7e"), vec![b'b'; 0x7e]].concat();
         let fields = MAX_FIELD_LEN / field.len() + 1;

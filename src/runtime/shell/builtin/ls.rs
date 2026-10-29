@@ -399,10 +399,10 @@ impl ShellLsTask {
         let new_path = self.join(name);
         // Pool thread: the subtask inherits our poster rather than deriving
         // one from the VM (`ShellTask::new` is JS-thread only).
-        let subtask = bun_core::heap::into_raw(Box::new(ShellLsTask {
+        let mut subtask = Box::new(ShellLsTask {
             cmd: self.cmd,
             opts: self.opts,
-            print_directory: false,
+            print_directory: true,
             task_count: self.task_count,
             cwd: self.cwd,
             path: new_path,
@@ -413,9 +413,8 @@ impl ShellLsTask {
             event_loop: self.event_loop,
             interp: self.interp,
             task: ShellTask::new_child(&self.task),
-        }));
-        // SAFETY: freshly allocated above.
-        unsafe { (*subtask).task.interp = self.interp };
+        });
+        subtask.task.interp = self.interp;
         // SAFETY: `task_count` points into the `Box<Ls>` ExecState which
         // outlives every in-flight task (see `next`). `subtask` is freshly
         // heap-allocated and scheduled via raw `WorkPool::schedule` (no
@@ -423,8 +422,7 @@ impl ShellLsTask {
         // thread-local.
         unsafe {
             (*self.task_count).fetch_add(1, Ordering::Relaxed);
-            (*subtask).print_directory = true;
-            ShellTask::schedule_no_ref::<ShellLsTask>(subtask);
+            ShellTask::schedule_no_ref::<ShellLsTask>(bun_core::heap::into_raw(subtask));
         }
     }
 
@@ -600,15 +598,15 @@ impl ShellLsTask {
         let mtime = bun_sys::stat_mtime(stat);
         let time_str = format_time(mtime.sec, self.now_secs);
 
-        // SAFETY: `format_permissions` only writes ASCII bytes (`r`/`w`/`x`/`s`/`S`/`t`/`T`/`-`).
-        let perms_str = unsafe { core::str::from_utf8_unchecked(&perms) };
-        // SAFETY: `format_time` only writes ASCII bytes (month abbrevs, digits, spaces, `:`).
-        let time_s = unsafe { core::str::from_utf8_unchecked(&time_str) };
+        self.output.push(file_type);
+        self.output.extend_from_slice(&perms);
         let _ = write!(
             self.output,
-            "{}{} {:>3} {:>5} {:>5} {:>8} {} ",
-            file_type as char, perms_str, nlink, uid, gid, size, time_s,
+            " {:>3} {:>5} {:>5} {:>8} ",
+            nlink, uid, gid, size,
         );
+        self.output.extend_from_slice(&time_str);
+        self.output.push(b' ');
         self.output.extend_from_slice(name);
         self.output.push(b'\n');
     }

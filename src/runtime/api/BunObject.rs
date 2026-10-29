@@ -682,23 +682,12 @@ fn get_argv(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
 // into `bun_jsc`'s graph. Semantically it is
 // per-JS-thread state (one VM per thread), so a `thread_local` here is
 // equivalent and breaks the cycle without type erasure.
-//
-// `name_storage` owns the user-supplied editor name so `EditorContext.name`
-// (typed `&'static [u8]`) can borrow it
-// without leaking; the borrow lives as long as the thread.
-struct EditorContextSlot {
-    ctx: crate::cli::open::EditorContext,
-    name_storage: Vec<u8>,
-}
 thread_local! {
-    static EDITOR_CONTEXT: core::cell::RefCell<EditorContextSlot> =
-        const { core::cell::RefCell::new(EditorContextSlot {
-            ctx: crate::cli::open::EditorContext {
-                editor: None,
-                name: b"",
-                path: b"",
-            },
-            name_storage: Vec::new(),
+    static EDITOR_CONTEXT: core::cell::RefCell<crate::cli::open::EditorContext> =
+        const { core::cell::RefCell::new(crate::cli::open::EditorContext {
+            editor: None,
+            name: Vec::new(),
+            path: b"",
         }) };
 }
 
@@ -711,44 +700,22 @@ pub(crate) fn open_in_editor<'a>(
     let editor_name = options.editor.filter(|name| !name.is_empty());
 
     EDITOR_CONTEXT.with(|cell| {
-        let mut slot = cell.borrow_mut();
-        let slot = &mut *slot;
-        let edit = &mut slot.ctx;
+        let edit = &mut *cell.borrow_mut();
         let env = vm.transpiler.env_mut();
         let mut editor_choice: Option<Editor> = None;
 
         if let Some(name) = editor_name {
-            let prev_name = edit.name;
-
-            if !strings::eql_long(prev_name, name, true) {
+            if !strings::eql_long(&edit.name, name, true) {
                 let prev = core::mem::take(edit);
-                // Own the bytes in `name_storage` and
-                // hand back a thread-lifetime borrow.
-                let prev_storage = core::mem::replace(&mut slot.name_storage, name.to_vec());
-                // SAFETY: `name_storage` lives in a thread_local that
-                // outlives any caller; we never reallocate it while
-                // `edit.name` is observed (single-threaded JS VM).
-                edit.name = unsafe { bun_ptr::detach_lifetime(slot.name_storage.as_slice()) };
+                edit.name = name.to_vec();
                 edit.detect_editor(env);
                 editor_choice = edit.found();
                 if editor_choice.is_none() {
-                    slot.name_storage = prev_storage;
                     *edit = prev;
                     return Err(heap.error(format_args!(
                         "Could not find editor \"{}\"",
                         bstr::BStr::new(name),
                     )));
-                } else if edit.name.as_ptr() == edit.path.as_ptr() {
-                    // `detect_editor` aliased `path` to `name` (absolute
-                    // editor path). `name` is backed by `slot.name_storage`,
-                    // which a later call may drop while the detached editor
-                    // thread is still reading argv[0]. Give `path`
-                    // process-lifetime storage, matching every other
-                    // `detect_editor` branch.
-                    edit.path = bun_resolver::fs::FileSystem::get()
-                        .dirname_store
-                        .append_slice(edit.path)
-                        .expect("unreachable");
                 }
             }
         }

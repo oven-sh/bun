@@ -332,21 +332,18 @@ mod fake_mimalloc {
         true
     }
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn mi_process_info(
-        a: *mut usize,
-        b: *mut usize,
-        c: *mut usize,
-        d: *mut usize,
-        e: *mut usize,
-        f: *mut usize,
-        g: *mut usize,
-        h: *mut usize,
+    extern "C" fn mi_process_info(
+        a: Option<&mut usize>,
+        b: Option<&mut usize>,
+        c: Option<&mut usize>,
+        d: Option<&mut usize>,
+        e: Option<&mut usize>,
+        f: Option<&mut usize>,
+        g: Option<&mut usize>,
+        h: Option<&mut usize>,
     ) {
-        for p in [a, b, c, d, e, f, g, h] {
-            if !p.is_null() {
-                // SAFETY: it isn't null, so the caller passed a valid pointer to write a number to.
-                unsafe { *p = 0 };
-            }
+        for p in [a, b, c, d, e, f, g, h].into_iter().flatten() {
+            *p = 0;
         }
     }
 }

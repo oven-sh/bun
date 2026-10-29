@@ -417,12 +417,15 @@ impl CompileTarget {
         }
     }
 
+    /// What `--compile` defines for its target, in the order of `define_values`.
+    pub const DEFINE_KEYS: [&'static [u8]; 3] = [
+        b"process.platform",
+        b"process.arch",
+        b"process.versions.bun",
+    ];
+
     pub fn define_keys(&self) -> [&'static [u8]; 3] {
-        [
-            b"process.platform",
-            b"process.arch",
-            b"process.versions.bun",
-        ]
+        Self::DEFINE_KEYS
     }
 
     pub fn define_values(&self) -> [&'static [u8]; 3] {

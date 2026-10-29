@@ -284,6 +284,7 @@ mod tests {
             None,
             dropped,
             false,
+            true,
             scratch,
         )
         .unwrap_or_else(|_| panic!("valid defines"))
@@ -414,6 +415,34 @@ mod tests {
             .map(|path| path_parts(path, &atoms).join(&b'.'))
             .collect();
         assert_eq!(plain, [&b"process.browser"[..], b"process.env.BUN_ENV"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn defines_of_the_compile_target_are_plain_path_defines_unless_given_again() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let entries = [
+            ("process.platform", "\"linux\""),
+            ("process.arch", "\"x64\""),
+            ("process.versions.bun", "\"1.0.0\""),
+            ("process[\"arch\"]", "\"mine\""),
+        ];
+        let options = fold(&entries, &[], session.arena(), &atoms);
+        let mut plain: Vec<Vec<u8>> = options
+            .plain_path_defines
+            .iter()
+            .map(|path| path_parts(path, &atoms).join(&b'.'))
+            .collect();
+        plain.sort();
+        let expected: [&[u8]; 5] = [
+            b"process.browser",
+            b"process.env.BUN_ENV",
+            b"process.env.NODE_ENV",
+            b"process.platform",
+            b"process.versions.bun",
+        ];
+        assert_eq!(plain, expected);
     }
 
     #[test]

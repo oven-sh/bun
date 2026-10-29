@@ -2,6 +2,7 @@ import type { BuildConfig, TranspilerOptions } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
+import { itBundled } from "./expectBundled";
 
 // `define` key matching and value parsing, on every surface that takes a
 // define map: `bun build` (bundling and `--no-bundle`), `Bun.build`, and
@@ -17,8 +18,9 @@ import { join } from "path";
 // - The later of two spellings of one key wins. esbuild takes the spelling that
 //   sorts last.
 // - A BigInt value can be hexadecimal (`0xffn`). esbuild takes decimal only.
-// - Bun defines `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser` by itself.
-//   In a build for `bun` or `node` these defaults replace the dotted spelling alone.
+// - Bun defines `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser` by itself, and
+//   `--compile` defines `process.platform`, `process.arch` and `process.versions.bun` for its target.
+//   In a build for `bun` or `node` these defines replace the dotted spelling alone.
 
 type Defines = Record<string, string>;
 
@@ -926,6 +928,24 @@ describe.concurrent("the defines that Bun adds by itself", () => {
       browser: everySpelling(mode, "true"),
       node: dottedAlone(mode),
     });
+  });
+});
+
+describe("bundler", () => {
+  // The executable reads the real `process` through the other spellings. `process.arch` is here the program's own define.
+  itBundled("define/CompileTargetDefinesReplaceDottedSpellingAlone", {
+    compile: true,
+    backend: "cli",
+    files: {
+      "/entry.js": /* js */ `
+        Object.defineProperty(process, "platform", { value: "made up" });
+        Object.defineProperty(process, "arch", { value: "made up" });
+        console.log(process.platform === "made up", process["platform"], process?.platform);
+        console.log(process.arch, process["arch"], process?.arch);
+      `,
+    },
+    define: { "process.arch": '"mine"' },
+    run: { stdout: "false made up made up\nmine mine mine" },
   });
 });
 

@@ -110,6 +110,7 @@ const expectedFailures: Record<string, Record<string, string>> = {
     "bundler > ts/EnumTreeShaking/sibling-enum-before.ts": "TS2450: the enum x is used before its declaration",
     "bundler > ts/EnumTreeShaking/namespace-before.ts": "TS2304: nothing declares y",
     "bundler > ts/EnumTreeShaking/namespace-after.ts": "TS2304: nothing declares y",
+    "bundler > ts/EnumDefine": "TS2304: nothing declares d, the name that the build defines",
     "bundler > ts/EnumRulesFrom_TypeScript_5_0/not-supported.ts": "TS2304: nothing declares capture",
   },
 };

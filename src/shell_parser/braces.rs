@@ -1,4 +1,4 @@
-use core::ptr;
+use core::cell::Cell;
 
 use bun_alloc::ArenaVecExt as _;
 use bun_alloc::{AllocError, Arena as Bump};
@@ -376,13 +376,13 @@ pub fn tokens_to_json(tokens: &[Token]) -> Vec<u8> {
     out
 }
 
-pub fn ast_to_json(root: &ast::Group) -> Vec<u8> {
+pub fn ast_to_json(root: &ast::Group<'_>) -> Vec<u8> {
     let mut out = Vec::new();
     ast_group_to_json(root, &mut out);
     out
 }
 
-fn ast_atom_to_json(atom: &ast::Atom, out: &mut Vec<u8>) {
+fn ast_atom_to_json(atom: &ast::Atom<'_>, out: &mut Vec<u8>) {
     match atom {
         ast::Atom::Text(txt) => {
             out.extend_from_slice(b"{\"text\":");
@@ -391,9 +391,7 @@ fn ast_atom_to_json(atom: &ast::Atom, out: &mut Vec<u8>) {
         }
         ast::Atom::Expansion(exp) => {
             out.extend_from_slice(b"{\"expansion\":{\"variants\":[");
-            // SAFETY: `variants` is a bump-allocated slice live for the parse arena.
-            let variants = unsafe { &*exp.variants };
-            for (i, g) in variants.iter().enumerate() {
+            for (i, g) in exp.variants.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
                 }
@@ -404,17 +402,18 @@ fn ast_atom_to_json(atom: &ast::Atom, out: &mut Vec<u8>) {
     }
 }
 
-fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
+fn ast_group_to_json(group: &ast::Group<'_>, out: &mut Vec<u8>) {
     use std::io::Write as _;
     out.extend_from_slice(b"{\"bubble_up\":");
-    if group.bubble_up.is_null() {
-        out.extend_from_slice(b"null");
-    } else {
-        // Optional pointers are encoded as the pointer address.
-        let _ = write!(out, "{}", group.bubble_up as usize);
+    match group.bubble_up.get() {
+        None => out.extend_from_slice(b"null"),
+        Some(bubble_up) => {
+            // Optional pointers are encoded as the pointer address.
+            let _ = write!(out, "{}", std::ptr::from_ref(bubble_up) as usize);
+        }
     }
     out.extend_from_slice(b",\"bubble_up_next\":");
-    match group.bubble_up_next {
+    match group.bubble_up_next.get() {
         Some(n) => {
             let _ = write!(out, "{}", n);
         }
@@ -429,8 +428,6 @@ fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
         }
         ast::GroupAtoms::Many(atoms) => {
             out.extend_from_slice(b"{\"many\":[");
-            // SAFETY: bump-allocated slice live for the parse arena.
-            let atoms = unsafe { &**atoms };
             for (i, a) in atoms.iter().enumerate() {
                 if i > 0 {
                     out.push(b',');
@@ -446,28 +443,28 @@ fn ast_group_to_json(group: &ast::Group, out: &mut Vec<u8>) {
 pub mod ast {
     use super::*;
 
-    pub enum Atom {
+    pub enum Atom<'a> {
         Text(SmolStr),
-        Expansion(Expansion),
+        Expansion(Expansion<'a>),
     }
 
-    pub enum GroupAtoms {
-        Single(Atom),
-        // bump-owned slice; raw because Group has raw backrefs (see bubble_up).
-        Many(*mut [Atom]),
+    pub enum GroupAtoms<'a> {
+        Single(Atom<'a>),
+        // bump-owned slice
+        Many(&'a [Atom<'a>]),
     }
 
-    pub struct Group {
+    pub struct Group<'a> {
         /// BACKREF: child points back to owning parent Group (LIFETIMES.tsv).
-        pub(crate) bubble_up: *mut Group,
-        pub(crate) bubble_up_next: Option<u16>,
-        pub(crate) atoms: GroupAtoms,
+        pub(crate) bubble_up: Cell<Option<&'a Group<'a>>>,
+        pub(crate) bubble_up_next: Cell<Option<u16>>,
+        pub(crate) atoms: GroupAtoms<'a>,
     }
 
-    pub struct Expansion {
-        // bump-owned mutable slice; raw because expand_nested writes
-        // bubble_up backrefs into elements while recursing through the parent.
-        pub(crate) variants: *mut [Group],
+    pub struct Expansion<'a> {
+        // bump-owned slice; expand_nested writes the `bubble_up` cells of its
+        // elements while recursing through the parent.
+        pub(crate) variants: &'a [Group<'a>],
     }
 }
 
@@ -535,43 +532,31 @@ pub fn expand(
     }
 
     let mut parser = Parser::init(tokens, bump);
-    let mut root_node = parser.parse()?;
-    // SAFETY: root_node lives on this stack frame for the duration of expand_nested;
-    // all bubble_up backrefs written during recursion point into bump-owned Groups
-    // or back at this root.
-    unsafe { expand_nested(&raw mut root_node, out, 0, &mut out_key_counter, 0) }
+    let root_node = parser.parse()?;
+    expand_nested(&root_node, out, 0, &mut out_key_counter, 0)
 }
 
-// SAFETY contract: `root` must be a valid *mut Group whose `atoms` slices and
-// `expansion.variants` slices are bump-owned and outlive this call. The function
-// writes `bubble_up` backrefs (raw pointers) into child Groups and re-enters the
-// parent through them; raw-pointer access is used throughout to avoid creating
-// overlapping `&mut` borrows.
-//
-// Aliasing audit: no reference is held across a recursive call. The shared
-// borrows created from raw pointers (`&(*root).atoms` match scrutinees,
-// `&(*many)[i_]`, `expansion`) are consumed before recursion — `variants` is
-// hoisted to a raw pointer copy ahead of the variant loop, and every arm that
-// recurses either tail-returns or returns immediately after its loop. Writes
-// during recursion target only `Group` structs (the stack root or bump-owned
-// `variants` elements), never the `[Atom]` slices a caller frame borrowed
-// from, and bubble-up re-entry always resumes past the caller's in-progress
-// atom index, so no frame's expansion is mutated while it is on the stack.
-unsafe fn expand_nested(
-    root: *mut ast::Group,
+fn expand_nested<'a>(
+    root: &'a ast::Group<'a>,
     out: &mut [Vec<u8>],
     out_key: usize,
     out_key_counter: &mut usize,
     start: u32,
 ) -> Result<(), ExpandError> {
-    // SAFETY: see fn doc comment —
-    // bump-owned Groups outlive this call, no overlapping `&mut` borrows are held.
-    unsafe {
-        if let ast::GroupAtoms::Single(_) = (*root).atoms {
-            if start > 0 {
-                if !(*root).bubble_up.is_null() {
-                    let bubble_up = (*root).bubble_up;
-                    let next = (*root).bubble_up_next.unwrap();
+    if let ast::GroupAtoms::Single(_) = root.atoms {
+        if start > 0 {
+            if let Some(bubble_up) = root.bubble_up.get() {
+                let next = root.bubble_up_next.get().unwrap();
+                return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
+            }
+            return Ok(());
+        }
+
+        match &root.atoms {
+            ast::GroupAtoms::Single(ast::Atom::Text(txt)) => {
+                out[out_key].extend_from_slice(txt.slice());
+                if let Some(bubble_up) = root.bubble_up.get() {
+                    let next = root.bubble_up_next.get().unwrap();
                     return expand_nested(
                         bubble_up,
                         out,
@@ -582,107 +567,81 @@ unsafe fn expand_nested(
                 }
                 return Ok(());
             }
+            ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
+                let length = out[out_key].len();
+                for (j, group) in expansion.variants.iter().enumerate() {
+                    group.bubble_up.set(Some(root));
+                    group.bubble_up_next.set(Some(1));
+                    let new_key = if j == 0 {
+                        out_key
+                    } else {
+                        let new_key = *out_key_counter;
+                        // new_key > out_key always (counter is bumped past out_key before
+                        // any recursion into it), and the j==0 recursion only appends to
+                        // out[out_key], so its [..length] prefix is stable.
+                        let (lo, hi) = out.split_at_mut(new_key);
+                        hi[0].extend_from_slice(&lo[out_key][..length]);
+                        *out_key_counter += 1;
+                        new_key
+                    };
 
-            match &(*root).atoms {
-                ast::GroupAtoms::Single(ast::Atom::Text(txt)) => {
-                    out[out_key].extend_from_slice(txt.slice());
-                    if !(*root).bubble_up.is_null() {
-                        let bubble_up = (*root).bubble_up;
-                        let next = (*root).bubble_up_next.unwrap();
-                        return expand_nested(
-                            bubble_up,
-                            out,
-                            out_key,
-                            out_key_counter,
-                            u32::from(next),
-                        );
-                    }
-                    return Ok(());
+                    expand_nested(group, out, new_key, out_key_counter, 0)?;
                 }
-                ast::GroupAtoms::Single(ast::Atom::Expansion(expansion)) => {
-                    let length = out[out_key].len();
-                    let variants = expansion.variants;
-                    let variants_len = variants.len();
-                    for j in 0..variants_len {
-                        let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
-                        (*group).bubble_up = root;
-                        (*group).bubble_up_next = Some(1);
-                        let new_key = if j == 0 {
-                            out_key
-                        } else {
-                            let new_key = *out_key_counter;
-                            // new_key > out_key always (counter is bumped past out_key before
-                            // any recursion into it), and the j==0 recursion only appends to
-                            // out[out_key], so its [..length] prefix is stable.
-                            let (lo, hi) = out.split_at_mut(new_key);
-                            hi[0].extend_from_slice(&lo[out_key][..length]);
-                            *out_key_counter += 1;
-                            new_key
-                        };
-
-                        expand_nested(group, out, new_key, out_key_counter, 0)?;
-                    }
-                    return Ok(());
-                }
-                ast::GroupAtoms::Many(_) => unreachable!(),
+                return Ok(());
             }
+            ast::GroupAtoms::Many(_) => unreachable!(),
         }
+    }
 
-        let many: *mut [ast::Atom] = match &(*root).atoms {
-            ast::GroupAtoms::Many(m) => *m,
-            _ => unreachable!(),
-        };
-        let many_len = many.len();
+    let many: &[ast::Atom<'a>] = match &root.atoms {
+        ast::GroupAtoms::Many(m) => m,
+        _ => unreachable!(),
+    };
+    let many_len = many.len();
 
-        if start as usize >= many_len {
-            if !(*root).bubble_up.is_null() {
-                let bubble_up = (*root).bubble_up;
-                let next = (*root).bubble_up_next.unwrap();
-                return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
-            }
-            return Ok(());
-        }
-
-        for i_ in (start as usize)..many_len {
-            let i: u16 = u16::try_from(i_).expect("int cast");
-            let atom: &ast::Atom = &(*many)[i_];
-            match atom {
-                ast::Atom::Text(txt) => {
-                    out[out_key].extend_from_slice(txt.slice());
-                }
-                ast::Atom::Expansion(expansion) => {
-                    let length = out[out_key].len();
-                    let variants = expansion.variants;
-                    let variants_len = variants.len();
-                    for j in 0..variants_len {
-                        let group: *mut ast::Group = (*variants).as_mut_ptr().add(j);
-                        (*group).bubble_up = root;
-                        (*group).bubble_up_next = Some(i + 1);
-                        let new_key = if j == 0 {
-                            out_key
-                        } else {
-                            let new_key = *out_key_counter;
-                            let (lo, hi) = out.split_at_mut(new_key);
-                            hi[0].extend_from_slice(&lo[out_key][..length]);
-                            *out_key_counter += 1;
-                            new_key
-                        };
-
-                        expand_nested(group, out, new_key, out_key_counter, 0)?;
-                    }
-                    return Ok(());
-                }
-            }
-        }
-
-        // After execution we need to go up a level
-        if !(*root).bubble_up.is_null() {
-            let bubble_up = (*root).bubble_up;
-            let next = (*root).bubble_up_next.unwrap();
+    if start as usize >= many_len {
+        if let Some(bubble_up) = root.bubble_up.get() {
+            let next = root.bubble_up_next.get().unwrap();
             return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
         }
-        Ok(())
-    } // unsafe
+        return Ok(());
+    }
+
+    for i_ in (start as usize)..many_len {
+        let i: u16 = u16::try_from(i_).expect("int cast");
+        let atom: &ast::Atom<'a> = &many[i_];
+        match atom {
+            ast::Atom::Text(txt) => {
+                out[out_key].extend_from_slice(txt.slice());
+            }
+            ast::Atom::Expansion(expansion) => {
+                let length = out[out_key].len();
+                for (j, group) in expansion.variants.iter().enumerate() {
+                    group.bubble_up.set(Some(root));
+                    group.bubble_up_next.set(Some(i + 1));
+                    let new_key = if j == 0 {
+                        out_key
+                    } else {
+                        let new_key = *out_key_counter;
+                        let (lo, hi) = out.split_at_mut(new_key);
+                        hi[0].extend_from_slice(&lo[out_key][..length]);
+                        *out_key_counter += 1;
+                        new_key
+                    };
+
+                    expand_nested(group, out, new_key, out_key_counter, 0)?;
+                }
+                return Ok(());
+            }
+        }
+    }
+
+    // After execution we need to go up a level
+    if let Some(bubble_up) = root.bubble_up.get() {
+        let next = root.bubble_up_next.get().unwrap();
+        return expand_nested(bubble_up, out, out_key, out_key_counter, u32::from(next));
+    }
+    Ok(())
 }
 
 /// This function is fast but does not work for nested brace expansions
@@ -762,8 +721,7 @@ fn expand_flat(
 }
 
 // FIXME error location
-// lifetime on transient parser struct; `tokens`/`bump` borrowed from caller
-// for the parse() call only — not an AST node.
+// `tokens`/`bump` borrowed from caller; the AST that parse() returns lives in `bump`.
 pub struct Parser<'a> {
     current: usize,
     tokens: &'a [Token],
@@ -779,9 +737,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    pub fn parse(&mut self) -> Result<ast::Group, ParserError> {
+    pub fn parse(&mut self) -> Result<ast::Group<'a>, ParserError> {
         check_brace_group_count(self.tokens)?;
-        let mut nodes: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
+        let mut nodes: BumpVec<'a, ast::Atom<'a>> = BumpVec::new_in(self.bump);
         while !self.r#match(TokenTag::Eof) {
             match self.parse_atom()? {
                 Some(atom) => nodes.push(atom),
@@ -792,21 +750,21 @@ impl<'a> Parser<'a> {
         if nodes.len() == 1 {
             let single = nodes.into_iter().next().unwrap();
             Ok(ast::Group {
-                bubble_up: ptr::null_mut(),
-                bubble_up_next: None,
+                bubble_up: Cell::new(None),
+                bubble_up_next: Cell::new(None),
                 atoms: ast::GroupAtoms::Single(single),
             })
         } else {
-            let many = std::ptr::from_mut::<[ast::Atom]>(nodes.into_bump_slice_mut());
+            let many = nodes.into_bump_slice();
             Ok(ast::Group {
-                bubble_up: ptr::null_mut(),
-                bubble_up_next: None,
+                bubble_up: Cell::new(None),
+                bubble_up_next: Cell::new(None),
                 atoms: ast::GroupAtoms::Many(many),
             })
         }
     }
 
-    fn parse_atom(&mut self) -> Result<Option<ast::Atom>, ParserError> {
+    fn parse_atom(&mut self) -> Result<Option<ast::Atom<'a>>, ParserError> {
         match self.advance() {
             Token::Open(_) => {
                 let expansion_ptr = self.parse_expansion()?;
@@ -818,10 +776,10 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn parse_expansion(&mut self) -> Result<ast::Expansion, ParserError> {
-        let mut variants: BumpVec<'a, ast::Group> = BumpVec::new_in(self.bump);
+    fn parse_expansion(&mut self) -> Result<ast::Expansion<'a>, ParserError> {
+        let mut variants: BumpVec<'a, ast::Group<'a>> = BumpVec::new_in(self.bump);
         loop {
-            let mut group: BumpVec<'a, ast::Atom> = BumpVec::new_in(self.bump);
+            let mut group: BumpVec<'a, ast::Atom<'a>> = BumpVec::new_in(self.bump);
             // Only this inner loop consumes Close/Eof so a trailing empty
             // variant (`{a,}`) is pushed before the outer loop exits.
             let close = loop {
@@ -839,15 +797,15 @@ impl<'a> Parser<'a> {
             if group.len() == 1 {
                 let single = group.into_iter().next().unwrap();
                 variants.push(ast::Group {
-                    bubble_up: ptr::null_mut(),
-                    bubble_up_next: None,
+                    bubble_up: Cell::new(None),
+                    bubble_up_next: Cell::new(None),
                     atoms: ast::GroupAtoms::Single(single),
                 });
             } else {
-                let many = std::ptr::from_mut::<[ast::Atom]>(group.into_bump_slice_mut());
+                let many = group.into_bump_slice();
                 variants.push(ast::Group {
-                    bubble_up: ptr::null_mut(),
-                    bubble_up_next: None,
+                    bubble_up: Cell::new(None),
+                    bubble_up_next: Cell::new(None),
                     atoms: ast::GroupAtoms::Many(many),
                 });
             }
@@ -857,7 +815,7 @@ impl<'a> Parser<'a> {
         }
 
         Ok(ast::Expansion {
-            variants: std::ptr::from_mut::<[ast::Group]>(variants.into_bump_slice_mut()),
+            variants: variants.into_bump_slice(),
         })
     }
 

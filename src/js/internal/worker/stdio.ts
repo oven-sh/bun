@@ -82,8 +82,8 @@ function makePortReadable(
   // wrote and the port still holds comes first (node's kOnExit drains its port).
   stream.endFromOwner = function () {
     while (ended === false) {
-      const entry = receiveMessageOnPort?.(port);
       try {
+        const entry = receiveMessageOnPort?.(port);
         if (entry === undefined) {
           ended = true;
           stream.push(null);

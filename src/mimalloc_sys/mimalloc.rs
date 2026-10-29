@@ -97,14 +97,14 @@ pub struct struct_mi_heap_area_s {
 pub type mi_heap_area_t = struct_mi_heap_area_s;
 
 type mi_block_visit_fun =
-    extern "C" fn(*const Heap, *const mi_heap_area_t, *mut c_void, usize, *mut c_void) -> bool;
+    extern "C" fn(*const Heap, &mi_heap_area_t, *mut c_void, usize, &mut usize) -> bool;
 
 unsafe extern "C" {
     pub fn mi_heap_visit_blocks(
         heap: *const Heap,
         visit_all_blocks: bool,
         visitor: core::option::Option<mi_block_visit_fun>,
-        arg: *mut c_void,
+        arg: &mut usize,
     ) -> bool;
     /// No preconditions; looks the address up in the page map and never dereferences `p`.
     pub safe fn mi_is_in_heap_region(p: *const c_void) -> bool;

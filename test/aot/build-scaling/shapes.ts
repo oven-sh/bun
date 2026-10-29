@@ -385,6 +385,23 @@ export const shapes: Shape[] = [
       "main.js": `const table = {\n${lines(size, index => `  name${index}: ${index},`)}};\nlet sum = 0;\n${lines(size, index => `sum += table.name${index};`)}console.log(sum);\n`,
     }),
   },
+  // What lies under a name also lies under every name that it is stored again under. Lists of the functions under each name would hold 1, 2, 3 .. of them.
+  {
+    name: "names that are each stored again under the next",
+    counted: "names",
+    size: 3000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        lines(
+          size,
+          index =>
+            `function step${index}() {\n  const made = {};\n  made.name${index} = function (x) { return x + ${index}; };\n  const handedOn = {};\n  handedOn.name${index + 1} = made.name${index};\n  return handedOn;\n}`,
+        ) +
+        `let last = { name0: x => x };\nfor (const step of [${upTo(size, index => `step${index}`).join(", ")}]) last = step();\nconsole.log(last.name${size}(1));\n`,
+    }),
+  },
   {
     name: "exports of one module that another imports by name",
     counted: "exports",
@@ -1110,6 +1127,19 @@ export const shapes: Shape[] = [
     write: size => ({
       "tsconfig.json": withoutLibraryTypes,
       "main.ts": `${declaredConsole}let seen = 0;\nfunction use(text: string) {\n  seen += text.length;\n}\nfunction atTheEnd(a: string, n: number): string {\n  let s = a;\n${"  s = s + n + a;\n  use(s);\n".repeat(size)}  return s;\n}\nconsole.log(atTheEnd("x", 1).length, seen);\n`,
+    }),
+  },
+  {
+    name: "names stored on one object that are each read and stored again on another",
+    counted: "names",
+    size: 6000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `const made = {};\nconst copied = {};\n` +
+        lines(size, index => `made.name${index} = function (x) { return x + ${index}; };\ncopied.name${index + 1} = made.name${index};`) +
+        `console.log(${size ? `copied.name${size}(1)` : 0});\n`,
     }),
   },
 ];

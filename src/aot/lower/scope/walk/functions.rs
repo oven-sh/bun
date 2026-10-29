@@ -296,7 +296,16 @@ impl Walker<'_, '_> {
             CodeUnit::File if self.walk.has_wrapper_parameters => {
                 return self.record_eval_arguments_slots(eval, context, time);
             }
-            CodeUnit::File | CodeUnit::FieldInitializer(_) => return,
+            CodeUnit::FieldInitializer(member) => {
+                let (settings, transpiled) = (self.input.compiled.settings, self.input.transpiled);
+                if class::is_evaluated_in_constructor(
+                    self.hir, self.bound, settings, transpiled, member,
+                ) {
+                    self.record_eval_arguments_slots(eval, context, time);
+                }
+                return;
+            }
+            CodeUnit::File => return,
         };
         let kind = self.hir.runtime_function_kind(function);
         self.record_eval_arguments_slots(eval, context, time);

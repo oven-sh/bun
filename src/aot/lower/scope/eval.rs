@@ -137,7 +137,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 (flags, Some(this_scope), bound.function_class(function))
             }
             CodeUnit::FieldInitializer(member) => {
-                let flags = compute_initializer_flags();
+                let flags = match self.is_code_of_constructor(this_scope) {
+                    true => compute_function_flags(FnKind::Method, false),
+                    false => compute_initializer_flags(),
+                };
                 (flags, Some(this_scope), bound.member_class(member))
             }
         };

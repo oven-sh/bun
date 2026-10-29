@@ -121,9 +121,10 @@ fn required_if(is_required: bool) -> Facts {
     }
 }
 
+#[derive(Clone)]
 struct Member {
     name: Atom,
-    usage: Usage,
+    usage: Rc<Usage>,
 }
 
 impl Member {
@@ -132,12 +133,13 @@ impl Member {
     }
 }
 
-#[derive(Default)]
+/// A merge into a part that says nothing yet shares the other tree's part, so a part may belong to many trees: it is copied when one of them changes it.
+#[derive(Default, Clone)]
 pub(super) struct Usage {
     facts: Facts,
     arms: SmallVec<[TypeId; 2]>,
     members: Vec<Member>,
-    elements: Option<Box<Usage>>,
+    elements: Option<Rc<Usage>>,
 }
 
 impl Usage {
@@ -146,15 +148,25 @@ impl Usage {
         let index = found.unwrap_or_else(|| {
             self.members.push(Member {
                 name,
-                usage: Usage::default(),
+                usage: Rc::default(),
             });
             self.members.len() - 1
         });
-        &mut self.members[index].usage
+        Rc::make_mut(&mut self.members[index].usage)
     }
 
     fn elements_mut(&mut self) -> &mut Usage {
-        self.elements.get_or_insert_default()
+        Rc::make_mut(self.elements.get_or_insert_default())
+    }
+
+    /// `None`: more than `most`.
+    fn count_nodes(&self, most: u64) -> Option<u64> {
+        let mut count = 1;
+        let parts = self.members.iter().map(|member| &member.usage);
+        for part in parts.chain(&self.elements) {
+            count += part.count_nodes(most.checked_sub(count)?)?;
+        }
+        (count <= most).then_some(count)
     }
 
     fn add_arm(&mut self, arm: TypeId) {
@@ -172,10 +184,19 @@ impl Usage {
             self.add_arm(arm);
         }
         for member in &other.members {
-            self.member_mut(member.name).merge(walk, &member.usage);
+            let is_new = !self.members.iter().any(|own| own.name == member.name);
+            if is_new && walk.enter_all_nodes_of(&member.usage) {
+                self.members.push(member.clone());
+            } else {
+                self.member_mut(member.name).merge(walk, &member.usage);
+            }
         }
         if let Some(elements) = &other.elements {
-            self.elements_mut().merge(walk, elements);
+            if self.elements.is_none() && walk.enter_all_nodes_of(elements) {
+                self.elements = Some(Rc::clone(elements));
+            } else {
+                self.elements_mut().merge(walk, elements);
+            }
         }
     }
 
@@ -207,6 +228,15 @@ impl Walk {
         let has_budget = self.remaining_nodes > 0;
         self.remaining_nodes = self.remaining_nodes.saturating_sub(1);
         has_budget
+    }
+
+    /// Pays for every node of the tree at once, as a merge into an empty tree pays for them one by one. `false`: the budget ends inside the tree, and nothing is paid.
+    fn enter_all_nodes_of(&mut self, usage: &Usage) -> bool {
+        let Some(count) = usage.count_nodes(self.remaining_nodes) else {
+            return false;
+        };
+        self.remaining_nodes -= count;
+        true
     }
 
     fn is_out_of_budget(&self) -> bool {

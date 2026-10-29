@@ -13,6 +13,7 @@ use crate::ir::generated::{
 use crate::ir::{ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, TypeTable, ValueId};
 use crate::lower::member::{GivenName, PropertyName};
 use crate::lower::positions::SiteOrigin;
+use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{FileLowering, FunctionLowering, convert, function, layouts};
 
 #[derive(Copy, Clone)]
@@ -363,7 +364,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let initializer = self.file.hir[member].init;
         let scope = self.file.bound.field_initializer_scope(member);
         if let Some(scope) = scope {
-            self.enter_scope(scope);
+            let count = self.builder.function().parameters.len() as u32;
+            let get_parameter = |index| self.builder.parameter(index);
+            let parameters: SmallVec<[ValueId; 4]> = (0..count).map(get_parameter).collect();
+            let unit = CodeUnit::FieldInitializer(member);
+            let arguments = self.create_arguments_object(unit, &parameters);
+            let arguments =
+                arguments.map(|object| (BindingRef::Slot(scope, ScopeSlot::Arguments), object));
+            self.allocate_scope(scope, arguments.as_slice());
+            self.instantiate_functions(scope);
         }
         let value = match function_name {
             Some(name) => self.lower_named_evaluation(initializer, name),

@@ -303,6 +303,10 @@ void discardBackEndOptionsOfEnvironment();
 }
 
 extern "C" [[noreturn]] void Bun__outOfMemory();
+#if OS(LINUX)
+// Declared in mimalloc's internal headers, and compiled as C++ here. mimalloc reads vm.overcommit_memory when it starts.
+bool _mi_os_has_overcommit(void);
+#endif
 extern "C" void* Bun__getVM();
 extern "C" void WebWorker__endForExhaustedHeap(void* bunVM);
 
@@ -374,6 +378,9 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
 #endif
         JSC::MarkedBlockCage::setExhaustionHandler(Bun__outOfMemory);
+#if OS(LINUX)
+        JSC::MarkedBlockCage::setCommitsOnDemand(!_mi_os_has_overcommit());
+#endif
         JSC::MarkedBlockCage::setLastReserveHandler([](JSC::VM&) { WebWorker__endForExhaustedHeap(Bun__getVM()); });
         JSC::initialize([&] {
 #if defined(BUN_DISABLE_WEBASSEMBLY)

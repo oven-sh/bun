@@ -134,7 +134,7 @@ function commonJSModule(random: Random, module: Module, modules: Module[]): stri
   const { name } = module;
   const lines: string[] = [`require("./show.cjs");`, `say("${name} begins");`];
   const sets = [
-    random.pick([`exports.first = "${name}.first";`, `exports.first = function first() {\n  return "${name}";\n};`, `Object.defineProperty(exports, "first", { enumerable: true, get: () => "${name}.first by a getter" });`]),
+    random.pick([`exports.first = "${name}.first";`, `exports.first = function first() {\n  return "${name}";\n};`, `Object.defineProperty(exports, "first", { enumerable: true, get: () => "${name}.first by a getter" });`, `Object.defineProperty(exports, "first", {\n  enumerable: true,\n  get() {\n    say("${name}.first is read");\n    return "${name}.first by a getter that says so";\n  },\n});`]),
     random.pick([`exports.second = { of: "${name}" };`, `module.exports.second = 2;`, `exports.second = class {\n  static of = "${name}";\n};`]),
     random.pick([`exports.count = ${random.below(9)};`, `exports.default = "${name}.default";`, `Object.defineProperty(exports, "__esModule", { value: true });\nexports.default = { of: "${name}" };`, `exports.__esModule = true;`, ``]),
   ];

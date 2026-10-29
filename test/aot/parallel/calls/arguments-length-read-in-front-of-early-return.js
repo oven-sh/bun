@@ -1,6 +1,6 @@
 // Functions that ask for arguments.length and can return before they need their arguments object, as the verbs of an Express application do: `app.get(setting)`.
 // They are called through values that nobody knows. The list of the arguments that no parameter takes is made on the way that goes on, and on no other.
-// COUNT: cells <= 1000
+// COUNT: cells <= 60
 "use strict";
 const slice = Array.prototype.slice;
 function createApp(name) {
@@ -31,7 +31,7 @@ proto.count = function count(first) {
 };
 proto.sloppyLike = function (a, b) {
   if (arguments.length === 0) return "none";
-  if (arguments.length === 1) return "one " + a;
+  if (arguments.length === 1) return a;
   a = "changed";
   return arguments.length + " " + arguments[0] + " " + b + " " + slice.call(arguments, 2).join("|");
 };
@@ -40,12 +40,12 @@ proto.throws = function (path) {
   return slice.call(arguments, 1);
 };
 proto.tries = function (flag) {
-  if (flag === 0) return "none";
+  if (flag === 0) return 0;
   try {
     flag.missing.deeper;
   } catch (error) {}
   try {
-    return arguments[1] + ":" + arguments.length;
+    return arguments[1] + arguments.length;
   } catch (error) {
     return "caught";
   }
@@ -62,7 +62,15 @@ function respond(request) {
   const etag = app.get("etag");
   const env = app.get("env");
   const proxy = app.get("trust proxy");
-  return etag + env + proxy + app.count(request.n) + app.sloppyLike(request.n) + app.tries(request.n & 1, request.n);
+  // Numbers only: the loop below allocates nothing of its own.
+  return (
+    etag.length +
+    env.length +
+    (proxy ? 1 : 0) +
+    app.count(request.n) +
+    app.sloppyLike(request.n) +
+    app.tries(request.n & 1, request.n)
+  );
 }
 // Text that is made when the program runs: nobody knows what comes back.
 const handedBack = (0, eval)("value => " + String.fromCharCode(118, 97, 108, 117, 101));
@@ -75,8 +83,9 @@ apps[0]
   )
   .post("/b", () => 3)
   .put("/c");
+const requests = [0, 1, 2, 3].map(n => ({ n, app: undefined }));
 let total = 0;
-for (let i = 0; i < 30000; i++) total += apps[i & 1]({ n: i & 3 }).length;
+for (let i = 0; i < 30000; i++) total += apps[i & 1](requests[i & 3]);
 let message = "";
 try {
   apps[0].throws("x");

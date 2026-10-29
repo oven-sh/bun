@@ -9,8 +9,9 @@
 //   testaot native <part of a name>                   tests written in C++
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isArm64, isCI, isMacOS, isWindows } from "harness";
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { countsInstructions } from "../analysis-scaling/measure-check";
 import { slot } from "../harness/commands";
 import { unsupported } from "../harness/compiler";
 
@@ -131,6 +132,27 @@ export function irTests(part: number, parts: number) {
     test(`${mine.length} IR tests of ${folder === engineTests ? "the engine" : "test/aot/engine-tests"}`, async () => {
       for (const paths of inCommandLines(mine)) await expectEveryTestPasses(["run", ...paths], folder);
     }, 600_000);
+  }
+}
+
+/**
+ * The IR tests that bound a count of the hardware's instruction counter. Where the counter cannot be read they pass without a count,
+ * so ir-<n>.test.ts does not judge the bounds on such a machine.
+ */
+export function irTestsWithInstructionBounds() {
+  if (whyNoEngineTests) return void skipOrFail(whyNoEngineTests);
+  for (const folder of [engineTests!, testsOfBunsEntries]) {
+    const mine = readdirSync(folder, { recursive: true, encoding: "utf8" })
+      .filter(path => path.endsWith(".ir") && readFileSync(join(folder, path), "utf8").includes("aotInstructionCount"))
+      .sort();
+    test.skipIf(!countsInstructions())(
+      `${mine.length} IR tests of ${folder === engineTests ? "the engine" : "test/aot/engine-tests"}`,
+      async () => {
+        expect(mine.length).toBeGreaterThan(0);
+        for (const paths of inCommandLines(mine)) await expectEveryTestPasses(["run", ...paths], folder);
+      },
+      600_000,
+    );
   }
 }
 

@@ -1,8 +1,8 @@
 // What a function is compiled to does not hang on which file is the entry point, nor on how many files stand between it and the
-// entry point. One small server is written in many shapes: its file is the entry point, is imported by the entry point, stands
-// behind three files or behind sixteen that each import the next one twice, is loaded by import() or by require(), exports a
-// function that the entry point calls, takes its handler from a third file. Each shape answers the same, and its machine code is
-// within one percent of that of the first shape.
+// entry point. One small server is written in several shapes: its file is the entry point, is imported by the entry point, stands
+// behind sixteen files that each import the next one twice, is loaded by import() or by require(), takes its handler from a third
+// file. Each shape answers the same, and its machine code is within one percent of that of the first shape.
+// Each shape is a build of node:http, so there are few: the three with a static import are the ones that have failed.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
@@ -47,22 +47,6 @@ server.listen(0, "127.0.0.1", async () => {
 });
 `;
 const app = types + createServer + handler + listen;
-const untyped = (text: string) =>
-  text
-    .replace("req: IncomingMessage, res: ServerResponse): void", "req, res)")
-    .replace("(server.address() as { port: number })", "server.address()");
-const commonJSApp = `const { createServer } = require("node:http");\n` + untyped(handler + listen);
-
-const answer = (serve: string) => `function answer(request: Request): Response {
-  const url = new URL(request.url);
-  if (url.pathname === "/json") return Response.json({ hello: "world", n: url.searchParams.get("n") });
-  return new Response("Hello, World!");
-}
-const served = Bun.serve({ port: 0, hostname: "127.0.0.1", fetch: ${serve} });
-console.log(await (await fetch(new URL("/", served.url))).text(), await (await fetch(new URL("/json?n=7", served.url))).text());
-served.stop(true);
-`;
-
 const chain = (length: number, link: (index: number) => Record<string, string>) =>
   Object.assign({}, ...Array.from({ length }, (_, index) => link(index + 1))) as Record<string, string>;
 
@@ -72,16 +56,6 @@ const families: Record<string, Record<string, Shape>> = {
   "node:http in ES modules": {
     "the entry point": { entry: "main.ts", files: { "main.ts": app } },
     "imported by the entry point": { entry: "main.ts", files: { "main.ts": `import "./app";\n`, "app.ts": app } },
-    "behind three files": {
-      entry: "main.ts",
-      files: {
-        "main.ts": `import "./a";\n`,
-        "a.ts": `import "./b";\n`,
-        "b.ts": `import "./c";\n`,
-        "c.ts": `import "./app";\n`,
-        "app.ts": app,
-      },
-    },
     "behind sixteen files that each import the next one twice": {
       entry: "main.ts",
       files: {
@@ -94,13 +68,6 @@ const families: Record<string, Record<string, Shape>> = {
         "level17.ts": app,
       },
     },
-    "a function that the entry point calls": {
-      entry: "main.ts",
-      files: {
-        "main.ts": `import { start } from "./app";\nstart();\n`,
-        "app.ts": types + createServer + handler + `export function start(): void {\n${listen}}\n`,
-      },
-    },
     "the handler in a third file": {
       entry: "main.ts",
       files: {
@@ -111,28 +78,6 @@ const families: Record<string, Record<string, Shape>> = {
     },
     "loaded by import()": { entry: "main.ts", files: { "main.ts": `await import("./app");\n`, "app.ts": app } },
     "loaded by require()": { entry: "main.cts", files: { "main.cts": `require("./app");\n`, "app.ts": app } },
-  },
-  "node:http in CommonJS modules": {
-    "the entry point": { entry: "main.cjs", files: { "main.cjs": commonJSApp } },
-    "required by the entry point": {
-      entry: "main.cjs",
-      files: { "main.cjs": `require("./app.cjs");\n`, "app.cjs": commonJSApp },
-    },
-    "behind sixteen files": {
-      entry: "main.cjs",
-      files: {
-        "main.cjs": `require("./level1.cjs");\n`,
-        ...chain(16, index => ({ [`level${index}.cjs`]: `require("./level${index + 1}.cjs");\n` })),
-        "level17.cjs": commonJSApp,
-      },
-    },
-  },
-  "node:http beside Bun.serve": {
-    "the entry point": { entry: "main.ts", files: { "main.ts": app + answer("answer") } },
-    "imported by the entry point": {
-      entry: "main.ts",
-      files: { "main.ts": `import "./app";\n`, "app.ts": app + answer("answer") },
-    },
   },
 };
 

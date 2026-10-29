@@ -290,12 +290,13 @@ const buildsManyExecutables = (testPath: string) =>
     testPath.replaceAll("\\", "/"),
   );
 // Every test of the ahead-of-time compiler runs on every push, on x64 and on arm64. Two lanes share them, so that neither carries
-// all of it: Ubuntu runs what is built, run and compared with plain Bun (the programs under test/aot/parallel, the packages and the
-// frameworks from npm), Debian runs the other test files. Both have glibc: the same test files take 1.45 times as long on Alpine.
-// Nearly all that they cost is compiling, and the compiler is deterministic. A test whose verdict hangs on what it makes of a
-// program (listings, counts, pins, sizes, reports, the errors of a build, the builds of frameworks and packages, what a program
-// of the language alone prints) runs there alone. What asks the system runs on every lane: a test file or a folder of programs
-// whose path under test/ begins with one of these.
+// all of it: Ubuntu runs the programs under test/aot/parallel and the test files that distroOfAotTest() names, which evens the two;
+// Debian runs the other test files. Nearly all that they cost is compiling,
+// and the compiler is deterministic. A test whose verdict hangs on what it makes of a program (listings, counts, pins, sizes,
+// reports, the errors of a build, the builds of frameworks and packages, what a program of the language alone prints) runs there
+// alone. What asks the system also runs on every lane with another system: musl, Windows, macOS. Debian and Ubuntu have one libc
+// and nearly one kernel, so neither repeats what the other runs. What asks the system: a test file or a folder of programs whose
+// path under test/ begins with one of these.
 const aotTestsThatAskTheSystem = [
   // The image: written, loaded, trimmed, refused.
   "aot/in-place-executables",
@@ -511,7 +512,10 @@ const linuxDistro = isLinux ? getDistro() : undefined;
 // Asked once: with glibc getAbi() starts `ldd`.
 const isMusl = getAbi() === "musl";
 const distroOfAotTest = (path: string) =>
-  /^aot\/(?:parallel|backend-packages|frameworks)\//.test(path) ? "ubuntu" : "debian";
+  /^aot\/(?:parallel\/|backend-packages\/|frameworks\/|trimmed-is-whole\/|one-line-changes-little)/.test(path)
+    ? "ubuntu"
+    : "debian";
+const sharesAotTests = linuxDistro === "debian" || linuxDistro === "ubuntu";
 // The second build of a program, with its types erased, asks the compiler, and is the same text again.
 const flagsOfAotDriver = (execPath: string) =>
   isCI && (hasSanitizer(execPath) || linuxDistro !== distroOfAotTest("aot/parallel/")) ? ["--no-erased"] : [];
@@ -522,7 +526,7 @@ function runsOnThisLane(testPath: string, execPath: string) {
   if (hasSanitizer(execPath)) return !beginsWithOneOf(aotTestsThatFeedNothingNew);
   return (
     linuxDistro === distroOfAotTest(path) ||
-    beginsWithOneOf(aotTestsThatAskTheSystem) ||
+    (!sharesAotTests && beginsWithOneOf(aotTestsThatAskTheSystem)) ||
     (isWindows && beginsWithOneOf(aotTestsThatAskWindows)) ||
     (isMusl && beginsWithOneOf(aotTestsThatAskAlpine))
   );

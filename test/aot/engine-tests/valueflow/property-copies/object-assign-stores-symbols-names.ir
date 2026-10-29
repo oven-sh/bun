@@ -1042,7 +1042,7 @@ function f68 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Return v4
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="other"
-# CHECK: module=m0 position=2221 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: module=m0 position=2221 kind=Getter flags=[HasExplicitName] thisType={type=anything} results=[{type=1}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: 1 = Integer integer=1
 # CHECK-NEXT: Return v0

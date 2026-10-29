@@ -3099,7 +3099,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: Return v0
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="b"
-# CHECK: module=m0 position=2023 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=int|whole site=w51}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: module=m0 position=2023 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=int|whole site=w51}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: env L0):
 # CHECK-NEXT: v1: int|whole = GetEnvironmentField v0 layout=L0
 # CHECK-NEXT: v2: int|whole = Increment v1

@@ -119,6 +119,10 @@
     "millionInstructionsWithMusl": 2773,
     "megabytes": 216
   },
+  "names that are each stored again under the next": {
+    "millionInstructions": 19891,
+    "megabytes": 281
+  },
   "exports of one module that another imports by name": {
     "millionInstructions": 2905,
     "millionInstructionsWithMusl": 3360,
@@ -479,6 +483,10 @@
   "lines that each add a number and a text to one text, all of them known, and hand it to a function": {
     "millionInstructions": 9226,
     "megabytes": 200
+  },
+  "names stored on one object that are each read and stored again on another": {
+    "millionInstructions": 38163,
+    "megabytes": 322
   },
   "all shapes as the entry points of one build, on four threads": {
     "megabytes": 654

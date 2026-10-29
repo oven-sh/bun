@@ -67,7 +67,7 @@ extern "C" void Bun__StrongRef__set(StrongRefImpl* _Nonnull ref, JSC::JSGlobalOb
 // live here: destructOnExit / WebWorker__teardownJSCVM set that flag before
 // their final collectNow, which is the only point the block can go dead while
 // handles still exist.
-extern "C" void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
+extern "C" NEVER_INLINE void Bun__StrongRef__delete(StrongRefImpl* _Nonnull ref)
 {
     auto* block = decodeStrongRefBlock(ref);
     auto& vm = block->vm();

@@ -1447,6 +1447,42 @@ mod tests {
     }
 
     #[test]
+    fn a_url_in_the_executable_leads_to_the_file_on_disk() {
+        let find = |directory: &str, prefix: &str, name: &str| {
+            let paths = PathOptions {
+                module_prefix: prefix.as_bytes().to_vec(),
+                root_directory: directory.as_bytes().to_vec(),
+                entry_point_names: Vec::new(),
+            };
+            find_file_named_as_in_executable(&paths, name.as_bytes())
+        };
+        let is = |path: &str| Some(path.as_bytes().to_vec());
+        let posix = "/$bunfs/root/";
+        assert_eq!(
+            find("/a/b", posix, "file:///$bunfs/root/w.js"),
+            is("/a/b/w.js")
+        );
+        let windows = "B:/~BUN/root/";
+        assert_eq!(
+            find("C:\\a\\b", windows, "file:///B:/~BUN/root/w.js"),
+            is("C:/a/b/w.js")
+        );
+        assert_eq!(
+            find("C:\\a\\b\\", windows, "file:///B:/~BUN/root/lib/w.js"),
+            is("C:/a/b/lib/w.js")
+        );
+        assert_eq!(
+            find("C:\\a b", windows, "file:///B:/~BUN/root/w%20x.js"),
+            is("C:/a b/w x.js")
+        );
+        assert_eq!(
+            find("C:\\a\\b", "B:\\~BUN\\root\\", "file:///B:/~BUN/root/w.js"),
+            is("C:/a/b/w.js")
+        );
+        assert_eq!(find("C:\\a\\b", windows, "file:///C:/a/b/w.js"), None);
+    }
+
+    #[test]
     fn a_path_comes_back_out_of_its_url() {
         for path in ["/$bunfs/root/a b/w#1%.js", "B:/~BUN/root/w.js"] {
             let url = write_file_url(path.as_bytes()).expect("the path is absolute");

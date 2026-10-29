@@ -133,6 +133,7 @@ pub(super) fn declare_constructor(
             function::create_header(file, key, FunctionKind::BaseConstructor, position);
         if is_derived_class(file.hir, class) {
             header.flags |= FunctionFlags::HAS_REST_PARAMETER | FunctionFlags::TAKES_CALLEE;
+            header.flags = header.flags.without(FunctionFlags::HAS_HIDDEN_REST);
             let arguments = DeclaredType::from_compiler(TypeTable::ARRAY);
             header.parameters.push(arguments);
         }

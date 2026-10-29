@@ -4879,7 +4879,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f182 visibility=Private
 # CHECK-NEXT: ReturnCall v2 casts=[{declared={type=undefined|null|string flags=[IsExpected]} resolution=Nothing}, {declared={type=string} resolution=Assume}]
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="b"
-# CHECK: module=m0 position=1403 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: module=m0 position=1403 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L14|L22|L23|L26|L34|L36 = Upcast v0 castType=anything
 # CHECK-NEXT: v2: L14|L34 = AssumeType v1 provenType=L14|L34
@@ -4913,7 +4913,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f182 visibility=Private
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="one"
-# CHECK: module=m0 position=1670 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: module=m0 position=1670 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L21 = Upcast v0 castType=anything
 # CHECK-NEXT: v2: L21 = AssumeType v1 provenType=L21
@@ -4932,7 +4932,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f182 visibility=Private
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="two"
-# CHECK: module=m0 position=1712 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: module=m0 position=1712 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L21 = Upcast v0 castType=anything
 # CHECK-NEXT: v2: L21 = AssumeType v1 provenType=L21
@@ -4958,7 +4958,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f182 visibility=Private
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="four"
-# CHECK: module=m0 position=1819 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: module=m0 position=1819 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L21 = Upcast v0 castType=anything
 # CHECK-NEXT: v2: L21 = AssumeType v1 provenType=L21
@@ -4977,7 +4977,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f182 visibility=Private
 # CHECK-NEXT: Return v11
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="five"
-# CHECK: module=m0 position=1862 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: module=m0 position=1862 kind=Getter flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=int|whole}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: anything):
 # CHECK-NEXT: v1: anything ~ undefined|null|L21 = Upcast v0 castType=anything
 # CHECK-NEXT: v2: L21 = AssumeType v1 provenType=L21

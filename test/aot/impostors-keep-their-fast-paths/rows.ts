@@ -103,7 +103,7 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         compiled: 3975,
         outside: 814,
         stubs: [
-          "CallOperationPreservingRegisters.ValueWithInstanceNoExceptionCheck",
+          "CallOperationPreservingRegisters.ValueWithInstanceMayFailToAllocate",
           "StoreSlotExit.StrictByIdUncached",
         ],
         calls: ["operationAOTPutById 1", "operationAOTReserveArrayCapacity 1"],
@@ -926,7 +926,7 @@ export const projects: { folder: string; entry: string; withoutProjectFile?: boo
         compiled: 3975,
         outside: 817,
         stubs: [
-          "CallOperationPreservingRegisters.ValueWithInstanceNoExceptionCheck",
+          "CallOperationPreservingRegisters.ValueWithInstanceMayFailToAllocate",
           "StoreSlotExit.StrictByIdUncached",
         ],
         calls: ["operationAOTPutById 1", "operationAOTReserveArrayCapacity 1"],

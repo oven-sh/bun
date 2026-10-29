@@ -482,17 +482,12 @@ async function start(cmd: string[], cwd: string, env: Record<string, string | un
 const describeEnd = ({ exitCode, signal, overLimit }: Output) =>
   `${signal ?? `exit code ${exitCode}`}${overLimit ? `: ${overLimit}` : ""}`;
 
-// A Bun built with assertions keeps the line breaks of the built-ins written in JavaScript, so plain Bun prints `map (native:17:41)` there.
-// An executable has the positions of a release build: `map (native:1:11)`.
-const withoutPositionsInBuiltins = (text: string) =>
-  isASAN ? text.replace(/\b(native|unknown):\d+:\d+/g, "$1") : text;
-
 /** What the two runs must agree on. Below an uncaught error stand frames with paths, which differ between an executable and its sources. */
 const compared = ({ exitCode, signal, stdout, stderr }: Output) => ({
   exitCode,
   signal,
   // A duration that a program measures is not part of its behavior.
-  stdout: withoutPositionsInBuiltins(stdout.replace(/ [0-9]+ms$/gm, "")),
+  stdout: stdout.replace(/ [0-9]+ms$/gm, ""),
   stderr:
     exitCode === 0
       ? stderr
@@ -500,6 +495,27 @@ const compared = ({ exitCode, signal, stdout, stderr }: Output) => ({
           .replace(/^\(Use `[^`\n]* --trace-warnings /gm, "(Use `bun --trace-warnings ")
       : (stderr.split("\n").find(line => /^(error|[A-Za-z]*Error)\b/.test(line)) ?? ""),
 });
+// A Bun built with assertions keeps the line breaks of the built-ins written in JavaScript, so plain Bun prints `map (native:17:41)` there.
+// An executable has the positions of a release build, `map (native:1:11)`, and so has a stored output.
+const comparedWithPlain = (output: Output) => {
+  const { stdout, ...rest } = compared(output);
+  return { ...rest, stdout: isASAN ? stdout.replace(/\b(native|unknown):\d+:\d+/g, "$1") : stdout };
+};
+/** The lines of `text` that are not the same in `other`, each with the line before and the line after it. */
+function differingLines(text: string, other: string) {
+  const [lines, others] = [text.split("\n"), other.split("\n")];
+  const kept: string[] = [];
+  let same = 0;
+  const countSame = () => void (same && kept.push(`(${same} lines that are the same)`), (same = 0));
+  lines.forEach((line, at) => {
+    if ([at - 1, at, at + 1].some(near => near >= 0 && near < lines.length && lines[near] !== others[near])) {
+      countSame();
+      kept.push(line);
+    } else same++;
+  });
+  countSame();
+  return kept.join("\n");
+}
 const shown = (output: Output) => ({
   ...output,
   stdout: output.stdout.slice(0, longestTextShown),
@@ -537,13 +553,19 @@ function settle(program: Program, verdict: Record<string, unknown>) {
     ways: Object.fromEntries(all.map(({ way, state }) => [way, state])),
   });
 }
+// A long output is cut where it is shown, and the cut must not hide the difference.
+const leavingOutTheSame = (output: Output, other: Output) => ({
+  ...output,
+  stdout: differingLines(output.stdout, other.stdout),
+  stderr: differingLines(output.stderr, other.stderr),
+});
 function fail(program: Program, stage: string, message: string, actual?: Output, expected?: Output) {
   settle(program, {
     state: "fail",
     stage,
     message: program.way === "erased" ? `with --aot-erase-types: ${message}` : message,
-    expected: expected && shown(expected),
-    actual: actual && shown(actual),
+    expected: expected && shown(actual ? leavingOutTheSame(expected, actual) : expected),
+    actual: actual && shown(expected ? leavingOutTheSame(actual, expected) : actual),
   });
 }
 
@@ -684,6 +706,8 @@ const withoutCollections = {
 function unmetBounds(counted: Map<string, number>, bounds: Bound[], who: string) {
   return bounds
     .filter(({ name, relation, bound }) => {
+      // With AddressSanitizer the allocators have shorter free lists, so compiled code calls the run time for a new one more often.
+      if (isASAN && name === "operations") return false;
       // A function of the run time that nothing called has no line.
       const value = counted.get(name) ?? (name.startsWith("operation:") ? 0 : undefined);
       return (
@@ -728,7 +752,8 @@ async function run(programs: Program[]): Promise<void> {
     ...(first.way === "erased" ? ["--aot-erase-types"] : []),
     ...(first.statistics.length ? ["--explain=statistics"] : []),
     ...(first.counts.some(({ name }) => name === "arrivals") ? ["--aot-count-arrivals"] : []),
-    ...(first.counts.some(({ name }) => name === "branches") ? ["--aot-count-branches"] : []),
+    // Only such a build counts every cell. Any other books a whole free list to the place that finds it used up.
+    ...(first.counts.some(({ name }) => ["branches", "cells", "bytes"].includes(name)) ? ["--aot-count-branches"] : []),
     ...entryPoints,
     ...first.entryPoints,
     "--outfile",
@@ -915,7 +940,7 @@ async function run(programs: Program[]): Promise<void> {
             compiled.output,
             plain!.output,
           );
-        if (Bun.deepEquals(compared(compiled.output), compared(plain!.output)))
+        if (Bun.deepEquals(comparedWithPlain(compiled.output), comparedWithPlain(plain!.output)))
           await settleChecked({ ...passes, plainMs: plain!.ms });
         else fail(program, "compare", "it does not exit and print as plain Bun does", compiled.output, plain!.output);
       }),

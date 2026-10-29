@@ -338,13 +338,12 @@ describe.skipIf(skipped)("compile/aot/servers/budgets", () => {
       // The package.json of "tanstack" says that its files have no side effects, so a file that is imported for its effects alone is dropped.
       const importing =
         name === "tanstack" ? undefined : entryThatImports(folder, source, { isServer: name !== "typescript" });
-      const [code, codeWhereImported, build] = await Promise.all([
+      // The code is sized with the file as the entry point, the work is counted where an entry point imports it: one budget holds
+      // both forms. That both have the same code: ../a-server-gets-the-same-code-however-its-file-is-reached.test.ts.
+      const [code, build] = await Promise.all([
         codeOf(folder, `./${source}`, flags, name === "typescript" ? checksItsText : undefined),
-        // A third build of "typescript" would take another minute: there the counts alone hold the second form.
-        importing && name !== "typescript" ? codeOf(folder, importing, flags) : undefined,
         buildCounted(folder, importing ?? entryThatExitsWhenTold(folder, source), flags),
       ]);
-      if (codeWhereImported) expect(codeWhereImported.codeBytes / code.codeBytes).toBeWithin(0.99, 1.01);
       const work =
         name === "typescript"
           ? await countScript(build, folder, "2322 2345 2322\n", { warmUp: 5, units: 20 })

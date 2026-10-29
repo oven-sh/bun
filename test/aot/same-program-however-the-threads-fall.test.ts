@@ -59,7 +59,11 @@ const entryPoint = (modules: number, more = "") =>
   `import { run${chainLength - modules} as first } from "./chain/c${chainLength - modules}.ts";\n${more}` +
   `declare const console: { log(...values: unknown[]): void };\nconsole.log(first(1), first.name.length);\n`;
 
-async function build(directory: string, entry: string, threads: number) {
+// For the two large programs. What has differed between thread counts there was decided by the front end and by the flow analysis.
+// These make the stages after them cost half, and what those two decide still reaches the bytes of the executable.
+const withCheapBackEnd = ["--aot-heat=everything-is-cold", "--aot-limit=MaxOptimizationRounds:1"];
+
+async function build(directory: string, entry: string, threads: number, flags: string[] = []) {
   const { stderr, exitCode } = await run(
     [
       bunExe(),
@@ -69,6 +73,7 @@ async function build(directory: string, entry: string, threads: number) {
       `--aot-threads=${threads}`,
       "--aot-out=emitted.program",
       "--minify",
+      ...flags,
       entry,
       "--outfile",
       "app",
@@ -149,10 +154,13 @@ test("library modules lower the same at any thread count", async () => {
       console.log(modules.length, typeof server.listen);
     `,
   });
-  const first = await build(String(dir), "main.js", 1);
+  const first = await build(String(dir), "main.js", 1, withCheapBackEnd);
   expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
   for (const threads of [2, 4, 8, 16, 64])
-    expect({ threads, ...(await build(String(dir), "main.js", threads)) }).toEqual({ threads, ...first });
+    expect({ threads, ...(await build(String(dir), "main.js", threads, withCheapBackEnd)) }).toEqual({
+      threads,
+      ...first,
+    });
 });
 
 // The typescript package is large enough for the flow analysis to split its work into batches, which the small programs above never do.
@@ -166,7 +174,10 @@ test.skipIf(wanted === "quick")("a large untyped package builds the same at one 
     join(String(dir), "node_modules", "typescript"),
     "junction",
   );
-  const first = await build(String(dir), "typescript-check.ts", 1);
+  const first = await build(String(dir), "typescript-check.ts", 1, withCheapBackEnd);
   expect(first).toEqual({ ...first, exitCode: 0, errors: 0 });
-  expect({ threads: 4, ...(await build(String(dir), "typescript-check.ts", 4)) }).toEqual({ threads: 4, ...first });
+  expect({ threads: 4, ...(await build(String(dir), "typescript-check.ts", 4, withCheapBackEnd)) }).toEqual({
+    threads: 4,
+    ...first,
+  });
 });

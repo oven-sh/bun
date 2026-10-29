@@ -60,6 +60,8 @@ pub(in crate::lower) enum ArgumentsObject {
 pub(super) struct ArgumentsObjects {
     pub(super) file: ArgumentsObject,
     pub(super) functions: Vec<ArgumentsObject>,
+    /// Sorted. Fields whose values the constructor evaluates, so `arguments` in a direct eval there is the constructor's.
+    pub(super) fields: Vec<MemberId>,
 }
 
 impl ArgumentsObjects {
@@ -70,7 +72,10 @@ impl ArgumentsObjects {
                 let object = self.functions.get(function.idx());
                 object.copied().unwrap_or(ArgumentsObject::None)
             }
-            CodeUnit::FieldInitializer(_) => ArgumentsObject::None,
+            CodeUnit::FieldInitializer(member) => match self.fields.binary_search(&member) {
+                Ok(_) => ArgumentsObject::Unmapped,
+                Err(_) => ArgumentsObject::None,
+            },
         }
     }
 }

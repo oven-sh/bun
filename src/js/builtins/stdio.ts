@@ -21,22 +21,28 @@ export function getLightStdioWriteStreams(
   // queued by the first read of it comes earlier than any other. And node:events puts its EventEmitter.prototype above the prototype of `process`.
   const nextTick = process.nextTick;
   require("node:events");
-  // Whether it is writeFast() that asks a stream for its own half of it. Anybody else finds nothing under that key, as in the whole stream.
-  let isAskedByWriteFast = false;
+  // What writeFast() of internal/fs/streams does with a receiver that is not a stream: it asks for the state of a stream and then calls _write().
+  function writeToForeignReceiver(receiver: any): never {
+    if (receiver === undefined)
+      throw new TypeError("undefined is not an object (evaluating 'kWriteMonkeyPatchDefense')");
+    if (receiver === null) throw new TypeError("null is not an object (evaluating 'kWriteMonkeyPatchDefense')");
+    if (receiver._writableState !== undefined) needsWholeStream();
+    if (receiver._write !== undefined) needsWholeStream();
+    throw new TypeError(
+      "this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is undefined)",
+    );
+  }
 
   // writeFast() of internal/fs/streams, which both streams have for `write`.
   function writeFast(this: any, data: any, encoding?: unknown, cb?: unknown): boolean {
-    if (this === undefined) throw new TypeError("undefined is not an object (evaluating 'kWriteMonkeyPatchDefense')");
-    if (this === null) throw new TypeError("null is not an object (evaluating 'kWriteMonkeyPatchDefense')");
-    isAskedByWriteFast = true;
-    const writeToThis = this["%write of this stream%"];
-    isAskedByWriteFast = false;
-    // A receiver that is no stream has nothing under the keys of internal/fs/streams, which then calls its _write().
-    if (typeof writeToThis !== "function")
-      throw new TypeError(
-        "this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is undefined)",
-      );
-    return writeToThis(data, encoding, cb);
+    if (!$isProxyObject(this)) return writeToForeignReceiver(this);
+    // Each stream's own half lies in the handler of its proxy, which no program can reach. A proxy of the program has none there.
+    const handler = $getProxyInternalField(this, $proxyFieldHandler);
+    // A proxy that was revoked has no handler.
+    if (handler === null) return needsWholeStream();
+    const writeToThis = handler["%write of this stream%"];
+    if (writeToThis !== undefined) return writeToThis(data, encoding, cb);
+    return needsWholeStream();
   }
 
   function makeStream(fd: number, isTTY: boolean, isFile: boolean) {
@@ -80,33 +86,33 @@ export function getLightStdioWriteStreams(
       return lastSize === undefined ? undefined : lastSize[index];
     }
 
-    return new Proxy(
-      {},
-      {
-        get(_, key) {
-          if (key === "write") return writeFast;
-          if (key === "isTTY") return isTTY ? true : undefined;
-          if (key === "fd") return fd;
-          // tty.WriteStream has them from its constructor and again at each SIGWINCH. Any other stream has neither.
-          if (key === "columns") return sizeOfTerminal(0);
-          if (key === "rows") return sizeOfTerminal(1);
-          if (key === "%write of this stream%") return isAskedByWriteFast ? writeToThis : undefined;
-          // A trap is always handed a key. The compiler takes a parameter for one that may be missing.
-          if (key === undefined) return undefined;
-          needsWholeStream();
-        },
-        set: needsWholeStream,
-        has: needsWholeStream,
-        deleteProperty: needsWholeStream,
-        defineProperty: needsWholeStream,
-        getOwnPropertyDescriptor: needsWholeStream,
-        ownKeys: needsWholeStream,
-        getPrototypeOf: needsWholeStream,
-        setPrototypeOf: needsWholeStream,
-        isExtensible: needsWholeStream,
-        preventExtensions: needsWholeStream,
+    const handler: ProxyHandler<{}> & { "%write of this stream%": typeof writeToThis } = {
+      get(_, key) {
+        if (key === "write") return writeFast;
+        if (key === "isTTY") return isTTY ? true : undefined;
+        if (key === "fd") return fd;
+        // tty.WriteStream has them from its constructor and again at each SIGWINCH. Any other stream has neither.
+        if (key === "columns") return sizeOfTerminal(0);
+        if (key === "rows") return sizeOfTerminal(1);
+        // As in the whole stream.
+        if (key === "%write of this stream%") return undefined;
+        // A trap is always handed a key. The compiler takes a parameter for one that may be missing.
+        if (key === undefined) return undefined;
+        needsWholeStream();
       },
-    );
+      set: needsWholeStream,
+      has: needsWholeStream,
+      deleteProperty: needsWholeStream,
+      defineProperty: needsWholeStream,
+      getOwnPropertyDescriptor: needsWholeStream,
+      ownKeys: needsWholeStream,
+      getPrototypeOf: needsWholeStream,
+      setPrototypeOf: needsWholeStream,
+      isExtensible: needsWholeStream,
+      preventExtensions: needsWholeStream,
+      "%write of this stream%": writeToThis,
+    };
+    return new Proxy({}, handler);
   }
 
   return {

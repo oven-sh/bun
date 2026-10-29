@@ -209,7 +209,7 @@ for (const name of process.argv.slice(2)) {
   );
 
   test.skipIf(isDebug)(
-    "a constant name of a module that only a flag of Bun turns on is not found, whether or not the run has the flag",
+    "a constant name of a module that only a flag of Bun turns on fails as under bun run without the flag, whether or not the run has it",
     async () => {
       const names = modulesBehindAFlag;
       const asksFor = (name: string) => `try {
@@ -222,7 +222,7 @@ await import("${name}").then(
   error => console.log("${name}", "import", describe(error)),
 );
 `;
-      // The error of the resolver, as for any module that does not exist. Its message goes on with who asked.
+      // A message of the resolver goes on with who asked.
       const asks = `const describe = error => [error.name, error.code, error.message.replace(/( imported from |\\n)[^]*$/, "")].join(" | ");
 ${names.map(asksFor).join("")}`;
       using dir = tempDir("aot-constant-names-of-modules-behind-a-flag", { "asks.js": asks });
@@ -233,16 +233,14 @@ ${names.map(asksFor).join("")}`;
       const command = [bunExe(), "build", "--compile", "--aot", "asks.js", "--outfile", executable];
       const built = await runCommand(command, directory, withoutTheFlag);
       expect(built.exitCode).toBe(0);
-      // Plain Bun prints another output: BuildMessage, ENOENT reading "<name>".
-      const notFound = names
-        .flatMap(name => [
-          `${name} require ResolveMessage | MODULE_NOT_FOUND | Cannot find module '${name}'\n`,
-          `${name} import ResolveMessage | ERR_MODULE_NOT_FOUND | Cannot find package '${name.split("/")[0]}'\n`,
-        ])
-        .join("");
+      const underBunRun = await runCommand([bunExe(), "asks.js"], directory, withoutTheFlag);
+      expect(underBunRun.stdout).toContain(`bun:internal-for-testing require BuildMessage |  | ENOENT reading`);
       for (const env of [withoutTheFlag, { ...withoutTheFlag, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" }]) {
         const compiled = await runCommand([executable], directory, env);
-        expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: notFound, exitCode: 0 });
+        expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
+          stdout: underBunRun.stdout,
+          exitCode: 0,
+        });
       }
     },
   );

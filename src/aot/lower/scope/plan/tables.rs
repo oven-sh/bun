@@ -138,7 +138,8 @@ fn compute_function_summaries(
         captures.extend_from_slice(&parts.captures.captures[id.index()]);
         summaries.push(FunctionSummary {
             key: function.key,
-            entry_flags: compute_entry_flags(context, function.key, parts),
+            entry_flags: compute_entry_flags(context, function.key, parts)
+                | compute_field_arguments_flags(context, function.key, id, parts),
             undeclared_parameters: count_undeclared_parameters(context, function.key),
             captures: start..captures.len() as u32,
             has_too_many_captures: over_limit.binary_search(&id).is_ok(),
@@ -246,6 +247,26 @@ fn compute_arguments_entry_flags(parts: &Parts, unit: CodeUnit) -> FunctionFlags
         ArgumentsObject::Unmapped | ArgumentsObject::Mapped => {
             FunctionFlags::HAS_ARGUMENT_COUNT | FunctionFlags::HAS_HIDDEN_REST
         }
+    }
+}
+
+/// A constructor makes the `arguments` object of each field value that it evaluates.
+fn compute_field_arguments_flags(
+    context: &Context<'_, '_>,
+    key: FunctionKey,
+    id: WalkedFunctionId,
+    parts: &Parts,
+) -> FunctionFlags {
+    let fields = context.walk.function_of_field.iter();
+    let mut flags = FunctionFlags::default();
+    for &(member, _) in fields.filter(|field| field.1 == id) {
+        flags |= compute_arguments_entry_flags(parts, CodeUnit::FieldInitializer(member));
+    }
+    match key {
+        FunctionKey::Source(source) if has_rest_parameter(context, source.function) => {
+            flags.without(FunctionFlags::HAS_HIDDEN_REST)
+        }
+        _ => flags,
     }
 }
 

@@ -471,7 +471,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f4 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="a"
-# CHECK: module=m0 position=293 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=int[0, 1999] site=w3}] thisType={type=anything} results=[{type=int[7, 2006] site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: module=m0 position=293 kind=Getter flags=[IsChecked, HasExplicitName] captures=[{type=int[0, 1999] site=w3}] thisType={type=anything} results=[{type=int[7, 2006] site=w13}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, RecordsCalleeOnceRenamed] {
 # CHECK-NEXT: b0(v0: int[0, 1999]):
 # CHECK-NEXT: v1: 7 = Integer integer=7
 # CHECK-NEXT: v2: int[7, 2006] = Add v0, v1

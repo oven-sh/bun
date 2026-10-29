@@ -600,7 +600,8 @@ static thread_local bool isAskingWhyFileFailsToLoad = false;
 // The file is read and parsed as `require` reads it, and nothing of it runs.
 static JSValue createLoadError(JSGlobalObject* realm, const String& path)
 {
-    if (!Bun__compiledProgramRunsInPlace())
+    // The name of a built-in module is not a path. Reading one that the executable does not hold fails as under `bun run`.
+    if (!Bun__compiledProgramRunsInPlace() && isAbsolutePath(path))
         return {};
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(realm);
     BunString specifier = Bun::toString(path);

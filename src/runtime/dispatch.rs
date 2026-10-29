@@ -341,7 +341,7 @@ pub(crate) fn run_task(
                 [NodeFs],
                 |copy: crate::node::fs::AsyncCpTask| -> JsResult<()> {
                     // SAFETY: posted by `on_subtask_done` with the count at zero (exclusive).
-                    unsafe { (*copy).run_from_js_thread()? };
+                    unsafe { bun_core::heap::take(copy) }.run_from_js_thread()?;
                     Ok(())
                 }
             )?
@@ -351,7 +351,7 @@ pub(crate) fn run_task(
                 [Shell],
                 |copy: crate::node::fs::ShellAsyncCpTask| -> JsResult<()> {
                     // SAFETY: as above.
-                    unsafe { (*copy).run_from_js_thread()? };
+                    unsafe { bun_core::heap::take(copy) }.run_from_js_thread()?;
                     Ok(())
                 }
             )?

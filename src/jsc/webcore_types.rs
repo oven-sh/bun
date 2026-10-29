@@ -202,7 +202,7 @@ const _: () = {
         fn to_js(self, global: &JSGlobalObject) -> JSValue {
             // Heap-promote and hand
             // ownership to the codegen wrapper. The S3File fast-path (different
-            // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::to_js` for
+            // JS wrapper) is layered on by `bun_runtime`'s `BlobExt::into_js` for
             // S3-backed blobs; lower-tier callers never construct S3 blobs.
             let ptr = Blob::new(self);
             // SAFETY: the new object takes the one ref `Blob::new` made.

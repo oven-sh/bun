@@ -170,7 +170,7 @@ impl Drop for ReadFileCompletionFns {
 unsafe impl bun_jsc::job::JsAffine for ReadFileCompletionFns {}
 
 pub(crate) struct ReadFileRead {
-    /// Not a `Vec`: whoever frees it, JSC or `to_string_with_bytes::<Temporary>`, has `(ptr, len)` alone.
+    /// Not a `Vec`: JSC, which adopts it as a string or an array buffer, has `(ptr, len)` alone.
     pub(crate) buf: Box<[u8]>,
 }
 
@@ -1088,10 +1088,7 @@ impl<'a> ReadFileUV<'a> {
             ReadFileResultType::Err(err)
         } else {
             // Move byte_store out so dropping `this_box` below does not free the
-            // buffer we hand to the callback. Normalize to `Box<[u8]>` so the
-            // `is_temporary` consumer (Body.rs / Blob.rs) can soundly reclaim
-            // via `heap::take` — handing out `(ptr, len)` from a ByteStore
-            // whose `cap > len` would be a layout-mismatched dealloc.
+            // buffer we hand to the callback.
             let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
             ReadFileResultType::Result(ReadFileRead { buf: boxed })
         };

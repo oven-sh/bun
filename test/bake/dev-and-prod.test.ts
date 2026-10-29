@@ -137,6 +137,29 @@ devAndProductionTest("inline script and styles appear", {
     await c.style("body").backgroundColor.expect.toBe("red");
   },
 });
+// `import()` gives the namespace, as in Node. A promise that is resolved with
+// the namespace must not call a `then` that `module.exports` only inherits.
+devAndProductionTest("import() of a CommonJS module whose module.exports is a promise", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import("./promise.cjs").then(
+        async ns => console.log("resolved: " + typeof ns.then + " " + (await ns.default)),
+        error => console.log("rejected: " + error.constructor.name),
+      );
+    `,
+    "promise.cjs": `
+      module.exports = Promise.resolve(42);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("resolved: undefined 42");
+  },
+});
 // TODO: revive production
 devTest("using runtime import", {
   files: {

@@ -63,6 +63,8 @@ export var __toESM = (mod, isNodeMode, target) => {
     if (cached) return cached;
   }
   target = mod != null ? __create(__getProtoOf(mod)) : {};
+  // `import()` and `await ns` must not call a "then" that "module.exports" inherits. Own names stay the same.
+  if ("then" in target) target = __create(__defProp(target, "then", {}));
   const to =
     isNodeMode || !mod || !mod.__esModule || !__hasOwnProp.call(mod, "default")
       ? __defProp(target, "default", { value: mod, enumerable: true })

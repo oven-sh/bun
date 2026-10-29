@@ -1235,4 +1235,306 @@ describe("bundler", () => {
       stdout: "function/undefined",
     },
   });
+
+  // ============================================================================
+  // The namespace keeps the prototype of `module.exports`, so inherited members
+  // can be imported by name (esbuild's rule, for webpack compatibility). A
+  // `then` that `module.exports` inherits is hidden: a promise that is resolved
+  // with the namespace (`import()`, `await ns`, an async function that returns
+  // it) would call that method. `bun run` and Node give the namespace there.
+  // ============================================================================
+
+  const inheritedThenFiles = {
+    "/promise.cjs": /* js */ `module.exports = Promise.resolve(42);`,
+    // `then` is two prototypes away.
+    "/subclass.cjs": /* js */ `
+      class Cancelable extends Promise {}
+      module.exports = Cancelable.resolve(42);
+    `,
+    "/query.cjs": /* js */ `
+      exports.Query = class Query {
+        rows = [1, 2];
+        then(resolve) {
+          resolve("Query.prototype.then was called");
+        }
+        where() {
+          return "where " + this.rows.length;
+        }
+      };
+    `,
+    "/instance.cjs": /* js */ `module.exports = new (require("./query.cjs").Query)();`,
+    "/proto.cjs": /* js */ `
+      module.exports = Object.create({
+        then(resolve) {
+          resolve("the inherited then was called");
+        },
+      });
+    `,
+    "/static.cjs": /* js */ `
+      class Base {
+        static then(resolve) {
+          resolve("Base.then was called");
+        }
+      }
+      module.exports = class Derived extends Base {};
+    `,
+    // Without node mode, the namespace of this module gets no "default" from `__toESM`.
+    "/esmodule.cjs": /* js */ `
+      module.exports = Object.create({
+        then(resolve) {
+          resolve("the inherited then was called");
+        },
+      });
+      module.exports.__esModule = true;
+      module.exports.default = 5;
+    `,
+    // An own "then" is an export. `import()` calls it, as it does for an ES module.
+    "/ownthen.cjs": /* js */ `
+      exports.then = function (resolve) {
+        resolve("the exported then was called");
+      };
+    `,
+    "/plain.cjs": /* js */ `exports.x = 1;`,
+  };
+  const importEveryShape = /* js */ `
+    const settle = promise =>
+      promise.then(
+        value => (Object(value) === value && "default" in value ? "namespace" : value),
+        error => "rejected with " + error.constructor.name,
+      );
+    (async () => {
+      console.log(
+        JSON.stringify({
+          promise: await settle(import("./promise.cjs")),
+          subclass: await settle(import("./subclass.cjs")),
+          instance: await settle(import("./instance.cjs")),
+          proto: await settle(import("./proto.cjs")),
+          static: await settle(import("./static.cjs")),
+          esModule: await settle(import("./esmodule.cjs")),
+          ownthen: await settle(import("./ownthen.cjs")),
+          plain: await settle(import("./plain.cjs")),
+        }),
+      );
+    })();
+  `;
+  const everyShapeImported = JSON.stringify({
+    promise: "namespace",
+    subclass: "namespace",
+    instance: "namespace",
+    proto: "namespace",
+    static: "namespace",
+    esModule: "namespace",
+    ownthen: "the exported then was called",
+    plain: "namespace",
+  });
+
+  // Test 63: `Promise.resolve().then(() => __toESM(require_x(), 1))`
+  itBundled("cjs/__toESM_dynamic_import_inherited_then", {
+    files: {
+      "/entry.mjs": importEveryShape,
+      ...inheritedThenFiles,
+    },
+    run: [{ stdout: everyShapeImported }, { runtime: "node", stdout: everyShapeImported }],
+  });
+
+  // Test 64: `import("./chunk.js").then((m) => __toESM(m.default, 1))`
+  itBundled("cjs/__toESM_splitting_dynamic_import_inherited_then", {
+    files: {
+      "/entry.mjs": importEveryShape,
+      ...inheritedThenFiles,
+    },
+    splitting: true,
+    outdir: "/out",
+    outputPaths: ["/out/entry.js"],
+    run: { file: "/out/entry.js", stdout: everyShapeImported },
+  });
+
+  // Test 65: the minified helper, in CommonJS output, without node mode
+  itBundled("cjs/__toESM_minified_dynamic_import_inherited_then", {
+    files: {
+      "/entry.ts": importEveryShape,
+      ...inheritedThenFiles,
+    },
+    format: "cjs",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    run: [{ stdout: everyShapeImported }, { runtime: "node", stdout: everyShapeImported }],
+  });
+
+  // Test 66: a namespace from a static import that reaches a promise. For an
+  // object export it is the same object that `import()` gives.
+  itBundled("cjs/__toESM_static_namespace_inherited_then", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as promise from "./promise.cjs";
+        import * as instance from "./instance.cjs";
+        import * as reexport from "./reexport.mjs";
+
+        const same = (value, ns) => (value === ns ? "the namespace" : value);
+        console.log(
+          JSON.stringify({
+            await: same(await promise, promise),
+            asyncReturn: same(await (async () => instance)(), instance),
+            promiseResolve: same(await Promise.resolve(promise), promise),
+            promiseAll: same((await Promise.all([instance]))[0], instance),
+            dynamicImport: same(await import("./instance.cjs"), instance),
+            exportStarAs: typeof reexport.promise.then,
+            exportStar: Object.keys(reexport),
+          }),
+        );
+      `,
+      "/reexport.mjs": /* js */ `
+        export * as promise from "./promise.cjs";
+        export * from "./instance.cjs";
+      `,
+      ...inheritedThenFiles,
+    },
+    run: {
+      stdout: JSON.stringify({
+        await: "the namespace",
+        asyncReturn: "the namespace",
+        promiseResolve: "the namespace",
+        promiseAll: "the namespace",
+        dynamicImport: "the namespace",
+        exportStarAs: "undefined",
+        exportStar: ["promise", "rows"],
+      }),
+    },
+  });
+
+  // Test 67: every other inherited member stays, and so do the own names. A
+  // module that inherits no `then` gets the namespace it had before. Only a
+  // bundle has this rule: Node and `bun run` reject `import { where }`.
+  itBundled("cjs/__toESM_inherited_members_other_than_then", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import query, { where } from "./instance.cjs";
+        import * as queryNs from "./instance.cjs";
+        import * as notCallableNs from "./not-callable.cjs";
+        import counter from "./counter.cjs";
+        import * as counterNs from "./counter.cjs";
+        import { Query } from "./query.cjs";
+
+        console.log(
+          JSON.stringify({
+            namedImport: typeof where,
+            method: queryNs.where(),
+            instanceOf: queryNs instanceof Query,
+            ownNames: Object.getOwnPropertyNames(queryNs),
+            then: typeof queryNs.then,
+            thenOfDefault: typeof query.then,
+            thenNotCallable: typeof notCallableNs.then,
+            noThenSamePrototype: Object.getPrototypeOf(counterNs) === Object.getPrototypeOf(counter),
+            noThenIn: "then" in counterNs,
+          }),
+        );
+      `,
+      "/not-callable.cjs": /* js */ `module.exports = Object.create({ then: "not a function" });`,
+      "/counter.cjs": /* js */ `
+        class Counter {
+          count = 1;
+        }
+        module.exports = new Counter();
+      `,
+      ...inheritedThenFiles,
+    },
+    run: {
+      stdout: JSON.stringify({
+        namedImport: "function",
+        method: "where 2",
+        instanceOf: true,
+        ownNames: ["default", "rows"],
+        then: "undefined",
+        thenOfDefault: "function",
+        thenNotCallable: "undefined",
+        noThenSamePrototype: true,
+        noThenIn: false,
+      }),
+    },
+  });
+
+  // Test 68: the helper asks whether `then` is there and does not read it. A
+  // `then` getter on the prototype never runs.
+  itBundled("cjs/__toESM_inherited_then_getter", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as getter from "./getter.cjs";
+
+        const same = (value, ns) => (value === ns ? "the namespace" : value);
+        console.log(
+          JSON.stringify({
+            getter: [same(await getter, getter), same(await import("./getter.cjs"), getter)],
+            getterReads: getter.reads(),
+          }),
+        );
+      `,
+      "/getter.cjs": /* js */ `
+        let reads = 0;
+        class Counter {
+          get then() {
+            reads++;
+          }
+        }
+        module.exports = new Counter();
+        module.exports.reads = () => reads;
+      `,
+    },
+    run: {
+      stdout: JSON.stringify({
+        getter: ["the namespace", "the namespace"],
+        getterReads: 0,
+      }),
+    },
+  });
+
+  // Test 69: the helper looks for `then` once, when it builds the namespace.
+  itBundled("cjs/__toESM_inherited_then_added_later", {
+    todo: true, // a `then` that the prototype gets after that is still called; `bun run` and Node give the namespace
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as late from "./late.cjs";
+
+        const same = (value, ns) => (value === ns ? "the namespace" : value);
+        late.addThen();
+        console.log(JSON.stringify([same(await late, late), same(await import("./late.cjs"), late)]));
+      `,
+      "/late.cjs": /* js */ `
+        class Late {}
+        module.exports = new Late();
+        module.exports.addThen = () => {
+          Late.prototype.then = function (resolve) {
+            resolve("the late then was called");
+          };
+        };
+      `,
+    },
+    run: {
+      stdout: JSON.stringify(["the namespace", "the namespace"]),
+    },
+  });
+
+  // Test 70: an external CommonJS dependency in CommonJS output
+  itBundled("cjs/__toESM_external_require_inherited_then", {
+    files: {
+      "/entry.mjs": /* js */ `
+        import * as ext from "ext";
+        (async () => ext)().then(
+          value => console.log(value === ext ? "the namespace" : value),
+          error => console.log("rejected with " + error.constructor.name),
+        );
+      `,
+    },
+    runtimeFiles: {
+      "/node_modules/ext/package.json": `{ "name": "ext", "main": "index.js" }`,
+      "/node_modules/ext/index.js": /* js */ `module.exports = Promise.resolve(42);`,
+    },
+    external: ["ext"],
+    target: "node",
+    format: "cjs",
+    onAfterBundle(api) {
+      api.expectFile("/out.js").toContain('__toESM(require("ext"), 1)');
+    },
+    run: { stdout: "the namespace" },
+  });
 });

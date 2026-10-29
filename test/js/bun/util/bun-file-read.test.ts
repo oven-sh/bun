@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { mkfifo } from "mkfifo";
-import { existsSync } from "node:fs";
+import { closeSync, openSync, readSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -76,28 +76,42 @@ describe("Bun.file read-loop target selection", () => {
     }).toEqual({ bytes: n, zeros: true, arrayBuffer: n, text: n });
   });
 
+  // What this user can read from the start of /proc/kallsyms: nothing where
+  // the file does not exist (macOS, Windows) or cannot be read, and less than
+  // a kernel's whole listing in some sandboxes.
+  function firstBytesOfKallsyms(n: number) {
+    const bytes = Buffer.alloc(n);
+    let length = 0;
+    try {
+      const fd = openSync("/proc/kallsyms", "r");
+      try {
+        for (let r; length < n && (r = readSync(fd, bytes, length, n - length, null)) > 0;) length += r;
+      } finally {
+        closeSync(fd);
+      }
+    } catch {}
+    return bytes.subarray(0, length);
+  }
+  const kallsyms = firstBytesOfKallsyms(400_000);
+
   // A procfs file is a regular file with st_size 0, and one read() of it
   // returns at most a page of whole lines. A regular file is not polled: the
   // loop reads again at once, for what is left of the slice.
-  it.skipIf(!existsSync("/proc/kallsyms")).each([
+  for (const [label, n] of [
     ["the second read is cut short", 5000],
     ["short reads into the stack buffer, then into the spare capacity", 400_000],
-  ] as const)("slice(0, N) of /proc/kallsyms reads its first N bytes: %s", async (_label, n) => {
-    const expected = Buffer.alloc(n);
-    {
-      await using kallsyms = await open("/proc/kallsyms");
-      for (let got = 0, r; got < n && (r = (await kallsyms.read(expected, got, n - got)).bytesRead) > 0;) got += r;
-    }
-
-    const slice = Bun.file("/proc/kallsyms").slice(0, n);
-    const bytes = await slice.bytes();
-    expect({
-      bytes: bytes.length,
-      same: expected.equals(bytes),
-      arrayBuffer: (await slice.arrayBuffer()).byteLength,
-      text: (await slice.text()).length,
-    }).toEqual({ bytes: n, same: true, arrayBuffer: n, text: n });
-  });
+  ] as const) {
+    it.skipIf(kallsyms.length < n)(`slice(0, N) of /proc/kallsyms reads its first N bytes: ${label}`, async () => {
+      const slice = Bun.file("/proc/kallsyms").slice(0, n);
+      const bytes = await slice.bytes();
+      expect({
+        bytes: bytes.length,
+        same: kallsyms.subarray(0, n).equals(bytes),
+        arrayBuffer: (await slice.arrayBuffer()).byteLength,
+        text: (await slice.text()).length,
+      }).toEqual({ bytes: n, same: true, arrayBuffer: n, text: n });
+    });
+  }
 
   // A FIFO holds less than the slice, so the read takes several reads and
   // waits for the writer in between. The bytes after the slice stay in the

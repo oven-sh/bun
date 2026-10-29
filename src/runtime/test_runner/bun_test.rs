@@ -530,6 +530,7 @@ impl BunTestRoot {
         let reporter_ptr = NonNull::from(&mut *reporter);
         let bun_test = BunTestCell::new(BunTest::init(
             stable_root,
+            &raw mut *self.hook_scope,
             file_id,
             Some(reporter_ptr),
             default_concurrent,
@@ -658,6 +659,7 @@ impl BunTest {
     /// that outlives the returned `BunTest`.
     pub(crate) fn init(
         bun_test_root: NonNull<BunTestRoot>,
+        hook_scope: *mut DescribeScope,
         file_id: FileId,
         reporter: Option<NonNull<CommandLineReporter>>,
         default_concurrent: bool,
@@ -670,7 +672,7 @@ impl BunTest {
             in_run_loop: false,
             phase: Phase::Collection,
             file_id,
-            collection: Collection::init(bun_test_root.as_ptr()),
+            collection: Collection::init(hook_scope),
             execution: Execution::Execution::init(),
             reporter,
             result_queue: ResultQueue::init(),
@@ -1667,14 +1669,11 @@ impl BaseScope {
     pub(crate) fn init(
         cfg: BaseScopeCfg,
         name_not_owned: Option<&[u8]>,
-        parent: Option<*mut DescribeScope>,
+        parent: Option<&mut DescribeScope>,
         has_callback: bool,
     ) -> BaseScope {
-        // SAFETY: `parent` is a live backref into the describe tree; single-threaded,
-        // and the parent outlives this child during construction.
-        let parent_base = parent.map(|p| unsafe { &(*p).base });
+        let parent_base = parent.as_deref().map(|p| &p.base);
         BaseScope {
-            parent,
             name: name_not_owned.map(Box::<[u8]>::from),
             concurrent: match cfg.self_concurrent {
                 ConcurrentMode::Yes => true,
@@ -1690,22 +1689,17 @@ impl BaseScope {
             has_callback,
             test_id_for_debugger: cfg.test_id_for_debugger,
             line_no: cfg.line_no,
+            parent: parent.map(std::ptr::from_mut),
         }
     }
 
-    pub(crate) fn propagate(&mut self, has_callback: bool) {
+    pub(crate) fn propagate(&mut self, parent: &mut DescribeScope, has_callback: bool) {
         self.has_callback = has_callback;
-        if let Some(parent) = self.parent {
-            // SAFETY: parent backref valid; tree is single-threaded and parent
-            // outlives child. Borrows are scoped to each call.
-            unsafe {
-                if self.only != Only::No {
-                    (*parent).mark_contains_only();
-                }
-                if self.has_callback {
-                    (*parent).mark_has_callback();
-                }
-            }
+        if self.only != Only::No {
+            parent.mark_contains_only();
+        }
+        if self.has_callback {
+            parent.mark_has_callback();
         }
     }
 }
@@ -1789,8 +1783,8 @@ impl DescribeScope {
         name_not_owned: Option<&[u8]>,
         base: BaseScopeCfg,
     ) -> &mut DescribeScope {
-        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
-        child.base.propagate(false);
+        let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(&mut *self), false));
+        child.base.propagate(self, false);
         self.entries.push(TestScheduleEntry::Describe(child));
         match self.entries.last_mut().unwrap() {
             TestScheduleEntry::Describe(d) => &mut **d,
@@ -1806,9 +1800,9 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        let mut entry = ExecutionEntry::create(name_not_owned, callback, cfg, Some(&mut *self), base, phase);
         let has_cb = entry.callback.is_some();
-        entry.base.propagate(has_cb);
+        entry.base.propagate(self, has_cb);
         self.entries.push(TestScheduleEntry::TestCallback(entry));
         match self.entries.last_mut().unwrap() {
             TestScheduleEntry::TestCallback(e) => Ok(&mut **e),
@@ -1835,7 +1829,7 @@ impl DescribeScope {
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> JsResult<&mut ExecutionEntry> {
-        let entry = ExecutionEntry::create(None, callback, cfg, Some(std::ptr::from_mut(self)), base, phase);
+        let entry = ExecutionEntry::create(None, callback, cfg, Some(&mut *self), base, phase);
         let list = self.get_hook_entries(tag);
         list.push(entry);
         Ok(&mut **list.last_mut().unwrap())
@@ -1893,7 +1887,7 @@ impl ExecutionEntry {
         name_not_owned: Option<&[u8]>,
         cb: Option<JSValue>,
         cfg: ExecutionEntryCfg,
-        parent: Option<*mut DescribeScope>,
+        parent: Option<&mut DescribeScope>,
         base: BaseScopeCfg,
         phase: AddedInPhase,
     ) -> Box<ExecutionEntry> {

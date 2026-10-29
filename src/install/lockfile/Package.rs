@@ -2026,34 +2026,22 @@ impl Package<u64> {
         self.parse_with_json(lockfile, pm, log, source, parsed.root, resolver, features)
     }
 
-    /// Borrow-splitting bridge for `PackageManager` callers
-    /// (`processDependencyList`, `folder_resolver`). Borrowck rejects passing
-    /// `manager.lockfile`, `manager`, `manager.log` as three separate args
-    /// overlapping `&mut self`, so split via raw
-    /// pointer here once instead of at every call site.
-    ///
-    /// # Safety
-    /// `manager` must point to a live `PackageManager` for the duration of the
-    /// call, and its `lockfile` / `log` fields must point to live allocations
-    /// disjoint from `*manager` itself.
-    pub(crate) unsafe fn parse_from_real_manager<R: ResolverContext>(
+    /// Borrow-splitting bridge for `processDependencyList`, with `Features::NPM`. Borrowck
+    /// rejects passing `manager.lockfile`, `manager`, `manager.log` as three separate args
+    /// overlapping `&mut self`, so split via raw pointer here.
+    pub(crate) fn parse_from_real_manager<R: ResolverContext>(
         &mut self,
-        manager: *mut crate::package_manager_real::PackageManager,
+        manager: &mut crate::package_manager_real::PackageManager,
         source: &bun_ast::Source,
         resolver: &mut R,
-        features: Features,
     ) -> crate::Result<()> {
-        // SAFETY: `manager` points to a live `PackageManager` for the duration
-        // of this call (caller passes `self as *mut _`); `lockfile` and `log`
-        // are disjoint fields, and `parse_with_json` only reaches `manager`
-        // through the `pm` argument it receives here — no re-entrancy.
-        let (lockfile, pm, log) = unsafe {
-            let m = &mut *manager;
-            let lockfile: *mut Lockfile = &raw mut *m.lockfile;
-            let log: *mut bun_ast::Log = m.log;
-            (&mut *lockfile, &mut *manager, &mut *log)
-        };
-        self.parse(lockfile, pm, log, source, resolver, features)
+        let log = manager.log_mut();
+        let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
+        // SAFETY: the `Box<Lockfile>` allocation lies outside `*manager`. `parse_with_json`
+        // derefs `pm.lockfile` only under `Features::workspaces`, which `NPM` does not set,
+        // and never `pm.log`.
+        let lockfile = unsafe { &mut *lockfile };
+        self.parse(lockfile, manager, log, source, resolver, Features::NPM)
     }
 
     fn parse_dependency(

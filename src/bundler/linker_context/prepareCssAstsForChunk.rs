@@ -196,21 +196,21 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 sources: Default::default(),
                                 source_map_urls: Default::default(),
                                 rules: {
-                                    let mut import_rule = ImportRule {
+                                    let import_rule = ImportRule {
                                         // SAFETY: `bun_css` types its strings `'static`. This
                                         // stylesheet is printed and dropped with the chunk.
                                         url: unsafe { bun_ptr::detach_lifetime(p.pretty) },
+                                        // SAFETY: shallow struct
+                                        // copy. The duplicate is never dropped (`ManuallyDrop`
+                                        // above), so the aliased heap stays singly-owned by
+                                        // `entry.conditions[j]`.
+                                        conditions: unsafe {
+                                            core::ptr::read(entry.conditions.at(j))
+                                        },
                                         import_record_idx: entry.condition_import_records.len()
                                             as u32,
                                         loc: Location::dummy(),
-                                        ..Default::default()
                                     };
-                                    // SAFETY: shallow struct
-                                    // copy. The duplicate is never dropped (`ManuallyDrop`
-                                    // above), so the aliased heap stays singly-owned by
-                                    // `entry.conditions[j]`.
-                                    *import_rule.conditions_mut() =
-                                        unsafe { core::ptr::read(entry.conditions.at(j)) };
                                     arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                                 },
                                 composes: Default::default(),
@@ -302,8 +302,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             // (`CssChunk::Drop` frees the slab via `set_len(0)`), so
                             // `entry.conditions[0]` / `empty_conditions` remain the sole
                             // owners of the interior heap.
-                            *import_rule.conditions_mut() =
-                                unsafe { core::ptr::read(actual_conditions) };
+                            import_rule.conditions = unsafe { core::ptr::read(actual_conditions) };
                             arena_rule_list_one(bump, BundlerCssRule::Import(import_rule))
                         },
                         sources: Default::default(),

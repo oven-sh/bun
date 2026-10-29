@@ -781,7 +781,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         import_rule.import_record_idx = import_record_index;
         import_records.push(ImportRecord {
             path: ast::fs::path_init(import_rule.url),
-            kind: if import_rule.supports.is_some() {
+            kind: if import_rule.conditions.supports.is_some() {
                 ImportKind::AtConditional
             } else {
                 ImportKind::At
@@ -1305,9 +1305,11 @@ mod rule_parsers {
                     this.state = TopLevelState::Imports;
                     let mut import_rule = ImportRule {
                         url,
-                        media,
-                        supports,
-                        layer: layer.map(|v| css_rules::import::Layer { v }),
+                        conditions: ImportConditions {
+                            layer: layer.map(|v| css_rules::import::Layer { v }),
+                            supports,
+                            media,
+                        },
                         loc,
                         ..Default::default()
                     };

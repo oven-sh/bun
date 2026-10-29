@@ -546,11 +546,9 @@ public:
 
         while (!isDoneProcessingEvents) {
             for (auto& connection : connections) {
-                // The thread runs no disconnect task during the pause, and the breakpoints of a frontend that left would pause it again.
                 if (connection->hasLeft())
-                    connection->turnOffWhatOnlyThisFrontendTurnedOn();
-                else
-                    connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
+                    continue;
+                connection->receiveMessagesOnInspectorThread(*global->scriptExecutionContext(), global, true);
                 if (isDoneProcessingEvents)
                     break;
             }
@@ -559,6 +557,14 @@ public:
                 break;
 
             size_t closedCount = countFrontendsThatCannotResume(connections);
+            // The thread runs no disconnect task during the pause, and the breakpoints of a frontend that left would pause it again.
+            for (auto& connection : connections) {
+                if (connection->hasLeft())
+                    connection->turnOffWhatOnlyThisFrontendTurnedOn();
+            }
+            if (isDoneProcessingEvents)
+                break;
+
             if (closedCount == connections.size()) {
                 if (global->debugger() && global->debugger()->isPaused()) {
                     global->debugger()->continueProgram();

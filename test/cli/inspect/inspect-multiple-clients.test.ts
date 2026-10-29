@@ -208,9 +208,16 @@ async function pausesIn(client: Client, call: string): Promise<boolean> {
   return true;
 }
 
-/** Resolves when the inspected thread has run the tasks that were queued for it, such as the disconnect of a client. */
-async function afterInspectedThread(client: Client): Promise<void> {
+/**
+ * Resolves when the inspected thread has run the tasks that were queued for it, such as the
+ * disconnect of a client that closed. The task that connects a new client is behind them, and
+ * the first command of that client is answered after it. A command of a client that is attached
+ * can be answered before them: each client has a queue of its own.
+ */
+async function afterInspectedThread(connect: Clients["connect"]): Promise<void> {
+  const client = await connect(9000);
   await client.send("Runtime.evaluate", { expression: "0" });
+  await client.close();
 }
 
 // JSGlobalObjectInspectorController::disconnectFrontend tears down every agent
@@ -235,7 +242,7 @@ fixtureTest(
     // A command counts whatever the order of its keys is.
     expect(await b.sendText(id => `{ "method": "Heap.enable", "id": ${id} }`)).toEqual(ok);
     await b.close();
-    await afterInspectedThread(a);
+    await afterInspectedThread(connect);
 
     // What both clients had enabled stays on for A.
     await a.send("Runtime.evaluate", { expression: "tick('after')" });
@@ -265,7 +272,7 @@ fixtureTest(
     expect(a.consoleTexts).toEqual(["ready", "tick one"]);
 
     await b.close();
-    await afterInspectedThread(a);
+    await afterInspectedThread(connect);
 
     // Nobody is left to resume the program, so it must not stop in tick() again.
     const second = a.send("Runtime.evaluate", { expression: "tick('two')" });
@@ -307,7 +314,7 @@ fixtureTest(
     expect(a.count("Debugger.resumed")).toBe(1);
 
     // The debugger went with B: tick() does not stop again.
-    await afterInspectedThread(a);
+    await afterInspectedThread(connect);
     const second = a.send("Runtime.evaluate", { expression: "tick('two')" });
     await Promise.race([second, a.until(() => a.count("Debugger.paused") > 1).catch(() => {})]);
     expect({ pausedAgain: a.count("Debugger.paused") > 1, consoleTexts: a.consoleTexts }).toEqual({
@@ -336,7 +343,7 @@ for (const leaver of ["accepted", "refused"]) {
       const [leaving, staying] = leaver === "accepted" ? [a, b] : [b, a];
       const [itsCall, ownCall] = leaver === "accepted" ? ["tick('x')", "tock('x')"] : ["tock('x')", "tick('x')"];
       await leaving.close();
-      await afterInspectedThread(staying);
+      await afterInspectedThread(connect);
 
       expect({
         atItsBreakpoint: await pausesIn(staying, itsCall),
@@ -361,7 +368,7 @@ fixtureTest("a debugger client leaves after another client turned the debugger o
 
   // B has no debugger to turn off: JSC asserts when a debugger that is off is turned off. Its breakpoint goes.
   await b.close();
-  await afterInspectedThread(a);
+  await afterInspectedThread(connect);
   await enableDebugger(a);
   expect(await pausesIn(a, "tick('x')")).toBe(false);
 });
@@ -402,7 +409,7 @@ fixtureTest("a debugger client that leaves takes each kind of breakpoint with it
   expect(await pauses()).toEqual({ byUrlRegex: true, byUrl: true, byLocation: true, byFunctionName: true });
 
   await b.close();
-  await afterInspectedThread(a);
+  await afterInspectedThread(connect);
   expect(await pauses()).toEqual({ byUrlRegex: false, byUrl: false, byLocation: false, byFunctionName: false });
 });
 
@@ -419,7 +426,7 @@ fixtureTest("a breakpoint that two clients ask for goes with the client that got
   expect(await pausesIn(a, "tick('one')")).toBe(true);
 
   await b.close();
-  await afterInspectedThread(a);
+  await afterInspectedThread(connect);
   expect(await pausesIn(a, "tick('two')")).toBe(false);
   // Now A can have it.
   await setBreakpoint(a);
@@ -437,7 +444,7 @@ fixtureTest(
     await setBreakpoint(a);
 
     await b.close();
-    await afterInspectedThread(a);
+    await afterInspectedThread(connect);
     expect(await pausesIn(a, "tick('x')")).toBe(true);
   },
 );
@@ -453,8 +460,9 @@ fixtureTest("a debugger client that leaves during a pause takes its breakpoint a
   const evaluated = a.send("Runtime.evaluate", { expression: "for (const tag of [1, 2, 3]) tick(tag)" });
   await a.until(() => a.count("Debugger.paused") === 1);
   await b.close();
-  // A has the debugger on too, so the program waits for A. It answers A during the pause.
-  await afterInspectedThread(a);
+  // A has the debugger on too, so the program waits for A. It answers A during the pause, and
+  // then it sees that B left.
+  await a.send("Runtime.evaluate", { expression: "0" });
   expect(await a.send("Debugger.resume")).toEqual(ok);
   await evaluated;
   expect({ pauses: a.count("Debugger.paused"), consoleTexts: a.consoleTexts }).toEqual({
@@ -471,7 +479,7 @@ fixtureTest("a breakpoint that a client set as it left is gone with it", async (
   // B does not wait for the answer.
   b.send("Debugger.setBreakpointByUrl", breakpoint).catch(() => {});
   await b.close();
-  await afterInspectedThread(a);
+  await afterInspectedThread(connect);
 
   expect(await pausesIn(a, "tick('x')")).toBe(false);
   expect(a.consoleTexts).toEqual(["ready", "tick x"]);
@@ -489,7 +497,7 @@ fixtureTest("a client that leaves takes its profilers with it, and nobody gets i
   expect(await b.send("Runtime.enableTypeProfiler")).toEqual(ok);
   expect(await typeInformation()).toEqual({ id: expect.any(Number), result: { types: [] } });
   await b.close();
-  await afterInspectedThread(a);
+  await afterInspectedThread(connect);
 
   expect(await typeInformation()).toEqual({
     id: expect.any(Number),
@@ -521,7 +529,7 @@ fixtureTest("a client that comes and goes during a pause leaves nothing on", asy
 
   expect(await a.send("Debugger.resume")).toEqual(ok);
   await evaluated;
-  await afterInspectedThread(a);
+  await afterInspectedThread(connect);
 
   // What B enabled went with B: JSC refuses to disable it a second time.
   expect(await a.send("Heap.disable")).toEqual({

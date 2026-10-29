@@ -1,0 +1,13 @@
+------------------
+{ printWidth: 80 }
+------------------
+type P0 = keyof /* prettier-ignore */ (Aaaa<X,Y> & Bbbb<X,Y>);
+type P1 = /* prettier-ignore */ (new ( ) => A)[];
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type P0 = keyof /* prettier-ignore */ (Aaaa<X,Y> & Bbbb<X,Y>);
+type P1 = /* prettier-ignore */ (new ( ) => A)[];
+
+===================== End =====================

@@ -1,0 +1,6 @@
+{
+  "build": ["--aot-check=validate-reference-guards"],
+  "env": {
+    "BUN_JSC_useNarrowReferenceScan": "0"
+  }
+}

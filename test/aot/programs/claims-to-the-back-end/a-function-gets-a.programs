@@ -1,0 +1,23 @@
+//// a-function-gets-a-property-between-two-questions-about-it.ts
+type Handler = ((value: number) => number) & { label?: string };
+
+function make(step: number): Handler {
+  return (value: number) => value + step;
+}
+
+function name(handler: Handler, depth: number): void {
+  if (depth > 0) return name(handler, depth - 1);
+  handler.label = "named";
+}
+
+function describe(handler: unknown): string {
+  return typeof handler === "function" ? "function" : typeof handler === "string" ? "string" : "other";
+}
+
+function around(handler: Handler): string {
+  const before = describe(handler) + " " + Object.keys(handler).length;
+  name(handler, 2);
+  return before + " | " + describe(handler) + " " + Object.keys(handler).length + " " + handler.label + " " + handler(1);
+}
+
+for (let step = 0; step < 4; step++) console.log(around(make(step)));

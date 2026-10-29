@@ -1,0 +1,269 @@
+//// damage-behind-a-call-untyped/a-call-in-return-position-of-sloppy-code-keeps-its-frame.cjs
+// Sloppy code has no tail calls: a function that ends in `return last(p)` stays on the stack. It does the damage first. The trace taken in the callee shows it, and the holder reads its object behind the call.
+var own = ["last", "leaves", "holder"];
+function framesOf(stack) {
+  var frames = [];
+  stack.split("\n").forEach(function (line) {
+    var frame = /^\s*at (\w+) \(.*:(\d+):(\d+)\)$/.exec(line);
+    if (frame && own.indexOf(frame[1]) >= 0) frames.push(frame[1] + "@" + frame[2] + ":" + frame[3]);
+  });
+  return frames.join(" < ");
+}
+
+var strikes = false;
+var trace = "";
+function last(p) {
+  trace = framesOf(String(new Error("last").stack));
+  return p.y;
+}
+function leaves(p) {
+  if (strikes) delete p.x;
+  return last(p);
+}
+function holder(p) {
+  var before = p.x;
+  var got = leaves(p);
+  return before + " " + got + " " + p.x;
+}
+
+var calm = "";
+for (var round = 0; round < 300; round++) {
+  strikes = round % 100 === 99;
+  var line = holder({ x: round, y: 1 });
+  if (round === 0) {
+    calm = trace;
+    console.log(trace);
+  }
+  if (strikes) console.log(round + ": " + line + " | the same trace: " + (trace === calm));
+}
+//// damage-behind-a-call-untyped/a-function-that-has-seen-one-shape-gets-another.js
+// No types are written, and for a long time a function and its callee see objects of one literal only. Then the callee is handed, or stores, something else: the callee's generic version runs below a caller that goes on as before.
+let swap = null;
+function callee(o, holderObject) {
+  if (swap !== null) {
+    holderObject.a = swap;
+    o = { b: 1, a: 2, c: 3 };
+  }
+  return o.a + o.b;
+}
+
+function holder(o) {
+  const before = o.a + o.b;
+  const got = callee({ a: 1, b: 2 }, o);
+  return before + " " + got + " " + (o.a + o.b) + " " + typeof o.a;
+}
+
+for (let round = 0; round < 500; round++) {
+  swap = round % 100 === 99 ? [null, "text", 0.5, undefined, { valueOf: () => 7 }, 10n][(round + 1) / 100] : null;
+  let line;
+  try {
+    line = holder({ a: round, b: 1 });
+  } catch (error) {
+    line = error.name;
+  }
+  if (swap !== null || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-untyped/classes-with-fields.js
+// No types are written. A class has fields with initial values, an accessor and a method. A function uses them all, makes a call and uses them again. Below the call the object, the class or the base class is damaged.
+class Base {
+  kind() {
+    return "base";
+  }
+}
+class Box extends Base {
+  width = 1;
+  height = 2;
+  open = false;
+  get area() {
+    return this.width * this.height;
+  }
+  grow() {
+    return ++this.width;
+  }
+}
+const area = Object.getOwnPropertyDescriptor(Box.prototype, "area");
+const kind = Base.prototype.kind;
+
+let mode = 0;
+function below(box) {
+  if (mode === 1) delete box.height;
+  else if (mode === 2) box.open = "ajar";
+  else if (mode === 3) Object.defineProperty(Box.prototype, "area", { get: () => -1, configurable: true });
+  else if (mode === 4) Base.prototype.kind = () => "replaced";
+  else if (mode === 5) Object.defineProperty(box, "area", { value: -2 });
+  else if (mode === 6) Object.freeze(box);
+  return 1;
+}
+
+function holder(box) {
+  const before = box.width + "," + box.height + "," + box.open + "," + box.area + "," + box.kind();
+  const got = below(box);
+  const read = box.width + "," + box.height + "," + (box.open ? "open" : "shut") + "," + box.area + "," + box.kind();
+  let grown;
+  try {
+    grown = box.grow();
+  } catch (error) {
+    grown = error.name;
+  }
+  return before + " " + got + " " + read + " " + grown + " " + box.width;
+}
+
+for (let round = 0; round < 700; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = holder(new Box());
+  Object.defineProperty(Box.prototype, "area", area);
+  Base.prototype.kind = kind;
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-untyped/closures-that-hold-the-object.js
+// No types are written. A factory returns closures over one object. One closure reads it, calls another one that was handed in from outside, and reads it again.
+function makeCounter(start) {
+  const state = { count: start, step: 1 };
+  return {
+    state,
+    run(between) {
+      const before = state.count + state.step;
+      between(state);
+      state.count += state.step;
+      return before + " " + state.count + "," + state.step;
+    },
+  };
+}
+
+const ways = [
+  () => {},
+  state => delete state.step,
+  state => (state.step = "s"),
+  state => Object.defineProperty(state, "count", { get: () => -7, set() {} }),
+  state => Object.freeze(state),
+];
+
+for (let round = 0; round < 500; round++) {
+  const way = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const counter = makeCounter(round);
+  let line;
+  try {
+    line = counter.run(ways[way % ways.length]);
+  } catch (error) {
+    line = error.name + " " + counter.state.count;
+  }
+  if (way || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-untyped/constructor-functions-and-their-prototypes.js
+// No types are written. Objects come from a constructor function, methods lie on its prototype object. A function reads an object, calls a method, makes a call and does both again. Below the call the object or the prototype object is damaged.
+////= lines-41	Point	x	y
+Point.prototype.norm = function () {
+  return this.x * this.x + this.y * this.y;
+};
+const norm = Point.prototype.norm;
+
+let mode = 0;
+function below(p) {
+  if (mode === 1) delete p.x;
+  else if (mode === 2) p.y = "text";
+  else if (mode === 3) Point.prototype.norm = () => -1;
+  else if (mode === 4) p.norm = () => -2;
+  else if (mode === 5) Object.setPrototypeOf(p, { norm: () => -3 });
+  else if (mode === 6) Point.prototype = { norm: () => -4 };
+  return 1;
+}
+
+function holder(p) {
+  const before = p.x + "," + p.y + "," + p.norm();
+  const got = below(p);
+  return before + " " + got + " " + p.x + "," + p.y + "," + p.norm() + "," + (p instanceof Point);
+}
+
+const prototype = Point.prototype;
+for (let round = 0; round < 700; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  const line = holder(new Point(round, 1));
+  Point.prototype = prototype;
+  Point.prototype.norm = norm;
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-untyped/stores-that-sloppy-code-drops.cjs
+// In sloppy code a store to a frozen object, to a read-only field or to an accessor without a setter does nothing and throws nothing, and neither does a delete that is refused. The function that stores has read the object before the call that changed it.
+let mode = 0;
+function below(p) {
+  if (mode === 1) Object.freeze(p);
+  else if (mode === 2) Object.defineProperty(p, "x", { value: 41, writable: false });
+  else if (mode === 3) Object.defineProperty(p, "x", { get: function () { return -7; } });
+  else if (mode === 4) Object.seal(p);
+  else if (mode === 5) Object.preventExtensions(p);
+  return 1;
+}
+
+function holder(p) {
+  var before = p.x + p.y;
+  var got = below(p);
+  p.x = 5;
+  p.z = 6;
+  var deleted = delete p.y;
+  return before + " " + got + " " + p.x + "," + p.y + "," + p.z + "," + deleted + " " + Object.keys(p).join("");
+}
+
+for (var round = 0; round < 600; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  var line = holder({ x: round, y: 1 });
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-untyped/the-arguments-object-rebinds-a-parameter.cjs
+// In sloppy code the arguments object and the parameters are one. A function reads its parameter, hands its arguments object to a callee, and reads the parameter again. The callee has stored another object, or a number, into the arguments object.
+let mode = 0;
+function below(list) {
+  if (mode === 1) list[0] = { x: "another object", y: 0 };
+  else if (mode === 2) list[0] = 17;
+  else if (mode === 3) delete list[0].x;
+  return 1;
+}
+
+function holder(p) {
+  var before = p.x + p.y;
+  var got = below(arguments);
+  return before + " " + got + " " + p.x + "," + p.y + " " + typeof p;
+}
+
+for (var round = 0; round < 400; round++) {
+  mode = round % 100 === 99 ? (round + 1) / 100 : 0;
+  var line = holder({ x: round, y: 1 });
+  if (mode || round === 0) console.log(round + ": " + line);
+}
+//// damage-behind-a-call-untyped/the-proto-setter-changes-the-prototype.js
+// A store to `__proto__` runs the setter of Object.prototype and gives the object another prototype. It stands below a call, and the caller has read an absent property and called an inherited method before.
+class Animal {
+  constructor(legs) {
+    this.legs = legs;
+  }
+  sound() {
+    return "none";
+  }
+}
+const bird = {
+  wings: 2,
+  sound() {
+    return "tweet";
+  },
+};
+
+let mode = 0;
+function below(a) {
+  if (mode === 1) a.__proto__ = bird;
+  else if (mode === 2) a.__proto__ = null;
+  else if (mode === 3) a["__pro" + "to__"] = bird;
+  return 1;
+}
+
+function holder(a) {
+  const before = a.legs + "," + a.wings + "," + a.sound();
+  const got = below(a);
+  let sound;
+  try {
+    sound = a.sound();
+  } catch (error) {
+    sound = error.name;
+  }
+  return before + " " + got + " " + a.legs + "," + a.wings + "," + sound + "," + (a instanceof Animal);
+}
+
+////= for-26	holder(new Animal(round)

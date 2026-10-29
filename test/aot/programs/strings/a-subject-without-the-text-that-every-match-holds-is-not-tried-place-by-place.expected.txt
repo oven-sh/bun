@@ -1,0 +1,20 @@
+a literal, a character behind a bounded run: no place is tried
+a literal, a text behind two runs: no place is tried
+a literal, one of two signs behind a word: no place is tried
+a literal in unicode mode, a character behind a bounded run: no place is tried
+a literal, a run that has to reach the end: no place is tried
+a literal, a run at the start or one that has to reach the end: no place is tried
+run-time text, a run that has to reach the end: no place is tried
+run-time text, a character behind a bounded run: no place is tried
+run-time text, a text behind two runs: no place is tried
+run-time text that looks back over a group, a character behind a run: no place is tried
+a literal, a character behind a bounded run: no place is tried
+a literal, a text behind two runs: no place is tried
+a literal, one of two signs behind a word: no place is tried
+a literal in unicode mode, a character behind a bounded run: no place is tried
+a literal, a run that has to reach the end: no place is tried
+a literal, a run at the start or one that has to reach the end: no place is tried
+run-time text, a run that has to reach the end: no place is tried
+run-time text, a character behind a bounded run: no place is tried
+run-time text, a text behind two runs: no place is tried
+run-time text that looks back over a group, a character behind a run: no place is tried

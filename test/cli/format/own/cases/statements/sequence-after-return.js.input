@@ -1,0 +1,14 @@
+function a() {
+  return (
+    someFunction() && otherFunction(argument, another.node.language), otherFunction(argument), b
+  );
+}
+function c() {
+  return (someObject.topLeftX = l), (someObject.topLeftY = g), (someObject.width = T - l), (someObject.height = d - g), (someObject.depth = e - h), someObject;
+}
+function i() {
+  throw (someFunction() && otherFunction(argument, another.node.language), otherFunction(argument), b);
+}
+function j() {
+  return a, b;
+}

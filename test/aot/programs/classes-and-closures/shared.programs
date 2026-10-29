@@ -1,0 +1,147 @@
+////: Kit
+interface Kit {
+  label: string;
+  first: () => number;
+  own: () => string;
+  maybe: (() => string) | undefined;
+  none: (() => string) | null;
+}
+////: attempt
+function attempt(action: () => unknown) {
+  try {
+    return String(action());
+  } catch (error) {
+    return (error as Error).constructor.name;
+  }
+}
+////: attempt-11
+function attempt(run) {
+  try {
+    return «1»(run());
+  } catch (error) {
+    return error.constructor.name;
+  }
+}
+////: attempt-4
+function attempt(run) {
+  try {
+    return String(run());
+  } catch (error) {
+    return "throws " + error.name;
+  }
+}
+////: describe
+function describe(object) {
+  return Reflect.ownKeys(object)
+    .map(key => {
+      const descriptor = Object.getOwnPropertyDescriptor(object, key);
+      const kind = "value" in descriptor ? typeof descriptor.value : (descriptor.get ? "get" : "") + (descriptor.set ? "set" : "");
+      const flags = (descriptor.writable ? "w" : "-") + (descriptor.enumerable ? "e" : "-") + (descriptor.configurable ? "c" : "-");
+      return String(key) + ":" + kind + ":" + flags;
+    })
+    .join(" ");
+}
+////: kit
+function kit(label: string, n: number): Kit {
+  const made = {
+    label,
+    first: () => 1,
+    maybe: n & 1 ? () => "maybe" : undefined,
+    none: n & 2 ? () => "none" : null,
+  } as Kit;
+  made.own = () => made.label + " owns";
+  return made;
+}
+////: kit-3
+////= kit
+////= show
+////: lines-21
+function «1»(«2») {
+  return «3»;
+}
+////: lines-22
+class «1» «2» «3» {
+  «4» = «5»;
+}
+////: lines-35
+«1».prototype.«2» = function () {
+  return «3»;
+};
+////: lines-36
+function «1»(«2») {
+  «3» = «4»;
+}
+////: lines-39
+class «1» extends «2» {
+  constructor() {
+    super();
+    this.«3» = «4»;
+  }
+}
+////: lines-43
+class «1» {
+  «2» = «3»;
+}
+////: lines-45
+class «1» extends «2» {
+  «3»() {
+    return «4»;
+  }
+}
+////: lines-48
+class «1» extends «2» {
+  «3»(): number {
+    return «4»;
+  }
+}
+////: lines-61
+function «1»(run) {
+  try {
+    return "returned " + String(run());
+  } catch (error) {
+    return error.constructor.name;
+  }
+}
+////: lines-64
+«1».prototype.«2» = function () {
+  return «3» + this.«4»;
+};
+////: lines-66
+function «1»() {
+  this.«2» = «3»;
+}
+////: lines-67
+function «1»() {
+  return «2»;
+}
+////: lines-68
+function «1»(seed) {
+  this.seed = seed;
+  this.read = () => this.seed;
+}
+////: lines-69
+function «1»(«2») {
+  this.«3» = «2»;
+  return «4»;
+}
+////: lines-70
+function «1»(): «2» {
+  return «3»;
+}
+////: lines-8
+function «1»(«2») {
+  return «3»();
+}
+////: say
+function say(...values: unknown[]) {
+  lines.push(values.map(String).join(" "));
+}
+////: say-3
+////= say
+////= attempt
+
+////= Kit
+////: show
+function show(kit: Kit) {
+  return [kit.label, kit.first(), kit.own(), kit.maybe === undefined ? "undefined" : kit.maybe(), kit.none === null ? "null" : kit.none(), Object.keys(kit).join("+")].join(" | ");
+}

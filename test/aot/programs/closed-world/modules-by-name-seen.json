@@ -1,0 +1,1 @@
+{"skipInShell": "it uses CustomEvent and Buffer, which the jsc shell does not have", "skipInVariants": "its output is what the executable refuses, and a variant that runs the files from disk finds them"}

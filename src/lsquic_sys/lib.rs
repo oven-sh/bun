@@ -1,5 +1,4 @@
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
-#![allow(clippy::missing_safety_doc)]
+#![allow(non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_uint, c_ulong, c_void};
 
@@ -750,11 +749,11 @@ impl NqTransportParams {
     }
 }
 
+bun_core::impl_zeroable!(NqTransportParams);
+
 impl Default for NqTransportParams {
     fn default() -> Self {
-        // SAFETY: `#[repr(C)]` POD (u64 / c_int / byte arrays); all-zero is a valid
-        // bit pattern for every field.
-        unsafe { core::mem::MaybeUninit::zeroed().assume_init() }
+        bun_core::ffi::zeroed()
     }
 }
 

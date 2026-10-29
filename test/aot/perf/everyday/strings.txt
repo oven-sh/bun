@@ -1,0 +1,425 @@
+//// concat-two
+const names = ["ann", "bob", "cy", "dee"];
+function turn(i: number): number {
+  return ("hello " + names[i & 3]!).length;
+}
+//// concat-with-a-number
+function turn(i: number): number {
+  return ("id-" + (i & 1023)).length;
+}
+//// template
+const names = ["ann", "bob", "cy", "dee"];
+function turn(i: number): number {
+  return `${names[i & 3]} is ${i & 63} years old`.length;
+}
+//// template-used-as-a-key
+const cells: Record<string, number> = { "0:0": 1, "0:1": 2, "1:0": 3, "1:1": 4 };
+function turn(i: number): number {
+  return cells[`${i & 1}:${(i >> 1) & 1}`]!;
+}
+//// append-in-a-loop
+function turn(i: number): number {
+  let text = "";
+  for (let k = 0; k < 8; k++) text += "ab";
+  return text.length + (i & 1);
+}
+//// append-then-read-a-character
+function turn(i: number): number {
+  let text = "";
+  for (let k = 0; k < 8; k++) text += String.fromCharCode(97 + ((i + k) & 15));
+  return text.charCodeAt(5);
+}
+//// pieces-pushed-and-joined
+function turn(i: number): number {
+  const pieces: string[] = [];
+  for (let k = 0; k < 6; k++) pieces.push("k" + ((i + k) & 7));
+  return pieces.join(",").length;
+}
+//// length
+const texts = ["", "a", "four", "seventeen letters"];
+function turn(i: number): number {
+  return texts[i & 3]!.length;
+}
+//// char-code-at-loop
+const text = "The quick brown fox jumps over the lazy dog";
+function turn(i: number): number {
+  let hash = i & 1;
+  for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0;
+  return hash;
+}
+//// char-codes-of-a-text-built-by-appending
+function turn(i: number): number {
+  let text = "";
+  for (let k = 0; k < 16; k++) text += String.fromCharCode(65 + ((i + k) & 15));
+  let hash = 0;
+  for (let k = 0; k < text.length; k++) hash = (hash * 31 + text.charCodeAt(k)) | 0;
+  return hash;
+}
+//// index-loop
+const text = "The quick brown fox jumps over the lazy dog";
+function turn(i: number): number {
+  let spaces = i & 1;
+  for (let k = 0; k < text.length; k++) if (text[k] === " ") spaces++;
+  return spaces;
+}
+//// for-of-characters
+const text = "The quick brown fox";
+function turn(i: number): number {
+  let vowels = i & 1;
+  for (const letter of text) if (letter === "o" || letter === "u" || letter === "i" || letter === "e") vowels++;
+  return vowels;
+}
+//// char-at
+const text = "abcdefghijklmnop";
+function turn(i: number): number {
+  return text.charAt(i & 15) === "h" ? 1 : 0;
+}
+//// code-point-at
+const text = "naïve café ☕ 😀 done";
+function turn(i: number): number {
+  return text.codePointAt(i & 15)!;
+}
+//// equality
+const verbs = ["GET", "POST", "PUT", "GET"];
+function turn(i: number): number {
+  const verb = verbs[i & 3]!;
+  return verb === "GET" ? 1 : verb === "POST" ? 2 : 3;
+}
+//// equality-of-built-strings
+const halves = ["ab", "cd"];
+function turn(i: number): number {
+  const built = halves[i & 1]! + halves[(i >> 1) & 1]!;
+  return built === "abcd" ? 1 : 0;
+}
+//// comparison
+const words = ["pear", "apple", "fig", "mango"];
+function turn(i: number): number {
+  return words[i & 3]! < words[(i + 1) & 3]! ? 1 : 0;
+}
+//// slice
+const text = "2026-10-23T18:07:35Z";
+function turn(i: number): number {
+  return text.slice(0, 10).length + text.slice(11 + (i & 1)).length;
+}
+//// slice-from-the-end
+const file = "archive.tar.gz";
+function turn(i: number): number {
+  return file.slice(-3) === ".gz" ? 1 + (i & 1) : 0;
+}
+//// substring
+const text = "key=value; other=thing";
+function turn(i: number): number {
+  const at = text.indexOf("=");
+  return text.substring(0, at).length + text.substring(at + 1, at + 6).length + (i & 1);
+}
+//// slice-then-compare
+const lines = ["GET /a HTTP/1.1", "POST /b HTTP/1.1", "PUT /c HTTP/1.0", "GET /d HTTP/1.1"];
+function turn(i: number): number {
+  return lines[i & 3]!.slice(0, 3) === "GET" ? 1 : 0;
+}
+//// split-by-a-comma
+const row = "alpha,beta,gamma,delta,epsilon";
+function turn(i: number): number {
+  return row.split(",")[i % 5]!.length;
+}
+//// split-and-join
+const path = "a/b/c/d";
+function turn(i: number): number {
+  return path.split("/").join(".").length + (i & 1);
+}
+//// split-into-characters
+const word = "letters";
+function turn(i: number): number {
+  return word.split("").length + (i & 1);
+}
+//// split-lines
+const text = "one\ntwo\nthree\nfour";
+function turn(i: number): number {
+  return text.split("\n")[i & 3]!.length;
+}
+//// split-by-a-pattern
+const text = "a1b22c333d";
+function turn(i: number): number {
+  return text.split(/\d+/).length + (i & 1);
+}
+//// split-a-pair
+const headers = ["host: example.com", "accept: */*", "x-id: 7", "te: trailers"];
+function turn(i: number): number {
+  const [name, value] = headers[i & 3]!.split(": ");
+  return name!.length + value!.length;
+}
+//// index-of
+const text = "The quick brown fox jumps over the lazy dog";
+const needles = ["quick", "lazy", "cat", "The"];
+function turn(i: number): number {
+  return text.indexOf(needles[i & 3]!);
+}
+//// last-index-of
+const path = "/usr/local/share/doc/readme.txt";
+function turn(i: number): number {
+  return path.lastIndexOf("/") + (i & 1);
+}
+//// includes
+const agent = "Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0";
+const needles = ["Firefox", "Chrome", "Linux", "Mac"];
+function turn(i: number): number {
+  return agent.includes(needles[i & 3]!) ? 1 : 0;
+}
+//// starts-with
+const urls = ["https://a.example", "http://b.example", "ftp://c.example", "https://d.example"];
+function turn(i: number): number {
+  return urls[i & 3]!.startsWith("https://") ? 1 : 0;
+}
+//// ends-with
+const files = ["a.ts", "b.js", "c.ts", "d.json"];
+function turn(i: number): number {
+  return files[i & 3]!.endsWith(".ts") ? 1 : 0;
+}
+//// to-lower-case
+const headers = ["Content-Type", "ACCEPT", "host", "X-Request-Id"];
+function turn(i: number): number {
+  return headers[i & 3]!.toLowerCase() === "host" ? 1 : 0;
+}
+//// to-upper-case
+const verbs = ["get", "post", "Put", "DELETE"];
+function turn(i: number): number {
+  return verbs[i & 3]!.toUpperCase().length;
+}
+//// trim
+const inputs = ["  padded  ", "clean", "\ttabbed\n", " x"];
+function turn(i: number): number {
+  return inputs[i & 3]!.trim().length;
+}
+//// pad-start
+function turn(i: number): number {
+  return String(i & 59).padStart(2, "0").length;
+}
+//// pad-end
+const labels = ["a", "bb", "ccc", "dddd"];
+function turn(i: number): number {
+  return labels[i & 3]!.padEnd(8, ".").length;
+}
+//// repeat
+function turn(i: number): number {
+  return "-".repeat(i & 31).length;
+}
+//// replace-a-text
+const greeting = "hello NAME, welcome";
+const names = ["ann", "bob", "cy", "dee"];
+function turn(i: number): number {
+  return greeting.replace("NAME", names[i & 3]!).length;
+}
+//// replace-all-of-a-text
+const text = "a-b-c-d-e";
+function turn(i: number): number {
+  return text.replaceAll("-", i & 1 ? "+" : "__").length;
+}
+//// replace-by-a-pattern
+const text = "2026-10-23";
+function turn(i: number): number {
+  return text.replace(/-/g, "/").length + (i & 1);
+}
+//// replace-by-a-pattern-with-groups
+const date = "2026-10-23";
+function turn(i: number): number {
+  return date.replace(/(\d+)-(\d+)-(\d+)/, "$3.$2.$1").length + (i & 1);
+}
+//// replace-by-a-function
+const text = "snake_case_name_here";
+function turn(i: number): number {
+  return text.replace(/_(\w)/g, (_, letter: string) => letter.toUpperCase()).length + (i & 1);
+}
+//// escape-html
+const inputs = ["plain text", "<b>bold</b>", "a & b", 'say "hi"'];
+const escapes: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" };
+function turn(i: number): number {
+  return inputs[i & 3]!.replace(/[&<>"]/g, character => escapes[character]!).length;
+}
+//// pattern-test
+const inputs = ["abc123", "no digits", "42", "x9y"];
+function turn(i: number): number {
+  return /\d+/.test(inputs[i & 3]!) ? 1 : 0;
+}
+//// pattern-test-anchored
+const inputs = ["user@example.com", "not an address", "a@b.co", "@nobody"];
+const address = /^[^@\s]+@[^@\s]+\.[a-z]+$/;
+function turn(i: number): number {
+  return address.test(inputs[i & 3]!) ? 1 : 0;
+}
+//// pattern-exec-with-groups
+const inputs = ["10:42", "7:05", "23:59", "nope"];
+function turn(i: number): number {
+  const match = /^(\d+):(\d+)$/.exec(inputs[i & 3]!);
+  return match ? Number(match[1]) * 60 + Number(match[2]) : -1;
+}
+//// pattern-named-groups
+const inputs = ["2026-10-23", "1999-01-02"];
+function turn(i: number): number {
+  const match = /(?<year>\d{4})-(?<month>\d\d)-(?<day>\d\d)/.exec(inputs[i & 1]!)!;
+  return Number(match.groups!.year) + Number(match.groups!.day);
+}
+//// match
+const inputs = ["a1b2c3", "none", "x10", "7"];
+function turn(i: number): number {
+  return inputs[i & 3]!.match(/\d/g)?.length ?? 0;
+}
+//// match-all
+const text = "k1=v1;k2=v2;k3=v3";
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const match of text.matchAll(/(\w+)=(\w+)/g)) sum += match[1]!.length + match[2]!.length;
+  return sum;
+}
+//// pattern-exec-in-a-loop-with-last-index
+const text = "one two three four";
+function turn(i: number): number {
+  const word = /\w+/g;
+  let count = i & 1;
+  while (word.exec(text)) count++;
+  return count;
+}
+//// search
+const text = "find the 1st digit";
+function turn(i: number): number {
+  return text.search(/\d/) + (i & 1);
+}
+//// number-to-string
+function turn(i: number): number {
+  return String(i).length;
+}
+//// number-to-string-method
+function turn(i: number): number {
+  return (i & 0xffff).toString().length;
+}
+//// number-to-hex
+function turn(i: number): number {
+  return (i & 0xffff).toString(16).length;
+}
+//// double-to-string
+function turn(i: number): number {
+  return String((i & 1023) / 8).length;
+}
+//// string-to-number
+const inputs = ["12", "3.5", "1e3", "0x10"];
+function turn(i: number): number {
+  return Number(inputs[i & 3]!);
+}
+//// plus-to-number
+const inputs = ["12", "35", "1000", "7"];
+function turn(i: number): number {
+  return +inputs[i & 3]!;
+}
+//// from-char-code
+function turn(i: number): number {
+  return String.fromCharCode(65 + (i & 15)).length;
+}
+//// wide-text-length-and-slice
+const text = "Привет, мир! Как дела сегодня?";
+function turn(i: number): number {
+  return text.slice(i & 7, 12).length;
+}
+//// wide-text-concat
+const names = ["Анна", "Борис", "Вера", "Глеб"];
+function turn(i: number): number {
+  return ("Привет, " + names[i & 3]! + "!").length;
+}
+//// locale-compare
+const words = ["pear", "apple", "fig", "mango"];
+function turn(i: number): number {
+  return words[i & 3]!.localeCompare(words[(i + 1) & 3]!);
+}
+//// normalize
+const inputs = ["café", "plain", "éà", "ascii only"];
+function turn(i: number): number {
+  return inputs[i & 3]!.normalize("NFC").length;
+}
+//// capitalize
+const words = ["apple", "banana", "cherry", "date"];
+function turn(i: number): number {
+  const word = words[i & 3]!;
+  return (word[0]!.toUpperCase() + word.slice(1)).length;
+}
+//// camel-to-kebab
+const names = ["backgroundColor", "fontSize", "borderTopWidth", "color"];
+function turn(i: number): number {
+  return names[i & 3]!.replace(/[A-Z]/g, letter => "-" + letter.toLowerCase()).length;
+}
+//// query-string-parsed-by-hand
+const query = "a=1&b=two&c=3&d=four";
+function turn(i: number): number {
+  const parsed: Record<string, string> = {};
+  for (const pair of query.split("&")) {
+    const at = pair.indexOf("=");
+    parsed[pair.slice(0, at)] = pair.slice(at + 1);
+  }
+  return parsed.b!.length + parsed.d!.length + (i & 1);
+}
+//// encode-uri-component
+const inputs = ["plain", "a b&c", "ü/ñ", "x=y"];
+function turn(i: number): number {
+  return encodeURIComponent(inputs[i & 3]!).length;
+}
+//// decode-uri-component
+const inputs = ["plain", "a%20b%26c", "%C3%BC%2F%C3%B1", "x%3Dy"];
+function turn(i: number): number {
+  return decodeURIComponent(inputs[i & 3]!).length;
+}
+//// string-as-a-switch-subject
+const events = ["open", "close", "data", "error", "end", "drain"];
+function turn(i: number): number {
+  switch (events[i % 6]) {
+    case "open":
+      return 1;
+    case "close":
+      return 2;
+    case "data":
+      return 3;
+    case "error":
+      return 4;
+    case "end":
+      return 5;
+    default:
+      return 0;
+  }
+}
+//// tagged-template
+function tag(strings: TemplateStringsArray, ...values: number[]): number {
+  let sum = 0;
+  for (let k = 0; k < values.length; k++) sum += strings[k]!.length + values[k]!;
+  return sum;
+}
+function turn(i: number): number {
+  return tag`a${i & 7}bc${2}d`;
+}
+//// string-raw-and-at
+const text = "last letter";
+function turn(i: number): number {
+  return text.at(-1)!.charCodeAt(0) + (i & 1);
+}
+//// field-that-holds-narrow-and-wide-text
+const holder = { text: "plain" };
+const texts = ["plain", "шире", "again", "ещё"];
+function turn(i: number): number {
+  holder.text = texts[i & 3]!;
+  return holder.text.length + holder.text.charCodeAt(0);
+}
+//// strip-rare-characters-of-a-unicode-class-from-a-long-text
+const text = ("line: the quick brown fox { \"key\": [1, 2, 3] } jumps over the lazy dog\n".repeat(40) + "\u2014 \u2026\n").repeat(4);
+function turn(i: number): number {
+  return text.replace(/[\p{Cf}\p{Variation_Selector}]/gu, "").length + (i & 1);
+}
+//// strip-what-is-not-ascii-from-a-long-text
+const text = ("line: the quick brown fox { \"key\": [1, 2, 3] } jumps over the lazy dog\n".repeat(40) + "\u2014 \u2026\n").repeat(4);
+function turn(i: number): number {
+  return text.replace(/[^\x00-\x7F]/gu, "").length + (i & 1);
+}
+//// a-piece-of-a-query-compared-with-the-state-of-every-row
+const nothing = String(Date.now()).slice(99);
+const query = "status=open&limit=25" + nothing;
+const states: string[] = ["done", "open", "late", "open", "done", "open", "late", "done"];
+function turn(i: number): number {
+  const wanted = query.slice(7, 11);
+  let hits = i & 1;
+  for (const state of states) if (state === wanted) hits++;
+  return hits;
+}

@@ -1,0 +1,395 @@
+////: get-2
+function get(name: string) {
+  return Reflect.get(things, name);
+}
+//// what-reflect-apply-of-a-value-of-type-function-returns-fills-places-of-a-function-type.ts
+type Step = (n: number) => number;
+
+const log: string[] = [];
+
+////= show-36
+
+////= things-4
+const names = Object.keys(things);
+
+const all = new Map<string, unknown>(Object.entries(things));
+const lookUp: Function = (name: string) => all.get(name);
+
+function get(name: string) {
+  return Reflect.apply(lookUp, undefined, [name]);
+}
+
+////= twice-2
+
+console.log("honest callers: " + [twice(n => n + 1), twice(n => n * 3), twice(Math.sqrt)].join(" "));
+
+////= sinks-7
+
+export {};
+//// what-reflect-apply-of-a-value-of-type-function-returns-fills-places-of-type-point.ts
+////= Point-2
+
+const log: string[] = [];
+
+////= show-47
+const names = Object.keys(things);
+
+const all = new Map<string, unknown>(Object.entries(things));
+const lookUp: Function = (name: string) => all.get(name);
+
+function get(name: string) {
+  return Reflect.apply(lookUp, undefined, [name]);
+}
+
+////= sum-7
+
+console.log("honest callers: " + [sum({ x: 1, y: 2 }), sum({ x: 3, y: 4 }), sum({ y: 6, x: 5 })].join(" "));
+
+////= sinks-5
+
+export {};
+//// what-reflect-get-returns-fills-places-of-a-function-type.ts
+type Step = (n: number) => number;
+
+const log: string[] = [];
+
+////= show-36
+
+////= things-4
+const names = Object.keys(things);
+
+////= get-2
+
+////= twice-2
+
+console.log("honest callers: " + [twice(n => n + 1), twice(n => n * 3), twice(Math.sqrt)].join(" "));
+
+////= sinks-7
+
+export {};
+//// what-reflect-get-returns-fills-places-of-type-number.ts
+const log: string[] = [];
+
+////= show-44
+const names = Object.keys(things);
+
+////= get-2
+
+const table = [10, 20, 30, 40];
+
+////= plusOne-3
+
+console.log("honest callers: " + [plusOne(1), plusOne(2.5), pick(0), pick(3)].join(" "));
+
+////= sinks-6
+
+export {};
+//// what-reflect-get-returns-fills-places-of-type-point.ts
+////= Point-2
+
+const log: string[] = [];
+
+////= show-47
+const names = Object.keys(things);
+
+////= get-2
+
+////= sum-7
+
+console.log("honest callers: " + [sum({ x: 1, y: 2 }), sum({ x: 3, y: 4 }), sum({ y: 6, x: 5 })].join(" "));
+
+////= sinks-5
+
+export {};
+//// what-reflect-get-returns-fills-places-typed-as-a-class.ts
+////= Point-32
+
+const log: string[] = [];
+
+////= show-36
+
+////= things-3
+const names = Object.keys(things);
+
+////= get-2
+
+////= norm-2
+
+console.log("honest callers: " + [norm(new Point(1, 2)), norm(new Point(3, 4)), sum(new Point(5, 6)), norm(new Far(7, 8))].join(" "));
+
+////= sinks-4
+
+////= for
+
+export {};
+//// what-structured-clone-refuses-and-what-it-evaluates.ts
+////= show-30
+
+const log: string[] = [];
+
+class Gauge {
+  level = 5;
+  get doubled(): number {
+    log.push("prototype getter");
+    return this.level * 2;
+  }
+}
+
+class WithCallback {
+  value = 1;
+  onChange: () => void = () => {};
+}
+
+class WithSymbol {
+  value = 1;
+  mark = Symbol("mark");
+}
+
+class WithSymbolKey {
+  value = 1;
+  [Symbol.toStringTag] = "Custom";
+}
+
+function nameOf(run: () => unknown): string {
+  try {
+    return show(run());
+  } catch (error) {
+    return "threw " + (error instanceof Error ? error.name : typeof error) + " " + (error instanceof DOMException);
+  }
+}
+
+console.log("a function in a field -> " + nameOf(() => structuredClone(new WithCallback())));
+console.log("a symbol in a field -> " + nameOf(() => structuredClone(new WithSymbol())));
+console.log("a function itself -> " + nameOf(() => structuredClone(nameOf)));
+console.log("a class itself -> " + nameOf(() => structuredClone(Gauge)));
+console.log("a symbol itself -> " + nameOf(() => structuredClone(Symbol.iterator)));
+console.log("a weak map -> " + nameOf(() => structuredClone(new WeakMap())));
+console.log("a promise -> " + nameOf(() => structuredClone(Promise.resolve(1))));
+console.log("a proxy of an instance -> " + nameOf(() => structuredClone(new Proxy(new Gauge(), {}))));
+console.log("a generator -> " + nameOf(() => structuredClone((function* () {})())));
+console.log("a key that is a symbol is left out -> " + nameOf(() => {
+  const clone = structuredClone(new WithSymbolKey());
+  return [clone.value, clone[Symbol.toStringTag], Reflect.ownKeys(clone).length];
+}));
+
+attempt("a getter of the prototype is not copied", () => {
+  const clone = structuredClone(new Gauge());
+  return [clone.level, clone.doubled, typeof clone.doubled, Object.keys(clone), log.length];
+});
+attempt("an own getter is evaluated once", () => {
+  log.length = 0;
+  const source: { readonly level: number } = {
+    get level() {
+      log.push("own getter");
+      return 5;
+    },
+  };
+  const clone = structuredClone(source);
+  return [clone.level, clone.level, log, Object.getOwnPropertyDescriptor(clone, "level")?.writable];
+});
+attempt("an own getter that throws", () =>
+  structuredClone({
+    get level(): number {
+      throw new RangeError("no level");
+    },
+  }),
+);
+attempt("members that are not enumerable are left out", () => {
+  const source = Object.defineProperty(new Gauge(), "level", { enumerable: false });
+  const clone = structuredClone(source);
+  return [clone.level, Object.keys(clone)];
+});
+attempt("a frozen instance gives a clone that is not frozen", () => {
+  const frozen: Gauge = Object.freeze(new Gauge());
+  const clone = structuredClone(frozen);
+  clone.level = 6;
+  return [clone.level, Object.isFrozen(clone)];
+});
+attempt("wrapper objects", () => {
+  const clone = structuredClone({ n: new Number(5), s: new String("ab"), b: new Boolean(false) });
+  return [typeof clone.n, clone.n.valueOf(), clone.s.length, clone.b.valueOf(), clone.n instanceof Number];
+});
+attempt("primitives come back as they are", () => [structuredClone(5), structuredClone(-0), structuredClone("text"), structuredClone(null), structuredClone(undefined), structuredClone(5n)]);
+attempt("a transferred buffer leaves the source empty", () => {
+  const bytes = new Uint8Array([1, 2, 3]);
+  const clone = structuredClone(bytes, { transfer: [bytes.buffer] });
+  return [clone.length, bytes.length, bytes.byteLength, bytes[0]];
+});
+attempt("an object without a prototype", () => {
+  const source: { a: number } = Object.assign(Object.create(null), { a: 1 });
+  const clone = structuredClone(source);
+  return [clone.a, Object.getPrototypeOf(clone) === Object.prototype];
+});
+//// wrappers-pass-their-own-this-to-a-method-that-was-taken-off.ts
+////= show-6
+
+function passing<A extends unknown[], R>(f: (...args: A) => R): (...args: A) => R {
+  return function (this: unknown, ...args: A): R {
+    return f.apply(this, args);
+  };
+}
+function dropping<A extends unknown[], R>(f: (...args: A) => R): (...args: A) => R {
+  return (...args: A): R => f(...args);
+}
+function once<R>(f: () => R): () => R | undefined {
+  let ran = false;
+  return function (this: unknown): R | undefined {
+    if (ran) return undefined;
+    ran = true;
+    return f.call(this);
+  };
+}
+function counted<R>(f: () => R): { (): R; calls: number } {
+  const wrapper = Object.assign(
+    function (this: unknown): R {
+      wrapper.calls++;
+      return f.call(this);
+    },
+    { calls: 0 },
+  );
+  return wrapper;
+}
+
+class Account {
+  balance: number = 100;
+  owner: string = "ann";
+  read(): number {
+    return this.balance;
+  }
+  add(amount: number, bonus: number): number {
+    this.balance += amount + bonus;
+    return this.balance;
+  }
+  title(): string {
+    return this.owner.toUpperCase();
+  }
+  wrappedRead = passing(this.read);
+  droppedRead = dropping(this.read);
+}
+
+const account = new Account();
+show("honest", () => account.read());
+show("a passing wrapper as a member", () => account.wrappedRead());
+show("a dropping wrapper as a member", () => account.droppedRead());
+show("a passing wrapper, bare", () => (0, account.wrappedRead)());
+show("a passing wrapper on a look-alike", () => account.wrappedRead.call({ balance: 5 }));
+
+const holder = {
+  balance: 7,
+  owner: "holder",
+  read: passing(account.read),
+  add: passing(account.add),
+  title: passing(account.title),
+  readOnce: once(account.read),
+  readCounted: counted(account.read),
+};
+show("on another object: read", () => holder.read());
+show("on another object: add", () => holder.add(1, 2));
+show("on another object: title", () => holder.title());
+show("on another object: once", () => holder.readOnce());
+show("on another object: once again", () => holder.readOnce());
+show("on another object: counted", () => holder.readCounted() + " " + holder.readCounted() + " " + holder.readCounted.calls);
+show("the account is untouched", () => account.balance);
+show("the other object", () => holder.balance);
+
+const wrong = { balance: "much", owner: 5, read: passing(account.read), add: passing(account.add), title: passing(account.title) };
+show("other kinds: read", () => wrong.read());
+show("other kinds: add", () => wrong.add(1, 2));
+show("other kinds: title", () => wrong.title());
+
+show("two wrappers deep", () => ({ balance: 9, read: passing(passing(account.read)) }).read());
+show("a wrapper around a bound method", () => ({ balance: 9, read: passing(account.read.bind(account)) }).read());
+show("a wrapper handed to map", () => [0].map(passing(account.read))[0]);
+show("a wrapper handed to map with a this", () => [0].map(passing(account.read), { balance: 11 })[0]);
+
+let total = 0;
+for (let i = 0; i < 2000; i++) total += account.wrappedRead();
+show("2000 honest calls through the wrapper", () => total);
+show("then on another object", () => holder.read());
+//// x-then-y-and-y-then-x.ts
+////= Point-2
+
+const xy: Point = { x: 1, y: 2 };
+const yx: Point = { y: 4, x: 3 };
+
+function show(p: Point): void {
+  console.log(p.x);
+  console.log(p.y);
+  console.log(Object.keys(p).join());
+  console.log(JSON.stringify(p));
+  console.log(JSON.stringify({ ...p }));
+  for (const key in p) console.log(key);
+}
+
+show(xy);
+show(yx);
+
+export {};
+//// yield-star-forwards-what-the-outer-generator-is-sent.ts
+////= text-14
+
+function* inner(label: string): Generator<number, string, number> {
+  let sum = 0;
+  for (let i = 1; i <= 2; i++) {
+    const sent: number = yield i;
+    console.log(label + " inner was sent " + text(sent));
+    sum += sent;
+    try {
+      console.log(label + " inner toFixed " + sent.toFixed(1));
+    } catch (error) {
+      console.log(label + " inner toFixed " + failure(error));
+    }
+  }
+  return "sum " + text(sum);
+}
+
+function* honestOuter(): Generator<number, string, number> {
+  const result: string = yield* inner("honest");
+  return "outer saw " + result;
+}
+
+function* textOuter(): Generator<number, string, string> {
+  const hidden: Iterable<number> = inner("text");
+  const result = yield* hidden;
+  return "outer saw " + text(result);
+}
+
+function* flagOuter(): Generator<number, string, boolean> {
+  const hidden: Iterable<number, string> = inner("flag");
+  const result: string = yield* hidden;
+  return "outer saw " + result + " of length " + result.length;
+}
+
+function* nothingOuter(): Generator<number, string, undefined> {
+  const hidden: Iterable<number, string> = inner("nothing");
+  const result: string = yield* hidden;
+  return "outer saw " + result;
+}
+
+const honest = honestOuter();
+console.log(text(honest.next(100)));
+console.log(text(honest.next(1)));
+console.log(text(honest.next(2)));
+console.log(text(honest.next(3)));
+
+const texts = textOuter();
+console.log(text(texts.next("dropped")));
+console.log(text(texts.next("one")));
+console.log(text(texts.next("two")));
+
+const flags = flagOuter();
+console.log(text(flags.next(true)));
+console.log(text(flags.next(true)));
+console.log(text(flags.next(false)));
+
+const nothing = nothingOuter();
+console.log(text(nothing.next()));
+console.log(text(nothing.next()));
+console.log(text(nothing.next(undefined)));
+
+console.log("spread of the outer one: " + text([...nothingOuter()]));
+
+const honestAgain = honestOuter();
+console.log(text(honestAgain.next()));
+console.log(text(honestAgain.next(0.5)));
+console.log(text(honestAgain.next(-0)));

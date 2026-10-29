@@ -50,7 +50,7 @@ function check() {
   }
 }
 
-export function generateJsonByteClass(cfg: Config): { h: string; rs: string } {
+export function generateJsonByteClass(cfg: Pick<Config, "codegenDir">): { h: string; rs: string } {
   check();
 
   const banner = (comment: string) => [
@@ -83,7 +83,7 @@ export function generateJsonByteClass(cfg: Config): { h: string; rs: string } {
 
   const table: string[] = [];
   for (let row = 0; row < 256; row += 16) {
-    const cells = [];
+    const cells: string[] = [];
     for (let b = row; b < row + 16; b++) cells.push(hex(classOf(b)));
     table.push(`    ${cells.join(", ")},`);
   }

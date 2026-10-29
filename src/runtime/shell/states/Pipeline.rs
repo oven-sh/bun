@@ -13,7 +13,7 @@ use crate::shell::states::r#if::If;
 use crate::shell::states::subshell::Subshell;
 use crate::shell::yield_::Yield;
 
-pub struct Pipeline {
+pub(crate) struct Pipeline {
     pub(crate) base: Base,
     pub node: bun_ptr::BackRef<ast::Pipeline>,
     pub(crate) io: IO,
@@ -23,12 +23,12 @@ pub struct Pipeline {
     pub(crate) state: PipelineState,
 }
 
-pub enum CmdOrResult {
+pub(crate) enum CmdOrResult {
     Cmd(NodeId),
     Result(ExitCode),
 }
 
-pub enum PipelineState {
+pub(crate) enum PipelineState {
     /// `idx` is the next `cmds[]` slot to start.
     StartingCmds {
         idx: u32,
@@ -285,7 +285,7 @@ impl Pipeline {
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
         let stderr_fd = match &interp.as_pipeline(this).io.stderr {
-            OutKind::Fd(fd) => Some((std::sync::Arc::clone(&fd.writer), fd.captured)),
+            OutKind::Fd(fd) => Some((std::rc::Rc::clone(&fd.writer), fd.captured)),
             OutKind::Pipe | OutKind::Ignore => None,
         };
         if let Some((writer, captured)) = stderr_fd {

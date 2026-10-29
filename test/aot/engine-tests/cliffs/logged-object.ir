@@ -1,0 +1,62 @@
+# The trigger of the pair with logged-object-baseline.ir: the same program with one more line, console.log(point). The instance keeps its size, its proven accesses and its direct calls: the numbers below are those of the baseline
+# FORM: AsRead
+# OPTIONS: references=narrow
+# RUN: plan-slots layouts
+# RUN(CALLS): pipeline ResolveCalls
+# STATISTIC: HiddenWordsPlaced = 0
+# STATISTIC: FlowProvenPositions = 6
+# STATISTIC: CallsResolved = 2
+# CHECK: L0 CompiledObject size=32
+# CHECK-NEXT: .0 "x" Double @16
+# CHECK-NEXT: .1 "y" Double @24
+# CHECK-NOT: extra-properties
+# CALLS-LABEL: function f3 name="use"
+# CALLS: [[point]]: L0 = GetModuleVariable variable=g0
+# CALLS-NOT: Branch
+# CALLS: = CallDirect [[point]] function=f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 kind=Instance name="Point" module=m0 constructor=f1 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}]
+variable g0 name="point" module=m0 declared={type=anything} initialization=Undefined
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    v2 = NewClosure function=f2
+    DefineMethod v1, v2 layout=L0 key="norm"
+    v4 = FinishClass v1 layout=L0
+    v5 = Builtin builtin=MathRandom
+    v6 = Call v5
+    v7 = ToNumber v6
+    v8 = Construct v4, -, v7, v7
+    PutModuleVariable v8 variable=g0
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="console" [isFreeName]
+    v12 = PropGet v11 key="log"
+    v13 = Call v12, v11, v8 calleeKey="log"
+    v14 = CallDirect function=f3
+    Return v14
+}
+function f1 name="Point" kind=BaseConstructor flags=[HasNewTarget] parameters=[{type=number}, {type=number}] results=[{type=anything}] {
+  b0(v0: anything, v1: number, v2: number):
+    v3 = GetConstructPrototype v0 layout=L0
+    v4 = NewObject v3 layout=L0 fields=[]
+    PropSet v4, v1 key="x" mode=Strict
+    PropSet v4, v2 key="y" mode=Strict
+    Return v4
+}
+function f2 name="norm" kind=Method flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = PropGet v0 key="y"
+    v3 = Add v1, v2
+    Return v3
+}
+function f3 name="use" results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="norm"
+    v2 = Call v1, v0 calleeKey="norm"
+    Return v2
+}

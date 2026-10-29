@@ -26,10 +26,10 @@ import { writeIfChanged } from "./fs.ts";
  * they are the fields of `Rule`, and of a build statement where a value per edge makes sense.
  */
 const ruleVars = {
+  // aot.ts
+  aot_check: ["cwd", "args", "desc"],
   // bun.ts
   binary_verify: ["spec"],
-  bk_upload: ["paths"],
-  bk_upload_gz: ["paths"],
   copy_exe: [],
   dsymutil: [],
   duplicate_symbols: [],
@@ -37,6 +37,7 @@ const ruleVars = {
   shim_verify: ["spec"],
   smoke_test: [],
   strip: ["stripflags"],
+  stripped_verify: ["spec"],
   // codegen.ts
   bun_install: ["dir", "stamp"],
   codegen: ["cwd", "args", "desc"],
@@ -48,31 +49,34 @@ const ruleVars = {
   cc: ["cflags"],
   cxx: ["cxxflags"],
   cxx_pch: ["cxxflags", "pch_file", "pch_header"],
-  link: ["ldflags"],
+  cxx_pch_chained: ["cxxflags", "pch_file", "pch_header", "pch_bases"],
+  link: ["ldflags", "lazy"],
+  link_trimmable: ["ldflags", "lazy"],
   mkdir_stamp: ["dir"],
   nasm: ["nasmflags"],
   pch: ["cxxflags", "pch_header"],
+  pch_chained: ["cxxflags", "pch_header"],
+  pch_checksum: [],
   pch_msvc: ["cxxflags", "pch_header", "pch_stub_obj"],
   // configure.ts
   regen: [],
   // rust/emit.ts
   rust_build_script: ["manifest", "crate"],
+  rust_generated_inputs: [],
   rust_plan: ["planinput", "plan"],
   rust_rustc: ["manifest", "crate", "what"],
   // shims.ts
   host_tool_cc: [],
-  shim_crt_decompress: [],
   // source.ts
-  dep_build: ["name", "builddir", "buildtype", "targets"],
   dep_cargo: ["name", "manifestdir", "env", "args"],
   dep_cargo_cross: ["name", "manifestdir", "env", "args", "rust_target"],
+  dep_check_defined: ["name", "symbols"],
   dep_check_undefined: ["name", "nm", "symbols"],
   dep_codegen: ["name", "cwd", "tool", "args"],
-  dep_configure: ["name", "srcdir", "builddir", "args"],
   dep_fetch: ["name", "repo", "commit", "dest", "cache", "patches"],
   dep_fetch_prebuilt: ["name", "url", "dest", "identity", "rm_paths"],
+  dep_gen: ["name", "desc", "opts", "cmd"],
   dep_host_cc: ["flags"],
-  dep_prebuild: ["name", "cwd", "cmd"],
   dep_subst: ["pairs"],
 } as const satisfies Record<string, readonly string[]>;
 
@@ -97,7 +101,7 @@ export type RuleName = keyof typeof ruleVars;
 type RuleVars<R extends RuleName> = { [K in (typeof ruleVars)[R][number]]: string };
 
 /** Every job pool: ninja's built-in `console`, and the ones the build declares. */
-export type PoolName = "bk_upload" | "bun_install" | "compile" | "console" | "dep";
+export type PoolName = "bun_install" | "compile" | "console" | "dep";
 
 /**
  * A ninja `rule` — a reusable command template.
@@ -193,19 +197,28 @@ export interface NinjaOptions {
 }
 
 /**
- * The variables in a rule's text, other than ninja's own (`$in`, `$out`, `$in_newline`), read the way ninja's lexer
- * reads them (src/lexer.in.cc): `$name` is `[a-zA-Z0-9_-]+`, so `$out-tmp` is the variable `out-tmp`, and `${name}`
- * may also contain `.`. `$$` is a literal dollar.
+ * A `$` in a rule's text, read the way ninja's lexer reads it (src/lexer.in.cc): `$$` is a literal dollar, `$name` is
+ * `[a-zA-Z0-9_-]+`, so `$out-tmp` is the variable `out-tmp`, and `${name}` may also contain `.`.
  */
+const reference = /\$(?:(\$)|\{([a-zA-Z0-9_.-]+)\}|([a-zA-Z0-9_-]+))/g;
+
+/** The variables in a rule's text, other than ninja's own (`$in`, `$out`, `$in_newline`). */
 function variablesIn(...texts: (string | undefined)[]): string[] {
   const found = new Set<string>();
   for (const text of texts) {
-    for (const m of (text ?? "").replaceAll("$$", "").matchAll(/\$(?:\{([a-zA-Z0-9_.-]+)\}|([a-zA-Z0-9_-]+))/g)) {
-      const name = (m[1] ?? m[2])!;
-      if (name !== "in" && name !== "out" && name !== "in_newline") found.add(name);
+    for (const [, dollar, braced, bare] of (text ?? "").matchAll(reference)) {
+      const name = braced ?? bare;
+      if (dollar === undefined && name !== "in" && name !== "out" && name !== "in_newline") found.add(name!);
     }
   }
   return [...found];
+}
+
+/** A rule's text with each variable replaced by `value(name)`, as ninja expands it. */
+export function expand(text: string, value: (name: string) => string): string {
+  return text.replace(reference, (_, dollar?: string, braced?: string, bare?: string) =>
+    dollar !== undefined ? "$" : value((braced ?? bare)!),
+  );
 }
 
 /**
@@ -510,6 +523,141 @@ export class Ninja {
 
     return changed;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Reading build.ninja back
+//
+// The inverse of `Ninja.toString()`, for tools that describe a build directory after the fact (timings.ts). It reads
+// what this file writes, not the whole ninja language: no `include`/`subninja`, no variable references in paths.
+// ---------------------------------------------------------------------------
+
+export interface ManifestRule {
+  /** Unexpanded: `$out`, `$in` and the edge's variables are still references. */
+  description: string | undefined;
+  restat: boolean;
+  generator: boolean;
+  pool: string | undefined;
+}
+
+export interface ManifestEdge {
+  /** A rule's name, or `phony`. */
+  rule: string;
+  outputs: string[];
+  /** Includes the absolute spelling `Ninja.build()` declares for each output. */
+  implicitOutputs: string[];
+  inputs: string[];
+  implicitInputs: string[];
+  orderOnlyInputs: string[];
+  validations: string[];
+  /** The indented `name = value` lines: the rule's variables, `pool`, `depfile`, `early_output_prefix`. */
+  bindings: Record<string, string>;
+}
+
+export interface Manifest {
+  /** Declared pools and their depth (`console` is ninja's own and is not declared). */
+  pools: Map<string, number>;
+  rules: Map<string, ManifestRule>;
+  edges: ManifestEdge[];
+}
+
+/** Parse the text of a `build.ninja` written by `Ninja`. Paths stay as written: relative to the build directory. */
+export function readManifest(text: string): Manifest {
+  const manifest: Manifest = { pools: new Map(), rules: new Map(), edges: [] };
+  // `$` + newline continues a statement; ninja drops the newline and the next line's indentation. A `$$` is read
+  // first, so a value that ends in a literal dollar does not continue.
+  const lines = text.replace(/\$\$|\$\r?\n[ \t]*/g, m => (m === "$$" ? m : "")).split(/\r?\n/);
+  let bind: (name: string, value: string) => void = () => {};
+  for (const line of lines) {
+    if (line.startsWith("#") || line.trim() === "") continue;
+    const binding = /^\s+([a-zA-Z0-9_.-]+) = (.*)$/.exec(line);
+    if (binding !== null) {
+      bind(binding[1]!, binding[2]!);
+      continue;
+    }
+    bind = () => {};
+    const [keyword, rest = ""] = splitOnce(line, " ");
+    if (keyword === "rule") {
+      const rule: ManifestRule = {
+        description: undefined,
+        restat: false,
+        generator: false,
+        pool: undefined,
+      };
+      manifest.rules.set(rest, rule);
+      bind = (name, value) => {
+        if (name === "description") rule.description = value;
+        else if (name === "restat") rule.restat = true;
+        else if (name === "generator") rule.generator = true;
+        else if (name === "pool") rule.pool = value;
+      };
+    } else if (keyword === "pool") {
+      bind = (name, value) => {
+        if (name === "depth") manifest.pools.set(rest, Number(value));
+      };
+    } else if (keyword === "build") {
+      const edge = readBuildLine(rest);
+      manifest.edges.push(edge);
+      bind = (name, value) => {
+        edge.bindings[name] = value.replaceAll("$$", "$");
+      };
+    }
+    // `default`, `ninja_required_version = …` and other top-level variables say nothing about the graph.
+  }
+  return manifest;
+}
+
+function splitOnce(s: string, sep: string): [string, string | undefined] {
+  const at = s.indexOf(sep);
+  return at < 0 ? [s, undefined] : [s.slice(0, at), s.slice(at + sep.length)];
+}
+
+/** `outs [| implicit outs]: rule [ins] [| implicit ins] [|| order-only ins] [|@ validations]`, undoing `ninjaEscapePath`. */
+function readBuildLine(text: string): ManifestEdge {
+  const edge: ManifestEdge = {
+    rule: "",
+    outputs: [],
+    implicitOutputs: [],
+    inputs: [],
+    implicitInputs: [],
+    orderOnlyInputs: [],
+    validations: [],
+    bindings: {},
+  };
+  let into = edge.outputs;
+  let afterColon = false;
+  let word = "";
+  const endWord = () => {
+    if (word === "") return;
+    if (word === "|") into = afterColon ? edge.implicitInputs : edge.implicitOutputs;
+    else if (word === "||") into = edge.orderOnlyInputs;
+    else if (word === "|@") into = edge.validations;
+    else if (afterColon && edge.rule === "") edge.rule = word;
+    else into.push(word);
+    word = "";
+  };
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]!;
+    if (c === "$") {
+      const escaped = text[++i];
+      assert(
+        escaped === "$" || escaped === " " || escaped === ":",
+        `build.ninja: a path refers to a variable: ${text}`,
+        {
+          hint: "Ninja.build() escapes every `$` in a path, so this file was not written by it.",
+        },
+      );
+      word += escaped;
+    } else if (c === " ") endWord();
+    else if (c === ":" && !afterColon) {
+      endWord();
+      afterColon = true;
+      into = edge.inputs;
+    } else word += c;
+  }
+  endWord();
+  assert(edge.rule !== "" && edge.outputs.length > 0, `build.ninja: not a build statement: build ${text}`);
+  return edge;
 }
 
 // ---------------------------------------------------------------------------

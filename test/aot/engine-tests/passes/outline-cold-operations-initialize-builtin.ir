@@ -1,0 +1,26 @@
+# A run that starts with InitializeBuiltin does not share a body with equal runs that have none
+# FORM: Selected
+# OPTIONS: check=VerifyEachPass heat=OnlyLoopsAreHot
+# RUN: pass OutlineColdOperations
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="sixRuns" parameters=[{type=number}, {type=anything}] results=[{type=anything}] {
+    Switch v0 cases=[0, 1, 2, 3, 4, 5] -> case b1(), case b2(), case b3(), case b4(), case b5(), case b6(), otherwise b7()
+# REPEAT: i = 1..5
+  b%(i)() frequency=Rare:
+    v%(i*2) = PropGet v1 key="config" accessSite=%(i*2-1)
+    v%(i*2+1) = PropGet v%(i*2) key="detail" accessSite=%(i*2)
+    Return v%(i*2+1)
+# END REPEAT
+  b6() frequency=Rare:
+    InitializeBuiltin builtin=ProcessNextTick
+    v13 = PropGet v1 key="config"
+    v14 = PropGet v13 key="detail"
+    Return v14
+  b7():
+    Return v1
+}
+# CHECK-LABEL: function f0
+# CHECK-COUNT-5: anything = CallDirect v1 function=f1
+# CHECK: InitializeBuiltin builtin=ProcessNextTick

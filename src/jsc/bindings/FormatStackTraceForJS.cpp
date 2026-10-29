@@ -24,6 +24,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "ObjectBindings.h"
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
@@ -166,7 +167,8 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     if (callsPrepareStackTrace) {
         // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
         // it will display the stack as a formatted string, so we have to do the same.
-        errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+        putDirectOrThrow(lexicalGlobalObject, errorObject, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(scope, {});
 
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(errorObject);
@@ -322,6 +324,10 @@ WTF::String formatStackTrace(
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
+#if ENABLE(AOT)
+    JSC::AOT::Typed::ModuleID previousCompiledModule;
+    size_t previousCompiledFrame = 0;
+#endif
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
@@ -336,6 +342,21 @@ WTF::String formatStackTrace(
         originalLineColumns[i] = {};
 
         if (!frame.hasLineAndColumnInfo()) continue;
+
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame()) [[unlikely]] {
+            if (auto position = frame.compiledPosition()) {
+                originalLineColumns[i] = position->lineColumn;
+                if (position->source) {
+                    sourceURLs[i] = position->source == previousCompiledModule ? sourceURLs[previousCompiledFrame] : JSC::AOT::sourceURLOf(position->source);
+                    previousCompiledModule = position->source;
+                    previousCompiledFrame = i;
+                } else
+                    sourceURLs[i] = Zig::sourceURL(*position);
+            }
+            continue;
+        }
+#endif
 
         originalLineColumns[i] = frame.computeLineAndColumn();
 
@@ -397,7 +418,11 @@ WTF::String formatStackTrace(
                 column = displayColumn;
                 sourceURL = sourceURLForFrame;
 
-                if (remappedFrame.remapped) {
+                bool showsSourcePosition = remappedFrame.remapped;
+#if ENABLE(AOT)
+                showsSourcePosition |= frame.isCompiledFrame() && !frame.isBuiltinFunction() && !sourceURLForFrame.isEmpty();
+#endif
+                if (showsSourcePosition) {
                     if (errorInstance) {
                         errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                         errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
@@ -434,14 +459,11 @@ WTF::String formatStackTrace(
 
         if (!sourceURLForFrame.isEmpty()) {
             sb.append(sourceURLForFrame);
-            if (displayLine.zeroBasedInt() > 0 || displayColumn.zeroBasedInt() > 0) {
+            if (frame.hasLineAndColumnInfo()) {
                 sb.append(':');
                 sb.append(displayLine.oneBasedInt());
-
-                if (displayColumn.zeroBasedInt() > 0) {
-                    sb.append(':');
-                    sb.append(displayColumn.oneBasedInt());
-                }
+                sb.append(':');
+                sb.append(displayColumn.oneBasedInt());
             }
         }
 
@@ -534,7 +556,10 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
             }
         }
 
-        if (globalObjectForFrame == globalObject) {
+        // A position recorded at build time is already the one in the original source.
+        bool isOriginalPosition = Zig::hasOriginalSourcePosition(stackFrame);
+
+        if (globalObjectForFrame == globalObject && !isOriginalPosition) {
             if (JSCStackFrame::SourcePositions* sourcePositions = visibleFrame.getSourcePositions()) {
                 frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
                 frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();
@@ -585,7 +610,7 @@ static JSValue computeErrorInfoToJSValueWithoutSkipping(JSC::VM& vm, Vector<Stac
     // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
     if (!globalObject) {
         // node:vm will use a different JSGlobalObject
-        globalObject = defaultGlobalObject();
+        globalObject = defaultGlobalObject(vm);
         if (!globalObject->isInsideErrorPrepareStackTraceCallback) {
             auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
             auto prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s));
@@ -651,7 +676,7 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     // The frames only: JavaScriptCore prepends the error's name and message when the stack is read.
-    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
+    WTF::String result = Bun::formatStackTrace(vm, defaultGlobalObject(vm), nullptr, emptyString(), emptyString(), line, column, sourceURL, stackTrace, nullptr);
     if (scope.exception()) {
         // The onComputeErrorInfo hook cannot propagate a throw.
         (void)scope.tryClearException();
@@ -739,6 +764,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncAppendStackTrace, (JSC::JSGlobalObj
     if (!source || !destination) {
         throwTypeError(lexicalGlobalObject, scope, "First & second argument must be an Error object"_s);
         return {};
+    }
+
+    // appendVector() can't append a vector to itself, and the clear() below would drop the trace.
+    if (source == destination) {
+        return JSC::JSValue::encode(jsUndefined());
     }
 
     // A destination that is materialized, or is being formatted right now, never renders frames again.
@@ -840,7 +870,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSC::JSValue objectArg = callFrame->argument(0);
-    if (!objectArg.isObject()) {
+    // A WebAssembly GC object can't get a property and its Structure has no global object. V8 rejects it too.
+    if (!objectArg.isObject() || objectArg.asCell()->type() == JSC::JSType::WebAssemblyGCObjectType) {
         return JSC::JSValue::encode(throwTypeError(lexicalGlobalObject, scope, "invalid_argument"_s));
     }
 
@@ -889,7 +920,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
         RETURN_IF_EXCEPTION(scope, {});
-        errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        putDirectOrThrow(globalObject, errorObject, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

@@ -89,38 +89,38 @@ pub(crate) fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd,
     retry(|| rustix::fs::openat(dir, path.as_cstr(), oflags, mode)).map(own_fd)
 }
 
-#[inline]
-pub(crate) fn openat2_beneath(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
-    let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
-    let mode = rustix::fs::Mode::from_raw_mode(mode);
-    let dir = dir.as_borrowed_fd();
-    retry(|| {
-        rustix::fs::openat2(
-            dir,
-            path.as_cstr(),
-            oflags,
-            mode,
-            rustix::fs::ResolveFlags::BENEATH,
-        )
+/// Android's seccomp answers `openat2`/`fchmodat2` with SIGSYS; Termux runs the linux build.
+pub(crate) fn is_android_kernel() -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| {
+        let release = bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
+        cfg!(target_os = "android")
+            || bun_core::strings::contains_case_insensitive_ascii(release, b"android")
+            || bun_core::env_var::ANDROID_ROOT::get_not_empty().is_some_and(|root| {
+                let linker = [root, b"/bin/linker64\0"].concat();
+                faccessat(Fd::cwd(), ZStr::from_slice_with_nul(&linker), libc::F_OK).is_ok()
+            })
     })
-    .map(own_fd)
 }
 
+pub(crate) use rustix::fs::ResolveFlags;
+
 #[inline]
-pub(crate) fn openat2_in_root(dir: Fd, path: &ZStr, flags: i32, mode: Mode) -> Result<Fd, i32> {
+pub(crate) fn openat2(
+    dir: Fd,
+    path: &ZStr,
+    flags: i32,
+    mode: Mode,
+    resolve: ResolveFlags,
+) -> Result<Fd, i32> {
+    use bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH as DISABLED;
+    if is_android_kernel() || DISABLED.get().unwrap_or(false) {
+        return Err(libc::ENOSYS);
+    }
     let oflags = rustix::fs::OFlags::from_bits_retain(flags as u32);
     let mode = rustix::fs::Mode::from_raw_mode(mode);
     let dir = dir.as_borrowed_fd();
-    retry(|| {
-        rustix::fs::openat2(
-            dir,
-            path.as_cstr(),
-            oflags,
-            mode,
-            rustix::fs::ResolveFlags::IN_ROOT | rustix::fs::ResolveFlags::NO_MAGICLINKS,
-        )
-    })
-    .map(own_fd)
+    retry(|| rustix::fs::openat2(dir, path.as_cstr(), oflags, mode, resolve)).map(own_fd)
 }
 
 #[inline]

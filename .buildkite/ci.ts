@@ -5,10 +5,26 @@
  * @link https://buildkite.com/docs/pipelines/defining-steps
  */
 
+import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Arch, Abi as HostAbi, Os } from "../scripts/agent.ts";
 import { output, run } from "../scripts/agent.ts";
+import {
+  type AotTakes,
+  type AotTests,
+  getAotAlwaysDrawn,
+  getAotAlwaysInDrawnStep,
+  getAotExcludes,
+  getAotFileDraw,
+  getAotSample,
+  getAotShare,
+  getAotStepArguments,
+  getAotTestsOfLane,
+  getHardenedStepArguments,
+  isFileDrawn,
+  spellSample,
+} from "../scripts/aot-tests.ts";
 import {
   type BakedImage,
   type GeneratedImage,
@@ -21,6 +37,7 @@ import {
   locations,
 } from "../scripts/build/ci-images/spec.ts";
 import {
+  aotTests,
   getBuildMetadata,
   getCommit,
   getCommitMessage,
@@ -32,7 +49,6 @@ import {
   getSecret,
   isBuildkite,
   isFork,
-  isGithubAction,
   isMainBranch,
   isMergeQueue,
   isPullRequest,
@@ -57,18 +73,6 @@ function parseGitRepository(url: string | URL): string | undefined {
 function getRepository(): string | undefined {
   const url = getRepositoryUrl();
   return url ? parseGitRepository(url) : undefined;
-}
-
-function getBuildNumber(): number | undefined {
-  if (isBuildkite) {
-    return parseInt(getEnv("BUILDKITE_BUILD_NUMBER"));
-  }
-
-  if (isGithubAction) {
-    return parseInt(getEnv("GITHUB_RUN_ID"));
-  }
-
-  return undefined;
 }
 
 function isBuildManual(): boolean | undefined {
@@ -153,8 +157,6 @@ const emojiMap = {
   ubuntu: ["🐧", "ubuntu"],
   alpine: ["🐧", "alpine"],
   aws: ["☁️", "aws"],
-  amazonlinux: ["🐧", "aws"],
-  nix: ["🐧", "nix"],
   windows: ["🪟", "windows"],
   true: ["✅", "white_check_mark"],
   false: ["❌", "x"],
@@ -166,8 +168,6 @@ const emojiMap = {
   clipboard: ["📋", "clipboard"],
   package: ["📦", "package"],
   rocket: ["🚀", "rocket"],
-  openbsd: ["🐡", "openbsd"],
-  netbsd: ["🚩", "netbsd"],
   freebsd: ["😈", "freebsd"],
 };
 
@@ -186,9 +186,9 @@ function getBuildkiteEmoji(emoji: Emoji): string {
 
 /** A target's abi. glibc is the absence of one, so "gnu" is never spelled here. */
 type Abi = Exclude<HostAbi, "gnu">;
-type Distro = "debian" | "ubuntu" | "alpine" | "amazonlinux";
-type Tier = "latest" | "previous" | "oldest" | "eol" | "beta";
-type Profile = "release" | "assert" | "debug" | "asan";
+type Distro = "debian" | "ubuntu" | "alpine";
+type Tier = "latest" | "previous" | "oldest" | "beta";
+type Profile = "release" | "assert" | "debug" | "asan" | "hardened";
 
 interface Target {
   os: Os;
@@ -240,7 +240,6 @@ type Platform = Target & {
   distro?: Distro;
   release: string;
   tier?: Tier;
-  features?: string[];
 };
 
 type AzureVmTier = "build" | "test";
@@ -305,6 +304,11 @@ const buildPlatforms: Platform[] = [
   { os: "windows", arch: "x64", crossCompile: true, distro: "debian", release: "13" },
   { os: "windows", arch: "aarch64", crossCompile: true, distro: "debian", release: "13" },
 ];
+
+// A Bun built with --hardened=on is in no release, so nothing else would notice where its layout is lost. The build checks
+// the file that it links and the one that it strips (scripts/build/verify-binary.ts), and test/aot/hardened-*.test.ts check
+// what that Bun builds.
+const hardenedPlatform: Platform = { os: "linux", arch: "x64", profile: "hardened", distro: "debian", release: "13" };
 
 const testPlatforms: Platform[] = [
   // Darwin arm64 is targeted by `release-tier` (see getTestAgent): one job on
@@ -516,7 +520,9 @@ function getBuildAgent(platform: Platform): Ec2Agent {
   // (buildHostPlatform) and cross-compiles to its target; the target's
   // os/arch only affect build args, not agent tags or image-name.
   const { os, arch, abi, profile } = platform;
-  // Lanes without LTO (see ltoDefault in scripts/build/config.ts): rustc does its own fat LTO + codegen inside cargo, so the C++ compile overlapping it costs ~20s on 16 vCPUs; give them 32.
+  // Lanes without C/C++ LTO (see ltoDefault in scripts/build/config.ts) get 32 vCPUs. That was sized when rustc ran a
+  // fat LTO inside cargo beside the C++ compile (~20s lost to the overlap on 16); not re-measured since the link runs
+  // the Rust LTO.
   const nonLto =
     profile === "asan" || abi === "android" || os === "freebsd" || (os === "windows" && arch === "aarch64");
   return getEc2Agent(buildHostPlatform, {
@@ -584,19 +590,16 @@ function getTestAgent(platform: Platform): Agent {
  * Steps
  */
 
-/** The `ci-<mode>` profile of scripts/build.ts a build command runs. */
-type BuildMode = "build" | "cpp-only" | "rust-only" | "link-only" | "rust-and-link";
-
 /**
  * Build the scripts/build.ts argument list from a target's properties.
  * Replaces the old getBuildEnv (cmake -D env vars) + getBuildCommand
  * (--target passthrough) with direct build.ts flags.
  */
-function getBuildArgs(target: Target, options: PipelineOptions, mode: BuildMode): string {
+function getBuildArgs(target: Target, options: PipelineOptions): string {
   const { os, arch, abi, baseline, profile } = target;
   const { canary } = options;
 
-  const args = [`--profile=ci-${mode}`];
+  const args = ["--profile=ci-build"];
 
   // All build lanes share a debian-13 arm64 host, so host detection cannot
   // infer the target triple — always pass os/arch (and abi on linux).
@@ -605,6 +608,7 @@ function getBuildArgs(target: Target, options: PipelineOptions, mode: BuildMode)
 
   if (baseline) args.push("--baseline=on");
   if (profile === "asan") args.push("--asan=on");
+  if (profile === "hardened") args.push("--hardened=on");
 
   // canary: options.canary can be number (revision count) or undefined
   // (default on). Old system used CANARY_REVISION as a counter; build.ts
@@ -615,7 +619,7 @@ function getBuildArgs(target: Target, options: PipelineOptions, mode: BuildMode)
   return args.join(" ");
 }
 
-function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMode): string {
+function getBuildCommand(target: Target, options: PipelineOptions): string {
   // Windows code signing is handled by a dedicated 'windows-sign' step after
   // all Windows builds complete — see getWindowsSignStep(). smctl is x64-only,
   // so signing on the build agent wouldn't work for ARM64 anyway.
@@ -623,11 +627,11 @@ function getBuildCommand(target: Target, options: PipelineOptions, mode: BuildMo
   // Literal `node` — ci.ts generates a pipeline that runs on a
   // different agent later, so process.execPath (the generator's path)
   // is wrong. PATH on the agent has node: the image's bake installs it.
-  return `node scripts/build.ts ${getBuildArgs(target, options, mode)}`;
+  return `node scripts/build.ts ${getBuildArgs(target, options)}`;
 }
 
 /**
- * deps + C++ + cargo + link on one agent; also uploads libbun-*.a, libbun_runtime.a and the dep libs.
+ * deps + C++ + Rust + link on one agent.
  */
 function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandStep {
   const { arch } = platform;
@@ -650,7 +654,7 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
       // linked binary's startup during the smoke test.
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
     },
-    command: [...nasmSetup, getBuildCommand(platform, options, "build")],
+    command: [...nasmSetup, getBuildCommand(platform, options)],
   };
 }
 
@@ -659,7 +663,7 @@ function getBuildBunStep(platform: Platform, options: PipelineOptions): CommandS
  * Matches the naming convention in cmake/targets/BuildBun.cmake.
  */
 function getTargetTriplet(platform: Target): string {
-  const { os, arch, abi, baseline } = platform;
+  const { os, arch, abi, baseline, profile } = platform;
   let triplet = `bun-${os}-${arch}`;
   if (abi === "musl") {
     triplet += "-musl";
@@ -669,6 +673,9 @@ function getTargetTriplet(platform: Target): string {
   }
   if (baseline) {
     triplet += "-baseline";
+  }
+  if (profile === "hardened") {
+    triplet += "-hardened";
   }
   return triplet;
 }
@@ -682,7 +689,7 @@ function needsBaselineVerification(platform: Platform): boolean {
   const { os, arch, abi, profile } = platform;
   // asan never ships. x64-android is emulator-only; aarch64-android keeps its
   // static LSE/SVE scan via --skip-emulation in getVerifyBaselineStep().
-  if (profile === "asan") return false;
+  if (profile === "asan" || profile === "hardened") return false;
   if (os === "linux") return (arch === "x64" && abi !== "android") || arch === "aarch64";
   if (os === "windows") return arch === "x64";
   return false;
@@ -811,13 +818,12 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
 }
 
 /**
- * Targets whose build lane cross-compiles (so `canTraceOrderFile()` is false)
- * but whose test fleet is native. A `-trace-order` step runs there, downloads
- * the cross-built `bun-profile`, traces it, and uploads the `.order` artifact
- * that the next build's `inheritOrderFile()` picks up. One build of lag.
- *
- * linux-aarch64 is absent because its build lane runs on the aarch64 host and
- * traces itself; `packageAndUpload()` is its sole publisher.
+ * The targets that link with a symbol ordering file (flags.ts `usesOrderFile`),
+ * and the test machine each is traced on. No build traces its own binary: a
+ * `-trace-order` step runs after the build on a machine of the target's own
+ * architecture, downloads the build's `bun-profile`, traces it, and uploads the
+ * `.order` artifact that later builds' `inheritOrderFile()` picks up: every
+ * build, of main or of a pull request, links against the most recent one.
  *
  * The `on` platforms are entries of `testPlatforms`, so the step runs on an
  * image that exists. The windows tracer is built on the test VM for whichever
@@ -827,23 +833,24 @@ function getVerifyBaselineStep(platform: Platform, options: PipelineOptions): Co
 const traceOrderTargets: { os: Os; arch: Arch; on: Platform }[] = [
   { os: "darwin", arch: "aarch64", on: { os: "darwin", arch: "aarch64", release: "26", tier: "latest" } },
   { os: "linux", arch: "x64", on: { os: "linux", arch: "x64", distro: "debian", release: "13" } },
+  { os: "linux", arch: "aarch64", on: { os: "linux", arch: "aarch64", distro: "debian", release: "13" } },
   { os: "windows", arch: "x64", on: { os: "windows", arch: "x64", release: "2019", tier: "oldest" } },
   { os: "windows", arch: "aarch64", on: { os: "windows", arch: "aarch64", release: "11", tier: "latest" } },
 ];
 
 /**
- * Trace the symbol order file for a cross-compiled target on a native-arch
- * host, so the next build's `inheritOrderFile()` has something to download.
+ * Trace the symbol order file for a target on a machine of its own
+ * architecture, so the next build's `inheritOrderFile()` has something to download.
  *
- * The build lane cross-compiles from the aarch64 `buildHostPlatform` and cannot
- * run the binary it linked. This step runs on the target-arch test fleet,
+ * Every target is linked on the aarch64 `buildHostPlatform`, which cannot run
+ * most of them. This step runs on the target-arch test fleet,
  * downloads that lane's unstripped `bun-profile`, runs it under `scripts/
  * orderfile/generate.ts` (the traced binary doubles as the interpreter), and
  * uploads the result.
  *
- * Non-PR only — `orderFileEligible()` ignores PR builds, so a trace there has
- * no consumer. Soft-fail: the order file is an optimization, and a broken
- * tracer must not fail a build.
+ * Main only: every build, of any branch or pull request, inherits from main's
+ * builds, so a trace anywhere else has no consumer. Soft-fail: the order file
+ * is an optimization, and a broken tracer must not fail a build.
  *
  * Windows agents run commands under cmd.exe (see getVerifyBaselineStep for the
  * `|| exit /b 1` convention). The generator compiles the tracer there, which
@@ -888,20 +895,164 @@ function getTraceOrderStep(target: Target, tracePlatform: Platform, options: Pip
 interface TestOptions {
   buildId?: string | undefined;
   testFiles?: string[] | undefined;
+  aot?: AotTests | undefined;
+  /** Which of the two steps of `aot` this is. */
+  aotTakes?: AotTakes | undefined;
+  /** The Bun of `hardenedPlatform`. */
+  hardened?: boolean | undefined;
+}
+
+// Which tests of the ahead-of-time compiler a step runs: scripts/aot-tests.ts.
+const aotSources = [
+  "src/aot/",
+  "src/sema/",
+  "src/builtin_sources/",
+  "src/bundler/aot/",
+  "src/trim/",
+  "src/exe_format/",
+  "src/codegen/builtins/",
+  "src/codegen/declared-type-checks.ts",
+  "src/codegen/generate-removable-features.ts",
+  "src/codegen/removable-entry-points.ts",
+  "src/options_types/aot_options.rs",
+  "src/options_types/trim.rs",
+  "src/resolver/compiled_program.rs",
+  "src/standalone_graph/compiled_program.rs",
+  "src/standalone_graph/executable_",
+  "src/crash_handler/compiled_frames.rs",
+  "src/sql_jsc/shared/RowDecoder.rs",
+  "src/runtime/api/compile_ahead_of_time.rs",
+  "src/runtime/cli/check_command/compile_check.rs",
+  "src/runtime/cli/compile_",
+  "src/runtime/cli/run_compiled.rs",
+  "src/runtime/cli/startup_options",
+  "src/runtime/removed_feature.rs",
+  "src/jsc/compiled_program.rs",
+  "src/jsc/bindings/BunAOT",
+  "src/jsc/bindings/BunCompiled",
+  "src/jsc/bindings/BunCompilers.cpp",
+  "src/jsc/bindings/RemovableFeatures.h",
+  "src/jsc/bindings/RemovedFeature.cpp",
+  ...aotTests.map(group => `test/${group}`),
+  "scripts/build/aot",
+  "scripts/build/trim/",
+  "scripts/build/deps/webkit.ts",
+];
+// A git pathspec that names no directory or file matches nothing, so a file name prefix becomes a glob.
+const aotPathspecs = aotSources.map(source => (source.endsWith("/") || source.includes(".") ? source : `${source}*`));
+
+// The checkout of the step that runs this file is sparse and has no blobs: what it needs of test/ and src/ it asks git for.
+function git(...args: string[]): string | undefined {
+  const { status, stdout } = spawnSync("git", args, { encoding: "utf8", maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
+  return status === 0 ? stdout : undefined;
+}
+
+let aotChanges: boolean | undefined;
+// A diff that fails says nothing about the files, so it counts as a change.
+function hasAotChanges({ changedFiles }: PipelineOptions): boolean {
+  return (aotChanges ??= changedFiles?.length
+    ? changedFiles.some(file => aotSources.some(source => file.startsWith(source)))
+    : git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...aotPathspecs)?.trim() !== "");
+}
+
+// What an executable compiles and what the table of built-ins is written from, outside the compiler's own folders: the modules in
+// JavaScript, the schemas of native functions, and the generators of both.
+const librarySources = ["src/js/", "src/codegen/"];
+const libraryPathspecs = [...librarySources, "*.bind.ts"];
+const isLibrarySource = (file: string) =>
+  file.endsWith(".bind.ts") || librarySources.some(source => file.startsWith(source));
+
+let libraryChanges: boolean | undefined;
+function hasLibraryChangesWithoutAotChanges(options: PipelineOptions): boolean {
+  if (hasAotChanges(options)) return false;
+  return (libraryChanges ??= options.changedFiles?.length
+    ? options.changedFiles.some(isLibrarySource)
+    : git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...libraryPathspecs)?.trim() !== "");
+}
+
+const buildScripts = ["scripts/build", "scripts/build.ts"];
+let hardenedLane: boolean | undefined;
+// What decides the layout of a hardened Bun and of what it builds: the build scripts, the trimmable link, the writers of
+// executables and the compiler.
+function hasHardenedLane(options: PipelineOptions): boolean {
+  return (hardenedLane ??=
+    isMainBranch() ||
+    hasAotChanges(options) ||
+    (options.changedFiles?.length
+      ? options.changedFiles.some(file => buildScripts.some(source => file.startsWith(source)))
+      : git("diff", "--name-only", "--merge-base", "origin/main", "HEAD", "--", ...buildScripts)?.trim() !== ""));
+}
+function getAotTests(platform: Platform, options: PipelineOptions): AotTests | undefined {
+  return options.testFiles?.length ? undefined : getAotTestsOfLane(platform, hasAotChanges(options));
+}
+
+let expectedDurations: Record<string, Record<string, unknown>> | undefined;
+function getExpectedDurations(): Record<string, Record<string, unknown>> {
+  try {
+    return (expectedDurations ??= JSON.parse(git("show", "HEAD:test/expected-durations.json") ?? "{}") ?? {});
+  } catch {
+    return (expectedDurations = {});
+  }
+}
+
+// By their names, for the number of shards alone: scripts/runner.node.ts reads the tests and knows.
+let programFolders: string[] | undefined;
+function isDrawnByName(path: string): boolean {
+  programFolders ??= git("ls-tree", "-d", "--name-only", "HEAD:test/aot/programs")?.split("\n").filter(Boolean) ?? [];
+  return (
+    /^aot\/(variant-|packages-|generated-|jit-mode-eager-tier-up|each-case-alone|every-program|programs-marked-as-failing|collector-stress\/|heat\/|bad-time\/|joined-programs|trimmed-matches-untrimmed)/.test(
+      path,
+    ) || programFolders.some(folder => path.startsWith(`aot/${folder}.`) || path.startsWith(`aot/${folder}-`))
+  );
+}
+
+function getAotParallelism(platform: Platform, options: PipelineOptions, aot: AotTests, takes: AotTakes): number {
+  const { os, arch, abi, profile } = platform;
+  const windows = arch === "x64" ? "windows" : "windows-aarch64";
+  const lane = profile === "asan" ? "asan" : abi === "musl" ? "musl" : os === "windows" ? windows : "default";
+  const excludes = getAotExcludes(platform, aot);
+  const alwaysDrawn = getAotAlwaysDrawn(platform, hasLibraryChangesWithoutAotChanges(options));
+  const draw = getAotFileDraw(platform, aot);
+  const sample = spellSample(getAotSample(), getAotShare(platform));
+  const alwaysInDrawnStep = getAotAlwaysInDrawnStep(platform, aot);
+  let milliseconds = 0;
+  for (const [path, durations] of Object.entries(getExpectedDurations())) {
+    if (!aotTests.some(group => path.startsWith(group)) || excludes.some(group => path.includes(group))) continue;
+    // Where files are drawn, what is always drawn is the fixed step and the draw is the other. Where every file is run, the tests that take shares are the drawn step.
+    const isFixed = draw > 1 ? alwaysDrawn.some(group => path.includes(group)) : !isDrawnByName(path);
+    // These have as much for one step as for the other.
+    const isInBoth = draw === 1 && path.startsWith("aot/generated-births-and-uses");
+    if (isFixed !== (takes === "fixed") && !isInBoth) continue;
+    if (!isFixed && !alwaysInDrawnStep.some(group => path.includes(group)) && !isFileDrawn(sample, path, draw))
+      continue;
+    milliseconds += Number(durations?.[lane] ?? durations?.["default"]) || 0;
+  }
+  const shards = Math.ceil(milliseconds / (12 * 60_000)) || (aot === "all" ? 10 : 2);
+  return Math.min(shards, os === "darwin" ? 16 : arch === "x64" ? 27 : 24);
 }
 
 function getTestBunStep(platform: Platform, options: PipelineOptions, testOptions: TestOptions = {}): CommandStep {
   const { os, profile } = platform;
-  const { buildId, testFiles } = testOptions;
+  const { buildId, testFiles, aot, aotTakes = "fixed", hardened } = testOptions;
 
-  const args = [`--step=${getTargetKey(platform)}-build-bun`];
+  const buildKey = `${getTargetKey(hardened ? hardenedPlatform : platform)}-build-bun`;
+  const args = [`--step=${buildKey}`];
   if (buildId) {
     args.push(`--build-id=${buildId}`);
   }
 
-  if (testFiles?.length) {
+  if (hardened) {
+    args.push(...getHardenedStepArguments(aotTakes), "--vendor=false");
+  } else if (aot) {
+    args.push(
+      "--retries=1",
+      "--vendor=false",
+      ...getAotStepArguments(platform, aot, aotTakes, hasLibraryChangesWithoutAotChanges(options)),
+    );
+  } else if (testFiles?.length) {
     args.push(...testFiles.map(testFile => `--include=${testFile}`));
   } else {
+    args.push(...aotTests.map(group => `--exclude=${group}`));
     // platform-independent tsc check; runs in .github/workflows/bun-types.yml instead
     args.push("--exclude=integration/bun-types");
     // source-tree lints and build-script unit tests that never touch the built
@@ -911,12 +1062,13 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
 
   const depends: string[] = [];
   if (!buildId) {
-    depends.push(`${getTargetKey(platform)}-build-bun`);
+    depends.push(buildKey);
   }
 
+  const kind = `${hardened ? "hardened" : aot ? "aot" : "bun"}${aotTakes === "drawn" ? "-drawn" : ""}`;
   return {
-    key: `${getPlatformKey(platform)}-test-bun`,
-    label: `${getPlatformLabel(platform)} - test-bun`,
+    key: `${getPlatformKey(platform)}-test-${kind}`,
+    label: `${getPlatformLabel(platform)} - test-${kind}`,
     depends_on: depends,
     agents: getTestAgent(platform),
 
@@ -931,11 +1083,24 @@ function getTestBunStep(platform: Platform, options: PipelineOptions, testOption
     // connected at upload but drops off during the build wait, so the
     // step sits `scheduled` with nobody to take it. That holds only this
     // PR's own build, and a cancel clears it.
-    parallelism: platform.tier === "beta" ? 1 : os === "darwin" ? 2 : os === "windows" ? 8 : 20,
-    ...(platform.tier === "beta" ? { soft_fail: true } : {}),
+    parallelism: aot
+      ? getAotParallelism(platform, options, aot, aotTakes)
+      : platform.tier === "beta" || hardened
+        ? 1
+        : os === "darwin"
+          ? 2
+          : os === "windows"
+            ? 8
+            : 20,
+    // The compiler's tests do not hold up work that touches neither the compiler nor what it compiles.
+    ...(platform.tier === "beta" ||
+    aotTakes === "drawn" ||
+    (aot && !(hasAotChanges(options) || hasLibraryChangesWithoutAotChanges(options)))
+      ? { soft_fail: true }
+      : {}),
     // The beta lane runs the whole suite as one shard on one box (~35 min).
     timeout_in_minutes:
-      platform.tier === "beta" ? 60 : profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
+      platform.tier === "beta" ? 60 : aot || profile === "asan" || os === "windows" || os === "darwin" ? 45 : 30,
     env: {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.ts asserts the agent matches what
@@ -1017,13 +1182,6 @@ function getImageSteps(
       {
         ...waitStep,
         label: `${getImageLabel(platform)} - bake-image`,
-        env: {
-          // Packer needs several minutes to delete its temp Azure resources after a cancel;
-          // the agent's default 10s grace SIGKILLs it mid-cleanup and leaks a full
-          // VM/NIC/IP stack per retry. The agent reads this from job env — there's no
-          // step-level property for it.
-          BUILDKITE_SIGNAL_GRACE_PERIOD_SECONDS: `${10 * 60}`,
-        },
         // One command, so that a cancel reaches Packer (see bakeWindowsImage).
         command: `node ./scripts/ci-image.ts bake-image --key=${key} --name=${name} --timeout-minutes=${bakeTimeout - 10}`,
       },
@@ -1088,8 +1246,9 @@ function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptio
     }),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
+    // smctl runs signtool.exe, which is only in PATH in a Visual Studio environment.
     command: [
-      `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/sign-windows-artifacts.ps1 ` +
+      `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 pwsh -NoProfile -File .\\.buildkite\\scripts\\sign-windows-artifacts.ps1 ` +
         `-Artifacts ${artifacts.join(",")} ` +
         `-BuildSteps ${buildSteps.join(",")}`,
     ],
@@ -1291,7 +1450,6 @@ interface PipelineOptions {
   skipSizeCheck?: OptionFlag;
   forceBuilds?: OptionFlag;
   signWindows?: OptionFlag;
-  dryRun?: OptionFlag;
   canary?: number;
   buildPlatforms?: Platform[];
   testPlatforms?: Platform[];
@@ -1529,7 +1687,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
             getBuildProfiles().map(profile => ({ ...getSelectedPlatform(testPlatformsMap, key), profile })),
           )
         : Array.from(testPlatformsMap.values()),
-      dryRun: parseBoolean(options["dry-run"]),
     };
   }
 
@@ -1560,7 +1717,6 @@ async function getPipelineOptions(): Promise<PipelineOptions | undefined> {
     skipTests: parseOption(/\[(skip tests?|no tests?|only builds?)\]/i),
     skipSizeCheck: parseOption(/\[(skip size( check)?|allow size)\]/i),
     signWindows: parseOption(/\[(sign windows)\]/i),
-    dryRun: parseOption(/\[(dry run)\]/i),
     buildPlatforms: Array.from(buildPlatformsMap.values()),
     testPlatforms: Array.from(testPlatformsMap.values()),
   };
@@ -1726,7 +1882,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     steps.push({ key: "images", group: getBuildkiteEmoji("aws"), steps: imageSteps });
   }
 
-  const { skipBuilds, forceBuilds, dryRun } = options;
+  const { skipBuilds, forceBuilds } = options;
 
   let buildId: string | undefined;
   if (skipBuilds && !forceBuilds) {
@@ -1782,6 +1938,7 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
     let relevantBuildPlatforms = includeASAN
       ? buildPlatforms
       : buildPlatforms.filter(({ profile }) => profile !== "asan");
+    if (hasHardenedLane(options)) relevantBuildPlatforms = [...relevantBuildPlatforms, hardenedPlatform];
 
     steps.push(
       ...relevantBuildPlatforms.flatMap(target => {
@@ -1814,17 +1971,15 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
           );
         }
 
-        // Seed the symbol order file for a cross-compiled target on its native
-        // test fleet (see getTraceOrderStep). Always on main so the inheritance
-        // chain stays fed, and anywhere else on commit-message opt-in so a PR
-        // that changes the tracer can prove the step works before merge — the
-        // same `[generate symbol order]` tag ci.ts already honours. Release
-        // profile only — usesOrderFile() is false under a sanitizer anyway.
+        // Trace the symbol order file later builds inherit, on the target's own
+        // test fleet (see getTraceOrderStep). On main: that is where every
+        // build, of a pull request too, inherits from. Release profile only —
+        // usesOrderFile() is false under a sanitizer anyway.
         const traceOn = traceOrderTargets.find(
           t =>
             t.os === target.os && t.arch === target.arch && !target.abi && (target.profile ?? "release") === "release",
         );
-        if (traceOn && (isMainBranch() || /\[generate symbol order\]/i.test(getCommitMessage() ?? ""))) {
+        if (traceOn && isMainBranch()) {
           const traceDeps = getImageDependsOn(traceOn.on, baking);
           steps.push(
             ...placeBinaryCheck(
@@ -1874,6 +2029,20 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
         ...relevantTestPlatforms.map(target => {
           const step = getTestBunStep(target, options, { testFiles, buildId });
           testStepKeys.push(step.key);
+          const aot = getAotTests(target, options);
+          const aotStep = aot && getTestBunStep(target, options, { buildId, aot });
+          if (aotStep) testStepKeys.push(aotStep.key);
+          // Nothing waits for it.
+          const drawnAotStep = aot && getTestBunStep(target, options, { buildId, aot, aotTakes: "drawn" });
+          // Its build is made in this run alone, and no release waits for it.
+          const runsHardened =
+            !buildId &&
+            !testFiles?.length &&
+            getPlatformKey(target) === getPlatformKey({ ...hardenedPlatform, profile: undefined });
+          const hardenedStep =
+            runsHardened && hasHardenedLane(options) && getTestBunStep(target, options, { hardened: true });
+          const drawnHardenedStep =
+            hardenedStep && getTestBunStep(target, options, { hardened: true, aotTakes: "drawn" });
           // Test shards run on their native platform image; when this build
           // bakes it, they wait for it.
           const dependsOn = getImageDependsOn(target, baking);
@@ -1881,7 +2050,9 @@ async function getPipeline(options: PipelineOptions = {}): Promise<Pipeline | un
             {
               key: getPlatformKey(target),
               group: getPlatformLabel(target),
-              steps: [step],
+              steps: [step, aotStep, drawnAotStep, hardenedStep, drawnHardenedStep].filter(
+                (step): step is CommandStep => !!step,
+              ),
             },
             ...dependsOn,
           );

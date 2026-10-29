@@ -38,15 +38,18 @@ const repo = resolve(import.meta.dirname, "..");
 // the long poles immediately; everything after bun_hash takes seconds.
 const MIRI_CRATES = [
   "bun_collections",
+  "bun_sema",
   "bun_ast",
   "bun_paths",
   "bun_hash",
   "bun_base64",
+  "bun_bundler",
   "bun_clap",
   "bun_dispatch",
   "bun_errno",
   "bun_http_types",
   "bun_md",
+  "bun_pod",
   "bun_ptr",
   "bun_resolve_builtins",
   "bun_shell_parser",

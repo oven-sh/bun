@@ -1,9 +1,11 @@
 /**
  * Rust build step — every crate a ninja edge.
  *
- * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`; the leaf crate is
- * `src/runtime` (`bun_runtime`, `crate-type = ["staticlib"]`), whose `libbun_runtime.a` carries the
- * entire crate graph plus libstd with `main` exported `#[no_mangle] extern "C"`.
+ * The Rust port lives in the workspace rooted at the repo's `Cargo.toml`; the root of the crate graph is
+ * `src/executable` (`bun_executable`), an empty library that depends on the crates the link takes and nothing else
+ * depends on. `main` is in `bun_runtime`, exported `#[no_mangle] extern "C"`.
+ * Every crate's rlib, std's included, is an input of bun's own link, beside the C/C++ objects: no crate is a
+ * final Rust artifact, and nothing copies the crate graph into one archive.
  *
  * cargo plans, ninja executes: `rust/plan.ts` asks cargo for the unit graph it would build for
  * exactly the arguments computed here (`cargoBuildInvocation`: profile, target, `-Zbuild-std`, the
@@ -22,30 +24,26 @@
  * (`src/install/windows-shim`), planned with its own profile, flags and `-Zbuild-std`, whose root is a
  * `bin`. Its executable lands in the codegen directory, where `bun_install` embeds it from.
  *
- * ## Why an `.a` and not a single `.o`
+ * ## How Rust reaches the link
  *
- * A single `.o` would need either full LTO (`-C lto=fat --emit=obj`, which
- * recompiles the whole crate graph from bitcode every build — minutes in
- * debug) or an `ld -r --whole-archive` post-merge (extra platform-specific
- * step). The staticlib goes into the link's `$in` list between the C++
- * objects and the dependency archives;
- * crt1.o's undefined `main` plus the C++ side's hundreds of `extern "C"`
- * `Bun__*`/`Zig*` references pull every reachable member, and the release
- * link's `--gc-sections` still DCEs per-function. `rustLinkFlags()` wraps
- * the archive in `--whole-archive` so members that are *only* referenced via
- * the dynamic-list / NAPI surface (no inbound static ref) are retained too.
+ * Like the C/C++ objects: every crate's rlib has a name known at configure and is an input of the link edge
+ * (`rust/units.ts` `linkedRlibs`), between the C++ objects and the dependency archives. An rlib is an archive, so
+ * a member is linked when something needs a symbol it defines: crt1.o's undefined `main` plus the C++ side's
+ * hundreds of `extern "C"` `Bun__*`/`Zig*` references pull every reachable member, and the release link's
+ * `--gc-sections` still DCEs per-function. A member is one codegen unit's object, as it was inside the single
+ * archive rustc used to make of all of them, so what gets pulled is unchanged.
  */
 
 import { existsSync } from "node:fs";
-import { basename, dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Abi, Arch, Config, OS } from "./config.ts";
 import { assert } from "./error.ts";
-import { computeCpuTargetFlags } from "./flags.ts";
+import { computeCpuTargetFlags, rustLtoInLink } from "./flags.ts";
 import type { Ninja } from "./ninja.ts";
 import { envify } from "./rust/cargo-env.ts";
-import { emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
+import { emitGeneratedInputsCheck, emitRustPlan, emitRustUnits, registerRustUnitRules } from "./rust/emit.ts";
 import { type PlanInput, planEnv, planPath, readPlan } from "./rust/plan.ts";
-import { buildRustGraph } from "./rust/units.ts";
+import { buildRustGraph, linkedRlibs } from "./rust/units.ts";
 
 // ───────────────────────────────────────────────────────────────────────────
 // Target / profile mapping
@@ -132,7 +130,7 @@ export const cargoBuildStdArg = "-Zbuild-std=core,alloc,std,proc_macro,panic_abo
  * The C++ side's `cpuTargetFlags` (flags.ts) spelled as rustflags, derived
  * from that table so the two halves of the binary can't drift apart. They
  * have to agree: the Rust half runs on whatever CPU the C++ baseline admits,
- * and under cross-language LTO (`cfg.crossLangLto`) LLVM only inlines a call
+ * and under LTO (`cfg.lto`, which is cross-language: rustc's bitcode joins the C++ link) LLVM only inlines a call
  * when the callee's CPU feature set is a subset of the caller's (a CPU's own
  * tuning features and the tune CPU count too), so a mismatch turns off
  * inlining across the Rust/C++ boundary in both directions.
@@ -187,7 +185,7 @@ export function windowsShimPath(cfg: Config): string {
 
 /**
  * `<buildDir>/rust-target`: everything Rust. Each planned graph has a directory of its own there — its plan, unit
- * manifests and artifacts; bun_runtime's is that directory itself, the Windows shim's is `rust-target/shim`. It is
+ * manifests and artifacts; bun_executable's is that directory itself, the Windows shim's is `rust-target/shim`. It is
  * also the `--target-dir` the planner gives cargo, which writes nothing there, and cargo's own layout
  * (`<triple>/<profile>/…`) does not meet the units' (`<triple>/deps`, `host/`, `units/`).
  */
@@ -202,11 +200,6 @@ function shimGraphDir(cfg: Config): string {
 /** The plans build.ninja is generated from: inputs of the regen edge (configure.ts). */
 export function rustPlanFiles(cfg: Config): string[] {
   return [planPath(rustTargetDir(cfg)), ...(cfg.windows ? [planPath(shimGraphDir(cfg))] : [])];
-}
-
-/** Absolute path to `libbun_runtime.a` (or `bun_runtime.lib` on Windows): the staticlib root's output, `<buildDir>/rust-target/<triple>/` (rust/units.ts). */
-export function rustLibPath(cfg: Config): string {
-  return resolve(rustTargetDir(cfg), rustTarget(cfg), `${cfg.libPrefix}bun_runtime${cfg.libSuffix}`);
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -228,10 +221,9 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
  */
 export interface RustBuildInputs {
   /**
-   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist (`generated_classes.rs`
-   * and friends are undeclared side effects of the scripts producing these). Order-only for the crate edges:
-   * they must exist before a workspace crate compiles, and from then on rustc's dep-info names exactly the
-   * files each crate read, so a changed one rebuilds just its includers.
+   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist. Order-only for the edges
+   * of the crates that read them (`generatedFilesReadBy`): they must exist before such a crate compiles, and from
+   * then on rustc's dep-info names exactly the files each crate read, so a changed one rebuilds just its includers.
    */
   codegenOrderOnly: string[];
   /**
@@ -248,6 +240,49 @@ export interface RustBuildInputs {
    * re-plans — and order-only for every crate edge.
    */
   vendorStamps: string[];
+}
+
+/**
+ * The packages that read generated files, with what each reads: paths in the codegen directory, or in the repository
+ * when they start with `src/`, where a trailing `/` names a directory. A package's crates wait for those files alone,
+ * and every other crate for none.
+ */
+const generatedBuiltinTables = ["aot_builtin_ids.rs", "aot_builtin_syntax.rs", "aot_builtin_table.rs"];
+
+const generatedFilesReadBy: Record<string, string[] | "all"> = {
+  bun_aot: [...generatedBuiltinTables, "aot_schema.rs"],
+  bun_aot_builtins: [...generatedBuiltinTables, "aot_schema_builtins.rs"],
+  bun_aot_interface: ["aot_schema_interface.rs"],
+  bun_ast: ["runtime.out.js"],
+  bun_bundler: ["bake.server.js", "compressed/codegen/bake.client.js.zst"],
+  bun_core: ["build_options.rs"],
+  bun_css_jsc: ["generated_bindgen_bun_css_jsc.rs"],
+  bun_http_jsc: ["generated_bindgen_bun_http_jsc.rs"],
+  bun_install: ["bun-shim-impl.exe"],
+  bun_install_jsc: ["generated_bindgen_bun_install_jsc.rs"],
+  bun_jsc: [
+    "ErrorCode.generated.rs",
+    "cpp.rs",
+    "generated_bindgen_bun_jsc.rs",
+    "generated_builtin_module_key_index.rs",
+    "generated_resolved_source_tag.rs",
+  ],
+  bun_lint: ["compressed/lint/", "compressed/src/lint/"],
+  bun_lint_driver: ["compressed/lint/", "compressed/codegen/lint-rule-pages.txt.zst"],
+  bun_parsers: ["json_byte_class.rs", "xml_byte_class.rs"],
+  bun_patch_jsc: ["generated_bindgen_bun_patch_jsc.rs"],
+  bun_removable_features: ["removable_features.rs"],
+  bun_resolver: ["node-fallbacks/"],
+  bun_runtime: "all",
+  bun_sema: ["compressed/src/sema/"],
+  bun_semver_jsc: ["generated_bindgen_bun_semver_jsc.rs"],
+  bun_sourcemap_jsc: ["generated_bindgen_bun_sourcemap_jsc.rs"],
+  bun_sql_jsc: ["generated_bindgen_bun_sql_jsc.rs"],
+  bun_sys_jsc: ["generated_bindgen_bun_sys_jsc.rs"],
+};
+
+function generatedFilesOf(packageName: string): string[] | "all" {
+  return generatedFilesReadBy[packageName] ?? [];
 }
 
 /** The `cargo build` invocation the Rust step plans with (`cargo build <args> --unit-graph`), and what it implies for every unit. */
@@ -269,19 +304,18 @@ export interface CargoInvocation {
 }
 
 /**
- * Compute the cargo command line + environment for `cargo build -p bun_runtime`.
+ * Compute the cargo command line + environment for `cargo build -p bun_executable`.
  * Pure function of `cfg`; does no I/O.
  */
 export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   const targetDir = rustTargetDir(cfg);
   const triple = rustTarget(cfg);
-  const tier3 = rustTargetIsTier3(triple);
   const profile = cargoProfile(cfg);
 
   // ─── Build args ───
   const args: string[] = [
     "-p",
-    "bun_runtime",
+    "bun_executable",
     "--lib",
     "--target-dir",
     targetDir,
@@ -291,26 +325,27 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     profile,
     "--locked",
   ];
-  if (tier3 || cfg.release || cfg.asan) {
-    // Rebuild std from source (cargoBuildStdArg) because:
-    // tier3:   no prebuilt `rust-std` exists.
-    // release: prebuilt std is native code built for generic x86-64 with no
-    //          `.llvm_addrsig`. Rebuilding with our RUSTFLAGS gets it
-    //          `-Ctarget-cpu=` (AVX2/BMI in core::str / hashbrown), and under
-    //          `cfg.lto` it becomes bitcode that joins the cross-language LTO
-    //          unit + safe ICF instead of being an opaque blob in the link.
-    // asan:    prebuilt std is uninstrumented; rebuilding applies
-    //          `-Zsanitizer=address` so OOB/UAF inside Vec/String/HashMap are
-    //          visible instead of stopping at the std boundary.
-    args.push(cargoBuildStdArg);
-    if (cfg.release && !cfg.asan) {
-      // Cargo's default build-std feature set is `panic-unwind,backtrace,default`.
-      // `backtrace` links std's symbolizer (gimli, addr2line, miniz_oxide,
-      // rustc-demangle, ~200 KB on linux-x64) for `std::backtrace` and the
-      // default panic hook; bun installs its own panic hook and symbolizes
-      // crash traces out of process, so nothing reads it.
-      args.push("-Zbuild-std-features=panic-unwind,default");
-    }
+  if (!cfg.aot) args.push("--no-default-features", "--features", "without_aot");
+  // std is compiled from source (cargoBuildStdArg) in every build: the link is bun's own and takes each crate's rlib
+  // as the output of an edge (rust/units.ts linkedRlibs), so std's crates have to be units of the graph like the
+  // rest; the toolchain's prebuilt std is not. It also gives:
+  // tier3:   a std at all; no prebuilt `rust-std` exists.
+  // release: prebuilt std is native code built for generic x86-64 with no
+  //          `.llvm_addrsig`. Rebuilding with our RUSTFLAGS gets it
+  //          `-Ctarget-cpu=` (AVX2/BMI in core::str / hashbrown), and under
+  //          `cfg.lto` it becomes bitcode that joins the cross-language LTO
+  //          unit + safe ICF instead of being an opaque blob in the link.
+  // asan:    prebuilt std is uninstrumented; rebuilding applies
+  //          `-Zsanitizer=address` so OOB/UAF inside Vec/String/HashMap are
+  //          visible instead of stopping at the std boundary.
+  args.push(cargoBuildStdArg);
+  if (cfg.release && !cfg.asan) {
+    // Cargo's default build-std feature set is `panic-unwind,backtrace,default`.
+    // `backtrace` links std's symbolizer (gimli, addr2line, miniz_oxide,
+    // rustc-demangle, ~200 KB on linux-x64) for `std::backtrace` and the
+    // default panic hook; bun installs its own panic hook and symbolizes
+    // crash traces out of process, so nothing reads it.
+    args.push("-Zbuild-std-features=panic-unwind,default");
   }
 
   // ─── rustflags ───
@@ -320,7 +355,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // the targets where bun links as a position-dependent ET_EXEC. With the
   // default `pic`, every Rust `&'static [T]` / `&'static str` / vtable is a
   // GOT-relative reference and the constant ends up in `.data.rel.ro` (RW
-  // segment, eagerly faulted) instead of `.rodata`; libbun_runtime.a alone
+  // segment, eagerly faulted) instead of `.rodata`; the Rust crates alone
   // contributes ~561 KiB of `.data.rel.ro` that the Zig binary placed in
   // shareable read-only pages. `static` lets rustc emit absolute references
   // and the constants land in `.rodata`. This is a *target* RUSTFLAG: with
@@ -329,11 +364,21 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // always PIC), Android (bionic loader requires PIE — flags.ts:934), and
   // Windows (COFF has its own model) are excluded.
   if ((cfg.linux && cfg.abi !== "android") || cfg.freebsd) {
-    rustflags.push("-Crelocation-model=static");
+    rustflags.push(
+      ...(cfg.hardened ? ["-Crelocation-model=pie", "-Zplt=yes", "--cfg=bun_hardened"] : ["-Crelocation-model=static"]),
+    );
+    if (cfg.hardened && !cfg.requireMdwe) rustflags.push("--cfg=bun_starts_without_mdwe");
+    if (cfg.lockEnvironment) rustflags.push("--cfg=bun_locked_environment");
+    if (!cfg.executeOnlyStart) rustflags.push("--cfg=bun_refuses_execute_only_start");
   }
   // Keep frame pointers — matches the C++ side's `-fno-omit-frame-pointer`
   // (flags.ts:293-301). Needed so profilers and crash backtraces can walk Rust frames.
   rustflags.push("-Cforce-frame-pointers=yes");
+  // The one of `hardeningFlags` (flags.ts) rustc has and does not already do:
+  // its stack probes are inline on this target with or without this.
+  if (cfg.hardened) rustflags.push("-Zstack-protector=strong");
+  if (cfg.hardened) rustflags.push("-Coverflow-checks=on");
+  if (cfg.hardened) rustflags.push("-Zub-checks=yes");
   // Parallel frontend: rustc's default is single-threaded for parse / macro
   // expansion / typeck / borrowck, so the critical-path crate (`bun_runtime`)
   // sits on one core while the rest idle. With this, independent compiler
@@ -401,6 +446,10 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // `builtin.mode == .Debug`, which the Rust port had proxied via
   // `debug_assertions` only because the two were coextensive until now.
   rustflags.push("--check-cfg=cfg(bun_debug)");
+  rustflags.push("--check-cfg=cfg(bun_hardened)");
+  rustflags.push("--check-cfg=cfg(bun_starts_without_mdwe)");
+  rustflags.push("--check-cfg=cfg(bun_locked_environment)");
+  rustflags.push("--check-cfg=cfg(bun_refuses_execute_only_start)");
   if (cfg.debug) {
     rustflags.push("--cfg=bun_debug");
   }
@@ -424,6 +473,18 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   rustflags.push("--check-cfg=cfg(socket_fault_injection)");
   if (cfg.socketFaultInjection) {
     rustflags.push("--cfg=socket_fault_injection");
+  }
+  // `bun_disallow_code_generation_from_strings`: `bun_core::code_generation_from_strings()` is the
+  // constant `Strict` (BUN_DISALLOW_CODE_GENERATION_FROM_STRINGS=1 on the C++ side, which then
+  // does not import the Rust symbol).
+  // `bun_fuzzilli`: the loop that compiles the programs Fuzzilli sends, and what only that loop uses.
+  rustflags.push("--check-cfg=cfg(bun_fuzzilli)");
+  if (cfg.fuzzilli) {
+    rustflags.push("--cfg=bun_fuzzilli");
+  }
+  rustflags.push("--check-cfg=cfg(bun_disallow_code_generation_from_strings)");
+  if (!cfg.codeGenerationFromStrings) {
+    rustflags.push("--cfg=bun_disallow_code_generation_from_strings");
   }
   // Drop `#[track_caller]` source-location capture in release. Every
   // `Option::unwrap`/`slice[i]`/`RefCell::borrow` etc. otherwise emits a
@@ -504,19 +565,15 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
   // -Qunused-arguments above only covers the clang-driver case. Real linker
   // errors are unaffected (they fail the link, not the lint).
   rustflags.push(`-Alinker_messages`);
-  if (cfg.crossLangLto) {
-    // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
-    // so the final lld LTO link sees through Rust↔C++ call edges. The shape
-    // of that bitcode must match the platform's C++ LTO mode — thin
-    // (per-CGU, ThinLTO-summaried) on darwin, fat (pre-merged by rustc,
-    // summary-less) on ELF — selected via the CARGO_PROFILE_RELEASE_LTO
-    // override in the env block below.
+  if (rustLtoInLink(cfg)) {
+    // Every release build but ASan's: the crates carry ThinLTO bitcode, not machine code, and bun's link optimises
+    // it. Where cross-language LTO is on that is one ThinLTO graph with the C/C++ and JSC, and importing works across
+    // the languages; elsewhere (FreeBSD, Android, Windows arm64, `--lto=off`) it is ThinLTO over the crates alone.
+    // Thin, not fat: a pre-merged fat module cannot take part in a thin link's importing, and the backends run in
+    // parallel. The release profile's `lto = "off"` is what leaves each crate's bitcode with its summary.
     //
-    // Bitcode-format compatibility: lld must be able to read rustc's bitcode.
-    // LLVM bitcode is forward-compatible (newer reads older), so this works
-    // when the linker's LLVM ≥ rustc's bundled LLVM. resolveConfig() swaps
-    // `cfg.ld` to rustc's bundled rust-lld when rustc's LLVM major is ahead
-    // of clang's (the wantRustLld block in config.ts).
+    // The linker has to read rustc's bitcode, which it can because rustc's LLVM and clang's are the same major
+    // version (resolveConfig() refuses anything else).
     rustflags.push("-Clinker-plugin-lto");
     rustflags.push("-Cembed-bitcode=yes");
     // EnableSplitLTOUnit consistency: lld errors with "inconsistent LTO Unit
@@ -528,7 +585,7 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     // unconditionally above — under LTO it doubles as making rustc's bitcode
     // link go through the LTO-aware linker our final link uses, not BFD
     // `/usr/bin/ld`.)
-    if (!cfg.darwin && !cfg.windows) {
+    if (cfg.lto && !cfg.darwin && !cfg.windows) {
       // Rust functions default to carrying the `uwtable(async)` attribute.
       // When the LTO inliner inlines such a callee into one of our C++
       // callers (compiled without unwind tables), the caller inherits the
@@ -598,25 +655,16 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     CARGO_TERM_COLOR: "always",
     [`CARGO_TARGET_${envify(triple)}_LINKER`]: linker,
   };
-  if (cfg.crossLangLto) {
-    // Every crossLangLto platform links ThinLTO, so leave each crate's per-CGU
-    // bitcode with its ThinLTO summary intact: the whole link is one uniform
-    // ThinLTO graph and cross-module importing works across Rust↔C++/JSC.
-    // `fat` would pre-merge the crates into one summary-less blob the thin
-    // link can't import from. (The workspace `[profile.release] lto = "fat"`
-    // exists for non-LTO release builds, where the rust .a is linked as
-    // already-codegen'd machine code and still wants intra-Rust inlining.)
-    env.CARGO_PROFILE_RELEASE_LTO = "off";
-  } else if (cfg.asan) {
-    // release-asan has `cfg.lto` forced off (config.ts), but without this
-    // override Cargo.toml's `[profile.release] lto = "fat"` still applies —
-    // rustc merges every crate into one module and codegens it serially, on
-    // IR that ASAN instrumentation has already ~doubled. That's the 15-min
-    // cargo step vs 4m36s for the linker-plugin-lto build (which defers
-    // codegen to lld). ASAN builds don't need intra-Rust LTO; turn it off.
-    env.CARGO_PROFILE_RELEASE_LTO = "off";
-    // With LTO off, `codegen-units = 1` only serializes each crate's LLVM pass over the doubled IR; nothing built with ASAN ships, so take cargo's release default instead.
+  if (cfg.asan) {
+    // ASan links machine code (no LTO), so `codegen-units = 1` only serializes each crate's LLVM pass over IR the
+    // instrumentation has about doubled; nothing built with ASan ships, so take cargo's release default instead.
     env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = "16";
+  }
+  if (cfg.rustCodegenUnits !== undefined) {
+    env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS = String(cfg.rustCodegenUnits);
+  }
+  if (cfg.rustIncremental) {
+    env.CARGO_PROFILE_RELEASE_INCREMENTAL = "true";
   }
   if (cfg.assertions) {
     // Turn `debug_assert!()` / `#[cfg(debug_assertions)]` on in the release
@@ -701,9 +749,9 @@ function shimCargoInvocation(
 }
 
 /**
- * Emit the Rust step: for bun_runtime — and on Windows targets the .bin/ shim — a plan edge and, once the plans
- * exist, one edge per unit. Returns the output staticlib path as a one-element array so the link step can spread it
- * alongside the C++ object list.
+ * Emit the Rust step: for bun_executable — and on Windows targets the .bin/ shim — a plan edge and, once the plans
+ * exist, one edge per unit. Returns what the link takes beside the C/C++ objects: the rlib of `bun_executable` and of
+ * every library it depends on, std's included. No crate is a final Rust artifact; the link is bun's own.
  */
 export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string[] {
   assert(cfg.cargo !== undefined, "building bun's Rust crates requires cargo but no rust toolchain was found", {
@@ -727,7 +775,6 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   n.comment("─── Rust ───");
   n.blank();
 
-  const lib = rustLibPath(cfg);
   const { args, env, unitEnv, rustflags, linker, targetDir, triple } = cargoBuildInvocation(cfg);
 
   // ─── Plans ───
@@ -767,11 +814,12 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
 
   // ─── Units ───
   // On a fresh tree there is no plan yet: build.ninja depends on the plans (configure.ts), so ninja produces them,
-  // reconfigures, and restarts with the per-crate graph. Until then `bun-rust` builds just the plans.
+  // reconfigures, and restarts with the per-crate graph, all before it builds anything else. Until then `bun-rust`
+  // builds just the plans, and the rlibs have no names yet.
   if (runtime.plan === undefined || (shim !== undefined && shim.plan === undefined)) {
     n.phony("bun-rust", planFiles);
     n.blank();
-    return [lib];
+    return [];
   }
   const toolchainBin = (tool: string) => join(rustSysroot, "bin", `${tool}${cfg.host.exeSuffix}`);
   const context = {
@@ -785,7 +833,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   n.phony("rust-codegen-ready", inputs.codegenOrderOnly);
 
   // The shim first: bun_install embeds its executable, so every edge of that package waits for it. Its crates
-  // (bun_windows_sys, bun_opaque and the shim itself) include nothing generated, so they wait for no codegen.
+  // (bun_windows_sys, bun_opaque, bun_pod and the shim itself) include nothing generated, so they wait for no codegen.
   const packageInputs: Record<string, string[]> = {};
   if (shim?.plan !== undefined) {
     const graph = buildRustGraph(shim.plan, shim.dir);
@@ -798,7 +846,7 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       n,
       { ...context, graph, binDestination: exe },
       {
-        localOrderOnly: [],
+        generatedInputs: () => [],
         implicitInputs: {},
         vendorStamps: inputs.vendorStamps,
         rootValidations: inputs.shimValidations,
@@ -809,20 +857,34 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   }
 
   const graph = buildRustGraph(runtime.plan, runtime.dir);
-  assert(graph.root.output === lib, `rust plan root writes ${graph.root.output}, expected ${lib}`);
+  assert(
+    graph.root.kind === "lib",
+    `rust plan root ${graph.root.crateName} is a ${graph.root.kind}, expected a library`,
+  );
+  const generatedInputs = (packageName: string): string[] => {
+    const reads = generatedFilesOf(packageName);
+    if (reads === "all") return ["rust-codegen-ready"];
+    const paths = reads.map(
+      entry => resolve(entry.startsWith("src/") ? cfg.cwd : cfg.codegenDir, entry) + (entry.endsWith("/") ? sep : ""),
+    );
+    return inputs.codegenOrderOnly.filter(file =>
+      paths.some(path => (path.endsWith(sep) ? file.startsWith(path) : file === path)),
+    );
+  };
   emitRustUnits(
     n,
     { ...context, graph },
     {
-      localOrderOnly: ["rust-codegen-ready"],
+      generatedInputs,
       implicitInputs: packageInputs,
       vendorStamps: inputs.vendorStamps,
-      rootValidations: [],
+      rootValidations: [emitGeneratedInputsCheck(n, graph, cfg.codegenDir, generatedFilesOf)],
     },
   );
-  n.phony("bun-rust", [lib]);
+  const rlibs = linkedRlibs(graph).map(unit => unit.output);
+  n.phony("bun-rust", rlibs);
   n.blank();
-  return [lib];
+  return rlibs;
 }
 
 /**
@@ -836,25 +898,4 @@ function hostLinker(cfg: Config, targetTriple: string, targetLinker: string): st
   if (cfg.rustHostTriple === targetTriple) return targetLinker;
   if (cfg.host.os === "windows") return cfg.msvcLinker ?? cfg.ld;
   return cfg.hostCxx;
-}
-
-/**
- * Linker flags to wrap the Rust staticlib so every `#[no_mangle]` member
- * reaches the final image (the dynamic-list / NAPI surface has no inbound
- * static ref, so plain archive extraction would drop those `.o` members).
- * Functionally equivalent to feeding a single merged `.o`.
- *
- * Returned flags reference `libs` by absolute path; the caller must also
- * list them in the link's `implicitInputs` so ninja relinks on change.
- */
-export function rustLinkFlags(cfg: Config, libs: string[]): string[] {
-  if (libs.length === 0) return [];
-  if (cfg.windows) {
-    return libs.map(l => `/WHOLEARCHIVE:${l}`);
-  }
-  if (cfg.darwin) {
-    return libs.flatMap(l => ["-Wl,-force_load", l]);
-  }
-  // ELF (Linux/FreeBSD/Android)
-  return ["-Wl,--whole-archive", ...libs, "-Wl,--no-whole-archive"];
 }

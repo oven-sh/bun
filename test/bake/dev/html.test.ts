@@ -688,14 +688,27 @@ devTest("an empty development.allowedHosts list replaces the bunfig.toml list to
   },
 });
 
-async function readServerUrl(proc: Subprocess<any, "pipe", any>): Promise<string> {
+/**
+ * The URL a `bun ./index.html` child prints at startup. Both pipes stay drained
+ * for the life of the child, so a chatty child cannot stall on a full pipe.
+ */
+async function readServerUrl(proc: Subprocess<any, "pipe", "pipe">): Promise<string> {
+  const stderr = proc.stderr.text();
+  const stdout = proc.stdout.getReader();
+  const decoder = new TextDecoder();
   let text = "";
-  for await (const chunk of proc.stdout) {
-    text += new TextDecoder().decode(chunk, { stream: true });
+  while (true) {
+    const { value, done } = await stdout.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
     const match = text.match(/http:\/\/[^\s\x1b]+/);
-    if (match) return match[0];
+    if (match) {
+      stdout.releaseLock();
+      proc.stdout.text();
+      return match[0];
+    }
   }
-  throw new Error(`server url not printed: ${JSON.stringify(text)}`);
+  throw new Error(`server url not printed. stdout: ${JSON.stringify(text)} stderr: ${JSON.stringify(await stderr)}`);
 }
 
 test("[serve.static] allowedHosts applies to `bun ./index.html`", async () => {

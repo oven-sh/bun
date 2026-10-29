@@ -78,7 +78,7 @@ fn memcpy_and_reset<'a>(order: &mut Vec<CssImportOrder<'a>>, wip: &mut Vec<CssIm
 /// The traversal recurses once per `@import`. Returns `Err` if the import chain
 /// is too deep for the thread's stack, and the caller reports it.
 pub(crate) fn find_imported_files_in_css_order<'a>(
-    this: &mut LinkerContext<'a>,
+    this: &LinkerContext<'a>,
     temp_arena: &Arena,
     entry_points: &[Index],
 ) -> Result<Vec<CssImportOrder<'a>>, CssImportChainTooDeep> {

@@ -6142,7 +6142,7 @@ pub mod bv2_impl {
             let mut css_orders = Vec::with_capacity(start.css_entry_points.count());
             let mut css_too_deep = Vec::new();
             for entry_point in start.css_entry_points.keys() {
-                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&mut self.linker, self.graph.heap, &[*entry_point]) {
+                match crate::linker_context::find_imported_files_in_css_order::find_imported_files_in_css_order(&self.linker, self.graph.heap, &[*entry_point]) {
                     Ok(order) => css_orders.push((*entry_point, order)),
                     Err(too_deep) => css_too_deep.push((*entry_point, too_deep)),
                 }

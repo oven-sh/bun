@@ -504,6 +504,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
     ) {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
+            let _completing = Resolver::enter_completion((*this).resolver_for_caching);
             if let Some(resolver) = (*this).resolver_for_caching {
                 scopeguard::defer! { (*resolver).request_completed() };
                 if let Some(pos) = (*this).pending_slot {
@@ -639,6 +640,7 @@ impl GetHostByAddrInfoRequest {
     ) {
         // SAFETY: this is the heap-allocated request c-ares calls back with
         unsafe {
+            let _completing = Resolver::enter_completion((*this).resolver_for_caching);
             if let Some(resolver) = (*this).resolver_for_caching {
                 if let Some(pos) = (*this).pending_slot {
                     (*resolver).drain_pending_addr_cares(pos, err_, timeout, result);
@@ -893,6 +895,7 @@ impl GetNameInfoRequest {
         // SAFETY: `this` is the heap-allocated request c-ares calls back with;
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
+            let _completing = Resolver::enter_completion((*this).resolver_for_caching);
             if let Some(resolver) = (*this).resolver_for_caching {
                 scopeguard::defer! { (*resolver).request_completed() };
                 if let Some(pos) = (*this).pending_slot {
@@ -1339,6 +1342,7 @@ impl GetAddrInfoRequest {
         // SAFETY: `this` is the heap-allocated request c-ares calls back with;
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
+            let _completing = Resolver::enter_completion((*this).resolver_for_caching);
             if let Some(resolver) = (*this).resolver_for_caching {
                 if let Some(pos) = (*this).pending_slot {
                     (*resolver).drain_pending_host_cares(pos, err_, timeout, result);
@@ -3584,6 +3588,12 @@ type PollsMap = ArrayHashMap<c_ares::ares_socket_t, *mut PollType>;
 pub(crate) struct Resolver {
     pub(crate) ref_count: bun_ptr::RefCount<Resolver>,
     pub(crate) channel: Cell<Option<*mut c_ares::Channel>>, // FFI
+    /// This channel keeps the servers it has: `setServers()`, or a system list that is not one loopback server.
+    servers_final: Cell<bool>,
+    /// A server did not answer and the list can still be replaced: the next query reads the config again.
+    reread_servers: Cell<bool>,
+    /// How many completion callbacks of the channel are on the stack.
+    completing: Cell<u32>,
     /// The context whose script made the resolver: its channel is that context's, whoever is first
     /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is
     /// called by then (`bun test --isolate` renews it for every file).
@@ -3931,6 +3941,9 @@ impl Resolver {
         Self {
             ref_count: bun_ptr::RefCount::init(),
             channel: Cell::new(None),
+            servers_final: Cell::new(false),
+            reread_servers: Cell::new(false),
+            completing: Cell::new(0),
             made_in,
             vm: bun_ptr::BackRef::new(vm),
             polls: JsCell::new(PollsMap::new()),
@@ -4047,7 +4060,7 @@ impl Resolver {
             pending_nameinfo_cache_cares
         );
         // The 32-slot caches overflow to `LookupCacheHit::Disabled`; c-ares' own
-        // queue length covers those too. Its channel lock is recursive, so this
+        // queue length covers those too. It only reads a list length, so this
         // is safe from inside a completion callback.
         if let Some(channel) = self.channel.get() {
             // SAFETY: `channel` is the live c-ares channel owned by `self`.
@@ -4629,6 +4642,8 @@ impl Resolver {
     }
 
     pub(crate) fn get_channel(&self) -> ChannelResult<'_> {
+        // c-ares is built without its own locking: the channel stays on one thread.
+        self.ref_count.assert_single_threaded();
         if self.channel.get().is_none() {
             let opts = self.options.get();
             if let Some(err) = c_ares::Channel::init(self, opts) {
@@ -4639,8 +4654,83 @@ impl Resolver {
         ChannelResult::Result(unsafe { &mut *self.channel.get().unwrap() })
     }
 
+    /// The channel for a query about to be sent, after any due config read.
+    pub(crate) fn channel_for_query(&self) -> ChannelResult<'_> {
+        if self.reread_servers.get() {
+            self.refresh_servers();
+        }
+        self.get_channel()
+    }
+
+    /// Node's `EnsureServers`, on the same channel: https://github.com/nodejs/node/blob/a7a978415cc690fc1f751800a2a8052d4d02f289/src/cares_wrap.cc#L1120-L1153
+    #[cold]
+    fn refresh_servers(&self) {
+        // Inside a completion callback c-ares holds the servers a read replaces.
+        if self.completing.get() != 0 {
+            return;
+        }
+        self.reread_servers.set(false);
+        let Some(channel) = self.channel.get() else {
+            return;
+        };
+        if !Self::is_lone_loopback_server(channel) {
+            self.servers_final.set(true);
+            return;
+        }
+        // SAFETY: `channel` is the live c-ares channel owned by `self`, and no
+        // c-ares call on it is on the stack.
+        unsafe { (*channel).reinit() };
+    }
+
+    /// One loopback server, 127.0.0.1 or ::1: the c-ares default, and node's rule.
+    fn is_lone_loopback_server(channel: *mut c_ares::Channel) -> bool {
+        let mut servers: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
+        // SAFETY: `channel` is a live handle from `ares_init_options`; `servers` is a stack out-param.
+        if unsafe { c_ares::ares_get_servers_ports(channel, &raw mut servers) }
+            != c_ares::ARES_SUCCESS
+            || servers.is_null()
+        {
+            return false;
+        }
+        scopeguard::defer! {
+            // SAFETY: `servers` was allocated by ares_get_servers_ports; ares_free_data is its deallocator.
+            unsafe { c_ares::ares_free_data(servers.cast()) }
+        };
+        // SAFETY: non-null head of the list c-ares allocated.
+        let server = unsafe { &*servers };
+        if !server.next.is_null() {
+            return false;
+        }
+        let mut buf = [0u8; INET6_ADDRSTRLEN + 1];
+        // SAFETY: `addr_ptr` type-erases the in_addr/in6_addr union arm that `family` names.
+        let ip = unsafe { bun_cares_sys::ntop(server.family, server.addr_ptr(), &mut buf) };
+        matches!(ip, Some(b"127.0.0.1" | b"::1"))
+    }
+
+    /// Entry of a c-ares completion callback, which can run JS that sends a query.
+    unsafe fn enter_completion(resolver: Option<*mut Resolver>) -> Option<impl Drop> {
+        // SAFETY: `resolver` is live for the whole callback and outlives the
+        // guard: every frame that enters c-ares holds a ref on it.
+        let this = unsafe { &*resolver? };
+        this.completing.set(this.completing.get() + 1);
+        Some(scopeguard::guard(this, |this| {
+            this.completing.set(this.completing.get() - 1)
+        }))
+    }
+
     fn get_channel_from_vm(global_this: &JSGlobalObject) -> JsResult<*mut c_ares::Channel> {
         global_resolver(global_this).get_channel_or_error(global_this)
+    }
+
+    /// [`Self::channel_for_query`] for the sender that throws the error.
+    fn channel_for_query_or_error(
+        &self,
+        global_this: &JSGlobalObject,
+    ) -> JsResult<*mut c_ares::Channel> {
+        if self.reread_servers.get() {
+            self.refresh_servers();
+        }
+        self.get_channel_or_error(global_this)
     }
 
     pub(crate) fn get_channel_or_error(
@@ -4754,11 +4844,18 @@ impl Resolver {
 
         let _guard = self.ref_guard();
 
+        // A poll that failed or hung up reports no direction; give c-ares both, like Node:
+        // https://github.com/nodejs/node/blob/8a41d9b636be86350cd32847c3f89d327c4f6ff7/src/cares_wrap.cc#L93
+        let failed =
+            poll.flags.contains(Async::PollFlag::Eof) || poll.flags.contains(Async::PollFlag::Hup);
+        let readable = poll.is_readable() || failed;
+        let writable = poll.is_writable() || failed;
+
         // SAFETY: `channel` is the live c-ares channel owned by `self`; no `&mut`
         // to `*self` is held across this re-entrant call (all fields are
         // UnsafeCell-backed).
         unsafe {
-            (*channel).process(poll.fd.native(), poll.is_readable(), poll.is_writable());
+            (*channel).process(poll.fd.native(), readable, writable);
         }
 
         // c-ares detaches a query only *after* its callback returns, so
@@ -4774,6 +4871,8 @@ impl Resolver {
         readable: bool,
         writable: bool,
     ) {
+        // c-ares calls this from inside the call that opened or closed `fd`.
+        self.ref_count.assert_single_threaded();
         #[cfg(windows)]
         {
             use libuv as uv;
@@ -5002,7 +5101,7 @@ impl Resolver {
             ));
         }
 
-        let channel: *mut c_ares::Channel = match self.get_channel() {
+        let channel: *mut c_ares::Channel = match self.channel_for_query() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 return Err(global_this.throw_value(
@@ -5192,8 +5291,16 @@ impl c_ares::ChannelContainer for Resolver {
         Resolver::on_dns_socket_state(self, socket, readable, writable);
     }
     #[inline]
+    fn on_dns_server_state(&self, answered: bool) {
+        if !answered && !self.servers_final.get() {
+            self.reread_servers.set(true);
+        }
+    }
+    #[inline]
     fn set_channel(&self, channel: *mut c_ares::Channel) {
         self.channel.set(Some(channel));
+        self.servers_final.set(false);
+        self.reread_servers.set(false);
         // SAFETY: a resolver with a channel is at its final address (the
         // channel holds it); it leaves its context in `destroy_channel`.
         let context = match self.made_in {
@@ -5293,7 +5400,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
-        let channel: *mut c_ares::Channel = match self.get_channel() {
+        let channel: *mut c_ares::Channel = match self.channel_for_query() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 // syscall = "query" + ucfirst(TYPE_NAME) — precomputed per record type.
@@ -5351,7 +5458,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> JsResult<JSValue> {
-        let channel: *mut c_ares::Channel = match self.get_channel() {
+        let channel: *mut c_ares::Channel = match self.channel_for_query() {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 let syscall = bun_core::String::create_atom(&query.name);
@@ -5722,12 +5829,7 @@ impl Resolver {
     }
 
     pub(crate) fn set_global_servers(cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
-        let global_this = cx.global();
-        Self::set_channel_servers(
-            Self::get_channel_from_vm(global_this)?,
-            global_this,
-            servers.to_js(),
-        )
+        global_resolver(cx.global()).set_servers(cx, servers)
     }
 
     pub(crate) fn set_servers(&self, cx: &mut JsScope<'_>, servers: JsLocal<'_>) -> JsResult<()> {
@@ -5736,7 +5838,11 @@ impl Resolver {
             self.get_channel_or_error(global_this)?,
             global_this,
             servers.to_js(),
-        )
+        )?;
+        // https://github.com/nodejs/node/blob/a7a978415cc690fc1f751800a2a8052d4d02f289/src/cares_wrap.cc#L2309
+        self.servers_final.set(true);
+        self.reread_servers.set(false);
+        Ok(())
     }
 
     pub(crate) fn new_resolver(cx: &mut JsScope<'_>, options: &ResolverOptions) -> JSValue {
@@ -5805,7 +5911,7 @@ impl Resolver {
         }
 
         let resolver = global_resolver(global_this);
-        let channel = resolver.get_channel_or_error(global_this)?;
+        let channel = resolver.channel_for_query_or_error(global_this)?;
 
         // This string will be freed in `CAresNameInfo.deinit`
         let mut cache_name = Vec::new();

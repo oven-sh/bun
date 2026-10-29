@@ -752,7 +752,8 @@ pub(crate) fn run_task(
         task_tag::ServerAllConnectionsClosedTask => feature_arm!(
             [Serve],
             |closed: ServerAllConnectionsClosedTask| -> JsResult<()> {
-                ServerAllConnectionsClosedTask::run_from_js_thread(closed)?;
+                // SAFETY: boxed in `schedule`; the arm consumes it.
+                unsafe { bun_core::heap::take(closed) }.run_from_js_thread()?;
                 Ok(())
             }
         )?,

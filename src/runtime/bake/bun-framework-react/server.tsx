@@ -142,10 +142,7 @@ export async function render(request: Bun.BunRequest, meta: Bake.RouteMetadata):
 export async function prerender(meta: Bake.RouteMetadata) {
   const page = getPage(meta, meta.styles);
 
-  // React calls `onError` for each error of a server component. `renderToStaticHtml` decides if the page fails.
-  const errors: unknown[] = [];
-  const flight = renderToPipeableStream(page, serverManifest, { onError: error => void errors.push(error) });
-  const rscPayload = flight
+  const rscPayload = renderToPipeableStream(page, serverManifest)
     // TODO: write a lightweight version of PassThrough
     .pipe(new PassThrough());
 
@@ -154,8 +151,13 @@ export async function prerender(meta: Bake.RouteMetadata) {
   let rscChunks: Array<BlobPart> = [int.buffer as ArrayBuffer, meta.styles.join("\n")];
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 
-  // A page that fails rejects here, so the build fails with the error of the component.
-  const html = await renderToStaticHtml(rscPayload, meta.modules, errors, flight.abort);
+  let html;
+  try {
+    html = await renderToStaticHtml(rscPayload, meta.modules);
+  } catch (err) {
+    //console.error("ah fuck");
+    return undefined;
+  }
   const rsc = new Blob(rscChunks, { type: "text/x-component" });
 
   return {

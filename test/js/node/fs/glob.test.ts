@@ -3,7 +3,7 @@
  * tested elsewhere. These tests check API compatibility with Node.js.
  */
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { isWindows, tempDir, tempDirWithFiles, type DirectoryTree } from "harness";
+import { isMacOS, isWindows, tempDir, tempDirWithFiles, type DirectoryTree } from "harness";
 import fs from "node:fs";
 import { join, sep } from "node:path";
 
@@ -303,7 +303,7 @@ describe("fs.globSync exclude with withFileTypes", () => {
 
 // The lists in the blocks below are the ones Node.js v26.12.1 returns for the same tree and the same call.
 
-type GlobOptions = { cwd: string; followSymlinks?: boolean };
+type GlobOptions = { cwd: string; followSymlinks?: boolean; exclude?: string[] };
 
 /** The lists of the three entry points, sorted, with "/" as the separator. */
 async function globAll(pattern: string | string[], options: GlobOptions) {
@@ -480,4 +480,11 @@ describe("a link to a directory that '**' meets", () => {
     fs.symlinkSync(join(root, "d"), join(root, "todir"));
     expect(await globAll("./**/.", { cwd: root, followSymlinks: true })).toEqual(fromAllThree(["d", "todir"]));
   });
+});
+
+// Node.js matches a literal exclude pattern without case on the platforms where it matches a pattern without case.
+it("a literal exclude pattern in another case excludes on macOS and Windows only", async () => {
+  using dir = tempDir("fs-glob-exclude-case", { a: { "b.txt": "" } });
+  const expected = isMacOS || isWindows ? [] : ["a/b.txt"];
+  expect(await globAll("a/b.txt", { cwd: String(dir), exclude: ["A/B.TXT"] })).toEqual(fromAllThree(expected));
 });

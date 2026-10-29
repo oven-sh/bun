@@ -1,6 +1,6 @@
 // Port of Node.js lib/internal/fs/glob.js (v26.3.0):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/lib/internal/fs/glob.js
-// plus nodejs/node 74dcdbb5f1 (v26.8.0) and ab7f4c88b7 (v26.9.0),
+// plus nodejs/node 74dcdbb5f1, ab7f4c88b7, 54a1311d9e: the walker of v24.22.1 (v26.12.1 adds only `maxDepth`),
 // backed by a vendored copy of minimatch (Node's deps/minimatch/index.js, ISC license):
 //   https://github.com/nodejs/node/blob/50c35fea9e64d50ab3bb5f359e8523de89d6c798/deps/minimatch/index.js
 // embedded below lazyMinimatch(); the vendored block is third-party and not edited but for types — the port above it follows bun's style.
@@ -164,6 +164,9 @@ function createMatcher(pattern: string, options: MinimatchOptions = kEmptyObject
   };
   return new (lazyMinimatch().Minimatch)(pattern, opts);
 }
+
+// An exclude pattern is only compared with paths, never looked up on disk, so its literal parts ignore case too.
+const kExcludeMatcherOptions: MinimatchOptions = { nocaseMagicOnly: false };
 
 function cloneSet(values: Set<string>) {
   const cloned = new Set<string>();
@@ -417,7 +420,7 @@ class Glob {
         // consistent comparison before instantiating matchers.
         const matchers: Minimatch[] = [];
         for (const pat of exclude) {
-          matchers.push(createMatcher(resolve(this.#root, pat)));
+          matchers.push(createMatcher(resolve(this.#root, pat), kExcludeMatcherOptions));
         }
         this.#isExcluded = makeMatchersExclude(matchers);
         this.#results.setup(this.#root, this.#isExcluded);

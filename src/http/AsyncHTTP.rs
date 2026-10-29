@@ -317,8 +317,7 @@ struct Preconnect {
     // `Option` so we can write the field after the heap address is fixed
     // (late-init); `None` is never observed after `preconnect()` populates it.
     async_http: Option<AsyncHTTP<'static>>,
-    url: URL<'static>,
-    // Last, so that it outlives the two fields that may point into it.
+    // After `async_http`, which may point into it.
     _owned_href: Vec<u8>,
 }
 
@@ -339,7 +338,7 @@ impl Preconnect {
     }
 }
 
-/// `owned_href` is the buffer that `url` points into, or empty when that buffer is `'static`.
+/// Keeps `owned_href`, the buffer `url` points into (empty if that is `'static`), until `url` is last read.
 pub fn preconnect(url: URL<'static>, owned_href: Vec<u8>) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
         return;
@@ -355,7 +354,6 @@ pub fn preconnect(url: URL<'static>, owned_href: Vec<u8>) {
 
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
         async_http: None,
-        url,
         _owned_href: owned_href,
     }));
 
@@ -363,7 +361,6 @@ pub fn preconnect(url: URL<'static>, owned_href: Vec<u8>) {
     // in-place write `async_http` before any read and before it can be observed
     // by another thread.
     unsafe {
-        let url = (*this).url.clone();
         let async_http = (*this).async_http.insert(AsyncHTTP::init(
             Method::GET,
             url,

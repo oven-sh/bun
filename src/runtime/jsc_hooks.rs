@@ -1372,28 +1372,11 @@ fn process_exit(global: &JSGlobalObject, code: u8) {
 }
 
 /// `graph.find(path).?.sourcemap.load()`.
-/// Reaches the concrete `bun_standalone_graph::Graph` via its `UnsafeCell`
-/// singleton accessor (proper write provenance) and lazily decodes the
-/// embedded source map for `path`. The returned `Arc` is the caller's strong
-/// ref.
-///
-/// Note: do **not** thread the `&'static dyn StandaloneModuleGraph` from
-/// `vm.standalone_module_graph` here and cast it to `&mut Graph` — that
-/// shared-ref provenance has no write permission, so the resulting `&mut` is
-/// instant UB under Stacked Borrows regardless of `INIT_LOCK`. `Graph::get()`
-/// hands out the `*mut` directly from the backing `UnsafeCell`.
-///
-/// `LazySourceMap::load` is the graph's only post-init mutation and is
-/// serialized by `INIT_LOCK`.
 fn load_standalone_sourcemap(
     path: &[u8],
 ) -> Option<std::sync::Arc<bun_sourcemap::ParsedSourceMap>> {
-    let graph = bun_standalone_graph::Graph::get()?;
-    // SAFETY: `graph` is the `UnsafeCell::get()` pointer to the
-    // process-lifetime singleton. `find`/`load` mutate only per-file lazy
-    // state; this hook runs on the JS thread and `LazySourceMap::load` is
-    // additionally guarded by its own `INIT_LOCK`.
-    unsafe { (*graph).find(path)?.sourcemap.load() }
+    let graph = bun_standalone_graph::Graph::get_ref()?;
+    graph.find(path)?.sourcemap.load()
 }
 
 /// `node_cluster_binding.child_singleton.deinit()` —

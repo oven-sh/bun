@@ -176,29 +176,15 @@ pub fn install_with_manager(
                 let source_copy = root_package_json_source(manager, root_package_json_path, true)?;
 
                 let mut resolver: () = ();
-                // `parse` needs `manager`, `manager.log` and a fresh
-                // stack `lockfile` simultaneously. Route through raw ptrs so
-                // borrowck doesn't see overlapping `&mut PackageManager` /
-                // `&mut Lockfile`.
-                {
-                    // `log_mut()` reads the BACKREF `self.log: *mut Log` and
-                    // returns the disjoint CLI `Log` allocation (lifetime
-                    // decoupled from `&self`), so call it safely through
-                    // `manager` *before* establishing the raw-ptr split — no
-                    // borrow on `*manager` survives into the `&mut *mgr` below.
-                    let log = manager.log_mut();
-                    let mgr: *mut PackageManager = manager;
-                    maybe_root.parse(
-                        &mut lockfile,
-                        // SAFETY: `mgr` is the sole provenance root for `*manager`; `log` is a
-                        // disjoint backref and `lockfile` is a stack local, so this `&mut` is unique.
-                        unsafe { &mut *mgr },
-                        log,
-                        &source_copy,
-                        &mut resolver,
-                        Features::main(),
-                    )?;
-                }
+                let log = manager.log_mut();
+                maybe_root.parse(
+                    &mut lockfile,
+                    manager,
+                    log,
+                    &source_copy,
+                    &mut resolver,
+                    Features::main(),
+                )?;
                 if PackageJSONEditor::steers_catalogs_to_latest(manager) {
                     PackageJSONEditor::steer_used_catalogs_to_latest(manager, Some(&mut lockfile))?;
                 }

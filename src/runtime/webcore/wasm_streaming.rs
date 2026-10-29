@@ -6,22 +6,22 @@
 //! C++ calls this via `jsc.host_fn.wrap3` — i.e. plain C ABI with the three
 //! original arguments, returning a possibly-empty `JSValue` (empty == thrown).
 
-use core::ffi::c_void;
-
 use bun_core::strings;
 use bun_jsc::{ErrorCode, JSGlobalObject, JSValue, JsError, JsResult};
 
 use crate::webcore::blob::{self, Any as AnyBlob, Blob, BlobExt};
 use crate::webcore::body::{BodyMixin as _, Value as BodyValue};
-use crate::webcore::{ReadableStream, Response, response};
+use crate::webcore::{ReadableStream, response};
+
+bun_opaque::opaque_ffi! {
+    /// Opaque C++ `JSC::Wasm::StreamingCompiler`.
+    struct StreamingCompiler;
+}
 
 unsafe extern "C" {
-    // `streaming_compiler` is the opaque C++ `StreamingCompiler*` handed in by
-    // the host; `bytes_ptr`/`bytes_len` are the ptr/len of a Rust `&[u8]`.
-    // Module-private with one call site below — no caller-side precondition
-    // remains.
+    // Module-private, one call site: `bytes_ptr`/`bytes_len` are the ptr/len of a `&[u8]` that outlives the call.
     safe fn JSC__Wasm__StreamingCompiler__addBytes(
-        streaming_compiler: *mut c_void,
+        streaming_compiler: &StreamingCompiler,
         bytes_ptr: *const u8,
         bytes_len: usize,
     );
@@ -30,15 +30,12 @@ unsafe extern "C" {
 fn get_body_stream_or_bytes_for_wasm_streaming(
     this: &JSGlobalObject,
     response_value: JSValue,
-    streaming_compiler: *mut c_void,
+    streaming_compiler: &StreamingCompiler,
 ) -> JsResult<JSValue> {
     // `WebAssembly.compileStreaming` / `instantiateStreaming`, C++ host functions, call this.
     let context = this.bun_vm().context_of_caller();
-    let response: &mut Response = match response::from_js(response_value) {
-        // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
-        // the cell stays live for the duration of this host call (rooted on the
-        // C++ caller's stack).
-        Some(r) => unsafe { &mut *r },
+    let response = match response::from_js_ref(response_value) {
+        Some(r) => r,
         None => {
             return Err(this.throw_invalid_argument_type_value2(
                 b"source",
@@ -158,18 +155,12 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
 
 /// Plain C ABI
 /// shim: returns `.zero` on thrown exception.
-///
-/// # Safety
-/// `this` must be a valid, live `JSGlobalObject` pointer for the duration of
-/// the call (guaranteed by the C++ host caller).
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
-    this: *mut JSGlobalObject,
+extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+    this: &JSGlobalObject,
     response_value: JSValue,
-    streaming_compiler: *mut c_void,
+    streaming_compiler: &StreamingCompiler,
 ) -> JSValue {
-    // SAFETY: C++ passes a live global object.
-    let this = unsafe { &*this };
     match get_body_stream_or_bytes_for_wasm_streaming(this, response_value, streaming_compiler) {
         Ok(v) => v,
         Err(JsError::OutOfMemory) => {

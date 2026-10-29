@@ -1,4 +1,5 @@
 import { describe, expect } from "bun:test";
+import { dirname, join } from "node:path";
 import { itBundled, type BundlerTestBundleAPI } from "./expectBundled";
 
 describe("bundler", () => {
@@ -177,12 +178,14 @@ describe("bundler", () => {
     },
     entryPoints: ["/index.html"],
   };
-  function expectFragmentUrls(api: BundlerTestBundleAPI) {
+  // `themeBundled`: an onResolve plugin gave the two "#theme" links a stylesheet.
+  function expectFragmentUrls(api: BundlerTestBundleAPI, themeBundled = false) {
     const html = api.readFile("out/index.html");
     expect(html.match(/<(?:link|img|script)\b[^>]*>/g)).toEqual([
       `<link rel="stylesheet" href="#">`,
-      `<link rel="stylesheet" href="#theme">`,
-      `<link rel="preload" as="style" href="#theme">`,
+      ...(themeBundled
+        ? []
+        : [`<link rel="stylesheet" href="#theme">`, `<link rel="preload" as="style" href="#theme">`]),
       `<link rel="icon" href="#">`,
       expect.stringMatching(/^<link rel="stylesheet" crossorigin href="\.\/[a-z]+-[a-z0-9]+\.css">$/),
       expect.stringMatching(/^<script type="module" crossorigin src="\.\/[a-z]+-[a-z0-9]+\.js">$/),
@@ -190,24 +193,31 @@ describe("bundler", () => {
     ]);
     const css = api.readFile("out/" + html.match(/href="(.*?\.css)"/)![1]);
     expect(css).toContain("margin: 0");
-    expect(css).not.toContain("theme");
+    expect(css.includes(".theme")).toBe(themeBundled);
     expect(api.readFile("out/" + html.match(/src="(.*?\.js)"/)![1])).toContain("from #app");
   }
   itBundled("html/fragment-urls", {
     ...fragmentUrls,
-    onAfterBundle: expectFragmentUrls,
+    onAfterBundle: api => expectFragmentUrls(api),
   });
-  // A stylesheet link with a fragment href makes no import record, so no plugin sees it.
+  // An onResolve plugin is offered each of them. The ones it declines stay as written.
   const offered: string[] = [];
-  itBundled("html/fragment-urls-onResolve", {
+  itBundled("html/fragment-urls-plugin-declines", {
     ...fragmentUrls,
     plugins(build) {
       build.onResolve({ filter: /^#/ }, args => void offered.push(args.path));
     },
     onAfterBundle(api) {
       expectFragmentUrls(api);
-      expect(offered.toSorted()).toEqual(["#", "#app", "#image"]);
+      expect(offered.toSorted()).toEqual(["#", "#", "#app", "#image", "#theme", "#theme"]);
     },
+  });
+  itBundled("html/fragment-urls-plugin-resolves", {
+    ...fragmentUrls,
+    plugins(build) {
+      build.onResolve({ filter: /^#theme$/ }, args => ({ path: join(dirname(args.importer), "theme.css") }));
+    },
+    onAfterBundle: api => expectFragmentUrls(api, true),
   });
 
   // Test mixed local and external assets

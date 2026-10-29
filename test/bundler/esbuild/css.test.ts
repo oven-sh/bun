@@ -1013,7 +1013,9 @@ describe("esbuild-bundler", () => {
     imports: {
       "#plain": "./plain.css",
       "#dir/*": "./dir/*",
-      "#supported": "./supported.css",
+      "#conditional": { import: "./script.js", default: "./conditional.css" },
+      "#supported": { import: "./script.js", default: "./supported.css" },
+      "#styled": { style: "./styled.css", default: "./script.js" },
       "#theme": { custom: "./custom.css", default: "./default.css" },
     },
   });
@@ -1022,12 +1024,17 @@ describe("esbuild-bundler", () => {
       "/entry.css": /* css */ `
         @import "#plain";
         @import url(#dir/nested.css);
+        @import "#conditional";
         @import "#supported" supports(display: grid);
+        @import "#styled";
         .entry { color: red }
       `,
       "/plain.css": `.plain { color: green }`,
       "/dir/nested.css": `.nested { color: blue }`,
+      "/conditional.css": `.conditional { color: black }`,
       "/supported.css": `.supported { color: white }`,
+      "/styled.css": `.styled { color: gray }`,
+      "/script.js": `export default {};`,
       "/package.json": packageJsonImports,
     },
     outfile: "/out.css",
@@ -1041,11 +1048,19 @@ describe("esbuild-bundler", () => {
         .nested {
           color: #00f;
         }
+        /* conditional.css */
+        .conditional {
+          color: #000;
+        }
         /* supported.css */
         @supports (display: grid) {
           .supported {
             color: #fff;
           }
+        }
+        /* styled.css */
+        .styled {
+          color: gray;
         }
         /* entry.css */
         .entry {
@@ -1054,16 +1069,37 @@ describe("esbuild-bundler", () => {
       `);
     },
   });
-  for (const { name, conditions, file, color } of [
-    { name: "DefaultCondition", conditions: [], file: "default.css", color: "#00f" },
-    { name: "UserCondition", conditions: ["custom"], file: "custom.css", color: "green" },
+  // `conditions` applies to an `@import` that a package.json "imports" or "exports" map resolves.
+  for (const { name, specifier, conditions, file, color } of [
+    { name: "ImportsDefaultCondition", specifier: "#theme", conditions: [], file: "default.css", color: "#00f" },
+    { name: "ImportsUserCondition", specifier: "#theme", conditions: ["custom"], file: "custom.css", color: "green" },
+    {
+      name: "ExportsDefaultCondition",
+      specifier: "dep",
+      conditions: [],
+      file: "node_modules/dep/default.css",
+      color: "#00f",
+    },
+    {
+      name: "ExportsUserCondition",
+      specifier: "dep",
+      conditions: ["custom"],
+      file: "node_modules/dep/custom.css",
+      color: "green",
+    },
   ]) {
-    itBundled(`css/CSSAtImportPackageJsonImports${name}`, {
+    itBundled(`css/CSSAtImportPackageJson${name}`, {
       files: {
-        "/entry.css": `@import "#theme";`,
+        "/entry.css": `@import "${specifier}";`,
         "/custom.css": `.theme { color: green }`,
         "/default.css": `.theme { color: blue }`,
         "/package.json": packageJsonImports,
+        "/node_modules/dep/package.json": JSON.stringify({
+          name: "dep",
+          exports: { ".": { custom: "./custom.css", default: "./default.css" } },
+        }),
+        "/node_modules/dep/custom.css": `.theme { color: green }`,
+        "/node_modules/dep/default.css": `.theme { color: blue }`,
       },
       conditions,
       outfile: "/out.css",

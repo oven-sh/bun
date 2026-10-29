@@ -5246,10 +5246,12 @@ impl<'a> Resolver<'a> {
         // the `ESModule` is constructed as a temporary whose
         // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
         let esm_resolution = ESModule {
+            // The same set as the "exports" lookup in `load_node_modules`.
             conditions: match kind {
                 ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
                     &self.opts.conditions.require
                 }
+                ast::ImportKind::At | ast::ImportKind::AtConditional => &self.opts.conditions.style,
                 _ => &self.opts.conditions.import,
             },
             debug_logs: self.debug_logs.as_mut(),

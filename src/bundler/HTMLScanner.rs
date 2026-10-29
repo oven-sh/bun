@@ -331,9 +331,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
                         let value = element
                             .get_attribute(tag_info.url_attribute)
                             .unwrap_or_default();
-                        // The resolver reads a stylesheet's "#x" as a package.json "imports" alias.
-                        let is_fragment = tag_info.kind == ImportKind::At && value.starts_with('#');
-                        if !value.is_empty() && !is_fragment {
+                        if !value.is_empty() {
                             bun_core::scoped_log!(HTMLScanner, "{} {}", tag_info.selector, value);
                             // SAFETY: `this_ptr` was derived from `run`'s `&mut T`,
                             // which is not reborrowed while the rewriter — the only

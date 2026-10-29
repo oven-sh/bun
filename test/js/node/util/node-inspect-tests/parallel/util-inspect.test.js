@@ -3166,6 +3166,7 @@ test("no assertion failures 3", () => {
     assert.strictEqual(util.inspect(NaN), "NaN");
     assert.strictEqual(util.inspect(Infinity), "Infinity");
     assert.strictEqual(util.inspect(-Infinity), "-Infinity");
+    assert.strictEqual(util.inspect(-0), "-0");
 
     assert.strictEqual(util.inspect(new Float64Array([100_000_000])), "Float64Array(1) [ 100_000_000 ]");
     assert.strictEqual(util.inspect(new BigInt64Array([9_100_000_100n])), "BigInt64Array(1) [ 9_100_000_100n ]");
@@ -3178,6 +3179,30 @@ test("no assertion failures 3", () => {
     assert.strictEqual(util.inspect(123456789.12345678, { numericSeparator: true }), "123_456_789.123_456_78");
 
     assert.strictEqual(util.inspect(-123456789.12345678, { numericSeparator: true }), "-123_456_789.123_456_78");
+
+    // -0 should be formatted as '-0' even with numericSeparator enabled
+    assert.strictEqual(util.inspect(-0, { numericSeparator: true }), "-0");
+
+    // Regression test for https://github.com/nodejs/node/issues/59376
+    // numericSeparator should work correctly for negative fractional numbers
+    {
+      // Test the exact values from the GitHub issue
+      const values = [0.1234, -0.12, -0.123, -0.1234, -1.234];
+      assert.strictEqual(
+        util.inspect(values, { numericSeparator: true }),
+        "[ 0.123_4, -0.12, -0.123, -0.123_4, -1.234 ]",
+      );
+
+      // Test individual negative fractional numbers between -1 and 0
+      assert.strictEqual(util.inspect(-0.1234, { numericSeparator: true }), "-0.123_4");
+      assert.strictEqual(util.inspect(-0.12345, { numericSeparator: true }), "-0.123_45");
+    }
+
+    // Numbers in scientific notation should not get malformed separators
+    assert.strictEqual(util.inspect(1e-7, { numericSeparator: true }), "1e-7");
+    assert.strictEqual(util.inspect(1.5e-10, { numericSeparator: true }), "1.5e-10");
+    assert.strictEqual(util.inspect(1.23e-100, { numericSeparator: true }), "1.23e-100");
+    assert.strictEqual(util.inspect(1.23456789e-12, { numericSeparator: true }), "1.23456789e-12");
   }
 
   // Regression test for https://github.com/nodejs/node/issues/41244

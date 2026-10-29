@@ -24,8 +24,10 @@
 import assert from "assert";
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast } from "harness";
+import { join } from "node:path";
 import util from "util";
+import numericSeparatorRows from "./inspect-numeric-separator-fixture.cjs";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
 const strictEqual = (...args) => {
@@ -685,6 +687,30 @@ describe("util", () => {
       expect(sep(NaN)).toBe("NaN");
       expect(sep(Infinity)).toBe("Infinity");
       expect(sep(-Infinity)).toBe("-Infinity");
+    });
+  });
+
+  // The rows are in the fixture: one for each caller of the number formatter.
+  describe("numericSeparator in util.format, typed arrays, Number objects and inspect.defaultOptions", () => {
+    it.each(numericSeparatorRows)("%s", (_, print, expected) => {
+      expect(print()).toBe(expected);
+    });
+
+    // Before v26.4.0 Node.js printed -0 as 0 and put separators into an exponent.
+    const node = nodeExeAtLeast("26.4.0");
+    it.skipIf(!node)("Node.js prints the same text for each row", async () => {
+      await using proc = Bun.spawn({
+        cmd: [node, join(import.meta.dir, "inspect-numeric-separator-fixture.cjs")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+        stdout: JSON.stringify(numericSeparatorRows.map(([label, , expected]) => [label, expected])),
+        stderr: "",
+        exitCode: 0,
+      });
     });
   });
 });

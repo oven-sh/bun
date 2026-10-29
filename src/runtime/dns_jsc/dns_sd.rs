@@ -462,7 +462,7 @@ impl SharedConnection {
         // SAFETY: `FilePoll::init` returned a live pool slot; exclusive here.
         let poll = unsafe { &mut *poll_ptr };
         // SAFETY: the event loop outlives every lookup made on it.
-        let loop_ = unsafe { ctx.platform_event_loop() };
+        let loop_ = unsafe { &*ctx.loop_() };
         let rc = poll.register_with_fd(
             loop_,
             Async::PollKind::Readable,

@@ -4,7 +4,7 @@ use crate::generated_bindgen::node_path::ParsedPath;
 use crate::jsc::bindgen::{self, JsHeap, JsLatin1, JsLocal, JsScope};
 use crate::jsc::rare_data::PathBuf as RarePathBuf;
 use crate::jsc::{JSString, SysErrorJsc as _};
-use crate::node::validators::{validate_object, validate_string};
+use crate::node::validators::{throw_err_invalid_arg_type, validate_object};
 use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;
 use bun_node_path::{
@@ -886,7 +886,7 @@ fn throw_path_not_a_string(
     value: crate::jsc::JSValue,
     index: usize,
 ) -> crate::jsc::JsError {
-    validate_string(global, value, format_args!("paths[{}]", index)).unwrap_err()
+    throw_err_invalid_arg_type(global, format_args!("paths[{}]", index), "string", value)
 }
 
 #[inline(never)]

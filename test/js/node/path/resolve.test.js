@@ -192,6 +192,7 @@ describe("path.resolve", () => {
     const notStrings = [undefined, null, 123, {}, []];
     const named = index =>
       expect.objectContaining({
+        name: "TypeError",
         code: "ERR_INVALID_ARG_TYPE",
         message: expect.stringContaining(`"paths[${index}]"`),
       });

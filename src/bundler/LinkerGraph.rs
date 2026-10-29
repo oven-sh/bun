@@ -492,7 +492,7 @@ impl<'a> LinkerGraph<'a> {
 
     /// Mutable view of a symbol that is known to exist. Takes `&self` (not
     /// `&mut self`): the linker mutates per-symbol fields (`link`,
-    /// `namespace_alias`, `import_item_status`, ...) through shared
+    /// `namespace_alias`, `kind`, ...) through shared
     /// `&LinkerContext`/`&LinkerGraph` paths while iterating disjoint graph
     /// columns, mirroring the prior open-coded `unsafe { &mut *get(r) }`.
     ///

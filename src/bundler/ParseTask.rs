@@ -771,7 +771,7 @@ pub mod parse_worker {
             // `s.kind`/`s.import_item_status` are already the target nominal types
             // — the former `#[repr(u8)]` round-trip bridge is no longer needed.
             let kind: PKind = s.kind;
-            let import_item_status: bun_ast::ImportItemStatus = s.import_item_status;
+            let import_item_status: bun_ast::ImportItemStatus = s.import_item_status.get();
             // `bun_ast::Ref` is a re-export of `bun_ast::Ref` (ast/base.rs:172)
             // — same nominal type, no bridge needed.
             let link: bun_ast::Ref = s.link.get();
@@ -788,7 +788,7 @@ pub mod parse_worker {
                 ),
                 nested_scope_slot: s.nested_scope_slot,
                 kind,
-                import_item_status,
+                import_item_status: std::cell::Cell::new(import_item_status),
                 flags: s.flags,
             });
         }

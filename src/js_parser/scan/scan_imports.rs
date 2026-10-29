@@ -697,7 +697,9 @@ impl<'a> ImportScanner<'a> {
                             if ref_.is_symbol()
                                 && p.symbols[ref_.inner_index() as usize].kind
                                     == js_ast::symbol::Kind::Import
-                                && p.symbols[ref_.inner_index() as usize].import_item_status
+                                && p.symbols[ref_.inner_index() as usize]
+                                    .import_item_status
+                                    .get()
                                     != js_ast::ImportItemStatus::Generated
                             {
                                 ref_

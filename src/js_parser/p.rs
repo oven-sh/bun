@@ -1105,8 +1105,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.is_import_item.insert(item.local, ());
                 // A name the importee does not export reads `undefined`, as it
                 // does off a namespace object, rather than failing the build.
-                self.symbols[item.local.inner_index() as usize].import_item_status =
-                    bun_ast::ImportItemStatus::Generated;
+                self.symbols[item.local.inner_index() as usize]
+                    .import_item_status
+                    .set(bun_ast::ImportItemStatus::Generated);
                 bun_core::handle_oom(self.named_imports.put(
                     item.local,
                     js_ast::NamedImport {

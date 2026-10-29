@@ -55,6 +55,8 @@ pub struct FileReader {
     /// Read-only after construction.
     pub(crate) highwater_mark: usize,
     pub(crate) flowing: Cell<bool>,
+    /// Reads fd 0, 1 or 2 as a pipe, socket or terminal. That descriptor has other readers (a child process, a synchronous read), so a reader release stops this source.
+    pub(crate) shared_stdio: Cell<bool>,
     /// Native sink attached by a hookup site (e.g. fetch request body). When
     /// set, `on_read_chunk` writes directly to it instead of the JS `pending`
     /// path; `pull_into_sink` is the drain-ack resume.
@@ -81,6 +83,7 @@ impl Default for FileReader {
             read_error: JsCell::new(None),
             highwater_mark: 16384,
             flowing: Cell::new(true),
+            shared_stdio: Cell::new(false),
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
         }
@@ -98,6 +101,8 @@ pub(crate) struct OpenedFileBlob {
     pub(crate) fd: Fd,
     pub(crate) pollable: bool,
     pub(crate) nonblocking: bool,
+    /// The Blob names fd 0, 1 or 2. `fd` can be another descriptor: a terminal is read through one of its own.
+    pub(crate) is_stdio: bool,
     #[cfg(not(windows))]
     pub(crate) file_type: FileType,
 }
@@ -108,6 +113,7 @@ impl Default for OpenedFileBlob {
             fd: Fd::INVALID,
             pollable: false,
             nonblocking: true,
+            is_stdio: false,
             #[cfg(not(windows))]
             file_type: FileType::File,
         }
@@ -132,6 +138,7 @@ impl Lazy {
         let fd: Fd = match &file.pathlike {
             PathOrFileDescriptor::Fd(pl_fd) => {
                 if pl_fd.stdio_tag().is_some() {
+                    this.is_stdio = true;
                     'brk: {
                         #[cfg(unix)]
                         {
@@ -306,6 +313,7 @@ impl FileReader {
         self.reader().set_parent(self.as_ctx_ptr().cast());
         let was_lazy = !matches!(self.lazy.get(), Lazy::None);
         let mut pollable = false;
+        let mut is_stdio = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
         // R-2: move the `Lazy` out of the cell up-front (it's reset to `None`
@@ -330,6 +338,7 @@ impl FileReader {
                             debug_assert!(opened.fd.is_valid());
                             self.fd.set(opened.fd);
                             pollable = opened.pollable;
+                            is_stdio = opened.is_stdio;
                             #[cfg(unix)]
                             {
                                 file_type = opened.file_type;
@@ -407,6 +416,12 @@ impl FileReader {
                 }
                 return streams::Start::Err(e);
             }
+            // Only a pipe, socket or terminal reads with no consumer. On Windows only a pipe stops: a stop cancels a file read in flight, and libuv cancels a console line read with an Enter key of its own.
+            #[cfg(unix)]
+            self.shared_stdio.set(is_stdio && pollable);
+            #[cfg(windows)]
+            self.shared_stdio
+                .set(is_stdio && matches!(self.reader().source, Some(bun_io::Source::Pipe(_))));
         } else {
             #[cfg(unix)]
             {
@@ -744,8 +759,8 @@ impl FileReader {
         // SAFETY: see `parent()`.
         let _pin = unsafe { RefPtr::init_ref(self.parent()) };
         self.pending.with_mut(|p| p.run());
-        // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd.
-        ret && !self.done.get() && !self.reader().is_done()
+        // Re-entrant cancel or a nested pull that read to EOF closed the reader; tell the io caller to stop so it does not re-read the captured fd. The same for a consumer that stopped the source inside `run()`: the read loop would read once more.
+        ret && self.flowing.get() && !self.done.get() && !self.reader().is_done()
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
@@ -904,6 +919,10 @@ impl FileReader {
         self.flowing.set(flag);
 
         if flag {
+            // With `buffered` at the highwater mark no pull is parked, and a read now would grow `buffered` once per pause and resume. The next `on_pull` unpauses and reads.
+            if self.buffered.get().len() >= self.highwater_mark {
+                return;
+            }
             self.reader().unpause();
             if !self.reader().is_done() && !self.reader().has_pending_read() {
                 // Kick off a new read if needed
@@ -923,6 +942,20 @@ pub(crate) type Source = readable_stream::NewSource<FileReader>;
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__FileReader__resume(source: &Source) {
     source.context.set_flowing(true);
+}
+
+/// The reader of the stream was released. A shared stdio source stops, so input that arrives now stays on the descriptor. Stopped, it keeps nothing alive, and its ref is for the next reader. Every other source reads on and drops its ref.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__FileReader__onReaderRelease(source: &Source) {
+    let this = &source.context;
+    if this.done.get() {
+        return;
+    }
+    if this.shared_stdio.get() {
+        this.set_flowing(false);
+    } else {
+        this.reader().update_ref(false);
+    }
 }
 
 // SAFETY: `FileReader` is always the `context` field of a heap-allocated

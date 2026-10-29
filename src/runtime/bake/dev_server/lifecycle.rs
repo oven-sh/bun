@@ -666,7 +666,7 @@ impl Drop for DevServer {
         // `Watcher::shutdown` serialises with `dispatch_file_updates` on
         // `Watcher.mutex`, so `next_event` is stable from the watcher side.
         let atomics = self.watcher_atomics.as_ptr();
-        // SAFETY: `atomics` is the `heap::into_raw` pointer from `init()`.
+        // SAFETY: `atomics` is the `heap::alloc_nn` pointer from `init()`.
         let next = unsafe {
             (*atomics)
                 .next_event

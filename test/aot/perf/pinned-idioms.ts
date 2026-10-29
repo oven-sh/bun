@@ -5,7 +5,8 @@ import { bunEnv, bunExe, isASAN, isCI, isDebug, isMusl, isWindows, tempDir } fro
 import { join } from "path";
 import { measureCommand } from "../analysis-scaling/measure-check";
 import { withSteadyCollections } from "../harness/counted-run";
-import { isToldWhatToTake, slot, spawned, withoutDebugInformation } from "../run-programs";
+import { isToldWhatToTake } from "../harness/shares";
+import { slot, spawned, withoutDebugInformation } from "../harness/commands";
 import { describe, test } from "../supported";
 import { writeUntypedIdioms } from "./untyped-idioms";
 

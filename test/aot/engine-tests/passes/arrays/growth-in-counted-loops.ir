@@ -1,0 +1,221 @@
+# Arrays that counted loops append to: parameters, fields, literals longer than any planned capacity, arrays that cannot grow in place, loops that end early, and arrays replaced inside the loop.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="growth-in-counted-loops.js" displayPath="growth-in-counted-loops.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Chunks" module=m0 position=1148 constructor=f3 fields=[{key="current" declared={type=undefined|null|Array<never> flags=[IsExpected]} flags=[IsRequired]}, {key="full" declared={type=undefined|null|Array<never> flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L1 kind=Instance name="Stack" module=m0 position=3022 constructor=f5 flags=[HasHeritage]
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=5}, Number{value=6}, Number{value=7}, Number{value=100}, Number{value=5000}, Number{value=150000}]} module=m0
+data d1 root=Array{contents=anything} module=m0
+data d2 root=Array{contents=anything} module=m0
+variable g0 name="fill" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = NewClass v2 layout=L0
+    v4 = NewClosure function=f4
+    DefineMethod v3, v4 layout=L0 key="addAll"
+    v6 = FinishClass v3 layout=L0
+    v7 = Convert v6 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Data data=d0
+    v9 = Convert v8 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v10 = IteratorOpen v9
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v12 = IteratorResume v10
+    v13 = ResultAt v12
+    v14 = ResultAt v12 index=1
+    Branch v13 -> taken b2(), notTaken b4()
+  b2():
+    v15 = Construct v7 calleeName="Chunks"
+    v16 = Convert v15 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v17 = PropGet v16 key="addAll"
+    v18 = Convert v17 declared={type=undefined|null|function|f4 flags=[IsExpected]}
+    v19 = Integer integer=100000
+    v20 = Call v1, -, v19 calleeName="collect"
+    v21 = Convert v20 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v22 = Integer integer=8
+    v23 = Call v18, v16, v21, v22 calleeKey="addAll" calleeName="addAll"
+    v24 = Builtin builtin=Array
+    v25 = ResolveHeritage v24
+    v26 = NewClosure function=f5
+    v27 = NewClass v26, v24, v25 layout=L1
+    v28 = FinishClass v27 layout=L1
+    v29 = Convert v28 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v30 = GetModuleVariable variable=g0
+    v31 = Construct v29 calleeName="Stack"
+    v32 = Convert v31 declared={type=undefined|null|L1 flags=[IsExpected]}
+    v33 = Integer integer=5000
+    v34 = Call v30, -, v32, v33 calleeName="fill"
+    v35 = Construct v29 calleeName="Stack"
+    v36 = NewClosure function=f6
+    v37 = Convert v36 declared={type=undefined|null|function|f6 flags=[IsExpected]}
+    v38 = GetModuleVariable variable=g0
+    v39 = Call v37 calleeName="constant"
+    v40 = Convert v39 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v41 = Integer integer=2000
+    v42 = Call v38, -, v40, v41 calleeName="fill"
+    v43 = Call v37 calleeName="constant"
+    v44 = Integer
+    v45 = Convert v44 declared={type=number flags=[IsExpected]}
+    Jump -> next b3(v45)
+  b3(v46):
+    LoopHint
+    v48 = Increment v46
+    v49 = Convert v48 declared={type=number flags=[IsExpected]}
+    Jump -> next b3(v49)
+  b4():
+    Jump -> next b5()
+  b5() handler=b6():
+    v50 = Convert v14 declared={type=number flags=[IsExpected]}
+    v51 = Call v1, -, v50 calleeName="collect"
+    Jump -> next b1()
+  b6() role=IterationCleanup subject=v10:
+    v52 = CatchException
+    Rethrow v52
+}
+function f1 name="fill" module=m0 position=366 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="collect" module=m0 position=768 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|Array<number> flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="Chunks" module=m0 position=1170 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Convert v3 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v5 = Data data=d1
+    v6 = Convert v5 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v7 = Convert v6 declared={type=undefined|null|Array flags=[IsExpected]}
+    PropSet v4, v7 key="full"
+    v9 = Undefined
+    Return v3
+}
+function f4 name="addAll" module=m0 position=1224 kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=L0 flags=[IsExpected]} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=undefined|null|L0 flags=[IsExpected]}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0, v1: undefined|null|string|Array, v2: anything):
+    v3 = Integer
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v8 = PropGet v7 key="full"
+    v9 = Convert v8 declared={type=undefined|null|Array flags=[IsExpected]}
+    v10 = PropGet v9 key="push"
+    v11 = Convert v10 declared={type=undefined|null|function flags=[IsExpected]}
+    v12 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v13 = PropGet v12 key="current"
+    v14 = Convert v13 declared={type=undefined|null|Array flags=[IsExpected]}
+    v15 = Call v11, v9, v14 calleeKey="push" calleeName="this.full.push"
+    v16 = Convert v0 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v17 = Data data=d2
+    v18 = Convert v17 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v19 = Convert v18 declared={type=undefined|null|Array flags=[IsExpected]}
+    PropSet v16, v19 key="current"
+    v21 = Increment v5
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v22)
+}
+function f5 name="Stack" module=m0 position=3022 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+function f6 name="constant" module=m0 position=3150 kind=Arrow thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[IsExpected]}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 Chunks addAll
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f15 callPosition=4294967295 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0() frequency=Rare:
+# CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=0 storage=Frame
+# CHECK-NEXT: v1: f3 = NewClosure function=f3 allocationSite=1
+# CHECK-NEXT: v2: f3 = NewClass v1 layout=L0
+# CHECK-NEXT: v3: f4 = NewClosure function=f4 allocationSite=2
+# CHECK-NEXT: DefineMethod v2, v3 layout=L0 key="addAll"
+# CHECK-NEXT: v5: 0 = Integer
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: v7: 5 = Integer integer=5
+# CHECK-NEXT: v8: 6 = Integer integer=6
+# CHECK-NEXT: v9: 7 = Integer integer=7
+# CHECK-NEXT: v10: 100 = Integer integer=100
+# CHECK-NEXT: v11: 5000 = Integer integer=5000
+# CHECK-NEXT: v12: 150000 = Integer integer=150000
+# CHECK-NEXT: v13: anything ~ undefined|null|Array<number> = Call v0, -, v5 calleeName="collect" accessSite=10 callees=[f2]
+# CHECK-NEXT: v14: anything ~ undefined|null|Array<number> = Call v0, -, v6 calleeName="collect" accessSite=10 callees=[f2]
+# CHECK-NEXT: v15: anything ~ undefined|null|Array<number> = Call v0, -, v7 calleeName="collect" accessSite=10 callees=[f2]
+# CHECK-NEXT: v16: anything ~ undefined|null|Array<number> = Call v0, -, v8 calleeName="collect" accessSite=10 callees=[f2]
+# CHECK-NEXT: v17: anything ~ undefined|null|Array<number> = Call v0, -, v9 calleeName="collect" accessSite=10 callees=[f2]
+# CHECK-NEXT: v18: anything ~ undefined|null|Array<number> = Call v0, -, v10 calleeName="collect" accessSite=10 callees=[f2]
+# CHECK-NEXT: v19: anything ~ undefined|null|Array<number> = Call v0, -, v11 calleeName="collect" accessSite=10 callees=[f2]
+# CHECK-NEXT: v20: anything ~ undefined|null|Array<number> = Call v0, -, v12 calleeName="collect" accessSite=10 callees=[f2]
+# CHECK-NEXT: v21: Array<undefined|Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v22: Array<undefined|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v21 provenType=Array<undefined|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v23: 100000 = Integer integer=100000
+# CHECK-NEXT: v24: anything ~ undefined|null|Array<number> = Call v0, -, v23 calleeName="collect" accessSite=2 callees=[f2]
+# CHECK-NEXT: v25: L0 = NewObject -, v22 layout=L0 fields=[1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: v26: undefined|null|L0 = CallDirect v25 function=f19 accessSite=3
+# CHECK-NEXT: v27: builtin(Array) = Builtin builtin=Array
+# CHECK-NEXT: v28: null|object = ResolveHeritage v27
+# CHECK-NEXT: v29: builtin(ArrayPrototype) = AssumeType v28 provenType=builtin(ArrayPrototype)
+# CHECK-NEXT: v30: f5 = NewClosure function=f5 allocationSite=4
+# CHECK-NEXT: v31: f5 = NewClass v30, v27, v29 layout=L1
+# CHECK-NEXT: v32: f5 = FinishClass v31 layout=L1
+# CHECK-NEXT: v33: f1 = GetModuleVariable variable=g0
+# CHECK-NEXT: v34: anything ~ object = Construct v32 calleeName="Stack" accessSite=4 callees=[f5]
+# CHECK-NEXT: v35: anything ~ L1 = Upcast v34 castType=anything
+# CHECK-NEXT: v36: 5000 = Integer integer=5000
+# CHECK-NEXT: v37: anything = Call v33, -, v35, v36 calleeName="fill" accessSite=5 callees=[f1]
+# CHECK-NEXT: v38: anything ~ object = Construct v32 calleeName="Stack" accessSite=6 callees=[f5]
+# CHECK-NEXT: v39: f6 = NewClosure function=f6 allocationSite=5 storage=Frame
+# CHECK-NEXT: v40: anything ~ undefined|null|Array<number> = Call v39 calleeName="constant" accessSite=7 callees=[f6]
+# CHECK-NEXT: v41: 2000 = Integer integer=2000
+# CHECK-NEXT: v42: anything = Call v33, -, v40, v41 calleeName="fill" accessSite=8 callees=[f1]
+# CHECK-NEXT: v43: anything ~ undefined|null|Array<number> = Call v39 calleeName="constant" accessSite=9 callees=[f6]
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Chunks"
+# CHECK: module=m0 position=1170 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=L0 flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+# CHECK-NEXT: b0(v0: anything):
+# CHECK-NEXT: v1: f3 = AssumeType v0 provenType=f3
+# CHECK-NEXT: v2: object = GetConstructPrototype v1 layout=L0
+# CHECK-NEXT: v3: object ~ L0 = NewObject v2 layout=L0 allocationSite=6 allocationClass=0
+# CHECK-NEXT: v4: L0 = AssumeType v3 provenType=L0
+# CHECK-NEXT: v5: Array<undefined|Array<never, proven, pristine[Storage, Names, Dense]>, Contiguous> = NewArray contents=undefined|Array<never, proven, pristine[Storage, Names, Dense]> allocationSite=7 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v6: Array<undefined|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v5 provenType=Array<undefined|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlot v4, -, v6 key="full" receivers=[L0] level=Proven accessSite=11
+# CHECK-NEXT: Return v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="addAll"
+# CHECK: module=m0 position=1224 kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=L0} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=8}] results=[{type=undefined|null|L0}] functionTypes=[f7] capabilities=[MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces, ClosuresAreReadWithoutCode]
+# CHECK-LABEL: function {{*}}name="Chunks"
+# CHECK: module=m0 position=1170 kind=BaseConstructor role=GenericEntrypoint flags=[HasThis, HasNewTarget] captures=[{type=f3}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3} creator=Entrypoint{target=f3 arguments=Registers takesNewTarget=true} {
+# CHECK-NEXT: b0(v0: f3, v1: anything, v2: anything):
+# CHECK-NEXT: v3: L0 = CallDirect v2 function=f3
+# CHECK-NEXT: ReturnCall v3 requirement=Allowed
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Chunks"
+# CHECK: module=m0 position=1170 kind=BaseConstructor role=AllocatedThisVersion flags=[HasThis, HasNewTarget, HasExplicitName] thisType={type=L0} results=[{type=undefined}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{}, {original=0}]} creator=Version{provenVersion=f3} constructedClass=L0
+# CHECK-LABEL: function {{*}}name="addAll"
+# CHECK: module=m0 position=1224 kind=Method role=GenericEntrypoint flags=[HasThis] length=2 captures=[{type=f4}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f4} creator=Entrypoint{target=f4 arguments=Registers} {
+# CHECK-NEXT: b0(v0: f4, v1: anything, v2: anything, v3: anything) frequency=Rare:
+# CHECK-NEXT: v4: object = NewRuntimeError runtimeError=LeftOutOfExecutable
+# CHECK-NEXT: Throw v4
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="addAll"
+# CHECK: module=m0 position=1224 kind=Method flags=[HasThis, HasExplicitName] length=2 thisType={type=L0} results=[{type=undefined|null|L0}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] derivation={source=f4 parameterMap=[{original=0}]} {
+# CHECK-NEXT: b0(v0: L0):
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v4: Array<undefined|Array<never, proven, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = GetSlot v0 key="full" receivers=[L0] level=Proven accessSite=12
+# CHECK-NEXT: v5: undefined|Array<never, proven, pristine[Storage, Names, Dense]> = GetSlotOrUndefined v0 key="current" receivers=[L0] level=Proven accessSite=14
+# CHECK-NEXT: v6: undefined|Array<never, proven, pristine[Storage, Names, Dense]> ~ Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v5 provenType=undefined|Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v7: int[0, 4294967295] = CallBuiltin v4, v6 overload=ArrayPrototypePush/0 accessSite=15
+# CHECK-NEXT: v11: 1 = Integer integer=1
+# CHECK-NEXT: v8: Array = NewArray contents=anything capacity=v11 allocationSite=8
+# CHECK-NEXT: v9: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutSlot v0, -, v9 key="current" receivers=[L0] level=Proven accessSite=16
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }

@@ -211,19 +211,7 @@ impl FileLowering<'_, '_, '_, '_> {
         // `import.meta.path` of a text that is no file begins with a `/`, and `__filename` of one that is CommonJS is its name.
         let is_commonjs_text =
             is_name_of_text(path) && self.inputs.modules.kind(owner) == ModuleKind::CommonJs;
-        if !is_commonjs_text
-            && (!path.starts_with(b"/") || bun_core::strings::contains_char(path, b'\\'))
-        {
-            return None;
-        }
-        match builtin {
-            BuiltinId::ImportMetaPath => Some(path.to_vec()),
-            BuiltinId::ImportMetaDir => {
-                let end = bun_core::strings::last_index_of_char(path, b'/');
-                Some(path[..end.or_else(|| is_commonjs_text.then_some(0))?].to_vec())
-            }
-            _ => None,
-        }
+        find_text_in_path(path, is_commonjs_text, builtin)
     }
 
     fn find_wrapper_path(
@@ -246,6 +234,29 @@ impl FileLowering<'_, '_, '_, '_> {
             properties.push(entry);
             entry = table::entry(entry).holder?;
         }
+    }
+}
+
+fn find_text_in_path(path: &[u8], is_commonjs_text: bool, builtin: BuiltinId) -> Option<Vec<u8>> {
+    let holds = |separator| bun_core::strings::contains_char(path, separator);
+    // In an executable for Windows a path begins with a drive and has that system's separators.
+    let separator = match path {
+        _ if is_commonjs_text => b'/',
+        [b'/', ..] if !holds(b'\\') => b'/',
+        [drive, b':', b'\\', ..] if drive.is_ascii_alphabetic() && !holds(b'/') => b'\\',
+        _ => return None,
+    };
+    match builtin {
+        BuiltinId::ImportMetaPath => Some(path.to_vec()),
+        BuiltinId::ImportMetaDir => {
+            let end = bun_core::strings::last_index_of_char(path, separator);
+            // The folder of a file that lies in the root of a drive keeps its separator.
+            if separator == b'\\' && end == Some(2) {
+                return None;
+            }
+            Some(path[..end.or_else(|| is_commonjs_text.then_some(0))?].to_vec())
+        }
+        _ => None,
     }
 }
 
@@ -546,4 +557,45 @@ pub(super) fn emit_entry_value(
     let index = wrapper_parameter_index(variable);
     let value = lowering.builder.parameter(index);
     lowering.expect_variable(variable, value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_and_folder_of_a_module_are_texts_of_the_build() {
+        let path = |path: &[u8]| find_text_in_path(path, false, BuiltinId::ImportMetaPath);
+        let folder = |path: &[u8]| find_text_in_path(path, false, BuiltinId::ImportMetaDir);
+        let text = |text: &[u8]| Some(text.to_vec());
+
+        assert_eq!(path(b"/$bunfs/root/a/b.js"), text(b"/$bunfs/root/a/b.js"));
+        assert_eq!(folder(b"/$bunfs/root/a/b.js"), text(b"/$bunfs/root/a"));
+        assert_eq!(path(br"B:\~BUN\root\a\b.js"), text(br"B:\~BUN\root\a\b.js"));
+        assert_eq!(folder(br"B:\~BUN\root\a\b.js"), text(br"B:\~BUN\root\a"));
+        assert_eq!(folder(br"B:\~BUN\root\b.js"), text(br"B:\~BUN\root"));
+
+        for left_to_the_run_time in [
+            &br"/a\b.js"[..],
+            br"B:\~BUN/root\b.js",
+            b"B:/~BUN/root/b.js",
+            br"1:\b.js",
+            b"data:text/javascript,1",
+        ] {
+            assert_eq!(path(left_to_the_run_time), None);
+            assert_eq!(folder(left_to_the_run_time), None);
+        }
+        assert_eq!(folder(br"B:\b.js"), None);
+
+        let of_text = |builtin| find_text_in_path(b"data:text/javascript,1", true, builtin);
+        assert_eq!(
+            of_text(BuiltinId::ImportMetaPath),
+            text(b"data:text/javascript,1")
+        );
+        assert_eq!(of_text(BuiltinId::ImportMetaDir), text(b"data:text"));
+        assert_eq!(
+            find_text_in_path(b"blob:1", true, BuiltinId::ImportMetaDir),
+            text(b"")
+        );
+    }
 }

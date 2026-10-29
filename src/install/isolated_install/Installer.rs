@@ -2831,7 +2831,7 @@ impl<'a> Installer<'a> {
         let base: &[u8] = if crate::dependency::is_link_path(target) {
             bun_fs::FileSystem::instance().top_level_dir()
         } else {
-            &self.manager().global_link_dir_path
+            self.manager().global_link_dir_path
         };
         debug_assert!(!base.is_empty());
         let len = paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(

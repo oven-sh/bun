@@ -520,16 +520,9 @@ macro_rules! encoded_wrap_free {
 impl Encoded {
     #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
-        let mut bytes = core::mem::ManuallyDrop::new(bytes);
-        // SAFETY: Vec data ptr is non-null; len is valid.
-        let slice = unsafe {
-            NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(
-                bytes.as_mut_ptr(),
-                bytes.len(),
-            ))
-        };
+        let (ptr, len, _capacity) = bytes.into_parts();
         Encoded {
-            bytes: slice,
+            bytes: NonNull::slice_from_raw_parts(ptr, len),
             // `bytes` came from a `Vec<u8>` (the global allocator); free with
             // `default_alloc::free` so it agrees with the `#[global_allocator]`.
             free: encoded_wrap_free!(bun_alloc::default_alloc::free),

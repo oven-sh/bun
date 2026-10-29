@@ -101,10 +101,59 @@ const typeTestsOfNode = [
   "isWeakSet",
 ];
 
+const typedArrays = [
+  "Int8Array",
+  "Uint8Array",
+  "Uint8ClampedArray",
+  "Int16Array",
+  "Uint16Array",
+  "Int32Array",
+  "Uint32Array",
+  "Float16Array",
+  "Float32Array",
+  "Float64Array",
+  "BigInt64Array",
+  "BigUint64Array",
+] as const;
+
+// The classes whose instances a test answers true for, and no others.
+const classesToldApart: Readonly<Record<string, readonly b.ClassName[]>> = {
+  isAnyArrayBuffer: ["ArrayBuffer", "SharedArrayBuffer"],
+  isArgumentsObject: ["Arguments"],
+  isArrayBuffer: ["ArrayBuffer"],
+  isArrayBufferView: [...typedArrays, "DataView"],
+  isBigIntObject: ["BigInt"],
+  isBooleanObject: ["Boolean"],
+  isBoxedPrimitive: ["BigInt", "Boolean", "Number", "String", "Symbol"],
+  isDataView: ["DataView"],
+  isDate: ["Date"],
+  isMap: ["Map"],
+  isMapIterator: ["MapIterator"],
+  isNativeError: ["Error"],
+  isNumberObject: ["Number"],
+  isPromise: ["Promise"],
+  isProxy: ["Proxy"],
+  isRegExp: ["RegExp"],
+  isSet: ["Set"],
+  isSetIterator: ["SetIterator"],
+  isSharedArrayBuffer: ["SharedArrayBuffer"],
+  isStringObject: ["String"],
+  isSymbolObject: ["Symbol"],
+  isTypedArray: typedArrays,
+  isWeakMap: ["WeakMap"],
+  isWeakSet: ["WeakSet"],
+  ...Object.fromEntries(typedArrays.map(name => [`is${name}`, [name]])),
+};
+
+const testOf = (name: string) => {
+  const classes = classesToldApart[name];
+  if (classes === undefined) return testsKindOfCell;
+  const [first, ...others] = classes.map(b.instance);
+  return { ...testsKindOfCell, answersWhetherInstance: { value: b.union(first, ...others) } };
+};
+
 export default b.declarations(
-  typeTestsOfNode.flatMap(name =>
-    b.static(`node:util/types.${name}`, { ...testsKindOfCell, implementation: b.generic }),
-  ),
+  typeTestsOfNode.flatMap(name => b.static(`node:util/types.${name}`, { ...testOf(name), implementation: b.generic })),
   // Nothing leads from the realm to a member of a module: its native code tells which function it is. That of these two belongs to the functions below.
   typeTestsOfNode
     .filter(name => name !== "isMapIterator" && name !== "isSetIterator")
@@ -123,8 +172,8 @@ export default b.declarations(
     .filter(path => !functionsBelowOtherObjects.includes(path))
     .flatMap(path => b.inherits(path, "Function.prototype")),
 
-  b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator"), testsKindOfCell),
-  b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator"), testsKindOfCell),
+  b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsMapIterator"), testOf("isMapIterator")),
+  b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsSetIterator"), testOf("isSetIterator")),
   // It looks for @@toStringTag without running a getter, and asks for the prototype, which a proxy answers with its trap.
   b.static(cpp("NodeUtilTypesModule.cpp", "jsFunctionIsError"), {
     ...operandCodeOnly,
@@ -169,7 +218,7 @@ export default b.declarations(
         b.contentsStoredIn(b.resultSlot("element")),
       ],
       except: b.ownPropertyTraps,
-      receiver: [b.everything],
+      receiver: b.inspected,
     },
     implementation: b.hostCall,
   }),

@@ -289,9 +289,10 @@ test("nothing is looked up outside the entries", () => {
 });
 
 // Node.js asks the file system whether an entry is a directory. Bun reads it from the list of the directory above,
-// and asks the file system where that list cannot be read. The super-user can read every list. On Windows a mode
-// does not stop the listing of a directory.
-(isWindows ? test.skip : test)("an entry is searched where the directory above it cannot be listed", () => {
+// and asks the file system where that list cannot be read. The super-user can read every list, and on Windows a mode
+// does not stop the listing of a directory. The test does not run there.
+const canListEveryDirectory = isWindows || process.getuid?.() === 0;
+(canListEveryDirectory ? test.skip : test)("an entry is searched where the directory above it cannot be listed", () => {
   mkdirSync(abs("unlisted", "entry"), { recursive: true });
   writeFileSync(abs("unlisted", "entry", "file.js"), "");
   chmodSync(abs("unlisted"), 0o300);
@@ -939,7 +940,7 @@ test("the extensions, the conditions and the exports are those of require()", ()
 
 // Only in Bun: these tests need the test harness, and when Node.js runs this file it must not start itself again.
 if (isBun) {
-  const { bunEnv, bunExe, isDebug, nodeExeAtLeast, tempDir } = await import("harness");
+  const { bunEnv, bunExe, nodeExeAtLeast, tempDir } = await import("harness");
 
   // Node.js reads the entries once more, for the key of its cache.
   test("a getter of paths runs once for each entry that is searched", () => {
@@ -964,77 +965,6 @@ if (isBun) {
       "no entry has it": false,
       "the second entry has it": "<root>/lib/a.js",
       reads: [0, 1, 0, 1],
-    });
-  });
-
-  // On a miss, the resolver asks the registry for a name that no node_modules directory has.
-  test("no package is asked of the registry", async () => {
-    const requests = [];
-    await using registry = Bun.serve({
-      port: 0,
-      fetch(request) {
-        requests.push(new URL(request.url).pathname);
-        return new Response("{}", { status: 404 });
-      },
-    });
-    using dir = tempDir("findpath-no-install", {});
-    using cache = tempDir("findpath-no-install-cache", {});
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "--install=force",
-        "-e",
-        `console.log(require("node:module")._findPath("findpath-not-installed", [process.cwd()]));`,
-      ],
-      env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry.url.href, BUN_INSTALL_CACHE_DIR: String(cache) },
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode, requests }).toEqual({
-      stdout: "false\n",
-      stderr: "",
-      exitCode: 0,
-      requests: [],
-    });
-  });
-
-  // Reading an entry can run code that resolves a module. What the resolver logs for the next
-  // entry is still no output of the program.
-  test("what the resolver logs for an entry is not printed", async () => {
-    using dir = tempDir("findpath-log", {
-      "first/.keep": "",
-      "second/broken/package.json": `{ "name": "broken", "main": `,
-      "second/broken/index.js": "",
-      "main.cjs": `
-        const Module = require("node:module");
-        const path = require("node:path");
-        const paths = {
-          length: 2,
-          get 0() {
-            try {
-              require.resolve("./not-there");
-            } catch {}
-            return path.join(__dirname, "first");
-          },
-          1: path.join(__dirname, "second"),
-        };
-        console.log(path.relative(__dirname, Module._findPath("broken", paths) || ""));
-      `,
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "main.cjs"],
-      env: bunEnv,
-      cwd: String(dir),
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-      stdout: join("second", "broken", "index.js"),
-      stderr: "",
-      exitCode: 0,
     });
   });
 
@@ -1074,8 +1004,79 @@ if (isBun) {
     }
   });
 
+  // On a miss, the resolver asks the registry for a name that no node_modules directory has.
+  test.concurrent("no package is asked of the registry", async () => {
+    const requests = [];
+    await using registry = Bun.serve({
+      port: 0,
+      fetch(request) {
+        requests.push(new URL(request.url).pathname);
+        return new Response("{}", { status: 404 });
+      },
+    });
+    using dir = tempDir("findpath-no-install", {});
+    using cache = tempDir("findpath-no-install-cache", {});
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--install=force",
+        "-e",
+        `console.log(require("node:module")._findPath("findpath-not-installed", [process.cwd()]));`,
+      ],
+      env: { ...bunEnv, BUN_CONFIG_REGISTRY: registry.url.href, BUN_INSTALL_CACHE_DIR: String(cache) },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode, requests }).toEqual({
+      stdout: "false\n",
+      stderr: "",
+      exitCode: 0,
+      requests: [],
+    });
+  });
+
+  // Reading an entry can run code that resolves a module. What the resolver logs for the next
+  // entry is still no output of the program.
+  test.concurrent("what the resolver logs for an entry is not printed", async () => {
+    using dir = tempDir("findpath-log", {
+      "first/.keep": "",
+      "second/broken/package.json": `{ "name": "broken", "main": `,
+      "second/broken/index.js": "",
+      "main.cjs": `
+        const Module = require("node:module");
+        const path = require("node:path");
+        const paths = {
+          length: 2,
+          get 0() {
+            try {
+              require.resolve("./not-there");
+            } catch {}
+            return path.join(__dirname, "first");
+          },
+          1: path.join(__dirname, "second"),
+        };
+        console.log(path.relative(__dirname, Module._findPath("broken", paths) || ""));
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: join("second", "broken", "index.js"),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   const node = nodeExeAtLeast("26.3.0");
-  (node ? test : test.skip)("all tests pass in Node.js", async () => {
+  (node ? test.concurrent : test.skip)("all tests pass in Node.js", async () => {
     await using proc = Bun.spawn({
       cmd: [node, fileURLToPath(import.meta.url)],
       env: bunEnv,
@@ -1085,70 +1086,4 @@ if (isBun) {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ exitCode, output: exitCode === 0 ? "" : stdout + stderr }).toEqual({ exitCode: 0, output: "" });
   });
-
-  // `bun build --compile` copies the whole bun binary. That of a debug build is 1.6 GB.
-  test(
-    "the modules of a standalone executable are found",
-    async () => {
-      using dir = tempDir("findpath-standalone", {
-        "entry.mjs": `
-        import { _findPath } from "node:module";
-        import path from "node:path";
-        const self = import.meta.path;
-        const root = path.dirname(self);
-        const name = path.basename(self);
-        // On Windows the name of a module of the executable has forward slashes, and import.meta.path has backslashes.
-        const found = (request, paths) => {
-          const file = _findPath(request, paths);
-          return typeof file === "string" && path.normalize(file) === path.normalize(self) ? "this module" : file;
-        };
-        console.log(JSON.stringify({
-          absolute: found(self),
-          relative: found("./" + name, [root]),
-          bare: found(name, [root]),
-          missing: [found("./nowhere", [root]), found(path.join(root, "nowhere"))],
-        }));
-      `,
-      });
-      await using build = Bun.spawn({
-        cmd: [bunExe(), "build", "--compile", "entry.mjs", "--outfile", "app"],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [, buildStderr, buildExitCode] = await Promise.all([
-        build.stdout.text(),
-        build.stderr.text(),
-        build.exited,
-      ]);
-      expect({ stderr: buildExitCode === 0 ? "" : buildStderr, exitCode: buildExitCode }).toEqual({
-        stderr: "",
-        exitCode: 0,
-      });
-
-      // The directory of the executable is not the current directory, so nothing is found on disk by accident.
-      using cwd = tempDir("findpath-standalone-cwd", {});
-      await using proc = Bun.spawn({
-        cmd: [join(String(dir), isWindows ? "app.exe" : "app")],
-        cwd: String(cwd),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
-        stdout: JSON.stringify({
-          absolute: "this module",
-          relative: "this module",
-          bare: "this module",
-          missing: [false, false],
-        }),
-        stderr: "",
-        exitCode: 0,
-      });
-    },
-    // A debug build takes a minute to copy. A release build keeps the timeout that the run has.
-    isDebug ? 180_000 : undefined,
-  );
 }

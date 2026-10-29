@@ -636,6 +636,38 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // Module._findPath finds a module of the executable by its path, under the name that require.resolve() gives it.
+  itBundled("compile/ModuleFindPathFindsEmbeddedModule", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { _findPath } from "node:module";
+        import path from "node:path";
+        const self = import.meta.path;
+        const root = path.dirname(self);
+        const name = path.basename(self);
+        // On Windows the name of a module of the executable has forward slashes, and import.meta.path has backslashes.
+        const found = (request: string, paths?: string[]) => {
+          const file = _findPath(request, paths);
+          return typeof file === "string" && path.normalize(file) === path.normalize(self) ? "this module" : file;
+        };
+        console.log(JSON.stringify({
+          absolute: found(self),
+          relative: found("./" + name, [root]),
+          bare: found(name, [root]),
+          missing: [found("./nowhere", [root]), found(path.join(root, "nowhere"))],
+        }));
+      `,
+    },
+    run: {
+      stdout: JSON.stringify({
+        absolute: "this module",
+        relative: "this module",
+        bare: "this module",
+        missing: [false, false],
+      }),
+    },
+  });
   itBundled("compile/WorkerRelativePathTSExtension", {
     backend: "cli",
     compile: true,

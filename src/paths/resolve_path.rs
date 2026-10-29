@@ -133,99 +133,7 @@ pub fn is_parent_or_equal(parent_: &[u8], child: &[u8]) -> ParentEqual {
     ParentEqual::Unrelated
 }
 
-fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
-    input: &[&'a [u8]],
-) -> Option<&'a [u8]> {
-    let is_path_separator = P::P.get_separator_func();
-
-    let nql_at_index_fn: fn(usize, usize, &[&[u8]]) -> bool = match P::P {
-        Platform::Windows => |n, i, inp| nql_at_index_case_insensitive_dyn(n, i, inp),
-        _ => |n, i, inp| nql_at_index_dyn(n, i, inp),
-    };
-    // PERF: uses a runtime `n` (no per-count unrolling). Profile if it shows
-    // up on a hot path.
-
-    let mut min_length: usize = usize::MAX;
-    for str in input {
-        min_length = str.len().min(min_length);
-    }
-
-    let mut index: usize = 0;
-    let mut last_common_separator: Option<usize> = None;
-
-    match input.len() {
-        0 => return Some(b""),
-        1 => return Some(input[0]),
-        n @ 2..=8 => {
-            while index < min_length {
-                if nql_at_index_fn(n, index, input) {
-                    last_common_separator?;
-                    break;
-                }
-                if is_path_separator(input[0][index]) {
-                    last_common_separator = Some(index);
-                }
-                index += 1;
-            }
-        }
-        _ => {
-            let mut string_index: usize = 1;
-            // `index -= 1` below needs a byte in every input.
-            while min_length > 0 && string_index < input.len() {
-                while index < min_length {
-                    if P::P == Platform::Windows {
-                        if !input[0][index].eq_ignore_ascii_case(&input[string_index][index]) {
-                            last_common_separator?;
-                            break;
-                        }
-                    } else {
-                        if input[0][index] != input[string_index][index] {
-                            last_common_separator?;
-                            break;
-                        }
-                    }
-                    index += 1;
-                }
-                if index == min_length {
-                    index -= 1;
-                }
-                if is_path_separator(input[0][index]) {
-                    last_common_separator = Some(index);
-                }
-                string_index += 1;
-            }
-        }
-    }
-
-    if index == 0 {
-        return Some(P::P.separator_string().as_bytes());
-    }
-
-    if last_common_separator.is_none() {
-        return Some(b".");
-    }
-
-    // The above won't work for a case like this:
-    // /app/public/index.js
-    // /app/public
-    // It will return:
-    // /app/
-    // It should return:
-    // /app/public/
-    // To detect /app/public is actually a folder, we do one more loop through the strings
-    // and say, "do one of you have a path separator after what we thought was the end?"
-    for str in input {
-        if str.len() > index {
-            if is_path_separator(str[index]) {
-                return Some(&str[0..index + 1]);
-            }
-        }
-    }
-
-    Some(&input[0][0..last_common_separator.unwrap() + 1])
-}
-
-// Runtime helpers for the nql checks above.
+// Runtime helpers for the nql checks below.
 #[inline]
 fn nql_at_index_dyn(string_count: usize, index: usize, input: &[&[u8]]) -> bool {
     for s in 1..string_count {
@@ -370,10 +278,6 @@ pub fn longest_common_path<'a>(input: &[&'a [u8]]) -> &'a [u8] {
 /// Like `longest_common_path`, with the rules of the host: on Windows the compare is case-insensitive and paths on two volumes share nothing.
 pub fn longest_common_path_native<'a>(input: &[&'a [u8]]) -> &'a [u8] {
     longest_common_path_generic::<platform::Auto>(input)
-}
-
-pub fn get_if_exists_longest_common_path<'a>(input: &[&'a [u8]]) -> Option<&'a [u8]> {
-    get_if_exists_longest_common_path_generic::<platform::Loose>(input)
 }
 
 // bun.ThreadlocalBuffers(struct {...}) heap-allocates on first use and

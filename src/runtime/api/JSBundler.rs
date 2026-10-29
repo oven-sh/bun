@@ -1335,7 +1335,8 @@ pub(crate) mod js_bundler {
             let mut is_root_written = false;
             let mut derived_root_error: Option<String> = None;
             'root: {
-                let path: Utf8Bytes = 'brk: {
+                let mut is_shared_by_entry_points = false;
+                let mut path: Utf8Bytes = 'brk: {
                     if let Some(slice) = config.get_optional_slice(global_this, b"root")? {
                         is_root_written = true;
                         break 'brk slice;
@@ -1365,13 +1366,20 @@ pub(crate) mod js_bundler {
                     }
 
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
+                    is_shared_by_entry_points = true;
                     break 'brk Utf8Bytes::Owned(bun_bundler::options::common_entry_directory(
                         bun_resolver::fs::FileSystem::get().top_level_dir(),
                         &borrowed,
                     ));
                 };
 
-                let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
+                let mut opened = bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice());
+                // The shared directory is derived from names: a package or a plugin can resolve them, and the user may not be allowed to list it.
+                if is_shared_by_entry_points && opened.is_err() {
+                    path = Utf8Bytes::Borrowed(b".");
+                    opened = bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice());
+                }
+                let dir = match opened {
                     Ok(d) => d,
                     Err(err) => {
                         let message = format!(

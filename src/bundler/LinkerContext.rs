@@ -1211,7 +1211,7 @@ impl<'a> LinkerContext<'a> {
         &mut self,
         isolated_hash: u64,
         _worker: &mut crate::thread_pool::Worker,
-        results: &MultiArrayList<CompileResultForSourceMap>,
+        results: &MultiArrayList<CompileResultForSourceMap<'_>>,
         chunk_abs_dir: &[u8],
         can_have_shifts: bool,
     ) -> Result<SourceMapPieces, BunError> {
@@ -1315,7 +1315,7 @@ impl<'a> LinkerContext<'a> {
         let offsets = results.items_generated_offset();
         debug_assert_eq!(source_map_chunks.len(), offsets.len());
         debug_assert_eq!(source_map_chunks.len(), source_indices.len());
-        for ((chunk, offset), &current_source_index) in source_map_chunks
+        for ((&chunk, offset), &current_source_index) in source_map_chunks
             .iter()
             .zip(offsets.iter())
             .zip(source_indices.iter())
@@ -1450,10 +1450,6 @@ pub struct LinkerOptions {
     pub(crate) target: Target,
     pub(crate) compile_mode: CompileMode,
     pub(crate) metafile: bool,
-    /// Path to write JSON metafile (for Bun.build API)
-    pub(crate) metafile_json_path: &'static [u8],
-    /// Path to write markdown metafile (for Bun.build API)
-    pub(crate) metafile_markdown_path: &'static [u8],
 
     pub(crate) mode: LinkerOptionsMode,
 
@@ -1515,8 +1511,6 @@ impl Default for LinkerOptions {
             target: Target::Browser,
             compile_mode: CompileMode::None,
             metafile: false,
-            metafile_json_path: b"",
-            metafile_markdown_path: b"",
             mode: LinkerOptionsMode::Bundle,
             public_path: b"",
         }

@@ -2132,15 +2132,12 @@ fn parse_md_loader<'a>(
     arena: &'a Arena,
     log: &mut bun_ast::Log,
 ) -> Option<ParseResult<'a>> {
-    let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
+    let html: &[u8] = match bun_md::root::render_to_html(&source.contents) {
         // The rendered HTML is allocated via
         // `arena` (the per-parse arena), so it is freed with the
         // arena. Arena-copy the heap `Box<[u8]>` and let it drop;
         // PORTING.md §Forbidden patterns bars `Box::leak` here.
-        // SAFETY: ARENA — `arena` outlives the returned
-        // `ParseResult.ast` (the AST crate's `Str` convention erases
-        // `'bump` to `'static` for `E::String.data`).
-        Ok(h) => unsafe { bun_ptr::detach_lifetime(arena.alloc_slice_copy(&h)) },
+        Ok(h) => arena.alloc_slice_copy(&h),
         Err(_) => {
             let _ = log.add_error_fmt(
                 None,

@@ -2,6 +2,7 @@
 import { expect } from "bun:test";
 import { MAX_PATH_BYTES } from "harness";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
@@ -410,6 +411,24 @@ devTest('a "use client" module with a @jsxRuntime pragma keeps its client refere
     await dev.fetch("/").equals(references);
   },
 });
+for (const count of [4, 9]) {
+  const ids = Array.from({ length: count }, (_, i) => i);
+  devTest(`a page that imports ${count} "use client" modules`, {
+    framework: minimalFramework,
+    files: {
+      ...Object.fromEntries(ids.map(i => [`components/c${i}.ts`, `"use client";\nexport default function C${i}() {}`])),
+      "routes/index.ts": `
+        ${ids.map(i => `import c${i} from "../components/c${i}";`).join("\n")}
+        export default function () {
+          return Response.json([${ids.map(i => `c${i}`).join(", ")}].map(ref => ref.file.replaceAll("\\\\", "/")));
+        }
+      `,
+    },
+    async test(dev) {
+      await dev.fetch("/").equals(ids.map(i => `components/c${i}.ts`));
+    },
+  });
+}
 devTest("repairing a missing import in a framework without server components", {
   framework: { fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes },
   files: {
@@ -1390,6 +1409,58 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
   },
 });
 
+// HMR lowering merges the statements of one import path into the first one. The
+// import record of each later statement is never resolved.
+const abBarrel = `export { a } from './a.js'; export { b } from './b.js';`;
+const abPackage = (name: string, index: string) => ({
+  [`node_modules/${name}/package.json`]: JSON.stringify({
+    name,
+    version: "1.0.0",
+    main: "./index.js",
+    sideEffects: false,
+  }),
+  [`node_modules/${name}/index.js`]: index,
+  [`node_modules/${name}/inner.js`]: abBarrel,
+  [`node_modules/${name}/a.js`]: `export const a = "A";`,
+  [`node_modules/${name}/b.js`]: `export function b() {}`,
+});
+
+devTest("barrel optimization: export star after another statement of the same path", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b as b1 } from 'named-first';
+      import { b as b2 } from 'star-first';
+      import { b as b3 } from 'star-twice';
+      import { b as b4 } from './import-first';
+      import { a as importLate } from 'parsed-first';
+      const { b: b5 } = await importLate();
+      console.log('got: ' + [b1, b2, b3, b4, b5].map(b => typeof b).join(' '));
+    `,
+    ...abPackage("named-first", `export { a } from './inner.js'; export * from './inner.js';`),
+    ...abPackage("star-first", `export * from './inner.js'; export { a } from './inner.js';`),
+    ...abPackage("star-twice", `import './inner.js'; export * from './inner.js'; export * from './inner.js';`),
+    "import-first.ts": `
+      import { a } from 'leaf';
+      export * from 'leaf';
+      export const own = a;
+    `,
+    ...abPackage("leaf", abBarrel),
+    // parsed-first has deferred b.js by the time its a.js leads to late.ts.
+    ...abPackage("parsed-first", abBarrel),
+    "node_modules/parsed-first/a.js": `export const a = () => import('../../late');`,
+    "late.ts": `
+      import { a } from 'parsed-first';
+      export * from 'parsed-first';
+      export const own = a;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("got: function function function function function");
+  },
+});
+
 devTest("barrel optimization: namespace re-export cycle through a star-exported module", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
@@ -1566,6 +1637,85 @@ devTest("a route whose import throws on load throws that error again on the next
     await dev.fetch("/sync-body").equals("sync-body: fixed");
     await dev.write("sync-import-dep.ts", `export const value = "fixed";`);
     await dev.fetch("/sync-import").equals("sync-import: fixed");
+  },
+});
+devTest("a route module that throws when a save reloads it is reported and recovers", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      export default function () {
+        return new Response("index v1");
+      }
+    `,
+    "routes/other.ts": `
+      export default function () {
+        return new Response("other v1");
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("index v1");
+    await dev.fetch("/other").equals("other v1");
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write(
+        "routes/index.ts",
+        `
+          throw new Error("thrown at module scope");
+          export default function () {
+            return new Response("index v2");
+          }
+        `,
+      );
+      await dev.patch("routes/other.ts", { find: "v1", replace: "v2" });
+    }
+    const failed = await dev.fetch("/");
+    expect(await failed.text()).toContain("thrown at module scope");
+    expect(failed.status).toBe(500);
+    await dev.fetch("/other").equals("other v2");
+    await dev.write(
+      "routes/index.ts",
+      `
+        export default function () {
+          return new Response("index v3");
+        }
+      `,
+    );
+    await dev.fetch("/").equals("index v3");
+  },
+});
+devTest("a route loads after a request for it was answered with 413", {
+  files: {
+    "routes/about.ts": `
+      export default function () {
+        return new Response("about");
+      }
+    `,
+    "routes/other.ts": `
+      export default function () {
+        return new Response("other");
+      }
+    `,
+    "bun.app.ts": `
+      export default {
+        maxRequestBodySize: 1024,
+        app: { framework: ${JSON.stringify(minimalFramework)} },
+      };
+    `,
+  },
+  async test(dev) {
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const socket = net.connect(dev.port, "localhost", () => {
+      socket.write("POST /about HTTP/1.1\r\nHost: localhost\r\nContent-Length: 999999\r\n\r\n");
+    });
+    let data = "";
+    socket.on("data", chunk => (data += chunk));
+    socket.on("error", reject);
+    socket.on("close", () => resolve(data.split("\r\n")[0]));
+    expect(await promise).toBe("HTTP/1.1 413 Request Entity Too Large");
+
+    await dev.fetch("/other").equals("other");
+    await dev.fetch("/about").equals("about");
   },
 });
 // "loop" is a symlink to itself, so kqueue can't open the directory to watch it.

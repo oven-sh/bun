@@ -11,7 +11,6 @@ use bun_core::{ZStr, strings};
 use bun_dotenv as DotEnv;
 use bun_http::{self as HTTP, headers};
 use bun_install::integrity::{Integrity, Tag as IntegrityTag};
-use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_parsers::json as JSON;
 use bun_paths::{self, SEP_STR};
 use bun_resolver::fs;
@@ -47,10 +46,10 @@ fn spawn_windows_options() -> crate::api::bun::process::WindowsOptions {
 // the un-exported `fs_full` module. Shim it locally — open
 // `RealFS::tmpdir_path()` as a `sys::Dir`, mirroring `RealFS::open_tmp_dir`.
 pub(crate) trait FileSystemTmpdirExt {
-    fn tmpdir(&mut self) -> crate::Result<sys::Dir>;
+    fn tmpdir(&self) -> crate::Result<sys::Dir>;
 }
 impl FileSystemTmpdirExt for fs::FileSystem {
-    fn tmpdir(&mut self) -> crate::Result<sys::Dir> {
+    fn tmpdir(&self) -> crate::Result<sys::Dir> {
         sys::Dir::open(fs::RealFS::tmpdir_path()).map_err(Into::into)
     }
 }
@@ -537,8 +536,8 @@ impl UpgradeCommand {
     fn _exec(ctx: Command::Context) -> crate::Result<()> {
         HTTP::http_thread::init(&Default::default());
 
-        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        fs::FileSystem::init(None)?;
+        let filesystem = fs::FileSystem::get();
         let mut env_loader = DotEnv::Loader::init();
         env_loader.load_process()?;
 
@@ -1381,6 +1380,7 @@ impl UpgradeCommand {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) mod upgrade_js_bindings {
+    #[cfg(windows)]
     use super::*;
 
     // Process-global, not threadlocal: if open/close are invoked from different
@@ -1390,46 +1390,9 @@ pub(crate) mod upgrade_js_bindings {
     #[cfg(windows)]
     static TEMPDIR_FD: bun_core::RacyCell<Option<sys::Fd>> = bun_core::RacyCell::new(None);
 
-    pub(crate) fn generate(global: &JSGlobalObject) -> JSValue {
-        let obj = JSValue::create_empty_object(global, 2);
-        obj.put(
-            global,
-            b"openTempDirWithoutSharingDelete",
-            jsc::JSFunction::create(
-                global,
-                "openTempDirWithoutSharingDelete",
-                // `#[bun_jsc::host_fn]` emits the C-ABI shim with a
-                // `__jsc_host_` prefix.
-                __jsc_host_js_open_temp_dir_without_sharing_delete,
-                1,
-                Default::default(),
-            ),
-        );
-        obj.put(
-            global,
-            b"closeTempDirHandle",
-            jsc::JSFunction::create(
-                global,
-                "closeTempDirHandle",
-                __jsc_host_js_close_temp_dir_handle,
-                1,
-                Default::default(),
-            ),
-        );
-        obj
-    }
-
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    #[bun_jsc::host_fn]
-    fn js_open_temp_dir_without_sharing_delete(
-        _global: &JSGlobalObject,
-        _frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        #[cfg(not(windows))]
-        {
-            return Ok(JSValue::UNDEFINED);
-        }
+    pub(crate) fn open_temp_dir_without_sharing_delete() {
         #[cfg(windows)]
         {
             use sys::windows as w;
@@ -1439,7 +1402,7 @@ pub(crate) mod upgrade_js_bindings {
             let mut wtmp = bun_paths::w_path_buffer_pool::get();
             let tmpdir_w = bun_core::convert_utf8_to_utf16_in_buffer(&mut wtmp[..], tmpdir_path);
             let path = match sys::normalize_path_windows(sys::Fd::INVALID, tmpdir_w, &mut buf[..]) {
-                sys::Result::Err(_) => return Ok(JSValue::UNDEFINED),
+                sys::Result::Err(_) => return,
                 sys::Result::Ok(norm) => norm,
             };
 
@@ -1497,17 +1460,10 @@ pub(crate) mod upgrade_js_bindings {
                 }
                 _ => {}
             }
-
-            Ok(JSValue::UNDEFINED)
         }
     }
 
-    #[bun_jsc::host_fn]
-    fn js_close_temp_dir_handle(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        #[cfg(not(windows))]
-        {
-            return Ok(JSValue::UNDEFINED);
-        }
+    pub(crate) fn close_temp_dir_handle() {
         #[cfg(windows)]
         {
             use bun_sys::FdExt as _;
@@ -1517,8 +1473,6 @@ pub(crate) mod upgrade_js_bindings {
             if let Some(fd) = unsafe { core::mem::take(&mut *TEMPDIR_FD.get()) } {
                 fd.close();
             }
-
-            Ok(JSValue::UNDEFINED)
         }
     }
 }

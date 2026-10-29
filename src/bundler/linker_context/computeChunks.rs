@@ -35,11 +35,11 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
 
 /// Returns `order`. If the `@import` chain is too deep, logs an error and returns
 /// an empty order. The logged error fails the build after `compute_chunks` returns.
-fn css_order_or_log(
+fn css_order_or_log<'a>(
     this_ptr: *mut LinkerContext,
     parse_graph: &crate::Graph::Graph,
-    order: Result<Vec<chunk::CssImportOrder>, CssImportChainTooDeep>,
-) -> Vec<chunk::CssImportOrder> {
+    order: Result<Vec<chunk::CssImportOrder<'a>>, CssImportChainTooDeep>,
+) -> Vec<chunk::CssImportOrder<'a>> {
     order.unwrap_or_else(|too_deep| {
         // SAFETY: see the `this_ptr` note in `compute_chunks`. The log is
         // allocation-disjoint from the linker (`LinkerContext::log_disjoint`).
@@ -50,10 +50,10 @@ fn css_order_or_log(
 }
 
 #[inline(never)]
-pub(crate) fn compute_chunks(
-    this: &mut LinkerContext,
+pub(crate) fn compute_chunks<'a>(
+    this: &mut LinkerContext<'a>,
     unique_key: u64,
-) -> crate::Result<Box<[Chunk]>> {
+) -> crate::Result<Box<[Chunk<'a>]>> {
     let _trace = bun_core::perf::trace("Bundler.computeChunks");
 
     debug_assert!(this.dev_server.is_none()); // use
@@ -78,11 +78,6 @@ pub(crate) fn compute_chunks(
     // link step. Raw deref (not `this.parse_graph()`) because the loop below
     // needs disjoint `&mut this.graph.*` borrows while `parse_graph` is held.
     let parse_graph = unsafe { &*this.parse_graph };
-    // `bump` is a `BackRef` into `BundleV2.graph.arena`, valid for the link step.
-    // Hoisted so the loop can hold disjoint &mut borrows into `this.graph`.
-    // `BundlerStyleSheet::empty()` no longer takes an arena in Rust; kept for
-    // when arena threading lands.
-    let _arena: &Arena = this.graph.arena();
 
     // borrowck escape hatch — the SoA column slices below hold disjoint
     // immutable borrows into `this.graph` while several helpers (and the BundleV2
@@ -402,12 +397,12 @@ pub(crate) fn compute_chunks(
                         }
                     } else {
                         // Pass a context struct + fn pointer to entry_bits' forEach.
-                        struct Handler<'a> {
-                            chunks: &'a mut [Chunk],
+                        struct Handler<'a, 'c> {
+                            chunks: &'a mut [Chunk<'c>],
                             source_id: u32,
                             entry_point_to_js_chunk_idx: &'a [u32],
                         }
-                        fn next(c: &mut Handler<'_>, entry_point_id: usize) {
+                        fn next(c: &mut Handler<'_, '_>, entry_point_id: usize) {
                             // Map the entry point ID to the actual JS chunk index.
                             // CSS-only entry points don't have JS chunks (sentinel value).
                             let chunk_idx = c.entry_point_to_js_chunk_idx[entry_point_id];
@@ -449,7 +444,7 @@ pub(crate) fn compute_chunks(
         // sort by entry_point_id to ensure the main entry point (id=0) comes first,
         // then by key for determinism among the rest.
         struct ChunkSortContext<'a> {
-            chunks: &'a ArrayHashMap<&'a [u8], Chunk>,
+            chunks: &'a ArrayHashMap<&'a [u8], Chunk<'a>>,
         }
 
         impl<'a> ChunkSortContext<'a> {

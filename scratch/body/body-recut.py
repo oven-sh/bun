@@ -13,7 +13,7 @@ P = {
     "text_bytes": "382",
     "bss_bytes": "16",
     # Executed instructions in lsquic_stream.o for one 49,500-byte response.
-    "instructions": "34 more instructions per 49,500-byte response (26,139 before)",
+    "instructions": "33 more instructions per 49,500-byte response (29,430 before)",
     "base": "main with #46528",
 }
 for arg in sys.argv[2:]:
@@ -90,7 +90,8 @@ notes = f"""<details><summary>Notes</summary>
 - With the patches: the 13 rows pass on a debug build and on a release build (30 of 30 release runs). Release build: `quic-stream.test.ts` (119), `serve-http3.test.ts` (120, 2 skipped), `quic-endpoint.test.ts` (42, 2 skipped), `quic-sni.test.ts` (20), `fetch-http3-client.test.ts` (108), `test/js/node/test/parallel/test-quic-*.mjs` (233 of 235: the other two import `node:stream/iter`, which does not exist). Debug build: `quic-stream.test.ts` (119) and `serve-http3.test.ts` (122).
 - Without the three patches: a debug build fails all 13 rows. A release build fails 12 in every run, and the 100 Continue row for the first flight of a connection in 2 of 20 runs.
 - With the third patch alone: the three 100 Continue rows that need no small window pass.
-- `lsquic_stream.o`, release flags without LTO: `.text` 38,912 to 39,294 bytes. The counter is 117 of the 382. No patch adds an allocation, a system call or a pass over the streams. The instruction count is from main's patch stack, before #46528.
+- `lsquic_stream.o`, release flags without LTO: `.text` 38,912 to 39,294 bytes. The counter is 117 of the 382. No patch adds an allocation, a system call or a pass over the streams.
+- Instructions that `lsquic_stream.o` executes per stream, counted by single-stepping a driver in the scaffolding of lsquic's `tests/test_h3_framing.c`, mean of 10 streams: a header block with a 49,500-byte body 29,430 to 29,463, a header block alone 2,137 to 2,140, a 103 in front 30,754 to 30,790, trailers behind 30,738 to 30,778. Of the 33, the credit check is 11, the flush 2, the write check 16, the counter 3.
 - STREAM frames end to end, measured on main before #46528: 100 small responses into a 1 MiB window give 210 with and without the patches. 100 responses with 3,000-byte bodies into a 30,000-byte window give 430 without and 523 with, in 296 and 295 packets.
 - Four unit cases for the first two patches fail on lsquic at the pin with this tree's other patches, and on v4.11.1 (2f4cd42f) as it is. They pass with the two patches. Upstream's `tests/test_h3_framing.c` passes with all four. The cases are in {REFERENCE}.
 - Earlier heads of these patches ran through unit sweeps on main's patch stack and on an earlier head of #46528: 74,368 cases at the window edges (0 change from right to wrong), 72,000 configurations of the stall (0 stalled), 3,246 of a flush that ends with a packet (0 stop), 4,056 at the edge of both windows (0 pass a limit, where lsquic at the pin passes one in 548). The sweeps did not run again on this tree.

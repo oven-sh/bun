@@ -445,6 +445,61 @@ describe("EventEmitter", () => {
     expect(myEmitter.eventNames()).toEqual(["bar"]);
   });
 
+  // What only Bun promises of eventNames(). event-emitter-event-names.test.ts has what Node.js answers too.
+  test("eventNames makes no second array when it skips no name, and calls nothing that a program can replace", async () => {
+    const script = `
+      const { jscDescribe } = require("bun:jsc");
+      const EventEmitter = require("node:events");
+      // removeListener() keeps the key of an emitter whose constructor ran twice, with undefined in its slot.
+      class ConstructedTwice extends EventEmitter {
+        constructor() {
+          super();
+          EventEmitter.call(this);
+        }
+      }
+      const fn = () => {};
+      const emitter = new ConstructedTwice().on("a", fn).on("b", fn).on("c", fn);
+
+      // The engine shares the array of keys until a write. These readings come first:
+      // an index accessor on Array.prototype changes the storage of every array for good.
+      const storageOf = names => /(CopyOnWrite)?ArrayWith\\w+/.exec(jscDescribe(names))[0];
+      const storage = { noNameSkipped: storageOf(emitter.eventNames()) };
+      emitter.off("b", fn);
+      storage.oneNameSkipped = storageOf(emitter.eventNames());
+
+      const original = {
+        ownKeys: Reflect.ownKeys,
+        push: Array.prototype.push,
+        slice: Array.prototype.slice,
+        iterator: Array.prototype[Symbol.iterator],
+      };
+      let reached = "";
+      Reflect.ownKeys = function (target) { reached += "Reflect.ownKeys "; return original.ownKeys(target); };
+      Array.prototype.push = function () { reached += "push "; return original.push.apply(this, arguments); };
+      Array.prototype.slice = function () { reached += "slice "; return original.slice.apply(this, arguments); };
+      Array.prototype[Symbol.iterator] = function () { reached += "iterator "; return original.iterator.call(this); };
+      Object.defineProperty(Array.prototype, "0", { set() { reached += "setter "; }, configurable: true });
+      const names = emitter.eventNames();
+      delete Array.prototype[0];
+      Reflect.ownKeys = original.ownKeys;
+      Array.prototype.push = original.push;
+      Array.prototype.slice = original.slice;
+      Array.prototype[Symbol.iterator] = original.iterator;
+      console.log(JSON.stringify({ storage, names, reached }));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        storage: { noNameSkipped: "CopyOnWriteArrayWithContiguous", oneNameSkipped: "ArrayWithContiguous" },
+        names: ["a", "c"],
+        reached: "",
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   test("_eventsCount", () => {
     const myEmitter = new EventEmitter() as EventEmitter & {
       _eventsCount: number;

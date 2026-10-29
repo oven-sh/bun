@@ -203,8 +203,6 @@ function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions
       this[kCapture] = !!opts.captureRejections;
     } else {
       this[kCapture] = EventEmitterPrototype[kCapture];
-      const capture = EventEmitterPrototype[kCapture];
-      this[kCapture] = capture;
     }
     return;
   }
@@ -266,8 +264,6 @@ function initializeProxyReceiver(emitter: any, opts?: $Node.EventEmitterOptions)
     emitter[kCapture] = !!opts.captureRejections;
   } else {
     emitter[kCapture] = EventEmitterPrototype[kCapture];
-    const capture = EventEmitterPrototype[kCapture];
-    emitter[kCapture] = capture;
   }
 }
 Object.defineProperty(EventEmitter, "name", { value: "EventEmitter", configurable: true });

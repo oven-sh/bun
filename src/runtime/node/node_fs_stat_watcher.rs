@@ -86,22 +86,6 @@ impl Drop for StatWatcherScheduler {
 }
 
 impl StatWatcherScheduler {
-    /// # Safety
-    /// `this` must point to a live `StatWatcherScheduler`.
-    #[inline]
-    pub(crate) fn ref_(this: *mut Self) {
-        // SAFETY: per fn contract.
-        unsafe { ThreadSafeRefCount::<Self>::ref_(this) };
-    }
-    /// # Safety
-    /// `this` must point to a live `StatWatcherScheduler` and the caller must
-    /// own one outstanding ref, which is released.
-    #[inline]
-    pub(crate) fn deref(this: *mut Self) {
-        // SAFETY: per fn contract.
-        unsafe { ThreadSafeRefCount::<Self>::deref(this) };
-    }
-
     /// Borrow the per-thread `VirtualMachine` this scheduler is bound to.
     ///
     /// `vm` is a `BackRef` (JSC_BORROW): the VM owns the event loop / timer
@@ -244,7 +228,7 @@ impl StatWatcherScheduler {
         // `set_interval` — so the count exactly tracks "task in flight" instead
         // of accumulating one leak per `set_interval(0)` / re-arm.
         // SAFETY: `self` is live (`&mut self`).
-        Self::ref_(core::ptr::from_mut(self));
+        unsafe { ThreadSafeRefCount::<Self>::ref_(core::ptr::from_mut(self)) };
         self.ticket.set(Some(self.vm().ticket()));
         WorkPool::schedule(&raw mut self.task);
     }
@@ -260,10 +244,7 @@ impl StatWatcherScheduler {
         // ref'd when the work-pool task was scheduled
         // SAFETY: `this` is live; one ref (taken in `timer_callback`) is owned
         // by this callback and adopted here.
-        let guard = unsafe { RefPtr::from_raw(this) };
-        // BACKREF — `this` is alive (ref'd when the timer was scheduled);
-        // `ParentRef` Deref gives safe `&Self` for the queue/interval reads.
-        let this_ref = ParentRef::from(NonNull::new(this).expect("work_pool_callback: scheduler"));
+        let this_ref = unsafe { RefPtr::from_raw(this) };
         // Moved out before anything is posted: the JS thread may re-arm (and
         // store the next pass's ticket) as soon as it hears from this pass.
         let ticket = this_ref
@@ -326,7 +307,7 @@ impl StatWatcherScheduler {
         // Publish the queue writes above before declaring the work-pool hop
         // finished; `shutdown_for_exit` Acquire-loads this and then drains.
         this_ref.work_pool_in_flight.store(false, Ordering::Release);
-        drop(guard);
+        drop(this_ref);
         drop(ticket);
     }
 
@@ -353,7 +334,8 @@ impl StatWatcherScheduler {
             return;
         };
         let this: *mut StatWatcherScheduler = raw.as_ptr().cast();
-        let this_ref = ParentRef::from(NonNull::new(this).expect("shutdown: scheduler"));
+        // SAFETY: the slot held the ref `lazy_scheduler` stored with `into_raw()`.
+        let this_ref = unsafe { RefPtr::from_raw(this) };
         debug_assert_eq!(this_ref.main_thread, thread::current().id());
 
         this_ref.is_shutdown.store(true, Ordering::Relaxed);
@@ -388,8 +370,7 @@ impl StatWatcherScheduler {
         // Release the RareData ref (`into_raw()` in `lazy_scheduler`). The
         // scheduler stays alive until the last remaining `StatWatcher` (each
         // holds a `scheduler` ref) is freed.
-        // SAFETY: `this` is live and we own the RareData ref.
-        Self::deref(this);
+        drop(this_ref);
     }
 }
 

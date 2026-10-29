@@ -169,6 +169,15 @@ describe("fs.cpSync checks its two paths in the order of node's CpSyncCheckPaths
           );
         }
       }
+      // A lone surrogate is U+FFFD in the bytes of a path, and the message shows those bytes.
+      if (!isWindows) {
+        fs.mkdirSync(path.join(dir, "a\uD800b"));
+        assertNativeError(
+          thrownBy(() => fs.cpSync(path.join(dir, "a\uD800b"), path.join(dir, "missing"))),
+          "ERR_FS_EISDIR",
+          `Recursive option not enabled, cannot copy a directory: ${path.join(dir, "a\uFFFDb")}${path.sep}`,
+        );
+      }
     }));
 
   test("a directory without recursive: fs.cp and fs.promises.cp throw a SystemError", () =>
@@ -678,6 +687,50 @@ if (isBun) {
         }),
       );
     }
+
+    // The folders above dest are read by their resolved paths, and one of those can be too long to read where the
+    // path that was given is short. Nothing then says that the folder is not src, so nothing is copied.
+    test("a folder above dest that cannot be read stops the copy", { skip: process.platform !== "linux" }, () =>
+      inTempDir(dir => {
+        const script = `
+          const fs = require("node:fs");
+          // Go down until the working directory is a few bytes short of PATH_MAX.
+          const made = [];
+          const down = name => {
+            fs.mkdirSync(name);
+            process.chdir(name);
+            made.push(name);
+          };
+          while (process.cwd().length + 256 < 4090) down(Buffer.alloc(250, "d").toString());
+          down(Buffer.alloc(4090 - process.cwd().length - 1, "e").toString());
+          fs.mkdirSync("src");
+          fs.symlinkSync("src", "link");
+          let code;
+          try {
+            fs.cpSync("src", "link/sub/dest", { recursive: true });
+          } catch (err) {
+            code = err.code;
+          }
+          const written = fs.readdirSync("src");
+          fs.rmSync("src", { recursive: true, force: true });
+          fs.unlinkSync("link");
+          while (made.length) {
+            process.chdir("..");
+            fs.rmdirSync(made.pop());
+          }
+          console.log(JSON.stringify({ code, written }));
+        `;
+        const child = spawnSync(process.execPath, ["-e", script], {
+          cwd: dir,
+          encoding: "utf8",
+          env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+        });
+        assert.deepStrictEqual(
+          { stdout: child.stdout.trim(), status: child.status },
+          { stdout: JSON.stringify({ code: "ENAMETOOLONG", written: [] }), status: 0 },
+        );
+      }),
+    );
 
     test("a Buffer path that the check lets through is refused before anything is written", () =>
       inTempDir(dir => {

@@ -8942,7 +8942,16 @@ impl NodeFS {
                 return refuse(CpSyncVerdict::NonDirectoryOntoDirectory);
             }
         }
-        if src_is_directory && self.cp_sync_dest_is_inside_src(&src, src_path, dest_path)? {
+        // A folder above `dest` that cannot be read is an error, as in node's JavaScript `checkParentPaths`. It waits as the error of `dest` does.
+        let (dest_is_inside_src, walk_error) = if src_is_directory {
+            match self.cp_sync_dest_is_inside_src(&src, src_path, dest_path) {
+                Ok(inside) => (inside, None),
+                Err(err) => (false, Some(err)),
+            }
+        } else {
+            (false, None)
+        };
+        if dest_is_inside_src {
             return refuse(CpSyncVerdict::DestInsideSrc);
         }
         if src_is_directory && !args.recursive {
@@ -8954,7 +8963,7 @@ impl NodeFS {
             sys::S::IFDIR | sys::S::IFREG | sys::S::IFLNK | sys::S::IFCHR | sys::S::IFBLK => {}
             _ => return refuse(CpSyncVerdict::UnknownType),
         }
-        if let Some(err) = dest_error {
+        if let Some(err) = dest_error.or(walk_error) {
             return Err(err.into());
         }
 
@@ -9033,10 +9042,11 @@ impl NodeFS {
         // A resolved path's `dirname` is resolved too, so each folder further up is a prefix of this one.
         let mut dest_parent = resolve(&[dirname(dest_path)], of_dest, scratch)?;
         while dest_parent != src_parent && dest_parent != parse(dest_parent).root {
-            // Node's C++ stops at a folder that it cannot read.
-            let Ok(stat) = self.cp_sync_stat(&PathLike::borrowed(dest_parent), StatOf::LinkTarget)
-            else {
-                break;
+            let stat = match self.cp_sync_stat(&PathLike::borrowed(dest_parent), StatOf::LinkTarget)
+            {
+                Ok(stat) => stat,
+                Err(err) if err.get_errno() == E::ENOENT => break,
+                Err(err) => return Err(err),
             };
             if is_same_file(src, &stat) {
                 return Ok(true);

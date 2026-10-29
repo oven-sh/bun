@@ -136,37 +136,47 @@ describe("eventNames() skips a name whose slot in _events holds undefined", () =
     ]);
   });
 
-  test("reads the count, then _events, then the keys, then every slot once in the order of the keys", () => {
-    const log: string[] = [];
-    const logged = <T extends object>(name: string, target: T) =>
-      new Proxy(target, {
-        get(target, key, receiver) {
-          log.push(`${name} get ${String(key)}`);
-          return Reflect.get(target, key, receiver);
-        },
-        has(target, key) {
-          log.push(`${name} has ${String(key)}`);
-          return Reflect.has(target, key);
-        },
-        ownKeys(target) {
-          log.push(`${name} ownKeys`);
-          return Reflect.ownKeys(target);
-        },
-        getOwnPropertyDescriptor(target, key) {
-          log.push(`${name} getOwnPropertyDescriptor ${String(key)}`);
-          return Reflect.getOwnPropertyDescriptor(target, key);
-        },
-      });
-    const receiver = logged("this", { _events: logged("_events", { a() {}, b: undefined, c() {} }), _eventsCount: 2 });
-    assert.deepStrictEqual(EventEmitter.prototype.eventNames.call(receiver), ["a", "c"]);
-    assert.deepStrictEqual(log, [
-      "this get _eventsCount",
-      "this get _events",
-      "_events ownKeys",
-      "_events get a",
-      "_events get b",
-      "_events get c",
-    ]);
+  test("reads the count, then _events, then the keys once, then every slot once in the order of the keys", () => {
+    const readsFor = (events: object) => {
+      const log: string[] = [];
+      const logged = <T extends object>(name: string, target: T) =>
+        new Proxy(target, {
+          get(target, key, receiver) {
+            log.push(`${name} get ${String(key)}`);
+            return Reflect.get(target, key, receiver);
+          },
+          has(target, key) {
+            log.push(`${name} has ${String(key)}`);
+            return Reflect.has(target, key);
+          },
+          ownKeys(target) {
+            log.push(`${name} ownKeys`);
+            return Reflect.ownKeys(target);
+          },
+          getOwnPropertyDescriptor(target, key) {
+            log.push(`${name} getOwnPropertyDescriptor ${String(key)}`);
+            return Reflect.getOwnPropertyDescriptor(target, key);
+          },
+        });
+      const receiver = logged("this", { _events: logged("_events", events), _eventsCount: 2 });
+      return { names: EventEmitter.prototype.eventNames.call(receiver), log };
+    };
+    assert.deepStrictEqual(readsFor({ a() {}, b: undefined, c() {} }), {
+      names: ["a", "c"],
+      log: [
+        "this get _eventsCount",
+        "this get _events",
+        "_events ownKeys",
+        "_events get a",
+        "_events get b",
+        "_events get c",
+      ],
+    });
+    // No slot is emptied: the keys are still taken once.
+    assert.deepStrictEqual(readsFor({ a() {}, c() {} }), {
+      names: ["a", "c"],
+      log: ["this get _eventsCount", "this get _events", "_events ownKeys", "_events get a", "_events get c"],
+    });
   });
 
   test("a count of zero answers without a read of _events", () => {

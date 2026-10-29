@@ -217,7 +217,7 @@ const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverse
 
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
 
-const fakeTimerFunctions = functionsIn("builtins/FakeTimers", "createPerformance");
+const fakeTimerFunctions = functionsIn("builtins/useFakeTimers", "createPerformance");
 
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
   "%ModuleObject%.children": moduleChildrenFunctions,

@@ -9,7 +9,7 @@
 module m0 path="main.js" displayPath="main.js" body=f0
 module m1 path="internal/process/next_tick_queue" displayPath="internal/process/next_tick_queue" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=InternalProcessNext_tick_queue body=f2
 entry module=m0
-runtimefunction id=65581 function=f1
+runtimefunction id=65580 function=f1
 layout L0 name="Exports" fields=[{key="nextTick" declared={type=anything} flags=[IsRequired]}, {key="ring" declared={type=anything} flags=[IsRequired]}]
 layout L1 name="Ring" fields=[{key="pushWithInitHooks" declared={type=anything} flags=[IsRequired]}]
 variable g0 name="nextTick" module=m1 declared={type=anything} initialization=Function function=f3 flags=[IsImmutable]
@@ -27,7 +27,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v9 = Call v5, v4, v6
     Return
 }
-function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65581 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65580 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = RequireModule module=m1 referrer=m1 specifier="internal/process/next_tick_queue"
     v4 = PropGet v3 key="nextTick"

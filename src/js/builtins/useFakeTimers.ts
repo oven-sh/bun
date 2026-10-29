@@ -1,3 +1,5 @@
+// This file sorts last in its folder. The id of a built-in function is its position, and the `.ir` files in test/aot spell ids out.
+
 // The same object @sinonjs/fake-timers replaces `performance` with.
 export function createPerformance(original: object, now: Function, timeOrigin: number) {
   const fake: Record<string, unknown> = { __proto__: null };

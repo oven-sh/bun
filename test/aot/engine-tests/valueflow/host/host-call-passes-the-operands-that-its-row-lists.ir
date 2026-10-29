@@ -1,4 +1,4 @@
-# initializeNextTickQueue(process, queue, drainMicrotasks), called by native code on behalf of process.nextTick (runtimefunction 65581)
+# initializeNextTickQueue(process, queue, drainMicrotasks), called by native code on behalf of process.nextTick (runtimefunction 65580)
 # The row lists the operands: `process`, the queue, which is an object that native code makes by itself, and a function that native code makes. A call of that function is a call of its entry.
 # What the call answers is process.nextTick and nothing else becomes of it but what the row lists: it has not escaped.
 # LIBRARY: own
@@ -15,14 +15,14 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65581 function=f1
+runtimefunction id=65580 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=Process
     v1 = PropGet v0 key="nextTick"
     Return
 }
-function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65581 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="initializeNextTickQueue" role=Library enclosingRuntimeFunction=65580 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     v3 = PropGet v0 key="x"
     v4 = PropGet v1 key="x"

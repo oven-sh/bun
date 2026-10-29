@@ -1,5 +1,5 @@
 # process.on("mess" + String(Date.now()), listener)
-# Nobody follows the text of a string that is put together at run time, so it may be one of the events for which the functions of the channel hang on `on`: parseHandle is entered (runtimefunction 65562)
+# Nobody follows the text of a string that is put together at run time, so it may be one of the events for which the functions of the channel hang on `on`: parseHandle is entered (runtimefunction 65561)
 # LIBRARY: own
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
@@ -7,7 +7,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65562 function=f1
+runtimefunction id=65561 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=Process
@@ -21,7 +21,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v8 = Call v1, v0, v6, v7
     Return
 }
-function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65562 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65561 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     Return v0
 }

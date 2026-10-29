@@ -403,7 +403,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] __attribute__((minsize)) JSC::EncodedJS
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* create = JSFunction::create(vm, globalObject, fakeTimersCreatePerformanceCodeGenerator(vm), globalObject);
+    auto* create = JSFunction::create(vm, globalObject, useFakeTimersCreatePerformanceCodeGenerator(vm), globalObject);
     MarkedArgumentBuffer args;
     args.append(JSValue::decode(original));
     args.append(JSFunction::create(vm, globalObject, 0, "now"_s, functionFakePerformanceNow, ImplementationVisibility::Public));

@@ -1,34 +1,48 @@
 // A function of a node:vm context has the engine's own Error.captureStackTrace, which keeps its frames apart from the ones that Bun formats.
 // The collection that finds one of those frames dead writes the stack out by itself, and may look into no realm for a name. Compiled code that
 // calls `require` lists the function that `require` hands the file to. Its frame has the name of that function object: "anonymous" for a
-// CommonJS file, none for an ES module.
+// CommonJS file and for a module of Bun's library, none for an ES module.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 const files = {
   "main.cjs": `const vm = require("node:vm");
 const context = vm.createContext({});
-const kept = { common: [], module: [] };
+// The third stack below has bodies of library modules on it, and none of its frames is to be cut off.
+vm.runInContext("Error.stackTraceLimit = 100;", context);
+const kept = { common: [], module: [], library: [] };
 globalThis.keep = function keep(from) {
   const error = new Error("kept");
-  const capture = vm.runInContext("(function (error) { Error.captureStackTrace(error); })", context);
-  // This function is on the stack that is captured, and dies with the call.
-  new Function("capture", "error", "capture(error);")(capture, error);
+  // The function of the context is on the stack that it captures, and dies with this call.
+  vm.runInContext("(function (error) { Error.captureStackTrace(error); })", context)(error);
   kept[from].push(error);
 };
 require("./common.cjs");
 require("./module.mjs");
+// The library module that copies the built-in classes calls each function without parameters that it finds on Map.prototype, while it is first loaded.
+Object.defineProperty(Map.prototype, "added", {
+  configurable: true,
+  value() {
+    for (let i = 0; i < 20; ++i) globalThis.keep("library");
+  },
+});
+require("node:util");
+delete Map.prototype.added;
+const frames = error => error.stack.split("\\n");
 const listed = error =>
-  error.stack
-    .split("\\n")
-    .map(line => line.slice(0, line.indexOf("@")))
+  frames(error)
+    .map(frame => frame.slice(0, frame.indexOf("@")))
     .join(" < ");
-const atOnce = { common: listed(kept.common[0]), module: listed(kept.module[0]) };
+const atOnce = { common: listed(kept.common[0]), module: listed(kept.module[0]), library: listed(kept.library[0]) };
 console.log(JSON.stringify(atOnce.common));
 console.log(JSON.stringify(atOnce.module));
+// Which library module loads which is not what this test holds. The frame below the body of each is: the function that require called for it.
+const isBodyOfLibraryModule = frame => /^module code@(?:node|internal|bun):/.test(frame);
+const below = frames(kept.library[0]).filter((frame, index, all) => index > 0 && isBodyOfLibraryModule(all[index - 1]));
+console.log(JSON.stringify([...new Set(below)]));
 Bun.gc(true);
-for (const from of ["common", "module"])
+for (const from of ["common", "module", "library"])
   console.log(from, kept[from].filter(error => listed(error) === atOnce[from]).length, "of", kept[from].length);
 `,
   "common.cjs": `for (let i = 0; i < 20; ++i) globalThis.keep("common");\n`,
@@ -51,7 +65,7 @@ test.skipIf(unsupported)(
   async () => {
     using dir = tempDir("aot-captured-stack-below-require", files);
     const folder = String(dir);
-    const executable = join(folder, "main");
+    const executable = join(folder, "main" + (isWindows ? ".exe" : ""));
     {
       await using build = Bun.spawn({
         cmd: [bunExe(), "build", "--compile", "--aot", "main.cjs", "--outfile", executable],
@@ -68,18 +82,21 @@ test.skipIf(unsupported)(
       cwd: folder,
       env: { ...bunEnv, BUN_ENABLE_CRASH_REPORTING: "0" },
       stdout: "pipe",
-      stderr: "ignore",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([ran.stdout.text(), ran.exited]);
-    expect({ stdout, exitCode, signal: ran.signalCode }).toEqual({
-      // The function of the context, the one that dies, keep(), the body of the required file, the function that require called, the body of main.cjs.
+    const [stdout, stderr, exitCode] = await Promise.all([ran.stdout.text(), ran.stderr.text(), ran.exited]);
+    expect({ stdout, stderr, exitCode, signal: ran.signalCode }).toEqual({
       stdout: [
-        '" < anonymous < keep <  < anonymous < "',
-        '" < anonymous < keep < module code <  < "',
+        // The function of the context, keep(), the body of the required file, the function that require called, the body of main.cjs.
+        '" < keep <  < anonymous < "',
+        '" < keep < module code <  < "',
+        '["anonymous@[native code]"]',
         "common 20 of 20",
         "module 20 of 20",
+        "library 20 of 20",
         "",
       ].join("\n"),
+      stderr: "",
       exitCode: 0,
       signal: null,
     });

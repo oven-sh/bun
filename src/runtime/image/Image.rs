@@ -1809,8 +1809,7 @@ impl PipelineTask {
                     Deliver::Blob => {
                         // Blob.Store frees via an Allocator; dupe for that path.
                         let owned = out_slice.to_vec();
-                        // SAFETY: explicit free in lieu of suppressed `Drop`.
-                        unsafe { (out.free)(out.bytes.as_ptr().cast(), core::ptr::null_mut()) };
+                        drop(mem::ManuallyDrop::into_inner(out));
                         let blob = Blob::init(owned, global);
                         blob.content_type
                             .set(crate::webcore::blob::BlobContentType::Static(

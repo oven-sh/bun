@@ -9502,19 +9502,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// single `out.write(Self { .. })` so there is no stack temporary `Self`
     /// to relocate.
     ///
-    /// On `Ok(())`, `*out` is fully initialized and the caller owns dropping
-    /// it (e.g. via `assume_init`); on `Err`, `*out` is left untouched.
+    /// Returns the initialized `*out`; the caller owns dropping it.
     /// Taking `&mut MaybeUninit<Self>` (vs the previous `*mut Self`) makes the
     /// alignment/writability precondition a type guarantee, so this fn is safe.
-    pub fn init(
-        out: &mut core::mem::MaybeUninit<Self>,
+    pub fn init<'o>(
+        out: &'o mut core::mem::MaybeUninit<Self>,
         arena: &'a Bump,
         log: core::ptr::NonNull<bun_ast::Log>,
         source: &'a bun_ast::Source<'a>,
         define: &'a Define,
         mut lexer: js_lexer::Lexer<'a>,
         mut opts: ParserOptions<'a>,
-    ) -> Result<(), crate::Error> {
+    ) -> &'o mut Self {
         // Pre-size the parser's per-file name/ref-keyed symbol maps so the
         // common case never re-hashes while it grows. Profiling the runtime
         // transpiler showed
@@ -9766,14 +9765,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Moved-in last so the field expressions above can still read `opts.*`.
             options: opts,
-        });
+        })
 
         // The transposer recursion lives as inherent `P::maybe_transpose_if_*` methods
         // called directly (no stored `*mut P`).
         //
         // For SCAN_ONLY, the caller (Parser) moves the `ScanPassResult`'s containers in afterwards.
-
-        Ok(())
     }
 }
 

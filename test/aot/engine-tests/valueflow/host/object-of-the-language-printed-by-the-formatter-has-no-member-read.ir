@@ -1,0 +1,19 @@
+# console.log(Object)
+# What the language puts on its own objects lies there without any code of the library: the walk is no use of a member, and nothing of the library comes in for it.
+# LIBRARY: own
+# RUN: valueflow-why used-builtin=ObjectKeys used-builtin=ObjectPrototype
+# CHECK: used-builtin=ObjectKeys
+# CHECK-NEXT: not held
+# CHECK: used-builtin=ObjectPrototype
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Console
+    v1 = Builtin builtin=ConsoleLog
+    v2 = Builtin builtin=Object
+    v3 = Call v1, v0, v2
+    Return
+}

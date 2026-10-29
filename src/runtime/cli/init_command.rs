@@ -313,6 +313,7 @@ impl InitCommand {
 
         let mut template: Template = Template::Blank;
         let mut prev_flag_was_react = false;
+        let mut ca_store_flags: Vec<&[u8]> = Vec::new();
         for arg_ in init_args {
             let arg = arg_.as_bytes();
             if parse_flags && !arg.is_empty() && arg[0] == b'-' {
@@ -351,6 +352,9 @@ impl InitCommand {
                     prev_flag_was_react = false;
                     auto_yes = true;
                 } else {
+                    if Global::is_ca_store_flag(arg) {
+                        ca_store_flags.push(arg);
+                    }
                     prev_flag_was_react = false;
                 }
             } else {
@@ -361,6 +365,8 @@ impl InitCommand {
                 }
             }
         }
+
+        Global::set_ca_store_from_flags(|flag| ca_store_flags.contains(&flag));
 
         // The template picker reads single keystrokes from raw-mode stdin; on a
         // pipe (CI, `spawn(...,{stdio:'pipe'})`, `foo | bun init`) that blocks
@@ -649,10 +655,8 @@ impl InitCommand {
             true
         };
 
-        // SAFETY: `fields.object` was set above either from the parsed JSON
-        // (arena-owned, lives for the duration of `exec`) or from a freshly
-        // allocated `Expr.init` from the AST store (also lives until process exit).
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        let mut object = fields.object.unwrap();
+        let object = &mut *object;
 
         if !minimal {
             if !fields.name.is_empty() {
@@ -913,7 +917,6 @@ impl InitCommand {
                             (b"name", fields.name.as_slice()),
                             (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
                             (b"entryPoint", fields.entry_point.as_slice()),
-                            (b"tools", Assets::README_TOOLS),
                         ],
                     );
                     // suppressed
@@ -943,8 +946,7 @@ impl InitCommand {
 
                 if exists_z(b"package.json") && need_run_bun_install {
                     bun_core::prettyln!("");
-                    let self_exe = bun::self_exe_path()?;
-                    let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
+                    let _ = bun::spawn_sync_inherit(&bun_install_argv()?)?;
                 }
             }
             _ => {}
@@ -952,6 +954,12 @@ impl InitCommand {
 
         Ok(())
     }
+}
+
+fn bun_install_argv() -> Result<Vec<&'static [u8]>, Error> {
+    let mut argv: Vec<&[u8]> = vec![bun::self_exe_path()?.as_bytes(), b"install"];
+    argv.extend(Global::ca_store_flag().map(ZStr::as_bytes));
+    Ok(argv)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -966,12 +974,6 @@ impl Assets {
     pub(crate) const TSCONFIG_JSON: &'static [u8] = include_bytes!("init/tsconfig.default.json");
     pub(crate) const README_MD: &'static [u8] = include_bytes!("init/README.default.md");
     pub(crate) const README2_MD: &'static [u8] = include_bytes!("init/README2.default.md");
-    /// `{[tools]s}` in both.
-    const README_TOOLS: &'static [u8] = if CLI::lint_command::IS_ENABLED {
-        b"Run `bun lint` to find problems in the code and `bun fmt` to format it."
-    } else {
-        b"Run `bun fmt` to format the code."
-    };
 
     /// Create a new asset file, overriding anything that already exists. Known
     /// assets will have their contents pre-populated; otherwise the file will be empty.
@@ -1388,8 +1390,7 @@ impl Template {
             head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
             next: core::ptr::null_mut(),
         });
-        // SAFETY: object is arena-allocated and live for the command duration.
-        let object = unsafe { &mut *fields.object.unwrap().as_ptr() };
+        let mut object = fields.object.unwrap();
         let mut scripts_json = object.get_or_put_object(key, bump).map_err(|e| match e {
             bun_ast::E::SetError::OutOfMemory => Error::Alloc(bun_alloc::AllocError),
             bun_ast::E::SetError::Clobber => Error::Unexpected,
@@ -1476,7 +1477,6 @@ impl Template {
         let Some(path) = env_var::PATH.get() else {
             return false;
         };
-        // SAFETY: FileSystem::instance() returns the process-global singleton.
         let top_level_dir = Fs::FileSystem::get().top_level_dir();
         bun_which::which(&mut *pathbuffer, path, top_level_dir, b"claude").is_some()
     }
@@ -1654,7 +1654,6 @@ impl Template {
                     &[
                         (b"name", self.name()),
                         (b"bunVersion", Environment::VERSION_STRING.as_bytes()),
-                        (b"tools", Assets::README_TOOLS),
                     ],
                 )
             } else {
@@ -1687,8 +1686,7 @@ impl Template {
         bun_core::pretty!("\n");
         Output::flush();
 
-        let self_exe = bun::self_exe_path()?;
-        let _ = bun::spawn_sync_inherit_no_stdin(&[self_exe.as_bytes(), b"install"])?;
+        let _ = bun::spawn_sync_inherit_no_stdin(&bun_install_argv()?)?;
 
         bun_core::prettyln!(
             "\n\

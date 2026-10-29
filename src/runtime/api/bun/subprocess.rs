@@ -8,8 +8,7 @@ use bun_ptr::{RefCount, RefPtr};
 
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
 use bun_jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
-    VirtualMachine,
+    self as jsc, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult, VirtualMachine,
 };
 use bun_jsc::{JsClass, SysErrorJsc};
 #[cfg(not(windows))]
@@ -915,9 +914,7 @@ impl Subprocess<'_> {
             if let Some(existing_value) = js::stdin_get_cached(this_jsvalue) {
                 if existing_value.is_cell() {
                     if stdin.is_none() {
-                        // TODO: review this cast
-                        stdin = crate::webcore::file_sink::JSSink::from_js(existing_value)
-                            .and_then(|p| NonNull::new(p.cast::<FileSink>()));
+                        stdin = crate::webcore::file_sink::JSSink::sink_from_js(existing_value);
                     }
 
                     if !self.flags.get().contains(Flags::IS_STDIN_A_READABLE_STREAM) {
@@ -938,7 +935,7 @@ impl Subprocess<'_> {
         }
 
         if !existing_stdin_value.is_empty() {
-            crate::webcore::file_sink::JSSink::set_destroy_callback(existing_stdin_value, 0);
+            crate::webcore::file_sink::JSSink::forget_subprocess(existing_stdin_value);
         }
 
         // Node.js keeps reading stdout/stderr until EOF after the direct child
@@ -1492,32 +1489,23 @@ pub(crate) mod testing_apis {
     ///
     /// Returns true if an error was injected, false if the given stdio is
     /// not (or no longer) a buffered pipe reader.
-    #[bun_jsc::host_fn]
     pub(crate) fn inject_stdio_read_error(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let [subprocess_value, kind_value] = callframe.arguments_as_array::<2>();
-        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value) else {
-            return Err(global_this.throw(format_args!("first argument must be a Subprocess")));
-        };
-        // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
-        // R-2: deref as shared (`&*const`) — fields are interior-mutable.
-        let subprocess = unsafe { &*subprocess_ptr };
-        let kind_str = kind_value.to_bun_string(global_this)?;
-
-        let out: &JsCell<Readable> = if kind_str.eq_ascii(b"stdout") {
+        cx: &mut JsScope<'_>,
+        subprocess: &Subprocess<'static>,
+        kind: &bun_core::String,
+    ) -> JsResult<bool> {
+        let out: &JsCell<Readable> = if kind.eq_ascii(b"stdout") {
             &subprocess.stdout
-        } else if kind_str.eq_ascii(b"stderr") {
+        } else if kind.eq_ascii(b"stderr") {
             &subprocess.stderr
         } else {
-            return Err(
-                global_this.throw(format_args!("second argument must be 'stdout' or 'stderr'"))
-            );
+            return Err(cx
+                .global()
+                .throw(format_args!("second argument must be 'stdout' or 'stderr'")));
         };
 
         let Readable::Pipe(pipe) = out.get() else {
-            return Ok(JSValue::FALSE);
+            return Ok(false);
         };
 
         // Mirror what the real error path does (onStreamRead on Windows,
@@ -1531,34 +1519,24 @@ pub(crate) mod testing_apis {
         // SAFETY: live pipe reader; `on_error` is the raw entry so the
         // (maybe-freeing) error dispatch runs under no receiver protector.
         unsafe { bun_io::BufferedReader::on_error(reader, fake_err) };
-        Ok(JSValue::TRUE)
+        Ok(true)
     }
 
     /// Close the stdin pipe's writer as a Windows worker's stop phase does: no JS wrapper, no ref.
-    #[bun_jsc::host_fn]
     pub(crate) fn close_stdin_writer(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
+        _: &mut JsScope<'_>,
+        subprocess: &Subprocess<'static>,
+    ) -> bool {
         #[cfg(windows)]
         use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 
-        let [subprocess_value] = callframe.arguments_as_array::<1>();
-        let Some(subprocess_ptr) = Subprocess::from_js(subprocess_value) else {
-            return Err(global_this.throw(format_args!("first argument must be a Subprocess")));
-        };
-        // SAFETY: `from_js` returned a live `*mut Subprocess` owned by the JS wrapper.
-        let subprocess = unsafe { &*subprocess_ptr };
         let Writable::Pipe(pipe) = subprocess.stdin.get() else {
-            return Ok(JSValue::FALSE);
+            return false;
         };
         let writer = pipe.writer.as_ptr();
         // SAFETY: the Subprocess's ref keeps the sink and its writer live on entry;
         // `close()` may free both, and nothing touches them afterwards.
         unsafe { (*writer).close() };
-        Ok(JSValue::TRUE)
+        true
     }
 }
-// `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
-// (the converter splits the trailing `…APIs` cluster into `AP` + `Is`).
-pub(crate) use testing_apis as testing_ap_is;

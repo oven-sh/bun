@@ -70,7 +70,7 @@ impl MarkedArgumentBuffer {
         })
     }
 
-    pub fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {
+    fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {
         // `MarkedArgumentBuffer__run` round-trips `ctx` opaquely back to `func`,
         // and `func`'s ABI is identical modulo the
         // pointee types (both params are thin pointers).
@@ -86,47 +86,4 @@ impl MarkedArgumentBuffer {
             },
         )
     }
-}
-
-/// Rust cannot parameterize a `fn` item by a const
-/// fn-pointer, so this is a macro that expands to a `#[bun_jsc::host_fn]` wrapper.
-#[macro_export]
-macro_rules! marked_argument_buffer_wrap {
-    ($function:path) => {{
-        #[$crate::host_fn]
-        pub(crate) fn wrapper(
-            global_this: &$crate::JSGlobalObject,
-            callframe: &$crate::CallFrame,
-        ) -> $crate::JsResult<$crate::JSValue> {
-            struct Context<'a> {
-                result: $crate::JsResult<$crate::JSValue>,
-                global_this: &'a $crate::JSGlobalObject,
-                callframe: &'a $crate::CallFrame,
-            }
-            extern "C" fn run(
-                this: *mut Context<'_>,
-                marked_argument_buffer: *mut $crate::MarkedArgumentBuffer,
-            ) {
-                // SAFETY: `this` is the `&mut ctx` passed to `MarkedArgumentBuffer::run` below;
-                // `marked_argument_buffer` is the live stack-allocated buffer C++ hands us.
-                let result = $function(
-                    unsafe { (*this).global_this },
-                    unsafe { (*this).callframe },
-                    unsafe { &mut *marked_argument_buffer },
-                );
-                unsafe { (*this).result = result };
-            }
-
-            let mut ctx = Context {
-                global_this,
-                callframe,
-                // Placeholder; `run`
-                // unconditionally overwrites it before we read.
-                result: ::core::result::Result::Ok($crate::JSValue::ZERO),
-            };
-            $crate::MarkedArgumentBuffer::run(&mut ctx, run);
-            ctx.result
-        }
-        wrapper
-    }};
 }

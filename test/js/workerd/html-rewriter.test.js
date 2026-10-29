@@ -600,8 +600,8 @@ describe("HTMLRewriter", () => {
     });
 
     // A `type: 'direct'` source whose `pull()` throws synchronously leaves the
-    // JS controller's `m_sinkPtr` set after `readDirectStream` returns with an
-    // exception; `end_from_stream` must null it (via `JSSink::detach`) before
+    // JS controller attached to the pipe after `readDirectStream` returns with an
+    // exception; `end_from_stream` must detach it (via `SourceHandle::detach`) before
     // the pipe can be freed so the controller's destructor doesn't dispatch
     // into freed memory.
     it("a direct ReadableStream whose pull() throws synchronously rejects the body", async () => {

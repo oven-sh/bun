@@ -276,7 +276,7 @@ fn read_yarnrc(log: &mut bun_ast::Log, manager: &PackageManager) -> Result<YarnR
         .map(strings::without_trailing_slash);
 
     let mut folder: &[u8] =
-        strings::without_trailing_slash(crate::bun_fs::FileSystem::instance().top_level_dir());
+        strings::without_trailing_slash(crate::bun_fs::FileSystem::get().top_level_dir());
     let mut in_project = true;
     let mut read_home = false;
     loop {
@@ -593,12 +593,12 @@ fn package_json<'a>(
         .map_err(|_| Error::InvalidPackageJSON)
 }
 
-pub(crate) fn migrate_yarn_berry_lockfile<'a>(
-    this: &'a mut Lockfile,
+pub(crate) fn migrate_yarn_berry_lockfile(
+    this: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-) -> Result<LoadResult<'a>, Error> {
+) -> Result<LoadResult, Error> {
     this.init_empty();
     crate::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
@@ -1475,7 +1475,6 @@ pub(crate) fn migrate_yarn_berry_lockfile<'a>(
     }
 
     Ok(LoadResult::Ok(LoadResultOk {
-        lockfile: this,
         migrated: lockfile::Migrated::Yarn,
         serializer_result: Default::default(),
         format: lockfile::Format::Text,

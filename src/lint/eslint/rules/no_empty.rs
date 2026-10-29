@@ -28,8 +28,8 @@ impl NoEmpty {
             .report(report_span, UNEXPECTED)
             .data("type", kind)
             .hint(match is_handler() {
-                true => "Handle the error, or put a comment in it that says why the error is ignored.",
-                false => "Remove it, or put a comment in it that says why it is empty.",
+                true => "Handle the error, or add a comment saying why it's ignored.",
+                false => "Remove it, or add a comment saying why it's empty.",
             });
         if cx.language().is_oxlint {
             report.fix(|fixer| removed().map(|it| fixer.remove(it)));

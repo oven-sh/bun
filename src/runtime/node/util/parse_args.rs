@@ -2,8 +2,9 @@ use core::fmt;
 use std::borrow::Cow;
 
 use bun_core::{String, StringView};
+use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
 use super::parse_args_utils::{
     OptionDefinition, OptionValueType, TokenSubtype, classify_token, find_option_by_short_name,
@@ -876,18 +877,19 @@ impl<'a> ParseArgsState<'a> {
     }
 }
 
-#[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs")]
-pub(crate) fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|default_roots| parse_args_impl(global, callframe, default_roots))
+pub(crate) fn parse_args<'a>(cx: &mut JsScope<'a>, config: JsLocal<'a>) -> JsResult<JSValue> {
+    let global = cx.global();
+    MarkedArgumentBuffer::new(|default_roots| {
+        parse_args_impl(global, config.to_js(), default_roots)
+    })
 }
 
 fn parse_args_impl(
     global: &JSGlobalObject,
-    callframe: &CallFrame,
+    config_value: JSValue,
     default_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
     // jsc.markBinding(@src()) — debug-only, dropped
-    let config_value = callframe.arguments_as_array::<1>()[0];
     //
     // Phase 0: parse the config object
     //

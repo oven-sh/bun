@@ -1,5 +1,5 @@
 import { jscDescribe } from "bun:jsc";
-import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, nodeExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, isLinux, nodeExe, nodeExeAtLeast, tempDir } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
 import dc from "node:diagnostics_channel";
@@ -5007,6 +5007,9 @@ const optionChecksExpected = `{ strictSingleValueFields: "yes" }
 { remoteCustomSettings: "x", strictSingleValueFields: "yes" }
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.remoteCustomSettings" property must be an instance of Array. Received type string ('x')
     every entry point
+{ strictSingleValueFields: "yes", maxSessionInvalidFrames: -1 }
+  TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
+    every entry point
 { remoteCustomSettings: [11 ids], maxSessionInvalidFrames: -1 }
   Error [ERR_HTTP2_TOO_MANY_CUSTOM_SETTINGS]: Number of custom settings exceeds MAX_ADDITIONAL_SETTINGS
     every entry point
@@ -5021,9 +5024,7 @@ const optionChecksExpected = `{ strictSingleValueFields: "yes" }
     connect(https), createServer, createSecureServer, performServerHandshake
 { unknownProtocolTimeout: -1, strictSingleValueFields: "yes" }
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
-    connect(http), connect(https), connect(createConnection)
-  RangeError [ERR_OUT_OF_RANGE]: The value of "options.unknownProtocolTimeout" is out of range. It must be >= 0 && <= 4294967295. Received -1
-    createServer, createSecureServer, performServerHandshake
+    every entry point
 other calls
   TypeError [ERR_INVALID_ARG_TYPE]: The "options.strictSingleValueFields" property must be of type boolean. Received type string ('yes')
     connect("not a url", { strictSingleValueFields: "yes" })
@@ -5044,13 +5045,8 @@ other calls
   rejects with RangeError [ERR_OUT_OF_RANGE]: The value of "options.maxSessionInvalidFrames" is out of range. It must be >= 0 && <= 4294967295. Received -1
     promisify(connect)(https url, { maxSessionInvalidFrames: -1 })
 `;
-// An older node has no strictSingleValueFields option, and the macOS CI hosts can have one.
-const optionChecksNode = (() => {
-  const node = nodeExe();
-  if (!node) return null;
-  const { stdout } = Bun.spawnSync({ cmd: [node, "-p", "process.versions.node"], env: bunEnv, stderr: "ignore" });
-  return parseInt(stdout.toString(), 10) >= 26 ? node : null;
-})();
+// Before v26.11.0 node checked the options in another order.
+const optionChecksNode = nodeExeAtLeast("26.11.0");
 
 for (const [name, runtime] of [
   ["bun", bunExe()],

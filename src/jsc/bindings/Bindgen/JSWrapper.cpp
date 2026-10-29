@@ -23,10 +23,10 @@ NEVER_INLINE GCClient::IsoSubspace* createSubspaceForClass(VM& vm, unsigned clas
         nullptr);
 }
 
-void analyzeInternalField(JSCell* cell, HeapAnalyzer& analyzer, const WriteBarrier<Unknown>& field, ASCIILiteral name)
+void analyzeInternalField(JSCell* cell, HeapAnalyzer& analyzer, JSValue field, ASCIILiteral name)
 {
-    if (JSValue value = field.get(); value && value.isCell())
-        analyzer.analyzePropertyNameEdge(cell, value.asCell(), Identifier::fromString(cell->vm(), name).impl());
+    if (field && field.isCell())
+        analyzer.analyzePropertyNameEdge(cell, field.asCell(), Identifier::fromString(cell->vm(), name).impl());
 }
 
 const ClassInfo JSClassConstructor::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSClassConstructor) };
@@ -50,9 +50,9 @@ JSClassConstructor::JSClassConstructor(VM& vm, Structure* structure, NativeFunct
 {
 }
 
-JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, NativeFunction call, NativeFunction construct, unsigned length, std::span<const HashTableValue> tableValues, JSObject* prototype)
+JSClassConstructor* JSClassConstructor::create(VM& vm, JSGlobalObject* globalObject, ASCIILiteral name, NativeFunction call, NativeFunction construct, unsigned length, std::span<const HashTableValue> tableValues, JSObject* prototype, JSObject* base)
 {
-    auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
+    auto* structure = createStructure(vm, globalObject, base ? base : globalObject->functionPrototype());
     auto* constructor = new (NotNull, allocateCell<JSClassConstructor>(vm)) JSClassConstructor(vm, structure, call, construct);
     constructor->finishCreation(vm, length, name, PropertyAdditionMode::WithoutStructureTransition);
     // Reifying makes the structure a dictionary, even for no properties.

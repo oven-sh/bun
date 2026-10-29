@@ -795,6 +795,12 @@ for (const [label, value] of [["object", {}], ["string", "require"], ["negative"
     options.sslMode = value;
   });
 }
+results["port fraction"] = await attempt(options => {
+  options.port += 0.5;
+});
+results["port NaN"] = await attempt(options => {
+  options.port = NaN;
+});
 console.log(JSON.stringify(results));`,
     ],
     env: { ...bunEnv, SQL_URL: `${adapter}://user@127.0.0.1:${port}/db` },
@@ -818,9 +824,11 @@ console.log(JSON.stringify(results));`,
     // A mode that cannot be mapped must not mean `disable`.
     "sslMode object": "ERR_INVALID_ARG_TYPE",
     "sslMode string": "ERR_INVALID_ARG_TYPE",
-    "sslMode negative": "ERR_INVALID_ARG_TYPE",
-    "sslMode out of range": "ERR_INVALID_ARG_TYPE",
-    "sslMode fraction": "ERR_INVALID_ARG_TYPE",
+    "sslMode negative": "ERR_OUT_OF_RANGE",
+    "sslMode out of range": "ERR_OUT_OF_RANGE",
+    "sslMode fraction": "ERR_OUT_OF_RANGE",
+    "port fraction": refused,
+    "port NaN": refused,
   });
   expect(exitCode).toBe(0);
 });

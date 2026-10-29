@@ -1,0 +1,170 @@
+# A large function without calls in its source: all calls in its machine code are on rarely taken paths.
+# FORM: AsRead
+# RUN: lower-to-air size f0 f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="calls-only-on-rare-paths.ts" displayPath="calls-only-on-rare-paths.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Shape" module=m0 position=184 fields=[{key="flags" declared={type=number} flags=[IsRequired]}, {key="height" declared={type=number} flags=[IsRequired]}, {key="kind" declared={type=number} flags=[IsRequired]}, {key="label" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="objectFlags" declared={type=number} flags=[IsRequired]}, {key="parent" declared={type=undefined|null|L0 flags=[OmitsNull]} flags=[IsRequired]}, {key="width" declared={type=number} flags=[IsRequired]}] declaredOrder=[2, 0, 4, 6, 1, 5, 3] ownFieldCount=7
+data d0 root=Array{contents=undefined|null|L0} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v4 = Undefined
+    v5 = Convert v4 declared={type=undefined|null|L0 flags=[OmitsNull]}
+    v6 = Integer
+    v7 = Convert v6 declared={type=number}
+    Jump -> next b1(v5, v7)
+  b1(v8: undefined|null|L0, v9: number):
+    LoopHint
+    v11 = Convert v9 declared={type=i32 flags=[IsExpected]}
+    v12 = Integer integer=64
+    v13 = Less v11, v12
+    Branch v13 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v14):
+    v15 = Integer integer=5940
+    v16 = Convert v14 declared={type=i32 flags=[IsExpected]}
+    v17 = Integer integer=15
+    v18 = BitAnd v16, v17
+    v19 = Add v15, v18
+    v20 = Convert v19 declared={type=number}
+    v21 = Integer integer=65537
+    v22 = Mul v16, v21
+    v23 = Convert v22 declared={type=number}
+    v24 = Integer integer=16843009
+    v25 = Mul v16, v24
+    v26 = Convert v25 declared={type=number}
+    v27 = Integer integer=3
+    v28 = Div v16, v27
+    v29 = Convert v28 declared={type=number}
+    v30 = Integer integer=64
+    v31 = Sub v30, v16
+    v32 = Convert v31 declared={type=number}
+    v33 = Convert v8 declared={type=undefined|null|L0 flags=[OmitsNull]}
+    v34 = String string="s"
+    v35 = Add v34, v16
+    v36 = Convert v35 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v37 = NewObject -, v20, v23, v26, v29, v32, v33, v36 layout=L0 fields=[2, 0, 4, 6, 1, 5, 3]
+    v38 = FinishObject v37
+    v39 = Convert v38 declared={type=undefined|null|L0 flags=[OmitsNull]}
+    v40 = PropGet v3 key="push"
+    v41 = Call v40, v3, v39 calleeKey="push" calleeName="shapes.push"
+    v42 = Increment v16
+    v43 = Convert v42 declared={type=number}
+    Jump -> next b1(v39, v43)
+  b3(v44):
+    v45 = Integer
+    v46 = Convert v45 declared={type=number}
+    v47 = Integer
+    v48 = Convert v47 declared={type=number}
+    v49 = Integer
+    v50 = Convert v49 declared={type=number}
+    Jump -> next b4(v46, v50)
+  b4(v51: number, v52: number):
+    LoopHint
+    v54 = Convert v52 declared={type=i32 flags=[IsExpected]}
+    v55 = Convert v54 declared={type=i32 flags=[IsExpected]}
+    v56 = ElemGet v3, v55
+    v57 = Convert v56 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v58 = Integer integer=1
+    v59 = Add v55, v58
+    v60 = ElemGet v3, v59
+    v61 = Convert v60 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v62 = Integer integer=7
+    v63 = Call v1, -, v57, v61, v62 calleeName="measure"
+    v64 = Convert v63 declared={type=number}
+    v65 = Add v51, v64
+    v66 = Convert v65 declared={type=number}
+    v67 = Increment v55
+    v68 = Convert v67 declared={type=number}
+    Jump -> next b4(v66, v68)
+}
+function f1 name="measure" module=m0 position=317 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0, v2: number):
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    v5 = PropGet v0 key="flags"
+    v6 = Integer integer=3932161
+    v7 = BitAnd v5, v6
+    v8 = PropGet v0 key="objectFlags"
+    v9 = Integer integer=403963917
+    v10 = BitAnd v8, v9
+    v11 = Add v4, v10
+    v12 = Convert v11 declared={type=number}
+    v13 = PropGet v1 key="flags"
+    v14 = Integer integer=3932161
+    v15 = BitAnd v13, v14
+    v16 = PropGet v1 key="objectFlags"
+    v17 = Integer integer=403963917
+    v18 = BitAnd v16, v17
+    v19 = Add v12, v18
+    v20 = Convert v19 declared={type=number}
+    v21 = PropGet v0 key="kind"
+    v22 = NarrowByField v0, v21 key="kind"
+    v23 = Integer integer=767
+    v24 = BitXor v20, v23
+    v25 = Convert v24 declared={type=number}
+    v26 = PropGet v1 key="kind"
+    v27 = NarrowByField v1, v26 key="kind"
+    v28 = Integer integer=767
+    v29 = BitXor v25, v28
+    v30 = Convert v29 declared={type=number}
+    v31 = PropGet v22 key="parent"
+    v32 = PropGet v22 key="parent"
+    v33 = PropGet v32 key="flags"
+    v34 = BitAnd v33, v2
+    v35 = PropGet v22 key="parent"
+    v36 = PropGet v35 key="kind"
+    v37 = Integer integer=3
+    v38 = Mul v36, v37
+    v39 = Add v30, v38
+    v40 = Convert v39 declared={type=number}
+    v41 = PropGet v27 key="parent"
+    v42 = PropGet v27 key="parent"
+    v43 = PropGet v42 key="flags"
+    v44 = BitAnd v43, v2
+    v45 = ToBoolean v44
+    Branch v45 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v46):
+    v47 = PropGet v27 key="parent"
+    v48 = PropGet v47 key="kind"
+    v49 = Integer integer=5
+    v50 = Mul v48, v49
+    v51 = Add v40, v50
+    v52 = Convert v51 declared={type=number}
+    Jump -> next b3(v52)
+  b2(v53):
+    Jump -> next b3(v40)
+  b3(v54: number):
+    v55 = Integer integer=65537
+    v56 = Add v54, v55
+    v57 = Convert v56 declared={type=number}
+    v58 = PropGet v27 key="height"
+    v59 = Integer integer=131071
+    v60 = Add v57, v59
+    v61 = Convert v60 declared={type=number}
+    v62 = Integer integer=1048583
+    v63 = Add v61, v62
+    v64 = Convert v63 declared={type=number}
+    v65 = PropGet v22 key="flags"
+    v66 = PropGet v27 key="flags"
+    v67 = BitOr v65, v66
+    v68 = Integer integer=1073741824
+    v69 = BitAnd v67, v68
+    v70 = Negate v64
+    v71 = Convert v70 declared={type=number}
+    v72 = Convert v71 declared={type=number}
+    Return v72
+}
+# -- generated: f0 measure
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 55, patchpoints: 7, rare instructions: 50, polls: 2
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="measure"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 22, patchpoints: 0
+# CHECK-NEXT: end of function f1

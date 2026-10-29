@@ -4,7 +4,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::node::os" });
 
-export const hostCpuCount = b.fn({ returns: b.i32 });
+export const hostCpuCount = b.value({ returns: b.i32 });
 export const cpus = b.fn({ returns: b.any, capability: "js", throws: true });
 export const freemem = b.fn({ returns: b.u64 });
 export const getPriority = b.fn({

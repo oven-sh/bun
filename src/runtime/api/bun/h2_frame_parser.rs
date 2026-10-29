@@ -331,11 +331,7 @@ struct StreamPriority {
     stream_identifier: u32,
     weight: u8,
 }
-// SAFETY: `#[repr(C, packed)]` with `u32 + u8` fields — no padding, no niches,
-// every 5-byte pattern is a valid value.
-unsafe impl bytemuck::Zeroable for StreamPriority {}
-// SAFETY: see `Zeroable` impl above; additionally `Copy + 'static`.
-unsafe impl bytemuck::Pod for StreamPriority {}
+bun_core::impl_no_uninit!(StreamPriority);
 const _: () = assert!(core::mem::size_of::<StreamPriority>() == StreamPriority::BYTE_SIZE);
 impl StreamPriority {
     pub(crate) const BYTE_SIZE: usize = 5;
@@ -343,7 +339,7 @@ impl StreamPriority {
     fn write(self, writer: &mut impl WireWriter) -> bool {
         let mut swap = self;
         swap.stream_identifier = swap.stream_identifier.swap_bytes();
-        writer.write_all(bytemuck::bytes_of(&swap)).is_ok()
+        writer.write_all(bun_core::bytes_of(&swap)).is_ok()
     }
 }
 
@@ -7590,7 +7586,7 @@ impl H2FrameParser {
             .strong_this
             .with_mut(|s| s.set_strong(js_value, global_object));
         let vm = global_object.bun_vm();
-        if let Some(context) = vm.as_graph_context(vm.context_of_caller_no_frame()) {
+        if let Some(context) = vm.as_graph_context(vm.context_of_caller()) {
             // SAFETY: `this` is heap-pinned (pool slot or Box); it leaves its context in
             // `release_from_js` or when it drops.
             unsafe { bun_jsc::AbortHandle::arm_owner(this, context) };

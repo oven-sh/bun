@@ -102,9 +102,9 @@ enum Progress {
 }
 
 enum Backend {
-    Deflate(Box<zlib::z_stream>),
+    Deflate(zlib::ZStream),
     Inflate {
-        state: Box<zlib::z_stream>,
+        state: zlib::ZStream,
         /// Gzip only: after the first member ends, any further bytes must be
         /// another gzip member (RFC 1952 §2.2) — the decoder resets and
         /// continues. Deflate/deflate-raw have no such concatenation, so
@@ -159,10 +159,10 @@ impl Drop for CompressionStreamCoder {
         unsafe {
             match &mut self.backend {
                 Backend::Deflate(s) => {
-                    zlib::deflateEnd(&raw mut **s);
+                    zlib::deflateEnd(s.as_ptr());
                 }
                 Backend::Inflate { state, .. } => {
-                    zlib::inflateEnd(&raw mut **state);
+                    zlib::inflateEnd(state.as_ptr());
                 }
                 Backend::BrotliEncode(p) => brotli::BrotliEncoderDestroyInstance(p.as_ptr()),
                 Backend::BrotliDecode(p) => brotli::BrotliDecoderDestroyInstance(p.as_ptr()),
@@ -197,38 +197,23 @@ impl CompressionStreamCoder {
     ) -> Result<Box<Self>, CodecError> {
         let backend = match (format, decompress) {
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, false) => {
-                let mut s = Box::new(bun_core::ffi::zeroed::<zlib::z_stream>());
+                let mut s = zlib::ZStream::new();
                 // Spec: "default compression level". Z_DEFAULT_COMPRESSION = -1.
-                // SAFETY: `s` is a zeroed, #[repr(C)] z_stream; zlibVersion() is
-                // a static C string.
-                let rc = unsafe {
-                    zlib::deflateInit2_(
-                        &raw mut *s,
-                        level.unwrap_or(-1),
-                        8, // Z_DEFLATED
-                        format.window_bits(),
-                        8, // default mem_level
-                        0, // Z_DEFAULT_STRATEGY
-                        zlib::zlibVersion().cast(),
-                        core::mem::size_of::<zlib::z_stream>() as c_int,
-                    )
-                };
+                let rc = s.deflate_init(
+                    level.unwrap_or(-1),
+                    8, // Z_DEFLATED
+                    format.window_bits(),
+                    8, // default mem_level
+                    0, // Z_DEFAULT_STRATEGY
+                );
                 if rc != zlib::ReturnCode::Ok {
                     return Err(CodecError::Message("failed to initialize deflate"));
                 }
                 Backend::Deflate(s)
             }
             (Format::Deflate | Format::DeflateRaw | Format::Gzip, true) => {
-                let mut s = Box::new(bun_core::ffi::zeroed::<zlib::z_stream>());
-                // SAFETY: as above.
-                let rc = unsafe {
-                    zlib::inflateInit2_(
-                        &raw mut *s,
-                        format.window_bits(),
-                        zlib::zlibVersion().cast(),
-                        core::mem::size_of::<zlib::z_stream>() as c_int,
-                    )
-                };
+                let mut s = zlib::ZStream::new();
+                let rc = s.inflate_init(format.window_bits());
                 if rc != zlib::ReturnCode::Ok {
                     return Err(CodecError::Message("failed to initialize inflate"));
                 }
@@ -238,6 +223,13 @@ impl CompressionStreamCoder {
                 }
             }
             (Format::Brotli, false) => {
+                if bun_removable_features::is_removed(
+                    bun_removable_features::Feature::BrotliEncoder,
+                ) {
+                    return Err(CodecError::Message(
+                        "Brotli compression isn't in this executable",
+                    ));
+                }
                 // SAFETY: FFI — the default-allocator instance (all nulls).
                 let p = NonNull::new(unsafe {
                     brotli::BrotliEncoderCreateInstance(None, None, ptr::null_mut())
@@ -259,6 +251,13 @@ impl CompressionStreamCoder {
                 Backend::BrotliEncode(p)
             }
             (Format::Brotli, true) => {
+                if bun_removable_features::is_removed(
+                    bun_removable_features::Feature::BrotliDecoder,
+                ) {
+                    return Err(CodecError::Message(
+                        "Brotli decompression isn't in this executable",
+                    ));
+                }
                 // SAFETY: FFI — the default-allocator instance (all nulls).
                 let p = NonNull::new(unsafe {
                     brotli::BrotliDecoderCreateInstance(None, None, ptr::null_mut())
@@ -297,7 +296,7 @@ impl CompressionStreamCoder {
             high_water_mark,
             pending: None,
             context: bun_jsc::virtual_machine::VirtualMachine::get()
-                .context_of_caller_no_frame()
+                .context_of_caller()
                 .id(),
         }))
     }
@@ -392,20 +391,18 @@ impl CompressionStreamCoder {
                     } else {
                         zlib::FlushValue::NoFlush
                     };
-                    s.next_in = remaining.as_ptr();
-                    s.avail_in = take as u32;
+                    s.set_input(remaining.as_ptr(), take as u32);
                     let spare = spare(out, cap)?;
-                    s.next_out = spare.as_mut_ptr().cast();
-                    s.avail_out = spare.len().min(u32::MAX as usize) as u32;
-                    let before = s.avail_out;
+                    let before = spare.len().min(u32::MAX as usize) as u32;
+                    s.set_output(spare.as_mut_ptr().cast(), before);
                     // SAFETY: `s` was initialized by `deflateInit2_`; next_in/
                     // avail_in borrow `remaining`, next_out/avail_out borrow
                     // the Vec's spare capacity for this one call.
-                    let rc = unsafe { zlib::deflate(&raw mut **s, flush) };
-                    let written = (before - s.avail_out) as usize;
+                    let rc = unsafe { zlib::deflate(s.as_ptr(), flush) };
+                    let written = (before - s.avail_out()) as usize;
                     // SAFETY: deflate wrote exactly `written` bytes.
                     unsafe { out.set_len(out.len() + written) };
-                    let consumed = take - s.avail_in as usize;
+                    let consumed = take - s.avail_in() as usize;
                     remaining = &remaining[consumed..];
                     match rc {
                         zlib::ReturnCode::Ok | zlib::ReturnCode::BufError => {}
@@ -413,7 +410,7 @@ impl CompressionStreamCoder {
                         zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
                         _ => return Err(CodecError::Message("deflate failed")),
                     }
-                    if s.avail_out != 0 && remaining.is_empty() {
+                    if s.avail_out() != 0 && remaining.is_empty() {
                         return Ok(Progress::Done);
                     }
                 }
@@ -429,7 +426,7 @@ impl CompressionStreamCoder {
                             return Err(CodecError::TrailingJunk);
                         }
                         // SAFETY: `s` is an initialized inflate stream.
-                        if unsafe { zlib::inflateReset(&raw mut **s) } != zlib::ReturnCode::Ok {
+                        if unsafe { zlib::inflateReset(s.as_ptr()) } != zlib::ReturnCode::Ok {
                             return Err(CodecError::Message("inflate failed"));
                         }
                         self.ended = false;
@@ -452,19 +449,17 @@ impl CompressionStreamCoder {
                     } else {
                         zlib::FlushValue::NoFlush
                     };
-                    s.next_in = remaining.as_ptr();
-                    s.avail_in = take as u32;
+                    s.set_input(remaining.as_ptr(), take as u32);
                     let spare = spare(out, cap)?;
-                    s.next_out = spare.as_mut_ptr().cast();
-                    s.avail_out = spare.len().min(u32::MAX as usize) as u32;
-                    let before = s.avail_out;
+                    let before = spare.len().min(u32::MAX as usize) as u32;
+                    s.set_output(spare.as_mut_ptr().cast(), before);
                     // SAFETY: `s` was initialized by `inflateInit2_`; buffers
                     // as in the deflate arm.
-                    let rc = unsafe { zlib::inflate(&raw mut **s, flush) };
-                    let written = (before - s.avail_out) as usize;
+                    let rc = unsafe { zlib::inflate(s.as_ptr(), flush) };
+                    let written = (before - s.avail_out()) as usize;
                     // SAFETY: inflate wrote exactly `written` bytes.
                     unsafe { out.set_len(out.len() + written) };
-                    let consumed = take - s.avail_in as usize;
+                    let consumed = take - s.avail_in() as usize;
                     remaining = &remaining[consumed..];
                     match rc {
                         zlib::ReturnCode::Ok => {}
@@ -482,7 +477,7 @@ impl CompressionStreamCoder {
                                 return Err(CodecError::TrailingJunk);
                             }
                             // SAFETY: `s` is an initialized inflate stream.
-                            if unsafe { zlib::inflateReset(&raw mut **s) } != zlib::ReturnCode::Ok {
+                            if unsafe { zlib::inflateReset(s.as_ptr()) } != zlib::ReturnCode::Ok {
                                 return Err(CodecError::Message("inflate failed"));
                             }
                             self.ended = false;
@@ -494,7 +489,7 @@ impl CompressionStreamCoder {
                         zlib::ReturnCode::MemError => return Err(CodecError::OutOfMemory),
                         _ => return Err(CodecError::Message("inflate failed")),
                     }
-                    if s.avail_out != 0 && remaining.is_empty() {
+                    if s.avail_out() != 0 && remaining.is_empty() {
                         if finish && !self.ended {
                             return Err(CodecError::Message("unexpected end of file"));
                         }
@@ -783,6 +778,7 @@ impl AsyncInput {
 // ─── extern "C" surface (called from JSCompressionStream.cpp) ──────────────
 
 /// `level` (present when `has_level`) is range-checked by the caller; ignored for decompression.
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__create(
     format: u8,
@@ -791,6 +787,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
     has_level: bool,
     level: i32,
 ) -> *mut CompressionStreamCoder {
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__create
+    );
     let Some(format) = Format::from_u8(format) else {
         return ptr::null_mut();
     };
@@ -802,8 +802,13 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
 }
 
 /// Releases the C++ cell's reference; see [`CompressionStreamCoder::ref_count`].
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__destroy
+    );
     if !this.is_null() {
         // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
         // the cell's reference has not been released yet.
@@ -814,6 +819,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionS
 /// One JS-thread [`step`](CompressionStreamCoder::step): returns its output as
 /// a fresh (possibly empty) `Uint8Array` and sets `more` if the coder must be
 /// stepped again (with `input` null), or throws a `TypeError` and returns zero.
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__transform(
     this: *mut CompressionStreamCoder,
@@ -823,6 +829,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
     finish: bool,
     more: &mut bool,
 ) -> JSValue {
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__transform
+    );
     let slice = if input.is_null() {
         &[][..]
     } else {
@@ -883,8 +893,9 @@ fn throw_codec_error(global: &JSGlobalObject, e: CodecError) {
 }
 
 /// [`CompressionStreamCoder__transform`], but the output is written to the
-/// native JSSink `sink_ptr`: returns the sink's `write` result (see
+/// native sink of `controller`: returns the sink's `write` result (see
 /// nativeSinkWriteIsBackpressure), `undefined` when there was no output.
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     this: *mut CompressionStreamCoder,
@@ -892,10 +903,13 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
     input: *const u8,
     input_len: usize,
     finish: bool,
-    sink_id: u8,
-    sink_ptr: *mut core::ffi::c_void,
+    controller: &crate::webcore::sink::ReadableSinkController,
     more: &mut bool,
 ) -> JSValue {
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__transformInto
+    );
     let slice = if input.is_null() {
         &[][..]
     } else {
@@ -909,21 +923,16 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
         Ok(has_more) => {
             *more = has_more;
             'write: {
-                let Some(sink_ptr) = NonNull::new(sink_ptr).filter(|_| !out.is_empty()) else {
-                    break 'write JSValue::UNDEFINED;
-                };
-                // SAFETY: `sink_ptr` is a live JSSink of type `sink_id`; the sink
-                // copies what it needs before returning.
-                let handle =
-                    unsafe { crate::webcore::sink::sink_handle_from_id(sink_id, sink_ptr) };
-                if handle.is_none() {
+                // The sink copies what it needs before returning.
+                let handle = controller.sink_handle();
+                if out.is_empty() || handle.is_none() {
                     break 'write JSValue::UNDEFINED;
                 }
                 handle
                     .write(&crate::webcore::streams::Result::Temporary(
                         bun_ptr::RawSlice::new(&out),
                     ))
-                    .to_js(&global.js_thread_of_caller_no_frame())
+                    .to_js(&global.js_thread_of_caller())
             }
         }
         Err(e) => {
@@ -1021,6 +1030,7 @@ impl bun_jsc::JobContext for CompressionAsyncCtx {
 
 /// Schedules one off-thread step; a continuation step passes no chunk and no
 /// input (the coder kept the tail).
+#[inline(never)]
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     this: *mut CompressionStreamCoder,
@@ -1031,6 +1041,10 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     input_len: usize,
     finish: bool,
 ) {
+    bun_removable_features::removable_definition!(
+        CompressionStreams,
+        CompressionStreamCoder__transformAsync
+    );
     let fallback = if input.is_null() {
         &[][..]
     } else {
@@ -1050,7 +1064,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformAsync(
     };
     let cx = global.js_thread(match &entered {
         Some(scope) => scope.context(),
-        None => vm.context_of_caller_no_frame(),
+        None => vm.context_of_caller(),
     });
     bun_jsc::Job::<CompressionAsyncCtx>::schedule(
         &cx,

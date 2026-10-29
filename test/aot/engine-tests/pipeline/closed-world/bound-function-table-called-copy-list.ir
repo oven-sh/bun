@@ -1,0 +1,223 @@
+# A function is bound by an arrow that stands in a table, laid into a list, taken out of a copy that concat() makes, and called. It runs.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="bound-function-table-called-copy-list.js" displayPath="bound-function-table-called-copy-list.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything} module=m0
+variable g0 name="show" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="outcome" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="attempt" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="log" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+variable g4 name="table" module=m0 declared={type=undefined|null|absent|Array<undefined|null|Array<undefined|null|string|function|f4|f5|Array<undefined|null|Array<undefined|null|string|function|f8>>>> flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f4
+    v1 = Convert v0 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f5
+    v3 = Convert v2 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f6
+    v5 = Convert v4 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Data data=d0
+    v7 = Convert v6 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v8 = Convert v7 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutModuleVariable v8 variable=g3
+    v10 = String string="a bound function"
+    v11 = NewClosure function=f7
+    v12 = NewArray v10, v11 contents=undefined|null|string|function|f7
+    v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|string|function|f7> flags=[IsExpected]}
+    v14 = NewArray v13 contents=undefined|null|Array<undefined|null|string|function|f7>
+    v15 = Convert v14 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f7>> flags=[IsExpected]}
+    v16 = String string="a proxy"
+    v17 = NewClosure function=f8
+    v18 = NewArray v16, v17 contents=undefined|null|string|function|f8
+    v19 = Convert v18 declared={type=undefined|null|Array<undefined|null|string|function|f8> flags=[IsExpected]}
+    v20 = NewArray v19 contents=undefined|null|Array<undefined|null|string|function|f8>
+    v21 = Convert v20 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f8>> flags=[IsExpected]}
+    v22 = String string="calls"
+    v23 = NewArray v22, v1, v15 contents=undefined|null|string|function|f4|Array<undefined|null|Array<undefined|null|string|function|f7>>
+    v24 = Convert v23 declared={type=undefined|null|Array<undefined|null|string|function|f4|Array<undefined|null|Array<undefined|null|string|function|f7>>> flags=[IsExpected]}
+    v25 = String string="addsMembers"
+    v26 = NewArray v25, v3, v21 contents=undefined|null|string|function|f4|f5|Array<undefined|null|Array<undefined|null|string|function|f8>>
+    v27 = Convert v26 declared={type=undefined|null|Array<undefined|null|string|function|f4|f5|Array<undefined|null|Array<undefined|null|string|function|f8>>> flags=[IsExpected]}
+    v28 = NewArray v24, v27 contents=undefined|null|Array<undefined|null|string|function|f4|f5|Array<undefined|null|Array<undefined|null|string|function|f8>>>
+    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f4|f5|Array<undefined|null|Array<undefined|null|string|function|f8>>>> flags=[IsExpected]}
+    PutModuleVariable v29 variable=g4
+    v31 = String string="at first"
+    v32 = Call v5, -, v31 calleeName="everyCase"
+    v33 = Integer
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v34)
+  b1(v35):
+    LoopHint
+    v37 = Increment v35
+    v38 = Convert v37 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v38)
+}
+function f1 name="show" module=m0 position=155 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="outcome" module=m0 position=398 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function):
+    Jump -> next b1()
+  b1() handler=b3():
+    Jump -> next b2()
+  b2():
+    v1 = Undefined
+    v2 = Convert v1 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v2
+  b3() role=CatchHandler:
+    v3 = CatchValue
+    v4 = GetModuleVariable variable=g3
+    v5 = CheckInitialized v4 name="log"
+    v6 = PropGet v5 key="join"
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v8 = String string=", "
+    v9 = Call v7, v5, v8 calleeKey="join" calleeName="log.join"
+    v10 = Convert v9 declared={type=undefined|null|string flags=[IsExpected]}
+    v11 = String string="threw "
+    v12 = GetModuleVariable variable=g0
+    v13 = Call v12, -, v3 calleeName="show"
+    v14 = Add v11, v13
+    v15 = String string=" "
+    v16 = Add v14, v15
+    v17 = PropGet v3 key="message"
+    v18 = Add v16, v17
+    Jump -> next b4(v10)
+  b4(v19):
+    v20 = String string=" | "
+    v21 = Add v20, v19
+    v22 = Add v18, v21
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
+    Return v23
+}
+function f3 name="attempt" module=m0 position=609 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function):
+    v2 = GetModuleVariable variable=g1
+    v3 = Call v2, -, v1 calleeName="outcome"
+    v4 = Undefined
+    Return v4
+}
+function f4 name="calls" module=m0 position=1034 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="addsMembers" module=m0 position=1106 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="everyCase" module=m0 position=1257 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = GetModuleVariable variable=g4
+    v2 = CheckInitialized v1 name="table"
+    v3 = IteratorOpen v2
+    LoopHint
+    v5 = IteratorResume v3
+    v6 = ResultAt v5 index=1
+    Jump -> next b1()
+  b1() handler=b11():
+    v7 = IteratorOpen v6 elementCount=3 [isDestructuring]
+    Jump -> next b2()
+  b2() handler=b10():
+    v8 = IteratorResume v7 stepIndex=0
+    v9 = ResultAt v8 index=1
+    v10 = Convert v9 declared={type=undefined|null|string|function|f4|f5|Array<undefined|null|Array<undefined|null|string|function|f8>> flags=[IsExpected]}
+    v11 = IteratorResume v7 stepIndex=1
+    v12 = ResultAt v11 index=1
+    v13 = Convert v12 declared={type=undefined|null|string|function|f4|f5|Array<undefined|null|Array<undefined|null|string|function|f8>> flags=[IsExpected]}
+    v14 = IteratorResume v7 stepIndex=2
+    v15 = ResultAt v14 index=1
+    v16 = Convert v15 declared={type=undefined|null|string|function|f4|f5|Array<undefined|null|Array<undefined|null|string|function|f8>> flags=[IsExpected]}
+    Jump -> next b3()
+  b3() handler=b11():
+    v17 = NewArray contents=anything
+    v18 = Integer
+    v19 = ElemGet v16, v18
+    AppendElement v17, v19
+    v21 = Convert v17 declared={type=undefined|null|Array flags=[IsExpected]}
+    v22 = IteratorOpen v21
+    Jump -> next b4()
+  b4() handler=b11():
+    LoopHint
+    v24 = IteratorResume v22
+    v25 = ResultAt v24 index=1
+    Jump -> next b5()
+  b5() handler=b9():
+    v26 = IteratorOpen v25 elementCount=2 [isDestructuring]
+    Jump -> next b6()
+  b6() handler=b8():
+    v27 = IteratorResume v26 stepIndex=0
+    v28 = ResultAt v27 index=1
+    v29 = IteratorResume v26 stepIndex=1
+    v30 = ResultAt v29 index=1
+    Jump -> next b7()
+  b7() handler=b9():
+    v31 = GetModuleVariable variable=g2
+    v32 = String string=" "
+    v33 = Add v0, v32
+    v34 = Add v33, v10
+    v35 = String string=" "
+    v36 = Add v34, v35
+    v37 = Add v36, v28
+    v38 = NewClosure v13, v30 function=f9
+    v39 = Call v31, -, v37, v38 calleeName="attempt"
+    Jump -> next b4()
+  b8() role=IterationCleanup subject=v26 handler=b9():
+    v40 = CatchException
+    Rethrow v40
+  b9() role=IterationCleanup subject=v22 handler=b11():
+    v41 = CatchException
+    Rethrow v41
+  b10() role=IterationCleanup subject=v7 handler=b11():
+    v42 = CatchException
+    Rethrow v42
+  b11() role=IterationCleanup subject=v3:
+    v43 = CatchException
+    Rethrow v43
+}
+function f7 module=m0 position=740 kind=Arrow thisType={type=anything} results=[{type=undefined|null|function flags=[IsExpected]}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m0 position=881 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f11] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=1428 kind=Arrow captures=[{type=undefined|null|string|function|f4|f5|Array<undefined|null|Array<undefined|null|string|function|f8>> flags=[IsExpected]}, {type=anything}] thisType={type=anything} results=[{type=anything}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f13]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0 outcome attempt
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0() frequency=Rare:
+# CHECK-NEXT: v0: f4 = NewClosure function=f4 allocationSite=0
+# CHECK-NEXT: v1: f5 = NewClosure function=f5 allocationSite=1
+# CHECK-NEXT: v2: "a bound function" = String string="a bound function"
+# CHECK-NEXT: v3: f7 = NewClosure function=f7 allocationSite=4
+# CHECK-NEXT: v4: Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v2, v3 contents=string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=5 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v5: Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v4 provenType=Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v6: Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v5 contents=string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=6 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v7: Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v6 provenType=Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: "a proxy" = String string="a proxy"
+# CHECK-NEXT: v9: f8 = NewClosure function=f8 allocationSite=7
+# CHECK-NEXT: v10: Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v8, v9 contents=string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=8 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v11: Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v11 contents=string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=9 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v13: Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<string|f7|f8|Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: "calls" = String string="calls"
+# CHECK-NEXT: v15: Array<string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v14, v0, v7 contents=string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=10 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v16: Array<string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v15 provenType=Array<string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v17: "addsMembers" = String string="addsMembers"
+# CHECK-NEXT: v18: Array<string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v17, v1, v13 contents=string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=11 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v19: Array<string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: Array<Array<string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v16, v19 contents=Array<string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=12 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v21: Array<Array<string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<Array<string|f4|f5|Array<Array<string|f7|f8, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: PutModuleVariable v21 variable=g4
+# CHECK-NEXT: v23: "at first" = String string="at first"
+# CHECK-NEXT: v24: anything = CallDirect v23 function=f6 accessSite=0
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="outcome"
+# CHECK: module=m0 position=398 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=f9}] results=[{type=undefined|string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: f9):
+# CHECK-NEXT: v1: undefined = Undefined
+# CHECK-NEXT: Return v1
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="attempt"
+# CHECK: module=m0 position=609 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=string}, {type=f9}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0(v0: string, v1: f9):
+# CHECK-NEXT: v2: undefined = Undefined
+# CHECK-NEXT: Return v2
+# CHECK-NEXT: }

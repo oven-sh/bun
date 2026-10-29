@@ -1,4 +1,5 @@
 #include "root.h"
+#include "ErrorCode.h"
 #include "GeneratedBlob.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -9,7 +10,7 @@
 using Bun::Bindgen::Generated::JSBlob;
 using namespace JSC;
 
-extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
+extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, EncodedJSValue bits, EncodedJSValue name, EncodedJSValue options);
 extern "C" SYSV_ABI bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
 
 // TODO: make this inehrit from JSBlob instead of InternalFunction
@@ -72,7 +73,10 @@ public:
         Structure* structure = Bun::Bindgen::structureForNewTarget(lexicalGlobalObject, callFrame, JSBlob::classIndex);
         RETURN_IF_EXCEPTION(scope, {});
 
-        void* ptr = JSDOMFile__construct(lexicalGlobalObject, callFrame);
+        if (callFrame->argumentCount() < 2) [[unlikely]]
+            return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "new File(bits, name) expects at least 2 arguments"_s);
+
+        void* ptr = JSDOMFile__construct(lexicalGlobalObject, JSValue::encode(callFrame->uncheckedArgument(0)), JSValue::encode(callFrame->uncheckedArgument(1)), JSValue::encode(callFrame->argument(2)));
         // Not RETURN_IF_EXCEPTION: it handles traps, and a termination thrown there would leak `ptr`.
         if (!ptr) [[unlikely]] {
             EXCEPTION_ASSERT(scope.exception());

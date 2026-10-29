@@ -24,6 +24,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "ObjectBindings.h"
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
@@ -166,7 +167,8 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
     if (callsPrepareStackTrace) {
         // In Node, if you console.log(error.stack) inside Error.prepareStackTrace
         // it will display the stack as a formatted string, so we have to do the same.
-        errorObject->putDirect(vm, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+        putDirectOrThrow(lexicalGlobalObject, errorObject, vm.propertyNames->stack, stackStringValue, JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(scope, {});
 
         JSC::MarkedArgumentBuffer arguments;
         arguments.append(errorObject);
@@ -322,6 +324,10 @@ WTF::String formatStackTrace(
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
+#if ENABLE(AOT)
+    JSC::AOT::Typed::ModuleID previousCompiledModule;
+    size_t previousCompiledFrame = 0;
+#endif
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
@@ -336,6 +342,21 @@ WTF::String formatStackTrace(
         originalLineColumns[i] = {};
 
         if (!frame.hasLineAndColumnInfo()) continue;
+
+#if ENABLE(AOT)
+        if (frame.isCompiledFrame()) [[unlikely]] {
+            if (auto position = frame.compiledPosition()) {
+                originalLineColumns[i] = position->lineColumn;
+                if (position->source) {
+                    sourceURLs[i] = position->source == previousCompiledModule ? sourceURLs[previousCompiledFrame] : JSC::AOT::sourceURLOf(position->source);
+                    previousCompiledModule = position->source;
+                    previousCompiledFrame = i;
+                } else
+                    sourceURLs[i] = Zig::sourceURL(*position);
+            }
+            continue;
+        }
+#endif
 
         originalLineColumns[i] = frame.computeLineAndColumn();
 
@@ -397,7 +418,11 @@ WTF::String formatStackTrace(
                 column = displayColumn;
                 sourceURL = sourceURLForFrame;
 
-                if (remappedFrame.remapped) {
+                bool showsSourcePosition = remappedFrame.remapped;
+#if ENABLE(AOT)
+                showsSourcePosition |= frame.isCompiledFrame() && !frame.isBuiltinFunction() && !sourceURLForFrame.isEmpty();
+#endif
+                if (showsSourcePosition) {
                     if (errorInstance) {
                         errorInstance->putDirect(vm, builtinNames(vm).originalLinePublicName(), jsNumber(originalLine.oneBasedInt()), PropertyAttribute::DontEnum | 0);
                         errorInstance->putDirect(vm, builtinNames(vm).originalColumnPublicName(), jsNumber(originalColumn.oneBasedInt()), PropertyAttribute::DontEnum | 0);
@@ -531,7 +556,10 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObj
             }
         }
 
-        if (globalObjectForFrame == globalObject) {
+        // A position recorded at build time is already the one in the original source.
+        bool isOriginalPosition = Zig::hasOriginalSourcePosition(stackFrame);
+
+        if (globalObjectForFrame == globalObject && !isOriginalPosition) {
             if (JSCStackFrame::SourcePositions* sourcePositions = visibleFrame.getSourcePositions()) {
                 frame.position.line_zero_based = sourcePositions->line.zeroBasedInt();
                 frame.position.column_zero_based = sourcePositions->column.zeroBasedInt();
@@ -892,7 +920,8 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
         String sourceURL;
         JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorObject);
         RETURN_IF_EXCEPTION(scope, {});
-        errorObject->putDirect(vm, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        putDirectOrThrow(globalObject, errorObject, vm.propertyNames->stack, result, JSC::PropertyAttribute::DontEnum | 0);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     return JSC::JSValue::encode(JSC::jsUndefined());

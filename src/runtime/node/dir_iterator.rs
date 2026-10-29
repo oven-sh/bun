@@ -361,7 +361,7 @@ mod platform {
     /// Helper to select `name_data` element type (`[u16; 257]` or `[u8; 513]`)
     /// and result type from the const-bool generic.
     pub(crate) trait WindowsOsPath {
-        type NameData: Sized;
+        type NameData: bun_core::ffi::Zeroable;
         type Entry;
         /// Max u16 codeunits that fit in `name_data` (reserving one for the
         /// trailing NUL on the u16 path, or accounting for UTF-16→UTF-8
@@ -608,8 +608,8 @@ mod platform {
                 // `buf` follows the 8-byte `Fd` in a `repr(C, align(8))` struct so
                 // it is itself 8-byte aligned, and per MS docs each record (and
                 // thus its FileName at offset 64) lands on an 8-byte boundary —
-                // bytemuck checks the u8→u16 alignment at runtime.
-                let dir_info_name: &[u16] = bytemuck::cast_slice(
+                // `cast_slice` checks the u8→u16 alignment at runtime.
+                let dir_info_name: &[u16] = bun_core::cast_slice(
                     &self.buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
                 );
 
@@ -731,8 +731,7 @@ where
                     first: true,
                     // zero-init avoids the invalid_value lint on integer arrays
                     buf: [0u8; 8192],
-                    // SAFETY: NameData is [u8; 513] or [u16; 257]; zero is a valid bit pattern.
-                    name_data: unsafe { bun_core::ffi::zeroed_unchecked() },
+                    name_data: bun_core::ffi::zeroed(),
                     name_filter: None,
                 },
             };

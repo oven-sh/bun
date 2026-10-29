@@ -598,7 +598,7 @@ impl Encoding for Utf16 {
         // Reinterpret `&[u16]` as `&[u8]` of `len * 2` for byte-keyed hashing.
         // Uniqueness is preserved (equal u16 slices ⇔ equal byte slices). Same
         // pattern as `bun_ast::E::EString::hash()` for the utf16 arm.
-        bytemuck::cast_slice(s)
+        bun_core::slice_as_bytes(s)
     }
     #[inline]
     fn unit_from_u16(u: u16) -> u16 {
@@ -1654,15 +1654,7 @@ impl<Enc: Encoding> NodeScalar<Enc> {
                     YamlString::List(list) => bump.alloc_slice_copy(list.as_slice()),
                 };
                 let estring = match Enc::KIND {
-                    EncodingKind::Utf16 => {
-                        // SAFETY: `Enc::Unit == u16` when `KIND == Utf16`;
-                        // reinterpret with the same element count for
-                        // `E::String::init_utf16` (which sets `is_utf16`).
-                        let s16 = unsafe {
-                            core::slice::from_raw_parts(s.as_ptr().cast::<u16>(), s.len())
-                        };
-                        E::String::init_utf16(s16)
-                    }
+                    EncodingKind::Utf16 => E::String::init_utf16(Enc::as_u16_slice(s)),
                     _ => E::String::init(Enc::key_bytes(s)),
                 };
                 Expr::init(estring, pos.loc())

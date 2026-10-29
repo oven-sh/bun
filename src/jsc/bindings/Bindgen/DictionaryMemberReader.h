@@ -18,7 +18,7 @@ public:
     {
     }
 
-    // May throw. Out of line: inlined, it is most of the size of every generated dictionary converter.
+    // Empty if it threw. Out of line: inlined, it is most of the size of every generated dictionary converter.
     NEVER_INLINE JSC::JSValue get(unsigned index);
 
 private:

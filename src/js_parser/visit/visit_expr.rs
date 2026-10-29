@@ -914,6 +914,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
         );
 
+        // A private name is resolved first, then the link is folded.
+        if e_.optional_chain.is_some()
+            && Self::is_dead_hot_chain_target(p, &e_.target)
+            && !matches!(e_.index.data, Data::EPrivateIdentifier(..))
+        {
+            Self::fold_to_hot_undefined(p, e, core::slice::from_mut(&mut e_.index));
+            return;
+        }
+        if in_.property_access_for_method_call_maybe_should_replace_with_undefined
+            && p.hot_undefined_is_method
+            && Self::is_access_on_hot_method(p, &e_.target)
+            && !matches!(e_.index.data, Data::EPrivateIdentifier(..))
+        {
+            // `import.meta.hot.accept["call"](cb)` with HMR off: the call is dropped. A call in the index must not take the flag.
+            Self::visit_dead_exprs(p, core::slice::from_mut(&mut e_.index));
+            p.method_call_must_be_replaced_with_undefined = true;
+            return;
+        }
+
         match e_.index.data {
             Data::EPrivateIdentifier(mut private) => {
                 let name = p.load_name_from_ref(private.ref_);
@@ -992,6 +1011,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     data: Data::EPrivateIdentifier(private),
                     loc: e_.index.loc,
                 };
+
+                if e_.optional_chain.is_some() && Self::is_dead_hot_chain_target(p, &e_.target) {
+                    Self::fold_to_hot_undefined(p, e, &mut []);
+                    return;
+                }
             }
             _ => {
                 p.visit_expr(&mut e_.index);
@@ -1001,6 +1025,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if !s.is_utf16 {
                         // A folded `"a" + "b"` is a rope whose `data` is only "a".
                         s.resolve_rope_if_needed(p.arena);
+
+                        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+                            && Self::is_hot_enabled_property(&e_.target, s.data.slice())
+                        {
+                            e_.optional_chain = None;
+                        }
 
                         // "a['b' + '']" => "a.b"
                         // "enum A { B = 'b' }; a[A.B]" => "a.b"
@@ -1025,24 +1055,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             if is_delete_target {
                                 p.delete_target = dot.data;
                             }
+                            if Self::is_hot_undefined(p, &e_.target)
+                                && let Data::EDot(moved) = &dot.data
+                            {
+                                p.hot_undefined_slot = &raw const moved.target;
+                            }
 
                             // don't call visitExprInOut on `dot` because we've already visited `target` above!
                             *e = dot;
-                            return;
-                        }
-
-                        // `import.meta.hot?.["x"]`: see the `?.` case in e_dot.
-                        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
-                            && Self::is_import_meta_hot(&e_.target)
-                            && let Some(rewrite) = p.maybe_rewrite_property_access(
-                                expr.loc,
-                                e_.target,
-                                s.data.slice(),
-                                unwrapped.loc,
-                                Self::import_meta_hot_optional_opts(in_),
-                            )
-                        {
-                            *e = rewrite;
                             return;
                         }
 
@@ -1056,10 +1076,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 .with_is_template_tag(is_template_tag)
                                 .with_is_delete_target(is_delete_target)
                                 .with_assign_target(in_.assign_target)
-                                .with_is_property_access_target(in_.is_property_access_target)
-                                .with_is_method_call_callee(
-                                    in_.property_access_for_method_call_maybe_should_replace_with_undefined,
-                                );
+                                .with_is_property_access_target(in_.is_property_access_target);
                             if let Some(rewrite) = p.maybe_rewrite_property_access(
                                 expr.loc,
                                 e_.target,
@@ -1068,6 +1085,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 opts,
                             ) {
                                 *e = rewrite;
+                                if matches!(e_.target.data, Data::ESpecial(E::Special::HotDisabled))
+                                {
+                                    Self::did_rewrite_hot_disabled_property(p, e, in_);
+                                }
                                 return;
                             }
                             e_.is_import_property_use =
@@ -1251,6 +1272,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Op::UnDelete => {
                 p.delete_target = e_.value.data;
                 p.visit_expr_in_out(&mut e_.value, ExprIn::default());
+
+                // `delete import.meta.hot?.x` with HMR off: the chain never runs, so it is `true`.
+                if Self::is_dead_hot_chain_target(p, &e_.value) {
+                    *e = p.new_expr(E::Boolean { value: true }, expr.loc);
+                    return;
+                }
             }
             _ => {
                 let assign_target = Op::unary_assign_target(e_.op);
@@ -1363,23 +1390,74 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
     }
-    /// A visited `import.meta.hot`: the HMR object with HMR on, `undefined` with HMR off.
+
+    /// True if `expr` is an `undefined` that `hot_undefined_slot` records.
     #[inline]
-    fn is_import_meta_hot(target: &Expr) -> bool {
-        matches!(
-            target.data,
-            Data::ESpecial(E::Special::HotEnabled | E::Special::HotDisabled)
-        )
+    fn is_hot_undefined(p: &Self, expr: &Expr) -> bool {
+        matches!(expr.data, Data::EUndefined(..)) && core::ptr::eq(p.hot_undefined_slot, expr)
     }
 
-    /// The options for the rewrite of `import.meta.hot?.x`: the two bits its arm reads.
+    /// True if `target` is a chain of property accesses on the `import.meta.hot` method that `hot_undefined_slot` records.
+    #[cold]
+    fn is_access_on_hot_method(p: &Self, mut target: &Expr) -> bool {
+        loop {
+            target = match &target.data {
+                Data::EDot(dot) => &dot.target,
+                Data::EIndex(index) => &index.target,
+                _ => break,
+            };
+        }
+        Self::is_hot_undefined(p, target)
+    }
+
+    /// True if `target`, the visited target of an optional chain link or of `delete`, is `undefined` because HMR is off.
     #[inline]
-    fn import_meta_hot_optional_opts(in_: ExprIn) -> IdentifierOpts {
-        IdentifierOpts::default()
-            .with_is_method_call_callee(
-                in_.property_access_for_method_call_maybe_should_replace_with_undefined,
-            )
-            .with_is_optional_chain_start(true)
+    fn is_dead_hot_chain_target(p: &Self, target: &Expr) -> bool {
+        matches!(target.data, Data::ESpecial(E::Special::HotDisabled))
+            || Self::is_hot_undefined(p, target)
+    }
+
+    /// True for `import.meta.hot?.name` with HMR on and a `name` that Bun implements. The `?.` is then a `.`.
+    #[inline]
+    fn is_hot_enabled_property(target: &Expr, name: &[u8]) -> bool {
+        matches!(target.data, Data::ESpecial(E::Special::HotEnabled))
+            && Self::is_import_meta_hot_property(name)
+    }
+
+    /// Visits expressions that never run. The visit keeps the scopes in order.
+    #[cold]
+    #[inline(never)]
+    fn visit_dead_exprs(p: &mut Self, dead: &mut [Expr]) {
+        let old_is_control_flow_dead = p.is_control_flow_dead;
+        p.is_control_flow_dead = true;
+        for expr in dead {
+            p.visit_expr(expr);
+        }
+        p.is_control_flow_dead = old_is_control_flow_dead;
+    }
+
+    /// Replaces `e` with an `undefined` that `hot_undefined_slot` records. `dead` is its index or arguments, which never run.
+    #[cold]
+    #[inline(never)]
+    fn fold_to_hot_undefined(p: &mut Self, e: &mut Expr, dead: &mut [Expr]) {
+        // The target of `e` can set this flag for a call. `e` is `undefined` now, so no call is dropped.
+        p.method_call_must_be_replaced_with_undefined = false;
+        Self::visit_dead_exprs(p, dead);
+        e.data = Data::EUndefined(E::Undefined {});
+        p.hot_undefined_slot = e;
+        p.hot_undefined_is_method = false;
+    }
+
+    /// `e` is what a property of `import.meta.hot` is with HMR off. A method is `undefined`, and a call of it is dropped.
+    #[cold]
+    fn did_rewrite_hot_disabled_property(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        if matches!(e.data, Data::EUndefined(..)) {
+            p.hot_undefined_slot = e;
+            p.hot_undefined_is_method = true;
+            if in_.property_access_for_method_call_maybe_should_replace_with_undefined {
+                p.method_call_must_be_replaced_with_undefined = true;
+            }
+        }
     }
 
     fn e_dot(p: &mut Self, e: &mut Expr, in_: ExprIn) {
@@ -1479,6 +1557,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
+        if e_.optional_chain.is_some() {
+            if Self::is_dead_hot_chain_target(p, &e_.target) {
+                Self::fold_to_hot_undefined(p, e, &mut []);
+                return;
+            }
+            if e_.optional_chain == Some(js_ast::OptionalChain::Start)
+                && Self::is_hot_enabled_property(&e_.target, e_.name.slice())
+            {
+                e_.optional_chain = None;
+            }
+        }
+
         // `ns?.foo` on an import()/require() namespace local reads `foo`.
         if e_.optional_chain == Some(js_ast::OptionalChain::Start)
             && let Data::EIdentifier(id) = e_.target.data
@@ -1499,31 +1589,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // `import.meta.hot?.x`: the rewrite decides what the `?.` means.
-        if e_.optional_chain == Some(js_ast::OptionalChain::Start)
-            && Self::is_import_meta_hot(&e_.target)
-            && let Some(rewrite) = p.maybe_rewrite_property_access(
-                expr.loc,
-                e_.target,
-                e_.name.slice(),
-                e_.name_loc,
-                Self::import_meta_hot_optional_opts(in_),
-            )
-        {
-            *e = rewrite;
-            return;
-        }
-
         if e_.optional_chain.is_none() {
             let opts = IdentifierOpts::default()
                 .with_is_call_target(is_call_target)
                 .with_is_template_tag(is_template_tag)
                 .with_assign_target(in_.assign_target)
                 .with_is_delete_target(is_delete_target)
-                .with_is_property_access_target(in_.is_property_access_target)
-                .with_is_method_call_callee(
-                    in_.property_access_for_method_call_maybe_should_replace_with_undefined,
-                );
+                .with_is_property_access_target(in_.is_property_access_target);
             if let Some(_expr) = p.maybe_rewrite_property_access(
                 expr.loc,
                 e_.target,
@@ -1532,6 +1604,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 opts,
             ) {
                 *e = _expr;
+                if matches!(e_.target.data, Data::ESpecial(E::Special::HotDisabled)) {
+                    Self::did_rewrite_hot_disabled_property(p, e, in_);
+                }
                 return;
             }
             e_.is_import_property_use =
@@ -1970,6 +2045,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             },
         );
+
+        if e_.optional_chain.is_some() && Self::is_dead_hot_chain_target(p, &e_.target) {
+            Self::fold_to_hot_undefined(p, e, e_.args.slice_mut());
+            return;
+        }
 
         // Copy the call side effect flag over if this is a known target
         // copy the small inline payloads out first so the `match &e_.target.data`

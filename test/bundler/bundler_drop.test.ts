@@ -122,4 +122,18 @@ describe("bundler", () => {
     run: { stdout: "kept" },
     drop: ["console"],
   });
+  // A call in the index of a bracket access is not the dropped call. `console[...]()` is not
+  // dropped. A call on an `import.meta.hot` method is.
+  itBundled("drop/CallInIndexOfBracketCallee", {
+    files: {
+      "/a.js": `
+        const level = () => "log";
+        console[level()]("kept");
+        import.meta.hot.on[level()]("event", () => globalThis.console.log("FAIL"));
+        globalThis.console.log("end");
+      `,
+    },
+    run: { stdout: "kept\nend" },
+    drop: ["console"],
+  });
 });

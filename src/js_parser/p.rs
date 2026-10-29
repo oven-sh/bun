@@ -564,6 +564,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
+    /// Where the visitor last put an `undefined` for an `import.meta.hot` use with HMR off. Compared by address only.
+    pub(crate) hot_undefined_slot: *const Expr,
+    /// True if that `undefined` is a read of a method. False if it is a folded optional chain.
+    pub(crate) hot_undefined_is_method: bool,
+
     // Inside a TypeScript namespace, an "export declare" statement can be used
     // to cause a namespace to be emitted even though it has no other observable
     // effect. This flag is used to implement this feature.
@@ -9788,6 +9793,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
             method_call_must_be_replaced_with_undefined: false,
+            hot_undefined_slot: core::ptr::null(),
+            hot_undefined_is_method: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,
             temp_refs_to_declare: BumpVec::new_in(arena),

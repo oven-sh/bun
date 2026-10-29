@@ -1154,6 +1154,11 @@ describe("bundler", () => {
           import.meta.hot.accept?.(() => console.log("FAIL"));
           import.meta.hot.accept.call(null, () => console.log("FAIL"));
           import.meta.hot.dispose.apply(null, [() => console.log("FAIL")]);
+          import.meta.hot.accept["call"](null, () => console.log("FAIL"));
+          import.meta.hot.dispose.bind["call"](null, () => console.log("FAIL"));
+          const key = "bind";
+          import.meta.hot.dispose[key].call["ap" + "ply"](null, [() => console.log("FAIL")]);
+          import.meta.hot.on[(() => console.log("FAIL"))()]("event", () => console.log("FAIL"));
           console.log("after direct calls");
         `,
       },
@@ -1186,9 +1191,8 @@ describe("bundler", () => {
       },
     });
   }
-  // With HMR off, `import.meta.hot` is `undefined`. A call of a known method through
-  // `?.` never runs, so it is dropped with its callback. Every other `?.` access
-  // keeps its JavaScript meaning: `undefined`, a no-op call, no build error.
+  // With HMR off, `import.meta.hot` is `undefined`, so an optional chain on it is `undefined`
+  // whatever follows. The chain, its callbacks and their imports leave the bundle.
   itBundled("minify/ImportMetaHotOptionalChainTreeShaking", {
     files: {
       "/entry.ts": `
@@ -1204,10 +1208,18 @@ describe("bundler", () => {
         import.meta.hot?.invalidate(() => {"FAIL";value});
         import.meta.hot?.prune(() => {"FAIL";value});
         import.meta.hot?.decline(() => {"FAIL";value});
+        import.meta.hot?.on("event", () => {"FAIL";value}).x;
+        import.meta.hot?.accept.call(null, () => {"FAIL";value});
+        import.meta.hot?.acceptExports(["x"], () => {"FAIL";value});
+        import.meta.hot?.accept(async () => {
+          await import("crash");
+          require("crash");
+        });
         capture(import.meta.hot?.accept());
         capture(import.meta.hot?.data ?? "fallback");
         capture(import.meta.hot?.accept.length);
-        capture(import.meta.hot?.acceptExports(["x"], () => "vite only"));
+        capture(typeof import.meta.hot?.future);
+        capture(delete import.meta.hot?.data.x);
         // A read that is not a call must not delete the next call.
         const f = import.meta.hot?.accept;
         capture(f);
@@ -1222,44 +1234,95 @@ describe("bundler", () => {
       `,
     },
     outfile: "/out.js",
-    capture: [
-      '"hello"',
-      "void 0",
-      '(void 0)?.data ?? "fallback"',
-      "(void 0)?.accept.length",
-      '(void 0)?.acceptExports(["x"], () => "vite only")',
-      "f",
-      '"KEEP"',
-      "g",
-      '"KEEP2"',
-    ],
+    capture: ['"hello"', "void 0", '"fallback"', "void 0", '"undefined"', "!0", "f", '"KEEP"', "g", '"KEEP2"'],
     minifySyntax: true,
     onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("FAIL");
       api.expectFile("/out.js").not.toContain("import.meta.hot");
+      api.expectFile("/out.js").not.toContain("?.");
     },
   });
-  // The same file runs: nothing the `?.` guards throws, and the dropped calls leave no trace.
-  itBundled("minify/ImportMetaHotOptionalChainRuns", {
-    files: {
-      "/entry.ts": `
-        import.meta.hot?.accept(() => console.log("FAIL"));
-        import.meta.hot?.accept?.(() => console.log("FAIL"));
-        import.meta.hot?.["dispose"](() => console.log("FAIL"));
-        import.meta.hot?.acceptExports(["x"], () => console.log("vite only, kept"));
-        import.meta.hot.accept.call(null, () => console.log("FAIL"));
-        const f = import.meta.hot?.accept;
-        console.log("after read", f, import.meta.hot?.data, import.meta.hot?.accept.length);
-        console.log(import.meta.hot?.data ?? "fallback");
-      `,
-    },
-    outfile: "/out.js",
-    run: { stdout: "after read undefined undefined undefined\nfallback" },
-    onAfterBundle(api) {
-      api.expectFile("/out.js").not.toContain("FAIL");
-      api.expectFile("/out.js").not.toContain("import.meta.hot");
-    },
-  });
+  for (const [suffix, options] of [
+    ["", {}],
+    ["NoBundle", { bundling: false }],
+    ["MinifySyntax", { minifySyntax: true }],
+  ] as const) {
+    // The file runs as JavaScript says for an `undefined` import.meta.hot: each chain is
+    // `undefined`, no index or argument is evaluated, and parentheses end the chain.
+    itBundled(`minify/ImportMetaHotOptionalChainRuns${suffix}`, {
+      files: {
+        "/entry.ts": `
+          const fail = () => {
+            throw new Error("evaluated");
+          };
+          import.meta.hot?.accept(fail);
+          import.meta.hot?.on("event", fail).x;
+          const chains = [
+            import.meta.hot?.data,
+            import.meta.hot?.data.cache.get(1),
+            import.meta.hot?.data.list.length,
+            import.meta.hot?.data.stop(),
+            import.meta.hot?.data?.x.y,
+            import.meta.hot?.accept,
+            import.meta.hot?.accept.length,
+            import.meta.hot?.accept.call(null, fail),
+            import.meta.hot?.accept.call(null, fail).x,
+            import.meta.hot?.accept.bind(null)(fail),
+            import.meta.hot?.accept(fail).then(fail),
+            import.meta.hot?.accept?.(fail()).x,
+            import.meta.hot?.on("event", fail).x,
+            import.meta.hot?.on("event", fail).x.y(fail()),
+            import.meta.hot?.on("event", fail)[fail()],
+            import.meta.hot?.on("event", fail)(fail()),
+            import.meta.hot?.on?.("event", fail)[0](),
+            import.meta.hot?.["on"]("event", fail).x,
+            import.meta.hot?.["o" + "n"]("event", fail).x,
+            import.meta.hot?.[fail()],
+            import.meta.hot?.(fail()).x,
+            import.meta.hot?.dispose(fail)?.x.y,
+            import.meta.hot?.acceptExports(["x"], fail).x,
+            import.meta.hot?.future.x.y(),
+            import.meta.hot.on?.("event", fail).x,
+          ];
+          console.log(chains.length, chains.every(value => value === undefined));
+          console.log(
+            import.meta.hot?.data ?? "fallback",
+            import.meta.hot?.on("event", fail).x ?? "fallback",
+            typeof import.meta.hot?.future,
+            typeof import.meta.hot?.on("event", fail).x,
+            delete import.meta.hot?.accept,
+            delete import.meta.hot?.data.x,
+            delete import.meta.hot?.on("event", fail).x,
+          );
+          const evaluated = [];
+          const side = value => (evaluated.push(value), value);
+          for (const afterParentheses of [
+            () => (import.meta.hot?.on("event", fail)).x,
+            () => (import.meta.hot?.accept)(side(1)),
+            () => (import.meta.hot?.accept)[side(2)](side(3)),
+            () => (import.meta.hot?.accept.call)[side(4)](),
+          ]) {
+            try {
+              afterParentheses();
+              console.log("did not throw");
+            } catch (e) {
+              console.log(e instanceof TypeError);
+            }
+          }
+          console.log(evaluated.join());
+        `,
+      },
+      ...options,
+      outfile: "/out.js",
+      run: {
+        stdout: "25 true\nfallback fallback undefined undefined true true true\ntrue\ntrue\ntrue\ntrue\n1,2,4",
+      },
+      onAfterBundle(api) {
+        api.expectFile("/out.js").not.toContain("import.meta.hot");
+        api.expectFile("/out.js").not.toContain("?.");
+      },
+    });
+  }
   itBundled("minify/ProductionMode", {
     files: {
       "/entry.jsx": `
@@ -2249,6 +2312,8 @@ test("runtime transpiler keeps the call after an import.meta.hot method that is 
       const accept = import.meta.hot.accept;
       console.log("after read", accept);
       import.meta.hot.dispose(() => console.log("FAIL"));
+      const key = "bind";
+      import.meta.hot.dispose[key].call["ap" + "ply"](null, [() => console.log("FAIL")]);
       console.log("after direct call");
     `,
   });
@@ -2297,19 +2362,86 @@ test.each([false, true])(
   },
 );
 
-// HMR is off in the runtime transpiler, so `import.meta.hot?.x` keeps its JavaScript meaning.
-test("runtime transpiler drops an import.meta.hot?.method call and its callback", async () => {
+// HMR is off in `Bun.Transpiler`, so `import.meta.hot` is `undefined` and an optional chain on
+// it is `undefined`, whatever the chain is.
+test.each([{ minify: { syntax: false } }, { minify: { syntax: true } }, { deadCodeElimination: false }])(
+  "a chain on import.meta.hot?. transpiles like undefined (%j)",
+  options => {
+    const transpiler = new Bun.Transpiler({ loader: "ts", ...options });
+    const chains = [
+      "import.meta.hot?.data",
+      "import.meta.hot?.data.cache.get(1)",
+      "import.meta.hot?.data.list.length",
+      "import.meta.hot?.data.stop()",
+      "import.meta.hot?.data?.x.y",
+      "import.meta.hot?.accept",
+      "import.meta.hot?.accept(cb)",
+      "import.meta.hot?.accept?.(cb)",
+      "import.meta.hot?.accept?.(cb).x",
+      "import.meta.hot?.accept(cb)?.x.y",
+      "import.meta.hot?.accept(cb).then(next)",
+      "import.meta.hot?.accept.call(null, cb)",
+      "import.meta.hot?.accept.call(null, cb).x",
+      "import.meta.hot?.accept.bind(null)(cb)",
+      "import.meta.hot?.on('e', cb).x",
+      "import.meta.hot?.on('e', cb).x.y()",
+      "import.meta.hot?.on('e', cb)[key()]",
+      "import.meta.hot?.on('e', cb)(arg())",
+      "import.meta.hot?.on?.('e', cb)[0]()",
+      "import.meta.hot?.['on']('e', cb).x",
+      "import.meta.hot?.['o' + 'n']('e', cb).x",
+      "import.meta.hot?.[key()](cb).x",
+      "import.meta.hot?.(cb).x",
+      "import.meta.hot?.a(import.meta.hot?.b.c, import.meta.hot.accept(cb))[import.meta.hot?.d]",
+      "import.meta.hot?.acceptExports(['x'], cb)",
+      "import.meta.hot?.future.x.y()",
+      "import.meta.hot!?.on!('e', cb).x",
+      "(import.meta.hot as any)?.future.x",
+      "import.meta.hot.on?.('e', cb).x",
+    ];
+    const transpile = (chain: string, deleted = `delete ${chain}`) =>
+      transpiler.transformSync(`a = ${chain}; b = typeof ${chain}; c = ${chain} ?? init(); d = ${deleted}; ${chain};`);
+    expect(chains.map(chain => transpile(chain))).toEqual(chains.map(() => transpile("undefined", "true")));
+    // Parentheses end the chain. What follows them runs.
+    expect(transpiler.transformSync("(import.meta.hot?.on('e', cb)).x;")).toBe(
+      transpiler.transformSync("undefined.x;"),
+    );
+    expect(transpiler.transformSync("(import.meta.hot?.accept)(cb);")).toBe(transpiler.transformSync("undefined(cb);"));
+    expect(transpiler.transformSync("(import.meta.hot?.accept.call)[key()](cb); next();")).toBe(
+      transpiler.transformSync("undefined[key()](cb); next();"),
+    );
+  },
+);
+
+// A private name in a chain that never runs is still resolved.
+test("import.meta.hot?. with a private name that is not declared is an error", () => {
+  const transpiler = new Bun.Transpiler({ loader: "ts" });
+  const source = (name: string) => `class A { #declared; read() { return import.meta.hot?.data.${name}; } }`;
+  expect(transpiler.transformSync(source("#declared"))).not.toContain("?.");
+  expect(() => transpiler.transformSync(source("#missing"))).toThrow(
+    'Private name "#missing" must be declared in an enclosing class',
+  );
+});
+
+// HMR is off in the runtime transpiler too.
+test("runtime transpiler folds a chain on import.meta.hot?. and runs nothing in it", async () => {
   const source = /* ts */ `
-    import.meta.hot?.accept(() => console.log("FAIL"));
-    import.meta.hot?.dispose(() => console.log("FAIL"));
-    import.meta.hot?.acceptExports(["x"], () => console.log("vite only, kept"));
-    const accept = import.meta.hot?.accept;
-    console.log("after read", accept, import.meta.hot?.data ?? "fallback");
+    const fail = () => {
+      throw new Error("evaluated");
+    };
+    import.meta.hot?.accept(fail);
+    import.meta.hot?.acceptExports(["x"], fail);
+    const chains = [
+      import.meta.hot?.data.cache.get(1),
+      import.meta.hot?.data.list.length,
+      import.meta.hot?.data.stop(),
+      import.meta.hot?.on("e", fail).x,
+      import.meta.hot?.accept.call(null, fail),
+      import.meta.hot?.on("e", fail)[fail()](fail()),
+    ];
+    console.log(chains.join(), import.meta.hot?.data ?? "fallback", typeof import.meta.hot?.future);
   `;
-  const transpiled = new Bun.Transpiler({ loader: "ts" }).transformSync(source);
-  expect(transpiled).not.toContain("FAIL");
-  expect(transpiled).toContain("vite only, kept");
-  expect(transpiled).toContain('undefined?.data ?? "fallback"');
+  expect(new Bun.Transpiler({ loader: "ts" }).transformSync(source)).not.toContain("?.");
 
   using dir = tempDir("import-meta-hot-optional", { "index.ts": source });
 
@@ -2323,7 +2455,7 @@ test("runtime transpiler drops an import.meta.hot?.method call and its callback"
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: "after read undefined fallback\n",
+    stdout: ",,,,, fallback undefined\n",
     stderr: "",
     exitCode: 0,
   });

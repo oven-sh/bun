@@ -26,6 +26,8 @@ import.meta.hot.dispose(() => {
 });
 ```
 
+`import.meta.hot?.dispose(...)` also works. In development it is a direct call. In production `import.meta.hot` is `undefined`, so the whole optional chain is `undefined` and Bun removes it.
+
 <Warning>
 For this dead-code elimination to work, Bun forces these APIs to be called without indirection. That means the following do not work:
 

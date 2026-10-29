@@ -120,6 +120,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         )
     }
 
+    /// A property of `import.meta.hot` that `maybe_rewrite_property_access` lowers.
+    pub(crate) fn is_import_meta_hot_property(name: &[u8]) -> bool {
+        name == b"data" || name == b"accept" || Self::is_import_meta_hot_method(name)
+    }
+
     // EDot nodes represent a property access. This function may return an
     // expression to replace the property access with. It assumes that the
     // target of the EDot expression has already been visited.
@@ -758,19 +763,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     E::Special::HotEnabled | E::Special::HotDisabled => {
                         let enabled = p.options.features.hot_module_reloading;
-                        // `import.meta.hot?.x` with HMR off: drop a known method call, keep the rest.
-                        if !enabled && identifier_opts.is_optional_chain_start() {
-                            if identifier_opts.is_method_call_callee()
-                                && (name == b"accept" || Self::is_import_meta_hot_method(name))
-                            {
-                                p.method_call_must_be_replaced_with_undefined = true;
-                                return Some(Expr {
-                                    data: js_ast::ExprData::EUndefined(E::Undefined),
-                                    loc,
-                                });
-                            }
-                            return None;
-                        }
                         if name == b"data" {
                             return Some(if enabled {
                                 Expr {
@@ -783,9 +775,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
                         if name == b"accept" {
                             if !enabled {
-                                if identifier_opts.is_method_call_callee() {
-                                    p.method_call_must_be_replaced_with_undefined = true;
-                                }
                                 return Some(Expr {
                                     data: js_ast::ExprData::EUndefined(E::Undefined),
                                     loc,
@@ -808,9 +797,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     loc,
                                 ));
                             } else {
-                                if identifier_opts.is_method_call_callee() {
-                                    p.method_call_must_be_replaced_with_undefined = true;
-                                }
                                 return Some(Expr {
                                     data: js_ast::ExprData::EUndefined(E::Undefined),
                                     loc,

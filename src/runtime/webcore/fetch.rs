@@ -444,12 +444,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
         break 'brk None;
     };
-    // Helper macro: short-lived `&mut Request` reborrow of the optional pointer.
-    macro_rules! request_mut {
+    // Helper macro: short-lived `&Request` reborrow of the optional pointer.
+    macro_rules! request_ref {
         () => {
             // SAFETY: `request` was obtained from a live JS-owned Request via
             // `as_direct`; each reborrow is non-overlapping at the call site.
-            request.map(|p| unsafe { &mut *p })
+            request.map(|p| unsafe { &*p })
         };
     }
 
@@ -478,7 +478,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'extract_url str;
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request_ref!() {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
             break 'extract_url req.url.get().clone();
         }
@@ -537,7 +537,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request_ref!() {
             break 'extract_method Some(req.method);
         }
 
@@ -795,7 +795,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // redirect: "follow" | "error" | "manual" | undefined;
     redirect_type = 'extract_redirect_type: {
         // First, try to use the Request object's redirect if available
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request_ref!() {
             redirect_type = req.flags.redirect;
         }
 
@@ -960,7 +960,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request_ref!() {
             if let Some(signal_) = req.abort_signal() {
                 break 'extract_signal Some(signal_.ref_());
             }
@@ -1010,7 +1010,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
-        if let Some(req) = request_mut!() {
+        if let Some(req) = request_ref!() {
             let body_value = req.get_body_value();
             let already_used = match body_value {
                 BodyValue::Used => true,
@@ -1123,7 +1123,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 }
             }
 
-            if let Some(req) = request_mut!() {
+            if let Some(req) = request_ref!() {
                 if let Some(head) = req.get_fetch_headers_unless_empty() {
                     break 'brk Some(head.as_ptr());
                 }

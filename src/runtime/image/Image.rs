@@ -663,26 +663,6 @@ enum PinError {
 }
 
 impl Image {
-    /// Fresh slice into the input bytes for use ON THE JS THREAD ONLY (re-reads
-    /// the ArrayBuffer's vector each call so a detach between construction and
-    /// here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
-    fn js_thread_bytes(&self, this_value: JSValue, global: &JSGlobalObject) -> Option<&[u8]> {
-        match self.source.get() {
-            Source::JsBuffer => js::source_js_get_cached(this_value)
-                .and_then(|v: JSValue| v.as_array_buffer(global))
-                .map(|ab| {
-                    // SAFETY: `ArrayBuffer` is a view struct (ptr+len); the
-                    // bytes live in the JS heap, not in `ab` — the returned
-                    // slice borrows the JS heap with `&self`'s lifetime, which
-                    // is sound only on the JS thread. `this_value` keeps the
-                    // buffer alive for this JS-thread call — see fn doc above.
-                    unsafe { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
-                }),
-            Source::Owned(b) => Some(b.as_slice()),
-            Source::Path(_) | Source::Blob(_) => None,
-        }
-    }
-
     /// Pin the source ArrayBuffer for the duration of one off-thread task and
     /// return a slice that's safe for the worker to read. Unpinned in `then()`.
     ///
@@ -899,7 +879,21 @@ impl Image {
         // Header-only probe is a few dozen byte reads — when the bytes are already
         // in memory it's cheaper to do it inline than to bounce off the WorkPool
         // (~0.4 ms roundtrip). Path-backed sources still go async for the file I/O.
-        if let Some(buf) = self.js_thread_bytes(this_value, global) {
+        //
+        // Fresh slice into the input bytes for use ON THE JS THREAD ONLY (re-reads
+        // the ArrayBuffer's vector so a detach between construction and
+        // here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
+        let view;
+        let bytes: Option<&[u8]> = match self.source.get() {
+            Source::JsBuffer => {
+                view = js::source_js_get_cached(this_value)
+                    .and_then(|v: JSValue| v.as_array_buffer(global));
+                view.as_ref().map(ArrayBuffer::byte_slice)
+            }
+            Source::Owned(b) => Some(b.as_slice()),
+            Source::Path(_) | Source::Blob(_) => None,
+        };
+        if let Some(buf) = bytes {
             match codecs::probe(buf, self.max_pixels) {
                 Ok(p) => {
                     let mut w = p.width;

@@ -15,8 +15,7 @@ impl HMAC {
     pub(crate) fn init(algorithm: evp::Algorithm, key: &[u8]) -> Option<Box<HMAC>> {
         let md = algorithm.md()?;
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
-        // SAFETY: HMAC_CTX_init writes the entire struct; ctx is valid uninit memory.
-        unsafe { boringssl::HMAC_CTX_init(ctx.as_mut_ptr()) };
+        boringssl::HMAC_CTX_init(&mut ctx);
         // SAFETY: ctx was initialized by HMAC_CTX_init above.
         let mut ctx = unsafe { ctx.assume_init() };
         // SAFETY: ctx is initialized; key.ptr/len are a valid readable region; md is non-null.
@@ -49,8 +48,7 @@ impl HMAC {
 
     pub(crate) fn copy(&self) -> crate::Result<Box<HMAC>> {
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
-        // SAFETY: HMAC_CTX_init writes the entire struct; ctx is valid uninit memory.
-        unsafe { boringssl::HMAC_CTX_init(ctx.as_mut_ptr()) };
+        boringssl::HMAC_CTX_init(&mut ctx);
         // SAFETY: ctx was initialized by HMAC_CTX_init above.
         let mut ctx = unsafe { ctx.assume_init() };
         // SAFETY: both ctx and self.ctx are initialized HMAC_CTX values.

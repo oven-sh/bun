@@ -121,9 +121,7 @@ pub fn decode(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<Decoded, Fa
         let mut out = if POISON_OUTPUT.load(std::sync::atomic::Ordering::Relaxed) {
             vec![0xA5u8; out_len]
         } else {
-            let mut out = Vec::with_capacity(out_len);
-            out.set_len(out_len);
-            out
+            vec![0u8; out_len]
         };
         let rc = tj3Decompress8(h, bytes.as_ptr(), bytes.len(), out.as_mut_ptr(), pitch, if cmyk { TJPF_CMYK } else { TJPF_RGBA });
         let decode_warned = rc != 0 && tj3BunCompletedWithWarning(h) != 0;

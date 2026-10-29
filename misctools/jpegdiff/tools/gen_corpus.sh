@@ -3,7 +3,11 @@
 set -u
 T=/root/ref/build-tools; I=/root/ref/libjpeg-turbo/testimages; O=/root/ref/corpus/gen
 rm -rf $O; mkdir -p $O
-cj() { out=$1; shift; $T/cjpeg-static "$@" > $O/$out 2>/dev/null || { echo "cjpeg failed: $out"; rm -f $O/$out; }; }
+S=$(mktemp -d); trap 'rm -rf $S' EXIT
+failed=0
+run() { tool=$1; out=$2; shift 2; $T/$tool-static "$@" > $O/$out 2>/dev/null || { echo "$tool failed: $out"; rm -f $O/$out; failed=1; }; }
+cj() { run cjpeg "$@"; }
+jt() { run jpegtran "$@"; }
 # Crops of the source image at awkward sizes, as PPM.
 python3 - <<'PY'
 import struct
@@ -45,11 +49,11 @@ for f in /root/ref/corpus/ppm/*.ppm; do
   for p in 1 2 3 4 5 6 7; do cj ${b}_ll$p.jpg -lossless $p $f; cj ${b}_ll${p}pt2.jpg -lossless $p,2 $f; done
   cj ${b}_llrst.jpg -lossless 4 -restart 1 $f
   for p in 1 4 7; do for pt in 0 2; do
-    printf "0: $p 0 0 $pt;\n1: $p 0 0 $pt;\n2: $p 0 0 $pt;\n" > /tmp/s3.scan
-    printf "0: $p 0 0 $pt;\n1 2: $p 0 0 $pt;\n" > /tmp/s2.scan
+    printf "0: $p 0 0 $pt;\n1: $p 0 0 $pt;\n2: $p 0 0 $pt;\n" > $S/s3.scan
+    printf "0: $p 0 0 $pt;\n1 2: $p 0 0 $pt;\n" > $S/s2.scan
     for sc in s3 s2; do
-      cj ${b}_ll${p}pt${pt}_$sc.jpg -lossless $p,$pt -scans /tmp/$sc.scan $f
-      cj ${b}_ll${p}pt${pt}_${sc}rst.jpg -lossless $p,$pt -scans /tmp/$sc.scan -restart 1 $f
+      cj ${b}_ll${p}pt${pt}_$sc.jpg -lossless $p,$pt -scans $S/$sc.scan $f
+      cj ${b}_ll${p}pt${pt}_${sc}rst.jpg -lossless $p,$pt -scans $S/$sc.scan -restart 1 $f
     done
   done; done
   for pr in 2 3 4 5 6 7; do cj ${b}_llprec$pr.jpg -lossless 1 -precision $pr $f; done
@@ -73,21 +77,22 @@ done
 for f in $O/c100x75_s2x1.jpg $O/c227x149_s2x2.jpg $O/c33x31_s2x1.jpg $O/c227x149_s4x1.jpg; do
   b=$(basename $f .jpg)
   for x in "rotate 90" "rotate 270" "transpose" "flip horizontal"; do
-    $T/jpegtran-static -$x $f > $O/${b}_$(echo $x | tr -d ' ').jpg 2>/dev/null
+    jt ${b}_$(echo $x | tr -d ' ').jpg -$x $f
   done
-  $T/jpegtran-static -progressive $f > $O/${b}_tprog.jpg
-  $T/jpegtran-static -arithmetic $f > $O/${b}_tari.jpg
+  jt ${b}_tprog.jpg -progressive $f
+  jt ${b}_tari.jpg -arithmetic $f
 done
 # Non-interleaved sequential scans.
-printf '0;\n1;\n2;\n' > /tmp/noninter.scan
-printf '0 1;\n2;\n' > /tmp/partinter.scan
+printf '0;\n1;\n2;\n' > $S/noninter.scan
+printf '0 1;\n2;\n' > $S/partinter.scan
 for f in /root/ref/corpus/ppm/c100x75.ppm /root/ref/corpus/ppm/c33x31.ppm /root/ref/corpus/ppm/c17x128.ppm; do
   b=$(basename $f .ppm)
   for s in 1x1 2x2 2x1; do
-    cj ${b}_s${s}_nonint.jpg -sample $s -scans /tmp/noninter.scan $f
-    cj ${b}_s${s}_partint.jpg -sample $s -scans /tmp/partinter.scan $f
-    cj ${b}_s${s}_nonintari.jpg -sample $s -arithmetic -scans /tmp/noninter.scan $f
-    cj ${b}_s${s}_nonintrst.jpg -sample $s -restart 2B -scans /tmp/noninter.scan $f
+    cj ${b}_s${s}_nonint.jpg -sample $s -scans $S/noninter.scan $f
+    cj ${b}_s${s}_partint.jpg -sample $s -scans $S/partinter.scan $f
+    cj ${b}_s${s}_nonintari.jpg -sample $s -arithmetic -scans $S/noninter.scan $f
+    cj ${b}_s${s}_nonintrst.jpg -sample $s -restart 2B -scans $S/noninter.scan $f
   done
 done
 ls $O | wc -l
+exit $failed

@@ -12,10 +12,8 @@ fn main() {
         for (cs, cs_name) in [(3, "cmyk"), (4, "ycck")] {
             for (ss, ss_name) in [(0, "444"), (1, "422"), (2, "420"), (4, "440"), (5, "411")] {
                 for (progressive, arithmetic, mode) in [(false, false, "seq"), (true, false, "prog"), (false, true, "ari")] {
-                    match jpegdiff::reference::encode_cmyk(&px, w, h, cs, ss, progressive, arithmetic) {
-                        Ok(v) => std::fs::write(format!("{dir}/c{w}x{h}_{cs_name}{ss_name}{mode}.jpg"), v).unwrap(),
-                        Err(e) => eprintln!("{cs_name} {ss_name} {mode}: {e}"),
-                    }
+                    let v = jpegdiff::reference::encode_cmyk(&px, w, h, cs, ss, progressive, arithmetic).unwrap();
+                    std::fs::write(format!("{dir}/c{w}x{h}_{cs_name}{ss_name}{mode}.jpg"), v).unwrap();
                 }
             }
         }

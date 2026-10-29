@@ -62,6 +62,10 @@ fn main() {
             if b.len() < 40_000 { corpus.push(b); }
         }
     }
+    if corpus.is_empty() {
+        eprintln!("no files to start from");
+        std::process::exit(2);
+    }
     std::fs::create_dir_all("/root/ref/corpus/fail").unwrap();
     let bad = AtomicU64::new(0);
     let kinds: [AtomicU64; 5] = Default::default();
@@ -71,7 +75,7 @@ fn main() {
             s.spawn(move || {
                 let mut r = Rng(seed.wrapping_mul(0x9E3779B97F4A7C15) ^ (t as u64 + 1).wrapping_mul(0xD1B54A32D192ED03) | 1);
                 for _ in 0..8 { r.next(); }
-                for i in 0..iters / threads as u64 {
+                for i in 0..iters.div_ceil(threads as u64) {
                     let mut d = corpus[r.below(corpus.len())].clone();
                     let other = &corpus[r.below(corpus.len())];
                     for _ in 0..1 + r.below(4) { mutate(&mut r, &mut d, other); }

@@ -6,7 +6,10 @@ fn main() {
     for dir in std::env::args().skip(1) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
-            let Ok(bytes) = std::fs::read(&path) else { continue };
+            if !path.is_file() {
+                continue;
+            }
+            let bytes = std::fs::read(&path).unwrap();
             for eighths in [8u32, 3] {
                 let (mut r, mut o) = (f64::MAX, f64::MAX);
                 for _ in 0..3 {

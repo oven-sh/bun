@@ -12,6 +12,10 @@ fn main() {
             files.push(p.to_path_buf());
         }
     }
+    if files.is_empty() {
+        eprintln!("no files");
+        std::process::exit(2);
+    }
     let mut tally: BTreeMap<&'static str, usize> = BTreeMap::new();
     let mut bad = 0;
     for f in &files {

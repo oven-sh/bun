@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, preadExact, tempDirWithFiles } from "harness";
 import { closeSync, copyFileSync, openSync, statSync, writeSync } from "node:fs";
 import { basename, join } from "node:path";
+import { readPe } from "./libuv-threadpool-stack-measure-pe";
 
 const fixture = join(import.meta.dir, "libuv-threadpool-stack-measure-fixture.ts");
 
@@ -72,6 +73,27 @@ describe.skipIf(!isWindows)("libuv pool measurements (temporary)", () => {
       JSON.stringify({ exe: "one page copy", ...stackSizes(copyWithOnePageStackCommit()) }),
     );
   }, 60_000);
+
+  // The code of bun.exe: its size, and the machine code of the libuv functions it exports that this change can reach.
+  test("code of bun.exe", () => {
+    const pe = readPe(bunExe(), [
+      "uv_thread_create_ex",
+      "uv_thread_create",
+      "uv_thread_join",
+      "uv_queue_work",
+      "uv_cancel",
+      "uv_random",
+      "uv_getaddrinfo",
+      "uv_fs_statfs",
+      "uv_fs_open",
+      "uv_fs_close",
+      "uv_fs_read",
+      "uv_fs_write",
+    ]);
+    const { functions, ...sizes } = pe;
+    console.log("MEASURE binary", JSON.stringify(sizes));
+    for (const fn of functions) console.log("MEASURE code", JSON.stringify(fn));
+  }, 120_000);
 
   // What the start of the pool costs, with the header of this build and with one page of stack commit in it.
   for (const header of ["as built", "one page"] as const) {

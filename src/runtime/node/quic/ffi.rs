@@ -14,13 +14,12 @@ use super::{QuicEndpoint, QuicSession, QuicStream};
 ///   back via `*(us_nq_vtable**)ctx`. Those structs are `#[repr(C)]` precisely
 ///   so that first-field read stays valid, and the shim never invents or
 ///   offsets a context pointer.
-/// * The only other value the shim can pass is NULL — teardown clears the
+/// * The only other value is NULL, which the shim passes on only as `owner` — teardown clears the
 ///   conn/stream ctx (and lsquic passes NULL for crypto/mini-conn streams that
 ///   never got one), so a null check is the whole liveness test. A non-null
-///   ctx is a live `T`: its JS wrapper stays alive until after the engine that
+///   ctx is a live `T`: `teardown` and `Drop` null it (`detach_for_finalize` for `owner`) before the engine that
 ///   could call us is destroyed.
-/// * lsquic only calls into us from `process_conns`/`packet_in` on the JS
-///   thread, so the `&T` cannot race another thread, and every
+/// * lsquic calls us only from inside a call we make, always on the JS thread, so the `&T` cannot race, and every
 ///   mutable field of these types is `Cell`-based (shared-ref interior
 ///   mutability), so `&T` is the right reference to hand the callback body.
 ///
@@ -30,43 +29,39 @@ pub(super) struct NqVtable {
     pub(super) owner: *const QuicEndpoint,
     pub(super) on_new_conn:
         unsafe extern "C" fn(owner: Option<&QuicEndpoint>, c: *mut lsquic_conn) -> *mut c_void,
-    pub(super) on_hsk_done: unsafe extern "C" fn(conn_ctx: Option<&QuicSession>, status: c_int),
-    pub(super) on_hsk_confirmed: unsafe extern "C" fn(conn_ctx: Option<&QuicSession>),
-    pub(super) on_goaway_received: unsafe extern "C" fn(conn_ctx: Option<&QuicSession>),
-    pub(super) on_conn_closed: unsafe extern "C" fn(conn_ctx: Option<&QuicSession>),
+    pub(super) on_hsk_done: unsafe extern "C" fn(conn_ctx: &QuicSession, status: c_int),
+    pub(super) on_hsk_confirmed: unsafe extern "C" fn(conn_ctx: &QuicSession),
+    pub(super) on_goaway_received: unsafe extern "C" fn(conn_ctx: &QuicSession),
+    pub(super) on_conn_closed: unsafe extern "C" fn(conn_ctx: &QuicSession),
     pub(super) on_conncloseframe: unsafe extern "C" fn(
-        conn_ctx: Option<&QuicSession>,
+        conn_ctx: &QuicSession,
         app_error: c_int,
         code: u64,
         reason: *const c_char,
         reason_len: c_int,
     ),
     pub(super) on_new_token:
-        unsafe extern "C" fn(conn_ctx: Option<&QuicSession>, token: *const u8, token_size: usize),
+        unsafe extern "C" fn(conn_ctx: &QuicSession, token: *const u8, token_size: usize),
     pub(super) on_sess_resume:
-        unsafe extern "C" fn(conn_ctx: Option<&QuicSession>, blob: *const u8, blob_size: usize),
+        unsafe extern "C" fn(conn_ctx: &QuicSession, blob: *const u8, blob_size: usize),
     pub(super) on_new_stream:
         unsafe extern "C" fn(owner: Option<&QuicEndpoint>, s: *mut lsquic_stream) -> *mut c_void,
-    pub(super) on_stream_read:
-        unsafe extern "C" fn(stream_ctx: Option<&QuicStream>, s: *mut lsquic_stream),
+    pub(super) on_stream_read: unsafe extern "C" fn(stream_ctx: &QuicStream, s: *mut lsquic_stream),
     pub(super) on_stream_write:
-        unsafe extern "C" fn(stream_ctx: Option<&QuicStream>, s: *mut lsquic_stream),
+        unsafe extern "C" fn(stream_ctx: &QuicStream, s: *mut lsquic_stream),
     pub(super) on_stream_close:
-        unsafe extern "C" fn(stream_ctx: Option<&QuicStream>, s: *mut lsquic_stream),
+        unsafe extern "C" fn(stream_ctx: &QuicStream, s: *mut lsquic_stream),
     pub(super) on_stream_reset:
-        unsafe extern "C" fn(stream_ctx: Option<&QuicStream>, how: c_int, error_code: u64),
-    pub(super) on_dg_write: unsafe extern "C" fn(
-        conn_ctx: Option<&QuicSession>,
-        buf: *mut c_void,
-        buf_sz: usize,
-    ) -> isize,
+        unsafe extern "C" fn(stream_ctx: &QuicStream, how: c_int, error_code: u64),
+    pub(super) on_dg_write:
+        unsafe extern "C" fn(conn_ctx: &QuicSession, buf: *mut c_void, buf_sz: usize) -> isize,
     pub(super) on_datagram:
-        unsafe extern "C" fn(conn_ctx: Option<&QuicSession>, buf: *const c_void, sz: usize),
+        unsafe extern "C" fn(conn_ctx: &QuicSession, buf: *const c_void, sz: usize),
     pub(super) on_datagram_status:
-        unsafe extern "C" fn(conn_ctx: Option<&QuicSession>, count: c_uint, acked: c_int),
-    pub(super) on_early_data_failed: unsafe extern "C" fn(conn_ctx: Option<&QuicSession>),
+        unsafe extern "C" fn(conn_ctx: &QuicSession, count: c_uint, acked: c_int),
+    pub(super) on_early_data_failed: unsafe extern "C" fn(conn_ctx: &QuicSession),
     pub(super) on_path_switch: unsafe extern "C" fn(
-        conn_ctx: Option<&QuicSession>,
+        conn_ctx: &QuicSession,
         validated: c_int,
         is_preferred: c_int,
         new_local: *const sockaddr,
@@ -74,12 +69,8 @@ pub(super) struct NqVtable {
         old_local: *const sockaddr,
         old_peer: *const sockaddr,
     ),
-    pub(super) on_origin: unsafe extern "C" fn(
-        conn_ctx: Option<&QuicSession>,
-        chunk: *const u8,
-        len: usize,
-        fin: c_int,
-    ),
+    pub(super) on_origin:
+        unsafe extern "C" fn(conn_ctx: &QuicSession, chunk: *const u8, len: usize, fin: c_int),
     pub(super) get_ssl_ctx:
         unsafe extern "C" fn(owner: Option<&QuicEndpoint>, local: *const sockaddr) -> *mut SSL_CTX,
     pub(super) get_client_ssl_ctx:
@@ -104,17 +95,18 @@ pub(super) struct NqVtable {
 macro_rules! lsquic_callback {
     () => {};
 
+    // `owner` is null after `detach_for_finalize`; the shim tests a conn or stream ctx itself.
     (
         $(#[$meta:meta])*
         $vis:vis fn $name:ident(
-            $r:ident: &$ty:ty $(, $arg:ident: $argty:ty)* $(,)?
-        ) -> $ret:ty = $default:expr; $body:block
+            $r:ident: &QuicEndpoint $(, $arg:ident: $argty:ty)* $(,)?
+        ) $(-> $ret:ty = $default:expr;)? $body:block
         $($rest:tt)*
     ) => {
         $(#[$meta])*
-        $vis unsafe extern "C" fn $name($r: Option<&$ty> $(, $arg: $argty)*) -> $ret {
+        $vis unsafe extern "C" fn $name($r: Option<&QuicEndpoint> $(, $arg: $argty)*) $(-> $ret)? {
             let Some($r) = $r else {
-                return $default;
+                return $($default)?;
             };
             $body
         }
@@ -125,16 +117,11 @@ macro_rules! lsquic_callback {
         $(#[$meta:meta])*
         $vis:vis fn $name:ident(
             $r:ident: &$ty:ty $(, $arg:ident: $argty:ty)* $(,)?
-        ) $body:block
+        ) $(-> $ret:ty)? $body:block
         $($rest:tt)*
     ) => {
         $(#[$meta])*
-        $vis unsafe extern "C" fn $name($r: Option<&$ty> $(, $arg: $argty)*) {
-            let Some($r) = $r else {
-                return;
-            };
-            $body
-        }
+        $vis unsafe extern "C" fn $name($r: &$ty $(, $arg: $argty)*) $(-> $ret)? $body
         lsquic_callback! { $($rest)* }
     };
 }

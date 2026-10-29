@@ -288,7 +288,7 @@ unsafe impl Sync for FSEventsLoop {}
 
 pub(crate) struct Task {
     pub ctx: &'static FSEventsLoop,
-    pub callback: fn(&FSEventsLoop),
+    pub callback: fn(&'static FSEventsLoop),
 }
 
 impl Task {
@@ -296,7 +296,7 @@ impl Task {
         (self.callback)(self.ctx);
     }
 
-    pub(crate) fn new(ctx: &'static FSEventsLoop, callback: fn(&FSEventsLoop)) -> Task {
+    pub(crate) fn new(ctx: &'static FSEventsLoop, callback: fn(&'static FSEventsLoop)) -> Task {
         Task { ctx, callback }
     }
 }
@@ -533,7 +533,7 @@ impl FSEventsLoop {
     }
 
     // Runs on CF Thread
-    fn schedule(&self) {
+    fn schedule(&'static self) {
         let mut state = self.mutex.lock();
         state.has_scheduled_watchers = false;
         let watcher_count = state.watcher_count;
@@ -597,7 +597,6 @@ impl FSEventsLoop {
                 ptr::null(),
             );
             let mut ctx = FSEventStreamContext {
-                // `events_cb` gets this back; the loop is leaked, so it outlives the stream.
                 info: core::ptr::from_ref::<FSEventsLoop>(self),
                 ..Default::default()
             };

@@ -316,7 +316,7 @@ impl PathWatcher {
     /// `events_cb` holds that mutex while calling into `onFSEvent` (which takes
     /// `manager.mutex`). Holding both here would be AB/BA with the CF thread. Once
     /// `fse.deinit()` returns, `events_cb` has released the loop mutex and nulled our
-    /// slot, so no further callbacks will fire and `destroy()` is safe.
+    /// slot, so no further callbacks will fire and freeing `this` is safe.
     ///
     /// # Safety
     /// `this` must be a live `PathWatcher` produced by [`PathWatcher::new`] whose
@@ -337,7 +337,7 @@ impl PathWatcher {
             unsafe {
                 (*this).handlers.swap_remove(&ctx);
                 if (*this).handlers.len() == 0 {
-                    Self::destroy(this);
+                    drop(bun_core::heap::take(this));
                 }
             }
             return;
@@ -379,15 +379,6 @@ impl PathWatcher {
         }
         // SAFETY: `this` was created via PathWatcher::new (heap::alloc); no other thread
         // can reach it after unlink + remove_watch above.
-        unsafe { Self::destroy(this) };
-    }
-
-    /// # Safety
-    /// `this` must have been produced by `PathWatcher::new` and have no remaining
-    /// references (handlers empty, removed from manager maps).
-    unsafe fn destroy(this: *mut PathWatcher) {
-        // SAFETY: caller contract — `this` came from `heap::into_raw` in
-        // `PathWatcher::new` and has no remaining references.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }
@@ -497,7 +488,7 @@ pub(crate) fn watch(
             // SAFETY: no other thread observed watcher.
             unsafe {
                 (*watcher).manager = None;
-                PathWatcher::destroy(watcher);
+                drop(bun_core::heap::take(watcher));
             }
             // `Linux.addOne` builds the error with `.path = watcher.path`, which we
             // just freed; strip it like every other return in this function.
@@ -542,7 +533,7 @@ pub(crate) fn watch(
             unsafe { (*watcher).manager = None };
             drop(locked);
             // SAFETY: last handler removed; no other thread holds watcher.
-            unsafe { PathWatcher::destroy(watcher) };
+            drop(unsafe { bun_core::heap::take(watcher) });
             return Err(err.without_path());
         }
         return Ok(watcher);
@@ -741,7 +732,7 @@ struct WdOwner {
     /// Raw `*mut`. Stored in a long-lived map; `platform.wds` is written through
     /// it under `manager.mutex`, so a `&PathWatcher` here would make every
     /// write-through a const→mut cast (UB). Lifetime: outlives the entry
-    /// because `remove_watch` drops all of a watcher's wd entries before `destroy()`.
+    /// because `remove_watch` drops all of a watcher's wd entries before it is freed.
     watcher: *mut PathWatcher,
     /// Path of the watched directory/file relative to `watcher.path`. Empty for
     /// the root. Owned; freed when this owner is removed from the wd.
@@ -1328,7 +1319,7 @@ impl Darwin {
     ///
     /// `watcher` itself is kept alive by the FSEvents loop mutex: `detach()` →
     /// `removeWatch()` → `fse.deinit()` → `unregisterWatcher()` blocks until
-    /// `events_cb` releases it, so `destroy()` cannot run under us. The
+    /// `events_cb` releases it, so `watcher` cannot be freed under us. The
     /// `watcher.manager == null` check catches the window where detach has already
     /// unlinked us but hasn't yet called `fse.deinit()`.
     fn on_fs_event(ctx: *mut c_void, event: Event, is_file: bool) {
@@ -1395,7 +1386,7 @@ pub(crate) struct Kqueue {
 struct KqEntry {
     /// Raw `*mut`. See `WdOwner.watcher` — stored long-lived, dereferenced
     /// under `manager.mutex`; outlives the entry because
-    /// `remove_watch` clears all of a watcher's entries before `destroy()`.
+    /// `remove_watch` clears all of a watcher's entries before it is freed.
     watcher: *mut PathWatcher,
     fd: Fd,
     /// Relative to watcher.path; empty for the root. Owned.

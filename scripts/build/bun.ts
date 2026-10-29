@@ -358,7 +358,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const builtinTableObjects: string[] = [];
   for (const src of cxxSources) {
     const opts: Parameters<typeof cxx>[3] = {
-      flags: [...cxxFlagsFull, ...extraCxxFlags(cfg, src, codegen.builtinTableSources)],
+      flags: [...cxxFlagsFull, ...extraCxxFlags(cfg, src, codegen)],
     };
     if (!noPchSources.has(src)) {
       // PCH has implicit deps on depHeaderSignal. cxx has implicit dep on PCH.
@@ -526,12 +526,16 @@ function emitJscPrograms(
 /**
  * What one of bun's own C++ sources is compiled with after the common flags:
  * its entry in flags.ts fileOverrides, and builtinTableFlags() for the table
- * of built-ins.
+ * of built-ins, which is whatever the codegen step says it is.
  */
-export function extraCxxFlags(cfg: Config, src: string, builtinTableSources: readonly string[]): string[] {
+export function extraCxxFlags(
+  cfg: Config,
+  src: string,
+  codegen: Pick<CodegenOutputs, "builtinTableSources">,
+): string[] {
   return [
     ...extraFlagsFor(cfg, relative(cfg.cwd, src)),
-    ...(builtinTableSources.includes(src) ? builtinTableFlags(cfg) : []),
+    ...(codegen.builtinTableSources.includes(src) ? builtinTableFlags(cfg) : []),
   ];
 }
 

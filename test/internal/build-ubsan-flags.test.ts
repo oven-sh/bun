@@ -5,11 +5,23 @@
  */
 import { expect, test } from "bun:test";
 import { tempDir } from "harness";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
+import { emitBuiltinsTable } from "../../scripts/build/aot.ts";
 import { extraCxxFlags } from "../../scripts/build/bun.ts";
+import type { CodegenOutputs } from "../../scripts/build/codegen.ts";
 import { resolveConfig, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
-import { computeDepFlags, computeFlags, computeTargetLinkFlags, usesUbsan } from "../../scripts/build/flags.ts";
+import { webkitEngineSources } from "../../scripts/build/deps/webkit.ts";
+import {
+  builtinTableFlags,
+  computeDepFlags,
+  computeFlags,
+  computeTargetLinkFlags,
+  usesUbsan,
+} from "../../scripts/build/flags.ts";
+import { Ninja } from "../../scripts/build/ninja.ts";
+import { registerAllRules } from "../../scripts/build/rules.ts";
+import type { Sources } from "../../scripts/glob-sources.ts";
 
 const toolchain = {
   cc: "/fake/llvm/bin/clang",
@@ -75,14 +87,57 @@ test.each(builds)(
   (_build, partial, ubsan) => {
     using dir = tempDir("build-ubsan-flags", {});
     const cfg = resolveConfig({ ...linux, buildDir: String(dir), ...partial }, toolchain);
-    const table = join(cfg.codegenDir, "AOTBuiltinTableBuiltins.cpp");
-    const other = join(cfg.codegenDir, "ZigGeneratedClasses.cpp");
-    expect({
-      table: extraCxxFlags(cfg, table, [table]),
-      other: extraCxxFlags(cfg, other, [table]),
-    }).toEqual({ table: ubsan ? ["-fsanitize-trap=all"] : [], other: [] });
+    expect(builtinTableFlags(cfg)).toEqual(ubsan ? ["-fsanitize-trap=all"] : []);
   },
 );
+
+test("of the C++ that the table's codegen step lists, only the table's sources are compiled that way", () => {
+  using dir = tempDir("build-ubsan-flags", {});
+  const buildDir = join(String(dir), "build");
+  // A prebuilt engine with an empty cache: no WebKit checkout is read.
+  const cfg = resolveConfig(
+    { ...linux, webkit: "prebuilt", buildType: "Debug", buildDir, cacheDir: join(String(dir), "cache") },
+    toolchain,
+  );
+  const n = new Ninja({ buildDir });
+  registerAllRules(n, cfg);
+  // The step as emitCodegen() runs it: the groups it fills, and none of the lists it only names as inputs.
+  const codegen = {
+    all: [],
+    rustInputs: [],
+    cppSources: [],
+    builtinTableSources: [],
+    cppHeaders: [],
+    rootInstall: join(buildDir, "stamps", "install.stamp"),
+  } as Partial<CodegenOutputs> as CodegenOutputs;
+  const inputs = {
+    builtinsTableCodegen: [],
+    bindgen: [],
+    js: [],
+    jsCodegen: [],
+    aotPrelude: [],
+    nativeModuleLoadSites: [],
+    nativeCallSites: [],
+    removableFeatures: [],
+  } as Partial<Sources> as Sources;
+  emitBuiltinsTable({
+    n,
+    cfg,
+    sources: inputs,
+    o: codegen,
+    dirStamp: join(cfg.codegenDir, ".dir"),
+    engine: webkitEngineSources(cfg),
+  });
+
+  expect(codegen.cppSources.map(src => [basename(src), extraCxxFlags(cfg, src, codegen)])).toEqual([
+    ["BunAOTHostBindings.cpp", []],
+    ["AOTBuiltinTableAttachments.cpp", ["-fsanitize-trap=all"]],
+    ["AOTBuiltinTableBuiltins.cpp", ["-fsanitize-trap=all"]],
+    ["AOTBuiltinTableNames.cpp", ["-fsanitize-trap=all"]],
+    ["AOTBuiltinTableOverloads.cpp", ["-fsanitize-trap=all"]],
+    ["AOTBuiltinTableTypes.cpp", ["-fsanitize-trap=all"]],
+  ]);
+});
 
 test("which targets compile Bun's own sources with UBSan in a debug build", () => {
   const debug = { debug: true, release: false, asan: false };

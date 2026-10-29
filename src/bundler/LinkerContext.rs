@@ -5441,8 +5441,7 @@ mod inside_wrapper_prefix_tests {
             .collect()
     }
 
-    /// Source order while no statement is for an async dependency. With one: each sync dependency, one `await` of
-    /// the async imports, then the other statements.
+    /// Source order with no async kind, else each sync dependency, one `await`, then the other statements.
     fn expected(list: &[Kind]) -> Vec<Printed> {
         let positions = |kinds: &[Kind]| -> Vec<i32> {
             (0..list.len())

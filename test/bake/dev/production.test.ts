@@ -893,13 +893,28 @@ export default function IndexPage() {
     return { errors, stdout, exitCode, signalCode: proc.signalCode, dist };
   }
 
-  // A framework with no dependency. A page module returns its own files and its own params.
-  const app = (pages: Record<string, string>) => ({
+  // A framework with no dependency, with one router for each top directory of `pages`. A page module returns its
+  // own files and its own params. `written()` resolves when each file of `dist` is on disk.
+  const app = (pages: Record<string, string>, dist: Record<string, string> = {}) => ({
     "app.ts": `
-      const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
-      export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      const fsr = root => ({ root, style: "nextjs-pages", serverEntryPoint: "./server.ts" });
+      const roots = ${JSON.stringify([...new Set(Object.keys(pages).map(file => file.split("/")[0]))])};
+      export default { app: { framework: { fileSystemRouterTypes: roots.map(fsr) } } };
     `,
     "server.ts": `
+      import { readFileSync } from "node:fs";
+      const dist = ${JSON.stringify(dist)};
+      const read = file => {
+        try {
+          return readFileSync("dist/" + file, "utf8");
+        } catch {}
+      };
+      globalThis.written = async () => {
+        for (let polls = 0; Object.keys(dist).some(file => read(file) !== dist[file]); polls++) {
+          if (polls === 2000) throw new Error("the first page is not in dist");
+          await Bun.sleep(1);
+        }
+      };
       export function prerender(meta) {
         const files = meta.pageModule.default(meta.params);
         return files instanceof Promise ? files.then(files => ({ files })) : { files };
@@ -1031,6 +1046,194 @@ export default function Page() {
         signalCode: null,
       });
       expect(dist["index.html"]).toContain("FALLBACK");
+    });
+  });
+
+  // An output file is a route pattern with its params filled in, plus a file name from the framework.
+  // So two pages can meet on one file only when they are rendered. The route scan cannot see it.
+  describe("output files", () => {
+    const params = shapes["a sync iterable"];
+    const html = (text: string) => `{ "/index.html": ${JSON.stringify(text)} }`;
+    // The page made with `second` asks for its files when the page made with `first` is on disk.
+    const first = (files: string) => `export default () => (${files});`;
+    const second = (files: string) => `export default async () => (await written(), ${files});`;
+
+    const quote = (file: string) => JSON.stringify(platformPath(file));
+    const clash = (a: string, b: string, file: string) => {
+      const [x, y] = [platformPath(a), platformPath(b)].sort();
+      return `error: Routes ${quote(x)} and ${quote(y)} both generate the output file ${quote(file)}.`;
+    };
+    const repeat = (route: string, file: string) =>
+      `error: Route ${quote(route)} generates the output file ${quote(file)} more than once.`;
+
+    // Each case: the pages, the error, and what is in dist after the build. Only the first page is written.
+    type Clash = [name: string, pages: Record<string, string>, error: string, dist: Record<string, string>];
+    const clashes: Clash[] = [
+      ...Object.entries(shapes).map(([shape, getParams]): Clash => [
+        `a static page, then a param page (${shape})`,
+        {
+          "routes/first.ts": first(html("static")),
+          "routes/[id].ts": second(html("param")) + getParams([{ id: "first" }]),
+        },
+        clash("routes/first.ts", "routes/[id].ts", "first/index.html"),
+        { "first/index.html": "static" },
+      ]),
+      [
+        "a param page, then a static page",
+        {
+          "routes/first.ts": second(html("static")),
+          "routes/[id].ts": first(html("param")) + params([{ id: "first" }]),
+        },
+        clash("routes/first.ts", "routes/[id].ts", "first/index.html"),
+        { "first/index.html": "param" },
+      ],
+      [
+        "two param routes",
+        {
+          "routes/[id].ts": first(html("id")) + params([{ id: "a" }]),
+          "routes/[...rest].ts": second(html("rest")) + params([{ rest: ["a"] }]),
+        },
+        clash("routes/[id].ts", "routes/[...rest].ts", "a/index.html"),
+        { "a/index.html": "id" },
+      ],
+      [
+        "a param with a slash",
+        {
+          "routes/a/b.ts": first(html("static")),
+          "routes/[id].ts": second(html("param")) + params([{ id: "a/b" }]),
+        },
+        clash("routes/a/b.ts", "routes/[id].ts", "a/b/index.html"),
+        { "a/b/index.html": "static" },
+      ],
+      [
+        "an empty param beside the index page",
+        {
+          "routes/index.ts": first(html("static")),
+          "routes/[id].ts": second(html("param")) + params([{ id: "" }]),
+        },
+        clash("routes/index.ts", "routes/[id].ts", "index.html"),
+        { "index.html": "static" },
+      ],
+      [
+        "an empty catch-all beside an index page",
+        {
+          "routes/docs/index.ts": first(html("static")),
+          "routes/docs/[...path].ts": second(html("param")) + params([{ path: [] }]),
+        },
+        clash("routes/docs/index.ts", "routes/docs/[...path].ts", "docs/index.html"),
+        { "docs/index.html": "static" },
+      ],
+      [
+        "pages of two routers",
+        {
+          "routes/first.ts": first(html("static")),
+          "more/[id].ts": second(html("param")) + params([{ id: "first" }]),
+        },
+        clash("routes/first.ts", "more/[id].ts", "first/index.html"),
+        { "first/index.html": "static" },
+      ],
+      [
+        "two static pages through their file names",
+        {
+          "routes/a/b.ts": first(html("a/b")),
+          "routes/a.ts": second(`{ "/b/index.html": "a" }`),
+        },
+        clash("routes/a/b.ts", "routes/a.ts", "a/b/index.html"),
+        { "a/b/index.html": "a/b" },
+      ],
+      [
+        "a page whose second file clashes: none of its files is written",
+        {
+          "routes/a.ts": first(html("a")),
+          "routes/b.ts": second(`{ "/index.html": "b", "/../a/index.html": "b" }`),
+        },
+        clash("routes/a.ts", "routes/b.ts", "a/index.html"),
+        { "a/index.html": "a" },
+      ],
+      [
+        "two pages of one route",
+        { "routes/[id].ts": first(html("page")) + params([{ id: "x" }, { id: "./x" }]) },
+        repeat("routes/[id].ts", "x/index.html"),
+        { "x/index.html": "page" },
+      ],
+      [
+        "two pages of one route that differ in a param the path does not have",
+        {
+          "routes/[id].ts":
+            `export default async params => (params.lang === "fr" && (await written()), { "/index.html": params.lang });` +
+            shapes["a pages object"]([
+              { id: "x", lang: "en" },
+              { id: "x", lang: "fr" },
+            ]),
+        },
+        repeat("routes/[id].ts", "x/index.html"),
+        { "x/index.html": "en" },
+      ],
+      [
+        "two file names of one page",
+        { "routes/index.ts": first(`{ "/index.html": "one", "//index.html": "two" }`) },
+        repeat("routes/index.ts", "index.html"),
+        {},
+      ],
+    ];
+
+    test.concurrent.each(clashes)("fail the build: %s", async (_, pages, error, dist) => {
+      using dir = tempDir("bake-production-output-clash", app(pages, dist));
+      expect(await build(String(dir))).toEqual({ errors: [error], stdout: "", exitCode: 1, signalCode: null, dist });
+    });
+
+    test("pages with their own files are all written, also into an existing dist", async () => {
+      // A route that yields the same params again renders the page again, and no file is written twice.
+      const again = `let renders = 0; export default () => ({ "/index.html": "render " + ++renders, ["/render-" + renders + ".txt"]: "" });`;
+      using dir = tempDir(
+        "bake-production-output-files",
+        app({
+          "routes/twice/[id].ts": again + shapes["a sync iterable"]([{ id: "x" }, { id: "x" }]),
+          "routes/again/[id].ts": again + shapes["a pages object"]([{ id: "x" }, { id: "x" }]),
+          "routes/stream/[id].ts":
+            `let renders = 0; export default params => ({ "/index.html": params.id + " render " + ++renders });` +
+            shapes["an async iterable"]([{ id: "a" }, { id: "b" }, { id: "a" }]),
+          // One route path with two file names.
+          "routes/names/[id].ts":
+            `export default params => ({ ["/" + params.name + ".html"]: params.name });` +
+            params([
+              { id: "x", name: "a" },
+              { id: "x", name: "b" },
+            ]),
+          // Two routes with one route path and different file names. A page with no files does not need a route path.
+          "routes/first.ts": first(html("static")),
+          "routes/[id].ts":
+            `export default params => (params.id === "first" ? { "/data.json": "param" } : {});` +
+            params([{ id: "first" }, { id: 1 }]),
+        }),
+      );
+
+      const built = {
+        errors: [],
+        stdout: "done\n",
+        exitCode: 0,
+        signalCode: null,
+        dist: {
+          "again/x/index.html": "render 1",
+          "again/x/render-1.txt": "",
+          "again/x/render-2.txt": "",
+          "first/data.json": "param",
+          "first/index.html": "static",
+          "names/x/a.html": "a",
+          "names/x/b.html": "b",
+          "stream/a/index.html": "a render 1",
+          "stream/b/index.html": "b render 2",
+          "twice/x/index.html": "render 1",
+          "twice/x/render-1.txt": "",
+          "twice/x/render-2.txt": "",
+        },
+      };
+      expect(await build(String(dir))).toEqual(built);
+      // The second build writes each page again: the bytes of an earlier build do not stay.
+      for (const [file, text] of Object.entries(built.dist)) {
+        await Bun.write(path.join(String(dir), "dist", file), text + " of an earlier build");
+      }
+      expect(await build(String(dir))).toEqual(built);
     });
   });
 });

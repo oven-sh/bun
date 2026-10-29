@@ -56,9 +56,15 @@ export async function renderRoutesForProdStatic(
     paramInformation,
     styles,
   });
-  const { join: pathJoin } = require("node:path");
+  const { join: pathJoin, relative: pathRelative } = require("node:path");
 
   let loadedModules = new Array(allServerFiles.length);
+
+  // Each output file of this build, by the path handed to `Bun.write`, with the page that generates it.
+  // A page is one call of `doGenerateRoute`: its route index and its params.
+  const outputFiles = new Map<string, number>();
+  const pageRoutes: number[] = [];
+  const pageParams: (RouteParams | null)[] = [];
 
   async function doGenerateRoute(
     type: number,
@@ -93,18 +99,54 @@ export async function renderRoutesForProdStatic(
       throw new Error(`Route ${JSON.stringify(sourceRouteFiles[i])} cannot be pre-rendered to a static page.`);
     }
 
-    await Promise.all(
-      Object.entries(files).map(([key, value]) => {
-        if (params != null) {
-          $assert(patterns[i].includes(`:`));
-          const newKey = patterns[i].replace(/:(\w+)/g, (_, p1) =>
-            typeof params[p1] === "string" ? params[p1] : params[p1].join("/"),
-          );
-          return Bun.write(pathJoin(outBase, newKey + key), value);
-        }
-        return Bun.write(pathJoin(outBase, patterns[i] + key), value);
-      }),
-    );
+    const entries = Object.entries(files);
+    if (entries.length === 0) return;
+
+    let routePath = patterns[i];
+    if (params != null) {
+      $assert(routePath.includes(`:`));
+      routePath = routePath.replace(/:(\w+)/g, (_, p1) =>
+        typeof params[p1] === "string" ? params[p1] : params[p1].join("/"),
+      );
+    }
+    const page = pageRoutes.length;
+    $arrayPush(pageRoutes, i);
+    $arrayPush(pageParams, params);
+
+    // Every file of the page is claimed before the first write, so a page that clashes writes none of its files.
+    let kept = 0;
+    for (let j = 0; j < entries.length; j++) {
+      const entry = entries[j];
+      const file = pathJoin(outBase, routePath + entry[0]);
+      const owner = outputFiles.$get(file);
+      if (owner === undefined) {
+        outputFiles.$set(file, page);
+        entry[0] = file;
+        entries[kept++] = entry;
+        continue;
+      }
+      const ownerRoute = pageRoutes[owner];
+      // A route that yields the same params again renders the same page again. The file is not written again.
+      if (ownerRoute === i && owner !== page && Bun.deepEquals(pageParams[owner], params)) continue;
+
+      const output = JSON.stringify(pathRelative(outBase, file));
+      if (ownerRoute === i) {
+        throw new Error(
+          `Route ${JSON.stringify(sourceRouteFiles[i])} generates the output file ${output} more than once.`,
+        );
+      }
+      // The two pages can arrive in either order, and route indexes follow the order of the directory scan.
+      let a = sourceRouteFiles[ownerRoute];
+      let b = sourceRouteFiles[i];
+      if (a > b) {
+        a = b;
+        b = sourceRouteFiles[ownerRoute];
+      }
+      throw new Error(`Routes ${JSON.stringify(a)} and ${JSON.stringify(b)} both generate the output file ${output}.`);
+    }
+    entries.length = kept;
+
+    await Promise.all(entries.map(entry => Bun.write(entry[0], entry[1])));
   }
 
   function callRouteGenerator(

@@ -442,6 +442,16 @@ declare module "bun" {
     };
 
     interface PrerenderResult {
+      /**
+       * The files of this page. A key is a file path under the page's route
+       * path and starts with `/`: the page `/blog/hello` with the key
+       * `/index.html` is `blog/hello/index.html` in the output directory.
+       *
+       * An output file comes from one page. If two pages generate the same
+       * file, a static build fails and names the route of each page. A route
+       * that yields the same params again renders the same page again: the
+       * build writes each of its files once.
+       */
       files?: Record<string, Blob | NodeJS.TypedArray | ArrayBufferLike | string | Bun.BlobPart[]>;
       // /**
       //  * For dynamic builds, `partialData` will be provided to `render` to allow

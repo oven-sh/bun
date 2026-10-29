@@ -17,7 +17,9 @@ use super::{FileLowering, FunctionLowering, scope};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::{Intrinsic, Resolved, builtin_value_of};
 use crate::ir::generated::{BlockFrequency, TypeSiteKind};
-use crate::ir::{DeclaredType, ExpectedResultId, PropertyKeyId, StringId, TypeTable, ValueId};
+use crate::ir::{
+    DeclaredType, ExpectedResultId, PropertyKeyId, StringId, Type, TypeTable, ValueId,
+};
 
 pub(in crate::lower) use self::callee::PrintedOperators;
 pub(in crate::lower) use self::intrinsic::lower_intrinsic_expression;
@@ -293,15 +295,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             call_number: self.file.find_number_of_symbol_call(call),
         };
         self.set_position(self.file.call_position(site));
-        if is_reflect_construct_syntax {
-            // A call site lists the start of a construction only in front of the place where the construction is reported. The key may be a constant that is written earlier.
-            let start = self.file.first_position(call);
-            self.set_position(self.position().max(start));
-            self.builder.set_written_position(start);
+        // The callee is read from whatever `Reflect` names there.
+        let tests_callee = is_reflect_construct_syntax && callee.key.is_some();
+        if is_reflect_construct_syntax && !tests_callee {
+            self.set_position_of_construction_in_place(call);
         }
+        let construction = tests_callee.then_some(call);
         match tail {
             Tail::No => {
-                let value = self.emit_call_at(callee, arguments, options);
+                let value = self.emit_written_call(construction, callee, arguments, options);
                 self.set_position(hir[call].pos);
                 self.claim_call_result(call, value)
             }
@@ -312,9 +314,73 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 };
                 let tail = Tail::Yes { casts: Some(&cast) };
                 self.describe_int32_tail_call(call);
-                self.emit_call_at(callee, arguments, CallOptions { tail, ..options })
+                let options = CallOptions { tail, ..options };
+                self.emit_written_call(construction, callee, arguments, options)
             }
         }
+    }
+
+    fn emit_written_call(
+        &mut self,
+        construction_if_callee_is_builtin: Option<ExprId>,
+        callee: Callee,
+        arguments: Arguments,
+        options: CallOptions<'_>,
+    ) -> ValueId {
+        match construction_if_callee_is_builtin {
+            Some(call) => {
+                self.emit_construction_in_place_or_call(call, callee, &arguments, options)
+            }
+            None => self.emit_call_at(callee, arguments, options),
+        }
+    }
+
+    fn set_position_of_construction_in_place(&mut self, call: ExprId) {
+        // A call site lists the start of a construction only in front of the place where the construction is reported. The key may be a constant that is written earlier.
+        let start = self.file.first_position(call);
+        self.set_position(self.position().max(start));
+        self.builder.set_written_position(start);
+    }
+
+    /// Bytecode tests the callee of a call that is written `Reflect.construct(..)`, whatever `Reflect` names there. It constructs in place
+    /// where the callee is that function, so a stack trace lists no frame of it, and calls anything else.
+    fn emit_construction_in_place_or_call(
+        &mut self,
+        call: ExprId,
+        callee: Callee,
+        arguments: &Arguments,
+        options: CallOptions<'_>,
+    ) -> ValueId {
+        let call_position = self.position();
+        let types = &mut self.file.fragment.types;
+        let tested = types.intern(Type::builtin(BuiltinId::ReflectConstruct));
+        let split = self.split_on_type(callee.function, tested);
+        let result = self.builder.create_variable(None);
+        let join = self.create_block();
+        for (block, function, is_done_in_place) in [
+            (split.taken, split.taken_value, true),
+            (split.not_taken, callee.function, false),
+        ] {
+            self.builder.switch_to(block);
+            self.set_position(call_position);
+            if is_done_in_place {
+                self.set_position_of_construction_in_place(call);
+            }
+            let arguments = match arguments {
+                Arguments::Values(values) => Arguments::Values(values.clone()),
+                Arguments::List(list) => Arguments::List(*list),
+            };
+            let callee = Callee { function, ..callee };
+            let options = CallOptions {
+                is_done_in_place,
+                ..options
+            };
+            let value = self.emit_call_at(callee, arguments, options);
+            self.builder.write_variable(result, value);
+            self.jump(join);
+        }
+        self.continue_in(join);
+        self.builder.read_variable(result)
     }
 
     fn emit_new_expression(

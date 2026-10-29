@@ -265,6 +265,32 @@ export function addressSpaceForObjects(part: number, parts: number) {
       120_000,
     );
 
+    inPart(test)(
+      "the heap fills up inside an addition, in a function that catches nothing",
+      async () => {
+        using folder = tempDir("aot-heap-limit", {
+          "program.ts": `function fill(make: (index: number) => unknown) {
+  const keep: unknown[] = [];
+  try {
+    for (let index = 0; ; index++) keep.push(make(index));
+  } catch (e) {
+    return keep.length > 1000 ? (e as Error).name : "too few";
+  }
+}
+const values: any[] = JSON.parse('["text"]');
+for (let round = 0; round < 3; round++) console.log(fill(index => BigInt(index) + values[0]));
+`,
+        });
+        const { stdout, stderr, exitCode } = await run([await build(String(folder))], String(folder), smallHeap);
+        // A list that was dropped may still count as held. Then the next error comes where nothing catches it.
+        if (exitCode) expect(stderr).toStartWith("RangeError: Out of memory: " + limitOf64MB);
+        else expect(stderr).toBe("");
+        expect(stdout).toMatch(exitCode ? /^(RangeError\n){1,3}$/ : /^(RangeError\n){3}$/);
+        expect(exitCode).toBeOneOf([0, 1]);
+      },
+      120_000,
+    );
+
     inPart(test.skipIf(runsOutOfRoomEarly))(
       "a program that is told and goes on filling stops and says why",
       async () => {
@@ -1746,28 +1772,96 @@ function some(): number {
 await new Promise<void>(resolve => {
   const worker = new Worker("./worker.ts");
   worker.on("message", (said: string) => console.log("the Worker says:", said));
-  worker.on("error", (error: Error) => console.log("the Worker ends with:", error.name, error.message));
+  worker.on("error", (error: Error) => {
+    console.error(error.stack);
+    console.log("the Worker ends with:", error.name, error.message);
+  });
   worker.on("exit", (code: number) => (console.log("exit", code, "and the main thread goes on:", some()), resolve()));
 });
 `,
       "worker.ts": `import { parentPort } from "node:worker_threads";
 ${keepsAFullRangeAndGoesOnInATry("parentPort!.postMessage")}`,
     });
-    inPart(test)(
-      "a Worker that is told so and does not catch it ends alone",
-      async () => {
-        using folder = tempDir("aot-heap-limit", case5);
-        const program = await linkTogether(String(folder));
-        const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
-        expect(stderr).not.toContain("FATAL");
-        expect({ stdout: stdout.replace(/finished \d+/, "finished"), exitCode }).toEqual({
-          stdout:
-            "the Worker says: full RangeError\nthe Worker says: finished true\nthe Worker ends with: RangeError Out of memory\nexit 1 and the main thread goes on: 100000\n",
-          exitCode: 0,
-        });
-      },
-      120_000,
-    );
+    // The same Worker. It also notes in shared memory, which takes no allocation, how far it gets after the error.
+    const case5WithMarks = together("5-marks", {
+      "program.ts": `import { Worker } from "node:worker_threads";
+const marks = new Int32Array(new SharedArrayBuffer(16));
+await new Promise<void>(resolve => {
+  const worker = new Worker("./worker.ts", { workerData: marks });
+  worker.on("message", (said: string) => console.log("the Worker says:", said));
+  worker.on("error", (error: Error) => {
+    console.error(error.stack);
+    console.log("the Worker ends with:", error.name, error.message);
+  });
+  worker.on("exit", (code: number) => {
+    console.error("iterations", marks[0], "steps after the error", marks[1], "errors after the error", marks[2]);
+    console.log("exit", code);
+    resolve();
+  });
+});
+`,
+      "worker.ts": `import { parentPort, workerData } from "node:worker_threads";
+const marks: Int32Array = workerData;
+type Entry = { id: number; next: Entry | null };
+const kept: Entry[] = [];
+function fill() {
+  for (let i = 0; ; i++) kept.push({ id: i, next: null });
+}
+try {
+  fill();
+} catch (error) {
+  parentPort!.postMessage("full " + (error as Error).name);
+}
+const ring: (Entry | null)[] = new Array(1024).fill(null);
+try {
+  for (let i = 0; i < 600_000; i++) {
+    ring[i & 1023] = { id: i, next: null };
+    marks[0] = i;
+  }
+} finally {
+  marks[1] = 1;
+  try {
+    const id = ring[1023]!.id;
+    marks[1] = 2;
+    const said = "finished " + id + " " + (kept.length > 100_000);
+    marks[1] = 3;
+    parentPort!.postMessage(said);
+    marks[1] = 4;
+  } catch (error) {
+    marks[2]++;
+    throw error;
+  }
+}
+`,
+    });
+    const endsAlone = (exit: string) =>
+      "the Worker says: full RangeError\nthe Worker says: finished true\nthe Worker ends with: RangeError Out of memory\n" +
+      exit +
+      "\n";
+    for (const [name, files, exit] of [
+      [
+        "a Worker that is told so and does not catch it ends alone",
+        case5,
+        "exit 1 and the main thread goes on: 100000",
+      ],
+      ["a Worker that notes its steps after the error ends alone", case5WithMarks, "exit 1"],
+    ] as const) {
+      inPart(test)(
+        name,
+        async () => {
+          using folder = tempDir("aot-heap-limit", files);
+          const program = await linkTogether(String(folder));
+          const { stdout, stderr, exitCode } = await run([program], String(folder), smallHeap);
+          expect(stderr).not.toContain("FATAL");
+          const received = { stdout: stdout.replace(/finished \d+/, "finished"), exitCode };
+          const expected = { stdout: endsAlone(exit), exitCode: 0 };
+          // Where the Worker's last error was thrown, and how far the Worker got.
+          if (!Bun.deepEquals(received, expected)) console.error(stderr);
+          expect(received).toEqual(expected);
+        },
+        120_000,
+      );
+    }
 
     const case6 = together("6", twoWorkersThatKeepMoreThanHalfARange);
     inPart(test.skipIf(runsOutOfRoomEarly))(
@@ -1990,7 +2084,8 @@ const map = new Map<string, number>();
 for (const kib of [262144, 16384, 1024, 64]) for (;;) { try { hold.push(new ArrayBuffer(kib * 1024)); } catch { break; } }
 console.log("address space used up");
 try {
-  for (let i = 0; i < 200000; i++) map.set("a-prefix-of-18-chars" + (100000 + i), i);
+  // However much room the buffers have left, this uses it up.
+  for (let i = 0; i < 100_000_000; i++) map.set("a-prefix-of-18-chars" + (100000 + i), i);
   console.log("all were made");
 } catch (e) { console.log("caught " + (e as Error).name + ": " + (e as Error).message); }
 console.log("alive");

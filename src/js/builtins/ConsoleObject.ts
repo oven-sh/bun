@@ -520,6 +520,7 @@ export function createConsoleConstructor(console: Console) {
         // on POSIX systems) or asynchronously (e.g. pipes on POSIX systems), so
         // handle both situations.
         let hasCalledWrite = false;
+        const pending = stream._writableState?.pendingcb;
         try {
           // Add and later remove a noop error handler to catch synchronous
           // errors.
@@ -527,21 +528,20 @@ export function createConsoleConstructor(console: Console) {
           hasCalledWrite = true;
           stream.write(string, errorHandler);
         } catch (e) {
-          if (e != null && typeof e === "object" && (e as Partial<Error>).name === "RangeError") {
-            const message = (e as Partial<Error>).message;
-            // Console is a debugging utility, so it swallowing errors is not
-            // desirable even in edge cases such as low stack space.
-            if (message === "Maximum call stack size exceeded.") throw e;
+          // Console is a debugging utility, so it swallowing errors is not
+          // desirable even in edge cases such as low stack space.
+          if (isRangeErrorWithPrefix(e, "Maximum call stack size exceeded.")) throw e;
+          if (isRangeErrorWithPrefix(e, "Out of memory") && !(hasCalledWrite && mayHoldChunk(stream, pending))) {
             // Some memory is free again once an out-of-memory error has been thrown.
-            if (
-              !hasCalledWrite &&
-              typeof message === "string" &&
-              StringPrototypeStartsWith.$call(message, "Out of memory")
-            ) {
-              try {
-                if (stream.listenerCount("error") === 0) stream.once("error", noop);
-                stream.write(string, errorHandler);
-              } catch {}
+            hasCalledWrite = false;
+            try {
+              if (stream.listenerCount("error") === 0) stream.once("error", noop);
+              hasCalledWrite = true;
+              stream.write(string, errorHandler);
+            } catch (again) {
+              // The line is lost. Returning would hide that.
+              const isLost = !(hasCalledWrite && mayHoldChunk(stream, pending));
+              if (isLost && isRangeErrorWithPrefix(again, "Out of memory")) throw again;
             }
           }
           // Sorry, there's no proper way to pass along the error here.
@@ -589,6 +589,17 @@ export function createConsoleConstructor(console: Console) {
       },
     },
   });
+
+  function isRangeErrorWithPrefix(error: unknown, prefix: string): boolean {
+    if (error == null || typeof error !== "object" || (error as Partial<Error>).name !== "RangeError") return false;
+    const message = (error as Partial<Error>).message;
+    return typeof message === "string" && StringPrototypeStartsWith.$call(message, prefix);
+  }
+
+  // A Writable counts a chunk as pending once it has taken it. Any other stream may have taken it as soon as write() is called.
+  function mayHoldChunk(stream: ConsoleStream, pendingBefore: number | undefined): boolean {
+    return pendingBefore === undefined || stream._writableState.pendingcb !== pendingBefore;
+  }
 
   // Make a function that can serve as the callback passed to `stream.write()`.
   function createWriteErrorHandler(instance: ConsoleInstance, streamSymbol: StreamSymbol): $Node.ErrorCallback {

@@ -1,9 +1,7 @@
 use super::runtime_reach::{
     Application, LoadedLibrary, ReachInput, ReachedRuntimeCode, find_reached_runtime_code,
 };
-use super::{
-    BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject, library_code_of,
-};
+use super::{BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject};
 use crate::builtins::BuiltinNames;
 use crate::diagnostics::{DiagnosticBuffer, Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::ir::generated::FunctionRole;
@@ -463,7 +461,7 @@ impl Build<'_> {
             sources: &loaded.project(ProjectId::Runtime).sources,
             graph: &bound.projects.runtime.graph,
         };
-        let lacked_before = library_code_of(&self.options.load.library_code_lacked);
+        let lacked_before = self.library_code_asked_for(&self.options.load);
         let reach_input = ReachInput {
             application: Application::Bound {
                 files: loaded.project(ProjectId::Application).loaded.files(),

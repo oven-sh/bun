@@ -1689,7 +1689,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: Return v57
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="thisArgument"
-# CHECK: module=m0 position=819 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f14 callPosition=886 module=m1}, {callee=f28 callPosition=901 module=m2}, {callee=f28 callPosition=2337 parent=2 module=m2}, {callee=f21 callPosition=2337 parent=3 module=m2}, {callee=f21 callPosition=5210 parent=1 module=m2}, {callee=f18 callPosition=6938 parent=4 module=m2}, {callee=f6 callPosition=4894 parent=5 calleeIsPredicted=true module=m0}] {
+# CHECK: module=m0 position=819 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w5 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=901 module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f14 callPosition=886 module=m1}, {callee=f28 callPosition=901 parent=1 module=m2}, {callee=f28 callPosition=2337 parent=3 module=m2}, {callee=f21 callPosition=2337 parent=4 module=m2}, {callee=f21 callPosition=5210 parent=2 module=m2}, {callee=f18 callPosition=6938 parent=5 module=m2}, {callee=f6 callPosition=4894 parent=6 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0(v0: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: "\n" = String string="\n"
 # CHECK-NEXT: v2: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=65
@@ -1729,15 +1729,15 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v27: int[1, 4294967295] = Increment v10
 # CHECK-NEXT: Jump -> next b1(v26, v27)
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v28: string = StringBuilderFinish v5 @7547:4 tail
-# CHECK-NEXT: v29: string = CallDirect v28, v1, v6, v2 function=f19 accessSite=100 @7547:4 tail
+# CHECK-NEXT: v28: string = StringBuilderFinish v5 @7547:5 tail
+# CHECK-NEXT: v29: string = CallDirect v28, v1, v6, v2 function=f19 accessSite=100 @7547:5 tail
 # CHECK-NEXT: v30: "</ul>" = String string="</ul>"
 # CHECK-NEXT: v31: "<ul>" = String string="<ul>"
 # CHECK-NEXT: v32: string = Strcat v31, v29, v30
 # CHECK-NEXT: Return v32
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="unknownCallback"
-# CHECK: module=m0 position=922 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f14 callPosition=1074 module=m1}, {callee=f28 callPosition=1084 module=m2}, {callee=f28 callPosition=2337 parent=2 module=m2}, {callee=f21 callPosition=2337 parent=3 module=m2}, {callee=f21 callPosition=5210 parent=1 module=m2}, {callee=f18 callPosition=6938 parent=4 module=m2}, {callee=f8 callPosition=4894 parent=5 calleeIsPredicted=true module=m0}, {callee=f6 callPosition=4894 parent=5 calleeIsPredicted=true module=m0}] {
+# CHECK: module=m0 position=922 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]> site=w6 flags=[OmitsNull, OmitsUndefined]}] results=[{type=string site=w7 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f3 callPosition=1084 module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f14 callPosition=1074 module=m1}, {callee=f28 callPosition=1084 parent=1 module=m2}, {callee=f28 callPosition=2337 parent=3 module=m2}, {callee=f21 callPosition=2337 parent=4 module=m2}, {callee=f21 callPosition=5210 parent=2 module=m2}, {callee=f18 callPosition=6938 parent=5 module=m2}, {callee=f8 callPosition=4894 parent=6 calleeIsPredicted=true module=m0}, {callee=f6 callPosition=4894 parent=6 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0(v0: Array<L0, proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: int[0, 4294967295] = CallBuiltin v0 overload=ArrayPrototypeLength/0 accessSite=32
 # CHECK-NEXT: v2: 9 = Integer integer=9
@@ -1775,7 +1775,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v25: string = Strcat v22, v23, v24
 # CHECK-NEXT: Jump -> next b9(v25)
 # CHECK-NEXT: b8():
-# CHECK-NEXT: v26: string = CallDirect v20 function=f6 accessSite=47 @1042:7 tail
+# CHECK-NEXT: v26: string = CallDirect v20 function=f6 accessSite=47 @1042:8 tail
 # CHECK-NEXT: Jump -> next b9(v26)
 # CHECK-NEXT: b9(v27: string):
 # CHECK-NEXT: Jump -> next b10(v12)
@@ -1796,8 +1796,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v36: int[1, 4294967295] = Increment v16
 # CHECK-NEXT: Jump -> next b4(v35, v36)
 # CHECK-NEXT: b15():
-# CHECK-NEXT: v37: string = StringBuilderFinish v11 @7547:4 tail
-# CHECK-NEXT: v38: string = CallDirect v37, v7, v12, v8 function=f19 accessSite=100 @7547:4 tail
+# CHECK-NEXT: v37: string = StringBuilderFinish v11 @7547:5 tail
+# CHECK-NEXT: v38: string = CallDirect v37, v7, v12, v8 function=f19 accessSite=100 @7547:5 tail
 # CHECK-NEXT: v39: "</ul>" = String string="</ul>"
 # CHECK-NEXT: v40: "<ul>" = String string="<ul>"
 # CHECK-NEXT: v41: string = Strcat v40, v38, v39

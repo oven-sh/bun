@@ -878,7 +878,10 @@ fn evaluated_function_is_found_by_file_and_call() {
             FnKind::Expr
         );
         let paths = sources.module_paths(function.file);
-        assert!(paths.public_path.starts_with(b"/$bun/text/"));
+        assert_eq!(
+            paths.public_path,
+            b"/$bun/text/%2f%24bunfs%2froot%2fmain.js/0.cjs"
+        );
         assert_eq!(paths.display_path, paths.public_path);
         assert_eq!(sources.diagnostic_path(function.file), paths.public_path);
 

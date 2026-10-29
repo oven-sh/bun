@@ -92,7 +92,7 @@ fn runs_unseen_code(option: &OptionRequirement) -> bool {
     }
 }
 
-fn can_run_unseen_code(used: &UsedFeatures, requirements: &[OptionRequirement]) -> bool {
+pub fn can_run_unseen_code(used: &UsedFeatures, requirements: &[OptionRequirement]) -> bool {
     used.causes
         .iter()
         .any(|unseen| unseen.cause.lets_unseen_code_run())

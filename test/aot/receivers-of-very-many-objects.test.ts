@@ -1,5 +1,6 @@
-// Two receivers that may each be any of over three thousand objects share a third of them, and read and write names that single objects read and write too.
-// Flow links such receivers through the sets of objects they share. Past its edge budget flow stops and the build goes on without it; no test program is that large, so the budget is lowered.
+// Two receivers that may each be any of two hundred objects share a third of them, and read and write names that single objects read and write too.
+// Flow links receivers of very many objects through the sets of objects they share. Past its edge budget flow stops and the build goes on without it.
+// No test program is that large, so both limits are lowered.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { unsupported } from "./harness/compiler";
@@ -73,7 +74,7 @@ console.log(printed.join("\\n"));
 describe.skipIf(!!unsupported)("receivers of very many objects", () => {
   // A build without flow compiles all of Bun's own modules, so the program that goes past the budget is tiny.
   const { folder, build } = sharedBuilds("receivers-of-very-many-objects", {
-    "large.js": programWith(groups * 1100),
+    "many.js": programWith(groups * 70),
     "tiny.js": programWith(groups * 3),
   });
   const printedBy = async (cmd: string[]) => {
@@ -82,13 +83,13 @@ describe.skipIf(!!unsupported)("receivers of very many objects", () => {
   };
 
   test.each([
-    ["large.js", []],
+    ["many.js", ["--aot-limit=MaxValueFlowObjectsListedByMember:64"]],
     ["tiny.js", ["--aot-limit=MaxValueFlowEdgesLogged:1"]],
   ])("%s prints what it prints in plain Bun, built with %j", async (program, flags) => {
     const built = await build(program, "--aot", ...flags);
     expect(await printedBy([built.executable])).toEqual(await printedBy([bunExe(), program]));
     // The build says once that it went without whole-program analysis, also where the front end compiled the program a second time.
-    const isPastTheBudget = flags.some(flag => flag.startsWith("--aot-limit="));
+    const isPastTheBudget = flags.some(flag => flag.startsWith("--aot-limit=MaxValueFlowEdgesLogged:"));
     expect((built.stderr + built.stdout).split("TS100073").length - 1).toBe(isPastTheBudget ? 1 : 0);
   });
 });

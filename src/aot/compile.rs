@@ -135,6 +135,8 @@ pub struct Compilation {
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     /// A program is too large for whole-program analysis, by the word of the engine.
     is_too_large_to_analyze: bool,
+    /// The load expected the analysis to stop, and it came to an end, by the word of the engine.
+    holds_whole_library_for_nothing: bool,
 }
 
 /// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
@@ -253,6 +255,8 @@ pub(crate) struct Build<'a> {
     /// The program is the placeholder of `Preload`.
     pub(crate) is_preloading: bool,
     pub(crate) is_one_program: bool,
+    /// The load expects whole-program analysis to stop, so it holds all of Bun's own code from the start.
+    pub(crate) holds_whole_library_as_guess: bool,
     pub(crate) started_workers: StartedWorkers,
     pub(crate) brings_bun_types: bool,
     pub(crate) has_withdrawn_trust: bool,
@@ -352,6 +356,7 @@ struct FrontEndOutput {
     lets_process_out_of_sight: bool,
     ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
     ways_followed_for_their_names: WaysBetweenModuleObjects,
+    holds_whole_library_as_guess: bool,
 }
 
 impl FrontEndOutput {
@@ -562,6 +567,12 @@ fn begins_program_at_each_entry_point(options: &Options<'_>) -> bool {
         && options.entry_points.iter().all(is_code)
 }
 
+// A limit can only be lowered.
+fn has_more_entry_points_than_programs(options: &Options<'_>) -> bool {
+    let most = LimitValues::for_host().get(LimitId::MaxProgramsPerBuild);
+    options.entry_points.len() as u64 > most
+}
+
 fn can_have_several_programs(options: &Options<'_>) -> bool {
     let aot = options.aot;
     // A hardened run time executes only what the loader of the system has mapped to be executed, and that is the code of one image.
@@ -767,7 +778,7 @@ fn numbers_of(code: &RuntimeUses) -> LibraryCode {
     }
 }
 
-fn chooses_library_code_by_names(options: &Options<'_>) -> bool {
+pub(crate) fn chooses_library_code_by_names(options: &Options<'_>) -> bool {
     !options.load.keeps_library_code_without_names
         && !options.load.omits_builtin_modules
         && !options.aot.checks_only
@@ -806,6 +817,7 @@ fn find_load_options_with_what_engine_found(
         compiled.ways_read_out_of_sight,
         compiled.ways_named_that_nobody_reads,
         compiled.is_too_large_to_analyze,
+        compiled.holds_whole_library_for_nothing,
     )
 }
 
@@ -816,7 +828,14 @@ fn find_load_options_with(
     ways_read_out_of_sight: WaysBetweenModuleObjects,
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     is_too_large_to_analyze: bool,
+    holds_whole_library_for_nothing: bool,
 ) -> Option<LoadOptions> {
+    // The program is compiled as if nothing had been expected. What the engine found beside all that code says nothing about it.
+    if holds_whole_library_for_nothing {
+        let mut load = options.load.clone();
+        load.is_known_to_be_analyzed = true;
+        return Some(load);
+    }
     let mut load = find_load_options_with_library_code_lacked(options, library_code_lacked);
     if !ways_read_out_of_sight.is_empty() && !options.aot.checks_only {
         let load = load.get_or_insert_with(|| options.load.clone());
@@ -1256,6 +1275,7 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     (first.ways_read_out_of_sight).add(program.ways_read_out_of_sight);
     (first.ways_named_that_nobody_reads).add(program.ways_named_that_nobody_reads);
     first.is_too_large_to_analyze |= program.is_too_large_to_analyze;
+    first.holds_whole_library_for_nothing |= program.holds_whole_library_for_nothing;
 }
 
 fn compile_written_entry_points(
@@ -1266,6 +1286,13 @@ fn compile_written_entry_points(
 ) -> Result<Compilation, BuildFailed> {
     if !begins_program_at_each_entry_point(options) {
         return compile_program(options, ProgramPlace::Only, known, provider, log);
+    }
+    // They are one program whatever the files say, so nothing is loaded to find that out.
+    if has_more_entry_points_than_programs(options) {
+        let mut compiled = compile_program(options, ProgramPlace::Only, known, provider, log)?;
+        let statistics = &mut compiled.summary.statistics;
+        statistics.gave_up(LimitId::MaxProgramsPerBuild, None);
+        return Ok(compiled);
     }
     let said_before = (log.msgs.len(), log.warnings, log.errors);
     if let Some(compiled) = compile_program_at_each_entry_point(options, provider, log) {
@@ -1593,9 +1620,15 @@ fn compile_programs<'a>(
         let lets_process_out_of_sight = output.lets_process_out_of_sight;
         let ways_not_followed = output.ways_not_followed_out_of_sight;
         let ways_followed = output.ways_followed_for_their_names;
+        let holds_whole_library = output.holds_whole_library_as_guess;
+        // All of it was asked for, so what is still lacked is not to be had.
+        let find_lacked = |found: FlowFindings<'_>| match holds_whole_library {
+            true => RuntimeUses::default(),
+            false => find_library_code_lacked(found, held, platform),
+        };
         // A program that is compiled again, with what the engine has found: nothing is made of it now.
         let goes_on = |found: FlowFindings<'_>| {
-            let lacked = find_library_code_lacked(found, held, platform);
+            let lacked = find_lacked(found);
             let reads_main_module =
                 lacks_main_module && reads_main_module(found, lets_process_out_of_sight);
             let ways = find_ways_read_out_of_sight(found, ways_not_followed);
@@ -1608,6 +1641,7 @@ fn compile_programs<'a>(
                 ways,
                 nobody_reads,
                 is_too_large,
+                holds_whole_library && !has_followed_nothing(found),
             );
             load.is_none()
         };
@@ -1619,8 +1653,7 @@ fn compile_programs<'a>(
         };
         let engine = build.run_engine(bytes, &engine_options, &output, &goes_on, further_load);
         is_loaded_again |= WHOLE_ENGINE_RUNS.get() == whole_runs;
-        let lacked = find_library_code_lacked(engine.flow_findings(), held, platform);
-        library_code_lacked.push(lacked);
+        library_code_lacked.push(find_lacked(engine.flow_findings()));
         if let Some(modules) = &mut output.modules {
             modules.count_code(engine.functions(), &output.names);
         }
@@ -1711,9 +1744,12 @@ fn compile_programs<'a>(
                 output.ways_followed_for_their_names,
             );
             let is_too_large_to_analyze = is_too_large_to_analyze(engine.flow_findings());
+            let holds_whole_library_for_nothing = output.holds_whole_library_as_guess
+                && !has_followed_nothing(engine.flow_findings());
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
                 is_too_large_to_analyze,
+                holds_whole_library_for_nothing,
                 reads_main_module_without_its_name,
                 ways_read_out_of_sight,
                 ways_named_that_nobody_reads,
@@ -1861,6 +1897,7 @@ impl<'a> Build<'a> {
             has_left_all_entry_points: false,
             is_preloading: false,
             is_one_program: false,
+            holds_whole_library_as_guess: false,
             started_workers: StartedWorkers::default(),
             brings_bun_types: false,
             has_withdrawn_trust: false,

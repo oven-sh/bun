@@ -1,8 +1,8 @@
 use super::import_graph::ImportGraph;
 use super::runtime_reach::ReachWhileLoading;
 use super::{
-    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, library_code_of,
-    mentions_worker_constructor, preload_of,
+    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, chooses_library_code_by_names,
+    library_code_of, mentions_worker_constructor, preload_of,
 };
 use crate::builtins::{BuiltinNames, RuntimeUses};
 use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
@@ -25,6 +25,7 @@ use crate::load::worker_files::{
     WorkerSearch, find_code_that_starts_workers, find_embedded_code_files, source_path_of,
 };
 use crate::load::{PerProject, ProjectId, SourceKind, Sources};
+use crate::options::{LibraryCode, LoadOptions};
 use crate::statistics::{LimitId, LimitValues, Stage, StatisticId, Statistics};
 use bun_builtin_sources::{Archive, Manifest, VIRTUAL_ROOT};
 use bun_sema::atom::Interner;
@@ -529,6 +530,14 @@ impl<'a> Build<'a> {
         self.load_and_compile(shared, project, then, &mut kept_runtime)
     }
 
+    /// What of Bun's own code the load holds beside what the files name.
+    pub(super) fn library_code_asked_for(&self, load: &LoadOptions) -> RuntimeUses {
+        match self.holds_whole_library_as_guess {
+            true => RuntimeUses::of_whole_library(self.platform),
+            false => library_code_of(&load.library_code_lacked),
+        }
+    }
+
     /// `kept_runtime`: Bun's own code as an earlier program of the build has loaded it. The placeholder of `Preload` leaves it there.
     fn load_and_compile<'s, R>(
         &mut self,
@@ -652,6 +661,8 @@ impl<'a> Build<'a> {
         let is_read_again = self.programs.is_some();
         application.set_is_read_again(is_read_again);
         let first_files: Vec<Option<FileId>> = programs.iter().map(|program| program.1).collect();
+        self.holds_whole_library_as_guess =
+            self.programs.is_none() && looks_too_large_to_analyze(files, options, &self.limits);
         let mut roots: Vec<RuntimeRoots> = programs
             .iter()
             .map(|&(position, first)| {
@@ -660,7 +671,7 @@ impl<'a> Build<'a> {
                 }
                 let of_program = self.programs.map(|all| &all.options[position].load);
                 let load = of_program.unwrap_or(&options.load);
-                let lacked_before = library_code_of(&load.library_code_lacked);
+                let lacked_before = self.library_code_asked_for(load);
                 let further = FurtherLibraryCode {
                     lacked_before: &lacked_before,
                     // What is loaded ahead of a program serves whatever that program asks for.
@@ -1160,6 +1171,24 @@ fn texts_of_program_files<'f, 's>(
         let module = files.module(file);
         (module.file_name(), module.hir.text.len())
     })
+}
+
+// Whole-program analysis of so much text stops at its budget, and the program then holds all of Bun's own code. A load that holds it
+// from the start is not thrown away for lacking it. Where the analysis comes to an end after all, the program is loaded again without it.
+fn looks_too_large_to_analyze(
+    files: &Files<'_>,
+    options: &Options<'_>,
+    limits: &LimitValues,
+) -> bool {
+    let load = &options.load;
+    if !chooses_library_code_by_names(options)
+        || load.is_known_to_be_analyzed
+        || load.library_code_lacked != LibraryCode::default()
+    {
+        return false;
+    }
+    let size: usize = texts_of_program_files(files).map(|(_, size)| size).sum();
+    size as u64 > limits.get(LimitId::MaxSourceBytesExpectedToBeAnalyzed)
 }
 
 // The rule of `are_one_program` for the files of a program that is loaded behind the others.

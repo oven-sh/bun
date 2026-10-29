@@ -724,7 +724,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f48 visibility=Private
 # CHECK-NEXT: Jump -> next b2(v52, v53)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m0 position=352 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f56 callPosition=4294967295 module=m3}, {callee=f48 callPosition=2337 parent=1 module=m3}, {callee=f46 callPosition=4294967295 parent=2 isTailCall=true module=m3}] {
+# CHECK: module=m0 position=352 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=L0}] results=[{type=string}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f8 callPosition=4294967295 module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f8 callPosition=4294967295 module=m0 calledBuiltin=ArrayPrototypeMap}, {callee=f56 callPosition=4294967295 parent=1 module=m3}, {callee=f56 callPosition=2337 parent=3 module=m3}, {callee=f48 callPosition=2337 parent=4 module=m3}, {callee=f48 callPosition=4294967295 parent=2 module=m3}, {callee=f46 callPosition=4294967295 parent=5 isTailCall=true module=m3}] {
 # CHECK-NEXT: b0(v0: L0):
 # CHECK-NEXT: v1: null|object = CallBuiltin -, v0 overload=ObjectGetPrototypeOf/0 accessSite=2
 # CHECK-NEXT: v2: null|L1|L2|f21|builtin(ArrayPrototype)|builtin(ObjectPrototype) = AssumeType v1 provenType=undefined|null|int|"array prototype"|"base"|"function"|"literal"|"null"|"number"|"text"|"undefined"|L1|L2|f21|builtin(ArrayPrototype)|builtin(ObjectPrototype)

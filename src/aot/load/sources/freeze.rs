@@ -14,6 +14,7 @@ use super::{
 use crate::builtins::RuntimeModule;
 use crate::diagnostics::{DiagnosticBuffer, InternalError, Span};
 use crate::ir::{InParallel, for_each_mut};
+use crate::load::evaluated_texts::create_public_path;
 use crate::load::loaders::{BY_NAME, loader_by_name};
 use crate::load::module_paths::{
     FileMaps, PathContext, PathInput, are_all_different, check_unique_public_paths,
@@ -79,6 +80,7 @@ pub(crate) fn freeze_sources(
     modules.shared_sort_unstable_by_key(|entry| entry.0.registry_id());
     let functions = &mut all.evaluated_functions;
     functions.shared_sort_unstable_by_key(|entry| entry.0);
+    name_texts_after_evaluators(files, &mut all);
     let sources = Sources {
         #[cfg(test)]
         project: input.project,
@@ -139,6 +141,8 @@ struct FrozenRun {
     web_assembly_files: Vec<FileId>,
     pages: Vec<(FileId, Box<[u8]>)>,
     evaluated_functions: Vec<((FileId, ExprId), FunctionRef)>,
+    /// Each evaluated text with the file that evaluates it.
+    evaluators: Vec<(FileId, FileId)>,
 }
 
 impl FrozenRun {
@@ -153,6 +157,7 @@ impl FrozenRun {
         self.pages.append(&mut following.pages);
         self.evaluated_functions
             .append(&mut following.evaluated_functions);
+        self.evaluators.append(&mut following.evaluators);
     }
 
     fn add_compiled_file(
@@ -192,6 +197,7 @@ impl FrozenRun {
                     file_name,
                 ));
             };
+            self.evaluators.push((text_file, file));
             let text = parsed_source(files, text_file);
             if let Some(function) = text.and_then(|text| text.evaluated_function) {
                 let function = FunctionRef {
@@ -203,6 +209,36 @@ impl FrozenRun {
         }
         Ok(())
     }
+}
+
+/// The file name of an evaluated text holds the file name of its evaluator. An executable is the same wherever it is built, so it names
+/// the text after the public path of the evaluator.
+fn name_texts_after_evaluators(files: &Files<'_>, all: &mut FrozenRun) {
+    let (entries, evaluators) = (&mut all.entries, &mut all.evaluators);
+    evaluators.shared_sort_unstable_by_key(|entry| entry.0);
+    let texts = evaluators.iter().map(|entry| entry.0);
+    let paths: Vec<Box<[u8]>> = texts
+        .map(|text| compute_path_by_evaluator(files, entries, evaluators, text).into())
+        .collect();
+    for (&(text, _), path) in evaluators.iter().zip(paths) {
+        let entry = &mut entries[text.idx()];
+        entry.display_path = OnceLock::from(path.clone());
+        entry.diagnostic_path.clone_from(&path);
+        entry.public_path = path;
+    }
+}
+
+fn compute_path_by_evaluator(
+    files: &Files<'_>,
+    entries: &[SourceEntry],
+    evaluators: &[(FileId, FileId)],
+    file: FileId,
+) -> Vec<u8> {
+    let Ok(index) = evaluators.binary_search_by_key(&file, |entry| entry.0) else {
+        return entries[file.idx()].public_path.to_vec();
+    };
+    let evaluator_path = compute_path_by_evaluator(files, entries, evaluators, evaluators[index].1);
+    create_public_path(files.module(file).file_name(), &evaluator_path)
 }
 
 fn freeze_file(

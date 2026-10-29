@@ -2943,7 +2943,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 runtimefunction id=ArrayTraversalTraverseArray function=f20 visibility=Private
 # -- generated: f0 show note greatestCommonDivisor Holder
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=6297 module=m0}, {callee=f6 callPosition=6339 module=m0}, {callee=f6 callPosition=6310 module=m0}, {callee=f5 callPosition=6278 module=m0}, {callee=f4 callPosition=6255 module=m0}, {callee=f3 callPosition=6233 module=m0}, {callee=f36 callPosition=899 isConstruction=true module=m0}, {callee=f8 callPosition=824 parent=7 module=m0}, {callee=f29 callPosition=6026 parent=3 isTailCall=true module=m0}, {callee=f25 callPosition=6026 parent=3 isTailCall=true module=m0}, {callee=f29 callPosition=6026 parent=2 isTailCall=true module=m0}, {callee=f25 callPosition=6026 parent=2 isTailCall=true module=m0}, {callee=f12 callPosition=656 parent=1 module=m2}, {callee=f37 callPosition=666 parent=1 module=m3}, {callee=f37 callPosition=2337 parent=14 module=m3}, {callee=f20 callPosition=2337 parent=15 module=m3}, {callee=f20 callPosition=5210 parent=13 module=m3}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f2 callPosition=6297 module=m0}, {callee=f6 callPosition=6339 module=m0}, {callee=f6 callPosition=6310 module=m0}, {callee=f5 callPosition=6278 module=m0}, {callee=f4 callPosition=6255 module=m0}, {callee=f3 callPosition=6233 module=m0}, {callee=f36 callPosition=899 isConstruction=true module=m0}, {callee=f8 callPosition=824 parent=7 module=m0}, {callee=f29 callPosition=6026 parent=3 isTailCall=true module=m0}, {callee=f25 callPosition=6026 parent=3 isTailCall=true module=m0}, {callee=f29 callPosition=6026 parent=2 isTailCall=true module=m0}, {callee=f25 callPosition=6026 parent=2 isTailCall=true module=m0}, {callee=f2 callPosition=666 parent=1 module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f12 callPosition=656 parent=1 module=m2}, {callee=f37 callPosition=666 parent=13 module=m3}, {callee=f37 callPosition=2337 parent=15 module=m3}, {callee=f20 callPosition=2337 parent=16 module=m3}, {callee=f20 callPosition=5210 parent=14 module=m3}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: Array<i32> = Data data=d0 allocationSite=5
 # CHECK-NEXT: v1: Array<i32, proven, pristine[Storage, Names, Dense]> = AssumeType v0 provenType=Array<i32, proven, pristine[Storage, Names, Dense]>
@@ -3105,8 +3105,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f20 visibility=Private
 # CHECK-NEXT: v129: int[1, 4294967295] = Increment v115
 # CHECK-NEXT: Jump -> next b22(v128, v129)
 # CHECK-NEXT: b30():
-# CHECK-NEXT: v130: string = StringBuilderFinish v110 @7547:16 tail
-# CHECK-NEXT: v131: string = CallDirect v130, v106, v111, v107 function=f18 accessSite=174 @7547:16 tail
+# CHECK-NEXT: v130: string = StringBuilderFinish v110 @7547:17 tail
+# CHECK-NEXT: v131: string = CallDirect v130, v106, v111, v107 function=f18 accessSite=174 @7547:17 tail
 # CHECK-NEXT: v132: "gcd " = String string="gcd "
 # CHECK-NEXT: v133: string = Add v132, v131
 # CHECK-NEXT: v134: 0 = Integer
@@ -3175,7 +3175,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f20 visibility=Private
 # CHECK-NEXT: Return v8
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="note"
-# CHECK: module=m0 position=566 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="bits"|"by -1"|"by -2"|"by -2147483648"|"by -3"|"by -8"|"by 0"|"by 1"|"by 10"|"by 1000"|"by 1000000007"|"by 1024"|"by 1073741824"|"by 16"|"by 2"|"by 2147483647"|"by 2147483648"|"by 3"|"by 4"|"by 4294967296"|"by 65536"|"by 7"|"by 8"|"equal"|"gcd"|"index"|"negated"|"negated index"|"negated remainder"|"negated wide"|"number"|"order"|"product"|"stored"|"sum"|"text"|"truth"|"two"|"wide"|"written" site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=656 module=m2}, {callee=f37 callPosition=666 module=m3}, {callee=f37 callPosition=2337 parent=2 module=m3}, {callee=f20 callPosition=2337 parent=3 module=m3}, {callee=f20 callPosition=5210 parent=1 module=m3}, {callee=f18 callPosition=7547 parent=4 isTailCall=true module=m3}, {callee=f17 callPosition=6938 parent=4 module=m3}, {callee=f1 callPosition=4894 parent=5 calleeIsPredicted=true module=m0}] {
+# CHECK: module=m0 position=566 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type="bits"|"by -1"|"by -2"|"by -2147483648"|"by -3"|"by -8"|"by 0"|"by 1"|"by 10"|"by 1000"|"by 1000000007"|"by 1024"|"by 1073741824"|"by 16"|"by 2"|"by 2147483647"|"by 2147483648"|"by 3"|"by 4"|"by 4294967296"|"by 65536"|"by 7"|"by 8"|"equal"|"gcd"|"index"|"negated"|"negated index"|"negated remainder"|"negated wide"|"number"|"order"|"product"|"stored"|"sum"|"text"|"truth"|"two"|"wide"|"written" site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]> site=w2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f2 callPosition=666 module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f12 callPosition=656 module=m2}, {callee=f37 callPosition=666 parent=1 module=m3}, {callee=f37 callPosition=2337 parent=3 module=m3}, {callee=f20 callPosition=2337 parent=4 module=m3}, {callee=f20 callPosition=5210 parent=2 module=m3}, {callee=f18 callPosition=7547 parent=5 isTailCall=true module=m3}, {callee=f17 callPosition=6938 parent=5 module=m3}, {callee=f1 callPosition=4894 parent=6 calleeIsPredicted=true module=m0}] {
 # CHECK-NEXT: b0(v0: "bits"|"by -1"|"by -2"|"by -2147483648"|"by -3"|"by -8"|"by 0"|"by 1"|"by 10"|"by 1000"|"by 1000000007"|"by 1024"|"by 1073741824"|"by 16"|"by 2"|"by 2147483647"|"by 2147483648"|"by 3"|"by 4"|"by 4294967296"|"by 65536"|"by 7"|"by 8"|"equal"|"gcd"|"index"|"negated"|"negated index"|"negated remainder"|"negated wide"|"number"|"order"|"product"|"stored"|"sum"|"text"|"truth"|"two"|"wide"|"written", v1: Array<undefined|null|boolean|number|string|symbol|bigint, proven, Contiguous, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v2: " " = String string=" "
 # CHECK-NEXT: v3: string = Add v0, v2
@@ -3207,10 +3207,10 @@ runtimefunction id=ArrayTraversalTraverseArray function=f20 visibility=Private
 # CHECK-NEXT: v24: "-0" = String string="-0"
 # CHECK-NEXT: Jump -> next b9(v24)
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v25: string = CallBuiltin -, v21 overload=String/0 accessSite=12 @493:8 tail
+# CHECK-NEXT: v25: string = CallBuiltin -, v21 overload=String/0 accessSite=12 @493:9 tail
 # CHECK-NEXT: Jump -> next b9(v25)
 # CHECK-NEXT: b8(v26: undefined|null|boolean|string|symbol|bigint):
-# CHECK-NEXT: v27: string = CallBuiltin -, v26 overload=String/0 accessSite=13 @517:8 tail
+# CHECK-NEXT: v27: string = CallBuiltin -, v26 overload=String/0 accessSite=13 @517:9 tail
 # CHECK-NEXT: Jump -> next b9(v27)
 # CHECK-NEXT: b9(v28: string):
 # CHECK-NEXT: Jump -> next b10(v11)

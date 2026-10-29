@@ -7,7 +7,9 @@ import { beforeAll, describe, test } from "./supported";
 // In a node:worker_threads Worker, console.log writes to a stream that is written in JavaScript, so it allocates.
 
 const fills = (method: string) => `let returned = 0;
+const thrown: unknown[] = [];
 function fill(make: (index: number) => bigint) {
+  thrown.push(null);
   const lists: bigint[][] = [];
   try {
     for (;;) {
@@ -19,12 +21,15 @@ function fill(make: (index: number) => bigint) {
     try {
       console.${method}("caught");
       returned++;
-    } catch {}
+    } catch (error) {
+      thrown[thrown.length - 1] = error;
+    }
   }
   return lists.length;
 }
 const filled = fill(index => BigInt(index) + 1n) > 100 && fill(index => BigInt(index) << 64n) > 100;
 console.${method}("the end", filled, returned);
+for (const error of thrown) console.${method}("thrown:", error instanceof Error ? JSON.stringify(error.stack) : error);
 `;
 
 describe("in a Worker whose heap is full", () => {
@@ -57,17 +62,68 @@ worker.on("exit", code => console.log("exit", code));
         ...bunEnv,
         BUN_JSC_markedBlockCageSizeInMB: "64",
       });
-      const lines = (method === "log" ? stdout : stderr).split("\n");
+      const output = (method === "log" ? stdout : stderr).split("\n");
+      const lines = output.filter(line => !line.startsWith("thrown:"));
       const printed = lines.filter(line => line === "caught").length;
       const rest = method === "log" ? ["exit 0", ""] : [""];
-      expect({ lines, exitCode }).toEqual({
+      const expected = {
         lines: [...Array(printed).fill("caught"), `the end true ${printed}`, ...rest],
         exitCode: 0,
-      });
+      };
+      // Where each call that threw was interrupted.
+      if (!Bun.deepEquals({ lines, exitCode }, expected)) console.error(output.join("\n"));
+      expect({ lines, exitCode }).toEqual(expected);
     },
     120_000,
   );
 });
+
+test("a Console tries again, then throws, while its stream has not taken the line", async () => {
+  using folder = tempDir("aot-console-line-not-taken", {
+    "program.cjs": `const { Console } = require("node:console");
+const { Writable } = require("node:stream");
+const fs = require("node:fs");
+let failing = "", failures = 0;
+function failIn(method) {
+  if (failing !== method || failures === 0) return;
+  failures--;
+  throw new RangeError("Out of memory");
+}
+const stream = new Writable({
+  write(chunk, encoding, done) {
+    fs.writeSync(1, chunk);
+    done();
+  },
+});
+for (const method of ["listenerCount", "once", "write"]) {
+  const original = stream[method];
+  stream[method] = function (first, second) {
+    failIn(method);
+    return original.call(this, first, second);
+  };
+}
+const console = new Console(stream);
+for (failing of ["listenerCount", "once", "write"]) {
+  for (const count of [1, 2]) {
+    failures = count;
+    try {
+      console.log(failing, count, "printed");
+    } catch (error) {
+      fs.writeSync(1, [failing, count, "threw", error.message].join(" ") + "\\n");
+    }
+  }
+}
+`,
+  });
+  const expected = {
+    stdout: ["listenerCount", "once", "write"]
+      .map(method => `${method} 1 printed\n${method} 2 threw Out of memory\n`)
+      .join(""),
+    stderr: "",
+    exitCode: 0,
+  };
+  expect(await run([bunExe(), "run", "program.cjs"], String(folder))).toEqual(expected);
+}, 120_000);
 
 test("a Console hands a line to its stream once, whatever write() throws", async () => {
   using folder = tempDir("aot-console-writes-a-line-once", {

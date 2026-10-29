@@ -3224,7 +3224,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f95 visibility=Private
 # CHECK-NEXT: Throw v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="say"
-# CHECK: module=m0 position=237 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<anything, proven, pristine[Storage, Names, Dense]> site=w24 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f80 callPosition=294 module=m2}, {callee=f154 callPosition=306 module=m7}, {callee=f154 callPosition=2337 parent=2 module=m7}, {callee=f95 callPosition=2337 parent=3 module=m7}, {callee=f95 callPosition=5210 parent=1 module=m7}, {callee=f92 callPosition=6938 parent=4 module=m7}] {
+# CHECK: module=m0 position=237 flags=[HasRestParameter, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array<anything, proven, pristine[Storage, Names, Dense]> site=w24 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f7 callPosition=306 module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f80 callPosition=294 module=m2}, {callee=f154 callPosition=306 parent=1 module=m7}, {callee=f154 callPosition=2337 parent=3 module=m7}, {callee=f95 callPosition=2337 parent=4 module=m7}, {callee=f95 callPosition=5210 parent=2 module=m7}, {callee=f92 callPosition=6938 parent=5 module=m7}] {
 # CHECK-NEXT: b0(v0: Array<anything, proven, pristine[Storage, Names, Dense]>):
 # CHECK-NEXT: v1: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g6
 # CHECK-NEXT: v2: undefined = Undefined
@@ -3263,8 +3263,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f95 visibility=Private
 # CHECK-NEXT: v25: int[1, 4294967295] = Increment v12
 # CHECK-NEXT: Jump -> next b1(v24, v25)
 # CHECK-NEXT: b9():
-# CHECK-NEXT: v26: string = StringBuilderFinish v7 @7547:4 tail
-# CHECK-NEXT: v27: string = CallDirect v26, v3, v8, v4 function=f93 accessSite=201 @7547:4 tail
+# CHECK-NEXT: v26: string = StringBuilderFinish v7 @7547:5 tail
+# CHECK-NEXT: v27: string = CallDirect v26, v3, v8, v4 function=f93 accessSite=201 @7547:5 tail
 # CHECK-NEXT: v28: int[0, 4294967295] = CallBuiltin v1, v27 overload=ArrayPrototypePush/0 accessSite=72
 # CHECK-NEXT: v29: undefined = Undefined
 # CHECK-NEXT: Return v29

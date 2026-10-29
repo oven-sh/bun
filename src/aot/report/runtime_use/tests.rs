@@ -371,6 +371,25 @@ fn locale_line_lists_requested_tags_alone() {
 }
 
 #[test]
+fn locale_line_says_all_where_unseen_code_can_run() {
+    let mut fixture = ReportFixture::new(ResultRecords::default());
+    fixture.used_features.locales = UsedLocales::Listed(vec![LocaleTag((&b"fr"[..]).into())]);
+    for cause in UnseenCodeCause::ALL {
+        fixture.used_features.causes = vec![unseen(cause, None)];
+        let text = match cause.lets_unseen_code_run() {
+            true => "locales: all, because code loaded at run time could use any",
+            false => "locales: fr",
+        };
+        assert_eq!(locale_text(&fixture), line(text, None), "{cause:?}");
+    }
+    fixture.used_features.locales = UsedLocales::Unknown(None);
+    assert_eq!(locale_text(&fixture), line("locales: all", None));
+    fixture.options.trim.locales = Some(vec![(&b"de"[..]).into()]);
+    let text = "locales: de: listed in compile.trim.locales";
+    assert_eq!(locale_text(&fixture), line(text, None));
+}
+
+#[test]
 fn unknown_locales_have_position() {
     let record = |kind, builtin| LocaleUseRecord {
         kind,

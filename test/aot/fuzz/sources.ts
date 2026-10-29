@@ -404,11 +404,30 @@ const asMultiFile =
     };
   };
 
+/** Library modules that print nothing and start nothing when they are loaded. */
+const quietModules = ["readline", "events", "stream", "util", "string_decoder", "querystring", "url", "path", "assert", "timers", "tty", "os"]; // prettier-ignore
+
+/**
+ * The program also loads one to three library modules and reads nothing of them. More of the library is then part of the
+ * build, which changes what the compiler knows about host classes. The lines stand behind the comments at the top, which
+ * may hold directives. A file that uses `require` or `exports` stays a CommonJS file.
+ */
+function withUnreadModules(text: string, random: Random) {
+  const isCommonJS = /\b(require\(|module\.exports|exports\.)/.test(text) && !/^(import|export)\b/m.test(text);
+  const lines = random
+    .sample(quietModules, random.between(1, 3))
+    .map(name => (isCommonJS ? `require("node:${name}");\n` : `import "node:${name}";\n`))
+    .join("");
+  const head = /^(?:#![^\n]*\n)?(?:[ \t]*(?:\/\/[^\n]*)?\n)*/.exec(text)![0];
+  return head + lines + text.slice(head.length);
+}
+
 /**
  * The rewritten variant of a source: each program is transformed in one to six ways that keep its output and hide
  * information from the compiler: its values are laundered through eval, the bounds of its short loops are only known at
  * run time, each function starts with a call that sometimes collects, the host could call what it declares, it uses
- * open-world global access, and the whole file is wrapped in a function, a try or a loop.
+ * open-world global access, it imports library modules that it never reads, and the whole file is wrapped in a function,
+ * a try or a loop.
  */
 const asRewritten =
   (source: Source): Source =>
@@ -429,6 +448,7 @@ const asRewritten =
       ["collections inside calls", text => withGcInsideCalls(text, loader)],
       ["functions the host could call", text => withFunctionsTheHostCouldCall(text, loader)],
       ["the world is open", withTheWorldOpen],
+      ["library modules nobody reads", text => withUnreadModules(text, random)],
       [`the whole file inside ${place}`, text => wrapFileInFunction(text, loader, place)],
     ];
     let text = whole.text;
@@ -720,6 +740,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "outer-variables-written-in-loops",
     "rounded-quotients-of-whole-numbers",
     "strings-built-in-steps",
+    "values-stored-by-name-into-number-fields",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(
@@ -909,6 +930,9 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "list-patterns-whose-defaults-change-the-list",
     "result-objects-told-apart-by-a-tag",
     "constructors-swapped-in-an-allocator",
+    "number-fields-of-returned-literals",
+    "methods-copied-onto-prototypes",
+    "prototypes-linked-below-classes-evaluated-later",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =

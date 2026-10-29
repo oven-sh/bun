@@ -600,8 +600,7 @@ fn close_over_followed_edges(table: &ToyTable, seed: FeatureSet) -> FeatureSet {
 
 fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
     use UnseenCodeCause::{
-        EvaluatesText, FlowGaveUp, LoadsCodeByName, LoadsModuleByName, RunsMachineCode,
-        RunsUnseenCode,
+        EvaluatesText, LoadsCodeByName, LoadsModuleByName, RunsMachineCode, RunsUnseenCode,
     };
 
     let program_features = Feature::all_entered_from(EnteredFrom::Program);
@@ -619,12 +618,12 @@ fn features_opened_by(cause: UnseenCodeCause) -> FeatureSet {
             ]));
             features
         }
-        FlowGaveUp | EvaluatesText | RunsUnseenCode | RunsMachineCode => program_features
+        EvaluatesText | RunsUnseenCode | RunsMachineCode => program_features
             .iter()
             .filter(|feature| {
                 let is_added_for_cause = matches!(cause, RunsUnseenCode | RunsMachineCode)
                     && *feature == Feature::NativeAddons;
-                let has_to_be_named = cause != FlowGaveUp && only_when_named.contains(*feature);
+                let has_to_be_named = only_when_named.contains(*feature);
                 is_added_for_cause
                     || (feature.is_engine()
                         && !outside_language.contains(feature)

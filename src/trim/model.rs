@@ -54,8 +54,7 @@ impl UnseenCodeCause {
     pub fn admits_library_text(self) -> bool {
         !matches!(
             self,
-            UnseenCodeCause::FlowGaveUp
-                | UnseenCodeCause::EvaluatesText
+            UnseenCodeCause::EvaluatesText
                 | UnseenCodeCause::LoadsModuleByName
                 | UnseenCodeCause::RunsUnseenCode
                 | UnseenCodeCause::RunsMachineCode

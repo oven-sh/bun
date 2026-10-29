@@ -270,6 +270,7 @@ fn load_options(input: &OptionsInput<'_, '_, '_>) -> LoadOptions {
         ways_read_out_of_sight: Default::default(),
         ways_named_that_nobody_reads: Default::default(),
         is_too_large_to_analyze: false,
+        is_known_to_be_analyzed: false,
     }
 }
 

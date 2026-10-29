@@ -193,6 +193,7 @@ impl Build<'_> {
             ways_not_followed_out_of_sight: application_graph.ways_not_followed_out_of_sight(),
             ways_followed_for_their_names: application_graph.ways_followed_for_their_names(),
             lets_process_out_of_sight: application_graph.lets_process_out_of_sight(),
+            holds_whole_library_as_guess: self.holds_whole_library_as_guess,
             writes_preload,
             held_library_code: core::mem::take(&mut self.held_library_code),
             program,

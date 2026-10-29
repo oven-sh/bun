@@ -70,6 +70,8 @@ pub struct LoadOptions {
     pub ways_named_that_nobody_reads: WaysBetweenModuleObjects,
     /// An earlier compile of the same program was too large for whole-program analysis, by the word of the engine.
     pub is_too_large_to_analyze: bool,
+    /// An earlier compile of the same program held all of Bun's own code because it expected the analysis to stop, and the analysis came to an end, by the word of the engine.
+    pub is_known_to_be_analyzed: bool,
 }
 
 /// The members of a module object that lead to other module objects.
@@ -157,6 +159,7 @@ impl LoadOptions {
             ways_read_out_of_sight: WaysBetweenModuleObjects::default(),
             ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
             is_too_large_to_analyze: false,
+            is_known_to_be_analyzed: false,
         }
     }
 }

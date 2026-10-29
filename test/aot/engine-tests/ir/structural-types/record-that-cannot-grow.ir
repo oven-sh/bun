@@ -801,7 +801,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f69 visibility=Private
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
-# CHECK: m0 position=2945 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w69 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f96 callPosition=4294967295 isTailCall=true module=m3}, {callee=f69 callPosition=2337 parent=1 module=m3}] {
+# CHECK: m0 position=2945 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=string site=w69 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f59] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f30 callPosition=4294967295 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f30 callPosition=4294967295 module=m0 calledBuiltin=ArrayPrototypeMap}, {callee=f96 callPosition=4294967295 parent=1 module=m3}, {callee=f96 callPosition=2337 parent=3 module=m3}, {callee=f69 callPosition=2337 parent=4 module=m3}, {callee=f69 callPosition=4294967295 parent=2 module=m3}] {
 # CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: Array<L4|L5|L6, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g7
 # CHECK-NEXT: v1: undefined = Undefined

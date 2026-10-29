@@ -4272,7 +4272,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f171 visibility=Private
 # CHECK-NEXT: Return v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function f27 module=
-# CHECK: m0 position=5314 kind=Arrow captures=[{type=int[0, 2]}] thisType={type=anything} results=[{type=string}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=5320 isTailCall=true module=m0}, {callee=f153 callPosition=3629 parent=1 module=m5}, {callee=f221 callPosition=3712 parent=1 isTailCall=true module=m13}, {callee=f221 callPosition=2337 parent=3 module=m13}, {callee=f171 callPosition=2337 parent=4 module=m13}, {callee=f171 callPosition=5210 parent=2 module=m13}] {
+# CHECK: m0 position=5314 kind=Arrow captures=[{type=int[0, 2]}] thisType={type=anything} results=[{type=string}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=5320 isTailCall=true module=m0}, {callee=f12 callPosition=3712 parent=1 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f153 callPosition=3629 parent=1 module=m5}, {callee=f221 callPosition=3712 parent=2 module=m13}, {callee=f221 callPosition=2337 parent=4 module=m13}, {callee=f171 callPosition=2337 parent=5 module=m13}, {callee=f171 callPosition=5210 parent=3 module=m13}] {
 # CHECK-NEXT: b0(v0: int[0, 2]):
 # CHECK-NEXT: v1: L4 = NewObject -, v0 layout=L4 fields=[0] allocationSite=96 allocationClass=4
 # CHECK-NEXT: v2: L4 = FinishObject v1
@@ -4335,12 +4335,12 @@ runtimefunction id=ArrayTraversalTraverseArray function=f171 visibility=Private
 # CHECK-NEXT: v39: int[1, 4294967295] = Increment v15
 # CHECK-NEXT: Jump -> next b1(v11, v39)
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v40: string = StringBuilderFinish v8 @7547:5 tail
-# CHECK-NEXT: v41: string = CallDirect v40, v4, v11, v5 function=f169 accessSite=394 @7547:5 tail
+# CHECK-NEXT: v40: string = StringBuilderFinish v8 @7547:6 tail
+# CHECK-NEXT: v41: string = CallDirect v40, v4, v11, v5 function=f169 accessSite=394 @7547:6 tail
 # CHECK-NEXT: Return v41
 # CHECK-NEXT: }
 # CHECK-LABEL: function f28 module=
-# CHECK: m0 position=5368 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f89] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=5374 isTailCall=true module=m0}, {callee=f153 callPosition=3629 parent=1 module=m5}, {callee=f221 callPosition=3712 parent=1 isTailCall=true module=m13}, {callee=f221 callPosition=2337 parent=3 module=m13}, {callee=f171 callPosition=2337 parent=4 module=m13}, {callee=f171 callPosition=5210 parent=2 module=m13}] {
+# CHECK: m0 position=5368 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f89] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=5374 isTailCall=true module=m0}, {callee=f12 callPosition=3712 parent=1 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f153 callPosition=3629 parent=1 module=m5}, {callee=f221 callPosition=3712 parent=2 module=m13}, {callee=f221 callPosition=2337 parent=4 module=m13}, {callee=f171 callPosition=2337 parent=5 module=m13}, {callee=f171 callPosition=5210 parent=3 module=m13}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: L11 = NewObject layout=L11 allocationSite=97 allocationClass=11
 # CHECK-NEXT: v1: Array<int[-2147483648, 4294967295]|double|"-1"|"01"|"1"|"1.0"|"length"|"name", proven, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g2
@@ -4402,8 +4402,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f171 visibility=Private
 # CHECK-NEXT: v37: int[1, 4294967295] = Increment v13
 # CHECK-NEXT: Jump -> next b1(v9, v37)
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v38: string = StringBuilderFinish v6 @7547:5 tail
-# CHECK-NEXT: v39: string = CallDirect v38, v2, v9, v3 function=f169 accessSite=394 @7547:5 tail
+# CHECK-NEXT: v38: string = StringBuilderFinish v6 @7547:6 tail
+# CHECK-NEXT: v39: string = CallDirect v38, v2, v9, v3 function=f169 accessSite=394 @7547:6 tail
 # CHECK-NEXT: Return v39
 # CHECK-NEXT: }
 # CHECK-LABEL: function f33 module=
@@ -4448,7 +4448,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f171 visibility=Private
 # CHECK-NEXT: Return v5
 # CHECK-NEXT: }
 # CHECK-LABEL: function f49 module=
-# CHECK: m0 position=7974 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f112] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=7980 isTailCall=true module=m0}, {callee=f153 callPosition=3629 parent=1 module=m5}, {callee=f221 callPosition=3712 parent=1 isTailCall=true module=m13}, {callee=f221 callPosition=2337 parent=3 module=m13}, {callee=f171 callPosition=2337 parent=4 module=m13}, {callee=f171 callPosition=5210 parent=2 module=m13}] {
+# CHECK: m0 position=7974 kind=Arrow thisType={type=anything} results=[{type=string}] functionTypes=[f112] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f12 callPosition=7980 isTailCall=true module=m0}, {callee=f12 callPosition=3712 parent=1 isTailCall=true module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f153 callPosition=3629 parent=1 module=m5}, {callee=f221 callPosition=3712 parent=2 module=m13}, {callee=f221 callPosition=2337 parent=4 module=m13}, {callee=f171 callPosition=2337 parent=5 module=m13}, {callee=f171 callPosition=5210 parent=3 module=m13}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: "abc" = String string="abc"
 # CHECK-NEXT: v1: String = CallBuiltin -, v0 overload=String/2 accessSite=258
@@ -4511,8 +4511,8 @@ runtimefunction id=ArrayTraversalTraverseArray function=f171 visibility=Private
 # CHECK-NEXT: v38: int[1, 4294967295] = Increment v14
 # CHECK-NEXT: Jump -> next b1(v10, v38)
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v39: string = StringBuilderFinish v7 @7547:5 tail
-# CHECK-NEXT: v40: string = CallDirect v39, v3, v10, v4 function=f169 accessSite=394 @7547:5 tail
+# CHECK-NEXT: v39: string = StringBuilderFinish v7 @7547:6 tail
+# CHECK-NEXT: v40: string = CallDirect v39, v3, v10, v4 function=f169 accessSite=394 @7547:6 tail
 # CHECK-NEXT: Return v40
 # CHECK-NEXT: }
 # CHECK-LABEL: function f51 module=

@@ -1224,3 +1224,47 @@ fn build_that_compiles_refuses_the_whole_program() {
     let (result, _) = link_project(&project, &WithoutServices);
     assert_eq!(expect_failure(result).refused_entry_points, None);
 }
+
+#[test]
+fn engine_that_analyzed_nothing_says_nothing_about_module_objects() {
+    use crate::ir::generated::{SourceLocation, UnseenCodeRecord, Witness};
+    use crate::ir::ids::ABSENT_WORD;
+    let both = WaysBetweenModuleObjects {
+        children: true,
+        parent: true,
+    };
+    for cause in [
+        UnseenCodeCause::FlowResultDisabled,
+        UnseenCodeCause::LimitReached,
+    ] {
+        let unseen_code = [UnseenCodeRecord {
+            cause,
+            builtin: ABSENT_WORD,
+            witness: Witness {
+                function: ABSENT_WORD,
+                value: ABSENT_WORD,
+                location: SourceLocation {
+                    module: ABSENT_WORD,
+                    position: 0,
+                },
+            },
+        }];
+        let found = FlowFindings {
+            unseen_code: &unseen_code,
+            builtins_used: &[],
+            library_functions_lacked: &[],
+        };
+        assert!(reads_main_module(found, false));
+        assert_eq!(find_ways_read_out_of_sight(found, both), both);
+        assert!(find_ways_named_that_nobody_reads(found, both).is_empty());
+    }
+    // It has analyzed the program, and lists no use.
+    let found = FlowFindings {
+        unseen_code: &[],
+        builtins_used: &[],
+        library_functions_lacked: &[],
+    };
+    assert!(!reads_main_module(found, false));
+    assert!(find_ways_read_out_of_sight(found, both).is_empty());
+    assert_eq!(find_ways_named_that_nobody_reads(found, both), both);
+}

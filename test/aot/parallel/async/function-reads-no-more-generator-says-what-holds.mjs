@@ -25,7 +25,13 @@ function holders(object) {
   }
   if (target === undefined) return ["the snapshot does not show the object"];
   const reasons = new Map();
-  for (let r = 0; r < roots.length; r += 3) reasons.set(roots[r], labels[roots[r + 2]] || labels[roots[r + 1]] || "a root");
+  const reasonCounts = new Map();
+  for (let r = 0; r < roots.length; r += 3) {
+    const reason = labels[roots[r + 1]] + (roots[r + 2] ? " (" + labels[roots[r + 2]] + ")" : "");
+    reasons.set(roots[r], reason);
+    reasonCounts.set(labels[roots[r + 1]], (reasonCounts.get(labels[roots[r + 1]]) ?? 0) + 1);
+  }
+  const listed = [...reasonCounts].map(([reason, count]) => reason + " " + count).join(", ");
   const nameOf = e => {
     const type = edgeTypes[edges[e + 2]];
     return type === "Property" || type === "Variable" ? type + " " + edgeNames[edges[e + 3]] : type === "Index" ? "Index " + edges[e + 3] : type;
@@ -49,7 +55,7 @@ function holders(object) {
     level = next;
     if (depth < 5 && level.length) levels.push(depth + 1 + " away: " + [...new Set(level.map(([id]) => classOf.get(id) ?? "the root node"))].slice(0, 6).join(", "));
   }
-  return [...levels, ...ends.slice(0, 3).map(chain => (chain.length > 400 ? chain.slice(0, 200) + " .. " + chain.slice(-190) : chain))];
+  return ["why the snapshot says it is a root: " + (reasons.get(target) ?? "it is none of the roots (" + listed + ")"), ...levels, ...ends.slice(0, 3).map(chain => (chain.length > 400 ? chain.slice(0, 200) + " .. " + chain.slice(-190) : chain))];
 }
 function collectFromDeeper(depth) {
   if (depth > 0) return collectFromDeeper(depth - 1) + 1;
@@ -62,6 +68,9 @@ function probe() {
   console.log("  collected again from forty calls deeper:", last.deref() !== undefined ? "kept" : "collected");
   const object = last.deref();
   if (object !== undefined) for (const line of holders(object)) console.log("  " + line);
+  const local = { n: -1 };
+  for (const line of holders(local)) console.log("  for comparison, an object that a local of this function holds: " + line);
+  sink += local.n + 1;
 }
 let last;
 let sink = 0;

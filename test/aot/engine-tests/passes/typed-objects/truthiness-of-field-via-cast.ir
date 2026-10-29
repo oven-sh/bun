@@ -552,7 +552,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f30
 runtimefunction id=ArrayTraversalTraverseArray function=f38 visibility=Private
 # -- generated: f0
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f43 callPosition=4294967295 module=m3}, {callee=f38 callPosition=2337 parent=1 module=m3}] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f0 callPosition=4294967295 module=m0 calledBuiltin=ArrayPrototypeJoin}, {callee=f0 callPosition=4294967295 module=m0 calledBuiltin=ArrayPrototypeMap}, {callee=f43 callPosition=4294967295 parent=1 module=m3}, {callee=f43 callPosition=2337 parent=3 module=m3}, {callee=f38 callPosition=2337 parent=4 module=m3}, {callee=f38 callPosition=4294967295 parent=2 module=m3}] {
 # CHECK-NEXT: b0() frequency=Rare:
 # CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0 [isHeldByClosureTable]
 # CHECK-NEXT: v1: f15 = NewClosure function=f15 allocationSite=13 storage=Frame

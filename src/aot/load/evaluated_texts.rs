@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use bun_core::strings::is_valid_utf8;
+use bun_core::strings::{is_valid_utf8, last_index_of_char};
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{BindOptions, Binding, Bound, Decl, FunctionFlags, RuntimeBindOptions, bind};
 use bun_sema::fold::{Constant, Decision, Decisions};
@@ -121,6 +121,15 @@ fn create_virtual_path(importer: &[u8], index: usize) -> Vec<u8> {
     path.push(b'/');
     path.extend_from_slice(index.to_string().as_bytes());
     path.extend_from_slice(VIRTUAL_EXTENSION);
+    path
+}
+
+/// `virtual_path` with the public path of the importer in place of its file name.
+pub(crate) fn create_public_path(virtual_path: &[u8], importer_public_path: &[u8]) -> Vec<u8> {
+    let name_start = last_index_of_char(virtual_path, b'/').unwrap_or(0);
+    let mut path = [HOST_ROOT, VIRTUAL_DIRECTORY].concat();
+    append_encoded_segment(&mut path, importer_public_path);
+    path.extend_from_slice(&virtual_path[name_start..]);
     path
 }
 
@@ -599,6 +608,12 @@ mod tests {
         assert_eq!(path, b"/$bun/text/%2fproject%2fa.js/7.cjs");
         assert_ne!(path, create_virtual_path(b"/project/b.js", 7));
         assert_ne!(path, create_virtual_path(IMPORTER, 8));
+    }
+
+    #[test]
+    fn public_path_names_public_path_of_importer() {
+        let path = create_public_path(&create_virtual_path(IMPORTER, 7), b"/$bunfs/root/a.js");
+        assert_eq!(path, b"/$bun/text/%2f%24bunfs%2froot%2fa.js/7.cjs");
     }
 
     #[test]

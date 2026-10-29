@@ -203,7 +203,8 @@ fn features_reachable_by(cause: UnseenCodeCause) -> FeatureSet {
         }
         UnseenCodeCause::ReportMissing => program_features,
         UnseenCodeCause::FlowResultDisabled => program_features,
-        UnseenCodeCause::FlowGaveUp => language_features(),
+        // The analysis stops as a whole, so it has followed nothing.
+        UnseenCodeCause::FlowGaveUp => program_features,
         UnseenCodeCause::EvaluatesText => features_reachable_by_text(),
         UnseenCodeCause::ImportsUncompiledCode => program_features,
         UnseenCodeCause::LoadsModuleByName => FeatureSet::from_features(&[LOADS_FILES_FROM_DISK]),
@@ -404,10 +405,11 @@ mod tests {
         assert_eq!(retained.reasons.len(), 2);
     }
 
-    const CAUSES_OPENING_WHOLE_RUNTIME: [UnseenCodeCause; 5] = [
+    const CAUSES_OPENING_WHOLE_RUNTIME: [UnseenCodeCause; 6] = [
         UnseenCodeCause::ProgramNotCompiled,
         UnseenCodeCause::ReportMissing,
         UnseenCodeCause::FlowResultDisabled,
+        UnseenCodeCause::FlowGaveUp,
         UnseenCodeCause::ImportsUncompiledCode,
         UnseenCodeCause::OptionAdmitsCode,
     ];
@@ -512,7 +514,7 @@ mod tests {
             let decision = decide_request(&used, &removing_unused());
             if CAUSES_OPENING_WHOLE_RUNTIME.contains(&cause) {
                 assert!(!decision.unused.intersects(&only_when_named), "{cause:?}");
-            } else if cause != UnseenCodeCause::FlowGaveUp {
+            } else {
                 assert!(only_when_named.is_subset_of(&decision.unused), "{cause:?}");
             }
         }

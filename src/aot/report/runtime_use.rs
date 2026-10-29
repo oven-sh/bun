@@ -1,6 +1,9 @@
 use bun_options_types::aot_options::ExplainSet;
 use bun_sema::util::SharedSort;
-use bun_trim::{Decision, Feature, FeatureSet, RetainReason, Retained, UsedLocales, WitnessIndex};
+use bun_trim::{
+    Decision, Feature, FeatureSet, RetainReason, Retained, UsedLocales, WitnessIndex,
+    can_run_unseen_code,
+};
 
 use super::format::write_parts;
 use super::positions::{PathStyle, Positions, write_shown_position};
@@ -201,7 +204,13 @@ fn locale_line(input: &ReportInput<'_>, positions: &mut Positions<'_>) -> Report
         let line = line_from(&[b"locales: ", &tags, b": listed in compile.trim.locales"]);
         return entry_at(line, None);
     }
+    let requirements = input.decision.map_or(&[][..], |it| &it.requirements);
     match &input.used_features.locales {
+        // Unseen code can ask for any locale, so the plan ignores the list and keeps them all.
+        UsedLocales::Listed(_) if can_run_unseen_code(input.used_features, requirements) => {
+            let why = b"code loaded at run time could use any";
+            entry_at(line_from(&[b"locales: all, because ", why]), None)
+        }
         UsedLocales::Listed(tags) if tags.is_empty() => {
             entry_at(line_from(&[b"locales: none"]), None)
         }

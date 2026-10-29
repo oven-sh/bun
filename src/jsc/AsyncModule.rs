@@ -21,7 +21,7 @@ pub struct InitOpts<'a> {
     pub referrer: &'a [u8],
     pub specifier: &'a [u8],
     pub path: Fs::Path<'a>,
-    pub promise_ptr: Option<*mut *mut JSInternalPromise>,
+    pub promise_ptr: &'a core::cell::Cell<*mut JSInternalPromise>,
     pub arena: Box<ArenaAllocator>,
     /// Backs `parse_result`'s small `AstVec`s (inline bump chunk); must stay
     /// alive alongside `arena` until the module finishes loading.
@@ -550,10 +550,7 @@ impl AsyncModule {
         buf.count(opts.path.text);
 
         buf.allocate()?;
-        // SAFETY: caller guarantees promise_ptr is non-null and points to a valid out-slot.
-        unsafe {
-            *opts.promise_ptr.unwrap() = this_promise.as_promise().unwrap();
-        }
+        opts.promise_ptr.set(this_promise.as_promise().unwrap());
         // Self-referential borrows can't be stored, so capture lengths and pack
         // `referrer ++ specifier ++ path.text` into `string_buf`, then expose
         // them via `referrer()`/`specifier()`/`path_text()`. `move_to_slice()`

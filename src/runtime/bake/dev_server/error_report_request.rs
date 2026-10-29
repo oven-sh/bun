@@ -40,7 +40,7 @@ use bun_core::fmt::parse_hex_to_u64;
 pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
-    dev: bun_ptr::BackRef<DevServer, bun_ptr::Mut>,
+    dev: bun_ptr::BackRef<DevServer>,
 }
 
 impl BodyReaderHandler for ErrorReportRequest {
@@ -61,15 +61,12 @@ impl ErrorReportRequest {
         _req: &mut Request,
         resp: &mut Response<SSL>,
     ) {
-        // Use the caller's `&mut DevServer` directly (matches
-        // `UnrefSourceMapRequest::run`) — no need to re-derive it through the
-        // freshly-allocated ctx's `BackRef` under `unsafe`.
         dev.server
             .as_mut()
             .expect("server bound")
             .on_pending_request();
         let ctx = ErrorReportRequest {
-            dev: bun_ptr::BackRef::new_mut(dev),
+            dev: bun_ptr::BackRef::new(dev),
         };
         uws::BodyReaderMixin::read_body(ctx, resp);
     }

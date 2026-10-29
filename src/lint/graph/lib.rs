@@ -1302,11 +1302,14 @@ impl Modules for Graph<'_> {
                 let resolve = |specifier: &[u8]| {
                     self.resolve_any_path(flavor, config, &from, specifier, is_require)
                 };
-                // oxlint's resolver doesn't add these to a name. The other resolvers do, and Bun runs `./data`.
+                // oxlint's resolver doesn't add these to a path. The other resolvers do, and Bun runs `./data`. A
+                // package's `exports` are exact, so a bare specifier gets none.
                 let others = [&b".json"[..], b".node"];
+                let is_path = specifier.starts_with(b".") || specifier.starts_with(b"/");
                 let added = || {
                     others
                         .iter()
+                        .filter(|_| is_path)
                         .find_map(|it| resolve(&[specifier, it].concat()))
                 };
                 resolve(specifier).or_else(added)?.0.into_owned()

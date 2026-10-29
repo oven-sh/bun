@@ -1091,6 +1091,7 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
         "./star/*": "./dist/*.js",
         "./hidden": null,
         "./esm-only": { module: "./esm.js" },
+        "./settings.json": "./settings.json",
       },
     }),
     "node_modules/lib/dist/main.js": "export const v = 1;\n",
@@ -1101,6 +1102,7 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "node_modules/lib/dist/x.js": "export const v = 1;\n",
     "node_modules/lib/hidden.js": "export const v = 1;\n",
     "node_modules/lib/esm.js": "export const v = 1;\n",
+    "node_modules/lib/settings.json": "{}",
     "addon.node": "",
   };
   const found = [
@@ -1124,6 +1126,7 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "lib/conditional",
     "lib/star/x",
     "lib/esm-only",
+    "lib/settings.json",
     "bun",
     "bun:bundle",
     "bun:test",
@@ -1139,6 +1142,7 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     "./f_mts.js",
     "lib/dist/x",
     "lib/hidden",
+    "lib/settings",
     "bun:missing",
     "other",
   ];
@@ -1185,16 +1189,20 @@ describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
     }
   });
 
-  test("a setting that is set replaces the default", async () => {
-    const settings = { "import/core-modules": ["electron"], "import/resolve": null };
-    const files = {
-      ...project,
-      ".oxlintrc.json": oxlintrc({ "import/no-unresolved": "error" }, settings),
-      "index.ts": `import "bun";\nimport "electron";\nimport "./f_ts";\n`,
-    };
-    const { problems } = await lint(files, ["index.ts"]);
-    expect(problems).toEqual(["index.ts:1:8 import/no-unresolved"]);
-  });
+  test.each([[["electron"]], [[]]])(
+    "a setting that is set replaces the default: core-modules %j",
+    async coreModules => {
+      const settings = { "import/core-modules": coreModules, "import/resolve": null };
+      const files = {
+        ...project,
+        ".oxlintrc.json": oxlintrc({ "import/no-unresolved": "error" }, settings),
+        "index.ts": `import "bun";\nimport "electron";\nimport "./f_ts";\n`,
+      };
+      const { problems } = await lint(files, ["index.ts"]);
+      const electron = coreModules.length === 0 ? ["index.ts:2:8 import/no-unresolved"] : [];
+      expect(problems).toEqual(["index.ts:1:8 import/no-unresolved", ...electron]);
+    },
+  );
 
   test("--tsconfig sets the tsconfig.json whose `paths` apply, as for oxlint's rules", async () => {
     const paths = (to: string) => JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`${to}/*`] } } });

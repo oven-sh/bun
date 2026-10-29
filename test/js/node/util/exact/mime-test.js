@@ -215,8 +215,7 @@ console.log(`After delete, params.has("charset"): ${params2.has("charset")}`); /
 console.log(`After delete, params.get("charset"): ${params2.get("charset") === null}`); // true
 console.log(`params.has("CHARSET"): ${params2.has("CHARSET")}`); // false, it was the same parameter
 console.log(`params entries length: ${[...params2].length}`); // 0
-// trimEnd() here and below: an empty value leaves no trailing space for an editor to strip from the snapshot.
-console.log(`params toString(): ${params2.toString()}`.trimEnd()); // (empty)
+console.log(`params toString(): [${params2.toString()}]`); // []
 
 // Multiple parameters
 console.log(`\n=== MULTIPLE PARAMETERS ===`);
@@ -280,19 +279,20 @@ for (const key of params2.keys()) {
   console.log(`  ${key}`);
 }
 
+// An empty value prints no separator space: editors strip trailing spaces from the snapshot.
 console.log(`Values:`);
 for (const value of params2.values()) {
-  console.log(`  ${value}`.trimEnd());
+  console.log(value === "" ? "" : `  ${value}`);
 }
 
 console.log(`Entries:`);
 for (const [key, value] of params2.entries()) {
-  console.log(`  ${key}: ${value}`.trimEnd());
+  console.log(value === "" ? `  ${key}:` : `  ${key}: ${value}`);
 }
 
 console.log(`Direct iteration:`);
 for (const [key, value] of params2) {
-  console.log(`  ${key}: ${value}`.trimEnd());
+  console.log(value === "" ? `  ${key}:` : `  ${key}: ${value}`);
 }
 
 // toJSON method

@@ -336,7 +336,7 @@ test("Exact match with node", () => {
     After delete, params.get("charset"): true
     params.has("CHARSET"): false
     params entries length: 0
-    params toString():
+    params toString(): []
 
     === MULTIPLE PARAMETERS ===
     params entries length: 2

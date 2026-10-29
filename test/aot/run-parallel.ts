@@ -572,7 +572,6 @@ function fail(program: Program, stage: string, message: string, actual?: Output,
 function read(file: string): Program {
   const path = resolve(file);
   const text = readFileSync(path, "utf8");
-  const namesModules = someFileOf(path, text => namesMuchOfTheLibrary.test(text));
   const head =
     /^(?:#!.*\r?\n)?(?:\/\/.*\r?\n)*/.exec(text)![0] +
     (/\n((?:\/\/.*\r?\n)+)\/\* (?:Output|Build errors):\r?\n(?:(?!\*\/)[^])*\*\/\s*$/.exec(text)?.[1] ?? "");
@@ -584,10 +583,14 @@ function read(file: string): Program {
       .exec(text)?.[1]
       .replaceAll("*\\/", "*/")
       .replaceAll("\r\n", "\n");
+  const flags = [...words("Flags"), ...moreFlags.filter(flag => !words("Flags").includes(flag))];
+  // Without whole-program analysis an executable holds the whole library.
+  const namesModules =
+    flags.includes("--aot-disable=flow-results") || someFileOf(path, text => namesMuchOfTheLibrary.test(text));
   return {
     file,
     path,
-    flags: [...words("Flags"), ...moreFlags.filter(flag => !words("Flags").includes(flag))],
+    flags,
     env: Object.fromEntries(lines("Env").map(line => line.split(/=(.*)/s).slice(0, 2))),
     envOfExecutable: Object.fromEntries(lines("Env of the executable").map(line => line.split(/=(.*)/s).slice(0, 2))),
     envOfBuild: Object.fromEntries(lines("Env of the build").map(line => line.split(/=(.*)/s).slice(0, 2))),

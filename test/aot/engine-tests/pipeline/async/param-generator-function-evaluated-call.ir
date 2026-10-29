@@ -283,38 +283,48 @@ runtimefunction id=GeneratorPrototypeThrow function=f51 visibility=Private
 # CHECK-NEXT: b4():
 # CHECK-NEXT: v45: anything = ResumeGenerator v38, v39
 # CHECK-NEXT: v46: object = AssumeType v45 provenType=object
-# CHECK-NEXT: Jump -> next b6(v46)
-# CHECK-NEXT: b5(v47: int[0, 1]):
-# CHECK-NEXT: v48: 1 = Integer integer=1
-# CHECK-NEXT: v49: boolean = StrictEq v47, v48
-# CHECK-NEXT: v50: L(IteratorResult) = NewObject -, v41, v49 layout=L(IteratorResult) fields=[0, 1]
-# CHECK-NEXT: Jump -> next b6(v50)
-# CHECK-NEXT: b6(v51: object):
-# CHECK-NEXT: v52: anything = PropGet v51 key="value" accessSite=30
-# CHECK-NEXT: v53: undefined = AssumeType v52 provenType=undefined
-# CHECK-NEXT: v54: anything = Call v0 calleeName="ofLong" accessSite=7 callees=[f16]
-# CHECK-NEXT: v55: 50 = Integer integer=50
-# CHECK-NEXT: v56: anything ~ number = Call v1, -, v55 calleeName="ofLongInLoop" accessSite=8 callees=[f17]
-# CHECK-NEXT: v57: anything = Call v2 calleeName="ofFinally" accessSite=9 callees=[f18]
-# CHECK-NEXT: v58: anything = Call v3 calleeName="ofCatch" accessSite=10 callees=[f19]
-# CHECK-NEXT: v59: anything = Call v4 calleeName="ofDelegate" accessSite=11 callees=[f20]
-# CHECK-NEXT: v60: anything ~ undefined|null|string = Call v5 calleeName="ofShortByHand" accessSite=12 callees=[f21]
-# CHECK-NEXT: v61: anything = Call v6 calleeName="ofCall" accessSite=13 callees=[f22]
-# CHECK-NEXT: v62: anything = Call v7 calleeName="field" accessSite=14 callees=[f23]
-# CHECK-NEXT: v63: anything = Call v8 calleeName="pattern" accessSite=15 callees=[f24]
-# CHECK-NEXT: v64: anything = Call v9 calleeName="list" accessSite=16 callees=[f25]
-# CHECK-NEXT: v65: anything = Call v10 calleeName="earlier" accessSite=17 callees=[f26]
-# CHECK-NEXT: v66: anything = Call v11 calleeName="length" accessSite=18 callees=[f27]
-# CHECK-NEXT: v67: anything = Call v12 calleeName="nested" accessSite=19 callees=[f28]
-# CHECK-NEXT: v68: anything = Call v13 calleeName="ofInstance" accessSite=20 callees=[f29]
-# CHECK-NEXT: v69: anything = Call v14 calleeName="ofClass" accessSite=21 callees=[f30]
-# CHECK-NEXT: v70: anything = Call v15 calleeName="ofObject" accessSite=22 callees=[f31]
-# CHECK-NEXT: v71: anything ~ undefined|null|string = Call v16 calleeName="throwsAtTheCall" accessSite=23 callees=[f32]
-# CHECK-NEXT: v72: Array<undefined> = NewArray v53, v54, v56, v57, v58, v59, v60, v61, v62, v63, v64, v65, v66, v67, v68, v69, v70, v71 contents=undefined allocationSite=18 [contentsAreProven]
-# CHECK-NEXT: v73: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v72 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
-# CHECK-NEXT: v74: " " = String string=" "
-# CHECK-NEXT: v75: string = CallBuiltin v73, v74 overload=ArrayPrototypeJoin/0 accessSite=25
-# CHECK-NEXT: v76: Set<string, proven, pristine[Storage, Names]> = CallBuiltin v34, v75 overload=SetPrototypeAdd/0 accessSite=26
+# CHECK-NEXT: v47: object ~ L(IteratorResult) = Upcast v46 castType=object
+# CHECK-NEXT: v48: boolean ~ true = TypeTest v47 testedType=L(IteratorResult)
+# CHECK-NEXT: Branch v48 -> taken b6(v47 | 0), notTaken b8(v47)
+# CHECK-NEXT: b5(v49: int[0, 1]):
+# CHECK-NEXT: v50: 1 = Integer integer=1
+# CHECK-NEXT: v51: boolean = StrictEq v49, v50
+# CHECK-NEXT: v52: L(IteratorResult) = NewObject -, v41, v51 layout=L(IteratorResult) fields=[0, 1]
+# CHECK-NEXT: Jump -> next b6(v52, v52)
+# CHECK-NEXT: b6(v53: object ~ L(IteratorResult), v54: L(IteratorResult)):
+# CHECK-NEXT: v55: boolean = IsSlotFilled v54 key="value" receivers=[L(IteratorResult)] level=Expected
+# CHECK-NEXT: Branch v55 -> taken b7(| 0), notTaken b8(v53)
+# CHECK-NEXT: b7(v56: guard):
+# CHECK-NEXT: v57: anything = GetSlot v54, v56 key="value" receivers=[L(IteratorResult)] level=Expected accessSite=30
+# CHECK-NEXT: Jump -> next b9(v57)
+# CHECK-NEXT: b8(v58: object ~ L(IteratorResult)) frequency=Unlikely:
+# CHECK-NEXT: v59: anything = PropGet v58 key="value" accessSite=30
+# CHECK-NEXT: Jump -> next b9(v59)
+# CHECK-NEXT: b9(v60: anything):
+# CHECK-NEXT: v61: undefined = AssumeType v60 provenType=undefined
+# CHECK-NEXT: v62: anything = Call v0 calleeName="ofLong" accessSite=7 callees=[f16]
+# CHECK-NEXT: v63: 50 = Integer integer=50
+# CHECK-NEXT: v64: anything ~ number = Call v1, -, v63 calleeName="ofLongInLoop" accessSite=8 callees=[f17]
+# CHECK-NEXT: v65: anything = Call v2 calleeName="ofFinally" accessSite=9 callees=[f18]
+# CHECK-NEXT: v66: anything = Call v3 calleeName="ofCatch" accessSite=10 callees=[f19]
+# CHECK-NEXT: v67: anything = Call v4 calleeName="ofDelegate" accessSite=11 callees=[f20]
+# CHECK-NEXT: v68: anything ~ undefined|null|string = Call v5 calleeName="ofShortByHand" accessSite=12 callees=[f21]
+# CHECK-NEXT: v69: anything = Call v6 calleeName="ofCall" accessSite=13 callees=[f22]
+# CHECK-NEXT: v70: anything = Call v7 calleeName="field" accessSite=14 callees=[f23]
+# CHECK-NEXT: v71: anything = Call v8 calleeName="pattern" accessSite=15 callees=[f24]
+# CHECK-NEXT: v72: anything = Call v9 calleeName="list" accessSite=16 callees=[f25]
+# CHECK-NEXT: v73: anything = Call v10 calleeName="earlier" accessSite=17 callees=[f26]
+# CHECK-NEXT: v74: anything = Call v11 calleeName="length" accessSite=18 callees=[f27]
+# CHECK-NEXT: v75: anything = Call v12 calleeName="nested" accessSite=19 callees=[f28]
+# CHECK-NEXT: v76: anything = Call v13 calleeName="ofInstance" accessSite=20 callees=[f29]
+# CHECK-NEXT: v77: anything = Call v14 calleeName="ofClass" accessSite=21 callees=[f30]
+# CHECK-NEXT: v78: anything = Call v15 calleeName="ofObject" accessSite=22 callees=[f31]
+# CHECK-NEXT: v79: anything ~ undefined|null|string = Call v16 calleeName="throwsAtTheCall" accessSite=23 callees=[f32]
+# CHECK-NEXT: v80: Array<undefined> = NewArray v61, v62, v64, v65, v66, v67, v68, v69, v70, v71, v72, v73, v74, v75, v76, v77, v78, v79 contents=undefined allocationSite=18 [contentsAreProven]
+# CHECK-NEXT: v81: Array<undefined, proven, pristine[Storage, Names, Dense]> = AssumeType v80 provenType=Array<undefined, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v82: " " = String string=" "
+# CHECK-NEXT: v83: string = CallBuiltin v81, v82 overload=ArrayPrototypeJoin/0 accessSite=25
+# CHECK-NEXT: v84: Set<string, proven, pristine[Storage, Names]> = CallBuiltin v34, v83 overload=SetPrototypeAdd/0 accessSite=26
 # CHECK-NEXT: Jump -> next b3(v34)
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="next"

@@ -122,21 +122,29 @@ describe("compile/aot/runtime-counts-file", () => {
     const cwd = String(dir);
     const executable = join(cwd, "cells" + (isWindows ? ".exe" : ""));
     built(await spawned([bunExe(), "build", "--compile", "--aot", "cells.ts", "--outfile", executable], cwd, bunEnv));
-    const cellsHandedOut = async (count: number) => {
-      const path = join(cwd, `counts-of-${count}`);
-      const env = { ...bunEnv, ...withoutCollections, [runtimeEnvironment.countsPath]: path };
-      expect(await spawned([executable, String(count)], cwd, env)).toMatchObject({ stdout: "true\n", exitCode: 0 });
-      return readFileSync(path, "utf8")
-        .split("\n")
-        .reduce((sum, line) => sum + Number(/^refill \S+ \S+ \S+ (\d+) \d+$/.exec(line)?.[1] ?? 0), 0);
-    };
-    // A list is counted when it is used up, and what is used of the lists at hand when the process ends: one object more is one cell more.
-    const few = await cellsHandedOut(1000);
-    expect([
-      (await cellsHandedOut(1001)) - few,
-      (await cellsHandedOut(1007)) - few,
-      (await cellsHandedOut(3000)) - few,
-    ]).toEqual([1, 7, 2000]);
+    // Destroying the VM at exit collects first, and a collection takes the lists from their allocators.
+    for (const BUN_DESTRUCT_VM_ON_EXIT of [undefined, "1"]) {
+      const cellsHandedOut = async (count: number) => {
+        const path = join(cwd, `counts-of-${count}`);
+        const env = {
+          ...bunEnv,
+          ...withoutCollections,
+          BUN_DESTRUCT_VM_ON_EXIT,
+          [runtimeEnvironment.countsPath]: path,
+        };
+        expect(await spawned([executable, String(count)], cwd, env)).toMatchObject({ stdout: "true\n", exitCode: 0 });
+        return readFileSync(path, "utf8")
+          .split("\n")
+          .reduce((sum, line) => sum + Number(/^refill \S+ \S+ \S+ (\d+) \d+$/.exec(line)?.[1] ?? 0), 0);
+      };
+      // A list is counted when it is used up, and what is used of the lists at hand when the process ends: one object more is one cell more.
+      const few = await cellsHandedOut(1000);
+      expect([
+        (await cellsHandedOut(1001)) - few,
+        (await cellsHandedOut(1007)) - few,
+        (await cellsHandedOut(3000)) - few,
+      ]).toEqual([1, 7, 2000]);
+    }
   }, 240_000);
 
   test("Workers that end one after the other are counted, each for itself", async () => {

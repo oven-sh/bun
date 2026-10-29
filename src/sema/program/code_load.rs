@@ -171,6 +171,10 @@ pub(super) struct CodeTarget<'r> {
     pub(super) host_module: Option<HostModuleId>,
     pub(super) increases_depth: bool,
     pub(super) has_loader_attribute: bool,
+    /// An import or export statement asks for it, so it is loaded with the graph of the file.
+    pub(super) is_loaded_with_importer: bool,
+    /// The statement writes a `type` other than "json". The loader of `bun run` keeps one module for a path and all of those.
+    pub(super) has_shared_type: bool,
 }
 
 impl<'r> CodeTarget<'r> {
@@ -180,6 +184,8 @@ impl<'r> CodeTarget<'r> {
             host_module: None,
             increases_depth: false,
             has_loader_attribute: false,
+            is_loaded_with_importer: false,
+            has_shared_type: false,
         }
     }
 }

@@ -80,6 +80,14 @@ pub(crate) fn to_host_loader(loader: Loader, path: &[u8]) -> HostLoader {
     }
 }
 
+/// `bun run` keeps what a `type` attribute asks for apart from what an import without one gets, even if both read the file alike.
+pub(crate) fn to_host_loader_of_attribute(loader: Loader, path: &[u8]) -> HostLoader {
+    match script_kind_of(loader).is_some() {
+        true => to_host_loader(loader, path),
+        false => HostLoader(host_number(loader)),
+    }
+}
+
 pub(crate) fn host_loader_kind(loader: HostLoader) -> Option<HostLoaderKind> {
     match loader {
         BY_NAME => Some(HostLoaderKind::ByName),

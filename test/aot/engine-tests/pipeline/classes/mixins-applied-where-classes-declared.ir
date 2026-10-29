@@ -3681,27 +3681,50 @@ runtimefunction id=ArrayTraversalTraverseArray function=f93 visibility=Private
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: L4|L5):
 # CHECK-NEXT: v4: undefined|"t" ~ "t" = GetSlotOrUndefined v3 key="tag" receivers=[L4, L5] level=Expected accessSite=306
-# CHECK-NEXT: Jump -> next b3(v4)
+# CHECK-NEXT: Jump -> next b6(v4)
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: anything ~ "t" = PropGet v1 key="tag" accessSite=306
-# CHECK-NEXT: v6: undefined|"t" ~ "t" = AssumeType v5 provenType=undefined|"t"
-# CHECK-NEXT: Jump -> next b3(v6)
-# CHECK-NEXT: b3(v7: undefined|"t" ~ "t"):
-# CHECK-NEXT: v8: "t" = RequireObjectCoercible v7 name="length"
-# CHECK-NEXT: v9: anything = PropGet v1 key="id" accessSite=308
-# CHECK-NEXT: v10: undefined|int = AssumeType v9 provenType=undefined|int
-# CHECK-NEXT: v11: undefined|int ~ int = Upcast v10 castType=anything
-# CHECK-NEXT: v12: boolean ~ false = TypeTest v11 testedType=undefined|null
-# CHECK-NEXT: Branch v12 -> taken b4(), notTaken b5(| 0)
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v13: 0 = Integer
-# CHECK-NEXT: Jump -> next b6(v13)
-# CHECK-NEXT: b5(v14: int):
-# CHECK-NEXT: Jump -> next b6(v14)
-# CHECK-NEXT: b6(v15: int):
-# CHECK-NEXT: v16: 1 = Integer integer=1
-# CHECK-NEXT: v17: int|whole = Add v16, v15
-# CHECK-NEXT: Return v17
+# CHECK-NEXT: v5: boolean ~ false = TypeTest v1 testedType=L3|L7|L14|L15|L17|L18
+# CHECK-NEXT: Branch v5 -> taken b3(| 0), notTaken b9()
+# CHECK-NEXT: b3(v6: L3|L7|L14|L15|L17|L18) frequency=Unlikely:
+# CHECK-NEXT: v7: boolean = HasNoExtraProperties v6
+# CHECK-NEXT: Branch v7 -> taken b4(), notTaken b9()
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v8: boolean = AreMembersUnchanged conditions=[{layout=L3 key="tag"}, {layout=L7 key="tag"}, {layout=L14 key="tag"}, {layout=L15 key="tag"}, {layout=L17 key="tag"}, {layout=L18 key="tag"}]
+# CHECK-NEXT: Branch v8 -> taken b5(), notTaken b9()
+# CHECK-NEXT: b5() frequency=Unlikely:
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: Jump -> next b6(v9)
+# CHECK-NEXT: b6(v10: undefined|"t" ~ "t"):
+# CHECK-NEXT: v11: "t" = RequireObjectCoercible v10 name="length"
+# CHECK-NEXT: v12: boolean ~ false = TypeTest v1 testedType=L3|L7|L14|L15|L17|L18
+# CHECK-NEXT: Branch v12 -> taken b7(| 0), notTaken b10()
+# CHECK-NEXT: b7(v13: L3|L7|L14|L15|L17|L18):
+# CHECK-NEXT: v14: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v13 key="id" receivers=[L3, L7, L14, L15, L17, L18] level=Expected accessSite=308
+# CHECK-NEXT: v15: undefined|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = Upcast v14 castType=anything
+# CHECK-NEXT: v16: boolean ~ false = TypeTest v15 testedType=undefined|null
+# CHECK-NEXT: Branch v16 -> taken b11(), notTaken b8(| 0)
+# CHECK-NEXT: b8(v17: int[-2147483643, 2147483647]):
+# CHECK-NEXT: Jump -> next b13(v17)
+# CHECK-NEXT: b9() frequency=Rare:
+# CHECK-NEXT: v18: anything ~ "t" = PropGet v1 key="tag" accessSite=306
+# CHECK-NEXT: v19: undefined|"t" ~ "t" = AssumeType v18 provenType=undefined|"t"
+# CHECK-NEXT: v20: "t" = RequireObjectCoercible v19 name="length"
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10() frequency=Unlikely:
+# CHECK-NEXT: v21: anything = PropGet v1 key="id" accessSite=308
+# CHECK-NEXT: v22: undefined|int = AssumeType v21 provenType=undefined|int
+# CHECK-NEXT: v23: undefined|int ~ int = Upcast v22 castType=anything
+# CHECK-NEXT: v24: boolean ~ false = TypeTest v23 testedType=undefined|null
+# CHECK-NEXT: Branch v24 -> taken b11(), notTaken b12(| 0)
+# CHECK-NEXT: b11():
+# CHECK-NEXT: v25: 0 = Integer
+# CHECK-NEXT: Jump -> next b13(v25)
+# CHECK-NEXT: b12(v26: int) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b13(v26)
+# CHECK-NEXT: b13(v27: int ~ int[-2147483643, 2147483647]):
+# CHECK-NEXT: v28: 1 = Integer integer=1
+# CHECK-NEXT: v29: int|whole ~ int[-2147483642, 2147483648] = Add v28, v27
+# CHECK-NEXT: Return v29
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="self"
 # CHECK: module=m0 position=1118 kind=Method flags=[HasExplicitName] captures=[{type=env L9 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=f39}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {

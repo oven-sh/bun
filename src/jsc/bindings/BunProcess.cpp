@@ -14,6 +14,9 @@
 #include <node_version.h>
 #include <wtf/Scope.h>
 #include <JavaScriptCore/AOTBuiltinModules.h>
+#include <JavaScriptCore/JSBoundFunction.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/ProxyObject.h>
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -3326,10 +3329,190 @@ static JSObject* lightStandardStreamsOf(JSC::JSGlobalObject* globalObject, JSC::
     return kept;
 }
 
+// The `get` trap of a bare stream. Its target holds the members that never change, and the descriptor under a private name.
+JSC_DEFINE_HOST_FUNCTION(Process_functionGetOfBareStream, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* target = asObject(callFrame->argument(0));
+    int fd = target->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()).asInt32();
+    Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    PropertySlot slot(target, PropertySlot::InternalMethodType::Get);
+    bool isFound = target->getPropertySlot(globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isFound)
+        RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, name)));
+    if (name.isSymbol() || name == Identifier::fromString(vm, "isTTY"_s))
+        return JSValue::encode(jsUndefined());
+    bool isColumns = name == Identifier::fromString(vm, "columns"_s);
+    if (fd && (isColumns || name == Identifier::fromString(vm, "rows"_s))) {
+        if (!bun_stdio_tty[fd])
+            return JSValue::encode(jsUndefined());
+        JSC::JSArray* size = JSC::constructEmptyArray(globalObject, nullptr, 2);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::MarkedArgumentBuffer args;
+        args.append(jsNumber(fd));
+        args.append(size);
+        JSFunction* getWindowSize = JSFunction::create(vm, globalObject, 2, ""_s, Bun::Process_functionInternalGetWindowSize, JSC::ImplementationVisibility::Private);
+        JSValue isKnown = JSC::profiledCall(globalObject, ProfilingReason::API, getWindowSize, JSC::getCallData(getWindowSize), jsUndefined(), args);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (!isKnown.isTrue())
+            return JSValue::encode(jsUndefined());
+        RELEASE_AND_RETURN(scope, JSValue::encode(size->getIndex(globalObject, isColumns ? 0 : 1)));
+    }
+    RELEASE_AND_RETURN(scope, fd ? Process_functionNeedsWholeOutputStream(globalObject, callFrame) : Process_functionNeedsWholeInputStream(globalObject, callFrame));
+}
+
+// Plain Bun has these names on a stream that is a terminal, and on no other.
+static bool isNameOfTerminal(JSC::VM& vm, const Identifier& name, int fd)
+{
+    return name == Identifier::fromString(vm, "isTTY"_s) || (fd && (name == Identifier::fromString(vm, "columns"_s) || name == Identifier::fromString(vm, "rows"_s)));
+}
+
+// The `has` trap of a bare stream
+JSC_DEFINE_HOST_FUNCTION(Process_functionHasOfBareStream, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* target = asObject(callFrame->argument(0));
+    int fd = target->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()).asInt32();
+    Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    bool isFound = target->hasProperty(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isFound || name.isSymbol())
+        return JSValue::encode(jsBoolean(isFound));
+    if (isNameOfTerminal(vm, name, fd))
+        return JSValue::encode(jsBoolean(bun_stdio_tty[fd]));
+    RELEASE_AND_RETURN(scope, fd ? Process_functionNeedsWholeOutputStream(globalObject, callFrame) : Process_functionNeedsWholeInputStream(globalObject, callFrame));
+}
+
+// The `getOwnPropertyDescriptor` trap of a bare stream
+JSC_DEFINE_HOST_FUNCTION(Process_functionGetOwnPropertyDescriptorOfBareStream, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* target = asObject(callFrame->argument(0));
+    int fd = target->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()).asInt32();
+    Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::PropertyDescriptor descriptor;
+    bool isOwn = target->getOwnPropertyDescriptor(globalObject, name, descriptor);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isOwn)
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructObjectFromPropertyDescriptor(globalObject, descriptor)));
+    bool isInherited = target->hasProperty(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (isInherited || name.isSymbol() || isNameOfTerminal(vm, name, fd))
+        return JSValue::encode(jsUndefined());
+    RELEASE_AND_RETURN(scope, fd ? Process_functionNeedsWholeOutputStream(globalObject, callFrame) : Process_functionNeedsWholeInputStream(globalObject, callFrame));
+}
+
+// write(data, encoding, callback) of a bare stream
+JSC_DEFINE_HOST_FUNCTION(Process_functionWriteOfBareStream, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const Identifier& privateName = WebCore::builtinNames(vm).lightStandardStreamsPrivateName();
+    JSValue thisValue = callFrame->thisValue();
+    if (thisValue.isUndefinedOrNull())
+        return throwVMTypeError(globalObject, scope, makeString(thisValue.isNull() ? "null"_s : "undefined"_s, " is not an object (evaluating 'kWriteMonkeyPatchDefense')"_s));
+    auto* proxy = dynamicDowncast<JSC::ProxyObject>(thisValue);
+    JSValue descriptor = proxy && !proxy->isRevoked() ? proxy->target()->getDirect(vm, privateName) : JSValue();
+    if (!descriptor)
+        return throwVMTypeError(globalObject, scope, "this._write is not a function. (In 'this._write(data, encoding, cb)', 'this._write' is undefined)"_s);
+    int fd = descriptor.asInt32();
+    JSObject* kept = asObject(defaultGlobalObject(globalObject)->processObject()->getDirect(vm, privateName));
+    JSValue sink = kept->getDirectIndex(globalObject, fd);
+    RETURN_IF_EXCEPTION(scope, {});
+    // The first write opens the sink. A read of the stream opens nothing, so it cannot throw where the executable was trimmed of what opens a sink.
+    if (!sink) {
+        sink = openStandardSink(globalObject, fd);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (writesSynchronously(Bun__Process__getStdinFdType(Bun::vm(vm), fd)))
+            Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, JSValue::encode(sink));
+        kept->putDirectIndex(globalObject, fd, sink);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    JSValue write = sink.get(globalObject, Identifier::fromString(vm, "write"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::MarkedArgumentBuffer data;
+    data.append(callFrame->argument(0));
+    JSValue written = JSC::profiledCall(globalObject, ProfilingReason::API, write, JSC::getCallData(write), sink, data);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSValue callback = callFrame->argument(1).isCallable() ? callFrame->argument(1) : callFrame->argument(2);
+    JSC::MarkedArgumentBuffer null;
+    null.append(jsNull());
+    if (!written.inherits<JSC::JSPromise>()) {
+        if (callback.isCallable()) {
+            JSC::profiledCall(globalObject, ProfilingReason::API, callback, JSC::getCallData(callback), jsUndefined(), null);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
+        return JSValue::encode(jsBoolean(true));
+    }
+    if (callback.isCallable()) {
+        JSValue then = written.get(globalObject, vm.propertyNames->then);
+        RETURN_IF_EXCEPTION(scope, {});
+        JSC::MarkedArgumentBuffer reactions;
+        reactions.append(JSC::JSBoundFunction::create(vm, globalObject, asObject(callback), jsUndefined(), null, 0, nullptr, JSC::SourceTaintedOrigin::Untainted));
+        RETURN_IF_EXCEPTION(scope, {});
+        reactions.append(callback);
+        JSC::profiledCall(globalObject, ProfilingReason::API, then, JSC::getCallData(then), written, reactions);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+    return JSValue::encode(jsBoolean(false));
+}
+
+// What code evaluated at run time gets for a standard stream in a program that names none: no function that makes streams is in the executable.
+// The object answers `fd`, `isTTY`, `columns`, `rows` and `write`. Every question about another name and every change throw the error that names the function left out.
+// Listing its keys and asking for its prototype do not throw, so code that walks over every object it can reach goes on.
+static JSValue constructBareStream(JSC::JSGlobalObject* globalObject, int fd, JSValue write)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* target = JSC::constructEmptyObject(globalObject);
+    target->putDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName(), jsNumber(fd));
+    target->putDirect(vm, Identifier::fromString(vm, "fd"_s), jsNumber(fd));
+    if (bun_stdio_tty[fd])
+        target->putDirect(vm, Identifier::fromString(vm, "isTTY"_s), jsBoolean(true));
+    if (write)
+        target->putDirect(vm, Identifier::fromString(vm, "write"_s), write);
+    JSObject* handler = JSC::constructEmptyObject(globalObject);
+    handler->putDirect(vm, Identifier::fromString(vm, "get"_s), JSFunction::create(vm, globalObject, 3, ""_s, Process_functionGetOfBareStream, JSC::ImplementationVisibility::Private));
+    handler->putDirect(vm, Identifier::fromString(vm, "has"_s), JSFunction::create(vm, globalObject, 2, ""_s, Process_functionHasOfBareStream, JSC::ImplementationVisibility::Private));
+    handler->putDirect(vm, Identifier::fromString(vm, "getOwnPropertyDescriptor"_s), JSFunction::create(vm, globalObject, 2, ""_s, Process_functionGetOwnPropertyDescriptorOfBareStream, JSC::ImplementationVisibility::Private));
+    JSFunction* needsWholeStream = JSFunction::create(vm, globalObject, 0, ""_s, fd ? Process_functionNeedsWholeOutputStream : Process_functionNeedsWholeInputStream, JSC::ImplementationVisibility::Private);
+    for (ASCIILiteral trap : { "set"_s, "deleteProperty"_s, "defineProperty"_s, "setPrototypeOf"_s, "preventExtensions"_s })
+        handler->putDirect(vm, Identifier::fromString(vm, trap), needsWholeStream);
+    RELEASE_AND_RETURN(scope, JSC::ProxyObject::create(globalObject, target, handler));
+}
+
+static JSValue constructBareStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const Identifier& name = WebCore::builtinNames(vm).lightStandardStreamsPrivateName();
+    JSValue kept = processObject->getDirect(vm, name);
+    if (!kept) {
+        kept = JSC::constructEmptyArray(globalObject, nullptr, 3);
+        RETURN_IF_EXCEPTION(scope, {});
+        // Both streams have one function for `write`.
+        asObject(kept)->putDirectIndex(globalObject, 0, JSFunction::create(vm, globalObject, 3, "writeFast"_s, Process_functionWriteOfBareStream, JSC::ImplementationVisibility::Public));
+        RETURN_IF_EXCEPTION(scope, {});
+        processObject->putDirect(vm, name, kept);
+    }
+    JSValue write = asObject(kept)->getDirectIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, constructBareStream(globalObject, fd, write));
+}
+
 static JSValue constructLightStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSC::AOT::refusesToRun(JSC::JSFunction::create(vm, globalObject, stdioGetLightStdioWriteStreamsCodeGenerator(vm), globalObject)))
+        RELEASE_AND_RETURN(scope, constructBareStdioWriteStream(globalObject, processObject, fd));
     JSObject* kept = lightStandardStreamsOf(globalObject, processObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSObject* streams = asObject(kept->getDirectIndex(globalObject, 0));
@@ -3508,6 +3691,10 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     JSC::MarkedArgumentBuffer args;
     if (JSC::AOT::refusesToRun(getStdinStream)) {
         getStdinStream = JSC::JSFunction::create(vm, globalObject, stdioGetLightStdinStreamCodeGenerator(vm), globalObject);
+        if (JSC::AOT::refusesToRun(getStdinStream)) {
+            JSValue stream = constructBareStream(globalObject, STDIN_FILENO, {});
+            return scope.exception() ? JSValue() : stream;
+        }
         args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));
         args.append(JSFunction::create(vm, globalObject, 0, ""_s, Process_functionNeedsWholeInputStream, JSC::ImplementationVisibility::Private));
     } else {

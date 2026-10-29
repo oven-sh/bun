@@ -1925,6 +1925,36 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
       120_000,
     );
 
+    // The tables that the run time makes at their first use have their pages from the start.
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "with its address space used up a program reads, stores and copies properties for the first time",
+      async () => {
+        using folder = tempDir("aot-heap-limit", {
+          "program.ts": `import path from "path";
+const long = "ab/../".repeat(51200) + "z";
+const hold: ArrayBuffer[] = [];
+const given: any = { a: 1, b: { c: [1, 2, 3] }, name: "n" };
+for (const kib of [262144, 16384, 1024, 64, 40]) for (;;) { try { hold.push(new ArrayBuffer(kib * 1024)); } catch { break; } }
+console.log("address space used up");
+try { path.normalize(long); console.log("answered"); } catch (e) { console.log("caught " + (e as Error).name + ": " + (e as Error).message); }
+given.fresh = given.b.c.length;
+console.log(given.fresh, given["na" + "me".slice(0)], "a" in given);
+console.log(Object.assign({}, given).name, Object.keys(given).length, Reflect.ownKeys(given).length);
+console.log("alive");
+`,
+        });
+        await build(String(folder));
+        for (const limit of [4194304, 2097152]) {
+          expect(await run(["sh", "-c", `ulimit -c 0 && ulimit -v ${limit} && exec ./program`], String(folder))).toEqual({
+            stdout: "address space used up\ncaught RangeError: Out of memory\n3 n true\nn 4 4\nalive\n",
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+      },
+      120_000,
+    );
+
     inPart(test.skipIf(!isLinux || isASAN))(
       "under a limit of 4 GB on address space one buffer gets two gigabytes",
       async () => {

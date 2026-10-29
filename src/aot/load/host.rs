@@ -42,6 +42,7 @@ use crate::load::is_host_path;
 use crate::load::loaders::{
     BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path,
     loader_named_by_path, parses_text_as_data, script_kind_of, to_host_loader,
+    to_host_loader_of_attribute,
 };
 use crate::load::macros;
 use crate::load::named_loads::find_library_modules_named_in_choices;
@@ -664,22 +665,22 @@ impl CodeHost for LoadHost<'_> {
         let default_loader = self.default_loader_for(path, request.kind);
         let is_embedded = matches!(request.embed_attribute, Some(b"true"));
         let chosen = match request.type_attribute {
-            None => default_loader,
+            None => return to_host_loader(default_loader, path),
             Some(b"macro") => {
                 let message = [
                     &b"a macro import was followed as code: "[..],
                     to_native(path),
                 ];
                 (self.input.messages).report_internal_error(message.concat());
-                default_loader
+                return to_host_loader(default_loader, path);
             }
             Some(name) => match Loader::from_string(name) {
                 Some(Loader::Sqlite) if is_embedded => Loader::SqliteEmbedded,
                 Some(loader) => loader,
-                None => default_loader,
+                None => return to_host_loader(default_loader, path),
             },
         };
-        to_host_loader(chosen, path)
+        to_host_loader_of_attribute(chosen, path)
     }
 
     fn loads_as_code(&self, path: &[u8], loader: HostLoader) -> bool {

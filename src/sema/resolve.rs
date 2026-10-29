@@ -626,6 +626,9 @@ pub struct ParseOptions {
     pub keeps_library_text: bool,
     /// `Options::keeps_comments`
     pub keeps_comments: bool,
+    /// Text that is not UTF-8 is read as `bun run` reads it, not as TypeScript does. A build sets it for a file that it reads for
+    /// its types alone, so that this file and a compiled one agree on what a string literal says.
+    pub reads_as_bun_run: bool,
     pub bind: crate::bind::BindOptions,
 }
 
@@ -888,6 +891,7 @@ impl Options {
             keeps_library_text: self.lib_replacement
                 || !(self.skip_lib_check || self.skip_default_lib_check),
             keeps_comments: self.keeps_comments,
+            reads_as_bun_run: false,
             bind: crate::bind::BindOptions {
                 emit_standard_class_fields: self.emit_standard_class_fields,
                 before_es2020: is_before(ScriptTarget::ES2020),

@@ -1087,6 +1087,41 @@ struct OrderedFiles<'s, 'r> {
     steps: Vec<Vec<bool>>,
 }
 
+/// `CodeTarget::has_shared_type`: the statement that the loader comes to first decides for the later ones. It loads a graph level by level, each file in the
+/// order of its text, and what code asks for when it runs after that. Which thread read a file first has no say.
+fn share_modules_among_types(files: &mut [WalkedFile<'_, '_>], entry_points: VecDeque<u32>) {
+    let has_shared_type =
+        |file: &WalkedFile<'_, '_>| file.code_targets().iter().any(|it| it.has_shared_type);
+    if !files.iter().any(has_shared_type) {
+        return;
+    }
+    let mut first_forms: FxHashMap<&[u8], u32> = FxHashMap::default();
+    let mut seen = vec![false; files.len()];
+    let (mut level, mut later) = (VecDeque::new(), entry_points);
+    while let Some(index) = level.pop_front().or_else(|| later.pop_front()) {
+        if std::mem::replace(&mut seen[index as usize], true) {
+            continue;
+        }
+        for next in 0..files[index as usize].code_targets().len() {
+            let target = files[index as usize].code_targets()[next];
+            let mut reached = files[index as usize].targets[next];
+            if target.has_shared_type {
+                reached = *first_forms.entry(target.key.path).or_insert(reached);
+                let key = files[reached as usize].target.key;
+                let file = &mut files[index as usize];
+                file.targets[next] = reached;
+                if let Some(parsed) = &mut file.parsed {
+                    parsed.code.targets[next].key = key;
+                }
+            }
+            match target.is_loaded_with_importer {
+                true => level.push_back(reached),
+                false => later.push_back(reached),
+            }
+        }
+    }
+}
+
 fn order_files<'s, 'r>(
     context: &CodeLoadContext<'_, 's, 'r>,
     state: WalkState<'s, 'r>,
@@ -1096,6 +1131,9 @@ fn order_files<'s, 'r>(
         index_of,
         ..
     } = state;
+    let entry_points = context.entry_points.iter();
+    let entry_points = entry_points.map(|it| index_of[&context.canonical_key(it.key)]);
+    share_modules_among_types(&mut files, entry_points.collect());
     let mut roots: Vec<u32> = Vec::with_capacity(context.entry_points.len());
     let mut order: Vec<u32> = Vec::with_capacity(files.len());
     let mut seen = vec![false; files.len()];

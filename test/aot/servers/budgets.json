@@ -132,12 +132,12 @@
       "operationAOTToNumber": 9
     },
     "allocated": {
-      "cells": 636,
-      "bytes": 40500
+      "cells": 585,
+      "bytes": 39100
     },
     "allocatedInTotal": {
-      "cells": 946.1,
-      "bytes": 57300
+      "cells": 895.5,
+      "bytes": 55900
     },
     "closures": {
       "aRound": 72,
@@ -660,12 +660,12 @@
       "operationAOTValueBitNot": 3
     },
     "allocated": {
-      "cells": 1160,
-      "bytes": 61600
+      "cells": 1132,
+      "bytes": 60300
     },
     "allocatedInTotal": {
-      "cells": 1546.64,
-      "bytes": 78115.36
+      "cells": 1518,
+      "bytes": 77050
     },
     "closures": {
       "aRound": 270,

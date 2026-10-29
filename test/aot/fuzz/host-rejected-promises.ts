@@ -81,6 +81,7 @@ const byTheLoader: Rejection[] = [
   {
     promise: `import("data:text/javascript," + made("let let = 1 +"))`,
     needs: `const made = text => text.split("").join("");`,
+    messageDiffers: true,
   },
   { promise: `import({\ntoString() {\nthrow new URIError("thrown by toString");\n},\n})` },
   { promise: `import(made("node:nothing-here"))`, needs: `const made = text => text.split("").join("");` },

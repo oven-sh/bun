@@ -614,6 +614,19 @@ impl RuntimeUses {
         join(&mut self.functions, &further.functions);
     }
 
+    /// Every module of the library and every function behind a built-in.
+    pub fn of_whole_library(platform: Platforms) -> RuntimeUses {
+        let mut collector = Collector::new(platform);
+        collector.add_startup_loads();
+        for module in RuntimeModule::ALL {
+            collector.add_load(module, None);
+        }
+        for data in table::runtime_functions() {
+            collector.add_functions(&[data.function]);
+        }
+        collector.finish()
+    }
+
     /// What code that the build does not see may get at without a name that the build sees.
     pub fn of_unseen_code(platform: Platforms) -> RuntimeUses {
         let mut collector = Collector::new(platform);

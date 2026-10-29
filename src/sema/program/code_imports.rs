@@ -38,6 +38,12 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             kind: loader_kind(site),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
             embed_attribute: embed_attribute(hir, site).map(|value| atoms.bytes(value)),
+            is_statement: matches!(
+                site.kind,
+                ImportSiteKind::Import(_)
+                    | ImportSiteKind::ExportFrom(_)
+                    | ImportSiteKind::ExportStar(_)
+            ),
             increases_depth: (alternatives.iter())
                 .any(|&specifier| !is_relative(constant_prefix(atoms, specifier))),
         };
@@ -380,6 +386,7 @@ struct TargetOrigin<'a> {
     kind: CodeImportKind,
     type_attribute: Option<&'a [u8]>,
     embed_attribute: Option<&'a [u8]>,
+    is_statement: bool,
     increases_depth: bool,
 }
 
@@ -387,6 +394,7 @@ const IMPLIED_IMPORT: TargetOrigin<'static> = TargetOrigin {
     kind: CodeImportKind::Import,
     type_attribute: None,
     embed_attribute: None,
+    is_statement: true,
     increases_depth: false,
 };
 
@@ -401,6 +409,7 @@ fn add_target<'r>(
         kind,
         type_attribute,
         embed_attribute,
+        is_statement,
         increases_depth,
     } = origin;
     let request = resolver.loader_request(file.path, kind, type_attribute, embed_attribute);
@@ -415,6 +424,8 @@ fn add_target<'r>(
         host_module: file.host_module,
         increases_depth,
         has_loader_attribute: type_attribute.is_some(),
+        is_loaded_with_importer: is_statement,
+        has_shared_type: is_statement && type_attribute.is_some_and(|it| it != b"json"),
     });
     index
 }

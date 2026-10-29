@@ -711,6 +711,11 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "many-live-values-across-blocks",
     "field-stores-in-loops",
     "field-stores-in-unknown-callbacks",
+    "private-names-in-classes-below-builtins",
+    "elements-of-array-subclass-instances",
+    "own-properties-hiding-members-of-builtin-subclasses",
+    "loop-counters-near-integer-limits",
+    "numbers-returned-in-two-forms",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(
@@ -846,6 +851,7 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "many-allocations-one-escapes",
     "polymorphic-variable-destructured",
     "spread-arrays-on-rare-path",
+    "other-objects-typed-as-builtin-subclasses",
   ])
     sources[name] = productSource(name, generateOf(name), always);
   for (const name of [
@@ -879,6 +885,15 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "key-order-of-built-objects",
     "stores-after-prototype-chain-changes",
     "element-presence-in-lists-from-builtins",
+    "many-classes-below-one-builtin",
+    "values-lent-to-callees-that-may-keep-them",
+    "closures-in-fields-seen-every-way",
+    "objects-made-in-try-blocks",
+    "bytes-moved-between-views",
+    "objects-changed-during-for-in",
+    "tables-read-under-keys-made-at-run-time",
+    "names-stored-on-objects-a-function-was-given",
+    "definitions-by-descriptor-literals",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =

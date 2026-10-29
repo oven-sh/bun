@@ -473,10 +473,11 @@ fn loader_follows_attribute_options_and_entry_points() {
     with_host(&[], |fixture| {
         let host = fixture.host;
         let (by_name, named) = (HostLoaderKind::ByName, HostLoaderKind::Loader);
-        let cases: [(&[u8], Option<&[u8]>, HostLoaderKind); 10] = [
+        let cases: [(&[u8], Option<&[u8]>, HostLoaderKind); 11] = [
             (b"/project/a.ts", None, by_name),
             (b"/project/a.ts", Some(b""), by_name),
-            (b"/project/a.txt", Some(b"text"), by_name),
+            (b"/project/a.txt", Some(b"text"), named(Loader::Text)),
+            (b"/project/a.ts", Some(b"ts"), by_name),
             (b"/project/a.ts", Some(b"text"), named(Loader::Text)),
             (b"/project/a.ts", Some(b"json"), named(Loader::Json)),
             (b"/project/a.ts", Some(b"no-such-loader"), by_name),

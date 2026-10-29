@@ -1,5 +1,5 @@
 // A DataView over each kind of buffer is made and written to at once, in a program in which another DataView has a property of its own.
-// Flags: --aot-validate --aot-disable=flow-results
+// Flags: --aot-validate --aot-disable=flow:NarrowedTypes
 const marked: DataView & { mark?: number } = new DataView(new ArrayBuffer(8));
 marked.mark = 1;
 function written(make: () => ArrayBufferLike): string {

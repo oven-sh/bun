@@ -48,7 +48,16 @@ pub(crate) fn parse_json<'s>(
     if skip_trivia(text, 0) == text.len() {
         return None;
     }
-    let hir = summarize(arena, b"/value.json", None, text, atoms, false, false);
+    let hir = summarize(
+        arena,
+        b"/value.json",
+        None,
+        text,
+        atoms,
+        false,
+        false,
+        false,
+    );
     if hir.has_errors || hir.has_parse_diagnostics {
         return None;
     }

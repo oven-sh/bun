@@ -1,4 +1,5 @@
 #include "root.h"
+#include "JSNextTickQueue.h"
 
 #include "BunCompiledModules.h"
 
@@ -625,6 +626,12 @@ static JSValue createModuleNotFoundError(JSGlobalObject* realm, const String& sp
     return JSValue::decode(ResolveMessage__createModuleNotFound(realm, &specifierString, &referrer, isForRequire));
 }
 
+static bool hasQueuedTicks(JSGlobalObject* globalObject)
+{
+    auto* queue = defaultGlobalObject(globalObject)->m_nextTickQueue.get();
+    return queue && !queue->isEmpty();
+}
+
 const AOT::ModuleHost compiledModuleHost = {
     &createModuleObject,
     &createRequirer,
@@ -642,6 +649,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &findModuleWithAttributes,
     &resolveFunctionOf,
     &replacesNativeModule,
+    &hasQueuedTicks,
     &isImportOfMainModule,
     &runMainModule,
     &createModuleNotFoundError,

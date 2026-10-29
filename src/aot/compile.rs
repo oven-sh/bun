@@ -641,15 +641,9 @@ fn find_library_code_lacked(
     let used: Vec<BuiltinId> = used.map(table::canonical_id).collect();
     let mut needed = RuntimeUses::of_entries_used(used.iter().copied(), platform);
     needed.add(&held.find_modules_left_out(&used));
-    // It has followed nothing, and keeps all that it was handed.
-    let has_followed_nothing = found.unseen_code.iter().any(|record| {
-        matches!(
-            record.cause,
-            UnseenCodeCause::FlowResultDisabled | UnseenCodeCause::LimitReached
-        )
-    });
-    if has_followed_nothing {
-        needed.add(&RuntimeUses::of_unseen_code(platform));
+    // Any name may reach a loader, and library code that is not compiled would run in the interpreter.
+    if has_followed_nothing(found) {
+        needed.add(&RuntimeUses::of_whole_library(platform));
     }
     // Where the host hands anything to anything, every function of the host counts as called. Such a program holds those that it names.
     let holds_named_functions_of_host_alone = table::STARTUP_MODULES
@@ -672,9 +666,22 @@ fn find_library_code_lacked(
     held.find_lacked(&needed)
 }
 
+// The engine did not analyze the program, so its lists of what is used are empty and say nothing.
+fn has_followed_nothing(found: FlowFindings<'_>) -> bool {
+    found.unseen_code.iter().any(|record| {
+        matches!(
+            record.cause,
+            UnseenCodeCause::FlowResultDisabled | UnseenCodeCause::LimitReached
+        )
+    })
+}
+
 // An executable keeps track of which file is the main module where the front end has seen somebody ask.
 // Code that the build does not see counts as reading all that it can get at, and is handed no module object of the program. Beside such code a read counts where code of the program lets `process` go out of sight.
 fn reads_main_module(found: FlowFindings<'_>, lets_process_out_of_sight: bool) -> bool {
+    if has_followed_nothing(found) {
+        return true;
+    }
     (found.unseen_code.is_empty() || lets_process_out_of_sight)
         && found.builtins_used.iter().any(|record| {
             record.uses.contains(BuiltinUse::READ)
@@ -688,6 +695,9 @@ fn find_ways_read_out_of_sight(
     found: FlowFindings<'_>,
     not_followed: WaysBetweenModuleObjects,
 ) -> WaysBetweenModuleObjects {
+    if has_followed_nothing(found) {
+        return not_followed;
+    }
     let is_used = |wanted: BuiltinId| {
         found
             .builtins_used
@@ -1613,6 +1623,14 @@ fn compile_programs<'a>(
                 started_at,
                 ..copy.clone()
             });
+        }
+        // Any code file that the program embeds may be what it starts a Worker with.
+        if has_followed_nothing(engine.flow_findings()) {
+            reported.extend(started_workers.copies.iter().map(|copy| WorkerFile {
+                is_guess: true,
+                has_options: true,
+                ..copy.clone()
+            }));
         }
     }
     reported.sort_unstable();

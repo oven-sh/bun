@@ -201,8 +201,10 @@ pub fn install_with_manager(
                     Diff::generate(
                         manager,
                         log,
-                        // SAFETY: the `Box<Lockfile>` allocation lies outside `*manager`, and
-                        // `Diff::generate` never derefs `pm.lockfile`, so this is unique.
+                        // SAFETY: the `Box<Lockfile>` allocation lies outside `*manager`.
+                        // `Diff::generate` never derefs `pm.lockfile` itself and parses only with
+                        // `Features::WORKSPACE` and `FOLDER`. `parse_with_json` derefs it only
+                        // under `Features::workspaces`, which neither sets, so this is unique.
                         unsafe { &mut *from_lockfile },
                         &mut lockfile,
                         &root,

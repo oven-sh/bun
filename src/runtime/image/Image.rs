@@ -1701,7 +1701,7 @@ impl PipelineTask {
         let Kind::Encode(enc_opt) = &self.kind else {
             unreachable!()
         };
-        let mut enc: codecs::EncodeOptions = enc_opt.unwrap_or(codecs::EncodeOptions {
+        let enc: codecs::EncodeOptions = enc_opt.unwrap_or(codecs::EncodeOptions {
             format: match src_format {
                 codecs::Format::Bmp | codecs::Format::Tiff | codecs::Format::Gif => {
                     codecs::Format::Png
@@ -1710,18 +1710,18 @@ impl PipelineTask {
             },
             ..Default::default()
         });
-        // Carry the source ICC profile through to the encoder unless the
-        // caller already set one (reserved for a future `.withIccProfile()`
-        // method). The pipeline doesn't colour-convert the RGBA, so dropping
+        // Carry the source ICC profile through to the encoder.
+        // The pipeline doesn't colour-convert the RGBA, so dropping
         // the profile reinterprets a non-sRGB source (Display-P3, Adobe RGB,
         // Jpegli XYB) as sRGB and visibly shifts the colours — see #30197.
         // JPEG/PNG/WebP embed it; HEIC/AVIF via the system backend do not.
-        if enc.icc_profile.is_none() {
-            // `EncodeOptions.icc_profile` borrows for the duration of `encode()`
-            // (raw `NonNull<[u8]>`); `decoded` outlives the call below.
-            enc.icc_profile = decoded.icc_profile.as_deref().map(core::ptr::NonNull::from);
-        }
-        let out = match codecs::encode(&decoded.rgba, decoded.width, decoded.height, enc) {
+        let out = match codecs::encode(
+            &decoded.rgba,
+            decoded.width,
+            decoded.height,
+            enc,
+            decoded.icc_profile.as_deref(),
+        ) {
             Ok(o) => o,
             Err(e) => {
                 self.result = TaskResult::Err(e);

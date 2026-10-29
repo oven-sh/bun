@@ -343,6 +343,18 @@ impl CopyFile {
     pub(crate) fn do_copy_file_range<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
     ) -> Result<(), crate::Error> {
+        let mut total_written = 0;
+        let result = self.copy_file_range_loop::<USE, CLEAR_APPEND_IF_INVALID>(&mut total_written);
+        self.read_len = total_written;
+        result
+    }
+
+    /// Adds what it copies to `total_written`, also when it fails.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn copy_file_range_loop<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
+        &mut self,
+        total_written: &mut SizeType,
+    ) -> Result<(), crate::Error> {
         use bun_sys::linux;
 
         let mut remain: usize = self.max_length as usize;
@@ -355,24 +367,15 @@ impl CopyFile {
             remain = 64 * 1024;
         }
 
-        let mut total_written: u64 = 0;
         let src_fd = self.source_fd;
         let dest_fd = self.destination_fd;
-
-        let read_len_slot: *mut SizeType = &raw mut self.read_len;
-        let total_written_slot: *const u64 = core::ptr::addr_of!(total_written);
-        scopeguard::defer! {
-            // SAFETY: both raw ptrs point into the enclosing stack frame which
-            // outlives this guard (dropped before fn return); disjoint fields.
-            unsafe { *read_len_slot = *total_written_slot as SizeType };
-        }
 
         let mut has_unset_append = false;
 
         // If they can't use copy_file_range, they probably also can't
         // use sendfile() or splice()
         if !bun_sys::copy_file::can_use_copy_file_range_syscall() {
-            return self.fallback_read_write(remain, unknown_size, &mut total_written);
+            return self.fallback_read_write(remain, unknown_size, total_written);
         }
 
         loop {
@@ -407,7 +410,7 @@ impl CopyFile {
                 // OPNOTSUPP: filesystem doesn't support this operation
                 bun_sys::E::ENOSYS | bun_sys::E::EXDEV | bun_sys::E::ENOTSUP => {
                     // TODO: this should use non-blocking I/O.
-                    return self.fallback_read_write(remain, unknown_size, &mut total_written);
+                    return self.fallback_read_write(remain, unknown_size, total_written);
                 }
 
                 // EINVAL: eCryptfs and other filesystems may not support copy_file_range.
@@ -440,9 +443,9 @@ impl CopyFile {
                     // copy_file_range or the file descriptor is
                     // incompatible with the chosen syscall, fall back
                     // to a read/write loop
-                    if total_written == 0 {
+                    if *total_written == 0 {
                         // TODO: this should use non-blocking I/O.
-                        return self.fallback_read_write(remain, unknown_size, &mut total_written);
+                        return self.fallback_read_write(remain, unknown_size, total_written);
                     }
 
                     self.system_error = Some(
@@ -471,7 +474,7 @@ impl CopyFile {
             }
 
             // wrote zero bytes means EOF
-            total_written += u64::try_from(written).expect("int cast");
+            *total_written += u64::try_from(written).expect("int cast");
             if written == 0 {
                 break;
             }

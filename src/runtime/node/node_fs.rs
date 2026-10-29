@@ -6248,25 +6248,10 @@ impl NodeFS {
             }
         }
 
-        // SAFETY: `sync_error_buf` is a pooled heap allocation, and every
-        // supported allocator aligns it to at least 8 bytes, so this address is
-        // ≥ `align_of::<OSPathChar>()`-aligned. On Windows
-        // `OSPathBuffer = [u16; PATH_MAX_WIDE]` (65 534 B) which fits inside
-        // `PathBuffer` (`MAX_PATH_BYTES` = 98 302 B); on POSIX it is the same
-        // type. The `assert!` below verifies the alignment at runtime.
-        // Keep the raw `*mut PathBuffer` so error-return paths can re-derive a fresh
-        // `&mut PathBuffer` without reborrowing `&mut self` (which would alias
-        // `working_mem` under stacked borrows). On every such path `working_mem` is
-        // not used afterward, so the re-derive is sound.
-        let sync_error_buf_ptr: *mut PathBuffer = &raw mut *self.sync_error_buf;
-        assert!(
-            sync_error_buf_ptr.cast::<OSPathChar>().is_aligned(),
-            "NodeFS.sync_error_buf misaligned for OSPathChar",
-        );
-        // SAFETY: alignment asserted above; `OSPathBuffer` fits inside `PathBuffer`
-        // (same type on POSIX; smaller on Windows) and `self.sync_error_buf` is exclusive.
-        let working_mem: &mut OSPathBuffer =
-            unsafe { &mut *sync_error_buf_ptr.cast::<OSPathBuffer>() };
+        // The error returns write to the buffer again, after the last use of `working_mem`.
+        let sync_error_buf: &mut PathBuffer = &mut self.sync_error_buf;
+        let working_mem: &mut [OSPathChar] =
+            bun_core::cast_slice_mut::<u8, OSPathChar>(&mut sync_error_buf[..]);
         working_mem[..len as usize].copy_from_slice(&(&path[..])[..len as usize]);
 
         let mut i: u16 = len - 1;
@@ -6275,9 +6260,7 @@ impl NodeFS {
         while i > 0 {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
-                // SAFETY: `working_mem[..i]` is initialized from `path` above and
-                // `working_mem[i]` was just set to NUL; the slice is in-bounds.
-                let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
+                let parent = OSPathSliceZ::from_buf(working_mem, i as usize);
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
                         // The SEP-restore must NOT happen before the errno match:
@@ -6295,13 +6278,11 @@ impl NodeFS {
                                     {
                                         // is a directory. break.
                                         if !res {
-                                            // SAFETY: `working_mem` is not used after this return; the
-                                            // re-derived &mut PathBuffer is scoped to the call.
                                             return Err(sys::Error {
                                                 errno: E::ENOTDIR as _,
                                                 syscall: sys::Tag::mkdir,
                                                 path: Self::os_path_into_buf(
-                                                    unsafe { &mut *sync_error_buf_ptr },
+                                                    sync_error_buf,
                                                     without_nt_prefix(&(&path[..])[..len as usize]),
                                                 )
                                                 .into(),
@@ -6322,18 +6303,12 @@ impl NodeFS {
                             _ => {
                                 #[cfg(windows)]
                                 let p = {
-                                    // `parent` aliases `working_mem` (== sync_error_buf). Copy it
-                                    // out to a temp before re-deriving `&mut PathBuffer` so we
-                                    // never hold `&mut buf` and `&buf[..]` simultaneously.
+                                    // `parent` borrows `sync_error_buf`, which the conversion overwrites.
                                     let stripped = without_nt_prefix(&parent[..]);
                                     let n = stripped.len();
                                     let mut tmp = paths::os_path_buffer_pool::get();
                                     tmp[..n].copy_from_slice(stripped);
-                                    // SAFETY: `working_mem`/`parent` are not used after this return.
-                                    Self::os_path_into_buf(
-                                        unsafe { &mut *sync_error_buf_ptr },
-                                        &tmp[..n],
-                                    )
+                                    Self::os_path_into_buf(sync_error_buf, &tmp[..n])
                                 };
                                 #[cfg(not(windows))]
                                 let p = without_nt_prefix(&parent[..]);
@@ -6357,9 +6332,7 @@ impl NodeFS {
         while i < len {
             if bun_paths::is_sep_native_t::<OSPathChar>((&path[..])[i as usize]) {
                 working_mem[i as usize] = 0;
-                // SAFETY: `working_mem[..i]` is initialized from `path` and
-                // `working_mem[i]` was just set to NUL; the slice is in-bounds.
-                let parent = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), i as usize) };
+                let parent = OSPathSliceZ::from_buf(working_mem, i as usize);
                 match mkdir_os_path(parent, mode) {
                     Err(err) => {
                         working_mem[i as usize] = paths::SEP as OSPathChar;
@@ -6368,10 +6341,8 @@ impl NodeFS {
                             E::EEXIST => {}
                             // NOENT shouldn't happen here
                             _ => {
-                                // SAFETY: `working_mem` is not used after this return;
-                                // the re-derived &mut PathBuffer is scoped to the call.
                                 return Err(err.with_path(Self::os_path_into_buf(
-                                    unsafe { &mut *sync_error_buf_ptr },
+                                    sync_error_buf,
                                     without_nt_prefix(&path[..]),
                                 )));
                             }
@@ -6390,17 +6361,13 @@ impl NodeFS {
 
         // Our final directory will not have a trailing separator
         // so we have to create it once again
-        // SAFETY: `working_mem[..len]` is the full input path and `working_mem[len]`
-        // was just set to NUL; the slice is in-bounds.
-        let final_ = unsafe { OSPathSliceZ::from_raw(working_mem.as_ptr(), len as usize) };
+        let final_ = OSPathSliceZ::from_buf(working_mem, len as usize);
         match mkdir_os_path(final_, mode) {
             Err(err) => match err.get_errno() {
                 E::EEXIST => {}
                 _ => {
-                    // SAFETY: `working_mem` is not used after this return; the
-                    // re-derived &mut PathBuffer is scoped to the call.
                     return Err(err.with_path(Self::os_path_into_buf(
-                        unsafe { &mut *sync_error_buf_ptr },
+                        sync_error_buf,
                         without_nt_prefix(&path[..]),
                     )));
                 }
@@ -8719,10 +8686,7 @@ impl NodeFS {
         Self::os_path_into_buf(&mut self.sync_error_buf, slice)
     }
 
-    /// Free-function form of [`os_path_into_sync_error_buf`] that does not borrow
-    /// `&mut self`. Needed by `mkdir_recursive_os_path_impl`, which holds a long-lived
-    /// `&mut OSPathBuffer` reinterpreted from `sync_error_buf` and so must not reborrow
-    /// `&mut self` on its error-return paths (PORTING.md §Forbidden aliased `&mut`).
+    /// [`Self::os_path_into_sync_error_buf`] for a caller that already borrows the buffer.
     fn os_path_into_buf<'a>(buf: &'a mut PathBuffer, slice: &[OSPathChar]) -> &'a [u8] {
         #[cfg(windows)]
         {

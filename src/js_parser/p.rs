@@ -3551,10 +3551,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // cannot hand out `&mut K` (see StringHashMapGetOrPut docs), so
                                 // no key write is needed here.
                                 // SAFETY: `name` is a symbol's `original_name`.
-                                *unsafe {
-                                    _scope.get_or_put_member_with_hash(name, hash.unwrap())
-                                }
-                                .value_ptr = member_in_scope;
+                                *unsafe { _scope.members.get_or_put_hashed(hash.unwrap(), name) }
+                                    .value_ptr = member_in_scope;
 
                                 // "function foo() {} { var foo; }"
                                 if _scope_ptr == self.module_scope
@@ -3619,13 +3617,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // into this symbol but continue hoisting past this catch scope
                             self.symbols[existing_idx].link.set(value.ref_);
                             // SAFETY: `name` is a symbol's `original_name`.
-                            *unsafe { _scope.get_or_put_member_with_hash(name, hash.unwrap()) }
+                            *unsafe { _scope.members.get_or_put_hashed(hash.unwrap(), name) }
                                 .value_ptr = value;
                         }
 
                         if _scope.kind_stops_hoisting() {
                             // SAFETY: `name` is a symbol's `original_name`.
-                            *unsafe { _scope.get_or_put_member_with_hash(name, hash.unwrap()) }
+                            *unsafe { _scope.members.get_or_put_hashed(hash.unwrap(), name) }
                                 .value_ptr = value;
                             break;
                         }
@@ -3806,7 +3804,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let adjacent_kind = self.symbols[value.ref_.inner_index() as usize].kind;
                 if adjacent_kind != js_ast::symbol::Kind::HoistedFunction {
                     // SAFETY: `key` derefs to a slice into source text / the
-                    // lexer string-table (see `get_or_put_member_with_hash`),
+                    // lexer string-table (see `Members::get_or_put_hashed`),
                     // both of which outlive every arena-backed `Scope`. Avoids
                     // a per-argument `mi_heap_malloc` on every function body.
                     unsafe { scope.members.put(key, value) };
@@ -4992,7 +4990,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the entry below can coexist with `self.symbols` / `self.log()` reads.
         // SAFETY (key lifetime): `name: &'a [u8]` points into source text or
         // the lexer string-table, both of which outlive the arena-owned
-        // `Scope` — see `Scope::get_or_put_member_with_hash`.
+        // `Scope` — see `Members::get_or_put_hashed`.
         let mut scope: js_ast::StoreRef<js_ast::Scope> = self.current_scope;
         let scope_kind = scope.kind;
         // SAFETY: see key-lifetime note above — `name: &'a [u8]` outlives the

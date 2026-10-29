@@ -142,6 +142,17 @@ describe("a plain ES module whose evaluation a vm run stops", () => {
                 import: rejected,
                 log: "wait",
               },
+              // An import() that finds the module while it is evaluating ends as a later import() does, as in Node.
+              // A timeout that stops the load of these modules leaves their import() calls pending, so only the
+              // SIGINT has this one too.
+              {
+                scenario: "import() that joins the evaluation",
+                run: `threw ${code}`,
+                fromDependency: rejected,
+                fromItsBody: rejected,
+                import: rejected,
+                log: "join-root,join-dependency",
+              },
             ]
           : []),
       ],

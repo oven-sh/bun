@@ -68,6 +68,17 @@ const modules = {
     globalThis.cutShort.log.push("cycle-b");
     ${waitIn("cycle-b")}
   `,
+  // import() of join-root.mjs, from a module that it requires and from its own body, while it is evaluating.
+  "join-root.mjs": `
+    globalThis.cutShort.log.push("join-root");
+    ${requireWhileEvaluating("join-dependency.mjs")}
+    globalThis.cutShort.joined.push(globalThis.cutShort.settled(import("./join-root.mjs")));
+    ${waitIn("join-root")}
+  `,
+  "join-dependency.mjs": `
+    globalThis.cutShort.log.push("join-dependency");
+    globalThis.cutShort.joined.push(globalThis.cutShort.settled(import("./join-root.mjs")));
+  `,
 };
 
 const describe = value =>
@@ -86,6 +97,15 @@ const settled = promise =>
     error => "rejected with " + describe(error),
   );
 const imported = file => settled(import(pathToFileURL(file).href));
+// The modules of the "joins" scenario say how their import() ended. The handlers are there before the run stops.
+cutShort.settled = settled;
+// For a promise that nothing settles: ten turns of the event loop, and not a wait for an amount of time.
+const settledSoon = async described => {
+  let result = "pending";
+  described.then(value => (result = value));
+  for (let turn = 0; turn < 10 && result === "pending"; turn++) await new Promise(resolve => setImmediate(resolve));
+  return result;
+};
 // `error` of a vm.Module throws when the module has no error.
 const errorOf = module => (module.status === "errored" ? describe(module.error) : "none");
 
@@ -265,6 +285,19 @@ const scenarios = {
     after: async dir => ({
       a: await imported(path.join(dir, "cycle-a.mjs")),
       b: await imported(path.join(dir, "cycle-b.mjs")),
+    }),
+  },
+  // Two import() calls find join-root.mjs while it is evaluating. They end as a later import() does.
+  "import() that joins the evaluation": {
+    log: "join-root,join-dependency",
+    run: (dir, options) => {
+      cutShort.joined = [];
+      return stopped(() => require(path.join(dir, "join-root.mjs")), options);
+    },
+    after: async dir => ({
+      fromDependency: await settledSoon(cutShort.joined[0]),
+      fromItsBody: await settledSoon(cutShort.joined[1]),
+      import: await imported(path.join(dir, "join-root.mjs")),
     }),
   },
 };

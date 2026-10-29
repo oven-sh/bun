@@ -101,6 +101,132 @@ describe("bundler", () => {
       api.expectFile("out.js").not.toInclude("import ");
     },
   });
+
+  // A Node.js builtin with no polyfill is a stub in a browser build: a function
+  // that returns an empty object. `import d, * as ns` of it declares the names
+  // with two `var` statements, which need a `;` between them when whitespace
+  // is minified.
+  for (const minify of [false, true]) {
+    itBundled("browser/NodeBuiltinStubDefaultAndStarImport" + (minify ? "Minify" : "MinifyWhitespace"), {
+      files: {
+        "/entry.js": /* js */ `
+          import d, * as ns from "fs";
+          import d2, * as ns2 from "node:child_process";
+          console.log(typeof d, typeof ns, typeof d2, typeof ns2);
+        `,
+      },
+      target: "browser",
+      minifyWhitespace: true,
+      minifySyntax: minify,
+      minifyIdentifiers: minify,
+      run: {
+        stdout: "undefined function undefined function",
+      },
+      onAfterBundle(api) {
+        expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
+      },
+    });
+  }
+  itBundled("browser/NodeBuiltinStubImportStatementsMinifyWhitespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import d, * as ns from "fs";
+        import d2, * as ns2 from "node:child_process";
+        import d3, { readFileSync as r, "a-b" as c, writeFileSync } from "node:fs";
+        import * as dns from "node:dns";
+        import "node:tls";
+        import { star, y, z } from "./reexport.js";
+        import react from "react";
+        const lazy = require("./lazy.js");
+        console.log(typeof d, typeof ns, typeof ns.readFileSync);
+        console.log(typeof d2, typeof ns2, typeof d3, typeof r, typeof c, typeof writeFileSync);
+        console.log(typeof dns, typeof star, typeof y, typeof z);
+        console.log(lazy.inLazyModule, react.inUnwrappedRequire);
+      `,
+      // require() makes this a lazily initialized module: its imports are
+      // declared outside the wrapper.
+      "/lazy.js": /* js */ `
+        import d, * as ns from "fs";
+        export const inLazyModule = [typeof d, typeof ns].join();
+      `,
+      "/reexport.js": /* js */ `
+        export * as star from "node:vm";
+        export { x as y, default as z } from "node:v8";
+      `,
+      // The bundler turns a top-level require() inside react into an import.
+      "/node_modules/react/package.json": JSON.stringify({ name: "react", version: "18.0.0", main: "index.js" }),
+      "/node_modules/react/index.js": /* js */ `
+        const fs = require("fs");
+        const { readFileSync } = require("node:fs");
+        exports.inUnwrappedRequire = [typeof fs, typeof readFileSync].join();
+      `,
+    },
+    target: "browser",
+    minifyWhitespace: true,
+    run: {
+      stdout: [
+        "undefined function undefined",
+        "undefined function undefined undefined undefined undefined",
+        "function function undefined undefined",
+        "undefined,function function,undefined",
+      ].join("\n"),
+    },
+    onAfterBundle(api) {
+      expect(new Bun.Transpiler().scanImports(api.readFile("/out.js"))).toEqual([]);
+    },
+  });
+  // A path that a "browser" map sets to false prints the same way.
+  itBundled("browser/BrowserFieldDisabledDefaultAndStarImportMinifyWhitespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import d, * as ns from "mapped-false";
+        import d2, * as ns2 from "./node-only.js";
+        const loaded = [d, ns.value, d2, ns2.value].includes("real");
+        console.log(loaded ? "loaded a disabled file" : "did not load a disabled file");
+      `,
+      "/package.json": JSON.stringify({ name: "app", browser: { "mapped-false": false, "./node-only.js": false } }),
+      "/node-only.js": /* js */ `
+        export const value = "real";
+        export default "real";
+      `,
+      "/node_modules/mapped-false/package.json": JSON.stringify({ name: "mapped-false", main: "index.js" }),
+      "/node_modules/mapped-false/index.js": /* js */ `
+        exports.value = "real";
+        exports.default = "real";
+      `,
+    },
+    target: "browser",
+    minifyWhitespace: true,
+    run: {
+      stdout: "did not load a disabled file",
+    },
+  });
+  // So does "fs" when a plugin declines to resolve it: the resolver then
+  // disables it at a later point of the build.
+  let declinedByPlugin: string[] = [];
+  itBundled("browser/NodeBuiltinStubAfterPluginDeclinesMinifyWhitespace", {
+    files: {
+      "/entry.js": /* js */ `
+        import d, * as ns from "fs";
+        console.log(typeof d, typeof ns);
+      `,
+    },
+    target: "browser",
+    minifyWhitespace: true,
+    plugins(builder) {
+      declinedByPlugin = [];
+      builder.onResolve({ filter: /^fs$/ }, ({ kind }) => {
+        declinedByPlugin.push(kind);
+        return undefined;
+      });
+    },
+    run: {
+      stdout: "undefined function",
+    },
+    onAfterBundle() {
+      expect(declinedByPlugin).toEqual(["import-statement"]);
+    },
+  });
   itBundled("browser/NodeTTY", {
     files: {
       "/entry.js": /* js */ `

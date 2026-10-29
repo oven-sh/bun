@@ -1323,18 +1323,9 @@ mod draft {
     pub fn handle_root_error(err: impl bun_core::output::ErrName) -> ! {
         use bun_core::{err_generic, pretty_error};
 
-        /// bun_sys::posix has no rlimit yet —
-        /// thin libc wrapper (POD out-param, never fails on supported targets).
         #[cfg(unix)]
-        fn getrlimit_nofile() -> Option<libc::rlimit> {
-            // SAFETY: zeroed rlimit is valid POD; getrlimit only writes to it.
-            let mut lim: libc::rlimit = bun_core::ffi::zeroed();
-            // SAFETY: &mut lim is a valid out-pointer.
-            if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &raw mut lim) } == 0 {
-                Some(lim)
-            } else {
-                None
-            }
+        fn getrlimit_nofile() -> Option<bun_sys::posix::Rlimit> {
+            bun_sys::posix::getrlimit(bun_sys::posix::RlimitResource::NOFILE).ok()
         }
 
         let name: &[u8] = err.name();
@@ -1355,7 +1346,7 @@ mod draft {
         } else if name == b"SystemFdQuotaExceeded" {
             #[cfg(unix)]
             {
-                let limit = getrlimit_nofile().map(|l| l.rlim_cur);
+                let limit = getrlimit_nofile().map(|l| l.cur);
                 #[cfg(target_os = "macos")]
                 {
                     pretty_error!(
@@ -1398,7 +1389,7 @@ mod draft {
         } else if name == b"ProcessFdQuotaExceeded" {
             #[cfg(unix)]
             {
-                let limit = getrlimit_nofile().map(|l| l.rlim_cur);
+                let limit = getrlimit_nofile().map(|l| l.cur);
                 #[cfg(target_os = "macos")]
                 {
                     pretty_error!(
@@ -1445,10 +1436,10 @@ mod draft {
                 // SAFETY: zeroed rlimit is valid POD (integers).
                 let limit = getrlimit_nofile().unwrap_or(bun_core::ffi::zeroed());
 
-                if limit.rlim_cur > 0 && limit.rlim_cur < (8192 * 2) {
+                if limit.cur > 0 && limit.cur < (8192 * 2) {
                     pretty_error!(
                         "\n<r><red>error<r>: An unknown error occurred, possibly due to low max file descriptors <d>(<red>Unexpected<r><d>)<r>\n\n<d>Current limit: {}<r>\n\nTo fix this, try running:\n\n  <cyan>ulimit -n 2147483646<r>\n",
-                        limit.rlim_cur,
+                        limit.cur,
                     );
 
                     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -3423,20 +3414,13 @@ mod draft {
     pub fn suppress_core_dumps_if_necessary() {
         #[cfg(unix)]
         {
-            // bun_sys::posix has no rlimit
-            // surface yet — go straight to libc (already a dep, async-signal-safe).
-            // SAFETY: all-zero rlimit is valid POD; getrlimit/setrlimit only read/write the struct.
-            let mut existing_limit: libc::rlimit = bun_core::ffi::zeroed();
-            // SAFETY: &mut existing_limit is a valid out-pointer.
-            if unsafe { libc::getrlimit(libc::RLIMIT_CORE, &raw mut existing_limit) } != 0 {
+            let resource = bun_sys::posix::RlimitResource::CORE;
+            let Ok(mut existing_limit) = bun_sys::posix::getrlimit(resource) else {
                 return;
-            }
-            if existing_limit.rlim_cur > 0 || existing_limit.rlim_cur == libc::RLIM_INFINITY {
-                existing_limit.rlim_cur = 0;
-                // SAFETY: &existing_limit is a valid in-pointer.
-                unsafe {
-                    libc::setrlimit(libc::RLIMIT_CORE, &raw const existing_limit);
-                }
+            };
+            if existing_limit.cur > 0 || existing_limit.cur == libc::RLIM_INFINITY as u64 {
+                existing_limit.cur = 0;
+                let _ = bun_sys::posix::setrlimit(resource, existing_limit);
             }
         }
     }

@@ -2956,8 +2956,13 @@ pub struct RuntimeHooks {
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
     /// Applies `--compile`-baked runtime flags to the
-    /// worker's transpiler. The caller gates the call on [`standalone_module_graph`].
-    pub apply_standalone_runtime_flags: fn(transpiler: &mut Transpiler<'static>),
+    /// worker's transpiler. `graph` is the same trait object stored in
+    /// `vm.standalone_module_graph` (the high tier downcasts to its concrete
+    /// `bun_standalone_graph::Graph` — the sole implementor).
+    pub apply_standalone_runtime_flags: unsafe fn(
+        transpiler: &mut Transpiler<'static>,
+        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+    ),
     /// Parse a Worker's `execArgv` for the flags in [`WorkerExecArgvFlags`].
     /// `None` if parsing failed.
     pub parse_worker_exec_argv_flags: for<'a> fn(

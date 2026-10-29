@@ -1,6 +1,6 @@
 use core::cell::Cell;
 #[cfg(not(windows))]
-use core::ffi::c_char;
+use core::ffi::{c_char, c_uint};
 use core::ffi::{c_int, c_void};
 
 use bun_core::{String as BunString, Utf8Bytes};
@@ -24,7 +24,7 @@ use bun_uws as uws;
 #[cfg(not(windows))]
 use libc::sockaddr_storage;
 #[cfg(not(windows))]
-use libc::{IF_NAMESIZE, if_indextoname, if_nametoindex};
+use libc::{IF_NAMESIZE, if_nametoindex};
 
 use crate::api::SocketAddress;
 use crate::generated_bindgen::udp_socket::js_UDPSocket as js;
@@ -82,6 +82,9 @@ unsafe extern "C" {
     /// `listen(2)`. safe: two integers; a descriptor that cannot listen is an errno.
     #[cfg(not(windows))]
     safe fn listen(fd: c_int, backlog: c_int) -> c_int;
+    /// `if_indextoname(3)`. safe: writes at most `IF_NAMESIZE` bytes to `ifname`; an unknown index is null.
+    #[cfg(not(windows))]
+    safe fn if_indextoname(ifindex: c_uint, ifname: &mut [u8; IF_NAMESIZE + 1]) -> *mut c_char;
 }
 
 extern "C" fn on_close(socket: *mut uws::udp::Socket) {
@@ -244,10 +247,7 @@ extern "C" fn on_data(
                 #[cfg(not(windows))]
                 {
                     let mut buffer = [0u8; IF_NAMESIZE + 1];
-                    // SAFETY: buffer is IF_NAMESIZE+1 bytes, NUL-terminated by zero-init.
-                    if !unsafe { if_indextoname(id, buffer.as_mut_ptr().cast::<c_char>()) }
-                        .is_null()
-                    {
+                    if !if_indextoname(id, &mut buffer).is_null() {
                         // SAFETY: if_indextoname wrote a NUL-terminated string.
                         let name = unsafe { bun_core::ffi::cstr(buffer.as_ptr().cast::<c_char>()) }
                             .to_bytes();

@@ -54,7 +54,7 @@ pub struct Result<'r> {
 
     pub jsx: options::jsx::Pragma,
 
-    pub package_json: Option<*const PackageJSON>,
+    pub package_json: Option<&'static PackageJSON>,
 
     // If present, any ES6 imports to this file can be considered to have no side
     // effects. This means they should be removed if unused.
@@ -189,24 +189,6 @@ pub enum ResultUnion<'r> {
 }
 
 impl<'r> Result<'r> {
-    /// Read-only view of the `package_json` field. It stores `Option<*const _>`
-    /// (rather than `Option<&'static _>`) so [`Default`] / zeroed-init stays
-    /// bit-valid. Takes the `Copy` field, not `&self`, so a site that already
-    /// borrows `self` mutably (e.g. while iterating `path_pair`) can read it.
-    /// Single deref site for the ARENA-backed pointer — same invariant as
-    /// [`dir_info::DirInfo::package_json`].
-    #[inline]
-    pub(crate) fn deref_package_json(
-        ptr: Option<*const PackageJSON>,
-    ) -> Option<&'static PackageJSON> {
-        // SAFETY: ARENA — every `*const PackageJSON` stored in
-        // `Result::package_json` is interned in the resolver's process-lifetime
-        // PackageJSON cache (or a `'static` fallback-module literal); never
-        // freed while a `Result` is live (see LIFETIMES.tsv). No
-        // `&mut PackageJSON` is ever materialized concurrently with a read.
-        ptr.map(|p| unsafe { &*p })
-    }
-
     pub fn path(&mut self) -> Option<&mut crate::fs::Path<'r>> {
         if !self.path_pair.primary.is_disabled {
             return Some(&mut self.path_pair.primary);
@@ -327,7 +309,7 @@ pub struct MatchResult {
     pub(crate) dirname_fd: FD,
     pub(crate) file_fd: FD,
     pub(crate) is_node_module: bool,
-    pub(crate) package_json: Option<*const PackageJSON>,
+    pub(crate) package_json: Option<&'static PackageJSON>,
     pub(crate) dir_info: Option<DirInfoRef>,
     pub(crate) module_type: options::ModuleType,
     pub(crate) is_external: bool,

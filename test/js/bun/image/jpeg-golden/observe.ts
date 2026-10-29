@@ -1,9 +1,11 @@
 // What `Bun.Image` does with a JPEG file and what it makes of pixels, in a form that can be recorded and compared.
-// Shared by record.ts and jpeg-golden.test.ts.
-import { deflateSync, gunzipSync, inflateSync } from "node:zlib";
+// Shared by record.ts and the tests of the JPEG codec.
+import { deflateSync, gunzipSync } from "node:zlib";
 
 export type DecodeCase = {
   name: string;
+  /** What the damage to the copies depends on. A file keeps it when others come or go. */
+  seed: number;
   /** The file, in base64. */
   data: string;
   /** One line for the file and one for each damaged copy of it. See `observeDecode`. */
@@ -18,20 +20,27 @@ export async function store(path: string, value: unknown) {
   await Bun.write(path, Bun.gzipSync(Buffer.from(JSON.stringify(value)), { level: 9 }));
 }
 
-function hash(bytes: Uint8Array): string {
+export function hash(bytes: Uint8Array): string {
   return new Bun.CryptoHasher("sha256").update(bytes).digest("hex").slice(0, 10);
 }
 
-/** The pixels of an 8-bit RGBA PNG, without the help of `Bun.Image`. */
-export function pixelsOfPng(png: Uint8Array): { width: number; height: number; rgba: Uint8Array } {
+/** Much less work for a debug build than `inflateSync` of node:zlib. */
+const inflate = (pieces: Uint8Array[]) => Bun.inflateSync(Buffer.concat(pieces), { windowBits: 15 });
+
+/** The pixels and the ICC profile of an 8-bit RGBA PNG, without the help of `Bun.Image`. */
+export function readPng(png: Uint8Array): { width: number; height: number; rgba: Uint8Array; icc?: Uint8Array } {
   const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
   const width = view.getUint32(16);
   const height = view.getUint32(20);
   const idat: Uint8Array[] = [];
+  let icc: Uint8Array | undefined;
   for (let at = 8; at < png.length; at += 12 + view.getUint32(at)) {
-    if (view.getUint32(at + 4) === 0x49444154) idat.push(png.subarray(at + 8, at + 8 + view.getUint32(at)));
+    const data = png.subarray(at + 8, at + 8 + view.getUint32(at));
+    if (view.getUint32(at + 4) === 0x49444154) idat.push(data);
+    // iCCP: a name, a zero, the compression method, the profile.
+    if (view.getUint32(at + 4) === 0x69434350) icc = inflate([data.subarray(data.indexOf(0) + 2)]);
   }
-  const raw = inflateSync(Buffer.concat(idat));
+  const raw = inflate(idat);
   const stride = width * 4;
   const rgba = new Uint8Array(stride * height);
   for (let y = 0, p = 0; y < height; y++) {
@@ -47,13 +56,15 @@ export function pixelsOfPng(png: Uint8Array): { width: number; height: number; r
       else if (filter === 3) predicted = (left + up) >> 1;
       else if (filter === 4) {
         const estimate = left + up - corner;
-        const [a, b, c] = [Math.abs(estimate - left), Math.abs(estimate - up), Math.abs(estimate - corner)];
+        const a = Math.abs(estimate - left);
+        const b = Math.abs(estimate - up);
+        const c = Math.abs(estimate - corner);
         predicted = a <= b && a <= c ? left : b <= c ? up : corner;
       }
       rgba[row + i] = (raw[p++] + predicted) & 255;
     }
   }
-  return { width, height, rgba };
+  return { width, height, rgba, icc };
 }
 
 function pngChunk(type: string, data: Uint8Array): Uint8Array {
@@ -99,14 +110,42 @@ async function outcome(run: () => Promise<string>): Promise<string> {
   }
 }
 
-async function decoded(image: Bun.Image): Promise<string> {
-  const { width, height, rgba } = pixelsOfPng(await image.png({ compressionLevel: 1 }).bytes());
-  return `${width}x${height}:${hash(rgba)}`;
+const pngOf = (image: Bun.Image) => image.png({ compressionLevel: 1 }).bytes();
+
+function describe(png: Uint8Array): string {
+  const { width, height, rgba, icc } = readPng(png);
+  return `${width}x${height}:${hash(rgba)},icc:${icc ? `${icc.length}:${hash(icc)}` : "none"}`;
+}
+
+/** `Decoder::scalable` of src/jpeg: 8 bits, not lossless, sampled in a way that TurboJPEG has a name for. */
+function scalable(file: Uint8Array): boolean {
+  for (let at = 2; at + 4 <= file.length;) {
+    const marker = file[at + 1];
+    if (file[at] !== 0xff || marker === 0xff) at++;
+    else if (marker <= 0x01 || (marker >= 0xd0 && marker <= 0xd9)) at += 2;
+    else if (marker < 0xc0 || marker > 0xcf || marker === 0xc4 || marker === 0xc8 || marker === 0xcc)
+      at += 2 + ((file[at + 2] << 8) | file[at + 3]);
+    else {
+      const [first, ...others] = Array.from({ length: file[at + 9] }, (_, i) => file[at + 11 + 3 * i]);
+      // The fourth component of CMYK and YCCK is sampled like the first.
+      const all = (chroma: number) => others.every((sampling, i) => sampling === (i === 2 ? first : chroma));
+      return (
+        marker !== 0xc3 &&
+        file[at + 4] === 8 &&
+        (others.length === 0 ||
+          ([0x11, 0x21, 0x22, 0x12, 0x41, 0x14].includes(first) && all(0x11)) ||
+          (first === 0x22 && (all(0x12) || all(0x21))) ||
+          ((first >> 4) * (first & 15) <= 3 && all(first)))
+      );
+    }
+  }
+  return false;
 }
 
 /**
- * `metadata()`, then the pixels at each of `eighths`. A resize to exactly what the decoder gives at M/8 of the size is
- * left to the decoder alone.
+ * `metadata()`, then the pixels and the ICC profile at each of `eighths`, of which the first is 8. A resize to exactly
+ * what the decoder gives at M/8 of the size is left to the decoder alone. What the decoder does not scale is left to
+ * the resize kernel, whose pixels are not for this test to pin: "resized" stands for what it makes of the full size.
  */
 export async function observeDecode(file: Uint8Array, eighths: number[]): Promise<string> {
   let size: { width: number; height: number } | undefined;
@@ -116,14 +155,20 @@ export async function observeDecode(file: Uint8Array, eighths: number[]): Promis
       return `${size.width}x${size.height}`;
     }),
   ];
+  // What has no size fails before the scale matters.
+  if (!size) eighths = [8];
+  const resized = !scalable(file);
+  if (resized) eighths = eighths.slice(0, 2);
+  let full: Uint8Array | undefined;
   for (const m of eighths) {
     results.push(
-      await outcome(() => {
+      await outcome(async () => {
         const image = new Bun.Image(file, { autoOrient: false });
-        if (m === 8 || !size) return decoded(image);
-        return decoded(
-          image.resize(Math.ceil((size.width * m) / 8), Math.ceil((size.height * m) / 8), { fit: "fill" }),
-        );
+        if (m === 8) return describe((full = await pngOf(image)));
+        const to = [Math.ceil((size!.width * m) / 8), Math.ceil((size!.height * m) / 8), { fit: "fill" }] as const;
+        const scaled = describe(await pngOf(image.resize(...to)));
+        if (resized && full && scaled === describe(await pngOf(new Bun.Image(full).resize(...to)))) return "resized";
+        return scaled;
       }),
     );
   }
@@ -173,11 +218,11 @@ export function damaged(file: Uint8Array, seed: number, count: number): Uint8Arr
 }
 
 /** How a file of the decoding fixture is looked at: itself at every scale, each damaged copy at full size and one other. */
-export async function observeDecodeCase(file: Uint8Array, index: number): Promise<string[]> {
-  const copies = damaged(file, index, 3);
+export async function observeDecodeCase(file: Uint8Array, seed: number): Promise<string[]> {
+  const copies = damaged(file, seed, 3);
   return Promise.all([
     observeDecode(file, [8, 7, 6, 5, 4, 3, 2, 1]),
-    ...copies.map((copy, i) => observeDecode(copy, [8, 1 + ((index + i) % 7)])),
+    ...copies.map((copy, i) => observeDecode(copy, [8, 1 + ((seed + i) % 7)])),
   ]);
 }
 
@@ -187,36 +232,68 @@ export type EncodeCase = {
   height: number;
   quality: number;
   progressive: boolean;
-  expected?: string;
+  /** Whether alpha, which a JPEG has no place for, is random. Otherwise it is 255. */
+  alpha: boolean;
 };
 
+/**
+ * Gray blocks of one AC coefficient each, in 15 places that come up 4, 5, 8, 13, 21, ... times. That makes the optimal
+ * Huffman table of a progressive scan a chain, whose longest code has 17 bits where 16 are allowed.
+ */
+function blocksForAChainOfCodes(): number[][] {
+  const blocks: number[][] = [];
+  const cosine = (at: number, frequency: number) => Math.cos(((2 * at + 1) * frequency * Math.PI) / 16);
+  let [count, before] = [4, 3];
+  // Places 6 to 20 of the zigzag order.
+  for (const place of [3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40]) {
+    const [u, v] = [place % 8, place >> 3];
+    // A coefficient of 6. No sample comes near a half, so the last bit of a cosine does not matter.
+    const amplitude = (6 / 4) * (u ? 1 : Math.SQRT1_2) * (v ? 1 : Math.SQRT1_2);
+    const block = Array.from({ length: 64 }, (_, i) =>
+      Math.round(128 + amplitude * cosine(i % 8, u) * cosine(i >> 3, v)),
+    );
+    for (let n = 0; n < count; n++) blocks.push(block);
+    // More than all but the last count together, so that the tree is a chain however ties are broken.
+    [count, before] = [Math.max(before, count) + 1, before + count];
+  }
+  return blocks;
+}
+
 /** Pixels that depend on the case alone. */
-export function picture({ kind, width, height, quality }: EncodeCase): Uint8Array {
-  const below = random((kind + 1) * 7919 + width * 31 + height * 131 + quality);
+export function picture({ kind, width, height, quality, alpha }: EncodeCase): Uint8Array {
+  const seed = (kind + 1) * 7919 + width * 31 + height * 131 + quality;
+  const below = random(seed);
+  const opacity = random(seed + 1);
   const rgba = new Uint8Array(width * height * 4);
   const period = 1 + below(12);
-  const flat = [below(256), below(256), below(256)];
-  if (kind === 1) {
-    for (let p = 0; p < width * 4; p += 4) rgba.set([...flat, 255], p);
-    for (let y = 1; y < height; y++) rgba.copyWithin(y * width * 4, 0, width * 4);
-    return rgba;
-  }
-  for (let y = 0; y < height; y++) {
+  const [red, green, blue] = [below(256), below(256), below(256)];
+  const blocks = kind === 8 ? blocksForAChainOfCodes() : [];
+  let p = 0;
+  // Nothing is allocated for a pixel, which a debug build takes long to do.
+  const put = (r: number, g: number, b: number) => {
+    rgba[p++] = r;
+    rgba[p++] = g;
+    rgba[p++] = b;
+    rgba[p++] = alpha ? opacity(256) : 255;
+  };
+  const putGray = (gray: number) => put(gray, gray, gray);
+  // The rows of a flat picture are copies of the first.
+  for (let y = 0; y < (kind === 1 ? 1 : height); y++) {
     for (let x = 0; x < width; x++) {
-      const p = (y * width + x) * 4;
-      let rgb: number[];
-      if (kind === 0) rgb = [below(256), below(256), below(256)];
+      if (kind === 0) put(below(256), below(256), below(256));
+      else if (kind === 1) put(red, green, blue);
       else if (kind === 2)
-        rgb = [((x * 255) / width) | 0, ((y * 255) / height) | 0, (((x + y) * 255) / (width + height)) | 0];
-      else if (kind === 3) rgb = (((x / period) | 0) + ((y / period) | 0)) % 2 ? [255, 255, 255] : [0, 0, 0];
-      else if (kind === 4) rgb = [below(2) * 255, below(2) * 255, below(2) * 255];
-      else if (kind === 5) rgb = [125 + below(7), 125 + below(7), 125 + below(7)];
-      else if (kind === 6) rgb = [(x * period) & 255, (y * period) & 255, (x * y) & 255];
-      else rgb = below(period * 20) ? flat : [255, 255, 255];
-      rgba.set(rgb, p);
-      rgba[p + 3] = 255;
+        put(((x * 255) / width) | 0, ((y * 255) / height) | 0, (((x + y) * 255) / (width + height)) | 0);
+      else if (kind === 3) putGray((((x / period) | 0) + ((y / period) | 0)) % 2 ? 255 : 0);
+      else if (kind === 4) put(below(2) * 255, below(2) * 255, below(2) * 255);
+      else if (kind === 5) put(125 + below(7), 125 + below(7), 125 + below(7));
+      else if (kind === 6) put((x * period) & 255, (y * period) & 255, (x * y) & 255);
+      else if (kind === 8) putGray(blocks[(y >> 3) * (width >> 3) + (x >> 3)]?.[(y % 8) * 8 + (x % 8)] ?? 128);
+      else if (below(period * 20)) put(red, green, blue);
+      else putGray(255);
     }
   }
+  if (kind === 1) for (let y = 1; y < height; y++) rgba.copyWithin(y * width * 4, 0, width * 4);
   return rgba;
 }
 
@@ -253,13 +330,15 @@ export function encodeCases(): EncodeCase[] {
     for (const [width, height] of sizes) {
       // Every quality and both modes come up for every kind and for every size, not for every pair of them.
       for (let i = 0; i < 3; i++, n++) {
-        cases.push({ kind, width, height, quality: qualities[n % qualities.length], progressive: n % 2 === 1 });
+        const [quality, progressive] = [qualities[n % qualities.length], n % 2 === 1];
+        cases.push({ kind, width, height, quality, progressive, alpha: i === 2 });
       }
     }
   }
   // More than 32,767 blocks with nothing in them, which is as far as a run of them counts.
-  cases.push({ kind: 1, width: 1480, height: 1480, quality: 80, progressive: true });
-  cases.push({ kind: 2, width: 200, height: 150, quality: 85, progressive: false });
-  cases.push({ kind: 5, width: 200, height: 150, quality: 100, progressive: true });
+  cases.push({ kind: 1, width: 1480, height: 1480, quality: 80, progressive: true, alpha: false });
+  cases.push({ kind: 2, width: 200, height: 150, quality: 85, progressive: false, alpha: false });
+  cases.push({ kind: 5, width: 200, height: 150, quality: 100, progressive: true, alpha: false });
+  cases.push({ kind: 8, width: 664, height: 656, quality: 100, progressive: true, alpha: false });
   return cases;
 }

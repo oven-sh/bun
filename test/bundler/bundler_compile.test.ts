@@ -637,7 +637,7 @@ describe("bundler", () => {
     },
   });
   // The embedded root is the directory that holds every entry point, however each one is spelled on the command
-  // line, so a Worker path resolves the same as in the executable that `--aot` builds. A path that names no
+  // line, so a Worker path resolves the same as in an executable compiled ahead of time. A path that names no
   // embedded file is read from disk, relative to the working directory: the copy on disk says so.
   itBundled("compile/EmbeddedRootIgnoresEntryPointSpelling", {
     backend: "cli",

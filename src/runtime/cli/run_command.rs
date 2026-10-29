@@ -2090,10 +2090,20 @@ impl RunCommand {
             ) {
                 Ok(()) => {}
                 Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
-                Err(other) => panic!(
-                    "unexpected error from createFakeTemporaryNodeExecutable: {}",
-                    other.name()
-                ),
+                // `--bun` asks for bun as `node`, so the script must not run with another `node`.
+                Err(_) if force_using_bun => {
+                    bun_core::err_generic!(
+                        "failed to create <b>node<r> alias in {}: the path of the bun executable is not known",
+                        bstr::BStr::new(bun_node_dir_win),
+                    );
+                    Global::exit(1);
+                }
+                Err(_) => bun_core::run_once! {{
+                    bun_core::warn!(
+                        "failed to create <b>node<r> alias in {}, scripts that run <b>node<r> will not find it",
+                        bstr::BStr::new(bun_node_dir_win),
+                    );
+                }},
             }
 
             if !force_using_bun {

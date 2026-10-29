@@ -4419,8 +4419,8 @@ pub fn exec_self(exec_path: &ZStr, args: &[&[u8]], keep_open: Option<Fd>) -> i32
     let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
     pointers.push(core::ptr::null());
     on_before_reload_process_posix(false);
-    // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, `environ` is the
-    // process's own, and `fcntl` takes no pointer.
+    // SAFETY: `exec_path` is NUL-terminated, `pointers` is a null-terminated array of NUL-terminated strings that outlive
+    // the call, `environ` is the process's own, and `fcntl` takes no pointer.
     unsafe {
         if let Some(fd) = keep_open {
             let flags = libc::fcntl(fd.native(), libc::F_GETFD);

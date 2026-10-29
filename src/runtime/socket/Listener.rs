@@ -1344,7 +1344,7 @@ impl Listener {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
         }
 
-        let mut buf = [0u8; 64];
+        let mut buf = [0u8; 16];
         let mut text_buf = [0u8; 512];
         // S008: `ListenSocket` is a ZST opaque — safe deref.
         let socket_ref = bun_opaque::opaque_deref_mut(socket);

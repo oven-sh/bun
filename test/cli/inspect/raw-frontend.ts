@@ -2,17 +2,17 @@ import crypto from "node:crypto";
 import net from "node:net";
 
 /**
- * An inspector frontend on a raw TCP socket.
+ * An inspector frontend on a raw socket, for the WebSocket server and for the
+ * transport that the inspected process dials.
  *
- * A `WebSocket` always reads. This one can stop (`pause()`), so the inspected
- * process cannot write to it, and it shows how the connection ended: with the
- * server's close frame or without one.
+ * It can stop reading (`pause()`), so that the inspected process cannot write
+ * to it, and read again one chunk at a time (`readChunk()`). It keeps only the
+ * start of a large frame. It shows how the connection ended: with the server's
+ * close frame or without one.
  */
 export class RawFrontend {
   /** The `<n>` of each `console.log("#<n> ...")` line that arrived. */
   readonly lines = new Set<number>();
-  /** How many `Debugger.paused` events arrived. */
-  paused = 0;
   /** The close frame of the server, if it sent one. */
   closeFrame: { code: number; reason: string } | undefined;
   ended = false;
@@ -22,6 +22,7 @@ export class RawFrontend {
   #webSocket: boolean;
   #nextId = 1;
   #responses = new Map<number, { resolve: (message: any) => void; reject: (error: Error) => void }>();
+  #events = new Map<string, number>();
   #waiters: (() => void)[] = [];
   // The frame that is arriving: its header bytes, then its payload. Console lines are large
   // and only their start matters, so an event keeps its first bytes and drops the rest.
@@ -47,15 +48,18 @@ export class RawFrontend {
     });
   }
 
-  /** Connects to the WebSocket server of `bun --inspect` or `inspector.open()`. */
-  static async connect(url: string | URL): Promise<RawFrontend> {
+  /**
+   * Connects to the WebSocket server of `bun --inspect` or `inspector.open()`.
+   * `headers`: more lines for the upgrade request, each ending in "\r\n".
+   */
+  static async connect(url: string | URL, headers = ""): Promise<RawFrontend> {
     const { hostname, port, pathname, host } = new URL(url);
     const socket = net.connect(Number(port), hostname);
     await new Promise<void>((resolve, reject) => socket.once("connect", resolve).once("error", reject));
     const frontend = new RawFrontend(socket, true);
     socket.write(
       `GET ${pathname} HTTP/1.1\r\nHost: ${host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n` +
-        `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString("base64")}\r\nSec-WebSocket-Version: 13\r\n\r\n`,
+        `Sec-WebSocket-Key: ${crypto.randomBytes(16).toString("base64")}\r\nSec-WebSocket-Version: 13\r\n${headers}\r\n`,
     );
     let head: Buffer | undefined = Buffer.alloc(0);
     socket.on("data", (chunk: Buffer) => {
@@ -109,6 +113,11 @@ export class RawFrontend {
       this.#socket.write(Buffer.concat([header, payload]));
     }
     return new Promise((resolve, reject) => this.#responses.set(id, { resolve, reject }));
+  }
+
+  /** How many events with this method arrived. */
+  count(method: string): number {
+    return this.#events.get(method) ?? 0;
   }
 
   pause(): void {
@@ -186,7 +195,8 @@ export class RawFrontend {
     if (opcode !== 1) return;
     if (this.#isEvent()) {
       const start = payload.toString("latin1");
-      if (start.startsWith('{"method":"Debugger.paused"')) this.paused++;
+      const method = start.slice(11, start.indexOf('"', 11));
+      this.#events.set(method, this.count(method) + 1);
       // Console.messageAdded has the line in "text", Runtime.consoleAPICalled in the first "value".
       const line = start.match(/"(?:text|value)":"#(\d+) /);
       if (line) this.lines.add(Number(line[1]));

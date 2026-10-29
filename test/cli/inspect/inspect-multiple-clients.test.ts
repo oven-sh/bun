@@ -4,20 +4,20 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import { WebSocket } from "ws";
 
-// Runtime.evaluate goes through JSC's InjectedScript, which has missing
-// RELEASE_AND_RETURN wraps in the prebuilt WebKit that abort the inspectee
-// under validateExceptionChecks.
-const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...inspecteeEnv } = bunEnv;
-
-// `tick()` logs one line. The breakpoint of the tests goes on its `console.log`.
+// `tick()` and `tock()` log one line each. The breakpoints of the tests go on their `console.log`.
 const fixture = `function tick(tag) {
   console.log("tick " + tag);
 }
+function tock(tag) {
+  console.log("tock " + tag);
+}
 globalThis.tick = tick;
+globalThis.tock = tock;
 setInterval(() => {}, 1e9);
 console.log("ready");
 `;
 const breakpoint = { lineNumber: 1, urlRegex: "fixture\\.js$" };
+const breakpointInTock = { lineNumber: 4, urlRegex: "fixture\\.js$" };
 
 /** A frontend that speaks the JSC inspector protocol over the `--inspect` WebSocket. */
 class Client {
@@ -57,8 +57,7 @@ class Client {
     });
   }
 
-  /** `firstId`: each client of a test counts its command ids in a range of its own. */
-  static async connect(url: URL, firstId: number, headers?: Record<string, string>): Promise<Client> {
+  static async connect(url: string, firstId: number, headers?: Record<string, string>): Promise<Client> {
     const ws = new WebSocket(url, { headers });
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => resolve());
@@ -115,43 +114,67 @@ afterAll(() => {
   for (const proc of processes) proc.kill();
 });
 
-/** Starts the fixture. It waits for a frontend before it runs. */
-function startFixture(dir: string): Subprocess<"ignore", "ignore", "pipe"> {
-  const proc = spawn({
-    cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", join(dir, "fixture.js")],
-    env: inspecteeEnv,
-    stdout: "ignore",
-    stderr: "pipe",
-  });
-  processes.push(proc);
-  return proc;
-}
+// A debug build takes seconds to start, which the default 5 s does not cover.
+const timeout = isASAN || isDebug ? 90_000 : undefined;
 
-/** Attaches the first client and lets the program run to its end. */
-async function attach(proc: Subprocess<"ignore", "ignore", "pipe">): Promise<{ url: URL; a: Client }> {
-  let url: URL | undefined;
-  let stderr = "";
-  const decoder = new TextDecoder();
-  for await (const chunk of proc.stderr) {
-    stderr += decoder.decode(chunk);
-    for (const line of stderr.split("\n")) {
+type Clients = {
+  /** The first client. The program ran to its last statement with this client attached. */
+  a: Client;
+  /** Attaches one more client. Each client of a test counts its command ids in a range of its own. */
+  connect(firstId: number, headers?: Record<string, string>): Promise<Client>;
+};
+
+/**
+ * A test on the fixture program. The program must still run when the test ends.
+ * If the test fails, it shows what the program printed.
+ */
+function fixtureTest(name: string, body: (clients: Clients) => Promise<void>): void {
+  test.concurrent(
+    name,
+    async () => {
+      using dir = tempDir("inspect-multiple-clients", { "fixture.js": fixture });
+      // The program waits for a frontend before it runs.
+      await using proc = spawn({
+        cmd: [bunExe(), "--inspect-wait=127.0.0.1:0", join(String(dir), "fixture.js")],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      processes.push(proc);
+
+      let stderr = "";
+      const listening = Promise.withResolvers<string>();
+      (async () => {
+        const decoder = new TextDecoder();
+        for await (const chunk of proc.stderr) {
+          stderr += decoder.decode(chunk, { stream: true });
+          const url = stderr.match(/(ws:\/\/\S+)\n/)?.[1];
+          if (url) listening.resolve(url);
+        }
+        listening.reject(new Error("the program printed no inspector URL"));
+      })();
+
       try {
-        const candidate = new URL(line);
-        if (candidate.protocol.includes("ws")) url = candidate;
-      } catch {}
-    }
-    if (url || stderr.includes("Listening:")) break;
-  }
-  if (!url) throw new Error("Unable to find inspector URL:\n" + stderr);
+        const url = await listening.promise;
+        const a = await Client.connect(url, 1);
+        await a.send("Inspector.enable");
+        await a.send("Console.enable");
+        await a.send("Runtime.enable");
+        await a.send("Inspector.initialized");
+        // The program runs from here. Its last statement logs "ready".
+        await a.until(() => a.consoleTexts.includes("ready"));
 
-  const a = await Client.connect(url, 1);
-  await a.send("Inspector.enable");
-  await a.send("Console.enable");
-  await a.send("Runtime.enable");
-  await a.send("Inspector.initialized");
-  // The program runs from here. Its last statement logs "ready".
-  await a.until(() => a.consoleTexts.includes("ready"));
-  return { url, a };
+        await body({ a, connect: (firstId, headers) => Client.connect(url, firstId, headers) });
+
+        expect(proc.exitCode).toBeNull();
+        await a.close();
+      } catch (error) {
+        console.error("The inspected program printed:\n" + stderr);
+        throw error;
+      }
+    },
+    timeout,
+  );
 }
 
 const ok = { id: expect.any(Number), result: {} };
@@ -163,26 +186,35 @@ async function enableDebugger(client: Client): Promise<void> {
   expect(await client.send("Debugger.setBreakpointsActive", { active: true })).toEqual(ok);
 }
 
-/** Sets the breakpoint in `tick()`. */
-async function setBreakpoint(client: Client): Promise<void> {
-  const { result } = await client.send("Debugger.setBreakpointByUrl", breakpoint);
+/** Sets the breakpoint in `tick()`, or another one. */
+async function setBreakpoint(client: Client, where = breakpoint): Promise<void> {
+  const { result } = await client.send("Debugger.setBreakpointByUrl", where);
   expect(result?.locations).toHaveLength(1);
 }
 
-// A debug build takes seconds to start, which the default 5 s does not cover.
-const timeout = isASAN || isDebug ? 90_000 : undefined;
+/** Calls a function of the fixture from `client`. Resolves with whether the program paused in it: `client` resumes it. */
+async function pausesIn(client: Client, call: string): Promise<boolean> {
+  const paused = client.count("Debugger.paused");
+  const evaluated = client.send("Runtime.evaluate", { expression: call });
+  await Promise.race([evaluated, client.until(() => client.count("Debugger.paused") > paused).catch(() => {})]);
+  if (client.count("Debugger.paused") === paused) return false;
+  expect(await client.send("Debugger.resume")).toEqual(ok);
+  await evaluated;
+  return true;
+}
+
+/** Resolves when the inspected thread has run the tasks that were queued for it, such as the disconnect of a client. */
+async function afterInspectedThread(client: Client): Promise<void> {
+  await client.send("Runtime.evaluate", { expression: "0" });
+}
 
 // JSGlobalObjectInspectorController::disconnectFrontend tears down every agent
 // (willDestroyFrontendAndBackend) before its last-frontend check, so without
 // Bun's per-connection routing a second client's close would silently disable
 // Console/Runtime/Debugger for the still-attached first client.
-test.concurrent(
+fixtureTest(
   "a second --inspect client disconnecting does not disable inspector agents for the first",
-  async () => {
-    using dir = tempDir("inspect-second-client", { "fixture.js": fixture });
-    await using proc = startFixture(String(dir));
-    const { url, a } = await attach(proc);
-
+  async ({ a, connect }) => {
     // The Console.messageAdded event for a console.log inside Runtime.evaluate is
     // emitted synchronously during dispatch, so it arrives on this socket before
     // the evaluate response does.
@@ -192,16 +224,13 @@ test.concurrent(
     // B enables the domains that A has, and one that only B has. The round trips register B as a
     // FrontendChannel on the inspected thread before it closes: a socket that never reached
     // connectFrontend would not exercise the disconnect path.
-    const b = await Client.connect(url, 1000);
+    const b = await connect(1000);
     expect(await b.send("Console.enable")).toEqual(ok);
     expect(await b.send("Runtime.enable")).toEqual(ok);
     // A command counts whatever the order of its keys is.
     expect(await b.sendText(id => `{ "method": "Heap.enable", "id": ${id} }`)).toEqual(ok);
     await b.close();
-
-    // One round-trip so B's disconnect task (posted to the inspected thread before
-    // this message was) has run before the probe below.
-    await a.send("Runtime.evaluate", { expression: "0" });
+    await afterInspectedThread(a);
 
     // What both clients had enabled stays on for A.
     await a.send("Runtime.evaluate", { expression: "tick('after')" });
@@ -211,22 +240,15 @@ test.concurrent(
       id: expect.any(Number),
       error: expect.objectContaining({ message: expect.stringContaining("Heap domain already disabled") }),
     });
-
-    expect(proc.exitCode).toBeNull();
-    await a.close();
   },
-  timeout,
 );
 
 // JSC has one debugger state for every frontend. What a client that left had turned on
 // must not stop the program when the client that stays never turned the debugger on.
-test.concurrent(
+fixtureTest(
   "a debugger client that leaves takes its breakpoints with it, and the other client keeps its events",
-  async () => {
-    using dir = tempDir("inspect-debugger-leaves", { "fixture.js": fixture });
-    await using proc = startFixture(String(dir));
-    const { url, a } = await attach(proc);
-    const b = await Client.connect(url, 1000);
+  async ({ a, connect }) => {
+    const b = await connect(1000);
     await enableDebugger(b);
     await setBreakpoint(b);
 
@@ -238,8 +260,7 @@ test.concurrent(
     expect(a.consoleTexts).toEqual(["ready", "tick one"]);
 
     await b.close();
-    // One round-trip so that B's disconnect task has run.
-    await a.send("Runtime.evaluate", { expression: "0" });
+    await afterInspectedThread(a);
 
     // Nobody is left to resume the program, so it must not stop in tick() again.
     const second = a.send("Runtime.evaluate", { expression: "tick('two')" });
@@ -248,20 +269,13 @@ test.concurrent(
       pausedAgain: false,
       consoleTexts: ["ready", "tick one", "tick two"],
     });
-
-    expect(proc.exitCode).toBeNull();
-    await a.close();
   },
-  timeout,
 );
 
-test.concurrent(
+fixtureTest(
   "the program continues when its debugger client leaves during a pause and another client stays",
-  async () => {
-    using dir = tempDir("inspect-debugger-leaves-paused", { "fixture.js": fixture });
-    await using proc = startFixture(String(dir));
-    const { url, a } = await attach(proc);
-    const b = await Client.connect(url, 1000);
+  async ({ a, connect }) => {
+    const b = await connect(1000);
     await enableDebugger(b);
     await setBreakpoint(b);
     // Only a command turns the debugger off. This text in an expression does not.
@@ -281,120 +295,113 @@ test.concurrent(
     await evaluated;
     expect(a.consoleTexts).toEqual(["ready", "tick one"]);
 
-    // The debugger went with B: after B's disconnect task, tick() does not stop again.
-    await a.send("Runtime.evaluate", { expression: "0" });
+    // The debugger went with B: tick() does not stop again.
+    await afterInspectedThread(a);
     const second = a.send("Runtime.evaluate", { expression: "tick('two')" });
     await Promise.race([second, a.until(() => a.count("Debugger.paused") > 1).catch(() => {})]);
     expect({ pausedAgain: a.count("Debugger.paused") > 1, consoleTexts: a.consoleTexts }).toEqual({
       pausedAgain: false,
       consoleTexts: ["ready", "tick one", "tick two"],
     });
-
-    expect(proc.exitCode).toBeNull();
-    await a.close();
   },
-  timeout,
 );
 
-test.concurrent(
-  "a debugger client keeps the debugger and its breakpoint when another debugger client leaves",
-  async () => {
-    using dir = tempDir("inspect-two-debuggers", { "fixture.js": fixture });
-    await using proc = startFixture(String(dir));
-    const { url, a } = await attach(proc);
-    await enableDebugger(a);
-    await setBreakpoint(a);
-    const b = await Client.connect(url, 1000);
-    await enableDebugger(b);
-    await b.close();
-    // One round-trip so that B's disconnect task has run.
-    await a.send("Runtime.evaluate", { expression: "0" });
+// JSC accepts the first `Debugger.enable` and refuses the second. The debugger is on for both
+// clients all the same, and each breakpoint belongs to the client that set it.
+for (const leaver of ["accepted", "refused"]) {
+  fixtureTest(
+    `of two debugger clients, the one whose Debugger.enable JSC ${leaver} leaves: the other keeps the debugger and its breakpoint`,
+    async ({ a, connect }) => {
+      const b = await connect(1000);
+      expect(await a.send("Debugger.enable")).toEqual(ok);
+      expect(await b.send("Debugger.enable")).toEqual({
+        id: expect.any(Number),
+        error: expect.objectContaining({ message: expect.stringContaining("Debugger domain already enabled") }),
+      });
+      expect(await a.send("Debugger.setBreakpointsActive", { active: true })).toEqual(ok);
+      await setBreakpoint(a, breakpoint);
+      await setBreakpoint(b, breakpointInTock);
 
-    // A's breakpoint still stops the program, and A resumes it.
-    const evaluated = a.send("Runtime.evaluate", { expression: "tick('one')" });
-    await Promise.race([evaluated, a.until(() => a.count("Debugger.paused") === 1).catch(() => {})]);
-    expect({ paused: a.count("Debugger.paused"), consoleTexts: a.consoleTexts }).toEqual({
-      paused: 1,
-      consoleTexts: ["ready"],
-    });
-    expect(await a.send("Debugger.resume")).toEqual(ok);
-    await evaluated;
-    expect(a.consoleTexts).toEqual(["ready", "tick one"]);
+      const [leaving, staying] = leaver === "accepted" ? [a, b] : [b, a];
+      const [itsCall, ownCall] = leaver === "accepted" ? ["tick('x')", "tock('x')"] : ["tock('x')", "tick('x')"];
+      await leaving.close();
+      await afterInspectedThread(staying);
 
-    expect(proc.exitCode).toBeNull();
-    await a.close();
-  },
-  timeout,
-);
+      expect({
+        atItsBreakpoint: await pausesIn(staying, itsCall),
+        atOwnBreakpoint: await pausesIn(staying, ownCall),
+      }).toEqual({
+        atItsBreakpoint: false,
+        atOwnBreakpoint: true,
+      });
+      await staying.close();
+    },
+  );
+}
+
+// The inspected thread takes a command and a disconnect in the order the client sent them.
+fixtureTest("a breakpoint that a client set as it left is gone with it", async ({ a, connect }) => {
+  await enableDebugger(a);
+  const b = await connect(1000);
+  await enableDebugger(b);
+  // B does not wait for the answer.
+  b.send("Debugger.setBreakpointByUrl", breakpoint).catch(() => {});
+  await b.close();
+  await afterInspectedThread(a);
+
+  expect(await pausesIn(a, "tick('x')")).toBe(false);
+  expect(a.consoleTexts).toEqual(["ready", "tick x"]);
+});
 
 // Not every switch is a domain: a recording and the type profiler also go with the client that started them.
-test.concurrent(
-  "a client that leaves takes its profilers with it, and nobody gets its samples",
-  async () => {
-    using dir = tempDir("inspect-profiler-leaves", { "fixture.js": fixture });
-    await using proc = startFixture(String(dir));
-    const { url, a } = await attach(proc);
-    const typeInformation = () => a.send("Runtime.getRuntimeTypesForVariablesAtOffsets", { locations: [] });
+fixtureTest("a client that leaves takes its profilers with it, and nobody gets its samples", async ({ a, connect }) => {
+  const typeInformation = () => a.send("Runtime.getRuntimeTypesForVariablesAtOffsets", { locations: [] });
 
-    const b = await Client.connect(url, 1000);
-    expect(await b.send("Runtime.enableTypeProfiler")).toEqual(ok);
-    expect(await b.send("ScriptProfiler.startTracking", { includeSamples: true })).toEqual(ok);
-    expect(await typeInformation()).toEqual({ id: expect.any(Number), result: { types: [] } });
-    // Something for the sampling profiler to record.
-    await a.send("Runtime.evaluate", { expression: "for (let i = 0; i < 1e6; i++) tick.name;" });
-    await b.close();
-    // One round-trip so that B's disconnect task has run.
-    await a.send("Runtime.evaluate", { expression: "0" });
+  const b = await connect(1000);
+  expect(await b.send("ScriptProfiler.startTracking", { includeSamples: true })).toEqual(ok);
+  // Something for the sampling profiler to record.
+  await a.send("Runtime.evaluate", { expression: "for (let i = 0; i < 1e6; i++) tick.name;" });
+  // The program runs nothing hot while the type profiler is on: JSC can crash when it goes off then (oven-sh/WebKit#836).
+  expect(await b.send("Runtime.enableTypeProfiler")).toEqual(ok);
+  expect(await typeInformation()).toEqual({ id: expect.any(Number), result: { types: [] } });
+  await b.close();
+  await afterInspectedThread(a);
 
-    expect(await typeInformation()).toEqual({
-      id: expect.any(Number),
-      error: expect.objectContaining({ message: expect.stringContaining("VM has no type information") }),
-    });
-    // The recording ended, without the samples that B would have asked for.
-    expect(a.events("ScriptProfiler.trackingComplete").map(params => params.samples?.stackTraces ?? [])).toEqual([[]]);
-    // So A can start one of its own.
-    expect(await a.send("ScriptProfiler.startTracking")).toEqual(ok);
-    expect(a.count("ScriptProfiler.trackingStart")).toBe(2);
-    expect(await a.send("ScriptProfiler.stopTracking")).toEqual(ok);
+  expect(await typeInformation()).toEqual({
+    id: expect.any(Number),
+    error: expect.objectContaining({ message: expect.stringContaining("VM has no type information") }),
+  });
+  // The recording ended, without the samples that B would have asked for.
+  expect(a.events("ScriptProfiler.trackingComplete").map(params => params.samples?.stackTraces ?? [])).toEqual([[]]);
+  // So A can start one of its own.
+  expect(await a.send("ScriptProfiler.startTracking")).toEqual(ok);
+  expect(a.count("ScriptProfiler.trackingStart")).toBe(2);
+  expect(await a.send("ScriptProfiler.stopTracking")).toEqual(ok);
 
-    await a.send("Runtime.evaluate", { expression: "tick('after')" });
-    expect(a.consoleTexts).toEqual(["ready", "tick after"]);
-    expect(proc.exitCode).toBeNull();
-    await a.close();
-  },
-  timeout,
-);
+  await a.send("Runtime.evaluate", { expression: "tick('after')" });
+  expect(a.consoleTexts).toEqual(["ready", "tick after"]);
+});
 
 // The inspected thread connects a client in a task. A client that is gone by then was never
 // connected, but the commands it sent still run.
-test.concurrent(
-  "a client that comes and goes during a pause leaves nothing on",
-  async () => {
-    using dir = tempDir("inspect-never-connected", { "fixture.js": fixture });
-    await using proc = startFixture(String(dir));
-    const { url, a } = await attach(proc);
-    await enableDebugger(a);
-    await setBreakpoint(a);
+fixtureTest("a client that comes and goes during a pause leaves nothing on", async ({ a, connect }) => {
+  await enableDebugger(a);
+  await setBreakpoint(a);
 
-    const evaluated = a.send("Runtime.evaluate", { expression: "tick('one')" });
-    await a.until(() => a.count("Debugger.paused") === 1);
-    // The program is paused, so its thread runs no task. This client does not keep the process alive.
-    const b = await Client.connect(url, 1000, { "Ref-Event-Loop": "0" });
-    b.send("Heap.enable").catch(() => {});
-    await b.close();
+  const evaluated = a.send("Runtime.evaluate", { expression: "tick('one')" });
+  await a.until(() => a.count("Debugger.paused") === 1);
+  // The program is paused, so its thread runs no task. This client does not keep the process alive.
+  const b = await connect(1000, { "Ref-Event-Loop": "0" });
+  b.send("Heap.enable").catch(() => {});
+  await b.close();
 
-    expect(await a.send("Debugger.resume")).toEqual(ok);
-    await evaluated;
-    // One round-trip so that B's tasks have run.
-    await a.send("Runtime.evaluate", { expression: "0" });
+  expect(await a.send("Debugger.resume")).toEqual(ok);
+  await evaluated;
+  await afterInspectedThread(a);
 
-    // What B enabled went with B: JSC refuses to disable it a second time.
-    expect(await a.send("Heap.disable")).toEqual({
-      id: expect.any(Number),
-      error: expect.objectContaining({ message: expect.stringContaining("Heap domain already disabled") }),
-    });
-    expect(proc.exitCode).toBeNull();
-    await a.close();
-  },
-  timeout,
-);
+  // What B enabled went with B: JSC refuses to disable it a second time.
+  expect(await a.send("Heap.disable")).toEqual({
+    id: expect.any(Number),
+    error: expect.objectContaining({ message: expect.stringContaining("Heap domain already disabled") }),
+  });
+});

@@ -6,10 +6,6 @@ import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 // Each of these tests starts a program and attaches clients to it, which takes a debug build seconds.
 const attachTimeout = isASAN || isDebug ? 120_000 : undefined;
 
-// Runtime.evaluate and a pause go through JSC's InjectedScript. In the prebuilt WebKit it has
-// exception checks missing, which abort the child under validateExceptionChecks.
-const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...inspecteeEnv } = bunEnv;
-
 // A test that times out does not dispose its process, and a paused program does not see its stdin close.
 const processes: Bun.Subprocess[] = [];
 afterAll(() => {
@@ -20,7 +16,7 @@ afterAll(() => {
 async function openInspectee(cwd: string) {
   const proc = Bun.spawn({
     cmd: [bunExe(), "entry.mjs"],
-    env: inspecteeEnv,
+    env: bunEnv,
     cwd,
     stdin: "pipe",
     stdout: "pipe",
@@ -214,7 +210,7 @@ inspector.open(0, "127.0.0.1");
 const session = new inspector.Session();
 session.connect();
 session.post("Debugger.enable");
-// Each line on stdin runs a debugger statement and then says so.
+// Each line on stdin is a step: it runs a debugger statement and then says so.
 process.stdin.on("data", data => {
   for (const step of String(data).trim().split("\\n")) {
     debugger;
@@ -226,62 +222,75 @@ process.stdin.on("data", data => {
     const { proc, url } = await openInspectee(String(dir));
     await using _ = proc;
 
-    // "done <step>" lines of the program, as they arrive.
+    // The steps that the program has run through.
     const done: string[] = [];
-    let wake = () => {};
+    const waiters: (() => void)[] = [];
     (async () => {
       const decoder = new TextDecoder();
+      let rest = "";
       for await (const chunk of proc.stdout) {
-        done.push(...decoder.decode(chunk, { stream: true }).split("\n").filter(Boolean));
-        wake();
+        const lines = (rest + decoder.decode(chunk, { stream: true })).split("\n");
+        rest = lines.pop()!;
+        for (const line of lines) done.push(line.slice("done ".length));
+        for (const waiter of waiters.splice(0)) waiter();
       }
-      wake();
+      for (const waiter of waiters.splice(0)) waiter();
     })();
-    const step = async (name: string) => {
+    /** Tells the program to run a step. Resolves when the program has run through its debugger statement. */
+    const step = (name: string) => {
       proc.stdin.write(name + "\n");
       proc.stdin.flush();
-    };
-    const untilDone = async (name: string) => {
-      while (!done.includes("done " + name)) {
-        if (proc.exitCode !== null) throw new Error(`the program exited before step ${name}`);
-        await new Promise<void>(resolve => (wake = resolve));
-      }
+      return (async () => {
+        while (!done.includes(name)) {
+          if (proc.exitCode !== null) throw new Error(`the program exited before step ${name}`);
+          await new Promise<void>(resolve => waiters.push(resolve));
+        }
+      })();
     };
 
-    // The Session turned the debugger on. A client holds its pauses, as in Node, also when that
-    // client did not turn the debugger on itself. The answer to the resume says that the program waited.
+    // The Session's Debugger.enable goes through the debugger thread, in no order with stdin. So the
+    // statement pauses the program from some step on. A client holds that pause, as in Node, also
+    // when the client did not turn the debugger on itself.
     const visitor = await connectDevToolsClient(url, { resume: false });
     await visitor.send("Runtime.enable");
-    await step("0");
-    await visitor.until(() => visitor.paused === 1);
-    expect(await visitor.send("Debugger.resume")).toEqual({ id: expect.any(Number), result: {} });
-    await untilDone("0");
+    for (let i = 0; visitor.paused === 0; i++) {
+      const finished = step("warm-up " + i);
+      await Promise.race([finished, visitor.until(() => visitor.paused === 1)]);
+      if (visitor.paused === 0) continue;
+      // The answer to the resume says that the program waited for it.
+      expect(await visitor.send("Debugger.resume")).toEqual({ id: expect.any(Number), result: {} });
+      await finished;
+    }
     await visitor.close();
 
-    // With a client attached the statement pauses the program, and the client resumes it.
+    // With a debugger client attached the statement pauses the program, and the client resumes it.
     const first = await connectDevToolsClient(url);
     await first.send("Debugger.enable");
-    await step("1");
-    await untilDone("1");
+    await step("with a debugger client");
     expect(first.paused).toBe(1);
 
     // The client leaves while the program runs. Only the Session is left: nothing holds the program.
     await first.close();
-    await step("2");
-    await untilDone("2");
+    await step("with the Session alone");
+
+    // The debugger went off with the client that had it on: the Session keeps nothing on by itself.
+    // So a client that does not turn the debugger on holds no pause now.
+    const later = await connectDevToolsClient(url, { resume: false });
+    await later.send("Runtime.enable");
+    await step("with a client that is no debugger");
+    expect(later.paused).toBe(0);
+    await later.close();
 
     // A client that attaches later gets a debugger that works. It leaves during the pause.
     const second = await connectDevToolsClient(url, { resume: false });
     await second.send("Debugger.enable");
-    await step("3");
+    const finished = step("with a debugger client that leaves");
     await second.until(() => second.paused === 1);
-    expect(done).toEqual(["done 0", "done 1", "done 2"]);
+    expect(done).not.toContain("with a debugger client that leaves");
     await second.close();
-    await untilDone("3");
+    await finished;
 
-    await step("4");
-    await untilDone("4");
-    expect(done).toEqual(["done 0", "done 1", "done 2", "done 3", "done 4"]);
+    await step("at the end");
     expect(proc.exitCode).toBeNull();
   },
   attachTimeout,

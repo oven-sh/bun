@@ -127,18 +127,15 @@ type Receive = (...messages: string[]) => number | void;
 type UnsentBytes = () => number;
 // Closes a frontend that took nothing while the backend queued its limit for it. The backend disconnects it after the call.
 type Dismiss = (reason: string) => void;
-type CreateBackendFn = (
-  executionContextId: number,
-  refEventLoop: boolean,
-  receive: Receive,
-  unsentBytes?: UnsentBytes,
-  dismiss?: Dismiss,
-) => unknown;
+// A transport gives all three. The in-process `inspector.Session` has no client and gives `receive` only.
+type Transport = [receive: Receive, unsentBytes: UnsentBytes, dismiss: Dismiss];
+type Frontend = Transport | [receive: Receive];
+type CreateBackendFn = (executionContextId: number, refEventLoop: boolean, ...frontend: Frontend) => unknown;
 
 const socketUnsentBytes = $bindgen("socket_body.bind.ts", "getBufferedAmount") as (socket: FramedSocket) => number;
 
 // This transport has no close frame, so a dismissed frontend gets no reason.
-function socketTransport(socket: FramedSocket, framer: SocketFramer): [Receive, UnsentBytes, Dismiss] {
+function socketTransport(socket: FramedSocket, framer: SocketFramer): Transport {
   return [
     (...messages) => {
       let sent = true;
@@ -218,7 +215,6 @@ export default function (
           // outlive it. Refcounted so one Session can't tear down another's.
           if (--sessionRefs > 0) return;
           sessionRefs = 0;
-          sessionAdapter?.removeBreakpoints();
           sessionBackend?.close();
           sessionBackend = undefined;
           sessionAdapter = undefined;
@@ -345,7 +341,7 @@ function unescapeUnixSocketUrl(href: string) {
 
 class Debugger {
   #url?: URL;
-  #createBackend: (refEventLoop: boolean, receive: Receive, unsentBytes?: UnsentBytes, dismiss?: Dismiss) => Backend;
+  #createBackend: (refEventLoop: boolean, ...frontend: Frontend) => Backend;
   // node:inspector mode: connections speak the V8 Chrome DevTools Protocol and
   // /json discovery endpoints are served.
   #nodeInspector = false;
@@ -361,8 +357,8 @@ class Debugger {
     isNodeInspector: boolean = false,
   ) {
     this.#nodeInspector = isNodeInspector;
-    this.#createBackend = (refEventLoop, receive, unsentBytes, dismiss) => {
-      const backend = createBackend(executionContextId, refEventLoop, receive, unsentBytes, dismiss);
+    this.#createBackend = (refEventLoop, ...frontend) => {
+      const backend = createBackend(executionContextId, refEventLoop, ...frontend);
       return {
         write: (message: string | string[]) => {
           send.$call(backend, message);
@@ -607,8 +603,6 @@ class Debugger {
       return ws.getBufferedAmount();
     };
     const dismiss = (reason: string) => {
-      // The backend takes nothing more from this frontend once this returns.
-      data.adapter?.removeBreakpoints();
       if (ws.getBufferedAmount() === 0) {
         ws.close(1013, reason);
         return;
@@ -685,7 +679,6 @@ class Debugger {
   #close(connection: ConnectionOwner): void {
     const { data } = connection;
     clearTimeout(data.dismissTimer);
-    data.adapter?.removeBreakpoints();
     data.backend?.close();
   }
 

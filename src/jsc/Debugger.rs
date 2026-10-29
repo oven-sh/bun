@@ -169,6 +169,7 @@ unsafe extern "C" {
         is_connect: bool,
         is_node_inspector: bool,
     );
+    safe fn Bun__Debugger__setStalledFrontendBacklog(megabytes: u64);
 }
 
 static FUTEX_ATOMIC: AtomicU32 = AtomicU32::new(0);
@@ -511,6 +512,10 @@ impl Debugger {
             from_env,
             path_or_port,
         } = init;
+
+        if let Some(megabytes) = bun_core::env_var::BUN_DEBUG_TEST_INSPECTOR_BACKLOG_MB.get() {
+            Bun__Debugger__setStalledFrontendBacklog(megabytes);
+        }
 
         if !from_env.is_empty() {
             let url = StringView::borrow_utf8(from_env);

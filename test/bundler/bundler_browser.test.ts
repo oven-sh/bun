@@ -131,15 +131,17 @@ describe("bundler", () => {
         const ab = Buffer.from("ab", "utf16le");
         // A match is reported in bytes, not in 2-byte units.
         console.log("bytes", utf16.lastIndexOf("c", "ucs2"), utf16.lastIndexOf("c", 8, "ucs2"), utf16.indexOf("c", 6, "utf16le"));
-        // The search uses whole 2-byte units. An odd byteOffset is rounded down.
-        console.log("odd byteOffset", utf16.indexOf("abc", 1, "utf16le"), utf16.lastIndexOf("c", 5, "ucs2"), utf16.includes("c", 9, "ucs2"));
+        // A forward search for a string starts at a whole 2-byte unit. An odd byteOffset is rounded up.
+        console.log("rounded up", utf16.indexOf("abc", 1, "utf16le"), utf16.includes("ca", 5, "ucs2"), utf16.indexOf("c", -7, "ucs2"));
+        // A backward search, and a search for a Buffer, round an odd byteOffset down.
+        console.log("rounded down", utf16.lastIndexOf("a", 5, "ucs2"), utf16.indexOf(Buffer.from("abc", "utf16le"), 1, "ucs2"));
         // The odd last byte of the buffer is not searched, and a match never starts at an odd byte.
         console.log("odd length", odd.lastIndexOf("c", "utf16le"), odd.indexOf(Buffer.from("x", "utf16le"), "ucs2"), Buffer.from([98, 97, 0]).lastIndexOf("a", "ucs2"));
         // With a string value, a negative byteOffset counts from the end of the last whole unit.
         const a0a = Buffer.from([97, 0, 97]);
         console.log("negative", a0a.indexOf("a", -2, "ucs2"), a0a.lastIndexOf("a", -3, "ucs2"), a0a.lastIndexOf(Buffer.from([97, 0]), -3, "ucs2"));
         // The odd last byte of a Buffer value is not compared, but the whole value must fit in bytes.
-        console.log("odd value", Buffer.from([97, 97, 98, 0]).lastIndexOf(Buffer.from([97, 97, 98]), "ucs2"), ab.lastIndexOf(Buffer.from([97, 0, 98, 0, 1]), "ucs2"), ab.indexOf("b", 3, "ucs2"));
+        console.log("odd value", Buffer.from([97, 97, 98, 0]).lastIndexOf(Buffer.from([97, 97, 98]), "ucs2"), ab.lastIndexOf(Buffer.from([97, 0, 98, 0, 1]), "ucs2"), ab.indexOf(Buffer.from("b", "utf16le"), 3, "ucs2"));
         // The search does not need Symbol.species. Without it (Hermes), subarray() returns a plain Uint8Array.
         Object.defineProperty(Buffer, Symbol.species, { get: () => Uint8Array });
         console.log("no species", odd.lastIndexOf("c", "utf16le"), odd.indexOf("c", -4, "utf16le"));
@@ -147,10 +149,11 @@ describe("bundler", () => {
     },
     target: "browser",
     run: {
-      // The values that Node.js prints for the same code.
+      // The values that Node.js v26.12.1 prints for the same code. Before v26.11.0 it printed "rounded up 0 true 4".
       stdout: `
         bytes 10 4 10
-        odd byteOffset 0 4 true
+        rounded up 6 false 10
+        rounded down 0 0
         odd length 10 -1 -1
         negative 0 -1 0
         odd value 0 -1 -1

@@ -763,8 +763,9 @@ function bidirectionalIndexOf(buffer, val, byteOffset, encoding, dir) {
   byteOffset = Math.trunc(byteOffset) || 0;
 
   // Like Node.js IndexOfString: for a string, drop the odd last byte of a UTF-16 buffer before the offset is resolved.
+  const utf16String = typeof val === "string" && isUtf16le(encoding);
   let length = buffer.length;
-  if (typeof val === "string" && isUtf16le(encoding)) length -= length % 2;
+  if (utf16String) length -= length % 2;
 
   // Normalize byteOffset: negative offsets start from the end of the buffer
   if (byteOffset < 0) byteOffset = length + byteOffset;
@@ -787,6 +788,8 @@ function bidirectionalIndexOf(buffer, val, byteOffset, encoding, dir) {
     if (val.length === 0) {
       return -1;
     }
+    // Like Node.js IndexOfString since v26.11.0: a forward search for a string starts at a whole UTF-16 unit.
+    if (utf16String && dir) byteOffset += byteOffset % 2;
     return arrayIndexOf(buffer, val, byteOffset, encoding, dir);
   } else if (typeof val === "number") {
     val = val & 0xff; // Search for a byte value [0-255]

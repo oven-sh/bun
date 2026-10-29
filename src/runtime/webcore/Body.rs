@@ -1088,7 +1088,7 @@ impl Value {
                     },
                     Action::GetJSON => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result = promise.wrap(cx.global(), |_| blob.to_json_share(cx));
+                        let result = promise.wrap(cx.global(), |_| blob.to_json(cx));
                         blob.detach();
                         result?;
                     }
@@ -1896,7 +1896,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |_| blob.to_json(&cx, Lifetime::Share));
+        let result = JSPromise::wrap(global_object, |_| blob.to_json(&cx));
         blob.detach();
         result
     }

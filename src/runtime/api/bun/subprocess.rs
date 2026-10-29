@@ -148,14 +148,16 @@ bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_t
 
 impl<'a> Subprocess<'a> {
     /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any) for
-    /// the caller to `deref()` after closing the writer; see `StaticPipeWriter`.
-    fn take_pending_start_writer(&self) -> Option<*mut StaticPipeWriter<'a>> {
+    /// the caller to drop after closing the writer; see `StaticPipeWriter`.
+    fn take_pending_start_writer(&self) -> Option<RefPtr<StaticPipeWriter<'a>>> {
         match self.stdin.get() {
             Writable::Buffer(buffer) => {
                 let writer = Writable::buffer_writer_mut(buffer);
                 if writer.started {
                     writer.started = false;
-                    Some(buffer.as_ptr())
+                    // SAFETY: `buffer` keeps the writer live. `started` was the token
+                    // for the +1 `start()` took; clearing it makes that ref ours.
+                    Some(unsafe { RefPtr::from_raw(buffer.as_ptr()) })
                 } else {
                     None
                 }
@@ -929,10 +931,7 @@ impl Subprocess<'_> {
         if let Writable::Buffer(buffer) = self.stdin.get() {
             Writable::buffer_writer_mut(buffer).close();
         }
-        if let Some(writer) = pending_start {
-            // SAFETY: `started` ⇒ start +1 was live entering; last use.
-            unsafe { RefCount::deref(writer) };
-        }
+        drop(pending_start);
 
         if !existing_stdin_value.is_empty() {
             crate::webcore::file_sink::JSSink::forget_subprocess(existing_stdin_value);
@@ -1138,19 +1137,18 @@ impl Subprocess<'_> {
         match io {
             StdioKind::Stdin => {
                 let pending_start = self.take_pending_start_writer();
-                if let Some(writer) = pending_start {
-                    // SAFETY: live StaticPipeWriter with >= 2 refs.
-                    unsafe { (*writer).close() };
+                if let Some(writer) = &pending_start {
+                    // SAFETY: `pending_start` owns the claimed ref, which keeps the writer
+                    // alive across `close()`: its `on_close_io` empties the stdin slot and
+                    // drops the ref held there. Nothing else borrows the writer here.
+                    unsafe { (*writer.as_ptr()).close() };
                 }
                 if !called {
                     Writable::finalize(self);
                 } else {
                     self.stdin.with_mut(|s| s.close());
                 }
-                if let Some(writer) = pending_start {
-                    // SAFETY: `started` ⇒ start +1 was live entering; last use.
-                    unsafe { RefCount::deref(writer) };
-                }
+                drop(pending_start);
             }
             StdioKind::Stdout => {
                 if !called {

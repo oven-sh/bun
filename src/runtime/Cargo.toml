@@ -5,12 +5,9 @@ edition.workspace = true
 
 [lib]
 path = "lib.rs"
-# The final Rust artifact: a staticlib the native build links together with the
-# C/C++ objects (see scripts/build/rust.ts). Being the leaf staticlib itself,
-# rather than an rlib consumed by a separate shim crate, means rustc never
-# encodes crate metadata for this (by far the largest) crate and cargo never
-# re-bundles every rlib into a second archive on each rebuild.
-crate-type = ["staticlib"]
+# The root of the crate graph the native build plans (scripts/build/rust.ts), and a library like every other crate:
+# the link takes each crate's rlib beside the C/C++ objects. No crate is a "final" Rust artifact, so nothing copies
+# every crate into one archive.
 
 [lints]
 workspace = true
@@ -24,7 +21,6 @@ getrandom.workspace = true
 # docs/PORTING.md, prefer a vetted crates.io impl over hand-porting Keccak/Blake2.
 sha3 = { version = "0.10", default-features = false }
 blake2 = { version = "0.10", default-features = false }
-bytemuck = "1"
 thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true
@@ -56,8 +52,10 @@ bun_cares_sys.workspace = true
 bun_dns.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
+bun_exe_format.workspace = true
 bun_glob.workspace = true
 bun_highway.workspace = true
+bun_histogram.workspace = true
 bun_http.workspace = true
 bun_http_jsc.workspace = true
 bun_http_types.workspace = true
@@ -67,14 +65,21 @@ bun_parsers.workspace = true
 bun_io.workspace = true
 bun_js_parser.workspace = true
 bun_js_parser_jsc.workspace = true
+bun_sema.workspace = true
+bun_sema_driver.workspace = true
+bun_aot = { package = "bun_aot_interface", path = "../aot/interface" }
+bun_lint_driver.workspace = true
+bun_format_conformance.workspace = true
+bun_sema_baselines.workspace = true
 bun_js_printer.workspace = true
 bun_jsc.workspace = true
-bun_libarchive.workspace = true
+bun_archive.workspace = true
 bun_libdeflate_sys.workspace = true
 bun_ast.workspace = true
 bun_ast_jsc.workspace = true
 lol_html.workspace = true
 bun_md.workspace = true
+bun_node_path.workspace = true
 bun_options_types.workspace = true
 bun_output.workspace = true
 bun_spawn.workspace = true
@@ -82,6 +87,7 @@ bun_sql_jsc.workspace = true
 bun_paths.workspace = true
 bun_picohttp.workspace = true
 bun_ptr.workspace = true
+bun_removable_features.workspace = true
 bun_resolve_builtins.workspace = true
 bun_resolver.workspace = true
 bun_router.workspace = true
@@ -100,7 +106,9 @@ bun_sys.workspace = true
 bun_sys_jsc.workspace = true
 bun_libuv_sys.workspace = true
 bun_tcc_sys.workspace = true
+bun_text_diff.workspace = true
 bun_threading.workspace = true
+bun_trim.workspace = true
 bun_url.workspace = true
 bun_uws.workspace = true
 bun_uws_sys.workspace = true

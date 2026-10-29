@@ -7,21 +7,21 @@
 //!
 //! Port of ValidateNoSetStateInRender.ts.
 
-use std::collections::HashSet;
+use crate::collections::IdBitSet;
 
 use crate::diagnostics::{CompilerDiagnostic, CompilerDiagnosticDetail, ErrorCategory};
-use crate::hir::dominator::compute_unconditional_blocks;
 use crate::hir::environment::Environment;
 use crate::hir::{
     HirFunction, Identifier, IdentifierId, InstructionValue, SourceLocation, Type,
     is_set_state_identifier,
 };
+use crate::validation::validate_hooks_usage::UnconditionalBlocks;
 
 pub(crate) fn validate_no_set_state_in_render(
     func: &HirFunction,
     env: &mut Environment,
 ) -> Result<(), CompilerDiagnostic> {
-    let mut unconditional_set_state_functions: HashSet<IdentifierId> = HashSet::new();
+    let mut unconditional_set_state_functions: IdBitSet<IdentifierId> = IdBitSet::default();
     let next_block_id = env.next_block_id().0;
     let diagnostics = validate_impl(
         func,
@@ -45,9 +45,13 @@ fn validate_impl(
     functions: &[HirFunction],
     next_block_id_counter: u32,
     enable_use_keyed_state: bool,
-    unconditional_set_state_functions: &mut HashSet<IdentifierId>,
+    unconditional_set_state_functions: &mut IdBitSet<IdentifierId>,
 ) -> Result<Vec<CompilerDiagnostic>, CompilerDiagnostic> {
-    let unconditional_blocks = compute_unconditional_blocks(func, next_block_id_counter)?;
+    if !crate::lowering::thread_has_stack() {
+        return Err(crate::lowering::nested_too_deeply());
+    }
+
+    let mut unconditional_blocks = UnconditionalBlocks::new(func, next_block_id_counter);
     let mut active_manual_memo_id: Option<u32> = None;
     let mut errors: Vec<CompilerDiagnostic> = Vec::new();
 
@@ -56,12 +60,12 @@ fn validate_impl(
             let instr = &func.instructions[instr_id.0 as usize];
             match &instr.value {
                 InstructionValue::LoadLocal { place, .. } => {
-                    if unconditional_set_state_functions.contains(&place.identifier) {
+                    if unconditional_set_state_functions.contains(place.identifier) {
                         unconditional_set_state_functions.insert(instr.lvalue.identifier);
                     }
                 }
                 InstructionValue::StoreLocal { lvalue, value, .. } => {
-                    if unconditional_set_state_functions.contains(&value.identifier) {
+                    if unconditional_set_state_functions.contains(value.identifier) {
                         unconditional_set_state_functions.insert(lvalue.place.identifier);
                         unconditional_set_state_functions.insert(instr.lvalue.identifier);
                     }
@@ -74,7 +78,7 @@ fn validate_impl(
                     // For FunctionExpression/ObjectMethod, operands are the context captures.
                     let has_set_state_operand = inner_func.context.iter().any(|ctx_place| {
                         is_set_state_identifier(ctx_place.identifier, identifiers, types)
-                            || unconditional_set_state_functions.contains(&ctx_place.identifier)
+                            || unconditional_set_state_functions.contains(ctx_place.identifier)
                     });
 
                     if has_set_state_operand {
@@ -93,26 +97,26 @@ fn validate_impl(
                     }
                 }
                 InstructionValue::StartMemoize { manual_memo_id, .. } => {
-                    assert!(
+                    crate::diagnostics::invariant(
                         active_manual_memo_id.is_none(),
-                        "Unexpected nested StartMemoize instructions"
-                    );
+                        "Unexpected nested StartMemoize instructions",
+                    )?;
                     active_manual_memo_id = Some(*manual_memo_id);
                 }
                 InstructionValue::FinishMemoize { manual_memo_id, .. } => {
-                    assert!(
+                    crate::diagnostics::invariant(
                         active_manual_memo_id == Some(*manual_memo_id),
-                        "Expected FinishMemoize to align with previous StartMemoize instruction"
-                    );
+                        "Expected FinishMemoize to align with previous StartMemoize instruction",
+                    )?;
                     active_manual_memo_id = None;
                 }
                 InstructionValue::CallExpression { callee, .. } => {
                     if is_set_state_identifier(callee.identifier, identifiers, types)
-                        || unconditional_set_state_functions.contains(&callee.identifier)
+                        || unconditional_set_state_functions.contains(callee.identifier)
                     {
                         if active_manual_memo_id.is_some() {
                             errors.push(set_state_in_memo_diag(callee.loc));
-                        } else if unconditional_blocks.contains(&block.id) {
+                        } else if unconditional_blocks.contains(block.id)? {
                             errors
                                 .push(set_state_in_render_diag(callee.loc, enable_use_keyed_state));
                         }

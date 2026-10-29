@@ -36,6 +36,7 @@ unsafe extern "C" {
     fn spng_get_png_buffer(ctx: *mut spng_ctx, len: *mut usize, err: *mut c_int) -> *mut u8;
     fn spng_set_option(ctx: *mut spng_ctx, opt: c_int, value: c_int) -> c_int;
     fn spng_set_crc_action(ctx: *mut spng_ctx, critical: c_int, ancillary: c_int) -> c_int;
+    fn spng_set_chunk_limits(ctx: *mut spng_ctx, chunk_size: usize, cache_limit: usize) -> c_int;
     /// iCCP chunk read/write — PNG carries an optional ICC profile alongside
     /// the pixels for every colour type (including indexed). `spng_get_iccp`
     /// returns non-zero when the source has no iCCP (or the chunk was
@@ -114,6 +115,11 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
 
     // SAFETY: ctx is valid.
     let _ = unsafe { spng_set_crc_action(ctx, SPNG_CRC_USE, SPNG_CRC_USE) };
+    // iCCP, zTXt and iTXt may inflate to at most the size of the largest RGBA buffer allowed, but
+    // never less than libpng's default of 8 MB, so a small `maxPixels` still takes any usual profile.
+    let max_inflated = max_pixels.saturating_mul(4).clamp(8 << 20, i32::MAX as u64) as usize;
+    // SAFETY: ctx is valid.
+    let _ = unsafe { spng_set_chunk_limits(ctx, max_inflated, usize::MAX) };
     // SAFETY: ctx is valid; bytes outlives the ctx (freed at end of scope).
     if unsafe { spng_set_png_buffer(ctx, bytes.as_ptr(), bytes.len()) } != 0 {
         return Err(codecs::Error::DecodeFailed);
@@ -154,8 +160,11 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     // than silently degrading colour fidelity — the pixels may be Display
     // P3 / Adobe RGB / XYB, and a "no profile" result there is a visible
     // colour shift, which is the exact bug #30197 is about.
-    // SAFETY: all-zero is a valid Iccp (POD; null profile ptr is the "no profile" state).
-    let mut iccp: Iccp = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut iccp = Iccp {
+        profile_name: [0; 80],
+        profile_len: 0,
+        profile: core::ptr::null_mut(),
+    };
     // SAFETY: ctx is valid; iccp is a valid out-ptr.
     let icc: Option<Vec<u8>> = if unsafe { spng_get_iccp(ctx, &raw mut iccp) } == 0
         && iccp.profile_len > 0

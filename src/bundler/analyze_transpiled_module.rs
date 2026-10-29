@@ -33,14 +33,6 @@ pub type RequestedModuleValue = FetchParameters;
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RecordKind(pub u8);
-// SAFETY: `#[repr(transparent)]` over `u8` — no padding, every bit pattern is
-// a valid `u8`. `Pod` lets
-// `bytemuck::{cast_slice,try_cast_slice}` reinterpret byte buffers and the
-// printer-crate `#[repr(u8)]` enum into `&[RecordKind]` without `unsafe`.
-unsafe impl bytemuck::Zeroable for RecordKind {}
-// SAFETY: see above — `#[repr(transparent)]` over `u8`, so no padding and every
-// bit pattern is valid; `RecordKind` is `Copy + 'static` with no interior refs.
-unsafe impl bytemuck::Pod for RecordKind {}
 
 impl RecordKind {
     /// module_name, import_name, local_name, fetch_parameters
@@ -529,19 +521,6 @@ impl ModuleInfoSlotTableBuilder {
 // ──────────────────────────────────────────────────────────────────────────
 // Extension shims over the printer-crate types
 // ──────────────────────────────────────────────────────────────────────────
-
-/// Extension constructor: `StringID::from_raw(u32)` — used by
-/// `linker_context::generateChunksInParallel` when rewriting cross-chunk
-/// specifier IDs.
-pub(crate) trait StringIDExt {
-    fn from_raw(raw: u32) -> StringID;
-}
-impl StringIDExt for StringID {
-    #[inline]
-    fn from_raw(raw: u32) -> StringID {
-        StringID(raw)
-    }
-}
 
 /// Bridges the printer-crate `ModuleInfo` builder to the serialized view
 /// JSC consumes.

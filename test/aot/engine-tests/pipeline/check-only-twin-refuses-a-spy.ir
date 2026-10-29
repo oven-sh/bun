@@ -1,0 +1,15 @@
+# The twin of check-only-takes-a-spy-for-no-write: in a build, spyOn of bun:test on a locked member that every run reaches throws in every run, and the build says so
+# RUN: pipeline CheckLockedBuiltinWrites
+# DIAGNOSTIC: LockedBuiltinWriteAlwaysRuns 1
+
+module m0 path="main.test.js" displayPath="main.test.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=StringPrototype
+    v1 = String string="normalize"
+    v2 = Undefined
+    v3 = Builtin builtin=BunTestSpyOn
+    v4 = Call v3, v2, v0, v1 @10
+    Return
+}

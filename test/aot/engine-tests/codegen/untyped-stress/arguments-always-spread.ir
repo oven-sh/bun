@@ -1,0 +1,282 @@
+# Functions with nine parameters are called with fewer, exactly nine and more arguments, and with undefined for some of them.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f5
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="impl.js" displayPath="impl.js" body=f0 namespaceLayout=L(m0)
+module m1 path="main.ts" displayPath="main.ts" body=f16 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=f8 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.3" declared={type=f9 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.4" declared={type=f10 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.5" declared={type=f11 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.6" declared={type=f12 flags=[IsFromCompiler]} flags=[IsImmutable]}] ownFieldCount=7
+variable g0 name="check" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Call v0
+    v2 = Undefined
+    Return v2
+}
+function f1 name="check" module=m0 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 module=m0 position=174 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f4
+    v2 = Convert v1 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v2 layout=L0 field=1
+    v4 = NewClosure function=f5
+    v5 = Convert v4 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure v0 function=f6
+    v7 = Convert v6 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure v0 function=f7
+    v9 = Convert v8 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f12
+    v11 = Convert v10 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v11 layout=L0 field=6
+    v13 = NewClosure v0 function=f13
+    v14 = Convert v13 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v15 = NewClosure v0 function=f14
+    v16 = Convert v15 declared={type=f14 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v17 = NewArray v5 contents=undefined|null|function|f5
+    v18 = Convert v17 declared={type=undefined|null|Array<undefined|null|function|f5> flags=[IsExpected]}
+    v19 = GetModuleVariable variable=g0
+    v20 = Integer integer=5
+    v21 = Call v7, -, v20 calleeName="callsNine"
+    v22 = Integer
+    v23 = ElemGet v18, v22
+    v24 = Convert v23 declared={type=undefined|null|function|f5 flags=[IsExpected]}
+    v25 = Integer integer=5
+    v26 = Integer integer=1
+    v27 = Integer integer=2
+    v28 = Integer integer=3
+    v29 = Integer integer=4
+    v30 = Integer integer=5
+    v31 = Integer integer=6
+    v32 = Integer integer=7
+    v33 = Integer integer=8
+    v34 = Call v24, v18, v25, v26, v27, v28, v29, v30, v31, v32, v33 calleeName="keepsReferenceOpen[0]"
+    v35 = String string="nine arguments, all passed"
+    v36 = Call v19, -, v21, v34, v35 calleeName="check"
+    v37 = Integer integer=6
+    v38 = Call v9, -, v37 calleeName="callsNineAgain"
+    v39 = GetModuleVariable variable=g0
+    v40 = Integer integer=5
+    v41 = Call v16, -, v40 calleeName="callsToo"
+    v42 = Convert v41 declared={type=number flags=[IsExpected]}
+    v43 = Integer integer=5
+    v44 = Call v14, -, v43 calleeName="tailCalls"
+    v45 = Convert v44 declared={type=number flags=[IsExpected]}
+    v46 = Sub v42, v45
+    v47 = Integer integer=1
+    v48 = String string="a function with nine parameters that is also called in tail position"
+    v49 = Call v39, -, v46, v47, v48 calleeName="check"
+    v50 = Undefined
+    Return v50
+}
+function f3 name="mix" module=m0 position=188 flags=[HasExplicitName] length=3 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="nine" module=m0 position=337 flags=[HasExplicitName] length=9 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="reference" module=m0 position=614 flags=[HasExplicitName] length=9 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything, v3: i32, v4: i32, v5: i32, v6: i32, v7: i32, v8: i32):
+    v9 = Convert v0 declared={type=number flags=[IsExpected]}
+    v10 = Integer integer=2
+    v11 = Mul v9, v10
+    v12 = Convert v1 declared={type=number flags=[IsExpected]}
+    v13 = Add v11, v12
+    v14 = Convert v13 declared={type=number flags=[IsExpected]}
+    v15 = Sub v14, v2
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = BitXor v16, v3
+    v18 = BitOr v4, v5
+    v19 = Add v17, v18
+    v20 = Convert v19 declared={type=number flags=[IsExpected]}
+    v21 = Integer integer=1000
+    v22 = Mod v20, v21
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    v24 = BitAnd v6, v7
+    v25 = BitAnd v7, v8
+    v26 = Add v24, v25
+    v27 = Integer integer=1
+    v28 = RShift v23, v27
+    v29 = Sub v26, v28
+    v30 = Add v23, v29
+    v31 = Convert v30 declared={type=number flags=[IsExpected]}
+    v32 = Greater v31, v2
+    Branch v32 -> taken b1(| 0, 1), notTaken b2(| 0, 1)
+  b1(v33, v34):
+    v35 = Sub v33, v34
+    v36 = Convert v35 declared={type=number flags=[IsExpected]}
+    Jump -> next b3(v36, v34)
+  b2(v37, v38):
+    v39 = Add v37, v38
+    v40 = Convert v39 declared={type=number flags=[IsExpected]}
+    Jump -> next b3(v40, v38)
+  b3(v41, v42):
+    v43 = Add v41, v9
+    v44 = Add v43, v12
+    v45 = Add v44, v42
+    v46 = Add v45, v3
+    v47 = Add v46, v4
+    v48 = Add v47, v5
+    v49 = Add v48, v6
+    v50 = Add v49, v7
+    v51 = Add v50, v8
+    Return v51
+}
+function f6 name="callsNine" module=m0 position=934 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=1
+    v3 = Convert v1 declared={type=number flags=[IsExpected]}
+    v4 = Integer integer=1
+    v5 = Integer integer=2
+    v6 = Integer integer=3
+    v7 = Integer integer=4
+    v8 = Integer integer=5
+    v9 = Integer integer=6
+    v10 = Integer integer=7
+    v11 = Integer integer=8
+    v12 = Call v2, -, v3, v4, v5, v6, v7, v8, v9, v10, v11 calleeName="nine"
+    ReturnCall v12
+}
+function f7 name="callsNineAgain" module=m0 position=1000 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=1
+    v3 = Convert v1 declared={type=number flags=[IsExpected]}
+    v4 = Integer integer=11
+    v5 = Integer integer=12
+    v6 = Integer integer=13
+    v7 = Integer integer=14
+    v8 = Integer integer=15
+    v9 = Integer integer=16
+    v10 = Integer integer=17
+    v11 = Integer integer=18
+    v12 = Integer integer=19
+    v13 = Integer integer=20
+    v14 = Call v2, -, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13 calleeName="nine"
+    ReturnCall v14
+}
+function f8 name="lastIsOptional" module=m0 position=1310 flags=[HasExplicitName] length=9 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=undefined|number flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 name="undefinedIsPassed" module=m0 position=1829 flags=[HasExplicitName] length=9 thisType={type=anything} parameters=[{type=anything}, {type=undefined|number flags=[IsExpected]}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 name="countsArguments" module=m0 position=2387 flags=[HasArgumentCount, HasHiddenRest, HasExplicitName] length=2 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 name="takesRest" module=m0 position=2708 flags=[HasRestParameter, HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number flags=[IsExpected]}, {type=Array flags=[IsFromCompiler]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 name="isTailCalled" module=m0 position=3078 flags=[HasExplicitName] length=9 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 name="tailCalls" module=m0 position=3349 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=6
+    v3 = Convert v1 declared={type=number flags=[IsExpected]}
+    v4 = Integer integer=1
+    v5 = Integer integer=2
+    v6 = Integer integer=3
+    v7 = Integer integer=4
+    v8 = Integer integer=5
+    v9 = Integer integer=6
+    v10 = Integer integer=7
+    v11 = Integer integer=8
+    v12 = Call v2, -, v3, v4, v5, v6, v7, v8, v9, v10, v11 calleeName="isTailCalled"
+    ReturnCall v12
+}
+function f14 name="callsToo" module=m0 position=3437 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = GetEnvironmentField v0 layout=L0 field=6
+    v3 = Convert v1 declared={type=number flags=[IsExpected]}
+    v4 = Integer integer=1
+    v5 = Integer integer=2
+    v6 = Integer integer=3
+    v7 = Integer integer=4
+    v8 = Integer integer=5
+    v9 = Integer integer=6
+    v10 = Integer integer=7
+    v11 = Integer integer=8
+    v12 = Call v2, -, v3, v4, v5, v6, v7, v8, v9, v10, v11 calleeName="isTailCalled"
+    v13 = Convert v12 declared={type=number flags=[IsExpected]}
+    v14 = Integer integer=1
+    v15 = Add v13, v14
+    Return v15
+}
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+# -- generated: reference
+# CHECK-LABEL: function {{*}}name="reference"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int32 b@19 = Trunc(b@18)
+# CHECK-NEXT: Int64 b@20 = ArgumentReg(%rsi)
+# CHECK-NEXT: Int32 b@21 = Trunc(b@20)
+# CHECK-NEXT: Int64 b@22 = ArgumentReg(%rdx)
+# CHECK-NEXT: Int32 b@23 = Trunc(b@22)
+# CHECK-NEXT: Int64 b@24 = ArgumentReg(%rcx)
+# CHECK-NEXT: Int32 b@25 = Trunc(b@24)
+# CHECK-NEXT: Int64 b@26 = ArgumentReg(%r8)
+# CHECK-NEXT: Int32 b@27 = Trunc(b@26)
+# CHECK-NEXT: Int64 b@28 = ArgumentReg(%r9)
+# CHECK-NEXT: Int32 b@29 = Trunc(b@28)
+# CHECK-NEXT: Int64 b@30 = ArgumentReg(%rax)
+# CHECK-NEXT: Int32 b@31 = Trunc(b@30)
+# CHECK-NEXT: Int64 b@32 = ArgumentReg(%r10)
+# CHECK-NEXT: Int32 b@33 = Trunc(b@32)
+# CHECK-NEXT: Int64 b@34 = FramePointer()
+# CHECK-NEXT: Int32 b@35 = Load(b@34, offset = 16, ControlDependent|Reads:argumentBuffer)
+# CHECK-NEXT: Int32 b@40 = Const32(9, v9:Integer)
+# CHECK-NEXT: Int32 b@41 = BitXor(b@25, $9(b@40), v10:BitXor)
+# CHECK-NEXT: Int32 b@42 = BitOr(b@27, b@29, v11:BitOr)
+# CHECK-NEXT: Int32 b@43 = Add(b@41, b@42, v12:Add)
+# CHECK-NEXT: Int32 b@17 = Const32(274877907, v14:Mod)
+# CHECK-NEXT: Int32 b@16 = UMulHigh(b@43, $274877907(b@17), v14:Mod)
+# CHECK-NEXT: Int32 b@48 = Const32(6, v15:Integer)
+# CHECK-NEXT: Int32 b@14 = ZShr(b@16, $6(b@48), v14:Mod)
+# CHECK-NEXT: Int32 b@44 = Const32(1000, v13:Integer)
+# CHECK-NEXT: Int32 b@46 = Mul(b@14, $1000(b@44), v14:Mod)
+# CHECK-NEXT: Int32 b@13 = Sub(b@42, b@46, v14:Mod)
+# CHECK-NEXT: Int32 b@12 = Add(b@13, b@41, v14:Mod)
+# CHECK-NEXT: Int32 b@49 = BitAnd(b@33, b@35, v16:BitAnd)
+# CHECK-NEXT: Int32 b@51 = Const32(1, v18:Integer)
+# CHECK-NEXT: Int32 b@54 = SShr(b@12, $1(b@51), v19:RShift)
+# CHECK-NEXT: Int32 b@11 = Sub($6(b@48), b@54, v20:Sub)
+# CHECK-NEXT: Int32 b@10 = Add(b@11, b@49, v20:Sub)
+# CHECK-NEXT: Int32 b@56 = Add(b@10, b@12, v21:Add)
+# CHECK-NEXT: Int32 b@9 = LessThan(b@23, b@56, v22:Greater)
+# CHECK-NEXT: Void b@62 = Branch(b@9, Terminal, v22:Greater)
+# CHECK-NEXT: Successors: Then:#5, Else:#6
+# CHECK-NEXT: BB#5: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int32 b@37 = Sub(b@41, b@23, v24:Sub)
+# CHECK-NEXT: Int32 b@59 = Add(b@13, b@37, v24:Sub)
+# CHECK-NEXT: Int32 b@7 = Add(b@10, b@59, v24:Sub)
+# CHECK-NEXT: Void b@64 = Upsilon(b@7, ^38, WritesLocalState)
+# CHECK-NEXT: Void b@65 = Jump(Terminal)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#4: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #6, #5
+# CHECK-NEXT: Int32 b@38 = Phi(ReadsLocalState, v27:Parameter)
+# CHECK-NEXT: Int32 b@69 = Add(b@19, b@38, v28:Add)
+# CHECK-NEXT: Int32 b@70 = Add(b@21, b@69, v29:Add)
+# CHECK-NEXT: Int32 b@71 = Add(b@23, b@70, v30:Add)
+# CHECK-NEXT: Int32 b@72 = Add(b@25, b@71, v31:Add)
+# CHECK-NEXT: Int32 b@73 = Add(b@27, b@72, v32:Add)
+# CHECK-NEXT: Int32 b@74 = Add(b@29, b@73, v33:Add)
+# CHECK-NEXT: Int32 b@75 = Add(b@31, b@74, v34:Add)
+# CHECK-NEXT: Int32 b@76 = Add(b@33, b@75, v35:Add)
+# CHECK-NEXT: Int64 b@77 = ZExt32(b@76, v36:Add)
+# CHECK-NEXT: Int64 b@78 = SExt32(b@35, v36:Add)
+# CHECK-NEXT: Int64 b@79 = Add(b@77, b@78, v36:Add)
+# CHECK-NEXT: Double b@80 = IToD(b@79)
+# CHECK-NEXT: Void b@81 = Return(b@80, Terminal)
+# CHECK-NEXT: BB#6: ; frequency = 0.500000
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int32 b@66 = Add(b@23, b@56, v26:Add)
+# CHECK-NEXT: Void b@67 = Upsilon(b@66, ^38, WritesLocalState)
+# CHECK-NEXT: Void b@68 = Jump(Terminal)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@19: range = [5,5]
+# CHECK-NEXT: b@21: range = [1,1]
+# CHECK-NEXT: b@23: range = [2,2]
+# CHECK-NEXT: b@25: range = [3,3]
+# CHECK-NEXT: b@27: range = [4,4]
+# CHECK-NEXT: b@29: range = [5,5]
+# CHECK-NEXT: b@31: range = [6,6]
+# CHECK-NEXT: b@33: range = [7,7]
+# CHECK-NEXT: b@38: range = [-3,33]
+# CHECK-NEXT: end of function f5

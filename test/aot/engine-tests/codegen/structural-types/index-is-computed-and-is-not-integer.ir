@@ -1,0 +1,164 @@
+# An index is computed and is not an integer.
+# FORM: AsRead
+# RUN: lower-to-air size f15
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="index-is-computed-and-is-not-integer.ts" displayPath="index-is-computed-and-is-not-integer.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=number elements=[Number{value=10}, Number{value=20}, Number{value=30}, Number{value=40}]} module=m0
+variable g0 name="show" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="added" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="numbers" module=m0 declared={type=undefined|null|absent|Array<number> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v3 variable=g2
+    v5 = Integer
+    v6 = Convert v5 declared={type=number}
+    v7 = Integer
+    v8 = Convert v7 declared={type=number}
+    v9 = String string="i + offset"
+    v10 = NewClosure function=f15
+    v11 = Call v1, -, v9, v10 calleeName="attempt"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="show" module=m0 position=47 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="added" module=m0 position=2014 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: number, v2: number):
+    v3 = Add v1, v2
+    v4 = ElemGet v0, v3
+    v5 = Convert v4 declared={type=number} illTypedCause=ContainerWriterUnseen
+    Return v5
+}
+function f3 name="attempt" module=m0 position=892 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11|f12|f13|f14|f15|f16|f17|f18|f19|f20|f21|f22):
+    Jump -> next b1()
+  b1() handler=b3():
+    v2 = GetModuleVariable variable=g0
+    v3 = Call v1 calleeName="run"
+    v4 = Call v2, -, v3 calleeName="show"
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Jump -> next b2()
+  b2():
+    Jump -> next b5(v5)
+  b3() role=CatchHandler:
+    v6 = CatchValue
+    v7 = String string="threw "
+    v8 = Builtin builtin=GlobalThis
+    v9 = PropGet v8 key="Error" [isFreeName]
+    v10 = Convert v9 declared={type=builtin(Error) flags=[IsExpected]}
+    v11 = InstanceOf v6, v10 writtenExpression="error instanceof Error"
+    Jump -> next b4(v11)
+  b4(v12):
+    v13 = GetModuleVariable variable=g0
+    v14 = Call v13, -, v6 calleeName="show"
+    v15 = Convert v14 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v16 = Add v7, v15
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull]}
+    Jump -> next b5(v17)
+  b5(v18: undefined|null|string):
+    v19 = Undefined
+    Return v19
+}
+function f4 module=m0 position=2589 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 module=m0 position=2672 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f25] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m0 position=2774 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 position=2924 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m0 position=2991 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=3124 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m0 position=3243 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=3301 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 position=3402 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=3495 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m0 position=3609 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 module=m0 position=3704 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g1
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="numbers"
+    v3 = Integer integer=1
+    v4 = Integer integer=1
+    v5 = Call v0, -, v2, v3, v4 calleeName="added"
+    v6 = Convert v5 declared={type=number}
+    v7 = GetModuleVariable variable=g1
+    v8 = GetModuleVariable variable=g2
+    v9 = CheckInitialized v8 name="numbers"
+    v10 = Integer integer=2147483647
+    v11 = Integer integer=1
+    v12 = Call v7, -, v9, v10, v11 calleeName="added"
+    v13 = Convert v12 declared={type=number}
+    v14 = GetModuleVariable variable=g1
+    v15 = GetModuleVariable variable=g2
+    v16 = CheckInitialized v15 name="numbers"
+    v17 = Integer integer=2147483647
+    v18 = Integer integer=-2147483646
+    v19 = Call v14, -, v16, v17, v18 calleeName="added"
+    v20 = Convert v19 declared={type=number}
+    v21 = GetModuleVariable variable=g1
+    v22 = GetModuleVariable variable=g2
+    v23 = CheckInitialized v22 name="numbers"
+    v24 = Integer integer=-2147483648
+    v25 = Integer integer=-1
+    v26 = Call v21, -, v23, v24, v25 calleeName="added"
+    v27 = Convert v26 declared={type=number}
+    v28 = GetModuleVariable variable=g1
+    v29 = GetModuleVariable variable=g2
+    v30 = CheckInitialized v29 name="numbers"
+    v31 = Double number=0.5
+    v32 = Double number=0.5
+    v33 = Call v28, -, v30, v31, v32 calleeName="added"
+    v34 = Convert v33 declared={type=number}
+    v35 = GetModuleVariable variable=g1
+    v36 = GetModuleVariable variable=g2
+    v37 = CheckInitialized v36 name="numbers"
+    v38 = Double number=0.1
+    v39 = Double number=0.2
+    v40 = Call v35, -, v37, v38, v39 calleeName="added"
+    v41 = Convert v40 declared={type=number}
+    v42 = GetModuleVariable variable=g1
+    v43 = GetModuleVariable variable=g2
+    v44 = CheckInitialized v43 name="numbers"
+    v45 = Integer integer=10000000000000000
+    v46 = Integer integer=1
+    v47 = Call v42, -, v44, v45, v46 calleeName="added"
+    v48 = Convert v47 declared={type=number}
+    v49 = NewArray v6, v13, v20, v27, v34, v41, v48 contents=anything
+    v50 = Convert v49 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}
+    Return v50
+}
+function f16 module=m0 position=3935 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 module=m0 position=4059 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 module=m0 position=4231 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string|Array<undefined|null|string>> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f19 module=m0 position=4460 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f39] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f20 module=m0 position=4680 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f40] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f21 module=m0 position=4839 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f41] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f22 module=m0 position=5001 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f38 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f39 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f40 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f41 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+function f42 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f23]
+# -- generated: f15
+# CHECK-LABEL: function f15 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 140, patchpoints: 12, rare instructions: 112
+# CHECK-NEXT: end of function f15

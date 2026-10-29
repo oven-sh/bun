@@ -42,9 +42,6 @@ pub enum FieldType {
 }
 
 impl FieldType {
-    // `from_js` is provided as an extension-trait method in the
-    // `bun_sql_jsc` crate; the base type carries no JSC dependency.
-
     /// Decode a raw protocol byte. On the wire any byte is possible; this
     /// Rust enum is
     /// exhaustive, so unknown bytes return `None` instead of producing an
@@ -86,22 +83,6 @@ impl FieldType {
             0xff => FieldType::MYSQL_TYPE_GEOMETRY,
             _ => return None,
         })
-    }
-
-    pub(crate) fn is_binary_format_supported(self) -> bool {
-        matches!(
-            self,
-            FieldType::MYSQL_TYPE_TINY
-                | FieldType::MYSQL_TYPE_SHORT
-                | FieldType::MYSQL_TYPE_LONG
-                | FieldType::MYSQL_TYPE_LONGLONG
-                | FieldType::MYSQL_TYPE_FLOAT
-                | FieldType::MYSQL_TYPE_DOUBLE
-                | FieldType::MYSQL_TYPE_TIME
-                | FieldType::MYSQL_TYPE_DATE
-                | FieldType::MYSQL_TYPE_DATETIME
-                | FieldType::MYSQL_TYPE_TIMESTAMP
-        )
     }
 }
 

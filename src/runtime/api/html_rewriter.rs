@@ -986,11 +986,14 @@ impl RewriterPipe {
             )),
         ))));
 
+        // https://github.com/oven-sh/bun/issues/3334
+        let headers = original.clone_init_headers(cx.global())?;
+
         // ── output Response: body starts Locked(PendingValue{...}) ──────────
         // A consumer reading `.body` creates the ByteStream lazily; until then
         // the sink buffers into `output_buffer`, and `on_start_streaming`
         // hands that over as `DrainResult::Owned`.
-        let result = bun_core::heap::alloc_nn(Response::init(
+        let result = RefPtr::new(Response::init(
             webcore::response::Init {
                 status_code: 200,
                 ..Default::default()
@@ -1007,10 +1010,8 @@ impl RewriterPipe {
             BunString::EMPTY,
             false,
         ));
-        let result_ref = BackRef::from(result);
-        // SAFETY: `result` is the live Response just allocated above.
-        this.response
-            .set(Some(unsafe { RefPtr::init_ref(result.as_ptr()) }));
+        let result_ref = result.this_ptr();
+        this.response.set(Some(result.clone()));
 
         result_ref.set_init(
             original.get_method(),
@@ -1018,11 +1019,9 @@ impl RewriterPipe {
             original.get_init_status_text().clone(),
         );
 
-        // https://github.com/oven-sh/bun/issues/3334
-        result_ref.set_init_headers(original.clone_init_headers(cx.global())?);
+        result_ref.set_init_headers(headers);
 
-        // SAFETY: the wrapper adopts the ref `result` was allocated with.
-        let response_js_value = unsafe { Response::to_js(result.as_ptr(), &this.global) };
+        let response_js_value = Response::to_js(result, &this.global);
 
         // Hand ownership of `pipe` to its `JSHTMLRewriterTransform` wrapper cell.
         // The cell's WriteBarrier slots root the Response and (later) the

@@ -190,7 +190,7 @@ pub struct SqlRuntimeHooks {
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),
     /// or null when the value contained no TLS config / threw (caller checks
     /// `global.has_exception()`).
-    pub ssl_config_from_js: unsafe fn(&JSGlobalObject, JSValue) -> *mut c_void,
+    pub ssl_config_from_js: fn(&JSGlobalObject, JSValue) -> *mut c_void,
     /// Drop a boxed `SSLConfig` returned by `ssl_config_from_js`.
     pub ssl_config_free: unsafe fn(*mut c_void),
     /// `SSLConfig::asUSocketsForClientVerification`.
@@ -450,8 +450,7 @@ pub mod api {
                 global: &JSGlobalObject,
                 value: JSValue,
             ) -> JsResult<Option<Self>> {
-                // SAFETY: hook contract — may run JS getters / throw.
-                let p = unsafe { (hooks().ssl_config_from_js)(global, value) };
+                let p = (hooks().ssl_config_from_js)(global, value);
                 if global.has_exception() {
                     debug_assert!(p.is_null());
                     return Err(JsError::Thrown);

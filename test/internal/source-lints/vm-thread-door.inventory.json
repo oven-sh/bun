@@ -30,14 +30,6 @@
   "src/jsc/RuntimeTranspilerStore.rs": {
     "WorkPool::schedule*": 1
   },
-  "src/jsc/TopExceptionScope.rs": {
-    "unsafe impl Send": [
-      "SourceLocation"
-    ],
-    "unsafe impl Sync": [
-      "SourceLocation"
-    ]
-  },
   "src/jsc/VirtualMachine.rs": {
     "unsafe impl Send": [
       "Shared"

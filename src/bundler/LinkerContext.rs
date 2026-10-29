@@ -1739,7 +1739,7 @@ pub struct ChunkMeta {
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
 /// Note: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
-/// `Ctx: Sync + Copy` and the same context is observed from every worker
+/// `Ctx: Sync` and the same context is observed from every worker
 /// thread. Each task only writes to its own `Chunk` slot; reads of
 /// `c`/`chunks` are disjoint or read-only.
 #[derive(Clone, Copy)]

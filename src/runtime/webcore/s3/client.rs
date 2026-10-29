@@ -525,10 +525,9 @@ pub(crate) fn writable_stream(
         on_writable: Some(on_writable_thunk),
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
     }));
-    // SAFETY: `task_ptr` is the fresh, non-null allocation root.
-    unsafe { (*task_ptr).root.set(core::ptr::NonNull::new(task_ptr)) };
     // SAFETY: freshly heap-allocated and refcounted; only shared access from here on.
     let task = unsafe { &*task_ptr };
+    task.root.set(core::ptr::NonNull::new(task_ptr));
 
     task.poll_ref
         .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
@@ -910,10 +909,9 @@ pub(crate) fn upload_stream(
         on_writable: Some(on_writable_thunk),
         callback_context: Cell::new(core::ptr::null_mut()), // assigned below
     }));
-    // SAFETY: `task_ptr` is the fresh, non-null allocation root.
-    unsafe { (*task_ptr).root.set(core::ptr::NonNull::new(task_ptr)) };
     // SAFETY: freshly heap-allocated and refcounted; only shared access from here on.
     let task = unsafe { &*task_ptr };
+    task.root.set(core::ptr::NonNull::new(task_ptr));
 
     task.poll_ref
         .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));

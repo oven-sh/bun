@@ -68,8 +68,9 @@ impl SavedSourceMap {
     /// released again.
     unsafe fn release_value(value: Value) {
         if let Some(parsed) = value.get::<ParsedSourceMap>() {
-            // SAFETY: per fn contract — the table held one strong ref.
-            unsafe { ParsedSourceMap::deref(parsed) };
+            // SAFETY: every `ParsedSourceMap` in the table came from `Arc::into_raw`, and per fn
+            // contract the table held one strong ref.
+            unsafe { Arc::decrement_strong_count(parsed.cast_const()) };
         } else if let Some(ism) = value.get::<InternalSourceMap>() {
             // The blob was heap-allocated via `put_mappings`
             // (`Box<[u8]>::into_raw`); the tagged pointer's address IS the
@@ -239,7 +240,6 @@ impl SavedSourceMap {
         self.unlock();
     }
 
-    /// You must call `sourcemap.map.deref()` or you will leak memory
     fn get_with_content(
         &mut self,
         path: &[u8],
@@ -333,7 +333,6 @@ impl SavedSourceMap {
         }
     }
 
-    /// You must `deref()` the returned value or you will leak memory
     pub fn get(&mut self, path: &[u8]) -> Option<std::sync::Arc<ParsedSourceMap>> {
         self.get_with_content(path, SourceMap::ParseUrlResultHint::MappingsOnly)
             .map

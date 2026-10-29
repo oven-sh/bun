@@ -1135,7 +1135,7 @@ extern "C" fn simdutf__base64_length_from_binary(len: usize, options: c_int) -> 
 }
 /// Answers simdutf's INVALID_BASE64_CHARACTER: `bun_base64::decode` then uses its own decoder.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn simdutf__base64_decode_from_binary(
+extern "C" fn simdutf__base64_decode_from_binary(
     _p: *const u8,
     _len: usize,
     _out: *mut u8,

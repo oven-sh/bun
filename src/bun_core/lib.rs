@@ -344,41 +344,18 @@ pub fn powf(x: f32, y: f32) -> f32 {
     libm_powf(x, y)
 }
 
-/// Safe `Vec` growth helpers — consolidate the
-/// `reserve(n); spare_capacity_mut(); MaybeUninit::write…; unsafe set_len(n)`
-/// pattern (S025) so the single `unsafe { set_len }` lives here behind a
-/// locally-proven invariant instead of being open-coded at every fill site.
+/// `Vec` growth helpers.
 pub mod vec {
     /// Extend `v` by `n` elements, each produced by `f(i)` for `i in 0..n`.
     ///
-    /// Equivalent to `for i in 0..n { v.push(f(i)) }` but reserves once and
-    /// writes through `spare_capacity_mut()` so no per-element capacity check
-    /// or length bump occurs in the hot loop.
+    /// Like `for i in 0..n { v.push(f(i)) }`, but the iterator is `TrustedLen`, so `extend` reserves once.
     ///
     /// Panic-safety: if `f` panics at index `k`, `v.len()` is left at its
     /// original value plus `k` — every exposed element is initialized, and the
     /// partially-written tail stays in spare capacity (never dropped).
     #[inline]
-    pub fn extend_from_fn<T>(v: &mut Vec<T>, n: usize, mut f: impl FnMut(usize) -> T) {
-        v.reserve(n);
-        let prev = v.len();
-        let spare = v.spare_capacity_mut();
-        debug_assert!(spare.len() >= n);
-        for (i, slot) in spare[..n].iter_mut().enumerate() {
-            // `MaybeUninit::write` never drops the (uninitialized) prior
-            // contents — it is a raw `ptr::write`.
-            slot.write(f(i));
-        }
-        // SAFETY:
-        // - `reserve(n)` guarantees `capacity >= prev + n`.
-        // - Every slot in `spare[..n]` (i.e. `v[prev .. prev+n]`) was just
-        //   initialized via `MaybeUninit::write` in the loop above, so the
-        //   newly-exposed range contains only valid `T`.
-        // Panic note: if `f` panics mid-loop, `len` is still `prev`, so the
-        // already-written prefix stays in spare capacity and is *leaked* (not
-        // dropped) — sound, and acceptable for the constant/`Default`/index
-        // fills this helper targets.
-        unsafe { v.set_len(prev + n) };
+    pub fn extend_from_fn<T>(v: &mut Vec<T>, n: usize, f: impl FnMut(usize) -> T) {
+        v.extend((0..n).map(f));
     }
 
     /// Extend `v` by `n` `T::default()` elements and return a mutable slice

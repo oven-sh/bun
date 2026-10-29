@@ -376,6 +376,7 @@ describe("ReadStream.prototype.setRawMode", () => {
             accepted,
             rejected: ${JSON.stringify(rejected)}.map(setRawMode),
             rejectedWhileRaw: (stdin.setRawMode(true), setRawMode("false")),
+            ioWhileRaw: setRawMode("io"),
             anyReceiver: (stdin.setRawMode(false), outcome(() => stdin.setRawMode.call(undefined, "a"))),
             throughReadline: outcome(() =>
               require("node:readline").Interface.prototype._setRawMode.call({ input: stdin }, "bogus"),
@@ -390,8 +391,13 @@ describe("ReadStream.prototype.setRawMode", () => {
 
       const cooked = { isRaw: false, rawMode: false };
       const raw = { isRaw: true, rawMode: "raw" };
+      const io = { isRaw: true, rawMode: "io" };
       const thrown = (mode: string) =>
         `TypeError [ERR_INVALID_ARG_VALUE]: The argument 'mode' must be true, false, 'raw', or 'io'. Received '${mode}'`;
+      // libuv has no UV_TTY_MODE_IO on Windows. Its uv_tty_set_mode() answers UV_ENOTSUP for it from every mode,
+      // the raw ones too, and Node emits that as 'error' and leaves the stream as it was:
+      // https://github.com/nodejs/node/blob/v26.12.1/deps/uv/src/win/tty.c#L379-L396
+      const notSupported = { code: "ENOTSUP", errno: -4049, syscall: "setRawMode", message: "setRawMode ENOTSUP" };
       expect(result).toEqual({
         isTTY: true,
         initial: cooked,
@@ -411,14 +417,12 @@ describe("ReadStream.prototype.setRawMode", () => {
         },
         rejected: rejected.map(mode => ({ thrown: thrown(mode), ...cooked })),
         rejectedWhileRaw: { thrown: thrown("false"), ...raw },
+        ioWhileRaw: { returnsThis: true, ...(isWindows ? raw : io) },
         // The check comes before anything reads the receiver.
         anyReceiver: { thrown: thrown("a"), ...cooked },
         throughReadline: { thrown: thrown("bogus"), ...cooked },
-        // libuv has no UV_TTY_MODE_IO on Windows: uv_tty_set_mode() answers UV_ENOTSUP, which Node emits as 'error'.
-        io: isWindows ? { returnsThis: true, ...cooked } : { returnsThis: true, isRaw: true, rawMode: "io" },
-        errors: isWindows
-          ? [{ code: "ENOTSUP", errno: -4049, syscall: "setRawMode", message: "setRawMode ENOTSUP" }]
-          : [],
+        io: { returnsThis: true, ...(isWindows ? cooked : io) },
+        errors: isWindows ? [notSupported, notSupported] : [],
       });
     });
 

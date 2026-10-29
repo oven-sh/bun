@@ -76,8 +76,7 @@ impl Default for WebPData {
 }
 
 /// `struct WebPChunkIterator` — cursor into a VP8X chunk list. Only `chunk`
-/// is read; `pad`/`private_` are libwebp-internal bookkeeping that
-/// `WebPDemuxReleaseChunkIterator` walks. `chunk.bytes` is a borrowed view
+/// is read; `pad`/`private_` are libwebp-internal bookkeeping. `chunk.bytes` is a borrowed view
 /// INTO the original input buffer — dupe it out before `WebPDemuxDelete`.
 #[repr(C)]
 struct WebPChunkIterator {
@@ -98,7 +97,7 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     /// Null or a fresh demuxer, which lives until `WebPDemuxDelete`.
     fn WebPDemuxInternal(
-        data: *const WebPData,
+        data: &WebPData,
         allow_partial: c_int,
         state: *mut c_int,
         version: c_int,
@@ -116,11 +115,11 @@ unsafe extern "C" {
     /// Null or a fresh mux, which lives until `WebPMuxDelete`.
     safe fn WebPNewInternal(version: c_int) -> Option<&'static mut WebPMux>;
     fn WebPMuxDelete(mux: *mut WebPMux);
-    fn WebPMuxSetImage(mux: &mut WebPMux, bitstream: *const WebPData, copy_data: c_int) -> c_int;
+    fn WebPMuxSetImage(mux: &mut WebPMux, bitstream: &WebPData, copy_data: c_int) -> c_int;
     fn WebPMuxSetChunk(
         mux: &mut WebPMux,
-        fourcc: *const u8,
-        chunk_data: *const WebPData,
+        fourcc: &[u8; 4],
+        chunk_data: &WebPData,
         copy_data: c_int,
     ) -> c_int;
     safe fn WebPMuxAssemble(mux: &mut WebPMux, assembled_data: &mut WebPData) -> c_int;
@@ -185,17 +184,11 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
             bytes: bytes.as_ptr(),
             size: bytes.len(),
         };
-        // SAFETY: `data` points to a valid WebPData; null state ptr is allowed. The demuxer keeps
-        // `data.bytes` and reads it in later calls. `bytes` is this block's own copy: nothing writes
-        // to it, and it is declared before the demuxer's guard, so it is freed after the demuxer.
-        let dmux = unsafe {
-            WebPDemuxInternal(
-                &raw const data,
-                0,
-                core::ptr::null_mut(),
-                WEBP_DEMUX_ABI_VERSION,
-            )
-        };
+        // SAFETY: null state ptr is allowed. The demuxer keeps `data.bytes` and reads it in later
+        // calls. `bytes` is this block's own copy: nothing writes to it, and it is declared before
+        // the demuxer's guard, so it is freed after the demuxer.
+        let dmux =
+            unsafe { WebPDemuxInternal(&data, 0, core::ptr::null_mut(), WEBP_DEMUX_ABI_VERSION) };
         let Some(dmux) = dmux else {
             break 'blk None;
         };
@@ -316,17 +309,16 @@ pub(crate) fn encode(
     // SAFETY: libwebp reads `img` now and keeps pointers into its bytes for `WebPMuxAssemble`.
     // They stay readable until the mux is deleted: `_free_bitstream` is declared before `mux`,
     // so it drops after it.
-    if unsafe { WebPMuxSetImage(&mut mux, &raw const img, 0) } != WEBP_MUX_OK {
+    if unsafe { WebPMuxSetImage(&mut mux, &img, 0) } != WEBP_MUX_OK {
         return Err(codecs::Error::EncodeFailed);
     }
     let icc = WebPData {
         bytes: profile.as_ptr(),
         size: profile.len(),
     };
-    // SAFETY: fourcc reads exactly 4 bytes. libwebp reads `icc` now and keeps `icc.bytes` for
-    // `WebPMuxAssemble`. `profile` is borrowed from the caller, so it stays readable until the
-    // mux is deleted.
-    if unsafe { WebPMuxSetChunk(&mut mux, b"ICCP".as_ptr(), &raw const icc, 0) } != WEBP_MUX_OK {
+    // SAFETY: libwebp reads `icc` now and keeps `icc.bytes` for `WebPMuxAssemble`. `profile` is
+    // borrowed from the caller, so it stays readable until the mux is deleted.
+    if unsafe { WebPMuxSetChunk(&mut mux, b"ICCP", &icc, 0) } != WEBP_MUX_OK {
         return Err(codecs::Error::EncodeFailed);
     }
     let mut assembled = WebPData::default();

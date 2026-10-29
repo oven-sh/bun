@@ -47,7 +47,7 @@ fn report<'a>(statement: Stmt<'a>, cx: &mut Cx<'a, NoUnsafeFinally>) {
     };
     cx.report(statement, UNSAFE_USAGE)
         .data("nodeType", node_type)
-        .hint("It replaces whatever try and catch return or throw.");
+        .hint("Overrides what try and catch return or throw.");
 }
 
 impl Rule for NoUnsafeFinally {

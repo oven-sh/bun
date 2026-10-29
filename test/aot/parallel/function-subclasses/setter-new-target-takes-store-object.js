@@ -1,0 +1,6 @@
+// `Reflect.construct(A, [], B)` runs A with an object below B.prototype. A setter there takes the store `this.v = ..`, so the object has no `v` of its own: it is not what `new A()` makes.
+function A() { this.v = { a: 1 }; }
+class B extends A { set v(x) {} }
+const o = Reflect.construct(A, [], B);
+console.log("typeof", typeof o.v);
+console.log("member", o.v?.a);

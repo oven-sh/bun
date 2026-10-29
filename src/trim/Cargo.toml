@@ -1,0 +1,26 @@
+[package]
+name = "bun_trim"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "lib.rs"
+
+[features]
+# What only tests use, those in `tests/` too.
+test_support = ["bun_removable_features/test_support"]
+
+[lints]
+workspace = true
+
+[dependencies]
+bun_removable_features.workspace = true
+bun_options_types.workspace = true
+bun_exe_format.workspace = true
+bun_core.workspace = true
+thiserror.workspace = true
+strum.workspace = true
+
+[dev-dependencies]
+bun_trim = { workspace = true, features = ["test_support"] }
+bun_sema_standalone = { path = "../sema/standalone" }

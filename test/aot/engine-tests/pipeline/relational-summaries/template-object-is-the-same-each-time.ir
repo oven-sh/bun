@@ -1,0 +1,166 @@
+# The array of strings that a tagged template hands to its tag is made once for the place in the program: every evaluation hands over the same frozen object. It looks like a literal and is no fresh object: libraries key their caches by it.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="template-object-is-the-same-each-time.ts" displayPath="template-object-is-the-same-each-time.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Compiled" module=m0 position=1550 fields=[{key="parts" declared={type=number} flags=[IsRequired]}, {key="uses" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="html" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="compiled" module=m0 declared={type=undefined|null|absent|WeakMap<undefined|null|Array<undefined|null|string>, undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer
+    v1 = Convert v0 declared={type=number}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="WeakMap" [isFreeName]
+    v8 = Convert v7 declared={type=builtin(WeakMap) flags=[IsExpected]}
+    v9 = Construct v8 calleeName="WeakMap"
+    v10 = Convert v9 declared={type=undefined|null|WeakMap<undefined|null|Array<undefined|null|string>, undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v10 variable=g1
+    v12 = NewClosure function=f2
+    v13 = Convert v12 declared={type=undefined|null|function|f2 flags=[OmitsNull, OmitsUndefined]}
+    v14 = Undefined
+    v15 = Convert v14 declared={type=undefined|null|L0 flags=[OmitsNull]} illTypedCause=FromLooseType
+    v16 = Integer
+    v17 = Convert v16 declared={type=number}
+    Jump -> next b1(v15, v17)
+  b1(v18: undefined|null|L0, v19: number):
+    LoopHint
+    v21 = Integer integer=300
+    v22 = Less v19, v21
+    Branch v22 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v23):
+    v24 = String string="n"
+    v25 = Add v24, v23
+    v26 = Call v13, -, v25, v23 calleeName="render"
+    v27 = Convert v26 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v28 = Increment v23
+    v29 = Convert v28 declared={type=number}
+    Jump -> next b1(v27, v29)
+  b3(v30):
+    v31 = Undefined
+    Return v31
+}
+function f1 name="html" module=m0 position=1660 flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}, {type=Array flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>, v1: Array):
+    Jump -> next b1()
+  b1():
+    v2 = GetModuleVariable variable=g1
+    v3 = CheckInitialized v2 name="compiled"
+    v4 = PropGet v3 key="get"
+    v5 = Call v4, v3, v0 calleeKey="get" calleeName="compiled.get"
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull]} illTypedCause=FromLooseType
+    Jump -> next b2(v6)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = GetModuleVariable variable=g1
+    v9 = CheckInitialized v8 name="compiled"
+    v10 = PropGet v9 key="set"
+    v11 = PropGet v0 key="length"
+    v12 = Convert v11 declared={type=number} illTypedCause=Assertion
+    v13 = Integer
+    v14 = Convert v13 declared={type=number}
+    v15 = NewObject -, v12, v14 layout=L0 fields=[0, 1]
+    v16 = FinishObject v15
+    v17 = Convert v16 declared={type=undefined|null|L0 flags=[OmitsNull]}
+    v18 = Call v10, v9, v0, v17 calleeKey="set" calleeName="compiled.set"
+    Jump -> next b4(v17)
+  b4(v19: undefined|null|L0):
+    v20 = Convert v19 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v20
+}
+function f2 name="render" module=m0 position=1899 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number):
+    v2 = GetModuleVariable variable=g0
+    v3 = NewTemplateObject templateStrings=[{cooked="<p>" raw="<p>"}, {cooked="</p><b>" raw="</p><b>"}, {cooked="</b>" raw="</b>"}]
+    v4 = Call v2, -, v3, v0, v1 calleeName="html"
+    ReturnCall v4 casts=[{declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}}]
+}
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@22 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000002, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v1:CallBuiltin)
+# CHECK-NEXT: Int64 b@21 = Const64(10, v0:Undefined)
+# CHECK-NEXT: Int64 b@23 = Patchpoint(b@22:Register(%r8), b@22:Register(%rax), $10(b@21):Register(%rdi), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:{frameSlots, StringStorage, AllocatorState, RuntimeState}, v1:CallBuiltin)
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Void b@24 = Store(b@23, b@10, offset = -1114112, ControlDependent|Writes:ModuleVariables.37, v4:PutModuleVariable)
+# CHECK-NEXT: Int32 b@25 = Const32(1, v4:PutModuleVariable)
+# CHECK-NEXT: Void b@26 = Store8($1(b@25), b@10, offset = -1114368, ControlDependent|Writes:cards, v4:PutModuleVariable)
+# CHECK-NEXT: Int32 b@27 = Const32(0, v5:Integer)
+# CHECK-NEXT: Void b@1 = Upsilon($0(b@27), ^3, WritesLocalState, v11:NewTemplateObject)
+# CHECK-NEXT: Int64 b@50 = Const64(1, v13:NewObject)
+# CHECK-NEXT: Void b@7 = Jump(Terminal, v11:NewTemplateObject)
+# CHECK-NEXT: Successors: #6
+# CHECK-NEXT: BB#6: ; frequency = 10.000000
+# CHECK-NEXT: Predecessors: #0, #5
+# CHECK-NEXT: Int32 b@3 = Phi(ReadsLocalState, v6:Parameter)
+# CHECK-NEXT: Int64 b@36 = Load(b@10, offset = -1114104, ControlDependent|Reads:AllocatorState, v11:NewTemplateObject)
+# CHECK-NEXT: Void b@38 = Branch(b@36, Terminal, v11:NewTemplateObject)
+# CHECK-NEXT: Successors: Then:#7, Else:Rare:#8
+# CHECK-NEXT: BB#7: ; frequency = 9.990234
+# CHECK-NEXT: Predecessors: #6
+# CHECK-NEXT: Void b@39 = Upsilon(b@36, ^49, WritesLocalState, v11:NewTemplateObject)
+# CHECK-NEXT: Void b@40 = Jump(Terminal, v11:NewTemplateObject)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#9: ; frequency = 10.000000
+# CHECK-NEXT: Predecessors: #8, #7
+# CHECK-NEXT: Int64 b@49 = Phi(ReadsLocalState, v11:NewTemplateObject)
+# CHECK-NEXT: Int64 b@51 = Patchpoint($1(b@50):Register(%r10), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v13:NewObject)
+# CHECK-NEXT: Void b@52 = Fence(Fence|Reads:jscRoot, v13:NewObject)
+# CHECK-NEXT: Int64 b@53 = Load(b@10, offset = 131120, ControlDependent|Reads:AllocatorState, v15:CallBuiltin)
+# CHECK-NEXT: Void b@55 = Branch(b@53, Terminal, v15:CallBuiltin)
+# CHECK-NEXT: Successors: Then:#10, Else:Rare:#11
+# CHECK-NEXT: BB#10: ; frequency = 9.990234
+# CHECK-NEXT: Predecessors: #9
+# CHECK-NEXT: Void b@56 = Upsilon(b@53, ^61, WritesLocalState, v15:CallBuiltin)
+# CHECK-NEXT: Void b@57 = Jump(Terminal, v15:CallBuiltin)
+# CHECK-NEXT: Successors: #12
+# CHECK-NEXT: BB#12: ; frequency = 10.000000
+# CHECK-NEXT: Predecessors: #11, #10
+# CHECK-NEXT: Int64 b@61 = Phi(ReadsLocalState, v15:CallBuiltin)
+# CHECK-NEXT: Int64 b@62 = Patchpoint(b@61:Register(%r8), b@23:Register(%rax), b@49:Register(%rdi), b@51:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, CollectionStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v15:CallBuiltin)
+# CHECK-NEXT: Void b@12 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v7:LoopHint)
+# CHECK-NEXT: Int32 b@63 = Add(b@3, $1(b@25), v16:Increment)
+# CHECK-NEXT: Int32 b@31 = Const32(300, v8:Integer)
+# CHECK-NEXT: Int32 b@9 = Below(b@63, $300(b@31), v9:Less)
+# CHECK-NEXT: Void b@8 = Branch(b@9, Terminal, v9:Less)
+# CHECK-NEXT: Successors: Then:#5, Else:#4
+# CHECK-NEXT: BB#5: ; frequency = 9.000000
+# CHECK-NEXT: Predecessors: #12
+# CHECK-NEXT: Void b@0 = Upsilon(b@63, ^3, WritesLocalState, v11:NewTemplateObject)
+# CHECK-NEXT: Void b@5 = Jump(Terminal, v11:NewTemplateObject)
+# CHECK-NEXT: Successors: #6
+# CHECK-NEXT: BB#4: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #12
+# CHECK-NEXT: Void b@66 = Return($10(b@21), Terminal)
+# CHECK-NEXT: BB#11: ; frequency = 0.009766
+# CHECK-NEXT: Predecessors: #9
+# CHECK-NEXT: Int64 b@58 = Patchpoint(resultConstraints = Register(%rax), pureFunction = 0x300000006, ControlDependent|Writes:{AOTSlimClosure_word, JSCell_header, JSObject_butterfly, AllocatorState, RuntimeState}, v15:CallBuiltin)
+# CHECK-NEXT: Void b@59 = Upsilon(b@58, ^61, WritesLocalState, v15:CallBuiltin)
+# CHECK-NEXT: Void b@60 = Jump(Terminal, v15:CallBuiltin)
+# CHECK-NEXT: Successors: #12
+# CHECK-NEXT: BB#8: ; frequency = 0.009766
+# CHECK-NEXT: Predecessors: #6
+# CHECK-NEXT: Int64 b@42 = Const64(4, v11:NewTemplateObject)
+# CHECK-NEXT: Int64 b@43 = Patchpoint($4(b@42):ColdAny, resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{frameSlots, AllocatorState}, v11:NewTemplateObject)
+# CHECK-NEXT: Void b@44 = Fence(Fence|Reads:jscRoot, v11:NewTemplateObject)
+# CHECK-NEXT: Void b@45 = Store(b@43, b@10, offset = -1114104, ControlDependent|Writes:AllocatorState, v11:NewTemplateObject)
+# CHECK-NEXT: Void b@46 = Store8($1(b@25), b@10, offset = -1114368, ControlDependent|Writes:cards, v11:NewTemplateObject)
+# CHECK-NEXT: Void b@47 = Upsilon(b@43, ^49, WritesLocalState, v11:NewTemplateObject)
+# CHECK-NEXT: Void b@48 = Jump(Terminal, v11:NewTemplateObject)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@3: range = [0,300]
+# CHECK-NEXT: b@10: dereferenceableBytes = 409600
+# CHECK-NEXT: b@49: dereferenceableBytes = 8
+# CHECK-NEXT: b@51: dereferenceableBytes = 16
+# CHECK-NEXT: b@3: induction, next = b@63, step = 1, test = b@9, doesNotWrap
+# CHECK-NEXT: end of function f0

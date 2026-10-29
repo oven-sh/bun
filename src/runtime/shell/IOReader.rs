@@ -1,6 +1,6 @@
 //! Similar to `IOWriter` but for reading.
 //!
-//! *NOTE* This type is reference counted via `Arc`; see the `Drop` impl note.
+//! *NOTE* This type is reference counted via `Rc`; see the `Drop` impl note.
 
 use core::cell::UnsafeCell;
 #[cfg(not(windows))]
@@ -56,10 +56,10 @@ struct State {
     #[cfg(windows)]
     reached_eof: bool,
     /// Weak self-ref so `keepalive()` can bump the strong count from `&self`
-    /// without unsafe Arc-pointer reconstruction. Set via `Arc::new_cyclic` in
+    /// without unsafe Rc-pointer reconstruction. Set via `Rc::new_cyclic` in
     /// `init()` (the sole constructor).
-    self_weak: std::sync::Weak<IOReader>,
-    read_guards: Vec<std::sync::Arc<IOReader>>,
+    self_weak: std::rc::Weak<IOReader>,
+    read_guards: Vec<std::rc::Rc<IOReader>>,
     /// Backref so async read callbacks can drive `Yield::run`. See
     /// `IOWriter::interp`.
     interp: Option<bun_ptr::ParentRef<Interpreter>>,
@@ -73,11 +73,6 @@ pub(crate) struct IOReader {
     reader: UnsafeCell<ReaderImpl>,
     state: UnsafeCell<State>,
 }
-
-// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
-unsafe impl Send for IOReader {}
-// SAFETY: shell is single-threaded; `Arc` is used purely for refcounting.
-unsafe impl Sync for IOReader {}
 
 impl IOReader {
     #[inline]
@@ -104,15 +99,15 @@ impl IOReader {
         unsafe { &mut *self.reader.get() }
     }
 
-    /// Bump our own Arc strong count. Held across re-entrant `run_yield` calls
+    /// Bump our own Rc strong count. Held across re-entrant `run_yield` calls
     /// whose child callback may drop the last external ref and free us
     /// mid-method.
     #[inline]
-    fn keepalive(&self) -> std::sync::Arc<IOReader> {
+    fn keepalive(&self) -> std::rc::Rc<IOReader> {
         self.state()
             .self_weak
             .upgrade()
-            .expect("IOReader::keepalive after last Arc dropped")
+            .expect("IOReader::keepalive after last Rc dropped")
     }
 
     fn push_read_guard(&self) {
@@ -120,11 +115,11 @@ impl IOReader {
         self.state().read_guards.push(guard);
     }
 
-    fn pop_read_guard(&self) -> Option<std::sync::Arc<IOReader>> {
+    fn pop_read_guard(&self) -> Option<std::rc::Rc<IOReader>> {
         self.state().read_guards.pop()
     }
 
-    pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> std::sync::Arc<IOReader> {
+    pub(crate) fn init(fd: Fd, evtloop: EventLoopHandle) -> std::rc::Rc<IOReader> {
         let mut reader = ReaderImpl::init::<IOReader>();
         #[cfg(not(windows))]
         {
@@ -136,7 +131,7 @@ impl IOReader {
         {
             reader.set_source(bun_io::Source::File(bun_io::Source::open_file(fd)));
         }
-        let this = std::sync::Arc::new_cyclic(|w| IOReader {
+        let this = std::rc::Rc::new_cyclic(|w| IOReader {
             reader: UnsafeCell::new(reader),
             state: UnsafeCell::new(State {
                 fd,
@@ -150,33 +145,29 @@ impl IOReader {
                 is_reading: false,
                 #[cfg(windows)]
                 reached_eof: false,
-                self_weak: std::sync::Weak::clone(w),
+                self_weak: std::rc::Weak::clone(w),
                 read_guards: Vec::new(),
                 interp: None,
             }),
         });
-        // NOTE: set the parent backref after Arc allocation so the
+        // NOTE: set the parent backref after Rc allocation so the
         // address is stable.
-        let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
-        // SAFETY: `Arc::as_ptr` yields `*const IOReader`, but every field of
+        let parent: *const IOReader = std::rc::Rc::as_ptr(&this);
+        // `Rc::as_ptr` yields `*const IOReader`, but every field of
         // `IOReader` is `UnsafeCell`, so all mutation flows through interior
         // mutability (SharedReadWrite). The `*mut` cast exists solely to satisfy
         // `set_parent`'s `*mut` signature for the vtable backref; the
         // `BufferedReaderParent` callbacks only ever reborrow it as `&Self` to
         // call `&self` methods — no `&mut IOReader` is materialized from it.
-        unsafe { (*this.reader.get()).set_parent(parent.cast_mut().cast()) };
+        this.reader().set_parent(parent.cast_mut().cast());
         crate::shell_log!("IOReader(0x{:x}, fd={}) create", parent as usize, fd);
         this
     }
 
-    /// # Safety
-    /// `interp` must be null or point to the live owning `Interpreter` (it
-    /// owns the IO struct that holds this `Arc`) for the lifetime of this
-    /// reader; single-threaded.
+    /// `interp` must outlive this reader (it owns the IO struct that holds this `Rc`).
     #[inline]
-    pub(crate) fn set_interp(&self, interp: *mut Interpreter) {
-        // SAFETY: precondition above.
-        self.state().interp = unsafe { bun_ptr::ParentRef::from_nullable(interp) };
+    pub(crate) fn set_interp(&self, interp: &Interpreter) {
+        self.state().interp = Some(bun_ptr::ParentRef::new(interp));
     }
 
     #[inline]
@@ -289,7 +280,7 @@ impl IOReader {
     /// The `BufferedReader.onReadChunk` hook.
     fn on_read_chunk_cb(&self, chunk: &[u8], has_more: bun_io::ReadState) -> bool {
         // `dispatch_read_chunk` → `Cat::on_io_reader_chunk` may drop the last
-        // external Arc; hold one across the whole body so the trailing
+        // external Rc; hold one across the whole body so the trailing
         // `state()` accesses (and `run_yield`'s re-read of `interp`) see live
         // memory.
         let _keepalive = self.keepalive();
@@ -328,7 +319,7 @@ impl IOReader {
     }
 
     fn on_reader_error(&self, err: &sys::Error) {
-        // `dispatch_reader_done` may drop the last external Arc; keep `self`
+        // `dispatch_reader_done` may drop the last external Rc; keep `self`
         // alive across the loop.
         let _keepalive = self.keepalive();
         self.set_reading(false);
@@ -347,7 +338,7 @@ impl IOReader {
 
     fn on_reader_done_cb(&self) {
         // `dispatch_reader_done` → `Cat::on_io_reader_done` drops Cat's
-        // `Arc<IOReader>`; if that was the last external ref, `self` is freed
+        // `Rc<IOReader>`; if that was the last external ref, `self` is freed
         // mid-loop and `run_yield`'s `state().interp` reads 0xdfdf poison.
         // Hold a strong ref across the body.
         let _keepalive = self.keepalive();
@@ -395,7 +386,7 @@ impl IOReader {
             return;
         };
         // `ParentRef: Deref<Target=Interpreter>` — the interpreter owns the IO
-        // struct holding this Arc and outlives every IOReader. Single-threaded.
+        // struct holding this Rc and outlives every IOReader. Single-threaded.
         y.run(&interp);
     }
 }
@@ -411,6 +402,7 @@ impl IOReader {
 // `reader()`.
 bun_io::impl_buffered_reader_parent! {
     ShellIoReader for IOReader;
+    feature = Shell;
     has_on_read_chunk = true;
     on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk_cb(&chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done_cb();

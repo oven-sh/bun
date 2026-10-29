@@ -110,6 +110,16 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
+        if bun_jsc::compiled_program::compiled_program()
+            .is_some_and(|program| !bun_jsc::compiled_program::admits_unknown_javascript(program))
+        {
+            log.add_range_error(
+                Some(source),
+                import_range,
+                b"Macros cannot be used in this executable, which only runs code that was compiled into it",
+            );
+            return Err(crate::Error::MacroFailed);
+        }
         // A macro's entry point is text made here, with names in it from the source that imports the macro, which may be a
         // string. The engine would refuse it, but nothing catches that rejection.
         if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {
@@ -176,9 +186,6 @@ impl MacroContext {
                     return Err(e.into());
                 }
             };
-            // The resolver's `Result` owns its path strings via the global `DirnameStore`
-            // (lifetime-erased `&'static [u8]`), so dropping `resolve_result`
-            // does not invalidate `text`.
             break 'brk resolve_result.path_pair.primary.text;
         };
 
@@ -369,12 +376,7 @@ fn __bun_macro_context_get_remap(
     // the `'static` borrow is sound for callers that drop it before the
     // `Transpiler` does.
     let inner = unsafe { &*data.cast::<MacroContext>() };
-    inner.get_remap(path).map(|e| {
-        // SAFETY: `e` borrows an entry in the remap table owned by
-        // `Transpiler.options`, which outlives every parse that calls this fn,
-        // so extending the borrow to `'static` upholds the function-level contract.
-        unsafe { &*std::ptr::from_ref::<js_parser::Macro::MacroRemapEntry>(e) }
-    })
+    inner.get_remap(path)
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -489,7 +491,9 @@ impl Macro {
             // SAFETY: `vm.global` is the live per-thread global; `loaded_result`
             // is a live promise cell.
             unsafe {
-                (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+                (*vm).run_with_api_lock(|| {
+                    (*vm).unhandled_rejection(&*(*vm).global, result, (*loaded_result).to_js());
+                });
             }
             return Err(crate::Error::MacroLoadError);
         }
@@ -600,7 +604,7 @@ pub(crate) struct Run<'a> {
     // printed long after this frame returns.
     pub(crate) bump: &'a bun_alloc::Arena,
     pub(crate) log: &'a mut Log,
-    pub(crate) source: &'a Source,
+    pub(crate) source: &'a Source<'a>,
     pub(crate) visited: VisitMap<'a>,
     pub(crate) is_top_level: bool,
     pub(crate) stack_check: bun_core::StackCheck,
@@ -1069,7 +1073,7 @@ impl Runner {
             bump: &'c bun_alloc::Arena,
             caller: Expr,
             js_args: &'c [JSValue],
-            source: &'c Source,
+            source: &'c Source<'c>,
             id: i32,
             result: Result<Expr, MacroError>,
         }

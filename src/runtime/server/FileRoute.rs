@@ -1,8 +1,7 @@
 use core::cell::Cell;
 use core::mem::size_of;
 
-use bun_core::String as BunString;
-use bun_core::strings;
+use bun_core::{StringView, strings};
 use bun_http::{Headers, Method};
 use bun_http_types::ETag;
 use bun_http_types::ETag::StringPointer;
@@ -92,7 +91,7 @@ impl FileRoute {
     pub(crate) fn last_modified_date(&self) -> JsResult<Option<u64>> {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
-                let string = BunString::borrow_utf8(last_modified);
+                let string = StringView::borrow_utf8(last_modified);
                 let global = VirtualMachine::get().as_mut().global();
                 let date_f64 = bun_string_jsc::parse_date(&string, global)?;
                 if !date_f64.is_nan() && date_f64.is_finite() {

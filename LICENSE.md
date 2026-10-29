@@ -22,7 +22,7 @@ Bun statically links these libraries:
 |---------|---------|
 | [`boringssl`](https://boringssl.googlesource.com/boringssl/) | [several licenses](https://boringssl.googlesource.com/boringssl/+/refs/heads/master/LICENSE) |
 | [`brotli`](https://github.com/google/brotli) | MIT |
-| [`libarchive`](https://github.com/libarchive/libarchive) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
+| [`libarchive`](https://github.com/libarchive/libarchive) (not linked: `src/tar` is derived from parts of it) | [several licenses](https://github.com/libarchive/libarchive/blob/master/COPYING) |
 | [`lol-html`](https://github.com/cloudflare/lol-html/tree/master/c-api) | BSD 3-Clause |
 | [`ls-hpack`](https://github.com/litespeedtech/ls-hpack) | MIT |
 | [`ls-qpack`](https://github.com/litespeedtech/ls-qpack) | MIT |
@@ -106,6 +106,17 @@ For compatibility reasons, the following packages are embedded into Bun's binary
 | [`url`](https://npmjs.com/package/url) | MIT |
 | [`util`](https://npmjs.com/package/util) | MIT |
 | [`vm-browserify`](https://npmjs.com/package/vm-browserify) | MIT |
+
+## Type declarations
+
+The type declarations of these packages are embedded into Bun's binary. `bun build --compile --aot` reads them in a project that hasn't installed `@types/bun`. They're embedded without their comments, except for copyright notices. The `LICENSE` files of `@types/node` and `undici-types` are embedded next to them.
+
+| Package | License |
+|---------|---------|
+| [`@types/node`](https://npmjs.com/package/@types/node) | MIT |
+| [`undici-types`](https://npmjs.com/package/undici-types) | MIT |
+| [`expect-type`](https://npmjs.com/package/expect-type), which `bun-types` includes | Apache 2.0 |
+| Types from [`jest-mock`](https://npmjs.com/package/jest-mock), which `bun-types` includes | MIT |
 
 ## Additional credits
 

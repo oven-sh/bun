@@ -88,20 +88,8 @@ pub fn install_with_manager(
         Global::crash();
     }
 
-    // reshaped for borrowck — `loadFromCwd` needs `manager`, `manager.lockfile`,
-    // and `manager.log` simultaneously. Route through a single
-    // raw provenance root so the three reborrows share a tag.
-    let load_result: lockfile::LoadResult = if manager.options.do_.load_lockfile() {
-        let mgr: *mut PackageManager = manager;
-        // SAFETY: `mgr` is the sole provenance root; `lockfile`, `*mgr`, and
-        // `*log` are disjoint storage. `load_from_cwd` only reads `manager`
-        // for option flags and writes through `lockfile`/`log`.
-        unsafe {
-            let log = (*mgr).log;
-            (*mgr)
-                .lockfile
-                .load_from_cwd::<true>(Some(&mut *mgr), &mut *log)
-        }
+    let load_result = if manager.options.do_.load_lockfile() {
+        manager.load_lockfile_from_cwd::<true>()
     } else {
         lockfile::LoadResult::NotFound
     };
@@ -114,24 +102,28 @@ pub fn install_with_manager(
     manager.lockfile.mark_loaded_packages()?;
     manager.held_messages = Some(Vec::new());
 
-    let (config_version, changed_config_version) = load_result.choose_config_version();
+    let (config_version, changed_config_version) =
+        load_result.choose_config_version(&manager.lockfile);
     manager.options.config_version = Some(config_version);
 
     let mut root = lockfile::Package::default();
     let mut needs_new_lockfile = !matches!(load_result, lockfile::LoadResult::Ok { .. })
-        || (load_result.ok().lockfile.buffers.dependencies.is_empty()
+        || (manager.lockfile.buffers.dependencies.is_empty()
             && !manager.update_requests.is_empty());
 
     manager.options.enable.set(
         Enable::FORCE_SAVE_LOCKFILE,
         manager.options.enable.force_save_lockfile()
             || changed_config_version
-            || (matches!(load_result, lockfile::LoadResult::Ok { .. })
-                // if migrated always save a new lockfile
-                && (load_result.ok().migrated != lockfile::Migrated::None
-                    // if loaded from binary and save-text-lockfile is passed
-                    || (load_result.ok().format == lockfile::Format::Binary
-                        && manager.options.save_text_lockfile.unwrap_or(false)))),
+            || matches!(
+                &load_result,
+                lockfile::LoadResult::Ok(ok)
+                    // if migrated always save a new lockfile
+                    if ok.migrated != lockfile::Migrated::None
+                        // if loaded from binary and save-text-lockfile is passed
+                        || (ok.format == lockfile::Format::Binary
+                            && manager.options.save_text_lockfile.unwrap_or(false))
+            ),
     );
 
     if manager.subcommand == Subcommand::Dedupe {
@@ -157,12 +149,12 @@ pub fn install_with_manager(
 
     match &load_result {
         lockfile::LoadResult::Err(cause) => report_lockfile_load_error(manager, cause, log_level)?,
-        lockfile::LoadResult::Ok(ok) => {
+        lockfile::LoadResult::Ok(_) => {
             if manager.subcommand == Subcommand::Update {
                 record_updating_package_versions(manager);
             }
             'differ: {
-                root = match ok.lockfile.root_package() {
+                root = match manager.lockfile.root_package() {
                     Some(r) => r,
                     None => {
                         needs_new_lockfile = true;
@@ -1057,9 +1049,12 @@ pub fn install_with_manager(
             && (did_meta_hash_change
                 || had_any_diffs
                 || !manager.update_requests.is_empty()
-                || (matches!(load_result, lockfile::LoadResult::Ok { .. })
-                    && (load_result.ok().serializer_result.packages_need_update
-                        || load_result.ok().serializer_result.migrated_from_lockb_v2))
+                || matches!(
+                    &load_result,
+                    lockfile::LoadResult::Ok(ok)
+                        if ok.serializer_result.packages_need_update
+                            || ok.serializer_result.migrated_from_lockb_v2
+                )
                 || manager.lockfile.is_empty()
                 || manager.options.enable.force_save_lockfile()));
 
@@ -2119,7 +2114,7 @@ fn root_package_json_source(
     manager: &mut PackageManager,
     root_package_json_path: &ZStr,
     has_lockfile: bool,
-) -> crate::Result<Source> {
+) -> crate::Result<Source<'static>> {
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),
         root_package_json_path.as_bytes(),
@@ -2177,7 +2172,7 @@ fn create_new_lockfile_and_enqueue(
     // the "an existing lockfile keeps its version" behavior everywhere else.
     let preserved_text_version = match load_result {
         lockfile::LoadResult::Ok(ok) if ok.format == lockfile::Format::Text => {
-            Some(ok.lockfile.text_lockfile_version)
+            Some(manager.lockfile.text_lockfile_version)
         }
         _ => None,
     };

@@ -1,0 +1,110 @@
+# The position and the count of a splice are typed `number` and hold whole numbers, fractions, NaN, infinities, -0, numbers beyond int32: with the result used, unused, and taken apart.
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="splice-at-a-position-typed-number.ts" displayPath="splice-at-a-position-typed-number.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=828 kind=Variable
+typesite w1 module=m0 position=204 kind=Parameter
+typesite w2 module=m0 position=220 kind=Parameter
+typesite w3 module=m0 position=232 kind=Parameter
+typesite w4 module=m0 position=409 kind=Parameter
+typesite w5 module=m0 position=436 kind=Parameter
+typesite w6 module=m0 position=448 kind=Parameter
+typesite w7 module=m0 position=463 kind=Parameter
+typesite w8 module=m0 position=474 kind=Parameter
+typesite w9 module=m0 position=390 kind=Result
+typesite w10 module=m0 position=604 kind=Parameter
+typesite w11 module=m0 position=622 kind=Parameter
+typesite w12 module=m0 position=590 kind=Result
+typesite w13 module=m0 position=993 kind=Variable
+typesite w14 module=m0 position=1109 kind=Variable
+typesite w15 module=m0 position=1266 kind=Variable
+typesite w16 module=m0 position=1041 kind=CallResult
+typesite w17 module=m0 position=1073 kind=CallResult
+typesite w18 module=m0 position=511 kind=CallResult
+typesite w19 module=m0 position=647 kind=Variable
+typesite w20 module=m0 position=700 kind=PropertyRead
+typesite w21 module=m0 position=689 kind=Element
+data d0 root=Array{contents=number elements=[Number{}, Number{value=1}, Number{value=2}, Number{value=3.5}, Number{value=-1}, Number{value=-2.5}, Number{value=NaN}, Number{value=Infinity}, Number{value=-Infinity}, Number{value=-0}, Number{value=2147483648}, Number{value=-2147483649}, Number{value=4294967297}, Number{value=1e+300}, Number{value=0.999}, Number{value=4}, Number{value=100}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}]} module=m0
+data d2 root=Array{contents=undefined|null|number|string elements=[Number{value=1}, String{value="x"}, Number{value=2}, String{value="y"}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Data data=d0
+    v7 = Convert v6 declared={type=undefined|null|Array<number> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v8 = Integer
+    v9 = Convert v8 declared={type=number site=w13}
+    Jump -> next b1(v9)
+  b1(v10: number):
+    LoopHint
+    v12 = Call v5, -, v7, v10 calleeName="pick"
+    v13 = Convert v12 declared={type=number site=w16}
+    v14 = Integer integer=5
+    v15 = Add v10, v14
+    v16 = Call v5, -, v7, v15 calleeName="pick"
+    v17 = Convert v16 declared={type=number site=w17}
+    v18 = Data data=d1
+    v19 = Convert v18 declared={type=undefined|null|Array<number> site=w14 flags=[OmitsNull, OmitsUndefined]}
+    v20 = Integer integer=9
+    v21 = Call v1, -, v19, v13, v20 calleeName="insertAt"
+    v22 = Data data=d2
+    v23 = Convert v22 declared={type=undefined|null|Array<undefined|null|number|string> site=w15 flags=[OmitsNull, OmitsUndefined]}
+    v24 = String string="new"
+    v25 = Integer integer=7
+    v26 = Call v3, -, v23, v13, v17, v24, v25 calleeName="replaceAt"
+    v27 = Increment v10
+    v28 = Convert v27 declared={type=number site=w13}
+    Jump -> next b1(v28)
+}
+function f1 name="insertAt" module=m0 position=186 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w1 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w2}, {type=number site=w3}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: number, v2: number):
+    v3 = PropGet v0 key="splice"
+    v4 = Integer
+    v5 = Call v3, v0, v1, v4, v2 calleeKey="splice" calleeName="list.splice"
+    v6 = Undefined
+    Return v6
+}
+function f2 name="replaceAt" module=m0 position=390 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string> site=w4 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w5}, {type=number site=w6}, {type=undefined|null|string site=w7 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w8}] results=[{type=number site=w9}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|number|string>, v1: number, v2: number, v3: undefined|null|string, v4: number):
+    v5 = PropGet v0 key="splice"
+    v6 = Call v5, v0, v1, v2, v3, v4 calleeKey="splice" calleeName="list.splice"
+    v7 = Convert v6 declared={type=undefined|null|Array<undefined|null|number|string> site=w18 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v8 = IteratorOpen v7 elementCount=1 [isDestructuring]
+    Jump -> next b1()
+  b1() handler=b3():
+    v9 = IteratorResume v8 stepIndex=0
+    v10 = ResultAt v9 index=1
+    v11 = Convert v10 declared={type=undefined|null|number|string} illTypedCause=Assertion
+    Jump -> next b2()
+  b2():
+    v12 = Convert v11 declared={type=number} illTypedCause=Assertion
+    v13 = Convert v12 declared={type=number site=w9}
+    Return v13
+  b3() role=IterationCleanup subject=v8:
+    v14 = CatchException
+    Rethrow v14
+}
+function f3 name="pick" module=m0 position=590 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> site=w10 flags=[OmitsNull, OmitsUndefined]}, {type=number site=w11}] results=[{type=number site=w12}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    v2 = PropGet v0 key="length"
+    v3 = Convert v2 declared={type=number site=w20} illTypedCause=Assertion
+    v4 = Mod v1, v3
+    v5 = ElemGet v0, v4
+    v6 = Convert v5 declared={type=number site=w21} illTypedCause=ContainerWriterUnseen
+    v7 = Convert v6 declared={type=undefined|number site=w19}
+    v8 = Convert v7 declared={type=number} illTypedCause=Assertion
+    Return v8
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 171, patchpoints: 15, rare instructions: 379, polls: 1
+# CHECK-NEXT: end of function f0

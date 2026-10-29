@@ -3,6 +3,7 @@
 // access is in JSWebView.cpp.
 
 #include "root.h"
+#include "RemovableFeatures.h"
 #include "JSWebView.h"
 #include "ZigGlobalObject.h"
 #include "ErrorCode.h"
@@ -211,6 +212,7 @@ static VirtualKey virtualKeyFromName(const WTF::String& s)
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncNavigate, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncNavigate);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "navigate"_s);
@@ -228,6 +230,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncNavigate, (JSGlobalObject * globalObj
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncEvaluate);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "evaluate"_s);
@@ -245,6 +248,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncEvaluate, (JSGlobalObject * globalObj
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncScreenshot);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "screenshot"_s);
@@ -351,6 +355,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScreenshot, (JSGlobalObject * globalO
 // the promise.
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncCdp);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "cdp"_s);
@@ -405,6 +410,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncCdp, (JSGlobalObject * globalObject, 
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncClick);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "click"_s);
@@ -471,6 +477,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClick, (JSGlobalObject * globalObject
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncType);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "type"_s);
@@ -488,6 +495,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncType, (JSGlobalObject * globalObject,
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncPress);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "press"_s);
@@ -521,6 +529,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncPress, (JSGlobalObject * globalObject
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncScroll);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "scroll"_s);
@@ -543,6 +552,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScroll, (JSGlobalObject * globalObjec
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncScrollTo);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "scrollTo"_s);
@@ -593,6 +603,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncScrollTo, (JSGlobalObject * globalObj
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncResize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncResize);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "resize"_s);
@@ -622,6 +633,7 @@ static auto& navSlot(JSWebView* view)
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncBack, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncBack);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goBack"_s);
@@ -632,6 +644,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncBack, (JSGlobalObject * globalObject,
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncForward);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "goForward"_s);
@@ -642,6 +655,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncForward, (JSGlobalObject * globalObje
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncReload);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = unwrapThis(globalObject, scope, callFrame, "reload"_s);
@@ -652,6 +666,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncReload, (JSGlobalObject * globalObjec
 
 JSC_DEFINE_HOST_FUNCTION(jsWebViewProtoFuncClose, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
+    BUN_REMOVABLE_HOST_FUNCTION_DEFINITION(WebView, jsWebViewProtoFuncClose);
     auto* thisObject = dynamicDowncast<JSWebView>(callFrame->thisValue());
     if (!thisObject || thisObject->m_closed) return JSValue::encode(jsUndefined());
     thisObject->doClose();

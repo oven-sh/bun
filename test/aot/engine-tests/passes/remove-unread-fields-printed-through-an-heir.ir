@@ -1,0 +1,40 @@
+# The formatter of console.log prints the enumerable properties that its operand inherits, so the fields of a literal that is only the prototype of what is printed stay, in their order.
+# The fields of a prototype of an object that is not printed are removed
+# FORM: AsRead
+# RUN: pipeline RemoveUnreadFields
+# OPTIONS: only-passes=ComputeEffectSummaries,ResolveCalls,ResolveAccesses,EliminateDeadCode,RemoveUnreadFields
+# STATISTIC: UnreadFieldsRemoved = 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Printed" fields=[{key="run" declared={type=anything} flags=[IsRequired]}, {key="unit" declared={type=anything} flags=[IsRequired]}]
+layout L1 name="PrintedTwoLevelsUp" fields=[{key="deep" declared={type=anything} flags=[IsRequired]}]
+layout L2 name="NotPrinted" fields=[{key="unit" declared={type=anything} flags=[IsRequired]}]
+# CHECK: layout L2 name="NotPrinted" {{*}}stores=Never{{*}}reads=NeverRead
+
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = Integer integer=1
+    v2 = Builtin builtin=ObjectCreate
+    v3 = Builtin builtin=ConsoleLog
+    v4 = NewClosure function=f1
+    v5 = NewObject -, v4, v1 layout=L0 fields=[0, 1]
+    v6 = Call v2, -, v5
+    v7 = Call v3, -, v6
+    v8 = NewObject -, v1 layout=L1 fields=[0]
+    v9 = Call v2, -, v8
+    v10 = Call v2, -, v9
+    v11 = Call v3, -, v10
+    v12 = NewObject -, v1 layout=L2 fields=[0]
+    v13 = Call v2, -, v12
+    Return
+}
+# CHECK-LABEL: function f0 name="main"
+# CHECK: layout=L0 fields=[0, 1]
+# CHECK: layout=L1 fields=[0]
+
+function f1 name="run" kind=Method results=[{type=anything}] {
+  b0():
+    Return
+}

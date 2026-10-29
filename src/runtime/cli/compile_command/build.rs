@@ -16,14 +16,14 @@ use bun_options_types::Format;
 use bun_paths::resolve_path::{self, platform};
 use bun_sema::util::FxHashSet;
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileResult, ExecutableRequest, Flags, GraphRequest, target_base_public_path, to_graph_bytes,
+    CompileResult, ExecutableRequest, GraphRequest, target_base_public_path, to_graph_bytes,
     write_executable,
 };
 use bun_standalone_graph::{
     CompiledEntryPointInput, CompiledPackageNameInput, CompiledProgramInput, with_executable_image,
 };
 use bun_sys::Fd;
-use bun_trim::{Feature, TrimPlan, UnseenCode, UsedFeature, UsedFeatures, UsedLocales};
+use bun_trim::{TrimPlan, UnseenCode, UsedFeature, UsedFeatures, UsedLocales};
 
 use super::{
     AssetError, BundlerInputs, CompileFailure, CompileOutcome, CompileProduct, CompileRequest,
@@ -84,9 +84,6 @@ pub(crate) fn compile_to_executable(
         add_used_features(&mut used, used_features(program));
     }
     used.starts_workers_from_unseen_code = build.starts_workers_from_unseen_code;
-    if (used.features.iter()).any(|used| used.feature == Feature::SystemCaCertificates) {
-        request.executable.flags |= Flags::NAMES_SYSTEM_CA_CERTIFICATES;
-    }
     let trimming = trimming::decide_trimming(request, &used)?;
     let untrimmed_outfile = bun_core::env_var::BUN_DEBUG_TEST_UNTRIMMED_OUTFILE
         .get_not_empty()

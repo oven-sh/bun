@@ -1131,8 +1131,6 @@ bitflags::bitflags! {
         const HAS_LINKED_BYTECODE_PAYLOAD   = 1 << 13;
         /// After the linked-payload record: the record of the program compiled ahead of time (`compiled_program.rs`).
         const HAS_COMPILED_PROGRAM          = 1 << 14;
-        /// The program may ask for the system's CA certificates: the process starts loading them on a thread of its own.
-        const NAMES_SYSTEM_CA_CERTIFICATES  = 1 << 15;
         // _padding: u16
     }
 }
@@ -2092,15 +2090,6 @@ pub(crate) fn to_bytes(
         | Flags::SOURCE_TEXT_CONTIGUOUS
         | Flags::HAS_SOURCE_HASHES
         | Flags::HAS_BUILTIN_BYTECODE;
-    // Whoever compiles ahead of time knows what the program reaches, and says so in `flags`.
-    if program.is_none()
-        && output_files.iter().any(|file| {
-            matches!(file.output_kind, options::OutputKind::EntryPoint | options::OutputKind::Chunk)
-                && matches!(&file.value, options::OutputFileValue::Buffer { bytes } if bun_core::strings::contains(bytes, b"getCACertificates"))
-        })
-    {
-        flags |= Flags::NAMES_SYSTEM_CA_CERTIFICATES;
-    }
     if bytecode_string_table_ptr.length != 0 {
         let mut record = [0u8; 8];
         record[0..4].copy_from_slice(&bytecode_string_table_ptr.offset.to_le_bytes());

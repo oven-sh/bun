@@ -8891,13 +8891,6 @@
     "windows": 100,
     "windows-aarch64": 100
   },
-  "aot/system-ca-certificates-by-use.test.ts": {
-    "default": 3200,
-    "asan": 9700,
-    "musl": 3100,
-    "windows": 7300,
-    "windows-aarch64": 4800
-  },
   "aot/test-files-self-skip.test.ts": {
     "default": 5300,
     "asan": 800,

@@ -335,7 +335,6 @@ const aotTestsThatAskTheSystem = [
   "aot/stack-frame-paths",
   "aot/the-folder-of-a-program-has-a-short-name",
   "aot/diagnostics-end-in-lf",
-  "aot/system-ca-certificates-by-use",
   "aot/parallel/modules/all-kinds-path-starts-folder-executable",
   // Native code: addons, sockets, the engine's own tests.
   "aot/native-addons",

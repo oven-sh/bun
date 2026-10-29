@@ -475,7 +475,6 @@ describe("node:test", () => {
           "(skip) a test calls t.skip() and throws while a test of its inline todo suite never settles",
           "(skip) a test with a timeout calls t.skip() and throws while its subtest never settles",
           "(skip) a test that called t.skip() times out while its subtest never settles",
-          "(skip) a test that called t.skip() times out after 3 s while its subtest never settles",
           "(pass) a subtest with a timeout calls t.todo() and throws while its own subtest never settles",
           "(skip) a test with a timeout throws, and its after hook calls t.skip(), while its subtest never settles",
           "(skip) a test with a timeout throws, and its subtest calls the t.skip() of the test and never settles",
@@ -499,6 +498,19 @@ describe("node:test", () => {
         "(pass) a subtest with a timeout",
         "(skip) a test with a timeout calls t.skip() and throws while its subtest never settles",
         "(pass) a before hook of a test fails, so its subtest never runs",
+      ]);
+      expect(exitCode).toBe(0);
+    },
+    30_000,
+  );
+
+  test.concurrent(
+    "should not wait for queued subtests after a test has used its whole timeout",
+    async () => {
+      // `node --test` (v26.3.0) exits 0 for the fixture. Its one test takes 3 s, so it runs in this test only.
+      const { exitCode, stderr } = await runTests(["52-timeout-leaves-no-wait.js"]);
+      expect(errorsAndVerdicts(stderr)).toEqual([
+        "(skip) a test that called t.skip() times out while its subtest never settles",
       ]);
       expect(exitCode).toBe(0);
     },

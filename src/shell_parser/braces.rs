@@ -27,10 +27,9 @@ pub enum StringEncoding {
 
 // ─── SrcAscii ──────────────────────────────────────────────────────────────
 
-// Copy: bitwise OK — `bytes` borrows caller-owned input (BACKREF, non-owning).
 #[derive(Copy, Clone)]
-struct SrcAscii {
-    bytes: *const [u8], // raw slice ptr — borrowed caller input; lifetime erased (BACKREF).
+struct SrcAscii<'a> {
+    bytes: &'a [u8],
     i: usize,
 }
 
@@ -48,22 +47,14 @@ struct AsciiIndexValue {
     char: u32,
 }
 
-impl SrcAscii {
+impl<'a> SrcAscii<'a> {
     #[inline]
-    fn init(bytes: &[u8]) -> Self {
-        Self {
-            bytes: std::ptr::from_ref::<[u8]>(bytes),
-            i: 0,
-        }
-    }
-    #[inline]
-    fn bytes(&self) -> &[u8] {
-        // SAFETY: `bytes` outlives the iter by construction (caller contract).
-        unsafe { &*self.bytes }
+    fn init(bytes: &'a [u8]) -> Self {
+        Self { bytes, i: 0 }
     }
     #[inline]
     fn index(&self) -> Option<AsciiIndexValue> {
-        let b = self.bytes();
+        let b = self.bytes;
         if self.i >= b.len() {
             return None;
         }
@@ -73,7 +64,7 @@ impl SrcAscii {
     }
     #[inline]
     fn index_next(&self) -> Option<AsciiIndexValue> {
-        let b = self.bytes();
+        let b = self.bytes;
         if self.i + 1 >= b.len() {
             return None;
         }
@@ -89,8 +80,8 @@ impl SrcAscii {
 
 // ─── SrcUnicode ────────────────────────────────────────────────────────────
 
-struct SrcUnicode {
-    iter: CodepointIterator<'static>, // lifetime erased; see SrcAscii.bytes note.
+struct SrcUnicode<'a> {
+    iter: CodepointIterator<'a>,
     cursor: Cursor,
     next_cursor: Cursor,
 }
@@ -100,9 +91,9 @@ struct UnicodeIndexValue {
     char: u32,
 }
 
-impl SrcUnicode {
+impl<'a> SrcUnicode<'a> {
     #[inline]
-    fn next_cursor(iter: &CodepointIterator<'static>, cursor: &mut Cursor) {
+    fn next_cursor(iter: &CodepointIterator<'a>, cursor: &mut Cursor) {
         if !CodepointIterator::next(iter, cursor) {
             // This will make `i > sourceBytes.len` so the condition in `index` will fail
             cursor.i = u32::try_from(iter.bytes.len() + 1).unwrap();
@@ -110,10 +101,7 @@ impl SrcUnicode {
             cursor.c = CodepointIterator::ZERO_VALUE;
         }
     }
-    fn init(bytes: &[u8]) -> Self {
-        // SAFETY: erase lifetime — caller guarantees `bytes` outlives the iter.
-        let bytes: &'static [u8] =
-            unsafe { core::slice::from_raw_parts(bytes.as_ptr(), bytes.len()) };
+    fn init(bytes: &'a [u8]) -> Self {
         let iter = CodepointIterator::init(bytes);
         let mut cursor = Cursor::default();
         Self::next_cursor(&iter, &mut cursor);
@@ -165,31 +153,31 @@ impl SrcUnicode {
 // store both arms in a small enum and branch at runtime. Could split into three
 // `impl CharIter for ShellCharIter<{StringEncoding::*}>` blocks if profiling
 // shows the branch matters.
-enum ShellSrc {
-    Ascii(SrcAscii),
-    Unicode(SrcUnicode),
+enum ShellSrc<'a> {
+    Ascii(SrcAscii<'a>),
+    Unicode(SrcUnicode<'a>),
 }
 
-pub struct ShellCharIter<const E: StringEncoding> {
-    src: ShellSrc,
+pub struct ShellCharIter<'a, const E: StringEncoding> {
+    src: ShellSrc<'a>,
 }
 
 /// Surface trait so callers can name `<ShellCharIter<E> as CharIter>::InputChar` /
 /// `::CodepointType` without inherent associated types.
-trait CharIter: Sized {
+trait CharIter<'a>: Sized {
     type CodepointType: Copy;
     type InputChar: Copy;
-    fn init(bytes: &[u8]) -> Self;
+    fn init(bytes: &'a [u8]) -> Self;
     fn eat(&mut self) -> Option<Self::InputChar>;
     fn read_char(&mut self) -> Option<Self::InputChar>;
 }
 
-impl<const E: StringEncoding> CharIter for ShellCharIter<E> {
+impl<'a, const E: StringEncoding> CharIter<'a> for ShellCharIter<'a, E> {
     // PERF: unified to u32 for ascii and unicode (see InputChar note).
     type CodepointType = u32;
     type InputChar = InputChar;
 
-    fn init(bytes: &[u8]) -> Self {
+    fn init(bytes: &'a [u8]) -> Self {
         let src = if E == StringEncoding::Ascii {
             ShellSrc::Ascii(SrcAscii::init(bytes))
         } else {
@@ -1024,9 +1012,9 @@ fn build_expansion_table(
     Ok(())
 }
 
-pub type Lexer = NewLexer<{ Encoding::Ascii }>;
+pub type Lexer<'a> = NewLexer<'a, { Encoding::Ascii }>;
 
-type Chars<const E: Encoding> = ShellCharIter<E>;
+type Chars<'a, const E: Encoding> = ShellCharIter<'a, E>;
 
 pub struct LexerOutput {
     pub tokens: Vec<Token>,
@@ -1035,14 +1023,14 @@ pub struct LexerOutput {
 
 pub(crate) type BraceLexerError = AllocError;
 
-pub struct NewLexer<const ENCODING: Encoding> {
-    chars: Chars<ENCODING>,
+pub struct NewLexer<'a, const ENCODING: Encoding> {
+    chars: Chars<'a, ENCODING>,
     tokens: Vec<Token>,
     contains_nested: bool,
 }
 
-impl<const ENCODING: Encoding> NewLexer<ENCODING> {
-    pub fn tokenize(src: &[u8]) -> Result<LexerOutput, BraceLexerError> {
+impl<'a, const ENCODING: Encoding> NewLexer<'a, ENCODING> {
+    pub fn tokenize(src: &'a [u8]) -> Result<LexerOutput, BraceLexerError> {
         let mut this = Self {
             chars: Chars::<ENCODING>::init(src),
             tokens: Vec::new(),
@@ -1222,7 +1210,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
 
     fn append_char(
         &mut self,
-        char: <Chars<ENCODING> as CharIter>::CodepointType,
+        char: <Chars<'a, ENCODING> as CharIter<'a>>::CodepointType,
     ) -> Result<(), AllocError> {
         if !self.tokens.is_empty() {
             let last_idx = self.tokens.len() - 1;
@@ -1251,7 +1239,7 @@ impl<const ENCODING: Encoding> NewLexer<ENCODING> {
         Ok(())
     }
 
-    fn eat(&mut self) -> Option<<Chars<ENCODING> as CharIter>::InputChar> {
+    fn eat(&mut self) -> Option<<Chars<'a, ENCODING> as CharIter<'a>>::InputChar> {
         self.chars.eat()
     }
 }

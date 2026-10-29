@@ -193,16 +193,7 @@ fn run<'h>(
     bundle.process_files_to_copy(&reachable_files)?;
     bundle.add_server_component_boundaries_as_extra_entry_points()?;
 
-    // SAFETY: as in `run_from_js_in_new_thread`: every borrow comes from the one raw pointer, so projecting `linker`
-    // does not invalidate `entry_points` or `boundaries`.
-    let mut chunks = unsafe {
-        let bundle_pointer: *mut BundleV2<'_> = &raw mut *bundle;
-        let entry_points = (*bundle_pointer).graph.entry_points.as_slice();
-        let boundaries = &(*bundle_pointer).graph.server_component_boundaries;
-        (*bundle_pointer)
-            .linker
-            .link(bundle_pointer, entry_points, boundaries, &reachable_files)?
-    };
+    let mut chunks = bundle.link(&reachable_files)?;
     if bundle.transpiler.log().errors > 0 {
         return Err(crate::Error::BuildFailed);
     }

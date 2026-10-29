@@ -1180,6 +1180,8 @@ A map of global identifiers that Bun replaces at build time. A key is an identif
 
 A define matches its key written with dots, with optional chains, or with a string literal index. `process.env.NODE_ENV`, `process.env["NODE_ENV"]`, and `process?.env?.NODE_ENV` are all replaced. An index that is an expression, such as `process.env["NODE_" + "ENV"]`, is not replaced.
 
+Bun defines `process.env.NODE_ENV`, `process.env.BUN_ENV`, and `process.browser` when the build does not. With `target: "bun"` or `target: "node"`, these defaults do not match the optional-chain and string-index spellings. A key that you define matches every spelling.
+
 <Tabs>
   <Tab title="JavaScript">
     ```ts title="build.ts" icon="/icons/typescript.svg"

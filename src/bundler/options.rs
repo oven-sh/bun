@@ -831,6 +831,8 @@ pub(crate) fn defines_from_transform_options(
     }
 
     let mut environment_defines = defines::UserDefinesArray::default();
+    // The keys of the defines below that no `--define` gave
+    let mut own_defaults: Vec<&'static [u8]> = Vec::new();
 
     let mut behavior = api::DotEnvBehavior::disable;
 
@@ -891,13 +893,20 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        user_defines.get_or_put_value(b"process.env.NODE_ENV", quoted_node_env.clone())?;
-        user_defines.get_or_put_value(b"process.env.BUN_ENV", quoted_node_env)?;
+        let mut add_default = |key: &'static [u8], value: Box<[u8]>| {
+            let added = user_defines.get_or_put_value(key, value)?;
+            if !added.found_existing {
+                own_defaults.push(key);
+            }
+            Ok::<(), bun_alloc::AllocError>(())
+        };
+        add_default(default_user_defines::node_env::KEY, quoted_node_env.clone())?;
+        add_default(b"process.env.BUN_ENV", quoted_node_env)?;
 
         // Automatically set `process.browser` to `true` for browsers and false for node+js
         // This enables some extra dead code elimination
         if let Some(value) = target.process_browser_define_value() {
-            user_defines.get_or_put_value(
+            add_default(
                 default_user_defines::process_browser_define::KEY,
                 Box::from(value.as_bytes()),
             )?;
@@ -918,7 +927,18 @@ pub(crate) fn defines_from_transform_options(
         }
     }
 
-    let resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
+    let mut resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
+    // A server has the real `process.env` where it runs, and a program reads it there with `process.env["NODE_ENV"]` or `?.`
+    if target.is_server_side() {
+        for key in own_defaults {
+            // A `--drop` of the same key has the entry now, and that one is the user's.
+            if let Some(data) = resolved_defines.get_mut(key)
+                && !data.valueless()
+            {
+                data.set_plain_path_only();
+            }
+        }
+    }
 
     let drop_debugger = drop.iter().any(|item| *item == b"debugger");
 

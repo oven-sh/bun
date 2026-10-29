@@ -35,6 +35,25 @@ fn define_value_can_be_assign_target(value: &Expr) -> bool {
     )
 }
 
+/// `a.b.c` and `a["b"].c`: a dot last and no `?.`. A define with `plain_path_only` replaces no other spelling.
+fn is_plain_path(expr: &Expr) -> bool {
+    let Data::EDot(last) = expr.data else {
+        return false;
+    };
+    if last.optional_chain.is_some() {
+        return false;
+    }
+    let mut object = last.target;
+    loop {
+        object = match object.data {
+            Data::EDot(dot) if dot.optional_chain.is_none() => dot.target,
+            Data::EIndex(index) if index.optional_chain.is_none() => index.target,
+            Data::EDot(_) | Data::EIndex(_) => return false,
+            _ => return true,
+        };
+    }
+}
+
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // PERF(port:noalias): `e: &mut Expr` is lowered to a `noalias` LLVM param, so reads
     // through `e` can be cached in registers across child recursion. The by-value
@@ -167,6 +186,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         for define in candidates {
             if !p.is_dot_define_match(expr, &define.parts) {
+                continue;
+            }
+            if define.data.plain_path_only() && !is_plain_path(&expr) {
                 continue;
             }
             // Substitute user-specified defines

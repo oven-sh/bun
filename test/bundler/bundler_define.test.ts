@@ -17,6 +17,8 @@ import { join } from "path";
 // - The later of two spellings of one key wins. esbuild takes the spelling that
 //   sorts last.
 // - A BigInt value can be hexadecimal (`0xffn`). esbuild takes decimal only.
+// - Bun defines `process.env.NODE_ENV`, `process.env.BUN_ENV` and `process.browser` by itself.
+//   In a build for `bun` or `node` these defaults replace the dotted spelling alone.
 
 type Defines = Record<string, string>;
 
@@ -818,6 +820,112 @@ describe.concurrent("a define key has one spelling", () => {
     const dotted = await bundle("process.env.NODE_ENV");
     expect(dotted).toContain("react/jsx-runtime");
     expect(await bundle('process.env["NODE_ENV"]')).toBe(dotted);
+  });
+});
+
+// A server has the real `process.env` where it runs, and a program reads it there with
+// `process.env["NODE_ENV"]` or `process.env?.NODE_ENV`. So the defines that Bun adds by itself
+// replace, in a build for a server, what they replaced before keys matched in brackets and behind `?.`.
+describe.concurrent("the defines that Bun adds by itself", () => {
+  const source = `x(
+    process.env.NODE_ENV, process["env"].NODE_ENV, process.env["NODE_ENV"], process.env?.NODE_ENV, process?.env?.NODE_ENV,
+    process.env.BUN_ENV, process.env["BUN_ENV"],
+    process.browser, process["browser"], process?.browser,
+  );`;
+  const onOneLine = (code: string) => withoutPathComments(code).replace(/\s+/g, " ").trim();
+
+  /** `bun build` in a child process, whose NODE_ENV is not the one of `bun test`. */
+  async function build(args: string[], text = source) {
+    using dir = tempDir("bundler-define-defaults", { "entry.js": text });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...args, "entry.js"],
+      env: { ...bunEnv, NODE_ENV: "staging", BUN_ENV: undefined },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return onOneLine(stdout);
+  }
+
+  /** What the default define of NODE_ENV is in this process: `bun test` has one of its own. */
+  const modeOf = (output: string) => /^x\(("\w+"),/.exec(output)?.[1] ?? "";
+  const dottedAlone = (mode: string) =>
+    `x(${mode}, ${mode}, process.env["NODE_ENV"], process.env?.NODE_ENV, process?.env?.NODE_ENV, ${mode}, process.env["BUN_ENV"], false, process["browser"], process?.browser);`;
+  const everySpelling = (mode: string, browser: string) =>
+    `x(${mode}, ${mode}, ${mode}, ${mode}, ${mode}, ${mode}, ${mode}, ${browser}, ${browser}, ${browser});`;
+
+  const modes: [string, string[]][] = [
+    ["--no-bundle", ["--no-bundle"]],
+    ["a bundle", []],
+  ];
+
+  describe.each(["bun", "node"])("--target=%s", target => {
+    test.each(modes)("bun build, %s, replaces the dotted spelling alone", async (_, mode) => {
+      expect(await build([...mode, `--target=${target}`])).toBe(dottedAlone('"staging"'));
+    });
+
+    test('--minify-syntax has ["NODE_ENV"] as .NODE_ENV first', async () => {
+      expect(await build(["--no-bundle", "--minify-syntax", `--target=${target}`])).toBe(
+        `x("staging", "staging", "staging", process.env?.NODE_ENV, process?.env?.NODE_ENV, "staging", "staging", !1, !1, process?.browser);`,
+      );
+    });
+
+    test("a key that --define gives replaces every spelling", async () => {
+      const defines = ["--define", 'process.env.NODE_ENV="mine"', "--define", "process.browser=1"];
+      expect(await build(["--no-bundle", `--target=${target}`, ...defines])).toBe(
+        `x("mine", "mine", "mine", "mine", "mine", "staging", process.env["BUN_ENV"], 1, 1, 1);`,
+      );
+    });
+
+    test('--production replaces ["NODE_ENV"] the same way, and no optional chain', async () => {
+      expect(await build(["--no-bundle", "--production", `--target=${target}`])).toBe(
+        `x("staging","staging","staging",process.env?.NODE_ENV,process?.env?.NODE_ENV,"staging","staging",!1,!1,process?.browser);`,
+      );
+    });
+
+    test("--env=inline replaces every spelling of a variable that is set", async () => {
+      expect(await build(["--no-bundle", "--env=inline", `--target=${target}`])).toBe(
+        `x("staging", "staging", "staging", "staging", "staging", "staging", process.env["BUN_ENV"], false, process["browser"], process?.browser);`,
+      );
+    });
+
+    test("--drop of one of the names drops a call in every spelling", async () => {
+      const calls = `x(process.browser(a()), process["browser"](b()), process?.browser(c()));`;
+      expect(await build(["--no-bundle", `--target=${target}`, "--drop=process.browser"], calls)).toBe(
+        "x(undefined, undefined, undefined);",
+      );
+    });
+
+    test("Bun.build replaces the dotted spelling alone", async () => {
+      using dir = tempDir("bundler-define-defaults-api", { "entry.js": source });
+      const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], target });
+      expect(result.logs).toEqual([]);
+      const output = onOneLine(await result.outputs[0].text());
+      expect(output).toBe(dottedAlone(modeOf(output)));
+    });
+  });
+
+  test.each(modes)("bun build, %s, --target=browser replaces every spelling", async (_, mode) => {
+    expect(await build([...mode, "--target=browser"])).toBe(everySpelling('"staging"', "true"));
+  });
+
+  test("Bun.Transpiler replaces every spelling for a browser, and the dotted spelling alone for node", () => {
+    const transform = (options: TranspilerOptions) =>
+      onOneLine(new Bun.Transpiler(options).transformSync(source, "js"));
+    const outputs = {
+      default: transform({}),
+      browser: transform({ target: "browser" }),
+      node: transform({ target: "node" }),
+    };
+    const mode = modeOf(outputs.node);
+    expect(outputs).toEqual({
+      default: everySpelling(mode, "true"),
+      browser: everySpelling(mode, "true"),
+      node: dottedAlone(mode),
+    });
   });
 });
 

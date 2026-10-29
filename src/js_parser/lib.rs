@@ -283,7 +283,7 @@ pub mod defines {
         pub data: DefineData,
     }
 
-    /// Bit-packed flags (LSB-first): 3 padding bits, `valueless`,
+    /// Bit-packed flags (LSB-first): 2 padding bits, `plain_path_only`, `valueless`,
     /// `can_be_removed_if_unused`, `call_can_be_unwrapped_if_unused`
     /// (`E.CallUnwrap`, 2 bits), `method_call_must_be_replaced_with_undefined`.
     #[repr(transparent)]
@@ -291,12 +291,17 @@ pub mod defines {
     pub struct Flags(u8);
 
     impl Flags {
+        const PLAIN_PATH_ONLY_SHIFT: u8 = 2;
         const VALUELESS_SHIFT: u8 = 3;
         const CAN_BE_REMOVED_SHIFT: u8 = 4;
         const CALL_UNWRAP_SHIFT: u8 = 5;
         const CALL_UNWRAP_MASK: u8 = 0b11 << Self::CALL_UNWRAP_SHIFT;
         const METHOD_CALL_UNDEF_SHIFT: u8 = 7;
 
+        #[inline]
+        pub(crate) const fn plain_path_only(self) -> bool {
+            (self.0 >> Self::PLAIN_PATH_ONLY_SHIFT) & 1 != 0
+        }
         #[inline]
         pub(crate) const fn valueless(self) -> bool {
             (self.0 >> Self::VALUELESS_SHIFT) & 1 != 0
@@ -449,6 +454,14 @@ pub mod defines {
         #[inline]
         pub fn valueless(&self) -> bool {
             self.flags.valueless()
+        }
+        /// True for a define that `bun build` adds by itself in a build for a server. It replaces a path with a dot last and no `?.`: what it replaced before a define matched `["name"]` and `?.`.
+        #[inline]
+        pub fn plain_path_only(&self) -> bool {
+            self.flags.plain_path_only()
+        }
+        pub fn set_plain_path_only(&mut self) {
+            self.flags.0 |= 1 << Flags::PLAIN_PATH_ONLY_SHIFT;
         }
 
         pub fn init_boolean(value: bool) -> DefineData {

@@ -258,12 +258,9 @@ unsafe extern "C" {
 /// Children created by a child are handled by that child's own `shutdown()`
 /// before it can be joined, so this is transitively complete.
 /// `children` is what was left in the VM's `child_workers`: each release re-enters and reads that field.
-pub(crate) fn join_child_workers(children: Vec<*mut WebWorker>) {
+pub(crate) fn join_child_workers(children: Vec<bun_ptr::ParentRef<WebWorker>>) {
     for child in children {
-        // SAFETY: registered children are live until the parent releases them
-        // (the proxy's ref); this is that release.
-        let messaging_proxy = unsafe { (*child).messaging_proxy };
-        WebWorker__parentContextWillDestroy(messaging_proxy);
+        WebWorker__parentContextWillDestroy(child.messaging_proxy);
     }
 }
 
@@ -626,7 +623,7 @@ impl WebWorker {
         }
         let worker = worker.into_raw();
         // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
-        unsafe { (*parent).child_workers.push(worker) };
+        unsafe { (*parent).child_workers.push(worker_ref) };
         worker
     }
 
@@ -682,15 +679,12 @@ impl WebWorker {
     }
 
     fn has_ending_child(parent: &VirtualMachine) -> bool {
-        parent.child_workers.iter().any(|&child| {
-            bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child")).is_ending()
-        })
+        parent.child_workers.iter().any(|child| child.is_ending())
     }
 
     /// Whether the thread of one of `parent`'s children is returning.
     fn has_returning_child(parent: &VirtualMachine) -> bool {
-        parent.child_workers.iter().any(|&child| {
-            let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
+        parent.child_workers.iter().any(|&worker| {
             worker.is_returning.load(Ordering::Acquire)
                 && worker.join_handle.with_mut(|handle| handle.is_some())
         })
@@ -699,8 +693,7 @@ impl WebWorker {
     /// Whether more of `parent`'s children are ending than wait for room.
     fn has_room_to_wait_for(parent: &VirtualMachine) -> bool {
         let (mut ending, mut waiting) = (0usize, 0usize);
-        for &child in parent.child_workers.iter() {
-            let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
+        for &worker in parent.child_workers.iter() {
             ending += usize::from(worker.is_ending());
             waiting += usize::from(!worker.thread_start.get().is_null());
         }
@@ -712,8 +705,7 @@ impl WebWorker {
     fn join_returning_children(parent: &VirtualMachine) -> bool {
         let mut joined_any = false;
         // Nothing runs on this thread during a join, so the list does not change.
-        for &child in parent.child_workers.iter() {
-            let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
+        for &worker in parent.child_workers.iter() {
             if worker.is_returning.load(Ordering::Acquire) {
                 joined_any |= worker.join_thread();
             }
@@ -733,9 +725,7 @@ impl WebWorker {
             let oldest = parent
                 .child_workers
                 .iter()
-                .map(|&child| {
-                    bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"))
-                })
+                .copied()
                 .filter(|worker| !worker.thread_start.get().is_null())
                 .min_by_key(|worker| worker.execution_context_id);
             let Some(worker) = oldest else { return };
@@ -899,7 +889,10 @@ impl WebWorker {
         this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
         // SAFETY: parent thread; `parent` outlives its children (it joins them).
         let children = unsafe { &mut (*this.parent).child_workers };
-        if let Some(i) = children.iter().position(|&c| core::ptr::eq(c, this)) {
+        if let Some(i) = children
+            .iter()
+            .position(|c| core::ptr::eq(c.as_const_ptr(), this))
+        {
             children.swap_remove(i);
         }
     }

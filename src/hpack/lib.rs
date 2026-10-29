@@ -730,10 +730,10 @@ mod tests {
 
     #[test]
     fn the_length_limit_is_not_on_what_is_left_of_the_block() {
-        let fields = MAX_FIELD_LEN / 5 + 1;
-        let block = hex("00 0161 0162").repeat(fields);
-        let decoded = decode(&mut Decoder::new(), &block).map(|fields| fields.len());
-        assert_eq!(decoded, Ok(fields));
+        let field = [hex("00 0161 7e"), vec![b'b'; 0x7e]].concat();
+        let fields = MAX_FIELD_LEN / field.len() + 1;
+        let decoded = decode(&mut Decoder::new(), &field.repeat(fields));
+        assert_eq!(decoded.map(|fields| fields.len()), Ok(fields));
     }
 
     #[test]

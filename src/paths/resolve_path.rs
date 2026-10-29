@@ -1706,7 +1706,7 @@ pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u
 
 const JOIN_TEMP_LEN: usize = 4096;
 
-/// Uninitialized scratch for `join_string_buf_t*`'s unnormalized concatenation of `count` units.
+/// Uninitialized scratch for `join_string_buf_t_same`'s unnormalized concatenation of `count` units.
 #[inline]
 fn join_temp_buf<'a, T>(
     stack: &'a mut [MaybeUninit<T>; JOIN_TEMP_LEN],

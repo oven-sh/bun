@@ -204,20 +204,13 @@ pub fn install_with_manager(
                     let to_update = manager.to_update;
                     let mgr: *mut PackageManager = manager;
                     // SAFETY: `mgr` is the sole provenance root for the manager
-                    // from here on; `Diff::generate` reborrows disjoint fields
-                    // (`lockfile`, `update_requests`) through it. No other live
-                    // `&mut` to `*mgr` exists across the call.
+                    // from here on; `Diff::generate` gets `lockfile` reborrowed
+                    // through it. No other live `&mut` to `*mgr` exists across
+                    // the call.
                     let from_lockfile: *mut Lockfile = unsafe { &raw mut *(*mgr).lockfile };
-                    let update_requests = if to_update {
-                        // SAFETY: shared reborrow of a field disjoint from `lockfile`; `mgr` is the
-                        // sole provenance root and `Diff::generate` does not mutate `update_requests`.
-                        Some(unsafe { &(&(*mgr).update_requests)[..] })
-                    } else {
-                        None
-                    };
                     Diff::generate(
                         // SAFETY: `mgr` is the sole provenance root; `Diff::generate` touches only
-                        // `PackageManager` fields disjoint from `lockfile`/`update_requests` via this.
+                        // `PackageManager` fields disjoint from `lockfile` via this.
                         unsafe { &mut *mgr },
                         log,
                         // SAFETY: `from_lockfile` projects `(*mgr).lockfile`; `Diff::generate` never
@@ -226,7 +219,7 @@ pub fn install_with_manager(
                         &mut lockfile,
                         &root,
                         &maybe_root,
-                        update_requests,
+                        to_update,
                         Some(&mut mapping[..]),
                     )?
                 };

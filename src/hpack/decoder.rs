@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use crate::storage::{Position, Storage};
+use crate::storage::{Span, Storage};
 use crate::{
     DEFAULT_TABLE_CAPACITY, ENTRY_OVERHEAD, Error, Indexing, MAX_FIELD_LEN, Result, huffman,
     integer, static_table,
@@ -16,16 +16,8 @@ pub struct Field<'a> {
 }
 
 struct Entry {
-    position: Position,
-    name_len: usize,
-    value_len: usize,
+    span: Span,
     static_index: u8,
-}
-
-impl Entry {
-    fn size(&self) -> usize {
-        self.name_len + self.value_len + ENTRY_OVERHEAD
-    }
 }
 
 /// The room for entries that a lower capacity leaves. No table of the default capacity needs more.
@@ -126,11 +118,10 @@ impl Decoder {
         let index = integer::decode(src, &mut pos, prefix_bits).ok_or(Invalid)?;
 
         // The name and then the value go to the scratch space, which is how an entry has them.
-        let start = self.storage.len();
         let mut static_index = 0;
         if index == 0 {
             self.decode_string(src, &mut pos, MAX_FIELD_LEN)?;
-            if self.storage.len() == start {
+            if self.storage.scratch_len() == 0 {
                 return Err(Invalid);
             }
         } else if let Some((name, _)) = static_table::get(index) {
@@ -139,33 +130,26 @@ impl Decoder {
         } else {
             let entry = self.entry(index).ok_or(Invalid)?;
             static_index = entry.static_index;
-            let name = self.storage.range(entry.position, entry.name_len);
-            self.storage.append_copy_of(name);
+            self.storage.append_name_of(entry.span).ok_or(Invalid)?;
         }
-        let value_start = self.storage.len();
-        let room = MAX_FIELD_LEN
-            .checked_sub(value_start - start)
-            .ok_or(Error::TooLarge)?;
+        let name_len = self.storage.scratch_len();
+        let room = MAX_FIELD_LEN.checked_sub(name_len).ok_or(Error::TooLarge)?;
         self.decode_string(src, &mut pos, room)?;
-        let end = self.storage.len();
+        let span = self.storage.scratch(name_len);
 
         if indexing == Indexing::Add {
-            let entry = Entry {
-                position: self.storage.keep_scratch(),
-                name_len: value_start - start,
-                value_len: end - value_start,
-                static_index,
-            };
-            self.size += entry.size();
-            self.entries.push_back(entry);
+            self.storage.keep_scratch();
+            self.size += span.size();
+            self.entries.push_back(Entry { span, static_index });
             // May evict the new entry, whose bytes stay readable for now.
             self.evict();
         }
 
         *field_pos = pos;
+        let (name, value) = self.storage.name_and_value(span).ok_or(Invalid)?;
         Ok(Field {
-            name: self.storage.get(start..value_start),
-            value: self.storage.get(value_start..end),
+            name,
+            value,
             never_index: indexing == Indexing::Never,
             static_index,
         })
@@ -181,11 +165,11 @@ impl Decoder {
             });
         }
         let entry = self.entry(index).ok_or(Error::Invalid)?;
-        let name = self.storage.range(entry.position, entry.name_len);
-        let value = name.end..name.end + entry.value_len;
+        let field = self.storage.name_and_value(entry.span);
+        let (name, value) = field.ok_or(Error::Invalid)?;
         Ok(Field {
-            name: self.storage.get(name),
-            value: self.storage.get(value),
+            name,
+            value,
             never_index: false,
             static_index: entry.static_index,
         })
@@ -230,8 +214,8 @@ impl Decoder {
             let Some(entry) = self.entries.pop_front() else {
                 return;
             };
-            self.size -= entry.size();
-            self.storage.release(entry.name_len + entry.value_len);
+            self.size -= entry.span.size();
+            self.storage.release(entry.span);
         }
     }
 }

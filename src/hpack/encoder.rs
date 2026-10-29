@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use crate::storage::{Position, Storage};
+use crate::storage::{Span, Storage};
 use crate::{
     DEFAULT_TABLE_CAPACITY, ENTRY_OVERHEAD, Error, MAX_FIELD_LEN, Result, huffman, integer,
     static_table,
@@ -20,20 +20,12 @@ pub enum Indexing {
 }
 
 struct Entry {
-    position: Position,
-    name_len: usize,
-    value_len: usize,
+    span: Span,
     name_hash: u32,
     field_hash: u32,
     /// The next entry in the same bucket's `by_field` and `by_name` chains.
     next_by_field: Option<Id>,
     next_by_name: Option<Id>,
-}
-
-impl Entry {
-    fn size(&self) -> usize {
-        self.name_len + self.value_len + ENTRY_OVERHEAD
-    }
 }
 
 /// Entries are numbered as they are added. Wraps around.
@@ -44,6 +36,25 @@ type Id = u32;
 struct Chain {
     first: Option<Id>,
     last: Option<Id>,
+}
+
+impl Chain {
+    /// Returns the entry that was the last until now.
+    fn push(&mut self, id: Id) -> Option<Id> {
+        let previous = self.last.replace(id);
+        if previous.is_none() {
+            self.first = Some(id);
+        }
+        previous
+    }
+
+    /// Removes the first entry, which `next` follows.
+    fn pop(&mut self, next: Option<Id>) {
+        self.first = next;
+        if next.is_none() {
+            self.last = None;
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -276,15 +287,9 @@ impl Encoder {
         while let Some(id) = next {
             let entry = self.entry(id)?;
             if entry.field_hash == field_hash
-                && entry.name_len == name.len()
-                && entry.value_len == value.len()
+                && self.storage.name_and_value(entry.span)? == (name, value)
             {
-                let stored_name = self.storage.range(entry.position, entry.name_len);
-                let stored_value = stored_name.end..stored_name.end + entry.value_len;
-                if self.storage.get(stored_name) == name && self.storage.get(stored_value) == value
-                {
-                    return Some(self.index_of(id));
-                }
+                return Some(self.index_of(id));
             }
             next = entry.next_by_field;
         }
@@ -295,13 +300,7 @@ impl Encoder {
         let mut next = self.buckets.get(self.bucket_of(name_hash))?.by_name.first;
         while let Some(id) = next {
             let entry = self.entry(id)?;
-            if entry.name_hash == name_hash
-                && entry.name_len == name.len()
-                && self
-                    .storage
-                    .get(self.storage.range(entry.position, entry.name_len))
-                    == name
-            {
+            if entry.name_hash == name_hash && self.storage.name_and_value(entry.span)?.0 == name {
                 return Some(self.index_of(id));
             }
             next = entry.next_by_name;
@@ -316,47 +315,47 @@ impl Encoder {
         self.storage.clear_scratch();
         self.storage.bytes_mut().extend_from_slice(name);
         self.storage.bytes_mut().extend_from_slice(value);
-        let entry = Entry {
-            position: self.storage.keep_scratch(),
-            name_len: name.len(),
-            value_len: value.len(),
+        let span = self.storage.scratch(name.len());
+        self.storage.keep_scratch();
+        self.size += span.size();
+        self.entries.push_back(Entry {
+            span,
             name_hash,
             field_hash,
             next_by_field: None,
             next_by_name: None,
-        };
-        self.size += entry.size();
-        self.entries.push_back(entry);
+        });
         let id = self.next_id;
         self.next_id = id.wrapping_add(1);
-        self.link(id, field_hash, false);
-        self.link(id, name_hash, true);
+        self.link(id);
         self.evict();
     }
 
-    /// Appends the entry to the chain its hash selects.
-    fn link(&mut self, id: Id, hash: u32, by_name: bool) {
-        let at = self.bucket_of(hash);
-        let Some(bucket) = self.buckets.get_mut(at) else {
+    fn by_field(&mut self, field_hash: u32) -> Option<&mut Chain> {
+        let bucket = self.bucket_of(field_hash);
+        Some(&mut self.buckets.get_mut(bucket)?.by_field)
+    }
+
+    fn by_name(&mut self, name_hash: u32) -> Option<&mut Chain> {
+        let bucket = self.bucket_of(name_hash);
+        Some(&mut self.buckets.get_mut(bucket)?.by_name)
+    }
+
+    /// Appends the entry to the two chains that its hashes select.
+    fn link(&mut self, id: Id) {
+        let Some(entry) = self.entry(id) else {
             return;
         };
-        let chain = if by_name {
-            &mut bucket.by_name
-        } else {
-            &mut bucket.by_field
-        };
-        let previous = chain.last.replace(id);
-        match previous {
-            None => chain.first = Some(id),
-            Some(previous) => {
-                if let Some(previous) = self.entry_mut(previous) {
-                    if by_name {
-                        previous.next_by_name = Some(id);
-                    } else {
-                        previous.next_by_field = Some(id);
-                    }
-                }
-            }
+        let (field_hash, name_hash) = (entry.field_hash, entry.name_hash);
+        if let Some(previous) = self.by_field(field_hash).and_then(|chain| chain.push(id))
+            && let Some(previous) = self.entry_mut(previous)
+        {
+            previous.next_by_field = Some(id);
+        }
+        if let Some(previous) = self.by_name(name_hash).and_then(|chain| chain.push(id))
+            && let Some(previous) = self.entry_mut(previous)
+        {
+            previous.next_by_name = Some(id);
         }
     }
 
@@ -364,17 +363,12 @@ impl Encoder {
         let len = self.buckets.len() * 2;
         self.buckets.clear();
         self.buckets.resize(len, Bucket::default());
-        let oldest = self.next_id.wrapping_sub(self.entries.len() as u32);
-        for i in 0..self.entries.len() {
-            let Some(entry) = self.entries.get_mut(i) else {
-                return;
-            };
+        for entry in &mut self.entries {
             entry.next_by_field = None;
             entry.next_by_name = None;
-            let (field_hash, name_hash) = (entry.field_hash, entry.name_hash);
-            let id = oldest.wrapping_add(i as u32);
-            self.link(id, field_hash, false);
-            self.link(id, name_hash, true);
+        }
+        for age in (1..=self.entries.len() as u32).rev() {
+            self.link(self.next_id.wrapping_sub(age));
         }
     }
 
@@ -383,26 +377,15 @@ impl Encoder {
             let Some(entry) = self.entries.pop_front() else {
                 return;
             };
-            self.size -= entry.size();
-            self.storage.release(entry.name_len + entry.value_len);
-            let (field_bucket, name_bucket) = (
-                self.bucket_of(entry.field_hash),
-                self.bucket_of(entry.name_hash),
-            );
-            if let Some(bucket) = self.buckets.get_mut(field_bucket) {
-                unlink_first(&mut bucket.by_field, entry.next_by_field);
+            self.size -= entry.span.size();
+            self.storage.release(entry.span);
+            if let Some(chain) = self.by_field(entry.field_hash) {
+                chain.pop(entry.next_by_field);
             }
-            if let Some(bucket) = self.buckets.get_mut(name_bucket) {
-                unlink_first(&mut bucket.by_name, entry.next_by_name);
+            if let Some(chain) = self.by_name(entry.name_hash) {
+                chain.pop(entry.next_by_name);
             }
         }
-    }
-}
-
-fn unlink_first(chain: &mut Chain, next: Option<Id>) {
-    chain.first = next;
-    if next.is_none() {
-        chain.last = None;
     }
 }
 

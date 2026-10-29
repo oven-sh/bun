@@ -238,8 +238,8 @@ mod tests {
         let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
         // The table holds about ten of these, so it turns over many times.
         for i in 0..160 {
-            let value = "~".repeat(300 + i % 100);
-            let mut block = encode(&mut encoder, &format!("x-{i}"), &value, Indexing::Add);
+            let (name, value) = (format!("{i}{}", "~".repeat(150)), "~".repeat(150 + i % 100));
+            let mut block = encode(&mut encoder, &name, &value, Indexing::Add);
             if i % 8 == 7 {
                 // One that does not fit at all, which an encoder does not keep.
                 block.extend(hex("00 0161"));

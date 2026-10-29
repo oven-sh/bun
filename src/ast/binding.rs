@@ -74,9 +74,7 @@ impl Binding {
             data: t.alloc_into_b(bump),
         }
     }
-}
 
-impl Binding {
     pub fn to_expr<C>(
         binding: &Binding,
         bump: &Arena,

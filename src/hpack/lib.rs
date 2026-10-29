@@ -640,9 +640,18 @@ mod tests {
             assert_eq!(static_table::find(first, name, value), Some(index));
             assert_eq!(static_table::find(first, name, b"no such value"), None);
         }
-        // Values that only later entries, with other names, have.
-        assert_eq!(static_table::find(2, b":method", b"/"), None);
-        assert_eq!(static_table::find(16, b"accept-encoding", b""), None);
+        // Values that only later entries, with other names, have, and near misses.
+        for (first, name, value) in [
+            (2, ":method", "/"),
+            (2, ":method", "get"),
+            (2, ":method", "GETs"),
+            (8, ":status", "2000"),
+            (16, "accept-encoding", ""),
+            (16, "accept-encoding", "GZIP, DEFLATE"),
+        ] {
+            let found = static_table::find(first, name.as_bytes(), value.as_bytes());
+            assert_eq!(found, None, "{name}: {value}");
+        }
         assert_eq!(static_table::find_name(b"x-a"), None);
         assert_eq!(static_table::find_name(b""), None);
     }
@@ -765,10 +774,11 @@ mod tests {
 
     #[test]
     fn field_length_limit_with_a_name_from_a_table() {
-        // :authority, and an entry with a name of 100 bytes.
-        for (name_index, name_len) in [("01", 10), ("0f2f", 100)] {
+        // :authority, and an entry with a name of 9,000 bytes.
+        for (name_index, name_len) in [("01", 10), ("0f2f", 9000)] {
             let mut decoder = Decoder::new();
-            let entry = [hex("40 64"), vec![b'n'; 100], hex("00")].concat();
+            decoder.set_max_capacity(1 << 14);
+            let entry = [hex("40 7fa945"), vec![b'n'; 9000], hex("00")].concat();
             assert!(decode(&mut decoder, &entry).is_ok());
             let room = MAX_FIELD_LEN - name_len;
             for (value_len, decoded) in [(room, Ok(room)), (room + 1, Err(Error::TooLarge))] {
@@ -1270,6 +1280,21 @@ mod tests {
         }
     }
 
+    /// 4b7c5cc: an entry with a name from the static table was on no chain of names, and took the first of one with it as it left.
+    #[test]
+    fn ls_hpack_an_entry_with_a_static_name_leaves() {
+        // One of these names shares its bucket.
+        for i in 0..16 {
+            let (mut encoder, name) = (Encoder::new(), format!("x-{i}"));
+            encode(&mut encoder, "content-length", "1", Indexing::Add);
+            encode(&mut encoder, &name, "1", Indexing::Add);
+            // Room for the second entry only, which then lends its name.
+            encoder.set_max_capacity(40);
+            let block = encode(&mut encoder, &name, "2", Indexing::Skip);
+            assert_eq!(block[..4], hex("3f09 0f2f"), "{name}");
+        }
+    }
+
     /// 7a90325: changing the capacity switched the history on.
     #[test]
     fn ls_hpack_no_history_after_a_capacity_change() {
@@ -1394,9 +1419,10 @@ mod tests {
     /// HAProxy took an index of 2^31 or more for a negative one, which is under any limit (CVE-2018-14645).
     #[test]
     fn an_index_far_past_the_tables() {
-        let cut_short = [8, 16, 31].map(|bits| (1 << bits) + 62);
-        let others = [63, (1 << 8) + 2, 1 << 16, 1 << 31, u32::MAX];
-        for index in others.into_iter().chain(cut_short) {
+        // An entry of either table once it is cut to 8, 16 or 31 bits.
+        let cut_short = [8, 16, 31].map(|bits| [(1 << bits) + 2, (1 << bits) + 62]);
+        let others = [63, 1 << 16, 1 << 31, u32::MAX];
+        for index in others.into_iter().chain(cut_short.into_iter().flatten()) {
             for (flags, prefix_bits) in [(0x80, 7), (0x40, 6), (0x10, 4), (0x00, 4)] {
                 // One entry, which an index that wraps around or is cut short would find.
                 let mut block = hex("4003782d610131");
@@ -1411,7 +1437,9 @@ mod tests {
     /// Jetty multiplied the length of a Huffman string until it was negative, and then made room for it (CVE-2023-36478).
     #[test]
     fn a_string_far_longer_than_the_block() {
-        for len in [2, 1 << 16, 1 << 29, 1 << 30, 1 << 31, u32::MAX] {
+        // The last two are 1, which is what there is, once they are cut to 16 or 31 bits.
+        let lens = [2, 1 << 16, 1 << 29, 1 << 30, 1 << 31, u32::MAX];
+        for len in lens.into_iter().chain([(1 << 16) + 1, (1 << 31) + 1]) {
             for huffman in [0x00, 0x80] {
                 for before in ["00", "000161", "41"] {
                     let (mut decoder, mut block) = (Decoder::new(), hex(before));

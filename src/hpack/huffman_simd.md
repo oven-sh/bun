@@ -116,41 +116,41 @@ Every row has 16,384 different values (4,194 of 1000 bytes): the branch predicto
 them, and then code with branches that depend on the text looks up to 25% faster than it is. "C" is
 ls-hpack 2.3.5, which is what Bun used before this crate, with its table of 65,536 pairs and its
 decoder that looks up 16 bits in 256 KB, put into the same benchmark. Xeon (Emerald Rapids) at 2.1
-GHz, compiled like a release build (`-march=nehalem`, LTO), the lowest of 2 or 3 runs, for C in
+GHz, compiled like a release build (`-march=nehalem`, LTO), the lowest of 3 runs, for C of 2 and in
 `encode/add` of up to 9.
 
 `decode/skip`: kernel / scalar / C.
 
 | length    | 1            | 8            | 32              | 63              | 64              | 100             | 1000                |
 | --------- | ------------ | ------------ | --------------- | --------------- | --------------- | --------------- | ------------------- |
-| text      | 22 / 21 / 23 | 35 / 37 / 54 | 52 / 89 / 146   | 80 / 144 / 278  | 79 / 150 / 274  | 111 / 242 / 449 | 893 / 2070 / 4093   |
-| url       | 22 / 21 / 22 | 41 / 36 / 52 | 64 / 74 / 137   | 100 / 136 / 255 | 102 / 143 / 273 | 151 / 223 / 390 | 1258 / 1964 / 3724  |
-| digits    | 23 / 21 / 21 | 34 / 28 / 44 | 54 / 65 / 105   | 72 / 125 / 190  | 74 / 122 / 192  | 107 / 212 / 291 | 767 / 1890 / 2708   |
-| base64    | 22 / 21 / 23 | 36 / 36 / 56 | 70 / 85 / 152   | 114 / 147 / 281 | 112 / 145 / 287 | 161 / 242 / 434 | 1370 / 2016 / 4302  |
-| upper     | 22 / 22 / 23 | 39 / 37 / 40 | 56 / 86 / 102   | 79 / 147 / 183  | 87 / 154 / 201  | 115 / 243 / 295 | 916 / 2104 / 2771   |
-| json      | 23 / 23 / 25 | 52 / 41 / 51 | 121 / 106 / 140 | 216 / 195 / 273 | 216 / 198 / 274 | 323 / 308 / 438 | 2843 / 2813 / 4057  |
-| printable | 23 / 23 / 24 | 46 / 40 / 51 | 106 / 91 / 160  | 169 / 168 / 352 | 177 / 163 / 348 | 265 / 261 / 626 | 2964 / 2918 / 11327 |
-| raw       | 17 / 18 / 19 | 16 / 18 / 20 | 18 / 18 / 20    | 18 / 18 / 39    | 19 / 19 / 30    | 19 / 19 / 33    | 51 / 53 / 208       |
+| text      | 20 / 20 / 23 | 33 / 35 / 54 | 52 / 82 / 146   | 80 / 144 / 278  | 76 / 149 / 274  | 107 / 237 / 449 | 850 / 2010 / 4093   |
+| url       | 21 / 21 / 22 | 40 / 35 / 52 | 62 / 76 / 137   | 101 / 131 / 255 | 99 / 139 / 273  | 148 / 216 / 390 | 1236 / 1872 / 3724  |
+| digits    | 20 / 20 / 21 | 33 / 27 / 44 | 50 / 63 / 105   | 69 / 120 / 190  | 69 / 118 / 192  | 104 / 204 / 291 | 759 / 1843 / 2708   |
+| base64    | 20 / 20 / 23 | 35 / 34 / 56 | 65 / 79 / 152   | 109 / 142 / 281 | 111 / 142 / 287 | 160 / 221 / 434 | 1367 / 1980 / 4302  |
+| upper     | 20 / 20 / 23 | 38 / 34 / 40 | 54 / 84 / 102   | 76 / 150 / 183  | 83 / 153 / 201  | 112 / 231 / 295 | 918 / 2003 / 2771   |
+| json      | 22 / 22 / 25 | 50 / 40 / 51 | 120 / 102 / 140 | 202 / 196 / 273 | 212 / 196 / 274 | 309 / 300 / 438 | 2740 / 2743 / 4057  |
+| printable | 22 / 22 / 24 | 45 / 38 / 51 | 97 / 87 / 160   | 176 / 158 / 352 | 181 / 162 / 348 | 259 / 251 / 626 | 2939 / 3070 / 11327 |
+| raw       | 16 / 16 / 19 | 16 / 16 / 20 | 16 / 16 / 20    | 16 / 18 / 39    | 17 / 16 / 30    | 17 / 17 / 33    | 50 / 51 / 208       |
 
 `encode/add`: Rust / C. Values of 1 byte come again while they are in the table, so most of those
 are references.
 
 | length    | 1       | 8        | 32       | 63        | 64        | 100       | 1000        |
 | --------- | ------- | -------- | -------- | --------- | --------- | --------- | ----------- |
-| text      | 18 / 48 | 44 / 78  | 68 / 111 | 92 / 134  | 97 / 133  | 133 / 176 | 1016 / 1021 |
-| url       | 16 / 42 | 44 / 75  | 72 / 106 | 98 / 134  | 94 / 131  | 135 / 173 | 993 / 1108  |
-| digits    | 17 / 40 | 44 / 71  | 67 / 94  | 95 / 121  | 97 / 116  | 134 / 150 | 982 / 932   |
-| base64    | 19 / 49 | 44 / 76  | 68 / 116 | 98 / 138  | 95 / 133  | 132 / 171 | 994 / 1023  |
-| upper     | 18 / 48 | 44 / 77  | 69 / 105 | 94 / 125  | 101 / 119 | 134 / 154 | 995 / 942   |
-| json      | 19 / 44 | 47 / 87  | 75 / 121 | 114 / 166 | 115 / 165 | 170 / 225 | 1421 / 1453 |
-| printable | 21 / 49 | 48 / 90  | 72 / 133 | 108 / 171 | 107 / 169 | 162 / 229 | 1642 / 1543 |
-| raw       | 16 / 42 | 39 / 110 | 48 / 143 | 55 / 165  | 55 / 163  | 71 / 199  | 367 / 1003  |
+| text      | 18 / 48 | 44 / 78  | 66 / 111 | 94 / 134  | 95 / 133  | 136 / 176 | 982 / 1021  |
+| url       | 15 / 42 | 44 / 75  | 68 / 106 | 91 / 134  | 96 / 131  | 134 / 173 | 982 / 1108  |
+| digits    | 15 / 40 | 44 / 71  | 71 / 94  | 94 / 121  | 94 / 116  | 136 / 150 | 1030 / 932  |
+| base64    | 19 / 49 | 43 / 76  | 70 / 116 | 96 / 138  | 93 / 133  | 135 / 171 | 983 / 1023  |
+| upper     | 17 / 48 | 44 / 77  | 70 / 105 | 92 / 125  | 93 / 119  | 138 / 154 | 1003 / 942  |
+| json      | 19 / 44 | 47 / 87  | 74 / 121 | 112 / 166 | 112 / 165 | 176 / 225 | 1407 / 1453 |
+| printable | 21 / 49 | 47 / 90  | 72 / 133 | 108 / 171 | 107 / 169 | 166 / 229 | 1612 / 1543 |
+| raw       | 16 / 42 | 38 / 110 | 47 / 143 | 53 / 165  | 53 / 163  | 74 / 199  | 369 / 1003  |
 
-The other rows, for text: `encode/skip` takes 14, 20, 40, 68, 69, 102 and 960 ns. `decode/add` takes
-up to 9 ns more than `decode/skip`. A field that is in the table takes 13 to 20 ns to encode up to
-100 characters (C 39 to 56) and 79 at 1000 (213), and 7 ns to decode (13 to 21). Two runs of a row
-differ by up to 5%. Behind C in `encode/add`: 1000 digits, upper case letters or printable
-characters, by 5 to 6%.
+The other rows, for text: `encode/skip` takes 14, 20, 39, 70, 68, 102 and 927 ns. `decode/add` takes
+up to 11 ns more than `decode/skip`. A field that is in the table takes 13 to 19 ns to encode up to
+100 characters (C 39 to 56) and 80 at 1000 (213), and 6 ns to decode (13 to 21). Two runs of a row
+differ by up to 5%. Behind C in `encode/add`: 1000 digits by 10%, upper case letters by 7%,
+printable characters by 4%.
 
 The rest is from harnesses that are not in the repository: they need the C code, or touch memory
 between two calls. One string literal of text through the coder, other strings every time, against
@@ -175,7 +175,7 @@ with 1 MB touched in between, 317 against 842 with 8 MB.
 Xeon (Cascade Lake) at 2.8 GHz, which has no kernel, 512 values per row, the decoder against C: text
 of 8 to 1000 characters 0.77 to 0.55, the values of hpack-test-case 0.70, `SAMEORIGIN` 0.96, a date
 0.95, 1 code in 5 of 10 to 19 bits 0.38, codes of 7 bits alone 0.67, of 14 bits 0.95. Behind C:
-codes of 5 bits alone 1.10, of 15 bits 1.17, of 8 bits 1.66, since two of those need 16 bits of
+codes of 5 bits alone 1.10, of 15 bits 1.33, of 8 bits 1.79, since two of those need 16 bits of
 lookup.
 
 Written byte by byte, 7 bytes take longer than in a loop that writes 32 bits whenever it has 32.
@@ -204,9 +204,9 @@ in the cache. Under 128 bytes they gain nothing in that table, so there they are
 
 On Cascade Lake they matter less: 0.97 to 1.00 for text of 64 to 4000 characters in a loop. With 8
 MB touched in between it is 1.14 to 1.22 at 64 and 100 characters, 1.06 to 1.12 at 200 and 1.02 at
-500 and 1000. Printable characters are the exception, with 0.97 at 64, 0.93 at 100 and 0.86 from
-1000 on, in a loop. `Encoder::encode` takes 0.88 of the time of the C code at 200 characters there
-and 1.00 to 1.08 from 500 to 4000.
+500 and 1000. Printable characters are the exception, with 0.97 at 64, 0.93 at 100 and 0.84 to 0.87
+from 1000 on, in a loop. `Encoder::encode` takes 0.88 of the time of the C code at 200 characters
+there and 1.00 to 1.08 from 500 to 4000.
 
 ### CPUs that were not measured
 

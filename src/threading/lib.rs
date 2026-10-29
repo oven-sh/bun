@@ -38,7 +38,7 @@ pub use rwlock::RwLock;
 pub use semaphore::Semaphore;
 pub use signal_ring::SignalRing;
 pub use thread_pool::ThreadPool;
-pub use unbounded_queue::{Link, Linked, UnboundedQueue};
+pub use unbounded_queue::{Link, UnboundedQueue};
 pub use wait_group::WaitGroup;
 pub use work_pool::Task as WorkPoolTask;
 pub use work_pool::{IntrusiveWorkTask, OwnedTask, WorkPool};

@@ -436,14 +436,7 @@ pub struct TranspilerJob {
     pub(crate) next: unbounded_queue::Link<TranspilerJob>,
 }
 
-// SAFETY: `next` is the sole intrusive link for `UnboundedQueue<TranspilerJob>`.
-unsafe impl unbounded_queue::Linked for TranspilerJob {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const unbounded_queue::Link<Self> {
-        // SAFETY: `item` is valid and properly aligned per `UnboundedQueue` contract.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(TranspilerJob, next: unbounded_queue::Link<TranspilerJob>);
 
 /// Per-worker output buffer. The printer is the **only** state
 /// retained across `run()` calls — its backing `Vec<u8>` is genuinely worth

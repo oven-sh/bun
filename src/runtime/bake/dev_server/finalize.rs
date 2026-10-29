@@ -875,30 +875,20 @@ fn finalize_bundle_inner(
 
     // `route_bits` will have all of the routes that were modified.
     if has_route_bits_set && (will_hear_hot_update || dev.incremental_result.had_adjusted_edges) {
-        // Note: copy out before the loop so the `&mut RouteBundle` borrow
-        // below doesn't overlap a `&dev.incremental_result` read.
         let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
         let mut it = route_bits.iterator::<true, true>();
         // List 2
         while let Some(i) = it.next() {
-            // Note: erase to raw ptr — `trace_all_route_imports` below needs
-            // `&mut *dev` while `route_bundle` (a sub-borrow of `dev.route_bundles`)
-            // is still live; the two do not actually alias.
-            let route_bundle: *mut RouteBundle = dev.route_bundle_ptr(route_bundle::Index::init(
-                u32::try_from(i).expect("int cast"),
-            ));
+            let route_bundle = &mut dev.route_bundles[i];
             if had_adjusted_edges {
-                // SAFETY: `route_bundle` points into `dev.route_bundles` (not
-                // resized in this loop); the exclusive borrow is scoped to this match.
-                match unsafe { &mut (*route_bundle).data } {
+                match &mut route_bundle.data {
                     route_bundle::Data::Framework(fw_bundle) => {
                         fw_bundle.cached_css_file_array.clear_without_deallocation()
                     }
                     route_bundle::Data::Html(html) => html.cached_response = None,
                 }
             }
-            // SAFETY: statement-scoped read; no `&mut` into `*route_bundle` is live.
-            if unsafe { (*route_bundle).active_viewers } == 0 || !will_hear_hot_update {
+            if route_bundle.active_viewers == 0 || !will_hear_hot_update {
                 continue;
             }
             w_int!(i32, i32::try_from(i).expect("int cast"));
@@ -908,10 +898,17 @@ fn finalize_bundle_inner(
             if had_adjusted_edges {
                 ctx.gts.clear();
                 dev.client_graph.current_css_files.clear();
-                // SAFETY: `trace_all_route_imports` does not mutate `route_bundles`;
-                // shared, call-scoped reborrow.
-                let route_bundle_ref = unsafe { &*route_bundle };
-                dev.trace_all_route_imports(route_bundle_ref, ctx.gts, TraceImportGoal::FindCss)?;
+                match &route_bundle.data {
+                    route_bundle::Data::Framework(fw) => {
+                        let route_index = fw.route_index;
+                        dev.trace_all_route_imports(route_index, ctx.gts, TraceImportGoal::FindCss)?
+                    }
+                    route_bundle::Data::Html(html) => dev.client_graph.trace_imports(
+                        html.bundled_file,
+                        ctx.gts,
+                        TraceImportGoal::FindCss,
+                    )?,
+                }
                 let css_ids = &dev.client_graph.current_css_files;
 
                 w_int!(i32, i32::try_from(css_ids.len()).expect("int cast"));

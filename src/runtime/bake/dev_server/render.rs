@@ -392,7 +392,8 @@ impl DevServer {
         let mut gts = self.init_graph_trace_state(0)?;
         // Run tracing
         self.client_graph.reset();
-        self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindCss)?;
+        self.client_graph
+            .trace_imports(html.bundled_file, &mut gts, TraceImportGoal::FindCss)?;
 
         let css_ids: &[u64] = &self.client_graph.current_css_files;
 
@@ -537,67 +538,47 @@ impl DevServer {
             return;
         }
 
-        self.on_js_request_with_bundle(bundle_index, resp, method);
-    }
-
-    fn on_js_request_with_bundle(
-        &mut self,
-        bundle_index: route_bundle::Index,
-        resp: AnyResponse,
-        method: Method,
-    ) {
-        let self_ptr = std::ptr::from_mut::<Self>(self);
-        // SAFETY: statement-scoped reborrow; the returned `&mut RouteBundle`
-        // immediately decays to a raw pointer.
-        let route_bundle: *mut RouteBundle =
-            unsafe { &mut *self_ptr }.route_bundle_ptr(bundle_index);
         // A route of a router with no client entry has no browser bundle.
-        // SAFETY: shared, statement-scoped reads; nothing mutates `route_bundles` or `router` here.
-        if let route_bundle::Data::Framework(fw) = unsafe { &(*route_bundle).data } {
-            // SAFETY: as above, a shared read of a field that nothing mutates here.
-            let router = unsafe { &(*self_ptr).router };
-            if router
-                .type_ptr_const(router.route_ptr(fw.route_index).r#type)
+        if let route_bundle::Data::Framework(fw) = &route_bundle.data
+            && self
+                .router
+                .type_ptr_const(self.router.route_ptr(fw.route_index).r#type)
                 .client_file
                 .is_none()
-            {
-                resp.write_status(b"404 Not Found");
-                resp.end(b"", false);
-                return;
-            }
+        {
+            resp.write_status(b"404 Not Found");
+            resp.end(b"", false);
+            return;
         }
-        // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in
-        // this fn; the shared reborrow ends with this statement.
-        let cached: Option<bun_ptr::ThisPtr<StaticRoute>> =
-            unsafe { (*route_bundle).client_bundle.as_ref() }.map(bun_ptr::RefPtr::this_ptr);
-        let client_bundle: bun_ptr::ThisPtr<StaticRoute> = match cached {
-            Some(client_bundle) => client_bundle,
-            None => 'generate: {
-                // SAFETY: `generate_client_bundle` reads `*route_bundle` and
-                // never reallocates `route_bundles`; no `&mut` into
-                // `*route_bundle` is live across this call.
-                let payload =
-                    unsafe { Self::generate_client_bundle(&mut *self_ptr, &*route_bundle) }
-                        .expect("oom");
+        let source_map_id = route_bundle.source_map_id();
+        let client_bundle: bun_ptr::ThisPtr<StaticRoute> = match &route_bundle.client_bundle {
+            Some(client_bundle) => client_bundle.this_ptr(),
+            None => {
+                let root = match &route_bundle.data {
+                    route_bundle::Data::Framework(fw) => {
+                        route_bundle::TraceRoot::Framework(fw.route_index)
+                    }
+                    route_bundle::Data::Html(html) => {
+                        route_bundle::TraceRoot::Html(html.bundled_file)
+                    }
+                };
+                let payload = self
+                    .generate_client_bundle(root, source_map_id)
+                    .expect("oom");
                 let bundle = StaticRoute::init_from_any_blob(
                     crate::webcore::AnyBlob::from_owned_slice(payload),
                     crate::server::static_route::InitFromBytesOptions {
                         mime_type: Some(&MimeType::JAVASCRIPT),
-                        // SAFETY: `self_ptr` is `&mut self` erased; live for this fn body.
-                        server: unsafe { &*self_ptr }.server,
+                        server: self.server,
                         ..Default::default()
                     },
                 );
                 let client_bundle = bundle.this_ptr();
-                // SAFETY: per-access reborrow; no other `&` into `*route_bundle` live.
-                unsafe { (*route_bundle).client_bundle = Some(bundle) };
-                break 'generate client_bundle;
+                self.route_bundles[bundle_index.get() as usize].client_bundle = Some(bundle);
+                client_bundle
             }
         };
-        // SAFETY: shared, statement-scoped read of `*route_bundle`.
-        let source_map_id = unsafe { &*route_bundle }.source_map_id();
-        // SAFETY: `source_maps` is disjoint from `route_bundles`.
-        unsafe { &mut (*self_ptr).source_maps }.add_weak_ref(source_map_id);
+        self.source_maps.add_weak_ref(source_map_id);
         StaticRoute::on_with_method(client_bundle, method, resp);
     }
 }
@@ -605,14 +586,12 @@ impl DevServer {
 impl DevServer {
     /// Used to generate the entry point. Unlike incremental patches, this always
     /// contains all needed files for a route.
-    fn generate_client_bundle(&mut self, route_bundle: &RouteBundle) -> crate::Result<Vec<u8>> {
-        debug_assert!(route_bundle.client_bundle.is_none());
-        debug_assert!(route_bundle.server_state == route_bundle::State::Loaded);
-
+    fn generate_client_bundle(
+        &mut self,
+        root: route_bundle::TraceRoot,
+        script_id: source_map_store::Key,
+    ) -> crate::Result<Vec<u8>> {
         let _lock = self.graph_safety_lock.guard();
-        // Note: scopeguard closures capture `self` by ref, wedging borrowck for
-        // the rest of the fn. Erase to a raw pointer.
-        let self_ptr: *mut Self = self;
 
         // Prepare bitsets
         let mut gts = self.init_graph_trace_state(0)?;
@@ -621,29 +600,33 @@ impl DevServer {
         self.client_graph.reset();
         // `current_chunk_parts`/`current_chunk_len` are scratch buffers shared with
         // the HMR pipeline. We must leave them cleared on every exit path.
-        // SAFETY: see `self_ptr` SAFETY above.
-        // Note: copy `self_ptr` so the `defer!` closure captures a distinct
-        // local — otherwise borrowck treats `*self_ptr` as held for the guard's
-        // lifetime and rejects later `&mut (*self_ptr).…` reborrows.
-        let self_ptr_defer: *mut Self = self_ptr;
-        scopeguard::defer! {
-            // SAFETY: `self_ptr_defer` is `&mut self` erased; live for this fn body.
-            unsafe { (*self_ptr_defer).client_graph.reset() }
-        };
-        self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindClientModules)?;
+        let mut reset_on_exit = scopeguard::guard(self, |this| this.client_graph.reset());
+        let this = &mut **reset_on_exit;
+        match root {
+            route_bundle::TraceRoot::Framework(route_index) => this.trace_all_route_imports(
+                route_index,
+                &mut gts,
+                TraceImportGoal::FindClientModules,
+            )?,
+            route_bundle::TraceRoot::Html(bundled_file) => this.client_graph.trace_imports(
+                bundled_file,
+                &mut gts,
+                TraceImportGoal::FindClientModules,
+            )?,
+        }
 
         let mut react_fast_refresh_id: &[u8] = b"";
-        if let Some(rfr) = &self.framework.react_fast_refresh {
+        if let Some(rfr) = &this.framework.react_fast_refresh {
             'brk: {
-                let Some(rfr_index) = self.client_graph.get_file_index(&rfr.import_source) else {
+                let Some(rfr_index) = this.client_graph.get_file_index(&rfr.import_source) else {
                     break 'brk;
                 };
-                if !self
+                if !this
                     .client_graph
                     .stale_files
                     .is_set(rfr_index.get() as usize)
                 {
-                    self.client_graph.trace_imports(
+                    this.client_graph.trace_imports(
                         rfr_index,
                         &mut gts,
                         TraceImportGoal::FindClientModules,
@@ -653,58 +636,54 @@ impl DevServer {
             }
         }
 
-        let route_page_files = match &route_bundle.data {
-            route_bundle::Data::Framework(fw) => Some(self.client_page_files(fw.route_index)),
-            route_bundle::Data::Html(_) => None,
+        let route_page_files = match root {
+            route_bundle::TraceRoot::Framework(route_index) => {
+                Some(this.client_page_files(route_index))
+            }
+            route_bundle::TraceRoot::Html(_) => None,
         }
         .filter(|files| files.page.is_some() || !files.layouts.is_empty());
 
-        let client_file: Option<incremental_graph::ClientFileIndex> = match &route_bundle.data {
-            route_bundle::Data::Framework(fw) => {
-                let type_idx = self.router.route_ptr(fw.route_index).r#type;
-                self.router
+        let client_file: Option<incremental_graph::ClientFileIndex> = match root {
+            route_bundle::TraceRoot::Framework(route_index) => {
+                let type_idx = this.router.route_ptr(route_index).r#type;
+                this.router
                     .type_ptr(type_idx)
                     .client_file
                     .map(from_opaque_file_id::<{ bake::Side::Client }>)
             }
-            route_bundle::Data::Html(html) => Some(html.bundled_file),
+            route_bundle::TraceRoot::Html(bundled_file) => Some(bundled_file),
         };
 
         // Insert the source map
-        let script_id = route_bundle.source_map_id();
         map_log!("inc {:x}, 1 for generateClientBundle", script_id.get());
-        match self.source_maps.put_or_increment_ref_count(script_id, 1)? {
+        match this.source_maps.put_or_increment_ref_count(script_id, 1)? {
             source_map_store::PutOrIncrementRefCount::Uninitialized(entry) => {
-                // SAFETY: `self_ptr` is live for the entire fn body; guard runs at scope exit.
-                // errdefer: unref on early-`?`; disarmed via `into_inner` on success.
-                let guard = scopeguard::guard(script_id, move |id| unsafe {
-                    (*self_ptr).source_maps.unref(id)
-                });
                 gts.clear_and_free();
                 // allocates internally with the global allocator in the port.
-                // SAFETY: see `self_ptr` SAFETY above; `client_graph` is a
-                // disjoint field from `source_maps`.
-                unsafe { &mut (*self_ptr).client_graph }.take_source_map(entry)?;
-                scopeguard::ScopeGuard::into_inner(guard);
+                if let Err(err) = this.client_graph.take_source_map(entry) {
+                    this.source_maps.unref(script_id);
+                    return Err(err);
+                }
             }
             source_map_store::PutOrIncrementRefCount::Shared(_) => {}
         }
 
         let initial_entry: &[u8] = if let Some(idx) = client_file {
-            &self.client_graph.bundled_files.keys()[idx.get() as usize]
+            &this.client_graph.bundled_files.keys()[idx.get() as usize]
         } else {
             b""
         };
         let client_bundle =
-            self.client_graph
+            this.client_graph
                 .take_js_bundle(&incremental_graph::TakeJSBundleOptionsClient {
                     kind: crate::bake::dev_server::ChunkKind::InitialResponse,
-                    root: &self.root,
-                    configuration_hash_key: &self.configuration_hash_key,
+                    root: &this.root,
+                    configuration_hash_key: &this.configuration_hash_key,
                     initial_response_entry_point: initial_entry,
                     react_refresh_entry_point: react_fast_refresh_id,
                     script_id,
-                    console_log: self.should_receive_console_log_from_browser(),
+                    console_log: this.should_receive_console_log_from_browser(),
                     route_page_files: route_page_files.as_ref(),
                 })?;
         Ok(client_bundle)
@@ -725,7 +704,11 @@ impl DevServer {
 
         // Run tracing
         self.client_graph.reset();
-        self.trace_all_route_imports(route_bundle, &mut gts, TraceImportGoal::FindCss)?;
+        self.trace_all_route_imports(
+            route_bundle.data.framework().route_index,
+            &mut gts,
+            TraceImportGoal::FindCss,
+        )?;
 
         let names: &[u64] = &self.client_graph.current_css_files;
         let global = self.vm().global();

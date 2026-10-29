@@ -997,7 +997,7 @@ macro_rules! bss_singleton {
 
 /// Heap-allocate a fresh `T` via mimalloc and run its in-place `init_at` initializer.
 ///
-/// Shared body of the `BSSStringList`/`BSSMapInner` `init()` shims.
+/// Shared body of `bss_singleton!` and the `BSSMapInner` `init()` shim.
 /// The once-guard is the *caller's* responsibility; use the `bss_*!` macros
 /// for the canonical per-monomorphization singleton.
 #[doc(hidden)] // Public only for the `bss_singleton!` macro expansion in dependent crates.
@@ -1774,12 +1774,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             addr_of_mut!((*slot).slice_buf_used).write(0);
             OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
-    }
-
-    /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
-    /// responsibility — use `bss_string_list!` for the canonical singleton.
-    pub fn init() -> NonNull<Self> {
-        bss_heap_init(Self::init_at)
     }
 
     // Singleton is process-lifetime; never freed.

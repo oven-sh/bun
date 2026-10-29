@@ -145,11 +145,6 @@ unsafe impl Sync for Chunk<'_> {}
 #[repr(transparent)]
 pub struct CompileResultSlots(Box<[UnsafeCell<CompileResult>]>);
 
-// SAFETY: writes target disjoint slots (unique `i` per task); reads happen
-// only after the pool join (happens-before via the batch's `group.wait()`).
-// `CompileResult` itself is `Send`.
-unsafe impl Sync for CompileResultSlots {}
-
 impl CompileResultSlots {
     pub(crate) fn new(len: usize) -> Self {
         let mut v = Vec::with_capacity(len);

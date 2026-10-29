@@ -2249,7 +2249,7 @@ impl<'a> Transpiler<'a> {
         format: js_printer::Format,
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         // Routed through the T0 ftrace subset like the
         // other bundler spans (`Bundler.computeChunks` etc.) —
@@ -2400,7 +2400,7 @@ impl<'a> Transpiler<'a> {
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
-        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         self.print_ast_esm_ascii::<ENABLE_SOURCE_MAP, false>(
             print_arena,
@@ -2428,13 +2428,8 @@ impl<'a> Transpiler<'a> {
         source_map_context: Option<js_printer::SourceMapHandler<'_>>,
         exports_kind: bun_ast::ExportsKind,
         runtime_transpiler_cache: Option<js_printer::RuntimeTranspilerCacheRef>,
-        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
-        // Both set on this (EsmAscii) arm only.
-        // SAFETY: `module_info` is `ModuleInfo::create`'s `heap::alloc` (or
-        // null); it is exclusively owned by this print call until T6 reclaims
-        // it after `print_with_source_map` returns.
-        let module_info = module_info.map(|p| unsafe { &mut *p });
         let opts = js_printer::Options {
             bundling: false,
             require_ref: Some(ast.require_ref),
@@ -2520,7 +2515,7 @@ impl<'a> Transpiler<'a> {
         writer: &mut js_printer::BufferPrinter,
         format: js_printer::Format,
         handler: js_printer::SourceMapHandler<'_>,
-        module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
+        module_info: Option<&mut analyze_transpiled_module::ModuleInfo>,
     ) -> crate::Result<usize> {
         // env_var feature_flag getters return `Option<bool>`
         // (Some(default) when unset).

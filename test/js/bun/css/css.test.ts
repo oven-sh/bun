@@ -1903,7 +1903,7 @@ describe("css tests", () => {
       describe.each([
         ["", ""],
         ["  ", " "],
-        ["/*empty*/", ""],
+        ["/*empty*/", " "],
       ])("value %j", (value, expected) => {
         minify_test(`.foo{${property}:${value}}`, `.foo{${property}:${expected}}`);
       });

@@ -2164,10 +2164,11 @@ pub type ForEachCallback =
 
 /// Callback signature for [`JSValue::for_each_property`] /
 /// [`JSValue::for_each_property_non_indexed`].
+/// C++ passes the address of a stack `EncodedSlice` as `key`.
 pub(crate) type ForEachPropertyCallback = extern "C" fn(
     global: &JSGlobalObject,
     ctx: *mut c_void,
-    key: *mut bun_core::EncodedSlice,
+    key: &bun_core::EncodedSlice,
     value: JSValue,
     is_symbol: bool,
     is_private_symbol: bool,

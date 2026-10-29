@@ -126,8 +126,7 @@ impl Loader {
         )
     }
 
-    /// The file's bytes are emitted as they are (copied, hashed, or
-    /// encoded), never parsed as text.
+    /// The bytes are copied, hashed or encoded as they are, never parsed as text.
     pub fn is_binary(self) -> bool {
         match self {
             Loader::File

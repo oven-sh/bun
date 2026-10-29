@@ -1695,8 +1695,7 @@ pub mod parse_worker {
         // the duration of `run`. Returned to the caller when the plugin keeps
         // the original source, dropped otherwise.
         original_contents: Option<crate::cache::Contents>,
-        // `original_contents` as text, for a file read from disk: what
-        // `fetch_source_code` hands the plugin.
+        // `original_contents` as text: what `fetch_source_code` hands the plugin.
         original_text: Option<crate::cache::Contents>,
     }
 

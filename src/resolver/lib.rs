@@ -2060,9 +2060,7 @@ pub mod cache {
             }
         }
 
-        /// The bytes as text: a UTF-8 byte-order mark dropped, UTF-16LE
-        /// transcoded to UTF-8. Bytes this `Contents` does not own (`SharedBuffer`,
-        /// `External`) stay as they are.
+        /// The bytes as text. Borrowed bytes (`SharedBuffer`, `External`) stay as they are.
         #[inline]
         pub fn convert_bom(self, arena: Option<&bun_alloc::Arena>) -> Contents {
             match fs_mod::BOM::detect(self.as_slice()) {

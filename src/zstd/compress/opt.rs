@@ -120,7 +120,8 @@ fn freqs_from_bit_costs(
     let mut sum = 0u32;
     for (symbol, freq) in (0u32..).zip(freqs.sub_mut(..=last_elt_index as usize)?) {
         let bit_cost = bit_cost(symbol);
-        // At least 1, to have a cost.
+        // At least 1, to have a cost. A code of a dictionary can have one bit more than `scale_log`: the C code then
+        // shifts by -1, which x86-64 and aarch64 take for 31.
         *freq = if bit_cost != 0 {
             1 << (scale_log.wrapping_sub(bit_cost) & 31)
         } else {

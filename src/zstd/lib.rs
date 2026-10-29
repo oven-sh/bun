@@ -497,7 +497,9 @@ mod tests {
         }
         let result = feed(&mut stream, output, &[]);
         assert_eq!(result, Err(Error::NoForwardProgressInputEmpty));
-        assert_eq!(feed(&mut stream, output, end), Ok(0));
+        let mut input = InBuffer { src: end, pos: 0 };
+        assert_eq!(stream.decompress_stream(output, &mut input), Ok(0));
+        assert_eq!(input.pos, end.len());
         assert_eq!(*output.dst.sub(..output.pos)?, *data);
 
         assert_eq!(feed(&mut stream, output, start), Ok(5));

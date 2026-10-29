@@ -1989,6 +1989,7 @@ describe("bugs that zstd has had", () => {
     try {
       return Buffer.from(decompress());
     } catch (error: any) {
+      if (typeof error.code !== "string") throw error;
       return error.code as string;
     }
   };
@@ -2184,9 +2185,12 @@ describe("bugs that zstd has had", () => {
     const { promise, resolve, reject } = Promise.withResolvers<number>();
     stream.once("data", chunk => resolve(chunk.length)).on("error", reject);
     stream.on("close", () => reject(new Error("closed before any data")));
-    stream.write(frame.subarray(0, 5000), () => stream.flush());
-    expect(await promise).toBeWithin(4000, 5000);
-    stream.destroy();
+    try {
+      stream.write(frame.subarray(0, 5000), () => stream.flush());
+      expect(await promise).toBeWithin(4000, 5000);
+    } finally {
+      stream.destroy();
+    }
   });
 
   const roundTrip = (input: Buffer, params: Record<number, number>, dictionary?: Buffer) => {

@@ -1265,7 +1265,8 @@ impl DState {
                     }
                 }
 
-                // A frame that is all there, with room for all of its output, needs no buffer.
+                // A frame that is all there, with room for all of its output, needs no buffer, so the limit on windows
+                // does not apply to it, as in the C code.
                 if self.f_params.frame_content_size != ZSTD_CONTENTSIZE_UNKNOWN
                     && self.f_params.frame_type != FrameType::Skippable
                     && (oend - op) as u64 >= self.f_params.frame_content_size

@@ -24,8 +24,7 @@
   "src/jsc/NodeCompileCache.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "AlignedBlob",
-      "CacheState"
+      "AlignedBlob"
     ]
   },
   "src/jsc/RuntimeTranspilerStore.rs": {
@@ -238,9 +237,6 @@
   "src/runtime/webcore/blob/write_file.rs": {
     "WorkPool::schedule*": 2,
     "intrusive_work_task!": [
-      "WriteFile"
-    ],
-    "unsafe impl Send": [
       "WriteFile"
     ]
   },

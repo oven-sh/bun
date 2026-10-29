@@ -20,14 +20,12 @@ impl HMAC {
         // SAFETY: ctx was initialized by HMAC_CTX_init above.
         let mut ctx = unsafe { ctx.assume_init() };
         // SAFETY: ctx is initialized; key.ptr/len are a valid readable region; md is non-null.
-        // `Algorithm::md()` lives in `bun_sha_hmac` and returns that
-        // crate's opaque `EVP_MD`; both name the same C struct so the pointer cast is sound.
         if unsafe {
             boringssl::HMAC_Init_ex(
                 &raw mut ctx,
                 key.as_ptr().cast(),
                 key.len(),
-                md.cast::<boringssl::EVP_MD>(),
+                md,
                 ptr::null_mut(),
             )
         } != 1

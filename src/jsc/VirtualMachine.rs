@@ -7802,7 +7802,7 @@ impl VirtualMachine {
         let frames = exception.stack.frames();
         let top_frame = frames.first();
         let dir = bun_core::env_var::GITHUB_WORKSPACE::get()
-            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::instance().top_level_dir());
+            .unwrap_or_else(|| bun_bundler::bun_fs::FileSystem::get().top_level_dir());
         bun_core::Output::flush();
 
         let writer = bun_core::Output::error_writer();

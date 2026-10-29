@@ -550,7 +550,7 @@ impl DirEntry {
     #[inline]
     fn debug_assert_entries_mutex_held() {
         debug_assert!(
-            crate::fs::FileSystem::instance()
+            crate::fs::FileSystem::get()
                 .fs
                 .entries_mutex
                 .is_held_by_current_thread(),
@@ -653,8 +653,6 @@ impl ModKey {
 // SAFETY: `cache` is the only `!Sync` field. It is shared under the per-entry
 // `mutex` discipline described on `Entry`.
 unsafe impl Sync for Entry {}
-// SAFETY: same invariant as the `Sync` impl above.
-unsafe impl Send for Entry {}
 
 // ══════════════════════════════════════════════════════════════════════════
 // CANONICAL: read-file-with-handle (stat → grow → pread-loop → BOM-strip)

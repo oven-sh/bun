@@ -722,7 +722,7 @@ impl BunxCommand {
         // `$TMPDIR` can be relative. It is made absolute because the install runs in a different
         // working directory than this command.
         let mut temp_dir_buf = bun_paths::path_buffer_pool::get();
-        let temp_dir = bun_resolver::fs::FileSystem::instance()
+        let temp_dir = bun_resolver::fs::FileSystem::get()
             .abs_buf_checked(&[RealFS::platform_temp_dir()], &mut temp_dir_buf[..]);
         let bases = [
             install_cache.as_ref().map(|dir| dir.path.as_slice()),

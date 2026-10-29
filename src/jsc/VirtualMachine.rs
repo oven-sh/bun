@@ -6707,67 +6707,50 @@ impl VirtualMachine {
         source_code: &'a mut bun_core::Utf8Bytes<'static>,
         allow_source_code_preview: bool,
     ) {
+        error_instance.to_zig_exception(self.global(), exception);
+        let mut enable_source_code_preview = allow_source_code_preview
+            && !(bun_core::env_var::feature_flag::BUN_DISABLE_SOURCE_CODE_PREVIEW::get()
+                .unwrap_or(false)
+                || bun_core::env_var::feature_flag::BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW::get()
+                    .unwrap_or(false));
+
+        self.remap_zig_exception_frames(
+            exception,
+            error_instance,
+            must_reset_parser_arena_later,
+            source_code,
+            &mut enable_source_code_preview,
+        );
+
+        #[cfg(debug_assertions)]
+        {
+            // SAFETY: `source_lines_numbers[0]` is always valid —
+            // `Holder` backs it with a `[i32; SOURCE_LINES_COUNT]`.
+            if !enable_source_code_preview && unsafe { *exception.stack.source_lines_numbers } != -1
+            {
+                bun_core::Output::panic(format_args!(
+                    "Do not collect source code when we don't need to"
+                ));
+            }
+        }
+        if let Some(list) = exception_list {
+            let origin = self.is_from_devserver.then_some(&self.origin);
+            exception.add_to_error_list(list, self.top_level_dir(), origin);
+        }
+    }
+
+    /// [`Self::remap_zig_exception`]'s work on the frames and source lines. A REPL frame clears `enable_source_code_preview`.
+    fn remap_zig_exception_frames<'a>(
+        &mut self,
+        exception: &mut ZigException<'a>,
+        error_instance: JSValue,
+        must_reset_parser_arena_later: &mut bool,
+        source_code: &'a mut bun_core::Utf8Bytes<'static>,
+        enable_source_code_preview: &mut bool,
+    ) {
         // `global()` returns `&'static`, so the borrow detaches from `&self`
         // and survives the `&mut self` reborrows below.
         let global = self.global();
-        error_instance.to_zig_exception(global, exception);
-        // `Cell<bool>` so the `Tail` drop-guard below can hold a shared `&Cell`
-        // and read the *current* value at scope-exit without a raw-ptr deref,
-        // while the body freely `.set()`s it.
-        let enable_source_code_preview = Cell::new(
-            allow_source_code_preview
-                && !(bun_core::env_var::feature_flag::BUN_DISABLE_SOURCE_CODE_PREVIEW::get()
-                    .unwrap_or(false)
-                    || bun_core::env_var::feature_flag::BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW::get()
-                        .unwrap_or(false)),
-        );
-
-        // Note: this guard runs the two tail blocks on the way out so every
-        // early `return` is covered.
-        struct Tail<'t, 'a> {
-            this: *mut VirtualMachine,
-            exception: *mut ZigException<'a>,
-            exception_list: Option<&'t mut ExceptionList>,
-            enable_source_code_preview: &'t Cell<bool>,
-        }
-        impl Drop for Tail<'_, '_> {
-            fn drop(&mut self) {
-                // SAFETY: `this`/`exception` are stack-local raw ptrs taken
-                // before the body below reborrows them; no overlap at drop.
-                let this = unsafe { &mut *self.this };
-                // SAFETY: `self.exception` is the caller's stack
-                // `ZigException`, live for the guard scope; no overlap at drop.
-                let exception = unsafe { &mut *self.exception };
-                #[cfg(debug_assertions)]
-                {
-                    let preview = self.enable_source_code_preview.get();
-                    // SAFETY: `source_lines_numbers[0]` is always valid —
-                    // `Holder` backs it with a `[i32; SOURCE_LINES_COUNT]`.
-                    if !preview && unsafe { *exception.stack.source_lines_numbers } != -1 {
-                        bun_core::Output::panic(format_args!(
-                            "Do not collect source code when we don't need to"
-                        ));
-                    }
-                }
-                #[cfg(not(debug_assertions))]
-                {
-                    let _ = self.enable_source_code_preview;
-                }
-                if let Some(list) = self.exception_list.take() {
-                    let origin = this.is_from_devserver.then_some(&this.origin);
-                    exception.add_to_error_list(list, this.top_level_dir(), origin);
-                }
-            }
-        }
-        let _tail = Tail {
-            this: self,
-            exception,
-            exception_list,
-            enable_source_code_preview: &enable_source_code_preview,
-        };
-        // SAFETY: re-borrow through the guard's raw ptrs; `_tail` does not
-        // touch them until Drop, so no aliasing during the body.
-        let exception: &mut ZigException<'a> = unsafe { &mut *_tail.exception };
 
         fn is_noisy_builtin(name: &bun_core::String) -> bool {
             name.eq_ascii(b"asyncModuleEvaluation")
@@ -6855,7 +6838,7 @@ impl VirtualMachine {
         // Don't show source code preview for REPL frames — it would show the
         // transformed IIFE wrapper code, not what the user typed.
         if frames[top].source_url.eq_ascii(b"[repl]") {
-            enable_source_code_preview.set(false);
+            *enable_source_code_preview = false;
         }
 
         let already_remapped = frames[top].remapped;
@@ -6895,7 +6878,7 @@ impl VirtualMachine {
                 } else {
                     None
                 };
-                let external_code = if enable_source_code_preview.get()
+                let external_code = if *enable_source_code_preview
                     && !already_remapped
                     && lookup
                         .source_map
@@ -6916,7 +6899,7 @@ impl VirtualMachine {
             }
 
             let code: bun_core::Utf8Bytes<'static> = 'code: {
-                if !enable_source_code_preview.get() {
+                if !*enable_source_code_preview {
                     break 'code bun_core::Utf8Bytes::EMPTY;
                 }
                 if let Some(src) = external_code {
@@ -6957,7 +6940,7 @@ impl VirtualMachine {
             *source_code = code;
             let code: &'a [u8] = source_code.slice();
 
-            if enable_source_code_preview.get() && code.is_empty() {
+            if *enable_source_code_preview && code.is_empty() {
                 exception.collect_source_lines(error_instance, global);
             }
 
@@ -6994,7 +6977,7 @@ impl VirtualMachine {
                 }
                 exception.stack.source_lines_len = take as u8;
             }
-        } else if enable_source_code_preview.get() {
+        } else if *enable_source_code_preview {
             exception.collect_source_lines(error_instance, global);
         }
 

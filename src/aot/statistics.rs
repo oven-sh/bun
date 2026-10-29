@@ -250,7 +250,11 @@ fn process_info() -> (Duration, usize, usize) {
             unused,
         );
     }
-    (Duration::from_millis((user + system) as u64), resident, peak)
+    (
+        Duration::from_millis((user + system) as u64),
+        resident,
+        peak,
+    )
 }
 
 fn logs_stages() -> bool {

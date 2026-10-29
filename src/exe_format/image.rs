@@ -320,7 +320,7 @@ pub trait ImageBytes: core::ops::DerefMut<Target = [u8]> {
     /// Moves the bytes at `source` to `target`, which is below `source.start`. Until `truncate`, nothing reads what the move leaves behind.
     fn move_down(&mut self, source: core::ops::Range<usize>, target: usize);
     fn truncate(&mut self, len: usize);
-    /// The bytes that are added are zero. `len` is at most the first length.
+    /// The bytes that are added are zero. `len` is at most the first length, or what a mapping has room for.
     fn grow(&mut self, len: usize);
     fn as_vec(&mut self) -> Option<&mut Vec<u8>>;
 }
@@ -416,6 +416,19 @@ impl<'a> ImageEditor<'a> {
         }
     }
 
+    /// Where a cut takes slots of a table that has few, what an earlier cut took out of the file is there again, as zeros, and its
+    /// slots are free: the cuts are chosen anew among all that is removed. What holds any of `stay_cut` is not given back.
+    /// Returns the number of bytes that the file has grown by.
+    pub fn give_back_cuts(&mut self, stay_cut: &[AddressRange]) -> Result<u64, Error> {
+        if self.format != ExecutableFormat::Pe {
+            return Ok(0);
+        }
+        let old_len = self.bytes.len();
+        pe_ranges::fill_holes(self.vector()?, &merge_ranges(stay_cut.to_vec()))?;
+        self.spans = read_mapped_spans(self.format, self.bytes)?;
+        Ok(self.bytes.len().saturating_sub(old_len) as u64)
+    }
+
     /// Drops the load-time relocations whose target is in `ranges`. Returns the number dropped.
     pub fn remove_relocations_in(&mut self, ranges: &[AddressRange]) -> Result<u64, Error> {
         match self.format {
@@ -435,7 +448,7 @@ impl<'a> ImageEditor<'a> {
         let old_len = self.bytes.len();
         match self.format {
             ExecutableFormat::Elf => elf_ranges::remove_ranges(self.bytes, cuts)?,
-            ExecutableFormat::MachO => macho_ranges::remove_ranges(self.vector()?, cuts)?,
+            ExecutableFormat::MachO => macho_ranges::remove_ranges(self.bytes, cuts)?,
             ExecutableFormat::Pe => pe_ranges::remove_ranges(self.vector()?, cuts)?,
         }
         self.spans = read_mapped_spans(self.format, self.bytes)?;
@@ -461,7 +474,7 @@ impl<'a> ImageEditor<'a> {
         if !cuts.iter().all(is_aligned) {
             return Err(ImageError::CutNotAligned);
         }
-        if cuts.len() > model.max_cuts() {
+        if cuts.iter().map(|cut| model.slots_for(*cut)).sum::<isize>() > model.free_slots() {
             return Err(ImageError::TooManyCuts);
         }
         let is_file_backed = |cut: &AddressRange| find_span(&self.spans, *cut).is_some();
@@ -932,7 +945,7 @@ mod tests {
     fn remove_ranges_rejects_too_many_cuts() {
         for toy in toy_files() {
             let model = cut_model_of(&toy);
-            let cuts: Vec<AddressRange> = (0..=model.max_cuts() as u64)
+            let cuts: Vec<AddressRange> = (0..=model.free_slots() as u64)
                 .map(|index| 2 * index * model.alignment)
                 .map(|start| range(start, start + model.alignment))
                 .collect();

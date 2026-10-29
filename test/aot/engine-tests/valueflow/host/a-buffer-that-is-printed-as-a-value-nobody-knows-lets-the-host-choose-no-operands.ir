@@ -1,0 +1,24 @@
+# console.log(new Error("x", { cause: Buffer.alloc(2) }).cause)
+# What is printed is an object nobody knows. Nobody stores under Symbol.for("nodejs.util.inspect.custom"), the method of Buffer.prototype under it has a row,
+# and no entry in use is listed with a feature of a class whose method under it has none. HostChoosesOperands (h7) stays down.
+# RUN: valueflow-why timeline
+# CHECK-NOT: flag h7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ErrorOptions" fields=[{key="cause" declared={type=anything}}] ownFieldCount=1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Console
+    v1 = Builtin builtin=ConsoleLog
+    v2 = Builtin builtin=BufferAlloc
+    v3 = Integer integer=2
+    v4 = Call v2, -, v3
+    v5 = Builtin builtin=Error
+    v6 = String string="x"
+    v7 = NewObject -, v4 layout=L0 fields=[0]
+    v8 = FinishObject v7
+    v9 = Construct v5, -, v6, v8
+    v10 = PropGet v9 key="cause"
+    v11 = Call v1, v0, v10
+    Return v11
+}

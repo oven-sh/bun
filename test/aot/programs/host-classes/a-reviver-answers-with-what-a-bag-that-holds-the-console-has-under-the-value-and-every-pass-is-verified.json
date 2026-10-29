@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it uses what Bun provides and the jsc shell does not: console",
+  "build": ["--aot-check=verify-each-pass"]
+}

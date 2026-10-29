@@ -214,6 +214,9 @@ enum HTTPUpgradeState {
 #[derive(Clone, Copy)]
 pub struct Flags {
     pub(crate) disable_timeout: bool,
+    /// No HTTP/1.1 keep-alive for the rest of the request. Only ever raised:
+    /// `connect` and `on_connect` read it before `build_request` parses the
+    /// headers.
     pub(crate) disable_keepalive: bool,
     /// Whether this request stays out of the keep-alive pool. See `PoolBypass`.
     pub(crate) pool_bypass: PoolBypass,
@@ -963,7 +966,7 @@ use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::fmt::{EscapeControlChars, escape_control_chars};
 use bun_core::{FeatureFlags, Global, Output};
-use bun_core::{String as BunString, Tag as BunStringTag, strings};
+use bun_core::{StringView, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
@@ -1007,12 +1010,18 @@ const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
 const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
 
-const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
-{
-    ACCEPT_ENCODING_HEADER_NO_COMPRESSION
-} else {
-    ACCEPT_ENCODING_HEADER_COMPRESSION
-};
+const ACCEPT_ENCODING_HEADER_WITHOUT_BROTLI: picohttp::Header =
+    picohttp::Header::new(b"Accept-Encoding", b"gzip, deflate, zstd");
+
+fn accept_encoding_header() -> picohttp::Header {
+    if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT {
+        ACCEPT_ENCODING_HEADER_NO_COMPRESSION
+    } else if bun_removable_features::is_removed(bun_removable_features::Feature::BrotliDecoder) {
+        ACCEPT_ENCODING_HEADER_WITHOUT_BROTLI
+    } else {
+        ACCEPT_ENCODING_HEADER_COMPRESSION
+    }
+}
 
 fn get_user_agent_header() -> picohttp::Header {
     let ua = OVERRIDDEN_DEFAULT_USER_AGENT.get().copied().unwrap_or(b"");
@@ -2016,11 +2025,8 @@ impl<'a> HTTPClient<'a> {
         // bare SO_KEEPALIVE without the delay would be ineffective; 60 here sets
         // TCP_KEEPIDLE=60s.
         //
-        // `disable_keepalive` is set when fetch is called with `keepalive: false`,
-        // which is what `node:http`/`node:https` pass through from
-        // `agent.keepAlive` (see _http_client.ts) — so requests through
-        // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
-        // through a non-keepalive Agent or `agent: false` skip it, matching Node.
+        // `disable_keepalive` skips it, as the `options.keepAlive` guard does at
+        // that link: fetch's `keepalive: false` also turns TCP keepalive off.
         //
         // TCP options do not apply to a unix socket.
         if !self.flags.disable_keepalive && self.unix_socket_path.is_empty() {
@@ -2222,6 +2228,30 @@ impl<'a> HTTPClient<'a> {
         }
     }
 
+    fn is_in_progress(&self) -> bool {
+        self.state.stage != Stage::Done
+            && self.state.stage != Stage::Fail
+            && !self.state.flags.is_redirect_pending
+    }
+
+    /// Whether `on_close` sends the request again: it went out on a reused
+    /// keep-alive connection, and that one ended before the response body.
+    pub(crate) fn retries_on_close(&self) -> bool {
+        // `is_in_progress` also keeps a client whose final result was already
+        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
+        // that embeds it is freed once that result is dispatched, so a late
+        // close event must not re-enter `start()`.
+        self.is_in_progress()
+            && self.allow_retry
+            && self.method.is_idempotent()
+            // Only a Bytes body can be rebuilt from `original_request_body`.
+            // Stream/Sendfile bodies are consumed as they are written, so a
+            // retry would silently replay a truncated request.
+            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
+            && self.state.response_stage != ResponseStage::Body
+            && self.state.response_stage != ResponseStage::BodyChunk
+    }
+
     pub(crate) fn on_close<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
         bun_core::scoped_log!(fetch, "Closed  {}\n", BStr::new(self.url.href));
         // the socket is closed, we need to unregister the abort tracker
@@ -2232,9 +2262,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         self.close_proxy_tunnel(true);
-        let in_progress = self.state.stage != Stage::Done
-            && self.state.stage != Stage::Fail
-            && !self.state.flags.is_redirect_pending;
+        let in_progress = self.is_in_progress();
         if self.state.flags.is_redirect_pending {
             // if the connection is closed and we are pending redirect just do the redirect
             // in this case we will re-connect or go to a different socket if needed
@@ -2252,20 +2280,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        // `in_progress` also keeps a client whose final result was already
-        // delivered (stage Done/Fail) from restarting; the AsyncHTTP clone
-        // that embeds it is freed once that result is dispatched, so a late
-        // close event must not re-enter `start()`.
-        if in_progress
-            && self.allow_retry
-            && self.method.is_idempotent()
-            // Only a Bytes body can be rebuilt from `original_request_body`.
-            // Stream/Sendfile bodies are consumed as they are written, so a
-            // retry would silently replay a truncated request.
-            && matches!(self.state.original_request_body, HTTPRequestBody::Bytes(_))
-            && self.state.response_stage != ResponseStage::Body
-            && self.state.response_stage != ResponseStage::BodyChunk
-        {
+        if self.retries_on_close() {
             self.allow_retry = false;
             // we need to retry the request, clean up the response message buffer and start again
             self.state.response_message_buffer = MutableString::default();
@@ -2512,7 +2527,6 @@ impl<'a> HTTPClient<'a> {
         let mut override_accept_header = false;
         let mut override_host_header = false;
         let mut override_connection_header = false;
-        let mut connection_close_requested = false;
         let mut override_user_agent = false;
         let mut original_content_length: Option<&[u8]> = None;
 
@@ -2545,11 +2559,7 @@ impl<'a> HTTPClient<'a> {
                         override_connection_header = true;
                         match connection_header_keep_alive(self.header_str(header_values[i])) {
                             Some(false) => {
-                                connection_close_requested = true;
                                 self.flags.disable_keepalive = true;
-                            }
-                            Some(true) if !connection_close_requested => {
-                                self.flags.disable_keepalive = false;
                             }
                             _ => {}
                         }
@@ -2631,7 +2641,7 @@ impl<'a> HTTPClient<'a> {
         }
 
         if !override_accept_encoding && !self.flags.disable_decompression {
-            request_headers_buf[header_count] = ACCEPT_ENCODING_HEADER;
+            request_headers_buf[header_count] = accept_encoding_header();
             header_count += 1;
         }
 
@@ -5235,7 +5245,7 @@ impl<'a> HTTPClient<'a> {
 
                         debug_assert!(string_builder.cap == string_builder.len);
 
-                        let input = BunString::borrow_utf8(string_builder.allocated_slice());
+                        let input = StringView::borrow_utf8(string_builder.allocated_slice());
                         let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             // URL__getHref failed, dont pass dead tagged string to toOwnedSlice.
@@ -5287,7 +5297,7 @@ impl<'a> HTTPClient<'a> {
 
                         debug_assert!(string_builder.cap == string_builder.len);
 
-                        let input = BunString::borrow_utf8(string_builder.allocated_slice());
+                        let input = StringView::borrow_utf8(string_builder.allocated_slice());
                         let normalized_url = bun_url::href_from_string(&input);
                         if normalized_url.tag() == BunStringTag::Dead {
                             return Err(crate::Error::RedirectURLInvalid);
@@ -5306,8 +5316,8 @@ impl<'a> HTTPClient<'a> {
                     } else {
                         let original_url = self.url.clone();
 
-                        let base = BunString::borrow_utf8(original_url.href);
-                        let rel = BunString::borrow_utf8(location);
+                        let base = StringView::borrow_utf8(original_url.href);
+                        let rel = StringView::borrow_utf8(location);
                         let new_url_ = bun_url::join(&base, &rel);
 
                         if new_url_.is_empty() {

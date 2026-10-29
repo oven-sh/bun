@@ -73,7 +73,7 @@ public:
     // can legitimately BE `undefined`).
     JSC::WriteBarrier<JSC::Unknown> m_storedError;
     // [[controller]] — the subsystem's ONE mandatory ERASED back-pointer: a spec controller,
-    // a JSDirectStreamController, or a generated JSReadable*Controller JSSink cell. Raw
+    // a JSDirectStreamController, or a JSReadableSinkController. Raw
     // jsCast/jsDynamicCast on this slot is BANNED; dispatch on m_controllerKind through the
     // total switch.
     JSC::WriteBarrier<JSC::JSObject> m_controller;

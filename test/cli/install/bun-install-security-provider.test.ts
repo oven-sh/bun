@@ -124,6 +124,21 @@ test("basic", {
   },
 });
 
+test("the scanner process gets --use-openssl-ca", {
+  packages: ["bar", "--use-openssl-ca"],
+  scanner: `import { getCACertificates, rootCertificates } from "node:tls";
+export const scanner = {
+  version: "1",
+  scan: async () => {
+    console.log("trusts the bundled roots:", getCACertificates("default").includes(rootCertificates[0]));
+    return [];
+  },
+};`,
+  expect: ({ out }) => {
+    expect(out).toContain("trusts the bundled roots: false");
+  },
+});
+
 test("shows progress message when scanner takes more than 1 second", {
   scanner: async () => {
     // Product boundary is `duration >= 1000` (security_scanner.rs); 1250ms

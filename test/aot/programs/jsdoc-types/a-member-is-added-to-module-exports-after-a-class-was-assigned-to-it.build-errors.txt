@@ -1,0 +1,1 @@
+error: TS2339: Property 'helper' does not exist on type 'typeof Main'.

@@ -1,0 +1,10 @@
+while method m is decorated ReferenceError
+while method n is decorated ReferenceError
+while the class is decorated ReferenceError
+in a static field function
+while method m is decorated ReferenceError
+while the class is decorated and kept ReferenceError
+in a static field function
+while the class is decorated ReferenceError
+true true true true
+true,1,true true,1,true

@@ -1,0 +1,214 @@
+////: callee-12
+function callee(depth: number): number {
+  if (depth === 0) return 0;
+  const below = callee(depth - 1);
+  if (depth === 2) strike();
+  return below + 1;
+}
+////: callee-6
+function callee(depth: number): number {
+  if (depth === 0) {
+    strike();
+    return 0;
+  }
+  return callee(depth - 1) + 1;
+}
+////: even
+function even(depth: number): number {
+  if (depth === 0) return 0;
+  return odd(depth - 1) + 1;
+}
+////: odd-2
+function odd(depth: number): number {
+  if (depth === 1) strike();
+  return even(depth - 1) + 1;
+}
+//// damage-behind-a-call-recursion/a-recursion-on-its-way-back-cuts-the-length-of-an-array.ts
+// A typed caller reads an array, makes a call and reads it again. A function that calls itself, on its way back up, cuts the length of the array.
+
+let victim: number[] | null = null;
+////= strike-18
+
+////= callee-12
+
+////= holder-35	callee((round % 5) + 2	p[3]
+
+////= outer-5
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-recursion/a-recursion-on-its-way-back-fills-an-optional-field.ts
+// A typed caller reads an object, makes a call and reads it again. A function that calls itself, on its way back up, fills an optional field of the object, in typed code.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Card
+
+let victim: Card | null = null;
+let spark: number = 0;
+////= hot-2
+////= strike-2
+
+////= callee-12
+
+function holder(p: Card, round: number): string {
+  const before = p.id + ":" + p.note;
+  const got = callee((round % 5) + 2);
+  const after = p.note + "," + p.id + "," + ("note" in p) + "," + Object.keys(p).join("");
+  return before + " " + got + " " + after;
+}
+
+////= outer-15
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-recursion/a-recursion-on-its-way-back-stores-a-fitting-number-by-name.ts
+// A typed caller reads an object, makes a call and reads it again. A function that calls itself, on its way back up, stores a number into a field of the object by a computed name, so that nothing about the object changes but the value.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Point
+const names = ["x", "y"];
+
+let victim: Point | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-9
+////= strike
+
+////= callee-12
+
+function holder(p: Point, round: number): string {
+  const before = p.x + p.y;
+  const got = callee((round % 5) + 2);
+  const after = p.x + "," + p.y;
+  return before + " " + got + " " + after;
+}
+
+////= outer-17
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-recursion/one-of-two-functions-that-call-each-other-gives-an-array-another-prototype.ts
+// A typed caller reads an array, makes a call and reads it again. One of two functions that call each other deletes an element of the array and gives the array a prototype that has an element there.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+const withAnElement: number[] = Object.create(Array.prototype, { 1: { value: 111 } });
+
+let victim: number[] | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-4
+////= strike
+
+////= even
+////= odd-2
+
+////= holder-35	even(((round % 3) + 1) * 2	p[3]
+
+////= outer
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-recursion/one-of-two-functions-that-call-each-other-makes-a-field-of-a-literal-an-accessor.ts
+// A typed caller reads an object, makes a call and reads it again. One of two functions that call each other makes a field of the object, which an object literal has made, an accessor.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+type Pair = { left: number; right: number; note?: string };
+
+let victim: Pair | null = null;
+let spark: number = 0;
+////= hot-12
+////= strike-2
+
+////= even
+////= odd-2
+
+////= holder-36	even(((round % 3) + 1) * 2)	p.right + "," + JSON.stringify(p)
+
+////= outer-30
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-recursion/one-of-two-functions-that-call-each-other-replaces-a-method-of-the-base-class.ts
+// A typed caller reads an object, makes a call and reads it again. One of two functions that call each other replaces a method on the prototype object of the base class.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+
+let victim: Square | null = null;
+////= strike-16
+
+////= even
+////= odd-2
+
+////= holder-38	even(((round % 3) + 1) * 2)
+
+////= outer-8
+
+let digest = 0;
+////= for-6
+console.log("digest " + digest);
+//// damage-behind-a-call-recursion/the-deepest-call-of-a-recursion-puts-the-class-under-another-base.ts
+// A typed caller reads an object, makes a call and reads it again. The deepest call of a function that calls itself puts the prototype object of the class under another one.
+// `strike` multiplies a variable that is declared a number. In the rounds of the damage the variable holds an object, so the multiplication leaves its typed path and runs valueOf, which does the damage.
+////= Shape-3
+const areaOfSquare = Square.prototype.area;
+const kindOfShape = Shape.prototype.kind;
+const otherBase = { kind: () => "another base", area: () => -4 };
+
+let victim: Square | null = null;
+let spark: number = 0;
+////= hot-13
+////= strike-2
+
+////= callee-6
+
+////= holder-38	callee((round % 5) + 1)
+
+////= outer-2
+
+let digest = 0;
+////= for-5
+console.log("digest " + digest);
+//// damage-behind-a-call-recursion/the-deepest-call-of-a-recursion-stores-a-number-into-a-reference-field.ts
+// A typed caller reads an object, makes a call and reads it again. The deepest call of a function that calls itself stores a number into a field that is declared to hold an object.
+// `strike` reads a field of a typed object. In the rounds of the damage that object is one whose field has become an accessor, so the read leaves its typed path, goes by name and runs the getter, which does the damage.
+////= Leaf-5
+
+let victim: Branch | null = null;
+////= Fuse
+const cold = new Fuse(0);
+const lit = new Fuse(0);
+let fuse: Fuse = cold;
+////= Object-defineProperty-5
+////= strike
+
+////= callee-6
+
+////= holder-32	callee((round % 5) + 1)
+
+////= outer-6
+
+let digest = 0;
+////= for
+console.log("digest " + digest);
+//// damage-behind-a-call-recursion/the-deepest-call-of-a-recursion-stores-a-string-into-a-number-field.ts
+// A typed caller reads an object, makes a call and reads it again. The deepest call of a function that calls itself stores a string into a number field of the object.
+////= Point
+
+let victim: Point | null = null;
+////= strike-9
+
+////= callee-6
+
+////= holder-37	(round % 5) + 1	(p.x + 1) + "," + typeof p.x + "," + p.y
+
+////= outer-20
+
+let digest = 0;
+////= for
+console.log("digest " + digest);

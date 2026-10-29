@@ -1,0 +1,6 @@
+holes in front of an element finished 4194305
+bytes RangeError
+bytes once more RangeError
+bytes by toLocaleString RangeError
+a few bytes afterward finished 1999
+holes afterward finished 8388609

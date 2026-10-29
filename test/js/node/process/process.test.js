@@ -459,6 +459,19 @@ it("process.env", () => {
   expect(process.env["LOL SMILE latin1 <abc>"]).toBe(undefined);
 });
 
+it("reading process.env adds no property to Bun", () => {
+  const { stdout, exitCode } = spawnSync({
+    cmd: [
+      bunExe(),
+      "-e",
+      "const before = Object.keys(Bun).join(); globalThis.env = process.env; console.log(Object.keys({ ...Bun }).join() === before);",
+    ],
+    env: bunEnv,
+    stderr: "inherit",
+  });
+  expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "true\n", exitCode: 0 });
+});
+
 it("process.env is spreadable and editable", () => {
   process.env["LOL SMILE UTF16 😂"] = "😂";
   const { "LOL SMILE UTF16 😂": lol, ...rest } = process.env;
@@ -754,7 +767,6 @@ it("process.versions", async () => {
   const depsDir = resolve(import.meta.dir, "../../../../scripts/build/deps");
   const deps = {
     boringssl: "boringssl",
-    libarchive: "libarchive",
     mimalloc: "mimalloc",
     picohttpparser: "picohttpparser",
     zlib: "zlib",
@@ -970,7 +982,7 @@ describe.concurrent(() => {
     });
 
     let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
-    expect(out.trim()).toEqual("v26.3.0");
+    expect(out.trim()).toEqual("v26.12.1");
     expect(exited).toBe(0);
   });
 
@@ -3011,8 +3023,8 @@ it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle excepti
 });
 
 it("process.versions", () => {
-  expect(process.versions.node).toEqual("26.3.0");
-  expect(process.versions.v8).toEqual("14.6.202.34-node.20");
+  expect(process.versions.node).toEqual("26.12.1");
+  expect(process.versions.v8).toEqual("14.6.202.34-node.40");
   expect(process.versions.napi).toEqual("10");
   expect(process.versions.modules).toEqual("147");
 });

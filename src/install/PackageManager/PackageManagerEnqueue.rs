@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_ptr::detach_lifetime;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -316,10 +315,7 @@ fn enqueue_download(
     task_context: TaskCallbackContext,
     authorization: Authorization,
 ) -> Result<(), ForTarballError> {
-    if this.network_task_has_failed(task_id) {
-        if is_asked_by_linker(&task_context) {
-            report_failed_download_as_required(this, task_id, dependency_id, package_id);
-        }
+    if has_already_failed(this, task_id, dependency_id, package_id, &task_context) {
         return Err(ForTarballError::AlreadyFailed);
     }
     if this.options.offline == OfflineMode::Offline {
@@ -363,12 +359,15 @@ pub fn enqueue_tarball_for_reading(
     alias: &[u8],
     resolution: &Resolution,
     task_context: TaskCallbackContext,
-) {
+) -> Result<(), ForTarballError> {
     // `enqueue_local_tarball` copies `path` into the filename store before `string_bytes` can grow.
     let path = this.lockfile.str_detached(resolution.local_tarball());
     let task_id = Task::Id::for_tarball(path);
+    if has_already_failed(this, task_id, dependency_id, package_id, &task_context) {
+        return Err(ForTarballError::AlreadyFailed);
+    }
     if !push_task_callback(this, task_id, task_context) {
-        return;
+        return Ok(());
     }
 
     let integrity = this.lockfile.packages.items_meta()[package_id as usize].integrity;
@@ -383,6 +382,7 @@ pub fn enqueue_tarball_for_reading(
         Some(&integrity),
     );
     this.task_batch.push(ThreadPool::Batch::from(task));
+    Ok(())
 }
 
 /// Returns `Err(Offline)` if the repository isn't cached. Nothing is queued then, and the caller
@@ -454,6 +454,23 @@ fn is_asked_by_linker(context: &TaskCallbackContext) -> bool {
         TaskCallbackContext::DependencyInstallContext(_)
             | TaskCallbackContext::IsolatedPackageInstallContext(_)
     )
+}
+
+/// Returns true if `task_id` has failed, which means that nothing would answer a request for it.
+fn has_already_failed(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    dependency_id: DependencyID,
+    package_id: PackageID,
+    context: &TaskCallbackContext,
+) -> bool {
+    if !this.network_task_has_failed(task_id) {
+        return false;
+    }
+    if is_asked_by_linker(context) {
+        report_failed_download_as_required(this, task_id, dependency_id, package_id);
+    }
+    true
 }
 
 /// The download failed with only a warning, because only optional dependencies needed it at the
@@ -986,6 +1003,87 @@ fn locked_repository(
     this.locked_tarball(res)
 }
 
+/// Only a package.json read from the project may name a tarball in the project.
+fn may_name_local_tarball(
+    lockfile: &Lockfile::Lockfile,
+    declarer: PackageID,
+    dependency: &Dependency,
+) -> bool {
+    lockfile.is_local_declarer(declarer)
+        || lockfile.has_equal_root_dependency(dependency)
+        || lockfile.packages.items_resolution()[declarer as usize].tag
+            == ResolutionTag::LocalTarball
+}
+
+/// Returns false for a dependency that never `refreshes_in_place`, whatever bun.lock has for it.
+#[inline]
+pub(crate) fn may_refresh_in_place(dependency: &Dependency) -> bool {
+    use dependency::version::Tag;
+    dependency.behavior.is_optional()
+        && matches!(
+            dependency.version.tag,
+            Tag::Git | Tag::Github | Tag::Tarball
+        )
+}
+
+/// Returns true if `dependency` of `declarer` keeps `locked` while this run reads its source again.
+pub(crate) fn refreshes_in_place(
+    this: &PackageManager,
+    declarer: PackageID,
+    dependency: &Dependency,
+    locked: PackageID,
+) -> bool {
+    use dependency::version::Tag;
+    if !may_refresh_in_place(dependency) {
+        return false;
+    }
+    let lockfile = &*this.lockfile;
+    let Some(locked_res) = lockfile.packages.items_resolution().get(locked as usize) else {
+        return false;
+    };
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    // An older bun.lock binds a dependency that never resolved to any package of its name.
+    let is_from_source = match dependency.version.tag {
+        Tag::Github => {
+            let asks = dependency.version.github();
+            locked_res.tag == ResolutionTag::Github
+                && locked_res.github().owner.eql(asks.owner, buf, buf)
+                && locked_res.github().repo.eql(asks.repo, buf, buf)
+        }
+        Tag::Git => {
+            let asks = dependency.version.git().repo.slice(buf);
+            // bun.lock has `host:path` as a URL.
+            let recorded = crate::repository_real::locked_scp_like(asks);
+            locked_res.tag == ResolutionTag::Git
+                && locked_res.git().repo.slice(buf) == recorded.as_deref().unwrap_or(asks)
+        }
+        _ => match &dependency.version.tarball().uri {
+            dependency::tarball::Uri::Remote(url) => {
+                locked_res.tag == ResolutionTag::RemoteTarball
+                    && locked_res.remote_tarball().eql(*url, buf, buf)
+            }
+            dependency::tarball::Uri::Local(path) => {
+                locked_res.tag == ResolutionTag::LocalTarball
+                    && locked_res.local_tarball().eql(*path, buf, buf)
+                    && may_name_local_tarball(lockfile, declarer, dependency)
+            }
+        },
+    };
+    let has_rule = |name_hash: PackageNameHash| {
+        lockfile.overrides.has_rule_for_name(name_hash)
+            || this
+                .summary
+                .overridden_names
+                .binary_search(&name_hash)
+                .is_ok()
+    };
+    is_from_source
+        // A rule replaces what the dependency declares, and a changed rule can replace `locked`.
+        && !has_rule(dependency.name_hash)
+        && !has_rule(lockfile.packages.items_name_hash()[locked as usize])
+        && unsafe_alias(lockfile, dependency).is_none()
+}
+
 /// Returns the `npm:` alias that the project declares for `name`, if any. A dependency of the root
 /// package.json only follows an alias that the root package.json itself declares.
 fn followed_npm_alias(
@@ -1258,7 +1356,7 @@ fn request_remote_package_ahead(
             asked.version.tarball().uri,
             dependency::tarball::Uri::Local(_)
         );
-    if resolution != invalid_package_id
+    if !this.lockfile.awaits_resolve(id)
         || this.options.runtime_auto_install
         // A deferred peer doesn't request anything, because the tree may provide it.
         || (dependency.behavior.is_peer() && !install_peer)
@@ -1739,37 +1837,38 @@ fn asked_version<'a>(
             } else {
                 name_hash
             };
-            let overridden = (this.lockfile.overrides)
+            let rule = (this.lockfile.overrides)
                 .lookup_declared(&this.lockfile, id, rule_name_hash, &dependency.version)
-                .map(|rule| rule.version().clone())
+                .map(|rule| rule.dep())
                 // Auto-install only follows an override that points to the registry. Others, such
                 // as `file:`, are ignored.
-                .filter(|new| {
+                .filter(|rule| {
                     !this.options.runtime_auto_install
                         || matches!(
-                            new.tag,
+                            rule.version.tag,
                             dependency::version::Tag::Npm
                                 | dependency::version::Tag::DistTag
                                 | dependency::version::Tag::Catalog
                         )
                 });
-            if let Some(new) = &overridden {
+            if let Some(rule) = rule {
                 bun_output::scoped_log!(
                     PackageManager,
                     "override: {} -> {}",
                     bstr::BStr::new(this.lockfile.str(&dependency.version.literal)),
-                    bstr::BStr::new(this.lockfile.str(&new.literal))
+                    bstr::BStr::new(this.lockfile.str(&rule.version.literal))
                 );
 
+                // The value is read under the name in the key, like a dependency of that name.
                 (name, name_hash) = update_name_and_name_hash_from_version_replacement(
                     &this.lockfile,
-                    name,
-                    name_hash,
-                    new,
+                    rule.name,
+                    rule.name_hash,
+                    &rule.version,
                 );
             }
 
-            let declared = overridden.as_ref().unwrap_or(&dependency.version);
+            let declared = rule.map_or(&dependency.version, |rule| &rule.version);
             if declared.tag == dependency::version::Tag::Catalog {
                 if let Some(catalog_dep) =
                     this.lockfile
@@ -1788,8 +1887,8 @@ fn asked_version<'a>(
                 }
             }
 
-            if overridden.is_some() {
-                *replacement = overridden;
+            if let Some(rule) = rule {
+                *replacement = Some(rule.version.clone());
             }
         }
     }
@@ -1810,15 +1909,7 @@ fn unsafe_name<'a>(
     dependency: &'a Dependency,
     asked: &'a Asked<'_>,
 ) -> Option<&'a [u8]> {
-    let alias = lockfile.str(&dependency.name);
-    let alias_is_safe = if alias == lockfile.str(&dependency.version.literal) {
-        // Until `assign_resolution` runs, the alias of `bun add <specifier>` is the specifier
-        // itself. It never becomes a folder name, but it is printed.
-        !dependency::contains_control_character(alias)
-    } else {
-        alias.is_empty() || crate::package_installer::alias_is_safe_install_target(alias)
-    };
-    if !alias_is_safe {
+    if let Some(alias) = unsafe_alias(lockfile, dependency) {
         return Some(alias);
     }
     let registry_name: Option<&[u8]> = match asked.version.tag {
@@ -1830,6 +1921,23 @@ fn unsafe_name<'a>(
     // A name like `""`, `@1.0.0` or `@scope/` (from an older lockfile or an override) would request
     // `/` or `/@1.0.0`.
     registry_name.filter(|name| !crate::package_installer::alias_is_safe_install_target(name))
+}
+
+/// The alias of a dependency, which is a future folder, if it is unsafe.
+#[inline(always)]
+fn unsafe_alias<'a>(
+    lockfile: &'a Lockfile::Lockfile,
+    dependency: &'a Dependency,
+) -> Option<&'a [u8]> {
+    let alias = lockfile.str(&dependency.name);
+    let alias_is_safe = if alias == lockfile.str(&dependency.version.literal) {
+        // Until `assign_resolution` runs, the alias of `bun add <specifier>` is the specifier
+        // itself. It never becomes a folder name, but it is printed.
+        !dependency::contains_control_character(alias)
+    } else {
+        alias.is_empty() || crate::package_installer::alias_is_safe_install_target(alias)
+    };
+    (!alias_is_safe).then_some(alias)
 }
 
 /// Resolves one dependency: binds it to a package that the lockfile has, or appends the package.
@@ -1880,6 +1988,13 @@ pub(crate) fn bind_row(
         version,
         version_was_replaced,
     } = asked;
+    // A rule for the name that its source has now replaces what the dependency asks for.
+    let resolution = if version_was_replaced && this.lockfile.is_refreshing(id) {
+        this.lockfile.unbind_refreshing(id);
+        invalid_package_id
+    } else {
+        resolution
+    };
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
 
     match version.tag {
@@ -1986,7 +2101,7 @@ pub(crate) fn bind_row(
                             .then(|| version.npm().version.head.head.range.left.version);
                             if let Some(exact) = exact
                                 && (!needs_extended_manifest
-                                    || manifest.pkg.has_extended_manifest
+                                    || manifest.pkg.has_extended_manifest()
                                     || manifest.should_exclude_from_age_filter(excludes))
                                 && !picks_latest_tag(
                                     this,
@@ -2170,8 +2285,7 @@ fn bind_row_without_manifest(
             let clone_id = Task::Id::for_git_clone(url);
 
             if let Some(repo_fd) = this.git_repositories.get(&clone_id).copied() {
-                let needs_ctx =
-                    this.lockfile.buffers.resolutions[id as usize] == invalid_package_id;
+                let needs_ctx = this.lockfile.awaits_resolve(id);
 
                 // Waits on a `git log` task; `run_tasks` fills `git_commits` and re-enters here.
                 let committish = this.lockfile.str_detached(&dep.committish);
@@ -2336,14 +2450,10 @@ fn bind_row_without_manifest(
                     dependency::tarball::Uri::Remote(url) => ResolutionTagged::RemoteTarball(*url),
                 },
             });
-            // Only a package.json read from the project may name a tarball in the project.
             if res.tag == ResolutionTag::LocalTarball
                 && !version_was_replaced
-                && !this.lockfile.is_dependency_of_local_package(id)
-                && !this.lockfile.has_equal_root_dependency(dependency)
                 && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
-                && this.lockfile.packages.items_resolution()[declarer as usize].tag
-                    != ResolutionTag::LocalTarball
+                && !may_name_local_tarball(&this.lockfile, declarer, dependency)
             {
                 if dependency.behavior.is_required() {
                     reject_local_tarball_of_remote_package(this, declarer, dependency);
@@ -2373,7 +2483,7 @@ fn bind_row_without_manifest(
             };
             let task_id = Task::Id::for_tarball(url);
 
-            if this.lockfile.buffers.resolutions[id as usize] == invalid_package_id {
+            if this.lockfile.awaits_resolve(id) {
                 if let Some(pkg_id) = resolve_from_appended_task(this, task_id, id) {
                     success_fn(this, id, pkg_id);
                     return Ok(());
@@ -3871,9 +3981,7 @@ fn get_or_put_resolved_package(
                 this.exit_or_log(&why);
                 return Err(crate::Error::MissingPackageJSON);
             }
-            // SAFETY: a slice into `PackageManager.global_link_dir_path`, set once and never freed.
-            let link_dir =
-                unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
+            let link_dir = package_manager_real::global_link_dir_path(this);
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Global(link_dir),
                 version,

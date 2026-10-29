@@ -1,0 +1,110 @@
+--- a/src/arena.c
++++ b/src/arena.c
+@@ -241,13 +241,74 @@
+   Arena Allocation
+ ----------------------------------------------------------- */
+ 
++static bool mi_arena_find_run(const mi_bfield_t* fields, size_t n, size_t* cidx) {
++  if (n == 8) {
++    for (size_t f = 0; f < MI_BCHUNK_FIELDS; f++) {
++      if (fields[f] == 0) continue;
++      for (size_t at = 0; at < MI_BFIELD_BITS; at += 8) {
++        if (((fields[f] >> at) & 0xFF) == 0xFF) { *cidx = f*MI_BFIELD_BITS + at; return true; }
++      }
++    }
++    return false;
++  }
++  size_t run = 0;
++  for (size_t f = 0; f < MI_BCHUNK_FIELDS; f++) {
++    size_t at = 0;
++    while (at < MI_BFIELD_BITS) {
++      const mi_bfield_t rest = fields[f] >> at;
++      if (rest == 0) { run = 0; break; }
++      const size_t zeros = mi_ctz(rest);
++      if (zeros > 0) { run = 0; at += zeros; continue; }
++      const size_t ones = mi_ctz(~rest);
++      run += ones; at += ones;
++      if (run >= n) { *cidx = f*MI_BFIELD_BITS + at - run; return true; }
++    }
++  }
++  return false;
++}
++
++static bool mi_arena_try_claim_before_purge(mi_arena_t* arena, size_t slice_count, size_t* slice_index) {
++  if (slice_count > MI_BCHUNK_BITS || arena->memid.is_pinned) return false;
++  if (mi_atomic_loadi64_relaxed(&arena->purge_expire) == 0) return false;
++  const mi_chunkbin_t bbin = mi_chunkbin_of(slice_count);
++  mi_bitmap_t* const purge = arena->slices_purge;
++  mi_bbitmap_t* const unused = arena->slices_free;
++  const size_t chunk_count = mi_bitmap_chunk_count(purge);
++  for (size_t i = 0; i < MI_BCHUNK_FIELDS; i++) {
++    mi_bfield_t cmap = mi_atomic_load_relaxed(&purge->chunkmap.bfields[i]);
++    while (cmap != 0) {
++      const size_t chunk_idx = i*MI_BFIELD_BITS + mi_ctz(cmap);
++      cmap &= (cmap - 1);
++      if (chunk_idx >= chunk_count) return false;
++      const mi_chunkbin_t bin = mi_bbitmap_debug_get_bin(unused->chunkmap_bins, chunk_idx);
++      if (bin != MI_CBIN_NONE && bin > bbin) continue;
++      mi_bfield_t fields[MI_BCHUNK_FIELDS];
++      for (size_t f = 0; f < MI_BCHUNK_FIELDS; f++) {
++        fields[f] = mi_atomic_load_relaxed(&purge->chunks[chunk_idx].bfields[f]) & mi_atomic_load_relaxed(&unused->chunks[chunk_idx].bfields[f]);
++      }
++      size_t cidx;
++      for (int tries = 0; tries < 4 && mi_arena_find_run(fields, slice_count, &cidx); tries++) {
++        if (mi_bbitmap_try_clearNC(unused, chunk_idx*MI_BCHUNK_BITS + cidx, slice_count)) {
++          *slice_index = chunk_idx*MI_BCHUNK_BITS + cidx;
++          return true;
++        }
++        fields[cidx / MI_BFIELD_BITS] &= ~((mi_bfield_t)1 << (cidx % MI_BFIELD_BITS));
++      }
++    }
++  }
++  return false;
++}
++
+ static mi_decl_noinline void* mi_arena_try_alloc_at(
+-  mi_arena_t* arena, size_t slice_count, bool commit, size_t tseq, mi_memid_t* memid)
++  mi_arena_t* arena, size_t slice_count, bool commit, size_t tseq, mi_memid_t* memid, bool before_purge)
+ {
+   mi_assert_internal(arena!=NULL);
+   mi_assert_internal(slice_count>0);
+   size_t slice_index;
+-  if (!mi_bbitmap_try_find_and_clearN(arena->slices_free, tseq, slice_count, &slice_index)) return NULL;
++  if (before_purge) {
++    if (!mi_arena_try_claim_before_purge(arena, slice_count, &slice_index)) return NULL;
++  }
++  else if (!mi_bbitmap_try_find_and_clearN(arena->slices_free, tseq, slice_count, &slice_index)) return NULL;
+ 
+   // claimed it!
+   void* p = mi_arena_slice_start(arena, slice_index);
+@@ -481,10 +542,20 @@
+   mi_assert(alignment <= MI_ARENA_SLICE_ALIGN);
+   if (alignment > MI_ARENA_SLICE_ALIGN) return NULL;
+ 
++  if (_mi_hands_out_last_freed) {
++    tseq = 0;
++    mi_forall_suitable_arenas(heap, req_arena, tseq, true /* only numa matching */, numa_node, allow_large, arena)
++    {
++      void* p = mi_arena_try_alloc_at(arena, slice_count, commit, tseq, memid, true);
++      if (p != NULL) return p;
++    }
++    mi_forall_suitable_arenas_end();
++  }
++
+   // search arena's
+   mi_forall_suitable_arenas(heap, req_arena, tseq, true /* only numa matching */, numa_node, allow_large, arena)
+   {
+-    void* p = mi_arena_try_alloc_at(arena, slice_count, commit, tseq, memid);
++    void* p = mi_arena_try_alloc_at(arena, slice_count, commit, tseq, memid, false);
+     if (p != NULL) return p;
+   }
+   mi_forall_suitable_arenas_end();
+@@ -493,7 +564,7 @@
+   // search again but now regardless of preferred numa affinity
+   mi_forall_suitable_arenas(heap, req_arena, tseq, false /* numa non-matching now */, numa_node, allow_large, arena)
+   {
+-    void* p = mi_arena_try_alloc_at(arena, slice_count, commit, tseq, memid);
++    void* p = mi_arena_try_alloc_at(arena, slice_count, commit, tseq, memid, false);
+     if (p != NULL) return p;
+   }
+   mi_forall_suitable_arenas_end();

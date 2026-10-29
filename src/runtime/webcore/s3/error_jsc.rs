@@ -1,7 +1,7 @@
 //! JSC bridges for S3 signing errors. The pure error-code/message tables
 //! stay in `s3_signing/`; the `*JSGlobalObject`-taking variants live here.
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_jsc::{ErrorCode, JSGlobalObject, JSPromise, JSValue, JsError};
 use bun_s3_signing::Error as SignError;
 use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
@@ -117,23 +117,19 @@ pub(crate) fn throw_sign_error(err: SignError, global_this: &JSGlobalObject) -> 
 }
 
 #[repr(C)]
-struct JSS3Error {
+struct JSS3Error<'a> {
     code: BunString,
     message: BunString,
-    path: BunString,
+    path: StringView<'a>,
 }
 
-impl JSS3Error {
-    fn init(code: &[u8], message: &[u8], path: Option<&[u8]>) -> Self {
+impl<'a> JSS3Error<'a> {
+    fn init(code: &[u8], message: &[u8], path: Option<&'a [u8]>) -> Self {
         Self {
             // lets make sure we can reuse code and message and keep it service independent
             code: BunString::create_atom_if_possible(code),
             message: BunString::create_atom_if_possible(message),
-            path: if let Some(p) = path {
-                BunString::from_bytes(p)
-            } else {
-                BunString::EMPTY
-            },
+            path: path.map_or(StringView::EMPTY, StringView::from_bytes),
         }
     }
 
@@ -146,7 +142,7 @@ impl JSS3Error {
 bun_jsc::jsc_abi_extern! {
     // C++ copies the three `BunString` fields out and does not write through
     // `this`, so `&JSS3Error` (readonly) is sound.
-    safe fn S3Error__toErrorInstance(this: &JSS3Error, global: &JSGlobalObject) -> JSValue;
+    safe fn S3Error__toErrorInstance(this: &JSS3Error<'_>, global: &JSGlobalObject) -> JSValue;
 }
 
 pub(crate) fn s3_error_to_js(

@@ -1,0 +1,3683 @@
+////: Base-2
+class Base {
+  constructor(public n: number) {}
+  static rank(): number {
+    return 1;
+  }
+  static make(): number {
+    return this.rank() * 10;
+  }
+  kind(): number {
+    return 1;
+  }
+  describe(): number {
+    return this.kind() * 10 + this.n;
+  }
+}
+////: Base-3
+class Base {
+  static rank(): number {
+    return 1;
+  }
+  static make(): number {
+    return this.rank() * 10;
+  }
+  own(): number {
+    return 100;
+  }
+}
+////: Bell-3
+////= Bell
+////= Bell-2
+
+////= ringOf
+
+////= attempt-2
+////: Bell-prototype-ring
+Bell.prototype.ring = function () {
+  return this.tone * 2;
+};
+////: Between
+class Between extends Base {
+  static rank(): number {
+    return 2;
+  }
+  static make(): number {
+    return super.make() + 5;
+  }
+  kind(): number {
+    return 2;
+  }
+  describe(): number {
+    return super.describe() + 500;
+  }
+}
+////: Between-2
+class Between extends Base {
+  static rank(): number {
+    return 2;
+  }
+  static make(): number {
+    return super.make() + 5;
+  }
+  own(): number {
+    return 200;
+  }
+}
+////: Between-3
+class Between extends Base {
+  kind(): number {
+    return 2;
+  }
+  describe(): number {
+    return super.describe() + 500;
+  }
+}
+////: Bound
+class Bound extends Note {
+  constructor(pitch: number) {
+    super(pitch);
+    this.sound = this.sound.bind(this);
+  }
+  sound(): number {
+    return this.pitch + 1;
+  }
+}
+////: Bright-2
+class Bright extends Lamp {
+  power(): number {
+    return this.watts * 2;
+  }
+  fixed(): number {
+    return 100;
+  }
+}
+////: Button
+class Button extends Panel {
+  border = 1;
+  measure(): number {
+    return super.measure() + (this.border ?? 1000);
+  }
+}
+////: Cat
+class Cat {
+  lives = 9;
+  sound(): number {
+    return this.lives;
+  }
+}
+////: Child
+class Child extends Base {
+  kind(): number {
+    return 2;
+  }
+  above(): number {
+    return super.kind() + 100;
+  }
+}
+////: Child-2
+class Child extends Base {
+  static above(): number {
+    return super.rank() * 1000 + super.make();
+  }
+  describe(): number {
+    return super.describe() + super.kind() * 1000;
+  }
+}
+////: Circle
+class Circle extends Shape {
+  area(): number {
+    return 3 * this.side * this.side;
+  }
+}
+////: Circle-2
+class Circle extends Shape {
+  area(): number {
+    return 3 * this.side * this.side;
+  }
+  edge(): number {
+    return 6 * this.side;
+  }
+}
+////: Defaults
+class Defaults extends Mixer {
+  mix(a: number, b = 20, c = 30, d = 40): number {
+    return arguments.length * 1000 + a + b + c + d;
+  }
+  idle(a = 5, b = a * 2): number {
+    return arguments.length * 1000 + a + b;
+  }
+}
+////: Dog
+class Dog {
+  constructor(public weight: number) {}
+  sound(times = 2): number {
+    return this.weight * times;
+  }
+}
+////: Door
+class Door {
+  constructor(public width: number) {}
+  open(by: number): number {
+    return this.width + by;
+  }
+}
+////: First
+class First extends Mixer {
+  mix(a: number): number {
+    return arguments.length * 1000 + a;
+  }
+  idle(a?: number, b?: number): number {
+    return arguments.length * 1000 + (a ?? 1) + (b ?? 2);
+  }
+}
+////: Frame
+class Frame {
+  constructor(public inner: Shape) {}
+  area(): number {
+    return this.inner.area() + this.inner.edge();
+  }
+}
+////: Gauge
+class Gauge {
+  constructor(public level: number) {}
+  scaled(factor: number): number {
+    return this.level * factor;
+  }
+}
+////: Lamp-2
+class Lamp {
+  constructor(public watts: number) {}
+  power(): number {
+    return this.watts;
+  }
+  fixed(): number {
+    return 60;
+  }
+}
+////: Lamp-4
+class Lamp {
+  constructor(public watts: number) {}
+  power(): number {
+    return this.watts;
+  }
+}
+////: Lamp-5
+class Lamp {
+  constructor(public watts: number) {}
+  power(more: number): number {
+    return this.watts + more;
+  }
+}
+////: Leaky
+class Leaky extends Tank {
+  get level(): number {
+    return super.level - 1;
+  }
+  set level(value: number) {
+    super.level = value / 2;
+  }
+}
+////: Long
+class Long extends Report {
+  pages = 30;
+  head(): number {
+    return 3;
+  }
+  body(): number {
+    return this.pages;
+  }
+}
+////: Mixer
+class Mixer {
+  mix(a: number, b: number, c: number): number {
+    return arguments.length * 1000 + a + b + c;
+  }
+  idle(): number {
+    return arguments.length * 1000;
+  }
+}
+////: Object-defineProperty
+Object.defineProperty(Shape.prototype, "area", {
+  get() {
+    reads++;
+    return function (this: Shape) {
+      return this.side + 100;
+    };
+  },
+  configurable: true,
+});
+////: Object-defineProperty-2
+Object.defineProperty(Tank.prototype, "level", {
+  get(this: Tank) {
+    return this.held + 100;
+  },
+  set(this: Tank, value: number) {
+    this.held = value - 100;
+  },
+  configurable: true,
+});
+////: Object-defineProperty-3
+Object.defineProperty(Circle.prototype, "area", {
+  get(this: Circle) {
+    reads += this.side;
+    return original;
+  },
+  configurable: true,
+});
+////: Object-defineProperty-4
+Object.defineProperty(notes[1], "sound", {
+  get(this: Note) {
+    reads++;
+    return () => this.pitch + 2;
+  },
+  configurable: true,
+});
+////: One
+class One {
+  constructor(public n: number) {}
+  name(): number {
+    return 1;
+  }
+  path(): number {
+    return 1;
+  }
+}
+////: Panel
+class Panel extends Widget {
+  pad = 5;
+  measure(): number {
+    return (this.pad ?? 100) + 2;
+  }
+}
+////: Registry
+class Registry extends Map<string, number> {
+  total(): number {
+    let sum = 0;
+    for (const value of this.values()) sum += value;
+    return sum;
+  }
+}
+////: Report
+abstract class Report {
+  abstract head(): number;
+  abstract body(): number;
+  render(): number {
+    return this.head() * 100 + this.body();
+  }
+}
+////: Rest
+class Rest extends Mixer {
+  mix(...all: number[]): number {
+    let sum = all.length * 1000;
+    for (const each of all) sum += each;
+    return sum;
+  }
+  idle(first = 3, ...others: number[]): number {
+    return others.length * 1000 + first;
+  }
+}
+////: Safe
+class Safe {
+  #code(): number {
+    return 1;
+  }
+  code(): number {
+    return this.#code() * 10;
+  }
+  static peek(safe: Safe): number {
+    return safe.#code();
+  }
+}
+////: Shape
+class Shape {
+  constructor(public side: number) {}
+  area(): number {
+    return this.side * this.side;
+  }
+}
+////: Shape-2
+class Shape {
+  constructor(public side: number) {}
+  area(): number {
+    return this.side * this.side;
+  }
+  edge(): number {
+    return 4 * this.side;
+  }
+}
+////: Shape-3
+class Shape {
+  size: number;
+  constructor(public side: number) {
+    this.size = this.area();
+  }
+  area(): number {
+    return this.side * this.side;
+  }
+}
+////: Shape-4
+////= Shape
+////= Circle
+////: Short
+class Short extends Report {
+  head(): number {
+    return 1;
+  }
+  body(): number {
+    return 2;
+  }
+}
+////: Slow
+class Slow extends Task {
+  step(): number {
+    Slow.prototype.step = function () {
+      return ++this.runs * 1000;
+    };
+    return super.step() + this.step() + 2;
+  }
+}
+////: Speaker
+abstract class Speaker {
+  abstract speak(): number;
+  loud(): number {
+    return this.speak() * 2;
+  }
+}
+////: Stranger-2
+class Stranger {
+  level = 900;
+  scaled(factor: number): number {
+    return this.level - factor;
+  }
+}
+////: Tank
+class Tank {
+  held = 10;
+  get level(): number {
+    return this.held;
+  }
+  set level(value: number) {
+    this.held = value;
+  }
+  fill(by: number): number {
+    this.level = this.level + by;
+    return this.level;
+  }
+}
+////: Task
+class Task {
+  runs = 0;
+  step(): number {
+    Task.prototype.step = function () {
+      return ++this.runs * 10;
+    };
+    return this.step() + 1;
+  }
+}
+////: Three
+class Three extends Two {
+  name(): number {
+    return 3;
+  }
+  path(): number {
+    return super.path() * 10 + 3;
+  }
+}
+////: Vault
+class Vault extends Safe {
+  #code(): number {
+    return 2;
+  }
+  code(): number {
+    return super.code() + this.#code();
+  }
+}
+////: Widget
+class Widget {
+  size: number;
+  constructor(public scale: number) {
+    this.size = this.measure() * scale;
+  }
+  measure(): number {
+    return 1;
+  }
+}
+////: areas
+function areas(shapes: Shape[]): number {
+  let sum = 0;
+  for (const shape of shapes) sum += shape.area();
+  return sum;
+}
+////: areas-2
+function areas(shapes: Shape[], at: number, change: () => void): number {
+  let sum = 0;
+  for (let i = 0; i < shapes.length; i++) {
+    if (i === at) change();
+    sum += shapes[i].area();
+  }
+  return sum;
+}
+////: attempt-3
+function attempt(lamp: Lamp): number {
+  try {
+    return powerOf(lamp);
+  } catch (error) {
+    return error instanceof TypeError ? -1 : -2;
+  }
+}
+////: attempt-4
+function attempt(run: () => number): number {
+  try {
+    const answer = run();
+    return Number.isNaN(answer) ? -3 : answer;
+  } catch (error) {
+    return error instanceof TypeError ? -1 : -2;
+  }
+}
+////: attempt-6
+function attempt(one: Note): number {
+  try {
+    return soundOf(one);
+  } catch (error) {
+    return error instanceof TypeError ? -1 : -2;
+  }
+}
+////: attempt-7
+function attempt(shape: Shape): number {
+  try {
+    return areaOf(shape);
+  } catch (error) {
+    return error instanceof TypeError ? -1 : -2;
+  }
+}
+////: attempt-8
+function attempt(speaker: Speaker): number {
+  try {
+    return loudOf(speaker);
+  } catch (error) {
+    return error instanceof TypeError ? -1 : -2;
+  }
+}
+////: attempt-9
+function attempt(tank: Tank): number {
+  try {
+    return fillOf(tank);
+  } catch (error) {
+    return error instanceof TypeError ? -1 : -2;
+  }
+}
+////: counting
+const counting = new Proxy(new Bright(4), {
+  get(target, key, receiver) {
+    reads++;
+    return Reflect.get(target, key, receiver);
+  },
+});
+////: for
+for (let round = 0; round < 1000; round++) {
+  Shape.prototype.area = () => round;
+  replaced += areas(shapes);
+  Circle.prototype.area = ofShape;
+  Shape.prototype.area = ofCircle;
+  exchanged += areas(shapes);
+  Shape.prototype.area = ofShape;
+  Circle.prototype.area = ofCircle;
+  restored += areas(shapes);
+}
+////: for-3
+for (let round = 0; round < 6; round++) {
+  classes.push(
+    class extends Speaker {
+      speak(): number {
+        return round + 1;
+      }
+    },
+  );
+}
+////: inAWorker
+function inAWorker(more: number): Promise<number[]> {
+  return new Promise(resolve => {
+    const worker = new Worker(new URL(import.meta.url));
+    let answer: number[] = [];
+    worker.onmessage = event => {
+      answer = event.data;
+      worker.terminate();
+    };
+    worker.addEventListener("close", () => resolve(answer));
+    worker.postMessage(more);
+  });
+}
+////: level
+async function level(depth: number): Promise<number[]> {
+  const seen = [total(meters)];
+  Meter.prototype.read = function () {
+    return this.base + 100 * depth;
+  };
+  if (depth % 2 === 1) Reflect.deleteProperty(Double.prototype, "read");
+  seen.push(total(meters));
+  if (depth < 4) {
+    const worker = new Worker(new URL(import.meta.url), { workerData: depth + 1 });
+    seen.push(...(await new Promise<number[]>(resolve => worker.once("message", resolve))));
+    await worker.terminate();
+  }
+  seen.push(total(meters));
+  return seen;
+}
+////: lines-11
+class «1» extends «2» {
+  «3»(): number {
+    return «4» * «5»;
+  }
+}
+////: lines-12
+class «1» extends «2» {
+  «3»(«4»: number): number {
+    return this.«5» * 2 + «4»;
+  }
+}
+////: lines-13
+class «1» extends «2» {
+  «3»(): number {
+    return super.«3»() + «4»;
+  }
+}
+////: lines-15
+class «1» extends «2» {
+  path(): number {
+    return super.path() * 10 + «3»;
+  }
+}
+////: lines-17
+function «1»(): void {
+  «2».prototype.area = () => «3»;
+}
+////: lines-19
+function «1»(): number {
+  Reflect.deleteProperty(«2».prototype, "open");
+  return ++changes;
+}
+////: lines-20
+function «1»(): number {
+  «2».prototype.open = () => «3»;
+  return ++changes;
+}
+////: lines-21
+«1».prototype.«2» = function () {
+  return this.«3»;
+};
+////: lines-22
+function «1»(lamp: Lamp, other: unknown): number {
+  return lamp.power.«2»(other);
+}
+////: lines-23
+function «1»(«2»: «3»): number {
+  return «4»(«5»);
+}
+////: lines-5
+function «1»(): void {
+  «2».prototype.area = function () {
+    return this.side + «3»;
+  };
+}
+////: lines-8
+function «1»(«2»: «3»): number {
+  return «4»() * «5» + «6»();
+}
+////: makeAll
+function makeAll(classes: (typeof Base)[]): number {
+  let sum = 0;
+  for (const each of classes) sum = sum * 100 + each.make() + each.rank();
+  return sum;
+}
+////: makeCounter
+function makeCounter(step: number) {
+  return class Counter {
+    count = 0;
+    bump(): number {
+      this.count += step;
+      return this.count;
+    }
+    twice(): number {
+      return this.bump() + this.bump();
+    }
+  };
+}
+////: powerOf-2
+////= powerOf
+
+////= attempt-3
+////: report
+function report(list: Base[]): number {
+  let sum = 0;
+  for (const each of list) sum += each.describe() * 3 + each.kind();
+  return sum;
+}
+////: start
+function start(task: string): { worker: Worker; answer: Promise<number>; closed: Promise<void> } {
+  const worker = new Worker(new URL(import.meta.url));
+  const answer = new Promise<number>(resolve => (worker.onmessage = event => resolve(event.data)));
+  const closed = new Promise<void>(resolve => worker.addEventListener("close", () => resolve()));
+  worker.postMessage(task);
+  return { worker, answer, closed };
+}
+////: three
+function three(mixer: Mixer): number {
+  return mixer.mix(«1», «2», «3»);
+}
+////: totalInAWorker
+function totalInAWorker(): Promise<number> {
+  return new Promise(resolve => {
+    const worker = new Worker(new URL(import.meta.url));
+    worker.onmessage = event => {
+      worker.terminate();
+      resolve(event.data);
+    };
+  });
+}
+////: twice
+function twice(shape: Shape, change: () => void): number {
+  const first = shape.area();
+  change();
+  return first * 1000 + shape.area();
+}
+//// a-base-constructor-calls-a-method-that-subclasses-override.ts
+// The constructor of the base class calls this.measure() while the object is still being made: the fields of the subclass do not exist yet, and the override runs all the same. Then an override is replaced and another is deleted, and objects made afterwards are measured by what is there at that time.
+////= Widget
+////= Panel
+////= Button
+class Label extends Widget {}
+
+function makeAll(): Widget[] {
+  return [new Widget(1), new Panel(2), new Button(3), new Label(4)];
+}
+
+function sizes(widgets: Widget[]): number {
+  let sum = 0;
+  for (const widget of widgets) sum += widget.size * 10000 + widget.measure();
+  return sum;
+}
+
+////= note
+
+const first = makeAll();
+for (const widget of first) note("size at first", widget.size);
+note("measured again", sizes(first));
+Panel.prototype.measure = () => 7;
+const second = makeAll();
+for (const widget of second) note("size after an override is replaced", widget.size);
+note("measured again", sizes(second));
+Reflect.deleteProperty(Button.prototype, "measure");
+const third = makeAll();
+for (const widget of third) note("size after another is deleted", widget.size);
+note("measured again", sizes(third));
+note("the first ones", sizes(first));
+
+export {};
+//// a-base-constructor-calls-a-method-that-subclasses-override-and-one-number-is-printed.ts
+// The constructor of the base class calls this.measure() while the object is still being made: the fields of the subclass do not exist yet, and the override runs all the same. Then an override is replaced and another is deleted, and objects made afterwards are measured by what is there at that time. One number is printed.
+////= Widget
+////= Panel
+////= Button
+class Label extends Widget {}
+
+function makeAll(): Widget[] {
+  return [new Widget(1), new Panel(2), new Button(3), new Label(4)];
+}
+
+function sizes(widgets: Widget[]): number {
+  let sum = 0;
+  for (const widget of widgets) sum += widget.size * 10000 + widget.measure();
+  return sum;
+}
+
+let checksum = 0;
+////= note-2
+
+const first = makeAll();
+for (const widget of first) note(widget.size);
+note(sizes(first));
+Panel.prototype.measure = () => 7;
+const second = makeAll();
+for (const widget of second) note(widget.size);
+note(sizes(second));
+Reflect.deleteProperty(Button.prototype, "measure");
+const third = makeAll();
+for (const widget of third) note(widget.size);
+note(sizes(third));
+note(sizes(first));
+console.log(checksum);
+
+export {};
+//// a-class-factory-is-called-three-times-and-one-result-is-changed.ts
+// One function returns a class and is called three times, so three classes share the code of their methods. A method is replaced on the prototype of the second and another is deleted from the third: the first one, and the other methods, stay as they are.
+////= makeCounter
+type Counter = InstanceType<ReturnType<typeof makeCounter>>;
+
+////= lines-9	twiceAll	counters	Counter	counter	counter.twice
+
+////= attempt-10
+
+const ByOne = makeCounter(1);
+const ByTen = makeCounter(10);
+const ByHundred = makeCounter(100);
+const counters: Counter[] = [new ByOne(), new ByTen(), new ByHundred()];
+
+note("at first", twiceAll(counters));
+ByTen.prototype.bump = function () {
+  this.count -= 1;
+  return this.count;
+};
+note("the second class has another bump", twiceAll(counters));
+for (const counter of counters) note("counts", counter.count);
+note("new objects", twiceAll([new ByOne(), new ByTen(), new ByHundred()]));
+Reflect.deleteProperty(ByHundred.prototype, "twice");
+note("the third class has lost twice", attempt(() => twiceAll(counters)));
+note("the first two", twiceAll([counters[0], counters[1]]));
+note("a fourth class", twiceAll([new (makeCounter(1000))()]));
+
+export {};
+//// a-class-factory-is-called-three-times-and-one-result-is-changed-and-one-number-is-printed.ts
+// One function returns a class and is called three times, so three classes share the code of their methods. A method is replaced on the prototype of the second and another is deleted from the third: the first one, and the other methods, stay as they are. One number is printed.
+////= makeCounter
+type Counter = InstanceType<ReturnType<typeof makeCounter>>;
+
+////= lines-9	twiceAll	counters	Counter	counter	counter.twice
+
+////= attempt
+
+let checksum = 0;
+////= note-2
+
+const ByOne = makeCounter(1);
+const ByTen = makeCounter(10);
+const ByHundred = makeCounter(100);
+const counters: Counter[] = [new ByOne(), new ByTen(), new ByHundred()];
+
+note(twiceAll(counters));
+ByTen.prototype.bump = function () {
+  this.count -= 1;
+  return this.count;
+};
+note(twiceAll(counters));
+for (const counter of counters) note(counter.count);
+note(twiceAll([new ByOne(), new ByTen(), new ByHundred()]));
+Reflect.deleteProperty(ByHundred.prototype, "twice");
+note(attempt(() => twiceAll(counters)));
+note(twiceAll([counters[0], counters[1]]));
+note(twiceAll([new (makeCounter(1000))()]));
+console.log(checksum);
+
+export {};
+//// a-class-object-is-hung-under-another-class.ts
+// Static methods are inherited from class object to class object. Object.setPrototypeOf hangs the class object Child under Between: Child.make(), `this.rank()` inside it and super.rank() in a static method find Between's from then on. Instances are not affected.
+////= Base-3
+////= Between-2
+class Child extends Base {
+  static above(): number {
+    return super.rank() * 1000 + super.make();
+  }
+}
+class Grandchild extends Child {}
+
+////= makeAll
+
+////= note
+
+const classes = [Base, Between, Child, Grandchild];
+note("at first", makeAll(classes));
+note("above the child", Child.above());
+note("above the grandchild", Grandchild.above());
+Object.setPrototypeOf(Child, Between);
+note("under the class in between", makeAll(classes));
+note("above the child", Child.above());
+note("above the grandchild", Grandchild.above());
+note("an instance", new Child().own());
+Between.rank = () => 7;
+note("a static method is replaced", makeAll(classes));
+Reflect.deleteProperty(Between, "rank");
+note("and deleted", makeAll(classes));
+Object.setPrototypeOf(Child, Base);
+note("back under the base", makeAll(classes));
+
+export {};
+//// a-class-object-is-hung-under-another-class-and-one-number-is-printed.ts
+// Static methods are inherited from class object to class object. Object.setPrototypeOf hangs the class object Child under Between: Child.make(), `this.rank()` inside it and super.rank() in a static method find Between's from then on. Instances are not affected. One number is printed.
+////= Base-3
+////= Between-2
+class Child extends Base {
+  static above(): number {
+    return super.rank() * 1000 + super.make();
+  }
+}
+class Grandchild extends Child {}
+
+////= makeAll
+
+let checksum = 0;
+////= note-2
+
+const classes = [Base, Between, Child, Grandchild];
+note(makeAll(classes));
+note(Child.above());
+note(Grandchild.above());
+Object.setPrototypeOf(Child, Between);
+note(makeAll(classes));
+note(Child.above());
+note(Grandchild.above());
+note(new Child().own());
+Between.rank = () => 7;
+note(makeAll(classes));
+Reflect.deleteProperty(Between, "rank");
+note(makeAll(classes));
+Object.setPrototypeOf(Child, Base);
+note(makeAll(classes));
+console.log(checksum);
+
+export {};
+//// a-class-that-inherits-a-method-gets-one-of-its-own-later.ts
+// Dot defines no area() and inherits Shape's. One store, in the middle of the program, gives Dot.prototype an area() of its own. Every call before that store finds Shape's: from a list, from the base constructor, and the first of two calls in one function. Every call after it, on old, new and lower objects, finds the new one.
+////= Shape-3
+////= Circle
+class Dot extends Shape {}
+class Speck extends Dot {}
+
+////= lines	areas	shapes	Shape	shape	100	shape.area
+
+////= twice
+
+function nothing(): void {}
+////= lines-5	addToDot	Dot	1
+
+////= note
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4), new Speck(5)];
+note("before the store", areas(shapes));
+for (const shape of shapes) note("measured by the constructor", shape.size);
+note("a dot, twice", twice(shapes[2], nothing));
+note("a dot, around the store", twice(shapes[2], addToDot));
+note("after the store", areas(shapes));
+note("a dot, twice", twice(shapes[2], nothing));
+for (const shape of [new Shape(2), new Circle(3), new Dot(4), new Speck(5)]) note("measured by the constructor", shape.size);
+
+export {};
+//// a-class-that-inherits-a-method-gets-one-of-its-own-later-and-one-number-is-printed.ts
+// Dot defines no area() and inherits Shape's. One store, in the middle of the program, gives Dot.prototype an area() of its own. Every call before that store finds Shape's: from a list, from the base constructor, and the first of two calls in one function. Every call after it, on old, new and lower objects, finds the new one. One number is printed.
+////= Shape-3
+////= Circle
+class Dot extends Shape {}
+class Speck extends Dot {}
+
+////= lines	areas	shapes	Shape	shape	100	shape.area
+
+////= twice
+
+function nothing(): void {}
+////= lines-5	addToDot	Dot	1
+
+let checksum = 0;
+////= note-2
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4), new Speck(5)];
+note(areas(shapes));
+for (const shape of shapes) note(shape.size);
+note(twice(shapes[2], nothing));
+note(twice(shapes[2], addToDot));
+note(areas(shapes));
+note(twice(shapes[2], nothing));
+for (const shape of [new Shape(2), new Circle(3), new Dot(4), new Speck(5)]) note(shape.size);
+console.log(checksum);
+
+export {};
+//// a-constructor-binds-a-method-onto-every-instance.ts
+// The constructor of one class of the family stores `this.sound.bind(this)` on each of its instances, so each has a member of its own over the method. Replacing the method on the prototype later changes new instances and leaves the old ones.
+////= Note
+////= Bound
+class Deep extends Bound {
+  sound(): number {
+    return this.pitch + 2;
+  }
+}
+
+////= lines	play	notes	Note	one	10	one.sound
+
+////= note
+
+const notes: Note[] = [new Note(1), new Bound(2), new Deep(3)];
+note("at first", play(notes));
+const taken = notes[1].sound;
+note("taken off its object", taken());
+Bound.prototype.sound = () => 7;
+Deep.prototype.sound = () => 8;
+note("after both methods are replaced", play(notes));
+note("new instances", play([new Note(1), new Bound(2), new Deep(3)]));
+Reflect.deleteProperty(notes[1], "sound");
+Reflect.deleteProperty(notes[2], "sound");
+note("the old ones without their own members", play(notes));
+
+export {};
+//// a-constructor-binds-a-method-onto-every-instance-and-one-number-is-printed.ts
+// The constructor of one class of the family stores `this.sound.bind(this)` on each of its instances, so each has a member of its own over the method. Replacing the method on the prototype later changes new instances and leaves the old ones. One number is printed.
+////= Note
+////= Bound
+class Deep extends Bound {
+  sound(): number {
+    return this.pitch + 2;
+  }
+}
+
+////= lines	play	notes	Note	one	10	one.sound
+
+let checksum = 0;
+////= note-2
+
+const notes: Note[] = [new Note(1), new Bound(2), new Deep(3)];
+note(play(notes));
+const taken = notes[1].sound;
+note(taken());
+Bound.prototype.sound = () => 7;
+Deep.prototype.sound = () => 8;
+note(play(notes));
+note(play([new Note(1), new Bound(2), new Deep(3)]));
+Reflect.deleteProperty(notes[1], "sound");
+Reflect.deleteProperty(notes[2], "sound");
+note(play(notes));
+console.log(checksum);
+
+export {};
+//// a-family-of-shapes-honest.ts
+// The honest twin of the programs that replace a method on a prototype: the same family and the same calls, from a list, a parameter, a field and a new object, and nothing is ever changed.
+////= Shape-2
+////= Circle-2
+class Dot extends Shape {}
+
+////= Frame
+
+////= areas
+
+////= lines-8	twice	shape	Shape	shape.area	1000	shape.area
+
+////= note
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+note("a list", areas(shapes));
+for (const shape of shapes) note("twice", twice(shape));
+for (const shape of shapes) note("from a field", new Frame(shape).area());
+note("new objects", new Shape(5).area() + new Circle(5).area() + new Dot(5).area());
+let sum = 0;
+for (let round = 0; round < 1000; round++) sum += areas(shapes);
+note("a thousand rounds", sum);
+
+export {};
+//// a-family-of-shapes-honest-and-one-number-is-printed.ts
+// The honest twin of the programs that replace a method on a prototype: the same family and the same calls, from a list, a parameter, a field and a new object, and nothing is ever changed. One number is printed.
+////= Shape-2
+////= Circle-2
+class Dot extends Shape {}
+
+////= Frame
+
+////= areas
+
+////= lines-8	twice	shape	Shape	shape.area	1000	shape.area
+
+let checksum = 0;
+////= note-2
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+note(areas(shapes));
+for (const shape of shapes) note(twice(shape));
+for (const shape of shapes) note(new Frame(shape).area());
+note(new Shape(5).area() + new Circle(5).area() + new Dot(5).area());
+let sum = 0;
+for (let round = 0; round < 1000; round++) sum += areas(shapes);
+note(sum);
+console.log(checksum);
+
+export {};
+//// a-family-with-super-calls-and-static-methods-honest.ts
+// The honest twin of the programs that give a prototype, an instance or a class object another parent: the same classes, super calls and static methods, and every object keeps the parent it was made with.
+////= Base-2
+////= Between
+////= Child-2
+class Grandchild extends Child {}
+
+////= report
+
+////= makeAll
+
+////= note
+
+const list: Base[] = [new Base(1), new Between(2), new Child(3), new Grandchild(4)];
+note("instances", report(list));
+for (const each of list) note("one by one", each.describe());
+note("classes", makeAll([Base, Between, Child, Grandchild]));
+note("above the child", Child.above());
+note("above the grandchild", Grandchild.above());
+let sum = 0;
+for (let round = 0; round < 1000; round++) sum += report(list);
+note("a thousand rounds", sum);
+
+export {};
+//// a-family-with-super-calls-and-static-methods-honest-and-one-number-is-printed.ts
+// The honest twin of the programs that give a prototype, an instance or a class object another parent: the same classes, super calls and static methods, and every object keeps the parent it was made with. One number is printed.
+////= Base-2
+////= Between
+////= Child-2
+class Grandchild extends Child {}
+
+////= report
+
+////= makeAll
+
+let checksum = 0;
+////= note-2
+
+const list: Base[] = [new Base(1), new Between(2), new Child(3), new Grandchild(4)];
+note(report(list));
+for (const each of list) note(each.describe());
+note(makeAll([Base, Between, Child, Grandchild]));
+note(Child.above());
+note(Grandchild.above());
+let sum = 0;
+for (let round = 0; round < 1000; round++) sum += report(list);
+note(sum);
+console.log(checksum);
+
+export {};
+//// a-method-called-with-different-numbers-of-arguments-is-replaced.ts
+// One method is called with no, one, two and three arguments and with a spread, each at a call site of its own. When the method is replaced, deleted or put back, all five call sites see it at once, whatever number of arguments they pass.
+class Mixer {
+  mix(a = 1, b = 2, c = 3): number {
+    return a * 100 + b * 10 + c;
+  }
+}
+class Loud extends Mixer {
+  mix(a = 4, b = 5, c = 6): number {
+    return -(a * 100 + b * 10 + c);
+  }
+}
+class Same extends Mixer {}
+
+////= lines-3	none	mixer	Mixer	mixer.mix
+////= lines-23	one	mixer	Mixer	mixer.mix	7
+function two(mixer: Mixer): number {
+  return mixer.mix(7, 8);
+}
+////= three	7	8	9
+function spread(mixer: Mixer, list: [number?, number?, number?]): number {
+  return mixer.mix(...list);
+}
+
+////= attempt-10
+
+const mixers: Mixer[] = [new Mixer(), new Loud(), new Same()];
+const ofMixer = Mixer.prototype.mix;
+const ofLoud = Loud.prototype.mix;
+
+function round(): void {
+  for (const mixer of mixers) {
+    note("none", attempt(() => none(mixer)));
+    note("one", attempt(() => one(mixer)));
+    note("two", attempt(() => two(mixer)));
+    note("three", attempt(() => three(mixer)));
+    note("a spread of two", attempt(() => spread(mixer, [5, 6])));
+  }
+}
+
+round();
+Mixer.prototype.mix = function () {
+  return 1000 + arguments.length;
+};
+round();
+Loud.prototype.mix = (...all: number[]) => 2000 + all.length;
+round();
+Reflect.deleteProperty(Loud.prototype, "mix");
+round();
+Reflect.deleteProperty(Mixer.prototype, "mix");
+round();
+Mixer.prototype.mix = ofMixer;
+Loud.prototype.mix = ofLoud;
+round();
+
+export {};
+//// a-method-called-with-different-numbers-of-arguments-is-replaced-and-one-number-is-printed.ts
+// One method is called with no, one, two and three arguments and with a spread, each at a call site of its own. When the method is replaced, deleted or put back, all five call sites see it at once, whatever number of arguments they pass. One number is printed.
+class Mixer {
+  mix(a = 1, b = 2, c = 3): number {
+    return a * 100 + b * 10 + c;
+  }
+}
+class Loud extends Mixer {
+  mix(a = 4, b = 5, c = 6): number {
+    return -(a * 100 + b * 10 + c);
+  }
+}
+class Same extends Mixer {}
+
+////= lines-3	none	mixer	Mixer	mixer.mix
+////= lines-23	one	mixer	Mixer	mixer.mix	7
+function two(mixer: Mixer): number {
+  return mixer.mix(7, 8);
+}
+////= three	7	8	9
+function spread(mixer: Mixer, list: [number?, number?, number?]): number {
+  return mixer.mix(...list);
+}
+
+////= attempt
+
+let checksum = 0;
+////= note-2
+
+const mixers: Mixer[] = [new Mixer(), new Loud(), new Same()];
+const ofMixer = Mixer.prototype.mix;
+const ofLoud = Loud.prototype.mix;
+
+function round(): void {
+  for (const mixer of mixers) {
+    note(attempt(() => none(mixer)));
+    note(attempt(() => one(mixer)));
+    note(attempt(() => two(mixer)));
+    note(attempt(() => three(mixer)));
+    note(attempt(() => spread(mixer, [5, 6])));
+  }
+}
+
+round();
+Mixer.prototype.mix = function () {
+  return 1000 + arguments.length;
+};
+round();
+Loud.prototype.mix = (...all: number[]) => 2000 + all.length;
+round();
+Reflect.deleteProperty(Loud.prototype, "mix");
+round();
+Reflect.deleteProperty(Mixer.prototype, "mix");
+round();
+Mixer.prototype.mix = ofMixer;
+Loud.prototype.mix = ofLoud;
+round();
+console.log(checksum);
+
+export {};
+//// a-method-is-called-on-another-object.ts
+// o.m.call(other), o.m.apply(other) and Reflect.apply: the method comes from one object and runs on another: an instance of a sibling class, a literal with the field, a literal without it, a number, undefined. Inside, the method calls a second method on this, which is looked up on the other object.
+////= Lamp-6
+
+////= attempt-4
+
+////= lines-22	on	call
+////= lines-22	applied	apply
+function reflected(lamp: Lamp, other: unknown): number {
+  return Reflect.apply(lamp.power, other, []);
+}
+
+////= note
+
+const lamps: Lamp[] = [new Lamp(1), new Bright(2), new Triple(3)];
+const others: unknown[] = [new Lamp(10), new Bright(20), new Triple(30), { watts: 40, factor: () => 4 }, { watts: 50 }, { factor: () => 6 }, 70, undefined];
+
+for (const lamp of lamps) for (const other of others) note("call", attempt(() => on(lamp, other)));
+for (const lamp of lamps) for (const other of others) note("apply", attempt(() => applied(lamp, other)));
+for (const lamp of lamps) for (const other of others) note("Reflect.apply", attempt(() => reflected(lamp, other)));
+Bright.prototype.factor = () => 9;
+for (const lamp of lamps) for (const other of others) note("call, after a method is replaced", attempt(() => on(lamp, other)));
+
+export {};
+//// a-method-is-called-on-another-object-and-one-number-is-printed.ts
+// o.m.call(other), o.m.apply(other) and Reflect.apply: the method comes from one object and runs on another: an instance of a sibling class, a literal with the field, a literal without it, a number, undefined. Inside, the method calls a second method on this, which is looked up on the other object. One number is printed.
+////= Lamp-6
+
+////= attempt-4
+
+////= lines-22	on	call
+////= lines-22	applied	apply
+function reflected(lamp: Lamp, other: unknown): number {
+  return Reflect.apply(lamp.power, other, []);
+}
+
+let checksum = 0;
+////= note-2
+
+const lamps: Lamp[] = [new Lamp(1), new Bright(2), new Triple(3)];
+const others: unknown[] = [new Lamp(10), new Bright(20), new Triple(30), { watts: 40, factor: () => 4 }, { watts: 50 }, { factor: () => 6 }, 70, undefined];
+
+for (const lamp of lamps) for (const other of others) note(attempt(() => on(lamp, other)));
+for (const lamp of lamps) for (const other of others) note(attempt(() => applied(lamp, other)));
+for (const lamp of lamps) for (const other of others) note(attempt(() => reflected(lamp, other)));
+Bright.prototype.factor = () => 9;
+for (const lamp of lamps) for (const other of others) note(attempt(() => on(lamp, other)));
+console.log(checksum);
+
+export {};
+//// a-method-is-defined-on-one-instance.ts
+// Object.defineProperty covers a method on single instances: with a hidden value, with a getter that answers a function, and with a value that is no function, which makes the call a TypeError. The other instances keep their class's method.
+////= Note-3
+class Rest extends Note {}
+
+////= soundOf
+
+////= attempt-6
+
+////= note
+
+const notes: Note[] = [new Note(10), new Sharp(20), new Rest(30), new Note(40), new Sharp(50), new Rest(60)];
+let reads = 0;
+
+for (const one of notes) note("at first", attempt(one));
+Object.defineProperty(notes[0], "sound", { value: () => 1, enumerable: false, configurable: true });
+////= Object-defineProperty-4
+Object.defineProperty(notes[2], "sound", { value: 3, configurable: true });
+for (const one of notes) note("three are covered", attempt(one));
+note("times the getter ran", reads);
+note("own names of the first", Object.keys(notes[0]).length);
+for (let i = 0; i < 3; i++) Reflect.deleteProperty(notes[i], "sound");
+for (const one of notes) note("uncovered", attempt(one));
+
+export {};
+//// a-method-is-defined-on-one-instance-and-one-number-is-printed.ts
+// Object.defineProperty covers a method on single instances: with a hidden value, with a getter that answers a function, and with a value that is no function, which makes the call a TypeError. The other instances keep their class's method. One number is printed.
+////= Note-3
+class Rest extends Note {}
+
+////= soundOf
+
+////= attempt-6
+
+let checksum = 0;
+////= note-2
+
+const notes: Note[] = [new Note(10), new Sharp(20), new Rest(30), new Note(40), new Sharp(50), new Rest(60)];
+let reads = 0;
+
+for (const one of notes) note(attempt(one));
+Object.defineProperty(notes[0], "sound", { value: () => 1, enumerable: false, configurable: true });
+////= Object-defineProperty-4
+Object.defineProperty(notes[2], "sound", { value: 3, configurable: true });
+for (const one of notes) note(attempt(one));
+note(reads);
+note(Object.keys(notes[0]).length);
+for (let i = 0; i < 3; i++) Reflect.deleteProperty(notes[i], "sound");
+for (const one of notes) note(attempt(one));
+console.log(checksum);
+
+export {};
+//// a-method-is-deleted-and-put-back.ts
+// An override is deleted, so that its objects find the method of the parent. Then the method of the parent is deleted too, and a call throws a TypeError. Then both are put back, the parent's first.
+////= Shape-4
+class Dot extends Shape {}
+
+////= lines-3	areaOf	shape	Shape	shape.area
+
+////= attempt-7
+
+////= note
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+const ofShape = Shape.prototype.area;
+const ofCircle = Circle.prototype.area;
+
+for (const shape of shapes) note("at first", attempt(shape));
+Reflect.deleteProperty(Circle.prototype, "area");
+for (const shape of shapes) note("without the override", attempt(shape));
+Reflect.deleteProperty(Shape.prototype, "area");
+for (const shape of shapes) note("without any", attempt(shape));
+note("a new circle", attempt(new Circle(5)));
+Shape.prototype.area = ofShape;
+for (const shape of shapes) note("the parent's is back", attempt(shape));
+Circle.prototype.area = ofCircle;
+for (const shape of shapes) note("the override is back", attempt(shape));
+Reflect.deleteProperty(Shape.prototype, "area");
+for (const shape of shapes) note("only the override is left", attempt(shape));
+
+export {};
+//// a-method-is-deleted-and-put-back-and-one-number-is-printed.ts
+// An override is deleted, so that its objects find the method of the parent. Then the method of the parent is deleted too, and a call throws a TypeError. Then both are put back, the parent's first. One number is printed.
+////= Shape-4
+class Dot extends Shape {}
+
+////= lines-3	areaOf	shape	Shape	shape.area
+
+////= attempt-7
+
+let checksum = 0;
+////= note-2
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+const ofShape = Shape.prototype.area;
+const ofCircle = Circle.prototype.area;
+
+for (const shape of shapes) note(attempt(shape));
+Reflect.deleteProperty(Circle.prototype, "area");
+for (const shape of shapes) note(attempt(shape));
+Reflect.deleteProperty(Shape.prototype, "area");
+for (const shape of shapes) note(attempt(shape));
+note(attempt(new Circle(5)));
+Shape.prototype.area = ofShape;
+for (const shape of shapes) note(attempt(shape));
+Circle.prototype.area = ofCircle;
+for (const shape of shapes) note(attempt(shape));
+Reflect.deleteProperty(Shape.prototype, "area");
+for (const shape of shapes) note(attempt(shape));
+console.log(checksum);
+
+export {};
+//// a-method-is-made-read-only.ts
+// A method is made read-only on its prototype. Stores to the prototype and to instances throw a TypeError and change nothing; Object.defineProperty still replaces it, on an instance and on the prototype.
+////= Shape-4
+class Dot extends Shape {}
+
+////= areas
+
+////= attempt
+
+function storeTo(shape: Shape): number {
+  shape.area = () => 1000;
+  return 1;
+}
+
+////= note
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+
+Object.defineProperty(Shape.prototype, "area", { writable: false });
+note("read-only", areas(shapes));
+note("a store to the prototype", attempt(() => storeTo(Shape.prototype)));
+note("afterwards", areas(shapes));
+note("a store to a shape", attempt(() => storeTo(shapes[0])));
+note("a store to a dot", attempt(() => storeTo(shapes[2])));
+note("afterwards", areas(shapes));
+note("a store to a circle", attempt(() => storeTo(shapes[1])));
+note("afterwards", areas(shapes));
+Object.defineProperty(shapes[2], "area", { value: () => 50, configurable: true });
+note("defined on the dot", areas(shapes));
+Object.defineProperty(Shape.prototype, "area", { value: () => 7 });
+note("defined on the prototype", areas(shapes));
+Object.freeze(Circle.prototype);
+note("a store to the frozen prototype of the subclass", attempt(() => storeTo(Circle.prototype)));
+note("a new circle", new Circle(2).area());
+note("a store to a new circle", attempt(() => storeTo(new Circle(2))));
+
+export {};
+//// a-method-is-made-read-only-and-one-number-is-printed.ts
+// A method is made read-only on its prototype. Stores to the prototype and to instances throw a TypeError and change nothing; Object.defineProperty still replaces it, on an instance and on the prototype. One number is printed.
+////= Shape-4
+class Dot extends Shape {}
+
+////= areas
+
+////= attempt
+
+function storeTo(shape: Shape): number {
+  shape.area = () => 1000;
+  return 1;
+}
+
+let checksum = 0;
+////= note-2
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+
+Object.defineProperty(Shape.prototype, "area", { writable: false });
+note(areas(shapes));
+note(attempt(() => storeTo(Shape.prototype)));
+note(areas(shapes));
+note(attempt(() => storeTo(shapes[0])));
+note(attempt(() => storeTo(shapes[2])));
+note(areas(shapes));
+note(attempt(() => storeTo(shapes[1])));
+note(areas(shapes));
+Object.defineProperty(shapes[2], "area", { value: () => 50, configurable: true });
+note(areas(shapes));
+Object.defineProperty(Shape.prototype, "area", { value: () => 7 });
+note(areas(shapes));
+Object.freeze(Circle.prototype);
+note(attempt(() => storeTo(Circle.prototype)));
+note(new Circle(2).area());
+note(attempt(() => storeTo(new Circle(2))));
+console.log(checksum);
+
+export {};
+//// a-method-is-replaced-and-put-back-a-thousand-times.ts
+// A method and its override are replaced and put back a thousand times, with calls after every change: each call finds what was stored last, whether that is the compiled method or another function.
+////= Shape-4
+class Dot extends Shape {}
+
+////= areas
+
+////= note
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+const ofShape = Shape.prototype.area;
+const ofCircle = Circle.prototype.area;
+
+let replaced = 0;
+let restored = 0;
+let exchanged = 0;
+////= for
+note("replaced", replaced);
+note("exchanged", exchanged);
+note("restored", restored);
+
+export {};
+//// a-method-is-replaced-and-put-back-a-thousand-times-and-one-number-is-printed.ts
+// A method and its override are replaced and put back a thousand times, with calls after every change: each call finds what was stored last, whether that is the compiled method or another function. One number is printed.
+////= Shape-4
+class Dot extends Shape {}
+
+////= areas
+
+let checksum = 0;
+////= note-2
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+const ofShape = Shape.prototype.area;
+const ofCircle = Circle.prototype.area;
+
+let replaced = 0;
+let restored = 0;
+let exchanged = 0;
+////= for
+note(replaced);
+note(exchanged);
+note(restored);
+console.log(checksum);
+
+export {};
+//// a-method-is-replaced-before-the-first-call.ts
+// Two methods of a family are replaced on their prototypes before any object exists and before the first call: no call ever finds the methods that the classes define.
+////= Shape-4
+class Dot extends Shape {}
+
+////= areas
+
+////= note
+
+////= lines-21	Shape	area	side
+Circle.prototype.area = function () {
+  return -10 * this.side;
+};
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+note("the first call", areas(shapes));
+note("the second call", areas(shapes));
+note("a shape", new Shape(5).area());
+note("a circle", new Circle(5).area());
+note("a dot", new Dot(5).area());
+
+export {};
+//// a-method-is-replaced-before-the-first-call-and-one-number-is-printed.ts
+// Two methods of a family are replaced on their prototypes before any object exists and before the first call: no call ever finds the methods that the classes define. One number is printed.
+////= Shape-4
+class Dot extends Shape {}
+
+////= areas
+
+let checksum = 0;
+////= note-2
+
+////= lines-21	Shape	area	side
+Circle.prototype.area = function () {
+  return -10 * this.side;
+};
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+note(areas(shapes));
+note(areas(shapes));
+note(new Shape(5).area());
+note(new Circle(5).area());
+note(new Dot(5).area());
+console.log(checksum);
+
+export {};
+//// a-method-is-replaced-between-two-calls.ts
+// One function calls the same method of the same object twice, and what it calls in between replaces the method: on the class of the object, on its parent, or on a class that the object does not look at.
+////= Shape-4
+class Dot extends Shape {}
+
+////= twice
+
+function nothing(): void {}
+////= lines-5	replaceOnCircle	Circle	1
+////= lines-5	replaceOnShape	Shape	2
+////= lines-5	replaceOnShapeAgain	Shape	3
+////= lines-17	replaceOnCircleAgain	Circle	0
+
+////= note
+
+const shape = new Shape(5);
+const circle = new Circle(3);
+const dot = new Dot(4);
+
+note("a shape, no change", twice(shape, nothing));
+note("a circle, no change", twice(circle, nothing));
+note("a dot, no change", twice(dot, nothing));
+note("a circle, its class changes", twice(circle, replaceOnCircle));
+note("a circle, its parent changes", twice(circle, replaceOnShape));
+note("a shape afterwards", twice(shape, nothing));
+note("a dot, its parent changes", twice(dot, replaceOnShapeAgain));
+note("a shape, a class below changes", twice(shape, replaceOnCircleAgain));
+note("a circle afterwards", twice(circle, nothing));
+
+export {};
+//// a-method-is-replaced-between-two-calls-and-one-number-is-printed.ts
+// One function calls the same method of the same object twice, and what it calls in between replaces the method: on the class of the object, on its parent, or on a class that the object does not look at. One number is printed.
+////= Shape-4
+class Dot extends Shape {}
+
+////= twice
+
+function nothing(): void {}
+////= lines-5	replaceOnCircle	Circle	1
+////= lines-5	replaceOnShape	Shape	2
+////= lines-5	replaceOnShapeAgain	Shape	3
+////= lines-17	replaceOnCircleAgain	Circle	0
+
+let checksum = 0;
+////= note-2
+
+const shape = new Shape(5);
+const circle = new Circle(3);
+const dot = new Dot(4);
+
+note(twice(shape, nothing));
+note(twice(circle, nothing));
+note(twice(dot, nothing));
+note(twice(circle, replaceOnCircle));
+note(twice(circle, replaceOnShape));
+note(twice(shape, nothing));
+note(twice(dot, replaceOnShapeAgain));
+note(twice(shape, replaceOnCircleAgain));
+note(twice(circle, nothing));
+console.log(checksum);
+
+export {};
+//// a-method-is-replaced-by-a-getter.ts
+// Object.defineProperty turns a method on the prototype into a getter: every call runs the getter first and then calls what it answers, with the object as this. A getter that answers a number makes the call a TypeError.
+////= Shape-4
+class Dot extends Shape {}
+
+////= areas
+
+////= attempt-10
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+const original = Shape.prototype.area;
+let reads = 0;
+
+note("at first", areas(shapes));
+////= Object-defineProperty
+note("a getter on the base", areas(shapes));
+note("times it ran", reads);
+////= Object-defineProperty-3
+note("a getter on the subclass that answers the base method", areas(shapes));
+note("times and sides", reads);
+Object.defineProperty(Shape.prototype, "area", { get: () => 5, configurable: true });
+note("a getter that answers a number", attempt(() => areas(shapes)));
+note("the circle alone", areas([shapes[1]]));
+Object.defineProperty(Shape.prototype, "area", { value: original, writable: true, configurable: true });
+Reflect.deleteProperty(Circle.prototype, "area");
+note("a plain method again, and none on the subclass", areas(shapes));
+
+export {};
+//// a-method-is-replaced-by-a-getter-and-one-number-is-printed.ts
+// Object.defineProperty turns a method on the prototype into a getter: every call runs the getter first and then calls what it answers, with the object as this. A getter that answers a number makes the call a TypeError. One number is printed.
+////= Shape-4
+class Dot extends Shape {}
+
+////= areas
+
+////= attempt
+
+let checksum = 0;
+////= note-2
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+const original = Shape.prototype.area;
+let reads = 0;
+
+note(areas(shapes));
+////= Object-defineProperty
+note(areas(shapes));
+note(reads);
+////= Object-defineProperty-3
+note(areas(shapes));
+note(reads);
+Object.defineProperty(Shape.prototype, "area", { get: () => 5, configurable: true });
+note(attempt(() => areas(shapes)));
+note(areas([shapes[1]]));
+Object.defineProperty(Shape.prototype, "area", { value: original, writable: true, configurable: true });
+Reflect.deleteProperty(Circle.prototype, "area");
+note(areas(shapes));
+console.log(checksum);
+
+export {};
+//// a-method-is-replaced-by-other-kinds-of-functions.ts
+// A method that takes one argument is replaced by functions of other kinds: without parameters, with more parameters, with a rest parameter, an arrow, a bound function, built-ins, a method of another class and a proxy of a function.
+////= Gauge
+class Half extends Gauge {
+  scaled(factor: number): number {
+    return (this.level * factor) / 2;
+  }
+}
+class Same extends Gauge {}
+
+////= Stranger-2
+
+function read(gauges: Gauge[]): number {
+  let sum = 0;
+  for (const gauge of gauges) sum = sum * 100 + gauge.scaled(3);
+  return sum;
+}
+
+////= attempt-10
+
+const gauges: Gauge[] = [new Gauge(2), new Half(4), new Same(5)];
+const original = Gauge.prototype.scaled;
+
+note("at first", read(gauges));
+Gauge.prototype.scaled = function () {
+  return arguments.length + this.level;
+};
+note("no parameters", read(gauges));
+Gauge.prototype.scaled = function (factor: number, more?: number, evenMore = 7) {
+  return more === undefined ? factor + evenMore : -1;
+};
+note("more parameters", read(gauges));
+Gauge.prototype.scaled = function (...all: number[]) {
+  return all.length * 10 + all[0];
+};
+note("a rest parameter", read(gauges));
+Gauge.prototype.scaled = factor => factor + 1;
+note("an arrow", read(gauges));
+Gauge.prototype.scaled = original.bind(new Gauge(20));
+note("a bound function", read(gauges));
+Gauge.prototype.scaled = Math.sqrt;
+note("Math.sqrt", Math.round(read(gauges)));
+Gauge.prototype.scaled = Math.max;
+note("Math.max", read(gauges));
+Gauge.prototype.scaled = Number.prototype.valueOf;
+note("Number.prototype.valueOf", attempt(() => read(gauges)));
+Gauge.prototype.scaled = Stranger.prototype.scaled;
+note("a method of another class", read(gauges));
+Gauge.prototype.scaled = new Proxy(original, {});
+note("a proxy of the method", read(gauges));
+Half.prototype.scaled = Math.abs;
+note("the override is Math.abs", read(gauges));
+Gauge.prototype.scaled = original;
+note("the base method is back", read(gauges));
+
+export {};
+//// a-method-is-replaced-by-other-kinds-of-functions-and-one-number-is-printed.ts
+// A method that takes one argument is replaced by functions of other kinds: without parameters, with more parameters, with a rest parameter, an arrow, a bound function, built-ins, a method of another class and a proxy of a function. One number is printed.
+////= Gauge
+class Half extends Gauge {
+  scaled(factor: number): number {
+    return (this.level * factor) / 2;
+  }
+}
+class Same extends Gauge {}
+
+////= Stranger-2
+
+function read(gauges: Gauge[]): number {
+  let sum = 0;
+  for (const gauge of gauges) sum = sum * 100 + gauge.scaled(3);
+  return sum;
+}
+
+////= attempt
+
+let checksum = 0;
+////= note-2
+
+const gauges: Gauge[] = [new Gauge(2), new Half(4), new Same(5)];
+const original = Gauge.prototype.scaled;
+
+note(read(gauges));
+Gauge.prototype.scaled = function () {
+  return arguments.length + this.level;
+};
+note(read(gauges));
+Gauge.prototype.scaled = function (factor: number, more?: number, evenMore = 7) {
+  return more === undefined ? factor + evenMore : -1;
+};
+note(read(gauges));
+Gauge.prototype.scaled = function (...all: number[]) {
+  return all.length * 10 + all[0];
+};
+note(read(gauges));
+Gauge.prototype.scaled = factor => factor + 1;
+note(read(gauges));
+Gauge.prototype.scaled = original.bind(new Gauge(20));
+note(read(gauges));
+Gauge.prototype.scaled = Math.sqrt;
+note(Math.round(read(gauges)));
+Gauge.prototype.scaled = Math.max;
+note(read(gauges));
+Gauge.prototype.scaled = Number.prototype.valueOf;
+note(attempt(() => read(gauges)));
+Gauge.prototype.scaled = Stranger.prototype.scaled;
+note(read(gauges));
+Gauge.prototype.scaled = new Proxy(original, {});
+note(read(gauges));
+Half.prototype.scaled = Math.abs;
+note(read(gauges));
+Gauge.prototype.scaled = original;
+note(read(gauges));
+console.log(checksum);
+
+export {};
+//// a-method-is-replaced-in-the-middle-of-a-loop.ts
+// A loop calls one method on twelve objects of three classes, and in the middle of the loop the method is replaced: the objects before keep the old answer, the objects after get the new one.
+////= Shape-4
+class Dot extends Shape {}
+
+////= areas-2
+
+function nothing(): void {}
+////= lines-17	replaceTheBaseMethod	Shape	1000
+////= lines-17	replaceTheOverride	Circle	100000
+function deleteTheOverride(): void {
+  Reflect.deleteProperty(Circle.prototype, "area");
+}
+
+////= note
+
+const shapes: Shape[] = [];
+for (let i = 0; i < 4; i++) shapes.push(new Shape(i + 1), new Circle(i + 1), new Dot(i + 1));
+
+note("no change", areas(shapes, -1, nothing));
+note("the base method at the seventh object", areas(shapes, 6, replaceTheBaseMethod));
+note("the whole loop afterwards", areas(shapes, -1, nothing));
+note("the override at the fifth object", areas(shapes, 4, replaceTheOverride));
+note("the whole loop afterwards", areas(shapes, -1, nothing));
+note("the override is deleted at the last object but one", areas(shapes, 10, deleteTheOverride));
+note("the whole loop afterwards", areas(shapes, -1, nothing));
+
+export {};
+//// a-method-is-replaced-in-the-middle-of-a-loop-and-one-number-is-printed.ts
+// A loop calls one method on twelve objects of three classes, and in the middle of the loop the method is replaced: the objects before keep the old answer, the objects after get the new one. One number is printed.
+////= Shape-4
+class Dot extends Shape {}
+
+////= areas-2
+
+function nothing(): void {}
+////= lines-17	replaceTheBaseMethod	Shape	1000
+////= lines-17	replaceTheOverride	Circle	100000
+function deleteTheOverride(): void {
+  Reflect.deleteProperty(Circle.prototype, "area");
+}
+
+let checksum = 0;
+////= note-2
+
+const shapes: Shape[] = [];
+for (let i = 0; i < 4; i++) shapes.push(new Shape(i + 1), new Circle(i + 1), new Dot(i + 1));
+
+note(areas(shapes, -1, nothing));
+note(areas(shapes, 6, replaceTheBaseMethod));
+note(areas(shapes, -1, nothing));
+note(areas(shapes, 4, replaceTheOverride));
+note(areas(shapes, -1, nothing));
+note(areas(shapes, 10, deleteTheOverride));
+note(areas(shapes, -1, nothing));
+console.log(checksum);
+
+export {};
+//// a-method-is-replaced-without-an-assignment-that-names-it.ts
+// Methods are replaced in ways that do not read `Class.prototype.name = ..`: Reflect.set, Object.assign, Object.defineProperties, a name computed at run time, a prototype reached from an instance, and a helper that gets the prototype as an argument.
+////= Shape-2
+////= Circle-2
+class Dot extends Shape {}
+
+function measure(shapes: Shape[]): number {
+  let sum = 0;
+  for (const shape of shapes) sum += shape.area() * 1000 + shape.edge();
+  return sum;
+}
+
+function put(target: Shape, name: "area" | "edge", answer: number): void {
+  target[name] = () => answer;
+}
+
+////= note
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+const names: ("area" | "edge")[] = ["area", "edge"];
+
+note("at first", measure(shapes));
+Reflect.set(Shape.prototype, "area", () => 1);
+note("Reflect.set", measure(shapes));
+Object.assign(Circle.prototype, { edge: () => 2 });
+note("Object.assign", measure(shapes));
+Object.defineProperties(Shape.prototype, { edge: { value: () => 3, writable: true, configurable: true } });
+note("Object.defineProperties", measure(shapes));
+put(Circle.prototype, names[shapes.length - 3], 4);
+note("a name computed at run time", measure(shapes));
+Object.getPrototypeOf(shapes[2]).area = () => 5;
+note("the prototype of an instance", measure(shapes));
+for (const name of names) put(Shape.prototype, name, 6);
+note("both names in a loop", measure(shapes));
+Reflect.defineProperty(Dot.prototype, "edge", { value: () => 7, configurable: true });
+note("Reflect.defineProperty", measure(shapes));
+
+export {};
+//// a-method-is-replaced-without-an-assignment-that-names-it-and-one-number-is-printed.ts
+// Methods are replaced in ways that do not read `Class.prototype.name = ..`: Reflect.set, Object.assign, Object.defineProperties, a name computed at run time, a prototype reached from an instance, and a helper that gets the prototype as an argument. One number is printed.
+////= Shape-2
+////= Circle-2
+class Dot extends Shape {}
+
+function measure(shapes: Shape[]): number {
+  let sum = 0;
+  for (const shape of shapes) sum += shape.area() * 1000 + shape.edge();
+  return sum;
+}
+
+function put(target: Shape, name: "area" | "edge", answer: number): void {
+  target[name] = () => answer;
+}
+
+let checksum = 0;
+////= note-2
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+const names: ("area" | "edge")[] = ["area", "edge"];
+
+note(measure(shapes));
+Reflect.set(Shape.prototype, "area", () => 1);
+note(measure(shapes));
+Object.assign(Circle.prototype, { edge: () => 2 });
+note(measure(shapes));
+Object.defineProperties(Shape.prototype, { edge: { value: () => 3, writable: true, configurable: true } });
+note(measure(shapes));
+put(Circle.prototype, names[shapes.length - 3], 4);
+note(measure(shapes));
+Object.getPrototypeOf(shapes[2]).area = () => 5;
+note(measure(shapes));
+for (const name of names) put(Shape.prototype, name, 6);
+note(measure(shapes));
+Reflect.defineProperty(Dot.prototype, "edge", { value: () => 7, configurable: true });
+note(measure(shapes));
+console.log(checksum);
+
+export {};
+//// a-method-is-taken-off-its-object-and-called.ts
+// `const f = o.m; f()`: the method runs without its object. One that reads this throws a TypeError, one that does not answers. A method put into another object runs on that object, and a method that was taken before the prototype changed stays the old one.
+////= Lamp-2
+////= Bright-2
+class Dim extends Lamp {}
+
+////= attempt
+
+function alone(lamp: Lamp): number {
+  const power = lamp.power;
+  return power();
+}
+function aloneFixed(lamp: Lamp): number {
+  const { fixed } = lamp;
+  return fixed();
+}
+function moved(lamp: Lamp): number {
+  const holder = { watts: 7, power: lamp.power };
+  return holder.power();
+}
+function inParentheses(lamp: Lamp): number {
+  return (lamp.power)();
+}
+
+////= note
+
+const lamps: Lamp[] = [new Lamp(1), new Bright(2), new Dim(3)];
+for (const lamp of lamps) note("reads this", attempt(() => alone(lamp)));
+for (const lamp of lamps) note("does not read this", attempt(() => aloneFixed(lamp)));
+for (const lamp of lamps) note("in another object", moved(lamp));
+for (const lamp of lamps) note("in parentheses", inParentheses(lamp));
+const kept = lamps[1].fixed;
+Bright.prototype.fixed = () => 5;
+Lamp.prototype.power = () => 6;
+note("taken before the change", kept());
+for (const lamp of lamps) note("reads this no longer", attempt(() => alone(lamp)));
+for (const lamp of lamps) note("does not read this", attempt(() => aloneFixed(lamp)));
+for (const lamp of lamps) note("in another object", moved(lamp));
+
+export {};
+//// a-method-is-taken-off-its-object-and-called-and-one-number-is-printed.ts
+// `const f = o.m; f()`: the method runs without its object. One that reads this throws a TypeError, one that does not answers. A method put into another object runs on that object, and a method that was taken before the prototype changed stays the old one. One number is printed.
+////= Lamp-2
+////= Bright-2
+class Dim extends Lamp {}
+
+////= attempt
+
+function alone(lamp: Lamp): number {
+  const power = lamp.power;
+  return power();
+}
+function aloneFixed(lamp: Lamp): number {
+  const { fixed } = lamp;
+  return fixed();
+}
+function moved(lamp: Lamp): number {
+  const holder = { watts: 7, power: lamp.power };
+  return holder.power();
+}
+function inParentheses(lamp: Lamp): number {
+  return (lamp.power)();
+}
+
+let checksum = 0;
+////= note-2
+
+const lamps: Lamp[] = [new Lamp(1), new Bright(2), new Dim(3)];
+for (const lamp of lamps) note(attempt(() => alone(lamp)));
+for (const lamp of lamps) note(attempt(() => aloneFixed(lamp)));
+for (const lamp of lamps) note(moved(lamp));
+for (const lamp of lamps) note(inParentheses(lamp));
+const kept = lamps[1].fixed;
+Bright.prototype.fixed = () => 5;
+Lamp.prototype.power = () => 6;
+note(kept());
+for (const lamp of lamps) note(attempt(() => alone(lamp)));
+for (const lamp of lamps) note(attempt(() => aloneFixed(lamp)));
+for (const lamp of lamps) note(moved(lamp));
+console.log(checksum);
+
+export {};
+//// a-method-promised-by-a-merged-interface-is-stored-later.ts
+// The class does not define ring(); an interface merged with it declares it, and a store to the prototype supplies it in the middle of the program. A call before the store throws a TypeError, a call after it works, on old and new objects.
+////= Bell-3
+
+////= note
+
+const bell = new Bell(3);
+note("before the store", attempt(bell));
+note("once more", attempt(bell));
+////= Bell-prototype-ring
+note("after the store", attempt(bell));
+note("a new bell", attempt(new Bell(5)));
+Reflect.deleteProperty(Bell.prototype, "ring");
+note("after it is deleted", attempt(bell));
+Bell.prototype.ring = () => 9;
+note("after another store", attempt(bell));
+
+export {};
+//// a-method-promised-by-a-merged-interface-is-stored-later-and-one-number-is-printed.ts
+// The class does not define ring(); an interface merged with it declares it, and a store to the prototype supplies it in the middle of the program. A call before the store throws a TypeError, a call after it works, on old and new objects. One number is printed.
+////= Bell-3
+
+let checksum = 0;
+////= note-2
+
+const bell = new Bell(3);
+note(attempt(bell));
+note(attempt(bell));
+////= Bell-prototype-ring
+note(attempt(bell));
+note(attempt(new Bell(5)));
+Reflect.deleteProperty(Bell.prototype, "ring");
+note(attempt(bell));
+Bell.prototype.ring = () => 9;
+note(attempt(bell));
+console.log(checksum);
+
+export {};
+//// a-method-replaces-itself-while-it-runs.ts
+// A method replaces itself on its prototype on its first run and then calls itself by name: the call inside finds the replacement, and so does every later call. An override does the same through super.
+////= Task
+////= Slow
+class Idle extends Task {}
+
+////= lines-3	stepOf	task	Task	task.step
+
+////= note
+
+const tasks: Task[] = [new Slow(), new Idle(), new Task(), new Slow()];
+for (let round = 0; round < 3; round++) for (const task of tasks) note("a step", stepOf(task));
+for (const task of tasks) note("runs", task.runs);
+
+export {};
+//// a-method-replaces-itself-while-it-runs-and-one-number-is-printed.ts
+// A method replaces itself on its prototype on its first run and then calls itself by name: the call inside finds the replacement, and so does every later call. An override does the same through super. One number is printed.
+////= Task
+////= Slow
+class Idle extends Task {}
+
+////= lines-3	stepOf	task	Task	task.step
+
+let checksum = 0;
+////= note-2
+
+const tasks: Task[] = [new Slow(), new Idle(), new Task(), new Slow()];
+for (let round = 0; round < 3; round++) for (const task of tasks) note(stepOf(task));
+for (const task of tasks) note(task.runs);
+console.log(checksum);
+
+export {};
+//// a-module-loaded-later-adds-a-subclass-and-replaces-a-method/family.ts
+export class Shape {
+  constructor(public side: number) {}
+  area(): number {
+    return this.side * this.side;
+  }
+}
+export class Circle extends Shape {
+  area(): number {
+    return 3 * this.side * this.side;
+  }
+}
+export class Dot extends Shape {}
+
+export function areas(shapes: Shape[]): number {
+  let sum = 0;
+  for (const shape of shapes) sum += shape.area();
+  return sum;
+}
+//// a-module-loaded-later-adds-a-subclass-and-replaces-a-method/late.ts
+import { Circle, Shape } from "./family";
+
+export class Ring extends Circle {
+  area(): number {
+    return super.area() - 1;
+  }
+}
+
+Shape.prototype.area = function () {
+  return this.side + 100;
+};
+//// a-module-loaded-later-adds-a-subclass-and-replaces-a-method/main.ts
+// The family and its call site live in one module. A second module, which is imported in the middle of the program, adds a subclass below an override and replaces the method of the base. Calls before the import find the originals; calls after it find the replacement and the new override.
+import { areas, Circle, Dot, Shape } from "./family";
+
+const shapes: Shape[] = [new Shape(2), new Circle(3), new Dot(4)];
+console.log("before the import: " + areas(shapes));
+let sum = 0;
+for (let round = 0; round < 1000; round++) sum += areas(shapes);
+console.log("a thousand rounds: " + sum);
+const { Ring } = await import("./late");
+console.log("after the import: " + areas(shapes));
+shapes.push(new Ring(5));
+console.log("with an object of the new subclass: " + areas(shapes));
+Circle.prototype.area = () => 1;
+console.log("after the override in between is replaced: " + areas(shapes));
+//// a-private-method-beside-a-public-one-of-the-same-name.ts
+// #code() and code() live side by side, in a class and in its subclass, which has a #code() of its own. Replacing or deleting the public one never changes what the private name finds, and an object made from the prototype alone has the public one and not the private one.
+////= Safe
+////= Vault
+class Drawer extends Safe {}
+
+function codes(safes: Safe[]): number {
+  let sum = 0;
+  for (const safe of safes) sum = sum * 100 + safe.code() + Safe.peek(safe);
+  return sum;
+}
+
+////= attempt-10
+
+const safes: Safe[] = [new Safe(), new Vault(), new Drawer()];
+note("at first", codes(safes));
+Safe.prototype.code = () => 5;
+note("the public one of the base is replaced", codes(safes));
+Reflect.deleteProperty(Vault.prototype, "code");
+note("the public one of the subclass is deleted", codes(safes));
+const bare: Safe = Object.create(Safe.prototype);
+note("the public one on an object that was never constructed", attempt(() => bare.code()));
+note("the private one on it", attempt(() => Safe.peek(bare)));
+
+export {};
+//// a-private-method-beside-a-public-one-of-the-same-name-and-one-number-is-printed.ts
+// #code() and code() live side by side, in a class and in its subclass, which has a #code() of its own. Replacing or deleting the public one never changes what the private name finds, and an object made from the prototype alone has the public one and not the private one. One number is printed.
+////= Safe
+////= Vault
+class Drawer extends Safe {}
+
+function codes(safes: Safe[]): number {
+  let sum = 0;
+  for (const safe of safes) sum = sum * 100 + safe.code() + Safe.peek(safe);
+  return sum;
+}
+
+////= attempt
+
+let checksum = 0;
+////= note-2
+
+const safes: Safe[] = [new Safe(), new Vault(), new Drawer()];
+note(codes(safes));
+Safe.prototype.code = () => 5;
+note(codes(safes));
+Reflect.deleteProperty(Vault.prototype, "code");
+note(codes(safes));
+const bare: Safe = Object.create(Safe.prototype);
+note(attempt(() => bare.code()));
+note(attempt(() => Safe.peek(bare)));
+console.log(checksum);
+
+export {};
+//// a-promised-method-is-stored-before-any-call-honest.ts
+// The honest twin of the programs in which a promised method is stored later: the interface merged with the class declares ring(), and the store to the prototype comes right after the class, before any object and any call.
+////= Bell
+////= Bell-2
+Bell.prototype.ring = function () {
+  return this.tone + 100;
+};
+////= Gong
+class Chime extends Bell {}
+////= Echo-2
+
+////= note
+
+const bells: Bell[] = [new Bell(1), new Gong(2), new Chime(3), new Echo(4)];
+for (const bell of bells) note("a bell", ringOf(bell));
+let sum = 0;
+for (let round = 0; round < 1000; round++) for (const bell of bells) sum += ringOf(bell);
+note("a thousand rounds", sum);
+
+export {};
+//// a-promised-method-is-stored-before-any-call-honest-and-one-number-is-printed.ts
+// The honest twin of the programs in which a promised method is stored later: the interface merged with the class declares ring(), and the store to the prototype comes right after the class, before any object and any call. One number is printed.
+////= Bell
+////= Bell-2
+Bell.prototype.ring = function () {
+  return this.tone + 100;
+};
+////= Gong
+class Chime extends Bell {}
+////= Echo-2
+
+let checksum = 0;
+////= note-2
+
+const bells: Bell[] = [new Bell(1), new Gong(2), new Chime(3), new Echo(4)];
+for (const bell of bells) note(ringOf(bell));
+let sum = 0;
+for (let round = 0; round < 1000; round++) for (const bell of bells) sum += ringOf(bell);
+note(sum);
+console.log(checksum);
+
+export {};
+//// a-promised-method-is-stored-once-and-later.ts
+// The class does not define ring(); an interface merged with it declares it, and the whole program has exactly one store that supplies it. The calls before that store throw a TypeError, although no other function is ever found under the name.
+////= Bell-3
+
+////= note
+
+const bell = new Bell(3);
+note("before the store", attempt(bell));
+note("once more", attempt(bell));
+////= Bell-prototype-ring
+note("after the store", attempt(bell));
+note("a new bell", attempt(new Bell(5)));
+
+export {};
+//// a-promised-method-is-stored-once-and-later-and-one-number-is-printed.ts
+// The class does not define ring(); an interface merged with it declares it, and the whole program has exactly one store that supplies it. The calls before that store throw a TypeError, although no other function is ever found under the name. One number is printed.
+////= Bell-3
+
+let checksum = 0;
+////= note-2
+
+const bell = new Bell(3);
+note(attempt(bell));
+note(attempt(bell));
+////= Bell-prototype-ring
+note(attempt(bell));
+note(attempt(new Bell(5)));
+console.log(checksum);
+
+export {};
+//// a-prototype-and-an-instance-lose-their-parent.ts
+// Object.setPrototypeOf(.., null): first on one instance, then on the prototype of a subclass. Methods that were inherited are gone and calling them throws a TypeError, super calls throw too, and the methods that the subclass defines itself still run.
+////= Base
+////= Child
+class Grandchild extends Child {}
+
+////= attempt
+
+////= lines-3	kindOf	each	Base	each.kind
+////= lines-3	describe	each	Base	each.describe
+////= lines-3	aboveOf	each	Child	each.above
+
+////= note
+
+const base = new Base(1);
+const child = new Child(2);
+const grandchild = new Grandchild(3);
+const bare = new Child(4);
+
+function round(): void {
+  for (const each of [base, child, grandchild, bare]) {
+    note("kind", attempt(() => kindOf(each)));
+    note("describe", attempt(() => describe(each)));
+  }
+  for (const each of [child, grandchild, bare]) note("above", attempt(() => aboveOf(each)));
+}
+
+round();
+Object.setPrototypeOf(bare, null);
+round();
+Object.setPrototypeOf(Child.prototype, null);
+round();
+note("a new grandchild", attempt(() => describe(new Grandchild(5))));
+Object.setPrototypeOf(Child.prototype, Base.prototype);
+Object.setPrototypeOf(bare, Child.prototype);
+round();
+
+export {};
+//// a-prototype-and-an-instance-lose-their-parent-and-one-number-is-printed.ts
+// Object.setPrototypeOf(.., null): first on one instance, then on the prototype of a subclass. Methods that were inherited are gone and calling them throws a TypeError, super calls throw too, and the methods that the subclass defines itself still run. One number is printed.
+////= Base
+////= Child
+class Grandchild extends Child {}
+
+////= attempt
+
+////= lines-3	kindOf	each	Base	each.kind
+////= lines-3	describe	each	Base	each.describe
+////= lines-3	aboveOf	each	Child	each.above
+
+let checksum = 0;
+////= note-2
+
+const base = new Base(1);
+const child = new Child(2);
+const grandchild = new Grandchild(3);
+const bare = new Child(4);
+
+function round(): void {
+  for (const each of [base, child, grandchild, bare]) {
+    note(attempt(() => kindOf(each)));
+    note(attempt(() => describe(each)));
+  }
+  for (const each of [child, grandchild, bare]) note(attempt(() => aboveOf(each)));
+}
+
+round();
+Object.setPrototypeOf(bare, null);
+round();
+Object.setPrototypeOf(Child.prototype, null);
+round();
+note(attempt(() => describe(new Grandchild(5))));
+Object.setPrototypeOf(Child.prototype, Base.prototype);
+Object.setPrototypeOf(bare, Child.prototype);
+round();
+console.log(checksum);
+
+export {};
+//// a-prototype-is-hung-under-a-class-in-between.ts
+// Object.setPrototypeOf hangs Child.prototype under Between.prototype. From then on the methods that Child inherits, and its super calls, are Between's; then it is hung back under Base.
+////= Base
+////= Between-3
+class Child extends Base {
+  describe(): number {
+    return super.describe() + super.kind() * 1000;
+  }
+}
+class Grandchild extends Child {}
+
+////= report
+
+////= note
+
+const list: Base[] = [new Base(1), new Between(2), new Child(3), new Grandchild(4)];
+note("at first", report(list));
+for (const each of list) note("one by one", each.describe());
+Object.setPrototypeOf(Child.prototype, Between.prototype);
+note("under the class in between", report(list));
+for (const each of list) note("one by one", each.describe());
+note("a new child", new Child(5).describe());
+note("is it one of them", Number(list[2] instanceof Between));
+Object.setPrototypeOf(Child.prototype, Base.prototype);
+note("back under the base", report(list));
+
+export {};
+//// a-prototype-is-hung-under-a-class-in-between-and-one-number-is-printed.ts
+// Object.setPrototypeOf hangs Child.prototype under Between.prototype. From then on the methods that Child inherits, and its super calls, are Between's; then it is hung back under Base. One number is printed.
+////= Base
+////= Between-3
+class Child extends Base {
+  describe(): number {
+    return super.describe() + super.kind() * 1000;
+  }
+}
+class Grandchild extends Child {}
+
+////= report
+
+let checksum = 0;
+////= note-2
+
+const list: Base[] = [new Base(1), new Between(2), new Child(3), new Grandchild(4)];
+note(report(list));
+for (const each of list) note(each.describe());
+Object.setPrototypeOf(Child.prototype, Between.prototype);
+note(report(list));
+for (const each of list) note(each.describe());
+note(new Child(5).describe());
+note(Number(list[2] instanceof Between));
+Object.setPrototypeOf(Child.prototype, Base.prototype);
+note(report(list));
+console.log(checksum);
+
+export {};
+//// a-proxy-of-an-instance-is-the-receiver.ts
+// new Proxy(lamp, ..) has the type of the lamp. Proxies lie in one list with real instances: one without traps, one whose get trap counts the reads, one whose get trap answers another function under the name of the method, a proxy of a proxy, and a revoked one, on which every call throws a TypeError.
+////= Lamp
+////= Bright
+
+////= powerOf-2
+
+////= note
+
+let reads = 0;
+const plain = new Proxy(new Bright(3), {});
+////= counting
+const lying = new Proxy(new Bright(5), {
+  get(target, key, receiver) {
+    return key === "factor" ? () => 100 : Reflect.get(target, key, receiver);
+  },
+});
+const nested = new Proxy(counting, {});
+const revocable = Proxy.revocable(new Lamp(6), {});
+const lamps: Lamp[] = [new Lamp(1), plain, new Bright(2), counting, lying, nested, revocable.proxy];
+
+for (const lamp of lamps) note("at first", attempt(lamp));
+note("reads through the trap", reads);
+revocable.revoke();
+Bright.prototype.factor = () => 7;
+for (const lamp of lamps) note("one is revoked and a method is replaced", attempt(lamp));
+note("reads through the trap", reads);
+let sum = 0;
+for (let round = 0; round < 100; round++) for (const lamp of lamps) sum += attempt(lamp);
+note("a hundred rounds", sum);
+
+export {};
+//// a-proxy-of-an-instance-is-the-receiver-and-one-number-is-printed.ts
+// new Proxy(lamp, ..) has the type of the lamp. Proxies lie in one list with real instances: one without traps, one whose get trap counts the reads, one whose get trap answers another function under the name of the method, a proxy of a proxy, and a revoked one, on which every call throws a TypeError. One number is printed.
+////= Lamp
+////= Bright
+
+////= powerOf-2
+
+let checksum = 0;
+////= note-2
+
+let reads = 0;
+const plain = new Proxy(new Bright(3), {});
+////= counting
+const lying = new Proxy(new Bright(5), {
+  get(target, key, receiver) {
+    return key === "factor" ? () => 100 : Reflect.get(target, key, receiver);
+  },
+});
+const nested = new Proxy(counting, {});
+const revocable = Proxy.revocable(new Lamp(6), {});
+const lamps: Lamp[] = [new Lamp(1), plain, new Bright(2), counting, lying, nested, revocable.proxy];
+
+for (const lamp of lamps) note(attempt(lamp));
+note(reads);
+revocable.revoke();
+Bright.prototype.factor = () => 7;
+for (const lamp of lamps) note(attempt(lamp));
+note(reads);
+let sum = 0;
+for (let round = 0; round < 100; round++) for (const lamp of lamps) sum += attempt(lamp);
+note(sum);
+console.log(checksum);
+
+export {};
+//// a-receiver-is-missing-where-the-type-says-it-is-there.ts
+// TypeScript takes list[i] for a lamp even past the end of the list, in a hole and after the list was cut short: the receiver is undefined and the call throws a TypeError before any argument is evaluated. An optional call on the same element answers undefined.
+////= Lamp-5
+////= lines-12	Bright	Lamp	power	more	watts
+
+let evaluated = 0;
+function argument(): number {
+  return ++evaluated;
+}
+
+function powerAt(lamps: Lamp[], index: number): number {
+  return lamps[index].power(argument());
+}
+function optionalAt(lamps: Lamp[], index: number): number {
+  return lamps[index]?.power(argument()) ?? -4;
+}
+
+////= attempt-10
+
+const lamps: Lamp[] = [new Lamp(10), new Bright(20), new Lamp(30)];
+for (let i = -1; i < 5; i++) note("by index", attempt(() => powerAt(lamps, i)));
+note("arguments evaluated", evaluated);
+for (let i = -1; i < 5; i++) note("an optional call", attempt(() => optionalAt(lamps, i)));
+note("arguments evaluated", evaluated);
+lamps.length = 1;
+lamps[2] = new Bright(40);
+for (let i = 0; i < 3; i++) note("with a hole", attempt(() => powerAt(lamps, i)));
+note("arguments evaluated", evaluated);
+
+export {};
+//// a-receiver-is-missing-where-the-type-says-it-is-there-and-one-number-is-printed.ts
+// TypeScript takes list[i] for a lamp even past the end of the list, in a hole and after the list was cut short: the receiver is undefined and the call throws a TypeError before any argument is evaluated. An optional call on the same element answers undefined. One number is printed.
+////= Lamp-5
+////= lines-12	Bright	Lamp	power	more	watts
+
+let evaluated = 0;
+function argument(): number {
+  return ++evaluated;
+}
+
+function powerAt(lamps: Lamp[], index: number): number {
+  return lamps[index].power(argument());
+}
+function optionalAt(lamps: Lamp[], index: number): number {
+  return lamps[index]?.power(argument()) ?? -4;
+}
+
+////= attempt
+
+let checksum = 0;
+////= note-2
+
+const lamps: Lamp[] = [new Lamp(10), new Bright(20), new Lamp(30)];
+for (let i = -1; i < 5; i++) note(attempt(() => powerAt(lamps, i)));
+note(evaluated);
+for (let i = -1; i < 5; i++) note(attempt(() => optionalAt(lamps, i)));
+note(evaluated);
+lamps.length = 1;
+lamps[2] = new Bright(40);
+for (let i = 0; i < 3; i++) note(attempt(() => powerAt(lamps, i)));
+note(evaluated);
+console.log(checksum);
+
+export {};
+//// a-replacement-answers-a-value-of-another-type.ts
+// value() is declared to answer a number. It is replaced by functions that hand on what JSON.parse answers, which TypeScript accepts for any type: a text, null, a list, an object, true, a fraction. The caller asks what kind of value it got, adds one to it and turns it into a text.
+////= lines-7	Cell	value	1
+////= lines-6	Big	Cell	value	2
+class Same extends Cell {}
+
+const kinds = ["number", "string", "object", "boolean", "undefined"];
+
+function look(cell: Cell): number {
+  const value = cell.value();
+  return kinds.indexOf(typeof value) * 10000 + String(value + 1).length * 100 + String(value).length;
+}
+
+function lookAtAll(cells: Cell[]): number {
+  let sum = 0;
+  for (const cell of cells) sum += look(cell);
+  return sum;
+}
+
+////= note
+
+const cells: Cell[] = [new Cell(), new Big(), new Same()];
+note("numbers", lookAtAll(cells));
+for (const text of ['"text"', "null", "[1,2]", '{"a":1}', "true", "2.5", "-0", "1e300"]) {
+  Cell.prototype.value = () => JSON.parse(text);
+  note("the base method hands on what was parsed", lookAtAll(cells));
+}
+Big.prototype.value = () => JSON.parse('"another text"');
+note("the override too", lookAtAll(cells));
+
+export {};
+//// a-replacement-answers-a-value-of-another-type-and-one-number-is-printed.ts
+// value() is declared to answer a number. It is replaced by functions that hand on what JSON.parse answers, which TypeScript accepts for any type: a text, null, a list, an object, true, a fraction. The caller asks what kind of value it got, adds one to it and turns it into a text. One number is printed.
+////= lines-7	Cell	value	1
+////= lines-6	Big	Cell	value	2
+class Same extends Cell {}
+
+const kinds = ["number", "string", "object", "boolean", "undefined"];
+
+function look(cell: Cell): number {
+  const value = cell.value();
+  return kinds.indexOf(typeof value) * 10000 + String(value + 1).length * 100 + String(value).length;
+}
+
+function lookAtAll(cells: Cell[]): number {
+  let sum = 0;
+  for (const cell of cells) sum += look(cell);
+  return sum;
+}
+
+let checksum = 0;
+////= note-2
+
+const cells: Cell[] = [new Cell(), new Big(), new Same()];
+note(lookAtAll(cells));
+for (const text of ['"text"', "null", "[1,2]", '{"a":1}', "true", "2.5", "-0", "1e300"]) {
+  Cell.prototype.value = () => JSON.parse(text);
+  note(lookAtAll(cells));
+}
+Big.prototype.value = () => JSON.parse('"another text"');
+note(lookAtAll(cells));
+console.log(checksum);
+
+export {};
+//// a-union-of-classes-and-null-is-the-receiver.ts
+// The receiver has the type Cat | Dog | Fish | null: three classes that are no relatives, with a method of one name that takes different parameters. It is tested for null, or called with `?.`. Then the methods are replaced, one class after the other.
+////= Cat
+////= Dog
+class Puppy extends Dog {
+  sound(times = 3): number {
+    return super.sound(times) + 1;
+  }
+}
+////= lines-7	Fish	sound	0
+
+type Pet = Cat | Dog | Fish | null;
+
+function soundOf(pet: Pet): number {
+  return pet === null ? -4 : pet.sound();
+}
+function optional(pet: Pet | undefined): number {
+  return pet?.sound() ?? -5;
+}
+function chorus(pets: Pet[]): number {
+  let sum = 0;
+  for (const pet of pets) if (pet) sum = sum * 10 + pet.sound();
+  return sum;
+}
+
+////= note
+
+const pets: Pet[] = [new Cat(), null, new Dog(2), new Puppy(1), new Fish(), null];
+
+function round(): void {
+  for (const pet of pets) note("tested for null", soundOf(pet));
+  for (const pet of pets) note("an optional call", optional(pet));
+  note("an optional call on undefined", optional(undefined));
+  note("all", chorus(pets));
+}
+
+round();
+Cat.prototype.sound = () => 1;
+round();
+Dog.prototype.sound = () => 2;
+round();
+Fish.prototype.sound = () => 3;
+Reflect.deleteProperty(Puppy.prototype, "sound");
+round();
+
+export {};
+//// a-union-of-classes-and-null-is-the-receiver-and-one-number-is-printed.ts
+// The receiver has the type Cat | Dog | Fish | null: three classes that are no relatives, with a method of one name that takes different parameters. It is tested for null, or called with `?.`. Then the methods are replaced, one class after the other. One number is printed.
+////= Cat
+////= Dog
+class Puppy extends Dog {
+  sound(times = 3): number {
+    return super.sound(times) + 1;
+  }
+}
+////= lines-7	Fish	sound	0
+
+type Pet = Cat | Dog | Fish | null;
+
+function soundOf(pet: Pet): number {
+  return pet === null ? -4 : pet.sound();
+}
+function optional(pet: Pet | undefined): number {
+  return pet?.sound() ?? -5;
+}
+function chorus(pets: Pet[]): number {
+  let sum = 0;
+  for (const pet of pets) if (pet) sum = sum * 10 + pet.sound();
+  return sum;
+}
+
+let checksum = 0;
+////= note-2
+
+const pets: Pet[] = [new Cat(), null, new Dog(2), new Puppy(1), new Fish(), null];
+
+function round(): void {
+  for (const pet of pets) note(soundOf(pet));
+  for (const pet of pets) note(optional(pet));
+  note(optional(undefined));
+  note(chorus(pets));
+}
+
+round();
+Cat.prototype.sound = () => 1;
+round();
+Dog.prototype.sound = () => 2;
+round();
+Fish.prototype.sound = () => 3;
+Reflect.deleteProperty(Puppy.prototype, "sound");
+round();
+console.log(checksum);
+
+export {};
+//// a-worker-deletes-a-method.ts
+// A Worker deletes an override, so that its objects find the method of the parent, and then the method of the parent, so that a call throws a TypeError. The main thread keeps both.
+import { isMainThread, parentPort, Worker } from "node:worker_threads";
+
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+////= attempt
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+////= note
+
+if (isMainThread) {
+  note("main at first", total(meters));
+  const worker = new Worker(new URL(import.meta.url));
+  for (const seen of await new Promise<number[]>(resolve => worker.once("message", resolve))) note("the Worker saw", seen);
+  note("main afterwards", attempt(() => total(meters)));
+  note("a new object on the main thread", new Double(10).read());
+  await worker.terminate();
+} else {
+  const seen = [total(meters)];
+  Reflect.deleteProperty(Double.prototype, "read");
+  seen.push(total(meters));
+  Reflect.deleteProperty(Meter.prototype, "read");
+  seen.push(attempt(() => total(meters)));
+  seen.push(attempt(() => new Double(10).read()));
+  parentPort?.postMessage(seen);
+}
+//// a-worker-deletes-a-method-and-one-number-is-printed.ts
+// A Worker deletes an override, so that its objects find the method of the parent, and then the method of the parent, so that a call throws a TypeError. The main thread keeps both. One number is printed.
+import { isMainThread, parentPort, Worker } from "node:worker_threads";
+
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+////= attempt
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+let checksum = 0;
+////= note-2
+
+if (isMainThread) {
+  note(total(meters));
+  const worker = new Worker(new URL(import.meta.url));
+  for (const seen of await new Promise<number[]>(resolve => worker.once("message", resolve))) note(seen);
+  note(attempt(() => total(meters)));
+  note(new Double(10).read());
+  await worker.terminate();
+  console.log(checksum);
+} else {
+  const seen = [total(meters)];
+  Reflect.deleteProperty(Double.prototype, "read");
+  seen.push(total(meters));
+  Reflect.deleteProperty(Meter.prototype, "read");
+  seen.push(attempt(() => total(meters)));
+  seen.push(attempt(() => new Double(10).read()));
+  parentPort?.postMessage(seen);
+}
+//// a-worker-hangs-a-prototype-and-an-instance-under-another-class.ts
+// A Worker gives a prototype, and then one instance, another parent. In the Worker their calls find other methods; on the main thread nothing moves.
+import { isMainThread, parentPort, Worker } from "node:worker_threads";
+
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+////= note
+
+if (isMainThread) {
+  note("main at first", total(meters));
+  const worker = new Worker(new URL(import.meta.url));
+  for (const seen of await new Promise<number[]>(resolve => worker.once("message", resolve))) note("the Worker saw", seen);
+  note("main afterwards", total(meters));
+  note("a new object on the main thread", new Plain(10).read());
+  await worker.terminate();
+} else {
+  const seen = [total(meters)];
+  Object.setPrototypeOf(Plain.prototype, Double.prototype);
+  seen.push(total(meters));
+  seen.push(new Plain(10).read());
+  Object.setPrototypeOf(meters[0], Double.prototype);
+  seen.push(total(meters));
+  Object.setPrototypeOf(Plain.prototype, Meter.prototype);
+  seen.push(total(meters));
+  parentPort?.postMessage(seen);
+}
+//// a-worker-hangs-a-prototype-and-an-instance-under-another-class-and-one-number-is-printed.ts
+// A Worker gives a prototype, and then one instance, another parent. In the Worker their calls find other methods; on the main thread nothing moves. One number is printed.
+import { isMainThread, parentPort, Worker } from "node:worker_threads";
+
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+let checksum = 0;
+////= note-2
+
+if (isMainThread) {
+  note(total(meters));
+  const worker = new Worker(new URL(import.meta.url));
+  for (const seen of await new Promise<number[]>(resolve => worker.once("message", resolve))) note(seen);
+  note(total(meters));
+  note(new Plain(10).read());
+  await worker.terminate();
+  console.log(checksum);
+} else {
+  const seen = [total(meters)];
+  Object.setPrototypeOf(Plain.prototype, Double.prototype);
+  seen.push(total(meters));
+  seen.push(new Plain(10).read());
+  Object.setPrototypeOf(meters[0], Double.prototype);
+  seen.push(total(meters));
+  Object.setPrototypeOf(Plain.prototype, Meter.prototype);
+  seen.push(total(meters));
+  parentPort?.postMessage(seen);
+}
+//// a-worker-is-terminated-while-it-replaces-methods-in-a-loop.ts
+// Three Workers replace, delete and put back methods in endless loops and are terminated in the middle of that. The main thread calls the same methods all the time and keeps the originals, and a Worker that is started afterwards finds them too.
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+////= start
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+////= note
+
+if (Bun.isMainThread) {
+  const endless = [start("endless"), start("endless"), start("endless")];
+  for (const { answer } of endless) note("a Worker before its loop", await answer);
+  let wrong = 0;
+  for (let i = 0; i < 300000; i++) if (total(meters) !== 26) wrong++;
+  for (const { worker } of endless) worker.terminate();
+  for (let i = 0; i < 300000; i++) if (total(meters) !== 26) wrong++;
+  for (const { closed } of endless) await closed;
+  note("wrong totals on the main thread", wrong);
+  const last = start("once");
+  note("a Worker started afterwards", await last.answer);
+  last.worker.terminate();
+  await last.closed;
+  note("main at the end", total(meters));
+} else {
+  addEventListener("message", (event: MessageEvent<string>) => {
+    postMessage(total(meters));
+    if (event.data !== "endless") return;
+    const ofMeter = Meter.prototype.read;
+    const ofDouble = Double.prototype.read;
+    for (let round = 0; ; round++) {
+      Meter.prototype.read = () => round;
+      Reflect.deleteProperty(Double.prototype, "read");
+      if (total(meters) !== 3 * round) throw new Error("a Worker lost its own replacement");
+      Meter.prototype.read = ofMeter;
+      Double.prototype.read = ofDouble;
+    }
+  });
+}
+
+export {};
+//// a-worker-is-terminated-while-it-replaces-methods-in-a-loop-and-one-number-is-printed.ts
+// Three Workers replace, delete and put back methods in endless loops and are terminated in the middle of that. The main thread calls the same methods all the time and keeps the originals, and a Worker that is started afterwards finds them too. One number is printed.
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+////= start
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+let checksum = 0;
+////= note-2
+
+if (Bun.isMainThread) {
+  const endless = [start("endless"), start("endless"), start("endless")];
+  for (const { answer } of endless) note(await answer);
+  let wrong = 0;
+  for (let i = 0; i < 300000; i++) if (total(meters) !== 26) wrong++;
+  for (const { worker } of endless) worker.terminate();
+  for (let i = 0; i < 300000; i++) if (total(meters) !== 26) wrong++;
+  for (const { closed } of endless) await closed;
+  note(wrong);
+  const last = start("once");
+  note(await last.answer);
+  last.worker.terminate();
+  await last.closed;
+  note(total(meters));
+  console.log(checksum);
+} else {
+  addEventListener("message", (event: MessageEvent<string>) => {
+    postMessage(total(meters));
+    if (event.data !== "endless") return;
+    const ofMeter = Meter.prototype.read;
+    const ofDouble = Double.prototype.read;
+    for (let round = 0; ; round++) {
+      Meter.prototype.read = () => round;
+      Reflect.deleteProperty(Double.prototype, "read");
+      if (total(meters) !== 3 * round) throw new Error("a Worker lost its own replacement");
+      Meter.prototype.read = ofMeter;
+      Double.prototype.read = ofDouble;
+    }
+  });
+}
+
+export {};
+//// a-worker-replaces-a-method-while-the-main-thread-calls-it.ts
+// A Worker replaces Meter.prototype.read and an override of it while the main thread calls both in a loop: the main thread keeps the originals before, during and after.
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+////= note
+
+if (isMainThread) {
+  const flags = new Int32Array(new SharedArrayBuffer(8));
+  note("before the Worker starts", total(meters));
+  const worker = new Worker(new URL(import.meta.url), { workerData: flags });
+  await new Promise(resolve => worker.once("message", resolve));
+  const answer = new Promise<number[]>(resolve => worker.once("message", resolve));
+  Atomics.store(flags, 0, 1);
+  Atomics.notify(flags, 0);
+  let wrong = 0;
+  while (Atomics.load(flags, 1) === 0) if (total(meters) !== 26) wrong++;
+  for (let i = 0; i < 100000; i++) if (total(meters) !== 26) wrong++;
+  note("wrong totals on the main thread", wrong);
+  for (const seen of await answer) note("the Worker saw", seen);
+  note("after the Worker", total(meters));
+  await worker.terminate();
+  note("after its end", total(meters));
+} else {
+  const flags: Int32Array = workerData;
+  const seen = [total(meters)];
+  parentPort?.postMessage("ready");
+  Atomics.wait(flags, 0, 0);
+  Meter.prototype.read = function () {
+    return this.base + 100;
+  };
+  seen.push(total(meters));
+  Double.prototype.read = () => 7;
+  seen.push(total(meters));
+  Atomics.store(flags, 1, 1);
+  parentPort?.postMessage(seen);
+}
+//// a-worker-replaces-a-method-while-the-main-thread-calls-it-and-one-number-is-printed.ts
+// A Worker replaces Meter.prototype.read and an override of it while the main thread calls both in a loop: the main thread keeps the originals before, during and after. One number is printed.
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+let checksum = 0;
+////= note-2
+
+if (isMainThread) {
+  const flags = new Int32Array(new SharedArrayBuffer(8));
+  note(total(meters));
+  const worker = new Worker(new URL(import.meta.url), { workerData: flags });
+  await new Promise(resolve => worker.once("message", resolve));
+  const answer = new Promise<number[]>(resolve => worker.once("message", resolve));
+  Atomics.store(flags, 0, 1);
+  Atomics.notify(flags, 0);
+  let wrong = 0;
+  while (Atomics.load(flags, 1) === 0) if (total(meters) !== 26) wrong++;
+  for (let i = 0; i < 100000; i++) if (total(meters) !== 26) wrong++;
+  note(wrong);
+  for (const seen of await answer) note(seen);
+  note(total(meters));
+  await worker.terminate();
+  note(total(meters));
+  console.log(checksum);
+} else {
+  const flags: Int32Array = workerData;
+  const seen = [total(meters)];
+  parentPort?.postMessage("ready");
+  Atomics.wait(flags, 0, 0);
+  Meter.prototype.read = function () {
+    return this.base + 100;
+  };
+  seen.push(total(meters));
+  Double.prototype.read = () => 7;
+  seen.push(total(meters));
+  Atomics.store(flags, 1, 1);
+  parentPort?.postMessage(seen);
+}
+//// a-worker-started-after-the-main-thread-changed-its-methods-finds-the-originals.ts
+// The main thread replaces one method, deletes another and covers a third on an instance, and only then starts Workers: each Worker finds every method as the classes define it.
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+////= totalInAWorker
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+////= note
+
+if (Bun.isMainThread) {
+  note("main at first", total(meters));
+  Meter.prototype.read = function () {
+    return this.base + 100;
+  };
+  Reflect.deleteProperty(Double.prototype, "read");
+  meters[2].read = () => -1;
+  note("main after its changes", total(meters));
+  note("the first Worker", await totalInAWorker());
+  Double.prototype.read = () => 0;
+  note("main after one more", total(meters));
+  note("the second Worker", await totalInAWorker());
+  note("main at the end", total(meters));
+} else {
+  postMessage(total(meters));
+}
+
+export {};
+//// a-worker-started-after-the-main-thread-changed-its-methods-finds-the-originals-and-one-number-is-printed.ts
+// The main thread replaces one method, deletes another and covers a third on an instance, and only then starts Workers: each Worker finds every method as the classes define it. One number is printed.
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+////= totalInAWorker
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+let checksum = 0;
+////= note-2
+
+if (Bun.isMainThread) {
+  note(total(meters));
+  Meter.prototype.read = function () {
+    return this.base + 100;
+  };
+  Reflect.deleteProperty(Double.prototype, "read");
+  meters[2].read = () => -1;
+  note(total(meters));
+  note(await totalInAWorker());
+  Double.prototype.read = () => 0;
+  note(total(meters));
+  note(await totalInAWorker());
+  note(total(meters));
+  console.log(checksum);
+} else {
+  postMessage(total(meters));
+}
+
+export {};
+//// a-worker-that-replaced-a-method-starts-a-worker-of-its-own.ts
+// The main thread replaces a method and starts a Worker; the Worker finds the original, replaces it in its own way and starts a Worker of its own, which finds the original again, and so on three levels down. Each level hands up what it and the levels below it saw.
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+////= level
+
+////= note
+
+if (isMainThread) {
+  for (const seen of await level(1)) note("seen", seen);
+} else {
+  parentPort?.postMessage(await level(workerData));
+}
+//// a-worker-that-replaced-a-method-starts-a-worker-of-its-own-and-one-number-is-printed.ts
+// The main thread replaces a method and starts a Worker; the Worker finds the original, replaces it in its own way and starts a Worker of its own, which finds the original again, and so on three levels down. Each level hands up what it and the levels below it saw. One number is printed.
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+////= level
+
+let checksum = 0;
+////= note-2
+
+if (isMainThread) {
+  for (const seen of await level(1)) note(seen);
+  console.log(checksum);
+} else {
+  parentPort?.postMessage(await level(workerData));
+}
+//// abstract-methods-are-called-from-the-base-class.ts
+// A method of an abstract class calls two abstract methods on this. Three concrete classes define them, one through its parent. Then one definition is deleted, which leaves nothing to call, and the abstract class itself gets a method under that name.
+////= Report
+////= Short
+////= Long
+////= lines-13	Longer	Long	body	1
+
+////= lines	renderAll	reports	Report	report	1000	report.render
+
+////= attempt-10
+
+const reports: Report[] = [new Short(), new Long(), new Longer()];
+note("at first", renderAll(reports));
+Reflect.deleteProperty(Short.prototype, "body");
+note("one definition is deleted", attempt(() => renderAll(reports)));
+note("the other two", renderAll([reports[1], reports[2]]));
+Report.prototype.body = () => 9;
+note("the abstract class gets a method", renderAll(reports));
+Reflect.deleteProperty(Long.prototype, "body");
+note("the parent of the third loses its own", renderAll(reports));
+
+export {};
+//// abstract-methods-are-called-from-the-base-class-and-one-number-is-printed.ts
+// A method of an abstract class calls two abstract methods on this. Three concrete classes define them, one through its parent. Then one definition is deleted, which leaves nothing to call, and the abstract class itself gets a method under that name. One number is printed.
+////= Report
+////= Short
+////= Long
+////= lines-13	Longer	Long	body	1
+
+////= lines	renderAll	reports	Report	report	1000	report.render
+
+////= attempt
+
+let checksum = 0;
+////= note-2
+
+const reports: Report[] = [new Short(), new Long(), new Longer()];
+note(renderAll(reports));
+Reflect.deleteProperty(Short.prototype, "body");
+note(attempt(() => renderAll(reports)));
+note(renderAll([reports[1], reports[2]]));
+Report.prototype.body = () => 9;
+note(renderAll(reports));
+Reflect.deleteProperty(Long.prototype, "body");
+note(renderAll(reports));
+console.log(checksum);
+
+export {};
+//// accessors-are-overridden-and-redefined.ts
+// A getter and a setter are overridden in subclasses: both with super, the getter alone, which leaves no setter, so that a store throws a TypeError. A method reads and stores through this. Then Object.defineProperty replaces the getter of the base and turns one subclass's accessor into a plain value.
+////= Tank
+////= Leaky
+////= lines-14	Sealed	Tank	get	level	7
+class Same extends Tank {}
+
+////= lines-23	fillOf	tank	Tank	tank.fill	4
+
+////= attempt-9
+
+////= note
+
+const tanks: Tank[] = [new Tank(), new Leaky(), new Sealed(), new Same()];
+for (const tank of tanks) note("at first", attempt(tank));
+for (const tank of tanks) note("held", tank.held);
+////= Object-defineProperty-2
+for (const tank of tanks) note("the accessor of the base is redefined", attempt(tank));
+for (const tank of tanks) note("held", tank.held);
+Object.defineProperty(Sealed.prototype, "level", { value: 50, writable: true, configurable: true });
+for (const tank of tanks) note("one accessor becomes a plain value", attempt(tank));
+note("own names of that tank", Object.keys(tanks[2]).length);
+
+export {};
+//// accessors-are-overridden-and-redefined-and-one-number-is-printed.ts
+// A getter and a setter are overridden in subclasses: both with super, the getter alone, which leaves no setter, so that a store throws a TypeError. A method reads and stores through this. Then Object.defineProperty replaces the getter of the base and turns one subclass's accessor into a plain value. One number is printed.
+////= Tank
+////= Leaky
+////= lines-14	Sealed	Tank	get	level	7
+class Same extends Tank {}
+
+////= lines-23	fillOf	tank	Tank	tank.fill	4
+
+////= attempt-9
+
+let checksum = 0;
+////= note-2
+
+const tanks: Tank[] = [new Tank(), new Leaky(), new Sealed(), new Same()];
+for (const tank of tanks) note(attempt(tank));
+for (const tank of tanks) note(tank.held);
+////= Object-defineProperty-2
+for (const tank of tanks) note(attempt(tank));
+for (const tank of tanks) note(tank.held);
+Object.defineProperty(Sealed.prototype, "level", { value: 50, writable: true, configurable: true });
+for (const tank of tanks) note(attempt(tank));
+note(Object.keys(tanks[2]).length);
+console.log(checksum);
+
+export {};
+//// an-argument-of-a-call-changes-the-method-that-is-being-called.ts
+// In o.m(f()) the function is read from o before f runs. So when f replaces, covers or deletes m, gives o another parent or stores another object in the variable, this call still runs the function that was there first, on the object that was there first; only the next call sees the change. A missing method throws after the arguments ran.
+////= Door
+////= lines-12	Gate	Door	open	by	width
+class Hatch extends Door {}
+
+let changes = 0;
+////= lines-20	replaceOnGate	Gate	1000
+////= lines-20	replaceOnDoor	Door	2000
+////= lines-19	deleteFromGate	Gate
+////= lines-19	deleteFromDoor	Door
+
+function openWith(door: Door, argument: () => number): number {
+  return door.open(argument()) * 10000 + door.open(0);
+}
+function coverWhileOpening(door: Door): number {
+  return door.open(((door.open = () => 3000), 5)) * 10000 + door.open(0);
+}
+function moveWhileOpening(door: Door): number {
+  return door.open((Object.setPrototypeOf(door, Gate.prototype), 6)) * 10000 + door.open(0);
+}
+function exchangeWhileOpening(door: Door, other: Door): number {
+  return door.open(((door = other), 7)) * 10000 + door.open(0);
+}
+
+////= attempt-10
+
+const ofDoor = Door.prototype.open;
+const ofGate = Gate.prototype.open;
+
+note("the override is replaced", openWith(new Gate(1), replaceOnGate));
+note("the inherited method is replaced", openWith(new Hatch(2), replaceOnDoor));
+note("the override is deleted", openWith(new Gate(3), deleteFromGate));
+Door.prototype.open = ofDoor;
+Gate.prototype.open = ofGate;
+note("the object gets a member of its own", coverWhileOpening(new Gate(4)));
+note("the object gets another parent", moveWhileOpening(new Hatch(5)));
+note("the variable gets another object", exchangeWhileOpening(new Gate(6), new Door(7)));
+note("the last method is deleted", attempt(() => openWith(new Hatch(8), deleteFromDoor)));
+note("arguments that ran", changes);
+note("nothing is left to call", attempt(() => openWith(new Hatch(9), replaceOnGate)));
+note("arguments that ran", changes);
+
+export {};
+//// an-argument-of-a-call-changes-the-method-that-is-being-called-and-one-number-is-printed.ts
+// In o.m(f()) the function is read from o before f runs. So when f replaces, covers or deletes m, gives o another parent or stores another object in the variable, this call still runs the function that was there first, on the object that was there first; only the next call sees the change. A missing method throws after the arguments ran. One number is printed.
+////= Door
+////= lines-12	Gate	Door	open	by	width
+class Hatch extends Door {}
+
+let changes = 0;
+////= lines-20	replaceOnGate	Gate	1000
+////= lines-20	replaceOnDoor	Door	2000
+////= lines-19	deleteFromGate	Gate
+////= lines-19	deleteFromDoor	Door
+
+function openWith(door: Door, argument: () => number): number {
+  return door.open(argument()) * 10000 + door.open(0);
+}
+function coverWhileOpening(door: Door): number {
+  return door.open(((door.open = () => 3000), 5)) * 10000 + door.open(0);
+}
+function moveWhileOpening(door: Door): number {
+  return door.open((Object.setPrototypeOf(door, Gate.prototype), 6)) * 10000 + door.open(0);
+}
+function exchangeWhileOpening(door: Door, other: Door): number {
+  return door.open(((door = other), 7)) * 10000 + door.open(0);
+}
+
+////= attempt
+
+let checksum = 0;
+////= note-2
+
+const ofDoor = Door.prototype.open;
+const ofGate = Gate.prototype.open;
+
+note(openWith(new Gate(1), replaceOnGate));
+note(openWith(new Hatch(2), replaceOnDoor));
+note(openWith(new Gate(3), deleteFromGate));
+Door.prototype.open = ofDoor;
+Gate.prototype.open = ofGate;
+note(coverWhileOpening(new Gate(4)));
+note(moveWhileOpening(new Hatch(5)));
+note(exchangeWhileOpening(new Gate(6), new Door(7)));
+note(attempt(() => openWith(new Hatch(8), deleteFromDoor)));
+note(changes);
+note(attempt(() => openWith(new Hatch(9), replaceOnGate)));
+note(changes);
+console.log(checksum);
+
+export {};
+//// an-override-in-the-middle-of-a-chain-of-four.ts
+// Four classes in a chain: one method is defined at the top and overridden in the third class only, another is overridden everywhere and calls super. They are called through parameters of all four types. Then the override in the third class is replaced and deleted, and so are links of the chain of super calls.
+////= One
+////= lines-15	Two	One	2
+////= Three
+////= lines-15	Four	Three	4
+
+////= lines-8	asOne	x	One	x.name	10000	x.path
+////= lines-8	asTwo	x	Two	x.name	10000	x.path
+////= lines-8	asThree	x	Three	x.name	10000	x.path
+////= lines-8	asFour	x	Four	x.name	10000	x.path
+
+////= note
+
+const one = new One(1);
+const two = new Two(2);
+const three = new Three(3);
+const four = new Four(4);
+
+function round(): void {
+  for (const x of [one, two, three, four]) note("as the first", asOne(x));
+  for (const x of [two, three, four]) note("as the second", asTwo(x));
+  for (const x of [three, four]) note("as the third", asThree(x));
+  note("as the fourth", asFour(four));
+}
+
+round();
+Three.prototype.name = () => 5;
+round();
+Reflect.deleteProperty(Three.prototype, "name");
+round();
+Reflect.deleteProperty(Three.prototype, "path");
+round();
+Two.prototype.path = () => 7;
+round();
+
+export {};
+//// an-override-in-the-middle-of-a-chain-of-four-and-one-number-is-printed.ts
+// Four classes in a chain: one method is defined at the top and overridden in the third class only, another is overridden everywhere and calls super. They are called through parameters of all four types. Then the override in the third class is replaced and deleted, and so are links of the chain of super calls. One number is printed.
+////= One
+////= lines-15	Two	One	2
+////= Three
+////= lines-15	Four	Three	4
+
+////= lines-8	asOne	x	One	x.name	10000	x.path
+////= lines-8	asTwo	x	Two	x.name	10000	x.path
+////= lines-8	asThree	x	Three	x.name	10000	x.path
+////= lines-8	asFour	x	Four	x.name	10000	x.path
+
+let checksum = 0;
+////= note-2
+
+const one = new One(1);
+const two = new Two(2);
+const three = new Three(3);
+const four = new Four(4);
+
+function round(): void {
+  for (const x of [one, two, three, four]) note(asOne(x));
+  for (const x of [two, three, four]) note(asTwo(x));
+  for (const x of [three, four]) note(asThree(x));
+  note(asFour(four));
+}
+
+round();
+Three.prototype.name = () => 5;
+round();
+Reflect.deleteProperty(Three.prototype, "name");
+round();
+Reflect.deleteProperty(Three.prototype, "path");
+round();
+Two.prototype.path = () => 7;
+round();
+console.log(checksum);
+
+export {};
+//// classes-made-in-a-loop-and-one-is-changed.ts
+// A class expression in the body of a loop is evaluated six times and each class closes over its own round. One call site sees the objects of all six. The method of the third class is replaced and that of the fifth is deleted, which leaves nothing: the base only declares it.
+////= Speaker
+
+const classes: { new (): Speaker; prototype: Speaker }[] = [];
+////= for-3
+
+////= lines-3	loudOf	speaker	Speaker	speaker.loud
+
+////= attempt-8
+
+////= note
+
+const speakers: Speaker[] = [];
+for (const each of classes) speakers.push(new each());
+
+for (const speaker of speakers) note("at first", attempt(speaker));
+classes[2].prototype.speak = () => 50;
+Reflect.deleteProperty(classes[4].prototype, "speak");
+for (const speaker of speakers) note("after the changes", attempt(speaker));
+for (const each of classes) note("new objects", attempt(new each()));
+
+export {};
+//// classes-made-in-a-loop-and-one-is-changed-and-one-number-is-printed.ts
+// A class expression in the body of a loop is evaluated six times and each class closes over its own round. One call site sees the objects of all six. The method of the third class is replaced and that of the fifth is deleted, which leaves nothing: the base only declares it. One number is printed.
+////= Speaker
+
+const classes: { new (): Speaker; prototype: Speaker }[] = [];
+////= for-3
+
+////= lines-3	loudOf	speaker	Speaker	speaker.loud
+
+////= attempt-8
+
+let checksum = 0;
+////= note-2
+
+const speakers: Speaker[] = [];
+for (const each of classes) speakers.push(new each());
+
+for (const speaker of speakers) note(attempt(speaker));
+classes[2].prototype.speak = () => 50;
+Reflect.deleteProperty(classes[4].prototype, "speak");
+for (const speaker of speakers) note(attempt(speaker));
+for (const each of classes) note(attempt(new each()));
+console.log(checksum);
+
+export {};
+//// classes-that-extend-built-ins-have-overridden-methods.ts
+// Three families whose roots extend Error, Array and Map: their instances are an error, an array and a map and not plain objects. Each family has a method with an override that calls super. The methods are called through the type of the root, then replaced and deleted.
+class Failure extends Error {
+  code(): number {
+    return this.message.length;
+  }
+}
+////= lines-13	Timeout	Failure	code	100
+class Refused extends Failure {}
+
+class Stack extends Array<number> {
+  top(): number {
+    return this[this.length - 1];
+  }
+}
+class Capped extends Stack {
+  top(): number {
+    return Math.min(super.top(), 10);
+  }
+}
+
+////= Registry
+class Doubled extends Registry {
+  total(): number {
+    return super.total() * 2;
+  }
+}
+
+////= lines	codes	failures	Failure	failure	1000	failure.code
+////= lines	tops	stacks	Stack	stack	1000	stack.top
+////= lines	totals	registries	Registry	registry	1000	registry.total
+
+////= note
+
+const failures: Failure[] = [new Failure("a"), new Timeout("bb"), new Refused("ccc")];
+const stacks: Stack[] = [new Stack(), new Capped()];
+for (const stack of stacks) stack.push(5, 50);
+const registries: Registry[] = [new Registry(), new Doubled()];
+for (const registry of registries) registry.set("x", 3).set("y", 4);
+
+function round(): void {
+  note("errors", codes(failures));
+  note("arrays", tops(stacks));
+  note("maps", totals(registries));
+}
+
+round();
+Failure.prototype.code = () => 7;
+Stack.prototype.top = function () {
+  return this[0];
+};
+////= lines-21	Registry	total	size
+round();
+Reflect.deleteProperty(Timeout.prototype, "code");
+Reflect.deleteProperty(Capped.prototype, "top");
+Reflect.deleteProperty(Doubled.prototype, "total");
+round();
+stacks[0].top = () => 8;
+registries[1].total = () => 9;
+failures[2].code = () => 6;
+round();
+
+export {};
+//// classes-that-extend-built-ins-have-overridden-methods-and-one-number-is-printed.ts
+// Three families whose roots extend Error, Array and Map: their instances are an error, an array and a map and not plain objects. Each family has a method with an override that calls super. The methods are called through the type of the root, then replaced and deleted. One number is printed.
+class Failure extends Error {
+  code(): number {
+    return this.message.length;
+  }
+}
+////= lines-13	Timeout	Failure	code	100
+class Refused extends Failure {}
+
+class Stack extends Array<number> {
+  top(): number {
+    return this[this.length - 1];
+  }
+}
+class Capped extends Stack {
+  top(): number {
+    return Math.min(super.top(), 10);
+  }
+}
+
+////= Registry
+class Doubled extends Registry {
+  total(): number {
+    return super.total() * 2;
+  }
+}
+
+////= lines	codes	failures	Failure	failure	1000	failure.code
+////= lines	tops	stacks	Stack	stack	1000	stack.top
+////= lines	totals	registries	Registry	registry	1000	registry.total
+
+let checksum = 0;
+////= note-2
+
+const failures: Failure[] = [new Failure("a"), new Timeout("bb"), new Refused("ccc")];
+const stacks: Stack[] = [new Stack(), new Capped()];
+for (const stack of stacks) stack.push(5, 50);
+const registries: Registry[] = [new Registry(), new Doubled()];
+for (const registry of registries) registry.set("x", 3).set("y", 4);
+
+function round(): void {
+  note(codes(failures));
+  note(tops(stacks));
+  note(totals(registries));
+}
+
+round();
+Failure.prototype.code = () => 7;
+Stack.prototype.top = function () {
+  return this[0];
+};
+////= lines-21	Registry	total	size
+round();
+Reflect.deleteProperty(Timeout.prototype, "code");
+Reflect.deleteProperty(Capped.prototype, "top");
+Reflect.deleteProperty(Doubled.prototype, "total");
+round();
+stacks[0].top = () => 8;
+registries[1].total = () => 9;
+failures[2].code = () => 6;
+round();
+console.log(checksum);
+
+export {};
+//// copies-of-an-instance-have-its-type-and-not-its-methods.ts
+// structuredClone(lamp), Object.assign({}, lamp) and a trip through JSON all have the type of the lamp for TypeScript, hold its fields and have no methods: a call throws a TypeError. They lie in one list with real instances. Once a copy is hung under the prototype it works.
+////= Lamp-4
+////= lines-11	Bright	Lamp	power	this.watts	2
+
+////= powerOf-2
+
+////= note
+
+const bright = new Bright(4);
+const cloned = structuredClone(bright);
+const assigned = Object.assign({}, bright);
+const parsed: Bright = JSON.parse(JSON.stringify(bright));
+const lamps: Lamp[] = [new Lamp(1), cloned, bright, assigned, new Bright(2), parsed];
+
+for (const lamp of lamps) note("power", attempt(lamp));
+for (const lamp of lamps) note("watts", lamp.watts);
+Object.setPrototypeOf(cloned, Bright.prototype);
+Object.setPrototypeOf(assigned, Lamp.prototype);
+parsed.power = () => 50;
+for (const lamp of lamps) note("after the copies are mended", attempt(lamp));
+
+export {};
+//// copies-of-an-instance-have-its-type-and-not-its-methods-and-one-number-is-printed.ts
+// structuredClone(lamp), Object.assign({}, lamp) and a trip through JSON all have the type of the lamp for TypeScript, hold its fields and have no methods: a call throws a TypeError. They lie in one list with real instances. Once a copy is hung under the prototype it works. One number is printed.
+////= Lamp-4
+////= lines-11	Bright	Lamp	power	this.watts	2
+
+////= powerOf-2
+
+let checksum = 0;
+////= note-2
+
+const bright = new Bright(4);
+const cloned = structuredClone(bright);
+const assigned = Object.assign({}, bright);
+const parsed: Bright = JSON.parse(JSON.stringify(bright));
+const lamps: Lamp[] = [new Lamp(1), cloned, bright, assigned, new Bright(2), parsed];
+
+for (const lamp of lamps) note(attempt(lamp));
+for (const lamp of lamps) note(lamp.watts);
+Object.setPrototypeOf(cloned, Bright.prototype);
+Object.setPrototypeOf(assigned, Lamp.prototype);
+parsed.power = () => 50;
+for (const lamp of lamps) note(attempt(lamp));
+console.log(checksum);
+
+export {};
+//// default-rest-and-optional-parameters-get-too-few-and-too-many-arguments.ts
+// Overrides take fewer or more parameters than the method they override: one parameter, defaults, a rest parameter, optional ones. Call sites typed with the base pass three arguments or none to all of them, directly and with a spread; each method reports how many it got.
+////= Mixer
+////= First
+////= Defaults
+////= Rest
+////= lines-11	None	Mixer	mix	arguments.length	1000
+
+////= three	1	2	3
+function spread(mixer: Mixer, triple: [number, number, number]): number {
+  return mixer.mix(...triple);
+}
+////= lines-3	none	mixer	Mixer	mixer.idle
+function holes(defaults: Defaults): number {
+  return defaults.mix(1, undefined, 3) + defaults.mix(1) + defaults.mix(1, 2, 3, 4) + defaults.idle(undefined, 1);
+}
+function many(rest: Rest): number {
+  return rest.mix() + rest.mix(1) + rest.mix(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) + rest.idle(1, 2, 3) + rest.mix(...[1, 2], ...[3, 4, 5]);
+}
+
+////= note
+
+const mixers: Mixer[] = [new Mixer(), new First(), new Defaults(), new Rest(), new None()];
+for (const mixer of mixers) note("three arguments", three(mixer));
+for (const mixer of mixers) note("a spread of three", spread(mixer, [4, 5, 6]));
+for (const mixer of mixers) note("no arguments", none(mixer));
+note("undefined for a default", holes(new Defaults()));
+note("from none to ten", many(new Rest()));
+
+export {};
+//// default-rest-and-optional-parameters-get-too-few-and-too-many-arguments-and-one-number-is-printed.ts
+// Overrides take fewer or more parameters than the method they override: one parameter, defaults, a rest parameter, optional ones. Call sites typed with the base pass three arguments or none to all of them, directly and with a spread; each method reports how many it got. One number is printed.
+////= Mixer
+////= First
+////= Defaults
+////= Rest
+////= lines-11	None	Mixer	mix	arguments.length	1000
+
+////= three	1	2	3
+function spread(mixer: Mixer, triple: [number, number, number]): number {
+  return mixer.mix(...triple);
+}
+////= lines-3	none	mixer	Mixer	mixer.idle
+function holes(defaults: Defaults): number {
+  return defaults.mix(1, undefined, 3) + defaults.mix(1) + defaults.mix(1, 2, 3, 4) + defaults.idle(undefined, 1);
+}
+function many(rest: Rest): number {
+  return rest.mix() + rest.mix(1) + rest.mix(1, 2, 3, 4, 5, 6, 7, 8, 9, 10) + rest.idle(1, 2, 3) + rest.mix(...[1, 2], ...[3, 4, 5]);
+}
+
+let checksum = 0;
+////= note-2
+
+const mixers: Mixer[] = [new Mixer(), new First(), new Defaults(), new Rest(), new None()];
+for (const mixer of mixers) note(three(mixer));
+for (const mixer of mixers) note(spread(mixer, [4, 5, 6]));
+for (const mixer of mixers) note(none(mixer));
+note(holes(new Defaults()));
+note(many(new Rest()));
+console.log(checksum);
+
+export {};
+//// each-worker-in-a-row-replaces-a-method-and-the-next-finds-the-original.ts
+// Five Workers run one after the other. Each replaces a method and ends; the next one, which may get the memory of the one before, finds the original again.
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+////= inAWorker
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+////= note
+
+if (Bun.isMainThread) {
+  for (let more = 100; more <= 500; more += 100) {
+    for (const seen of await inAWorker(more)) note("a Worker saw", seen);
+    note("main", total(meters));
+  }
+} else {
+  addEventListener("message", (event: MessageEvent<number>) => {
+    const more = event.data;
+    const seen = [total(meters)];
+    Meter.prototype.read = function () {
+      return this.base + more;
+    };
+    Double.prototype.read = () => more;
+    seen.push(total(meters));
+    postMessage(seen);
+  });
+}
+
+export {};
+//// each-worker-in-a-row-replaces-a-method-and-the-next-finds-the-original-and-one-number-is-printed.ts
+// Five Workers run one after the other. Each replaces a method and ends; the next one, which may get the memory of the one before, finds the original again. One number is printed.
+////= Meter-2
+class Plain extends Meter {}
+
+////= total
+
+////= inAWorker
+
+const meters: Meter[] = [new Meter(5), new Double(6), new Plain(7)];
+
+let checksum = 0;
+////= note-2
+
+if (Bun.isMainThread) {
+  for (let more = 100; more <= 500; more += 100) {
+    for (const seen of await inAWorker(more)) note(seen);
+    note(total(meters));
+  }
+  console.log(checksum);
+} else {
+  addEventListener("message", (event: MessageEvent<number>) => {
+    const more = event.data;
+    const seen = [total(meters)];
+    Meter.prototype.read = function () {
+      return this.base + more;
+    };
+    Double.prototype.read = () => more;
+    seen.push(total(meters));
+    postMessage(seen);
+  });
+}
+
+export {};

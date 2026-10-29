@@ -1,0 +1,126 @@
+//// damage-behind-a-call-workers/a-worker-does-the-damage-to-its-own-objects.ts
+// The main thread and a worker run the same typed functions. Only the worker does the damage, to objects of its own. Both tell what their holders read.
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+////= Point
+
+let strikes = false;
+////= touch
+function holder(p: Point): string {
+  const before = p.x;
+  const got = touch(p);
+  return before + ">" + p.x + "," + (p.x + p.y + got);
+}
+function run(damages: boolean): string {
+  let text = "";
+  for (let round = 0; round < 300; round++) {
+    strikes = damages && round % 100 === 99;
+    const line = holder(new Point(round, 1));
+    if (round % 100 === 99) text += line + " ";
+  }
+  return text;
+}
+
+if (isMainThread) {
+  console.log("main, at first: " + run(false));
+  const answer = await new Promise<string>(resolve => {
+    const worker = new Worker(new URL(import.meta.url), { workerData: true });
+    worker.once("message", (told: string) => void worker.terminate().then(() => resolve(told)));
+  });
+  console.log("the worker: " + answer);
+  console.log("main, afterwards: " + run(false));
+  console.log("main, with damage of its own: " + run(true));
+} else {
+  parentPort?.postMessage(run(workerData === true));
+}
+
+export {};
+//// damage-behind-a-call-workers/a-worker-replaces-a-method-below-a-call-and-the-main-thread-does-not.ts
+// A holder calls a method, makes a call, and calls the method again. In a worker the call in between replaces the method on the prototype object, which is the worker's own. The main thread runs the same code before, meanwhile and afterwards.
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+class Square {
+  side: number;
+  constructor(side: number) {
+    this.side = side;
+  }
+  area(): number {
+    return this.side * this.side;
+  }
+}
+
+let strikes = false;
+function between(): number {
+  if (strikes) Square.prototype.area = () => -1;
+  return 1;
+}
+function holder(s: Square): string {
+  const before = s.area();
+  const got = between();
+  return before + ">" + s.area() + "," + got;
+}
+function run(damages: boolean): string {
+  let text = "";
+  for (let round = 0; round < 200; round++) {
+    strikes = damages && round === 150;
+    const line = holder(new Square(round));
+    if (round === 149 || round === 150 || round === 199) text += line + " ";
+  }
+  return text;
+}
+
+if (isMainThread) {
+  console.log("main, at first: " + run(false));
+  const worker = new Worker(new URL(import.meta.url), { workerData: true });
+  const answer = new Promise<string>(resolve => worker.once("message", resolve));
+  console.log("main, meanwhile: " + run(false));
+  console.log("the worker: " + (await answer));
+  await worker.terminate();
+  console.log("main, afterwards: " + run(false));
+} else {
+  parentPort?.postMessage(run(workerData === true));
+}
+
+export {};
+//// damage-behind-a-call-workers/two-workers-and-the-main-thread-do-the-damage-at-once.ts
+// Two workers and the main thread run the same loop at the same time, and each does the damage to its own objects in rounds of its own. What each holder reads depends on its own thread alone.
+import { isMainThread, parentPort, Worker, workerData } from "node:worker_threads";
+
+////= Point
+
+let strikes = false;
+function touch(p: Point, list: number[]): number {
+  if (strikes) {
+    (p as any).x = "text";
+    list.push(0.5);
+  }
+  return 1;
+}
+function holder(p: Point, list: number[]): string {
+  const before = p.x + list[0];
+  const got = touch(p, list);
+  return before + ">" + p.x + "," + list.length + "," + list[list.length - 1] + "," + got;
+}
+function run(every: number): string {
+  let struck = 0;
+  let digest = 0;
+  for (let round = 0; round < 20000; round++) {
+    strikes = round % every === 0;
+    const line = holder(new Point(round, 1), [round, 1]);
+    if (line.includes("text")) struck++;
+    digest = (digest * 31 + line.length) | 0;
+  }
+  return every + ": " + struck + " " + digest;
+}
+
+if (isMainThread) {
+  const workers = [7, 11].map(every => new Worker(new URL(import.meta.url), { workerData: every }));
+  const answers = workers.map(worker => new Promise<string>(resolve => worker.once("message", resolve)));
+  console.log("main " + run(13));
+  for (const answer of answers) console.log("worker " + (await answer));
+  for (const worker of workers) await worker.terminate();
+} else {
+  parentPort?.postMessage(run(workerData as number));
+}
+
+export {};

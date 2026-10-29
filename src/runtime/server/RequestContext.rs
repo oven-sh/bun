@@ -821,11 +821,11 @@ where
 
         if self.method == Method::HEAD {
             if let Some(resp) = self.resp.get() {
-                let mut pair = HeaderResponsePair {
+                let pair = HeaderResponsePair {
                     this: self,
                     response,
                 };
-                resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                resp.run_corked_with_type(Self::do_render_head_response, &pair);
             }
             return;
         }
@@ -1149,14 +1149,12 @@ where
 
     pub(crate) fn render_missing(&self) {
         if let Some(resp) = self.resp.get() {
-            resp.run_corked_with_type(|ctx| Self::render_missing_corked(ctx), self.as_ctx_ptr());
+            resp.run_corked_with_type(Self::render_missing_corked, self);
         }
     }
 
-    fn render_missing_corked(ctx: *mut Self) {
-        // SAFETY: `ctx` is the live `RequestContext` threaded through the
-        // synchronous cork call; only a shared view is formed.
-        let ctx = unsafe { &*ctx };
+    fn render_missing_corked(&self) {
+        let ctx = self;
         if let Some(resp) = ctx.resp.get() {
             if !DEBUG_MODE {
                 if !ctx.flags.has_written_status() {
@@ -1251,11 +1249,6 @@ where
                 self.as_ctx_ptr(),
             );
         }
-    }
-
-    fn drain_response_buffer_and_metadata_corked(this: *mut Self) {
-        // SAFETY: this is the live RequestContext threaded through cork user-data.
-        unsafe { (*this).drain_response_buffer_and_metadata() };
     }
 
     /// Drain a partial response buffer
@@ -2022,7 +2015,7 @@ where
             }
         }
 
-        resp.run_corked_with_type(Self::render_metadata_corked, self.as_ctx_ptr());
+        resp.run_corked_with_type(Self::render_metadata, self);
 
         let sendfile = self.sendfile.get();
         if (is_regular && sendfile.remain == 0) || !self.method.has_body() {
@@ -2154,12 +2147,10 @@ where
         readable_ref.deinit();
     }
 
-    fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>) {
+    fn do_render_stream(pair: &StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>) {
         ctx_log!("doRenderStream");
-        // SAFETY: pair is a stack local threaded through cork user-data.
-        let pair = unsafe { &mut *pair };
         let this: &Self = pair.this;
-        let stream = &mut pair.stream;
+        let stream = &pair.stream;
         debug_assert!(this.server.get().is_some());
         let global_this = this.server().global_this();
 
@@ -2533,10 +2524,8 @@ where
     }
 
     fn do_render_head_response(
-        pair: *mut HeaderResponsePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
+        pair: &HeaderResponsePair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, MUX>,
     ) {
-        // SAFETY: pair is a stack local threaded through the synchronous cork call.
-        let pair = unsafe { &*pair };
         let this = pair.this;
         let response_ptr = pair.response;
         if this.resp.get().is_none() {
@@ -2557,7 +2546,7 @@ where
         // not derive framing from that body (or the user headers) either
         // (RFC 9110 §9.3.2): render the exact metadata+framing GET would.
         if HTTPStatusText::is_null_body(response.status_code()) {
-            Self::do_render_null_body_status_corked(this.as_ctx_ptr());
+            this.do_render_null_body_status_corked();
             return;
         }
 
@@ -2752,11 +2741,11 @@ where
             response_value.ensure_still_alive();
             if ctx.method == Method::HEAD {
                 if let Some(resp) = ctx.resp.get() {
-                    let mut pair = HeaderResponsePair {
+                    let pair = HeaderResponsePair {
                         this: ctx,
                         response,
                     };
-                    resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                    resp.run_corked_with_type(Self::do_render_head_response, &pair);
                 }
                 return;
             } else {
@@ -2810,11 +2799,11 @@ where
                     fulfilled_value.ensure_still_alive();
                     if ctx.method == Method::HEAD {
                         if let Some(resp) = ctx.resp.get() {
-                            let mut pair = HeaderResponsePair {
+                            let pair = HeaderResponsePair {
                                 this: ctx,
                                 response,
                             };
-                            resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                            resp.run_corked_with_type(Self::do_render_head_response, &pair);
                         }
                         return;
                     }
@@ -3171,8 +3160,8 @@ where
                         // These are the common scenario:
                         | readable_stream::Source::JavaScript => {
                             if let Some(resp) = this.resp.get() {
-                                let mut pair = StreamPair { stream, this };
-                                resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
+                                let pair = StreamPair { stream, this };
+                                resp.run_corked_with_type(Self::do_render_stream, &pair);
                             }
                             return;
                         }
@@ -3237,8 +3226,8 @@ where
                             // if we've received metadata and part of the body, send everything we can and drain
                             if has_body_bytes {
                                 resp.run_corked_with_type(
-                                    Self::drain_response_buffer_and_metadata_corked,
-                                    this.as_ctx_ptr(),
+                                    Self::drain_response_buffer_and_metadata,
+                                    this,
                                 );
                             } else if byte_stream.has_pending_error()
                                 || matches!(
@@ -3251,10 +3240,7 @@ where
                                 // still reach `error()`.
                             } else {
                                 // if we only have metadata to send, send it now
-                                resp.run_corked_with_type(
-                                    Self::render_metadata_corked,
-                                    this.as_ctx_ptr(),
-                                );
+                                resp.run_corked_with_type(Self::render_metadata, this);
                             }
                             // Runs `end_chunk`, which adopts the ref taken above and may free `this`.
                             if byte_stream.end_sink_with_pending_error() {
@@ -3319,7 +3305,7 @@ where
         // first chunk so a pre-first-byte failure can still reach the
         // server's `error()` hook. Flush it now, corked.
         if !this.flags.has_written_status() {
-            resp.run_corked_with_type(Self::render_metadata_corked, this.as_ctx_ptr());
+            resp.run_corked_with_type(Self::render_metadata, this);
         }
 
         let chunk = stream.slice();
@@ -3378,7 +3364,7 @@ where
             // Upstream ended cleanly before any chunk: flush the deferred
             // status/headers so the client sees them before the terminator.
             if let Some(resp) = this.resp.get() {
-                resp.run_corked_with_type(Self::render_metadata_corked, this.as_ctx_ptr());
+                resp.run_corked_with_type(Self::render_metadata, this);
             }
         }
         this.end_stream(this.should_close_connection());
@@ -3488,34 +3474,25 @@ where
         // This is an important performance optimization
         if self.flags.has_abort_handler() && self.blob.get().fast_size() < 16384 - 1024 {
             if let Some(resp) = self.resp.get() {
-                resp.run_corked_with_type(
-                    |ctx| Self::do_render_blob_corked(ctx),
-                    self.as_ctx_ptr(),
-                );
+                resp.run_corked_with_type(Self::do_render_blob_corked, self);
             }
         } else {
-            Self::do_render_blob_corked(self.as_ctx_ptr());
+            self.do_render_blob_corked();
         }
     }
 
-    fn do_render_blob_corked(this: *mut Self) {
-        // SAFETY: `this` is live for the synchronous cork call; only a shared
-        // view is formed.
-        let this = unsafe { &*this };
-        this.render_metadata();
-        this.render_bytes();
+    fn do_render_blob_corked(&self) {
+        self.render_metadata();
+        self.render_bytes();
     }
 
     pub(crate) fn do_render_null_body_status(&self) {
         if self.flags.has_abort_handler() {
             if let Some(resp) = self.resp.get() {
-                resp.run_corked_with_type(
-                    Self::do_render_null_body_status_corked,
-                    self.as_ctx_ptr(),
-                );
+                resp.run_corked_with_type(Self::do_render_null_body_status_corked, self);
             }
         } else {
-            Self::do_render_null_body_status_corked(self.as_ctx_ptr());
+            self.do_render_null_body_status_corked();
         }
     }
 
@@ -3523,13 +3500,8 @@ where
     /// would put `Content-Length: 0` on a 304 (uWS only suppresses it for
     /// 1xx/204); RFC 9110 §8.6 only allows the 200's length, so forward the
     /// handler's value or emit none.
-    ///
-    /// # Safety
-    /// `this` must point to a live `RequestContext` threaded through cork user-data.
-    fn do_render_null_body_status_corked(this: *mut Self) {
-        // SAFETY: `this` is live for the synchronous cork call; only a shared
-        // view is formed.
-        let this = unsafe { &*this };
+    fn do_render_null_body_status_corked(&self) {
+        let this = self;
 
         let (status, app_content_length) = {
             let response: &mut Response = this.response_mut().unwrap();
@@ -3570,12 +3542,6 @@ where
         }
         // render_bytes releases the base ref on every path (resp gone included).
         this.render_bytes();
-    }
-
-    /// `render_metadata` adapter for `run_corked_with_type` (takes `fn(*mut U)`).
-    fn render_metadata_corked(this: *mut Self) {
-        // SAFETY: this is the live RequestContext threaded through cork user-data.
-        unsafe { (*this).render_metadata() };
     }
 
     pub(crate) fn do_render(&self) {
@@ -4052,11 +4018,11 @@ where
         // here, but the `error()` handler paths call `render()` directly.
         if self.method == Method::HEAD {
             if let Some(resp) = self.resp.get() {
-                let mut pair = HeaderResponsePair {
+                let pair = HeaderResponsePair {
                     this: self,
                     response,
                 };
-                resp.run_corked_with_type(Self::do_render_head_response, &raw mut pair);
+                resp.run_corked_with_type(Self::do_render_head_response, &pair);
             }
             return;
         }

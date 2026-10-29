@@ -7,19 +7,22 @@ use core::ptr::NonNull;
 use super::codecs;
 use crate::encoded_wrap_free;
 
-#[allow(non_camel_case_types)]
-type tjhandle = *mut c_void;
+bun_opaque::opaque_ffi! {
+    /// What a `tjhandle` points to.
+    struct TjInstance;
+}
 
 // TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
 unsafe extern "C" {
-    safe fn tj3Init(init_type: c_int) -> tjhandle;
-    fn tj3Destroy(h: tjhandle);
-    fn tj3Set(h: tjhandle, param: c_int, value: c_int) -> c_int;
-    fn tj3Get(h: tjhandle, param: c_int) -> c_int;
-    fn tj3BunCompletedWithWarning(h: tjhandle) -> c_int;
-    fn tj3DecompressHeader(h: tjhandle, buf: *const u8, len: usize) -> c_int;
+    /// Null or a fresh instance, which lives until `tj3Destroy`.
+    safe fn tj3Init(init_type: c_int) -> Option<&'static mut TjInstance>;
+    fn tj3Destroy(h: *mut TjInstance);
+    safe fn tj3Set(h: &mut TjInstance, param: c_int, value: c_int) -> c_int;
+    safe fn tj3Get(h: &TjInstance, param: c_int) -> c_int;
+    safe fn tj3BunCompletedWithWarning(h: &TjInstance) -> c_int;
+    fn tj3DecompressHeader(h: &mut TjInstance, buf: *const u8, len: usize) -> c_int;
     fn tj3Decompress8(
-        h: tjhandle,
+        h: &mut TjInstance,
         buf: *const u8,
         len: usize,
         dst: *mut u8,
@@ -27,7 +30,7 @@ unsafe extern "C" {
         pf: c_int,
     ) -> c_int;
     fn tj3Compress8(
-        h: tjhandle,
+        h: &mut TjInstance,
         src: *const u8,
         w: c_int,
         pitch: c_int,
@@ -36,8 +39,8 @@ unsafe extern "C" {
         out: *mut *mut u8,
         out_len: *mut usize,
     ) -> c_int;
-    fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) -> c_int;
-    fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
+    safe fn tj3SetScalingFactor(h: &mut TjInstance, sf: ScalingFactor) -> c_int;
+    fn tj3SetCroppingRegion(h: &mut TjInstance, r: CropRegion) -> c_int;
     safe fn tj3GetScalingFactors(n: &mut c_int) -> *const ScalingFactor;
     pub(crate) fn tj3Free(ptr: *mut c_void);
     // ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
@@ -47,40 +50,36 @@ unsafe extern "C" {
     // libjpeg-turbo's allocator and returns it in *iccBuf for the caller to
     // tj3Free. tj3SetICCProfile copies the bytes into the encoder's state so
     // the input buffer can be freed immediately after.
-    fn tj3GetICCProfile(h: tjhandle, icc_buf: *mut *mut u8, icc_size: *mut usize) -> c_int;
-    fn tj3SetICCProfile(h: tjhandle, icc_buf: *const u8, icc_size: usize) -> c_int;
+    safe fn tj3GetICCProfile(
+        h: &mut TjInstance,
+        icc_buf: &mut *mut u8,
+        icc_size: &mut usize,
+    ) -> c_int;
+    fn tj3SetICCProfile(h: &mut TjInstance, icc_buf: *const u8, icc_size: usize) -> c_int;
 }
 
 /// RAII owner for a TurboJPEG handle — `tj3Destroy` on drop.
-pub(crate) struct Handle(NonNull<c_void>);
+pub(crate) struct Handle(&'static mut TjInstance);
 
 impl Handle {
     /// `init_type`: `0` = compress, `1` = decompress.
     #[inline]
     pub(crate) fn init(init_type: c_int) -> Option<Self> {
-        NonNull::new(tj3Init(init_type)).map(Self)
-    }
-
-    #[inline]
-    fn as_ptr(&self) -> tjhandle {
-        self.0.as_ptr()
+        tj3Init(init_type).map(Self)
     }
 
     /// Whether the decompress call that just returned `rc` ran to completion; a libjpeg warning alone still does.
     fn completed(&self, rc: c_int) -> bool {
-        // SAFETY: `self` owns a live tjhandle; this only reads a flag, which the next tj3Set*/tj3GetICCProfile call resets.
-        rc == 0 || unsafe { tj3BunCompletedWithWarning(self.as_ptr()) } != 0
+        // The next tj3Set*/tj3GetICCProfile call resets the flag.
+        rc == 0 || tj3BunCompletedWithWarning(self.0) != 0
     }
 
     /// SOF dimensions from the last header parse.
     fn dimensions(&self) -> Option<(u32, u32)> {
-        // SAFETY: `self` owns a live tjhandle; tj3Get only reads handle state.
-        let (w, ht) = unsafe {
-            (
-                tj3Get(self.as_ptr(), TJPARAM_JPEGWIDTH),
-                tj3Get(self.as_ptr(), TJPARAM_JPEGHEIGHT),
-            )
-        };
+        let (w, ht) = (
+            tj3Get(self.0, TJPARAM_JPEGWIDTH),
+            tj3Get(self.0, TJPARAM_JPEGHEIGHT),
+        );
         match (u32::try_from(w), u32::try_from(ht)) {
             (Ok(w @ 1..), Ok(ht @ 1..)) => Some((w, ht)),
             // -1 until a header with an SOF has been parsed.
@@ -89,9 +88,9 @@ impl Handle {
     }
 
     /// Parse the header (SOF dims, saved ICC markers) without touching scan data.
-    pub(crate) fn read_header(&self, bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
-        // SAFETY: `self` owns a live tjhandle; ptr/len come from a valid `&[u8]` borrowed for the call.
-        let rc = unsafe { tj3DecompressHeader(self.as_ptr(), bytes.as_ptr(), bytes.len()) };
+    pub(crate) fn read_header(&mut self, bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
+        // SAFETY: ptr/len come from a valid `&[u8]` borrowed for the call.
+        let rc = unsafe { tj3DecompressHeader(self.0, bytes.as_ptr(), bytes.len()) };
         if !self.completed(rc) {
             return Err(codecs::Error::DecodeFailed);
         }
@@ -104,7 +103,7 @@ impl Drop for Handle {
     fn drop(&mut self) {
         // SAFETY: `self.0` is the non-null tjhandle returned by tj3Init;
         // tj3Destroy is the documented owner-release and is called exactly once.
-        unsafe { tj3Destroy(self.0.as_ptr()) };
+        unsafe { tj3Destroy(self.0) };
     }
 }
 
@@ -157,21 +156,15 @@ pub(crate) fn decode(
     max_pixels: u64,
     hint: codecs::DecodeHint,
 ) -> Result<codecs::Decoded, codecs::Error> {
-    let handle = Handle::init(1).ok_or(codecs::Error::OutOfMemory)?;
-    let h = handle.as_ptr();
+    let mut handle = Handle::init(1).ok_or(codecs::Error::OutOfMemory)?;
     // Ask libjpeg-turbo to keep the APP2/ICC_PROFILE markers so we can pull
     // the profile out after header parse. Must be set PRE-header — the
     // marker buffer is discarded if we set this after.
-    // SAFETY: `h` is a live tjhandle for as long as `handle` is in scope.
-    unsafe { tj3Set(h, TJPARAM_SAVEMARKERS, 2) };
+    tj3Set(handle.0, TJPARAM_SAVEMARKERS, 2);
     let (src_w, src_h) = handle.read_header(bytes)?;
     codecs::guard(src_w, src_h, max_pixels)?;
     // libjpeg-turbo won't convert 4-component JPEGs to RGB; decode as packed CMYK (also 4 bytes/px) and convert below.
-    // SAFETY: `h` is live; tj3Get only reads handle state.
-    let cmyk = matches!(
-        unsafe { tj3Get(h, TJPARAM_COLORSPACE) },
-        TJCS_CMYK | TJCS_YCCK
-    );
+    let cmyk = matches!(tj3Get(handle.0, TJPARAM_COLORSPACE), TJCS_CMYK | TJCS_YCCK);
 
     let mut w = src_w;
     let mut ht = src_h;
@@ -209,8 +202,7 @@ pub(crate) fn decode(
                 }
             }
             if best.num != best.denom {
-                // SAFETY: `h` is live; `best` is a plain #[repr(C)] value passed by copy.
-                unsafe { tj3SetScalingFactor(h, best) };
+                tj3SetScalingFactor(handle.0, best);
                 w = scaled(src_w, best);
                 ht = scaled(src_h, best);
             }
@@ -232,15 +224,15 @@ pub(crate) fn decode(
     //     passes the product check still can't write more rows than fit
     // and post-check the second-parse dims so a smaller swap (which would
     // leave rows unfilled with raw mimalloc bytes) is treated as corrupt.
-    // SAFETY: `h` is live; CropRegion is a plain #[repr(C)] value passed by copy.
+    tj3Set(
+        handle.0,
+        TJPARAM_MAXPIXELS,
+        c_int::try_from(src_w * src_h).unwrap_or(c_int::MAX),
+    );
+    // SAFETY: TurboJPEG adds `x + w` and `y + h` as C ints; with x = y = 0 neither sum can overflow.
     let cropped = unsafe {
-        tj3Set(
-            h,
-            TJPARAM_MAXPIXELS,
-            c_int::try_from(src_w * src_h).unwrap_or(c_int::MAX),
-        );
         tj3SetCroppingRegion(
-            h,
+            handle.0,
             CropRegion {
                 x: 0,
                 y: 0,
@@ -252,15 +244,14 @@ pub(crate) fn decode(
     let pitch = if cropped {
         c_int::try_from(w * 4).expect("int cast")
     } else {
-        // SAFETY: `h` is live; ScalingFactor is a plain #[repr(C)] value passed by copy.
-        unsafe { tj3SetScalingFactor(h, ScalingFactor { num: 1, denom: 1 }) };
+        tj3SetScalingFactor(handle.0, ScalingFactor { num: 1, denom: 1 });
         w = src_w;
         ht = src_h;
         0
     };
     let out_len = w as usize * ht as usize * 4;
     let mut out: Vec<u8> = Vec::with_capacity(out_len);
-    // SAFETY: `h` is live and src ptr/len come from a valid `&[u8]`. dst is
+    // SAFETY: src ptr/len come from a valid `&[u8]`. dst is
     // `out`'s exclusive `w*ht*4` bytes of capacity: the pitch and the cropping
     // region bound libjpeg-turbo's writes to it. TurboJPEG refuses the region
     // for a lossless stream and for unknown subsampling (turbojpeg.c:2093), and
@@ -270,7 +261,7 @@ pub(crate) fn decode(
     // so TJPARAM_MAXPIXELS bounds the bytes written by `out_len`.
     let rc = unsafe {
         tj3Decompress8(
-            h,
+            handle.0,
             bytes.as_ptr(),
             bytes.len(),
             out.as_mut_ptr(),
@@ -305,9 +296,7 @@ pub(crate) fn decode(
         if cmyk {
             break 'blk None;
         }
-        // SAFETY: `h` is live; out-params are valid `&mut` locals.
-        if unsafe { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) } != 0 || icc_size == 0
-        {
+        if tj3GetICCProfile(handle.0, &mut icc_ptr, &mut icc_size) != 0 || icc_size == 0 {
             break 'blk None;
         }
         let _free = scopeguard::guard(icc_ptr, |p| {
@@ -341,18 +330,17 @@ pub(crate) fn encode(
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
     let handle = Handle::init(0).ok_or(codecs::Error::OutOfMemory)?;
-    let h = handle.as_ptr();
-    // SAFETY: `h` is a live tjhandle for as long as `handle` is in scope.
-    unsafe {
-        tj3Set(h, TJPARAM_QUALITY, c_int::from(quality.clamp(1, 100)));
-        tj3Set(h, TJPARAM_SUBSAMP, TJSAMP_420);
-    }
+    tj3Set(
+        handle.0,
+        TJPARAM_QUALITY,
+        c_int::from(quality.clamp(1, 100)),
+    );
+    tj3Set(handle.0, TJPARAM_SUBSAMP, TJSAMP_420);
     // Progressive emits a multi-scan SOF2 stream; same size ±1%, decodes
     // coarse-to-fine. Off by default (slower to encode, some old decoders
     // mishandle it).
     if progressive {
-        // SAFETY: `h` is live.
-        unsafe { tj3Set(h, TJPARAM_PROGRESSIVE, 1) };
+        tj3Set(handle.0, TJPARAM_PROGRESSIVE, 1);
     }
     // Embed the source colour profile as an APP2/ICC_PROFILE marker. The
     // library copies the bytes, so the caller can free `icc_profile` right
@@ -361,19 +349,19 @@ pub(crate) fn encode(
     // profile is still a valid JPEG (implicitly sRGB). See #30197.
     if let Some(p) = icc_profile {
         if !p.is_empty() {
-            // SAFETY: `h` is live; ptr/len come from a valid `&[u8]`; the
+            // SAFETY: ptr/len come from a valid `&[u8]`; the
             // library copies the bytes so the borrow need only outlive the call.
-            unsafe { tj3SetICCProfile(h, p.as_ptr(), p.len()) };
+            unsafe { tj3SetICCProfile(handle.0, p.as_ptr(), p.len()) };
         }
     }
     let mut out_ptr: *mut u8 = core::ptr::null_mut();
     let mut out_len: usize = 0;
-    // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]` with the
+    // SAFETY: src ptr/len come from a valid `&[u8]` with the
     // caller-asserted `w*ht*4` layout; out-params are valid `&mut` locals and
     // libjpeg-turbo allocates the output buffer (out_ptr starts null).
     if unsafe {
         tj3Compress8(
-            h,
+            handle.0,
             rgba.as_ptr(),
             c_int::try_from(w).expect("int cast"),
             0,

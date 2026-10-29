@@ -148,14 +148,16 @@ bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_t
 
 impl<'a> Subprocess<'a> {
     /// Claim `start()`'s outstanding +1 on the buffer-stdin writer (if any) for
-    /// the caller to `deref()` after closing the writer; see `StaticPipeWriter`.
-    fn take_pending_start_writer(&self) -> Option<*mut StaticPipeWriter<'a>> {
+    /// the caller to drop after closing the writer; see `StaticPipeWriter`.
+    fn take_pending_start_writer(&self) -> Option<RefPtr<StaticPipeWriter<'a>>> {
         match self.stdin.get() {
             Writable::Buffer(buffer) => {
                 let writer = Writable::buffer_writer_mut(buffer);
                 if writer.started {
                     writer.started = false;
-                    Some(buffer.as_ptr())
+                    // SAFETY: `buffer` keeps the writer live. `started` was the token
+                    // for the +1 `start()` took; clearing it makes that ref ours.
+                    Some(unsafe { RefPtr::from_raw(buffer.as_ptr()) })
                 } else {
                     None
                 }
@@ -929,10 +931,7 @@ impl Subprocess<'_> {
         if let Writable::Buffer(buffer) = self.stdin.get() {
             Writable::buffer_writer_mut(buffer).close();
         }
-        if let Some(writer) = pending_start {
-            // SAFETY: `started` ⇒ start +1 was live entering; last use.
-            unsafe { RefCount::deref(writer) };
-        }
+        drop(pending_start);
 
         if !existing_stdin_value.is_empty() {
             crate::webcore::file_sink::JSSink::forget_subprocess(existing_stdin_value);
@@ -1138,19 +1137,15 @@ impl Subprocess<'_> {
         match io {
             StdioKind::Stdin => {
                 let pending_start = self.take_pending_start_writer();
-                if let Some(writer) = pending_start {
-                    // SAFETY: live StaticPipeWriter with >= 2 refs.
-                    unsafe { (*writer).close() };
+                if let Some(writer) = &pending_start {
+                    Writable::buffer_writer_mut(writer).close();
                 }
                 if !called {
                     Writable::finalize(self);
                 } else {
                     self.stdin.with_mut(|s| s.close());
                 }
-                if let Some(writer) = pending_start {
-                    // SAFETY: `started` ⇒ start +1 was live entering; last use.
-                    unsafe { RefCount::deref(writer) };
-                }
+                drop(pending_start);
             }
             StdioKind::Stdout => {
                 if !called {
@@ -1440,16 +1435,14 @@ pub(crate) fn source_from_blob(b: webcore::AnyBlob) -> Source {
 /// the slots empty) instead of anyone closing them twice.
 #[cfg(windows)]
 impl Subprocess<'_> {
-    pub(crate) fn record_stdio_pipe_ownership(this: *mut Self) {
-        // SAFETY: `this` is the live boxed Subprocess (stable address).
-        let me = unsafe { &*this };
-        for item in me.stdio_pipes.get().iter() {
+    pub(crate) fn record_stdio_pipe_ownership(&self) {
+        for item in self.stdio_pipes.get().iter() {
             if let StdioResult::Buffer(buffer) = item {
                 bun_sys::windows::libuv::open_handles::set_owner(
                     core::ptr::from_ref::<bun_sys::windows::libuv::Pipe>(&**buffer)
                         .cast_mut()
                         .cast(),
-                    this.cast(),
+                    self.as_ctx_ptr().cast(),
                     Some(Self::stop_for_vm_teardown),
                 );
             }

@@ -214,14 +214,16 @@ pub(crate) struct TimerHeap(bun_io::heap::Intrusive<EventLoopTimer, TimerHeapCtx
 
 impl TimerHeap {
     #[inline]
-    pub(crate) fn peek(&self) -> Option<*mut EventLoopTimer> {
-        let r = self.0.peek();
-        if r.is_null() { None } else { Some(r) }
+    pub(crate) fn peek(&self) -> Option<&EventLoopTimer> {
+        // SAFETY: `insert`'s contract keeps a linked node valid, and unlinking
+        // one (`remove`, `delete_min`) takes `&mut self`, so the root outlives
+        // this borrow of the heap. Callers only copy `next` out.
+        unsafe { self.0.peek().as_ref() }
     }
 
     /// # Safety
     /// `v` is a valid, exclusively-owned node not currently in any heap
-    /// (its `IntrusiveField` links are null).
+    /// (its `IntrusiveField` links are null). It stays valid while linked.
     #[inline]
     unsafe fn insert(&mut self, v: *mut EventLoopTimer) {
         // SAFETY: forwarded — see fn contract.
@@ -245,11 +247,11 @@ impl TimerHeap {
     }
 
     #[inline]
-    pub(crate) fn find_max(&self) -> Option<*mut EventLoopTimer> {
+    pub(crate) fn find_max(&self) -> Option<&EventLoopTimer> {
         // SAFETY: all reachable nodes were inserted via `insert()` and remain
         // live for the heap's lifetime (intrusive invariant maintained by `All`).
-        let r = unsafe { self.0.find_max() };
-        if r.is_null() { None } else { Some(r) }
+        // The node outlives this borrow of the heap as in `peek`.
+        unsafe { self.0.find_max().as_ref() }
     }
 
     #[inline]
@@ -618,8 +620,8 @@ impl All {
     /// storage is freed.
     #[cfg(windows)]
     pub(crate) fn close_loop_handles_for_vm_teardown(&mut self) {
-        unsafe extern "C" fn timer_closed(_: *mut uv::Timer) {}
-        unsafe extern "C" fn idle_closed(_: *mut uv::uv_idle_t) {}
+        extern "C" fn timer_closed(_: *mut uv::Timer) {}
+        extern "C" fn idle_closed(_: *mut uv::uv_idle_t) {}
         if !self.uv_timer.data.is_null() {
             self.uv_timer.stop();
             self.uv_timer.close(timer_closed);
@@ -655,21 +657,13 @@ impl All {
             "timer scheduled after teardown closed the heap's uv timer"
         );
 
-        let reg_next = self.timers.peek().map(|timer| {
-            // SAFETY: `peek` returns a live heap node.
-            let next = unsafe { &(*timer).next };
-            Timespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            }
+        let reg_next = self.timers.peek().map(|timer| Timespec {
+            sec: timer.next.sec,
+            nsec: timer.next.nsec,
         });
-        let wtf_next = self.wtf_timers.lock().peek().map(|timer| {
-            // SAFETY: `peek` returns a live heap node.
-            let next = unsafe { &(*timer).next };
-            Timespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            }
+        let wtf_next = self.wtf_timers.lock().peek().map(|timer| Timespec {
+            sec: timer.next.sec,
+            nsec: timer.next.nsec,
         });
         let Some(next_ts) = Self::soonest(reg_next, wtf_next) else {
             return;
@@ -827,12 +821,9 @@ impl All {
                 // SAFETY: `this` is live; the guard drops before `fire`.
                 let mut wtf = unsafe { &(*this).wtf_timers }.lock();
                 let min = wtf.peek()?;
-                // SAFETY: `peek` returned a live heap node.
-                let min_next = unsafe {
-                    Timespec {
-                        sec: (*min).next.sec,
-                        nsec: (*min).next.nsec,
-                    }
+                let min_next = Timespec {
+                    sec: min.next.sec,
+                    nsec: min.next.nsec,
                 };
                 let now = *maybe_now
                     .get_or_insert_with(|| Timespec::now(TimespecMockMode::ForceRealTime));
@@ -902,13 +893,9 @@ impl All {
         let wtf_next = unsafe { Self::drain_due_wtf_timers(this, maybe_now, vm) };
 
         // SAFETY: `this` is live, and only this thread touches the regular heap.
-        let reg_next = (unsafe { &*this }).timers.peek().map(|min| {
-            // SAFETY: `peek` returns a live heap node.
-            let next = unsafe { &(*min).next };
-            Timespec {
-                sec: next.sec,
-                nsec: next.nsec,
-            }
+        let reg_next = (unsafe { &*this }).timers.peek().map(|min| Timespec {
+            sec: min.next.sec,
+            nsec: min.next.nsec,
         });
 
         let Some(next) = Self::soonest(wtf_next, reg_next) else {
@@ -959,19 +946,18 @@ impl All {
             *now = Timespec::now(TimespecMockMode::ForceRealTime);
             *has_set_now = true;
         }
-        // SAFETY: peek returns a live heap node
-        let next = unsafe { &(*timer).next };
         if (Timespec {
-            sec: next.sec,
-            nsec: next.nsec,
+            sec: timer.next.sec,
+            nsec: timer.next.nsec,
         })
         .greater(now)
         {
             return None;
         }
+        let timer: *const EventLoopTimer = timer;
         let deleted = self.timers.delete_min().expect("peek succeeded");
         debug_assert!(core::ptr::eq(deleted, timer));
-        Some(timer)
+        Some(deleted)
     }
 
     /// # Safety

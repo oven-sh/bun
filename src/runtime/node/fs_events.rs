@@ -30,7 +30,7 @@ pub(crate) type CFTypeRef = *mut c_void;
 pub(crate) type FSEventStreamRef = *mut c_void;
 pub(crate) type FSEventStreamCallback = unsafe extern "C" fn(
     FSEventStreamRef,
-    *mut c_void,
+    &FSEventsLoop,
     usize,
     *mut c_void,
     *mut FSEventStreamEventFlags,
@@ -41,7 +41,7 @@ pub(crate) type FSEventStreamCallback = unsafe extern "C" fn(
 #[repr(C)]
 pub(crate) struct CFRunLoopSourceContext {
     pub(crate) version: CFIndex,
-    pub(crate) info: *mut c_void,
+    pub(crate) info: *const FSEventsLoop,
     pub(crate) retain: Option<unsafe extern "C" fn(*const c_void) -> *const c_void>,
     pub(crate) release: Option<unsafe extern "C" fn(*const c_void)>,
     pub(crate) copy_description: Option<unsafe extern "C" fn(*const c_void) -> *mut c_void>,
@@ -49,13 +49,13 @@ pub(crate) struct CFRunLoopSourceContext {
     pub(crate) hash: Option<unsafe extern "C" fn(*const c_void) -> usize>,
     pub(crate) schedule: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
     pub(crate) cancel: Option<unsafe extern "C" fn(*mut c_void, *mut c_void, *mut c_void)>,
-    pub(crate) perform: unsafe extern "C" fn(*mut c_void),
+    pub(crate) perform: unsafe extern "C" fn(Option<&FSEventsLoop>),
 }
 
 #[repr(C)]
 pub(crate) struct FSEventStreamContext {
     pub(crate) version: CFIndex,
-    pub(crate) info: *mut c_void,
+    pub(crate) info: *const FSEventsLoop,
     pub(crate) pad: [*mut c_void; 3],
 }
 
@@ -63,7 +63,7 @@ impl Default for FSEventStreamContext {
     fn default() -> Self {
         Self {
             version: 0,
-            info: ptr::null_mut(),
+            info: ptr::null(),
             pad: [ptr::null_mut(); 3],
         }
     }
@@ -333,12 +333,10 @@ impl FSEventsLoop {
     // Runs in CF thread, executed after `enqueueTaskConcurrent()`. Body
     // discharges its own preconditions; safe `extern "C" fn` coerces to the
     // `CFRunLoopSourceContext.perform` fn-pointer slot.
-    extern "C" fn cf_loop_callback(arg: *mut c_void) {
-        if arg.is_null() {
+    extern "C" fn cf_loop_callback(this: Option<&FSEventsLoop>) {
+        let Some(this) = this else {
             return;
-        }
-        // SAFETY: `arg` is the leaked `&'static FSEventsLoop` set as `ctx.info` in `init()`.
-        let this: &FSEventsLoop = unsafe { &*arg.cast::<FSEventsLoop>() };
+        };
 
         let concurrent = this.tasks.pop_batch();
         let count = concurrent.count;
@@ -383,9 +381,7 @@ impl FSEventsLoop {
 
         let mut ctx = CFRunLoopSourceContext {
             version: 0,
-            info: core::ptr::from_ref::<FSEventsLoop>(this)
-                .cast_mut()
-                .cast::<c_void>(),
+            info: core::ptr::from_ref::<FSEventsLoop>(this),
             retain: None,
             release: None,
             copy_description: None,
@@ -396,7 +392,8 @@ impl FSEventsLoop {
             perform: Self::cf_loop_callback,
         };
 
-        // SAFETY: ctx is stack-local and outlives the call; CF copies it
+        // SAFETY: ctx is stack-local and outlives the call; CF copies it. `perform` gets `info`
+        // back: `this` is freed only on the error paths below, where the source is never scheduled.
         let signal_source =
             unsafe { (cf.run_loop_source_create)(ptr::null_mut(), 0, &raw mut ctx) };
         if signal_source.is_null() {
@@ -451,7 +448,7 @@ impl FSEventsLoop {
     // `FSEventStreamCallback` pointer type.
     extern "C" fn events_cb(
         _: FSEventStreamRef,
-        info: *mut c_void,
+        loop_: &FSEventsLoop,
         num_events: usize,
         event_paths: *mut c_void,
         event_flags: *mut FSEventStreamEventFlags,
@@ -460,8 +457,6 @@ impl FSEventsLoop {
         let paths_ptr = event_paths as *const *const c_char;
         // SAFETY: event_paths is a `char **` of length num_events per FSEvents API
         let paths = unsafe { bun_core::ffi::slice(paths_ptr, num_events) };
-        // SAFETY: `info` is the leaked `&'static FSEventsLoop` set as `ctx.info` in `schedule()`.
-        let loop_: &FSEventsLoop = unsafe { &*info.cast::<FSEventsLoop>() };
         // SAFETY: event_flags is an array of length num_events per FSEvents API
         let event_flags = unsafe { bun_core::ffi::slice(event_flags.cast_const(), num_events) };
 
@@ -607,9 +602,8 @@ impl FSEventsLoop {
                 ptr::null(),
             );
             let mut ctx = FSEventStreamContext {
-                info: core::ptr::from_ref::<FSEventsLoop>(self)
-                    .cast_mut()
-                    .cast::<c_void>(),
+                // `events_cb` gets this back; the loop is leaked, so it outlives the stream.
+                info: core::ptr::from_ref::<FSEventsLoop>(self),
                 ..Default::default()
             };
 

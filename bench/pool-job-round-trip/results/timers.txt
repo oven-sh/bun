@@ -1,0 +1,8 @@
+cpus=0-3   awake    2                        base   callsPerSec=21872 [7971..28810]  ticksPerSec=679 [606..803]  lateP50Us=53 [11..195]  lateP99Us=4224 [2952..7849]
+cpus=0-3   awake    2                        fix    callsPerSec=171248 [135520..282903]  ticksPerSec=795 [496..859]  lateP50Us=8 [3..10]  lateP99Us=3414 [2832..10019]
+cpus=0-3   normal   2                        base   callsPerSec=7489 [7072..9531]  ticksPerSec=903 [848..912]  lateP50Us=71 [64..81]  lateP99Us=685 [562..2747]
+cpus=0-3   normal   2                        fix    callsPerSec=10958 [7874..21536]  ticksPerSec=906 [774..911]  lateP50Us=74 [68..85]  lateP99Us=770 [585..3265]
+cpus=0-3   awake    2                        base   jobs=605 [551..741]  ticks=708 [638..884]  lateP50Us=60 [55..65]  lateP90Us=1322 [73..3228]  lateP99Us=9275 [2786..12291]  lateMaxUs=56789 [20085..347792]
+cpus=0-3   awake    2                        fix    jobs=675 [561..1205]  ticks=730 [635..907]  lateP50Us=59 [54..664]  lateP90Us=1580 [209..2822]  lateP99Us=7391 [2877..11301]  lateMaxUs=23796 [7344..70916]
+cpus=0-3   normal   2                        base   jobs=1239 [1103..1248]  ticks=573 [526..614]  lateP50Us=990 [789..999]  lateP90Us=3926 [3164..5010]  lateP99Us=6587 [6063..9453]  lateMaxUs=12047 [8032..27493]
+cpus=0-3   normal   2                        fix    jobs=1176 [1130..1240]  ticks=570 [548..574]  lateP50Us=996 [973..1004]  lateP90Us=3946 [3026..4427]  lateP99Us=7207 [7009..7656]  lateMaxUs=20899 [9563..74884]

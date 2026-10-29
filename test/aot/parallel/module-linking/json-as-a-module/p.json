@@ -1,0 +1,1 @@
+{ "name": "p", "version": "1.2.3", "nested": { "a": [1, 2] }, "default": "a key named default", "a-b": 1 }

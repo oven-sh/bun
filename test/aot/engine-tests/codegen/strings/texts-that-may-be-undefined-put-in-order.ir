@@ -1,0 +1,127 @@
+# The four relations where an operand is a character read from a text, which is undefined beyond its end, or an element of a list of texts.
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="texts-that-may-be-undefined-put-in-order.ts" displayPath="texts-that-may-be-undefined-put-in-order.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = String string=""
+    v3 = String string="a"
+    v4 = String string="m"
+    v5 = String string="z"
+    v6 = String string="mm"
+    v7 = String string="ml"
+    v8 = String string="mn"
+    v9 = String string="M"
+    v10 = String string="0"
+    v11 = String string="00"
+    v12 = String string="9"
+    v13 = String string="_"
+    v14 = String string="\u{e9}"
+    v15 = String string="\u{4e2d}"
+    v16 = String string="\u{4e2d}m"
+    v17 = String string="m\u{4e2d}"
+    v18 = String string="\u{1f600}"
+    v19 = String string="left "
+    v20 = String string="right"
+    v21 = PropGet v20 key="repeat"
+    v22 = Integer integer=2
+    v23 = Call v21, v20, v22 calleeKey="repeat" calleeName="repeat"
+    v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v25 = Add v19, v24
+    v26 = String string="xxm"
+    v27 = String string="yy"
+    v28 = PropGet v27 key="repeat"
+    v29 = Integer integer=3
+    v30 = Call v28, v27, v29 calleeKey="repeat" calleeName="repeat"
+    v31 = Convert v30 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v32 = Add v26, v31
+    v33 = PropGet v32 key="slice"
+    v34 = Integer integer=2
+    v35 = Call v33, v32, v34 calleeKey="slice" calleeName="slice"
+    v36 = Convert v35 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v37 = String string="xxm"
+    v38 = String string="yy"
+    v39 = PropGet v38 key="repeat"
+    v40 = Integer integer=3
+    v41 = Call v39, v38, v40 calleeKey="repeat" calleeName="repeat"
+    v42 = Convert v41 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v43 = Add v37, v42
+    v44 = PropGet v43 key="slice"
+    v45 = Integer integer=2
+    v46 = Integer integer=3
+    v47 = Call v44, v43, v45, v46 calleeKey="slice" calleeName="slice"
+    v48 = Convert v47 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v49 = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v25, v36, v48 contents=undefined|null|string
+    v50 = Convert v49 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]}
+    v51 = Integer
+    v52 = Convert v51 declared={type=number}
+    Jump -> next b1(v52)
+  b1(v53: number):
+    LoopHint
+    v55 = Convert v53 declared={type=i32 flags=[IsExpected]}
+    v56 = PropGet v50 key="length"
+    v57 = Convert v56 declared={type=number} illTypedCause=Assertion
+    v58 = LessEq v55, v57
+    Branch v58 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v59):
+    v60 = Convert v59 declared={type=i32 flags=[IsExpected]}
+    v61 = ElemGet v50, v60
+    v62 = Increment v60
+    v63 = Convert v62 declared={type=number}
+    Jump -> next b1(v63)
+  b3(v64):
+    v65 = String string="git commit -m 'Fix 42' && ls /usr | grep X_9z\u{e9}\u{4e2d}"
+    v66 = Convert v65 declared={type=undefined|null|"git commit -m 'Fix 42' && ls /usr | grep X_9z\u{e9}\u{4e2d}" flags=[OmitsNull, OmitsUndefined]}
+    v67 = String string=""
+    v68 = Convert v67 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v69 = Integer integer=-1
+    v70 = Convert v69 declared={type=number}
+    Jump -> next b4(v68, v70)
+  b4(v71: undefined|null|string, v72: number):
+    LoopHint
+    v74 = Convert v72 declared={type=i32 flags=[IsExpected]}
+    v75 = PropGet v66 key="length"
+    v76 = Convert v75 declared={type=number} illTypedCause=Assertion
+    v77 = Integer integer=1
+    v78 = Add v76, v77
+    v79 = LessEq v74, v78
+    Branch v79 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v80):
+    v81 = Convert v80 declared={type=i32 flags=[IsExpected]}
+    v82 = ElemGet v66, v81
+    v83 = Convert v82 declared={type=undefined|null|string flags=[OmitsNull]} illTypedCause=FromLooseType
+    v84 = Call v1, -, v83 calleeName="isWordCharacter"
+    v85 = Convert v84 declared={type=boolean}
+    v86 = String string="w"
+    v87 = Add v71, v86
+    v88 = Convert v87 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v89 = Increment v81
+    v90 = Convert v89 declared={type=number}
+    Jump -> next b4(v88, v90)
+  b6(v91):
+    v92 = Integer
+    v93 = Convert v92 declared={type=number}
+    v94 = Convert v93 declared={type=i32 flags=[IsExpected]}
+    v95 = Integer
+    v96 = Convert v95 declared={type=number}
+    Jump -> next b7(v96)
+  b7(v97: number):
+    LoopHint
+    v99 = Convert v97 declared={type=i32 flags=[IsExpected]}
+    v100 = Convert v99 declared={type=i32 flags=[IsExpected]}
+    v101 = Integer integer=2
+    v102 = Add v100, v101
+    v103 = Convert v102 declared={type=number}
+    Jump -> next b7(v103)
+}
+function f1 name="isWordCharacter" module=m0 position=323 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 141, patchpoints: 24, rare instructions: 63, polls: 3
+# CHECK-NEXT: end of function f0

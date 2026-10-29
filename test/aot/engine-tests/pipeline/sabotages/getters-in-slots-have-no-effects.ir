@@ -1,0 +1,6 @@
+# sabotage=GettersInSlotsHaveNoEffects: the build stops
+# FORM: AsRead
+# RUN: run-in-shell
+# OPTIONS: sabotage=GettersInSlotsHaveNoEffects
+# DIAGNOSTIC: GuardNotAvailable
+# PROGRAM-OF: getters-in-slots-have-no-effects-left-alone.ir

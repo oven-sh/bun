@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { unsupported } from "../aot/harness/commands";
 import { run } from "../aot/harness/run";
-import { unsupported } from "../aot/run-programs";
 
 const files = {
   "package.json": JSON.stringify({ name: "suite", type: "module" }),

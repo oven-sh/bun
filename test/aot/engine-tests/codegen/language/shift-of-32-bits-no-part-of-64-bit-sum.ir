@@ -1,0 +1,204 @@
+# -- source: shift-of-32-bits-no-part-of-64-bit-sum.ts
+# // `(u << 1) >>> 0` wraps at 32 bits and is then added as a wider integer.
+# function twice(flag: number, u: number): number {
+#   let sum = 0;
+#   if (flag & 1) {
+#     u = (u << 1) >>> 0;
+#     sum = u + u;
+#   }
+#   return sum + u;
+# }
+# let all = 0;
+# for (let i = 0; i < 40; i++) all += twice(i, (i * 1234567891) >>> 0);
+# console.log(all);
+# console.log(twice(1, 3000000000), twice(1, 4294967295), twice(1, 2147483648), twice(1, 1073741824), twice(0, 4294967295));
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="shift-of-32-bits-no-part-of-64-bit-sum.ts" displayPath="shift-of-32-bits-no-part-of-64-bit-sum.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=227 kind=Variable
+typesite w1 module=m0 position=90 kind=Parameter
+typesite w2 module=m0 position=104 kind=Parameter
+typesite w3 module=m0 position=75 kind=Result
+typesite w4 module=m0 position=245 kind=Variable
+typesite w5 module=m0 position=272 kind=CallResult
+typesite w6 module=m0 position=336 kind=CallResult
+typesite w7 module=m0 position=358 kind=CallResult
+typesite w8 module=m0 position=380 kind=CallResult
+typesite w9 module=m0 position=402 kind=CallResult
+typesite w10 module=m0 position=424 kind=CallResult
+typesite w11 module=m0 position=131 kind=Variable
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w0}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number site=w4}
+    Jump -> next b2(v3, v5)
+  b2(v6: number, v7: number):
+    LoopHint
+    v9 = Integer integer=40
+    v10 = Less v7, v9
+    Branch v10 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v11):
+    Jump -> next b4()
+  b4():
+    v12 = Integer integer=1234567891
+    v13 = Mul v11, v12
+    v14 = Integer
+    v15 = URShift v13, v14
+    v16 = Call v1, -, v11, v15 calleeName="twice"
+    v17 = Convert v16 declared={type=number site=w5}
+    v18 = Add v6, v17
+    v19 = Convert v18 declared={type=number site=w0}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v11
+    v21 = Convert v20 declared={type=number site=w4}
+    Jump -> next b2(v19, v21)
+  b6(v22):
+    Jump -> next b7()
+  b7():
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="console" [isFreeName]
+    v25 = Convert v24 declared={type=builtin(Console) flags=[IsExpected]}
+    v26 = PropGet v25 key="log"
+    v27 = Convert v26 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v28 = Call v27, v25, v6 calleeKey="log" calleeName="console.log"
+    v29 = Builtin builtin=GlobalThis
+    v30 = PropGet v29 key="console" [isFreeName]
+    v31 = Convert v30 declared={type=builtin(Console) flags=[IsExpected]}
+    v32 = PropGet v31 key="log"
+    v33 = Convert v32 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v34 = Integer integer=1
+    v35 = Integer integer=3000000000
+    v36 = Call v1, -, v34, v35 calleeName="twice"
+    v37 = Convert v36 declared={type=number site=w6}
+    v38 = Integer integer=1
+    v39 = Integer integer=4294967295
+    v40 = Call v1, -, v38, v39 calleeName="twice"
+    v41 = Convert v40 declared={type=number site=w7}
+    v42 = Integer integer=1
+    v43 = Integer integer=2147483648
+    v44 = Call v1, -, v42, v43 calleeName="twice"
+    v45 = Convert v44 declared={type=number site=w8}
+    v46 = Integer integer=1
+    v47 = Integer integer=1073741824
+    v48 = Call v1, -, v46, v47 calleeName="twice"
+    v49 = Convert v48 declared={type=number site=w9}
+    v50 = Integer
+    v51 = Integer integer=4294967295
+    v52 = Call v1, -, v50, v51 calleeName="twice"
+    v53 = Convert v52 declared={type=number site=w10}
+    v54 = Call v33, v31, v37, v41, v45, v49, v53 calleeKey="log" calleeName="console.log"
+    v55 = Undefined
+    Return v55
+}
+function f1 name="twice" module=m0 position=75 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number site=w1}, {type=number site=w2}] results=[{type=number site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    Jump -> next b1()
+  b1():
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w11}
+    v4 = Integer integer=1
+    v5 = BitAnd v0, v4
+    v6 = ToBoolean v5
+    Branch v6 -> taken b2(| 0), notTaken b4(| 0)
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = Integer integer=1
+    v9 = LShift v1, v8
+    v10 = Integer
+    v11 = URShift v9, v10
+    v12 = Convert v11 declared={type=number site=w2}
+    v13 = Add v12, v12
+    v14 = Convert v13 declared={type=number site=w11}
+    Jump -> next b5(v14, v12)
+  b4(v15):
+    Jump -> next b5(v3, v1)
+  b5(v16: number, v17: number):
+    v18 = Add v16, v17
+    v19 = Convert v18 declared={type=number site=w3}
+    Return v19
+}
+# -- generated: f0 twice
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v0, v1)
+# CHECK-NEXT: b1(v2: int|whole, v3: int[0, 40]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v5: 40 = Integer integer=40
+# CHECK-NEXT: v6: boolean = Less v3, v5
+# CHECK-NEXT: Branch v6 -> taken b2(| 0), notTaken b3()
+# CHECK-NEXT: b2(v7: int[0, 39]):
+# CHECK-NEXT: v8: 1234567891 = Integer integer=1234567891
+# CHECK-NEXT: v9: int[0, 48148147749] = Mul v7, v8
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: v11: int[0, 4294967295] = URShift v9, v10
+# CHECK-NEXT: v12: 0 = Integer
+# CHECK-NEXT: v13: 1 = Integer integer=1
+# CHECK-NEXT: v14: int[0, 1] = BitAnd v7, v13
+# CHECK-NEXT: v15: boolean = ToBoolean v14
+# CHECK-NEXT: Branch v15 -> taken b4(), notTaken b5(v12, v11)
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v16: undefined = CallBuiltin -, v2 overload=ConsoleLog/0 accessSite=3
+# CHECK-NEXT: v17: 1 = Integer integer=1
+# CHECK-NEXT: v18: 3000000000 = Integer integer=3000000000
+# CHECK-NEXT: v19: int[0, 12884901885] = CallDirect v17, v18 function=f1 accessSite=6
+# CHECK-NEXT: v20: 1 = Integer integer=1
+# CHECK-NEXT: v21: 4294967295 = Integer integer=4294967295
+# CHECK-NEXT: v22: int[0, 12884901885] = CallDirect v20, v21 function=f1 accessSite=7
+# CHECK-NEXT: v23: 1 = Integer integer=1
+# CHECK-NEXT: v24: 2147483648 = Integer integer=2147483648
+# CHECK-NEXT: v25: int[0, 12884901885] = CallDirect v23, v24 function=f1 accessSite=8
+# CHECK-NEXT: v26: 1 = Integer integer=1
+# CHECK-NEXT: v27: 1073741824 = Integer integer=1073741824
+# CHECK-NEXT: v28: int[0, 12884901885] = CallDirect v26, v27 function=f1 accessSite=9
+# CHECK-NEXT: v29: 4294967295 = Integer integer=4294967295
+# CHECK-NEXT: v30: undefined = CallBuiltin -, v19, v22, v25, v28, v29 overload=ConsoleLog/0 accessSite=11
+# CHECK-NEXT: v31: undefined = Undefined
+# CHECK-NEXT: Return v31
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v32: 1 = Integer integer=1
+# CHECK-NEXT: v33: i32 = LShift v11, v32
+# CHECK-NEXT: v34: 0 = Integer
+# CHECK-NEXT: v35: int[0, 4294967295] = URShift v33, v34
+# CHECK-NEXT: v36: int[0, 8589934590] = Add v35, v35
+# CHECK-NEXT: Jump -> next b5(v36, v35)
+# CHECK-NEXT: b5(v37: int[0, 8589934590], v38: int[0, 4294967295]):
+# CHECK-NEXT: v39: int[0, 12884901885] = Add v37, v38
+# CHECK-NEXT: v40: int|whole = Add v2, v39
+# CHECK-NEXT: v41: int[1, 40] = Increment v7
+# CHECK-NEXT: Jump -> next b1(v40, v41)
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="twice"
+# CHECK: module=m0 position=75 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 39] site=w1}, {type=int[0, 4294967295] site=w2}] results=[{type=int[0, 12884901885] site=w3}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int[0, 39], v1: int[0, 4294967295]):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: v4: int[0, 1] = BitAnd v0, v3
+# CHECK-NEXT: v5: boolean = ToBoolean v4
+# CHECK-NEXT: Branch v5 -> taken b1(), notTaken b2(v2, v1)
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: v7: i32 = LShift v1, v6
+# CHECK-NEXT: v8: 0 = Integer
+# CHECK-NEXT: v9: int[0, 4294967295] = URShift v7, v8
+# CHECK-NEXT: v10: int[0, 8589934590] = Add v9, v9
+# CHECK-NEXT: Jump -> next b2(v10, v9)
+# CHECK-NEXT: b2(v11: int[0, 8589934590], v12: int[0, 4294967295]):
+# CHECK-NEXT: v13: int[0, 12884901885] = Add v11, v12
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: }

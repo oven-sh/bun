@@ -1,0 +1,171 @@
+# What built ins make: programs p map from pairs. It prints what plain Bun prints.
+# @ts-nocheck
+# Instructions an entry of new Map(pairs) | new Set(strings) | a loop of map.set | a loop of set.add, keys that are strings.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="programs-p-map-from-pairs.ts" displayPath="programs-p-map-from-pairs.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=302
+data d0 root=Object{layout=L0} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="argv"
+    v2 = Convert v1 declared={type=builtin(ProcessArgv) flags=[IsExpected]}
+    v3 = Integer integer=2
+    v4 = ElemGet v2, v3
+    v5 = Convert v4 declared={type=undefined|null|string flags=[IsExpected]}
+    v6 = Integer integer=500
+    v7 = Convert v6 declared={type=500 flags=[IsExpected]}
+    v8 = Integer integer=400
+    v9 = Convert v8 declared={type=400 flags=[IsExpected]}
+    v10 = Data data=d0
+    v11 = Integer
+    v12 = Convert v11 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v12)
+  b1(v13):
+    LoopHint
+    v15 = Less v13, v7
+    Branch v15 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+  b2(v16, v17):
+    v18 = String string="key"
+    v19 = Add v18, v16
+    v20 = String string="value"
+    v21 = Add v20, v16
+    ElemSet v10, v19, v21
+    v23 = Increment v16
+    v24 = Convert v23 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v24)
+  b3(v25, v26):
+    v27 = Builtin builtin=Object
+    v28 = Builtin builtin=ObjectEntries
+    v29 = Call v28, v27, v10 calleeName="Object.entries"
+    v30 = Convert v29 declared={type=undefined|null|Array<undefined|null|Array> flags=[IsExpected]}
+    v31 = Builtin builtin=Object
+    v32 = Builtin builtin=ObjectKeys
+    v33 = Call v32, v31, v10 calleeName="Object.keys"
+    v34 = Convert v33 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v35 = Integer
+    v36 = Convert v35 declared={type=number flags=[IsExpected]}
+    v37 = Integer
+    v38 = Convert v37 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v36, v38)
+  b4(v39, v40):
+    LoopHint
+    v42 = String string="map"
+    v43 = StrictEq v5, v42
+    Branch v43 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v44):
+    v45 = Builtin builtin=Map
+    v46 = Construct v45, -, v30 calleeName="Map"
+    v47 = Convert v46 declared={type=undefined|null|Map<undefined|null|string, anything> flags=[IsExpected]}
+    v48 = PropGet v47 key="size"
+    v49 = Convert v48 declared={type=number flags=[IsExpected]}
+    v50 = Add v39, v49
+    v51 = Convert v50 declared={type=number flags=[IsExpected]}
+    v52 = Increment v40
+    v53 = Convert v52 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v51, v53)
+  b6(v54):
+    v55 = Builtin builtin=Map
+    v56 = Construct v55 calleeName="Map"
+    v57 = Convert v56 declared={type=undefined|null|Map flags=[IsExpected]}
+    v58 = Integer
+    v59 = Convert v58 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b7(v59)
+  b7(v60):
+    LoopHint
+    v62 = PropGet v57 key="set"
+    v63 = Convert v62 declared={type=undefined|null|function flags=[IsExpected]}
+    v64 = ElemGet v34, v60
+    v65 = Convert v64 declared={type=undefined|null|string flags=[IsExpected]}
+    v66 = Call v63, v57, v65, v60 calleeKey="set" calleeName="map.set"
+    v67 = Increment v60
+    v68 = Convert v67 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b7(v68)
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(Process) = Builtin builtin=Process
+# CHECK-NEXT: v1: anything = PropGet v0 key="argv" accessSite=0
+# CHECK-NEXT: v2: anything ~ builtin(ProcessArgv) = Upcast v1 castType=anything
+# CHECK-NEXT: v3: 2 = Integer integer=2
+# CHECK-NEXT: v4: anything = ElemGet v2, v3 accessSite=1
+# CHECK-NEXT: v5: anything ~ undefined|null|string = Upcast v4 castType=anything
+# CHECK-NEXT: v6: 500 = Integer integer=500
+# CHECK-NEXT: v7: 400 = Integer integer=400
+# CHECK-NEXT: v8: object = NewDictionary
+# CHECK-NEXT: v59: Object = AssumeType v8 provenType=Object
+# CHECK-NEXT: v9: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v9)
+# CHECK-NEXT: b1(v10: int[0, 500]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v12: boolean = Less v10, v6
+# CHECK-NEXT: Branch v12 -> taken b2(| 0, 1), notTaken b3(| 0, 1)
+# CHECK-NEXT: b2(v13: int[0, 499], v14: 500):
+# CHECK-NEXT: v15: "key" = String string="key"
+# CHECK-NEXT: v16: string = Add v15, v13
+# CHECK-NEXT: v17: "value" = String string="value"
+# CHECK-NEXT: v18: string = Add v17, v13
+# CHECK-NEXT: ElemSet v59, v16, v18 accessSite=2
+# CHECK-NEXT: v20: int[1, 500] = Increment v13
+# CHECK-NEXT: Jump -> next b1(v20)
+# CHECK-NEXT: b3(v21: 500, v22: 500):
+# CHECK-NEXT: v23: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v24: builtin(ObjectEntries) = Builtin builtin=ObjectEntries
+# CHECK-NEXT: v25: anything = Call v24, v23, v59 calleeName="Object.entries" accessSite=3 callees=[builtin(ObjectEntries)]
+# CHECK-NEXT: v60: Array<Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v25 provenType=Array<Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v26: Array<Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = Upcast v60 castType=anything
+# CHECK-NEXT: v61: Array<Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<Array<undefined|string, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v27: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v28: builtin(ObjectKeys) = Builtin builtin=ObjectKeys
+# CHECK-NEXT: v29: anything = Call v28, v27, v59 calleeName="Object.keys" accessSite=4 callees=[builtin(ObjectKeys)]
+# CHECK-NEXT: v62: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v30: Array<string, proven, pristine[Storage, Names, Dense]> = Upcast v62 castType=anything
+# CHECK-NEXT: v63: Array<string, proven, pristine[Storage, Names, Dense]> = AssumeType v30 provenType=Array<string, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v31: 0 = Integer
+# CHECK-NEXT: v32: 0 = Integer
+# CHECK-NEXT: Jump -> next b4(v31, v32)
+# CHECK-NEXT: b4(v33: number, v34: int|whole):
+# CHECK-NEXT: v64: number = AssumeType v33 provenType=number
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v36: "map" = String string="map"
+# CHECK-NEXT: v37: boolean = StrictEq v5, v36
+# CHECK-NEXT: Branch v37 -> taken b5(| 0), notTaken b6(| 0)
+# CHECK-NEXT: b5(v38: "map"):
+# CHECK-NEXT: v39: builtin(Map) = Builtin builtin=Map
+# CHECK-NEXT: v40: anything ~ object = Construct v39, -, v61 calleeName="Map" accessSite=5 callees=[builtin(Map)]
+# CHECK-NEXT: v65: Map<string, undefined|string, proven, pristine[Storage, Names]> = AssumeType v40 provenType=Map<string, undefined|string, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v41: Map<string, undefined|string, proven, pristine[Storage, Names]> = Upcast v65 castType=anything
+# CHECK-NEXT: v66: Map<string, undefined|string, proven, pristine[Storage, Names]> = AssumeType v41 provenType=Map<string, undefined|string, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v42: anything = PropGet v66 key="size" accessSite=6
+# CHECK-NEXT: v67: number = AssumeType v42 provenType=number
+# CHECK-NEXT: v43: number = Upcast v67 castType=anything
+# CHECK-NEXT: v68: number = AssumeType v43 provenType=number
+# CHECK-NEXT: v44: number = Add v64, v68
+# CHECK-NEXT: v69: number = AssumeType v44 provenType=number
+# CHECK-NEXT: v45: int|whole = Increment v34
+# CHECK-NEXT: Jump -> next b4(v69, v45)
+# CHECK-NEXT: b6(v46: anything ~ undefined|null|string):
+# CHECK-NEXT: v47: builtin(Map) = Builtin builtin=Map
+# CHECK-NEXT: v48: anything ~ object = Construct v47 calleeName="Map" accessSite=7 callees=[builtin(Map)]
+# CHECK-NEXT: v70: Map<undefined|string, int|whole, proven, pristine[Storage, Names]> = AssumeType v48 provenType=Map<undefined|string, int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v49: Map<undefined|string, int|whole, proven, pristine[Storage, Names]> = Upcast v70 castType=anything
+# CHECK-NEXT: v71: Map<undefined|string, int|whole, proven, pristine[Storage, Names]> = AssumeType v49 provenType=Map<undefined|string, int|whole, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v50: 0 = Integer
+# CHECK-NEXT: Jump -> next b7(v50)
+# CHECK-NEXT: b7(v51: int|whole ~ int[0, 2147483647]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v53: anything = PropGet v71 key="set" accessSite=8
+# CHECK-NEXT: v72: builtin(MapPrototypeSet) = AssumeType v53 provenType=builtin(MapPrototypeSet)
+# CHECK-NEXT: v54: builtin(MapPrototypeSet) = Upcast v72 castType=anything
+# CHECK-NEXT: v73: builtin(MapPrototypeSet) = AssumeType v54 provenType=builtin(MapPrototypeSet)
+# CHECK-NEXT: v55: undefined|string = ElemGet v63, v51 accessSite=9
+# CHECK-NEXT: v56: anything = Call v73, v71, v55, v51 calleeKey="set" calleeName="map.set" accessSite=10 callees=[builtin(MapPrototypeSet)]
+# CHECK-NEXT: v57: int|whole ~ int[1, 2147483648] = Increment v51
+# CHECK-NEXT: v58: int|whole ~ int[1, 2147483647] = Upcast v57 castType=int|whole
+# CHECK-NEXT: Jump -> next b7(v58)
+# CHECK-NEXT: }

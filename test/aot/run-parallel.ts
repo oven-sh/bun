@@ -73,7 +73,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { availableParallelism, getPriority, tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
 import { withoutCoreDump } from "./harness/without-core-dump";
@@ -362,15 +362,12 @@ const isASAN = (() => {
     return basename(process.execPath).includes("asan");
   }
 })();
-// On Windows arm64 CI runs the driver at low priority in the background of other tests, which may take every core for a minute.
-const patience = getPriority() > 0 ? 3 : 1;
 /** In seconds, for a run or the build of one program, and for each further program of a build. A build that is ended for nothing is made twice, so the limit is several times what a busy machine takes. */
 const timeLimit = (cmd: string[], programs = 1) =>
-  patience *
-  ((isASAN || cmd.some(flag => /^--aot-(validate$|verify-each-pass$|check=.*\bverify-each-pass\b)/.test(flag))
+  (isASAN || cmd.some(flag => /^--aot-(validate$|verify-each-pass$|check=.*\bverify-each-pass\b)/.test(flag))
     ? 240
     : 90) +
-    (isASAN ? 30 : 15) * (programs - 1));
+  (isASAN ? 30 : 15) * (programs - 1);
 const secondsToAnswer = 3;
 
 /** Each child leads a process group of its own, which holds whatever it starts. */

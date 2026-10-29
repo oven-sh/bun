@@ -31,7 +31,7 @@ import {
 } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { Socket } from "node:net";
-import { availableParallelism, constants, setPriority, totalmem, userInfo } from "node:os";
+import { availableParallelism, totalmem, userInfo } from "node:os";
 import { basename, dirname, extname, join, relative, sep } from "node:path";
 import { createInterface } from "node:readline";
 import { setTimeout as setTimeoutPromise } from "node:timers/promises";
@@ -515,7 +515,7 @@ const aotTestsThatStartToolsOfTheEngine = [
 const toolsOfTheEngine = [`*/jsc${isWindows ? ".exe" : ""}`, `*/testaot${isWindows ? ".exe" : ""}`, "*/aot-tests/*"];
 let unpackToolsOfTheEngine: ((isNeeded: boolean) => Promise<unknown>) | undefined;
 // A fifth of the unpacked archive. Other CI steps read them, no test does.
-const linkerMaps = ["*/bun-*.linker-map", "*/bun-*.map"];
+const linkerMaps = ["*/bun-*.linker-map", ...(isWindows ? ["*/bun-*.map"] : [])];
 // With test/aot go the tests of the tools that the compiler is built and started with.
 const isOfAotCompiler =
   /^(?:aot|bundler\/trim-by-use|bundler\/trim-runtime-icu|cli\/compile|internal\/builtins-table|internal\/trim)\/|^cli\/run\/run-aot\.|^bundler\/compile-(?:aot|trim)-|^cli\/aot-|^bundler\/bundler_compile_aot\.|^cli\/(?:crash-if-interpreter-is-used|inspect\/compile-aot-|test\/test-aot)/;
@@ -547,23 +547,6 @@ function runsOnThisLane(testPath: string, execPath: string) {
     (isMusl && beginsWithOneOf(aotTestsThatAskAlpine))
   );
 }
-// Compiling is CPU-bound, and a serial test leaves most cores idle. Where this is set, the compiler's programs, its
-// long test files and its bucket run at the lowest priority in the background of the shard's serial tests, and their results
-// are printed afterwards. Windows on arm64 alone. Elsewhere it disturbs tests that judge by the order of callbacks or by a
-// clock, and on Windows x64, where two threads share a core, work at idle priority gets too little time.
-const usesIdleCores = isWindows && !isX64;
-// These use every core for a minute: a low-priority program would starve until its time limit.
-const saturatesCpu = (testPath: string) =>
-  /^cli\/check\/(?:conformance\/|differential|check\.)/.test(testPath.replaceAll("\\", "/"));
-// A file system in memory that executables may be started from.
-const memoryFolder = (() => {
-  try {
-    const [, options] = /^\S+ \/dev\/shm tmpfs (\S+)/m.exec(readFileSync("/proc/mounts", "utf8")) ?? [];
-    return isCI && options && !options.split(",").includes("noexec") ? "/dev/shm" : undefined;
-  } catch {
-    return undefined;
-  }
-})();
 // A file says so where it judges by a clock, or by the memory that is held or left.
 const runsAlone = (testPath: string) => /^\/\/ Runs alone: /m.test(readFileSync(join(testsPath, testPath), "utf8"));
 const withSymbols = (execPath: string) =>
@@ -1036,26 +1019,20 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   type AotVerdict = Exclude<AotDriverLine, { state: "compiling" }>;
 
   /** One process compiles `files`, runs each program and plain Bun on the same file, and prints a line of JSON for each. */
-  const runAotDriver = async (bun: string, files: string[], inBackground = false) => {
+  const runAotDriver = async (bun: string, files: string[]) => {
     const verdicts = new Map<string, AotVerdict>();
     const started = new Set<string>();
     const byPath = new Map(files.map(testPath => [join(testsPath, testPath), testPath]));
-    // The driver's executables live for seconds: half a gigabyte at a time, gigabytes in all. It starts while the unpacking and
-    // the installs keep the disk at its limit, where every write waits. So they stay in memory where programs may run from it.
-    const folder = mkdtempSync(join(hasSanitizer(bun) ? tmpdir() : (memoryFolder ?? tmpdir()), "aot-programs-"));
+    const folder = mkdtempSync(join(tmpdir(), "aot-programs-"));
     const list = join(folder, "files.txt");
     writeFileSync(list, [...byPath.keys()].join("\n") + "\n");
     let unfinishedLine = "";
     let unexpectedLine: string | undefined;
     // The installs print meanwhile.
     let said = "";
-    // Leave a core to the test in the foreground.
-    const jobs = inBackground ? Math.max(1, aotWidth - 1) : aotWidth;
     const { error, exitCode, crashes } = await spawnBun(bun, {
-      args: [aotDriver, ...flagsOfAotDriver(bun), `--jobs=${jobs}`, `--files-from=${list}`],
+      args: [aotDriver, ...flagsOfAotDriver(bun), `--jobs=${aotWidth}`, `--files-from=${list}`],
       cwd,
-      env: { TMPDIR: folder, BUN_TMPDIR: folder },
-      lowPriority: inBackground,
       timeout: Math.max(60_000, Math.min(60 * 60_000, jobBudgetMs() - 5 * 60_000)),
       idleTimeout: 4 * 60_000,
       // It ends what it started when it is asked to end.
@@ -1116,7 +1093,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
     const listed = new Promise(setImmediate).then(() => {
       const tests = getRelevantTests(testsPath, getTestModifiers(profileName), getTestExpectations(), bun);
       const programs = tests.filter(isAotProgram);
-      const driver = programs.length ? runAotDriver(bun, programs, usesIdleCores) : undefined;
+      const driver = programs.length ? runAotDriver(bun, programs) : undefined;
       driver?.catch(() => {});
       return { tests, driver };
     });
@@ -1314,7 +1291,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
         if (attempt > 1) console.log(grouptitle);
         const startedAt = Date.now();
         result = await fn(index);
-        const seconds = ((result.duration ?? Date.now() - startedAt) / 1000).toFixed(2);
+        const seconds = ((Date.now() - startedAt) / 1000).toFixed(2);
         if (result.ok) console.log(`${grouptitle} ${getAnsi("gray")}(${seconds}s)${getAnsi("reset")}`);
       } else if (concurrent) {
         console.log(grouptitle);
@@ -1399,8 +1376,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   // The programs need nothing from node_modules, and compiling them is CPU-bound. An install waits for the disk, so the driver
   // starts beside the installs, with the Bun that arrives first. No test runs beside it.
   const aotPrograms = tests.filter(isAotProgram);
-  let earlyAotDriver =
-    driver ?? (aotPrograms.length ? runAotDriver(bunFor(execPath, "aot/"), aotPrograms, usesIdleCores) : undefined);
+  let earlyAotDriver = driver ?? (aotPrograms.length ? runAotDriver(bunFor(execPath, "aot/"), aotPrograms) : undefined);
   // runAotPrograms() awaits it.
   earlyAotDriver?.catch(() => {});
 
@@ -1452,8 +1428,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
   if (!failedResults.length) {
     await Promise.all(beforeFirstTest);
 
-    /** First tries that began in the background. */
-    const earlyBuildingTests = new Map<string, Promise<TestResult>>();
     const runOneTest = async (testPath: string, concurrent: boolean, saysDuration = false) => {
       await awaitNapiPrebuild(testPath);
       const absoluteTestPath = join(testsPath, testPath);
@@ -1579,8 +1553,7 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
         return runTest(
           title,
           async () =>
-            (++attempt === 1 && earlyBuildingTests.get(testPath)) ||
-            spawnBunTest(bunForTry(execPath, testPath, attempt), join("test", testPath), {
+            spawnBunTest(bunForTry(execPath, testPath, ++attempt), join("test", testPath), {
               cwd,
               filesAtATime: saysDuration ? buildingFilesWidth : 1,
               stdout: concurrent ? () => {} : pipeTestStdout(process.stdout),
@@ -1593,9 +1566,11 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       }
     };
 
-    /** One `bun test --parallel` process for `bucketFiles`. In the background it keeps its output until it is asked for. */
-    const startParallelBucket = (execPath: string, bucketFiles: string[], inBackground = false) => {
+    const runParallelBucket = async (execPath: string, bucketFiles: string[]) => {
+      for (const t of bucketFiles) await awaitNapiPrebuild(t);
       const width = parallelSafeWidth;
+      const label = `${bucketFiles.length} files in parallel (${width}×)`;
+      const range = `${getAnsi("gray")}[${i + 1}-${i + bucketFiles.length}/${total}]${getAnsi("reset")}`;
       const junitPath = join(
         cwd,
         `parallel-bucket-junit-${(options.step || getOs()).replace(/[^a-zA-Z0-9._-]/g, "_")}-shard${options.shard ?? 0}-${i + 1}.xml`,
@@ -1612,48 +1587,6 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       }
       if (isAsan || buildsManyExecutables(bucketFiles[0]!)) env.BUN_FEATURE_FLAG_NO_ORPHANS = "1";
 
-      let output = "";
-      const keep = (chunk: string) => void (output += chunk);
-      const ended = spawnBun(execPath, {
-        args: [
-          "test",
-          `--parallel=${width}`,
-          // A test holds the executables that it has built until it ends. The files of the bucket share the processors, and
-          // more tests under way in a file than its share of them end no sooner: their executables only lie there together.
-          ...(buildsManyExecutables(bucketFiles[0]!)
-            ? [`--max-concurrency=${Math.ceil(availableParallelism() / width)}`]
-            : []),
-          `--timeout=${perTestTimeout}`,
-          "--dots",
-          "--reporter=junit",
-          `--reporter-outfile=${junitPath}`,
-          ...bucketFiles.map(t => join(testsPath, t)),
-        ],
-        cwd,
-        timeout: Math.max(
-          60_000,
-          Math.min(Math.max(10 * 60_000, bucketFiles.length * 5_000), jobBudgetMs() - 5 * 60_000),
-        ),
-        idleTimeout: parseInt(process.env.BUN_RUNNER_BATCH_IDLE_MS || "", 10) || 4 * 60_000,
-        gracefulTimeout: true,
-        lowPriority: inBackground,
-        env,
-        stdout: inBackground ? keep : pipeTestStdout(process.stdout),
-        stderr: inBackground ? keep : pipeTestStdout(process.stderr),
-      });
-      // runParallelBucket() awaits it.
-      ended.catch(() => {});
-      return { junitPath, ended, output: () => output };
-    };
-
-    const runParallelBucket = async (
-      execPath: string,
-      bucketFiles: string[],
-      early?: Promise<ReturnType<typeof startParallelBucket>>,
-    ) => {
-      for (const t of bucketFiles) await awaitNapiPrebuild(t);
-      const label = `${bucketFiles.length} files in parallel (${parallelSafeWidth}×)`;
-      const range = `${getAnsi("gray")}[${i + 1}-${i + bucketFiles.length}/${total}]${getAnsi("reset")}`;
       const byPath = new Map(bucketFiles.map(t => [join("test", t).replaceAll("\\", "/"), t]));
       const norm = (p: string) =>
         byPath.get(
@@ -1664,12 +1597,34 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
             .replaceAll("\\", "/"),
         );
 
-      const { junitPath, ok, stdout, crashes } = await startGroup(`${range} ${label}`, async () => {
-        const { junitPath, ended, output } = (await early) ?? startParallelBucket(execPath, bucketFiles);
-        const result = await ended;
-        process.stdout.write(output());
-        return { junitPath, ...result };
-      });
+      const { ok, stdout, crashes } = await startGroup(`${range} ${label}`, () =>
+        spawnBun(execPath, {
+          args: [
+            "test",
+            `--parallel=${width}`,
+            // A test holds the executables that it has built until it ends. The files of the bucket share the processors, and
+            // more tests under way in a file than its share of them end no sooner: their executables only lie there together.
+            ...(buildsManyExecutables(bucketFiles[0]!)
+              ? [`--max-concurrency=${Math.ceil(availableParallelism() / width)}`]
+              : []),
+            `--timeout=${perTestTimeout}`,
+            "--dots",
+            "--reporter=junit",
+            `--reporter-outfile=${junitPath}`,
+            ...bucketFiles.map(t => join(testsPath, t)),
+          ],
+          cwd,
+          timeout: Math.max(
+            60_000,
+            Math.min(Math.max(10 * 60_000, bucketFiles.length * 5_000), jobBudgetMs() - 5 * 60_000),
+          ),
+          idleTimeout: parseInt(process.env.BUN_RUNNER_BATCH_IDLE_MS || "", 10) || 4 * 60_000,
+          gracefulTimeout: true,
+          env,
+          stdout: pipeTestStdout(process.stdout),
+          stderr: pipeTestStdout(process.stderr),
+        }),
+      );
       if (crashes) process.stderr.write(crashes);
 
       let suites = new Map<string, JunitFileSuite>(); // repo-relative path -> { failures, seconds, cases: [{name, message}] }
@@ -1898,58 +1853,15 @@ async function runTests(downloaded: Promise<string> | undefined, printed: Promis
       );
     const restSerialTests = unbucketedTests.filter(t => !buildingTests.includes(t));
 
-    const runSerialTests = (serial: string[]) =>
-      Promise.all(serial.map(t => limit(() => runOneTest(t, parallelism > 1))));
-    const runPrograms = async () => void (aotPrograms.length && (await runAotPrograms(aotPrograms)));
-    const runBuildingTests = async () => {
-      if (!buildingTests.length) return;
+    if (aotPrograms.length) await runAotPrograms(aotPrograms);
+    await Promise.all(modifiedSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
+    await Promise.all(restSerialTests.map(t => limit(() => runOneTest(t, parallelism > 1))));
+    if (buildingTests.length) {
       startGroup(`Running ${buildingTests.length} files that build many executables (${buildingFilesWidth}-wide)`);
       const buildingFilesLimit = createLimit(buildingFilesWidth);
       await Promise.all(buildingTests.map(t => buildingFilesLimit(() => runOneTest(t, true, true))));
-    };
-    if (!usesIdleCores) {
-      await runPrograms();
-      await runSerialTests(modifiedSerialTests);
-      await runSerialTests(restSerialTests);
-      await runBuildingTests();
-      for (const files of buckets) await runParallelBucket(bunFor(execPath, files[0]!), files);
-    } else {
-      // In the background, one after another: the driver (it began beside the installs), the first try of each long file, the bucket.
-      const driverEnded = Promise.resolve(earlyAotDriver).catch(() => {});
-      const backgroundLimit = createLimit(buildingFilesWidth);
-      for (const t of buildingTests) {
-        const firstTry = driverEnded.then(() =>
-          backgroundLimit(() =>
-            spawnBunTest(bunForTry(execPath, t, 1), join("test", t), {
-              cwd,
-              filesAtATime: buildingFilesWidth + 1,
-              lowPriority: true,
-              stdout: () => {},
-              stderr: () => {},
-            }),
-          ),
-        );
-        // runOneTest() awaits it.
-        firstTry.catch(() => {});
-        earlyBuildingTests.set(t, firstTry);
-      }
-      const isOurs = (files: string[]) => buildsManyExecutables(files[0]!);
-      const earlyBuckets = buckets.filter(isOurs).map(files => ({
-        files,
-        early: Promise.allSettled([driverEnded, ...earlyBuildingTests.values()]).then(() =>
-          startParallelBucket(bunFor(execPath, files[0]!), files, true),
-        ),
-      }));
-      // In the foreground: the serial tests. Then the results, and a second try in the foreground for what failed.
-      const serial = [...modifiedSerialTests, ...restSerialTests];
-      const needsTheMachine = (t: string) => saturatesCpu(t) || runsAlone(t);
-      await runSerialTests(serial.filter(t => !needsTheMachine(t)));
-      await runPrograms();
-      await runBuildingTests();
-      for (const { files, early } of earlyBuckets) await runParallelBucket(bunFor(execPath, files[0]!), files, early);
-      await runSerialTests(serial.filter(needsTheMachine));
-      for (const files of buckets) if (!isOurs(files)) await runParallelBucket(execPath, files);
     }
+    for (const files of buckets) await runParallelBucket(bunFor(execPath, files[0]!), files);
     // Concurrent tests log their title without opening a group (interleaved
     // output can't nest), so give the phase its own group instead of letting
     // the log viewer fold every line under the last serial test's group.
@@ -2245,8 +2157,6 @@ interface SpawnOptions {
   gracefulTimeout?: boolean | undefined;
   /** Milliseconds without any output after which the process counts as timed out ("stalled"). */
   idleTimeout?: number | undefined;
-  /** Run it and its children at the lowest priority. */
-  lowPriority?: boolean | undefined;
   /** How many times spawning has already been retried after EBUSY or UNKNOWN. */
   retries?: number;
 }
@@ -2343,13 +2253,6 @@ async function spawnWithTimeout(options: SpawnOptions): Promise<SpawnResult> {
         cwd,
         env,
       }) as SpawnedProcess;
-      if (options.lowPriority && subprocess.pid) {
-        try {
-          setPriority(subprocess.pid, constants.priority.PRIORITY_LOW);
-        } catch (error) {
-          console.warn(error);
-        }
-      }
       subprocess.on("spawn", () => {
         timestamp = Date.now();
         const expire = () => {
@@ -2600,7 +2503,7 @@ interface RemappedTrace {
 
 async function spawnBun(
   execPath: string,
-  { args, cwd, timeout, gracefulTimeout, idleTimeout, lowPriority, env, stdout, stderr }: SpawnBunOptions,
+  { args, cwd, timeout, gracefulTimeout, idleTimeout, env, stdout, stderr }: SpawnBunOptions,
 ): Promise<SpawnBunResult> {
   const path = getCombinedPath(execPath);
   const tmpdirPath = mkdtempSync(join(tmpdir(), "buntmp-"));
@@ -2661,7 +2564,6 @@ async function spawnBun(
       timeout,
       gracefulTimeout,
       idleTimeout,
-      lowPriority,
       env: bunEnv,
       stdout,
       stderr,
@@ -2796,7 +2698,6 @@ interface SpawnBunTestOptions {
   cwd: string;
   /** How many files share the machine. Each may take that many times as long as alone, so its time limits are that many times as long. */
   filesAtATime?: number;
-  lowPriority?: boolean;
   args?: string[];
   env?: SpawnEnv;
   stdout?: SpawnOutputHandler;
@@ -2874,7 +2775,6 @@ async function spawnBunTest(
     // the file wall before any individual test times out. Kept below the
     // per-test multiplier so the overall shard stays inside the job timeout.
     timeout: isReallyTest ? Math.ceil(timeout * (isAsan ? 2 : 1)) : 30_000,
-    lowPriority: opts.lowPriority,
     env,
     stdout: opts.stdout ?? pipeTestStdout(process.stdout),
     stderr: opts.stderr ?? pipeTestStdout(process.stderr),
@@ -3457,18 +3357,6 @@ function filesAtOnce(testPath: string) {
   return isInBucket ? 3 : 2;
 }
 
-// Background work gets the cores that a serial test leaves idle, about three of four.
-const backgroundSlowdown = 1.5;
-
-/** Where runTests() runs a test: one at a time, in the background of those, or with nothing in the background. */
-function phaseOf(testPath: string): "serial" | "background" | "rest" {
-  if (!usesIdleCores) return "rest";
-  if (isAotProgram(testPath)) return "background";
-  const atOnce = filesAtOnce(testPath);
-  if (atOnce === 1) return saturatesCpu(testPath) || runsAlone(testPath) ? "rest" : "serial";
-  return atOnce === 2 || buildsManyExecutables(testPath) ? "background" : "rest";
-}
-
 /**
  * The programs under test/aot/parallel by the builds that hold them. A build compiles Bun's library once for up to a hundred programs:
  * dealt one by one, every shard would compile it for its few.
@@ -3616,42 +3504,23 @@ function getRelevantTests(
     const order = [
       ...availableTests
         .filter(testPath => !isAotProgram(testPath))
-        .map(testPath => ({ testPaths: [testPath], cost: costOf(testPath), phase: phaseOf(testPath) })),
+        .map(testPath => ({ testPaths: [testPath], cost: costOf(testPath) })),
       ...(programs.length ? getBuildsOfAotPrograms(execPath, cwd, programs) : []).map(build => ({
         ...build,
         cost: build.cost / aotProgramsAtOnce,
-        phase: phaseOf(build.testPaths[0]!),
       })),
     ]
       .map(item => ({ ...item, originalIndex: indexOf.get(item.testPaths[0]!)! }))
       .sort((a, b) => b.cost - a.cost || a.originalIndex - b.originalIndex);
-    // A shard's background work overlaps its serial tests, so the shard takes the longer of the two plus the rest. Each item
-    // goes where that time grows least. Without a background everything is "rest", and that is the shard with the least load.
-    const loads = {
-      serial: new Float64Array(maxShards),
-      background: new Float64Array(maxShards),
-      rest: new Float64Array(maxShards),
-    };
-    const timeOf = (s: number, phase?: keyof typeof loads, cost = 0) =>
-      loads.rest[s]! +
-      (phase === "rest" ? cost : 0) +
-      Math.max(
-        loads.serial[s]! + (phase === "serial" ? cost : 0),
-        backgroundSlowdown * (loads.background[s]! + (phase === "background" ? cost : 0)),
-      );
-    const sumOf = (s: number) => loads.serial[s]! + loads.background[s]! + loads.rest[s]!;
+    const load = new Float64Array(maxShards);
     const assigned = Array.from({ length: maxShards }, (): { testPath: string; originalIndex: number }[] => []);
-    for (const { testPaths, cost, phase } of order) {
-      // The arrays have maxShards elements, and s and bin are less than that.
+    for (const { testPaths, cost } of order) {
+      // `load` and `assigned` have maxShards elements, and s and bin are less than that.
       let bin = 0;
-      for (let s = 1; s < maxShards; s++) {
-        const more = timeOf(s, phase, cost) - timeOf(bin, phase, cost);
-        if (more < 0 || (more === 0 && sumOf(s) < sumOf(bin))) bin = s;
-      }
-      loads[phase][bin]! += cost;
+      for (let s = 1; s < maxShards; s++) if (load[s]! < load[bin]!) bin = s;
+      load[bin]! += cost;
       for (const testPath of testPaths) assigned[bin]!.push({ testPath, originalIndex: indexOf.get(testPath)! });
     }
-    const load = Array.from({ length: maxShards }, (_, s) => timeOf(s));
     // Restore the within-shard order the rest of the pipeline expects
     // (docker-last / modified-first sorts below are stable over this).
     // --shard is less than --max-shards: Buildkite numbers parallel jobs from 0.

@@ -396,7 +396,7 @@ function f41 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: Then:#18, Else:Rare:#5
 # CHECK-NEXT: BB#18: ; frequency = 5.021927
 # CHECK-NEXT: Predecessors: #14
-# CHECK-NEXT: Int64 b@87 = Load(b@10, offset = 7840, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v22:TypeTest)
+# CHECK-NEXT: Int64 b@87 = Load(b@10, offset = 7832, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v22:TypeTest)
 # CHECK-NEXT: Int64 b@88 = Load(b@87, offset = 32, ControlDependent|Reads:AllocatorState, v22:TypeTest)
 # CHECK-NEXT: Void b@92 = Upsilon($1(b@84), ^105, WritesLocalState, v22:TypeTest)
 # CHECK-NEXT: Int64 b@93 = Load(b@82, offset = 112, ControlDependent|ReadsImmutable|Reads:BrandedStructure_brand, v22:TypeTest)

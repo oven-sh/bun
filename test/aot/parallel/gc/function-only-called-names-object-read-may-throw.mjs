@@ -82,3 +82,14 @@ for (const value of [...kept, ...handedOut]) {
   sum += typeof answer === "number" ? answer : answer.held.n;
 }
 console.log(sum, kept.length, handedOut.length);
+// The counts follow from the program. Plain Bun prints one of several outputs from run to run.
+/* Output:
+a function of the scope leaves by one way of four: 40 of 40
+a function of the scope is handed out: 40 of 40
+a function that calls two leaves: 40 of 40
+the read throws: 20 of 40
+the variable is stored behind the read: 40 of 40
+an instance with a closure over it: 40 of 40
+an instance whose constructor throws: 26 of 40
+13532 280 86
+*/

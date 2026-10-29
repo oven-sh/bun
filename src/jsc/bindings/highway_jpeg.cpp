@@ -14,6 +14,9 @@
 // instructions makes these kernels no faster, or with SVE2_128 slower.
 #undef HWY_DISABLED_TARGETS
 #define HWY_DISABLED_TARGETS (HWY_SSE4 | HWY_AVX3_DL | HWY_AVX3_ZEN4 | HWY_AVX3_SPR | HWY_AVX10_2 | HWY_NEON | HWY_NEON_BF16 | HWY_ALL_SVE)
+#ifndef __OPTIMIZE__
+#error "With targets of its own this file needs hwy::ChosenTarget::GetIndex() inlined, which Highway only does in an optimized build: see fileOverrides in scripts/build/flags.ts"
+#endif
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "highway_jpeg.cpp"

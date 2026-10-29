@@ -1961,7 +1961,8 @@ export const fileOverrides: FileOverride[] = [
     when: c => c.debug,
     desc:
       "Same as highway_json.cpp below. bun_jpeg, which calls these kernels for every row of an image, is optimized in " +
-      "debug builds too (Cargo.toml).",
+      "debug builds too (Cargo.toml). The file also has its own HWY_DISABLED_TARGETS: at -O0 the linker would merge " +
+      "its hwy::ChosenTarget::GetIndex() with that of the files with the global list.",
   },
   {
     file: "src/jsc/bindings/highway_xml.cpp",

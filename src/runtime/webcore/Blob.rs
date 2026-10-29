@@ -4777,27 +4777,25 @@ pub(crate) fn write_file_internal(
                             _ => return Ok(ControlFlow::Continue(unsafe { (*body_value).use_() })),
                         }
                     }
-                    let task =
-                        bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
-                            global_this: bun_ptr::BackRef::new(cx.global()),
-                            context: cx.context().id(),
-                            // Move `destination_blob` by value into the task.
-                            file_blob: core::mem::replace(
-                                &mut destination_blob,
-                                Blob::init_empty(cx.global()),
-                            ),
-                            promise: jsc::JSPromiseStrong::init(cx.global()),
-                            mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
-                        }));
+                    let task = Box::new(WriteFileWaitFromLockedValueTask {
+                        global_this: bun_ptr::BackRef::new(cx.global()),
+                        context: cx.context().id(),
+                        // Move `destination_blob` by value into the task.
+                        file_blob: core::mem::replace(
+                            &mut destination_blob,
+                            Blob::init_empty(cx.global()),
+                        ),
+                        promise: jsc::JSPromiseStrong::init(cx.global()),
+                        mkdirp_if_not_exists: options.mkdirp_if_not_exists.unwrap_or(true),
+                    });
+                    let promise = task.promise.value();
                     // SAFETY: re-borrow after the early-return paths.
                     let BodyValue::Locked(locked) = (unsafe { &mut *body_value }) else {
                         unreachable!()
                     };
                     let producer_hook = locked.on_start_buffering.take().zip(locked.task);
-                    locked.task = Some(NonNull::new(task).unwrap().cast::<c_void>());
+                    locked.task = Some(bun_core::heap::into_raw_nn(task).cast::<c_void>());
                     locked.on_receive_value = Some(WriteFileWaitFromLockedValueTask::then_wrap);
-                    // SAFETY: `task` was just heap-allocated; consumed in `then_wrap`.
-                    let promise = unsafe { (*task).promise.value() };
                     // Signalled last (see `PendingValue::on_start_buffering`):
                     // `then_wrap` may run and `*body_value` be replaced inside.
                     if let Some((on_start_buffering, producer_task)) = producer_hook {

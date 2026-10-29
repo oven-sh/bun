@@ -101,9 +101,7 @@ impl Url {
         // be replaced without escaping more easily. Quotes may be removed later during minification.
         if let Some(d) = dep {
             dest.write_str("url(")?;
-            // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
+            dest.serialize_string(d.placeholder)?;
             dest.write_char(b')')?;
 
             if let Some(dependencies) = &mut dest.dependencies {

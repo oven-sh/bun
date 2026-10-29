@@ -9,11 +9,11 @@ pub struct DependencyOptions {
 }
 
 /// A dependency.
-pub enum Dependency {
+pub enum Dependency<'bump> {
     /// An `@import` dependency.
-    Import(ImportDependency),
+    Import(ImportDependency<'bump>),
     /// A `url()` dependency.
-    Url(UrlDependency),
+    Url(UrlDependency<'bump>),
 }
 
 /// A line and column position within a source file.
@@ -35,18 +35,18 @@ impl Location {
 }
 
 /// An `@import` dependency.
-pub struct ImportDependency {
+pub struct ImportDependency<'bump> {
     /// The placeholder that the URL was replaced with.
     // Lifetime: arena-allocated by `css_modules::hash`.
-    pub(crate) placeholder: *const [u8],
+    pub(crate) placeholder: &'bump [u8],
 }
 
-impl ImportDependency {
-    pub(crate) fn new<'bump>(
+impl<'bump> ImportDependency<'bump> {
+    pub(crate) fn new(
         bump: &'bump bun_alloc::Arena,
         rule: &crate::css_rules::import::ImportRule,
         filename: &[u8],
-    ) -> ImportDependency {
+    ) -> ImportDependency<'bump> {
         let placeholder = crate::css_modules::hash(
             bump,
             format_args!(
@@ -57,34 +57,30 @@ impl ImportDependency {
             false,
         );
 
-        ImportDependency {
-            placeholder: std::ptr::from_ref::<[u8]>(placeholder),
-        }
+        ImportDependency { placeholder }
     }
 }
 
 /// A `url()` dependency.
-pub struct UrlDependency {
+pub struct UrlDependency<'bump> {
     /// The placeholder that the URL was replaced with.
     // Lifetime: arena-allocated by `css_modules::hash`.
-    pub(crate) placeholder: *const [u8],
+    pub(crate) placeholder: &'bump [u8],
 }
 
-impl UrlDependency {
-    pub(crate) fn new<'bump>(
+impl<'bump> UrlDependency<'bump> {
+    pub(crate) fn new(
         bump: &'bump bun_alloc::Arena,
         url: &crate::values::url::Url,
         filename: &[u8],
         import_records: &[bun_ast::ImportRecord],
-    ) -> UrlDependency {
+    ) -> UrlDependency<'bump> {
         let theurl: &[u8] = import_records[url.import_record_idx as usize].path.pretty;
         let placeholder = crate::css_modules::hash(
             bump,
             format_args!("{}_{}", bstr::BStr::new(filename), bstr::BStr::new(theurl)),
             false,
         );
-        UrlDependency {
-            placeholder: std::ptr::from_ref::<[u8]>(placeholder),
-        }
+        UrlDependency { placeholder }
     }
 }

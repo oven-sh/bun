@@ -11,12 +11,13 @@ const {
   mkdirSync,
   readdirSync,
   readlinkSync,
+  realpathSync,
   statSync,
   symlinkSync,
   unlinkSync,
   utimesSync,
 } = require("node:fs");
-const { dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
+const { basename, dirname, isAbsolute, join, parse, resolve, sep } = require("node:path");
 
 const { EEXIST, EISDIR, EINVAL, ENOTDIR } = $processBindingConstants.os.errno;
 
@@ -84,6 +85,16 @@ function fsCpEExistError(context: SystemErrorContext) {
 
 function fsCpEinvalError(context: SystemErrorContext) {
   return decorateSystemError($ERR_FS_CP_EINVAL(context.message), "Invalid src or dest", context);
+}
+
+function fsCpSubdirOfSelfError(src: string, dest: string) {
+  return fsCpEinvalError({
+    message: `cannot copy ${src} to a subdirectory of self ${dest}`,
+    path: dest,
+    syscall: "cp",
+    errno: EINVAL,
+    code: "EINVAL",
+  });
 }
 
 function fsCpFifoPipeError(context: SystemErrorContext) {
@@ -179,6 +190,49 @@ type Stats = $Node.Stats;
 type BigIntStats = $Node.BigIntStats;
 type AnyStats = Stats | BigIntStats;
 
+// A dest directory on the current recursion path. `stat` is null for one this copy made, until it is needed.
+export interface CpFrame {
+  stat: BigIntStats | null;
+  path: string;
+  up: CpFrame | null;
+}
+
+// One per recursive directory copy.
+export interface CpWalk {
+  parent: BigIntStats | undefined; // the directory a new root was made in
+  root: CpFrame | null; // that root's frame, while its stat is unread
+  rootInSrc: boolean; // src is that directory, so the walk starts inside it
+  entered: boolean; // a filter let the walk into its own output once
+}
+
+function newCpWalk(): CpWalk {
+  return { parent: undefined, root: null, rootInSrc: false, entered: false };
+}
+
+function isOwnOutput(frame: CpFrame | null, srcStat: BigIntStats) {
+  for (let f = frame; f !== null; f = f.up) {
+    const stat = f.stat;
+    if (stat !== null && areIdentical(srcStat, stat)) return true;
+  }
+  return false;
+}
+
+function followedLink(dirent: Pick<$Node.Dirent, "isDirectory">, opts: CpOptions) {
+  return opts.dereference && !dirent.isDirectory();
+}
+
+function unreadRootIn(walk: CpWalk, srcStat: BigIntStats) {
+  const root = walk.root;
+  return root !== null && root.stat === null && areIdentical(srcStat, walk.parent!) ? root : null;
+}
+
+// Only a filter can end a walk of the copy's own output, so only then is the first entry let through.
+function enterOnce(walk: CpWalk, opts: CpOptions) {
+  if (!opts.filter || walk.entered) return false;
+  walk.entered = true;
+  return true;
+}
+
 interface CpOptions {
   dereference: boolean;
   errorOnExist: boolean;
@@ -205,8 +259,22 @@ interface SkippedPaths {
 }
 
 function checkPathsSync(src: string, dest: string, opts: CpOptions & { filter: undefined }): CheckedPaths;
-function checkPathsSync(src: string, dest: string, opts: CpOptions): CheckedPaths | SkippedPaths;
-function checkPathsSync(src: string, dest: string, opts: CpOptions): CheckedPaths | SkippedPaths {
+function checkPathsSync(
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk?: CpWalk,
+  frame?: CpFrame,
+  dirent?: Pick<$Node.Dirent, "isDirectory">,
+): CheckedPaths | SkippedPaths;
+function checkPathsSync(
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk?: CpWalk,
+  frame?: CpFrame,
+  dirent?: Pick<$Node.Dirent, "isDirectory">,
+): CheckedPaths | SkippedPaths {
   if (opts.filter) {
     const shouldCopy = opts.filter(src, dest);
     if ($isPromise(shouldCopy)) {
@@ -246,14 +314,18 @@ function checkPathsSync(src: string, dest: string, opts: CpOptions): CheckedPath
     }
   }
 
-  if (srcStat.isDirectory() && isSrcSubdir(src, dest)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
+  if (srcStat.isDirectory()) {
+    let own = isSrcSubdir(src, dest);
+    if (!own && walk !== undefined && frame !== undefined) {
+      if (followedLink(dirent!, opts)) {
+        for (let f: CpFrame | null = frame; f !== null; f = f.up) f.stat ??= lstatSync(f.path, { bigint: true });
+      } else {
+        const root = unreadRootIn(walk, srcStat);
+        if (root !== null) root.stat = lstatSync(root.path, { bigint: true });
+      }
+      own = isOwnOutput(frame, srcStat) && !enterOnce(walk, opts);
+    }
+    if (own) throw fsCpSubdirOfSelfError(src, dest);
   }
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
@@ -284,16 +356,46 @@ function checkParentPathsSync(src: string, srcStat: BigIntStats, dest: string) {
     if (err.code === "ENOENT") return;
     throw err;
   }
-  if (areIdentical(srcStat, destStat)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
-  }
+  if (areIdentical(srcStat, destStat)) throw fsCpSubdirOfSelfError(src, dest);
   return checkParentPathsSync(src, srcStat, destParent);
+}
+
+// realpath collapses ".." as text, which names another directory when it follows a symlink.
+function hasParentSegment(path: string) {
+  const segments = StringPrototypeSplit.$call(path, sep);
+  for (let i = 0; i < segments.length; i++) {
+    if (segments[i] === "..") return true;
+  }
+  return false;
+}
+
+function resolveExistingRealpathSync(p: string) {
+  let missing = "";
+  for (;;) {
+    try {
+      return join(realpathSync(p), missing);
+    } catch (err: any) {
+      const parent = dirname(p);
+      if (err?.code !== "ENOENT" || parent === p) return undefined;
+      missing = join(basename(p), missing);
+      p = parent;
+    }
+  }
+}
+
+// The native walker has no own-output check, so only a dest that provably resolves outside src may reach it.
+function nativeDirCopyIsSafeSync(src: string, dest: string) {
+  if (hasParentSegment(src) || hasParentSegment(dest)) return false;
+  let realSrc: string;
+  try {
+    realSrc = realpathSync(src);
+  } catch {
+    return false;
+  }
+  const realDestParent = resolveExistingRealpathSync(dirname(dest));
+  if (realDestParent === undefined) return false;
+  if (isSrcSubdir(realSrc, join(realDestParent, basename(dest)))) throw fsCpSubdirOfSelfError(src, dest);
+  return true;
 }
 
 // The native recursive copy (a single clonefile() on macOS) copies symlinks
@@ -346,7 +448,11 @@ function tryNativeFastPathSync(src: string, dest: string, opts: CpOptions & { fi
     // node's walker: dest must not exist (no merge semantics) and the tree
     // must contain only regular files and directories.
     return {
-      ok: process.platform === "darwin" && !destStat && treeContainsOnlyFilesAndDirsSync(src),
+      ok:
+        process.platform === "darwin" &&
+        !destStat &&
+        treeContainsOnlyFilesAndDirsSync(src) &&
+        nativeDirCopyIsSafeSync(src, dest),
       checked,
     };
   }
@@ -363,21 +469,55 @@ function cpSyncFn(src: string, dest: string, opts: CpOptions, checked?: CheckedP
   const { srcStat, destStat, skipped } = checked ?? checkPathsSync(src, dest, opts);
   if (skipped) return;
   if (checked === undefined) checkParentPathsSync(src, srcStat, dest);
-  return checkParentDir(destStat, src, dest, opts);
+  const walk = opts.recursive && srcStat.isDirectory() ? newCpWalk() : undefined;
+  return checkParentDir(destStat, src, dest, opts, walk, srcStat);
 }
 
-function checkParentDir(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
+function checkParentDir(
+  destStat: BigIntStats | null | undefined,
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk?: CpWalk,
+  srcStat?: BigIntStats,
+) {
   const destParent = dirname(dest);
-  if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
-  return getStats(destStat, src, dest, opts);
+  if (walk === undefined) {
+    if (!existsSync(destParent)) mkdirSync(destParent, { recursive: true });
+    return getStats(destStat, src, dest, opts);
+  }
+  // dirname() of `sub/..` is `sub`, not the directory that holds it. A root that exists needs no parent here: its
+  // frame has its stat from the start.
+  const last = basename(dest);
+  if (destStat && (last === ".." || last === ".")) return getStats(destStat, src, dest, opts, walk, null);
+  let parent = statSync(destParent, { bigint: true, throwIfNoEntry: false }) as BigIntStats | undefined;
+  if (parent === undefined) {
+    // `new/../link` resolves, to what can be src, only once `new` exists.
+    mkdirSync(destParent, { recursive: true });
+    parent = statSync(destParent, { bigint: true });
+  }
+  if (areIdentical(srcStat!, parent)) {
+    // With no filter the walk is certain to reach the root, unless the copy stops first on the existing dest.
+    if (!opts.filter && !(destStat && opts.errorOnExist && !opts.force)) throw fsCpSubdirOfSelfError(src, dest);
+    walk.rootInSrc = true;
+  }
+  if (!destStat) walk.parent = parent;
+  return getStats(destStat, src, dest, opts, walk, null);
 }
 
-function getStats(destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
+function getStats(
+  destStat: BigIntStats | null | undefined,
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk?: CpWalk,
+  frame?: CpFrame | null,
+) {
   const statSyncFn = opts.dereference ? statSync : lstatSync;
   const srcStat = statSyncFn(src);
 
   if (srcStat.isDirectory() && opts.recursive) {
-    return onDir(srcStat, destStat, src, dest, opts);
+    return onDir(srcStat, destStat, src, dest, opts, walk ?? newCpWalk(), frame ?? null);
   } else if (srcStat.isDirectory()) {
     throw fsEisdirError({
       message: `${src} is a directory (not copied)`,
@@ -470,8 +610,16 @@ function setDestTimestamps(src: string, dest: string) {
   return utimesSync(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
-function onDir(srcStat: Stats, destStat: BigIntStats | null | undefined, src: string, dest: string, opts: CpOptions) {
-  if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts);
+function onDir(
+  srcStat: Stats,
+  destStat: BigIntStats | null | undefined,
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk: CpWalk,
+  frame: CpFrame | null,
+) {
+  if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts, walk, frame);
   if (opts.errorOnExist && !opts.force) {
     throw fsCpEExistError({
       message: `${dest} already exists`,
@@ -481,22 +629,37 @@ function onDir(srcStat: Stats, destStat: BigIntStats | null | undefined, src: st
       code: "EEXIST",
     });
   }
-  return copyDir(src, dest, opts);
+  return copyDir(src, dest, opts, walk, { stat: destStat, path: dest, up: frame });
 }
 
-function mkDirAndCopy(srcMode: number, src: string, dest: string, opts: CpOptions) {
+function mkDirAndCopy(
+  srcMode: number,
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk: CpWalk,
+  frame: CpFrame | null,
+) {
   mkdirSync(dest);
-  copyDir(src, dest, opts);
+  if (frame === null) {
+    frame = { stat: walk.rootInSrc ? lstatSync(dest, { bigint: true }) : null, path: dest, up: null };
+    if (walk.parent !== undefined) walk.root = frame;
+  } else if (walk.entered) {
+    frame = { stat: lstatSync(dest, { bigint: true }), path: dest, up: frame };
+  } else if (opts.dereference) {
+    frame = { stat: null, path: dest, up: frame };
+  }
+  copyDir(src, dest, opts, walk, frame);
   return setDestMode(dest, srcMode);
 }
 
-function copyDir(src: string, dest: string, opts: CpOptions) {
+function copyDir(src: string, dest: string, opts: CpOptions, walk: CpWalk, frame: CpFrame) {
   for (const dirent of readdirSync(src, { withFileTypes: true })) {
     const { name } = dirent;
     const srcItem = join(src, name);
     const destItem = join(dest, name);
-    const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts);
-    if (!skipped) getStats(destStat, srcItem, destItem, opts);
+    const { destStat, skipped } = checkPathsSync(srcItem, destItem, opts, walk, frame, dirent);
+    if (!skipped) getStats(destStat, srcItem, destItem, opts, walk, frame);
   }
 }
 
@@ -572,4 +735,11 @@ export default {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  fsCpSubdirOfSelfError,
+  hasParentSegment,
+  newCpWalk,
+  isOwnOutput,
+  followedLink,
+  unreadRootIn,
+  enterOnce,
 };

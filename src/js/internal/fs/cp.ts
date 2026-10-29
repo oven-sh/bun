@@ -1,4 +1,6 @@
 // Taken and modified from node.js: https://github.com/nodejs/node/blob/main/lib/internal/fs/cp/cp.js
+import type { CpFrame, CpWalk } from "./cp-sync";
+
 const {
   errno: { EEXIST, EINVAL, EISDIR, ENOTDIR },
   fsCpDirToNonDirError,
@@ -12,6 +14,13 @@ const {
   fsEisdirError,
   areIdentical,
   isSrcSubdir,
+  fsCpSubdirOfSelfError,
+  hasParentSegment,
+  newCpWalk,
+  isOwnOutput,
+  followedLink,
+  unreadRootIn,
+  enterOnce,
 } = require("internal/fs/cp-sync");
 
 const {
@@ -22,12 +31,13 @@ const {
   opendir,
   readdir,
   readlink,
+  realpath,
   stat,
   symlink,
   unlink,
   utimes,
 } = require("node:fs/promises");
-const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
+const { basename, dirname, isAbsolute, join, parse, resolve } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseReject = Promise.$reject;
@@ -62,8 +72,22 @@ interface SkippedPaths {
 }
 
 async function checkPaths(src: string, dest: string, opts: CpOptions & { filter: undefined }): Promise<CheckedPaths>;
-async function checkPaths(src: string, dest: string, opts: CpOptions): Promise<CheckedPaths | SkippedPaths>;
-async function checkPaths(src: string, dest: string, opts: CpOptions): Promise<CheckedPaths | SkippedPaths> {
+async function checkPaths(
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk?: CpWalk,
+  frame?: CpFrame,
+  dirent?: Pick<$Node.Dirent, "isDirectory">,
+): Promise<CheckedPaths | SkippedPaths>;
+async function checkPaths(
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk?: CpWalk,
+  frame?: CpFrame,
+  dirent?: Pick<$Node.Dirent, "isDirectory">,
+): Promise<CheckedPaths | SkippedPaths> {
   if (opts.filter && !(await opts.filter(src, dest))) {
     return { __proto__: null, skipped: true };
   }
@@ -98,14 +122,18 @@ async function checkPaths(src: string, dest: string, opts: CpOptions): Promise<C
     }
   }
 
-  if (srcStat.isDirectory() && isSrcSubdir(src, dest)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
+  if (srcStat.isDirectory()) {
+    let own = isSrcSubdir(src, dest);
+    if (!own && walk !== undefined && frame !== undefined) {
+      if (followedLink(dirent!, opts)) {
+        for (let f: CpFrame | null = frame; f !== null; f = f.up) f.stat ??= await lstat(f.path, { bigint: true });
+      } else {
+        const root = unreadRootIn(walk, srcStat);
+        if (root !== null) root.stat = await lstat(root.path, { bigint: true });
+      }
+      own = isOwnOutput(frame, srcStat) && !enterOnce(walk, opts);
+    }
+    if (own) throw fsCpSubdirOfSelfError(src, dest);
   }
   return { __proto__: null, srcStat, destStat, skipped: false };
 }
@@ -140,16 +168,37 @@ async function checkParentPaths(src: string, srcStat: BigIntStats, dest: string)
     if (err.code === "ENOENT") return;
     throw err;
   }
-  if (areIdentical(srcStat, destStat)) {
-    throw fsCpEinvalError({
-      message: `cannot copy ${src} to a subdirectory of self ${dest}`,
-      path: dest,
-      syscall: "cp",
-      errno: EINVAL,
-      code: "EINVAL",
-    });
-  }
+  if (areIdentical(srcStat, destStat)) throw fsCpSubdirOfSelfError(src, dest);
   return checkParentPaths(src, srcStat, destParent);
+}
+
+async function resolveExistingRealpath(p: string) {
+  let missing = "";
+  for (;;) {
+    try {
+      return join(await realpath(p), missing);
+    } catch (err: any) {
+      const parent = dirname(p);
+      if (err?.code !== "ENOENT" || parent === p) return undefined;
+      missing = join(basename(p), missing);
+      p = parent;
+    }
+  }
+}
+
+// The native walker has no own-output check, so only a dest that provably resolves outside src may reach it.
+async function nativeDirCopyIsSafe(src: string, dest: string) {
+  if (hasParentSegment(src) || hasParentSegment(dest)) return false;
+  let realSrc: string;
+  try {
+    realSrc = await realpath(src);
+  } catch {
+    return false;
+  }
+  const realDestParent = await resolveExistingRealpath(dirname(dest));
+  if (realDestParent === undefined) return false;
+  if (isSrcSubdir(realSrc, join(realDestParent, basename(dest)))) throw fsCpSubdirOfSelfError(src, dest);
+  return true;
 }
 
 // The native recursive copy (a single clonefile() on macOS) copies symlinks
@@ -202,7 +251,11 @@ async function tryNativeFastPath(src: string, dest: string, opts: CpOptions & { 
     // node's walker: dest must not exist (no merge semantics) and the tree
     // must contain only regular files and directories.
     return {
-      ok: process.platform === "darwin" && !destStat && (await treeContainsOnlyFilesAndDirs(src)),
+      ok:
+        process.platform === "darwin" &&
+        !destStat &&
+        (await treeContainsOnlyFilesAndDirs(src)) &&
+        (await nativeDirCopyIsSafe(src, dest)),
       checked,
     };
   }
@@ -219,15 +272,46 @@ async function cpFn(src: string, dest: string, opts: CpOptions, checked?: Checke
   const { srcStat, destStat, skipped } = checked ?? (await checkPaths(src, dest, opts));
   if (skipped) return;
   if (checked === undefined) await checkParentPaths(src, srcStat, dest);
-  return checkParentDir(destStat, src, dest, opts);
+  const walk = opts.recursive && srcStat.isDirectory() ? newCpWalk() : undefined;
+  return checkParentDir(destStat, src, dest, opts, walk, srcStat);
 }
 
-async function checkParentDir(destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
+async function checkParentDir(
+  destStat: DestinationStats,
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk?: CpWalk,
+  srcStat?: BigIntStats,
+) {
   const destParent = dirname(dest);
-  const dirExists = await pathExists(destParent);
-  if (dirExists) return getStatsForCopy(destStat, src, dest, opts);
-  await mkdir(destParent, { recursive: true });
-  return getStatsForCopy(destStat, src, dest, opts);
+  if (walk === undefined) {
+    const dirExists = await pathExists(destParent);
+    if (dirExists) return getStatsForCopy(destStat, src, dest, opts);
+    await mkdir(destParent, { recursive: true });
+    return getStatsForCopy(destStat, src, dest, opts);
+  }
+  // See checkParentDir() in internal/fs/cp-sync.
+  const last = basename(dest);
+  if (destStat && (last === ".." || last === ".")) return getStatsForCopy(destStat, src, dest, opts, walk, null);
+  let parent = (await PromisePrototypeThen.$call(stat(destParent, { bigint: true }), undefined, parentStatRejected)) as
+    BigIntStats | undefined;
+  if (parent === undefined) {
+    await mkdir(destParent, { recursive: true });
+    parent = await stat(destParent, { bigint: true });
+  }
+  if (areIdentical(srcStat!, parent)) {
+    // With no filter the walk is certain to reach the root, unless the copy stops first on the existing dest.
+    if (!opts.filter && !(destStat && opts.errorOnExist && !opts.force)) throw fsCpSubdirOfSelfError(src, dest);
+    walk.rootInSrc = true;
+  }
+  if (!destStat) walk.parent = parent;
+  return getStatsForCopy(destStat, src, dest, opts, walk, null);
+}
+
+function parentStatRejected(err: NodeJS.ErrnoException) {
+  if (err.code === "ENOENT") return undefined;
+  throw err;
 }
 
 function pathExistsFulfilled() {
@@ -240,11 +324,18 @@ function pathExists(dest: string) {
   return PromisePrototypeThen.$call(stat(dest), pathExistsFulfilled, pathExistsRejected);
 }
 
-async function getStatsForCopy(destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
+async function getStatsForCopy(
+  destStat: DestinationStats,
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk?: CpWalk,
+  frame?: CpFrame | null,
+) {
   const statFn = opts.dereference ? stat : lstat;
   const srcStat = await statFn(src);
   if (srcStat.isDirectory() && opts.recursive) {
-    return onDir(srcStat, destStat, src, dest, opts);
+    return onDir(srcStat, destStat, src, dest, opts, walk ?? newCpWalk(), frame ?? null);
   } else if (srcStat.isDirectory()) {
     throw fsEisdirError({
       message: `${src} is a directory (not copied)`,
@@ -347,8 +438,16 @@ async function setDestTimestamps(src: string, dest: string) {
   return utimes(dest, updatedSrcStat.atime, updatedSrcStat.mtime);
 }
 
-function onDir(srcStat: Stats, destStat: DestinationStats, src: string, dest: string, opts: CpOptions) {
-  if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts);
+function onDir(
+  srcStat: Stats,
+  destStat: DestinationStats,
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk: CpWalk,
+  frame: CpFrame | null,
+) {
+  if (!destStat) return mkDirAndCopy(srcStat.mode, src, dest, opts, walk, frame);
   if (opts.errorOnExist && !opts.force) {
     throw fsCpEExistError({
       message: `${dest} already exists`,
@@ -358,23 +457,39 @@ function onDir(srcStat: Stats, destStat: DestinationStats, src: string, dest: st
       code: "EEXIST",
     });
   }
-  return copyDir(src, dest, opts);
+  return copyDir(src, dest, opts, walk, { stat: destStat, path: dest, up: frame });
 }
 
-async function mkDirAndCopy(srcMode: number, src: string, dest: string, opts: CpOptions) {
+async function mkDirAndCopy(
+  srcMode: number,
+  src: string,
+  dest: string,
+  opts: CpOptions,
+  walk: CpWalk,
+  frame: CpFrame | null,
+) {
   await mkdir(dest);
-  await copyDir(src, dest, opts);
+  if (frame === null) {
+    frame = { stat: walk.rootInSrc ? await lstat(dest, { bigint: true }) : null, path: dest, up: null };
+    if (walk.parent !== undefined) walk.root = frame;
+  } else if (walk.entered) {
+    frame = { stat: await lstat(dest, { bigint: true }), path: dest, up: frame };
+  } else if (opts.dereference) {
+    frame = { stat: null, path: dest, up: frame };
+  }
+  await copyDir(src, dest, opts, walk, frame);
   return setDestMode(dest, srcMode);
 }
 
-async function copyDir(src: string, dest: string, opts: CpOptions) {
+async function copyDir(src: string, dest: string, opts: CpOptions, walk: CpWalk, frame: CpFrame) {
   const dir = await opendir(src);
 
-  for await (const { name } of dir) {
+  for await (const dirent of dir) {
+    const { name } = dirent;
     const srcItem = join(src, name);
     const destItem = join(dest, name);
-    const { destStat, skipped } = await checkPaths(srcItem, destItem, opts);
-    if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts);
+    const { destStat, skipped } = await checkPaths(srcItem, destItem, opts, walk, frame, dirent);
+    if (!skipped) await getStatsForCopy(destStat, srcItem, destItem, opts, walk, frame);
   }
 }
 

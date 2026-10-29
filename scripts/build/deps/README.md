@@ -8,7 +8,7 @@ libraries/headers it provides.
 
 1. Copy `libdeflate.ts` (the simplest direct dep) to `<name>.ts`
 2. Fill in `name`, `repo`, `commit`, `sources`, `includes`, `provides.includes`
-3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts`
+3. Add `import { <name> } from "./<name>.ts"` + entry in `allDeps` array in `index.ts` (`programDeps` if only a program beside bun takes it, which then names it in its `JSCProgram.deps`)
 4. Add the name to `DepName` in `../source.ts`
 5. `bun run scripts/build/phase3-test.ts` to verify it builds
 
@@ -28,7 +28,7 @@ Case-sensitive filesystems enforce this.
 ## Removing a dependency
 
 1. Delete `<name>.ts`
-2. Remove from `allDeps` in `index.ts`, and from `DepName` in `../source.ts`
+2. Remove from `allDeps` (or `programDeps`) in `index.ts`, and from `DepName` in `../source.ts`
 3. If any other dep has `fetchDeps: ["<name>"]`, remove that reference
 
 ## Updating a commit

@@ -8,6 +8,7 @@ import { isWindows, tempDir } from "harness";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 
+import { validateBunConfig } from "../../scripts/build/bun.ts";
 import { cxx } from "../../scripts/build/compile.ts";
 import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../scripts/build/config.ts";
 import {
@@ -20,10 +21,12 @@ import {
   webkitTestAotPath,
   type WebKitAotFile,
 } from "../../scripts/build/deps/webkit.ts";
+import { zstd } from "../../scripts/build/deps/zstd.ts";
 import { BuildError } from "../../scripts/build/error.ts";
 import { Ninja, readManifest } from "../../scripts/build/ninja.ts";
 import { getProfile } from "../../scripts/build/profiles.ts";
 import { registerAllRules } from "../../scripts/build/rules.ts";
+import { quote } from "../../scripts/build/shell.ts";
 import {
   depSource,
   resolveDep,
@@ -731,6 +734,32 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
     for (const program of programs) {
       expect(program.cxxflags).toContain(`-DBUILDING_${program.name}`);
       for (const source of program.sources) cxx(n, cfg, source, { flags: program.cxxflags });
+    }
+  });
+
+  test("--local-deps=zstd=<path> is for the jsc that reads the ICU of a prebuilt WebKit, as only that needs zstd", () => {
+    using local = checkOut({}, checkout);
+    const path = resolve("/else where", "zstd");
+    const { buildDir, localDeps } = local.cfg;
+    const cfg = linux({ localDeps: `WebKit=${localDeps.WebKit},zstd=${path}`, buildDir });
+    const flagsOfJsc = () => jscPrograms(cfg).find(program => program.name === "jsc")!.cxxflags;
+    const headersOf = (sourceDir: string) => `-I${quote(join(sourceDir, "lib"), isWindows)}`;
+    const saved = process.env.BUN_ICU_ROOT;
+    try {
+      process.env.BUN_ICU_ROOT = join("/somewhere", "icu");
+      validateBunConfig(cfg);
+      expect(depSource(cfg, zstd)).toMatchObject({ kind: "local", path });
+      expect(flagsOfJsc()).toContain(headersOf(path));
+      expect(flagsOfJsc()).not.toContain(headersOf(join(cfg.vendorDir, "zstd")));
+      expect(() => validateBunConfig(linux({ localDeps: `zstd=${path}`, buildDir }))).toThrow(
+        /--local-deps: zstd is disabled/,
+      );
+      delete process.env.BUN_ICU_ROOT;
+      expect(() => validateBunConfig(cfg)).toThrow(/--local-deps: zstd is disabled/);
+      expect(flagsOfJsc()).not.toContain(headersOf(path));
+    } finally {
+      if (saved === undefined) delete process.env.BUN_ICU_ROOT;
+      else process.env.BUN_ICU_ROOT = saved;
     }
   });
 });

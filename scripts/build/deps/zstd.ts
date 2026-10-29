@@ -5,8 +5,8 @@
  * WebKit's jsc.cpp reads them with this library, as in WebKit's own build
  * (shell/CMakeLists.txt, BUN_ICU_ZSTD_SOURCE_DIR).
  *
- * No other build fetches or compiles it, and it is not in `allDeps`: nothing of
- * it reaches bun, whose zstd is src/zstd.
+ * No other build fetches or compiles it, and it is one of `programDeps`, not of
+ * `allDeps`: nothing of it reaches bun, whose zstd is src/zstd.
  */
 
 import type { Dependency } from "../source.ts";

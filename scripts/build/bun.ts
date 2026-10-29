@@ -19,11 +19,10 @@ import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
 import { cc, cxx, link, pch, type PrecompiledHeader } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
-import { allDeps } from "./deps/index.ts";
+import { allDeps, programDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
 import { jscPrograms, linuxIcuRoot, webkitEngineSources } from "./deps/webkit.ts";
-import { zstd } from "./deps/zstd.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,
@@ -198,9 +197,10 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       depsByName.set(dep.name, resolved);
     }
   }
-  // For a program beside bun, so not one of `deps`.
-  const zstdDep = resolveDep(n, cfg, zstd, depsByName);
-  if (zstdDep !== null) depsByName.set(zstd.name, zstdDep);
+  for (const dep of programDeps) {
+    const resolved = resolveDep(n, cfg, dep, depsByName);
+    if (resolved !== null) depsByName.set(dep.name, resolved);
+  }
 
   // Collect all dep lib paths, include dirs, output stamps, and directly-
   // compiled source files (deps like picohttpparser that provide .c files
@@ -1132,7 +1132,7 @@ export function validateBunConfig(cfg: Config): void {
   // --local-deps names must match a dep — a typo would otherwise silently
   // build the pinned tarball while the banner claims `local:<typo>`.
   // Keyed by string: these names are the user's.
-  const depsByName = new Map<string, Dependency>(allDeps.map(d => [d.name, d]));
+  const depsByName = new Map<string, Dependency>([...allDeps, ...programDeps].map(d => [d.name, d]));
   for (const [name, path] of Object.entries(cfg.localDeps)) {
     const dep = depsByName.get(name);
     assert(dep !== undefined, `--local-deps: unknown dep '${name}'`, {

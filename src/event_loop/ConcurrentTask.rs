@@ -9,7 +9,7 @@
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
 use bun_threading::UnboundedQueue;
-use bun_threading::unbounded_queue::{Link, Linked};
+use bun_threading::unbounded_queue::Link;
 
 // ─── Module-level constructor forwarders ────────────────────────────────────
 // Several callers import this file
@@ -286,7 +286,7 @@ impl Task {
 pub struct ConcurrentTask {
     pub task: Task,
     /// Intrusive MPSC link for [`Queue`]. Plain `AtomicPtr` so the enqueue hot
-    /// path (`atomic_store_next`, called once per completed work-pool task via
+    /// path (`push` linking the old tail, once per completed work-pool task via
     /// `enqueue_task_concurrent`) is a single release-store — no read-modify-write.
     pub next: Link<ConcurrentTask>,
     /// If `true`, the task is heap-owned and freed by the event loop after
@@ -310,7 +310,7 @@ impl Default for ConcurrentTask {
 // of `next`: `Task` is already two words here (tag is not packed into the
 // pointer), so the struct was never 16B, and profiling (build/create-next
 // benches) showed
-// the packed form costs a Relaxed load + OR on every `atomic_store_next` —
+// the packed form costs a Relaxed load + OR on every store to `next` —
 // turning the MPSC enqueue's single release-store into a load-then-store on a
 // cache line that is bouncing between producer threads and the JS-thread
 // consumer. The extra word of padding is cheap; the contended RMW is not.
@@ -320,18 +320,7 @@ const _: () = assert!(
     "ConcurrentTask = Task + next ptr + auto_delete (padded)"
 );
 
-// SAFETY: `link()` always projects to the same embedded `next: Link<Self>`
-// field; `UnboundedQueue` only calls it with a valid, non-null, aligned `item`.
-// The blanket `impl<T: Linked> Node for T` supplies the four accessors as
-// straight `AtomicPtr` load/store — no bit-masking, no preservation load.
-unsafe impl Linked for ConcurrentTask {
-    #[inline]
-    unsafe fn link(item: *mut Self) -> *const Link<Self> {
-        // SAFETY: caller (UnboundedQueue) guarantees `item` is valid; we only
-        // form a raw pointer to the field, no intermediate `&`/`&mut`.
-        unsafe { core::ptr::addr_of!((*item).next) }
-    }
-}
+bun_core::intrusive_field!(ConcurrentTask, next: Link<ConcurrentTask>);
 pub type Queue = UnboundedQueue<ConcurrentTask>;
 
 #[derive(Copy, Clone, Eq, PartialEq)]

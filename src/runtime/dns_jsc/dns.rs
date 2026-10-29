@@ -4575,8 +4575,7 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
+            let loop_ = self.vm().uws_loop_ref();
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };

@@ -202,10 +202,8 @@ pub(crate) struct TimerHeapCtx;
 
 impl bun_io::heap::HeapContext<EventLoopTimer> for TimerHeapCtx {
     #[inline]
-    unsafe fn less(&self, a: *mut EventLoopTimer, b: *mut EventLoopTimer) -> bool {
-        // SAFETY: `Intrusive` only ever calls `less` with non-null nodes that
-        // are live members of the heap (caller invariant on insert/meld).
-        EventLoopTimer::less((), unsafe { &*a }, unsafe { &*b })
+    fn less(&self, a: &EventLoopTimer, b: &EventLoopTimer) -> bool {
+        EventLoopTimer::less((), a, b)
     }
 }
 

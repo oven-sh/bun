@@ -6405,9 +6405,13 @@ impl VirtualMachine {
                 allow_side_effects,
                 printed_member: false,
             };
-            if errors
-                .for_each(global_ref, (&raw mut ctx).cast(), agg_iter)
-                .is_err()
+            if crate::console_object::formatter::for_each_listed(
+                errors,
+                global_ref,
+                (&raw mut ctx).cast(),
+                agg_iter,
+            )
+            .is_err()
             {
                 global_ref.clear_exception();
             }

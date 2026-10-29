@@ -677,12 +677,15 @@ impl<'a> TablePrinter<'a> {
     ) -> JsResult<Self> {
         bun_removable_features::removable_definition!(ConsoleTable, Self::init);
         let _ = level;
+        let jstype = tabular_data.js_type();
         Ok(TablePrinter {
             global_object,
             tabular_data,
             properties,
-            is_iterable: tabular_data.is_iterable(global_object)?,
-            jstype: tabular_data.js_type(),
+            // No `Symbol.iterator` lookup on a Map or Set iterator: it is not run.
+            is_iterable: formatter::is_map_or_set_iterator(jstype)
+                || tabular_data.is_iterable(global_object)?,
+            jstype,
             value_formatter: {
                 // `Formatter` has a `Drop` impl, so struct-update
                 // from a temporary is rejected (E0509).
@@ -975,7 +978,8 @@ impl<'a> TablePrinter<'a> {
                     }
                     ctx.idx += 1;
                 }
-                tabular_data.for_each_with_context(
+                formatter::for_each_listed(
+                    tabular_data,
                     global_object,
                     (&raw mut ctx).cast::<c_void>(),
                     callback::<ENABLE_ANSI_COLORS>,
@@ -3217,6 +3221,24 @@ pub mod formatter {
         jsc::host_fn::from_js_host_call_generic(global, || {
             Bun__inspect__forEachRemainingEntry(iterator, global, ctx, callback)
         })
+    }
+
+    pub(crate) fn is_map_or_set_iterator(js_type: jsc::JSType) -> bool {
+        matches!(js_type, jsc::JSType::MapIterator | jsc::JSType::SetIterator)
+    }
+
+    /// `JSValue::for_each` for a printer: printing a Map or Set iterator must
+    /// not use it up, so that one is read and every other value is iterated.
+    pub(crate) fn for_each_listed(
+        value: JSValue,
+        global: &JSGlobalObject,
+        ctx: *mut c_void,
+        callback: jsc::ForEachCallback,
+    ) -> JsResult<()> {
+        if is_map_or_set_iterator(value.js_type()) {
+            return for_each_remaining_entry(value, global, ctx, callback);
+        }
+        value.for_each(global, ctx, callback)
     }
 
     // ───────────────────────────────────────────────────────────────────────

@@ -528,7 +528,7 @@ impl Snapshots {
                     // `P::init` writes a fully-initialized value on `Ok`. On `Err` we
                     // `?`-return before arming the drop guard, so the slot stays
                     // uninitialized and untouched.
-                    js_parser::TSXParser::init(
+                    let __parser = js_parser::TSXParser::init(
                         &mut __parser_slot,
                         &arena,
                         core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
@@ -537,13 +537,11 @@ impl Snapshots {
                         lexer,
                         opts,
                     )?;
-                    // SAFETY: `init` returned `Ok`, so `*__parser_slot` is initialized;
-                    // the guard's drop closure is the sole owner of the slot from here.
+                    // SAFETY: `p` is the value `init` wrote into `__parser_slot`, which does not drop it. The
+                    // guard holds the only reference to it, so it is dropped once and not used afterwards.
                     let mut __parser_guard =
-                        scopeguard::guard(__parser_slot, |mut s| unsafe { s.assume_init_drop() });
-                    // SAFETY: guard armed only after `init` succeeded.
-                    let parser: &mut js_parser::TSXParser<'_> =
-                        unsafe { __parser_guard.assume_init_mut() };
+                        scopeguard::guard(__parser, |p| unsafe { core::ptr::drop_in_place(p) });
+                    let parser: &mut js_parser::TSXParser<'_> = &mut __parser_guard;
 
                     parser.lexer.expect(js_lexer::T::TOpenParen)?;
                     let after_open_paren_loc = parser.lexer.loc().start;

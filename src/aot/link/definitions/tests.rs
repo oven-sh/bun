@@ -70,7 +70,7 @@ fn define_layout(fragment: &mut FragmentBuilder, key: LayoutKey) {
 fn define_variable(fragment: &mut FragmentBuilder, key: VariableKey) {
     let name = fragment.strings.intern(b"x");
     let id = fragment.declare_variable(key);
-    let variable = synthetic_export_variable(name, ModuleId::default(), ExportWriter::Loader);
+    let variable = synthetic_export_variable(name, ModuleId::default(), ExportWriter::Loader, true);
     fragment.define_variable(id, variable);
 }
 
@@ -636,19 +636,21 @@ fn synthetic_export_variable_is_untyped_and_uninitialized() {
         ty: TypeTable::ANYTHING_OR_ABSENT,
         ..DeclaredType::untyped()
     };
+    // So does the variable for a name that a module of the library may lack.
     let writers = [
-        (ExportWriter::Loader, DeclaredType::untyped()),
-        (ExportWriter::Face, may_be_read_empty()),
-        (ExportWriter::Capture, may_be_read_empty()),
+        (ExportWriter::Loader, true, DeclaredType::untyped()),
+        (ExportWriter::Loader, false, may_be_read_empty()),
+        (ExportWriter::Face, true, may_be_read_empty()),
+        (ExportWriter::Capture, true, may_be_read_empty()),
     ];
-    for (writer, declared) in writers {
+    for (writer, is_known_member, declared) in writers {
         let expected = Variable {
             name: Some(name),
             module,
             declared,
             ..Variable::default()
         };
-        let variable = synthetic_export_variable(name, module, writer);
+        let variable = synthetic_export_variable(name, module, writer, is_known_member);
         assert_eq!(variable, expected, "{writer:?}");
         assert_eq!(
             variable.initialization,
@@ -668,7 +670,7 @@ fn name_that_a_body_stores_reads_undefined_until_then() {
         ..Variable::default()
     };
     assert_eq!(
-        synthetic_export_variable(name, module, ExportWriter::Body),
+        synthetic_export_variable(name, module, ExportWriter::Body, true),
         expected
     );
 }

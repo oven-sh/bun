@@ -1,0 +1,28 @@
+{
+  "name": "more-backend-packages",
+  "private": true,
+  "dependencies": {
+    "@types/js-yaml": "4.0.9",
+    "@types/lodash": "4.17.26",
+    "@types/luxon": "3.7.6",
+    "@types/node": "26.6.5",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "date-fns": "4.4.0",
+    "dayjs": "1.11.23",
+    "dotenv": "18.0.8",
+    "js-yaml": "5.5.0",
+    "lodash": "4.18.1",
+    "lru-cache": "11.5.3",
+    "luxon": "3.7.2",
+    "nanoid": "6.0.2",
+    "p-limit": "7.3.3",
+    "p-queue": "10.0.0",
+    "superstruct": "2.0.2",
+    "uuid": "14.0.3",
+    "valibot": "1.5.0",
+    "yaml": "2.9.1",
+    "yup": "1.7.1",
+    "zod": "4.6.7"
+  }
+}

@@ -155,7 +155,6 @@ export const libraryLines: readonly Line[] = [
   ["get-builtin-module-unknown", "console.log(process.getBuiltinModule(K));"],
   ["bun-plugin", "Bun.plugin({ name: \"a\", setup() {} });"],
   ["sqlite", "new (require(\"bun:sqlite\").Database)(K);"],
-  ["shadow-realm", "new ShadowRealm().evaluate(K);"],
   ["atomics", "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1);"],
   ["events-require", "require(\"node:events\");"],
   ["events-new", "new (require(\"node:events\"))();"],

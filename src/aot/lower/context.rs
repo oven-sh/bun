@@ -12,6 +12,7 @@ use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, ExprId, ExprKind, NodeData};
 use bun_sema::import_sites::ResolvedForm;
 use bun_sema::program::{CompiledModule, FileId, FileRole};
+use bun_sema::resolve::TranspileSettings;
 use rustc_hash::FxHashMap;
 
 use self::function_table::FunctionTable;
@@ -101,7 +102,7 @@ pub struct LoweringInputs<'a> {
     pub defined_object_types: &'a DefinedObjectTypes,
     pub files: &'a [Option<FileInputs<'a>>],
     pub limits: &'a LimitValues,
-    pub transpiler: &'a RuntimeTranspiler,
+    pub transpiler: &'a RuntimeTranspiler<'a>,
     pub options: LoweringOptions,
 }
 
@@ -184,6 +185,7 @@ fn transpile_file(
     inputs: &LoweringInputs<'_>,
     file: FileId,
     queries: &Queries<'_, '_, '_>,
+    settings: &TranspileSettings,
     diagnostics: &mut DiagnosticBuffer,
 ) -> Option<TranspiledFile> {
     let hir = queries.hir();
@@ -192,6 +194,7 @@ fn transpile_file(
         text: &hir.text,
         loader: inputs.sources.loader(file),
         has_legacy_decorators: hir.legacy_decorators,
+        assigns_class_fields: settings.use_define_for_class_fields == Some(false),
         parsed: Some(ParsedText {
             hir,
             bound: queries.bound(),
@@ -240,11 +243,27 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let compiled = queries.files().compiled(file);
         let compiled = compiled.expect("only compiled files are lowered");
         let file_inputs = inputs.files[file.idx()].expect("every lowered file has its inputs");
+        let runs_as_written = runs_file_as_written(inputs.sources.kind(file), hir);
+        let mut diagnostics = DiagnosticBuffer::default();
+        // The positions in Bun's own modules come from a table.
+        let is_transpiled_at_run_time = match inputs.sources.kind(file) {
+            load::SourceKind::Program | load::SourceKind::Data | load::SourceKind::TypesOnly => {
+                !runs_as_written
+            }
+            load::SourceKind::EvaluatedText
+            | load::SourceKind::RuntimeModule(_)
+            | load::SourceKind::RuntimeFunctions => false,
+        };
+        let transpiled = match is_transpiled_at_run_time {
+            true => transpile_file(inputs, file, queries, compiled.settings, &mut diagnostics),
+            false => None,
+        };
         let scopes = analyze_scopes(&ScopeInput {
             file,
             hir,
             bound,
             compiled,
+            transpiled: transpiled.as_ref(),
             modules: inputs.modules,
             builtins: file_inputs.builtins,
             max_captures: inputs.limits.get(LimitId::MaxCaptures) as usize,
@@ -264,21 +283,6 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             file_inputs.builtins,
             inputs.options.removable,
         );
-        let runs_as_written = runs_file_as_written(inputs.sources.kind(file), hir);
-        let mut diagnostics = DiagnosticBuffer::default();
-        // The positions in Bun's own modules come from a table.
-        let is_transpiled_at_run_time = match inputs.sources.kind(file) {
-            load::SourceKind::Program | load::SourceKind::Data | load::SourceKind::TypesOnly => {
-                !runs_as_written
-            }
-            load::SourceKind::EvaluatedText
-            | load::SourceKind::RuntimeModule(_)
-            | load::SourceKind::RuntimeFunctions => false,
-        };
-        let transpiled = match is_transpiled_at_run_time {
-            true => transpile_file(inputs, file, queries, &mut diagnostics),
-            false => None,
-        };
         FileLowering {
             inputs,
             file,

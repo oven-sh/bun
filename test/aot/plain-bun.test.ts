@@ -1,14 +1,20 @@
 // Bugs in Bun without --aot that the programs under ./programs have found. The correct output of such a program is stored in
-// its .expected.txt, so that --aot is still tested with it; this file checks plain `bun run` against the same output.
+// its last comment, so that --aot is still tested with it; this file checks plain `bun run` against the same output.
 import { expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
+/** What the last comment of the program says it prints: see run-parallel.ts. */
+const storedOutput = (program: string) =>
+  /\n\/\* Output:\n([^]*)\*\/\s*$/.exec(
+    readFileSync(join(import.meta.dir, "parallel", program, "main.js"), "utf8"),
+  )![1];
+
 async function plain(program: string, env: Record<string, string> = {}) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "run", "main.js"],
-    cwd: join(import.meta.dir, "programs", program),
+    cwd: join(import.meta.dir, "parallel", program),
     env: { ...bunEnv, ...env },
     stdin: "ignore",
     stdout: "pipe",
@@ -26,7 +32,7 @@ test.failing(
   async () => {
     const program = "arrays/sort-write-back-after-mutation";
     const correct = {
-      stdout: readFileSync(join(import.meta.dir, "programs", program + ".expected.txt"), "utf8"),
+      stdout: storedOutput(program),
       exitCode: 0,
     };
     const runs = await Promise.all([
@@ -45,7 +51,7 @@ test.failing(
   async () => {
     const program = "calls/apply-tests-the-callee-before-the-list";
     const correct = {
-      stdout: readFileSync(join(import.meta.dir, "programs", program + ".expected.txt"), "utf8"),
+      stdout: storedOutput(program),
       exitCode: 0,
     };
     expect(await plain(program)).toEqual(correct);

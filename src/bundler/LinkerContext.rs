@@ -2580,8 +2580,6 @@ impl<'a> LinkerContext<'a> {
     /// widen until they differ, and every chunk that reaches a widened chunk
     /// (its output embeds that chunk's path or id) has the widths folded into
     /// its own hash so that its name changes with its bytes.
-    ///
-    /// Also returns the manifest of each page that a chunk prints, for the caller to render.
     pub(crate) fn final_chunk_hashes(
         &self,
         chunks: &[Chunk],
@@ -2592,8 +2590,40 @@ impl<'a> LinkerContext<'a> {
         ),
         BunError,
     > {
+        /// Grows each chunk's set to every chunk it reaches through `edges`.
+        fn close(reach: &mut [AutoBitSet], edges: &[Vec<u32>]) -> Result<(), AllocError> {
+            loop {
+                let mut changed = false;
+                for i in 0..reach.len() {
+                    for &j in &edges[i] {
+                        let j = j as usize;
+                        if j == i || reach[j].subset_of(&reach[i]) {
+                            continue;
+                        }
+                        let other = reach[j].clone()?;
+                        reach[i].set_union(&other);
+                        changed = true;
+                    }
+                }
+                if !changed {
+                    return Ok(());
+                }
+            }
+        }
+        /// Chunk `i`'s own hash, then the rest of its closure in chunk order.
+        fn closure_hash(own: &[u64], reach: &AutoBitSet, i: usize) -> u64 {
+            let mut hash = ContentHasher::default();
+            hash.write(&own[i].to_ne_bytes());
+            let mut iter = reach.iterator::<true, true>();
+            while let Some(j) = iter.next() {
+                if j != i {
+                    hash.write(&own[j].to_ne_bytes());
+                }
+            }
+            hash.digest()
+        }
+
         let n = chunks.len();
-        let mut manifests: Vec<Option<crate::HTMLImportManifest::Template>> = Vec::new();
         // The chunks that print a manifest.
         let mut printers: Vec<usize> = Vec::new();
         let mut own: Vec<u64> = Vec::with_capacity(n);
@@ -2645,28 +2675,6 @@ impl<'a> LinkerContext<'a> {
                             }
                         }
                         crate::chunk::QueryKind::HtmlImport => {
-                            use crate::HTMLImportManifest::Part;
-                            let parse_graph = self.parse_graph();
-                            let index = piece.query.index();
-                            if manifests.is_empty() {
-                                let pages = parse_graph.html_imports.server_source_indices.len();
-                                manifests.resize_with(pages, || None);
-                            }
-                            let manifest = match &mut manifests[index as usize] {
-                                Some(manifest) => manifest,
-                                unset => unset.insert(crate::HTMLImportManifest::emit(
-                                    index,
-                                    parse_graph,
-                                    &self.graph,
-                                    chunks,
-                                )?),
-                            };
-                            for part in manifest.parts() {
-                                match part {
-                                    Part::Literal(bytes) => hash.write(bytes),
-                                    Part::Chunk(listed, _) => out.push(listed),
-                                }
-                            }
                             if printers.last() != Some(&chunk_index) {
                                 printers.push(chunk_index);
                             }
@@ -2686,50 +2694,60 @@ impl<'a> LinkerContext<'a> {
             bits.set(i);
             reach.push(bits);
         }
-        loop {
-            let mut changed = false;
-            for i in 0..n {
-                for &j in &edges[i] {
-                    let j = j as usize;
-                    if j == i || reach[j].subset_of(&reach[i]) {
-                        continue;
-                    }
-                    let other = reach[j].clone()?;
-                    reach[i].set_union(&other);
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
+        close(&mut reach, &edges)?;
 
-        let closure: Vec<u64> = reach
-            .iter()
-            .enumerate()
-            .map(|(i, bits)| {
+        let mut closure: Vec<u64> = (0..n).map(|i| closure_hash(&own, &reach[i], i)).collect();
+
+        let mut manifests: Vec<Option<crate::HTMLImportManifest::Template>> = Vec::new();
+        if !printers.is_empty() {
+            use crate::HTMLImportManifest::Part;
+            let parse_graph = self.parse_graph();
+            let pages = parse_graph.html_imports.server_source_indices.len();
+            manifests.resize_with(pages, || None);
+            // A printer's own hash also covers its manifests as they print, with a listed chunk's hash for its path and etag.
+            for &printer in &printers {
+                let crate::chunk::IntermediateOutput::Pieces(pieces) =
+                    &chunks[printer].intermediate_output
+                else {
+                    continue;
+                };
                 let mut hash = ContentHasher::default();
-                hash.write(&own[i].to_ne_bytes());
-                // A manifest reaches the chunks of several pages, and their order differs between builds.
-                let reaches_manifest = printers.iter().any(|&printer| bits.is_set(printer));
-                let mut rest: u64 = 0;
-                let mut iter = bits.iterator::<true, true>();
-                while let Some(j) = iter.next() {
-                    if j == i {
+                hash.write(&own[printer].to_ne_bytes());
+                for piece in pieces.slice() {
+                    if piece.query.kind() != crate::chunk::QueryKind::HtmlImport {
                         continue;
                     }
-                    if reaches_manifest {
-                        rest = rest.wrapping_add(own[j]);
-                    } else {
-                        hash.write(&own[j].to_ne_bytes());
+                    let index = piece.query.index();
+                    let manifest = match &mut manifests[index as usize] {
+                        Some(manifest) => manifest,
+                        unset => unset.insert(crate::HTMLImportManifest::emit(
+                            index,
+                            parse_graph,
+                            &self.graph,
+                            chunks,
+                        )?),
+                    };
+                    for part in manifest.parts() {
+                        match part {
+                            Part::Literal(bytes) => hash.write(bytes),
+                            Part::Chunk(listed, _) => {
+                                hash.write(&closure[listed as usize].to_ne_bytes());
+                                edges[printer].push(listed);
+                            }
+                        }
                     }
                 }
-                if reaches_manifest {
-                    hash.write(&rest.to_ne_bytes());
+                own[printer] = hash.digest();
+            }
+            // A chunk that reaches a printer prints the printer's path.
+            for i in 0..n {
+                if printers.iter().any(|&printer| reach[i].is_set(printer)) {
+                    closure[i] = closure_hash(&own, &reach[i], i);
                 }
-                hash.digest()
-            })
-            .collect();
+            }
+            // A wider hash of a listed chunk changes what the manifest prints.
+            close(&mut reach, &edges)?;
+        }
 
         use bun_core::fmt::ContentHash;
         let min_len: Vec<usize> = chunks

@@ -630,17 +630,22 @@ console.log("About manifest:", aboutHtml);
     interface Options {
       entrypoints?: string[];
       splitting?: boolean;
+      minify?: boolean;
       assetNaming?: string;
       plugins?: BunPlugin[];
     }
 
     /** Every output of one build, sorted by path. */
-    async function build(dir: string, { entrypoints = ["server.js"], splitting, assetNaming, plugins }: Options = {}) {
+    async function build(
+      dir: string,
+      { entrypoints = ["server.js"], splitting, minify, assetNaming, plugins }: Options = {},
+    ) {
       const result = await Bun.build({
         entrypoints: entrypoints.map(entrypoint => join(dir, entrypoint)),
         outdir: join(dir, "out"),
         target: "bun",
         splitting,
+        minify,
         naming: { entry: "[name]-[hash].[ext]", asset: assetNaming },
         plugins,
       });
@@ -660,7 +665,8 @@ console.log("About manifest:", aboutHtml);
 
     /** The outputs that print a manifest, then the outputs that import one of those by name. */
     function printers(outputs: Output[]) {
-      const printing = outputs.filter(output => output.text.includes("__jsonParse("));
+      // The manifest's JSON in a string literal. Minified, `__jsonParse` has another name.
+      const printing = outputs.filter(output => output.text.includes(String.raw`\"files\":[`));
       return [...printing, ...outputs.filter(output => printing.some(printer => output.text.includes(printer.path)))];
     }
 
@@ -698,7 +704,12 @@ console.log("About manifest:", aboutHtml);
 
     interface Edit extends Options {
       files: Record<string, string>;
-      edit: [file: string, contents: string];
+      /** The new contents of each file that changes. */
+      edit: Record<string, string>;
+    }
+
+    function write(dir: string, edit: Record<string, string>) {
+      for (const [file, contents] of Object.entries(edit)) writeFileSync(join(dir, file), contents);
     }
 
     /** The edit renames `renames` and keeps `keeps`. No other name and content go apart, with or without the edit. */
@@ -708,7 +719,7 @@ console.log("About manifest:", aboutHtml);
       const second = await build(String(dir), options);
       expect(second).toEqual(first);
 
-      writeFileSync(join(String(dir), edit[0]), edit[1]);
+      write(String(dir), edit);
       const edited = await build(String(dir), options);
       expect(changes(second, edited)).toEqual(
         Object.fromEntries([...renames.map(output => [output, renamed]), ...keeps.map(output => [output, kept])]),
@@ -719,33 +730,33 @@ console.log("About manifest:", aboutHtml);
     const cases: (Omit<Edit, "files"> & { changes: string; renames: string[] })[] = [
       {
         changes: "client JS",
-        edit: ["client.js", `import("./lazy.js"); console.log("changed");`],
+        edit: { "client.js": `import("./lazy.js"); console.log("changed");` },
         renames: ["server.js"],
       },
-      { changes: "CSS", edit: ["style.css", `body { color: blue; }`], renames: ["server.js"] },
-      { changes: "an asset", edit: ["logo.png", "changed"], renames: ["server.js"] },
+      { changes: "CSS", edit: { "style.css": `body { color: blue; }` }, renames: ["server.js"] },
+      { changes: "an asset", edit: { "logo.png": "changed" }, renames: ["server.js"] },
       {
         // The asset keeps its path. Only its etag in the manifest changes.
         changes: "an asset with an unhashed name",
-        edit: ["logo.png", "changed"],
+        edit: { "logo.png": "changed" },
         assetNaming: "[name].[ext]",
         renames: ["server.js"],
       },
       {
         // Only the page's own path and etag change in the manifest.
         changes: "the page's own markup",
-        edit: ["index.html", files["index.html"].replace("<head>", "<head><title>changed</title>")],
+        edit: { "index.html": files["index.html"].replace("<head>", "<head><title>changed</title>") },
         renames: ["server.js"],
       },
       {
         changes: "the stylesheet of a lazy chunk",
-        edit: ["lazy.css", `p { color: purple; }`],
+        edit: { "lazy.css": `p { color: purple; }` },
         splitting: true,
         renames: ["server.js"],
       },
       {
         changes: "the asset of a lazy chunk, with an unhashed name",
-        edit: ["icon.png", "changed"],
+        edit: { "icon.png": "changed" },
         splitting: true,
         assetNaming: "[name].[ext]",
         renames: ["server.js"],
@@ -753,14 +764,14 @@ console.log("About manifest:", aboutHtml);
       {
         // Both entry points print the manifest of the one page.
         changes: "client JS under two entry points",
-        edit: ["client.js", `import("./lazy.js"); console.log("changed");`],
+        edit: { "client.js": `import("./lazy.js"); console.log("changed");` },
         entrypoints: ["server.js", "other.js"],
         renames: ["other.js", "server.js"],
       },
       {
         // The manifest moves to a chunk that both entry points import.
         changes: "client JS under two entry points that share a chunk",
-        edit: ["client.js", `import("./lazy.js"); console.log("changed");`],
+        edit: { "client.js": `import("./lazy.js"); console.log("changed");` },
         entrypoints: ["server.js", "other.js"],
         splitting: true,
         renames: ["chunk.js", "other.js", "server.js"],
@@ -794,7 +805,7 @@ console.log("About manifest:", aboutHtml);
       };
       const options: Edit = {
         files,
-        edit: ["b.client.js", `console.log("changed");`],
+        edit: { "b.client.js": `console.log("changed");` },
         entrypoints: ["sa.js", "sb.js"],
       };
       await expectRenames(options, ["sb.js"], ["sa.js"]);
@@ -809,7 +820,7 @@ console.log("About manifest:", aboutHtml);
         "server.js": `import a from "./a.html"; import b from "./b.html"; console.log(b);`,
         ...twoPages,
       };
-      await expectRenames({ files, edit: [file, `console.log("changed");`] }, renames, keeps);
+      await expectRenames({ files, edit: { [file]: `console.log("changed");` } }, renames, keeps);
     });
 
     /** Holds the files `held` until the scan has found every file that it can find without them. */
@@ -830,6 +841,13 @@ console.log("About manifest:", aboutHtml);
       "routes/b.js": `import b from "../b.html"; export { b };`,
       ...twoPages,
     };
+    // Both pages load one lazy chunk.
+    const sharedLazyChunk = {
+      ...routes,
+      "a.client.js": `import("./shared.js"); console.log("a");`,
+      "b.client.js": `import("./shared.js"); console.log("b");`,
+      "shared.js": `console.log("shared");`,
+    };
     const lazyStylesheets = {
       "server.js": files["server.js"],
       "index.html": `<!doctype html><html><body><script type="module" src="./client.js"></script></body></html>`,
@@ -840,8 +858,27 @@ console.log("About manifest:", aboutHtml);
       "lazy1.css": `.lazy1 { color: blue; }`,
     };
 
+    // Minified, a stylesheet's chunk is its rules alone. The two chunks keep
+    // their names and contents, and each is now listed where the other was.
+    test.each([
+      {
+        owners: "pages",
+        files: routes,
+        edit: { "a.css": twoPages["b.css"], "b.css": twoPages["a.css"] },
+        splitting: false,
+      },
+      {
+        owners: "lazy chunks of one page",
+        files: lazyStylesheets,
+        edit: { "lazy0.css": lazyStylesheets["lazy1.css"], "lazy1.css": lazyStylesheets["lazy0.css"] },
+        splitting: true,
+      },
+    ])("when two $owners trade their stylesheets", async ({ owners, ...options }) => {
+      await expectRenames({ ...options, minify: true }, ["server.js"]);
+    });
+
     // The order in which the scan finds files decides the order of the pages,
-    // of their CSS chunks and of the files they copy. A chunk that prints a
+    // of their chunks and of the files they copy. A chunk that prints a
     // manifest has the same bytes either way, so it has one name.
     test.each([
       {
@@ -849,7 +886,7 @@ console.log("About manifest:", aboutHtml);
         files: routes,
         held: ["a.js", "b.js"],
         options: {},
-        edit: ["b.css", `.b { color: green; }`],
+        edit: { "b.css": `.b { color: green; }` },
         renames: ["server.js"],
       },
       {
@@ -857,15 +894,23 @@ console.log("About manifest:", aboutHtml);
         files: routes,
         held: ["a.js", "b.js"],
         options: { entrypoints: ["server.js", "other.js"], splitting: true },
-        edit: ["b.css", `.b { color: green; }`],
+        edit: { "b.css": `.b { color: green; }` },
         renames: ["chunk.js", "other.js", "server.js"],
+      },
+      {
+        shape: "two pages that load one lazy chunk",
+        files: sharedLazyChunk,
+        held: ["a.js", "b.js"],
+        options: { splitting: true },
+        edit: { "shared.js": `console.log("changed");` },
+        renames: ["server.js"],
       },
       {
         shape: "two lazy stylesheets of one page",
         files: lazyStylesheets,
         held: ["lazy0.js", "lazy1.js"],
         options: { splitting: true },
-        edit: ["lazy1.css", `.lazy1 { color: green; }`],
+        edit: { "lazy1.css": `.lazy1 { color: green; }` },
         renames: ["server.js"],
       },
     ])("when the scan finds files in another order: $shape", async ({ files, held, options, edit, renames }) => {
@@ -876,10 +921,28 @@ console.log("About manifest:", aboutHtml);
       ];
       expect(second).toEqual(first);
 
-      writeFileSync(join(String(dir), edit[0]), edit[1]);
+      write(String(dir), edit);
       const edited = await build(String(dir), { ...options, plugins: [findLast(held[0])] });
       expect(changes(second, edited)).toEqual(Object.fromEntries(renames.map(output => [output, renamed])));
       expect(mismatches(second, edited)).toEqual(none);
+    });
+
+    // Each page's script reaches two lazy chunks, and the scan order decides
+    // which has the lower index. That names the script, so the two builds
+    // print two manifests.
+    test("when the scan order renames a listed chunk", async () => {
+      using dir = tempDir("html-import-hash-listed-order", {
+        ...sharedLazyChunk,
+        "a.client.js": `import("./a.lazy.js"); import("./shared.js"); console.log("a");`,
+        "b.client.js": `import("./b.lazy.js"); import("./shared.js"); console.log("b");`,
+        "a.lazy.js": `console.log("lazy a");`,
+        "b.lazy.js": `console.log("lazy b");`,
+      });
+      const [first, second] = [
+        await build(String(dir), { splitting: true, plugins: [findLast("a.js")] }),
+        await build(String(dir), { splitting: true, plugins: [findLast("b.js")] }),
+      ];
+      expect(mismatches(first, second).oneNameTwoContents).toEqual([]);
     });
 
     // `bun build` writes the chunks to disk itself.
@@ -917,13 +980,9 @@ console.log("About manifest:", aboutHtml);
       });
     });
 
-    // A chunk's final hash covers the set of chunks it reaches, not which
-    // chunk each of its references names. `lazy.js` goes from `a.js` to `b.js`
-    // here and the page reaches both either way, so the lazy chunk is renamed
-    // and the manifest lists its new path, while the server chunk keeps its
-    // name and hash: `{ "server.js": { text: true, path: false, hash: false } }`.
-    // The page's own script, which imports the lazy chunk by name, is stale the same way.
-    test.todo("when a lazy chunk imports another chunk that the page already reaches", async () => {
+    // `lazy.js` goes from `a.js` to `b.js`, and the page reaches both either
+    // way. Only the name of the lazy chunk changes, and the manifest lists it.
+    test("when a lazy chunk imports another chunk that the page already reaches", async () => {
       using dir = tempDir("html-import-hash-retarget", {
         "server.js": files["server.js"],
         "index.html": `<!doctype html><html><body><script type="module" src="./client.js"></script></body></html>`,

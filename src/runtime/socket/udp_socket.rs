@@ -2108,12 +2108,9 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
         if fd < 0 {
             break 'kind "UNKNOWN";
         }
-        let mut st: libc::stat = bun_core::ffi::zeroed();
-        // SAFETY: fstat(2) with a zeroed out-param.
-        let rc = unsafe { libc::fstat(fd, std::ptr::from_mut(&mut st)) };
-        if rc != 0 {
+        let Ok(st) = bun_sys::fstat(bun_sys::Fd::from_native(fd)) else {
             break 'kind "UNKNOWN";
-        }
+        };
         let mode = st.st_mode & libc::S_IFMT;
         if mode == libc::S_IFSOCK {
             let mut sock_type: c_int = 0;
@@ -2156,8 +2153,7 @@ pub(crate) fn dgram_guess_handle_type(fd: i32) -> BunString {
             break 'kind "PIPE";
         }
         if mode == libc::S_IFCHR {
-            // SAFETY: isatty(3) on a non-negative fd.
-            let is_tty = unsafe { libc::isatty(fd) } == 1;
+            let is_tty = bun_sys::isatty(bun_sys::Fd::from_native(fd));
             break 'kind if is_tty { "TTY" } else { "FILE" };
         }
         if mode == libc::S_IFREG {

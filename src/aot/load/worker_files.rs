@@ -231,6 +231,27 @@ pub(crate) fn find_file_named_as_in_executable(
     }
 }
 
+/// Whether the program sees its own paths with backslashes when it runs: `B:\~BUN\root\a.js` in an executable for Windows.
+fn sees_backslashes(paths: &PathOptions, runs_in_place: bool) -> bool {
+    match runs_in_place {
+        true => cfg!(windows),
+        false => matches!(&paths.module_prefix[..], [b'B', b':', b'/' | b'\\', ..]),
+    }
+}
+
+/// A path with forward slashes, as the program sees it.
+fn with_separators_of_run(path: &[u8], sees_backslashes: bool) -> Vec<u8> {
+    with_separators_of_host(path, sees_backslashes)
+}
+
+/// A path that the program has put together, with forward slashes. Elsewhere than on Windows a backslash is part of a name.
+fn without_separators_of_run(path: Vec<u8>, sees_backslashes: bool) -> Vec<u8> {
+    match sees_backslashes {
+        true => with_forward_slashes(path),
+        false => path,
+    }
+}
+
 /// A directory that the host has named, `C:\a\b` on Windows, as a program is taken to write it here.
 fn with_separators_of_program(directory: &[u8]) -> Vec<u8> {
     match directory {
@@ -717,7 +738,7 @@ impl Walk<'_, '_> {
         initializer
     }
 
-    // What the constructor of a Worker makes of the value that the expression always evaluates to, if that is a text or a URL: a constant, or constants and the path of the file itself that `+`, a template, `encodeURIComponent()`, `btoa()`, `new URL()` and the functions of node:path and node:url put together. A path is what the program sees when it runs, with forward slashes.
+    // What the constructor of a Worker makes of the value that the expression always evaluates to, if that is a text or a URL: a constant, or constants and the path of the file itself that `+`, a template, `encodeURIComponent()`, `btoa()`, `new URL()` and the functions of node:path and node:url put together. A path is what the program sees when it runs, with its separators.
     fn find_text(&mut self, file: FileId, expression: ExprId) -> Option<Vec<u8>> {
         let files = self.files;
         let (hir, bound) = (files.hir(file), files.bound(file));
@@ -769,9 +790,11 @@ impl Walk<'_, '_> {
             ExprKind::Call(call) => self.find_text_of_call(file, expression, call),
             ExprKind::Dot { obj, name, .. } => self.find_text_of_member(file, obj, name),
             ExprKind::Ident(_) => match bound.binding(expression) {
-                Binding::CommonJs(CommonJsVariable::Filename) => self.find_own_path(file),
+                Binding::CommonJs(CommonJsVariable::Filename) => {
+                    Some(self.as_seen(&self.find_own_path(file)?))
+                }
                 Binding::CommonJs(CommonJsVariable::Dirname) => {
-                    Some(dirname::<Posix>(&self.find_own_path(file)?).to_vec())
+                    Some(self.as_seen(dirname::<Posix>(&self.find_own_path(file)?)))
                 }
                 Binding::Symbol(symbol) if self.variables_left > 0 => {
                     self.variables_left -= 1;
@@ -791,6 +814,16 @@ impl Walk<'_, '_> {
         builtins
             .builtin_of_expression(expression)
             .map(table::canonical_id)
+    }
+
+    fn as_seen(&self, path: &[u8]) -> Vec<u8> {
+        let search = self.search;
+        with_separators_of_run(path, sees_backslashes(search.paths, search.runs_in_place))
+    }
+
+    fn as_joined(&self, path: Vec<u8>) -> Vec<u8> {
+        let search = self.search;
+        without_separators_of_run(path, sees_backslashes(search.paths, search.runs_in_place))
     }
 
     /// The path of the module as the program sees it when it runs, with forward slashes.
@@ -825,8 +858,8 @@ impl Walk<'_, '_> {
             }
             let path = self.find_own_path(file)?;
             return match name {
-                b"path" | b"filename" => Some(path),
-                b"dir" | b"dirname" => Some(dirname::<Posix>(&path).to_vec()),
+                b"path" | b"filename" => Some(self.as_seen(&path)),
+                b"dir" | b"dirname" => Some(self.as_seen(dirname::<Posix>(&path))),
                 b"url" => write_file_url(&path),
                 _ => None,
             };
@@ -883,7 +916,7 @@ impl Walk<'_, '_> {
             };
             let path = self.find_own_path(found)?;
             return match analysis.import_sites[site].kind {
-                ImportSiteKind::RequireResolve(_) => Some(path),
+                ImportSiteKind::RequireResolve(_) => Some(self.as_seen(&path)),
                 ImportSiteKind::ImportMetaResolve(_) => write_file_url(&path),
                 _ => None,
             };
@@ -900,17 +933,20 @@ impl Walk<'_, '_> {
             return match (position, name) {
                 (1, b"join" | b"resolve") => {
                     let parts: Option<Vec<Vec<u8>>> = (arguments.iter())
-                        .map(|&argument| self.find_text(file, argument))
+                        .map(|&argument| {
+                            let part = self.find_text(file, argument)?;
+                            Some(self.as_joined(part))
+                        })
                         .collect();
-                    join_paths(&parts?, name == b"resolve")
+                    Some(self.as_seen(&join_paths(&parts?, name == b"resolve")?))
                 }
                 (2, b"fileURLToPath") => {
                     let url = self.find_text(file, *arguments.first()?)?;
-                    read_file_url(&url)
+                    Some(self.as_seen(&read_file_url(&url)?))
                 }
                 (2, b"pathToFileURL") => {
                     let path = self.find_text(file, *arguments.first()?)?;
-                    write_file_url(&path)
+                    write_file_url(&self.as_joined(path))
                 }
                 _ => None,
             };
@@ -1114,6 +1150,7 @@ impl Walk<'_, '_> {
 
     /// False: the text is no path under which the executable would hold a file of code that the build finds. An executable looks in its own root for what a relative path names.
     fn add_path(&mut self, text: &[u8]) -> bool {
+        let text = &self.as_joined(text.to_vec())[..];
         let &WorkerSearch {
             paths,
             runs_in_place,
@@ -1494,6 +1531,29 @@ mod tests {
             is("C:/a/b/w.js")
         );
         assert_eq!(find("C:\\a\\b", windows, "file:///C:/a/b/w.js"), None);
+    }
+
+    #[test]
+    fn an_executable_for_windows_sees_backslashes() {
+        let paths = |prefix: &str| PathOptions {
+            module_prefix: prefix.as_bytes().to_vec(),
+            root_directory: b"/a".to_vec(),
+            entry_point_names: Vec::new(),
+        };
+        assert!(sees_backslashes(&paths("B:/~BUN/root/"), false));
+        assert!(sees_backslashes(&paths("B:\\~BUN\\root\\"), false));
+        assert!(!sees_backslashes(&paths("/$bunfs/root/"), false));
+        assert_eq!(
+            sees_backslashes(&paths("B:/~BUN/root/"), true),
+            cfg!(windows)
+        );
+        let seen = with_separators_of_run(b"B:/~BUN/root/a.js", true);
+        assert_eq!(seen, b"B:\\~BUN\\root\\a.js");
+        let mixed = [&seen[..seen.len() - 5], b"/w.js"].concat();
+        assert_eq!(without_separators_of_run(mixed, true), b"B:/~BUN/root/w.js");
+        let posix = b"/$bunfs/root/a\\b.js".to_vec();
+        assert_eq!(with_separators_of_run(&posix, false), posix);
+        assert_eq!(without_separators_of_run(posix.clone(), false), posix);
     }
 
     #[test]

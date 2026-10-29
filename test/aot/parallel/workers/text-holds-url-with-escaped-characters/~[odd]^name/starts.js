@@ -1,5 +1,5 @@
 const url = new URL("./beside.js", import.meta.url).href;
-console.log(url.slice(url.indexOf("%7E")));
+console.log(url.slice(url.lastIndexOf("%7E")));
 export const start = () =>
   new Worker(
     "data:text/javascript," +

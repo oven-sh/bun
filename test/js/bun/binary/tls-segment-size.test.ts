@@ -15,11 +15,18 @@
 // every platform rather than only showing up as a Windows size bump.
 
 import { describe, expect, test } from "bun:test";
-import { bunExe, isASAN, isDebug, isFreeBSD, isLinux, isWindows, preadExact, readElf64ProgramHeaders } from "harness";
-import { once } from "node:events";
-import { closeSync, openSync, readFileSync, readlinkSync } from "node:fs";
-import http2 from "node:http2";
-import type { AddressInfo } from "node:net";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isFreeBSD,
+  isLinux,
+  isWindows,
+  preadExact,
+  readElf64ProgramHeaders,
+} from "harness";
+import { closeSync, openSync } from "node:fs";
 
 /**
  * ELF: size of the PT_TLS segment's in-memory template (p_memsz). This is
@@ -122,55 +129,81 @@ describe("zero-filled data", () => {
   });
 
   // The Huffman tables of HPACK (768 KB, which only a process that speaks HTTP/2 or HTTP/3 fills) were zero-filled
-  // data. This process reads its own zero-filled data before and after its first HTTP/2 request: the longest stretch
+  // data. A new process reads its own zero-filled data before and after its first HTTP/2 request: the longest stretch
   // of pages that the request filled is the largest table that lives there.
-  test.skipIf(!isLinux)("the first HTTP/2 request fills no large table in it", async () => {
-    const addresses = readElf64ProgramHeaders(bunExe())
-      .filter(segment => segment.type === PT_LOAD)
-      .map(segment => segment.vaddr);
-    const lowest = addresses.reduce((least, address) => (address < least ? address : least));
-    // Where the kernel put the executable, which is not where the link put a position-independent one.
-    const executable = readlinkSync("/proc/self/exe");
-    const first = readFileSync("/proc/self/maps", "utf8")
-      .split("\n")
-      .find(line => line.endsWith(" " + executable))!;
-    const moved = BigInt("0x" + first.split("-")[0]) - (lowest / smallestPage) * smallestPage;
+  test.skipIf(!isLinux)(
+    "the first HTTP/2 request fills no large table in it",
+    async () => {
+      const mappings = zeroFilledMappings(bunExe()).map(mapping => [Number(mapping.start), Number(mapping.end)]);
+      const lowest = readElf64ProgramHeaders(bunExe())
+        .filter(segment => segment.type === PT_LOAD)
+        .map(segment => Number(segment.vaddr))
+        .reduce((least, address) => Math.min(least, address));
+      const script = `
+        const { openSync, readFileSync, readlinkSync, readSync } = require("node:fs");
+        const [mappings, lowest] = [JSON.parse(process.argv[1]), Number(process.argv[2])];
+        // Where the kernel put the executable, which is not where the link put a position-independent one.
+        const executable = readlinkSync("/proc/self/exe");
+        const first = readFileSync("/proc/self/maps", "utf8")
+          .split("\\n")
+          .find(line => line.endsWith(" " + executable));
+        const moved = parseInt(first.split("-")[0], 16) - (lowest - (lowest % 4096));
+        const memory = openSync("/proc/self/mem", "r");
+        const read = () =>
+          mappings.map(([start, end]) => {
+            const bytes = Buffer.alloc(end - start);
+            for (let at = 0; at < bytes.length; ) {
+              const count = readSync(memory, bytes, at, bytes.length - at, start + moved + at);
+              if (count === 0) throw new Error("/proc/self/mem ended early");
+              at += count;
+            }
+            return bytes;
+          });
+        const before = read();
 
-    const memory = openSync("/proc/self/mem", "r");
-    const server = http2.createServer((request, response) => response.end("the response"));
-    try {
-      const read = () =>
-        zeroFilledMappings(bunExe()).map(mapping =>
-          preadExact(memory, Number(mapping.start + moved), Number(mapping.end - mapping.start)),
-        );
-      const before = read();
+        const http2 = require("node:http2");
+        const server = http2.createServer((request, response) => response.end("the response"));
+        await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        const body = await new Promise((resolve, reject) => {
+          client.on("error", reject);
+          const request = client.request({ ":path": "/", "x-a-header": "a value that the client codes with the tables" });
+          let text = "";
+          request.setEncoding("utf8");
+          request.on("data", chunk => (text += chunk));
+          request.on("end", () => resolve(text));
+          request.on("error", reject);
+          request.end();
+        });
 
-      await once(server.listen(0, "127.0.0.1"), "listening");
-      const client = http2.connect(`http://127.0.0.1:${(server.address() as AddressInfo).port}`);
-      const request = client.request({ ":path": "/", "x-a-header": "a value that the client codes with the tables" });
-      let body = "";
-      request.setEncoding("utf8").on("data", chunk => (body += chunk));
-      request.end();
-      await once(request, "end");
-      client.close();
-      expect(body).toBe("the response");
-
-      const after = read();
-      const empty = Buffer.alloc(Number(smallestPage));
-      let longest = 0;
-      for (const [mapping, was] of before.entries()) {
-        for (let at = 0, filled = 0; at < was.length; at += empty.length) {
-          const wasEmpty = was.subarray(at, at + empty.length).equals(empty);
-          const isEmpty = after[mapping].subarray(at, at + empty.length).equals(empty);
-          filled = wasEmpty && !isEmpty ? filled + empty.length : 0;
-          longest = Math.max(longest, filled);
+        const after = read();
+        const empty = Buffer.alloc(4096);
+        let longest = 0;
+        for (const [mapping, was] of before.entries()) {
+          for (let at = 0, filled = 0; at < was.length; at += 4096) {
+            const wasEmpty = was.subarray(at, at + 4096).equals(empty);
+            const isEmpty = after[mapping].subarray(at, at + 4096).equals(empty);
+            filled = wasEmpty && !isEmpty ? filled + 4096 : 0;
+            longest = Math.max(longest, filled);
+          }
         }
-      }
+        console.log(JSON.stringify({ body, longestStretchFilled: longest }));
+        process.exit(0);
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script, JSON.stringify(mappings), String(lowest)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const result = stdout.startsWith("{") ? JSON.parse(stdout) : { stdout, stderr };
+      expect(result).toEqual({ body: "the response", longestStretchFilled: expect.any(Number) });
       // The tables are 512 KB and 256 KB. What else the request fills there is a few pages.
-      expect(longest).toBeLessThan(128 * 1024);
-    } finally {
-      server.close();
-      closeSync(memory);
-    }
-  });
+      expect(result.longestStretchFilled).toBeLessThan(128 * 1024);
+      expect(exitCode).toBe(0);
+    },
+    // In a debug build the new process takes 3 to 7 seconds.
+    isDebug ? 60_000 : undefined,
+  );
 });

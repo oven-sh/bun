@@ -1,0 +1,59 @@
+before
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40
+a read-only value and a getter alone
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: NaN 0 40 0---4---8---12---16---20---24---28---32---36---
+  instances made now: NaN 0 30
+  objects of a function made before: NaN 0 40
+  objects of a function made now: NaN 0 30
+  stores: 40 TypeError TypeError
+  behind the stores: 4040 0 40 | NaN 0 30 | NaN 0 30
+a getter and a setter
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 2y2y3y415y6y7y819y10y11y12113y14y15y16117y18y19y20121y22y23y24125y26y27y28129y30y31y32133y34y35y36137y38y39y 0 40 0123456789101112131415161718192021222324252627282930313233343536373839
+  instances made now: 0y1y2y3y4y5y6y7y8y9y10y11y12y13y14y15y16y17y18y19y20y21y22y23y24y25y26y27y28y29y30y31y32y33y34y35y36y37y38y39y 0 40
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 0
+  behind the stores: 4040 0 40 | 4040 0 40 | 0y1y2y3y4y5y6y7y8y9y10y11y12y13y14y15y16y17y18y19y20y21y22y23y24y25y26y27y28y29y30y31y32y33y34y35y36y37y38y39y 0 40
+60
+__defineGetter__
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: NaN 0 40
+  objects of a function made now: NaN 0 30
+  stores: 40 TypeError 40
+  behind the stores: 4040 0 40 | NaN 0 30 | 4040 0 40
+__defineSetter__
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: NaN 0 40
+  objects of a function made now: NaN 0 40
+  stores: 40 0 40
+  behind the stores: 4040 0 40 | NaN 0 40 | 4040 0 40
+120
+a getter on Object.prototype: TypeError
+a value on Object.prototype: TypeError
+false
+behind those
+  literals made before: 190 30 10
+  literals made now: 190 30 10
+  instances made before: 190 30 10 0---4---8---12---16---20---24---28---32---36---
+  instances made now: 190 30 10
+  objects of a function made before: 190 30 10
+  objects of a function made now: 190 30 10
+  stores: 40 40 40
+  behind the stores: 4040 0 40 | 4040 0 40 | 4040 0 40

@@ -1,0 +1,246 @@
+//// a-copy-of-a-copy.ts
+// What the first copy lacks the copy of the copy lacks too, though every object of the first copy's type holds all it has itself.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+interface W { b: number }
+class C implements W { a = 1; get b(): number { return 2 } }
+const first = (w: W) => ({ ...w, one: 1 });
+const second = (made: ReturnType<typeof first>) => ({ ...made, two: 2 });
+const third = ({ one, ...rest }: ReturnType<typeof second>) => rest;
+row("the first", () => first(new C()).b + 1);
+row("the second", () => second(first(new C())).b + 1);
+row("the third", () => third(second(first(new C()))).b + 1);
+row("its keys", () => Object.keys(third(second(first(new C())))).join());
+row("of a plain object", () => third(second(first({ b: 5 }))).b + 1);
+//// assignment-pattern-with-rest.ts
+// A rest in an assignment pattern copies as a rest in a declaration does.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+interface S { a: number; b: number }
+class C implements S { a = 1; get b(): number { return 2 } }
+const heir = (): S => new C();
+row("the rest", () => { let a: number; let rest: { b: number }; ({ a, ...rest } = heir()); return a + " " + typeof rest.b });
+//// copies-held-and-handed-on.ts
+// The copy goes on through fields, arrays, results and callbacks before the member is read.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+interface S { a: number; b: number }
+class C implements S { a = 1; get b(): number { return 2 } }
+class Holder { held: S; constructor(held: S) { this.held = held } }
+const copy = (s: S): S => ({ ...s });
+const sum = (list: S[]): number => { let total = 0; for (const each of list) total += each.b; return total };
+row("a field", () => new Holder(copy(new C())).held.b + 1);
+row("an array", () => sum([copy(new C()), { a: 1, b: 5 }]));
+row("map", () => [new C(), new C()].map(copy).map(each => each.b).join());
+row("stored into a number field", () => { const target = { n: 0 }; target.n = copy(new C()).b; return typeof target.n });
+row("a default", () => { const { b = 7 } = copy(new C()) as Partial<S>; return b });
+row("nullish", () => (copy(new C()).b as number | undefined) ?? 9);
+//// copies-made-where-they-are-used.ts
+// The copy is made in the place that takes it: an argument, a store, an element, a result, a default, a member of a literal.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+interface S { a: number; b: number }
+class C implements S { a = 1; get b(): number { return 2 } }
+class Holder { held: S = { a: 0, b: 0 } }
+interface Outer { inner: S }
+const heir = (): S => new C();
+const read = (s: S): number => s.b + 1;
+const withDefault = (s: S = { ...heir() }): number => s.b + 1;
+function* yielded(): Generator<S> { yield { ...heir() } }
+const later = async (): Promise<S> => ({ ...heir() });
+row("an argument", () => read({ ...heir() }));
+row("a store to a field", () => { const holder = new Holder(); holder.held = { ...heir() }; return holder.held.b + 1 });
+row("a store to a variable", () => { let s: S = { a: 0, b: 0 }; s = { ...heir() }; return s.b + 1 });
+row("an element", () => { const list: S[] = [{ ...heir() }]; return list[0].b + 1 });
+row("pushed", () => { const list: S[] = []; list.push({ ...heir() }); return list[0].b + 1 });
+row("a member of a literal", () => { const outer: Outer = { inner: { ...heir() } }; return outer.inner.b + 1 });
+row("a default", () => withDefault());
+row("yielded", () => { for (const each of yielded()) return each.b + 1 });
+row("one arm of a conditional", () => { const s: S = heir().a > 0 ? { ...heir() } : { a: 0, b: 0 }; return s.b + 1 });
+row("satisfies", () => ({ ...heir() } satisfies S).b + 1);
+row("in a map", () => { const map = new Map<string, S>(); map.set("k", { ...heir() }); return map.get("k")!.b + 1 });
+later().then(s => console.log("awaited: " + (s.b + 1)));
+//// copies-of-type-parameters-reached-indirectly.ts
+// The function that copies a type parameter is reached as a method, a member of an object, a static method, a callback, through another generic function.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+interface S { a: number; b: number }
+class C implements S { a = 1; get b(): number { return 2 } }
+const heir = (): S => new C();
+const copy = <T extends object>(value: T): T => ({ ...value });
+const tools = { copy<T extends object>(value: T): T { return { ...value } }, arrow: <T extends object>(value: T): T => ({ ...value }) };
+class Copier { static of<T extends object>(value: T): T { return { ...value } } one<T extends object>(value: T): T { return { ...value } } }
+const through = <T extends object>(value: T): T => copy(value);
+const twice = <T extends object>(value: T): T => through(through(value));
+const apply = <T extends object>(f: (value: T) => T, value: T): T => f(value);
+const pick = (which: boolean) => (which ? copy : through);
+row("a method of a literal", () => tools.copy(heir()).b + 1);
+row("an arrow in a literal", () => tools.arrow(heir()).b + 1);
+row("a static method", () => Copier.of(heir()).b + 1);
+row("a method", () => new Copier().one(heir()).b + 1);
+row("through another", () => through(heir()).b + 1);
+row("through two", () => twice(heir()).b + 1);
+row("a callback", () => apply(copy, heir()).b + 1);
+row("map", () => [heir()].map(copy)[0].b + 1);
+row("one of two", () => pick(true)(heir()).b + 1);
+row("a plain object", () => tools.copy({ a: 1, b: 2 }).b + Copier.of({ a: 1, b: 2 }).b + apply(copy, { a: 1, b: 2 }).b);
+//// getter-of-a-base-class.ts
+// The getter stands two classes up.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+interface S { a: number; b: number }
+class Base { get b(): number { return 2 } }
+class Middle extends Base {}
+class C extends Middle implements S { a = 1 }
+const copy = (s: S): S => ({ ...s });
+row("the instance", () => new C().b);
+row("the copy", () => copy(new C()).b + 1);
+//// member-named-by-a-symbol.ts
+// The member that the prototype provides is named by a symbol.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+const tag: unique symbol = Symbol("tag");
+interface S { a: number; [tag]: number }
+const base = { [tag]: 2 };
+const heir = (): S => Object.assign(Object.create(base), { a: 1 });
+const copy = (s: S): S => ({ ...s });
+row("the heir", () => heir()[tag]);
+row("the copy", () => copy(heir())[tag] + 1);
+//// members-of-every-kind-from-getters.ts
+// A copy of an instance lacks what the class provides by getters, whatever the member's type.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+interface Inner { x: number }
+interface S { own: number; n: number; s: string; f: boolean; o: Inner; list: number[]; big: bigint; either: "a" | "b" }
+class C implements S {
+  own = 1;
+  get n(): number { return 2 }
+  get s(): string { return "s" }
+  get f(): boolean { return true }
+  get o(): Inner { return { x: 1 } }
+  get list(): number[] { return [1] }
+  get big(): bigint { return 1n }
+  get either(): "a" | "b" { return "a" }
+}
+const copy = (s: S): S => ({ ...s });
+const made = (): S => copy(new C());
+row("own", () => made().own);
+row("number", () => typeof made().n);
+row("string", () => typeof made().s);
+row("string joined", () => "<" + made().s + ">");
+row("boolean", () => typeof made().f);
+row("boolean tested", () => (made().f ? "yes" : "no"));
+row("boolean compared", () => made().f === false);
+row("object", () => typeof made().o);
+row("read of the object", () => made().o.x);
+row("optional read of the object", () => (made().o as Inner | undefined)?.x);
+row("array", () => typeof made().list);
+row("bigint", () => typeof made().big);
+row("literal", () => { switch (made().either) { case "a": return "a"; case "b": return "b"; default: return "neither" } });
+row("number compared", () => made().n > 1);
+row("number in a template", () => `${made().n}`);
+//// object-create-with-descriptors.ts
+// Object.create is given descriptors: what they do not make enumerable is not copied, nor what the prototype provides.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+interface S { a: number; b: number; c: number }
+const base = { b: 2 };
+const heir = (): S => Object.create(base, { a: { value: 1, enumerable: true }, c: { value: 3 } });
+const copy = (s: S): S => ({ ...s });
+row("the heir", () => heir().a + heir().b + heir().c);
+row("the copy", () => { const made = copy(heir()); return made.a + " " + made.b + " " + made.c });
+row("added", () => copy(heir()).b + copy(heir()).c);
+//// objects-of-the-engine.ts
+// Objects that the engine makes hold little themselves: an error's message is hidden, a map's size is a getter, an array's length is hidden, a function's name is hidden.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+interface HasMessage { message: string }
+interface Sized { size: number }
+interface HasLength { length: number }
+interface Named { name: string }
+const message = (e: HasMessage): HasMessage => ({ ...e });
+const sized = (s: Sized): Sized => ({ ...s });
+const long = (l: HasLength): HasLength => ({ ...l });
+const named = (n: Named): Named => ({ ...n });
+row("an error", () => typeof message(new Error("x")).message);
+row("a map", () => sized(new Map([[1, 2]])).size + 1);
+row("a set", () => typeof sized(new Set([1])).size);
+row("an array", () => long([1, 2, 3]).length + 1);
+row("a function", () => typeof named(function f() {}).name);
+row("plain objects", () => message({ message: "m" }).message + sized({ size: 1 }).size + long({ length: 2 }).length + named({ name: "n" }).name);
+//// typed-as-the-class-getter.ts
+// A copy of an instance, typed as the class itself: Object.assign onto an empty literal has the type of the class, and none of what the class's prototype provides: reading the getter yields undefined.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+class C { a = 1; get b(): number { return 2 } }
+row("the getter", () => { const c: C = Object.assign({}, new C()); return c.a + " " + c.b });
+row("added to", () => { const c: C = Object.assign({}, new C()); return c.b + 1 });
+//// typed-as-the-class-method-read-as-a-value.ts
+// A copy of an instance, typed as the class: a method read as a value is undefined; called, it throws as in plain JavaScript.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+class C { a = 1; m(): number { return this.a } }
+row("read as a value", () => { const c: C = Object.assign({}, new C()); const m = c.m; return typeof m });
+row("called", () => { const c: C = Object.assign({}, new C()); return c.m() });
+row("of a base class", () => { class D extends C { d = 2 } const d: D = Object.assign({}, new D()); const m = d.m; return typeof m + " " + d.d });
+//// typed-as-the-class-seen-through-an-interface.ts
+// A copy of an instance, typed as the class and then seen through an interface that the class implements with a getter: reading the member yields undefined.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name : String(e))) } }
+interface S { a: number; b: number }
+class C implements S { a = 1; get b(): number { return 2 } }
+const read = (s: S): number => s.b + 1;
+row("through the interface", () => { const c: C = Object.assign({}, new C()); return read(c) });
+row("an instance", () => read(new C()));
+//// types-kept-methods-of-a-class-under-a-copy-of-a-type-parameter.ts
+// A type parameter is copied somewhere in the program: calls of a class's own methods on its instances stay what they are.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\\n")[0] : String(e))) } }
+class Counter { count = 0; add(n: number): number { this.count += n; return this.count } get twice(): number { return this.count * 2 } }
+const copy = <T extends object>(value: T): T => ({ ...value });
+row("a copy of a literal", () => copy({ x: 1 }).x);
+row("the class", () => { const counter = new Counter(); counter.add(2); return counter.add(3) + counter.twice });
+//// types-kept-no-heir-in-the-program.ts
+// Nothing in this program leaves a member to a prototype: what a spread, Object.assign and a rest pattern copy keeps its type, and so do the reads.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\\n")[0] : String(e))) } }
+interface S { a: number; b: number }
+const make = (a: number): S => ({ a, b: a + 1 });
+const copy = (s: S): S => ({ ...s });
+const assigned = (s: S): S => Object.assign({}, s);
+const rest = ({ a, ...others }: S) => others;
+row("spread", () => { const c = copy(make(1)); return c.a + c.b });
+row("Object.assign", () => { const c = assigned(make(2)); return c.a + c.b });
+row("rest", () => rest(make(3)).b + 1);
+//// types-kept-the-heir-does-not-fit-what-is-copied.ts
+// A class has `b` as a getter, but its instances are no S (they lack `a`): a copy of an S cannot be a copy of one of them, and the reads keep their type.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\\n")[0] : String(e))) } }
+interface S { a: number; b: number }
+class Other { c = 1; get b(): number { return 2 } }
+const make = (a: number): S => ({ a, b: a + 1 });
+const copy = (s: S): S => ({ ...s });
+row("the class", () => new Other().b + new Other().c);
+row("spread", () => { const c = copy(make(1)); return c.a + c.b });
+//// types-kept-the-heir-is-never-copied.ts
+// An S may have `b` from its prototype, but nothing copies an S: the reads of another type that is copied keep their type.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\\n")[0] : String(e))) } }
+interface S { a: number; b: number }
+interface P { x: number; y: number }
+const base = { b: 2 };
+const heir = (): S => Object.assign(Object.create(base), { a: 1 });
+const point = (x: number): P => ({ x, y: x + 1 });
+const copy = (p: P): P => ({ ...p });
+row("the heir", () => heir().a + heir().b);
+row("spread", () => { const c = copy(point(1)); return c.x + c.y });
+//// types-kept-the-member-is-written-behind-the-spread.ts
+// The copy is given `b` behind the spread, whatever its source held: it lacks nothing.
+declare const console: { log(...values: unknown[]): void };
+function row(name: string, f: () => unknown): void { try { console.log(name + ": " + String(f())) } catch (e) { console.log(name + ": THROWS " + (e instanceof Error ? e.name + ": " + e.message.split("\\n")[0] : String(e))) } }
+interface S { a: number; b: number }
+class C implements S { a = 1; get b(): number { return 2 } }
+const heir = (): S => new C();
+const copy = (s: S): S => ({ ...s, b: 5 });
+row("the heir", () => heir().b);
+row("spread", () => { const c = copy(heir()); return c.a + c.b });

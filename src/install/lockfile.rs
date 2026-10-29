@@ -87,7 +87,6 @@ pub use self::catalog_map::CatalogMap;
 pub use self::override_map::OverrideMap;
 pub use self::package::Package;
 pub use self::tree::Tree;
-pub use crate::padding_checker::assert_no_uninitialized_padding;
 // Bring the derive-generated `items_*` column accessors (`PackageColumns` for
 // `MultiArrayList<Package>`, `PackageColumns` for `Slice<Package>`) into scope.
 use self::package::PackageColumns as _;
@@ -3583,14 +3582,7 @@ impl Lockfile {
         }
 
         let mut digest = ZERO_HASH;
-        // SAFETY: engine is null (default).
-        unsafe {
-            Crypto::SHA512_256::hash(
-                alphabetized_name_version_string,
-                &mut digest,
-                core::ptr::null_mut(),
-            )
-        };
+        Crypto::SHA512_256::hash(alphabetized_name_version_string, &mut digest);
 
         Ok(digest)
     }
@@ -3876,6 +3868,7 @@ pub struct PatchedDep {
     /// the hash of the patch file contents
     __patchfile_hash: u64,
 }
+bun_core::impl_no_uninit!(PatchedDep);
 
 impl Default for PatchedDep {
     fn default() -> Self {

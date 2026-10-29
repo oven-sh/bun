@@ -1,0 +1,1016 @@
+//// indirect-call.member
+const ns = { f(a: number): number { return (a & 7) + 1; } };
+function turn(i: number): number {
+  return ns.f(i);
+}
+//// indirect-call.comma-zero
+const ns = { f(a: number): number { return (a & 7) + 1; } };
+function turn(i: number): number {
+  return (0, ns.f)(i);
+}
+//// booleans.words
+const flags: boolean[] = [true, false, true, true];
+function turn(i: number): number {
+  return flags[i & 3] === true ? 1 : flags[i & 3] === false ? 2 : 3;
+}
+//// booleans.not-zero
+const flags: boolean[] = [!0, !1, !0, !0];
+function turn(i: number): number {
+  return flags[i & 3] === !0 ? 1 : flags[i & 3] === !1 ? 2 : 3;
+}
+//// optional-chain.native
+interface N { a?: { b?: number } }
+const ns: (N | undefined)[] = [{ a: { b: 1 } }, {}, undefined, { a: {} }];
+function turn(i: number): number {
+  const o = ns[i & 3];
+  const v = o?.a?.b;
+  return v === undefined ? 0 : v;
+}
+//// optional-chain.downleveled
+interface N { a?: { b?: number } }
+const ns: (N | undefined)[] = [{ a: { b: 1 } }, {}, undefined, { a: {} }];
+function turn(i: number): number {
+  var _a: any;
+  const o = ns[i & 3];
+  const v = (_a = o === null || o === void 0 ? void 0 : o.a) === null || _a === void 0 ? void 0 : _a.b;
+  return v === undefined ? 0 : v;
+}
+//// nullish.native
+const xs: (number | null | undefined)[] = [1, null, undefined, 4];
+function turn(i: number): number {
+  return xs[i & 3] ?? 7;
+}
+//// nullish.downleveled
+const xs: (number | null | undefined)[] = [1, null, undefined, 4];
+function turn(i: number): number {
+  var _a: any;
+  return (_a = xs[i & 3]) !== null && _a !== void 0 ? _a : 7;
+}
+//// template.native
+const names: string[] = ["ab", "cd", "ef", "gh"];
+function turn(i: number): number {
+  return `<${names[i & 3]}:${i & 7}>`.length;
+}
+//// template.downleveled
+const names: string[] = ["ab", "cd", "ef", "gh"];
+function turn(i: number): number {
+  return "<".concat(names[i & 3], ":").concat((i & 7) as any, ">").length;
+}
+//// default-parameter.native
+function f(a: number, b = 2): number {
+  return a * b;
+}
+function turn(i: number): number {
+  return f(i & 7) + f(i & 3, 3);
+}
+//// default-parameter.downleveled
+function f(a: number, b?: number): number {
+  if (b === void 0) { b = 2; }
+  return a * b;
+}
+function turn(i: number): number {
+  return f(i & 7) + f(i & 3, 3);
+}
+//// default-parameter.or
+function f(a: number, b?: number): number {
+  b = b || 2;
+  return a * b;
+}
+function turn(i: number): number {
+  return f(i & 7) + f(i & 3, 3);
+}
+//// default-parameter.arguments-length
+function f(a: number, b?: number): number {
+  if (arguments.length < 2) b = 2;
+  return a * b!;
+}
+function turn(i: number): number {
+  return f(i & 7) + f(i & 3, 3);
+}
+//// class.native
+class V {
+  x: number;
+  constructor(x: number) { this.x = x; }
+  get(): number { return this.x + 1; }
+}
+function turn(i: number): number {
+  return new V(i & 7).get();
+}
+//// class.es5-function-in-a-function
+var V: any = /** @class */ (function () {
+  function V(this: any, x: number) { this.x = x; }
+  V.prototype.get = function () { return this.x + 1; };
+  return V;
+}());
+function turn(i: number): number {
+  return new V(i & 7).get();
+}
+//// class.babel-create-class
+function _defineProperties(target: any, props: any) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+function _createClass(Constructor: any, protoProps: any, staticProps?: any) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+function _classCallCheck(instance: any, Constructor: any) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+var V: any = /*#__PURE__*/ (function () {
+  function V(this: any, x: number) { _classCallCheck(this, V); this.x = x; }
+  _createClass(V, [{ key: "get", value: function get(this: any) { return this.x + 1; } }]);
+  return V;
+})();
+function turn(i: number): number {
+  return new V(i & 7).get();
+}
+//// class.new-or-call
+function V(this: any, x: number): any {
+  if (!(this instanceof V)) return new (V as any)(x);
+  (this as any).x = x;
+}
+V.prototype.get = function () { return this.x + 1; };
+function turn(i: number): number {
+  return (V as any)(i & 7).get();
+}
+//// derived.native
+class A { a: number; constructor(a: number) { this.a = a; } }
+class B extends A { b: number; constructor(a: number) { super(a); this.b = 2; } }
+function turn(i: number): number {
+  const v = new B(i & 7);
+  return v.a + v.b;
+}
+//// derived.es5-extends
+var __extends = (function () {
+  var extendStatics = function (d: any, b: any): any {
+    extendStatics = Object.setPrototypeOf || ({ __proto__: [] } instanceof Array && function (d: any, b: any) { d.__proto__ = b; }) || function (d: any, b: any) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+    return extendStatics(d, b);
+  };
+  return function (d: any, b: any) {
+    if (typeof b !== "function" && b !== null) throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+    extendStatics(d, b);
+    function __(this: any) { this.constructor = d; }
+    d.prototype = b === null ? Object.create(b) : ((__.prototype = b.prototype), new (__ as any)());
+  };
+})();
+var A: any = (function () { function A(this: any, a: number) { this.a = a; } return A; }());
+var B: any = (function (_super) {
+  __extends(B, _super);
+  function B(this: any, a: number) { var _this = _super.call(this, a) || this; _this.b = 2; return _this; }
+  return B;
+}(A));
+function turn(i: number): number {
+  const v = new B(i & 7);
+  return v.a + v.b;
+}
+//// derived.util-inherits
+import { inherits } from "node:util";
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B as any, A as any);
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.a + v.b;
+}
+//// derived.object-create-prototype
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+B.prototype = Object.create(A.prototype);
+B.prototype.constructor = B;
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.a + v.b;
+}
+//// field.native
+class T { x = 1; y = 2 }
+function turn(i: number): number {
+  const t = new T();
+  return t.x + t.y + (i & 1);
+}
+//// field.define-property
+class T {
+  x!: number; y!: number;
+  constructor() {
+    Object.defineProperty(this, "x", { enumerable: true, configurable: true, writable: true, value: 1 });
+    Object.defineProperty(this, "y", { enumerable: true, configurable: true, writable: true, value: 2 });
+  }
+}
+function turn(i: number): number {
+  const t = new T();
+  return t.x + t.y + (i & 1);
+}
+//// field.babel-define-property
+function _defineProperty(obj: any, key: any, value: any) { if (key in obj) { Object.defineProperty(obj, key, { value: value, enumerable: true, configurable: true, writable: true }); } else { obj[key] = value; } return obj; }
+class T {
+  x!: number; y!: number;
+  constructor() { _defineProperty(this, "x", 1); _defineProperty(this, "y", 2); }
+}
+function turn(i: number): number {
+  const t = new T();
+  return t.x + t.y + (i & 1);
+}
+//// private.native
+class T { #x = 3; get(): number { return this.#x; } }
+const t = new T();
+function turn(i: number): number {
+  return t.get() + (i & 1);
+}
+//// private.weak-map-helper
+var __classPrivateFieldGet = function (receiver: any, state: any, kind: any, f?: any) {
+    if (kind === "a" && !f) throw new TypeError("Private accessor was defined without a getter");
+    if (typeof state === "function" ? receiver !== state || !f : !state.has(receiver)) throw new TypeError("Cannot read private member from an object whose class did not declare it");
+    return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
+};
+var _T_x: any;
+class T { constructor() { _T_x.set(this, 3); } get(): number { return __classPrivateFieldGet(this, _T_x, "f"); } }
+_T_x = new WeakMap();
+const t = new T();
+function turn(i: number): number {
+  return t.get() + (i & 1);
+}
+//// spread-list.native
+const xs: number[] = [1, 2, 3];
+function turn(i: number): number {
+  const b = [...xs, i & 7];
+  return b.length + b[3];
+}
+//// spread-list.spread-array-helper
+var __spreadArray = function (to: any, from: any, pack?: any) {
+    if (pack || arguments.length === 2) for (var i = 0, l = from.length, ar; i < l; i++) {
+        if (ar || !(i in from)) {
+            if (!ar) ar = Array.prototype.slice.call(from, 0, i);
+            ar[i] = from[i];
+        }
+    }
+    return to.concat(ar || Array.prototype.slice.call(from));
+};
+const xs: number[] = [1, 2, 3];
+function turn(i: number): number {
+  const b = __spreadArray(__spreadArray([], xs, true), [i & 7], false);
+  return b.length + b[3];
+}
+//// spread-list.concat-empty
+const xs: number[] = [1, 2, 3];
+function turn(i: number): number {
+  const b = ([] as number[]).concat(xs, [i & 7]);
+  return b.length + b[3];
+}
+//// spread-object.native
+const o = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const c = { ...o, b: i & 7 };
+  return c.a + c.b + c.c;
+}
+//// spread-object.assign-helper
+var __assign: any = function (this: any) {
+    __assign = Object.assign || function (t: any) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+            s = arguments[i];
+            for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
+        }
+        return t;
+    };
+    return __assign.apply(this, arguments);
+};
+const o = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const c = __assign(__assign({}, o), { b: i & 7 });
+  return c.a + c.b + c.c;
+}
+//// rest-object.native
+const o = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const { a, ...rest } = o;
+  return a + rest.b + rest.c + (i & 1);
+}
+//// rest-object.rest-helper
+var __rest = function (s: any, e: any) {
+    var t: any = {};
+    for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+        t[p] = s[p];
+    if (s != null && typeof Object.getOwnPropertySymbols === "function")
+        for (var i = 0, q = Object.getOwnPropertySymbols(s); i < q.length; i++) {
+            if (e.indexOf(q[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, q[i]))
+                t[q[i]] = s[q[i]];
+        }
+    return t;
+};
+const o = { a: 1, b: 2, c: 3 };
+function turn(i: number): number {
+  const a = o.a, rest = __rest(o, ["a"]);
+  return a + rest.b + rest.c + (i & 1);
+}
+//// async.native
+async function g(i: number): Promise<number> { return i & 7; }
+async function turn(i: number): Promise<number> {
+  return (await g(i)) + 1;
+}
+//// async.awaiter-helper
+var __awaiter = function (thisArg: any, _arguments: any, P: any, generator: any): any {
+    function adopt(value: any) { return value instanceof P ? value : new P(function (resolve: any) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve: any, reject: any) {
+        function fulfilled(value: any) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value: any) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result: any) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+function g(i: number): Promise<number> { return __awaiter(undefined, void 0, void 0, function* () { return i & 7; }); }
+function step(i: number): Promise<number> { return __awaiter(undefined, void 0, void 0, function* (): any { return (yield g(i)) + 1; }); }
+async function turn(i: number): Promise<number> {
+  return await step(i);
+}
+//// arguments-to-list.rest
+function f(...r: number[]): number { return r.length + r[1]; }
+function turn(i: number): number {
+  return f(i & 7, 2, 3);
+}
+//// arguments-to-list.slice-call
+function f(a?: number, b?: number, c?: number): number { var r = Array.prototype.slice.call(arguments); return r.length + r[1]; }
+function turn(i: number): number {
+  return f(i & 7, 2, 3);
+}
+//// arguments-to-list.empty-slice-call
+function f(a?: number, b?: number, c?: number): number { var r = [].slice.call(arguments) as number[]; return r.length + r[1]; }
+function turn(i: number): number {
+  return f(i & 7, 2, 3);
+}
+//// arguments-to-list.array-from
+function f(a?: number, b?: number, c?: number): number { var r = Array.from(arguments); return r.length + r[1]; }
+function turn(i: number): number {
+  return f(i & 7, 2, 3);
+}
+//// arguments-to-list.spread
+function f(a?: number, b?: number, c?: number): number { var r = [...arguments]; return r.length + r[1]; }
+function turn(i: number): number {
+  return f(i & 7, 2, 3);
+}
+//// arguments-to-list.loop
+function f(a?: number, b?: number, c?: number): number { var r = new Array(arguments.length); for (var k = 0; k < r.length; k++) r[k] = arguments[k]; return r.length + r[1]; }
+function turn(i: number): number {
+  return f(i & 7, 2, 3);
+}
+//// push-many.spread
+const b: number[] = [4, 5, 6];
+function turn(i: number): number {
+  const a: number[] = [i & 7];
+  a.push(...b);
+  return a.length + a[2];
+}
+//// push-many.push-apply
+const b: number[] = [4, 5, 6];
+function turn(i: number): number {
+  const a: number[] = [i & 7];
+  a.push.apply(a, b);
+  return a.length + a[2];
+}
+//// push-many.prototype-push-apply
+const b: number[] = [4, 5, 6];
+function turn(i: number): number {
+  const a: number[] = [i & 7];
+  Array.prototype.push.apply(a, b);
+  return a.length + a[2];
+}
+//// push-many.loop
+const b: number[] = [4, 5, 6];
+function turn(i: number): number {
+  const a: number[] = [i & 7];
+  for (let k = 0; k < b.length; k++) a.push(b[k]);
+  return a.length + a[2];
+}
+//// text-has.includes
+const texts: string[] = ["a=1", "b", "c=3", "dd"];
+function turn(i: number): number {
+  return texts[i & 3].includes("=") ? 1 : 0;
+}
+//// text-has.index-of-not-minus-one
+const texts: string[] = ["a=1", "b", "c=3", "dd"];
+function turn(i: number): number {
+  return texts[i & 3].indexOf("=") !== -1 ? 1 : 0;
+}
+//// text-has.index-of-at-least-zero
+const texts: string[] = ["a=1", "b", "c=3", "dd"];
+function turn(i: number): number {
+  return texts[i & 3].indexOf("=") >= 0 ? 1 : 0;
+}
+//// text-has.tilde-index-of
+const texts: string[] = ["a=1", "b", "c=3", "dd"];
+function turn(i: number): number {
+  return ~texts[i & 3].indexOf("=") ? 1 : 0;
+}
+//// is-nan.number-is-nan
+const xs: number[] = [1, NaN, 3, NaN];
+function turn(i: number): number {
+  return Number.isNaN(xs[i & 3]) ? 1 : 0;
+}
+//// is-nan.global-is-nan
+const xs: number[] = [1, NaN, 3, NaN];
+function turn(i: number): number {
+  return isNaN(xs[i & 3]) ? 1 : 0;
+}
+//// is-nan.not-itself
+const xs: number[] = [1, NaN, 3, NaN];
+function turn(i: number): number {
+  const x = xs[i & 3];
+  return x !== x ? 1 : 0;
+}
+//// kind-of-value.array-is-array
+const vs: unknown[] = [[1], { a: 1 }, "s", 4];
+function turn(i: number): number {
+  return Array.isArray(vs[i & 3]) ? 1 : 0;
+}
+//// kind-of-value.to-string-call
+const vs: unknown[] = [[1], { a: 1 }, "s", 4];
+const toString = Object.prototype.toString;
+function turn(i: number): number {
+  return toString.call(vs[i & 3]) === "[object Array]" ? 1 : 0;
+}
+//// kind-of-value.constructor
+const vs: any[] = [[1], { a: 1 }, "s", 4];
+function turn(i: number): number {
+  return vs[i & 3].constructor === Array ? 1 : 0;
+}
+//// is-object.typeof-and-not-null
+const vs: unknown[] = [[1], { a: 1 }, "s", null];
+function turn(i: number): number {
+  const v = vs[i & 3];
+  return typeof v === "object" && v !== null ? 1 : 0;
+}
+//// is-object.not-null-and-typeof
+const vs: unknown[] = [[1], { a: 1 }, "s", null];
+function turn(i: number): number {
+  const v = vs[i & 3];
+  return v !== null && typeof v === "object" ? 1 : 0;
+}
+//// is-object.truthy-and-typeof
+const vs: unknown[] = [[1], { a: 1 }, "s", null];
+function turn(i: number): number {
+  const v = vs[i & 3];
+  return v && typeof v == "object" ? 1 : 0;
+}
+//// is-object.object-call
+const vs: unknown[] = [[1], { a: 1 }, "s", null];
+function turn(i: number): number {
+  const v = vs[i & 3];
+  return Object(v) === v ? 1 : 0;
+}
+//// bound-method.arrow-field
+class T { k = 3; f = (n: number): number => n + this.k; }
+const t = new T();
+const f = t.f;
+function turn(i: number): number {
+  return f(i & 7);
+}
+//// bound-method.bind-in-the-constructor
+class T { k = 3; constructor() { this.f = this.f.bind(this); } f(n: number): number { return n + this.k; } }
+const t = new T();
+const f = t.f;
+function turn(i: number): number {
+  return f(i & 7);
+}
+//// dictionary.literal
+const d: Record<string, number> = {};
+const names: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  const k = names[i & 3];
+  d[k] = (d[k] || 0) + 1;
+  return d[k] & 255;
+}
+//// dictionary.object-create-null
+const d: Record<string, number> = Object.create(null);
+const names: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  const k = names[i & 3];
+  d[k] = (d[k] || 0) + 1;
+  return d[k] & 255;
+}
+//// dictionary.map
+const d = new Map<string, number>();
+const names: string[] = ["a", "b", "c", "d"];
+function turn(i: number): number {
+  const k = names[i & 3];
+  d.set(k, (d.get(k) || 0) + 1);
+  return d.get(k)! & 255;
+}
+//// for-of.native
+const xs: number[] = [1, 2, 3, 4];
+function turn(i: number): number {
+  let s = i & 1;
+  for (const x of xs) s += x;
+  return s;
+}
+//// for-of.es5
+const xs: number[] = [1, 2, 3, 4];
+function turn(i: number): number {
+  var s = i & 1;
+  for (var _i = 0, xs_1 = xs; _i < xs_1.length; _i++) { var x = xs_1[_i]; s += x; }
+  return s;
+}
+//// for-of.values-helper
+var __values = function (o: any): any {
+    var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+    if (m) return m.call(o);
+    if (o && typeof o.length === "number") return {
+        next: function () {
+            if (o && i >= o.length) o = void 0;
+            return { value: o && o[i++], done: !o };
+        }
+    };
+    throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+};
+const xs: number[] = [1, 2, 3, 4];
+function turn(i: number): number {
+  var e_1: any, _a: any;
+  var s = i & 1;
+  try {
+    for (var xs_1 = __values(xs), xs_1_1 = xs_1.next(); !xs_1_1.done; xs_1_1 = xs_1.next()) { var x = xs_1_1.value; s += x; }
+  } catch (e_1_1) { e_1 = { error: e_1_1 }; }
+  finally {
+    try { if (xs_1_1 && !xs_1_1.done && (_a = xs_1.return)) _a.call(xs_1); }
+    finally { if (e_1) throw e_1.error; }
+  }
+  return s;
+}
+//// pair.native
+function pair(i: number): [number, number] { return [i & 7, i & 3]; }
+function turn(i: number): number {
+  const [a, b] = pair(i);
+  return a + b;
+}
+//// pair.read-helper
+var __read = function (o: any, n?: any) {
+    var m = typeof Symbol === "function" && o[Symbol.iterator];
+    if (!m) return o;
+    var i = m.call(o), r, ar = [], e;
+    try {
+        while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+    }
+    catch (error) { e = { error: error }; }
+    finally {
+        try {
+            if (r && !r.done && (m = i["return"])) m.call(i);
+        }
+        finally { if (e) throw e.error; }
+    }
+    return ar;
+};
+function pair(i: number): [number, number] { return [i & 7, i & 3]; }
+function turn(i: number): number {
+  var _a = __read(pair(i), 2), a = _a[0], b = _a[1];
+  return a + b;
+}
+//// pair.es5-index
+function pair(i: number): [number, number] { return [i & 7, i & 3]; }
+function turn(i: number): number {
+  var _a = pair(i), a = _a[0], b = _a[1];
+  return a + b;
+}
+//// super-call.native
+class A { a: number; constructor(a: number) { this.a = a; } area(): number { return this.a + 1; } }
+class B extends A { b: number; constructor(a: number) { super(a); this.b = 2; } area(): number { return super.area() + this.b; } }
+const kept: A[] = [new B(1), new B(2), new B(3), new B(4)];
+function turn(i: number): number {
+  return kept[i & 3].area();
+}
+//// super-call.prototype-call-in-a-class
+class A { a: number; constructor(a: number) { this.a = a; } area(): number { return this.a + 1; } }
+class B extends A { b: number; constructor(a: number) { super(a); this.b = 2; } area(): number { return A.prototype.area.call(this) + this.b; } }
+const kept: A[] = [new B(1), new B(2), new B(3), new B(4)];
+function turn(i: number): number {
+  return kept[i & 3].area();
+}
+//// super-call.prototype-call-of-functions
+function A(this: any, a: number) { this.a = a; }
+A.prototype.area = function () { return this.a + 1; };
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+Object.setPrototypeOf(B.prototype, A.prototype);
+B.prototype.area = function () { return A.prototype.area.call(this) + this.b; };
+const kept: any[] = [new (B as any)(1), new (B as any)(2), new (B as any)(3), new (B as any)(4)];
+function turn(i: number): number {
+  return kept[i & 3].area();
+}
+//// super-call.prototype-call-of-functions-object-create
+function A(this: any, a: number) { this.a = a; }
+A.prototype.area = function () { return this.a + 1; };
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+B.prototype = Object.create(A.prototype);
+B.prototype.constructor = B;
+B.prototype.area = function () { return A.prototype.area.call(this) + this.b; };
+const kept: any[] = [new (B as any)(1), new (B as any)(2), new (B as any)(3), new (B as any)(4)];
+function turn(i: number): number {
+  return kept[i & 3].area();
+}
+//// super-call.prototype-call-of-a-function-that-nobody-constructs
+function A(this: any, a: number) { this.a = a; }
+A.prototype.area = function () { return this.a + 1; };
+const kept: any[] = [{ a: 1 }, { a: 2 }, { a: 3 }, { a: 4 }];
+function turn(i: number): number {
+  return A.prototype.area.call(kept[i & 3]);
+}
+//// kept-objects.native
+class A { a: number; constructor(a: number) { this.a = a; } area(): number { return this.a + 1; } get size(): number { return this.a * 2; } static make(a: number): A { return new this(a); } }
+class B extends A { b: number; constructor(a: number) { super(a); this.b = 2; } area(): number { return super.area() + this.b; } }
+const kept: A[] = [new A(1), new B(2), new B(3), B.make(4)];
+function turn(i: number): number {
+  const v = kept[i & 3];
+  return v.area() + v.size;
+}
+//// kept-objects.es5
+var __extends = (function () {
+  var extendStatics = function (d: any, b: any): any {
+    extendStatics = Object.setPrototypeOf || ({ __proto__: [] } instanceof Array && function (d: any, b: any) { d.__proto__ = b; }) || function (d: any, b: any) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+    return extendStatics(d, b);
+  };
+  return function (d: any, b: any) {
+    if (typeof b !== "function" && b !== null) throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+    extendStatics(d, b);
+    function __(this: any) { this.constructor = d; }
+    d.prototype = b === null ? Object.create(b) : ((__.prototype = b.prototype), new (__ as any)());
+  };
+})();
+var A: any = /** @class */ (function () {
+  function A(this: any, a: number) { this.a = a; }
+  A.prototype.area = function () { return this.a + 1; };
+  Object.defineProperty(A.prototype, "size", { get: function () { return this.a * 2; }, enumerable: false, configurable: true });
+  A.make = function (this: any, a: number) { return new this(a); };
+  return A;
+}());
+var B: any = /** @class */ (function (_super) {
+  __extends(B, _super);
+  function B(this: any, a: number) { var _this = _super.call(this, a) || this; _this.b = 2; return _this; }
+  B.prototype.area = function () { return _super.prototype.area.call(this) + this.b; };
+  return B;
+}(A));
+var kept = [new A(1), new B(2), new B(3), B.make(4)];
+function turn(i: number): number {
+  var v = kept[i & 3];
+  return v.area() + v.size;
+}
+//// made-and-kept.native
+class A { a: number; constructor(a: number) { this.a = a; } }
+class B extends A { b: number; constructor(a: number) { super(a); this.b = 2; } }
+const ring: A[] = [new A(0), new A(0), new A(0), new A(0)];
+function turn(i: number): number {
+  const v = new B(i & 7);
+  ring[i & 3] = v;
+  return v.a + v.b;
+}
+//// made-and-kept.es5
+var __extends = (function () {
+  var extendStatics = function (d: any, b: any): any {
+    extendStatics = Object.setPrototypeOf || ({ __proto__: [] } instanceof Array && function (d: any, b: any) { d.__proto__ = b; }) || function (d: any, b: any) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+    return extendStatics(d, b);
+  };
+  return function (d: any, b: any) {
+    if (typeof b !== "function" && b !== null) throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+    extendStatics(d, b);
+    function __(this: any) { this.constructor = d; }
+    d.prototype = b === null ? Object.create(b) : ((__.prototype = b.prototype), new (__ as any)());
+  };
+})();
+var A: any = (function () { function A(this: any, a: number) { this.a = a; } return A; }());
+var B: any = (function (_super) {
+  __extends(B, _super);
+  function B(this: any, a: number) { var _this = _super.call(this, a) || this; _this.b = 2; return _this; }
+  return B;
+}(A));
+var ring = [new A(0), new A(0), new A(0), new A(0)];
+function turn(i: number): number {
+  var v = new B(i & 7);
+  ring[i & 3] = v;
+  return v.a + v.b;
+}
+//// three-derived.native
+class A { a: number; constructor(a: number) { this.a = a; } area(): number { return this.a + 1; } }
+class B extends A { b: number; constructor(a: number) { super(a); this.b = 2; } area(): number { return this.a + this.b; } }
+class C extends A { c: number; constructor(a: number) { super(a); this.c = 3; } area(): number { return this.a + this.c; } }
+class D extends B { d: number; constructor(a: number) { super(a); this.d = 4; } area(): number { return this.a + this.d; } }
+function turn(i: number): number {
+  return new B(i & 7).area() + new C(i & 3).area() + new D(i & 1).area();
+}
+//// three-derived.es5-extends
+var __extends = (function () {
+  var extendStatics = function (d: any, b: any): any {
+    extendStatics = Object.setPrototypeOf || ({ __proto__: [] } instanceof Array && function (d: any, b: any) { d.__proto__ = b; }) || function (d: any, b: any) { for (var p in b) if (Object.prototype.hasOwnProperty.call(b, p)) d[p] = b[p]; };
+    return extendStatics(d, b);
+  };
+  return function (d: any, b: any) {
+    if (typeof b !== "function" && b !== null) throw new TypeError("Class extends value " + String(b) + " is not a constructor or null");
+    extendStatics(d, b);
+    function __(this: any) { this.constructor = d; }
+    d.prototype = b === null ? Object.create(b) : ((__.prototype = b.prototype), new (__ as any)());
+  };
+})();
+var A: any = (function () { function A(this: any, a: number) { this.a = a; } A.prototype.area = function () { return this.a + 1; }; return A; }());
+var B: any = (function (_super) { __extends(B, _super); function B(this: any, a: number) { var _this = _super.call(this, a) || this; _this.b = 2; return _this; } B.prototype.area = function () { return this.a + this.b; }; return B; }(A));
+var C: any = (function (_super) { __extends(C, _super); function C(this: any, a: number) { var _this = _super.call(this, a) || this; _this.c = 3; return _this; } C.prototype.area = function () { return this.a + this.c; }; return C; }(A));
+var D: any = (function (_super) { __extends(D, _super); function D(this: any, a: number) { var _this = _super.call(this, a) || this; _this.d = 4; return _this; } D.prototype.area = function () { return this.a + this.d; }; return D; }(B));
+function turn(i: number): number {
+  return new B(i & 7).area() + new C(i & 3).area() + new D(i & 1).area();
+}
+//// three-derived.object-create
+function A(this: any, a: number) { this.a = a; }
+A.prototype.area = function () { return this.a + 1; };
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+B.prototype = Object.create(A.prototype);
+B.prototype.constructor = B;
+B.prototype.area = function () { return this.a + this.b; };
+function C(this: any, a: number) { A.call(this, a); this.c = 3; }
+C.prototype = Object.create(A.prototype);
+C.prototype.constructor = C;
+C.prototype.area = function () { return this.a + this.c; };
+function D(this: any, a: number) { B.call(this, a); this.d = 4; }
+D.prototype = Object.create(B.prototype);
+D.prototype.constructor = D;
+D.prototype.area = function () { return this.a + this.d; };
+function turn(i: number): number {
+  return new (B as any)(i & 7).area() + new (C as any)(i & 3).area() + new (D as any)(i & 1).area();
+}
+//// three-derived.inherits-helper-object-create
+function inherits(ctor: any, superCtor: any) {
+  ctor.super_ = superCtor;
+  ctor.prototype = Object.create(superCtor.prototype, { constructor: { value: ctor, enumerable: false, writable: true, configurable: true } });
+}
+function A(this: any, a: number) { this.a = a; }
+A.prototype.area = function () { return this.a + 1; };
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+B.prototype.area = function () { return this.a + this.b; };
+function C(this: any, a: number) { A.call(this, a); this.c = 3; }
+inherits(C, A);
+C.prototype.area = function () { return this.a + this.c; };
+function D(this: any, a: number) { B.call(this, a); this.d = 4; }
+inherits(D, B);
+D.prototype.area = function () { return this.a + this.d; };
+function turn(i: number): number {
+  return new (B as any)(i & 7).area() + new (C as any)(i & 3).area() + new (D as any)(i & 1).area();
+}
+//// three-derived.set-prototype-of
+function A(this: any, a: number) { this.a = a; }
+A.prototype.area = function () { return this.a + 1; };
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+Object.setPrototypeOf(B.prototype, A.prototype);
+B.prototype.area = function () { return this.a + this.b; };
+function C(this: any, a: number) { A.call(this, a); this.c = 3; }
+Object.setPrototypeOf(C.prototype, A.prototype);
+C.prototype.area = function () { return this.a + this.c; };
+function D(this: any, a: number) { B.call(this, a); this.d = 4; }
+Object.setPrototypeOf(D.prototype, B.prototype);
+D.prototype.area = function () { return this.a + this.d; };
+function turn(i: number): number {
+  return new (B as any)(i & 7).area() + new (C as any)(i & 3).area() + new (D as any)(i & 1).area();
+}
+//// two-classes.native
+class V { x: number; constructor(x: number) { this.x = x; } get(): number { return this.x + 1; } }
+class W { y: number; constructor(y: number) { this.y = y; } get(): number { return this.y + 2; } }
+function turn(i: number): number {
+  return new V(i & 7).get() + new W(i & 3).get();
+}
+//// two-classes.prototype-literal
+function V(this: any, x: number) { this.x = x; }
+V.prototype = { constructor: V, get: function (this: any): number { return this.x + 1; } };
+function W(this: any, y: number) { this.y = y; }
+W.prototype = { constructor: W, get: function (this: any): number { return this.y + 2; } };
+function turn(i: number): number {
+  return new (V as any)(i & 7).get() + new (W as any)(i & 3).get();
+}
+//// two-classes.babel-create-class
+function _defineProperties(target: any, props: any) { for (var i = 0; i < props.length; i++) { var descriptor = props[i]; descriptor.enumerable = descriptor.enumerable || false; descriptor.configurable = true; if ("value" in descriptor) descriptor.writable = true; Object.defineProperty(target, descriptor.key, descriptor); } }
+function _createClass(Constructor: any, protoProps: any, staticProps?: any) { if (protoProps) _defineProperties(Constructor.prototype, protoProps); if (staticProps) _defineProperties(Constructor, staticProps); return Constructor; }
+function _classCallCheck(instance: any, Constructor: any) { if (!(instance instanceof Constructor)) { throw new TypeError("Cannot call a class as a function"); } }
+var V: any = /*#__PURE__*/ (function () { function V(this: any, x: number) { _classCallCheck(this, V); this.x = x; } _createClass(V, [{ key: "get", value: function get(this: any) { return this.x + 1; } }]); return V; })();
+var W: any = /*#__PURE__*/ (function () { function W(this: any, y: number) { _classCallCheck(this, W); this.y = y; } _createClass(W, [{ key: "get", value: function get(this: any) { return this.y + 2; } }]); return W; })();
+function turn(i: number): number {
+  return new V(i & 7).get() + new W(i & 3).get();
+}
+//// two-classes.assign-to-prototype
+function V(this: any, x: number) { this.x = x; }
+Object.assign(V.prototype, { get: function (this: any) { return this.x + 1; } });
+function W(this: any, y: number) { this.y = y; }
+Object.assign(W.prototype, { get: function (this: any) { return this.y + 2; } });
+function turn(i: number): number {
+  return new (V as any)(i & 7).get() + new (W as any)(i & 3).get();
+}
+//// two-classes.define-properties-on-prototype
+function V(this: any, x: number) { this.x = x; }
+Object.defineProperties(V.prototype, { get: { value: function (this: any) { return this.x + 1; } }, size: { get: function (this: any) { return this.x; } } });
+function W(this: any, y: number) { this.y = y; }
+Object.defineProperties(W.prototype, { get: { value: function (this: any) { return this.y + 2; } }, size: { get: function (this: any) { return this.y; } } });
+function turn(i: number): number {
+  const v = new (V as any)(i & 7), w = new (W as any)(i & 3);
+  return v.get() + w.get() + v.size + w.size;
+}
+//// parent-call.plain-parent
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+Object.setPrototypeOf(B.prototype, A.prototype);
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.a + v.b;
+}
+//// parent-call.parent-with-a-static
+function A(this: any, a: number) { this.a = a; }
+(A as any).limit = 10;
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+Object.setPrototypeOf(B.prototype, A.prototype);
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.a + v.b;
+}
+//// parent-call.parent-with-a-method
+function A(this: any, a: number) { this.a = a; }
+A.prototype.get = function () { return this.a; };
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+Object.setPrototypeOf(B.prototype, A.prototype);
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.a + v.b;
+}
+//// parent-call.parent-with-a-prototype-literal
+function A(this: any, a: number) { this.a = a; }
+A.prototype = { constructor: A };
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+Object.setPrototypeOf(B.prototype, A.prototype);
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.a + v.b;
+}
+//// parent-call.parent-below-another-function
+function Z(this: any) {}
+function A(this: any, a: number) { this.a = a; }
+Object.setPrototypeOf(A, Z);
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+Object.setPrototypeOf(B.prototype, A.prototype);
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.a + v.b;
+}
+//// parent-call.apply-arguments
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.apply(this, arguments as any); this.b = 2; }
+Object.setPrototypeOf(B.prototype, A.prototype);
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.a + v.b;
+}
+//// parent-call.apply-arguments-parent-with-a-static
+function A(this: any, a: number) { this.a = a; }
+(A as any).limit = 10;
+function B(this: any, a: number) { A.apply(this, arguments as any); this.b = 2; }
+Object.setPrototypeOf(B.prototype, A.prototype);
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.a + v.b;
+}
+//// parent-call.event-emitter
+import { EventEmitter } from "node:events";
+function B(this: any, a: number) { EventEmitter.call(this); this.b = a; }
+Object.setPrototypeOf(B.prototype, EventEmitter.prototype);
+function turn(i: number): number {
+  const v = new (B as any)(i & 7);
+  return v.b;
+}
+//// parent-call.event-emitter-class
+import { EventEmitter } from "node:events";
+class B extends EventEmitter { b: number; constructor(a: number) { super(); this.b = a; } }
+function turn(i: number): number {
+  const v = new B(i & 7);
+  return v.b;
+}
+//// memo-cache.every-prop-given
+interface Props { text: string; background?: string; bold?: boolean; dim?: boolean }
+interface Style { background?: string; bold?: boolean; dim?: boolean }
+const $: any[] = new Array(7).fill(Symbol.for("react.memo_cache_sentinel"));
+function render(props: Props): number {
+  const { text, background, bold, dim } = props;
+  let style: Style;
+  if ($[0] !== background || $[1] !== bold || $[2] !== dim) {
+    style = { background, bold, dim };
+    $[0] = background;
+    $[1] = bold;
+    $[2] = dim;
+    $[3] = style;
+  } else {
+    style = $[3];
+  }
+  let line: { style: Style; text: string };
+  if ($[4] !== style || $[5] !== text) {
+    line = { style, text };
+    $[4] = style;
+    $[5] = text;
+    $[6] = line;
+  } else {
+    line = $[6];
+  }
+  return line.text.length + (line.style.bold ? 1 : 0);
+}
+const rows: Props[] = [{ text: "one", background: "red", bold: true, dim: false }, { text: "three", background: "red", bold: true, dim: false }];
+function turn(i: number): number {
+  return render(rows[(i >> 2) & 1]);
+}
+//// memo-cache.optional-props-omitted
+interface Props { text: string; background?: string; bold?: boolean; dim?: boolean }
+interface Style { background?: string; bold?: boolean; dim?: boolean }
+const $: any[] = new Array(7).fill(Symbol.for("react.memo_cache_sentinel"));
+function render(props: Props): number {
+  const { text, background, bold, dim } = props;
+  let style: Style;
+  if ($[0] !== background || $[1] !== bold || $[2] !== dim) {
+    style = { background, bold, dim };
+    $[0] = background;
+    $[1] = bold;
+    $[2] = dim;
+    $[3] = style;
+  } else {
+    style = $[3];
+  }
+  let line: { style: Style; text: string };
+  if ($[4] !== style || $[5] !== text) {
+    line = { style, text };
+    $[4] = style;
+    $[5] = text;
+    $[6] = line;
+  } else {
+    line = $[6];
+  }
+  return line.text.length + (line.style.bold ? 1 : 0);
+}
+const rows: Props[] = [{ text: "one" }, { text: "three" }];
+function turn(i: number): number {
+  return render(rows[(i >> 2) & 1]);
+}
+//// variant.direct-create-with-descriptor
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+B.prototype = Object.create(A.prototype, { constructor: { value: B, enumerable: false, writable: true, configurable: true } });
+function turn(i: number): number { const v = new (B as any)(i & 7); return v.a + v.b; }
+//// variant.helper-create-with-descriptor-one-class
+function inherits(ctor: any, superCtor: any) { ctor.prototype = Object.create(superCtor.prototype, { constructor: { value: ctor, enumerable: false, writable: true, configurable: true } }); }
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+function turn(i: number): number { const v = new (B as any)(i & 7); return v.a + v.b; }
+//// variant.helper-create-with-descriptor-two-classes
+function inherits(ctor: any, superCtor: any) { ctor.prototype = Object.create(superCtor.prototype, { constructor: { value: ctor, enumerable: false, writable: true, configurable: true } }); }
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+function C(this: any, a: number) { A.call(this, a); this.c = 3; }
+inherits(C, A);
+function turn(i: number): number { const v = new (B as any)(i & 7), w = new (C as any)(i & 3); return v.a + v.b + w.a + w.c; }
+//// variant.helper-plain-create-two-classes
+function inherits(ctor: any, superCtor: any) { ctor.prototype = Object.create(superCtor.prototype); ctor.prototype.constructor = ctor; }
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+function C(this: any, a: number) { A.call(this, a); this.c = 3; }
+inherits(C, A);
+function turn(i: number): number { const v = new (B as any)(i & 7), w = new (C as any)(i & 3); return v.a + v.b + w.a + w.c; }
+//// variant.helper-plain-create-two-levels
+function inherits(ctor: any, superCtor: any) { ctor.prototype = Object.create(superCtor.prototype); ctor.prototype.constructor = ctor; }
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+function D(this: any, a: number) { B.call(this, a); this.d = 3; }
+inherits(D, B);
+function turn(i: number): number { const v = new (B as any)(i & 7), w = new (D as any)(i & 3); return v.a + v.b + w.a + w.d; }
+//// variant.direct-plain-create-two-levels
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+B.prototype = Object.create(A.prototype); B.prototype.constructor = B;
+function D(this: any, a: number) { B.call(this, a); this.d = 3; }
+D.prototype = Object.create(B.prototype); D.prototype.constructor = D;
+function turn(i: number): number { const v = new (B as any)(i & 7), w = new (D as any)(i & 3); return v.a + v.b + w.a + w.d; }
+//// variant.util-inherits-two-levels
+import { inherits } from "node:util";
+function A(this: any, a: number) { this.a = a; }
+function B(this: any, a: number) { A.call(this, a); this.b = 2; }
+inherits(B, A);
+function D(this: any, a: number) { B.call(this, a); this.d = 3; }
+inherits(D, B);
+function turn(i: number): number { const v = new (B as any)(i & 7), w = new (D as any)(i & 3); return v.a + v.b + w.a + w.d; }
+//// call-by-value.plain-one-of-four
+const fns = [function (this: any, a: number) { return this.k + a; }, function (this: any, a: number) { return this.k - a; }, function (this: any, a: number) { return this.k ^ a; }, function (this: any, a: number) { return this.k | a; }];
+const o = { k: 3 };
+function turn(i: number): number { return fns[i & 3].call(o, i & 7); }
+//// call-by-value.direct-one-of-four
+const fns = [function (o: any, a: number) { return o.k + a; }, function (o: any, a: number) { return o.k - a; }, function (o: any, a: number) { return o.k ^ a; }, function (o: any, a: number) { return o.k | a; }];
+const o = { k: 3 };
+function turn(i: number): number { return fns[i & 3](o, i & 7); }
+//// call-by-value.one-of-four-with-a-name-of-their-own
+const fns: any[] = [function (this: any, a: number) { return this.k + a; }, function (this: any, a: number) { return this.k - a; }, function (this: any, a: number) { return this.k ^ a; }, function (this: any, a: number) { return this.k | a; }];
+for (let n = 0; n < 4; n++) fns[n].order = n;
+const o = { k: 3 };
+function turn(i: number): number { return fns[i & 3].call(o, i & 7); }
+//// call-by-value.apply-arguments-one-of-four
+const fns = [function (this: any, a: number) { return this.k + a; }, function (this: any, a: number) { return this.k - a; }, function (this: any, a: number) { return this.k ^ a; }, function (this: any, a: number) { return this.k | a; }];
+const o = { k: 3, relay(n: number, a: number) { return fns[n].apply(this, [a]); } };
+function turn(i: number): number { return o.relay(i & 3, i & 7); }
+//// call-by-value.held-under-a-text
+const table: Record<string, any> = {};
+const names = ["add", "sub", "xor", "or"];
+table[names[0]] = function (this: any, a: number) { return this.k + a; };
+table[names[1]] = function (this: any, a: number) { return this.k - a; };
+table[names[2]] = function (this: any, a: number) { return this.k ^ a; };
+table[names[3]] = function (this: any, a: number) { return this.k | a; };
+const o = { k: 3 };
+function turn(i: number): number { return table[names[i & 3]].call(o, i & 7); }
+//// call-by-value.one-function-with-a-name-of-its-own-by-key
+const f: any = function (this: any, a: number) { return this.k + a; };
+const keys = ["listener"];
+f[keys[0]] = 1;
+const o = { k: 3 };
+function turn(i: number): number { return f.call(o, i & 7); }

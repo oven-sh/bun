@@ -1,0 +1,151 @@
+////: attempt-as-written
+function attempt(what, run) {
+  try {
+    console.log(what, run());
+  } catch (error) {
+    console.log(what, error.name + ": " + error.message);
+  }
+}
+////: names-as-written
+console.log(typeof require, typeof module, typeof exports, typeof __filename, typeof __dirname);
+console.log(this === undefined ? "no this" : typeof this);
+attempt("this of a plain call", () => (function () { return typeof this; })());
+attempt("a store to a name that nothing declares", () => { nothingDeclaresThis = 1; return delete globalThis.nothingDeclaresThis; });
+////: uses-as-written
+attempt("require", () => typeof require("node:path").join);
+attempt("require.resolve", () => typeof require.resolve);
+attempt("module", () => typeof module.exports);
+attempt("exports", () => Object.keys(exports).join());
+attempt("__filename", () => typeof __filename.length);
+attempt("__dirname", () => typeof __dirname.length);
+attempt("a store to a member of exports", () => { exports.stored = 1; return "stored"; });
+attempt("a store to module", () => { module = 1; return "stored"; });
+attempt("a store to exports", () => { exports = 1; return "stored"; });
+attempt("a store to require", () => { require = 1; return "stored"; });
+attempt("a store to __filename", () => { __filename = 1; return "stored"; });
+attempt("a store to __dirname", () => { __dirname = 1; return "stored"; });
+console.log(typeof require !== "undefined" && typeof module !== "undefined" ? "takes itself for CommonJS" : "takes itself for an ES module");
+attempt("import.meta.require", () => typeof import.meta.require("node:path").join);
+attempt("import.meta.main", () => typeof import.meta.main);
+//// a-module-in-the-output-of-bun-build-has-none-of-the-five-names-of-commonjs.mjs
+// @bun
+// `bun build --target=bun` writes the first line. What follows is an ES module that names `require`, `module`, `exports`, `__filename` and `__dirname`.
+////= attempt-as-written
+////= names-as-written
+////= uses-as-written
+export {};
+//// a-module-in-the-output-of-bun-build-has-none-of-the-five-names-of-commonjs-behind-a-hashbang.mjs
+#!/usr/bin/env bun
+// @bun
+// The first line that `bun build --target=bun` writes follows a hashbang.
+////= attempt-as-written
+////= names-as-written
+////= uses-as-written
+export {};
+//// a-module-in-the-output-of-bun-build-with-bytecode-has-none-of-the-five-names-of-commonjs.mjs
+// @bun @bytecode
+// The first line is the one that `bun build --target=bun --bytecode` writes, and no bytecode lies beside the file.
+////= attempt-as-written
+////= names-as-written
+////= uses-as-written
+export {};
+//// text-without-import-or-export-in-the-output-of-bun-build-is-an-es-module.js
+// @bun
+// Nothing here is syntax of ES modules, and `module` and `exports` are named.
+////= attempt-as-written
+////= names-as-written
+////= uses-as-written
+//// text-that-only-calls-in-the-output-of-bun-build-is-an-es-module.js
+// @bun
+////= attempt-as-written
+attempt("this of a plain call", () => (function () { return typeof this; })());
+attempt("this", () => typeof this);
+attempt("arguments", () => typeof arguments);
+//// a-file-named-cjs-in-the-output-of-bun-build-is-an-es-module/main.cjs
+// The file that is required has the extension of CommonJS, in a package of CommonJS, and the first line that `bun build --target=bun` writes in front of an ES module.
+const all = require("./bundle.cjs");
+console.log(typeof all, Object.keys(all).join());
+import("./bundle.cjs").then(again => console.log(Object.keys(again).join()));
+//// a-file-named-cjs-in-the-output-of-bun-build-is-an-es-module/bundle.cjs
+// @bun
+////= attempt-as-written
+////= names-as-written
+if (typeof module !== "undefined") module.exports = { from: "CommonJS" };
+//// a-file-named-cjs-in-the-output-of-bun-build-is-an-es-module/package.json
+{ "type": "commonjs" }
+//// a-package-in-the-output-of-bun-build-asks-whether-require-is-there/main.mjs
+import kindOfModule, { kindOfRequire } from "built-by-bun";
+console.log(kindOfModule, kindOfRequire);
+//// a-package-in-the-output-of-bun-build-asks-whether-require-is-there/node_modules/built-by-bun/index.js
+// @bun
+export const kindOfRequire = typeof require === "function" ? "has require" : "has no require";
+export default typeof module;
+//// a-package-in-the-output-of-bun-build-asks-whether-require-is-there/node_modules/built-by-bun/package.json
+{ "name": "built-by-bun", "main": "index.js" }
+//// a-bundle-in-the-commonjs-format-of-bun-build-is-commonjs-whatever-its-name-and-package-say/main.mjs
+// Neither bundle names any of the five, so only their first lines say what they are.
+import "./bundle.mjs";
+import "./bundle.js";
+//// a-bundle-in-the-commonjs-format-of-bun-build-is-commonjs-whatever-its-name-and-package-say/bundle.mjs
+// @bun @bun-cjs
+(function(exports, require, module, __filename, __dirname) {console.log((function () { return typeof this; })());
+})
+//// a-bundle-in-the-commonjs-format-of-bun-build-is-commonjs-whatever-its-name-and-package-say/bundle.js
+// @bun @bytecode @bun-cjs
+(function(exports, require, module, __filename, __dirname) {console.log((function () { return typeof this; })(), arguments.length);
+})
+//// a-bundle-in-the-commonjs-format-of-bun-build-is-commonjs-whatever-its-name-and-package-say/package.json
+{ "type": "module" }
+//// first-lines-that-only-resemble-the-one-of-the-commonjs-format-of-bun-build/main.mjs
+// Each file is an ES module that holds a function expression, which nothing calls.
+import "./the-word-alone.js";
+import "./two-signs.js";
+import "./behind-bytecode-without-a-space.js";
+console.log("none of the three was called");
+//// first-lines-that-only-resemble-the-one-of-the-commonjs-format-of-bun-build/the-word-alone.js
+// @bun-cjs
+(function(exports, require, module, __filename, __dirname) {console.log("called", typeof require);
+})
+//// first-lines-that-only-resemble-the-one-of-the-commonjs-format-of-bun-build/two-signs.js
+// @bun @@bun-cjs
+(function(exports, require, module, __filename, __dirname) {console.log("called", typeof require);
+})
+//// first-lines-that-only-resemble-the-one-of-the-commonjs-format-of-bun-build/behind-bytecode-without-a-space.js
+// @bun @bytecode@bun-cjs
+(function(exports, require, module, __filename, __dirname) {console.log("called", typeof require);
+})
+//// globals-named-like-the-five-names-of-commonjs-are-read-in-the-output-of-bun-build.mjs
+// @bun
+const names = ["require", "module", "exports", "__filename", "__dirname"];
+for (const name of names) globalThis[name] = "the global " + name;
+console.log(require, module, exports, __filename, __dirname);
+for (const name of names) delete globalThis[name];
+console.log(typeof require, typeof module, typeof exports, typeof __filename, typeof __dirname);
+export {};
+//// variables-named-like-the-five-names-of-commonjs-in-the-output-of-bun-build.js
+// @bun
+var require = 1, module = 2, exports = 3, __filename = 4, __dirname = 5;
+console.log(require, module, exports, __filename, __dirname, this);
+//// a-call-behind-a-comment-that-calls-it-pure-runs-in-the-output-of-bun-build.mjs
+// @bun
+// Nobody reads what the calls return.
+function say(what) {
+  console.log("called", what);
+  return 1;
+}
+/* @__PURE__ */ say("in the file");
+/* #__PURE__ */ new (class { constructor() { say("by new"); } })();
+function inside() {
+  /* @__PURE__ */ say("in a function");
+}
+inside();
+export {};
+//// a-call-behind-a-comment-that-calls-it-pure-runs-in-text-that-the-program-evaluates.mjs
+globalThis.say = function (what) {
+  console.log("called", what);
+  return 1;
+};
+new Function("/* @__PURE__ */ say('in the text of new Function');")();
+(0, eval)("/* @__PURE__ */ say('in the text of an indirect eval'); 0;");
+eval("/* @__PURE__ */ say('in the text of a direct eval'); 0;");
+delete globalThis.say;

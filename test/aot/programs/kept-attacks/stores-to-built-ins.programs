@@ -1,0 +1,396 @@
+//// stores-to-built-ins/callbacks-in-functions.js
+// callbacks-in-functions.js <which> <size> <rounds>: built-ins that call a function for each element.
+const which = process.argv[2], size = Number(process.argv[3] ?? 64), rounds = Number(process.argv[4] ?? 100);
+const numbers = []; for (let i = 0; i < size; i++) numbers.push(((i * 7919) % 1000) | 0);
+const map = new Map(numbers.map((n, i) => [i, n])), set = new Set(numbers), text = "ab".repeat(size / 2);
+function once(which, numbers, map, set, text, size) {
+  let sum = 0;
+  switch (which) {
+  case "loop": for (let j = 0; j < numbers.length; j++) sum += numbers[j]; break;
+  case "forEach": numbers.forEach(n => { sum += n; }); break;
+  case "map": sum += numbers.map(n => n + 1).length; break;
+  case "filter": sum += numbers.filter(n => n & 1).length; break;
+  case "reduce": sum += numbers.reduce((a, n) => a + n, 0); break;
+  case "reduceRight": sum += numbers.reduceRight((a, n) => a + n, 0); break;
+  case "some": sum += numbers.some(n => n < 0) ? 1 : 0; break;
+  case "every": sum += numbers.every(n => n >= 0) ? 1 : 0; break;
+  case "find": sum += numbers.find(n => n < 0) === undefined ? 1 : 0; break;
+  case "findIndex": sum += numbers.findIndex(n => n < 0); break;
+  case "findLast": sum += numbers.findLast(n => n < 0) === undefined ? 1 : 0; break;
+  case "flatMap": sum += numbers.flatMap(n => [n]).length; break;
+  case "from": sum += Array.from(numbers, n => n + 1).length; break;
+  case "fromLength": sum += Array.from({ length: size }, (_, j) => j).length; break;
+  case "mapForEach": map.forEach(n => { sum += n; }); break;
+  case "setForEach": set.forEach(n => { sum += n; }); break;
+  case "replaceFn": sum += text.replace(/a/g, m => m + "x").length; break;
+  case "replaceAllFn": sum += text.replaceAll("a", m => m + "x").length; break;
+  case "sort": sum += numbers.slice().sort((a, b) => a - b)[0]; break;
+  case "stringifyReplacer": sum += JSON.stringify(numbers, (k, v) => v).length; break;
+  case "parseReviver": sum += JSON.parse("[" + numbers.join() + "]", (k, v) => v).length; break;
+  case "groupBy": sum += Object.keys(Object.groupBy(numbers, n => n & 3)).length; break;
+  case "fromEntries": sum += Object.keys(Object.fromEntries(numbers.map((n, j) => ["k" + j, n]))).length; break;
+  }
+  return sum;
+}
+function run(which, rounds) {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) sum += once(which, numbers, map, set, text, size);
+  return sum;
+}
+const sum = run(which, rounds);
+console.log(which, size, rounds, sum);
+//// stores-to-built-ins/host-calls.js
+// host-calls.js <which> <rounds>: one built-in that runs in the host, called in a loop: the price of the call all in.
+const which = process.argv[2], rounds = Number(process.argv[3] ?? 1000);
+const array = [1, 2, 3, 4], text = "a,b,c", object = { a: 1, b: 2, c: 3 }, map = new Map([[1, 2]]), nested = [[1], [2]];
+let sum = 0;
+for (let i = 0; i < rounds; i++) {
+  switch (which) {
+  case "none": sum += i & 1; break;
+  case "lastIndexOf": sum += array.lastIndexOf(3); break;
+  case "reverse": sum += array.reverse().length; break;
+  case "fill": sum += array.fill(i & 3).length; break;
+  case "flat": sum += nested.flat().length; break;
+  case "slice": sum += array.slice(1).length; break;
+  case "concat": sum += array.concat(array).length; break;
+  case "indexOf": sum += array.indexOf(3); break;
+  case "includes": sum += array.includes(3) ? 1 : 0; break;
+  case "join": sum += array.join().length; break;
+  case "sort": sum += array.sort().length; break;
+  case "sortBy": sum += array.sort((a, b) => a - b).length; break;
+  case "splice": sum += array.splice(1, 1, 5).length; break;
+  case "from": sum += Array.from(array).length; break;
+  case "fromMap": sum += Array.from(map.keys()).length; break;
+  case "isArray": sum += Array.isArray(array) ? 1 : 0; break;
+  case "keys": sum += Object.keys(object).length; break;
+  case "entries": sum += Object.entries(object).length; break;
+  case "values": sum += Object.values(object).length; break;
+  case "assign": sum += Object.assign({}, object).a; break;
+  case "freeze": sum += Object.freeze({ a: i }).a & 1; break;
+  case "hasOwn": sum += Object.hasOwn(object, "b") ? 1 : 0; break;
+  case "hasOwnProperty": sum += object.hasOwnProperty("b") ? 1 : 0; break;
+  case "defineProperty": sum += Object.defineProperty({}, "x", { value: i, enumerable: true }).x & 1; break;
+  case "getPrototypeOf": sum += Object.getPrototypeOf(object) === Object.prototype ? 1 : 0; break;
+  case "create": sum += Object.create(null) ? 1 : 0; break;
+  case "bind": sum += Math.max.bind(null, 1)(); break;
+  case "apply": sum += Math.max.apply(null, array); break;
+  case "stringify": sum += JSON.stringify(object).length; break;
+  case "parse": sum += JSON.parse('{"a":1}').a; break;
+  case "trim": sum += " a ".trim().length; break;
+  case "split": sum += text.split(",").length; break;
+  case "padEnd": sum += text.padEnd(8).length; break;
+  case "repeat": sum += text.repeat(2).length; break;
+  case "startsWith": sum += text.startsWith("a") ? 1 : 0; break;
+  case "localeCompare": sum += text.localeCompare("b"); break;
+  case "normalize": sum += text.normalize().length; break;
+  case "codePointAt": sum += text.codePointAt(0); break;
+  case "toFixed": sum += (i / 3).toFixed(2).length; break;
+  case "parseInt": sum += parseInt("12", 10); break;
+  case "parseFloat": sum += parseFloat("1.5"); break;
+  case "symbolFor": sum += Symbol.for("x") ? 1 : 0; break;
+  case "dateNow": sum += Date.now() & 1; break;
+  case "newDate": sum += new Date(0).getTime(); break;
+  case "newError": sum += new Error("x").message.length; break;
+  case "promiseResolve": sum += Promise.resolve(1) ? 1 : 0; break;
+  case "weakMap": sum += new WeakMap().has(object) ? 1 : 0; break;
+  case "structuredClone": sum += structuredClone(object).a; break;
+  }
+}
+console.log(which, rounds, sum);
+//// stores-to-built-ins/probe1.ts
+// Forms of stores and definitions as a large program has them. Which of them still go by name at Selected though the receiver has a layout?
+function largeLiteral(i: number) { return { a0: i, a1: i, a2: i, a3: i, a4: i, a5: i, a6: i, a7: i, a8: i, a9: i, a10: i, a11: i, a12: i, a13: i, a14: i, a15: i, a16: i, a17: i, a18: i, a19: i, a20: i, a21: i, a22: i, a23: i, a24: i, a25: i, a26: i, a27: i, a28: i, a29: i, a30: i, a31: i, a32: i, a33: i, a34: i, a35: i, a36: i, a37: i, a38: i, a39: i, a40: i, a41: i, a42: i, a43: i, a44: i, a45: i, a46: i, a47: i }; }
+function spreadInTheMiddle(o: { p: number }, i: number) { return { x: i, ...o, y: i, z: i }; }
+type Later = { a: number; b?: number; c?: string };
+function storedLater(i: number) { const t: Later = { a: i }; t.b = i; if (i & 1) t.c = "c"; return t; }
+function conditional(i: number): Later { return { a: i, ...(i & 1 ? { b: i } : {}) }; }
+const Kind: any = {};
+Kind["One"] = "One"; Kind["Two"] = "Two"; Kind["Three"] = "Three";
+export const table = {
+  t0: { type: "array", description: "d0", items: { type: "string", min: 0 } },
+  t1: { type: "array", description: "d1", items: { type: "string", min: 1 } },
+  t2: { type: "array", description: "d2", items: { type: "string", min: 2 } },
+  t3: { type: "array", description: "d3", items: { type: "string", min: 3 } },
+  t4: { type: "array", description: "d4", items: { type: "string", min: 4 } },
+  t5: { type: "array", description: "d5", items: { type: "string", min: 5 } },
+  t6: { type: "array", description: "d6", items: { type: "string", min: 6 } },
+  t7: { type: "array", description: "d7", items: { type: "string", min: 7 } },
+  t8: { type: "array", description: "d8", items: { type: "string", min: 8 } },
+  t9: { type: "array", description: "d9", items: { type: "string", min: 9 } },
+  t10: { type: "array", description: "d10", items: { type: "string", min: 10 } },
+  t11: { type: "array", description: "d11", items: { type: "string", min: 11 } }
+};
+class Plain { x; y; constructor(i: number) { this.x = i; this.y = i; } }
+function Old(this: any, i: number) { this.p = i; this.q = i; }
+function withMethods(i: number) { return { i, get twice() { return this.i * 2; }, run() { return this.i; }, after: i }; }
+function computedThenNamed(k: string, i: number) { return { [k]: i, named: i }; }
+function undefinedFields(i: number) { return { a: i, b: undefined, c: i & 1 ? i : undefined }; }
+function shorthandOfOptionals(a?: number, b?: string) { return { a, b }; }
+let sum = 0;
+const rounds = Number(process.argv[2] ?? 5);
+for (let i = 0; i < rounds; i++) {
+  sum += largeLiteral(i).a47 + spreadInTheMiddle({ p: i }, i).z + (storedLater(i).b ?? 0) + (conditional(i).b ?? 0) + new Plain(i).y + new (Old as any)(i).q + withMethods(i).after + computedThenNamed("k" + i, i).named + undefinedFields(i).a + (shorthandOfOptionals(i).a ?? 0);
+}
+console.log(sum, Object.keys(Kind).length, Object.keys(table).length);
+//// stores-to-built-ins/reads-one.js
+// reads-one.js <what> <shapes> <rounds>: one place reads, tests or stores the name y by name on many shapes. what: ordinary-own | ordinary-absent | compiled-absent | compiled-extra | in-ordinary-own | in-ordinary-absent | store-ordinary-own | store-ordinary-add
+const compiled = [
+  () => ({ a0: 0 }),
+  () => ({ a1: 1 }),
+  () => ({ a2: 2 }),
+  () => ({ a3: 3 }),
+  () => ({ a4: 4 }),
+  () => ({ a5: 5 }),
+  () => ({ a6: 6 }),
+  () => ({ a7: 7 }),
+  () => ({ a8: 8 }),
+  () => ({ a9: 9 }),
+  () => ({ a10: 10 }),
+  () => ({ a11: 11 }),
+  () => ({ a12: 12 }),
+  () => ({ a13: 13 }),
+  () => ({ a14: 14 }),
+  () => ({ a15: 15 }),
+  () => ({ a16: 16 }),
+  () => ({ a17: 17 }),
+  () => ({ a18: 18 }),
+  () => ({ a19: 19 }),
+  () => ({ a20: 20 }),
+  () => ({ a21: 21 }),
+  () => ({ a22: 22 }),
+  () => ({ a23: 23 }),
+  () => ({ a24: 24 }),
+  () => ({ a25: 25 }),
+  () => ({ a26: 26 }),
+  () => ({ a27: 27 }),
+  () => ({ a28: 28 }),
+  () => ({ a29: 29 }),
+  () => ({ a30: 30 }),
+  () => ({ a31: 31 }),
+  () => ({ a32: 32 }),
+  () => ({ a33: 33 }),
+  () => ({ a34: 34 }),
+  () => ({ a35: 35 }),
+  () => ({ a36: 36 }),
+  () => ({ a37: 37 }),
+  () => ({ a38: 38 }),
+  () => ({ a39: 39 }),
+  () => ({ a40: 40 }),
+  () => ({ a41: 41 }),
+  () => ({ a42: 42 }),
+  () => ({ a43: 43 }),
+  () => ({ a44: 44 }),
+  () => ({ a45: 45 }),
+  () => ({ a46: 46 }),
+  () => ({ a47: 47 }),
+  () => ({ a48: 48 }),
+  () => ({ a49: 49 }),
+  () => ({ a50: 50 }),
+  () => ({ a51: 51 }),
+  () => ({ a52: 52 }),
+  () => ({ a53: 53 }),
+  () => ({ a54: 54 }),
+  () => ({ a55: 55 }),
+  () => ({ a56: 56 }),
+  () => ({ a57: 57 }),
+  () => ({ a58: 58 }),
+  () => ({ a59: 59 }),
+  () => ({ a60: 60 }),
+  () => ({ a61: 61 }),
+  () => ({ a62: 62 }),
+  () => ({ a63: 63 }),
+  () => ({ a64: 64 }),
+  () => ({ a65: 65 }),
+  () => ({ a66: 66 }),
+  () => ({ a67: 67 }),
+  () => ({ a68: 68 }),
+  () => ({ a69: 69 }),
+  () => ({ a70: 70 }),
+  () => ({ a71: 71 }),
+  () => ({ a72: 72 }),
+  () => ({ a73: 73 }),
+  () => ({ a74: 74 }),
+  () => ({ a75: 75 }),
+  () => ({ a76: 76 }),
+  () => ({ a77: 77 }),
+  () => ({ a78: 78 }),
+  () => ({ a79: 79 }),
+  () => ({ a80: 80 }),
+  () => ({ a81: 81 }),
+  () => ({ a82: 82 }),
+  () => ({ a83: 83 }),
+  () => ({ a84: 84 }),
+  () => ({ a85: 85 }),
+  () => ({ a86: 86 }),
+  () => ({ a87: 87 }),
+  () => ({ a88: 88 }),
+  () => ({ a89: 89 }),
+  () => ({ a90: 90 }),
+  () => ({ a91: 91 }),
+  () => ({ a92: 92 }),
+  () => ({ a93: 93 }),
+  () => ({ a94: 94 }),
+  () => ({ a95: 95 }),
+  () => ({ a96: 96 }),
+  () => ({ a97: 97 }),
+  () => ({ a98: 98 }),
+  () => ({ a99: 99 }),
+  () => ({ a100: 100 }),
+  () => ({ a101: 101 }),
+  () => ({ a102: 102 }),
+  () => ({ a103: 103 }),
+  () => ({ a104: 104 }),
+  () => ({ a105: 105 }),
+  () => ({ a106: 106 }),
+  () => ({ a107: 107 }),
+  () => ({ a108: 108 }),
+  () => ({ a109: 109 }),
+  () => ({ a110: 110 }),
+  () => ({ a111: 111 }),
+  () => ({ a112: 112 }),
+  () => ({ a113: 113 }),
+  () => ({ a114: 114 }),
+  () => ({ a115: 115 }),
+  () => ({ a116: 116 }),
+  () => ({ a117: 117 }),
+  () => ({ a118: 118 }),
+  () => ({ a119: 119 }),
+  () => ({ a120: 120 }),
+  () => ({ a121: 121 }),
+  () => ({ a122: 122 }),
+  () => ({ a123: 123 }),
+  () => ({ a124: 124 }),
+  () => ({ a125: 125 }),
+  () => ({ a126: 126 }),
+  () => ({ a127: 127 }),
+  () => ({ a128: 128 }),
+  () => ({ a129: 129 }),
+  () => ({ a130: 130 }),
+  () => ({ a131: 131 }),
+  () => ({ a132: 132 }),
+  () => ({ a133: 133 }),
+  () => ({ a134: 134 }),
+  () => ({ a135: 135 }),
+  () => ({ a136: 136 }),
+  () => ({ a137: 137 }),
+  () => ({ a138: 138 }),
+  () => ({ a139: 139 }),
+  () => ({ a140: 140 }),
+  () => ({ a141: 141 }),
+  () => ({ a142: 142 }),
+  () => ({ a143: 143 }),
+  () => ({ a144: 144 }),
+  () => ({ a145: 145 }),
+  () => ({ a146: 146 }),
+  () => ({ a147: 147 }),
+  () => ({ a148: 148 }),
+  () => ({ a149: 149 }),
+  () => ({ a150: 150 }),
+  () => ({ a151: 151 }),
+  () => ({ a152: 152 }),
+  () => ({ a153: 153 }),
+  () => ({ a154: 154 }),
+  () => ({ a155: 155 }),
+  () => ({ a156: 156 }),
+  () => ({ a157: 157 }),
+  () => ({ a158: 158 }),
+  () => ({ a159: 159 }),
+  () => ({ a160: 160 }),
+  () => ({ a161: 161 }),
+  () => ({ a162: 162 }),
+  () => ({ a163: 163 }),
+  () => ({ a164: 164 }),
+  () => ({ a165: 165 }),
+  () => ({ a166: 166 }),
+  () => ({ a167: 167 }),
+  () => ({ a168: 168 }),
+  () => ({ a169: 169 }),
+  () => ({ a170: 170 }),
+  () => ({ a171: 171 }),
+  () => ({ a172: 172 }),
+  () => ({ a173: 173 }),
+  () => ({ a174: 174 }),
+  () => ({ a175: 175 }),
+  () => ({ a176: 176 }),
+  () => ({ a177: 177 }),
+  () => ({ a178: 178 }),
+  () => ({ a179: 179 }),
+  () => ({ a180: 180 }),
+  () => ({ a181: 181 }),
+  () => ({ a182: 182 }),
+  () => ({ a183: 183 }),
+  () => ({ a184: 184 }),
+  () => ({ a185: 185 }),
+  () => ({ a186: 186 }),
+  () => ({ a187: 187 }),
+  () => ({ a188: 188 }),
+  () => ({ a189: 189 }),
+  () => ({ a190: 190 }),
+  () => ({ a191: 191 }),
+  () => ({ a192: 192 }),
+  () => ({ a193: 193 }),
+  () => ({ a194: 194 }),
+  () => ({ a195: 195 }),
+  () => ({ a196: 196 }),
+  () => ({ a197: 197 }),
+  () => ({ a198: 198 }),
+  () => ({ a199: 199 }),
+];
+
+function read(object) { return object.y; }
+function has(object) { return "y" in object; }
+function store(object, value) { object.y = value; }
+const what = process.argv[2], used = Number(process.argv[3] ?? 1), rounds = Number(process.argv[4] ?? 3);
+const ordinaryOwn = [], ordinaryAbsent = [], compiledAbsent = [], compiledExtra = [];
+for (let i = 0; i < used; i++) {
+  ordinaryOwn.push(JSON.parse('{"a' + i + '":1,"y":2}'));
+  ordinaryAbsent.push(JSON.parse('{"a' + i + '":1}'));
+  compiledAbsent.push(compiled[i]());
+  const extra = compiled[i](); extra["z" + i] = 1; compiledExtra.push(extra);
+}
+let sum = 0;
+Date.now();
+for (let round = 0; round < rounds; round++) {
+  for (let i = 0; i < used; i++) {
+    switch (what) {
+    case "ordinary-own": sum += read(ordinaryOwn[i]); break;
+    case "ordinary-absent": sum += read(ordinaryAbsent[i]) === undefined ? 1 : 0; break;
+    case "compiled-absent": sum += read(compiledAbsent[i]) === undefined ? 1 : 0; break;
+    case "compiled-extra": sum += read(compiledExtra[i]) === undefined ? 1 : 0; break;
+    case "in-ordinary-own": sum += has(ordinaryOwn[i]) ? 1 : 0; break;
+    case "in-ordinary-absent": sum += has(ordinaryAbsent[i]) ? 1 : 0; break;
+    case "store-ordinary-own": store(ordinaryOwn[i], round); break;
+    case "store-ordinary-add": store(JSON.parse('{"a' + i + '":1}'), round); break;
+    }
+  }
+}
+console.log(what, used, rounds, sum);
+//// stores-to-built-ins/sorts.js
+// sorts.js <which> <size> <rounds>: an array of <size> numbers or strings in a fixed scrambled order is copied and sorted.
+const which = process.argv[2], size = Number(process.argv[3] ?? 16), rounds = Number(process.argv[4] ?? 100);
+const numbers = [], strings = [], objects = [];
+let seed = 12345;
+for (let i = 0; i < size; i++) { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; numbers.push((seed % 1000) | 0); strings.push("k" + (seed % 1000)); objects.push({ key: (seed % 1000) | 0, name: "n" + i }); }
+let sum = 0;
+for (let i = 0; i < rounds; i++) {
+  switch (which) {
+  case "copy": sum += numbers.slice().length; break;
+  case "numbers": sum += numbers.slice().sort((a, b) => a - b)[0]; break;
+  case "strings": sum += strings.slice().sort().length; break;
+  case "stringsBy": sum += strings.slice().sort((a, b) => a < b ? -1 : a > b ? 1 : 0).length; break;
+  case "locale": sum += strings.slice().sort((a, b) => a.localeCompare(b)).length; break;
+  case "objects": sum += objects.slice().sort((a, b) => a.key - b.key)[0].key; break;
+  case "toSorted": sum += numbers.toSorted((a, b) => a - b)[0]; break;
+  }
+}
+console.log(which, size, rounds, sum);
+//// stores-to-built-ins/transitions.js
+// transitions.js <objects>: every object gets five properties under names of its own, by key: each store makes a new transition.
+const n = Number(process.argv[2] ?? 100);
+const kept = [];
+for (let i = 0; i < n; i++) {
+  const object = JSON.parse("{}");
+  for (let j = 0; j < 5; j++) object["p" + i + "_" + j] = j;
+  kept.push(object);
+}
+console.log(kept.length, Object.keys(kept[n - 1]).join());

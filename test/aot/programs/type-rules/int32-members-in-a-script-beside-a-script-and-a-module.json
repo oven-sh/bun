@@ -1,0 +1,1 @@
+{ "entryPoints": ["./script.ts", "./module.ts"] }

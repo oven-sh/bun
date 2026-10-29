@@ -1,0 +1,45 @@
+self: 1000000
+self, ?:: 1000000
+self, ||: true
+two: true
+three: two
+an arrow: 0
+strings: xxxxxxxxxx
+doubles: 500000
+objects: 1
+fresh objects: 1000000
+void: undefined
+eight arguments: 28
+twelve arguments: 171
+one and twelve: 0
+defaults: 0
+rest: 2
+an inner function: 1000001
+closures: 1
+number and integer: 0.5
+in a catch: 0
+in a finally: 0
+after a try: 0
+in a loop: 0
+in a switch: 0
+a method: 1
+a static method, by the class: 0
+a static method, by this: 0
+a private method: 0
+a getter: 1000000
+two methods: 1
+super: -1
+a literal's method: 4
+by an interface: 1
+by value: 0
+by value, typed: 0
+by value, any: 0
+by value, a string: s
+out of a table: 0
+call: 0
+apply: 0
+spread: 0
+?.(): 0
+a tagged template: 0
+continuations: 100000
+1000001

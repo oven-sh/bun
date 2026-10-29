@@ -1,7 +1,7 @@
 //! Construction of union and intersection types.
 
 use super::*;
-use crate::util::{PositionSet, fx_hash};
+use crate::util::{FxHashMap, PositionSet, fx_hash};
 
 /// A declaration's sort key for `compareNodes`: library files first, then by file, then by position.
 type DeclarationPosition = (bool, FileId, u32);
@@ -1043,6 +1043,15 @@ impl<'p, 's> Checker<'p, 's> {
         for &ty in types {
             actual.extend_from_slice(self.parts(ty));
         }
+        // The sort asks for a position at every comparison.
+        let first_positions = (actual.len() > 64).then(|| {
+            let mut positions: FxHashMap<TypeId, usize> = FxHashMap::default();
+            positions.reserve(actual.len());
+            for (position, &ty) in actual.iter().enumerate() {
+                positions.entry(ty).or_insert(position);
+            }
+            positions
+        });
         let is_created_by_expression = |c: &Self, m: TypeId| {
             matches!(
                 c.data(m),
@@ -1067,7 +1076,10 @@ impl<'p, 's> Checker<'p, 's> {
                 }
                 _ => is_created_by_expression(c, m),
             };
-            let position = || actual.iter().position(|&g| g == m).unwrap_or(usize::MAX);
+            let position = || match &first_positions {
+                Some(positions) => positions.get(&m).copied().unwrap_or(usize::MAX),
+                None => actual.iter().position(|&g| g == m).unwrap_or(usize::MAX),
+            };
             created_by_expression.then(position)
         };
         let mut compare = |&x: &TypeId, &y: &TypeId| {
@@ -1716,6 +1728,26 @@ impl<'p, 's> Checker<'p, 's> {
         Some(size)
     }
 
+    /// `checked_cross_product_union_size` of the set that `distribute_intersection` is left with.
+    fn checked_size_of_distribution(&mut self, set: &[TypeId]) -> Option<usize> {
+        let size = self.get_cross_product_union_size(set);
+        if size < 100_000 {
+            return Some(size);
+        }
+        // `is_primitive_union` says no to both, whatever `is_without_primitive_union` says.
+        let has_primitive_types_alone = |t: TypeId| {
+            let mut members = self.parts(t).iter();
+            members.all(|&member| self.is_member_of_primitive_union(member))
+        };
+        let is_refused_to_everybody =
+            set.len() == 2 && !set.iter().any(|&t| has_primitive_types_alone(t));
+        match is_refused_to_everybody {
+            true => self.refuse_cross_product_of_two_unions(),
+            false => self.error_at_current_node(2590),
+        }
+        None
+    }
+
     /// `getCrossProductUnionSize`
     fn get_cross_product_union_size(&self, types: &[TypeId]) -> usize {
         (types.iter()).fold(1, |size, &t| size.saturating_mul(self.parts(t).len()))
@@ -1771,7 +1803,7 @@ impl<'p, 's> Checker<'p, 's> {
             return Some(self.intersection_ex(&[left, right], no_constraint_reduction, alias));
         }
         // `X & (A | B) & (C | D)` is `X & A & C | X & A & D | X & B & C | X & B & D`.
-        let size = self.checked_cross_product_union_size(&set)?;
+        let size = self.checked_size_of_distribution(&set)?;
         // `getCrossProductIntersections`
         let mut intersections: Vec<TypeId> = Vec::with_capacity(size);
         let mut constituents = set.to_vec();
@@ -1900,11 +1932,15 @@ impl<'p, 's> Checker<'p, 's> {
         if self.types().is_without_primitive_union(ty) {
             return false;
         }
-        parts.iter().all(|&p| {
-            let flags = self.flags(p);
-            flags & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0
-                && flags & (tf::VOID | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) == 0
-        })
+        parts.iter().all(|&p| self.is_member_of_primitive_union(p))
+    }
+
+    /// It has no `TypeFlagsNotPrimitiveUnion`.
+    #[inline]
+    fn is_member_of_primitive_union(&self, ty: TypeId) -> bool {
+        let flags = self.flags(ty);
+        flags & (tf::PRIMITIVE | tf::NON_PRIMITIVE) != 0
+            && flags & (tf::VOID | tf::TEMPLATE_LITERAL | tf::STRING_MAPPING) == 0
     }
 
     /// `intersectUnionsOfPrimitiveTypes`: intersects multiple unions of primitives, which is what `keyof (A | B | C)`

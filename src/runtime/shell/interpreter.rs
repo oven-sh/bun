@@ -1392,7 +1392,7 @@ impl Interpreter {
         self.this_value.with_mut(|r| r.upgrade(global_this));
         let vm = global_this.bun_vm();
         self.context.set(
-            vm.as_graph_context(vm.context_of_caller_no_frame())
+            vm.as_graph_context(vm.context_of_caller())
                 .map(bun_jsc::ScriptExecutionContext::id),
         );
 
@@ -1429,7 +1429,7 @@ impl Interpreter {
             });
         }
 
-        // Cannot be safely called multiple times: drops the `Arc<IOReader>`/`Arc<IOWriter>` refs.
+        // Cannot be safely called multiple times: drops the `Rc<IOReader>`/`Rc<IOWriter>` refs.
         self.root_io.set(IO::default());
         self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
 

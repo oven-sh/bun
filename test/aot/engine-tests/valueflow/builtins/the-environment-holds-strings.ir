@@ -1,0 +1,43 @@
+# env = process.env; env.HOME.length; env.A = "text"; env.B = { toString: converted }; Bun.env.C
+# process.env and Bun.env answer one object of the host. Native code has put a string under every name that it has, so a read answers a string or, where there is nothing, undefined: no object that nobody knows.
+# Of what is stored the object keeps a string, which code that the stored object names makes.
+# RUN: valueflow-why values=f0:v2 values=f0:v3 values=f0:v11
+# CHECK: values=f0:v2
+# CHECK: operand 0 {{*}} 1 members: [[environment]]
+# CHECK: values=f0:v3
+# CHECK: operand 0 {{*}} 2 members: primitive0 primitive7
+# CHECK: values=f0:v11
+# CHECK: operand 0 {{*}} 1 members: [[environment]]
+# RUN(UNREACHED): valueflow-solve unreached
+# UNREACHED-NOT: unreached f1
+# UNREACHED: unreached f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Converted" fields=[{key="toString" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = PropGet v0 key="env"
+    v2 = PropGet v1 key="HOME"
+    v3 = PropGet v2 key="length"
+    v4 = String string="text"
+    PropSet v1, v4 key="A" mode=Strict
+    v6 = NewClosure function=f1
+    v7 = NewObject -, v6 layout=L0 fields=[0]
+    PropSet v1, v7 key="B" mode=Strict
+    v9 = Builtin builtin=Bun
+    v10 = PropGet v9 key="env"
+    v11 = PropGet v10 key="C"
+    v12 = NewClosure function=f2
+    Return
+}
+function f1 name="converted" results=[{type=anything}] {
+  b0():
+    v0 = String string="made"
+    Return v0
+}
+function f2 name="neverStored" results=[{type=anything}] {
+  b0():
+    Return
+}

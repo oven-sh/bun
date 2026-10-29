@@ -1,11 +1,12 @@
 use core::cell::Cell;
 
-use crate::jsc::{CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
+use crate::jsc::{JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachineSqlExt as _};
 use crate::shared::cached_structure::Undescribed;
-use crate::shared::query_ctor_args::QueryCtorArgs;
+use crate::shared::query_ctor_args;
+use crate::shared::row_decoder::RowDecoder;
 use bun_core::String as BunString;
-use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSArray, JsCell};
 use bun_ptr::{AsCtxPtr, RefPtr};
 
 use super::PostgresSQLConnection;
@@ -42,6 +43,8 @@ pub struct PostgresSQLQuery {
     ref_count: Cell<u32>,
 
     pub(crate) flags: Cell<Flags>,
+
+    pub(crate) row_type: Cell<u32>,
 }
 
 impl Default for PostgresSQLQuery {
@@ -55,6 +58,7 @@ impl Default for PostgresSQLQuery {
             status: Cell::new(Status::Pending),
             ref_count: Cell::new(1),
             flags: Cell::new(Flags::default()),
+            row_type: Cell::new(0),
         }
     }
 }
@@ -374,16 +378,17 @@ impl PostgresSQLQuery {
         0
     }
 
-    // Registered directly as `createQuery` via
-    // `put_host_functions!` in `postgres.rs`, so no exported symbol is needed.
-    pub(crate) fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let QueryCtorArgs {
-            query,
-            values,
-            pending_value,
-            bigint,
-            simple,
-        } = QueryCtorArgs::parse(global_this, callframe.arguments())?;
+    pub(crate) fn create_query<'a>(
+        cx: &mut JsScope<'a>,
+        query: bun_core::String,
+        values: JsLocal<'a, JSArray>,
+        pending_value: JsLocal<'a, JSArray>,
+        bigint: bool,
+        simple: bool,
+    ) -> JsResult<JSValue> {
+        let global_this = cx.global();
+        let (values, pending_value) = (values.to_js(), pending_value.to_js());
+        query_ctor_args::validate(global_this, &query, values, simple)?;
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 
@@ -392,7 +397,7 @@ impl PostgresSQLQuery {
 
         // SAFETY: ptr is exclusively owned here until returned to JS.
         unsafe {
-            (*ptr).query = query.to_bun_string(global_this)?;
+            (*ptr).query = query;
             (*ptr).this_value.set(JsRef::init_weak(this_value));
             (*ptr).flags.set(Flags {
                 bigint,
@@ -451,6 +456,8 @@ impl PostgresSQLQuery {
         if !query.is_object() {
             return Err(global_object.throw_invalid_argument_type("run", "query", "Query"));
         }
+        self.row_type
+            .set(RowDecoder::expected_row_type(global_object, query));
 
         let this_value = this_value.to_js();
         let binding_value = js::binding_get_cached(this_value).unwrap_or_default();

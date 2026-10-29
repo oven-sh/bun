@@ -1,0 +1,15 @@
+strict: false
+parameterOfTheSameName "number"
+parameterUsedLikeANumber 2
+letOfTheSameName "string"
+constInAnOuterBlock ["string", "undefined"]
+varOfTheSameName "function"
+varDeclaredLater "function"
+catchParameter ["string", "function"]
+loopVariable [["number", "number"], "undefined"]
+functionOfTheSameNameOutside "inside"
+ownName false
+parameterUsedLikeAList, short 1
+parameterUsedLikeAList, long 2
+sum 2000
+parameterUsedLikeAList, long, after 2000 short ones 3

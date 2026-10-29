@@ -149,7 +149,7 @@ pub(crate) fn scan_imports_and_exports(
                 let _ = LinkerContext::scan_css_imports(
                     id as u32,
                     col_ref!(import_records_list)[id].as_slice(),
-                    css_asts,
+                    col_ref!(css_asts),
                     col_ref!(input_files),
                     col_ref!(loaders),
                     // `log_disjoint`: split-borrow with the SoA column refs above.

@@ -19,8 +19,8 @@ import {
 
 const root = join(import.meta.dir, "..", "..");
 
-function git(cwd: string, args: string[], stdin = "") {
-  const { exitCode, stdout, stderr } = Bun.spawnSync({
+async function git(cwd: string, args: string[], stdin = "") {
+  await using proc = Bun.spawn({
     cmd: ["git", ...args],
     cwd,
     env: bunEnv,
@@ -28,8 +28,9 @@ function git(cwd: string, args: string[], stdin = "") {
     stdout: "pipe",
     stderr: "pipe",
   });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   if (exitCode !== 0) throw new Error(`git ${args.join(" ")} exited with ${exitCode}: ${stderr}`);
-  return stdout.toString().trim();
+  return stdout.trim();
 }
 
 interface Commit {
@@ -45,7 +46,7 @@ interface Commit {
  * (identity, signing, hooks). The first of them comes after `from`, or after nothing. The author's date is not the
  * committer's, and the objects stay loose files.
  */
-function addCommits(dir: string, commits: Commit[], { to = "refs/heads/main", from = "" } = {}) {
+async function addCommits(dir: string, commits: Commit[], { to = "refs/heads/main", from = "" } = {}) {
   const data = (text: string) => `data ${Buffer.byteLength(text)}\n${text}\n`;
   const stream = commits.map(({ message, files, ref }, index) =>
     [
@@ -59,22 +60,22 @@ function addCommits(dir: string, commits: Commit[], { to = "refs/heads/main", fr
       ref === undefined ? "" : `reset ${ref}\nfrom :${index + 1}\n`,
     ].join(""),
   );
-  git(dir, ["-c", "fastimport.unpackLimit=100000", "fast-import", "--quiet"], stream.join("\n"));
+  await git(dir, ["-c", "fastimport.unpackLimit=100000", "fast-import", "--quiet"], stream.join("\n"));
 }
 
 /** A WebKit clone with `commits` on `main`. The branch `base` is the first of them. */
-function clone([base, ...commits]: Commit[]) {
+async function clone([base, ...commits]: Commit[]) {
   const dir = tempDir("webcore-copies-webkit", {});
-  git(String(dir), ["init", "--quiet", "--initial-branch=main"]);
-  addCommits(String(dir), [{ ...base, ref: "refs/heads/base" }, ...commits]);
+  await git(String(dir), ["init", "--quiet", "--initial-branch=main"]);
+  await addCommits(String(dir), [{ ...base, ref: "refs/heads/base" }, ...commits]);
   return dir;
 }
 
 /** A bun checkout where `files` are tracked. */
-function checkout(files: Record<string, string>) {
+async function checkout(files: Record<string, string>) {
   const dir = tempDir("webcore-copies-bun", files);
-  git(String(dir), ["init", "--quiet", "--initial-branch=main"]);
-  git(String(dir), ["add", "--all"]);
+  await git(String(dir), ["init", "--quiet", "--initial-branch=main"]);
+  await git(String(dir), ["add", "--all"]);
   return dir;
 }
 
@@ -203,8 +204,8 @@ const list = (bun: string, webkit: string, oldBase: string, newBase: string, nam
 let repositories: { bun: string; webkit: string };
 const directories: Disposable[] = [];
 afterAll(() => directories.forEach(directory => directory[Symbol.dispose]()));
-beforeAll(() => {
-  const bun = checkout({
+beforeAll(async () => {
+  const bun = await checkout({
     "src/jsc/bindings/webcore/PerformanceObserver.cpp": bunCopy,
     "src/jsc/bindings/webcore/JSPerformanceObserver.cpp": `#include "JSPerformanceObserver.h"\n`,
     [bunAesKw]: aesKw("CryptoAlgorithmAES_KW.h", "< 0"),
@@ -215,7 +216,7 @@ beforeAll(() => {
     "src/jsc/bindings/webcore/Straße.h": "#pragma once\n",
   });
   directories.push(bun);
-  const webkit = clone([
+  const webkit = await clone([
     {
       message: "base",
       files: {
@@ -324,15 +325,15 @@ test("a range with no commits is an error", () => {
   expect(() => listCopyChanges(bun, webkit, "main", "main", table)).toThrow("No commit is in main..main.");
 });
 
-test("an upstream file that git cannot read is an error, and not a file without a copy", () => {
+test("an upstream file that git cannot read is an error, and not a file without a copy", async () => {
   const path = "Source/WebCore/page/PerformanceObserver.cpp";
-  using bun = checkout({ "src/jsc/bindings/webcore/PerformanceObserver.cpp": bunCopy });
-  using webkit = clone([
+  using bun = await checkout({ "src/jsc/bindings/webcore/PerformanceObserver.cpp": bunCopy });
+  using webkit = await clone([
     { message: "base", files: { [path]: upstreamBefore } },
     { message: "Schedule task on buffered PerformanceObserver", files: { [path]: upstreamAfter } },
   ]);
   // What a clone without blobs has when it cannot fetch one: the tree names the file, and its content is not there.
-  const blob = git(String(webkit), ["rev-parse", `base:${path}`]);
+  const blob = await git(String(webkit), ["rev-parse", `base:${path}`]);
   const object = join(String(webkit), ".git", "objects", blob.slice(0, 2), blob.slice(2));
   chmodSync(object, 0o666);
   rmSync(object);
@@ -341,10 +342,10 @@ test("an upstream file that git cannot read is an error, and not a file without 
   );
 });
 
-test("a tracked file that the working tree does not have is an error", () => {
+test("a tracked file that the working tree does not have is an error", async () => {
   const { webkit } = repositories;
   const path = "src/jsc/bindings/webcore/PerformanceObserver.cpp";
-  using bun = checkout({ [path]: bunCopy, "src/jsc/bindings/webcore/Performance.cpp": bunCopy });
+  using bun = await checkout({ [path]: bunCopy, "src/jsc/bindings/webcore/Performance.cpp": bunCopy });
   rmSync(join(String(bun), path));
   // Without the error, the commits that touch its upstream file would not be listed, and nothing would say so.
   expect(() => listCopyChanges(String(bun), webkit, "base", "main", {})).toThrow(
@@ -352,9 +353,9 @@ test("a tracked file that the working tree does not have is an error", () => {
   );
 });
 
-test("a table that names a file which upstream no longer has is an error", () => {
-  using bun = checkout(serializerFiles);
-  using webkit = clone([
+test("a table that names a file which upstream no longer has is an error", async () => {
+  using bun = await checkout(serializerFiles);
+  using webkit = await clone([
     {
       message: "base",
       files: {
@@ -377,7 +378,7 @@ test("a table that names a file which upstream no longer has is an error", () =>
     },
   ]);
   const [bunRoot, dir, table] = [String(bun), String(webkit), serializerTable];
-  const removal = git(dir, ["rev-parse", "moved"]).slice(0, 12);
+  const removal = (await git(dir, ["rev-parse", "moved"])).slice(0, 12);
   const gone = `\`upstreamOf\` in scripts/webcore-copies.ts:\n  ${upstreamSerializer} is gone since ${removal}.`;
 
   // The range that removes the file lists it. After that range the entry would match nothing, and nobody would know.
@@ -392,8 +393,8 @@ test("a table that names a file which upstream no longer has is an error", () =>
   // Two commits that still have the file do not change that. The upgrade goes to neither: a release branch of
   // upstream that left before the move, and the fork, which kept the file when it merged `later`.
   const withFile = { message: "Keep the serializer", files: { [upstreamSerializer]: `${license}\n` } };
-  addCommits(dir, [withFile], { to: "refs/remotes/upstream/safari-branch", from: "refs/heads/base" });
-  addCommits(dir, [withFile], { to: "refs/remotes/origin/main", from: "refs/heads/later" });
+  await addCommits(dir, [withFile], { to: "refs/remotes/upstream/safari-branch", from: "refs/heads/base" });
+  await addCommits(dir, [withFile], { to: "refs/remotes/origin/main", from: "refs/heads/later" });
   expect(() => listCopyChanges(bunRoot, dir, "moved", "later", table)).toThrow(gone);
 
   // A name that upstream never had, and a copy that Bun does not have.
@@ -408,7 +409,7 @@ test("a table that names a file which upstream no longer has is an error", () =>
   // Upstream brings the file back after `later`. In the range before that, neither end has it and the table is right.
   // The table can also name the file that the copy's name leads to: the copy is then listed once.
   const reland = { message: "Reland the serializer", files: { [upstreamSerializer]: `${license}\n` } };
-  addCommits(dir, [reland], { to: "refs/remotes/upstream/main", from: "refs/heads/later" });
+  await addCommits(dir, [reland], { to: "refs/remotes/upstream/main", from: "refs/heads/later" });
   const both = { ...table, [bunSerializer]: [upstreamSerializer, upstreamSerializedScriptValue] };
   expect(list(bunRoot, dir, "moved", "later", both)).toEqual([
     "<sha> 2025-09-03 Another change",
@@ -418,14 +419,14 @@ test("a table that names a file which upstream no longer has is an error", () =>
   ]);
 });
 
-test("a file that the range adds and removes again is compared as the commit that adds it has it", () => {
+test("a file that the range adds and removes again is compared as the commit that adds it has it", async () => {
   const path = "Source/WebCore/page/PerformanceTiming.cpp";
   const unrelated = "Source/WebCore/platform/graphics/Path.cpp";
-  using bun = checkout({
+  using bun = await checkout({
     "src/jsc/bindings/webcore/PerformanceTiming.cpp": bunCopy,
     "src/jsc/bindings/Path.cpp": bunPath,
   });
-  using webkit = clone([
+  using webkit = await clone([
     { message: "base", files: { "Source/WebCore/page/Performance.cpp": upstreamBefore } },
     { message: "Add PerformanceTiming", files: { [path]: upstreamBefore, [unrelated]: webcorePath("false") } },
     { message: "Revert: Add PerformanceTiming", files: { [path]: null, [unrelated]: null } },
@@ -446,14 +447,9 @@ test("a file that the range adds and removes again is compared as the commit tha
   expect(list(String(bun), String(webkit), "base", "main", named)).toEqual(listed);
 });
 
-test("every copy that upstreamOf names is a tracked file", () => {
+test("every copy that upstreamOf names is a tracked file", async () => {
   const copies = Object.keys(upstreamOf);
-  const { exitCode, stdout, stderr } = Bun.spawnSync({ cmd: ["git", "ls-files", "--", ...copies], cwd: root });
-  expect({ exitCode, stderr: stderr.toString(), tracked: stdout.toString().trim().split("\n").sort() }).toEqual({
-    exitCode: 0,
-    stderr: "",
-    tracked: copies.toSorted(),
-  });
+  expect((await git(root, ["ls-files", "--", ...copies])).split("\n").sort()).toEqual(copies.toSorted());
 });
 
 test("a file of the same name is a copy only while it shares a long line with the upstream file", () => {
@@ -481,7 +477,7 @@ test("a file of the same name is a copy only while it shares a long line with th
 // A clone for this checkout. It has every upstream file that `upstreamOf` names, and the upstream file of one more
 // copy, with the copy's own text: so the two are related whatever the copy says.
 const realCopy = "src/jsc/bindings/webcore/PerformanceObserver.cpp";
-function cloneForThisCheckout() {
+async function cloneForThisCheckout() {
   const text = readFileSync(join(root, realCopy), "utf8");
   const named = Object.values(upstreamOf).flat();
   return clone([
@@ -506,8 +502,8 @@ const listedForThisCheckout = [
   "Commits in base..upstream/main that touch the upstream file of a Bun copy: 1 of 1",
 ].join("\n");
 
-test("the command prints the list, or says what is wrong", () => {
-  using webkit = cloneForThisCheckout();
+test("the command prints the list, or says what is wrong", async () => {
+  using webkit = await cloneForThisCheckout();
   const command = (args: string[], clone = String(webkit)) => {
     const { exitCode, stdout, stderr } = main(args, root, clone);
     return { exitCode, stdout: shas(stdout), stderr };
@@ -558,7 +554,7 @@ async function script(clone: string, ...args: string[]) {
 
 // These two are not concurrent: two debug builds of Bun that start together take longer than one after the other.
 test("the script finds this checkout from where it is, and the clone from $BUN_WEBKIT_PATH", async () => {
-  using webkit = cloneForThisCheckout();
+  using webkit = await cloneForThisCheckout();
   expect(await script(String(webkit), "base", "upstream/main")).toEqual({
     stdout: `${listedForThisCheckout}\n`,
     stderr: "",

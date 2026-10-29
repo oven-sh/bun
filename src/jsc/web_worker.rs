@@ -608,19 +608,15 @@ impl WebWorker {
             _parent_ticket: parent_ticket,
         });
         worker_ref.thread_start.set(start);
-        // SAFETY: `parent` is the calling thread's VM.
-        let mut outcome = worker_ref.try_start(unsafe { Self::has_room_to_wait_for(parent) });
+        let mut outcome = worker_ref.try_start(Self::has_room_to_wait_for(parent_ref));
         if matches!(outcome, StartOutcome::NoRoom) {
-            // SAFETY: `parent` is the calling thread's VM.
-            if unsafe { Self::join_returning_children(parent) } {
-                // SAFETY: `parent` is the calling thread's VM.
-                outcome = worker_ref.try_start(unsafe { Self::has_room_to_wait_for(parent) });
+            if Self::join_returning_children(parent_ref) {
+                outcome = worker_ref.try_start(Self::has_room_to_wait_for(parent_ref));
             }
         }
         match outcome {
             StartOutcome::Started => {}
-            // SAFETY: `parent` is the calling thread's VM.
-            StartOutcome::NoRoom if unsafe { Self::has_room_to_wait_for(parent) } => {
+            StartOutcome::NoRoom if Self::has_room_to_wait_for(parent_ref) => {
                 log!("[{}] waits for room", this_context_id);
                 WORKERS_WAITING_FOR_ROOM.fetch_add(1, Ordering::Relaxed);
                 worker_ref.arm_room_timer();
@@ -690,22 +686,15 @@ impl WebWorker {
             && self.join_handle.with_mut(|handle| handle.is_some())
     }
 
-    /// # Safety
-    /// `parent` is the calling thread's VM.
-    unsafe fn has_ending_child(parent: *mut VirtualMachine) -> bool {
-        // SAFETY: fn contract.
-        unsafe { (*parent).child_workers.iter() }.any(|&child| {
+    fn has_ending_child(parent: &VirtualMachine) -> bool {
+        parent.child_workers.iter().any(|&child| {
             bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child")).is_ending()
         })
     }
 
     /// Whether the thread of one of `parent`'s children is returning.
-    ///
-    /// # Safety
-    /// `parent` is the calling thread's VM.
-    unsafe fn has_returning_child(parent: *mut VirtualMachine) -> bool {
-        // SAFETY: fn contract.
-        unsafe { (*parent).child_workers.iter() }.any(|&child| {
+    fn has_returning_child(parent: &VirtualMachine) -> bool {
+        parent.child_workers.iter().any(|&child| {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             worker.is_returning.load(Ordering::Acquire)
                 && worker.join_handle.with_mut(|handle| handle.is_some())
@@ -713,13 +702,9 @@ impl WebWorker {
     }
 
     /// Whether more of `parent`'s children are ending than wait for room.
-    ///
-    /// # Safety
-    /// `parent` is the calling thread's VM.
-    unsafe fn has_room_to_wait_for(parent: *mut VirtualMachine) -> bool {
+    fn has_room_to_wait_for(parent: &VirtualMachine) -> bool {
         let (mut ending, mut waiting) = (0usize, 0usize);
-        // SAFETY: fn contract.
-        for &child in unsafe { (*parent).child_workers.iter() } {
+        for &child in parent.child_workers.iter() {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             ending += usize::from(worker.is_ending());
             waiting += usize::from(!worker.thread_start.get().is_null());
@@ -729,13 +714,10 @@ impl WebWorker {
 
     /// Join the threads of `parent`'s children that wait for nothing more on their way out.
     /// Returns whether there were any.
-    ///
-    /// # Safety
-    /// `parent` is the calling thread's VM.
-    unsafe fn join_returning_children(parent: *mut VirtualMachine) -> bool {
+    fn join_returning_children(parent: &VirtualMachine) -> bool {
         let mut joined_any = false;
-        // SAFETY: fn contract; nothing runs on this thread during a join, so the list does not change.
-        for &child in unsafe { (*parent).child_workers.iter() } {
+        // Nothing runs on this thread during a join, so the list does not change.
+        for &child in parent.child_workers.iter() {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
             if worker.is_returning.load(Ordering::Acquire) {
                 joined_any |= worker.join_thread();
@@ -747,31 +729,27 @@ impl WebWorker {
     /// `parent` has released a child. Its children that wait for room start, oldest
     /// first. Once no child is left that is ending, those that find none get 'error'.
     /// A parent that is ending starts none: its stop phase ends them.
-    ///
-    /// # Safety
-    /// `parent` is the calling thread's VM.
-    unsafe fn start_waiting_children(parent: *mut VirtualMachine) {
+    fn start_waiting_children(parent: &VirtualMachine) {
         while WORKERS_WAITING_FOR_ROOM.load(Ordering::Relaxed) != 0 {
-            // SAFETY: fn contract.
-            if unsafe { (*parent).is_shutting_down() || !(*parent).script_allowed() } {
+            if parent.is_shutting_down() || !parent.script_allowed() {
                 return;
             }
-            // SAFETY: fn contract; nothing below changes the list.
-            let oldest = unsafe { (*parent).child_workers.iter() }
+            // Nothing below changes the list.
+            let oldest = parent
+                .child_workers
+                .iter()
                 .map(|&child| {
                     bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"))
                 })
                 .filter(|worker| !worker.thread_start.get().is_null())
                 .min_by_key(|worker| worker.execution_context_id);
             let Some(worker) = oldest else { return };
-            // SAFETY: fn contract.
-            match worker.try_start(unsafe { Self::has_ending_child(parent) }) {
+            match worker.try_start(Self::has_ending_child(parent)) {
                 StartOutcome::Started => {
                     WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
                     worker.disarm_room_timer();
                 }
-                // SAFETY: fn contract.
-                StartOutcome::NoRoom if unsafe { Self::has_ending_child(parent) } => return,
+                StartOutcome::NoRoom if Self::has_ending_child(parent) => return,
                 StartOutcome::NoRoom | StartOutcome::Failed => {
                     WebWorker__postFailedToStartError(worker.messaging_proxy);
                     worker.end_without_thread(1);
@@ -803,30 +781,26 @@ impl WebWorker {
     /// Only the thread of a sibling that is returning is waited for any longer.
     ///
     /// # Safety
-    /// `this` waits for room; called on its parent's thread.
-    pub unsafe fn on_room_timer(this: *mut WebWorker) {
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("timer owner"));
-        this.room_timer
+    /// `self` waits for room, and `parent` is its parent.
+    pub unsafe fn on_room_timer(&self, parent: &VirtualMachine) {
+        self.room_timer
             .with_mut(|timer| timer.state = TimerState::FIRED);
-        let parent = this.parent;
-        // SAFETY: fn contract.
-        if unsafe { (*parent).is_shutting_down() || !(*parent).script_allowed() } {
+        if parent.is_shutting_down() || !parent.script_allowed() {
             return;
         }
-        let can_wait = this.room_timer_rounds.get() < ROOM_TIMER_MAX_ROUNDS
-            // SAFETY: fn contract.
-            && unsafe { Self::has_returning_child(parent) };
-        match this.try_start(can_wait) {
+        let can_wait = self.room_timer_rounds.get() < ROOM_TIMER_MAX_ROUNDS
+            && Self::has_returning_child(parent);
+        match self.try_start(can_wait) {
             StartOutcome::Started => {
                 WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
             }
             StartOutcome::NoRoom if can_wait => {
-                this.room_timer_rounds.set(this.room_timer_rounds.get() + 1);
-                this.arm_room_timer();
+                self.room_timer_rounds.set(self.room_timer_rounds.get() + 1);
+                self.arm_room_timer();
             }
             StartOutcome::NoRoom | StartOutcome::Failed => {
-                WebWorker__postFailedToStartError(this.messaging_proxy);
-                this.end_without_thread(1);
+                WebWorker__postFailedToStartError(self.messaging_proxy);
+                self.end_without_thread(1);
             }
         }
     }
@@ -861,7 +835,7 @@ impl WebWorker {
         this.join_thread();
         bun_removable_features::removable_body!(WorkerConstructor, ReturnDefault, {
             // SAFETY: parent thread; `parent` outlives its children (it joins them).
-            unsafe { Self::start_waiting_children(this.parent) }
+            Self::start_waiting_children(unsafe { &*this.parent })
         });
     }
 

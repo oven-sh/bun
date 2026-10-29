@@ -8,9 +8,9 @@ use bun_boringssl_sys as boringssl_sys;
 pub(crate) mod ffi {
     pub(crate) use bun_boringssl_sys::{
         EVP_Digest, EVP_DigestFinal, EVP_DigestInit, EVP_DigestUpdate, EVP_MD, EVP_MD_CTX,
-        EVP_MD_CTX_cleanup, EVP_MD_CTX_init, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5,
-        EVP_ripemd160, EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512,
-        EVP_sha224, EVP_sha256, EVP_sha384, EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
+        EVP_MD_CTX_cleanup, EVP_blake2b256, EVP_blake2b512, EVP_md4, EVP_md5, EVP_ripemd160,
+        EVP_sha1, EVP_sha3_224, EVP_sha3_256, EVP_sha3_384, EVP_sha3_512, EVP_sha224, EVP_sha256,
+        EVP_sha384, EVP_sha512, EVP_sha512_224, EVP_sha512_256, HMAC,
     };
 
     /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest. Re-typed
@@ -113,9 +113,6 @@ macro_rules! new_evp {
                     ctx: bun_core::ffi::zeroed(),
                 };
 
-                // ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
-                ffi::EVP_MD_CTX_init(&mut this.ctx);
-
                 let rc: c_int = ffi::EVP_DigestInit(&mut this.ctx, md);
                 debug_assert!(rc == 1);
 
@@ -159,7 +156,7 @@ macro_rules! new_evp {
 
         impl Drop for $name {
             fn drop(&mut self) {
-                // SAFETY: ctx was EVP_MD_CTX_init'd; cleanup is idempotent on a
+                // SAFETY: ctx initialised in `init()`; cleanup is idempotent on a
                 // zeroed/initialised ctx.
                 unsafe {
                     let _ = ffi::EVP_MD_CTX_cleanup(&mut self.ctx);

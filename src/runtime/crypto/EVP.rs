@@ -4,8 +4,7 @@ use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
 
 pub(crate) struct EVP {
-    pub ctx: boringssl::EVP_MD_CTX,
-    // FFI: BoringSSL EVP_MD singletons are static for the process lifetime.
+    ctx: boringssl::EVP_MD_CTX,
     md: &'static boringssl::EVP_MD,
     algorithm: Algorithm,
 }

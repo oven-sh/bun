@@ -444,12 +444,12 @@ impl X509 {
         let mut len: c_uint = 0;
         // SAFETY: `self` is live; `X509_digest` writes at most `EVP_MAX_MD_SIZE` bytes to `out`.
         unsafe {
-            let md: *const EVP_MD = match self.signature_digest_nid() {
+            let md = match self.signature_digest_nid() {
                 NID_undef => return None,
                 NID_md5 | NID_sha1 => EVP_sha256(),
-                nid => EVP_get_digestbynid(nid),
+                nid => EVP_get_digestbynid(nid)?,
             };
-            if md.is_null() || X509_digest(self, md, out.as_mut_ptr(), &raw mut len) != 1 {
+            if X509_digest(self, md, out.as_mut_ptr(), &raw mut len) != 1 {
                 return None;
             }
         }
@@ -688,14 +688,11 @@ unsafe extern "C" {
     pub safe fn EVP_blake2b512() -> &'static EVP_MD;
 
     // ── EVP digest ctx ───────────────────────────────────────────────────
-    // POD context by exclusive reference: BoringSSL only zero-initialises the
-    // struct (no deref of its raw-ptr fields), so any `&mut EVP_MD_CTX` is sound.
-    pub safe fn EVP_MD_CTX_init(ctx: &mut EVP_MD_CTX);
     pub fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int;
     pub fn EVP_MD_CTX_copy_ex(out: *mut EVP_MD_CTX, in_: *const EVP_MD_CTX) -> c_int;
     pub safe fn EVP_MD_size(md: &EVP_MD) -> usize;
-    // Starts with `EVP_MD_CTX_init`: what `ctx` held before is never read.
-    pub safe fn EVP_DigestInit(ctx: &mut EVP_MD_CTX, type_: &EVP_MD) -> c_int;
+    // Starts with `EVP_MD_CTX_init`: what `ctx` held is never read. Keeps `type_` in `ctx.digest`.
+    pub safe fn EVP_DigestInit(ctx: &mut EVP_MD_CTX, type_: &'static EVP_MD) -> c_int;
     pub fn EVP_DigestInit_ex(
         ctx: *mut EVP_MD_CTX,
         type_: *const EVP_MD,
@@ -788,7 +785,7 @@ unsafe extern "C" {
         out_digest_nid: *mut c_int,
         out_pkey_nid: *mut c_int,
     ) -> c_int;
-    fn EVP_get_digestbynid(nid: c_int) -> *const EVP_MD;
+    fn EVP_get_digestbynid(nid: c_int) -> Option<&'static EVP_MD>;
     pub safe fn X509_get_subject_name(x509: &X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;

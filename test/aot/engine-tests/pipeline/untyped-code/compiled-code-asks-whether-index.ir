@@ -2358,7 +2358,7 @@ function f144 module=m0 role=Signature thisType={type=anything} results=[{type=a
 function f145 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f146 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f147 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f148 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] enclosingRuntimeFunction=65569 thisType={type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=undefined|null|L18 site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f148 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] enclosingRuntimeFunction=65572 thisType={type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=undefined|null|L18 site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Buffer):
     Jump -> next b1()
   b1():
@@ -4161,7 +4161,7 @@ runtimefunction id=86 function=f155 visibility=Private
 runtimefunction id=87 function=f159
 runtimefunction id=88 function=f162
 runtimefunction id=92 function=f156 visibility=Private
-runtimefunction id=65569 function=f148
+runtimefunction id=65572 function=f148
 runtimefunction id=131072 function=f157 visibility=Private
 runtimefunction id=131091 function=f171 visibility=Private
 # -- generated: Holder f5 asked f7 f8 f9 f10 f11 f27 f28 f33 f39 f46 f47 f49 f51 f52 f53 f54 f55 f57 f58 throw

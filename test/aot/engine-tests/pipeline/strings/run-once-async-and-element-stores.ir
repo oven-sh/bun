@@ -2841,7 +2841,7 @@ function f25 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f28]
 function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f29 module=m1 position=12380 kind=Method role=Library flags=[IsChecked] length=3 enclosingRuntimeFunction=65580 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function site=w288 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function|f57 site=w289 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f29 module=m1 position=12380 kind=Method role=Library flags=[IsChecked] length=3 enclosingRuntimeFunction=65583 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function site=w288 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function|f57 site=w289 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|object, v1: undefined|null|object, v2: undefined|null|function):
     Jump -> next b1()
   b1():
@@ -2893,7 +2893,7 @@ function f29 module=m1 position=12380 kind=Method role=Library flags=[IsChecked]
     v38 = Convert v37 declared={type=undefined|null|function|f57 site=w289 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
     Return v38
 }
-function f30 module=m1 position=25259 kind=Method role=Library flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w290 flags=[OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w291 flags=[OmitsNull]}, {type=undefined|null|function site=w292 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function|f34 site=w293 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f30 module=m1 position=25259 kind=Method role=Library flags=[IsChecked] length=4 enclosingRuntimeFunction=65577 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w290 flags=[OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w291 flags=[OmitsNull]}, {type=undefined|null|function site=w292 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function|f34 site=w293 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|object, v1: undefined|null|string, v2: undefined|null|Array<undefined|null|string>, v3: undefined|null|function):
     Jump -> next b1()
   b1():
@@ -2947,7 +2947,7 @@ function f30 module=m1 position=25259 kind=Method role=Library flags=[IsChecked]
     v33 = Convert v32 declared={type=undefined|null|function|f34 site=w293 flags=[OmitsNull, OmitsUndefined]}
     Return v33
 }
-function f31 name="startRing" module=m1 position=12653 role=Library flags=[IsChecked, HasExplicitName] enclosingRuntimeFunction=65580 captures=[{type=env L5 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function site=w288 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f31 name="startRing" module=m1 position=12653 role=Library flags=[IsChecked, HasExplicitName] enclosingRuntimeFunction=65583 captures=[{type=env L5 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function site=w288 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f37] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: env L5, v1: undefined|null|object, v2: undefined|null|object, v3: undefined|null|function):
     Jump -> next b1()
   b1():
@@ -2962,8 +2962,8 @@ function f31 name="startRing" module=m1 position=12653 role=Library flags=[IsChe
     v12 = Undefined
     Return v12
 }
-function f32 name="nextTick" module=m1 position=14680 role=Library flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65580 captures=[{type=env L5 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|function site=w299 flags=[OmitsNull, OmitsUndefined]}, {type=Array site=w300 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
-function f33 name="writeOut" module=m1 position=25765 role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65574 captures=[{type=env L6 flags=[IsFromCompiler]}, {type=undefined|null|string site=w290 flags=[OmitsNull]}, {type=undefined|null|function site=w292 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|string site=w305 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f32 name="nextTick" module=m1 position=14680 role=Library flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65583 captures=[{type=env L5 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|function site=w299 flags=[OmitsNull, OmitsUndefined]}, {type=Array site=w300 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f33 name="writeOut" module=m1 position=25765 role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65577 captures=[{type=env L6 flags=[IsFromCompiler]}, {type=undefined|null|string site=w290 flags=[OmitsNull]}, {type=undefined|null|function site=w292 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|string site=w305 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: env L6, v1: undefined|null|string, v2: undefined|null|function, v3: undefined|null|string):
     Jump -> next b1()
   b1():
@@ -2998,7 +2998,7 @@ function f33 name="writeOut" module=m1 position=25765 role=Library flags=[IsChec
     v20 = Undefined
     Return v20
 }
-function f34 name="onWarning" module=m1 position=26529 role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65574 captures=[{type=env L6 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=f33 flags=[IsFromCompiler]}, {type=undefined|null|Set<undefined|null|string> site=w304 flags=[OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f34 name="onWarning" module=m1 position=26529 role=Library flags=[IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65577 captures=[{type=env L6 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=f33 flags=[IsFromCompiler]}, {type=undefined|null|Set<undefined|null|string> site=w304 flags=[OmitsUndefined]}] thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f38] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: env L6, v1: undefined|null|object, v2: f33, v3: undefined|null|Set<undefined|null|string>, v4: undefined|null|object):
     Jump -> next b1()
   b1():
@@ -3251,7 +3251,7 @@ function f34 name="onWarning" module=m1 position=26529 role=Library flags=[IsChe
     v159 = Undefined
     Return v159
 }
-function f35 name="processTicksAndRejections" module=m1 position=12820 role=Library flags=[IsChecked, HasExplicitName] enclosingRuntimeFunction=65580 captures=[{type=env L5 flags=[IsFromCompiler]}, {type=env L7 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function site=w288 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f35 name="processTicksAndRejections" module=m1 position=12820 role=Library flags=[IsChecked, HasExplicitName] enclosingRuntimeFunction=65583 captures=[{type=env L5 flags=[IsFromCompiler]}, {type=env L7 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function site=w288 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: env L5, v1: env L7, v2: undefined|null|object, v3: undefined|null|function):
     Jump -> next b1()
   b1():
@@ -4229,8 +4229,8 @@ function f89 module=m7 kind=Module role=Library flags=[IsChecked] thisType={type
 }
 function f90 name="matchesGlob" module=m7 position=3105 role=Library flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=boolean site=w413}, {type=undefined|null|string site=w414 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string site=w415 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean site=w416}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 runtimefunction id=69 function=f48
-runtimefunction id=65574 function=f30
-runtimefunction id=65580 function=f29
+runtimefunction id=65577 function=f30
+runtimefunction id=65583 function=f29
 # -- generated: p0 p1 pd pAwait put f15 f30 next nextTick p4 pThrow
 # CHECK-LABEL: function {{*}}name="p0"
 # CHECK: module=m0 position=121 role=CoroutineRamp flags=[IsAsync, HasThis, IsChecked, HasExplicitName] thisType={type=undefined} results=[{type=Promise<int, proven, pristine[Storage, Names]> flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] creator=Coroutine{kind=AsyncFunction ramp=f1 body=f96 promiseType=Promise worker=f96} inlineFrames=[{}, {callee=f96 callPosition=121 module=m0}] {
@@ -4298,7 +4298,7 @@ runtimefunction id=65580 function=f29
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }
 # CHECK-LABEL: function f30 module=
-# CHECK: m1 position=25259 kind=Method role=ResultWrapper flags=[IsChecked] length=4 enclosingRuntimeFunction=65574 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w290 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w291 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w292 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f34 site=w293 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f159} {
+# CHECK: m1 position=25259 kind=Method role=ResultWrapper flags=[IsChecked] length=4 enclosingRuntimeFunction=65577 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|string site=w290 flags=[IsExpected, OmitsNull]}, {type=undefined|null|Array<undefined|null|string> site=w291 flags=[IsExpected, OmitsNull]}, {type=undefined|null|function site=w292 flags=[IsExpected, OmitsNull, OmitsUndefined]}] results=[{type=f34 site=w293 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f159} {
 # CHECK-NEXT: b0(v0: anything, v1: anything, v2: anything, v3: anything):
 # CHECK-NEXT: v4: undefined = CallDirect v0, v1, v2, v3 function=f159
 # CHECK-NEXT: v5: env L6 = ResultAt v4
@@ -4309,7 +4309,7 @@ runtimefunction id=65580 function=f29
 # CHECK-NEXT: Return v9
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="nextTick"
-# CHECK: module=m1 position=14680 role=Library flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65580 captures=[{type=env L5 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|function site=w299 flags=[OmitsNull, OmitsUndefined]}, {type=Array site=w300 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
+# CHECK: module=m1 position=14680 role=Library flags=[HasRestParameter, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=65583 captures=[{type=env L5 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}] thisType={type=anything} parameters=[{type=undefined|null|function site=w299 flags=[OmitsNull, OmitsUndefined]}, {type=Array site=w300 flags=[IsFromCompiler, OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode]
 # CHECK-LABEL: function {{*}}name="next"
 # CHECK: module=m2 kind=Method role=ResultWrapper flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=ArrayIterator flags=[IsExpected]} results=[{type=L(IteratorResult)}] capabilities=[MayBeInlined, HasOrdinaryFrame, IsHiddenInStackTraces] creator=ResultWrapper{worker=f160 layout=L(IteratorResult)} {
 # CHECK-NEXT: b0(v0: anything):

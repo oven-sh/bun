@@ -54,34 +54,68 @@ test("the garbage collector knows the size of a histogram", () => {
   expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(88 * (chunk + 8), 88 * (chunk + 8) + 1024);
 });
 
+test("the garbage collector knows the size of a sliding window", () => {
+  const window = perf.createSlidingWindowHistogram({ chunks: 2, recordsPerChunk: 1 });
+  const size = () => estimateShallowMemoryUsageOf(window);
+  const empty = size();
+  // The table of the chunks there can be, and one chunk.
+  const part = 88 * 8 + chunk;
+  window.record(1);
+  expect(size() - empty).toBeWithin(part, part + 256);
+  const one = size() - empty;
+  for (const value of [1e9, 1, 1e9]) {
+    window.record(value);
+    expect(size() - empty).toBe(2 * one);
+  }
+  window.reset();
+  expect(size()).toBe(empty);
+});
+
 // The tests below count them, and a count that is `undefined` would end their loops at once.
 test("heapStats() counts the histograms of each class", () => {
   const recordable = perf.createHistogram();
   const held = [recordable, structuredClone(recordable), perf.monitorEventLoopDelay()];
-  held.push(structuredClone(held[2]));
-  const { RecordableHistogram, ELDHistogram, Histogram } = heapStats().objectTypeCounts;
+  held.push(structuredClone(held[2]), perf.createSlidingWindowHistogram({ chunks: 1, recordsPerChunk: 1 }));
+  const { RecordableHistogram, ELDHistogram, Histogram, SlidingWindowHistogram } = heapStats().objectTypeCounts;
   expect(RecordableHistogram).toBeGreaterThanOrEqual(2);
   expect(ELDHistogram).toBeGreaterThanOrEqual(1);
   expect(Histogram).toBeGreaterThanOrEqual(1);
+  expect(SlidingWindowHistogram).toBeGreaterThanOrEqual(1);
   expect(held.map(histogram => histogram.constructor.name)).toEqual([
     "RecordableHistogram",
     "RecordableHistogram",
     "ELDHistogram",
     "Histogram",
+    "SlidingWindowHistogram",
   ]);
 });
 
-test("histograms that grew are collected without an explicit GC", () => {
+test.each([
+  [
+    "RecordableHistogram",
+    "record",
+    () => {
+      const histogram = perf.createHistogram();
+      for (const value of valuesInEveryChunk) histogram.record(value);
+    },
+  ],
+  ["RecordableHistogram", "recordCorrected", () => perf.createHistogram().recordCorrected(Number.MAX_SAFE_INTEGER, 1)],
+  [
+    "SlidingWindowHistogram",
+    "record",
+    () => {
+      const window = perf.createSlidingWindowHistogram({ chunks: 1, recordsPerChunk: valuesInEveryChunk.length });
+      for (const value of valuesInEveryChunk) window.record(value);
+    },
+  ],
+])("%s objects that grew by %s() are collected without an explicit GC", (type, _, createAndGrow) => {
   // How many it takes depends on the size of the heap, but 720 MB is far more than enough.
   let created = 0;
   withoutAggressiveGC(() => {
     do {
-      for (let i = 0; i < 100; i++) {
-        const histogram = perf.createHistogram();
-        for (const value of valuesInEveryChunk) histogram.record(value);
-      }
+      for (let i = 0; i < 100; i++) createAndGrow();
       created += 100;
-    } while (created < 2000 && heapStats().objectTypeCounts.RecordableHistogram > created / 2);
+    } while (created < 2000 && heapStats().objectTypeCounts[type] > created / 2);
   });
   expect(created).toBeLessThan(2000);
 });
@@ -253,7 +287,7 @@ test("timerify is exposed on both performance and as a top-level export (Node v2
 
 // Captured from the real node v26.3.0 binary:
 // `node -p "Object.keys(require('perf_hooks')).sort()"`.
-test("export surface matches Node v26.3.0", () => {
+test("export surface matches Node v26.12.1", () => {
   const nodeExports = [
     "Performance",
     "PerformanceEntry",
@@ -264,7 +298,9 @@ test("export surface matches Node v26.3.0", () => {
     "PerformanceResourceTiming",
     "constants",
     "createHistogram",
+    "createSlidingWindowHistogram",
     "eventLoopUtilization",
+    "importHistogram",
     "monitorEventLoopDelay",
     "performance",
     "timerify",

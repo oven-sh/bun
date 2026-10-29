@@ -92,7 +92,7 @@ function f4 name="next" module=m0 position=1422 kind=Getter flags=[IsChecked, Ha
     v7 = Convert v6 declared={type=number}
     Return v7
 }
-function f5 name="startRing" module=m1 position=12653 role=Library flags=[IsChecked, HasExplicitName] enclosingRuntimeFunction=65580 captures=[{type=env L2 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f5 name="startRing" module=m1 position=12653 role=Library flags=[IsChecked, HasExplicitName] enclosingRuntimeFunction=65583 captures=[{type=env L2 flags=[IsFromCompiler]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|object flags=[IsExpected]}, {type=undefined|null|function flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f6 module=m1 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f10]
 function f7 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]
 function f8 module=m1 role=Signature thisType={type=anything} results=[{type=anything}]

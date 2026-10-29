@@ -218,6 +218,7 @@ const fusedTraversalFunctions = functionsIn("prelude/array-traversal", "traverse
 const streamedModuleFunctions = functionsIn("builtins/WasmStreaming", "consumeStream");
 
 const calledFunctionsByPath: Readonly<Record<b.BuiltinPath, readonly b.CalledFunctionSpec[]>> = {
+  "%Histogram%": functionsIn("builtins/Histogram", "percentileCI", "percentilesAt", "qrde"),
   "%ModuleObject%.children": moduleChildrenFunctions,
   "%ModuleObject%.parent": moduleChildrenFunctions,
   "%ModuleRequire%.cache": requireCacheFunctions,

@@ -2529,6 +2529,8 @@ export interface DictionaryOptions {
   nonObjectAsEmpty?: boolean | "typeof";
   /** As a result, the object has no prototype. */
   nullPrototype?: boolean;
+  /** Node's `validateObject(value, reportedAs)`: a function is refused too, and every refusal is Node's `ERR_INVALID_ARG_TYPE`. */
+  validateObject?: boolean;
   /** What an error calls the dictionary: `"options"` makes a member `options.level`, and `""` makes it `level`. Defaults to the name of the type. */
   reportedAs?: string;
 }
@@ -2585,6 +2587,9 @@ export class DictionaryType extends NamedType {
   }
   get allowArray(): boolean {
     return !!this.options.allowArray;
+  }
+  get validateObject(): boolean {
+    return !!this.options.validateObject;
   }
   get nonObjectAsEmpty(): boolean | "typeof" {
     return this.options.nonObjectAsEmpty ?? false;
@@ -3309,6 +3314,8 @@ export interface ClassOptions extends ClassTableColumns {
   enumerable?: boolean;
   /** `false`: native functions are read-only. */
   writable?: boolean;
+  /** `"node"`: a function or a getter whose `this` is not an instance throws `ERR_INVALID_THIS` with the message of Node.js. */
+  invalidThis?: "node";
   /** `fn memory_cost(&self) -> usize`: the extra memory the struct owns, for a heap snapshot. */
   memoryCost?: boolean;
   /** `fn estimated_size(&self) -> usize`: the same for the GC, whose marking threads call it. For a heap snapshot too, without `memoryCost`. */
@@ -3624,6 +3631,7 @@ export class ClassType extends NamedType {
   readonly configurable: boolean;
   readonly enumerable: boolean;
   readonly writable: boolean;
+  readonly nodeInvalidThis: boolean;
   readonly prototypeBase: "Error" | undefined;
   readonly columns: ClassTableColumns;
   /** Index in `AdditionsToGlobalObject::m_classes`. Set by the generator. */
@@ -3643,6 +3651,7 @@ export class ClassType extends NamedType {
       "configurable",
       "enumerable",
       "writable",
+      "invalidThis",
       "memoryCost",
       "estimatedSize",
       "construct",
@@ -3834,6 +3843,14 @@ export class ClassType extends NamedType {
     this.configurable = options.configurable ?? false;
     this.enumerable = options.enumerable ?? true;
     this.writable = options.writable ?? true;
+    this.nodeInvalidThis = options.invalidThis === "node";
+    assert(
+      !this.nodeInvalidThis ||
+        (!this.forBind &&
+          this.internalFieldAccessors.length === 0 &&
+          getters.every(getter => !getter.hasSetter && !getter.writable)),
+      'invalidThis: "node" is for a class without forBind, setters and accessors of internal fields',
+    );
     this.prototypeBase = options.prototypeBase;
   }
   /** The class that declares the struct and the fields: the base of its base, and so on. */

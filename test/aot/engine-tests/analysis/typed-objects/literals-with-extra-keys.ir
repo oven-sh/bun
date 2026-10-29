@@ -789,7 +789,7 @@ function f24 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f27]
 function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f28 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] enclosingRuntimeFunction=65569 thisType={type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=undefined|null|L7 site=w100 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f28 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] enclosingRuntimeFunction=65572 thisType={type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=undefined|null|L7 site=w100 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Buffer):
     Jump -> next b1()
   b1():
@@ -1296,7 +1296,7 @@ runtimefunction id=86 function=f34 visibility=Private
 runtimefunction id=87 function=f38
 runtimefunction id=88 function=f40
 runtimefunction id=92 function=f35 visibility=Private
-runtimefunction id=65569 function=f28
+runtimefunction id=65572 function=f28
 runtimefunction id=131072 function=f36 visibility=Private
 # -- generated: f13
 # CHECK-LABEL: function f13 module=

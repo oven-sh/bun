@@ -493,7 +493,7 @@ function f53 module=m0 role=Signature thisType={type=anything} results=[{type=an
 function f54 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f55 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 function f56 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
-function f57 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] enclosingRuntimeFunction=65569 thisType={type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=undefined|null|L27 site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
+function f57 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] enclosingRuntimeFunction=65572 thisType={type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=undefined|null|L27 site=w0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f58 name="from" module=m2 position=1338 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=47 thisType={type=undefined|null|function flags=[IsExpected]} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f59 name="[Symbol.iterator]" module=m2 position=2834 role=Library flags=[IsChecked, IsNamedByComputedKey] enclosingRuntimeFunction=47 captures=[{type=anything}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
 function f60 name="next" module=m3 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] enclosingRuntimeFunction=69 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame]
@@ -527,7 +527,7 @@ runtimefunction id=86 function=f65 visibility=Private
 runtimefunction id=87 function=f69
 runtimefunction id=88 function=f71
 runtimefunction id=92 function=f66 visibility=Private
-runtimefunction id=65569 function=f57
+runtimefunction id=65572 function=f57
 runtimefunction id=131072 function=f67 visibility=Private
 runtimefunction id=131091 function=f78 visibility=Private
 # -- generated: both make f31 Made f37 V

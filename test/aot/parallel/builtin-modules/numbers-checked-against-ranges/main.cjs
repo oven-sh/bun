@@ -15,11 +15,11 @@ const highWaterMark = stream.getDefaultHighWaterMark(false);
 // [the name in the error, the validator, its operands behind the name, the call]
 const checks = [
   ["options.lowest", "validateInteger", [1, Number.MAX_SAFE_INTEGER], lowest => createHistogram({ lowest })],
-  // The lower end is twice `lowest`, which lies above the upper end from 2 ** 52 on.
+  // A number inside the range is at least twice `lowest` too, which none is from 2 ** 52 on.
   ...[1, 2, 100, 2 ** 31, 2 ** 52 - 1, 2 ** 52, 2 ** 52 + 1, Number.MAX_SAFE_INTEGER].map(lowest => [
     "options.highest",
-    "validateInteger",
-    [2 * lowest, Number.MAX_SAFE_INTEGER],
+    "validateHighest",
+    [lowest],
     highest => createHistogram({ lowest, highest }),
   ]),
   ["options.figures", "validateInteger", [1, 5], figures => createHistogram({ figures })],

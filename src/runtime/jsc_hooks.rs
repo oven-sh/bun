@@ -1096,10 +1096,22 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
                 )
             };
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
+            let timeout = have_timeout.then_some(&timespec);
+            // SAFETY: `state` is the live per-thread `RuntimeState`; this runs no JavaScript.
+            unsafe { (*state).timer.event_loop_delay.before_poll(timeout) };
+            loop_.tick_with_timeout(timeout, now_ns);
         } else {
+            // SAFETY: `state` is the live per-thread `RuntimeState`; this runs no JavaScript.
+            unsafe {
+                (*state)
+                    .timer
+                    .event_loop_delay
+                    .before_poll(Some(&bun_core::Timespec::EPOCH))
+            };
             loop_.tick_without_idle();
         }
+        // SAFETY: as for `before_poll`; `vm` per fn contract.
+        unsafe { (*state).timer.event_loop_delay.after_poll(&*vm) };
     }
 
     #[cfg(unix)]
@@ -1215,10 +1227,22 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
                 )
             };
             let now_ns = now.map_or(bun_uws::NOW_NS_UNKNOWN, |t| t.ns());
-            loop_.tick_with_timeout(if have_timeout { Some(&timespec) } else { None }, now_ns);
+            let timeout = have_timeout.then_some(&timespec);
+            // SAFETY: `state` is the live per-thread `RuntimeState`; this runs no JavaScript.
+            unsafe { (*state).timer.event_loop_delay.before_poll(timeout) };
+            loop_.tick_with_timeout(timeout, now_ns);
         } else {
+            // SAFETY: `state` is the live per-thread `RuntimeState`; this runs no JavaScript.
+            unsafe {
+                (*state)
+                    .timer
+                    .event_loop_delay
+                    .before_poll(Some(&bun_core::Timespec::EPOCH))
+            };
             loop_.tick_without_idle();
         }
+        // SAFETY: as for `before_poll`; `vm` per fn contract.
+        unsafe { (*state).timer.event_loop_delay.after_poll(&*vm) };
     }
 
     #[cfg(unix)]

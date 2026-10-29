@@ -1,5 +1,5 @@
 # process.on("message", listener)
-# The call spells out one of the events for which the functions of the channel hang on `on`, so parseHandle is entered (runtimefunction 65561)
+# The call spells out one of the events for which the functions of the channel hang on `on`, so parseHandle is entered (runtimefunction 65564)
 # LIBRARY: own
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
@@ -7,7 +7,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65561 function=f1
+runtimefunction id=65564 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=Process
@@ -17,7 +17,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v4 = Call v1, v0, v2, v3
     Return
 }
-function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65561 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="parseHandle" role=Library enclosingRuntimeFunction=65564 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     Return v0
 }

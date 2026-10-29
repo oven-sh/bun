@@ -1,4 +1,4 @@
-# setTimeout(f, delay) with a delay nobody knows may warn, so the warning printer is entered (runtimefunction 65574)
+# setTimeout(f, delay) with a delay nobody knows may warn, so the warning printer is entered (runtimefunction 65577)
 # LIBRARY: own
 # RUN: valueflow-solve unreached
 # CHECK-NOT: unreached f1
@@ -6,7 +6,7 @@
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
-runtimefunction id=65574 function=f1
+runtimefunction id=65577 function=f1
 function f0 name="main" kind=Module results=[{type=anything}] {
   b0():
     v0 = Builtin builtin=SetTimeout
@@ -18,7 +18,7 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v6 = Call v0, v1, v2, v5
     Return v6
 }
-function f1 name="createOnWarning" role=Library enclosingRuntimeFunction=65574 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+function f1 name="createOnWarning" role=Library enclosingRuntimeFunction=65577 parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
   b0(v0: anything, v1: anything, v2: anything):
     Return v0
 }

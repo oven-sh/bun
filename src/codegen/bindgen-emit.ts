@@ -603,6 +603,9 @@ function cppSourceForDictionary(type: DictionaryType): string {
     return `    {\n${indent(lines.join("\n"), 8)}\n    }`;
   });
   const count = type.names.length;
+  const throwNotObject = type.validateObject
+    ? `Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, ${asciiLiteral(type.reportedAs || type.name)}, "object"_s, value);`
+    : "ctx.throwNotObject(*globalObject, scope);";
   return `
 template<> bool Bun::Bindgen::convertDictionaryInto<${type.cpp}>(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ${type.cpp}& result)
 {
@@ -617,8 +620,8 @@ ${
 ${indent(type.cppAssign("result", {}), 8)}
         return true;
     }`
-    : `    if (!object) [[unlikely]] {
-        ctx.throwNotObject(*globalObject, scope);
+    : `    if (!object${type.validateObject ? " || object->isCallable()" : ""}) [[unlikely]] {
+        ${throwNotObject}
         return false;
     }`
 }
@@ -628,7 +631,7 @@ ${
     : `    bool isArray = JSC::isArray(globalObject, value);
     RETURN_IF_EXCEPTION(scope, false);
     if (isArray) [[unlikely]] {
-        ctx.throwNotObject(*globalObject, scope);
+        ${throwNotObject}
         return false;
     }
 `
@@ -1119,7 +1122,9 @@ ${cppHostFunction(
         ${
           (fn.signatures[0] as Method).invalidThis === "undefined"
             ? "return JSC::JSValue::encode(JSC::jsUndefined());"
-            : `RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(globalObject, callFrame, ${asciiLiteral(type.name)}));`
+            : type.nodeInvalidThis
+              ? `return Bun::ERR::INVALID_THIS(scope, globalObject, ${asciiLiteral(type.name)});`
+              : `RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(globalObject, callFrame, ${asciiLiteral(type.name)}));`
         }
 `,
 )}
@@ -1274,7 +1279,11 @@ ${
     ? `    auto* thisObject = ${cppCastThisValue(type, "JSC::JSValue::decode(thisValue)")};
     if (!thisObject) [[unlikely]]
         return JSC::throwVMDOMAttributeGetterTypeError(globalObject, scope, ${type.cpp}::info(), attributeName);`
-    : `    // DOMAttribute: JSC has checked the receiver's ClassInfo.
+    : type.nodeInvalidThis
+      ? `    auto* thisObject = ${cppCastThisValue(type, "JSC::JSValue::decode(thisValue)")};
+    if (!thisObject) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, globalObject, ${asciiLiteral(type.name)});`
+      : `    // DOMAttribute: JSC has checked the receiver's ClassInfo.
     auto* thisObject = uncheckedDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));`
 }
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
@@ -1322,13 +1331,13 @@ function cppSourceForClass(type: ClassType, guards: Guards): string {
       `JSC::PropertyAttribute::Function${type.writable ? "" : " | JSC::PropertyAttribute::ReadOnly"}${attributes()}`,
       `JSC::HashTableValue::NativeFunctionType, ${pointer(isStaticFunction(fn), fn.name, methodHostFunctionName(type, fn))}, ${fn.length}`,
     );
-  // DOMAttribute has JSC check that the receiver is an instance. A static getter ignores it, and a forBind getter's is a bound function.
+  // DOMAttribute has JSC check that the receiver is an instance. A static getter ignores it, a forBind getter's is a bound function, and `invalidThis` has its own error.
   const getterRow = (getter: Getter | InternalFieldAccessor) => {
     const assignable = getter.hasSetter || (getter instanceof Getter && getter.writable);
     const isStatic = getter instanceof Getter && getter.isStatic;
     return row(
       getter.name,
-      `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${getter instanceof Getter ? attributes(getter.configurable, getter.enumerable) : attributes()}`,
+      `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || type.nodeInvalidThis || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${getter instanceof Getter ? attributes(getter.configurable, getter.enumerable) : attributes()}`,
       `JSC::HashTableValue::GetterSetterType, ${pointer(isStatic, getter.name, isStatic ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter), true)}, ${assignable ? pointer(isStatic, getter.name, setterHostFunctionName(type, getter), true) : "0"}`,
     );
   };
@@ -1341,7 +1350,7 @@ function cppSourceForClass(type: ClassType, guards: Guards): string {
   const builtinRow = (builtin: Builtin) =>
     row(
       builtin.name,
-      "JSC::PropertyAttribute::Builtin",
+      `JSC::PropertyAttribute::Builtin${type.enumerable ? "" : " | JSC::PropertyAttribute::DontEnum"}`,
       `JSC::HashTableValue::BuiltinGeneratorType, ${builtinCodeGenerator(builtin)}, ${builtin.length}`,
     );
   const constantRow = (constant: Constant) =>

@@ -14,7 +14,7 @@ feature NodeZlibBrotli "Brotli streams in node:zlib"
 
 feature NodeZlibZstd "zstd streams in node:zlib"
 
-feature Histogram "perf_hooks.createHistogram and perf_hooks.monitorEventLoopDelay"
+feature Histogram "the histograms of node:perf_hooks"
 
 feature NodeV8 "node:v8"
 

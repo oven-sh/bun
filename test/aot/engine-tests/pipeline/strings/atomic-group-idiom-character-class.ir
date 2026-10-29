@@ -448,7 +448,7 @@ function f1 name="show" module=m0 position=3257 flags=[IsChecked, HasExplicitNam
     Return v20
 }
 function f2 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] builtinMembers=[StringFromCodePoint]
-function f3 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] enclosingRuntimeFunction=65569 thisType={type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=undefined|null|L0 site=w44 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+function f3 module=m1 kind=Method role=Library flags=[HasThis, IsChecked] enclosingRuntimeFunction=65572 thisType={type=undefined|null|Buffer flags=[IsExpected, OmitsNull, OmitsUndefined]} results=[{type=undefined|null|L0 site=w44 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
   b0(v0: undefined|null|Buffer):
     v1 = String string="Buffer"
     v2 = Convert v1 declared={type=undefined|null|"Buffer" site=w45 flags=[OmitsNull, OmitsUndefined]}
@@ -714,7 +714,7 @@ runtimefunction id=86 function=f8 visibility=Private
 runtimefunction id=87 function=f12
 runtimefunction id=88 function=f14
 runtimefunction id=92 function=f9 visibility=Private
-runtimefunction id=65569 function=f3
+runtimefunction id=65572 function=f3
 runtimefunction id=131072 function=f10 visibility=Private
 # -- generated: show
 # CHECK-LABEL: function {{*}}name="show"

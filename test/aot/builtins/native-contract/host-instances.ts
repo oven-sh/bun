@@ -2,7 +2,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { SourceMap } from "node:module";
 import { join } from "node:path";
-import { createHistogram, monitorEventLoopDelay } from "node:perf_hooks";
+import { createHistogram, createSlidingWindowHistogram, monitorEventLoopDelay } from "node:perf_hooks";
 import { everyCandidate, openedCandidate, Unavailable, type Candidate, type Opened } from "../differential/instances";
 import type { Realm } from "../differential/members";
 import { isObject, type DumpedEntry } from "../differential/table-description";
@@ -349,6 +349,7 @@ const openers: (Open & { className?: string })[] = [
   openCronJob,
   () => ({ value: createHistogram(), close: noop }),
   openIntervalHistogram,
+  () => ({ value: createSlidingWindowHistogram({ chunks: 2, recordsPerChunk: 2 }), close: noop }),
   () => ({ value: new SourceMap({ version: 3, sources: ["a.js"], names: [], mappings: "AAAA", file: "b.js", sourceRoot: "" }), close: noop }),
   openMatcherContext(context => context),
   openMatcherContext(context => context.utils),

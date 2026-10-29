@@ -101,6 +101,7 @@ const classesWithConstructor = [
   "%S3Stat%",
   "%SecureContext%",
   "%ServerWebSocket%",
+  "%SlidingWindowHistogram%",
   "%SocketAddress%",
   "%SourceMap%",
   "%Stats%",

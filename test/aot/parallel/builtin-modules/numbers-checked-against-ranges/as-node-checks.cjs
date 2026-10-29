@@ -27,6 +27,15 @@ function validateNumber(value, min, max) {
     );
 }
 
+// validateHistogramOptions() in lib/internal/histogram.js of Node v26.12.1, for a `lowest` that passes.
+function validateHighest(value, lowest) {
+  const least = 2n * BigInt(lowest);
+  return (
+    validateInteger(value, 1, Number.MAX_SAFE_INTEGER) ??
+    (BigInt(value) < least ? outOfRange(`>= 2 * options.lowest (${least}n)`) : undefined)
+  );
+}
+
 /** What a call did, in the words of the functions above. An error about another name than `name` comes from behind the check. */
 function answerOf(call, name) {
   try {
@@ -50,4 +59,4 @@ const numbers = [
 
 const show = value => (Object.is(value, -0) ? "-0" : String(value));
 
-module.exports = { validateInteger, validateInt32, validateUint32, validateNumber, answerOf, numbers, show };
+module.exports = { validateInteger, validateInt32, validateUint32, validateNumber, validateHighest, answerOf, numbers, show };

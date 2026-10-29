@@ -151,7 +151,6 @@ mod _impl {
                         // hidepid mounts (common on Android) deny /proc/stat. lazyCpus in os.ts
                         // pre-creates hostCpuCount lazy proxies, so return that many stub
                         // entries (zeroed times / unknown model / speed 0) — matches Node.
-                        // SAFETY: pure FFI getter
                         let count: u32 =
                             u32::try_from(1i32.max(bun_sysconf__SC_NPROCESSORS_ONLN())).unwrap();
                         let stubs = JSValue::create_empty_array(global_this, count as usize)?;
@@ -348,7 +347,6 @@ mod _impl {
         bun_sys::posix::sysctl_read_slice(c"kern.cp_times", &mut times_buf[..])
             .map_err(|_| OsError::Any)?;
 
-        // SAFETY: pure FFI getter
         let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
         let mult: u64 = if ticks > 0 {
             1000 / u64::try_from(ticks).expect("int cast")
@@ -442,7 +440,6 @@ mod _impl {
         }
 
         // Get the multiplier; this is the number of ms/tick
-        // SAFETY: pure FFI getter
         let ticks: i64 = bun_sysconf__SC_CLK_TCK() as i64;
         let multiplier: u64 = 1000 / u64::try_from(ticks).expect("int cast");
 
@@ -570,7 +567,7 @@ mod _impl {
             // environment variable, then falls back to reading the passwd entry.
             if let Some(home) = env_var::HOME.get() {
                 if !home.is_empty() {
-                    return Ok(BunString::from_bytes(home));
+                    return Ok(BunString::clone_utf8(home));
                 }
             }
 
@@ -585,7 +582,6 @@ mod _impl {
             let mut string_bytes: &mut [u8] = &mut stack_string_bytes[..];
             let mut using_heap = false;
 
-            // SAFETY: zeroed POD
             let mut pw: libc::passwd = bun_core::ffi::zeroed();
             let mut result: *mut libc::passwd = core::ptr::null_mut();
 
@@ -658,8 +654,7 @@ mod _impl {
         #[cfg(windows)]
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
-            // SAFETY: idempotent Winsock init (libuv defers it to first use).
-            unsafe { windows::libuv::uv__winsock_ensure() };
+            windows::libuv::uv__winsock_ensure();
             // SAFETY: valid buffer
             if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                 return BunString::clone_utf16(slice_to_nul_u16(&name_buffer)).into_js(global);
@@ -970,9 +965,7 @@ mod _impl {
                         // `sdl_data` is `[c_char; N]` (signedness varies by platform);
                         // reinterpret as bytes — same width, same provenance.
                         let dl = unsafe { &*ll_addr.cast::<c::sockaddr_dl>() };
-                        let raw = &dl.sdl_data[dl.sdl_nlen as usize..];
-                        // c_char and u8 are both Pod; bytemuck statically checks the layout.
-                        bytemuck::cast_slice::<_, u8>(raw)
+                        bun_core::slice_as_bytes(&dl.sdl_data[dl.sdl_nlen as usize..])
                     };
                     if addr_data.len() < 6 {
                         let mac = b"00:00:00:00:00:00";
@@ -1014,7 +1007,7 @@ mod _impl {
 
             // Does this entry already exist?
             // The OS picks the interface name, so it can be an array index like "0".
-            let key = bun_core::String::from_bytes(interface_name);
+            let key = bun_core::StringView::from_bytes(interface_name);
             if let Some(array) = ret.get_own(global_this, &key)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
@@ -1197,7 +1190,7 @@ mod _impl {
             // SAFETY: iface.name is a NUL-terminated C string from libuv
             let interface_name = unsafe { bun_core::ffi::cstr(iface.name) }.to_bytes();
             // The OS picks the interface name, so it can be an array index like "0".
-            let key = bun_core::String::from_bytes(interface_name);
+            let key = bun_core::StringView::from_bytes(interface_name);
             if let Some(array) = ret.get_own(global_this, &key)? {
                 // Add this interface entry to the existing array
                 let next_index: u32 =
@@ -1234,8 +1227,7 @@ mod _impl {
         };
         #[cfg(windows)]
         let value: &[u8] = 'slice: {
-            // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
             let err = unsafe { libuv::uv_os_uname(&mut info) };
             if err != 0 {
@@ -1317,8 +1309,7 @@ mod _impl {
         }
         #[cfg(windows)]
         {
-            // SAFETY: pure FFI getter
-            return unsafe { libuv::uv_get_total_memory() };
+            return libuv::uv_get_total_memory();
         }
     }
 
@@ -1428,8 +1419,7 @@ mod _impl {
         };
         #[cfg(windows)]
         let slice: &[u8] = 'slice: {
-            // SAFETY: zeroed POD
-            let mut info: libuv::uv_utsname_s = unsafe { bun_core::ffi::zeroed_unchecked() };
+            let mut info: libuv::uv_utsname_s = bun_core::ffi::zeroed();
             // SAFETY: valid out-pointer
             let err = unsafe { libuv::uv_os_uname(&mut info) };
             if err != 0 {

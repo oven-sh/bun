@@ -1,0 +1,24 @@
+# counts = new Map(); counts.set("a", 5); Reflect.apply(Map.prototype.set, counts, list); return counts.get("a")
+# The second store spells out no value: nobody has looked at what it stores, so nothing bounds the numbers.
+# RUN: valueflow-apply
+# CHECK: function f0 name="main" {{*}}results=[{type=undefined|int|"a"}]
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Map
+    v1 = Construct v0, -
+    v2 = Builtin builtin=MapPrototypeSet
+    v3 = String string="a"
+    v4 = Integer integer=5
+    v5 = Call v2, v1, v3, v4
+    v6 = Integer integer=4000000000
+    v7 = NewArray v3, v6 contents=anything
+    v8 = Builtin builtin=Reflect
+    v9 = Builtin builtin=ReflectApply
+    v10 = Call v9, v8, v2, v1, v7
+    v11 = Builtin builtin=MapPrototypeGet
+    v12 = Call v11, v1, v3
+    Return v12
+}

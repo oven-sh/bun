@@ -164,7 +164,7 @@ int us_internal_loop_data_init(struct us_loop_t *loop, void (*wakeup_cb)(struct 
 
 void us_internal_loop_data_free(struct us_loop_t *loop) {
 #ifndef LIBUS_NO_SSL
-    us_internal_free_loop_ssl_data(loop);
+    if (loop->data.ssl_data) us_internal_free_loop_ssl_data(loop);
 #endif
 
     us_free(loop->data.recv_buf);
@@ -601,6 +601,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                         s->unclassified_send_failures = 0;
                         s->read_eof = 0;
                         s->hangup_closes_unsent = 0;
+                        s->send_rejected = 0;
 
                         /* We always use nodelay */
                         bsd_socket_nodelay(client_fd, 1);
@@ -648,7 +649,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
             /* Set once recv() returns 0 below: the only proof that the peer's stream ended with a FIN. The
              * eof hint this dispatch was called with (EPOLLHUP, kqueue's EV_EOF) also rides on a reset. */
             int read_fin = 0;
-            if (events & LIBUS_SOCKET_WRITABLE && !error) {
+            if (events & LIBUS_SOCKET_WRITABLE && !error && !s->send_rejected) {
                 s->flags.last_write_failed = 0;
                 #ifdef LIBUS_USE_KQUEUE
                 /* Kqueue EVFILT_WRITE is one-shot so the filter is removed after delivery.
@@ -915,6 +916,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
 
                     break;
                 } while (s);
+            }
+
+            /* No write may close under its caller, so the dispatch after a rejected send does. */
+            if (s && s->send_rejected && !us_socket_is_closed(s)) {
+                us_internal_socket_close_raw(s, LIBUS_ECONNRESET, NULL);
+                return;
             }
 
             /* The EOF hint (kqueue EV_EOF riding the final data's readable event,

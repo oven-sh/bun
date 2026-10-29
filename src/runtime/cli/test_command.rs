@@ -1,6 +1,7 @@
 use bun_io::Write as _;
 
 use crate::cli::Command;
+use crate::cli::run_compiled;
 use crate::cli::test::changed_files_filter as ChangedFilesFilter;
 use crate::cli::test::parallel_runner as ParallelRunner;
 use crate::cli::test::scanner::{self, Scanner};
@@ -163,7 +164,7 @@ pub(crate) struct TestFailure {
 /// How a test file is named in the JUnit document: relative to the project
 /// root when inside it, else as given.
 pub(crate) fn junit_file_name(path: &[u8]) -> &[u8] {
-    let top = FileSystem::instance().top_level_dir();
+    let top = FileSystem::get().top_level_dir();
     if strings::has_prefix(path, top) {
         without_leading_path_separator(&path[top.len()..])
     } else {
@@ -297,7 +298,7 @@ impl TestFailure {
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
-    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException) {
+    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException<'_>) {
         let failure = slot.get_or_insert_default();
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
@@ -338,7 +339,7 @@ impl TestFailure {
             }
         }
         body.push(b'\n');
-        let dir = FileSystem::instance().top_level_dir();
+        let dir = FileSystem::get().top_level_dir();
         for frame in exception.stack.frames() {
             let source_url = frame.source_url.to_utf8();
             let file = jsc::ZigStackFrame::relative_source_url(dir, source_url.slice());
@@ -373,7 +374,7 @@ impl TestFailure {
     }
 
     /// VirtualMachine::on_print_error_zig_exception thunk.
-    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
+    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException<'_>) {
         // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
         // `on_uncaught_exception` for the duration of a single
         // `run_error_handler` call; single-threaded, no other borrow live.
@@ -1771,7 +1772,7 @@ impl TestCommand {
             core::sync::atomic::Ordering::Relaxed,
         );
 
-        if !ctx.test_options.test_worker {
+        if !ctx.test_options.test_worker && !run_compiled::is_second_process() {
             // print the version so you know its doing stuff if it takes a sec
             let w = Output::writer();
             let colors = Output::enable_ansi_colors_stdout();
@@ -1806,10 +1807,14 @@ impl TestCommand {
         // `exec()` never returns before process exit, so the heap allocation
         // outlives all observers.
         let mut env_loader: Box<DotEnv::Loader> = Box::new(DotEnv::Loader::init());
+        crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
         jsc::initialize(jsc::InitializeOptions {
             short_lived_globals: ctx.test_options.isolate,
+            runs_compiled_code: run_compiled::runs_compiled_code(),
+            locks_builtins: run_compiled::is_checked(),
             ..Default::default()
         });
+        run_compiled::list_refused_changes();
         bun_http::http_thread::init(&Default::default());
 
         let enable_random = ctx.test_options.randomize;
@@ -1836,30 +1841,6 @@ impl TestCommand {
 
         jsc::virtual_machine::isBunTest.store(true, core::sync::atomic::Ordering::Relaxed);
 
-        // Borrowed-slice views (`&[&[u8]]`) over owned `Vec<Box<[u8]>>` config so the
-        // TestRunner / Scanner field types (`Option<&[&[u8]]>`) line up. The owned
-        // backing `Vec`s live in `ctx` for the process lifetime, so each element
-        // is detached to `&'static [u8]` up front (lets the outer view detach to
-        // `&'static [&'static [u8]]` below without a nested-lifetime bitcast).
-        let concurrent_test_glob_view: Option<Vec<bun_glob::Prepared<&'static [u8]>>> =
-            ctx.test_options.concurrent_test_glob.as_ref().map(|v| {
-                v.iter()
-                    .map(|b| {
-                        // SAFETY: backing bytes are owned by `ctx.test_options`
-                        // (process-lifetime) and `exec()` never returns.
-                        bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) })
-                    })
-                    .collect()
-            });
-        // SAFETY: backing bytes are owned by `ctx.test_options` (process-lifetime)
-        // and `exec()` never returns, so detaching to `'static` is sound.
-        let path_ignore_patterns_view: Vec<bun_glob::Prepared<&'static [u8]>> = ctx
-            .test_options
-            .path_ignore_patterns
-            .iter()
-            .map(|b| bun_glob::Prepared::new(unsafe { bun_ptr::detach_lifetime::<u8>(b) }))
-            .collect();
-
         // Keep an owned `Box` local — `exec()` never returns before process
         // exit, so the heap allocation outlives all raw-pointer observers
         // (e.g. `Jest::RUNNER` below).
@@ -1868,12 +1849,11 @@ impl TestCommand {
                 default_timeout_ms: ctx.test_options.default_timeout_ms,
                 concurrent: ctx.test_options.concurrent,
                 randomize_seed: if enable_random { Some(seed) } else { None },
-                // SAFETY: lifetime-erase to `'static`; backing storage lives in `ctx`
-                // (process-lifetime singleton) and `concurrent_test_glob_view` is held
-                // in this never-returning frame.
-                concurrent_test_glob: concurrent_test_glob_view
-                    .as_deref()
-                    .map(|s| unsafe { bun_ptr::detach_lifetime(s) }),
+                concurrent_test_glob: ctx
+                    .test_options
+                    .concurrent_test_glob
+                    .take()
+                    .map(|globs| globs.into_iter().map(bun_glob::Prepared::new).collect()),
                 run_todo: ctx.test_options.run_todo,
                 only: ctx.test_options.only,
                 bail: ctx.test_options.bail,
@@ -1960,6 +1940,7 @@ impl TestCommand {
                 env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
                 smol: ctx.runtime_options.smol,
                 is_main_thread: true,
+                graph: run_compiled::graph(),
                 ..Default::default()
             })?
         };
@@ -2043,11 +2024,18 @@ impl TestCommand {
         // But, don't block the main thread waiting if they used --inspect-wait.
         vm.ensure_debugger(false)?;
 
+        // `scanner` borrows these, so they are declared before it.
+        let path_ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = ctx
+            .test_options
+            .path_ignore_patterns
+            .iter()
+            .map(|b| bun_glob::Prepared::new(&**b))
+            .collect();
+        #[cfg(windows)]
+        let filter_names_normalized: Vec<Box<[u8]>>;
+
         let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
-        // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
-        // frame, underlying bytes live in `ctx` (process-lifetime).
-        scanner.path_ignore_patterns =
-            unsafe { bun_ptr::detach_lifetime(&path_ignore_patterns_view[..]) };
+        scanner.path_ignore_patterns = &path_ignore_patterns;
         let has_relative_path = 'hr: {
             for arg in &ctx.positionals {
                 if bun_paths::is_absolute(arg)
@@ -2078,7 +2066,7 @@ impl TestCommand {
                                 pretty_errorln!(
                                     "Test filter <b>{}<r> had no matches in --cwd={}",
                                     bun_fmt::quote(arg),
-                                    bun_fmt::quote(FileSystem::instance().top_level_dir())
+                                    bun_fmt::quote(FileSystem::get().top_level_dir())
                                 );
                             } else {
                                 pretty_errorln!(
@@ -2099,58 +2087,20 @@ impl TestCommand {
             }
         } else {
             // Treat arguments as filters and scan the codebase
-            // SAFETY: bytes live in `ctx` (process-lifetime) and this frame
-            // never returns; detach the inner lifetime once at construction so
-            // POSIX can borrow this Vec directly without a second allocation.
-            let filter_names_owned: Vec<&'static [u8]> = if ctx.positionals.is_empty() {
-                Vec::new()
-            } else {
-                ctx.positionals[1..]
+            let filters: &[Box<[u8]>] = ctx.positionals.get(1..).unwrap_or_default();
+            #[cfg(windows)]
+            let filters: &[Box<[u8]>] = {
+                filter_names_normalized = filters
                     .iter()
-                    .map(|b| {
-                        // SAFETY: bytes live in `ctx.positionals` (process-lifetime)
-                        // and this frame never returns.
-                        unsafe { bun_ptr::detach_lifetime::<u8>(&**b) }
+                    .map(|filter| {
+                        let mut normalized = filter.clone();
+                        bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut normalized);
+                        normalized
                     })
-                    .collect()
+                    .collect();
+                &filter_names_normalized
             };
-            #[cfg(windows)]
-            let filter_names: &[&[u8]] = &filter_names_owned;
-
-            // Both platforms use a `Vec<&[u8]>` view (already built above as
-            // `filter_names_owned`); the Windows branch additionally needs an
-            // owned backing `Vec<Box<[u8]>>` for the `/`→`\`-rewritten bytes
-            // plus a second view vec over those boxes.
-            #[cfg(windows)]
-            let filter_names_normalized_storage: Vec<Box<[u8]>> = {
-                let mut normalized = Vec::with_capacity(filter_names.len());
-                for in_ in filter_names {
-                    let mut to_normalize = in_.to_vec();
-                    bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
-                    normalized.push(to_normalize.into_boxed_slice());
-                }
-                normalized
-            };
-            #[cfg(windows)]
-            let filter_names_normalized: Vec<&'static [u8]> = filter_names_normalized_storage
-                .iter()
-                // SAFETY: the rewritten bytes are NOT `'static` — they live in
-                // `filter_names_normalized_storage`, a local `Vec<Box<[u8]>>`
-                // in this frame. Sound only because this frame never returns
-                // (every exit path is `global_exit()`), so the storage Vec is
-                // never dropped while `scanner.filter_names` is observed.
-                .map(|b| unsafe { bun_ptr::detach_lifetime::<u8>(b) })
-                .collect();
-            #[cfg(not(windows))]
-            let filter_names_normalized: &Vec<&'static [u8]> = &filter_names_owned;
-            // Drop of the `Vec<Box<[u8]>>` storage above never actually runs
-            // (frame never returns); the storage simply outlives use.
-            // SAFETY: lifetime-erase the outer borrow; the view vec and (on
-            // Windows) its backing storage live in this never-returning frame,
-            // and the underlying bytes are either in `ctx` (process-lifetime)
-            // or in `filter_names_normalized_storage` above.
-            scanner.filter_names =
-                unsafe { bun_ptr::detach_lifetime(&filter_names_normalized[..]) };
+            scanner.filter_names = filters;
 
             // Own the joined path in a hoisted buffer and borrow from it.
             let dir_to_scan_owned: Vec<u8>;
@@ -2187,7 +2137,7 @@ impl TestCommand {
                         pretty_errorln!(
                             "<red>Failed to scan non-existent root directory for tests:<r> {} in --cwd={}",
                             bun_fmt::quote(dir_to_scan),
-                            bun_fmt::quote(FileSystem::instance().top_level_dir())
+                            bun_fmt::quote(FileSystem::get().top_level_dir())
                         );
                     } else {
                         pretty_errorln!(
@@ -2252,7 +2202,7 @@ impl TestCommand {
                         if result.changed_count == 1 { "" } else { "s" }
                     );
                     pass_with_no_tests_from_filter = true;
-                } else {
+                } else if !run_compiled::is_second_process() {
                     pretty_error!(
                         "<r><d>--changed:<r> {} changed file{}, running {}/{} test file{}\n",
                         result.changed_count,
@@ -2296,14 +2246,16 @@ impl TestCommand {
                     }
                 }
 
-                pretty_error!(
-                    "<r><d>--shard={}/{}:<r> running {}/{} test file{}\n",
-                    shard.index,
-                    shard.count,
-                    write,
-                    test_files.len(),
-                    if test_files.len() == 1 { "" } else { "s" }
-                );
+                if !run_compiled::is_second_process() {
+                    pretty_error!(
+                        "<r><d>--shard={}/{}:<r> running {}/{} test file{}\n",
+                        shard.index,
+                        shard.count,
+                        write,
+                        test_files.len(),
+                        if test_files.len() == 1 { "" } else { "s" }
+                    );
+                }
                 Output::flush();
 
                 if write == 0 {
@@ -2357,9 +2309,21 @@ impl TestCommand {
                             None,
                         );
                     }
+                    run_compiled::watch_files_of_check(vm);
                 }
                 _ => {}
             }
+        }
+
+        if run_compiled::is_requested(ctx) && !test_files.is_empty() {
+            let mut entry_points: Vec<Box<[u8]>> =
+                test_files.iter().map(|path| Box::from(&**path)).collect();
+            entry_points.extend(ctx.preloads.iter().cloned());
+            let independent_count = match ctx.test_options.parallel {
+                0 => test_files.len(),
+                _ => 0,
+            };
+            run_compiled::start(ctx, entry_points, independent_count);
         }
 
         // After the file watcher is enabled: see `watching`.
@@ -2500,7 +2464,7 @@ impl TestCommand {
                     // Be very clear to ai.
                     Output::err_generic(
                         "0 test files matching **{{.test,.spec,_test_,_spec_}}.{{js,ts,jsx,tsx}} in --cwd={}",
-                        (bun_fmt::quote(FileSystem::instance().top_level_dir()),),
+                        (bun_fmt::quote(FileSystem::get().top_level_dir()),),
                     );
                 } else {
                     // Be friendlier to humans.
@@ -2512,7 +2476,7 @@ impl TestCommand {
                 if Output::is_ai_agent() {
                     pretty_errorln!(
                         "<yellow>The following filters did not match any test files in --cwd={}:<r>",
-                        bun_fmt::quote(FileSystem::instance().top_level_dir())
+                        bun_fmt::quote(FileSystem::get().top_level_dir())
                     );
                 } else {
                     pretty_errorln!(
@@ -2706,6 +2670,17 @@ impl TestCommand {
         }
 
         pretty_error!("\n");
+        let refused = run_compiled::refused_changes();
+        if !refused.is_empty() {
+            pretty_error!(
+                "<yellow>{} write{} to read-only built-ins<r> failed during this run, caught or not. Code that continued after one may have left its work half done:\n",
+                refused.len(),
+                if refused.len() == 1 { "" } else { "s" }
+            );
+            for refusal in &refused {
+                pretty_error!("  {}\n", bstr::BStr::new(refusal));
+            }
+        }
         Output::flush();
 
         reporter.write_junit_report_if_needed();
@@ -2758,6 +2733,8 @@ impl TestCommand {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
+        // `global_exit()` does not return, so nothing is dropped after it.
+        drop(all_test_files);
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
@@ -2899,15 +2876,20 @@ impl TestCommand {
         // lock on `reporter` for the entire function body.
         scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
 
-        let resolution = vm.transpiler.resolve_entry_point(file_name)?;
+        let dot_slash = core::cell::OnceCell::new();
+        let resolution = vm.transpiler.resolve_entry_point(file_name, &dot_slash)?;
         vm.clear_entry_point()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and
         // returns `&'static [u8]`.
-        let file_path: &'static [u8] = FileSystem::instance()
+        let file_path: &'static [u8] = FileSystem::get()
             .filename_store
             .append_slice(resolution.path_pair.primary.text)
             .expect("oom");
+        run_compiled::will_run_test_file(resolve_path::relative(
+            FileSystem::get().top_level_dir(),
+            file_path,
+        ));
         let file_id = jest::Jest::runner()
             .unwrap()
             .get_or_put_file(file_path)
@@ -2954,8 +2936,7 @@ impl TestCommand {
             }
 
             // Recompute on every repeat because the reporters overwrite `relative`'s buffer while the file runs.
-            let file_title =
-                resolve_path::relative(FileSystem::instance().top_level_dir(), file_path);
+            let file_title = resolve_path::relative(FileSystem::get().top_level_dir(), file_path);
             // SAFETY: `set()` reads only `reporter.{worker_ipc_file_idx, reporters}`
             // and writes only `current_file` — disjoint fields. Fresh raw-ptr
             // split (not the defer-captured `reporter_ptr`) keeps the borrows
@@ -2983,21 +2964,31 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
-            let promise = vm.load_entry_point_for_test_runner(file_path)?;
+            let promise = match run_compiled::is_refused(file_path) {
+                true => None,
+                false => Some(vm.load_entry_point_for_test_runner(file_path)?),
+            };
             // Only count the file once, not once per repeat
             if repeat_index == 0 {
                 reporter.summary().files += 1;
             }
 
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
-            match jsc::JSInternalPromise::opaque_mut(promise).status() {
-                jsc::js_promise::Status::Rejected => {
-                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = vm.global();
-                    let p = jsc::JSInternalPromise::opaque_mut(promise);
-                    let (result, promise_js) = (p.result(global.vm()), p.to_js());
-                    vm.unhandled_rejection(global, result, promise_js);
+            match promise.map(|promise| jsc::JSInternalPromise::opaque_mut(promise).status()) {
+                None | Some(jsc::js_promise::Status::Rejected) => {
+                    if let Some(promise) = promise {
+                        // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so `unhandled_rejection(&mut self, ...)` can reborrow.
+                        let global = vm.global();
+                        let p = jsc::JSInternalPromise::opaque_mut(promise);
+                        let (result, promise_js) = (p.result(global.vm()), p.to_js());
+                        vm.unhandled_rejection(global, result, promise_js);
+                    } else {
+                        reporter.jest.current_file.print_if_needed();
+                        pretty_error!(
+                            "<r><red>error<r>: bun test --aot does not run this file: it has a type error, or it imports a file that has one (see above)\n"
+                        );
+                        Output::flush();
+                    }
                     reporter.summary().fail += 1;
 
                     if reporter.jest.bail == reporter.summary().fail {

@@ -103,6 +103,8 @@ A value can be any dependency specifier, not only a version range. `npm:` swaps 
 }
 ```
 
+Bun reads a value like the specifier of a dependency that has the name in the rule's key. A `catalog:` rule reads the catalog entry of that name, and `workspace:*` links the workspace of that name. For a key that spells an `npm:` alias, the name is the alias: `"my-foo@npm:foo@^1": "catalog:"` reads the `my-foo` entry, and not the `foo` entry.
+
 Bun warns about a `catalog:` rule whose package is not in the catalog. A dependency that the rule applies to then fails to resolve.
 
 A value of `"$name"` reuses the range you declared for `name` in your own dependencies, so `"bar": "$foo"` pins `bar` to whatever range you declared for `foo`.
@@ -165,7 +167,7 @@ Bun compares the selector with the range each dependent _declares_, not the reso
 Two more selectors match a dependency by how it is declared, like Yarn's `"resolutions"`:
 
 - `"foo@catalog:"` (or `"foo@catalog:name"`) applies to dependents that declare `foo` with that [catalog](/pm/catalogs).
-- `"my-foo@npm:foo@^1"` applies to an `npm:` alias named `my-foo` that points at `foo` with an overlapping range. No other rule overrides an alias.
+- `"my-foo@npm:foo@^1"` applies to an `npm:` alias named `my-foo` that points at `foo` with an overlapping range. No other rule overrides an alias that has a version range. An alias of a dist-tag, such as `"my-foo": "npm:foo@latest"`, takes the rules for `foo`.
 
 ## Limitations
 

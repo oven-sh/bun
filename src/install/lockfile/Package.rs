@@ -123,7 +123,7 @@ pub(crate) fn folder_relative_to_top_level_dir<'a>(
     folder: &[u8],
     buf: &'a mut [u8],
 ) -> Option<&'a [u8]> {
-    let top_level_dir = FileSystem::instance().top_level_dir();
+    let top_level_dir = FileSystem::get().top_level_dir();
     let joined = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
         top_level_dir,
         buf,
@@ -886,6 +886,8 @@ pub struct DiffSummary {
     /// How many of the changes counted in `update` leave every dependency unchanged.
     pub(crate) script_only_updates: u32,
     pub(crate) overrides_changed: bool,
+    /// The sorted names with a rule in bun.lock or package.json, if `overrides_changed`.
+    pub(crate) overridden_names: Vec<PackageNameHash>,
     pub(crate) catalogs_changed: bool,
     /// Set after the differ, by `Lockfile::reconcile_package_extensions`.
     pub(crate) package_extensions_changed: bool,
@@ -1876,21 +1878,20 @@ impl Diff {
     /// `to` is about to replace `from_id`. Its dependencies keep the resolutions that `generate`
     /// would let the root's dependencies keep.
     pub(crate) fn keep_resolutions(pm: &mut PackageManager, from_id: PackageID, to: &Package) {
-        if pm.to_update || from_id >= pm.lockfile.loaded_package_count {
+        if from_id >= pm.lockfile.loaded_package_count {
             return;
         }
         let from = pm.lockfile.packages.items_dependencies()[from_id as usize];
+        if pm.to_update {
+            return Self::keep_while_refreshing(pm, from_id, from, to.dependencies);
+        }
         for to_i in to.dependencies.begin() as usize..to.dependencies.end() as usize {
             let lockfile = &*pm.lockfile;
             let buf = lockfile.buffers.string_bytes.as_slice();
             let to_dep = &lockfile.buffers.dependencies[to_i];
-            let kept = (from.begin() as usize..from.end() as usize).find_map(|from_i| {
-                let from_dep = &lockfile.buffers.dependencies[from_i];
-                let locked = lockfile.buffers.resolutions[from_i];
-                (from_dep.name_hash == to_dep.name_hash
-                    && from_dep.behavior == to_dep.behavior
-                    && (lockfile.packages.items_resolution().get(locked as usize))
-                        .is_some_and(|resolution| resolution.tag != ResolutionTag::Folder)
+            let kept = Self::locked_for(lockfile, from, to_dep, |from_dep, locked| {
+                (lockfile.packages.items_resolution().get(locked as usize))
+                    .is_some_and(|resolution| resolution.tag != ResolutionTag::Folder)
                     && ((Dependency::eql(to_dep, from_dep, buf, buf)
                         && !Self::locked_version_is_out_of_range(
                             lockfile,
@@ -1899,11 +1900,55 @@ impl Diff {
                             to.dependencies.get(&lockfile.buffers.dependencies),
                             to_i - to.dependencies.begin() as usize,
                         ))
-                        || Self::locked_version_satisfies(lockfile, locked, to_dep, buf)))
-                .then_some(locked)
+                        || Self::locked_version_satisfies(lockfile, locked, to_dep, buf))
             });
             if let Some(locked) = kept {
                 pm.lockfile.buffers.resolutions[to_i] = locked;
+            }
+        }
+    }
+
+    /// The package of the dependency in `from` with the name and group of `to_dep`, if `keeps` it.
+    fn locked_for(
+        lockfile: &Lockfile,
+        from: DependencySlice,
+        to_dep: &Dependency,
+        keeps: impl Fn(&Dependency, PackageID) -> bool,
+    ) -> Option<PackageID> {
+        (from.begin() as usize..from.end() as usize).find_map(|from_i| {
+            let from_dep = &lockfile.buffers.dependencies[from_i];
+            let locked = lockfile.buffers.resolutions[from_i];
+            (from_dep.name_hash == to_dep.name_hash
+                && from_dep.behavior == to_dep.behavior
+                && keeps(from_dep, locked))
+            .then_some(locked)
+        })
+    }
+
+    /// A dependency in `to` that `refreshes_in_place` keeps the package of the same one in `from`.
+    pub(crate) fn keep_while_refreshing(
+        pm: &mut PackageManager,
+        declarer: PackageID,
+        from: DependencySlice,
+        to: DependencySlice,
+    ) {
+        use crate::package_manager_real::enqueue;
+        for to_i in to.begin()..to.end() {
+            let lockfile = &*pm.lockfile;
+            let buf = lockfile.buffers.string_bytes.as_slice();
+            let to_dep = &lockfile.buffers.dependencies[to_i as usize];
+            if lockfile.buffers.resolutions[to_i as usize] != invalid_package_id
+                || !enqueue::may_refresh_in_place(to_dep)
+            {
+                continue;
+            }
+            let kept = Self::locked_for(lockfile, from, to_dep, |from_dep, locked| {
+                Dependency::eql(to_dep, from_dep, buf, buf)
+                    && enqueue::refreshes_in_place(pm, declarer, to_dep, locked)
+            });
+            if let Some(locked) = kept {
+                pm.lockfile.buffers.resolutions[to_i as usize] = locked;
+                pm.lockfile.mark_refreshing(to_i);
             }
         }
     }
@@ -3131,19 +3176,12 @@ impl Package<u64> {
                                         ),
                                     };
 
-                                    // `Location::init_or_null` borrows `file` from
-                                    // `note_src.path.text`, which itself borrows
-                                    // `note_abs_path`; both drop before the log is
-                                    // printed. `Location::clone` deep-copies `file`
-                                    // into a `Cow::Owned`.
                                     notes.push(bun_ast::Data {
                                         text: b"Package name is also declared here".to_vec().into(),
                                         location: bun_ast::Location::init_or_null(
                                             Some(&note_src),
                                             name_range_on_disk(&note_src),
-                                        )
-                                        .as_ref()
-                                        .cloned(),
+                                        ),
                                         ..Default::default()
                                     });
                                     i += 1;

@@ -237,7 +237,7 @@ impl StaticRoute {
                 let text_mime = bun_http_types::MimeType::TEXT;
                 response.get_or_create_headers(global_this)?.put_default(
                     HTTPHeaderName::ContentType,
-                    &bun_core::String::ascii(text_mime.value.as_ref()),
+                    &bun_core::StringView::ascii(text_mime.value.as_ref()),
                     global_this,
                 )?;
             }
@@ -270,7 +270,7 @@ impl StaticRoute {
     pub(crate) fn on_head(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
         Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.start_timeout();
         }
@@ -325,7 +325,7 @@ impl StaticRoute {
     pub(crate) fn on(this: ThisPtr<Self>, resp: AnyResponse) {
         debug_assert!(this.server.get().is_some());
         Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.start_timeout();
         }
@@ -363,7 +363,7 @@ impl StaticRoute {
         resp.clear_aborted();
         resp.clear_on_writable();
         resp.clear_timeout();
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_static_request_complete();
         }
         let n = this.pending_responses.get() - 1;
@@ -552,7 +552,7 @@ impl StaticRoute {
     ) -> bool {
         req.set_yield(false);
         Self::retain_for_response(this);
-        if let Some(mut server) = this.server.get() {
+        if let Some(server) = this.server.get() {
             server.on_pending_request();
             resp.start_timeout();
         }

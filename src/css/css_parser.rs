@@ -65,6 +65,7 @@ pub use crate::rules::{
     import::{ImportConditions, ImportRule},
     layer::{LayerBlockRule, LayerName, LayerStatementRule},
     namespace::NamespaceRule,
+    nesting::NestedDeclarationsRule,
     style::StyleRule,
     supports::{SupportsCondition, SupportsRule},
     unknown::UnknownAtRule,
@@ -152,9 +153,9 @@ impl VendorPrefix {
 pub use crate::SourceLocation;
 
 impl SourceLocation {
-    pub(crate) fn to_logger_location(self, file: &'static [u8]) -> bun_ast::Location {
+    pub(crate) fn to_logger_location(self, file: &[u8]) -> bun_ast::Location {
         bun_ast::Location {
-            file: std::borrow::Cow::Borrowed(file),
+            file: Box::from(file),
             line: i32::try_from(self.line).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
             ..Default::default()
@@ -229,7 +230,7 @@ pub mod enum_property_util {
 
     pub fn parse<T: EnumProperty>(input: &mut Parser) -> CssResult<T> {
         let location = input.current_source_location();
-        let ident = input.expect_ident_cloned()?;
+        let ident = input.expect_ident()?;
         if let Some(x) = T::from_ascii_case_insensitive(ident) {
             return Ok(x);
         }
@@ -268,11 +269,8 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
 /// Skips to the end of the current block. Returns `true` if the matching
 /// closing token was found, `false` if the end of input was reached first
 /// (the block is unclosed).
-#[cold]
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) -> bool {
-    // Vec is fine for the cold path.
-    let mut stack: Vec<BlockType> = Vec::with_capacity(16);
-    stack.push(block_type);
+    let mut stack = SmallList::<BlockType, 16>::with_one(block_type);
 
     while let Ok(tok) = tokenizer.next() {
         if let Some(b) = BlockType::closing(&tok) {
@@ -284,7 +282,7 @@ fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) 
             }
         }
         if let Some(bt) = BlockType::opening(&tok) {
-            stack.push(bt);
+            stack.append(bt);
         }
     }
     false
@@ -292,7 +290,7 @@ fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) 
 
 fn parse_at_rule<P: AtRuleParser>(
     start: &ParserState,
-    name: &[u8],
+    name: &'static [u8],
     input: &mut Parser,
     parser: &mut P,
 ) -> CssResult<P::AtRule> {
@@ -336,7 +334,7 @@ fn parse_at_rule<P: AtRuleParser>(
 }
 
 fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
-    name: &[u8],
+    name: &'static [u8],
     input: &mut Parser,
     options: &ParserOptions,
     at_rule_parser: &mut T,
@@ -355,11 +353,6 @@ fn parse_custom_at_rule_prelude<T: CustomAtRuleParser>(
         }
     }
 
-    // TODO: lifetime — `name` borrows the input arena. The detach is the
-    // same `'static` erasure already applied to `Token`/`AtRulePrelude::Unknown`.
-    // SAFETY: `name` points into the parser's source/arena, which outlives every
-    // `AtRulePrelude`/warning produced from this parser (see `src_str`).
-    let name: &'static [u8] = unsafe { src_str(name) };
     options.warn(&input.new_error(BasicParseErrorKind::at_rule_invalid(name)));
     input.skip_whitespace();
     let tokens = TokenListFns::parse(input, options, 0)?;
@@ -446,8 +439,13 @@ fn parse_until_before<T, C>(
         result
     };
     parser.stop_before = saved_stop_before;
+    skip_until_delimiter(parser, delimiters);
+    result
+}
 
-    // FIXME: have a special-purpose tokenizer method for this that does less work.
+// Not generic, so it is compiled once instead of once per `parse_until_before<T, C>`.
+#[inline(never)]
+fn skip_until_delimiter(parser: &mut Parser, delimiters: Delimiters) {
     loop {
         if delimiters.intersects(Delimiters::from_byte(parser.input.tokenizer.next_byte())) {
             break;
@@ -461,8 +459,6 @@ fn parse_until_before<T, C>(
             _ => break,
         }
     }
-
-    result
 }
 
 pub(crate) fn parse_until_after<T, C>(
@@ -612,16 +608,24 @@ pub trait QualifiedRuleParser {
     /// Parse the prelude of a qualified rule. For style rules, this is a
     /// Selector list. The given `input` is a "delimited" parser that ends
     /// where the prelude should end (before the next `{`).
-    fn parse_prelude(this: &mut Self, input: &mut Parser) -> CssResult<Self::Prelude>;
+    ///
+    /// The default implementation rejects all qualified rules.
+    fn parse_prelude(_this: &mut Self, input: &mut Parser) -> CssResult<Self::Prelude> {
+        Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
+    }
 
     /// Parse the content of a `{ /* ... */ }` block for the body of the
     /// qualified rule.
+    ///
+    /// The default implementation rejects all qualified rules.
     fn parse_block(
-        this: &mut Self,
-        prelude: Self::Prelude,
-        start: &ParserState,
+        _this: &mut Self,
+        _prelude: Self::Prelude,
+        _start: &ParserState,
         input: &mut Parser,
-    ) -> CssResult<Self::QualifiedRule>;
+    ) -> CssResult<Self::QualifiedRule> {
+        Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
+    }
 }
 
 #[derive(Default, Clone, Copy, crate::DeepClone)]
@@ -635,7 +639,7 @@ pub trait CustomAtRuleParser {
 
     fn parse_prelude(
         this: &mut Self,
-        name: &[u8],
+        name: &'static [u8],
         input: &mut Parser,
         options: &ParserOptions,
     ) -> CssResult<Self::Prelude>;
@@ -674,22 +678,34 @@ pub trait CustomAtRuleParser {
 }
 
 /// At rules are rules that have the `@` symbol.
+///
+/// The default method implementations reject all at-rules.
 pub trait AtRuleParser {
     type Prelude;
     type AtRule;
 
-    fn parse_prelude(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<Self::Prelude>;
-    fn rule_without_block(
-        this: &mut Self,
-        prelude: Self::Prelude,
-        start: &ParserState,
-    ) -> Maybe<Self::AtRule, ()>;
-    fn parse_block(
-        this: &mut Self,
-        prelude: Self::Prelude,
-        start: &ParserState,
+    fn parse_prelude(
+        _this: &mut Self,
+        name: &'static [u8],
         input: &mut Parser,
-    ) -> CssResult<Self::AtRule>;
+    ) -> CssResult<Self::Prelude> {
+        Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)))
+    }
+    fn rule_without_block(
+        _this: &mut Self,
+        _prelude: Self::Prelude,
+        _start: &ParserState,
+    ) -> Maybe<Self::AtRule, ()> {
+        Err(())
+    }
+    fn parse_block(
+        _this: &mut Self,
+        _prelude: Self::Prelude,
+        _start: &ParserState,
+        input: &mut Parser,
+    ) -> CssResult<Self::AtRule> {
+        Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
+    }
 }
 
 pub type BundlerAtRule = DefaultAtRule;
@@ -705,7 +721,7 @@ pub struct BundlerAtRuleParser<'a> {
     /// SharedRW provenance (see `parse_bundler`); each materialises a
     /// short-lived `&mut` only at the point of use, so accesses interleave
     /// soundly under Stacked Borrows.
-    pub(crate) import_records: *mut Vec<ImportRecord>,
+    pub(crate) import_records: *mut Vec<ImportRecord<'static>>,
     pub(crate) layer_names: Vec<LayerName>,
     /// Having _named_ layers nested inside of an _anonymous_ layer has no
     /// effect. See: https://drafts.csswg.org/css-cascade-5/#example-787042b6
@@ -719,7 +735,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
     fn parse_prelude(
         _this: &mut Self,
-        name: &[u8],
+        name: &'static [u8],
         input: &mut Parser,
         _: &ParserOptions,
     ) -> CssResult<Self::Prelude> {
@@ -765,7 +781,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         import_rule.import_record_idx = import_record_index;
         import_records.push(ImportRecord {
             path: ast::fs::path_init(import_rule.url),
-            kind: if import_rule.supports.is_some() {
+            kind: if import_rule.conditions.supports.is_some() {
                 ImportKind::AtConditional
             } else {
                 ImportKind::At
@@ -880,7 +896,7 @@ pub enum AtRulePrelude<T> {
     Layer(SmallList<LayerName, 1>),
     Container {
         name: Option<ContainerName>,
-        condition: ContainerCondition,
+        condition: Option<ContainerCondition>,
     },
     StartingStyle,
     Nest(SelectorList),
@@ -930,20 +946,19 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
     // `DeclarationList = bumpalo::Vec<'bump, Property>` needs the arena up
     // front, so cache it here (same `'static`-erased borrow `DeclarationBlock`
     // already uses crate-wide).
-    pub(crate) arena: &'a Bump,
+    pub(crate) arena: &'static Bump,
     pub(crate) options: &'a ParserOptions<'a>,
     pub(crate) state: TopLevelState,
     pub(crate) at_rule_parser: &'a mut AtRuleParserT,
     // TODO: think about memory management
     pub(crate) rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
     pub(crate) composes: &'a mut ComposesMap,
-    pub(crate) composes_refs: SmallList<ast::Ref, 2>,
     pub(crate) local_properties: &'a mut LocalPropertyUsage,
 }
 
 impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT> {
     pub(crate) fn new(
-        arena: &'a Bump,
+        arena: &'static Bump,
         options: &'a ParserOptions<'a>,
         at_rule_parser: &'a mut AtRuleParserT,
         rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
@@ -957,27 +972,23 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
             at_rule_parser,
             rules,
             composes,
-            composes_refs: SmallList::default(),
             local_properties,
         }
     }
 
     pub(crate) fn nested(&mut self) -> NestedRuleParser<'_, AtRuleParserT> {
-        // SAFETY: same `'static` erasure used by `DeclarationBlock::parse` —
-        // the arena outlives every `DeclarationList` produced here.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
         NestedRuleParser {
             arena: self.arena,
             options: self.options,
             at_rule_parser: &mut *self.at_rule_parser,
-            declarations: DeclarationList::new_in(bump),
-            important_declarations: DeclarationList::new_in(bump),
+            declarations: DeclarationList::new_in(self.arena),
+            important_declarations: DeclarationList::new_in(self.arena),
             rules: &mut *self.rules,
             is_in_style_rule: false,
+            is_in_scope_rule: false,
             allow_declarations: false,
             composes_state: ComposesState::DisallowEntirely,
             composes: &mut *self.composes,
-            composes_refs: &mut self.composes_refs,
             local_properties: &mut *self.local_properties,
         }
     }
@@ -985,18 +996,33 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
 
 // ───────────────────────────── NestedRuleParser ─────────────────────────────
 
+/// Whether the declarations of one block may use `composes`.
 #[derive(Clone, Copy)]
 pub enum ComposesState {
-    Allow(SourceLocation),
+    /// The block belongs to a rule whose selector is the single class `class`.
+    Allow {
+        loc: SourceLocation,
+        class: ast::Ref,
+    },
     DisallowNested(SourceLocation),
     DisallowNotSingleClass(SourceLocation),
     DisallowEntirely,
 }
 
+impl ComposesState {
+    /// The state of a block nested in a block with this state.
+    fn nested(self) -> ComposesState {
+        match self {
+            ComposesState::Allow { loc, .. } => ComposesState::DisallowNested(loc),
+            state => state,
+        }
+    }
+}
+
 /// Dispatch trait for `parse_declaration_impl`. Implemented by `NestedRuleParser`.
 pub trait ComposesCtx {
     fn composes_state(&self) -> ComposesState;
-    fn record_composes(&mut self, composes: &mut Composes);
+    fn record_composes(&mut self, class: ast::Ref, composes: &Composes);
 }
 /// Unit `ComposesCtx` for callers that don't track `composes:`.
 pub struct NoComposesCtx;
@@ -1006,11 +1032,11 @@ impl ComposesCtx for NoComposesCtx {
         ComposesState::DisallowEntirely
     }
     #[inline]
-    fn record_composes(&mut self, _: &mut Composes) {}
+    fn record_composes(&mut self, _: ast::Ref, _: &Composes) {}
 }
 
 pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
-    pub(crate) arena: &'a Bump,
+    pub(crate) arena: &'static Bump,
     pub(crate) options: &'a ParserOptions<'a>,
     pub(crate) at_rule_parser: &'a mut T,
     // todo_stuff.think_mem_mgmt
@@ -1023,10 +1049,11 @@ pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
     // todo_stuff.think_mem_mgmt
     pub(crate) rules: &'a mut CssRuleList<T::AtRule>,
     pub(crate) is_in_style_rule: bool,
+    /// In an `@scope` with no style rule in between.
+    pub(crate) is_in_scope_rule: bool,
     pub(crate) allow_declarations: bool,
 
     pub(crate) composes_state: ComposesState,
-    pub(crate) composes_refs: &'a mut SmallList<ast::Ref, 2>,
     pub(crate) composes: &'a mut ComposesMap,
     pub(crate) local_properties: &'a mut LocalPropertyUsage,
 }
@@ -1048,7 +1075,7 @@ pub trait DeclarationParser {
     type Declaration;
     fn parse_value(
         this: &mut Self,
-        name: &[u8],
+        name: &'static [u8],
         input: &mut Parser,
     ) -> CssResult<Self::Declaration>;
 }
@@ -1083,7 +1110,7 @@ where
             self.input.skip_cdc_and_cdo();
 
             let start = self.input.state();
-            let at_keyword: Option<&[u8]> = match self.input.next_byte()? {
+            let at_keyword: Option<&'static [u8]> = match self.input.next_byte()? {
                 b'@' => 'brk: {
                     let at_keyword: &Token =
                         match self.input.next_including_whitespace_and_comments() {
@@ -1136,24 +1163,21 @@ mod rule_parsers {
 
     // The borrow checker forbids passing `&mut *this` while also borrowing
     // `this.declarations` / `this.important_declarations`, so split-borrow the
-    // three composes fields into a small adaptor that implements the
+    // two composes fields into a small adaptor that implements the
     // `ComposesCtx` dispatch trait.
     struct NestedComposesCtx<'a> {
         state: ComposesState,
         arena: &'a Bump,
         composes: &'a mut ComposesMap,
-        composes_refs: &'a mut SmallList<ast::Ref, 2>,
     }
     impl<'a> ComposesCtx for NestedComposesCtx<'a> {
         #[inline]
         fn composes_state(&self) -> ComposesState {
             self.state
         }
-        fn record_composes(&mut self, composes: &mut Composes) {
-            for ref_ in self.composes_refs.slice() {
-                let entry = self.composes.entry(*ref_).or_default();
-                entry.composes.push(composes.deep_clone(self.arena));
-            }
+        fn record_composes(&mut self, class: ast::Ref, composes: &Composes) {
+            let entry = self.composes.entry(class).or_default();
+            entry.composes.push(composes.deep_clone(self.arena));
         }
     }
 
@@ -1163,7 +1187,7 @@ mod rule_parsers {
 
         fn parse_prelude(
             this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> CssResult<Self::Prelude> {
             // Case-insensitive dispatch on at-rule name.
@@ -1172,11 +1196,7 @@ mod rule_parsers {
                     if (this.state as u8) > (TopLevelState::Imports as u8) {
                         return Err(input.new_custom_error(ParserError::unexpected_import_rule));
                     }
-                    // TODO: lifetime — arena-owned slice; same `'static` erasure
-                    // as `Token` payloads.
-                    // SAFETY: the returned slice borrows `input.src`/arena, which outlives
-                    // the `AtRulePrelude` it is stored in (see `src_str`).
-                    let url_str: &'static [u8] = unsafe { src_str(input.expect_url_or_string()?) };
+                    let url_str = input.expect_url_or_string()?;
 
                     let layer: Option<Option<LayerName>> =
                         if input.try_parse(|p| p.expect_ident_matching(b"layer")).is_ok() {
@@ -1200,6 +1220,13 @@ mod rule_parsers {
                         None
                     };
 
+                    // Another tool's syntax, such as Tailwind's `source()`: its plugin did not run.
+                    let state = input.state();
+                    let location = input.current_source_location();
+                    if let Ok(&token @ Token::Function(_)) = input.next() {
+                        return Err(location.new_unexpected_token_error(token));
+                    }
+                    input.reset(&state);
                     let media = parse_media_list(input, this.options)?;
 
                     return Ok(AtRulePrelude::Import { url: url_str, media, supports, layer });
@@ -1208,19 +1235,8 @@ mod rule_parsers {
                     if (this.state as u8) > (TopLevelState::Namespaces as u8) {
                         return Err(input.new_custom_error(ParserError::unexpected_namespace_rule));
                     }
-                    let prefix = input
-                        .try_parse(|p| {
-                            p.expect_ident().map(|s| -> &'static [u8] {
-                                // SAFETY: `s` borrows the parser's source/arena, which
-                                // outlives the `AtRulePrelude` it is stored in (see
-                                // `src_str`).
-                                unsafe { src_str(s) }
-                            })
-                        })
-                        .ok();
-                    // SAFETY: the returned slice borrows `input.src`/arena, which outlives
-                    // the `AtRulePrelude` it is stored in (see `src_str`).
-                    let namespace: &'static [u8] = unsafe { src_str(input.expect_url_or_string()?) };
+                    let prefix = input.try_parse(|p| p.expect_ident()).ok();
+                    let namespace = input.expect_url_or_string()?;
                     return Ok(AtRulePrelude::Namespace { prefix, url: namespace });
                 },
                 b"charset" => {
@@ -1289,9 +1305,11 @@ mod rule_parsers {
                     this.state = TopLevelState::Imports;
                     let mut import_rule = ImportRule {
                         url,
-                        media,
-                        supports,
-                        layer: layer.map(|v| css_rules::import::Layer { v }),
+                        conditions: ImportConditions {
+                            layer: layer.map(|v| css_rules::import::Layer { v }),
+                            supports,
+                            media,
+                        },
                         loc,
                         ..Default::default()
                     };
@@ -1396,41 +1414,40 @@ mod rule_parsers {
     // ── NestedRuleParser behavior (struct hoisted above) ─────────────────────────
 
     impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
+        /// How a style rule selector or a `<scope-start>` written here relates to `&`.
+        fn nesting_requirement(&self) -> selector_parser::NestingRequirement {
+            if self.is_in_scope_rule {
+                selector_parser::NestingRequirement::Scoped
+            } else if self.is_in_style_rule {
+                selector_parser::NestingRequirement::Implicit
+            } else {
+                selector_parser::NestingRequirement::None
+            }
+        }
+
         pub(crate) fn parse_nested(
             &mut self,
             input: &mut Parser,
             is_style_rule: bool,
+            composes_state: ComposesState,
         ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<T::AtRule>)> {
             // TODO: think about memory management in error cases
             let mut rules = CssRuleList::<T::AtRule>::default();
-            let composes_state = if self.is_in_style_rule
-                && matches!(self.composes_state, ComposesState::Allow(_))
-            {
-                let ComposesState::Allow(l) = self.composes_state else {
-                    unreachable!()
-                };
-                ComposesState::DisallowNested(l)
-            } else {
-                // ComposesState is Copy.
-                self.composes_state
-            };
-            // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
-            // parser arena.
-            let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
             let mut nested_parser = NestedRuleParser::<T> {
                 arena: self.arena,
                 options: self.options,
                 at_rule_parser: &mut *self.at_rule_parser,
-                declarations: DeclarationList::new_in(bump),
-                important_declarations: DeclarationList::new_in(bump),
+                declarations: DeclarationList::new_in(self.arena),
+                important_declarations: DeclarationList::new_in(self.arena),
                 rules: &mut rules,
                 is_in_style_rule: self.is_in_style_rule || is_style_rule,
+                is_in_scope_rule: self.is_in_scope_rule && !is_style_rule,
                 allow_declarations: self.allow_declarations
                     || self.is_in_style_rule
+                    || self.is_in_scope_rule
                     || is_style_rule,
                 composes_state,
                 composes: &mut *self.composes,
-                composes_refs: &mut *self.composes_refs,
                 local_properties: &mut *self.local_properties,
             };
             // Spell out the impl with a fresh lifetime so `nested_parser` isn't
@@ -1491,23 +1508,14 @@ mod rule_parsers {
 
             // Declarations can be immediately within @media and @supports blocks
             // that are nested within a parent style rule. These act the same way
-            // as if they were nested within a `& { ... }` block.
-            let (declarations, mut rules) = self.parse_nested(input, false)?;
+            // as the declarations written after a nested rule: a nested declarations rule.
+            let (declarations, mut rules) =
+                self.parse_nested(input, false, self.composes_state.nested())?;
 
             if declarations.len() > 0 {
                 rules.v.insert(
                     0,
-                    CssRule::Style(StyleRule {
-                        // Arena-backed: this StyleRule lands in arena AST; bulk-free won't run Drop.
-                        selectors: SelectorList::from_selector(Selector::from_component_in(
-                            Component::Nesting,
-                            bun_alloc::ArenaPtr::new(input.arena()),
-                        )),
-                        declarations,
-                        vendor_prefix: VendorPrefix::default(),
-                        rules: CssRuleList::default(),
-                        loc,
-                    }),
+                    CssRule::NestedDeclarations(NestedDeclarationsRule { declarations, loc }),
                 );
             }
 
@@ -1521,15 +1529,9 @@ mod rule_parsers {
 
         fn parse_prelude(
             this: &mut Self,
-            name: &[u8],
+            name: &'static [u8],
             input: &mut Parser,
         ) -> CssResult<Self::Prelude> {
-            // TODO: lifetime — `name` borrows the input arena. Detach to
-            // `'static` to feed `BasicParseErrorKind::at_rule_invalid` (matches the
-            // `Token` payload erasure throughout this file).
-            // SAFETY: `name` points into the parser's source/arena, which outlives
-            // every prelude/error produced from this parser (see `src_str`).
-            let name: &'static [u8] = unsafe { src_str(name) };
             let result: Self::Prelude = 'brk: {
                 crate::match_ignore_ascii_case! { name, {
                     b"media" => break 'brk AtRulePrelude::Media(parse_media_list(input, this.options)?),
@@ -1543,8 +1545,22 @@ mod rule_parsers {
                     },
                     b"keyframes" | b"-webkit-keyframes" | b"-moz-keyframes" | b"-o-keyframes" | b"-ms-keyframes" => {
                         let prefix = VendorPrefix::strip_from(name).0;
+                        input.skip_whitespace();
+                        let position = input.position();
                         let keyframes_name =
                             input.try_parse(css_rules::keyframes::KeyframesName::parse)?;
+                        if input.flags.css_modules()
+                            && let KeyframesName::Ident(ident) = &keyframes_name
+                        {
+                            // The symbol exports the name. The printer hashes it as the linker does.
+                            input.add_symbol_for_name(
+                                ident.v(),
+                                CssRefTag::empty(),
+                                bun_ast::Loc {
+                                    start: i32::try_from(position).expect("int cast"),
+                                },
+                            );
+                        }
                         break 'brk AtRulePrelude::Keyframes { name: keyframes_name, prefix };
                     },
                     b"page" => {
@@ -1595,8 +1611,13 @@ mod rule_parsers {
                     b"container" => {
                         let container_name: Option<ContainerName> =
                             input.try_parse(css_rules::container::ContainerName::parse).ok();
-                        let condition: ContainerCondition =
-                            css_rules::container::ContainerCondition::parse(input)?;
+                        // `@container sidebar {}`: the query is optional after a name.
+                        let condition: Option<ContainerCondition> =
+                            if container_name.is_some() && input.is_exhausted() {
+                                None
+                            } else {
+                                Some(css_rules::container::ContainerCondition::parse(input)?)
+                            };
                         break 'brk AtRulePrelude::Container { name: container_name, condition };
                     },
                     b"starting-style" => break 'brk AtRulePrelude::StartingStyle,
@@ -1611,7 +1632,7 @@ mod rule_parsers {
                                     &mut selector_parser,
                                     input2,
                                     selector_parser::ParseErrorRecovery::IgnoreInvalidSelector,
-                                    selector_parser::NestingRequirement::None,
+                                    this.nesting_requirement(),
                                 )
                             })?)
                         } else {
@@ -1740,7 +1761,10 @@ mod rule_parsers {
                     scope_start,
                     scope_end,
                 } => {
-                    let rules = this.parse_style_block(input)?;
+                    let was_in_scope_rule = core::mem::replace(&mut this.is_in_scope_rule, true);
+                    let rules = this.parse_style_block(input);
+                    this.is_in_scope_rule = was_in_scope_rule;
+                    let rules = rules?;
                     this.rules
                         .v
                         .push(CssRule::Scope(css_rules::scope::ScopeRule {
@@ -1858,7 +1882,16 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Nest(selectors) => {
-                    let (declarations, rules) = this.parse_nested(input, true)?;
+                    let (mut declarations, mut rules) =
+                        this.parse_nested(input, true, this.composes_state.nested())?;
+                    // The minifier leaves an `@nest` body as written, so it stays one block.
+                    rules.v.retain_mut(|rule| {
+                        let CssRule::NestedDeclarations(run) = rule else {
+                            return true;
+                        };
+                        declarations.append(&mut run.declarations);
+                        false
+                    });
                     this.rules
                         .v
                         .push(CssRule::Nesting(css_rules::nesting::NestingRule {
@@ -1951,12 +1984,12 @@ mod rule_parsers {
                 is_nesting_allowed: true,
                 options: this.options,
             };
-            if this.is_in_style_rule {
+            if this.is_in_style_rule || this.is_in_scope_rule {
                 SelectorList::parse_relative(
                     &mut selector_parser,
                     input,
                     selector_parser::ParseErrorRecovery::DiscardList,
-                    selector_parser::NestingRequirement::Implicit,
+                    this.nesting_requirement(),
                 )
             } else {
                 SelectorList::parse(
@@ -1975,92 +2008,57 @@ mod rule_parsers {
             input: &mut Parser,
         ) -> CssResult<()> {
             let loc = this.get_loc(start);
-            // `composes_refs` is `&mut SmallList<..>` borrowed from the parent
-            // `TopLevelRuleParser`, so dropping `NestedRuleParser` on an error path
-            // does NOT clear the underlying storage. A safe `scopeguard::guard`
-            // over `&mut *this.composes_refs` would hold that borrow across
-            // `this.parse_nested(&mut self, …)` and trip borrowck, so capture the
-            // raw pointer instead — the guard fires at scope exit after all body
-            // borrows of `this` are released, and the pointee (owned by the parent
-            // `TopLevelRuleParser`) strictly outlives this frame.
-            let composes_refs_ptr: *mut SmallList<ast::Ref, 2> = &raw mut *this.composes_refs;
-            scopeguard::defer! {
-                // SAFETY: see the note above — no aliasing borrow live at drop.
-                unsafe { (*composes_refs_ptr).clear_retaining_capacity(); }
-            }
-            // allow composes if:
-            // - NOT in nested style rules
-            // - AND there is only one class selector
-            if input.flags.css_modules() {
-                'out: {
-                    if this.is_in_style_rule {
-                        this.composes_state = ComposesState::DisallowNested(SourceLocation {
-                            line: loc.line,
-                            column: loc.column,
-                        });
-                        break 'out;
-                    }
-                    if selectors.v.len() != 1 {
-                        this.composes_state =
-                            ComposesState::DisallowNotSingleClass(SourceLocation {
-                                line: loc.line,
-                                column: loc.column,
-                            });
-                        break 'out;
-                    }
-                    let sel = &selectors.v.slice()[0];
-                    if sel.components.len() != 1 {
-                        this.composes_state =
-                            ComposesState::DisallowNotSingleClass(SourceLocation {
-                                line: loc.line,
-                                column: loc.column,
-                            });
-                        break 'out;
-                    }
-                    let comp = &sel.components[0];
-                    if let Some(r) = comp.as_class() {
-                        let ref_ = r.as_ref().unwrap();
-                        this.composes_refs.append(ref_);
-                        this.composes_state = ComposesState::Allow(SourceLocation {
-                            line: loc.line,
-                            column: loc.column,
-                        });
-                        break 'out;
-                    }
-                    this.composes_state = ComposesState::DisallowNotSingleClass(SourceLocation {
-                        line: loc.line,
-                        column: loc.column,
-                    });
+            let composes_loc = SourceLocation {
+                line: loc.line,
+                column: loc.column,
+            };
+            let composes_state = if !input.flags.css_modules() {
+                ComposesState::DisallowEntirely
+            } else if this.is_in_style_rule {
+                ComposesState::DisallowNested(composes_loc)
+            } else if let [selector] = selectors.v.slice()
+                && let [component] = selector.components.as_slice()
+                && let Some(class) = component.as_class().and_then(|class| class.as_ref())
+            {
+                ComposesState::Allow {
+                    loc: composes_loc,
+                    class,
                 }
-            }
+            } else {
+                ComposesState::DisallowNotSingleClass(composes_loc)
+            };
             let location = input.position();
-            let (declarations, rules) = this.parse_nested(input, true)?;
+            let (declarations, rules) = this.parse_nested(input, true, composes_state)?;
 
-            // We parsed a style rule with the `composes` property. Track which
-            // properties it used so we can validate it later.
-            if matches!(this.composes_state, ComposesState::Allow(_)) {
+            // Track which properties the class sets, to validate a `composes` of it later.
+            if let ComposesState::Allow { class, .. } = composes_state {
                 let len = input.position() - location;
                 let mut usage = PropertyBitset::init_empty();
                 let mut custom_properties: Vec<&'static [u8]> = Vec::new();
                 fill_property_bit_set(&mut usage, &declarations, &mut custom_properties);
-
-                let custom_properties_slice = custom_properties.slice();
-
-                for ref_ in this.composes_refs.slice() {
-                    let entry =
-                        this.local_properties
-                            .entry(*ref_)
-                            .or_insert_with(|| PropertyUsage {
-                                range: bun_ast::Range {
-                                    loc: bun_ast::Loc {
-                                        start: i32::try_from(location).expect("int cast"),
-                                    },
-                                    len: i32::try_from(len).expect("int cast"),
-                                },
-                                ..Default::default()
-                            });
-                    entry.fill(&usage, custom_properties_slice);
+                // Declarations written after a nested rule are still this rule's own.
+                for rule in rules.v.iter() {
+                    if let CssRule::NestedDeclarations(nested) = rule {
+                        fill_property_bit_set(
+                            &mut usage,
+                            &nested.declarations,
+                            &mut custom_properties,
+                        );
+                    }
                 }
+
+                this.local_properties
+                    .entry(class)
+                    .or_insert_with(|| PropertyUsage {
+                        range: bun_ast::Range {
+                            loc: bun_ast::Loc {
+                                start: i32::try_from(location).expect("int cast"),
+                            },
+                            len: i32::try_from(len).expect("int cast"),
+                        },
+                        ..Default::default()
+                    })
+                    .fill(&usage, custom_properties.slice());
             }
 
             this.rules.v.push(CssRule::Style(StyleRule {
@@ -2087,26 +2085,57 @@ mod rule_parsers {
     impl<'a, T: CustomAtRuleParser> DeclarationParser for NestedRuleParser<'a, T> {
         type Declaration = ();
 
-        fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<()> {
+        fn parse_value(this: &mut Self, name: &'static [u8], input: &mut Parser) -> CssResult<()> {
             // Note: split-borrow — see `NestedComposesCtx` above.
-            // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
-            // detach that borrow so `input` can be re-borrowed mutably below. The
-            // arena outlives the parser (it owns all parsed allocations).
-            let arena: &Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
             let mut ctx = NestedComposesCtx {
                 state: this.composes_state,
-                arena,
+                arena: this.arena,
                 composes: &mut *this.composes,
-                composes_refs: &mut *this.composes_refs,
             };
+            // CSS modules consume `composes`: it stays in the block of the rule, whatever comes before it.
+            if this.rules.v.is_empty()
+                || (input.flags.css_modules()
+                    && matches!(PropertyId::from_string(name), PropertyId::Composes))
+            {
+                return declaration::parse_declaration_impl(
+                    name,
+                    input,
+                    &mut this.declarations,
+                    &mut this.important_declarations,
+                    this.options,
+                    &mut ctx,
+                );
+            }
+            if let Some(CssRule::NestedDeclarations(last)) = this.rules.v.last_mut() {
+                return declaration::parse_declaration_impl(
+                    name,
+                    input,
+                    &mut last.declarations.declarations,
+                    &mut last.declarations.important_declarations,
+                    this.options,
+                    &mut ctx,
+                );
+            }
+            let loc = input.current_source_location();
+            let mut nested = NestedDeclarationsRule {
+                declarations: DeclarationBlock::new_in(this.arena),
+                loc: Location {
+                    source_index: this.options.source_index,
+                    line: loc.line,
+                    column: loc.column,
+                },
+            };
+            // A declaration that fails is retried as a nested rule (`div:hover {`): `?` comes before the push.
             declaration::parse_declaration_impl(
                 name,
                 input,
-                &mut this.declarations,
-                &mut this.important_declarations,
+                &mut nested.declarations.declarations,
+                &mut nested.declarations.important_declarations,
                 this.options,
                 &mut ctx,
-            )
+            )?;
+            this.rules.v.push(CssRule::NestedDeclarations(nested));
+            Ok(())
         }
     }
 
@@ -2143,6 +2172,8 @@ pub type BundlerMediaRule = css_rules::media::MediaRule<BundlerAtRule>;
 pub struct StylesheetExtra {
     /// Used when css modules is enabled
     pub symbols: SymbolList,
+    /// A value holds `revert-rule`, which rolls back the style rule that holds it.
+    pub(crate) may_revert_rule: bool,
 }
 
 pub struct ParserExtra {
@@ -2219,7 +2250,8 @@ pub struct ComposesEntry {
 
 pub struct PropertyUsage {
     pub bitset: PropertyBitset,
-    pub custom_properties: Box<[&'static [u8]]>, // TODO: lifetime — arena slices
+    /// Arena slices with the lifetime erased; see `fill_property_bit_set`.
+    pub custom_properties: Vec<&'static [u8]>,
     pub range: bun_ast::Range,
 }
 
@@ -2227,7 +2259,7 @@ impl Default for PropertyUsage {
     fn default() -> Self {
         Self {
             bitset: PropertyBitset::init_empty(),
-            custom_properties: Box::default(),
+            custom_properties: Vec::new(),
             range: bun_ast::Range::default(),
         }
     }
@@ -2237,8 +2269,7 @@ impl PropertyUsage {
     #[inline]
     pub(crate) fn fill(&mut self, used: &PropertyBitset, custom_properties: &[&'static [u8]]) {
         self.bitset.set_union(used);
-        // TODO: lifetime — box for now.
-        self.custom_properties = custom_properties.to_vec().into_boxed_slice();
+        self.custom_properties.extend_from_slice(custom_properties);
     }
 }
 
@@ -2260,7 +2291,7 @@ pub(crate) fn fill_property_bit_set(
                 // SAFETY: `'bump`-erasure — `CustomPropertyName` stores an
                 // arena-owned `*const [u8]`; detach from `block`'s borrow so
                 // callers can move `block` afterwards. Re-thread once
-                // `PropertyUsage` carries the arena lifetime (TODO at field def).
+                // `PropertyUsage` carries the arena lifetime.
                 let name: &'static [u8] = unsafe { src_str(c.name.as_str()) };
                 custom_properties.push(name);
                 continue;
@@ -2541,7 +2572,7 @@ mod stylesheet_impl {
             arena: &'static Bump,
             code: &[u8],
             options: ParserOptions<'_>,
-            import_records: Option<&mut Vec<ImportRecord>>,
+            import_records: Option<&mut Vec<ImportRecord<'static>>>,
             source_index: SrcIndex,
         ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
             // Returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
@@ -2570,7 +2601,7 @@ mod stylesheet_impl {
             code: &[u8],
             options: ParserOptions<'_>,
             at_rule_parser: &mut P,
-            import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
+            import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // TODO: 'bump lifetime threading — every arena-backed slice the
@@ -2608,10 +2639,7 @@ mod stylesheet_impl {
                     Token::Whitespace(_) => {}
                     Token::Comment(comment) => {
                         if comment.first() == Some(&b'!') {
-                            // TODO: lifetime — arena slice; see erasure note.
-                            // SAFETY: `comment` borrows `parser.src`, which outlives
-                            // `license_comments` (consumed before `parser` drops).
-                            license_comments.push(unsafe { src_str(comment) });
+                            license_comments.push(comment);
                         }
                     }
                     _ => break,
@@ -2650,6 +2678,7 @@ mod stylesheet_impl {
             // (default = empty; `BundlerAtRuleParser` overrides to move its list
             // out) so the accumulated layer ordering isn't silently dropped.
             let layer_names = P::take_layer_names(at_rule_parser);
+            let may_revert_rule = parser.input.may_revert_rule;
 
             Ok((
                 Self {
@@ -2667,6 +2696,7 @@ mod stylesheet_impl {
                 },
                 StylesheetExtra {
                     symbols: parser_extra.symbols,
+                    may_revert_rule,
                 },
             ))
         }
@@ -2677,7 +2707,7 @@ mod stylesheet_impl {
             arena: &'static Bump,
             code: &[u8],
             options: &ParserOptions,
-            import_records: &mut Vec<ImportRecord>,
+            import_records: &mut Vec<ImportRecord<'static>>,
             source_index: SrcIndex,
         ) -> Maybe<StyleAttribute, Err<ParserError>> {
             // TODO: 'bump lifetime threading — `DeclarationBlock<'static>` in
@@ -2747,7 +2777,7 @@ mod stylesheet_impl {
             arena: &'static Bump,
             code: &[u8],
             options: ParserOptions<'_>,
-            import_records: &mut Vec<ImportRecord>,
+            import_records: &mut Vec<ImportRecord<'static>>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
             // `import_records` is shared by both `BundlerAtRuleParser` and the
@@ -2874,6 +2904,19 @@ where
                 _ => {}
             }
 
+            let token = *tok;
+            // `*zoom: 1`, an IE 7 hack. No selector starts with `*` and a name: browsers skip it.
+            if matches!(token, Token::Delim(delim) if delim == u32::from(b'*'))
+                && P::parse_declarations(self.parser)
+                && self.input.input.tokenizer.is_ident_start()
+            {
+                let delimiters = Delimiters::SEMICOLON | Delimiters::CURLY_BRACKET;
+                let _ = self
+                    .input
+                    .parse_until_after(delimiters, Parser::parse_empty);
+                continue;
+            }
+
             let result: CssResult<I<P>> = if P::parse_qualified(self.parser) {
                 self.input.reset(&start);
                 let delimiters = if P::parse_declarations(self.parser) {
@@ -2883,7 +2926,6 @@ where
                 };
                 parse_qualified_rule(&start, self.input, self.parser, delimiters)
             } else {
-                let token = *tok;
                 self.input
                     .parse_until_after(Delimiters::SEMICOLON, move |_i| {
                         Err(start.source_location().new_unexpected_token_error(token))
@@ -2999,6 +3041,12 @@ bitflags::bitflags! {
         const CSS_MODULES = 0b1;
         /// Makes `TokenList::parse` keep `url()` as a raw token instead of creating an import record.
         const RAW_URL_TOKENS = 0b10;
+        /// Inside `:global(...)` of a CSS module.
+        const GLOBAL_SCOPE = 0b100;
+        /// For `Bun.color`: clips a relative color or `color-mix()` that a style sheet keeps as written.
+        const CLIP_COLORS = 0b1000;
+        /// Lengths and percentages have the range `[0,∞]`: a math function below zero means zero, a literal is invalid.
+        const NON_NEGATIVE = 0b10000;
     }
 }
 impl ParserOpts {
@@ -3007,9 +3055,25 @@ impl ParserOpts {
         self.contains(Self::CSS_MODULES)
     }
 
+    /// Whether a class or an id parsed now is local to the CSS module.
+    #[inline]
+    pub(crate) fn local_scope(self) -> bool {
+        self.css_modules() && !self.contains(Self::GLOBAL_SCOPE)
+    }
+
     #[inline]
     pub(crate) fn raw_url_tokens(self) -> bool {
         self.contains(Self::RAW_URL_TOKENS)
+    }
+
+    #[inline]
+    pub(crate) fn clip_colors(self) -> bool {
+        self.contains(Self::CLIP_COLORS)
+    }
+
+    #[inline]
+    pub(crate) fn non_negative(self) -> bool {
+        self.contains(Self::NON_NEGATIVE)
     }
 }
 
@@ -3023,7 +3087,7 @@ pub struct Parser<'a> {
     /// be invalidated under Stacked Borrows the moment `on_import_rule`
     /// derives its own `&mut` from the sibling raw pointer. Each access site
     /// materialises a fresh short-lived `&mut` instead.
-    pub(crate) import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
+    pub(crate) import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
     pub(crate) extra: Option<&'a mut ParserExtra>,
 }
 
@@ -3047,13 +3111,6 @@ impl<'a> Parser<'a> {
         let local_scope = &mut extra.local_scope;
         let source_index = extra.source_index.get();
 
-        // SAFETY: `name` is a slice into the parser source / arena, both of
-        // which outlive the symbol table (`ParserExtra` is consumed into
-        // `StylesheetExtra` alongside the same arena). Detach the borrow so it
-        // satisfies `Symbol.original_name: &'static [u8]` (the parser's
-        // crate-wide lifetime erasure — see PORTING.md §Lifetimes).
-        let name_static: &'static [u8] = unsafe { src_str(name) };
-
         // Borrowed probe so a repeated class/id name doesn't box a fresh key
         // per selector; `StringArrayHashMap::get_or_put` boxes on miss only.
         let gop = local_scope.get_or_put(name).expect("unreachable");
@@ -3068,7 +3125,8 @@ impl<'a> Parser<'a> {
             let inner_index = u32::try_from(symbols.len()).unwrap();
             symbols.push(bun_ast::Symbol {
                 kind: bun_ast::SymbolKind::LocalCss,
-                original_name: name_static.into(),
+                // `name` points into the parser source or arena, which outlive the symbol table.
+                original_name: name.into(),
                 ..Default::default()
             });
             *entry = LocalEntry {
@@ -3085,7 +3143,7 @@ impl<'a> Parser<'a> {
     /// an error about the import underlines.
     pub(crate) fn add_import_record(
         &mut self,
-        url: &[u8],
+        url: &'static [u8],
         start_position: usize,
         end_position: usize,
         kind: ImportKind,
@@ -3095,12 +3153,8 @@ impl<'a> Parser<'a> {
             // for this scope; provenance shared only with raw-pointer aliases.
             let import_records = unsafe { &mut *ptr.as_ptr() };
             let idx = u32::try_from(import_records.len()).unwrap();
-            // SAFETY: `url` borrows the parser source / arena which outlives
-            // every `ImportRecord` produced by this parse; the lifetime
-            // is erased to 'static (see PORTING.md §Lifetimes).
-            let url_static: &'static [u8] = unsafe { src_str(url) };
             import_records.push(ImportRecord {
-                path: ast::fs::path_init(url_static),
+                path: ast::fs::path_init(url),
                 kind,
                 range: bun_ast::Range {
                     loc: bun_ast::Loc {
@@ -3116,15 +3170,12 @@ impl<'a> Parser<'a> {
             });
             Ok(idx)
         } else {
-            // SAFETY: same lifetime erasure as above; the error token is only
-            // used for diagnostics borrowing the same source.
-            let url_static: &'static [u8] = unsafe { src_str(url) };
-            Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url_static)))
+            Err(self.new_basic_unexpected_token_error(Token::UnquotedUrl(url)))
         }
     }
 
     #[inline]
-    pub(crate) fn arena(&self) -> &Bump {
+    pub(crate) fn arena(&self) -> &'a Bump {
         self.input.tokenizer.arena
     }
 
@@ -3135,7 +3186,7 @@ impl<'a> Parser<'a> {
     /// error.
     pub fn new(
         input: &'a mut ParserInput<'a>,
-        import_records: Option<core::ptr::NonNull<Vec<ImportRecord>>>,
+        import_records: Option<core::ptr::NonNull<Vec<ImportRecord<'static>>>>,
         flags: ParserOpts,
         extra: Option<&'a mut ParserExtra>,
     ) -> Parser<'a> {
@@ -3185,7 +3236,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Return a slice of the CSS input, from the given position to the current one.
-    pub(crate) fn slice_from(&self, start_position: usize) -> &[u8] {
+    pub(crate) fn slice_from(&self, start_position: usize) -> &'static [u8] {
         self.input.tokenizer.slice_from(start_position)
     }
 
@@ -3264,6 +3315,31 @@ impl<'a> Parser<'a> {
         result
     }
 
+    pub(crate) fn parse_with_non_negative<R>(
+        &mut self,
+        non_negative: bool,
+        func: impl FnOnce(&mut Parser) -> CssResult<R>,
+    ) -> CssResult<R> {
+        let saved = self.flags;
+        self.flags.set(ParserOpts::NON_NEGATIVE, non_negative);
+        let result = func(self);
+        self.flags = saved;
+        result
+    }
+
+    /// Parses the argument of `:global(...)` or `:local(...)`.
+    pub(crate) fn parse_with_global_scope<R>(
+        &mut self,
+        global: bool,
+        func: impl FnOnce(&mut Parser) -> CssResult<R>,
+    ) -> CssResult<R> {
+        let saved = self.flags;
+        self.flags.set(ParserOpts::GLOBAL_SCOPE, global);
+        let result = func(self);
+        self.flags = saved;
+        result
+    }
+
     #[inline]
     pub(crate) fn parse_nested_block<T>(
         &mut self,
@@ -3293,6 +3369,12 @@ impl<'a> Parser<'a> {
         self.input.token_list_parse_failures += 1;
     }
 
+    /// See `StylesheetExtra::may_revert_rule`.
+    #[inline]
+    pub(crate) fn note_may_revert_rule(&mut self) {
+        self.input.may_revert_rule = true;
+    }
+
     pub(crate) fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -3308,7 +3390,6 @@ impl<'a> Parser<'a> {
             match tok {
                 Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
                     self.parse_nested_block(|i| i.expect_no_error_token())?;
-                    return Ok(());
                 }
                 _ => {
                     if tok.is_parse_error() {
@@ -3322,8 +3403,11 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn expect_percentage(&mut self) -> CssResult<f32> {
         let start_location = self.current_source_location();
+        let non_negative = self.flags.non_negative();
         let tok = self.next()?;
-        if let Token::Percentage { unit_value, .. } = tok {
+        if let Token::Percentage { unit_value, .. } = tok
+            && !(non_negative && *unit_value < 0.0)
+        {
             return Ok(*unit_value);
         }
         let tok = *tok;
@@ -3397,7 +3481,8 @@ impl<'a> Parser<'a> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_string(&mut self) -> CssResult<&[u8]> {
+    /// `'static` here and below is `Token`'s placeholder for the source and arena lifetime.
+    pub(crate) fn expect_string(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::QuotedString(s) = tok {
@@ -3407,7 +3492,7 @@ impl<'a> Parser<'a> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_ident(&mut self) -> CssResult<&[u8]> {
+    pub(crate) fn expect_ident(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Ident(s) = tok {
@@ -3419,7 +3504,7 @@ impl<'a> Parser<'a> {
 
     /// Parse either a `<ident-token>` or a `<string-token>`, and return the
     /// unescaped value.
-    pub(crate) fn expect_ident_or_string(&mut self) -> CssResult<&[u8]> {
+    pub(crate) fn expect_ident_or_string(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         match tok {
@@ -3443,7 +3528,7 @@ impl<'a> Parser<'a> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    pub(crate) fn expect_function(&mut self) -> CssResult<&[u8]> {
+    pub(crate) fn expect_function(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         if let Token::Function(fn_name) = tok {
@@ -3476,14 +3561,14 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse a `<url-token>` and return the unescaped value.
-    pub(crate) fn expect_url(&mut self) -> CssResult<&[u8]> {
+    pub(crate) fn expect_url(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         match tok {
             Token::UnquotedUrl(value) => return Ok(*value),
             Token::Function(name) => {
                 if strings::eql_case_insensitive_asciii_check_length(b"url", name) {
-                    return self.parse_nested_block(|parser| parser.expect_string_cloned());
+                    return self.parse_nested_block(|parser| parser.expect_string());
                 }
             }
             _ => {}
@@ -3494,7 +3579,7 @@ impl<'a> Parser<'a> {
 
     /// Parse either a `<url-token>` or a `<string-token>`, and return the
     /// unescaped value.
-    pub(crate) fn expect_url_or_string(&mut self) -> CssResult<&[u8]> {
+    pub(crate) fn expect_url_or_string(&mut self) -> CssResult<&'static [u8]> {
         let start_location = self.current_source_location();
         let tok = self.next()?;
         match tok {
@@ -3502,7 +3587,7 @@ impl<'a> Parser<'a> {
             Token::QuotedString(value) => return Ok(*value),
             Token::Function(name) => {
                 if strings::eql_case_insensitive_asciii_check_length(b"url", name) {
-                    return self.parse_nested_block(|parser| parser.expect_string_cloned());
+                    return self.parse_nested_block(|parser| parser.expect_string());
                 }
             }
             _ => {}
@@ -3511,72 +3596,32 @@ impl<'a> Parser<'a> {
         Err(start_location.new_unexpected_token_error(tok))
     }
 
-    // ──────────────────────────────────────────────────────────────────────
-    // `*_cloned` helpers — C-7 in PORT_NOTES_PLAN.
-    //
-    // These wrap `expect_*` / `slice_from` and return the slice with its
-    // lifetime detached from `&mut self` (to `'static`, matching `Token`'s
-    // current `&'static [u8]` payload). All `unsafe { src_str(..) }` call
-    // sites in the CSS parser route through here instead of laundering the
-    // lifetime locally.
-    //
-    // Once C-9 threads `'i` through `Token<'i>`, these become safe
-    // `-> CssResult<&'i [u8]>` and the body drops the `unsafe` — no caller
-    // changes needed.
-    // ──────────────────────────────────────────────────────────────────────
-
-    /// `expect_ident` with the borrow detached from `&mut self` so the parser
-    /// is reusable while the slice is held (and the slice fits `Token::Ident`).
-    #[inline]
-    pub(crate) fn expect_ident_cloned(&mut self) -> CssResult<&'static [u8]> {
-        let s = self.expect_ident()?;
-        // SAFETY: `s` is a sub-slice of `self.input.tokenizer.src` (`&'a [u8]`)
-        // or arena-owned; the returned reference is only ever stored in
-        // structures reachable through the same `Parser<'a>`. See `src_str`.
-        Ok(unsafe { src_str(s) })
-    }
-
-    /// `expect_function` with the borrow detached. See [`expect_ident_cloned`].
-    #[inline]
-    pub(crate) fn expect_function_cloned(&mut self) -> CssResult<&'static [u8]> {
-        let s = self.expect_function()?;
-        // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
-    }
-
-    /// `expect_string` with the borrow detached. See [`expect_ident_cloned`].
-    #[inline]
-    pub(crate) fn expect_string_cloned(&mut self) -> CssResult<&'static [u8]> {
-        let s = self.expect_string()?;
-        // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
-    }
-
-    /// `expect_ident_or_string` with the borrow detached. See [`expect_ident_cloned`].
-    #[inline]
-    pub(crate) fn expect_ident_or_string_cloned(&mut self) -> CssResult<&'static [u8]> {
-        let s = self.expect_ident_or_string()?;
-        // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
-    }
-
-    /// `expect_url` with the borrow detached. See [`expect_ident_cloned`].
-    #[inline]
-    pub(crate) fn expect_url_cloned(&mut self) -> CssResult<&'static [u8]> {
-        let s = self.expect_url()?;
-        // SAFETY: see `expect_ident_cloned`.
-        Ok(unsafe { src_str(s) })
-    }
-
-    /// `slice_from` with the borrow detached. See [`expect_ident_cloned`].
-    #[inline]
-    pub(crate) fn slice_from_cloned(&self, start_position: usize) -> &'static [u8] {
-        // SAFETY: see `expect_ident_cloned`.
-        unsafe { src_str(self.slice_from(start_position)) }
-    }
-
     pub(crate) fn position(&self) -> usize {
         self.input.tokenizer.position
+    }
+
+    /// The source text of the numeric token `next*` returned last, if an f32 may not hold it
+    /// (`1700000000.25`, `123456.78`) or it touches another number: `5.0.1` is `5.0` and `.1`,
+    /// whose values print as `5.1`.
+    #[inline]
+    pub(crate) fn raw_number_text(&self) -> Option<&'static [u8]> {
+        let cached = self.input.cached_token.as_ref()?;
+        if !matches!(
+            cached.token,
+            Token::Number(_) | Token::Percentage { .. } | Token::Dimension(_)
+        ) {
+            return None;
+        }
+        let text = self.slice_from(cached.start_position);
+        let before = &self.input.tokenizer.src[..cached.start_position];
+        let touches_a_number = self.next_byte() == Some(b'.')
+            || text.starts_with(b"+")
+            || (text.starts_with(b".") && before.last().is_some_and(u8::is_ascii_digit));
+        let digits = text.strip_prefix(b"-").unwrap_or(text);
+        let digits = &digits[digits.iter().take_while(|b| **b == b'0').count()..];
+        let integer_digits = digits.iter().take_while(|b| b.is_ascii_digit()).count();
+        let is_long = integer_digits > 6 || (integer_digits == 6 && digits.get(6) == Some(&b'.'));
+        (is_long || touches_a_number).then_some(text)
     }
 
     fn parse_empty(_: &mut Parser) -> CssResult<()> {
@@ -3833,6 +3878,8 @@ pub struct ParserInput<'a> {
     /// alternative is guaranteed to fail again, so they propagate the error
     /// instead of retrying (which is exponential in the nesting depth).
     token_list_parse_failures: u64,
+    /// See `StylesheetExtra::may_revert_rule`.
+    may_revert_rule: bool,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -3861,6 +3908,7 @@ impl<'a> ParserInput<'a> {
             unclosed_block_at_eof: None,
             math_fn_parse_failures: 0,
             token_list_parse_failures: 0,
+            may_revert_rule: false,
         }
     }
 }
@@ -3949,17 +3997,17 @@ pub mod nth {
             }
             Token::Ident(value) => {
                 let value = *value;
-                if strings::eql_case_insensitive_ascii_ignore_length(value, b"even") {
+                if strings::eql_case_insensitive_asciii_check_length(value, b"even") {
                     return Ok((2, 0));
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"odd") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"odd") {
                     return Ok((2, 1));
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"n") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"n") {
                     return parse_b(input, 1);
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"-n") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n") {
                     return parse_b(input, -1);
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"n-") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"n-") {
                     return parse_signless_b(input, 1, -1);
-                } else if strings::eql_case_insensitive_ascii_ignore_length(value, b"-n-") {
+                } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n-") {
                     return parse_signless_b(input, -1, -1);
                 } else {
                     let (slice, a): (&[u8], i32) = if value.first() == Some(&b'-') {
@@ -3973,13 +4021,13 @@ pub mod nth {
                     return Err(input.new_unexpected_token_error(Token::Ident(value)));
                 }
             }
-            Token::Delim(_) => {
+            Token::Delim(d) if *d == u32::from(b'+') => {
                 let next_tok = input.next_including_whitespace()?;
                 if let Token::Ident(value) = next_tok {
                     let value = *value;
                     if strings::eql_case_insensitive_asciii_check_length(value, b"n") {
                         return parse_b(input, 1);
-                    } else if strings::eql_case_insensitive_asciii_check_length(value, b"-n") {
+                    } else if strings::eql_case_insensitive_asciii_check_length(value, b"n-") {
                         return parse_signless_b(input, 1, -1);
                     } else {
                         if let Ok(b) = parse_n_dash_digits(input.arena(), value) {
@@ -4114,9 +4162,9 @@ const MAX_THREE_B: u32 = 0x10000;
 // SAFETY: every call site below feeds either (a) a sub-slice of `self.src`
 // (`&'a [u8]`) or (b) an arena-allocated `CopyOnWriteStr::to_slice()` whose
 // backing storage lives in `self.arena: &'a Bump`. The returned reference
-// is only ever stored in a `Token` reachable through that same `Parser<'a>`.
+// ends up in the AST, import records, symbols and errors; source and arena must outlive them.
 #[inline(always)]
-pub(crate) unsafe fn src_str(s: &[u8]) -> &'static [u8] {
+unsafe fn src_str(s: &[u8]) -> &'static [u8] {
     // SAFETY: caller upholds the invariant documented on this function above.
     unsafe { bun_collections::detach_lifetime(s) }
 }
@@ -5313,7 +5361,14 @@ impl Token {
                 int_value,
                 has_sign,
             } => {
-                serializer::write_numeric(*unit_value * 100.0, *int_value, *has_sign, writer)?;
+                let mut percent = *unit_value * 100.0;
+                let mut int_value = *int_value;
+                // `unit_value` is rounded: where all digits print, the product's fraction is noise.
+                if percent.abs() >= 1e5 {
+                    percent = percent.round();
+                    int_value = Some(percent as i32);
+                }
+                serializer::write_numeric(percent, int_value, *has_sign, writer)?;
                 writer.write_all(b"%")
             }
             Token::Dimension(d) => {
@@ -5639,7 +5694,7 @@ pub mod color {
     /// Returns the named color with the given name.
     /// <https://drafts.csswg.org/css-color-4/#typedef-named-color>
     pub(crate) fn parse_named_color(ident: &[u8]) -> Option<(u8, u8, u8)> {
-        NAMED_COLORS.get(ident).copied()
+        NAMED_COLORS.get_ascii_case_insensitive(ident).copied()
     }
 
     /// Parse a color hash, without the leading '#' character.
@@ -5793,16 +5848,26 @@ pub mod serializer {
             token
                 .to_css_generic(&mut fbs)
                 .map_err(|_| dest.add_fmt_error())?;
-            let s = fbs.get_written();
-            if value < 0.0 {
-                dest.write_str("-")?;
-                dest.write_bytes(strings::trim_leading_pattern2(s, b'-', b'0'))
-            } else {
-                dest.write_bytes(strings::trim_leading_char(s, b'0'))
-            }
+            write_without_leading_zero(fbs.get_written(), dest)
         } else {
             token.to_css_generic(dest).map_err(|_| dest.add_fmt_error())
         }
+    }
+
+    /// `0.5px` -> `.5px`, `-0.5px` -> `-.5px`; `-1e-7px` and `-1px` are written as is.
+    pub(crate) fn write_without_leading_zero(
+        number: &[u8],
+        dest: &mut Printer,
+    ) -> Result<(), PrintErr> {
+        let rest: &[u8] = match number {
+            [b'-', b'0', b'.', ..] => {
+                dest.write_char(b'-')?;
+                &number[2..]
+            }
+            [b'0', b'.', ..] => &number[1..],
+            _ => number,
+        };
+        dest.write_str(rest)
     }
 
     /// Write a CSS identifier, escaping characters as necessary.
@@ -6072,14 +6137,23 @@ pub fn dtoa_short(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Opt
 pub(crate) fn dtoa_short_impl(buf: &mut [u8; 129], value: f32, precision: u8) -> (&[u8], Notation) {
     buf[0] = b'0';
     debug_assert!(value.is_finite());
-    // bun_core::fmt::FormatDouble::dtoa wants a fixed-size [u8; 124] buffer.
-    let buf_len = {
-        let inner: &mut [u8; 124] = (&mut buf[1..125])
-            .try_into()
-            .expect("infallible: size matches");
-        bun_core::fmt::FormatDouble::dtoa(inner, value as f64).len()
-    };
-    restrict_prec(&mut buf[0..buf_len + 1], precision)
+    // Format the f32, not `value as f64`: `restrict_prec` rounds its shortest round-trip digits.
+    let magnitude = value.abs();
+    if magnitude != 0.0 && !(1e-6..1e21).contains(&magnitude) {
+        let len =
+            bun_core::fmt::buf_print_infallible(&mut buf[1..], format_args!("{value:e}")).len();
+        return restrict_prec(&mut buf[..len + 1], precision);
+    }
+    let len = bun_core::fmt::buf_print_infallible(&mut buf[1..], format_args!("{value}")).len();
+    // Rounding only cuts a fraction short. One digit of it stays: the rest is f32 noise by then.
+    let digits = &buf[1..=len];
+    let integer_digits = digits
+        .strip_prefix(b"-")
+        .unwrap_or(digits)
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    restrict_prec(&mut buf[..len + 1], precision.max(integer_digits as u8 + 1))
 }
 
 fn restrict_prec(buf: &mut [u8], prec: u8) -> (&[u8], Notation) {

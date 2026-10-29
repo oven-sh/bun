@@ -1138,7 +1138,10 @@ impl Subprocess<'_> {
             StdioKind::Stdin => {
                 let pending_start = self.take_pending_start_writer();
                 if let Some(writer) = &pending_start {
-                    Writable::buffer_writer_mut(writer).close();
+                    // SAFETY: `pending_start` owns the claimed ref, which keeps the writer
+                    // alive across `close()`: its `on_close_io` empties the stdin slot and
+                    // drops the ref held there. Nothing else borrows the writer here.
+                    unsafe { (*writer.as_ptr()).close() };
                 }
                 if !called {
                     Writable::finalize(self);

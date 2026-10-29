@@ -3,12 +3,12 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { spawned, withoutCoreDump } from "./run-programs";
+import { spawned, withoutCoreDump } from "./harness/commands";
 import { test } from "./supported";
 
 test("the build exits by itself", async () => {
   using folder = tempDir("aot-error-beside-a-pattern-without-code", {});
-  const program = join(import.meta.dir, "programs", "strings", "regexps-from-constant-templates.ts");
+  const program = join(import.meta.dir, "parallel", "strings", "regexps-from-constant-templates.ts");
   const build = await spawned(
     withoutCoreDump([
       bunExe(),

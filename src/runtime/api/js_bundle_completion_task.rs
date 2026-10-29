@@ -1188,6 +1188,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         } else {
             options::CompileMode::None
         };
+        transpiler.options.inline_entrypoint_import_meta_main = config.compile.is_some();
 
         // For compile mode, set the public_path to the target-specific base path
         // This ensures embedded resources like yoga.wasm are correctly found

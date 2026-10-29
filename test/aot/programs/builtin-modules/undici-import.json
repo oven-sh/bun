@@ -1,3 +1,0 @@
-{
-  "skipInShell": "it imports a module of Bun's, which the jsc shell does not have"
-}

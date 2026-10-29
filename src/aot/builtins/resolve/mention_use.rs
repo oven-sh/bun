@@ -83,6 +83,8 @@ impl Resolver<'_, '_> {
             ExprKind::Binary { op: BinOp::In, left, right } if node == right => {
                 MentionUse::SearchedFor(left)
             }
+            // `a && b` answers `a` only where `a` is no object.
+            ExprKind::Binary { op: BinOp::And, left, .. } if node == left => MentionUse::Inspected,
             ExprKind::Binary { op: BinOp::And | BinOp::Or | BinOp::Nullish, .. } => {
                 return ControlFlow::Continue(parent);
             }

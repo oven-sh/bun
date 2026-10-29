@@ -116,7 +116,7 @@ pub(crate) enum ExternalPaths<'a> {
 
 /// Free fn for the same orphan-rule
 /// reason as [`is_node_builtin`]; stays at bundler tier because it needs
-/// `Fs`/`logger`/`NODE_BUILTIN_PATTERNS`.
+/// `logger`/`NODE_BUILTIN_PATTERNS`.
 pub(crate) fn init_external_modules(
     paths: ExternalPaths<'_>,
     externals: &[&[u8]],
@@ -1847,7 +1847,6 @@ impl<'a> BundleOptions<'a> {
     }
 
     pub(crate) fn from_api(
-        fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, crate::Error> {
@@ -1871,7 +1870,7 @@ impl<'a> BundleOptions<'a> {
             target,
             &transform,
             entry_points,
-            ExternalPaths::RelativeTo(fs.top_level_dir()),
+            ExternalPaths::RelativeTo(Fs::FileSystem::get().top_level_dir()),
             log_mut,
         )?;
         let bundler_feature_flags = Runtime::Features::init_bundler_feature_flags(

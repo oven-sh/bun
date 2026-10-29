@@ -2605,7 +2605,7 @@ pub mod bv2_impl {
                 })
                 .map(|((source, loader), _)| (source.path.text, source.contents(), *loader));
             let checked = options::TypeChecked {
-                cwd: self.transpiler.fs().top_level_dir(),
+                cwd: Fs::FileSystem::get().top_level_dir(),
                 tsconfig: self.transpiler.options.tsconfig_override.as_deref(),
                 conditions: &self.transpiler.options.custom_conditions,
                 loaders: &self.transpiler.options.loaders,
@@ -6484,7 +6484,7 @@ pub mod bv2_impl {
             generic_path_with_pretty_initialized(
                 path,
                 target,
-                self.transpiler.fs().top_level_dir(),
+                Fs::FileSystem::get().top_level_dir(),
                 self.graph.heap,
             )
         }
@@ -7236,7 +7236,7 @@ pub mod bv2_impl {
                                 bun_paths::resolve_path::platform::Loose,
                                 false,
                             >(
-                                self.transpiler.fs().top_level_dir(), path.text
+                                Fs::FileSystem::get().top_level_dir(), path.text
                             );
                             // A cached JSON or text module is also an `Asset`, but it has no asset URL.
                             if loader == Loader::Html

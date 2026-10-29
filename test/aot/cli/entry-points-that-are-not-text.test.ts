@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { mkdirSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned } from "../run-programs";
+import { built, slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 const env = { ...bunEnv, NO_COLOR: "1" };
@@ -21,7 +21,7 @@ async function outputOf(folder: string, mode: string[], entryPoints: string[]) {
   return { stdout: run.stdout, exitCode: run.exitCode };
 }
 
-describe("a further entry point that is not text", () => {
+describe.concurrent("a further entry point that is not text", () => {
   test(
     "is embedded as a file when its extension is unknown",
     () =>
@@ -57,7 +57,7 @@ describe("a further entry point that is not text", () => {
   );
 });
 
-describe("text in a file whose name says nothing about it", () => {
+describe.concurrent("text in a file whose name says nothing about it", () => {
   const typed = `const n: number = 41;\nconsole.log("ran", n + 1);\nmodule.exports = { n };\n`;
 
   test(

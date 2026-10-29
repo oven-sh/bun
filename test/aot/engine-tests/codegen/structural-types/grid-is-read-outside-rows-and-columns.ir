@@ -1,0 +1,172 @@
+# A grid is read outside its rows and columns.
+# FORM: AsRead
+# RUN: lower-to-air size f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="grid-is-read-outside-rows-and-columns.ts" displayPath="grid-is-read-outside-rows-and-columns.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=undefined|null|Array<number> elements=[Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}]}, Array{contents=number elements=[Number{value=4}, Number{value=5}, Number{value=6}]}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=1}, Number{value=2}, Number{value=3}, Number{value=4}, Number{value=5}, Number{value=6}]} module=m0
+variable g0 name="cell" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="cellPlusOne" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g2 name="neighbors" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g3 name="total" module=m0 declared={type=f4 flags=[IsFromCompiler]} initialization=Function function=f4 flags=[IsImmutable]
+variable g4 name="flat" module=m0 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d0
+    v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|Array<number>> flags=[OmitsNull, OmitsUndefined]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    Jump -> next b1(v3, v5)
+  b1(v6: number, v7: number):
+    LoopHint
+    v9 = GetModuleVariable variable=g0
+    v10 = Integer integer=2
+    v11 = Mod v7, v10
+    v12 = Integer integer=3
+    v13 = Mod v7, v12
+    v14 = Call v9, -, v1, v11, v13 calleeName="cell"
+    v15 = Convert v14 declared={type=number}
+    v16 = GetModuleVariable variable=g1
+    v17 = Integer integer=1
+    v18 = Integer integer=1
+    v19 = Call v16, -, v1, v17, v18 calleeName="cellPlusOne"
+    v20 = Convert v19 declared={type=number}
+    v21 = Add v15, v20
+    v22 = GetModuleVariable variable=g2
+    v23 = Integer
+    v24 = Integer integer=1
+    v25 = Call v22, -, v1, v23, v24 calleeName="neighbors"
+    v26 = Convert v25 declared={type=number}
+    v27 = Add v21, v26
+    v28 = GetModuleVariable variable=g3
+    v29 = Call v28, -, v1 calleeName="total"
+    v30 = Convert v29 declared={type=number}
+    v31 = Add v27, v30
+    v32 = GetModuleVariable variable=g4
+    v33 = Integer integer=3
+    v34 = Data data=d1
+    v35 = Integer integer=2
+    v36 = Mod v7, v35
+    v37 = Integer integer=3
+    v38 = Mod v7, v37
+    v39 = Call v32, -, v33, v34, v36, v38 calleeName="flat"
+    v40 = Convert v39 declared={type=number}
+    v41 = Add v31, v40
+    v42 = Add v6, v41
+    v43 = Convert v42 declared={type=number}
+    v44 = Increment v7
+    v45 = Convert v44 declared={type=number}
+    Jump -> next b1(v43, v45)
+}
+function f1 name="cell" module=m0 position=1182 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<number>> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="cellPlusOne" module=m0 position=1278 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<number>> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="neighbors" module=m0 position=1385 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<number>> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|Array<number>>, v1: number, v2: number):
+    Jump -> next b1()
+  b1():
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    v5 = Integer integer=-1
+    v6 = Convert v5 declared={type=number}
+    Jump -> next b2(v4, v6)
+  b2(v7: number, v8: number):
+    LoopHint
+    v10 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    v11 = Integer integer=1
+    v12 = LessEq v10, v11
+    Branch v12 -> taken b3(| 0), notTaken b19(| 0)
+  b3(v13):
+    Jump -> next b4()
+  b4():
+    v14 = Integer integer=-1
+    v15 = Convert v14 declared={type=number}
+    Jump -> next b5(v7, v15)
+  b5(v16: number, v17: number):
+    LoopHint
+    v19 = Convert v17 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer integer=1
+    v21 = LessEq v19, v20
+    Branch v21 -> taken b6(| 0), notTaken b16(| 0)
+  b6(v22):
+    Jump -> next b7()
+  b7():
+    v23 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b8(v23)
+  b8(v24):
+    Jump -> next b9(v24, v22)
+  b9(v25: number, v26: number):
+    v27 = Convert v25 declared={type=i32 flags=[IsExpected]}
+    v28 = Add v1, v27
+    v29 = ElemGet v0, v28
+    v30 = Convert v29 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    Jump -> next b10(v30)
+  b10(v31):
+    v32 = Convert v26 declared={type=i32 flags=[IsExpected]}
+    v33 = Add v2, v32
+    v34 = ElemGet v31, v33
+    v35 = Convert v34 declared={type=number} illTypedCause=ContainerWriterUnseen
+    Jump -> next b11(v35, v32)
+  b11(v36, v37: number):
+    Jump -> next b12(v36)
+  b12(v38):
+    Jump -> next b13(v38)
+  b13(v39):
+    v40 = Add v16, v39
+    v41 = Convert v40 declared={type=number}
+    Jump -> next b14(v37, v41)
+  b14(v42: number, v43: number):
+    Jump -> next b15()
+  b15():
+    v44 = Increment v42
+    v45 = Convert v44 declared={type=number}
+    Jump -> next b5(v43, v45)
+  b16(v46):
+    Jump -> next b17()
+  b17():
+    Jump -> next b18()
+  b18():
+    v47 = Increment v13
+    v48 = Convert v47 declared={type=number}
+    Jump -> next b2(v16, v48)
+  b19(v49):
+    Jump -> next b20()
+  b20():
+    v50 = Convert v7 declared={type=number}
+    Return v50
+}
+function f4 name="total" module=m0 position=1759 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|Array<number>> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|Array<number>>):
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    v3 = Integer
+    v4 = Convert v3 declared={type=number}
+    LoopHint
+    v6 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    v7 = Integer
+    v8 = Convert v7 declared={type=number}
+    Jump -> next b1(v2, v8)
+  b1(v9: number, v10: number):
+    LoopHint
+    v12 = Convert v10 declared={type=i32 flags=[IsExpected]}
+    v13 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    v14 = ElemGet v0, v13
+    v15 = Convert v14 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v16 = Convert v12 declared={type=i32 flags=[IsExpected]}
+    v17 = ElemGet v15, v16
+    v18 = Convert v17 declared={type=number} illTypedCause=ContainerWriterUnseen
+    v19 = Add v9, v18
+    v20 = Convert v19 declared={type=number}
+    v21 = Increment v16
+    v22 = Convert v21 declared={type=number}
+    Jump -> next b1(v20, v22)
+}
+function f5 name="flat" module=m0 position=2322 flags=[IsChecked, HasExplicitName] length=4 thisType={type=anything} parameters=[{type=number}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: neighbors
+# CHECK-LABEL: function {{*}}name="neighbors"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 34, patchpoints: 2, rare instructions: 59, polls: 1
+# CHECK-NEXT: end of function f3

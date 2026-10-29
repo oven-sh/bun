@@ -2536,6 +2536,39 @@ impl<'a> Source<'a> {
         }
         None
     }
+
+    /// [`Self::line_col_to_byte_offset`] for a file that JSC runs as Latin-1, which is every `// @bun` file: a
+    /// column is one byte, and a line ends at LF, CR or CRLF only.
+    pub fn line_col_to_byte_offset_latin1(
+        source_contents: &[u8],
+        start_line: u64,
+        start_col: u64,
+        line: u64,
+        col: u64,
+    ) -> Option<usize> {
+        use bun_core::strings;
+        const LINE_ENDS: &[u8] = b"\r\n";
+
+        let mut offset: usize = 0;
+        let mut column_number: u64 = start_col;
+        for _ in start_line..line {
+            let rest = &source_contents[offset..];
+            let line_end = strings::index_of_any(rest, LINE_ENDS)?;
+            let is_crlf = rest[line_end..].starts_with(b"\r\n");
+            offset += line_end + if is_crlf { 2 } else { 1 };
+            column_number = 1;
+        }
+        if line < start_line || col < column_number {
+            return None;
+        }
+
+        let columns = usize::try_from(col - column_number).ok()?;
+        let in_line = source_contents[offset..].get(..columns)?;
+        if strings::index_of_any(in_line, LINE_ENDS).is_some() {
+            return None;
+        }
+        Some(offset + columns)
+    }
 }
 
 #[inline]

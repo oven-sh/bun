@@ -352,6 +352,23 @@ impl SavedSourceMap {
             .map
     }
 
+    /// Whether the entry of `path` is the map that Bun's transpiler printed for the module, which leads to the text
+    /// the module was transpiled from. False for a module that runs as it was written (`// @bun`): its entry, if it
+    /// has one, is the map the file came with, which leads to other files. Loads no map.
+    pub fn has_transpiler_map(&mut self, path: &[u8]) -> bool {
+        self.lock();
+        let found = self.map.get(&hash(path)).is_some_and(|&ptr| {
+            let value = Value::from(Some(ptr));
+            value.get::<InternalSourceMap>().is_some()
+                || value.get::<ParsedSourceMap>().is_some_and(|parsed| {
+                    // SAFETY: `parsed` was stored by us and is live while the table is locked.
+                    unsafe { (*parsed).is_from_runtime_transpiler() }
+                })
+        });
+        self.unlock();
+        found
+    }
+
     pub(crate) fn resolve_mapping(
         &mut self,
         path: &[u8],

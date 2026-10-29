@@ -72,9 +72,21 @@ impl Snapshots {
 
 // hoisted out of `impl Snapshots` — inherent associated types are unstable.
 
+/// What `line` and `col` of an [`InlineSnapshotToWrite`] are the position of.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InlineSnapshotAnchor {
+    /// The start of the matcher name, where the source map of Bun's transpiler puts the call. A column is a UTF-16
+    /// code unit of the test file.
+    NameStart,
+    /// The end of the callee, where JSC puts the call, in a test file that runs as the bytes on disk (`// @bun`). A
+    /// column is a byte.
+    CalleeEnd,
+}
+
 pub(crate) struct InlineSnapshotToWrite {
     pub(crate) line: c_ulong,
     pub(crate) col: c_ulong,
+    pub(crate) anchor: InlineSnapshotAnchor,
     /// owned (was: owned by Snapshots.allocator)
     pub value: Box<[u8]>,
     pub(crate) has_matchers: bool,
@@ -477,9 +489,15 @@ impl Snapshots {
                 }
 
                 bun_core::scoped_log!(inline_snapshot, "Finding byte for {}/{}", ils.line, ils.col);
+                let line_col_to_byte_offset = match ils.anchor {
+                    InlineSnapshotAnchor::NameStart => bun_ast::Source::line_col_to_byte_offset,
+                    InlineSnapshotAnchor::CalleeEnd => {
+                        bun_ast::Source::line_col_to_byte_offset_latin1
+                    }
+                };
                 // c_ulong is u32 on Windows (LLP64); widen explicitly.
                 #[allow(clippy::useless_conversion)]
-                let Some(byte_offset_add) = bun_ast::Source::line_col_to_byte_offset(
+                let Some(byte_offset_add) = line_col_to_byte_offset(
                     &file_text[last_byte..],
                     u64::from(last_line),
                     u64::from(last_col),
@@ -511,7 +529,20 @@ impl Snapshots {
 
                 let (final_start, final_end, needs_pre_comma): (i32, i32, bool) = 'blk: {
                     let fn_name = ils.kind;
-                    if !strings::starts_with(&file_text[next_start..], fn_name) {
+                    let name_is_here = match ils.anchor {
+                        InlineSnapshotAnchor::NameStart => {
+                            strings::starts_with(&file_text[next_start..], fn_name)
+                        }
+                        // The callee has to end with the whole name: `.notToMatchInlineSnapshot` is another name.
+                        InlineSnapshotAnchor::CalleeEnd => file_text[..next_start]
+                            .strip_suffix(fn_name)
+                            .is_some_and(|before| {
+                                before.last().is_none_or(|&byte| {
+                                    !js_lexer::is_identifier_continue(i32::from(byte))
+                                })
+                            }),
+                    };
+                    if !name_is_here {
                         log.add_error_fmt(
                             &source,
                             bun_ast::Loc {
@@ -524,7 +555,9 @@ impl Snapshots {
                         );
                         continue 'ils;
                     }
-                    next_start += fn_name.len();
+                    if ils.anchor == InlineSnapshotAnchor::NameStart {
+                        next_start += fn_name.len();
+                    }
 
                     // `Lexer.initWithoutReading` and `TSXParser.init` both need the same
                     // `Log`, but Rust forbids two live `&'a mut Log`;
@@ -772,7 +805,8 @@ impl Snapshots {
                     re_indented,
                     &mut result_text,
                     b'`',
-                    false,
+                    // The next run reads this file as Latin-1 too.
+                    ils.anchor == InlineSnapshotAnchor::CalleeEnd,
                     false,
                     strings::Encoding::Utf8,
                 )?;

@@ -10,6 +10,7 @@ use bun_jsc::{
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
+use bun_jsc::call_frame::CallerText;
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
@@ -19,6 +20,7 @@ use super::bun_test::{self};
 use super::diff_format::DiffFormatter;
 use super::execution::ExpectAssertions;
 use super::jest::Jest;
+use super::snapshot::InlineSnapshotAnchor;
 use super::expect::{JSValueTestExt, FormatterTestExt, make_formatter};
 use crate::expect_throw as throw;
 use crate::generated_bindgen::expect::{
@@ -1061,28 +1063,40 @@ impl Expect {
             let buntest = buntest_strong.get();
 
             // 1. find the src loc of the snapshot
-            let srcloc = global_this.get_caller_src_loc();
             let file_id = buntest.file_id;
             // MultiArrayList::get requires MultiArrayElement (derive pending);
             // use the column accessor which already compiles in jest.rs.
             let fget_source_path_text = runner.files.items_source()[file_id as usize].path.text;
 
-            if !srcloc.str.eql_utf8(fget_source_path_text) {
-                let signature = Self::get_signature(fn_name, "", false);
-                return throw!(
-                    this, global_this, signature,
-                    "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
-                    bstr::BStr::new(fget_source_path_text),
-                    fn_name,
-                    // `{:?}` on BStr renders a quoted, escaped string
-                    bstr::BStr::new(srcloc.str.to_utf8().slice()),
-                );
-            }
+            // A test file that Bun did not transpile (`// @bun`) runs as the bytes on disk, so where JSC puts the call
+            // is a position in the file. The source map such a file came with leads to the files it was built from.
+            let raw = global_this.get_caller_src_loc_raw();
+            let runs_as_written = raw.text == CallerText::Stored
+                && raw.str.eql_utf8(fget_source_path_text)
+                && !global_this.bun_vm().as_mut().source_mappings.has_transpiler_map(fget_source_path_text);
+            let (line, col, anchor) = if runs_as_written {
+                (raw.line, raw.column, InlineSnapshotAnchor::CalleeEnd)
+            } else {
+                let srcloc = raw.remap(global_this);
+                if !srcloc.str.eql_utf8(fget_source_path_text) {
+                    let signature = Self::get_signature(fn_name, "", false);
+                    return throw!(
+                        this, global_this, signature,
+                        "\n\n<b>Matcher error<r>: Inline snapshot matchers must be called from the test file:\n  Expected to be called from file: <green>{:?}<r>\n  {} called from file: <red>{:?}<r>\n",
+                        bstr::BStr::new(fget_source_path_text),
+                        fn_name,
+                        // `{:?}` on BStr renders a quoted, escaped string
+                        bstr::BStr::new(srcloc.str.to_utf8().slice()),
+                    );
+                }
+                (srcloc.line, srcloc.column, InlineSnapshotAnchor::NameStart)
+            };
 
             // 2. save to write later
             runner.snapshots.add_inline_snapshot_to_write(file_id, super::snapshot::InlineSnapshotToWrite {
-                line: core::ffi::c_ulong::from(srcloc.line),
-                col: core::ffi::c_ulong::from(srcloc.column),
+                line: core::ffi::c_ulong::from(line),
+                col: core::ffi::c_ulong::from(col),
+                anchor,
                 value: core::mem::take(&mut pretty_value).into_boxed_slice(),
                 has_matchers: property_matchers.is_some(),
                 is_added: result.is_none(),

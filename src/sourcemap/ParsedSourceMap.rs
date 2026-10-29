@@ -234,6 +234,12 @@ impl ParsedSourceMap {
         }
     }
 
+    /// Whether Bun's transpiler printed this map for a module it transpiled at run time. Its original positions are
+    /// positions in the text that module was transpiled from.
+    pub fn is_from_runtime_transpiler(&self) -> bool {
+        self.internal.is_some() && !self.is_standalone_module_graph
+    }
+
     pub fn is_external(&self) -> bool {
         !self.external_source_names.is_empty()
     }

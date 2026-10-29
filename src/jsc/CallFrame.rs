@@ -38,6 +38,45 @@ pub struct CallerSrcLoc {
     pub column: c_uint,
 }
 
+/// Where JavaScript called the host function that is running, in the text that JSC runs. JSC reports a call at the
+/// end of its callee: `a.b(c)` is at the column after `b`.
+pub struct RawCallerSrcLoc {
+    pub str: bun_core::String,
+    /// One-based.
+    pub line: c_uint,
+    /// One-based. A `// @bun` module enters JSC as Latin-1, so there a column is a byte of the file.
+    pub column: c_uint,
+    pub text: CallerText,
+}
+
+impl RawCallerSrcLoc {
+    /// Where a stack trace shows this call: through the source map of its module, if that has one.
+    pub fn remap(&self, global: &JSGlobalObject) -> CallerSrcLoc {
+        let mut str = bun_core::String::default();
+        let mut line: c_uint = 0;
+        let mut column: c_uint = 0;
+        Bun__remapCallerSrcLoc(
+            global,
+            &self.str,
+            self.line,
+            self.column,
+            &mut str,
+            &mut line,
+            &mut column,
+        );
+        CallerSrcLoc { str, line, column }
+    }
+}
+
+/// Where the text of the caller's module came from (`JSC::SourceProvenance`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CallerText {
+    /// Read from where the program is stored: the file of the module, transpiled or as it is.
+    Stored,
+    /// A JavaScript value (what a plugin returned for the module, `eval`), or not known.
+    Other,
+}
+
 impl JSGlobalObject {
     /// [`CallFrame::get_caller_src_loc`] for the frame of the host function that is running.
     pub fn get_caller_src_loc(&self) -> CallerSrcLoc {
@@ -46,6 +85,27 @@ impl JSGlobalObject {
         let mut column: c_uint = 0;
         JSC__JSGlobalObject__getCallerSrcLoc(self, &mut str, &mut line, &mut column);
         CallerSrcLoc { str, line, column }
+    }
+
+    /// [`Self::get_caller_src_loc`] with no source map applied: [`RawCallerSrcLoc::remap`] gives that one. The source
+    /// map a bundle came with puts a call in one of the files the bundle was built from.
+    pub fn get_caller_src_loc_raw(&self) -> RawCallerSrcLoc {
+        let mut str = bun_core::String::default();
+        let mut line: c_uint = 0;
+        let mut column: c_uint = 0;
+        let mut is_static = false;
+        Bun__getCallerSrcLocRaw(self, &mut str, &mut line, &mut column, &mut is_static);
+        let text = if is_static {
+            CallerText::Stored
+        } else {
+            CallerText::Other
+        };
+        RawCallerSrcLoc {
+            str,
+            line,
+            column,
+            text,
+        }
     }
 }
 
@@ -113,6 +173,22 @@ unsafe extern "C" {
     );
     safe fn JSC__JSGlobalObject__getCallerSrcLoc(
         global: &JSGlobalObject,
+        out_str: &mut bun_core::String,
+        out_line: &mut c_uint,
+        out_column: &mut c_uint,
+    );
+    safe fn Bun__getCallerSrcLocRaw(
+        global: &JSGlobalObject,
+        out_str: &mut bun_core::String,
+        out_line: &mut c_uint,
+        out_column: &mut c_uint,
+        out_is_static: &mut bool,
+    );
+    safe fn Bun__remapCallerSrcLoc(
+        global: &JSGlobalObject,
+        str: &bun_core::String,
+        line: c_uint,
+        column: c_uint,
         out_str: &mut bun_core::String,
         out_line: &mut c_uint,
         out_column: &mut c_uint,

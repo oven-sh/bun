@@ -200,6 +200,7 @@
 
 #include "ErrorStackFrame.h"
 #include "AsyncStackTrace.h"
+#include "CallerLocation.h"
 #include "ErrorStackTrace.h"
 #include "ObjectBindings.h"
 #include "NodeVM.h"
@@ -6787,46 +6788,12 @@ CPP_DECL bool Bun__CallFrame__isFromBunMain(JSC::CallFrame* callFrame, JSC::VM* 
 
 CPP_DECL void Bun__CallFrame__getCallerSrcLoc(JSC::CallFrame* callFrame, JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)
 {
-    auto& vm = JSC::getVM(globalObject);
-    JSC::LineColumn lineColumn;
-    String sourceURL;
+    auto location = Bun::callerLocation(JSC::getVM(globalObject), callFrame);
+    Bun::remapCallerLocation(globalObject, location);
 
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (Zig::isImplementationVisibilityPrivate(visitor))
-            return WTF::IterationStatus::Continue;
-
-        if (visitor->hasLineAndColumnInfo()) {
-
-            lineColumn = visitor->computeLineAndColumn();
-
-            sourceURL = Zig::sourceURL(visitor);
-
-            return WTF::IterationStatus::Done;
-        }
-
-        return WTF::IterationStatus::Continue;
-    });
-
-    if (!sourceURL.isEmpty() and lineColumn.line > 0) {
-        OrdinalNumber originalLine = OrdinalNumber::fromOneBasedInt(lineColumn.line);
-        OrdinalNumber originalColumn = OrdinalNumber::fromOneBasedInt(lineColumn.column);
-
-        Bun::OwnedZigStackFrames remappedFrames(1);
-        ZigStackFrame& remappedFrame = remappedFrames[0];
-        remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
-        remappedFrame.position.column_zero_based = originalColumn.zeroBasedInt();
-        remappedFrame.source_url = Bun::toStringRef(sourceURL);
-
-        remappedFrames.remap(Bun::vm(globalObject));
-
-        sourceURL = remappedFrame.source_url.toWTFString();
-        lineColumn.line = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.line_zero_based).oneBasedInt();
-        lineColumn.column = OrdinalNumber::fromZeroBasedInt(remappedFrame.position.column_zero_based).oneBasedInt();
-    }
-
-    *outSourceURL = Bun::toStringRef(sourceURL);
-    *outLine = lineColumn.line;
-    *outColumn = lineColumn.column;
+    *outSourceURL = Bun::toStringRef(location.sourceURL);
+    *outLine = location.lineColumn.line;
+    *outColumn = location.lineColumn.column;
 }
 
 CPP_DECL void JSC__JSGlobalObject__getCallerSrcLoc(JSC::JSGlobalObject* globalObject, BunString* outSourceURL, unsigned int* outLine, unsigned int* outColumn)

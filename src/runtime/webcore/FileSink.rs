@@ -1333,8 +1333,7 @@ impl FileSink {
                     // JSPromise (may GC) but invokes no FileSink host-fn.
                     let promise = unsafe { self.pending.get_mut() }.promise(cx);
                     self.run_pending_later();
-                    // SAFETY: `WritablePending::promise()` never returns null.
-                    return sys::Result::Ok(unsafe { (*promise).to_js() });
+                    return sys::Result::Ok(promise);
                 }
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }
@@ -1364,8 +1363,7 @@ impl FileSink {
                     let promise_result = unsafe { self.pending.get_mut() }.promise(cx);
                     self.writer.with_mut(|w| w.end());
                     self.run_pending_later();
-                    // SAFETY: `WritablePending::promise()` never returns null.
-                    return sys::Result::Ok(unsafe { (*promise_result).to_js() });
+                    return sys::Result::Ok(promise_result);
                 }
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Err(err)
@@ -1389,10 +1387,7 @@ impl FileSink {
 
                 // SAFETY: JsCell — `WritablePending::promise` allocates a JSPromise
                 // (may GC) but does not invoke any FileSink host-fn synchronously.
-                let promise_result = unsafe { self.pending.get_mut() }.promise(cx);
-
-                // SAFETY: `WritablePending::promise()` never returns null.
-                sys::Result::Ok(unsafe { (*promise_result).to_js() })
+                sys::Result::Ok(unsafe { self.pending.get_mut() }.promise(cx))
             }
             WriteResult::Wrote(written) => {
                 self.writer.with_mut(|w| w.end());
@@ -1400,8 +1395,7 @@ impl FileSink {
                     // SAFETY: JsCell — see the `Done` arm above.
                     let promise = unsafe { self.pending.get_mut() }.promise(cx);
                     self.run_pending_later();
-                    // SAFETY: `WritablePending::promise()` never returns null.
-                    return sys::Result::Ok(unsafe { (*promise).to_js() });
+                    return sys::Result::Ok(promise);
                 }
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }

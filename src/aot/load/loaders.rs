@@ -97,19 +97,6 @@ pub(crate) fn script_kind_of(loader: Loader) -> Option<ScriptKind> {
     }
 }
 
-pub(crate) fn reads_raw_bytes(loader: Loader) -> bool {
-    matches!(
-        loader,
-        Loader::File
-            | Loader::Wasm
-            | Loader::Napi
-            | Loader::Base64
-            | Loader::Dataurl
-            | Loader::Sqlite
-            | Loader::SqliteEmbedded
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,13 +228,13 @@ mod tests {
     }
 
     #[test]
-    fn no_script_loader_reads_raw_bytes() {
-        assert!(reads_raw_bytes(Loader::Wasm));
-        assert!(reads_raw_bytes(Loader::SqliteEmbedded));
-        assert!(!reads_raw_bytes(Loader::Text));
-        assert!(!reads_raw_bytes(Loader::Json));
+    fn no_script_loader_is_binary() {
+        assert!(Loader::Wasm.is_binary());
+        assert!(Loader::SqliteEmbedded.is_binary());
+        assert!(!Loader::Text.is_binary());
+        assert!(!Loader::Json.is_binary());
         for &loader in ALL_LOADERS {
-            assert!(script_kind_of(loader).is_none() || !reads_raw_bytes(loader));
+            assert!(script_kind_of(loader).is_none() || !loader.is_binary());
         }
     }
 

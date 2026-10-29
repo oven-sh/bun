@@ -2187,10 +2187,6 @@ pub mod cache {
         /// drops instead of landing in the worker thread's default mimalloc
         /// heap (which is never destroyed). `None` keeps the global-heap
         /// `Contents::Owned(Vec<u8>)` path.
-        ///
-        /// `bom_handling`: text that is about to be parsed wants
-        /// [`fs_mod::BomHandling::Convert`]; files emitted byte-for-byte (the
-        /// bundler's binary loaders) must pass [`fs_mod::BomHandling::Keep`].
         pub fn read_file_with_allocator(
             &mut self,
             path: &[u8],

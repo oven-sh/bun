@@ -26,12 +26,9 @@ pub use bun_core::strings::BOM;
 /// What a file read does with a leading byte-order mark.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum BomHandling {
-    /// Strip a UTF-8 BOM and transcode UTF-16LE input to UTF-8: the bytes
-    /// are about to be parsed as text.
+    /// Strip a UTF-8 BOM, transcode UTF-16LE to UTF-8 (text about to be parsed).
     Convert,
-    /// Return the bytes exactly as they are on disk: the file is emitted
-    /// (or hashed / encoded) byte-for-byte, so a prefix that merely looks
-    /// like a BOM must survive.
+    /// Return the bytes as they are on disk (`Loader::is_binary`).
     Keep,
 }
 
@@ -813,9 +810,8 @@ fn arena_alloc_uninit_bytes(arena: &bun_alloc::Arena, len: usize) -> &mut [u8] {
     unsafe { core::slice::from_raw_parts_mut(slot.as_mut_ptr().cast::<u8>(), len) }
 }
 
-/// Strip BOM in-place (UTF-8) or via a fresh arena copy (UTF-16) when
-/// `bom_handling` asks for it, write the trailing NUL, and return
-/// `(ptr, len)`. `buf.len() >= total + 1`.
+/// Apply `bom_handling` (UTF-8 in place, UTF-16 via a fresh arena copy),
+/// write the trailing NUL, and return `(ptr, len)`. `buf.len() >= total + 1`.
 #[inline]
 fn finish_arena_contents(
     arena: &bun_alloc::Arena,

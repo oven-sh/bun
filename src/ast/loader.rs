@@ -126,10 +126,8 @@ impl Loader {
         )
     }
 
-    /// Loaders that pass the file's bytes through as-is (copied to the output
-    /// directory, content-hashed, base64/data-URL encoded) instead of parsing
-    /// them as text. Reading a file for one of these must not rewrite a
-    /// BOM-shaped prefix; see `bun_resolver::fs::BomHandling`.
+    /// The file's bytes are emitted as they are (copied, hashed, or
+    /// encoded), never parsed as text.
     pub fn is_binary(self) -> bool {
         match self {
             Loader::File

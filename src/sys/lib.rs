@@ -1378,6 +1378,7 @@ impl Tag {
     pub(crate) const fgetxattr: Tag = Tag(111);
     pub const epoll_create1: Tag = Tag(112);
     pub const pthread_create: Tag = Tag(113);
+    pub const _open_osfhandle: Tag = Tag(114);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1385,7 +1386,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 114] = [
+        const NAMES: [&str; 115] = [
             "TODO",
             "dup",
             "access",
@@ -1501,6 +1502,7 @@ impl Tag {
             "fgetxattr",
             "epoll_create1",
             "pthread_create",
+            "_open_osfhandle",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }

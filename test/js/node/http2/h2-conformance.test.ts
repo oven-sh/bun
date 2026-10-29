@@ -3314,7 +3314,8 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
-  test.each([0, 64, 100])("requests keep working with headerTableSize: %d on the server", async headerTableSize => {
+  // The two entries of a request have 57 and 50 bytes: none fits, each evicts the other, both stay.
+  test.each([0, 64, 128])("requests keep working with headerTableSize: %d on the server", async headerTableSize => {
     const { srv, seen, port } = await listen({ settings: { headerTableSize } });
     const client = http2.connect(`http://127.0.0.1:${port}`);
     client.on("error", () => {});
@@ -4313,7 +4314,8 @@ describe("HPACK (RFC 7541)", () => {
           () => '\x7f~|{}^`<>\\"#$%&',
           () => "caf\xe9 \xff\x80",
         ][next(8)]();
-      for (let i = 0; i < 40; i++) {
+      // The table is full after about half of them, so the rest evict entries.
+      for (let i = 0; i < 80; i++) {
         const headers: http2.OutgoingHttpHeaders = {
           ":authority": "example.com",
           ":path": ["/", "/index.html", `/item/${next(5)}`][next(3)],

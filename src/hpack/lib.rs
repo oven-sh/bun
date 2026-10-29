@@ -1402,10 +1402,11 @@ mod tests {
     /// One decoder called itself for each.
     #[test]
     fn many_size_updates_in_a_row() {
-        let mut decoder = Decoder::new();
-        assert!(decode(&mut decoder, &hex("4003782d610131")).is_ok());
-        let block = [hex("3fe11f20").repeat(2000), hex("3f05 be")].concat();
-        assert_eq!(decode(&mut decoder, &block), Err(Error::Invalid));
-        assert_eq!(decoder.table_size(), 0);
+        let (mut decoder, insert) = (Decoder::new(), hex("4003782d610131"));
+        assert!(decode(&mut decoder, &insert).is_ok());
+        let block = [hex("203fe11f").repeat(2000), insert, hex("be")].concat();
+        assert_eq!(decode(&mut decoder, &block).unwrap().len(), 2);
+        // The entry from before them is gone.
+        assert_eq!(decoder.table_size(), 36);
     }
 }

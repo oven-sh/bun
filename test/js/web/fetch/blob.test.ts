@@ -1,6 +1,6 @@
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, expectRssDeltaBelow, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
@@ -442,6 +442,34 @@ test("Bun.file(path, {type}).text() does not leak the duped content_type", async
   const { deltaMiB } = JSON.parse(stdout);
   expect(deltaMiB).toBeLessThan(isASAN ? 400 : 40);
   expect(exitCode).toBe(0);
+});
+
+test("Bun.file(path, {type}).formData() frees the bytes it read", async () => {
+  // The parser skips what precedes the first boundary, so the read buffer is the only large allocation.
+  using dir = tempDir("blob-form-data-read", {
+    "body.txt": Buffer.concat([
+      Buffer.alloc(4 * 1024 * 1024, "a"),
+      Buffer.from('\r\n--bun\r\nContent-Disposition: form-data; name="key"\r\n\r\nvalue\r\n--bun--\r\n'),
+    ]),
+  });
+  const code = /* js */ `
+    const file = Bun.file(${JSON.stringify(path.join(String(dir), "body.txt"))}, {
+      type: "multipart/form-data; boundary=bun",
+    });
+    async function run(calls) {
+      for (let i = 0; i < calls; i++) {
+        const form = await file.formData();
+        if (form.get("key") !== "value") throw new Error("wrong entries");
+      }
+      Bun.gc(true);
+      return process.memoryUsage.rss();
+    }
+    const before = await run(8);
+    const after = await run(32);
+    console.log(JSON.stringify({ deltaMiB: (after - before) / 1024 / 1024 }));
+  `;
+  // Unfixed: 128 MiB, the 32 reads of 4 MiB.
+  await expectRssDeltaBelow(["--smol", "-e", code], { release: 32, debug: 64 });
 });
 
 test("reading a file-backed Blob does not free the source's content type", async () => {

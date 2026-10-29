@@ -1,23 +1,20 @@
 //! Implements [`Host`], the parser interface that the compiler needs, on top of a [`Converted`] function.
 
 use crate::convert::Converted;
-use bun_alloc::Arena;
 use bun_ast::{Expr, ImportKind, ImportRecord, Loc, Ref, Scope, Symbol};
 use bun_react_compiler::{Host, JsxImportKind};
 
 pub(crate) struct LintHost<'c> {
     converted: &'c Converted,
-    arena: &'c Arena,
     source: &'c [u8],
     /// Always empty. [`Host::is_module_level`] tells the compiler what's bound outside the function.
     module_scope: Scope,
 }
 
 impl<'c> LintHost<'c> {
-    pub(crate) fn new(converted: &'c Converted, arena: &'c Arena, source: &'c [u8]) -> Self {
+    pub(crate) fn new(converted: &'c Converted, source: &'c [u8]) -> Self {
         LintHost {
             converted,
-            arena,
             source,
             module_scope: Scope::EMPTY,
         }
@@ -49,9 +46,6 @@ impl Host for LintHost<'_> {
     }
     fn source(&self) -> &[u8] {
         self.source
-    }
-    fn arena(&self) -> &Arena {
-        self.arena
     }
     fn ref_name(&self, ref_: Ref) -> &[u8] {
         let symbol = self.converted.symbols.get(ref_.inner_index() as usize);

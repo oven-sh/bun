@@ -373,7 +373,7 @@ pub struct VirtualMachine {
     pub worker: Option<*const c_void>,
     /// Workers created on this thread and not yet released by it. Parent-thread
     /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
-    /// `join_child_workers` drains at exit.
+    /// `teardown` takes the rest for `join_child_workers`.
     pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
     pub(crate) jobs: crate::JsCell<crate::job::JobList>,
@@ -2552,7 +2552,7 @@ impl VirtualMachine {
         // SAFETY: fn contract (statement-scoped exclusive access).
         unsafe {
             (*this).gc_controller.deinit();
-            crate::web_worker::join_child_workers(&mut *this);
+            crate::web_worker::join_child_workers(core::mem::take(&mut (*this).child_workers));
         }
         // Children have closed their own; now this VM's sqlite connections
         // checkpoint and close, before finalizers could.

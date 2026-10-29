@@ -1,22 +1,21 @@
 ### Problem
-- `node:quic` drops a header block that it sends while lsquic still holds part of the stream's previous one. `sendHeaders()` returns `false`, and a body or `end()` after it resets the stream (`H3_INTERNAL_ERROR`). lsquic logs `cannot send headers while previous header block is pending`.
+- `node:quic` drops a header block (`1xx`, response, trailers) that it sends while lsquic still holds part of the stream's previous one. `sendHeaders()` returns `false`, and a later body or `end()` resets the stream (`H3_INTERNAL_ERROR`).
 - 24 requests answered with a 6 KB `103`, then a `200`, lose 15 responses.
-- Cause: lsquic holds one unsent block per stream and answers `EAGAIN`, which `put_header_block` (`src/runtime/node/quic/stream.rs`) takes for a refusal.
+- Cause: lsquic holds one unsent block per stream and answers `EAGAIN`. `put_header_block` (`src/runtime/node/quic/stream.rs`) takes that for a refusal.
 
 ### Fix
-- `put_header_block` returns `Sent`, `Retry` or `Refused`. A `Retry` block waits in the stream's queue for the next write event. `sendHeaders()` returns `true`, as in Node.
-- `destroy()` writes no body while lsquic can still hold part of a queued block (`may_hold_queued_block`). lsquic 4.9.4 would put it into that block's frame.
-- A block that ends the write side drops the body that is not out yet.
-- Verified: `test/js/node/quic/quic-stream.test.ts`, 17 new cases, 14 fail without the fix. Self-reviewed: __RAISED__ concerns raised, __ADDRESSED__ addressed.
+- A block that gets `EAGAIN` waits in the stream's queue for the next write event (`SendHeaders::Retry`). `sendHeaders()` returns `true`, as in Node.
+- `destroy()` writes no body while lsquic can hold part of a queued block (`may_hold_queued_block`). lsquic 4.9.4 would put it into that block's frame. A block that ends the write side drops the unsent body.
+- Verified: `test/js/node/quic/quic-stream.test.ts` (17 new cases, 14 fail without the fix), `test/js/node/quic/`, `serve-http3.test.ts`, `fetch-http3-client.test.ts`.
+- Self-reviewed: __RAISED__ concerns raised, __ADDRESSED__ addressed. Not taken (Notes): an lsquic accessor for the flag, four changes outside this bug.
 
 ### Background
-- A header block is one HEADERS frame (`1xx`, response, trailers).
-- lsquic holds what the congestion window (about 47 KB at first) has no room for.
+- lsquic, the vendored QUIC library, holds what the congestion window (about 47 KB at first) has no room for.
 - `Bun.serve` already resends such a block (`Http3Response::sendBufferedHeaders`). Considered a queue inside lsquic: a permanent patch against its contract.
 
 ### Downsides
 - `QuicStream`: 256 to 264 bytes. `.text`: +__TEXT__ bytes. Each `node:quic` header block: +14 instructions.
-- Not fixed: a body behind a later header block that lsquic got directly and still holds (`QPACK decompression error` after `destroy()`). lsquic 4.11.0 has the check.
+- Not fixed: a body behind a later block that lsquic got directly and still holds (`QPACK decompression error` after `destroy()`). lsquic 4.11.0 has the check.
 
 <details><summary>Notes</summary>
 
@@ -24,7 +23,7 @@
 
 **Who meets this.** An HTTP/3 server on `node:quic` that sends a `1xx` and the response in one turn while lsquic cannot send all of the `1xx`: a burst of streams on one connection, one large block, or a small stream window. No user reported it. It was found while testing #46528.
 
-**What the loss looks like.** Released builds (1.4.3) drop the block with no error: for the 24 requests above the client gets 24 `103`s, 9 `200`s and 24 bodies. The reset with `H3_INTERNAL_ERROR` is the rule of #46528 for a body behind a refused block.
+**What the loss looks like.** Released builds (1.4.3) drop the block with no error: for the 24 requests above the client gets 24 `103`s, 9 `200`s and 24 bodies. The reset with `H3_INTERNAL_ERROR` is the rule of #46528 for a body behind a refused block. In a debug build lsquic logs `cannot send headers while previous header block is pending`.
 
 **Counts.** Debug builds, Linux x64. `onheaders` answers each request with a `103` that has one `link` field, then a `200`.
 
@@ -56,13 +55,20 @@
 
 **Tests.** Of the 17 new cases, 14 fail on the base. The 3 others keep behavior that the base has: no block after a terminal block, a request that opens behind an upload is not reset by `destroy()`, and a burst behind each stream's flow-control window. Each clause of the change has a case that fails without it (checked with a build that switches one clause off at a time). Also run: `test/js/node/quic/` (__QUIC_PASS__ pass), `serve-http3.test.ts` (117 pass), `fetch-http3-client.test.ts` (107 pass, 1 skip), and the 235 vendored `test-quic-*` files (the same 3 fail as on the base. `test-quic-callback-error-onstream.mjs` fails in 2 of 20 runs on both builds).
 
+**Self-review.** Three reviews ran, each on an earlier cut of this change. The counts are from the last one. Not taken:
+- An lsquic accessor in place of `may_hold_queued_block`. It is a maintainer's call: see the question above.
+- The body before early trailers, as in Node. It is another rule of the write side: see "Differences from Node that stay".
+- To clear `headers_refused` when a block joins the queue because it waits for credit. That is the rule of #46528's queue, and this PR does not change it. A block that joins the queue after an `EAGAIN` clears it.
+- A change to when a body that lsquic does not take reports `onblocked`. The rule is unchanged.
+- The lsquic write check as a carried patch. It needs a `Bun.serve` change: see "Not in this change".
+
 **Differences from Node that stay.**
 - `sendTrailers()` before the body is out sends the trailers first and ends the stream, so the body is dropped. Node sends the body first: nghttp3 keeps the trailers behind the stream's DATA entry ([`nghttp3_conn_submit_trailers`](https://github.com/ngtcp2/nghttp3/blob/v1.15.0/lib/nghttp3_conn.c#L2568-L2587)). Bun did the same before this PR when lsquic took the trailers at once. When lsquic refused them, the stream was reset. Now both cases drop the body.
 - `onblocked`: Node's HTTP/3 streams never get it ([`BlockStream`](https://github.com/nodejs/node/blob/v26.3.0/src/quic/http3.cc#L352-L355)). Bun reports a wait for flow-control credit and a body that lsquic does not take. This PR does not change that.
 
 **Not in this change.**
 - lsquic 4.9.4 takes body bytes while it holds part of a header block that is not the stream's first. `may_hold_queued_block` covers the blocks of the queue, and a block that ends the stream has no body behind it any more. A block that lsquic got directly and that does not end the stream is not covered: `destroy()` right after a small `103`, a large `200` and a body still closes the connection, and so does a `Bun.serve` burst of 24 `Expect: 100-continue` requests with a 6 KB response header (8 of 24 complete).
-- lsquic 4.11.0 has the check (4.10.2 and litespeedtech/lsquic#711, three hunks of `lsquic_stream.c`). As a carried patch they fix both cases above (built and run: 12 of 12 and 24 of 24). They also have a cost in `Bun.serve`: a response that the client stops while lsquic holds its header block is not given up (28 ms today for a block behind a `100`, not within 2.5 s with the patch, as for a first block today). So that patch needs a `Bun.serve` change and its own PR. `scripts/build/workarounds.ts` stops the configure step at the lsquic update until `may_hold_queued_block` is deleted. A PR that carries the check as a patch has to delete the flag itself.
+- lsquic 4.11.0 has the check (4.10.2 and litespeedtech/lsquic#711, three hunks of `lsquic_stream.c`). As a carried patch they fix both cases above (built and run: 12 of 12 and 24 of 24). They also have a cost in `Bun.serve`: a response that the client stops while lsquic holds its header block is not given up (28 ms today for a block behind a `100`, not within 2.5 s with the patch, as for a first block today). So that patch needs a `Bun.serve` change and its own PR. `scripts/build/workarounds.ts` stops the configure step at the lsquic update until `may_hold_queued_block` is deleted. A PR that carries the check as a patch has to delete the flag itself. #46881 (draft) plans that patch as `write-while-headers-pending.patch`.
 - #46866 changes the same functions. The second of the two to merge needs one more cut.
 
 **Considered.**

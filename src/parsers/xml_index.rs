@@ -56,11 +56,12 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
     /// Byte position of index `logical`, producing more of the index as needed.
     #[inline(always)]
     pub fn at(&mut self, logical: usize) -> usize {
-        if logical.wrapping_sub(self.base) >= self.win.len() {
+        loop {
+            if let Some(&p) = self.win.get(logical.wrapping_sub(self.base)) {
+                return p as usize;
+            }
             self.fill_to(logical);
         }
-        // SAFETY: `fill_to` returns only once `logical - base < win.len()`.
-        unsafe { *self.win.get_unchecked(logical - self.base) as usize }
     }
 
     /// The first index `>= logical` whose position is `>= pos`, and that position.
@@ -70,9 +71,8 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
         let win = self.win.as_slice();
         // The window ends with the sentinels once the input is exhausted, so
         // within it this loop needs no end check beyond the length.
-        while rel < win.len() {
-            // SAFETY: `rel < win.len()`.
-            let p = unsafe { *win.get_unchecked(rel) } as usize;
+        while let Some(&p) = win.get(rel) {
+            let p = p as usize;
             if p >= pos {
                 return (self.base + rel, p);
             }
@@ -85,11 +85,15 @@ impl<'c, U: crate::xml::Unit> StructuralIndex<'c, U> {
     #[inline(never)]
     fn seek_refill(&mut self, mut logical: usize, pos: usize) -> (usize, usize) {
         loop {
-            let p = self.at(logical);
-            if p >= pos {
-                return (logical, p);
+            self.fill_to(logical);
+            let (base, win) = (self.base, self.win.as_slice());
+            while let Some(&p) = win.get(logical - base) {
+                let p = p as usize;
+                if p >= pos {
+                    return (logical, p);
+                }
+                logical += 1;
             }
-            logical += 1;
         }
     }
 

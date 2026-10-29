@@ -486,7 +486,6 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
-// The default root is the directory that holds every entry point, however each one is spelled.
 describe.concurrent("the default root of a multi-entry build", () => {
   const files = {
     "src/main.ts": `console.log("main");`,
@@ -554,7 +553,6 @@ describe.concurrent("the default root of a multi-entry build", () => {
     expect(await outputs(String(dir), names)).toEqual(names.map(name => name.slice("pages/".length, -3) + ".js"));
   });
 
-  // A directory holds an entry point only if a path separator follows the directory's name in that entry point:
   // `ab` does not hold `abc/y.ts`, and `cli` does not hold `cli.ts`.
   test.each([
     [

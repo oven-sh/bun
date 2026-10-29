@@ -782,7 +782,6 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  // The default root is the directory that holds every entry point, however each one is spelled.
   test("the default root does not depend on how the entry points are spelled", async () => {
     using dir = tempDir("build-root-spelling", {
       "src/main.ts": `console.log("main");`,
@@ -814,7 +813,6 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
-  // A directory holds an entry point only if a path separator follows the directory's name in that entry point:
   // `ab` does not hold `abc/y.ts`, and `cli` does not hold `cli.ts`.
   test("the default root ends at a path separator, not inside a name", async () => {
     using dir = tempDir("build-root-name-prefix", {

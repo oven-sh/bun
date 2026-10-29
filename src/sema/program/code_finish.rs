@@ -12,6 +12,8 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
         self.remove_code_only_edges(module, arena);
         let Some(index) = self.entry_of(file) else {
             module.runs_other_code = self.typed_files_with_other_code.contains(module.path.text);
+            module.holds_code_that_never_runs =
+                self.reads_code_on_request && module.role != FileRole::TypesOnly;
             return;
         };
         let entry = &self.entries[index];
@@ -127,6 +129,9 @@ impl<'s, 'r> CodeFiles<'s, 'r> {
             host_module: entry.host_module,
             loader: entry.key.loader,
             is_aot_source: analyzed.is_aot_source,
+            import_meta_main: analyzed.import_meta_main,
+            is_called_before_it_runs: analyzed.is_called_before_it_runs,
+            is_only_imported: analyzed.is_only_imported,
         });
         module.compiled = Some(compiled);
 

@@ -168,7 +168,6 @@
 #include "libusockets.h"
 #include "ModuleLoader.h"
 #include "BunCompiledModules.h"
-#include "BunCompiledEntryPoint.h"
 #include "DLHandleMap.h"
 #include "napi_external.h"
 #include "napi_handle_scope.h"
@@ -506,6 +505,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
             // After the loop: BUN_JSC_useShadowRealm=1 does not bring it back.
             JSC::Options::useShadowRealm() = false;
 #endif
+            if (runsCompiledCode || locksBuiltins)
+                JSC::Options::useShadowRealm() = false;
             // This is the only assertOptionsAreCoherent() rule that BUN_JSC_* can break, and that assertion aborts.
             if (JSC::Options::useWasm() && !JSC::Options::useWasmIPInt() && !(JSC::Options::useBBQJIT() && JSC::Options::useJIT())) [[unlikely]] {
                 constexpr auto message = "BUN_JSC_useWasmIPInt=0 (needs useJIT and useBBQJIT, or BUN_JSC_useWasm=0)"_s;
@@ -4178,7 +4179,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     // already fulfilled and the loader keeps draining its private queue (see
     // JSModuleLoader::loadModuleSync / VM::m_synchronousModuleQueue).
     Bun::JSModuleGraph* graph = Bun::moduleGraphOfLoader(globalObject, loader);
-    if (vm.m_synchronousModuleQueue) {
+    if (vm.synchronousModuleQueue()) {
         JSValue result = Bun::fetchESMSourceCodeSync(
             static_cast<Zig::GlobalObject*>(globalObject),
             graph,
@@ -4705,13 +4706,8 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     auto scope = DECLARE_THROW_SCOPE(JSC::getVM(lexicalGlobalObject));
     Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, Bun::moduleGraphOfLoader(lexicalGlobalObject, moduleLoader));
     RETURN_IF_EXCEPTION(scope, {});
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    noteModuleEvaluation(globalObject, moduleLoader);
-    JSValue result = moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode);
-    RETURN_IF_EXCEPTION(scope, {});
-    Bun::lookForServerInEntryPoint(globalObject, moduleLoader, moduleRecordValue);
-    RETURN_IF_EXCEPTION(scope, {});
-    return result;
+    noteModuleEvaluation(defaultGlobalObject(lexicalGlobalObject), moduleLoader);
+    RELEASE_AND_RETURN(scope, moduleLoader->evaluateNonVirtual(lexicalGlobalObject, key, moduleRecordValue, WTF::move(scriptFetcher), sentValue, resumeMode));
 }
 
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);

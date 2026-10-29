@@ -1,4 +1,0 @@
-{
-  "build": ["--jsx-runtime=classic", "--jsx-side-effects"],
-  "reference": "compiled"
-}

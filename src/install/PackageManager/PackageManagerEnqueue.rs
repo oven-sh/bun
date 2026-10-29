@@ -898,15 +898,7 @@ fn enqueue_manifest_download(
     // A list for the task, even an empty one, tells `run_tasks` that a dependency wants it.
     task_callback_list(this, task_id);
 
-    let this_ptr: *mut PackageManager = this;
-    let network_task = run_tasks::get_network_task(this);
-    // SAFETY: `network_task` is the unique handle to a
-    // freshly-vended pool slot. `write_init` resets every
-    // defaulted field (callback is uninitialized and
-    // overwritten by `for_manifest`).
-    unsafe {
-        NetworkTask::write_init(network_task, task_id, this_ptr);
-    }
+    let network_task = run_tasks::get_network_task(this, task_id);
 
     let scope = this.scope_for_package_name(name);
     // SAFETY: network_task points to a valid initialized NetworkTask slot

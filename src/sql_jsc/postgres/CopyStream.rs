@@ -325,8 +325,7 @@ impl PostgresSQLQuery {
 
     fn end_copy_in(&self, failure: Option<&[u8]>) {
         let Some(connection) = self.copy_connection(CopyStream::writes) else {
-            // A writable exists only on a CopyBoth session: in `Readable` the server has ended
-            // its side, and the client's CopyDone is already out. An abort still rejects.
+            // `Readable`: the server ended its side and the client's CopyDone is out. Abort rejects.
             if let (Some(message), Some(connection)) = (
                 failure,
                 self.copy_connection(|copy| copy == CopyStream::Readable),

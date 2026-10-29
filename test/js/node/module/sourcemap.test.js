@@ -1,4 +1,4 @@
-const { test, expect } = require("bun:test");
+const { describe, test, expect } = require("bun:test");
 const { SourceMap } = require("node:module");
 const { bunEnv, bunExe, tempDir } = require("harness");
 
@@ -247,53 +247,159 @@ test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns
   expect(exitCode).toBe(1);
 });
 
+// A `// @bun` file is not transpiled again. Bun takes its inline map from the last `//# sourceMappingURL=` line, and
+// only when the file can end there (ECMA-426 draft, JavaScriptExtractSourceMapURL without parsing): no quote and no
+// `*/` from the URL on, and only blank lines and `//` comments after the line.
 // ";;EAIE" maps generated 3:3 to original 5:3 of source 0.
-test("map text inside a string is not the source map of a // @bun file", async () => {
+describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
   const throwsOnLine3 = `// @bun\nexport function t() {\n  throw new Error("SC");\n}\n`;
   const map = { version: 3, sources: ["original.ts"], sourcesContent: [null], names: [], mappings: ";;EAIE" };
-  const comment = map => `//# sourceMappingURL=data:application/json;base64,${btoa(JSON.stringify(map))}`;
+  // The JSON is padded so that base64 needs no "=". Text after such a payload does not end it.
+  function comment(map) {
+    const json = JSON.stringify(map);
+    return "//# sourceMappingURL=data:application/json;base64," + btoa(json.padEnd(Math.ceil(json.length / 3) * 3));
+  }
   const inString = comment({ ...map, sources: ["in-string.ts"] });
+  const own = comment({ ...map, sources: ["own.ts"] });
   const beside = JSON.stringify({ ...map, sources: ["beside.ts"] });
-  using dir = tempDir("sourcemap-text-in-string", {
-    "main.js": `
-      for (const file of process.argv.slice(2)) {
-        const { t } = await import("./" + file);
-        try {
-          t();
-        } catch (e) {
-          console.log(file + ": " + e.stack.split("\\n")[1].trim());
-        }
-      }
-    `,
-    // As `bun build --sourcemap=external` writes it: the file ends with a debugId comment, the map is beside it.
-    "external.js": throwsOnLine3 + "export const text = `\n" + inString + "\n`;\n//# debugId=0\n",
-    "external.js.map": beside,
-    "external-utf16.js": throwsOnLine3 + "export const text = `\u2603\n" + inString + "\n`;\n//# debugId=0\n",
-    "external-utf16.js.map": beside,
-    "string-ends-file.js": throwsOnLine3 + "export const text = `\n" + inString + "`;",
-    "string-ends-file.js.map": beside,
-    "no-map.js": throwsOnLine3 + "export const text = `\n" + inString + "\n`;\n",
-    // A map comment of the file itself can have other comments after it.
-    "own.js": throwsOnLine3 + comment({ ...map, sources: ["own.ts"] }) + "\n// the end\n",
-    "own-utf16.js": throwsOnLine3 + "// \u2603\n" + comment({ ...map, sources: ["own.ts"] }) + "\n// the end\n",
-  });
-  const besideFiles = ["external.js", "external-utf16.js", "string-ends-file.js"];
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.js", ...besideFiles, "no-map.js", "own.js", "own-utf16.js"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
+  async function run(files, script, names) {
+    using dir = tempDir("sourcemap-comment", { "main.js": script, ...files });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.js", ...names],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const clean = text => text.replaceAll(String(dir), "<dir>").replaceAll("\\", "/");
+    return { stdout: clean(stdout), stderr: clean(stderr), exitCode };
+  }
+  const printFirstFrames = `
+    for (const file of process.argv.slice(2)) {
+      const { t } = await import("./" + file);
+      try {
+        t();
+      } catch (e) {
+        console.log(file + ": " + e.stack.split("\\n")[1].trim());
+      }
+    }
+  `;
+
+  test("text in a string or in a block comment is not the comment of the file", async () => {
+    // Each file has a map beside it, as `bun build --sourcemap=external` writes it.
+    const tails = {
+      "string.js": "export const text = `\n" + inString + "\n`;\n//# debugId=0\n",
+      "string-closes-on-comment-line.js": "export const text = `\n" + inString + "\n// `;\n",
+      "string-closes-on-debug-id-line.js": "export const text = `\n" + inString + "\n//# debugId=0`;\n",
+      "string-closes-on-url-line.js": "export const text = `\n" + inString + "`;",
+      "minified.js": "var b=`x\n" + inString + "\n// the end`;function u(){return 1}export{b,u};\n\n//# debugId=0\n",
+      "block-comment.js": "/*\n" + inString + "\n// */\n",
+    };
+    const files = {};
+    for (const [name, tail] of Object.entries(tails)) {
+      files[name] = throwsOnLine3 + tail;
+      files[name + ".map"] = beside;
+    }
+
+    const { stdout, stderr, exitCode } = await run(files, printFirstFrames, Object.keys(tails));
+    expect({ stdout, stderr }).toEqual({
+      stdout: Object.keys(tails)
+        .map(name => `${name}: at t (<dir>/beside.ts:5:3)\n`)
+        .join(""),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout: stdout.replaceAll(String(dir), "<dir>").replaceAll("\\", "/"), stderr }).toEqual({
-    stdout:
-      besideFiles.map(file => `${file}: at t (<dir>/beside.ts:5:3)\n`).join("") +
-      "no-map.js: at t (<dir>/no-map.js:3:18)\n" +
-      "own.js: at t (<dir>/own.ts:5:3)\n" +
-      "own-utf16.js: at t (<dir>/own.ts:5:3)\n",
-    stderr: "",
+
+  test("such text gives no map and no warning to a file that has no map", async () => {
+    const tails = {
+      "string.js": "export const text = `\n" + inString + "\n`;\n",
+      "string-closes-on-url-line.js": "export const text = `\n" + inString + "`;",
+      // A library that writes map comments has the start of one in its own code.
+      "writer.js": "export const withMap = (code, url) => code + `\n//# sourceMappingURL=` + url;\n",
+      "writer-minified.js": "export const withMap=(c,u)=>c+`\n//# sourceMappingURL=`+u;\n",
+    };
+    const files = {};
+    for (const [name, tail] of Object.entries(tails)) files[name] = throwsOnLine3 + tail;
+
+    const { stdout, stderr, exitCode } = await run(files, printFirstFrames, Object.keys(tails));
+    expect({ stdout, stderr }).toEqual({
+      stdout: Object.keys(tails)
+        .map(name => `${name}: at t (<dir>/${name}:3:18)\n`)
+        .join(""),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
   });
-  expect(exitCode).toBe(0);
+
+  test("the comment of the file is read when only blank lines and // comments follow it", async () => {
+    const files = {
+      "own.js": throwsOnLine3 + own + "\n",
+      "own-without-newline.js": throwsOnLine3 + own,
+      "own-then-comments.js": throwsOnLine3 + own + "\n\n  \t\n// the end\n  // indented\n",
+      "own-crlf.js": (throwsOnLine3 + own + "\n// the end\n").replaceAll("\n", "\r\n"),
+      // The last such line is the one that counts.
+      "string-then-own.js": throwsOnLine3 + "export const text = `\n" + inString + "\n`;\n" + own + "\n",
+    };
+
+    const { stdout, stderr, exitCode } = await run(files, printFirstFrames, Object.keys(files));
+    expect({ stdout, stderr }).toEqual({
+      stdout: Object.keys(files)
+        .map(name => `${name}: at t (<dir>/own.ts:5:3)\n`)
+        .join(""),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("the comment of the file is not read when code, a block comment or a quote follows it", async () => {
+    const tails = {
+      "own-then-code.js": own + "\nexport const after = 1;\n",
+      "own-then-block-comment.js": own + "\n/* the end */\n",
+      "own-then-quote.js": own + "\n// it's the end\n",
+      "own-literal-json.js": "//# sourceMappingURL=data:application/json," + JSON.stringify(map) + "\n",
+    };
+    const files = {};
+    for (const [name, tail] of Object.entries(tails)) {
+      files[name] = throwsOnLine3 + tail;
+      files[name + ".map"] = beside;
+    }
+
+    const { stdout, stderr, exitCode } = await run(files, printFirstFrames, Object.keys(tails));
+    expect({ stdout, stderr }).toEqual({
+      stdout: Object.keys(tails)
+        .map(name => `${name}: at t (<dir>/beside.ts:5:3)\n`)
+        .join(""),
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  test("the code frame of an error is not text of a file that a string names", async () => {
+    const files = {
+      "other.txt": "OTHER 1\nOTHER 2\nOTHER 3\nOTHER 4\nOTHER 5\nOTHER 6\n",
+      "bundle.js": throwsOnLine3 + "var b=`x\n" + comment({ ...map, sources: ["other.txt"] }) + "\n// x`;export{b};\n",
+    };
+    const printCodeFrame = `
+      const { t } = await import("./bundle.js");
+      try {
+        t();
+      } catch (e) {
+        const text = Bun.inspect(e);
+        console.log(JSON.stringify({
+          frame: text.split("\\n").find(line => line.includes(" at t ")).trim(),
+          showsOtherFile: text.includes("OTHER"),
+        }));
+      }
+    `;
+
+    const { stdout, stderr, exitCode } = await run(files, printCodeFrame, []);
+    expect({ stdout: JSON.parse(stdout), stderr }).toEqual({
+      stdout: { frame: "at t (<dir>/bundle.js:3:9)", showsOtherFile: false },
+      stderr: "",
+    });
+    expect(exitCode).toBe(0);
+  });
 });

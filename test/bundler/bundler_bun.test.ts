@@ -135,6 +135,40 @@ describe("bundler", () => {
       },
     },
   });
+  for (const [name, text, tail] of [
+    // The template literal closes on the line after the comment.
+    [
+      "ThenCode",
+      "postMessage(1);\\n//# sourceMappingURL=worker.js.map\\n",
+      "\n//# sourceMappingURL=worker.js.map\n`);\n",
+    ],
+    // The template literal closes on the line of the comment, and it ends the bundle.
+    ["EndsBundle", "postMessage(1);\\n//# sourceMappingURL=worker.js.map", "\n//# sourceMappingURL=worker.js.map`);\n"],
+  ] as const) {
+    itBundled(`bun/TargetBunNoSourcemapMessageMapCommentInString${name}`, {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          function code() {
+            throw new Error("Hello World");
+          }
+          const log = (text: string) => code();
+          log("${text}");
+        `,
+      },
+      onAfterBundle(api) {
+        expect(api.readFile("/out.js")).toEndWith(tail);
+      },
+      run: {
+        exitCode: 1,
+        validate({ stderr }) {
+          expect(stderr).not.toInclude("Could not decode sourcemap");
+          expect(stderr).toInclude("\nnote: missing sourcemaps for ");
+          expect(stderr).toInclude("\nnote: consider bundling with '--sourcemap' to get unminified traces\n");
+        },
+      },
+    });
+  }
   itBundled("bun/TargetBunSourcemapInline", {
     target: "bun",
     files: {

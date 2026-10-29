@@ -1,6 +1,6 @@
 import { expect } from "bun:test";
 import { isASAN } from "harness";
-import { devTest } from "../bake-harness";
+import { devTest, minimalFramework } from "../bake-harness";
 
 devTest("server-side source maps show correct error lines", {
   files: {
@@ -231,6 +231,54 @@ if (isASAN) {
       // The harness calls gracefulExit() after this, which sends the dev
       // server through server.stop(true) + Bun.gc(true) + process.exit(0).
       // The teardown that follows is what this test is about.
+    },
+  });
+}
+
+// The text of another built file, with its inline map.
+const builtText =
+  "export function handle(msg) {\n  return msg.toUpperCase();\n}\n" +
+  "//# sourceMappingURL=data:application/json;base64," +
+  btoa(
+    JSON.stringify({
+      version: 3,
+      sources: ["../worker.ts"],
+      sourcesContent: ["export function handle(msg: string): string {\n  return msg.toUpperCase();\n}\n"],
+      names: [],
+      mappings: "AACO,gBAAS,OAAO,KAAqB;AAC1C,SAAO,IAAI,YAAY;AACzB;",
+    }),
+  ) +
+  "\n";
+
+// The printer keeps a character that is not ASCII only in a legal comment, so only the second chunk is a 16-bit string.
+for (const [kind, banner] of [
+  ["8-bit", ""],
+  ["16-bit", "/*! \u00a9 */\n"],
+]) {
+  devTest(`map text that a route keeps in a string is not the source map of its ${kind} server chunk`, {
+    framework: minimalFramework,
+    files: {
+      "routes/index.ts":
+        banner +
+        "export const text = `" +
+        builtText +
+        "`;\n" +
+        `function boom() {
+  throw new Error("boom");
+}
+export default function () {
+  try {
+    boom();
+  } catch (e) {
+    return new Response(e.stack);
+  }
+}`,
+    },
+    async test(dev) {
+      // `text` takes five lines, and `function boom() {` is the next line.
+      const line = banner ? 7 : 6;
+      const stack = await dev.fetch("/").text();
+      expect(stack).toMatch(new RegExp(`at boom \\(.*routes[/\\\\]index\\.ts:${line}:17\\)`));
     },
   });
 }

@@ -890,54 +890,19 @@ impl TranspilerJob {
             }
         }
 
-        // `vm.isWatcherEnabled()` ⇔ watcher present. The
-        // field is a nullable `*mut ImportWatcher`, so a non-null
-        // pointer may still hold `ImportWatcher::None`; both must be ruled out
-        // or we'd skip closing `input_file_fd` without a watcher to adopt it.
-        // Discriminant read on the BACKREF captured above; only the JS thread
-        // mutates the variant.
-        let is_watcher_enabled =
-            import_watcher.is_some_and(|iw| !matches!(&*iw, ImportWatcher::None));
-
         if let Some(own) = &self.aot_package_config {
             parse_options.apply_aot_package_config(own);
         }
         let Some(mut parse_result) = transpiler
             .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(parse_options, None)
         else {
-            if is_watcher_enabled && input_file_fd.is_valid() {
+            if let Some(iw) = import_watcher
+                && input_file_fd.is_valid()
+            {
                 if !is_node_override
                     && bun_paths::is_absolute(path.text)
                     && !strings::contains(path.text, b"node_modules")
                 {
-                    if let Some(iw) = import_watcher {
-                        // SAFETY: BACKREF — process-lifetime watcher; no other
-                        // `&ImportWatcher` is live here, and `add_file` is
-                        // thread-safe via watcher mutex.
-                        let added = unsafe { iw.assume_mut() }.add_file::<true>(
-                            input_file_fd,
-                            path.text,
-                            hash,
-                            Fd::INVALID,
-                            package_json,
-                        );
-                        if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
-                            should_close_input_file_fd.set(false);
-                        }
-                    }
-                }
-            }
-
-            self.parse_error = Some(crate::CrateError::ParseError);
-            return;
-        };
-
-        if is_watcher_enabled && input_file_fd.is_valid() {
-            if !is_node_override
-                && bun_paths::is_absolute(path.text)
-                && !strings::contains(path.text, b"node_modules")
-            {
-                if let Some(iw) = import_watcher {
                     // SAFETY: BACKREF — process-lifetime watcher; no other
                     // `&ImportWatcher` is live here, and `add_file` is
                     // thread-safe via watcher mutex.
@@ -951,6 +916,32 @@ impl TranspilerJob {
                     if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
                         should_close_input_file_fd.set(false);
                     }
+                }
+            }
+
+            self.parse_error = Some(crate::CrateError::ParseError);
+            return;
+        };
+
+        if let Some(iw) = import_watcher
+            && input_file_fd.is_valid()
+        {
+            if !is_node_override
+                && bun_paths::is_absolute(path.text)
+                && !strings::contains(path.text, b"node_modules")
+            {
+                // SAFETY: BACKREF — process-lifetime watcher; no other
+                // `&ImportWatcher` is live here, and `add_file` is
+                // thread-safe via watcher mutex.
+                let added = unsafe { iw.assume_mut() }.add_file::<true>(
+                    input_file_fd,
+                    path.text,
+                    hash,
+                    Fd::INVALID,
+                    package_json,
+                );
+                if matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
+                    should_close_input_file_fd.set(false);
                 }
             }
         }

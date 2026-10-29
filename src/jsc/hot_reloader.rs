@@ -26,7 +26,6 @@ bun_core::declare_scope!(hot_reloader, visible);
 use bun_core::env::IS_KQUEUE;
 
 pub enum ImportWatcher {
-    None,
     Hot(Box<Watcher>),
     Watch(Box<Watcher>),
 }
@@ -44,10 +43,7 @@ impl ImportWatcher {
         &self,
         hash: bun_watcher::HashType,
     ) -> Option<&'static bun_watcher::PackageJSON> {
-        let w = match self {
-            ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w,
-            ImportWatcher::None => return None,
-        };
+        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = self;
         let _guard = w.mutex.lock_guard();
         let index = w.index_of(hash)?;
         w.watchlist
@@ -58,7 +54,6 @@ impl ImportWatcher {
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => w.add_file_by_path_slow(file_path),
-            ImportWatcher::None => true,
         }
     }
 
@@ -77,7 +72,6 @@ impl ImportWatcher {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => {
                 watcher.add_file::<COPY_FILE_PATH>(fd, file_path, hash, dir_fd, package_json)
             }
-            ImportWatcher::None => Ok(bun_watcher::FdOwnership::Caller),
         }
     }
 }
@@ -96,14 +90,12 @@ impl HotReloaderCtx for VirtualMachine {
         // `VirtualMachine.bun_watcher` is the
         // `*mut ImportWatcher` (see the field comment in
         // VirtualMachine.rs), and `get_context` only runs after
-        // `enable_hot_module_reloading` has populated it, so the `.None` arm
-        // is unreachable.
+        // `enable_hot_module_reloading` has populated it.
         // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
         // `enable_hot_module_reloading`; non-null whenever the reloader is
         // running. The cast recovers the concrete type the field was erased to.
         match unsafe { &mut *self.bun_watcher.cast::<ImportWatcher>() } {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &mut **w,
-            ImportWatcher::None => unreachable!("bun_watcher_mut on un-enabled reloader"),
         }
     }
 
@@ -128,17 +120,7 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn is_watcher_enabled(&self) -> bool {
-        // The field is a typed `*mut ImportWatcher`; a null pointer means no
-        // watcher is installed.
-        if self.bun_watcher.is_null() {
-            return false;
-        }
-        // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
-        // `install_bun_watcher`; the cast recovers the concrete type.
-        !matches!(
-            unsafe { &*self.bun_watcher.cast::<ImportWatcher>() },
-            ImportWatcher::None
-        )
+        VirtualMachine::is_watcher_enabled(self)
     }
 
     fn watcher_top_level_dir(&self) -> &'static [u8] {
@@ -157,7 +139,6 @@ impl HotReloaderCtx for VirtualMachine {
         });
         let watcher_ptr: *mut Watcher = match &mut *iw {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &raw mut **w,
-            ImportWatcher::None => unreachable!(),
         };
         self.bun_watcher = bun_core::heap::into_raw(iw);
 

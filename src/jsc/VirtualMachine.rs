@@ -2188,9 +2188,7 @@ impl VirtualMachine {
                 return false;
             }
             self.run_error_handler(err, None);
-            // SAFETY: `global_object` is the live VM global; `process_exit` is
-            // `bun_runtime::node::process::exit` (main-thread `noreturn`).
-            unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
+            (hooks.process_exit)(global_object, 7);
             panic!("Uncaught exception while handling uncaught exception");
         }
         self.is_handling_uncaught_exception = true;
@@ -2215,8 +2213,7 @@ impl VirtualMachine {
                 // throws. No handler is running, so drop the recursion guard or
                 // that re-entry exits 7 ("handler threw") instead of 1.
                 self.is_handling_uncaught_exception = false;
-                // SAFETY: see above.
-                unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };
+                (hooks.process_exit)(global_object, 1);
                 panic!("made it past process.exit()");
             }
             // TODO maybe we want a separate code path for uncaught exceptions
@@ -2960,7 +2957,7 @@ pub struct RuntimeHooks {
     /// Lazy `NodeFS` creation.
     /// `NodeFS` lives in `bun_runtime`; the high tier boxes one and returns
     /// the type-erased pointer. Stored back into `vm.node_fs`.
-    pub create_node_fs: unsafe fn(vm: *mut VirtualMachine) -> *mut c_void,
+    pub create_node_fs: fn(vm: &mut VirtualMachine) -> *mut c_void,
     /// `ObjectURLRegistry` lookup. Registry lives in `bun_runtime::webcore`.
     pub has_blob_url: fn(blob_id: &[u8]) -> bool,
     /// `bun_aot::module_keys::name_of_text` of the text behind an object URL.
@@ -2977,7 +2974,7 @@ pub struct RuntimeHooks {
     /// it returns and the caller `panic!`s. Lives in `bun_runtime::node`
     /// (forward-dep cycle), so [`uncaught_exception`] reaches it through this
     /// slot instead of the linker.
-    pub process_exit: unsafe fn(global: *mut JSGlobalObject, code: u8),
+    pub process_exit: fn(global: &JSGlobalObject, code: u8),
     /// `onBeforePrint()` for the `bun:test` runner, which lives in `bun_runtime`;
     /// `console.log` calls this so the test reporter can flush its line state
     /// before user output interleaves with it. No-op when `bun test` isn't
@@ -3003,7 +3000,7 @@ pub struct RuntimeHooks {
     /// `vm.standalone_module_graph` (the high tier downcasts to its concrete
     /// `bun_standalone_graph::Graph` — the sole implementor).
     pub apply_standalone_runtime_flags: unsafe fn(
-        transpiler: *mut Transpiler<'static>,
+        transpiler: &mut Transpiler<'static>,
         graph: &'static dyn bun_resolver::StandaloneModuleGraph,
     ),
     /// Parse a Worker's `execArgv` for the flags in [`WorkerExecArgvFlags`].
@@ -4989,10 +4986,7 @@ impl VirtualMachine {
             return existing;
         }
         let hooks = runtime_hooks().expect("runtime hooks not installed");
-        // SAFETY: hook contract — `self` is the live per-thread VM. The hook
-        // boxes a `NodeFS{ vm: self if standalone else null }` and returns
-        // the leaked pointer.
-        let new = unsafe { (hooks.create_node_fs)(self) };
+        let new = (hooks.create_node_fs)(self);
         self.node_fs = Some(new);
         new
     }

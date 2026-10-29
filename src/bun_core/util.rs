@@ -2755,10 +2755,8 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
 }
 
 // ── get_thread_count ──────────────────────────────────────────────────────
-// In [2, 1024], from the process environment. An empty value is not set.
-// UV_THREADPOOL_SIZE: the digits in front count, as in libuv's atoi, and a value with no
-// count gives 2. libuv's floor is 1, but pool work can wait for other pool work.
-// GOMAXPROCS: only a positive integer counts, as in Go.
+// In [2, 1024]. A UV_THREADPOOL_SIZE with no positive count gives 2, and such a
+// GOMAXPROCS is ignored, as in Go. An empty value is not set.
 pub fn get_thread_count() -> u16 {
     static CELL: Once<u16> = Once::new();
     *CELL.get_or_init(|| {
@@ -2798,8 +2796,7 @@ pub fn get_thread_count() -> u16 {
                         return Some(n);
                     }
                 }
-                // Windows: `getenv_z` reads the environment as it was at startup. This reads
-                // the live one, where a `process.env` assignment lands.
+                // Windows: `getenv_z` reads a startup snapshot. This sees `process.env` writes.
                 #[cfg(windows)]
                 if let Ok(value) = std::env::var(
                     // SAFETY: keys above are ASCII literals.

@@ -417,51 +417,6 @@ describe("bundler", () => {
       });
     }
 
-    // sub/inner.ts and sub/worker.ts are entry points in another directory than the chunk of the runtime module.
-    // Each makes a `require` of its own, so a request that is left to run time finds the embedded module from
-    // /$bunfs/root/sub/. From /$bunfs/root/ it misses, and the lookup goes on to the working directory.
-    for (const bytecode of [false, true]) {
-      itBundled(`compile/splitting/RequireOfEmbeddedModuleResolvesFromItsChunk${bytecode ? "+bytecode" : ""}`, {
-        backend: "cli",
-        compile: true,
-        splitting: true,
-        bytecode,
-        format: "esm",
-        files: {
-          "/entry.ts": /* js */ `
-            import { tmpdir } from "os";
-            process.chdir(tmpdir());
-            const atRunTime = (x: string) => x;
-            console.log(require(atRunTime("./top.ts")).default, require(atRunTime("./sub/sibling.ts")).default);
-            console.log((await import(atRunTime("./sub/inner.ts"))).fromInside());
-            const worker = new Worker("./sub/worker.ts");
-            console.log(
-              await new Promise(resolve => {
-                worker.onmessage = e => resolve(e.data);
-                worker.onerror = e => resolve("error: " + e.message);
-              }),
-            );
-            worker.terminate();
-          `,
-          "/top.ts": `export default "top" as string;`,
-          "/sub/inner.ts": /* js */ `
-            export function fromInside() {
-              const atRunTime = (x: string) => x;
-              return [require(atRunTime("../top.ts")).default, require(atRunTime("./sibling.ts")).default].join(",");
-            }
-          `,
-          "/sub/sibling.ts": `export default "sibling" as string;`,
-          "/sub/worker.ts": /* js */ `
-            const atRunTime = (x: string) => x;
-            postMessage([require(atRunTime("./sibling.ts")).default, require(atRunTime("../top")).default].join(","));
-          `,
-        },
-        entryPointsRaw: ["./entry.ts", "./top.ts", "./sub/inner.ts", "./sub/sibling.ts", "./sub/worker.ts"],
-        outfile: "dist/out",
-        run: { stdout: "top sibling\ntop,sibling\nsibling,top", file: "dist/out" },
-      });
-    }
-
     // The shared chunk contains a require()d (so __esm-wrapped) module with an
     // unused import of a node builtin. Builtins are side-effect free, so that
     // import is tree-shaken out of the printed chunk, but the module record

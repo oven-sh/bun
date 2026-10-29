@@ -224,6 +224,8 @@ describe("zlib", () => {
       expect({ stdout, stderr }).toEqual({ stdout: "ok\n", stderr: "" });
       expect(exitCode).toBe(0);
     },
+    // On a debug build the process and its Worker need 2 s to start, and the two kinds run at the same time.
+    isDebug ? 30_000 : undefined,
   );
 
   describe("memLevel and strategy", () => {

@@ -9,7 +9,7 @@ run() { tool=$1; out=$2; shift 2; $T/$tool-static "$@" > $O/$out 2>/dev/null || 
 cj() { run cjpeg "$@"; }
 jt() { run jpegtran "$@"; }
 # Crops of the source image at awkward sizes, as PPM.
-python3 - <<'PY'
+python3 - <<'PY' || exit 1
 import struct
 def read_ppm(p):
     d=open(p,'rb').read()

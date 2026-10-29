@@ -49,7 +49,7 @@ fn main() {
         match x.as_str() {
             "--iters" => iters = a.next().unwrap().parse().unwrap(),
             "--seed" => seed = a.next().unwrap().parse().unwrap(),
-            "--threads" => threads = a.next().unwrap().parse().unwrap(),
+            "--threads" => threads = a.next().unwrap().parse::<std::num::NonZero<usize>>().unwrap().get(),
             _ => dirs.push(x),
         }
     }

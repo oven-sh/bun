@@ -16,7 +16,9 @@ for f in $JPEG8 $TJ; do $CC $CFLAGS -c $SRC/src/$f.c -o $OBJ/$f.o & done
 $CC $CFLAGS -c $SRC/jbun_stubs.c -o $OBJ/jbun_stubs.o &
 $CC $CFLAGS -c $SRC/simd/jsimd.c -o $OBJ/jsimd.o &
 for f in $SIMD; do nasm -felf64 -DELF -D__x86_64__ -DPIC -I$SRC/simd/nasm/ -I$SRC/simd/x86_64/ -o $OBJ/$f.o $SRC/simd/x86_64/$f.asm & done
-for job in $(jobs -p); do wait $job; done
+failed=0
+for job in $(jobs -p); do wait "$job" || failed=1; done
+[ $failed = 0 ]
 rm -f $OUT/libtjref${SUFFIX:-}.a
 llvm-ar-23 rcs $OUT/libtjref${SUFFIX:-}.a $OBJ/*.o
 ls -la $OUT/libtjref${SUFFIX:-}.a

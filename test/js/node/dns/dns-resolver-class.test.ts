@@ -1,6 +1,6 @@
 // node-dns.test.js resolves public hostnames. These tests need no network.
 import { describe, expect, test } from "bun:test";
-import { runWithError } from "harness";
+import { bunEnv, bunExe, runWithError } from "harness";
 import dgram from "node:dgram";
 import dns from "node:dns";
 import { once } from "node:events";
@@ -92,32 +92,10 @@ describe("setServers port range", () => {
     message: expect.stringMatching(/^Port should be >= 0 and < 65536\. Received /),
   };
 
-  type Target = { setServers(servers: readonly unknown[]): void; getServers(): string[] };
-  describe.each<[string, () => Target]>([
-    ["dns", () => dns as Target],
-    ["dns.promises", () => dns.promises as Target],
-    ["dns.Resolver", () => new dns.Resolver() as Target],
-    ["dns.promises.Resolver", () => new dns.promises.Resolver() as Target],
-    // With a receiver that is no Resolver, the method acts on the default resolver.
-    [
-      "dns.Resolver.prototype.setServers.call(undefined)",
-      () => ({
-        setServers: servers => dns.Resolver.prototype.setServers.call(undefined, servers as string[]),
-        getServers: () => dns.getServers(),
-      }),
-    ],
-  ])("%s", (_name, make) => {
-    // `dns` and `dns.promises` set the servers of the default resolver, which the whole process shares: put them back.
-    function withResolver(fn: (resolver: Target, original: string[]) => void) {
-      const resolver = make();
-      const original = resolver.getServers();
-      try {
-        fn(resolver, original);
-      } finally {
-        resolver.setServers(original);
-      }
-    }
-
+  describe.each([
+    ["dns.Resolver", dns.Resolver],
+    ["dns.promises.Resolver", dns.promises.Resolver],
+  ])("%s", (_name, Resolver: any) => {
     // Before the check, 65536 and 2**32 + 53 were the default port, and 99999 was 34463.
     test.each([
       ["127.0.0.1:65536", "127.0.0.1:65536"],
@@ -131,50 +109,47 @@ describe("setServers port range", () => {
       ["[::1]:<400 digits>", `[::1]:${Buffer.alloc(400, "9")}`],
       ["[fe80::1%lo]:99999", "[fe80::1%lo]:99999"],
     ])("%s throws ERR_SOCKET_BAD_PORT and leaves the servers as they were", (_label, server) => {
-      withResolver((resolver, original) => {
-        expect(runWithError(() => resolver.setServers([server]))).toMatchObject(badPort);
-        expect(runWithError(() => resolver.setServers(["192.0.2.2", server]))).toMatchObject(badPort);
-        expect(resolver.getServers()).toEqual(original);
-      });
+      const resolver = new Resolver();
+      resolver.setServers(["192.0.2.1"]);
+      expect(runWithError(() => resolver.setServers([server]))).toMatchObject(badPort);
+      expect(runWithError(() => resolver.setServers(["192.0.2.2", server]))).toMatchObject(badPort);
+      expect(resolver.getServers()).toEqual(["192.0.2.1"]);
     });
 
     test("accepts the ports 0 to 65535", () => {
-      withResolver(resolver => {
-        resolver.setServers([
-          "127.0.0.1:65535",
-          "[::1]:65535",
-          "127.0.0.2:0",
-          "[::2]:0",
-          "127.0.0.3:00053",
-          "127.0.0.4:000000000000099",
-        ]);
-        expect(resolver.getServers()).toEqual([
-          "127.0.0.1:65535",
-          "[::1]:65535",
-          "127.0.0.2",
-          "::2",
-          "127.0.0.3",
-          "127.0.0.4:99",
-        ]);
-      });
+      const resolver = new Resolver();
+      resolver.setServers([
+        "127.0.0.1:65535",
+        "[::1]:65535",
+        "127.0.0.2:0",
+        "[::2]:0",
+        "127.0.0.3:00053",
+        "127.0.0.4:000000000000099",
+      ]);
+      expect(resolver.getServers()).toEqual([
+        "127.0.0.1:65535",
+        "[::1]:65535",
+        "127.0.0.2",
+        "::2",
+        "127.0.0.3",
+        "127.0.0.4:99",
+      ]);
     });
 
     test("checks the servers in order, and the address of a server before its port", () => {
-      withResolver((resolver, original) => {
-        const invalidAddress = (server: string) => ({
-          name: "TypeError",
-          code: "ERR_INVALID_IP_ADDRESS",
-          message: `Invalid IP address: ${server}`,
-        });
-        expect(runWithError(() => resolver.setServers(["1.2.3.4:65536", "nope"]))).toMatchObject(badPort);
-        expect(runWithError(() => resolver.setServers(["1.2.3.4:65536", 5]))).toMatchObject(badPort);
-        expect(runWithError(() => resolver.setServers(["nope", "1.2.3.4:65536"]))).toMatchObject(
-          invalidAddress("nope"),
-        );
-        expect(runWithError(() => resolver.setServers(["nope:65536"]))).toMatchObject(invalidAddress("nope:65536"));
-        expect(runWithError(() => resolver.setServers(["[nope]:65536"]))).toMatchObject(invalidAddress("[nope]:65536"));
-        expect(resolver.getServers()).toEqual(original);
+      const resolver = new Resolver();
+      resolver.setServers(["192.0.2.1"]);
+      const invalidAddress = (server: string) => ({
+        name: "TypeError",
+        code: "ERR_INVALID_IP_ADDRESS",
+        message: `Invalid IP address: ${server}`,
       });
+      expect(runWithError(() => resolver.setServers(["1.2.3.4:65536", "nope"]))).toMatchObject(badPort);
+      expect(runWithError(() => resolver.setServers(["1.2.3.4:65536", 5]))).toMatchObject(badPort);
+      expect(runWithError(() => resolver.setServers(["nope", "1.2.3.4:65536"]))).toMatchObject(invalidAddress("nope"));
+      expect(runWithError(() => resolver.setServers(["nope:65536"]))).toMatchObject(invalidAddress("nope:65536"));
+      expect(runWithError(() => resolver.setServers(["[nope]:65536"]))).toMatchObject(invalidAddress("[nope]:65536"));
+      expect(resolver.getServers()).toEqual(["192.0.2.1"]);
     });
   });
 
@@ -198,5 +173,56 @@ describe("setServers port range", () => {
       resolver.cancel();
       socket.close();
     }
+  });
+
+  // These set the default resolver of the whole process. getServers() drops zone ids, so nothing can put it back.
+  test.concurrent("dns.setServers, dns.promises.setServers and a receiver that is no Resolver", async () => {
+    const fixture = `
+      const dns = require("node:dns");
+      const forms = {
+        "dns.setServers": servers => dns.setServers(servers),
+        "dns.promises.setServers": servers => dns.promises.setServers(servers),
+        "Resolver.prototype.setServers.call(undefined)": servers =>
+          dns.Resolver.prototype.setServers.call(undefined, servers),
+      };
+      const errorOf = fn => {
+        try {
+          fn();
+        } catch (error) {
+          return { name: error.name, code: error.code, message: error.message };
+        }
+      };
+      const results = {};
+      for (const [form, setServers] of Object.entries(forms)) {
+        dns.setServers(["192.0.2.1"]);
+        const errors = {
+          ipv4: errorOf(() => setServers(["127.0.0.1:65536"])),
+          ipv6: errorOf(() => setServers(["[::1]:99999"])),
+          afterAnAcceptedServer: errorOf(() => setServers(["192.0.2.2", "127.0.0.1:65536"])),
+          beforeABadAddress: errorOf(() => setServers(["127.0.0.1:65536", "nope"])),
+        };
+        const serversAfterTheErrors = dns.getServers();
+        setServers(["127.0.0.1:65535", "[::1]:0"]);
+        results[form] = { ...errors, serversAfterTheErrors, accepted: dns.getServers() };
+      }
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const ofEachForm = {
+      ipv4: badPort,
+      ipv6: badPort,
+      afterAnAcceptedServer: badPort,
+      beforeABadAddress: badPort,
+      serversAfterTheErrors: ["192.0.2.1"],
+      accepted: ["127.0.0.1:65535", "::1"],
+    };
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      "dns.setServers": ofEachForm,
+      "dns.promises.setServers": ofEachForm,
+      "Resolver.prototype.setServers.call(undefined)": ofEachForm,
+    });
+    expect(exitCode).toBe(0);
   });
 });

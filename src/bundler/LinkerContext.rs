@@ -2384,7 +2384,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub(crate) fn print_code_for_file_in_chunk_js(
-        &mut self,
+        &self,
         r: renamer::Renamer,
         alloc: &Bump,
         writer: &mut js_printer::BufferWriter,
@@ -2403,34 +2403,6 @@ impl<'a> LinkerContext<'a> {
             ..Default::default()
         }];
 
-        // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-        // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
-        let parse_graph = unsafe { &*self.parse_graph };
-
-        // Note: reshaped for borrowck — `Options` borrows `ts_enums` /
-        // `line_offset_tables` / `mangled_props` from `self.graph`, but the
-        // `require_or_import_meta_for_source_callback` field below needs
-        // `&mut self`. Detach the read-only borrows via raw-pointer round-trip
-        // (graph SoA storage is never reallocated during the print step).
-        // SAFETY: `self.graph` columns are stable heap allocations valid for
-        // the duration of this call; the printer only reads from them.
-        let ts_enums: &bun_ast::ast_result::TsEnumsMap =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.graph.ts_enums) };
-        // SAFETY: as for `ts_enums`.
-        let import_member_bindings: &bun_ast::ast_result::ImportMemberBindings =
-            unsafe { bun_ptr::detach_lifetime_ref(&self.graph.import_member_bindings) };
-        // SAFETY: `graph.files` SoA columns are stable heap allocations valid for this
-        // call (see above); the printer only reads from this slot.
-        let line_offset_table: &bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc> = unsafe {
-            bun_ptr::detach_lifetime_ref(
-                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
-            )
-        };
-        let mangled_props: &MangledProps =
-            // SAFETY: `self.mangled_props` is not mutated during printing; detached borrow
-            // outlives only this call (see above).
-            unsafe { bun_ptr::detach_lifetime_ref(&self.mangled_props) };
-
         let print_options = js_printer::Options {
             bundling: true,
             // TODO: IIFE
@@ -2447,8 +2419,8 @@ impl<'a> LinkerContext<'a> {
                 .flags
                 .contains(AstFlags::COMMONJS_MODULE_EXPORTS_ASSIGNED_DEOPTIMIZED),
             // .const_values = c.graph.const_values,
-            ts_enums: Some(ts_enums),
-            import_member_bindings: Some(import_member_bindings),
+            ts_enums: Some(&self.graph.ts_enums),
+            import_member_bindings: Some(&self.graph.import_member_bindings),
             has_dynamic_import_items: ast
                 .dynamic_import_aliases
                 .values()
@@ -2473,9 +2445,12 @@ impl<'a> LinkerContext<'a> {
                 Format::Cjs => None, // use unbounded global
                 _ => runtime_require_ref,
             },
-            require_or_import_meta_for_source_callback:
+            require_or_import_meta_for_source_callback: Some(
                 js_printer::RequireOrImportMetaCallback::init(self),
-            line_offset_tables: Some(line_offset_table),
+            ),
+            line_offset_tables: Some(
+                &self.graph.files.items_line_offset_table()[source_index.get() as usize],
+            ),
             target: self.options.target,
 
             hmr_ref: if self.options.output_format == Format::InternalBakeDev {
@@ -2485,11 +2460,11 @@ impl<'a> LinkerContext<'a> {
             },
 
             input_files_for_dev_server: if self.options.output_format == Format::InternalBakeDev {
-                Some(parse_graph.input_files.items_source())
+                Some(self.parse_graph().input_files.items_source())
             } else {
                 None
             },
-            mangled_props: Some(mangled_props),
+            mangled_props: Some(&self.mangled_props),
             module_info,
             ..Default::default()
         };
@@ -2552,32 +2527,6 @@ impl<'a> LinkerContext<'a> {
         // `defer writer.* = printer.ctx;`
         *writer = printer.ctx;
         result
-    }
-
-    pub(crate) fn require_or_import_meta_for_source(
-        &mut self,
-        source_index: crate::IndexInt,
-        was_unwrapped_require: bool,
-    ) -> js_printer::RequireOrImportMeta {
-        let flags = self.graph.meta.items_flags()[source_index as usize];
-        let wrapper_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
-        js_printer::RequireOrImportMeta {
-            exports_ref: if flags.wrap == WrapKind::Esm
-                || (was_unwrapped_require
-                    && self.graph.ast.items_flags()[source_index as usize]
-                        .contains(AstFlags::FORCE_CJS_TO_ESM))
-            {
-                self.graph.ast.items_exports_ref()[source_index as usize]
-            } else {
-                Ref::NONE
-            },
-            is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
-            wrapper_ref,
-
-            was_unwrapped_require: was_unwrapped_require
-                && self.graph.ast.items_flags()[source_index as usize]
-                    .contains(AstFlags::FORCE_CJS_TO_ESM),
-        }
     }
 
     pub(crate) fn mangle_local_css(&mut self) {
@@ -2843,16 +2792,31 @@ impl<'a> LinkerContext<'a> {
     }
 } // end — split: tree-shaking trio below
 
-/// `js_printer::RequireOrImportMetaSource` — manual-vtable shim so the printer
-/// can call back into `LinkerContext::require_or_import_meta_for_source`.
 impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
-    #[inline]
     fn require_or_import_meta_for_source(
-        &mut self,
-        id: u32,
+        &self,
+        source_index: crate::IndexInt,
         was_unwrapped_require: bool,
     ) -> js_printer::RequireOrImportMeta {
-        LinkerContext::require_or_import_meta_for_source(self, id, was_unwrapped_require)
+        let flags = self.graph.meta.items_flags()[source_index as usize];
+        let wrapper_ref = self.graph.ast.items_wrapper_ref()[source_index as usize];
+        js_printer::RequireOrImportMeta {
+            exports_ref: if flags.wrap == WrapKind::Esm
+                || (was_unwrapped_require
+                    && self.graph.ast.items_flags()[source_index as usize]
+                        .contains(AstFlags::FORCE_CJS_TO_ESM))
+            {
+                self.graph.ast.items_exports_ref()[source_index as usize]
+            } else {
+                Ref::NONE
+            },
+            is_wrapper_async: flags.is_async_or_has_async_dependency && wrapper_ref.is_valid(),
+            wrapper_ref,
+
+            was_unwrapped_require: was_unwrapped_require
+                && self.graph.ast.items_flags()[source_index as usize]
+                    .contains(AstFlags::FORCE_CJS_TO_ESM),
+        }
     }
 }
 

@@ -181,9 +181,6 @@
   },
   "src/runtime/node/path_watcher.rs": {
     "thread spawn": 2,
-    "unsafe impl Send": [
-      "PathWatcherManager"
-    ],
     "unsafe impl Sync": [
       "PathWatcherManager"
     ]

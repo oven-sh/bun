@@ -4133,7 +4133,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
             resolved = makeString(resolved, query);
     }
     if (hasModuleMocks) [[unlikely]]
-        resolved = Bun::keyOfImportByPackage(globalObject, resolved, referrerString);
+        resolved = Bun::keyOfImportByPackage(globalObject, resolved, referrerString, true);
     if (moduleMocksRun) [[unlikely]]
         resolved = Bun::keyOfImportWhileModuleMocksRun(globalObject, resolved, referrerString, true);
     Identifier resolvedKey = Identifier::fromString(vm, resolved);

@@ -2146,6 +2146,22 @@ static bool isInNodeModules(const String& path)
     return path.contains(makeString(PLATFORM_SEP, "node_modules"_s, PLATFORM_SEP));
 }
 
+extern "C" bool Bun__isESModuleByExtensionOrPackageType(JSC::JSGlobalObject*, const BunString* path);
+
+// Vitest externalizes packages: Node loads them, outside the module graph that Vitest mocks and resets.
+// It inlines an ES module that Node would read as CommonJS (".js" in a package without "type": "module") and loads it like the project's modules.
+static bool isExternalizedByVitest(Zig::GlobalObject* globalObject, const String& key)
+{
+    if (!isInNodeModules(key))
+        return false;
+    auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), key));
+    if (!entry || !dynamicDowncast<JSC::JSModuleRecord>(entry->record()))
+        return true;
+    String path = withoutOriginalModuleQuery(key);
+    BunString borrowedPath = Bun::toString(path);
+    return Bun__isESModuleByExtensionOrPackageType(globalObject, &borrowedPath);
+}
+
 struct ModulesToEvict {
     Vector<String> modules;
     // Patched in place: these stay registered, but their exports changed, so their importers go.
@@ -2154,10 +2170,12 @@ struct ModulesToEvict {
     // Mocked modules whose factory was abandoned, so their pending fetch never settles.
     Vector<String> abandonedModules;
     bool all { false };
-    // With `all`: modules in node_modules stay, as in Vitest, which doesn't load packages through the registry it resets.
+    // With `all`: not what Vitest externalizes.
     bool exceptPackages { false };
     // Packages that vi.mock() no longer mocks. See setLoadedModuleAside().
     Vector<String> packagesToBringBack;
+    // Packages that vi.mock() is about to mock.
+    Vector<String> packagesSetAside;
     bool onlyImportersFromEarlierTestFiles { false };
     // Forces a pass even with nothing listed, to sweep the modules that failed to load or threw.
     bool isEndOfTestFile { false };
@@ -2279,6 +2297,12 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
     MarkedArgumentBuffer pendingLoads;
     Vector<std::pair<JSC::AbstractModuleRecord*, JSC::JSPromise*>> asking;
     UncheckedKeyHashSet<JSC::AbstractModuleRecord*> asks;
+    // After moveLoadedModule() a record's own key is not the one it is registered under.
+    UncheckedKeyHashMap<JSC::AbstractModuleRecord*, String> registeredKeys;
+    for (auto& [mapKey, entry] : loader->moduleMap()) {
+        if (auto* record = entry->record())
+            registeredKeys.add(record, String(mapKey.first));
+    }
     for (auto& [mapKey, entry] : loader->moduleMap()) {
         String key(mapKey.first);
         auto* record = entry->record();
@@ -2292,7 +2316,7 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             evict.abandonedModules.append(key);
         // It may have failed because of a mock, and JSC forgets a failed module's requests, so it's never found as an importer.
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(record);
-        bool isEvictedWithAll = evict.all && !(evict.exceptPackages && isInNodeModules(key));
+        bool isEvictedWithAll = evict.all && !(evict.exceptPackages && isExternalizedByVitest(globalObject, key));
         if (isEvictedWithAll || entry->status() >= JSC::ModuleRegistryEntry::Status::FetchFailed || (cyclic && cyclic->evaluationError()))
             keys.append(key);
         if (!record || evict.all)
@@ -2303,9 +2327,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             addImporter(importersOf, key, String { resolved.get() });
         for (auto& loaded : record->loadedModules().values()) {
             auto* imported = loaded.m_module.get();
-            auto* registered = loader->registryEntry(imported->moduleKey());
-            if (registered && registered->record() == imported)
-                addImporter(importersOf, key, imported->moduleKey().string());
+            if (auto registered = registeredKeys.find(imported); registered != registeredKeys.end())
+                addImporter(importersOf, key, registered->value);
             else if (evict.isEndOfTestFile && imported->hasLiveExports() && plugins.testFileOfModule.get(key))
                 keys.append(key); // Linked to a mock's record that is no longer registered, e.g. after `delete require.cache[mocked]`.
         }
@@ -2389,8 +2412,8 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         bool stays = staysInRegistry.contains(key) || staysInRequireCache.contains(key);
         for (auto& importer : importers->value) {
             unsigned testFile = plugins.testFileOfModule.get(importer);
-            // It imported the real package before vi.mock() mocked it, and never the mock.
-            if (isInNodeModules(importer) && evict.packagesToBringBack.contains(key))
+            // It imports the real package whether or not vi.mock() mocks it.
+            if (isExternalizedByVitest(globalObject, importer) && (evict.packagesToBringBack.contains(key) || evict.packagesSetAside.contains(key)))
                 continue;
             if (!testFile || importer == key || (stays && evict.onlyImportersFromEarlierTestFiles && testFile == plugins.testFile))
                 continue;
@@ -2758,7 +2781,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisposeModuleMock, (JSC::JSGlobalObject * lex
     return JSValue::encode(jsUndefined());
 }
 
-// Whether a module outside node_modules is linked to `record` and has yet to run. `running` is the one that asks.
+// Whether a module that Vitest doesn't externalize is linked to `record` and has yet to run. `running` is the one that asks.
 __attribute__((minsize)) static bool isImportedByModuleYetToRun(Zig::GlobalObject* globalObject, JSC::AbstractModuleRecord* record, const String& running)
 {
     for (auto& [mapKey, entry] : Bun::testFileModuleLoader(globalObject)->moduleMap()) {
@@ -2766,7 +2789,7 @@ __attribute__((minsize)) static bool isImportedByModuleYetToRun(Zig::GlobalObjec
         if (!importer || importer->status() < JSC::CyclicModuleRecord::Status::Linked || importer->status() > JSC::CyclicModuleRecord::Status::Evaluating)
             continue;
         String key(mapKey.first);
-        if (key == running || isInNodeModules(key))
+        if (key == running || isExternalizedByVitest(globalObject, key))
             continue;
         for (auto& loaded : importer->loadedModules().values()) {
             if (loaded.m_module.get() == record)
@@ -2926,6 +2949,16 @@ __attribute__((minsize)) static JSC::EncodedJSValue mockModule(JSC::JSGlobalObje
     }
     bool isLoadInFlight = loaded.staleESMEntry;
     if (leavesLoadedModuleAlone && staysTheOriginal && (loaded.esmNamespace || loaded.commonJSModule)) {
+        // Before the move, while its importers are found under this key.
+        if (loadedByTestFile != globalObject->onLoadPlugins.testFile) {
+            ModulesToEvict evict;
+            evict.onlyImportersFromEarlierTestFiles = true;
+            evict.patchedESModules.append(specifier);
+            evict.patchedCommonJSModules.append(specifier);
+            evict.packagesSetAside.append(specifier);
+            evictModulesAndTheirImporters(globalObject, WTF::move(evict));
+            RETURN_IF_EXCEPTION(scope, {});
+        }
         setLoadedModuleAside(globalObject, specifier);
         RETURN_IF_EXCEPTION(scope, {});
         mock->hasSetLoadedModuleAside = !wasLoadedByImportActual;
@@ -4370,16 +4403,17 @@ bool isModuleMockWaitingForFactory(Zig::GlobalObject* globalObject, const String
     return mock && (mock->state == Zig::JSModuleMock::State::Running || globalObject->onLoadPlugins.waitingModuleMocks.containsIf([&](auto& waiting) { return waiting.mock.get() == mock; }));
 }
 
-// Vitest loads packages outside the module graph it mocks, so a module in node_modules gets the original of what vi.mock() mocked.
-// Jest's mocks reach packages too.
-String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, const String& importer)
+// A module that Vitest externalizes gets the original of what vi.mock() mocked. Jest's mocks reach packages too.
+String keyOfImportByPackage(Zig::GlobalObject* globalObject, const String& key, const String& importer, bool isESM)
 {
     if (!Zig::isInNodeModules(importer) || Zig::isBuiltinModuleKey(key))
         return key;
     auto* mock = Zig::registeredModuleMock(globalObject, key);
     // A module that was patched in place is the only instance there is.
     bool hasOriginal = mock && mock->isOfVitest() && !mock->originalExports && !mock->originalCommonJSExports;
-    return hasOriginal ? Zig::originalModuleKey(key) : key;
+    if (!hasOriginal || (isESM && !Zig::isExternalizedByVitest(globalObject, importer)))
+        return key;
+    return Zig::originalModuleKey(key);
 }
 
 // Whether some unfinished module imports both, directly or through other modules. The factories of two loads run at the same time.

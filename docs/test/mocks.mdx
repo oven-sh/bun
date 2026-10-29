@@ -456,12 +456,14 @@ If a module imports a name the factory didn't return, the module still loads. Wi
 
 `vi.mock()` and `vi.doMock()` mock a package for your own code only, as in Vitest. A module inside `node_modules` that imports the package gets the real one. `jest.mock()` and `mock.module()` mock it for every importer, as in Jest.
 
+The exception is a `.js` file that uses `import` or `export` in a package without `"type": "module"`. Node would read it as CommonJS, so Vitest loads it like your own code, and it gets the mock.
+
 ```ts
 vi.mock("dep", () => ({ default: fake })); // a library that requires "dep" still gets the real "dep"
 jest.mock("dep", () => fake); // the library gets the fake too
 ```
 
-If the package is already loaded, what imported it keeps the real one, and the next `import()` or `require()` from your own code calls the factory. The real package is never loaded a second time: `vi.importActual()` returns the loaded one, and `vi.doUnmock()` brings it back.
+If the package is already loaded, what imported it keeps the real one, and the next `import()` or `require()` from your own code calls the factory. Modules that an earlier test file loaded are loaded again and get the mock, because in Vitest each file starts with nothing loaded. The real package is never loaded a second time: `vi.importActual()` returns the loaded one, and `vi.doUnmock()` brings it back.
 
 The exception is a `vi.mock()` call in a module that is imported with a static import (see "Hoisting & Preloading" below). By the time that module runs, its importer's other imports are already linked to the real package. Bun updates the loaded package in place, so the test file and the modules it imports get the mock. A module inside `node_modules` that imports the package gets the mock too. So it does when a `--preload` script mocks a package that an earlier preload has loaded.
 
@@ -499,7 +501,7 @@ test("automock", () => {
 
 Mocked modules stay mocked after `resetModules()`. After `jest.resetModules()`, the next import also calls the factory again. Existing imports keep their values.
 
-As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a module imported again still shares its copy of `react` with the rest of the test. As in Jest, `jest.resetModules()` loads them again too.
+As in Vitest, `vi.resetModules()` leaves packages in `node_modules` loaded, so a module imported again still shares its copy of `react` with the rest of the test. It does load the `.js` files again that Vitest loads like your own code (see [Mocking a Package](#mocking-a-package)). As in Jest, `jest.resetModules()` loads them again too.
 
 `mock.restore()` doesn't remove module mocks.
 

@@ -1344,6 +1344,9 @@ describe.concurrent("a module mocked without a factory", () => {
       "node_modules/cjs-lib/index.js": `const dep = require("dep"); module.exports = { who: () => dep.who(), extra: dep.extra };`,
       "node_modules/esm-lib/package.json": `{ "name": "esm-lib", "type": "module", "main": "index.js" }`,
       "node_modules/esm-lib/index.js": `import dep from "dep"; export const who = () => dep.who(); export const extra = dep.extra;`,
+      // Node would read it as CommonJS, so Vitest inlines it.
+      "node_modules/untyped-esm-lib/package.json": `{ "name": "untyped-esm-lib", "main": "index.js" }`,
+      "node_modules/untyped-esm-lib/index.js": `import dep from "dep"; export const who = () => dep.who(); export const extra = dep.extra;`,
       "own.js": `import dep from "dep"; export const who = () => dep.who();`,
     };
     const file = (api: string, mock: string, factory: string, inPackages: string) => `
@@ -1353,8 +1356,10 @@ describe.concurrent("a module mocked without a factory", () => {
       import * as own from "./own.js";
       import cjsLib from "cjs-lib";
       import * as esmLib from "esm-lib";
+      import * as untypedEsmLib from "untyped-esm-lib";
       test("packages get ${inPackages}", () => {
         expect([dep.who(), own.who()]).toEqual(["mock", "mock"]);
+        expect([untypedEsmLib.who(), untypedEsmLib.extra]).toEqual(["mock", undefined]);
         expect([cjsLib.who(), esmLib.who()]).toEqual(["${inPackages}", "${inPackages}"]);
         expect([cjsLib.extra, esmLib.extra]).toEqual(${inPackages === "real" ? "[1, 1]" : "[undefined, undefined]"});
       });
@@ -1371,6 +1376,117 @@ describe.concurrent("a module mocked without a factory", () => {
         args,
       );
     });
+
+    test.each(isolationFlags)(
+      "two packages mocked with their ES module builds, one of which imports the other %j",
+      async args => {
+        const builds = (name: string, imports: string[]) => ({
+          [`node_modules/${name}/package.json`]: `{ "name": "${name}", "main": "./cjs/index.js", "module": "./esm/index.js" }`,
+          [`node_modules/${name}/cjs/index.js`]: `module.exports = { builds: ["${name} cjs", ${imports.map(from => `...require("${from}").builds`)}] };`,
+          [`node_modules/${name}/esm/index.js`]: `
+          ${imports.map((from, i) => `import { builds as from${i} } from "${from}";`).join("\n")}
+          export const builds = ["${name} esm", ${imports.map((_, i) => `...from${i}`)}];`,
+        });
+        await expectFixturesToPass(
+          {
+            ...builds("outer", ["inner", "shared"]),
+            ...builds("inner", ["shared"]),
+            "node_modules/shared/package.json": `{ "name": "shared", "type": "module", "exports": { "import": "./index.js", "require": "./index.cjs" } }`,
+            "node_modules/shared/index.js": `export const builds = ["shared esm"];`,
+            "node_modules/shared/index.cjs": `exports.builds = ["shared cjs"];`,
+            "builds.test.js": `
+            import { expect, test, vi } from "vitest";
+            import { builds } from "outer";
+            vi.mock("outer", () => import("outer/esm/index.js"));
+            vi.mock("inner", () => import("inner/esm/index.js"));
+            test("no CommonJS build is loaded", () => {
+              expect(builds).toEqual(["outer esm", "inner esm", "shared esm", "shared esm"]);
+            });
+          `,
+          },
+          1,
+          args,
+        );
+      },
+    );
+
+    test("files that mock it between files that don't", async () => {
+      const counted = Object.fromEntries(
+        Object.entries(packages).map(([path, text]) => [
+          path,
+          path.endsWith(".js")
+            ? `(globalThis.evaluated ??= []).push("${path.split("/").at(-2) ?? "own"}"); ${text}`
+            : text,
+        ]),
+      );
+      const names = ["./own.js", "untyped-esm-lib", "esm-lib", "cjs-lib"];
+      const who = `[own, untypedEsmLib, esmLib, cjsLib].map(lib => (lib.default ?? lib).who())`;
+      const real = `
+        import { expect, test } from "vitest";
+        import * as own from "./own.js";
+        import * as untypedEsmLib from "untyped-esm-lib";
+        import * as esmLib from "esm-lib";
+        import * as cjsLib from "cjs-lib";
+        test("real", () => expect(${who}).toEqual(["real", "real", "real", "real"]));
+      `;
+      await expectFixturesToPass(
+        {
+          ...counted,
+          "1.test.js": real,
+          "2.test.js": real
+            .replace("expect, test }", "expect, test, vi }")
+            .replace("import * as own", `vi.mock("dep", () => ({ default: { who: () => "mock" } }));\nimport * as own`)
+            .replace(`["real", "real", "real", "real"]`, `["mock", "mock", "real", "real"]`),
+          "3.test.js": real,
+          "4.test.js": `
+            import { expect, test, vi } from "vitest";
+            test("vi.doMock()", async () => {
+              vi.doMock("dep", () => ({ default: { who: () => "mock" } }));
+              const [own, untypedEsmLib, esmLib, cjsLib] = await Promise.all(${JSON.stringify(names)}.map(name => import(name)));
+              expect(${who}).toEqual(["mock", "mock", "real", "real"]);
+            });
+          `,
+          "5.test.js": `${real}
+            test("what Vitest externalizes ran once", () => {
+              const times = name => globalThis.evaluated.filter(evaluated => evaluated === name).length;
+              expect(["dep", "esm-lib", "cjs-lib"].map(times)).toEqual([1, 1, 1]);
+              expect(["own", "untyped-esm-lib"].map(times)).toEqual([5, 5]);
+            });
+          `,
+        },
+        6,
+      );
+    });
+
+    test.each(isolationFlags)(
+      "vi.doMock() reaches an ES module that Vitest inlines after vi.resetModules() %j",
+      async args => {
+        await expectFixturesToPass(
+          {
+            ...packages,
+            "reset.test.js": `
+            import { expect, test, vi } from "vitest";
+            const who = async () => (await import("untyped-esm-lib")).who();
+            test("like a module of the project", async () => {
+              expect(await who()).toBe("real");
+              vi.doMock("dep", () => ({ default: { who: () => "first" } }));
+              expect(await who()).toBe("real");
+              vi.resetModules();
+              expect(await who()).toBe("first");
+              vi.doMock("dep", () => ({ default: { who: () => "second" } }));
+              vi.resetModules();
+              expect(await who()).toBe("second");
+              vi.doUnmock("dep");
+              vi.resetModules();
+              expect(await who()).toBe("real");
+            });
+          `,
+          },
+          1,
+          args,
+        );
+      },
+    );
 
     test("jest.mock() and mock.module() mock it for them too, as in Jest", async () => {
       await expectFixturesToPass(
@@ -2115,7 +2231,10 @@ describe.concurrent("resetModules", () => {
         "node_modules/esm-pkg/index.js": `${counted("esm")} export default {};`,
         "node_modules/cjs-pkg/package.json": `{ "name": "cjs-pkg", "main": "index.js" }`,
         "node_modules/cjs-pkg/index.js": `${counted("cjs")} module.exports = {};`,
-        "own.js": `${counted("own")} export { default as esm } from "esm-pkg"; export { default as cjs } from "cjs-pkg";`,
+        // Node would read it as CommonJS, so Vitest inlines it.
+        "node_modules/untyped-esm-pkg/package.json": `{ "name": "untyped-esm-pkg", "main": "index.js" }`,
+        "node_modules/untyped-esm-pkg/index.js": `${counted("untyped")} export default {};`,
+        "own.js": `${counted("own")} export { default as esm } from "esm-pkg"; export { default as cjs } from "cjs-pkg"; export { default as untyped } from "untyped-esm-pkg";`,
         "reset.test.js": `
           import { expect, jest, test, vi } from "bun:test";
           import * as first from "./own.js";
@@ -2124,15 +2243,15 @@ describe.concurrent("resetModules", () => {
             vi.resetModules();
             const second = await import("./own.js");
             expect(second).not.toBe(first);
-            expect([second.esm === first.esm, second.cjs === first.cjs]).toEqual([true, true]);
+            expect([second.esm === first.esm, second.cjs === first.cjs, second.untyped === first.untyped]).toEqual([true, true, false]);
             expect((await import("esm-pkg")).default).toBe(first.esm);
             expect(require("cjs-pkg")).toBe(first.cjs);
-            expect([globalThis.own, globalThis.esm, globalThis.cjs]).toEqual([2, 1, 1]);
+            expect([globalThis.own, globalThis.esm, globalThis.cjs, globalThis.untyped]).toEqual([2, 1, 1, 2]);
 
             jest.resetModules();
             const third = await import("./own.js");
             expect([third.esm === first.esm, third.cjs === first.cjs]).toEqual([false, false]);
-            expect([globalThis.own, globalThis.esm, globalThis.cjs]).toEqual([3, 2, 2]);
+            expect([globalThis.own, globalThis.esm, globalThis.cjs, globalThis.untyped]).toEqual([3, 2, 2, 3]);
           });
         `,
       },

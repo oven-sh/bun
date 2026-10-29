@@ -4605,6 +4605,19 @@ fn module_type_of(
     ModuleType::Unknown
 }
 
+/// C++ entry point: whether the extension, or else `"type"` in package.json, makes the file an ES module.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__isESModuleByExtensionOrPackageType(
+    global: &JSGlobalObject,
+    path: &bun_core::String,
+) -> bool {
+    let path = path.to_utf8();
+    let path = Fs::Path::init(path.slice());
+    // SAFETY: `bun_vm_ptr()` is the live per-thread VM.
+    let package_json = unsafe { package_json_of(global.bun_vm_ptr(), &path) };
+    module_type_of(&path, package_json) == ModuleType::Esm
+}
+
 thread_local! {
     /// Per-thread shared `BufferPrinter`. Lazy-init in [`Bun__transpileFile`];
     /// never freed (process-lifetime singleton —

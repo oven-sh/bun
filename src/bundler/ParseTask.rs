@@ -227,23 +227,24 @@ pub enum Step {
 // ───────────────────────────────────────────────────────────────────────────
 
 impl<'a> ParseTask<'a> {
-    /// Shared borrow of the owning `BundleV2`. `ctx` is a BACKREF
-    /// (LIFETIMES.tsv) into the arena-allocated bundle, set at `init` time and
-    /// valid until `BundleV2::deinit`. Use a copy of `ctx` where a local borrow does; writers (e.g.
-    /// `on_complete`) must continue to deref the raw `ctx` field directly.
+    /// Shared borrow of the owning `BundleV2`. Use a copy of `ctx` where a
+    /// function-local borrow is enough.
     ///
     /// # Safety
     ///
-    /// The returned lifetime `'r` is **decoupled** from `&self`: callers in
-    /// `get_code_for_parse_task_*` stash slices borrowed from `ctx` into
-    /// out-params whose lifetime is independent of `task`, so we cannot tie
+    /// The returned lifetime `'r` is **decoupled** from `&self`:
+    /// `get_code_for_parse_task_without_plugins` stores a path borrowed from `ctx`
+    /// in an out-param whose lifetime is independent of `task`, so we cannot tie
     /// `'r` to the `ParseTask` borrow. The caller must ensure the bundle
-    /// outlives `'r` — true for every site, since the bundle drives the parse
-    /// tasks and outlives all of them. Also requires `ctx` to be initialized
-    /// (`init()` was called); debug-asserted.
+    /// outlives `'r`. It does, since the bundle drives the parse tasks and
+    /// outlives all of them.
+    ///
+    /// # Panics
+    ///
+    /// If `ctx` is `None`.
     #[inline]
     pub(crate) unsafe fn ctx<'r>(&self) -> &'r BundleV2<'static> {
-        // SAFETY: caller upholds: bundle outlives `'r`. `expect` enforces init().
+        // SAFETY: caller upholds: bundle outlives `'r`.
         unsafe { bun_ptr::detach_lifetime_ref(self.ctx.expect("ParseTask.ctx unset").get()) }
     }
 

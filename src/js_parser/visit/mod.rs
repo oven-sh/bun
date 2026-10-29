@@ -286,13 +286,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut j: usize = 0;
         // Iterate by index so kept entries can be written back through `decls[j]`
         // while scanning ahead.
-        let len = decls.len();
-        let mut i: usize = 0;
-        'outer: while i < len {
-            // SAFETY: i < len; we need disjoint borrows of decls[i] (read/mutate)
-            // and decls[j] (write at end). j <= i always holds.
-            let decl: &mut G::Decl = unsafe { &mut *decls.as_mut_ptr().add(i) };
-            i += 1;
+        'outer: for i in 0..decls.len() {
+            let decl = &mut decls[i];
 
             self.visit_binding(decl.binding, None);
 
@@ -635,16 +630,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 }
             }
 
-            // out_decls[j] = decl.*;
-            if j != i - 1 {
-                // SAFETY: j < i-1 < len; src/dst non-overlapping; Decl has no Drop.
-                // Derive both pointers from a single `as_mut_ptr()` so the src `*const`
-                // shares provenance with dst (Stacked Borrows: a separate `as_ptr()`
-                // SharedRO tag would be popped by the later `as_mut_ptr()` Unique).
-                unsafe {
-                    let base = decls.as_mut_ptr();
-                    core::ptr::copy_nonoverlapping(base.add(i - 1), base.add(j), 1);
-                }
+            if j < i {
+                decls[j] = decls[i];
             }
             j += 1;
         }
@@ -1695,9 +1682,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                             // The last function statement for a given symbol wins
                             data.func.name = None;
-                            // SAFETY: `G::Fn`'s fields are POD (`StoreSlice<T>`, ints, flags)
-                            // with no `Drop`, so a bitwise read is a plain copy; the type just
-                            // lacks `derive(Copy)`.
+                            // SAFETY: `G::Fn` is not `Copy` (`return_ts_metadata` can own a `Vec`),
+                            // so this is a move. The statement is not kept (`before.clear()` below),
+                            // and the AST store never drops its nodes: the `Vec` is not freed twice.
                             let func = unsafe { core::ptr::read(&raw const data.func) };
                             let_decls[index as usize].value =
                                 Some(p.new_expr(E::Function { func }, stmt.loc));
@@ -1899,8 +1886,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                             }
                                         }
                                     }
-                                    // `swap` compacts in place (idx >= end always).
-                                    decls.swap(end, idx);
+                                    if end < idx {
+                                        decls[end] = decls[idx];
+                                    }
                                     end += 1;
                                 }
                                 local.decls.truncate(end);

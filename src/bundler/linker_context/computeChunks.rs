@@ -37,11 +37,11 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
 /// an empty order. The logged error fails the build after `compute_chunks` returns.
 fn css_order_or_log<'a>(
     this: &LinkerContext,
-    parse_graph: &crate::Graph::Graph,
     order: Result<Vec<chunk::CssImportOrder<'a>>, CssImportChainTooDeep>,
 ) -> Vec<chunk::CssImportOrder<'a>> {
     order.unwrap_or_else(|too_deep| {
-        too_deep.add_to_log(parse_graph.input_files.items_source(), this.log_disjoint());
+        let sources = this.parse_graph().input_files.items_source();
+        too_deep.add_to_log(sources, this.log_disjoint());
         Vec::new()
     })
 }
@@ -144,7 +144,6 @@ pub(crate) fn compute_chunks<'a>(
         if css_asts[source_index as usize].is_some() {
             let order = css_order_or_log(
                 this,
-                parse_graph,
                 find_imported_files_in_css_order(this, temp, &[Index::init(source_index)]),
             );
             // Create a chunk for the entry point here to ensure that the chunk is
@@ -217,7 +216,6 @@ pub(crate) fn compute_chunks<'a>(
             if css_source_indices.len() > 0 {
                 let order = css_order_or_log(
                     this,
-                    parse_graph,
                     find_imported_files_in_css_order(this, temp, css_source_indices.slice()),
                 );
 

@@ -1064,12 +1064,7 @@ pub(crate) fn generate_entry_point_tail_js(
                         }
 
                         let own_len = items.len();
-                        items.extend(cross_chunk_exports.iter().map(|item| bun_ast::ClauseItem {
-                            alias: item.alias,
-                            alias_loc: item.alias_loc,
-                            name: item.name,
-                            original_name: item.original_name,
-                        }));
+                        items.extend_from_slice(cross_chunk_exports);
                         // arena-owned `*mut [ClauseItem]` — move the
                         // collected Vec into the linker arena. The arena slice is also iterated
                         // below for the synthetic-default-export path.

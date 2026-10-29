@@ -54,9 +54,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 // Note: reshaped for borrowck — index loop instead of `|*decl_ptr|`.
                 let decls_len = st.decls.len_u32() as usize;
                 for i in 0..decls_len {
-                    // explicit field copies to avoid aliasing
-                    let binding = st.decls.slice()[i].binding;
-                    let value = st.decls.slice()[i].value;
+                    let G::Decl { binding, value } = st.decls[i];
                     let Some(value) = value else {
                         st.decls[new_len] = G::Decl {
                             binding,

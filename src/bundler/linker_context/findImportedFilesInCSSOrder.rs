@@ -89,14 +89,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         // `BundledAst.css` SoA column.
         css_asts: &'v [crate::bundled_ast::CssCol],
         all_import_records: &'v [bun_ast::import_record::List<'a>],
-
-        // No `graph` field — `visit()` never reads it, and holding one would
-        // create an aliasing `&mut this.graph` borrow against
-        // `css_asts` (which already borrows `this.graph`).
-        // `BackRef` (not `&'a Graph`) so the visitor's `'a` borrow stays
-        // disjoint from `LinkerContext` (constructed from the raw `parse_graph`
-        // backref, valid for the link step).
-        parse_graph: bun_ptr::BackRef<Graph<'a>>,
+        parse_graph: &'v Graph<'a>,
 
         has_external_import: bool,
         visited: Vec<Index>,
@@ -332,16 +325,13 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
         }
     }
 
-    // Read MultiArrayList columns before constructing the visitor (borrowck).
     let css_asts_slice: &[crate::bundled_ast::CssCol] = this.graph.ast.items_css();
     let all_import_records_slice = this.graph.ast.items_import_records();
     let arena = this.graph.arena();
 
     let mut visitor = Visitor {
         arena,
-        parse_graph: bun_ptr::BackRef::from(
-            core::ptr::NonNull::new(this.parse_graph).expect("parse_graph set in load()"),
-        ),
+        parse_graph: this.parse_graph(),
         visited: Vec::<Index>::init_capacity(16),
         css_asts: css_asts_slice,
         all_import_records: all_import_records_slice,

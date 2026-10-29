@@ -8,6 +8,7 @@ export type Start = {
   systemCalls?: number;
   privateKilobytes?: number;
 };
+export type Measured = Start & { mappings?: string };
 export type Until = { prints: string } | { route: string; answers: string };
 
 const killAfterMilliseconds = 60_000;
@@ -29,7 +30,10 @@ export const startEnvironment = {
 
 function openLibc() {
   return dlopen("libc.so.6", {
-    syscall: { args: [FFIType.i64, FFIType.ptr, FFIType.i64, FFIType.i64, FFIType.i64, FFIType.u64], returns: FFIType.i64 },
+    syscall: {
+      args: [FFIType.i64, FFIType.ptr, FFIType.i64, FFIType.i64, FFIType.i64, FFIType.u64],
+      returns: FFIType.i64,
+    },
     read: { args: [FFIType.i32, FFIType.ptr, FFIType.u64], returns: FFIType.i64 },
     close: { args: [FFIType.i32], returns: FFIType.i32 },
   }).symbols;
@@ -64,17 +68,34 @@ function readAndClose({ read, close }: Libc, counter: number) {
   return bytesRead === 8 ? Number(value[0]) : undefined;
 }
 
+const hugePagesSetting = "/sys/kernel/mm/transparent_hugepage/enabled";
+
 function readMemory(pid: number) {
   let privateKilobytes = 0;
-  for (const line of readFileSync(`/proc/${pid}/smaps`, "utf8").split("\n")) {
-    if (line.startsWith("Anonymous:")) privateKilobytes += parseInt(line.slice(10));
+  const mappings = [
+    `${hugePagesSetting}: ${existsSync(hugePagesSetting) ? readFileSync(hugePagesSetting, "utf8").trim() : "absent"}`,
+  ];
+  for (const mapping of readFileSync(`/proc/${pid}/smaps`, "utf8").split(/^(?=[0-9a-f]+-[0-9a-f]+ )/m)) {
+    const [header, ...fields] = mapping.split("\n");
+    const field = (name: string) =>
+      fields
+        .find(line => line.startsWith(`${name}:`))
+        ?.slice(name.length + 1)
+        .trim() ?? "";
+    const kilobytes = (name: string) => String(parseInt(field(name)) || 0).padStart(8);
+    privateKilobytes += parseInt(field("Anonymous")) || 0;
+    const [addresses, permissions, , , , name = ""] = header.split(/\s+/);
+    mappings.push(
+      `${addresses.padEnd(25)} ${permissions} Size ${kilobytes("Size")} Rss ${kilobytes("Rss")} Private_Dirty ${kilobytes("Private_Dirty")} Anonymous ${kilobytes("Anonymous")} AnonHugePages ${kilobytes("AnonHugePages")} ${name} (${field("VmFlags")})`,
+    );
   }
-  return { privateKilobytes };
+  return { privateKilobytes, mappings: mappings.join("\n") };
 }
 
 async function untilReached(child: Bun.Subprocess<"pipe" | "ignore", "pipe", "pipe">, command: string[], until: Until) {
   let output = "";
-  const failed = async (what: string) => new Error(`${command.join(" ")}: ${what}\n${output}${await child.stderr.text()}`);
+  const failed = async (what: string) =>
+    new Error(`${command.join(" ")}: ${what}\n${output}${await child.stderr.text()}`);
   for await (const chunk of child.stdout.pipeThrough(new TextDecoderStream())) {
     output += chunk;
     if ("prints" in until) continue;
@@ -82,15 +103,17 @@ async function untilReached(child: Bun.Subprocess<"pipe" | "ignore", "pipe", "pi
     if (!port) continue;
     const response = await fetch(`http://127.0.0.1:${port}${until.route}`);
     const answer = await response.text();
-    if (response.status !== 200 || answer !== until.answers) throw await failed(`answered ${response.status} ${JSON.stringify(answer)}`);
+    if (response.status !== 200 || answer !== until.answers)
+      throw await failed(`answered ${response.status} ${JSON.stringify(answer)}`);
     return;
   }
   const exitCode = await child.exited;
   if (!("prints" in until)) throw await failed(`exited with code ${exitCode} before it listened`);
-  if (exitCode !== 0 || output !== until.prints) throw await failed(`exit code ${exitCode}, signal ${child.signalCode}`);
+  if (exitCode !== 0 || output !== until.prints)
+    throw await failed(`exit code ${exitCode}, signal ${child.signalCode}`);
 }
 
-async function countedStart(libc: Libc, command: string[], until: Until): Promise<Start> {
+async function countedStart(libc: Libc, command: string[], until: Until): Promise<Measured> {
   const child = Bun.spawn({
     cmd: ["/bin/sh", "-c", 'read line; exec "$0" "$@"', ...command],
     cwd: "/",
@@ -101,7 +124,10 @@ async function countedStart(libc: Libc, command: string[], until: Until): Promis
     timeout: killAfterMilliseconds,
     killSignal: "SIGKILL",
   });
-  const counters = [openCounter(libc, child.pid, hardware, instructions, "first"), openCounter(libc, child.pid, software, pageFaults, "all")];
+  const counters = [
+    openCounter(libc, child.pid, hardware, instructions, "first"),
+    openCounter(libc, child.pid, software, pageFaults, "all"),
+  ];
   try {
     child.stdin.write("\n");
     child.stdin.end();
@@ -123,7 +149,12 @@ async function countedStart(libc: Libc, command: string[], until: Until): Promis
 export type Stepped = { thousandSteps: number } | { notCounted: string };
 
 /** `thousandInstructions` without the processor's counters: the first thread runs one instruction at a time from exec to exit. */
-export async function steppedStart(command: string[], prints: string, runs: number, deadline: number): Promise<Stepped> {
+export async function steppedStart(
+  command: string[],
+  prints: string,
+  runs: number,
+  deadline: number,
+): Promise<Stepped> {
   const { ptrace, waitpid } = dlopen("libc.so.6", {
     ptrace: { args: [FFIType.i64, FFIType.i32, FFIType.u64, FFIType.u64], returns: FFIType.i64 },
     waitpid: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
@@ -222,11 +253,14 @@ async function countSystemCalls(command: string[], until: Until, log: string) {
   }
 }
 
-export async function measureStart(command: string[], until: Until, runs: number): Promise<Start> {
+/** `mappings`: what /proc/<pid>/smaps says of each mapping in the run with the least `privateKilobytes`. */
+export async function measureStart(command: string[], until: Until, runs: number): Promise<Measured> {
   const libc = openLibc();
   const least: Start = {};
+  let mappingsOfLeast: string | undefined;
   for (let run = 0; run < runs; run++) {
-    const start = await countedStart(libc, command, until);
+    const { mappings, ...start } = await countedStart(libc, command, until);
+    if ((start.privateKilobytes ?? Infinity) < (least.privateKilobytes ?? Infinity)) mappingsOfLeast = mappings;
     for (const [name, value] of Object.entries(start) as [keyof Start, number | undefined][]) {
       if (value !== undefined) least[name] = Math.min(value, least[name] ?? Infinity);
     }
@@ -235,5 +269,5 @@ export async function measureStart(command: string[], until: Until, runs: number
     const systemCalls = await countSystemCalls(command, until, `${command[0]}.strace`);
     if (systemCalls !== undefined) least.systemCalls = Math.min(systemCalls, least.systemCalls ?? Infinity);
   }
-  return least;
+  return { ...least, mappings: mappingsOfLeast };
 }

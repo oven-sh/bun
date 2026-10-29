@@ -388,7 +388,7 @@ pub trait Storage {
     type Ids<T: Id>: Ids<T> + Default;
     /// A list that is empty in most files.
     type Few<T: 'static>: DerefMut<Target = [T]> + Default;
-    type Map<K, V>;
+    type Map<K: 'static, V: 'static>;
     /// A map that is empty in most files.
     type FewMap<K: 'static, V: 'static>;
     /// A set that is empty in most files.
@@ -413,7 +413,7 @@ impl Storage for Growable {
     type Nodes<T: 'static> = Vec<T>;
     type Ids<T: Id> = Vec<T>;
     type Few<T: 'static> = Vec<T>;
-    type Map<K, V> = FxHashMap<K, V>;
+    type Map<K: 'static, V: 'static> = FxHashMap<K, V>;
     type FewMap<K: 'static, V: 'static> = FxHashMap<K, V>;
     type FewSet<K: 'static> = FxHashSet<K>;
     type Owning<T: Clone + 'static> = Vec<T>;
@@ -432,7 +432,7 @@ impl<'s> Storage for InArena<'s> {
     type Nodes<T: 'static> = Fixed<'s, T>;
     type Ids<T: Id> = Narrow<'s, T>;
     type Few<T: 'static> = ArenaFew<'s, T>;
-    type Map<K, V> = ArenaHashMap<'s, K, V>;
+    type Map<K: 'static, V: 'static> = FixedMap<'s, K, V>;
     type FewMap<K: 'static, V: 'static> = ArenaFewMap<'s, K, V>;
     type FewSet<K: 'static> = ArenaFewMap<'s, K, ()>;
     /// Owned until the program is loaded. A program's files are never dropped, so `Files::load` hands the list to
@@ -442,6 +442,23 @@ impl<'s> Storage for InArena<'s> {
     type Text = Cow<'s, [u8]>;
     type Lazy = Lazy<'s>;
     type Boxed<T> = ArenaBox<'s, T>;
+}
+
+/// A map that nothing writes to. It either owns its arena block or belongs to a file that several programs share.
+pub enum FixedMap<'s, K, V> {
+    Arena(ArenaHashMap<'s, K, V>),
+    Shared(&'s ArenaHashMap<'s, K, V>),
+}
+
+impl<'s, K, V> Deref for FixedMap<'s, K, V> {
+    type Target = ArenaHashMap<'s, K, V>;
+    #[inline(always)]
+    fn deref(&self) -> &ArenaHashMap<'s, K, V> {
+        match self {
+            FixedMap::Arena(map) => map,
+            FixedMap::Shared(map) => map,
+        }
+    }
 }
 
 /// A list that neither grows nor shrinks. It either owns an arena block, which it frees when dropped, or borrows from

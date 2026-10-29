@@ -48,12 +48,13 @@ use crate::builtins::{BuiltinNames, Platforms};
 use crate::ir::InParallel;
 use crate::ir::parallel::map_each;
 use crate::known_helpers::KnownHelpers;
+use crate::link::{Beside, run_beside};
 use crate::load::{EntryPointKind, SourceKind, Sources};
 use crate::statistics::{Counters, LimitId, StatisticId};
 use bun_sema::atom::Interner;
 use bun_sema::hir::StmtId;
 use bun_sema::program::{FileId, Files};
-use bun_sema::util::SharedSort;
+use bun_sema::util::{FxHashSet, SharedSort};
 use commonjs_exports::{CommonJsInput, InnerCommonJs, scan_commonjs_modules};
 use core::cmp::Ordering;
 use exports::{ExportTables, collect_export_entries, finish_exports, resolve_exports};
@@ -79,6 +80,7 @@ pub struct BindInput<'a, 's> {
     pub external_packages: &'a [Vec<u8>],
     pub application: Option<&'a ApplicationGraph<'a>>,
     pub in_parallel: InParallel<'a>,
+    pub beside: Beside<'a>,
 }
 
 /// For the graph of a typed package's own program. Every importer of a module has a say in how it exports, and only the application has all of them.
@@ -113,7 +115,12 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     let mut scans = scan_files(input);
     let unloadable = find_unloadable_modules(input, &mut scans);
     let modules = collect_modules(input, &scans);
-    let (order, mut sites) = compute_order(input, &scans, &modules);
+    let ((order, mut sites), entries) = run_beside(
+        input.beside,
+        || compute_order(input, &scans, &modules),
+        || collect_export_entries(input, &scans, &modules),
+    );
+    let mut entries = Some(entries);
     let inner_commonjs_modules = collect_inner_commonjs_modules(&modules, file_count);
     let commonjs_input = CommonJsInput {
         bind: input,
@@ -125,12 +132,24 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         is_prefix_root: &|file: FileId| order.is_prefix_root(file),
     };
     let mut texts = scan_commonjs_modules(&commonjs_input);
-    // What the text of a file says of its `__esModule` counts until a store in another file is found.
+    let mut stored_markers = FxHashSet::default();
+    let mut newly_stored_markers = find_markers_stored_in_application(input, &modules);
+    // What the build knows of the `__esModule` of a module counts until a store in another file is found.
     let (tables, imports) = loop {
-        let entries = collect_export_entries(input, &scans, &modules);
+        texts.forget_markers(&newly_stored_markers);
+        stored_markers.extend(newly_stored_markers);
+        let entries = entries
+            .take()
+            .unwrap_or_else(|| collect_export_entries(input, &scans, &modules));
         let tables = resolve_exports(input.files, &scans, &modules, entries, &texts);
         sites.settle(input.files, &modules, &tables);
-        let find_marker = |module: ModuleRef| texts.marker(module);
+        let find_marker = |module: ModuleRef| match modules.interop(module).kind {
+            _ if stored_markers.contains(&module) => None,
+            // From the first `require` on.
+            ModuleKind::SourceText => Some(true),
+            ModuleKind::CommonJs => texts.marker(module),
+            _ => None,
+        };
         let imports = bind_imports(
             input,
             &scans,
@@ -141,15 +160,23 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             &find_marker,
         );
         let stored = imports.iter().flat_map(|file| &file.stored_markers);
-        let stored: Vec<ModuleRef> = stored.copied().collect();
-        if stored.is_empty() {
+        newly_stored_markers = stored.copied().collect();
+        if newly_stored_markers.is_empty() {
             break (tables, imports);
         }
-        texts.forget_markers(&stored);
     };
     let synthetic = number_synthetic_exports(input, &modules, &tables, &imports, &texts);
-    let mut commonjs_exports =
-        CommonJsExports::finish(&commonjs_input, texts, &tables, &imports, &synthetic);
+    let ((mut pending, requests, is_library), mut commonjs_exports) = run_beside(
+        input.beside,
+        || {
+            (
+                collect_pending_failures(&scans, &modules, &tables, &imports),
+                finish_requests(&scans, &modules, &tables, &order, &sites),
+                find_library_files(input),
+            )
+        },
+        || CommonJsExports::finish(&commonjs_input, texts, &tables, &imports, &synthetic),
+    );
     // What the text of the files that use a module says, dead code too. Reach says the same of the code that is left.
     for file_imports in &imports {
         for &module in &file_imports.exports_values {
@@ -167,7 +194,6 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             commonjs_exports.call_through_namespace(module, name);
         }
     }
-    let mut pending = collect_pending_failures(&scans, &modules, &tables, &imports);
     drop_errors_of_unloadable_modules(&mut pending, &unloadable);
     let failures = number_failures(file_count, pending);
     let mut load_failures = Vec::with_capacity(unloadable.len());
@@ -177,8 +203,6 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
         let hir = input.files.hir(module.file);
         erased_statements.extend(hir.ids(hir.body).map(|statement| (module.file, statement)));
     }
-    let requests = finish_requests(&scans, &modules, &tables, &order, &sites);
-    let is_library = find_library_files(input);
     let mut compiled_files = modules.compiled_files.iter().zip(imports).peekable();
     let record_files = modules.record_files.iter().zip(requests.files);
     let drafts: Vec<(FileId, Vec<ModuleRequest>, Option<FileImports>)> = record_files
@@ -282,6 +306,9 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     }
     let (errors, failures) = failures.into_lists();
     let mut plan = Plan::new(order.into_parts(), erased_statements);
+    for &module in &stored_markers {
+        plan.set_marker_is_stored(module);
+    }
     let inner_requests = requests.inner_modules.into_iter();
     plan.inner_requests = inner_requests.map(|(_, requests)| requests).collect();
     let graph = ModuleGraph {
@@ -303,6 +330,23 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
     };
     let graph = graph.finish(input.in_parallel);
     BoundModules { graph, counters }
+}
+
+fn find_markers_stored_in_application(
+    input: &BindInput<'_, '_>,
+    modules: &ModuleSet,
+) -> Vec<ModuleRef> {
+    let Some(application) = input.application else {
+        return Vec::new();
+    };
+    let files = modules.record_files.iter();
+    let files = files.map(|&file| ModuleRef::File(file));
+    files
+        .filter(|&module| {
+            let theirs = application.application_module(module);
+            theirs.is_some_and(|theirs| application.graph.is_marker_stored(theirs))
+        })
+        .collect()
 }
 
 fn collect_inner_commonjs_modules(

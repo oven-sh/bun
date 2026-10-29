@@ -1,3 +1,0 @@
-{
-  "build": ["--aot-limit=MaxEscapeAnalysisWork:1", "--aot-verify-each-pass"]
-}

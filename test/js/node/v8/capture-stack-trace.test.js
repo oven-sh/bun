@@ -5,6 +5,7 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { totalmem } from "node:os";
 import { getCallSites } from "node:util";
 import vm, { runInNewContext } from "node:vm";
+import { Worker } from "node:worker_threads";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -1097,19 +1098,10 @@ test.each([
 );
 
 test("Error.captureStackTrace in a node:vm context of a Worker is Bun's function", async () => {
-  const source = `
-    import { Worker, isMainThread, parentPort } from "node:worker_threads";
-    import vm from "node:vm";
-    if (isMainThread) {
-      const worker = new Worker(new URL(import.meta.url));
-      const message = await new Promise((resolve, reject) => {
-        worker.once("message", resolve);
-        worker.once("error", reject);
-        worker.once("exit", code => reject(new Error("the worker exited with code " + code + " before it posted a message")));
-      });
-      await worker.terminate();
-      console.log(JSON.stringify(message));
-    } else {
+  using dir = tempDir("capture-stack-trace-vm-in-worker", {
+    "worker.mjs": `
+      import { parentPort } from "node:worker_threads";
+      import vm from "node:vm";
       const context = vm.createContext({});
       const error = vm.runInContext(\`
         function inner() { const error = new RangeError("boom"); Error.captureStackTrace(error, inner); return error; }
@@ -1122,20 +1114,21 @@ test("Error.captureStackTrace in a node:vm context of a Worker is Bun's function
         (function hooked() { const target = {}; Error.captureStackTrace(target); return target.stack; })();
       \`, context);
       parentPort.postMessage({ lazy, prepared });
-    }
-  `;
-  using dir = tempDir("capture-stack-trace-vm-in-worker", { "main.mjs": source });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "main.mjs"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
+    `,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ lazy: ["RangeError: boom", "at outer"], prepared: "hooked" });
-  expect(exitCode).toBe(0);
+  const worker = new Worker(join(String(dir), "worker.mjs"));
+  try {
+    const message = await new Promise((resolve, reject) => {
+      worker.once("message", resolve);
+      worker.once("error", reject);
+      worker.once("exit", code =>
+        reject(new Error("the worker exited with code " + code + " before it posted a message")),
+      );
+    });
+    expect(message).toEqual({ lazy: ["RangeError: boom", "at outer"], prepared: "hooked" });
+  } finally {
+    await worker.terminate();
+  }
 });
 
 // V8 searches the stack for the caller argument only when it is a function.

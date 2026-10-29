@@ -1923,7 +1923,7 @@ impl FetchTasklet {
 
     fn on_resolve(&mut self) -> JSValue {
         bun_output::scoped_log!(FetchTasklet, "onResolve");
-        let response = bun_core::heap::into_raw(Box::new(self.to_response()));
+        let response = RefPtr::new(self.to_response());
         // The fetch() promise is about to resolve; from here the paused
         // transport should not by itself keep the event loop alive. The body
         // consumer hooks (`on_start_streaming_http_response_body_callback`,
@@ -1932,10 +1932,8 @@ impl FetchTasklet {
             self.poll_ref
                 .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
         }
-        // SAFETY: response is a freshly allocated Response; makeMaybePooled takes ownership semantics on the JS side
         let global_this = self.global_this;
-        // SAFETY: `response` is freshly allocated above; ownership transfers to JSC.
-        let response_js = Response::make_maybe_pooled(&global_this, response);
+        let response_js = Response::to_js(response.clone(), &global_this);
         response_js.ensure_still_alive();
         self.response = jsc::Weak::<FetchTasklet>::create(
             response_js,
@@ -1943,14 +1941,14 @@ impl FetchTasklet {
             jsc::WeakRefType::FetchResponse,
             self,
         );
-        // SAFETY: `response` is the live heap allocation owned by JSC after
-        // `make_maybe_pooled`.
-        self.native_response
-            .set(Some(unsafe { RefPtr::init_ref(response) }));
+        let response_ptr = response.as_ptr();
+        self.native_response.set(Some(response));
         // Response-owned listener so abort still errors the body after this tasklet detaches its own.
         if let Some(signal) = self.abort_signal() {
-            // SAFETY: `response` is the live heap allocation owned by JSC.
-            unsafe { Response::attach_abort_signal(response, &global_this, signal, self.context) };
+            // SAFETY: `native_response` and the wrapper each hold a ref on the live heap allocation.
+            unsafe {
+                Response::attach_abort_signal(response_ptr, &global_this, signal, self.context)
+            };
         }
         response_js
     }

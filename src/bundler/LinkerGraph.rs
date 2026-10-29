@@ -412,12 +412,8 @@ pub(crate) fn generate_symbol_import_and_use(
     part_index: u32,
     ref_: Ref,
     use_count: u32,
-    // Note: callers are split between `crate::Index` (options_types)
-    // and the structurally identical `bun_ast::Index` until the two newtypes
-    // unify. Accept either via `Into` and normalize once.
-    source_index_to_import_from: impl Into<Index>,
+    source_index_to_import_from: Index,
 ) -> Result<(), bun_alloc::AllocError> {
-    let source_index_to_import_from: Index = source_index_to_import_from.into();
     if use_count == 0 {
         return Ok(());
     }
@@ -583,7 +579,7 @@ impl<'a> LinkerGraph<'a> {
         part_index: u32,
         ref_: Ref,
         use_count: u32,
-        source_index_to_import_from: impl Into<Index>,
+        source_index_to_import_from: Index,
     ) -> Result<(), bun_alloc::AllocError> {
         let ast = self.ast.split_mut();
         let meta = self.meta.split_mut();

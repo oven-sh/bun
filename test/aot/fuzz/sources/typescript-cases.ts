@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { asProgram, type Drawn } from "../family";
 
-const casesRoot = "/_submodules/TypeScript/tests/cases/";
+const casesRoot = "/tsc/testdata/tests/cases/";
 
 /**
  * Cases that say nothing about the compiler, because `bun <file>` is no yardstick for them. In all but the last plain Bun's own transpiler departs from what TypeScript means, and the

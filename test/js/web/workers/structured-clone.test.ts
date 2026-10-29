@@ -545,6 +545,8 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             const fs = require("node:fs");
             const big = new ArrayBuffer(256 * 1024 * 1024);
             const other = new ArrayBuffer(8);
+            // Freed after the fill: room for everything but a copy of big.
+            const spare = [new ArrayBuffer(64 * 1024 * 1024), new ArrayBuffer(64 * 1024 * 1024)];
             const fd = fs.openSync(process.execPath, "r");
             fs.read(fd, new Uint8Array(big), 0, 4, 0, () => fs.closeSync(fd));
             const held = [];
@@ -558,8 +560,7 @@ for (const structuredCloneFn of [structuredClone, jscSerializeRoundtrip, jscSeri
             };
             fill(64, () => new ArrayBuffer(0, { maxByteLength: 2 ** 32 }));
             const full = fill(256, () => new ArrayBuffer(64 * 1024 * 1024));
-            // Room for everything but a copy of big.
-            held.length -= 2;
+            spare.length = 0;
             Bun.gc(true);
             const errors = [[big], [other, big]].map(transfer => {
               try {

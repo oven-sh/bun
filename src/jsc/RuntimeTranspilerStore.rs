@@ -1006,12 +1006,6 @@ impl TranspilerJob {
         if let Some(mi) = module_info.as_deref_mut() {
             mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
         }
-        // Note: derive `*mut` from a `&mut` borrow (not `&x as *const _ as
-        // *mut _`, which is Stacked-Borrows UB). The `&mut` borrow ends when the
-        // closure returns; the raw pointer stays valid until `module_info` is
-        // moved/touched again (after `print_with_source_map`).
-        let module_info_ptr: Option<*mut analyze_transpiled_module::ModuleInfo> =
-            module_info.as_deref_mut().map(std::ptr::from_mut);
 
         let print_result = {
             // SAFETY: see `vm` note above — `from_raw` stores `vm` as a raw
@@ -1027,7 +1021,7 @@ impl TranspilerJob {
                 source_code_printer,
                 js_printer::Format::EsmAscii,
                 mapper.get(),
-                module_info_ptr,
+                module_info.as_deref_mut(),
             )
         };
         if let Err(err) = print_result {

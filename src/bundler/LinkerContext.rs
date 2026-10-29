@@ -2600,13 +2600,13 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Each chunk's final content hash: its own isolated hash (plus the asset
-    /// path or the chunk that each of its output pieces names) and that of
-    /// every chunk it transitively reaches through cross-chunk imports or
-    /// output pieces, so a change anywhere below a chunk renames it. Cycles
-    /// are fine: reachability is a fixpoint over bitsets, and each chunk
-    /// digests its own hash first, then the sum of the rest of its closure
-    /// (so two chunks that reach each other still differ, in any chunk order).
+    /// Each chunk's final content hash: its own isolated hash (plus the
+    /// asset paths and chunks its output pieces name) and that of every chunk it
+    /// transitively reaches through cross-chunk imports or output pieces, so a
+    /// change anywhere below a chunk renames it. Cycles are fine: reachability
+    /// is a fixpoint over bitsets, and each chunk digests its own hash first,
+    /// then the sum of the rest of its closure (so two chunks that reach
+    /// each other still differ).
     ///
     /// The width is the template's (`[hash]` = 8, `[hashN]` = N) unless two
     /// chunks with different hashes would print the same characters; those

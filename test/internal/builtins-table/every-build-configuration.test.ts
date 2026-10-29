@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { crateOf } from "../../../scripts/build/codegen.ts";
 import { globAllSources } from "../../../scripts/glob-sources.ts";
@@ -10,7 +11,8 @@ const bunRoot = resolve(import.meta.dir, "..", "..", "..");
 const schemas = globAllSources().bindgen;
 const testSchemas = schemas.filter(schema => schema.endsWith("_test.bind.ts")).map(schema => basename(schema));
 
-async function generateInto(directory: string, typesOnly: readonly string[]) {
+async function generate(typesOnly: readonly string[]) {
+  using directory = tempDir("builtins-table", {});
   const { stderr, exitCode } = await run(
     [
       bunExe(),
@@ -24,17 +26,35 @@ async function generateInto(directory: string, typesOnly: readonly string[]) {
     ],
     bunRoot,
   );
-  return { errors: stderr.split("\n").filter(line => line !== "" && !line.startsWith("builtins table:")), exitCode };
+  return {
+    errors: stderr.split("\n").filter(line => line !== "" && !line.startsWith("builtins table:")),
+    exitCode,
+    ids: exitCode === 0 ? readFileSync(join(String(directory), "aot_builtin_ids.rs"), "utf8") : "",
+  };
 }
 
+// A run of the generator takes many seconds: each configuration is generated once, side by side, for all that is asked of it.
+let generating: Promise<Awaited<ReturnType<typeof generate>>[]> | undefined;
+const configurations = () => (generating ??= Promise.all([generate(testSchemas), generate([])]));
+
 test.skipIf(generated === undefined).each([
-  ["without assertions", testSchemas],
-  ["with assertions", []],
+  ["without assertions", 0],
+  ["with assertions", 1],
 ])(
   "the table of built-ins is generated for a build %s",
-  async (_, typesOnly) => {
-    using directory = tempDir("builtins-table", {});
-    expect(await generateInto(String(directory), typesOnly)).toEqual({ errors: [], exitCode: 0 });
+  async (_, configuration) => {
+    const { errors, exitCode } = (await configurations())[configuration];
+    expect({ errors, exitCode }).toEqual({ errors: [], exitCode: 0 });
   },
-  120_000,
+  240_000,
+);
+
+test.skipIf(generated === undefined)(
+  "one prebuilt engine serves a build with and a build without assertions",
+  async () => {
+    const [withoutAssertions, withAssertions] = await configurations();
+    expect(withAssertions.ids).not.toBe("");
+    expect(withAssertions.ids === withoutAssertions.ids).toBe(true);
+  },
+  240_000,
 );

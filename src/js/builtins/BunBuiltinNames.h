@@ -45,6 +45,7 @@ using namespace JSC;
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
+    macro(bareStandardStreamPrototypes) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \

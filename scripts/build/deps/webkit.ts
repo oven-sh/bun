@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "autobuild-preview-pr-934-7ed0d6cd";
+export const WEBKIT_VERSION = "autobuild-preview-pr-934-b65bfbef";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine, with WTF and bmalloc.
@@ -1856,6 +1856,9 @@ function jscGroup(
         const prefix = aotPrefixOf(path);
         const bundled = bundledAotSources.get(path);
         if (prefix !== undefined) {
+          // Unrolling loops whose trip count is not known adds 2% to this code and no speed. Under ThinLTO loops are
+          // unrolled in the link, so this counts where the objects are machine code.
+          if (cfg.release && attribute === undefined) extra.push("-mllvm=-unroll-runtime=false");
           // A switch of aot/ that has no default names every enumerator, and nothing points into a temporary beyond its statement
           // (aot/AOT.cmake has the same flags).
           return {

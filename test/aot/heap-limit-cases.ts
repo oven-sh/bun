@@ -1925,7 +1925,7 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
       120_000,
     );
 
-    // The tables that the run time makes at their first use have their pages from the start.
+    // The tables that the run time makes at their first use have their pages from the start, or are done without. The program uses up the blocks of their sizes too.
     inPart(test.skipIf(!isLinux || isASAN))(
       "with its address space used up a program reads, stores and copies properties for the first time",
       async () => {
@@ -1934,7 +1934,7 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
 const long = "ab/../".repeat(51200) + "z";
 const hold: ArrayBuffer[] = [];
 const given: any = { a: 1, b: { c: [1, 2, 3] }, name: "n" };
-for (const kib of [262144, 16384, 1024, 64, 40]) for (;;) { try { hold.push(new ArrayBuffer(kib * 1024)); } catch { break; } }
+for (const kib of [262144, 16384, 1024, 64, 40, 10]) for (;;) { try { hold.push(new ArrayBuffer(kib * 1024)); } catch { break; } }
 console.log("address space used up");
 try { path.normalize(long); console.log("answered"); } catch (e) { console.log("caught " + (e as Error).name + ": " + (e as Error).message); }
 given.fresh = given.b.c.length;
@@ -1945,8 +1945,65 @@ console.log("alive");
         });
         await build(String(folder));
         for (const limit of [4194304, 2097152]) {
-          expect(await run(["sh", "-c", `ulimit -c 0 && ulimit -v ${limit} && exec ./program`], String(folder))).toEqual({
+          expect(
+            await run(["sh", "-c", `ulimit -c 0 && ulimit -v ${limit} && exec ./program`], String(folder), {
+              BUN_JSC_numberOfGCMarkers: "1",
+            }),
+          ).toEqual({
             stdout: "address space used up\ncaught RangeError: Out of memory\n3 n true\nn 4 4\nalive\n",
+            stderr: "",
+            exitCode: 0,
+          });
+        }
+      },
+      120_000,
+    );
+
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "the threads that a collection starts are up before the program goes on",
+      async () => {
+        using folder = tempDir("aot-heap-limit", {
+          "program.ts": `const hold: ArrayBuffer[] = [];
+for (const kib of [262144, 16384, 1024, 64, 40, 10]) for (;;) { try { hold.push(new ArrayBuffer(kib * 1024)); } catch { break; } }
+console.log("alive");
+`,
+        });
+        await build(String(folder));
+        const runs = await Promise.all(
+          Array.from({ length: 100 }, () =>
+            run(["sh", "-c", "ulimit -c 0 && ulimit -v 4194304 && exec ./program"], String(folder), {
+              BUN_JSC_numberOfGCMarkers: "64",
+            }),
+          ),
+        );
+        expect(runs.filter(({ stdout, exitCode }) => stdout !== "alive\n" || exitCode !== 0)).toEqual([]);
+      },
+      240_000,
+    );
+
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "with its address space used up a key that finds no memory for its text throws",
+      async () => {
+        using folder = tempDir("aot-heap-limit", {
+          "program.ts": `const hold: ArrayBuffer[] = [];
+const map = new Map<string, number>();
+for (const kib of [262144, 16384, 1024, 64]) for (;;) { try { hold.push(new ArrayBuffer(kib * 1024)); } catch { break; } }
+console.log("address space used up");
+try {
+  for (let i = 0; i < 200000; i++) map.set("a-prefix-of-18-chars" + (100000 + i), i);
+  console.log("all were made");
+} catch (e) { console.log("caught " + (e as Error).name + ": " + (e as Error).message); }
+console.log("alive");
+`,
+        });
+        await build(String(folder));
+        for (const limit of [4194304, 2097152]) {
+          expect(
+            await run(["sh", "-c", `ulimit -c 0 && ulimit -v ${limit} && exec ./program`], String(folder), {
+              BUN_JSC_numberOfGCMarkers: "1",
+            }),
+          ).toEqual({
+            stdout: "address space used up\ncaught RangeError: Out of memory\nalive\n",
             stderr: "",
             exitCode: 0,
           });

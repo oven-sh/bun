@@ -337,6 +337,23 @@ export const printFor = (isTyped: boolean) =>
   isTyped
     ? "function print(text: string): void {\n  console.log(text);\n}\n"
     : "function print(text) {\n  console.log(text);\n}\n";
+
+/** Each file that prints gets its own `print`, unless it declares or imports one. */
+export function withPrint(program: Program): Program {
+  const written = (text: string, isTyped: boolean) =>
+    /\bprint\(/.test(text) && !/\b(function|const|let|var) print\b|^import\b[^;]*\bprint\b/m.test(text)
+      ? printFor(isTyped) + text
+      : text;
+  const files =
+    program.files &&
+    Object.fromEntries(
+      Object.entries(program.files).map(([path, text]) => [
+        path,
+        /\.[cm]?[jt]sx?$/.test(path) && !path.endsWith(".d.ts") ? written(text, /ts.?$/.test(path)) : text,
+      ]),
+    );
+  return { ...program, text: written(program.text, program.extension === "ts"), ...(files ? { files } : {}) };
+}
 export const isBuildFlag = (flag: string) =>
   !flag.startsWith(runEnvFlag) &&
   !flag.startsWith(decoyShapesFlag) &&
@@ -582,25 +599,8 @@ export class ProductRunner implements Runner {
     });
   }
 
-  // Each file that prints gets its own `print`, unless it declares or imports one.
-  #written(program: Program): Program {
-    const written = (text: string, isTyped: boolean) =>
-      /\bprint\(/.test(text) && !/\b(function|const|let|var) print\b|^import\b[^;]*\bprint\b/m.test(text)
-        ? printFor(isTyped) + text
-        : text;
-    const files =
-      program.files &&
-      Object.fromEntries(
-        Object.entries(program.files).map(([path, text]) => [
-          path,
-          /\.[cm]?[jt]sx?$/.test(path) && !path.endsWith(".d.ts") ? written(text, /ts.?$/.test(path)) : text,
-        ]),
-      );
-    return { ...program, text: written(program.text, program.extension === "ts"), ...(files ? { files } : {}) };
-  }
-
   #write(folder: string, stem: string, program: Program, flags: string[]) {
-    writeProgram(folder, stem, this.#written(program));
+    writeProgram(folder, stem, withPrint(program));
     if (
       /tsx?$/.test(program.extension) &&
       !flags.some(flag => flag.startsWith(projectFlag)) &&
@@ -639,7 +639,7 @@ export class ProductRunner implements Runner {
         name,
         typeChecker({ typings: bunTypesFolder(), options: tsconfig && (tsconfig.compilerOptions ?? {}) }),
       );
-    const errors = this.#checkers.get(name)?.([this.#written(program)])[0];
+    const errors = this.#checkers.get(name)?.([withPrint(program)])[0];
     if (!errors) return verdict;
     if (errors.length) return { kind: "skipped", why: `${verdict.why}, as in TypeScript` };
     // Names stay in the signature of a rejected build: a member missing on one class says nothing about another class.

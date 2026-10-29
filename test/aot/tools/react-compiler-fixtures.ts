@@ -32,7 +32,7 @@ const onlyTheSourceThrows = new Set([
 ]);
 const printsPositions = /^(console-readonly|error\.todo-object-expression-[gs]et-syntax|outlining-in-react-memo|react-namespace|use-operator-)/;
 
-const room = mkdtempSync(join(tmpdir(), "react-compiler-fixtures-"));
+const room = ownTemporaryFolder(mkdtempSync(join(tmpdir(), "react-compiler-fixtures-")));
 function write(path: string, text: string) {
   mkdirSync(join(room, path, ".."), { recursive: true });
   writeFileSync(join(room, path), text);
@@ -99,6 +99,7 @@ process.exit(result.success ? 0 : 1);
 // What test/bundler/transpiler/react-compiler-fixtures-run/render-fixture.js does, for one fixture.
 const mainOf = (fixture: string) => `import React, { at, nextRender, render, sizes } from "react";
 import * as fixture from "./${fixture}";
+import { ownTemporaryFolder } from "../harness/temporary-folders";
 Function.prototype.toString = () => "[function]";
 globalThis.React = React;
 for (const [name, value] of Object.entries(React)) if (name.startsWith("use")) globalThis[name] = value;

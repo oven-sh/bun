@@ -13,6 +13,8 @@ export type Rejection = {
    * executable does differently (docs/compiler/compatibility.mdx).
    */
   messageDiffers?: true;
+  /** An executable rejects it with an error of its own, because it runs no code that is only known at run time. */
+  isAnotherError?: true;
   /** It starts its work in its own then(). */
   beginsInItsOwnThen?: true;
 };
@@ -82,6 +84,7 @@ const byTheLoader: Rejection[] = [
     promise: `import("data:text/javascript," + made("let let = 1 +"))`,
     needs: `const made = text => text.split("").join("");`,
     messageDiffers: true,
+    isAnotherError: true,
   },
   { promise: `import({\ntoString() {\nthrow new URIError("thrown by toString");\n},\n})` },
   { promise: `import(made("node:nothing-here"))`, needs: `const made = text => text.split("").join("");` },
@@ -403,6 +406,15 @@ export const handlers: readonly Handler[] = [
 
 export const everyLook = "every look";
 export const looksThatShowTheMessage: readonly string[] = ["message", "String", "template", "pattern", "length"];
+const looksThatShowTheClass: readonly string[] = [
+  "name",
+  "instanceof",
+  "code",
+  "constructor",
+  "keys",
+  "cause",
+  "prototype",
+];
 
 export function nameOf(rejection: Rejection, handler: Handler, look: string) {
   const needs = rejection.needs ? ` (${rejection.needs.replaceAll("\n", " ")})` : "";
@@ -411,7 +423,9 @@ export function nameOf(rejection: Rejection, handler: Handler, look: string) {
 
 export function generate(rejection: Rejection, handler: Handler, look: string) {
   const chosen = (look === everyLook ? looks : looks.filter(([name]) => name === look)).filter(
-    ([name]) => !rejection.messageDiffers || !looksThatShowTheMessage.includes(name),
+    ([name]) =>
+      (!rejection.messageDiffers || !looksThatShowTheMessage.includes(name)) &&
+      (!rejection.isAnotherError || !looksThatShowTheClass.includes(name)),
   );
   const seen = chosen
     .map(([name, expression]) => `console.log(${JSON.stringify(name + ":")}, ${expression("error")});`)

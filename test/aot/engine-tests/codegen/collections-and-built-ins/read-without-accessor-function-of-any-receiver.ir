@@ -1,0 +1,31 @@
+# A member that lies in a slot of the object itself, that is a number, or whose getter the table has no function object for, has no accessor function to call.
+# Where the type of the receiver was lost after the read was matched, such a read goes by name. A member with an accessor function calls it.
+# FORM: Selected
+# RUN: generate-code calls
+# CHECK: f0: size=
+# CHECK-NEXT: stub GetById{{*}} x1
+# CHECK-NEXT: f1: size=
+# CHECK-NEXT: stub GetById{{*}} x1
+# CHECK-NEXT: f2: size=
+# CHECK-NEXT: stub GetById{{*}} x1
+# CHECK-NEXT: f3: size=
+# CHECK-NEXT: stub BuiltinCell{{*}} x1
+# CHECK-NEXT: stub CallValue{{*}} x1
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="slotOfTheObject" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=ErrorPrototypeMessage/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+function f1 name="number" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=MathPI/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+function f2 name="getterWithoutFunctionObject" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=MapPrototypeSize/0 builtinCallForm=AnyReceiver
+    Return v1
+}
+function f3 name="accessor" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = CallBuiltin v0 overload=RegExpPrototypeFlags/0 builtinCallForm=AnyReceiver
+    Return v1
+}

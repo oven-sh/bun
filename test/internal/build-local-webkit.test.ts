@@ -485,6 +485,21 @@ describe.skipIf(Bun.which(python) === null)("the graph of a checkout", () => {
     expect(attributesIn("Debug")).toEqual([]);
   });
 
+  test("a release build does not unroll loops of unknown trip count in the sources of aot/ compiled for speed", () => {
+    const sourcesWithFlagIn = (buildType: "Debug" | "Release") => {
+      const { spec, short } = describeBuild({ asan: false, buildType });
+      const sources = spec.groups!.find(g => g.name === "JavaScriptCore")!.sources;
+      return sources.flatMap(s =>
+        typeof s !== "string" && (s.cflags ?? []).includes("-mllvm=-unroll-runtime=false") ? [short(s.path)] : [],
+      );
+    };
+    expect(sourcesWithFlagIn("Release")).toEqual([
+      "B/JavaScriptCore/DerivedSources/unified-sources/UnifiedSource-of-8-1.cpp",
+      "B/JavaScriptCore/DerivedSources/aot/AOTBuiltinTableEngineBindings.cpp",
+    ]);
+    expect(sourcesWithFlagIn("Debug")).toEqual([]);
+  });
+
   test("--unified-sources=off compiles each source of aot/ by itself", () => {
     const { sources } = describeBuild({ asan: false, unifiedSources: false }).group("JavaScriptCore");
     expect(sources).toContain("JSC/aot/ir/AOTValue.cpp");

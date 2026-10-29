@@ -3329,6 +3329,25 @@ static JSObject* lightStandardStreamsOf(JSC::JSGlobalObject* globalObject, JSC::
     return kept;
 }
 
+// Looks into the bare prototypes themselves. Streams share them, so their traps would refuse in the name of another stream.
+static bool findInBareStream(JSC::JSGlobalObject* globalObject, JSObject* target, const Identifier& name, PropertySlot& slot)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    for (JSObject* object = target; object;) {
+        if (auto* proxy = dynamicDowncast<JSC::ProxyObject>(object)) {
+            object = proxy->target();
+            continue;
+        }
+        bool isOwn = object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isOwn)
+            return true;
+        JSValue prototype = object->getPrototypeDirect();
+        object = prototype.isObject() ? asObject(prototype) : nullptr;
+    }
+    return false;
+}
+
 // The `get` trap of a bare stream. Its target holds the members that never change, and the descriptor under a private name.
 JSC_DEFINE_HOST_FUNCTION(Process_functionGetOfBareStream, (JSC::JSGlobalObject * globalObject, CallFrame* callFrame))
 {
@@ -3339,7 +3358,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetOfBareStream, (JSC::JSGlobalObject *
     Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     PropertySlot slot(target, PropertySlot::InternalMethodType::Get);
-    bool isFound = target->getPropertySlot(globalObject, name, slot);
+    bool isFound = findInBareStream(globalObject, target, name, slot);
     RETURN_IF_EXCEPTION(scope, {});
     if (isFound)
         RELEASE_AND_RETURN(scope, JSValue::encode(slot.getValue(globalObject, name)));
@@ -3379,7 +3398,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionHasOfBareStream, (JSC::JSGlobalObject *
     int fd = target->getDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName()).asInt32();
     Identifier name = callFrame->argument(1).toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    bool isFound = target->hasProperty(globalObject, name);
+    PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
+    bool isFound = findInBareStream(globalObject, target, name, slot);
     RETURN_IF_EXCEPTION(scope, {});
     if (isFound || name.isSymbol())
         return JSValue::encode(jsBoolean(isFound));
@@ -3402,7 +3422,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionGetOwnPropertyDescriptorOfBareStream, (
     RETURN_IF_EXCEPTION(scope, {});
     if (isOwn)
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::constructObjectFromPropertyDescriptor(globalObject, descriptor)));
-    bool isInherited = target->hasProperty(globalObject, name);
+    PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
+    bool isInherited = findInBareStream(globalObject, target, name, slot);
     RETURN_IF_EXCEPTION(scope, {});
     if (isInherited || name.isSymbol() || isNameOfTerminal(vm, name, fd))
         return JSValue::encode(jsUndefined());
@@ -3467,17 +3488,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionWriteOfBareStream, (JSC::JSGlobalObject
 // What code evaluated at run time gets for a standard stream in a program that names none: no function that makes streams is in the executable.
 // The object answers `fd`, `isTTY`, `columns`, `rows` and `write`. Every question about another name and every change throw the error that names the function left out.
 // Listing its keys and asking for its prototype do not throw, so code that walks over every object it can reach goes on.
-static JSValue constructBareStream(JSC::JSGlobalObject* globalObject, int fd, JSValue write)
+static JSObject* wrapBareStreamObject(JSC::JSGlobalObject* globalObject, int fd, JSObject* target)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* target = JSC::constructEmptyObject(globalObject);
     target->putDirect(vm, WebCore::builtinNames(vm).lightStandardStreamsPrivateName(), jsNumber(fd));
-    target->putDirect(vm, Identifier::fromString(vm, "fd"_s), jsNumber(fd));
-    if (bun_stdio_tty[fd])
-        target->putDirect(vm, Identifier::fromString(vm, "isTTY"_s), jsBoolean(true));
-    if (write)
-        target->putDirect(vm, Identifier::fromString(vm, "write"_s), write);
     JSObject* handler = JSC::constructEmptyObject(globalObject);
     handler->putDirect(vm, Identifier::fromString(vm, "get"_s), JSFunction::create(vm, globalObject, 3, ""_s, Process_functionGetOfBareStream, JSC::ImplementationVisibility::Private));
     handler->putDirect(vm, Identifier::fromString(vm, "has"_s), JSFunction::create(vm, globalObject, 2, ""_s, Process_functionHasOfBareStream, JSC::ImplementationVisibility::Private));
@@ -3486,6 +3501,71 @@ static JSValue constructBareStream(JSC::JSGlobalObject* globalObject, int fd, JS
     for (ASCIILiteral trap : { "set"_s, "deleteProperty"_s, "defineProperty"_s, "setPrototypeOf"_s, "preventExtensions"_s })
         handler->putDirect(vm, Identifier::fromString(vm, trap), needsWholeStream);
     RELEASE_AND_RETURN(scope, JSC::ProxyObject::create(globalObject, target, handler));
+}
+
+// A prototype of a bare stream says which class it is of, as in plain Bun, and nothing else.
+static JSObject* constructBareStreamPrototype(JSC::JSGlobalObject* globalObject, int fd, ASCIILiteral className, JSObject* parent)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* target = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    target->setPrototypeDirect(vm, parent);
+    JSFunction* constructor = JSFunction::create(vm, globalObject, 0, className, fd ? Process_functionNeedsWholeOutputStream : Process_functionNeedsWholeInputStream, JSC::ImplementationVisibility::Public);
+    target->putDirect(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+    JSObject* prototype = wrapBareStreamObject(globalObject, fd, target);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    constructor->putDirect(vm, vm.propertyNames->prototype, prototype, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly);
+    return prototype;
+}
+
+// The streams for output have one prototype, and every stream comes to the same two classes in the end.
+static JSObject* prototypeOfBareStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const Identifier& name = WebCore::builtinNames(vm).bareStandardStreamPrototypesPrivateName();
+    JSValue kept = processObject->getDirect(vm, name);
+    if (!kept) {
+        kept = JSC::constructEmptyArray(globalObject, nullptr, 3);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        processObject->putDirect(vm, name, kept);
+    }
+    auto find = [&](unsigned index, ASCIILiteral className, JSObject* parent) -> JSObject* {
+        JSValue made = asObject(kept)->getDirectIndex(globalObject, index);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (made && made.isObject())
+            return asObject(made);
+        JSObject* prototype = constructBareStreamPrototype(globalObject, fd, className, parent);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        asObject(kept)->putDirectIndex(globalObject, index, prototype);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return prototype;
+    };
+    JSObject* emitter = find(0, "EventEmitter"_s, globalObject->objectPrototype());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* stream = find(1, "Stream"_s, emitter);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* direction = find(fd ? 2 : 4, fd ? "Writable"_s : "Readable"_s, stream);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSObject* prototype = find(fd ? 3 : 5, fd ? "WriteStream"_s : "ReadStream"_s, direction);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return prototype;
+}
+
+static JSValue constructBareStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd, JSValue write)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* prototype = prototypeOfBareStream(globalObject, processObject, fd);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSObject* target = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    target->setPrototypeDirect(vm, prototype);
+    target->putDirect(vm, Identifier::fromString(vm, "fd"_s), jsNumber(fd));
+    if (bun_stdio_tty[fd])
+        target->putDirect(vm, Identifier::fromString(vm, "isTTY"_s), jsBoolean(true));
+    if (write)
+        target->putDirect(vm, Identifier::fromString(vm, "write"_s), write);
+    RELEASE_AND_RETURN(scope, wrapBareStreamObject(globalObject, fd, target));
 }
 
 static JSValue constructBareStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
@@ -3504,7 +3584,7 @@ static JSValue constructBareStdioWriteStream(JSC::JSGlobalObject* globalObject, 
     }
     JSValue write = asObject(kept)->getDirectIndex(globalObject, 0);
     RETURN_IF_EXCEPTION(scope, {});
-    RELEASE_AND_RETURN(scope, constructBareStream(globalObject, fd, write));
+    RELEASE_AND_RETURN(scope, constructBareStream(globalObject, processObject, fd, write));
 }
 
 static JSValue constructLightStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC::JSObject* processObject, int fd)
@@ -3692,7 +3772,7 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     if (JSC::AOT::refusesToRun(getStdinStream)) {
         getStdinStream = JSC::JSFunction::create(vm, globalObject, stdioGetLightStdinStreamCodeGenerator(vm), globalObject);
         if (JSC::AOT::refusesToRun(getStdinStream)) {
-            JSValue stream = constructBareStream(globalObject, STDIN_FILENO, {});
+            JSValue stream = constructBareStream(globalObject, processObject, STDIN_FILENO, {});
             return scope.exception() ? JSValue() : stream;
         }
         args.append(jsBoolean(bun_stdio_tty[STDIN_FILENO]));

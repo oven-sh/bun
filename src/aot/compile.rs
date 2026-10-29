@@ -133,6 +133,8 @@ pub struct Compilation {
     ways_read_out_of_sight: WaysBetweenModuleObjects,
     /// No program reads them, by the word of the engine, and the front end has followed them because a file names them.
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+    /// A program is too large for whole-program analysis, by the word of the engine.
+    is_too_large_to_analyze: bool,
 }
 
 /// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
@@ -676,6 +678,12 @@ fn has_followed_nothing(found: FlowFindings<'_>) -> bool {
     })
 }
 
+// The analysis stopped at its budget, and would stop there again.
+fn is_too_large_to_analyze(found: FlowFindings<'_>) -> bool {
+    let mut causes = found.unseen_code.iter().map(|record| record.cause);
+    causes.any(|cause| cause == UnseenCodeCause::LimitReached)
+}
+
 // An executable keeps track of which file is the main module where the front end has seen somebody ask.
 // Code that the build does not see counts as reading all that it can get at, and is handed no module object of the program. Beside such code a read counts where code of the program lets `process` go out of sight.
 fn reads_main_module(found: FlowFindings<'_>, lets_process_out_of_sight: bool) -> bool {
@@ -797,6 +805,7 @@ fn find_load_options_with_what_engine_found(
         compiled.reads_main_module_without_its_name,
         compiled.ways_read_out_of_sight,
         compiled.ways_named_that_nobody_reads,
+        compiled.is_too_large_to_analyze,
     )
 }
 
@@ -806,6 +815,7 @@ fn find_load_options_with(
     reads_main_module_without_its_name: bool,
     ways_read_out_of_sight: WaysBetweenModuleObjects,
     ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+    is_too_large_to_analyze: bool,
 ) -> Option<LoadOptions> {
     let mut load = find_load_options_with_library_code_lacked(options, library_code_lacked);
     if !ways_read_out_of_sight.is_empty() && !options.aot.checks_only {
@@ -822,6 +832,9 @@ fn find_load_options_with(
     {
         let load = load.get_or_insert_with(|| options.load.clone());
         load.reads_main_module_without_its_name = true;
+    }
+    if let Some(load) = &mut load {
+        load.is_too_large_to_analyze |= is_too_large_to_analyze;
     }
     load
 }
@@ -1242,6 +1255,7 @@ fn add_program(first: &mut Compilation, program: Compilation) {
     first.reads_main_module_without_its_name |= program.reads_main_module_without_its_name;
     (first.ways_read_out_of_sight).add(program.ways_read_out_of_sight);
     (first.ways_named_that_nobody_reads).add(program.ways_named_that_nobody_reads);
+    first.is_too_large_to_analyze |= program.is_too_large_to_analyze;
 }
 
 fn compile_written_entry_points(
@@ -1482,7 +1496,13 @@ fn compile_programs<'a>(
         thread_count: options.thread_count(),
         reports_functions: options.lists_modules,
     };
-    let mut engine_options = match EngineOptions::new(&request) {
+    let engine_options = EngineOptions::new(&request).and_then(|mut engine_options| {
+        if options.load.is_too_large_to_analyze {
+            engine_options.skip_flow_analysis()?;
+        }
+        Ok(engine_options)
+    });
+    let mut engine_options = match engine_options {
         Ok(engine_options) => engine_options,
         Err(rejected) => {
             let mut diagnostics = Diagnostics::new();
@@ -1501,6 +1521,9 @@ fn compile_programs<'a>(
     };
     let caches = ThreadCaches::default();
     let mut build = Build::new(options, provider, &caches, engine_options.limit_values());
+    if options.load.is_too_large_to_analyze {
+        build.diagnostics.add_program_too_large_to_analyze();
+    }
     build.programs = programs;
     let body_placement = match options.aot.ir_output_path {
         Some(_) => BodyPlacement::InProgramBytes,
@@ -1577,7 +1600,16 @@ fn compile_programs<'a>(
                 lacks_main_module && reads_main_module(found, lets_process_out_of_sight);
             let ways = find_ways_read_out_of_sight(found, ways_not_followed);
             let nobody_reads = find_ways_named_that_nobody_reads(found, ways_followed);
-            find_load_options_with(own, &lacked, reads_main_module, ways, nobody_reads).is_none()
+            let is_too_large = is_too_large_to_analyze(found);
+            let load = find_load_options_with(
+                own,
+                &lacked,
+                reads_main_module,
+                ways,
+                nobody_reads,
+                is_too_large,
+            );
+            load.is_none()
         };
         programs_to_ask -= 1;
         let whole_runs = WHOLE_ENGINE_RUNS.get();
@@ -1678,8 +1710,10 @@ fn compile_programs<'a>(
                 engine.flow_findings(),
                 output.ways_followed_for_their_names,
             );
+            let is_too_large_to_analyze = is_too_large_to_analyze(engine.flow_findings());
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
+                is_too_large_to_analyze,
                 reads_main_module_without_its_name,
                 ways_read_out_of_sight,
                 ways_named_that_nobody_reads,

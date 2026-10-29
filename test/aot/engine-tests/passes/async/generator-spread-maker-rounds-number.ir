@@ -466,13 +466,13 @@ runtimefunction id=GeneratorPrototypeNext function=f6 visibility=Private
 # CHECK-NEXT: v13: 2 = Integer integer=2
 # CHECK-NEXT: v14: L0 = NewObject -, v11 layout=L0 fields=[1] storage=Frame allocationClass=0 [listsOnlyStoredValues]
 # CHECK-NEXT: Jump -> next b7(v12, v13, v14)
-# CHECK-NEXT: b4() frequency=Rare handler=b6():
+# CHECK-NEXT: b4() handler=b6():
 # CHECK-NEXT: v15: fractional = Double number=1.5
 # CHECK-NEXT: v16: number = ToNumber v0 calledBuiltin=NumberPrototypeToFixed
 # CHECK-NEXT: v17: int|whole = ToIntegerOrInfinity v16
 # CHECK-NEXT: v18: string = CallBuiltin v15, v17 overload=NumberPrototypeToFixed/1 accessSite=20
 # CHECK-NEXT: Jump -> next b5()
-# CHECK-NEXT: b5() frequency=Rare:
+# CHECK-NEXT: b5():
 # CHECK-NEXT: v19: fact = Specified
 # CHECK-NEXT: v20: L0 = AssumeType v9, v19 provenType=L0
 # CHECK-NEXT: v21: int[-2147483643, 2147483647] = GetSlot v20 key="y" receivers=[L0] level=Proven accessSite=15

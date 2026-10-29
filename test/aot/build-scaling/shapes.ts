@@ -1142,6 +1142,23 @@ export const shapes: Shape[] = [
         `console.log(${size ? `copied.name${size}(1)` : 0});\n`,
     }),
   },
+  // Code from disk may write half of the objects, so little is known about what a read finds, and the one large block is full of tests and of writers that end them.
+  {
+    name: "objects made at top level, half of them handed to code from disk, and read by names of their own",
+    counted: "objects",
+    size: 3000,
+    entry: "main.cjs",
+    flags: ["--aot-allow-code-from-disk"],
+    write: size => ({
+      "main.cjs":
+        `const kept = [], handedOut = [];\nlet sum = 0;\nfunction use(value) { sum += typeof value === "number" ? value : 0; }\n` +
+        lines(size, index => `const object${index} = { own${index}: ${index} }; ${index & 1 ? "kept" : "handedOut"}.push(object${index});`) +
+        `globalThis.handedOut = handedOut;\ntry { require(process.argv[2]); } catch {}\n` +
+        `function pick(which) { return which & 1 ? kept[(which >> 1) % kept.length] : handedOut[(which >> 1) % handedOut.length]; }\n` +
+        lines(Math.ceil(size / 10), index => `use(pick(${index * 10 + 1}).own${index * 10 + 1});`) +
+        `console.log(sum);\n`,
+    }),
+  },
 ];
 
 if (import.meta.main) {

@@ -3337,7 +3337,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f93 visibility=Private
 # CHECK-NEXT: v50: int|whole ~ 1 = AssumeType v49 provenType=int|whole
 # CHECK-NEXT: PropSet v7, v50 key="count" accessSite=437
 # CHECK-NEXT: Jump -> next b19(v42)
-# CHECK-NEXT: b19(v52: object ~ L3|L6|L7):
+# CHECK-NEXT: b19(v52: object ~ L6):
 # CHECK-NEXT: v53: boolean = TypeTest v6 testedType=f34
 # CHECK-NEXT: Branch v53 -> taken b20(| 0), notTaken b21(| 0)
 # CHECK-NEXT: b20(v54: f34):
@@ -3347,105 +3347,72 @@ runtimefunction id=ArrayTraversalTraverseArray function=f93 visibility=Private
 # CHECK-NEXT: Return v57
 # CHECK-NEXT: b21(v58: undefined|f100|f111|f122|f133|f144|f155):
 # CHECK-NEXT: v59: boolean = TypeTest v58 testedType=f100
-# CHECK-NEXT: Branch v59 -> taken b22(), notTaken b27(| 0)
+# CHECK-NEXT: Branch v59 -> taken b22(), notTaken b23(| 0)
 # CHECK-NEXT: b22():
 # CHECK-NEXT: v60: fact = Entered function=f100 @2432 tail
 # CHECK-NEXT: v61: classtoken = GetModuleVariable fact=v60 variable=g35
-# CHECK-NEXT: v62: boolean = TypeTest v52 testedType=L3
-# CHECK-NEXT: Branch v62 -> taken b23(| 0), notTaken b25()
-# CHECK-NEXT: b23(v63: L3):
-# CHECK-NEXT: v64: boolean = IsSlotFilled v63 key=#"#ticks"@L14 receivers=[L3] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v64 -> taken b24(| 0), notTaken b25()
-# CHECK-NEXT: b24(v65: guard):
-# CHECK-NEXT: v66: int|whole = GetSlot v63, v65 key=#"#ticks"@L14 receivers=[L3] level=Expected accessSite=402 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b26(v66)
-# CHECK-NEXT: b25() frequency=Unlikely:
-# CHECK-NEXT: v67: anything ~ undefined|int|whole = PrivateGet v52, v61 layout=L14 field=2 accessSite=402
-# CHECK-NEXT: v68: int|whole = AssumeType v67 provenType=int|whole
-# CHECK-NEXT: Jump -> next b26(v68)
-# CHECK-NEXT: b26(v69: int|whole):
+# CHECK-NEXT: v62: anything = PrivateGet v52, v61 layout=L14 field=2 accessSite=402
+# CHECK-NEXT: v63: int|whole = AssumeType v62 provenType=int|whole
+# CHECK-NEXT: Return v63
+# CHECK-NEXT: b23(v64: undefined|f111|f122|f133|f144|f155):
+# CHECK-NEXT: v65: boolean = TypeTest v64 testedType=f111
+# CHECK-NEXT: Branch v65 -> taken b24(), notTaken b25(| 0)
+# CHECK-NEXT: b24():
+# CHECK-NEXT: v66: fact = Entered function=f111 @2432 tail
+# CHECK-NEXT: v67: classtoken = GetModuleVariable fact=v66 variable=g38
+# CHECK-NEXT: v68: anything = PrivateGet v52, v67 layout=L15 field=2 accessSite=423
+# CHECK-NEXT: v69: int|whole = AssumeType v68 provenType=int|whole
 # CHECK-NEXT: Return v69
-# CHECK-NEXT: b27(v70: undefined|f111|f122|f133|f144|f155):
-# CHECK-NEXT: v71: boolean = TypeTest v70 testedType=f111
-# CHECK-NEXT: Branch v71 -> taken b28(), notTaken b29(| 0)
-# CHECK-NEXT: b28():
-# CHECK-NEXT: v72: fact = Entered function=f111 @2432 tail
-# CHECK-NEXT: v73: classtoken = GetModuleVariable fact=v72 variable=g38
-# CHECK-NEXT: v74: anything = PrivateGet v52, v73 layout=L15 field=2 accessSite=423
-# CHECK-NEXT: v75: int|whole = AssumeType v74 provenType=int|whole
-# CHECK-NEXT: Return v75
-# CHECK-NEXT: b29(v76: undefined|f122|f133|f144|f155):
-# CHECK-NEXT: v77: boolean = TypeTest v76 testedType=f122
-# CHECK-NEXT: Branch v77 -> taken b30(), notTaken b35(| 0)
-# CHECK-NEXT: b30():
-# CHECK-NEXT: v78: fact = Entered function=f122 @2432 tail
-# CHECK-NEXT: v79: classtoken = GetModuleVariable fact=v78 variable=g41
-# CHECK-NEXT: v80: boolean = TypeTest v52 testedType=L6
-# CHECK-NEXT: Branch v80 -> taken b31(| 0), notTaken b33()
-# CHECK-NEXT: b31(v81: L6):
-# CHECK-NEXT: v82: boolean = IsSlotFilled v81 key=#"#ticks"@L16 receivers=[L6] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v82 -> taken b32(| 0), notTaken b33()
-# CHECK-NEXT: b32(v83: guard):
-# CHECK-NEXT: v84: int|whole = GetSlot v81, v83 key=#"#ticks"@L16 receivers=[L6] level=Expected accessSite=444 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b34(v84)
-# CHECK-NEXT: b33() frequency=Unlikely:
-# CHECK-NEXT: v85: anything ~ int|whole = PrivateGet v52, v79 layout=L16 field=2 accessSite=444
-# CHECK-NEXT: v86: int|whole = AssumeType v85 provenType=int|whole
-# CHECK-NEXT: Jump -> next b34(v86)
-# CHECK-NEXT: b34(v87: int|whole):
+# CHECK-NEXT: b25(v70: undefined|f122|f133|f144|f155):
+# CHECK-NEXT: v71: boolean = TypeTest v70 testedType=f122
+# CHECK-NEXT: Branch v71 -> taken b26(), notTaken b31(| 0)
+# CHECK-NEXT: b26():
+# CHECK-NEXT: v72: fact = Entered function=f122 @2432 tail
+# CHECK-NEXT: v73: classtoken = GetModuleVariable fact=v72 variable=g41
+# CHECK-NEXT: v74: boolean ~ true = TypeTest v52 testedType=L6
+# CHECK-NEXT: Branch v74 -> taken b27(| 0), notTaken b29()
+# CHECK-NEXT: b27(v75: L6):
+# CHECK-NEXT: v76: boolean = IsSlotFilled v75 key=#"#ticks"@L16 receivers=[L6] level=Expected [holdsDeclaredType]
+# CHECK-NEXT: Branch v76 -> taken b28(| 0), notTaken b29()
+# CHECK-NEXT: b28(v77: guard):
+# CHECK-NEXT: v78: int|whole = GetSlot v75, v77 key=#"#ticks"@L16 receivers=[L6] level=Expected accessSite=444 [holdsDeclaredType]
+# CHECK-NEXT: Jump -> next b30(v78)
+# CHECK-NEXT: b29() frequency=Unlikely:
+# CHECK-NEXT: v79: anything ~ int|whole = PrivateGet v52, v73 layout=L16 field=2 accessSite=444
+# CHECK-NEXT: v80: int|whole = AssumeType v79 provenType=int|whole
+# CHECK-NEXT: Jump -> next b30(v80)
+# CHECK-NEXT: b30(v81: int|whole):
+# CHECK-NEXT: Return v81
+# CHECK-NEXT: b31(v82: undefined|f133|f144|f155):
+# CHECK-NEXT: v83: boolean = TypeTest v82 testedType=f133
+# CHECK-NEXT: Branch v83 -> taken b32(), notTaken b33(| 0)
+# CHECK-NEXT: b32():
+# CHECK-NEXT: v84: fact = Entered function=f133 @2432 tail
+# CHECK-NEXT: v85: classtoken = GetModuleVariable fact=v84 variable=g44
+# CHECK-NEXT: v86: anything = PrivateGet v52, v85 layout=L17 field=2 accessSite=465
+# CHECK-NEXT: v87: int|whole = AssumeType v86 provenType=int|whole
 # CHECK-NEXT: Return v87
-# CHECK-NEXT: b35(v88: undefined|f133|f144|f155):
-# CHECK-NEXT: v89: boolean = TypeTest v88 testedType=f133
-# CHECK-NEXT: Branch v89 -> taken b36(), notTaken b41(| 0)
+# CHECK-NEXT: b33(v88: undefined|f144|f155):
+# CHECK-NEXT: v89: boolean = TypeTest v88 testedType=f144
+# CHECK-NEXT: Branch v89 -> taken b34(), notTaken b35(| 0)
+# CHECK-NEXT: b34():
+# CHECK-NEXT: v90: fact = Entered function=f144 @2432 tail
+# CHECK-NEXT: v91: classtoken = GetModuleVariable fact=v90 variable=g47
+# CHECK-NEXT: v92: anything = PrivateGet v52, v91 layout=L18 field=2 accessSite=486
+# CHECK-NEXT: v93: int|whole = AssumeType v92 provenType=int|whole
+# CHECK-NEXT: Return v93
+# CHECK-NEXT: b35(v94: undefined|f155):
+# CHECK-NEXT: v95: boolean = TypeTest v94 testedType=f155
+# CHECK-NEXT: Branch v95 -> taken b36(), notTaken b37()
 # CHECK-NEXT: b36():
-# CHECK-NEXT: v90: fact = Entered function=f133 @2432 tail
-# CHECK-NEXT: v91: classtoken = GetModuleVariable fact=v90 variable=g44
-# CHECK-NEXT: v92: boolean = TypeTest v52 testedType=L7
-# CHECK-NEXT: Branch v92 -> taken b37(| 0), notTaken b39()
-# CHECK-NEXT: b37(v93: L7):
-# CHECK-NEXT: v94: boolean = IsSlotFilled v93 key=#"#ticks"@L17 receivers=[L7] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v94 -> taken b38(| 0), notTaken b39()
-# CHECK-NEXT: b38(v95: guard):
-# CHECK-NEXT: v96: int|whole = GetSlot v93, v95 key=#"#ticks"@L17 receivers=[L7] level=Expected accessSite=465 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b40(v96)
-# CHECK-NEXT: b39() frequency=Unlikely:
-# CHECK-NEXT: v97: anything ~ undefined|int|whole = PrivateGet v52, v91 layout=L17 field=2 accessSite=465
-# CHECK-NEXT: v98: int|whole = AssumeType v97 provenType=int|whole
-# CHECK-NEXT: Jump -> next b40(v98)
-# CHECK-NEXT: b40(v99: int|whole):
+# CHECK-NEXT: v96: fact = Entered function=f155 @2432 tail
+# CHECK-NEXT: v97: classtoken = GetModuleVariable fact=v96 variable=g50
+# CHECK-NEXT: v98: anything = PrivateGet v52, v97 layout=L19 field=2 accessSite=507
+# CHECK-NEXT: v99: int|whole = AssumeType v98 provenType=int|whole
 # CHECK-NEXT: Return v99
-# CHECK-NEXT: b41(v100: undefined|f144|f155):
-# CHECK-NEXT: v101: boolean = TypeTest v100 testedType=f144
-# CHECK-NEXT: Branch v101 -> taken b42(), notTaken b47(| 0)
-# CHECK-NEXT: b42():
-# CHECK-NEXT: v102: fact = Entered function=f144 @2432 tail
-# CHECK-NEXT: v103: classtoken = GetModuleVariable fact=v102 variable=g47
-# CHECK-NEXT: v104: boolean = TypeTest v52 testedType=L7
-# CHECK-NEXT: Branch v104 -> taken b43(| 0), notTaken b45()
-# CHECK-NEXT: b43(v105: L7):
-# CHECK-NEXT: v106: boolean = IsSlotFilled v105 key=#"#ticks"@L18 receivers=[L7] level=Expected [holdsDeclaredType]
-# CHECK-NEXT: Branch v106 -> taken b44(| 0), notTaken b45()
-# CHECK-NEXT: b44(v107: guard):
-# CHECK-NEXT: v108: int|whole = GetSlot v105, v107 key=#"#ticks"@L18 receivers=[L7] level=Expected accessSite=486 [holdsDeclaredType]
-# CHECK-NEXT: Jump -> next b46(v108)
-# CHECK-NEXT: b45() frequency=Unlikely:
-# CHECK-NEXT: v109: anything ~ undefined|int|whole = PrivateGet v52, v103 layout=L18 field=2 accessSite=486
-# CHECK-NEXT: v110: int|whole = AssumeType v109 provenType=int|whole
-# CHECK-NEXT: Jump -> next b46(v110)
-# CHECK-NEXT: b46(v111: int|whole):
-# CHECK-NEXT: Return v111
-# CHECK-NEXT: b47(v112: undefined|f155):
-# CHECK-NEXT: v113: boolean = TypeTest v112 testedType=f155
-# CHECK-NEXT: Branch v113 -> taken b48(), notTaken b49()
-# CHECK-NEXT: b48():
-# CHECK-NEXT: v114: fact = Entered function=f155 @2432 tail
-# CHECK-NEXT: v115: classtoken = GetModuleVariable fact=v114 variable=g50
-# CHECK-NEXT: v116: anything = PrivateGet v52, v115 layout=L19 field=2 accessSite=507
-# CHECK-NEXT: v117: int|whole = AssumeType v116 provenType=int|whole
-# CHECK-NEXT: Return v117
-# CHECK-NEXT: b49() frequency=Unlikely:
-# CHECK-NEXT: v118: undefined = Undefined
-# CHECK-NEXT: v119: never = Call v118, v4, v52 calleeKey="peek" calleeName="parents.A.peek" accessSite=250 callees=[f34, f100, f111, f122, f133, f144, f155]
+# CHECK-NEXT: b37() frequency=Unlikely:
+# CHECK-NEXT: v100: undefined = Undefined
+# CHECK-NEXT: v101: never = Call v100, v4, v52 calleeKey="peek" calleeName="parents.A.peek" accessSite=250 callees=[f34, f100, f111, f122, f133, f144, f155]
 # CHECK-NEXT: Unreachable
 # CHECK-NEXT: }
 # CHECK-LABEL: function f22 module=
@@ -3664,10 +3631,10 @@ runtimefunction id=ArrayTraversalTraverseArray function=f93 visibility=Private
 # CHECK-NEXT: v6: f4|f25|f107 = AssumeType v5 provenType=f4|f25|f107
 # CHECK-NEXT: v7: object ~ L4|L5 = SuperConstructList v6, v4, v2 layout=L4 accessSite=304 callees=[f4, f25, f107]
 # CHECK-NEXT: v8: "t" = String string="t"
-# CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=L4|L5|L6|L16
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=L4|L5
 # CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v10: L4|L5|L6|L16 ~ L4|L5):
-# CHECK-NEXT: PutSlotOrAdd v10, -, v8 key="tag" receivers=[L4, L5, L6, L16] level=Expected accessSite=315
+# CHECK-NEXT: b1(v10: L4|L5):
+# CHECK-NEXT: PutSlotOrAdd v10, -, v8 key="tag" receivers=[L4, L5] level=Expected accessSite=315
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: PropDefine v7, v8 key="tag" accessSite=315
@@ -3681,50 +3648,27 @@ runtimefunction id=ArrayTraversalTraverseArray function=f93 visibility=Private
 # CHECK-NEXT: Branch v2 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v3: L4|L5):
 # CHECK-NEXT: v4: undefined|"t" ~ "t" = GetSlotOrUndefined v3 key="tag" receivers=[L4, L5] level=Expected accessSite=306
-# CHECK-NEXT: Jump -> next b6(v4)
+# CHECK-NEXT: Jump -> next b3(v4)
 # CHECK-NEXT: b2() frequency=Unlikely:
-# CHECK-NEXT: v5: boolean ~ false = TypeTest v1 testedType=L3|L7|L14|L15|L17|L18
-# CHECK-NEXT: Branch v5 -> taken b3(| 0), notTaken b9()
-# CHECK-NEXT: b3(v6: L3|L7|L14|L15|L17|L18) frequency=Unlikely:
-# CHECK-NEXT: v7: boolean = HasNoExtraProperties v6
-# CHECK-NEXT: Branch v7 -> taken b4(), notTaken b9()
-# CHECK-NEXT: b4() frequency=Unlikely:
-# CHECK-NEXT: v8: boolean = AreMembersUnchanged conditions=[{layout=L3 key="tag"}, {layout=L7 key="tag"}, {layout=L14 key="tag"}, {layout=L15 key="tag"}, {layout=L17 key="tag"}, {layout=L18 key="tag"}]
-# CHECK-NEXT: Branch v8 -> taken b5(), notTaken b9()
-# CHECK-NEXT: b5() frequency=Unlikely:
-# CHECK-NEXT: v9: undefined = Undefined
-# CHECK-NEXT: Jump -> next b6(v9)
-# CHECK-NEXT: b6(v10: undefined|"t" ~ "t"):
-# CHECK-NEXT: v11: "t" = RequireObjectCoercible v10 name="length"
-# CHECK-NEXT: v12: boolean ~ false = TypeTest v1 testedType=L3|L7|L14|L15|L17|L18
-# CHECK-NEXT: Branch v12 -> taken b7(| 0), notTaken b10()
-# CHECK-NEXT: b7(v13: L3|L7|L14|L15|L17|L18):
-# CHECK-NEXT: v14: undefined|int[-2147483643, 2147483647] = GetSlotOrUndefined v13 key="id" receivers=[L3, L7, L14, L15, L17, L18] level=Expected accessSite=308
-# CHECK-NEXT: v15: undefined|int[-2147483643, 2147483647] ~ int[-2147483643, 2147483647] = Upcast v14 castType=anything
-# CHECK-NEXT: v16: boolean ~ false = TypeTest v15 testedType=undefined|null
-# CHECK-NEXT: Branch v16 -> taken b11(), notTaken b8(| 0)
-# CHECK-NEXT: b8(v17: int[-2147483643, 2147483647]):
-# CHECK-NEXT: Jump -> next b13(v17)
-# CHECK-NEXT: b9() frequency=Rare:
-# CHECK-NEXT: v18: anything ~ "t" = PropGet v1 key="tag" accessSite=306
-# CHECK-NEXT: v19: undefined|"t" ~ "t" = AssumeType v18 provenType=undefined|"t"
-# CHECK-NEXT: v20: "t" = RequireObjectCoercible v19 name="length"
-# CHECK-NEXT: Jump -> next b10()
-# CHECK-NEXT: b10() frequency=Unlikely:
-# CHECK-NEXT: v21: anything = PropGet v1 key="id" accessSite=308
-# CHECK-NEXT: v22: undefined|int = AssumeType v21 provenType=undefined|int
-# CHECK-NEXT: v23: undefined|int ~ int = Upcast v22 castType=anything
-# CHECK-NEXT: v24: boolean ~ false = TypeTest v23 testedType=undefined|null
-# CHECK-NEXT: Branch v24 -> taken b11(), notTaken b12(| 0)
-# CHECK-NEXT: b11():
-# CHECK-NEXT: v25: 0 = Integer
-# CHECK-NEXT: Jump -> next b13(v25)
-# CHECK-NEXT: b12(v26: int) frequency=Unlikely:
-# CHECK-NEXT: Jump -> next b13(v26)
-# CHECK-NEXT: b13(v27: int ~ int[-2147483643, 2147483647]):
-# CHECK-NEXT: v28: 1 = Integer integer=1
-# CHECK-NEXT: v29: int|whole ~ int[-2147483642, 2147483648] = Add v28, v27
-# CHECK-NEXT: Return v29
+# CHECK-NEXT: v5: anything ~ "t" = PropGet v1 key="tag" accessSite=306
+# CHECK-NEXT: v6: undefined|"t" ~ "t" = AssumeType v5 provenType=undefined|"t"
+# CHECK-NEXT: Jump -> next b3(v6)
+# CHECK-NEXT: b3(v7: undefined|"t" ~ "t"):
+# CHECK-NEXT: v8: "t" = RequireObjectCoercible v7 name="length"
+# CHECK-NEXT: v9: anything = PropGet v1 key="id" accessSite=308
+# CHECK-NEXT: v10: undefined|int = AssumeType v9 provenType=undefined|int
+# CHECK-NEXT: v11: undefined|int ~ int = Upcast v10 castType=anything
+# CHECK-NEXT: v12: boolean ~ false = TypeTest v11 testedType=undefined|null
+# CHECK-NEXT: Branch v12 -> taken b4(), notTaken b5(| 0)
+# CHECK-NEXT: b4():
+# CHECK-NEXT: v13: 0 = Integer
+# CHECK-NEXT: Jump -> next b6(v13)
+# CHECK-NEXT: b5(v14: int):
+# CHECK-NEXT: Jump -> next b6(v14)
+# CHECK-NEXT: b6(v15: int):
+# CHECK-NEXT: v16: 1 = Integer integer=1
+# CHECK-NEXT: v17: int|whole = Add v16, v15
+# CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="self"
 # CHECK: module=m0 position=1118 kind=Method flags=[HasExplicitName] captures=[{type=env L9 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=f39}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
@@ -3739,18 +3683,17 @@ runtimefunction id=ArrayTraversalTraverseArray function=f93 visibility=Private
 # CHECK: m0 position=960 kind=Initializer flags=[HasThis, IsHiddenInStackTraces] thisType={type=L4|L5 flags=[IsFromCompiler, IsExpected]} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
 # CHECK-NEXT: b0(v0: anything ~ L4|L5):
 # CHECK-NEXT: v1: object ~ L4|L5 = AssumeType v0 provenType=object
-# CHECK-NEXT: v2: object ~ L4|L5 = AssumeType v1 provenType=object [isWordOfFrontEnd]
-# CHECK-NEXT: v3: "t" = String string="t"
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v2 testedType=L4|L5|L6|L16
-# CHECK-NEXT: Branch v4 -> taken b1(| 0), notTaken b3()
-# CHECK-NEXT: b1(v5: L4|L5|L6|L16 ~ L4|L5):
-# CHECK-NEXT: PutSlotOrAdd v5, -, v3 key="tag" receivers=[L4, L5, L6, L16] level=Expected accessSite=315
+# CHECK-NEXT: v2: "t" = String string="t"
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v1 testedType=L4|L5
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b3()
+# CHECK-NEXT: b1(v4: L4|L5):
+# CHECK-NEXT: PutSlotOrAdd v4, -, v2 key="tag" receivers=[L4, L5] level=Expected accessSite=315
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: b2():
-# CHECK-NEXT: v7: undefined = Undefined
-# CHECK-NEXT: Return v7
+# CHECK-NEXT: v6: undefined = Undefined
+# CHECK-NEXT: Return v6
 # CHECK-NEXT: b3() frequency=Unlikely:
-# CHECK-NEXT: PropDefine v2, v3 key="tag" accessSite=315
+# CHECK-NEXT: PropDefine v1, v2 key="tag" accessSite=315
 # CHECK-NEXT: Jump -> next b2()
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="Timed"
@@ -3839,10 +3782,10 @@ runtimefunction id=ArrayTraversalTraverseArray function=f93 visibility=Private
 # CHECK-NEXT: v6: f4|f25|f107 = AssumeType v5 provenType=f4|f25|f107
 # CHECK-NEXT: v7: object ~ L4|L5 = ConstructSuperForwardVarargs v6, v4 layout=L4 firstArgument=1 accessSite=304 callees=[f4, f25, f107]
 # CHECK-NEXT: v8: "t" = String string="t"
-# CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=L4|L5|L6|L16
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v7 testedType=L4|L5
 # CHECK-NEXT: Branch v9 -> taken b1(| 0), notTaken b2()
-# CHECK-NEXT: b1(v10: L4|L5|L6|L16 ~ L4|L5):
-# CHECK-NEXT: PutSlotOrAdd v10, -, v8 key="tag" receivers=[L4, L5, L6, L16] level=Expected accessSite=315
+# CHECK-NEXT: b1(v10: L4|L5):
+# CHECK-NEXT: PutSlotOrAdd v10, -, v8 key="tag" receivers=[L4, L5] level=Expected accessSite=315
 # CHECK-NEXT: Return v10
 # CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: PropDefine v7, v8 key="tag" accessSite=315

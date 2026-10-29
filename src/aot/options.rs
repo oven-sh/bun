@@ -68,6 +68,8 @@ pub struct LoadOptions {
     pub ways_read_out_of_sight: WaysBetweenModuleObjects,
     /// An earlier compile of the same program followed them because a file names them, and nobody reads them of a module object, by the word of the engine.
     pub ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+    /// An earlier compile of the same program was too large for whole-program analysis, by the word of the engine.
+    pub is_too_large_to_analyze: bool,
 }
 
 /// The members of a module object that lead to other module objects.
@@ -154,6 +156,7 @@ impl LoadOptions {
             reads_main_module_without_its_name: false,
             ways_read_out_of_sight: WaysBetweenModuleObjects::default(),
             ways_named_that_nobody_reads: WaysBetweenModuleObjects::default(),
+            is_too_large_to_analyze: false,
         }
     }
 }

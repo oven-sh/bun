@@ -187,7 +187,8 @@ export function namesOfSections(path: string) {
 // Every build writes the Bun that runs it once more, and CI tests bun-profile, which on Linux has its debug information in it:
 // three times the bytes of the Bun that ships. A file of many programs builds on a copy without it. The copy lies in the
 // temporary directory under a name that tells this Bun from any other. It is made once and found again by every test file,
-// process and run, so no test removes it; whoever makes one removes those that nobody has used for a day.
+// process and run, so no test removes it. Every use marks it, a test file takes minutes, and a machine that tests a new Bun every
+// few minutes would hold dozens: whoever makes one removes those that nobody has used for an hour.
 export function withoutDebugInformation(_folder?: string): string[] {
   const strip = isLinux && Bun.which("strip");
   const { ino, size, mtimeMs } = statSync(bunExe());
@@ -202,8 +203,7 @@ export function withoutDebugInformation(_folder?: string): string[] {
   for (const name of readdirSync(tmpdir())) {
     if (
       name.startsWith(prefix) &&
-      Date.now() - (statSync(join(tmpdir(), name), { throwIfNoEntry: false })?.mtimeMs ?? Infinity) >
-        24 * 60 * 60 * 1000
+      Date.now() - (statSync(join(tmpdir(), name), { throwIfNoEntry: false })?.mtimeMs ?? Infinity) > 60 * 60 * 1000
     )
       rmSync(join(tmpdir(), name), { force: true });
   }

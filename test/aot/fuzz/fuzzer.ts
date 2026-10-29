@@ -20,6 +20,7 @@ import {
   isFinding,
   isBuildFlag,
   sameFailure,
+  withPrint,
   wholeText,
   writeProgram,
   type Runner,
@@ -641,8 +642,9 @@ export async function fuzz(settings: Settings): Promise<Summary> {
     if (perGroup.get(group)! > 10) return void counts.repeated++;
     distinct.push(name);
     mkdirSync(target, { recursive: true });
-    writeProgram(target, "reduced", small);
-    writeProgram(target, "original", generated);
+    // As the runner ran them, so that each shows the failure outside the fuzzer too.
+    writeProgram(target, "reduced", withPrint(small));
+    writeProgram(target, "original", withPrint(generated));
     // The same program in the format of ../parallel, ready to land with its fix: its first lines hold what the build
     // and the runs need.
     const flags = mode.flags.filter(flag => isBuildFlag(flag) && (flag !== verifierFlags || !final.compiled?.run));
@@ -657,13 +659,14 @@ export async function fuzz(settings: Settings): Promise<Summary> {
       verdict.detail.includes(runtimeChecksVariable) ? `// Env of the executable: ${runtimeChecksVariable}` : "",
       final.plain.exitCode ? `// Exit code: ${final.plain.exitCode}` : "",
     ];
+    const whole = withPrint(small);
     writeProgram(join(out, "as-tests"), name, {
-      ...small,
+      ...whole,
       text:
         head
           .filter(Boolean)
           .map(line => line + "\n")
-          .join("") + small.text,
+          .join("") + whole.text,
     });
     writeFileSync(
       join(target, "plain.txt"),

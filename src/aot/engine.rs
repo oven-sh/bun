@@ -211,6 +211,11 @@ impl EngineOptions {
         })
     }
 
+    /// As with `--aot-disable=flow-results`.
+    pub fn skip_flow_analysis(&mut self) -> Result<(), RejectedOptionWord> {
+        apply_option_word(&mut self.record, b"disable=flow-results")
+    }
+
     pub fn check_only(&mut self) {
         self.record.action = CompileAction::CheckOnly;
     }

@@ -414,6 +414,11 @@ const aotTestsThatAskTheSystem = [
   "aot/parallel/errors/",
   "aot/parallel/async/",
   "aot/parallel/strings/",
+  // What --trim cuts out of the executable of the platform, and the options of the command line.
+  "bundler/compile-aot-",
+  "bundler/compile-trim-",
+  "bundler/trim-runtime-icu/",
+  "cli/aot-",
 ];
 // Alpine as well. CI can count instructions (perf_event_open) on Alpine x64 alone, and these tests skip themselves where they
 // cannot count. The last one names the host's own --target, which ends in -musl there.
@@ -502,7 +507,7 @@ const toolsOfTheEngine = [`*/jsc${isWindows ? ".exe" : ""}`, `*/testaot${isWindo
 let unpackToolsOfTheEngine: (() => Promise<unknown>) | undefined;
 // With test/aot go the tests of the tools that the compiler is built and started with.
 const isOfAotCompiler =
-  /^(?:aot|bundler\/trim-by-use|cli\/compile|internal\/builtins-table|internal\/trim)\/|^cli\/run\/run-aot\./;
+  /^(?:aot|bundler\/trim-by-use|bundler\/trim-runtime-icu|cli\/compile|internal\/builtins-table|internal\/trim)\/|^cli\/run\/run-aot\.|^bundler\/compile-(?:aot|trim)-|^cli\/aot-/;
 // These spend most of their time waiting for a build, a linker or a build script, and none of them measures time or memory
 // unless it says "Runs alone", so they can run beside one another.
 const waitsForChildProcesses = (testPath: string) =>
@@ -2664,6 +2669,10 @@ async function spawnBunTest(
   const args = opts.args ?? [];
 
   const testArgs = ["test", ...args, `--timeout=${perTestTimeout}`, "--reporter=dots"];
+  // A test holds the executables that it has built until it ends, and `bun test` has twenty tests under way. More of them than
+  // there are processors end no sooner: their executables only lie there together.
+  if (buildsManyExecutables(relative(testsPath, absPath)))
+    testArgs.push(`--max-concurrency=${Math.min(20, availableParallelism())}`);
 
   // This will be set if a JUnit file is generated
   let junitFilePath: string | null = null;
@@ -3499,7 +3508,17 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
   }
 
   const archive = zipPath;
-  await unzip(archive, releasePath, { without: toolsOfTheEngine });
+  const strippedArchive = isLinux
+    ? readdirSync(releasePath, { encoding: "utf-8" })
+        .filter(filename => /^bun.*\.zip$/i.test(filename))
+        .map(filename => join(releasePath, filename))
+        .find(path => path !== archive)
+    : undefined;
+  // Side by side: each keeps one processor busy for seconds.
+  const [, unpackedStripped] = await Promise.all([
+    unzip(archive, releasePath, { without: toolsOfTheEngine }),
+    strippedArchive && unzip(strippedArchive),
+  ]);
   // An archive without them: the tests that start them say so.
   unpackToolsOfTheEngine = () => unzip(archive, releasePath, { only: toolsOfTheEngine }).catch(console.warn);
 
@@ -3507,7 +3526,8 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
   for (const entry of releaseFiles) {
     const execPath = join(releasePath, entry);
     if (/bun(?:-[a-z]+)?(?:\.exe)?$/i.test(entry) && statSync(execPath).isFile()) {
-      if (isLinux) await unpackStrippedBun(releasePath, zipPath, execPath);
+      if (strippedArchive && unpackedStripped)
+        layStrippedBun(join(unpackedStripped, basename(strippedArchive, ".zip"), "bun"), execPath);
       if (isLinux && basename(execPath).includes("asan")) unpackDebugInformation(execPath);
       return execPath;
     }
@@ -3521,13 +3541,7 @@ async function getExecPathFromBuildkite(target: string, buildId?: string): Promi
  * The step that links `bun-profile` also uploads `bun`, the same link without symbols and debug information, in an
  * archive of its own. It is laid beside `bun-profile`, where tests look for the tools that are packed with it.
  */
-async function unpackStrippedBun(releasePath: string, profileZipPath: string, execPath: string): Promise<void> {
-  const zipPath = readdirSync(releasePath, { encoding: "utf-8" })
-    .filter(filename => /^bun.*\.zip$/i.test(filename))
-    .map(filename => join(releasePath, filename))
-    .find(path => path !== profileZipPath);
-  if (!zipPath) return;
-  const unpacked = join(await unzip(zipPath), basename(zipPath, ".zip"), "bun");
+function layStrippedBun(unpacked: string, execPath: string): void {
   if (!existsSync(unpacked)) return;
   const stripped = join(dirname(execPath), "bun-stripped");
   copyFileSync(unpacked, stripped);

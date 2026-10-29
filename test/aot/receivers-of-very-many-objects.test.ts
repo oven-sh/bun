@@ -1,5 +1,5 @@
 // Two receivers that may each be any of over three thousand objects share a third of them, and read and write names that single objects read and write too.
-// Flow links such receivers through the sets of objects they share. Past its edge budget it gives values up; no test program is that large, so the budget is lowered.
+// Flow links such receivers through the sets of objects they share. Past its edge budget flow stops and the build goes on without it; no test program is that large, so the budget is lowered.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { unsupported } from "./harness/compiler";
@@ -71,10 +71,10 @@ console.log(printed.join("\\n"));
 `;
 
 describe.skipIf(!!unsupported)("receivers of very many objects", () => {
-  // Where flow has given up, the passes behind it take minutes over the large program's top level.
+  // A build without flow compiles all of Bun's own modules, so the program that goes past the budget is tiny.
   const { folder, build } = sharedBuilds("receivers-of-very-many-objects", {
     "large.js": programWith(groups * 1100),
-    "small.js": programWith(groups * 260),
+    "tiny.js": programWith(groups * 3),
   });
   const printedBy = async (cmd: string[]) => {
     const { stdout, exitCode } = await run(cmd, folder, bunEnv);
@@ -83,12 +83,12 @@ describe.skipIf(!!unsupported)("receivers of very many objects", () => {
 
   test.each([
     ["large.js", []],
-    ["large.js", ["--aot-validate"]],
-    ["small.js", ["--aot-limit=MaxValueFlowEdgesLogged:1"]],
-    ["small.js", ["--aot-limit=MaxValueFlowEdgesLogged:10000"]],
-    ["small.js", ["--aot-limit=MaxValueFlowEdgesLogged:10000", "--aot-validate"]],
+    ["tiny.js", ["--aot-limit=MaxValueFlowEdgesLogged:1"]],
   ])("%s prints what it prints in plain Bun, built with %j", async (program, flags) => {
     const built = await build(program, "--aot", ...flags);
     expect(await printedBy([built.executable])).toEqual(await printedBy([bunExe(), program]));
+    // The build says once that it went without whole-program analysis, also where the front end compiled the program a second time.
+    const isPastTheBudget = flags.some(flag => flag.startsWith("--aot-limit="));
+    expect((built.stderr + built.stdout).split("TS100073").length - 1).toBe(isPastTheBudget ? 1 : 0);
   });
 });

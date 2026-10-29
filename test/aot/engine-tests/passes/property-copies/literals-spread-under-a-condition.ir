@@ -2898,7 +2898,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: Return v6
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="show"
-# CHECK: module=m0 position=267 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=L1|L2|L3|L4|L5|L7|L8|L9|L10|L11|L14|L16|L18|L21|L23|L24|L25|L26|Object site=w18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int[0, 4294967295] site=w19}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f14 callPosition=383 module=m2}, {callee=f47 callPosition=395 module=m3}, {callee=f47 callPosition=2337 parent=2 module=m3}, {callee=f21 callPosition=2337 parent=3 module=m3}, {callee=f21 callPosition=5210 parent=1 module=m3}, {callee=f19 callPosition=7547 parent=4 isTailCall=true module=m3}, {callee=f18 callPosition=6938 parent=4 module=m3}] {
+# CHECK: module=m0 position=267 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=string site=w17 flags=[OmitsNull, OmitsUndefined]}, {type=L1|L2|L3|L4|L5|L7|L8|L9|L10|L11|L14|L16|L18|L21|L23|L24|L25|L26|Object site=w18 flags=[OmitsNull, OmitsUndefined]}] results=[{type=int[0, 4294967295] site=w19}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f14 callPosition=383 module=m2}, {callee=f48 callPosition=395 module=m3}, {callee=f48 callPosition=2337 parent=2 module=m3}, {callee=f21 callPosition=2337 parent=3 module=m3}, {callee=f21 callPosition=5210 parent=1 module=m3}, {callee=f19 callPosition=7547 parent=4 isTailCall=true module=m3}, {callee=f18 callPosition=6938 parent=4 module=m3}] {
 # CHECK-NEXT: b0(v0: string, v1: L1|L2|L3|L4|L5|L7|L8|L9|L10|L11|L14|L16|L18|L21|L23|L24|L25|L26|Object):
 # CHECK-NEXT: v2: Array<string, proven, Contiguous, pristine[Storage, Names, Dense]> = GetModuleVariable variable=g0
 # CHECK-NEXT: v3: " | " = String string=" | "
@@ -2910,7 +2910,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v9: boolean = ShapeTest v1 layouts=[L8]
 # CHECK-NEXT: Branch v9 -> taken b1(), notTaken b3()
 # CHECK-NEXT: b1():
-# CHECK-NEXT: v10: int[0, 2] = CallDirect v1, v5 function=f35 calledBuiltin=JSONStringify
+# CHECK-NEXT: v10: int[0, 2] = CallDirect v1, v5 function=f36 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v10 cases=[1] -> case b2(), otherwise b24()
 # CHECK-NEXT: b2():
 # CHECK-NEXT: v11: buildercursor = StringBuilderReserve v5 size=128
@@ -2919,7 +2919,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v12: boolean = ShapeTest v1 layouts=[L14]
 # CHECK-NEXT: Branch v12 -> taken b4(), notTaken b6()
 # CHECK-NEXT: b4():
-# CHECK-NEXT: v13: int[0, 2] = CallDirect v1, v5 function=f40 calledBuiltin=JSONStringify
+# CHECK-NEXT: v13: int[0, 2] = CallDirect v1, v5 function=f41 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v13 cases=[1] -> case b5(), otherwise b24()
 # CHECK-NEXT: b5():
 # CHECK-NEXT: v14: buildercursor = StringBuilderReserve v5 size=128
@@ -2928,7 +2928,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v15: boolean = ShapeTest v1 layouts=[L24]
 # CHECK-NEXT: Branch v15 -> taken b7(), notTaken b9()
 # CHECK-NEXT: b7():
-# CHECK-NEXT: v16: int[0, 2] = CallDirect v1, v5 function=f41 calledBuiltin=JSONStringify
+# CHECK-NEXT: v16: int[0, 2] = CallDirect v1, v5 function=f42 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v16 cases=[1] -> case b8(), otherwise b24()
 # CHECK-NEXT: b8():
 # CHECK-NEXT: v17: buildercursor = StringBuilderReserve v5 size=128
@@ -2937,7 +2937,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v18: boolean = ShapeTest v1 layouts=[L10]
 # CHECK-NEXT: Branch v18 -> taken b10(), notTaken b12()
 # CHECK-NEXT: b10():
-# CHECK-NEXT: v19: int[0, 2] = CallDirect v1, v5 function=f37 calledBuiltin=JSONStringify
+# CHECK-NEXT: v19: int[0, 2] = CallDirect v1, v5 function=f38 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v19 cases=[1] -> case b11(), otherwise b24()
 # CHECK-NEXT: b11():
 # CHECK-NEXT: v20: buildercursor = StringBuilderReserve v5 size=128
@@ -2946,7 +2946,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v21: boolean = ShapeTest v1 layouts=[L4]
 # CHECK-NEXT: Branch v21 -> taken b13(), notTaken b15()
 # CHECK-NEXT: b13():
-# CHECK-NEXT: v22: int[0, 2] = CallDirect v1, v5 function=f31 calledBuiltin=JSONStringify
+# CHECK-NEXT: v22: int[0, 2] = CallDirect v1, v5 function=f32 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v22 cases=[1] -> case b14(), otherwise b24()
 # CHECK-NEXT: b14():
 # CHECK-NEXT: v23: buildercursor = StringBuilderReserve v5 size=128
@@ -2955,7 +2955,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v24: boolean = ShapeTest v1 layouts=[L5]
 # CHECK-NEXT: Branch v24 -> taken b16(), notTaken b18()
 # CHECK-NEXT: b16():
-# CHECK-NEXT: v25: int[0, 2] = CallDirect v1, v5 function=f32 calledBuiltin=JSONStringify
+# CHECK-NEXT: v25: int[0, 2] = CallDirect v1, v5 function=f33 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v25 cases=[1] -> case b17(), otherwise b24()
 # CHECK-NEXT: b17():
 # CHECK-NEXT: v26: buildercursor = StringBuilderReserve v5 size=128
@@ -2964,7 +2964,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v27: boolean = ShapeTest v1 layouts=[L7]
 # CHECK-NEXT: Branch v27 -> taken b19(), notTaken b21()
 # CHECK-NEXT: b19():
-# CHECK-NEXT: v28: int[0, 2] = CallDirect v1, v5 function=f34 calledBuiltin=JSONStringify
+# CHECK-NEXT: v28: int[0, 2] = CallDirect v1, v5 function=f35 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v28 cases=[1] -> case b20(), otherwise b24()
 # CHECK-NEXT: b20():
 # CHECK-NEXT: v29: buildercursor = StringBuilderReserve v5 size=128
@@ -2973,7 +2973,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v30: boolean = ShapeTest v1 layouts=[L9]
 # CHECK-NEXT: Branch v30 -> taken b22(), notTaken b24()
 # CHECK-NEXT: b22():
-# CHECK-NEXT: v31: int[0, 2] = CallDirect v1, v5 function=f36 calledBuiltin=JSONStringify
+# CHECK-NEXT: v31: int[0, 2] = CallDirect v1, v5 function=f37 calledBuiltin=JSONStringify
 # CHECK-NEXT: Switch v31 cases=[1] -> case b23(), otherwise b24()
 # CHECK-NEXT: b23():
 # CHECK-NEXT: v32: buildercursor = StringBuilderReserve v5 size=128
@@ -3114,35 +3114,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: Throw v1
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="throws"
-# CHECK: module=m0 position=4168 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=L9 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f50} {
-# CHECK-NEXT: b0(v0: boolean):
-# CHECK-NEXT: v1: undefined = CallDirect v0 function=f50
-# CHECK-NEXT: v2: i32 = ResultAt v1
-# CHECK-NEXT: v3: unspecified|L9 = ResultAt v1 index=1
-# CHECK-NEXT: v4: int[-2147483643, 2147483647]|unspecified = ResultAt v1 index=2
-# CHECK-NEXT: v5: 3|unspecified = ResultAt v1 index=3
-# CHECK-NEXT: v6: undefined|null|number|unspecified|L13 = ResultAt v1 index=4
-# CHECK-NEXT: Switch v2 cases=[1, 2] -> case b1(), case b2(), otherwise b3()
-# CHECK-NEXT: b1():
-# CHECK-NEXT: v7: fact = Specified
-# CHECK-NEXT: v8: L9 = AssumeType v3, v7 provenType=L9
-# CHECK-NEXT: Jump -> next b4(v8)
-# CHECK-NEXT: b2():
-# CHECK-NEXT: v9: fact = Specified
-# CHECK-NEXT: v10: int[-2147483643, 2147483647] = AssumeType v4, v9 provenType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v11: 3 = AssumeType v5, v9 provenType=3
-# CHECK-NEXT: v12: L9 = NewObject -, v10, v11 layout=L9 fields=[0, 2] allocationSite=64 allocationClass=8
-# CHECK-NEXT: Jump -> next b4(v12)
-# CHECK-NEXT: b3():
-# CHECK-NEXT: v13: fact = Specified
-# CHECK-NEXT: v14: int[-2147483643, 2147483647] = AssumeType v4, v13 provenType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v15: undefined|null|number|L13 = AssumeType v6, v13 provenType=undefined|null|number|L13
-# CHECK-NEXT: v16: 3 = AssumeType v5, v13 provenType=3
-# CHECK-NEXT: v17: L9 = NewObject -, v14, v15, v16 layout=L9 fields=[0, 1, 2] allocationSite=64 allocationClass=8
-# CHECK-NEXT: Jump -> next b4(v17)
-# CHECK-NEXT: b4(v18: L9):
-# CHECK-NEXT: Return v18
-# CHECK-NEXT: }
+# CHECK: module=m0 position=4168 role=ResultWrapper flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=L9 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f3 parameterMap=[{original=0}]} creator=ResultWrapper{worker=f26}
 # CHECK-LABEL: function {{*}}name="throws"
 # CHECK: module=m0 position=4168 role=GenericVersion flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10 flags=[IsExpected]}] results=[{type=L9 site=w11 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayBeCloned, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f3 parameterMap=[{original=0}]} creator=Version{provenVersion=f23}
 # CHECK-LABEL: function {{*}}name="three"
@@ -3192,6 +3164,23 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v32: undefined = Results v27, v28, v29, v30, v31
 # CHECK-NEXT: Return v32
 # CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="throws"
+# CHECK: module=m0 position=4168 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=i32}, {type=int[-2147483643, 2147483647]}, {type=anything|unspecified}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f23 parameterMap=[{original=0}]} creator=ResultWorker{origin=f23} {
+# CHECK-NEXT: b0(v0: boolean):
+# CHECK-NEXT: v1: 1 = Integer integer=1
+# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b2()
+# CHECK-NEXT: b1() frequency=Rare:
+# CHECK-NEXT: v2: anything = CallDirect function=f9 accessSite=149
+# CHECK-NEXT: v3: anything ~ undefined|null|number|L13 = Expect v2 expectedType=undefined|null|number|L13
+# CHECK-NEXT: v4: 2 = Integer integer=2
+# CHECK-NEXT: v5: undefined = Results v4, v1, v3
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: b2():
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: v7: anything|unspecified = Unspecified valueType=anything
+# CHECK-NEXT: v8: undefined = Results v6, v1, v7
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="b"
 # CHECK: module=m0 position=2023 kind=Getter role=GenericEntrypoint flags=[HasThis, IsChecked] captures=[{type=f7}] thisType={type=anything} results=[{type=anything}] capabilities=[HasOrdinaryFrame, IsNeverCalledByHost, IsHiddenInStackTraces] derivation={source=f7} creator=Entrypoint{target=f7 arguments=Registers} inlineFrames=[{}, {callee=f7 callPosition=2023 isTailCall=true module=m0}] {
 # CHECK-NEXT: b0(v0: f7, v1: anything):
@@ -3202,44 +3191,4 @@ runtimefunction id=ArrayTraversalTraverseArray function=f21 visibility=Private
 # CHECK-NEXT: v6: int|whole = Increment v5
 # CHECK-NEXT: PutEnvironmentField v2, v6 layout=L0
 # CHECK-NEXT: Return v6
-# CHECK-NEXT: }
-# CHECK-LABEL: function {{*}}name="throws"
-# CHECK: module=m0 position=4168 role=ResultWorker flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=boolean site=w10}] results=[{type=i32}, {type=unspecified|L9}, {type=int[-2147483643, 2147483647]|unspecified}, {type=3|unspecified}, {type=undefined|null|number|unspecified|L13}] capabilities=[MayChangeSignature, MayBeInlined, HasOrdinaryFrame, HasOnlyDirectCallers, IsNeverCalledByHost] derivation={source=f23 parameterMap=[{original=0}]} creator=ResultWorker{origin=f23} {
-# CHECK-NEXT: b0(v0: boolean):
-# CHECK-NEXT: v1: 1 = Integer integer=1
-# CHECK-NEXT: Branch v0 -> taken b1(), notTaken b4()
-# CHECK-NEXT: b1() frequency=Rare:
-# CHECK-NEXT: v2: anything = CallDirect function=f9 accessSite=149
-# CHECK-NEXT: v3: anything ~ undefined|null|number|L13 = Expect v2 expectedType=undefined|null|number|L13
-# CHECK-NEXT: v4: boolean ~ true = TypeTest v3 testedType=undefined|null|number|L13
-# CHECK-NEXT: Branch v4 -> taken b2(| 0), notTaken b3(| 0)
-# CHECK-NEXT: b2(v5: undefined|null|number|L13):
-# CHECK-NEXT: v6: undefined|null|number|L13 = Upcast v5 castType=undefined|null|number|unspecified|L13
-# CHECK-NEXT: v7: 1 = Upcast v1 castType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v8: 3 = Integer integer=3
-# CHECK-NEXT: v9: 4 = Integer integer=4
-# CHECK-NEXT: v10: unspecified|L9 = Unspecified valueType=L9
-# CHECK-NEXT: v11: fact = Specified
-# CHECK-NEXT: v12: undefined|null|number|L13 = AssumeType v6, v11 provenType=undefined|null|number|L13
-# CHECK-NEXT: v13: undefined = Results v9, v10, v7, v8, v12
-# CHECK-NEXT: Return v13
-# CHECK-NEXT: b3(v14: boolean|string|symbol|bigint|object) frequency=Rare:
-# CHECK-NEXT: v15: L9 = NewObject -, v1 layout=L9 fields=[0] allocationSite=64 allocationClass=8
-# CHECK-NEXT: PropDefine v15, v14 key="b" accessSite=150
-# CHECK-NEXT: v17: 3 = Integer integer=3
-# CHECK-NEXT: PropDefine v15, v17 key="c" accessSite=151 receivers=[L9]
-# CHECK-NEXT: v19: 1 = Integer integer=1
-# CHECK-NEXT: v20: int[-2147483643, 2147483647]|unspecified = Unspecified valueType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v21: 3|unspecified = Unspecified valueType=3
-# CHECK-NEXT: v22: undefined|null|number|unspecified|L13 = Unspecified valueType=undefined|null|number|L13
-# CHECK-NEXT: v23: undefined = Results v19, v15, v20, v21, v22
-# CHECK-NEXT: Return v23
-# CHECK-NEXT: b4():
-# CHECK-NEXT: v24: 1 = Upcast v1 castType=int[-2147483643, 2147483647]
-# CHECK-NEXT: v25: 3 = Integer integer=3
-# CHECK-NEXT: v26: 2 = Integer integer=2
-# CHECK-NEXT: v27: unspecified|L9 = Unspecified valueType=L9
-# CHECK-NEXT: v28: undefined|null|number|unspecified|L13 = Unspecified valueType=undefined|null|number|L13
-# CHECK-NEXT: v29: undefined = Results v26, v27, v24, v25, v28
-# CHECK-NEXT: Return v29
 # CHECK-NEXT: }

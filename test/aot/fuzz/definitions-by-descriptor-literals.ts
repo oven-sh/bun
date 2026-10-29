@@ -102,6 +102,20 @@ const turns = [
   "if (!Object.hasOwn(target, name)) Object.defineProperty(target, name, { get: all[name], enumerable: true });",
 ];
 
+/** Statements that change the walked literal: in front of the walk, or in a turn ahead of the definition. */
+const changesOfWalked = [
+  "delete all.two;",
+  "delete all.one;",
+  "all.late = () => 7;",
+  "all.two = () => 8;",
+  "all[3] = () => 9;",
+  'Object.defineProperty(all, "two", { enumerable: false });',
+  'Object.defineProperty(all, "two", { get: () => () => 10, enumerable: true, configurable: true });',
+  "Object.setPrototypeOf(all, { above: () => 11 });",
+  "Object.freeze(all);",
+  "change(all);",
+];
+
 export function generate(random: Random): string {
   const descriptor = () => {
     const members: string[] = [];
@@ -121,18 +135,25 @@ export function generate(random: Random): string {
   for (let scene = 0, total = random.between(3, 7); scene < total; scene++) {
     const rounds = random.pick([1, 1, 3, 300]);
     if (random.chance(0.25)) {
+      // The walk may be written out name by name only while nothing changes the literal from its creation to the last turn.
+      const inTurn = random.chance(0.3)
+        ? `if (turn++ === ${random.pick([0, 0, 1])}) ${random.pick(changesOfWalked)}\n    `
+        : "";
+      const inFront = random.chance(0.3) ? random.pick(changesOfWalked) : "";
+      const isNamed = inFront !== "" || random.chance(0.3);
+      const literal = random.pick(walked);
+      // A helper that is nothing but the loop, as bundlers write it, is what the compiler looks for.
       scenes.push(`function exportAll${scene}(target, all) {
-  for (const name in all) {
-    ${random.pick(turns)}
+  ${inTurn ? "let turn = 0;\n  " : ""}for (const name in all) {
+    ${inTurn}${random.pick(turns)}
   }
-  return target;
 }
 {
   let last;
   for (let round = 0; round < ${rounds}; round++) {
     last = told(() => {
       const target = ${random.pick(targets.slice(0, 14))};
-      exportAll${scene}(target, ${random.pick(walked)});
+      ${isNamed ? `const all = ${literal};\n      ${inFront}\n      exportAll${scene}(${random.chance(0.15) ? "all" : "target"}, all);` : `exportAll${scene}(target, ${literal});`}
       return Reflect.ownKeys(target).map(name => shown(target, name)).join(" ; ");
     });
   }
@@ -184,6 +205,10 @@ class WithAccessor {
   set a(stored) {
     log.push("setter of the class " + String(stored));
   }
+}
+function change(all) {
+  delete all.two;
+  all.changed = () => 12;
 }
 function define(target, key, descriptor) {
   return Object.defineProperty(target, key, descriptor) === target;

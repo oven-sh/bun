@@ -716,6 +716,10 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "own-properties-hiding-members-of-builtin-subclasses",
     "loop-counters-near-integer-limits",
     "numbers-returned-in-two-forms",
+    "loops-in-try-blocks",
+    "outer-variables-written-in-loops",
+    "rounded-quotients-of-whole-numbers",
+    "strings-built-in-steps",
   ])
     sources[name] = productSource(name, generateOf(name), oddSeeds);
   sources["computed-key-stores-with-mutations"] = productSource(
@@ -852,6 +856,8 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "polymorphic-variable-destructured",
     "spread-arrays-on-rare-path",
     "other-objects-typed-as-builtin-subclasses",
+    "json-parse-list-members",
+    "union-members-made-by-one-constructor",
   ])
     sources[name] = productSource(name, generateOf(name), always);
   for (const name of [
@@ -894,6 +900,15 @@ async function singleFileSources(programsRoot: string, rejected: Set<string>): P
     "tables-read-under-keys-made-at-run-time",
     "names-stored-on-objects-a-function-was-given",
     "definitions-by-descriptor-literals",
+    "sorts-in-default-order",
+    "regexp-literals-evaluated-again",
+    "generators-used-where-they-are-made",
+    "chains-of-list-callbacks",
+    "functions-that-call-themselves-last",
+    "reads-repeated-around-hidden-writes",
+    "list-patterns-whose-defaults-change-the-list",
+    "result-objects-told-apart-by-a-tag",
+    "constructors-swapped-in-an-allocator",
   ])
     sources[name] = productSource(name, generateOf(name), never);
   const named =

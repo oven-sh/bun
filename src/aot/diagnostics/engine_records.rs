@@ -71,6 +71,15 @@ impl Diagnostics {
         }
     }
 
+    // The engine said so in a compile that was thrown away with all that it said.
+    pub(crate) fn add_program_too_large_to_analyze(&mut self) {
+        let kind = UserDiagnosticKind::ProgramTooLargeToAnalyze;
+        let severity = severity_of(kind.severity());
+        let text = kind.message().as_bytes().to_vec();
+        let reported = new_driver_diagnostic(kind.code(), severity.category(), text, &[]);
+        self.add_message(kind.code(), to_log_message(&reported, severity));
+    }
+
     pub(super) fn add_user_diagnostic(
         &mut self,
         record: &UserDiagnosticRecord,

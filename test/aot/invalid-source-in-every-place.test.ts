@@ -86,7 +86,9 @@ for (const [place, filesWith] of Object.entries(places)) {
         using folder = tempDir("aot-invalid-source", files);
         const executable = join(String(folder), isWindows ? "program.exe" : "program");
         const entryPoints = "second.ts" in files ? ["./main.ts", "./second.ts"] : ["./main.ts"];
-        const command = [bunExe(), ...compileCommand, withThreads(1), ...entryPoints, "--outfile", executable];
+        // Nothing runs what a build makes here.
+        const flags = [withThreads(1), "--aot-testing=NoExecutable"];
+        const command = [bunExe(), ...compileCommand, ...flags, ...entryPoints, "--outfile", executable];
         const { exitCode, stderr } = await run(command, String(folder));
         const isRefused = refusedBy === "the parser" || (refusedBy === "the checker" && isChecked);
         const expected = { name, exitCode: isRefused ? 1 : 0, namesError: isRefused };

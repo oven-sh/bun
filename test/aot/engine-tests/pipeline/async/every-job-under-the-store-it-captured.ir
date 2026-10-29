@@ -4971,78 +4971,76 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f83
 # CHECK-NEXT: v2: undefined = Undefined
 # CHECK-NEXT: Jump -> next b35(v2)
 # CHECK-NEXT: b2(v3: L28):
-# CHECK-NEXT: v4: builtin(GlobalThis) = Builtin builtin=GlobalThis
-# CHECK-NEXT: v5: anything = PropGet v4 key=@"asyncContext" accessSite=424 [isFreeName]
-# CHECK-NEXT: v6: object = AssumeType v5 provenType=object [isWordOfFrontEnd]
-# CHECK-NEXT: v7: anything = GetInternalField v6
-# CHECK-NEXT: v8: anything ~ undefined|null|L26 = Expect v7 expectedType=undefined|null|L26
-# CHECK-NEXT: v9: boolean = TypeTest v8 testedType=undefined
-# CHECK-NEXT: Branch v9 -> taken b17(), notTaken b3(| 0)
-# CHECK-NEXT: b3(v10: null|boolean|number|string|symbol|bigint|object ~ null|L26):
-# CHECK-NEXT: v11: boolean|number|string|symbol|bigint|object ~ L26 = RequireObjectCoercible v10 name="masked"
-# CHECK-NEXT: v12: boolean ~ true = TypeTest v11 testedType=L26
-# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b12()
-# CHECK-NEXT: b4(v13: L26):
-# CHECK-NEXT: v14: boolean = HasBirthFieldsFilled v13
-# CHECK-NEXT: Branch v14 -> taken b5(| 0), notTaken b12()
-# CHECK-NEXT: b5(v15: guard):
-# CHECK-NEXT: v16: undefined|null|Array<undefined|null|L28> = GetSlot v13, v15 key="masked" receivers=[L26] level=Expected accessSite=428
-# CHECK-NEXT: v17: boolean = TypeTest v16 testedType=undefined
-# CHECK-NEXT: Branch v17 -> taken b24(v11), notTaken b6()
+# CHECK-NEXT: v4: object = GetBuiltinValue builtin=PrivateGlobalsAsyncContext overload=PrivateGlobalsAsyncContext/0
+# CHECK-NEXT: v5: anything = GetInternalField v4
+# CHECK-NEXT: v6: anything ~ undefined|null|L26 = Expect v5 expectedType=undefined|null|L26
+# CHECK-NEXT: v7: boolean = TypeTest v6 testedType=undefined
+# CHECK-NEXT: Branch v7 -> taken b17(), notTaken b3(| 0)
+# CHECK-NEXT: b3(v8: null|boolean|number|string|symbol|bigint|object ~ null|L26):
+# CHECK-NEXT: v9: boolean|number|string|symbol|bigint|object ~ L26 = RequireObjectCoercible v8 name="masked"
+# CHECK-NEXT: v10: boolean ~ true = TypeTest v9 testedType=L26
+# CHECK-NEXT: Branch v10 -> taken b4(| 0), notTaken b12()
+# CHECK-NEXT: b4(v11: L26):
+# CHECK-NEXT: v12: boolean = HasBirthFieldsFilled v11
+# CHECK-NEXT: Branch v12 -> taken b5(| 0), notTaken b12()
+# CHECK-NEXT: b5(v13: guard):
+# CHECK-NEXT: v14: undefined|null|Array<undefined|null|L28> = GetSlot v11, v13 key="masked" receivers=[L26] level=Expected accessSite=428
+# CHECK-NEXT: v15: boolean = TypeTest v14 testedType=undefined
+# CHECK-NEXT: Branch v15 -> taken b24(v9), notTaken b6()
 # CHECK-NEXT: b6():
-# CHECK-NEXT: v18: 0 = Integer
-# CHECK-NEXT: v19: Array<undefined|null|L28> = RequireObjectCoercible v16 name="length"
-# CHECK-NEXT: v20: int[0, 4294967295] = CallBuiltin v19 overload=ArrayPrototypeLength/0 accessSite=430
-# CHECK-NEXT: v21: boolean = HasArrayStorage v19 arrayStorage=Contiguous
-# CHECK-NEXT: Branch v21 -> taken b7(| 0), notTaken b14(v18, v20, v19)
-# CHECK-NEXT: b7(v22: guard):
-# CHECK-NEXT: Jump -> next b8(v18)
-# CHECK-NEXT: b8(v23: int[0, 4294967295]):
+# CHECK-NEXT: v16: 0 = Integer
+# CHECK-NEXT: v17: Array<undefined|null|L28> = RequireObjectCoercible v14 name="length"
+# CHECK-NEXT: v18: int[0, 4294967295] = CallBuiltin v17 overload=ArrayPrototypeLength/0 accessSite=430
+# CHECK-NEXT: v19: boolean = HasArrayStorage v17 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v19 -> taken b7(| 0), notTaken b14(v16, v18, v17)
+# CHECK-NEXT: b7(v20: guard):
+# CHECK-NEXT: Jump -> next b8(v16)
+# CHECK-NEXT: b8(v21: int[0, 4294967295]):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v25: boolean = Less v23, v20
-# CHECK-NEXT: Branch v25 -> taken b9(| 0), notTaken b24(v11)
-# CHECK-NEXT: b9(v26: int[0, 4294967294]):
-# CHECK-NEXT: v27: boolean = IsElementPresent v19, v26, v22 arrayStorage=Contiguous [keyIsIntegral]
-# CHECK-NEXT: Branch v27 -> taken b10(| 0), notTaken b16(v20, v26, v19)
-# CHECK-NEXT: b10(v28: guard):
-# CHECK-NEXT: v29: guard = AllGuards v22, v28
-# CHECK-NEXT: v30: anything ~ undefined|null|L28 = GetArrayElement v19, v26, v29 arrayStorage=Contiguous level=Expected accessSite=431 [keyIsIntegral, isPresent]
-# CHECK-NEXT: v31: boolean = StrictEq v30, v3
-# CHECK-NEXT: Branch v31 -> taken b17(), notTaken b11()
+# CHECK-NEXT: v23: boolean = Less v21, v18
+# CHECK-NEXT: Branch v23 -> taken b9(| 0), notTaken b24(v9)
+# CHECK-NEXT: b9(v24: int[0, 4294967294]):
+# CHECK-NEXT: v25: boolean = IsElementPresent v17, v24, v20 arrayStorage=Contiguous [keyIsIntegral]
+# CHECK-NEXT: Branch v25 -> taken b10(| 0), notTaken b16(v18, v24, v17)
+# CHECK-NEXT: b10(v26: guard):
+# CHECK-NEXT: v27: guard = AllGuards v20, v26
+# CHECK-NEXT: v28: anything ~ undefined|null|L28 = GetArrayElement v17, v24, v27 arrayStorage=Contiguous level=Expected accessSite=431 [keyIsIntegral, isPresent]
+# CHECK-NEXT: v29: boolean = StrictEq v28, v3
+# CHECK-NEXT: Branch v29 -> taken b17(), notTaken b11()
 # CHECK-NEXT: b11():
-# CHECK-NEXT: v32: int[1, 4294967295] = Increment v26
-# CHECK-NEXT: Jump -> next b8(v32)
+# CHECK-NEXT: v30: int[1, 4294967295] = Increment v24
+# CHECK-NEXT: Jump -> next b8(v30)
 # CHECK-NEXT: b12() frequency=Rare:
-# CHECK-NEXT: v33: anything ~ undefined|null|Array<undefined|null|L28> = PropGet v11 key="masked" accessSite=428
-# CHECK-NEXT: v34: boolean = TypeTest v33 testedType=undefined
-# CHECK-NEXT: Branch v34 -> taken b24(v11), notTaken b13()
+# CHECK-NEXT: v31: anything ~ undefined|null|Array<undefined|null|L28> = PropGet v9 key="masked" accessSite=428
+# CHECK-NEXT: v32: boolean = TypeTest v31 testedType=undefined
+# CHECK-NEXT: Branch v32 -> taken b24(v9), notTaken b13()
 # CHECK-NEXT: b13() frequency=Rare:
-# CHECK-NEXT: v35: anything ~ undefined|null|Array<undefined|null|L28> = PropGet v11 key="masked" accessSite=429
-# CHECK-NEXT: v36: boolean|number|string|symbol|bigint|object ~ Array<undefined|null|L28> = RequireObjectCoercible v35 name="length"
-# CHECK-NEXT: v37: anything = PropGet v36 key="length" accessSite=430
-# CHECK-NEXT: v38: anything ~ number = Expect v37 expectedType=number
-# CHECK-NEXT: v39: 0 = Integer
-# CHECK-NEXT: Jump -> next b14(v39, v38, v36)
-# CHECK-NEXT: b14(v40: int|whole ~ 0, v41: anything ~ int[0, 4294967295], v42: boolean|number|string|symbol|bigint|object ~ Array<undefined|null|L28>) frequency=Rare:
+# CHECK-NEXT: v33: anything ~ undefined|null|Array<undefined|null|L28> = PropGet v9 key="masked" accessSite=429
+# CHECK-NEXT: v34: boolean|number|string|symbol|bigint|object ~ Array<undefined|null|L28> = RequireObjectCoercible v33 name="length"
+# CHECK-NEXT: v35: anything = PropGet v34 key="length" accessSite=430
+# CHECK-NEXT: v36: anything ~ number = Expect v35 expectedType=number
+# CHECK-NEXT: v37: 0 = Integer
+# CHECK-NEXT: Jump -> next b14(v37, v36, v34)
+# CHECK-NEXT: b14(v38: int|whole ~ 0, v39: anything ~ int[0, 4294967295], v40: boolean|number|string|symbol|bigint|object ~ Array<undefined|null|L28>) frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v44: boolean = Less v40, v41
-# CHECK-NEXT: Branch v44 -> taken b15(| 0), notTaken b24(v11)
-# CHECK-NEXT: b15(v45: int|whole ~ 0) frequency=Rare:
-# CHECK-NEXT: Jump -> next b16(v41, v45, v42)
-# CHECK-NEXT: b16(v46: anything ~ int[0, 4294967295], v47: int|whole ~ int[0, 4294967294], v48: boolean|number|string|symbol|bigint|object ~ Array<undefined|null|L28>) frequency=Rare:
-# CHECK-NEXT: v49: anything ~ undefined|null|L28 = ElemGet v48, v47 accessSite=431 [keyIsIntegral]
-# CHECK-NEXT: v50: boolean = StrictEq v49, v3
-# CHECK-NEXT: Branch v50 -> taken b17(), notTaken b18()
+# CHECK-NEXT: v42: boolean = Less v38, v39
+# CHECK-NEXT: Branch v42 -> taken b15(| 0), notTaken b24(v9)
+# CHECK-NEXT: b15(v43: int|whole ~ 0) frequency=Rare:
+# CHECK-NEXT: Jump -> next b16(v39, v43, v40)
+# CHECK-NEXT: b16(v44: anything ~ int[0, 4294967295], v45: int|whole ~ int[0, 4294967294], v46: boolean|number|string|symbol|bigint|object ~ Array<undefined|null|L28>) frequency=Rare:
+# CHECK-NEXT: v47: anything ~ undefined|null|L28 = ElemGet v46, v45 accessSite=431 [keyIsIntegral]
+# CHECK-NEXT: v48: boolean = StrictEq v47, v3
+# CHECK-NEXT: Branch v48 -> taken b17(), notTaken b18()
 # CHECK-NEXT: b17():
-# CHECK-NEXT: v51: undefined = Undefined
-# CHECK-NEXT: Jump -> next b35(v51)
+# CHECK-NEXT: v49: undefined = Undefined
+# CHECK-NEXT: Jump -> next b35(v49)
 # CHECK-NEXT: b18() frequency=Rare:
-# CHECK-NEXT: v52: int|whole ~ int[1, 4294967295] = Increment v47
-# CHECK-NEXT: v53: boolean ~ true = TypeTest v48 testedType=Array<undefined|null|L28>
-# CHECK-NEXT: Branch v53 -> taken b19(), notTaken b22()
+# CHECK-NEXT: v50: int|whole ~ int[1, 4294967295] = Increment v45
+# CHECK-NEXT: v51: boolean ~ true = TypeTest v46 testedType=Array<undefined|null|L28>
+# CHECK-NEXT: Branch v51 -> taken b19(), notTaken b22()
 # CHECK-NEXT: b19() frequency=Rare:
-# CHECK-NEXT: v54: boolean ~ true = TypeTest v46 testedType=int[0, 4294967295]
-# CHECK-NEXT: Branch v54 -> taken b20(), notTaken b21()
+# CHECK-NEXT: v52: boolean ~ true = TypeTest v44 testedType=int[0, 4294967295]
+# CHECK-NEXT: Branch v52 -> taken b20(), notTaken b21()
 # CHECK-NEXT: b20() frequency=Rare:
 # CHECK-NEXT: Jump -> next b23()
 # CHECK-NEXT: b21() frequency=Rare:
@@ -5050,62 +5048,62 @@ runtimefunction id=ProcessObjectInternalsInitializeNextTickQueue function=f83
 # CHECK-NEXT: b22() frequency=Rare:
 # CHECK-NEXT: Jump -> next b23()
 # CHECK-NEXT: b23() frequency=Rare:
-# CHECK-NEXT: Jump -> next b14(v52, v46, v48)
-# CHECK-NEXT: b24(v55: anything ~ L26):
-# CHECK-NEXT: Jump -> next b25(v55)
-# CHECK-NEXT: b25(v56: anything ~ undefined|null|L26):
+# CHECK-NEXT: Jump -> next b14(v50, v44, v46)
+# CHECK-NEXT: b24(v53: anything ~ L26):
+# CHECK-NEXT: Jump -> next b25(v53)
+# CHECK-NEXT: b25(v54: anything ~ undefined|null|L26):
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v58: boolean = TypeTest v56 testedType=undefined
-# CHECK-NEXT: Branch v58 -> taken b26(), notTaken b27(| 0)
+# CHECK-NEXT: v56: boolean = TypeTest v54 testedType=undefined
+# CHECK-NEXT: Branch v56 -> taken b26(), notTaken b27(| 0)
 # CHECK-NEXT: b26():
-# CHECK-NEXT: v59: undefined = Undefined
-# CHECK-NEXT: Jump -> next b35(v59)
-# CHECK-NEXT: b27(v60: null|boolean|number|string|symbol|bigint|object ~ null|L26):
-# CHECK-NEXT: v61: boolean|number|string|symbol|bigint|object ~ L26 = RequireObjectCoercible v60 name="storage"
-# CHECK-NEXT: v62: boolean ~ true = TypeTest v61 testedType=L26
-# CHECK-NEXT: Branch v62 -> taken b28(| 0), notTaken b32(v61)
-# CHECK-NEXT: b28(v63: L26):
-# CHECK-NEXT: v64: boolean = HasBirthFieldsFilled v63
-# CHECK-NEXT: Branch v64 -> taken b29(| 0), notTaken b32(v63)
-# CHECK-NEXT: b29(v65: guard):
-# CHECK-NEXT: v66: undefined|null|L28 = GetSlot v63, v65 key="storage" receivers=[L26] level=Expected accessSite=515
-# CHECK-NEXT: v67: boolean = StrictEq v66, v3
-# CHECK-NEXT: Branch v67 -> taken b30(), notTaken b31()
+# CHECK-NEXT: v57: undefined = Undefined
+# CHECK-NEXT: Jump -> next b35(v57)
+# CHECK-NEXT: b27(v58: null|boolean|number|string|symbol|bigint|object ~ null|L26):
+# CHECK-NEXT: v59: boolean|number|string|symbol|bigint|object ~ L26 = RequireObjectCoercible v58 name="storage"
+# CHECK-NEXT: v60: boolean ~ true = TypeTest v59 testedType=L26
+# CHECK-NEXT: Branch v60 -> taken b28(| 0), notTaken b32(v59)
+# CHECK-NEXT: b28(v61: L26):
+# CHECK-NEXT: v62: boolean = HasBirthFieldsFilled v61
+# CHECK-NEXT: Branch v62 -> taken b29(| 0), notTaken b32(v61)
+# CHECK-NEXT: b29(v63: guard):
+# CHECK-NEXT: v64: undefined|null|L28 = GetSlot v61, v63 key="storage" receivers=[L26] level=Expected accessSite=515
+# CHECK-NEXT: v65: boolean = StrictEq v64, v3
+# CHECK-NEXT: Branch v65 -> taken b30(), notTaken b31()
 # CHECK-NEXT: b30():
-# CHECK-NEXT: v68: anything = GetSlot v63 key="value" receivers=[L26] level=Expected accessSite=516
-# CHECK-NEXT: Jump -> next b34(v68)
+# CHECK-NEXT: v66: anything = GetSlot v61 key="value" receivers=[L26] level=Expected accessSite=516
+# CHECK-NEXT: Jump -> next b34(v66)
 # CHECK-NEXT: b31():
-# CHECK-NEXT: v69: undefined|null|L26 = GetSlot v63, v65 key="prev" receivers=[L26] level=Expected accessSite=517
-# CHECK-NEXT: Jump -> next b25(v69)
-# CHECK-NEXT: b32(v70: boolean|number|string|symbol|bigint|object ~ L26) frequency=Rare:
-# CHECK-NEXT: v71: anything ~ undefined|null|L28 = PropGet v70 key="storage" accessSite=515
-# CHECK-NEXT: v72: boolean = StrictEq v71, v3
-# CHECK-NEXT: Branch v72 -> taken b33(), notTaken b37()
+# CHECK-NEXT: v67: undefined|null|L26 = GetSlot v61, v63 key="prev" receivers=[L26] level=Expected accessSite=517
+# CHECK-NEXT: Jump -> next b25(v67)
+# CHECK-NEXT: b32(v68: boolean|number|string|symbol|bigint|object ~ L26) frequency=Rare:
+# CHECK-NEXT: v69: anything ~ undefined|null|L28 = PropGet v68 key="storage" accessSite=515
+# CHECK-NEXT: v70: boolean = StrictEq v69, v3
+# CHECK-NEXT: Branch v70 -> taken b33(), notTaken b37()
 # CHECK-NEXT: b33() frequency=Rare:
-# CHECK-NEXT: v73: anything = PropGet v70 key="value" accessSite=516
-# CHECK-NEXT: Jump -> next b34(v73)
-# CHECK-NEXT: b34(v74: anything):
-# CHECK-NEXT: v75: anything ~ undefined|null|string = Expect v74 expectedType=undefined|null|string
-# CHECK-NEXT: v76: boolean ~ true = TypeTest v75 testedType=undefined|null|boolean|number|string|symbol|bigint @426 tail
-# CHECK-NEXT: Branch v76 -> taken b35(| 0), notTaken b36(| 0) @426 tail
-# CHECK-NEXT: b35(v77: undefined|null|boolean|number|string|symbol|bigint ~ undefined|null|string):
-# CHECK-NEXT: v78: string = CallBuiltin -, v77 overload=String/0 accessSite=94 @426 tail
+# CHECK-NEXT: v71: anything = PropGet v68 key="value" accessSite=516
+# CHECK-NEXT: Jump -> next b34(v71)
+# CHECK-NEXT: b34(v72: anything):
+# CHECK-NEXT: v73: anything ~ undefined|null|string = Expect v72 expectedType=undefined|null|string
+# CHECK-NEXT: v74: boolean ~ true = TypeTest v73 testedType=undefined|null|boolean|number|string|symbol|bigint @426 tail
+# CHECK-NEXT: Branch v74 -> taken b35(| 0), notTaken b36(| 0) @426 tail
+# CHECK-NEXT: b35(v75: undefined|null|boolean|number|string|symbol|bigint ~ undefined|null|string):
+# CHECK-NEXT: v76: string = CallBuiltin -, v75 overload=String/0 accessSite=94 @426 tail
+# CHECK-NEXT: Return v76
+# CHECK-NEXT: b36(v77: object) frequency=Rare:
+# CHECK-NEXT: v78: string = ToString v77 calledBuiltin=String @426 tail
 # CHECK-NEXT: Return v78
-# CHECK-NEXT: b36(v79: object) frequency=Rare:
-# CHECK-NEXT: v80: string = ToString v79 calledBuiltin=String @426 tail
-# CHECK-NEXT: Return v80
 # CHECK-NEXT: b37() frequency=Rare:
-# CHECK-NEXT: v81: anything ~ undefined|null|L26 = PropGet v70 key="prev" accessSite=517
-# CHECK-NEXT: v82: boolean ~ true = TypeTest v81 testedType=undefined|null|L26
-# CHECK-NEXT: Branch v82 -> taken b38(| 0), notTaken b39()
-# CHECK-NEXT: b38(v83: undefined|null|L26) frequency=Rare:
-# CHECK-NEXT: Jump -> next b24(v83)
+# CHECK-NEXT: v79: anything ~ undefined|null|L26 = PropGet v68 key="prev" accessSite=517
+# CHECK-NEXT: v80: boolean ~ true = TypeTest v79 testedType=undefined|null|L26
+# CHECK-NEXT: Branch v80 -> taken b38(| 0), notTaken b39()
+# CHECK-NEXT: b38(v81: undefined|null|L26) frequency=Rare:
+# CHECK-NEXT: Jump -> next b24(v81)
 # CHECK-NEXT: b39() frequency=Rare:
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v85: fact = Specified
-# CHECK-NEXT: v86: null|boolean|number|string|symbol|bigint|object ~ null|L26 = AssumeType v81, v85 provenType=null|boolean|number|string|symbol|bigint|object
-# CHECK-NEXT: v87: boolean|number|string|symbol|bigint|object ~ L26 = RequireObjectCoercible v86 name="storage"
-# CHECK-NEXT: Jump -> next b32(v87)
+# CHECK-NEXT: v83: fact = Specified
+# CHECK-NEXT: v84: null|boolean|number|string|symbol|bigint|object ~ null|L26 = AssumeType v79, v83 provenType=null|boolean|number|string|symbol|bigint|object
+# CHECK-NEXT: v85: boolean|number|string|symbol|bigint|object ~ L26 = RequireObjectCoercible v84 name="storage"
+# CHECK-NEXT: Jump -> next b32(v85)
 # CHECK-NEXT: }
 # CHECK-LABEL: function f7 module=
 # CHECK: m0 position=1095 kind=Arrow flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] functionTypes=[f42] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f452 callPosition=1117 isConstruction=true module=m12}, {callee=f1 callPosition=1387 module=m0}] {

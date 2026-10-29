@@ -2279,28 +2279,33 @@ runtimefunction id=ArrayTraversalTraverseArray function=f52 visibility=Private
 # CHECK-NEXT: v3: object ~ L1|L2 = NewObject v2 layout=L1 allocationSite=29 allocationClass=1
 # CHECK-NEXT: v4: 1 = Integer integer=1
 # CHECK-NEXT: v5: boolean ~ true = TypeTest v3 testedType=L1|L2
-# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b6()
+# CHECK-NEXT: Branch v5 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v6: L1|L2):
 # CHECK-NEXT: PutSlotOrAdd v6, -, v4 key="x" receivers=[L1, L2] level=Expected accessSite=96
-# CHECK-NEXT: v8: boolean = HasLayoutPrototype v6
-# CHECK-NEXT: Branch v8 -> taken b2(| 0), notTaken b7()
-# CHECK-NEXT: b2(v9: guard):
-# CHECK-NEXT: v10: boolean = HasNoFieldOutsideSlot v6, v9
-# CHECK-NEXT: Branch v10 -> taken b3(| 0), notTaken b7()
-# CHECK-NEXT: b3(v11: guard):
-# CHECK-NEXT: v12: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L2}, {kind=MemberPassedByStores layout=L1 key="y"}, {kind=MemberPassedByStores layout=L2 key="y"}]
-# CHECK-NEXT: Branch v12 -> taken b4(| 0), notTaken b7()
-# CHECK-NEXT: b4(v13: guard):
-# CHECK-NEXT: v14: boolean = TypeTest v1 testedType=int[-2147483643, 2147483647]
-# CHECK-NEXT: Branch v14 -> taken b5(| 0), notTaken b7()
-# CHECK-NEXT: b5(v15: int[-2147483643, 2147483647]):
-# CHECK-NEXT: v16: guard = AllGuards v9, v11, v13
-# CHECK-NEXT: PutSlotOrAdd v6, v16, v15 key="y" receivers=[L1, L2] level=Expected accessSite=89
-# CHECK-NEXT: Return v6
-# CHECK-NEXT: b6() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b2() frequency=Unlikely:
 # CHECK-NEXT: PropDefine v3, v4 key="x" accessSite=96
-# CHECK-NEXT: Jump -> next b7()
-# CHECK-NEXT: b7() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: v9: boolean ~ true = TypeTest v3 testedType=L1|L2|L3
+# CHECK-NEXT: Branch v9 -> taken b4(| 0), notTaken b9()
+# CHECK-NEXT: b4(v10: L1|L2|L3 ~ L1|L2):
+# CHECK-NEXT: v11: boolean = HasLayoutPrototype v10
+# CHECK-NEXT: Branch v11 -> taken b5(| 0), notTaken b9()
+# CHECK-NEXT: b5(v12: guard):
+# CHECK-NEXT: v13: boolean = HasNoFieldOutsideSlot v10, v12
+# CHECK-NEXT: Branch v13 -> taken b6(| 0), notTaken b9()
+# CHECK-NEXT: b6(v14: guard):
+# CHECK-NEXT: v15: boolean = AreMembersUnchanged conditions=[{kind=PrototypeLinkUnchanged layout=L2}, {kind=PrototypeLinkUnchanged layout=L3}, {kind=MemberPassedByStores layout=L1 key="y"}, {kind=MemberPassedByStores layout=L2 key="y"}, {kind=MemberPassedByStores layout=L3 key="y"}]
+# CHECK-NEXT: Branch v15 -> taken b7(| 0), notTaken b9()
+# CHECK-NEXT: b7(v16: guard):
+# CHECK-NEXT: v17: boolean = TypeTest v1 testedType=int[-2147483643, 2147483647]
+# CHECK-NEXT: Branch v17 -> taken b8(| 0), notTaken b9()
+# CHECK-NEXT: b8(v18: int[-2147483643, 2147483647]):
+# CHECK-NEXT: v19: guard = AllGuards v12, v14, v16
+# CHECK-NEXT: PutSlotOrAdd v10, v19, v18 key="y" receivers=[L1, L2, L3] level=Expected accessSite=89
+# CHECK-NEXT: Return v10
+# CHECK-NEXT: b9() frequency=Unlikely:
 # CHECK-NEXT: PropSet v3, v1 key="y" accessSite=89
 # CHECK-NEXT: Return v3
 # CHECK-NEXT: }

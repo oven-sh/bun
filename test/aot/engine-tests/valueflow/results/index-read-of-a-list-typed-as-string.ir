@@ -1,4 +1,4 @@
-# A function inside a function reads s[0] of a parameter declared string and is handed a list, while flow follows no set that still changes
+# A function inside a function reads s[0] of a parameter declared string and is handed a list, in a build in which flow has stopped at its budget
 # -- source: first.ts
 # declare function print(text: string): void;
 # (() => {
@@ -9,6 +9,7 @@
 # -- end of source
 # FORM: AsRead
 # OPTIONS: limit=MaxValueFlowEdgesLogged:1
+# DIAGNOSTIC: ProgramTooLargeToAnalyze
 # RUN: run-in-shell
 # CHECK: a
 # CHECK-NEXT: exited with 0

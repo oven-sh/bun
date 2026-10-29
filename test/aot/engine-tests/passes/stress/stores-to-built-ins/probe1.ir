@@ -181,7 +181,7 @@ function f11 name="run" module=m0 position=2188 kind=Method flags=[HasThis, IsCh
 function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
 # -- generated: f0 largeLiteral
 # CHECK-LABEL: function f0 module=
-# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f14 callPosition=141 parent=1 module=m0}] {
 # CHECK-NEXT: b0():
 # CHECK-NEXT: v0: f2 = NewClosure function=f2 allocationSite=1 storage=Frame
 # CHECK-NEXT: v1: f3 = NewClosure function=f3 allocationSite=2 storage=Frame
@@ -203,8 +203,8 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b1(v16: int|whole ~ 0):
 # CHECK-NEXT: v17: 0 = Integer
 # CHECK-NEXT: LoopHint
-# CHECK-NEXT: v19: L3 = CallDirect v16 function=f1 accessSite=3
-# CHECK-NEXT: v20: int|whole = GetSlot v19 key="a47" receivers=[L3] level=Proven accessSite=4
+# CHECK-NEXT: v19: int|whole ~ 0 = Upcast v16 castType=int|whole
+# CHECK-NEXT: v20: int|whole ~ 0 = Upcast v19 castType=int|whole
 # CHECK-NEXT: v21: L4 = NewObject layout=L4 allocationSite=10 allocationClass=3
 # CHECK-NEXT: v22: L4 = FinishObject v21
 # CHECK-NEXT: v23: undefined|null|L5 = Call v0, -, v22, v16 calleeName="spreadInTheMiddle" accessSite=5 callees=[f2]
@@ -292,7 +292,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: b24(v78: number|string|bigint ~ number, v79: int|whole ~ 0, v80: int ~ 0, v81: boolean|number|string|symbol|bigint|object ~ L1) frequency=Rare:
 # CHECK-NEXT: v82: anything ~ number = PropGet v81 key="y" accessSite=12
 # CHECK-NEXT: Jump -> next b25(v78, v82, v79, v80)
-# CHECK-NEXT: b25(v83: number|string|bigint ~ number, v84: anything ~ undefined, v85: int|whole ~ 0, v86: int ~ 0) frequency=Rare:
+# CHECK-NEXT: b25(v83: number|string|bigint ~ number, v84: anything ~ undefined, v85: int|whole ~ 0, v86: int ~ 0):
 # CHECK-NEXT: v87: number|string|bigint ~ number = Add v83, v84
 # CHECK-NEXT: v88: anything ~ object = Construct v3, -, v85 calleeName="Old" accessSite=13 callees=[f5]
 # CHECK-NEXT: v89: undefined = Undefined

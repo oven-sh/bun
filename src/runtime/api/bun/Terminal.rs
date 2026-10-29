@@ -1875,9 +1875,7 @@ impl Terminal {
             return true;
         }
         v.extend_from_slice(chunk);
-        // MarkedArrayBuffer::from_bytes takes a `&mut [u8]` it will own (freed
-        // via mimalloc on the C++ side) — leak the Box and hand over the slice.
-        let bytes: &'static mut [u8] = Box::leak(v.into_boxed_slice());
+        let bytes = v.into_boxed_slice();
         // This is the pipe reader's landing frame: a buffer that cannot be
         // built (allocation failure, a terminating VM) is folded here and
         // reading goes on.

@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { copyFileSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 
@@ -552,6 +552,509 @@ it("test timeouts when expected", () => {
   const err = stderr!.toString();
   expect(err).toHaveTestTimedOutAfter(10);
   expect(err).not.toContain("unreachable code");
+});
+
+describe("a test that completes after its timeout has passed is reported as timed out", () => {
+  // Each late body blocks synchronously for longer than its timeout, so the timeout timer cannot fire until the
+  // callback has already completed, and the verdict has to come from the completion itself.
+  //
+  // Where the timer's verdict would print something else, the late test resumes with turn() (setImmediate runs
+  // before timers) and is the first test of its file: a test that starts while bun handles the timeout of the
+  // test before it is checked again as soon as it yields, so a slow start would get it the timer's verdict.
+  const defineTurn = "const turn = () => new Promise(resolve => setImmediate(resolve));";
+
+  async function runFixture(name: string, files: string | Record<string, string>, args: string[] = []) {
+    if (typeof files === "string") files = { "blocks.test.js": files };
+    using dir = tempDir("late-timeout-" + name, { ...files, "package.json": "{}" });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", ...args, ...Object.keys(files)],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, raw, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Without the source excerpt and the stack that bun prints with an error.
+    const stderr = raw
+      .split(/\r?\n/)
+      .filter(line => !/^\s*\d+ \| |^\s+\^$|^\s+at /.test(line))
+      .join("\n");
+    return { raw, result: { stdout: normalizeBunSnapshot(stdout), stderr: normalizeBunSnapshot(stderr), exitCode } };
+  }
+
+  test.concurrent("sequential test, Bun.sleepSync after an await", async () => {
+    const { result } = await runFixture(
+      "sequential",
+      /*js*/ `
+        import { test } from "bun:test";
+        test("sleeps synchronously after an await", async () => {
+          await Bun.sleep(1);
+          Bun.sleepSync(200);
+        }, 100);
+        test("has no timeout", async () => {
+          await Bun.sleep(1);
+          Bun.sleepSync(200);
+        }, 0);
+        test("next test still runs", async () => {
+          await Bun.sleep(1);
+        });
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) sleeps synchronously after an await
+        ^ this test timed out after 100ms.
+      (pass) has no timeout
+      (pass) next test still runs
+
+       2 pass
+       1 fail
+      Ran 3 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("concurrent test with a sibling still pending, busy loop after an await", async () => {
+    const { result } = await runFixture(
+      "concurrent-busy-loop",
+      /*js*/ `
+        import { test } from "bun:test";
+        ${defineTurn}
+        test.concurrent("busy loops after an await", async () => {
+          await turn();
+          const start = Date.now();
+          while (Date.now() - start < 200) {}
+        }, 100);
+        test.concurrent("sibling", async () => {
+          await Bun.sleep(10);
+        }, 30_000);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) busy loops after an await
+        ^ this test timed out after 100ms.
+      (pass) sibling
+
+       1 pass
+       1 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("concurrent test with a sibling still pending, Bun.spawnSync after an await", async () => {
+    // With a sibling running, spawnSync's wait loop cannot tell whose child it is waiting on and uses
+    // the sibling's later deadline, so this test's own deadline is only checked once the callback
+    // completes.
+    const { result } = await runFixture(
+      "concurrent-spawnSync",
+      /*js*/ `
+        import { test } from "bun:test";
+        ${defineTurn}
+        test.concurrent("spawnSync outlives the timeout", async () => {
+          await turn();
+          Bun.spawnSync({ cmd: [process.execPath, "-e", "Bun.sleepSync(200)"] });
+        }, 100);
+        test.concurrent("sibling", async () => {
+          await Bun.sleep(10);
+        }, 30_000);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) spawnSync outlives the timeout
+        ^ this test timed out after 100ms.
+      (pass) sibling
+
+       1 pass
+       1 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("a concurrent test that waits while a sibling blocks past its timeout", async () => {
+    // The timeout is wall clock from the test's own start, so the sibling's block counts against it. A
+    // test marked test.serial runs alone, with and without --concurrent, so it cannot use up the time of
+    // the test after it.
+    const code = /*js*/ `
+      import { test } from "bun:test";
+      ${defineTurn}
+      test.concurrent("blocks the thread", async () => {
+        await turn();
+        Bun.sleepSync(200);
+      }, 100);
+      test.concurrent("waits on a timer meanwhile", async () => {
+        await Bun.sleep(20);
+      }, 100);
+      test.serial("blocks the thread, marked test.serial", async () => {
+        await turn();
+        Bun.sleepSync(1100);
+      });
+      test.concurrent("waits on a timer after the serial test", async () => {
+        await Bun.sleep(20);
+      }, 1000);
+    `;
+    const [plain, concurrentFlag] = await Promise.all([
+      runFixture("concurrent-waiting-sibling", code),
+      runFixture("concurrent-waiting-sibling-flag", code, ["--concurrent"]),
+    ]);
+    expect(plain.result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) blocks the thread
+        ^ this test timed out after 100ms.
+      (fail) waits on a timer meanwhile
+        ^ this test timed out after 100ms.
+      (pass) blocks the thread, marked test.serial
+      (pass) waits on a timer after the serial test
+
+       2 pass
+       2 fail
+      Ran 4 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+    expect(concurrentFlag.result).toEqual(plain.result);
+  });
+
+  test.concurrent("a callback left running by an earlier test counts against the next test", async () => {
+    const { result } = await runFixture(
+      "leftover-callback",
+      /*js*/ `
+        import { test } from "bun:test";
+        test("passes, and leaves a timer whose callback blocks", () => {
+          setTimeout(() => Bun.sleepSync(200), 1);
+        });
+        test("waits on a timer while that callback blocks", async () => {
+          await Bun.sleep(20);
+        }, 100);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (pass) passes, and leaves a timer whose callback blocks
+      (fail) waits on a timer while that callback blocks
+        ^ this test timed out after 100ms.
+
+       1 pass
+       1 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("done() called after the timeout has passed", async () => {
+    // done() was called, so the hint about a missing done() call does not apply. An error passed
+    // to done() stays the reason of the failure.
+    const { result } = await runFixture("done-callback", {
+      "1-done.test.js": /*js*/ `
+        import { test } from "bun:test";
+        test("done() from a callback on the event loop", done => {
+          setImmediate(() => {
+            Bun.sleepSync(200);
+            done();
+          });
+        }, 100);
+        test("done() synchronously", done => {
+          Bun.sleepSync(200);
+          done();
+        }, 100);
+      `,
+      "2-done-with-an-error.test.js": /*js*/ `
+        import { test } from "bun:test";
+        test("done(err) from a callback on the event loop", done => {
+          setImmediate(() => {
+            Bun.sleepSync(200);
+            done(new Error("passed to done"));
+          });
+        }, 100);
+      `,
+    });
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "1-done.test.js:
+      (fail) done() from a callback on the event loop
+        ^ this test timed out after 100ms.
+      (fail) done() synchronously
+        ^ this test timed out after 100ms.
+
+      2-done-with-an-error.test.js:
+      error: passed to done
+      (fail) done(err) from a callback on the event loop
+
+       0 pass
+       3 fail
+      Ran 3 tests across 2 files."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
+
+  test.concurrent("a test that finished in time is not blamed for a sibling blocking afterwards", async () => {
+    // The first test's completion is queued as soon as it returns, but the runner only processes the queue
+    // once the sibling, resumed by the microtask the first test queues on its way out, has finished
+    // blocking. The verdict and the printed time have to come from when the completion arrived.
+    const { raw, result } = await runFixture(
+      "sibling-blocks-after-completion",
+      /*js*/ `
+        import { test } from "bun:test";
+        ${defineTurn}
+        const { promise: firstReturned, resolve: markFirstReturned } = Promise.withResolvers();
+        test.concurrent("finishes within its timeout", async () => {
+          await turn();
+          queueMicrotask(markFirstReturned);
+        }, 1000);
+        test.concurrent("blocks once the first test has returned", async () => {
+          await firstReturned;
+          Bun.sleepSync(1100);
+        }, 30_000);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": 
+      "blocks.test.js:
+      (pass) finishes within its timeout
+      (pass) blocks once the first test has returned
+
+       2 pass
+       0 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+    const printed = raw.match(/^\(pass\) finishes within its timeout \[([\d.]+)ms\]$/m);
+    expect(Number(printed?.[1])).toBeLessThan(1000);
+  });
+
+  test.concurrent("a hook that completes after its timeout", async () => {
+    // The bodies below a failed beforeAll or beforeEach must not run. The hook that takes done() is first
+    // because only its timer verdict prints something else.
+    const { result } = await runFixture(
+      "hooks",
+      /*js*/ `
+        import { afterAll, afterEach, beforeAll, beforeEach, describe, onTestFinished, test } from "bun:test";
+        ${defineTurn}
+        const late = async () => {
+          await turn();
+          Bun.sleepSync(200);
+        };
+        describe("afterEach that takes done", () => {
+          afterEach(done => {
+            setImmediate(() => {
+              Bun.sleepSync(200);
+              done();
+            });
+          }, 100);
+          test("body runs", () => console.log("afterEach with done: body ran"));
+        });
+        describe("beforeAll", () => {
+          beforeAll(late, 100);
+          test("body is skipped", () => console.log("beforeAll: body ran"));
+        });
+        describe("beforeEach", () => {
+          beforeEach(late, 100);
+          test("body is skipped", () => console.log("beforeEach: body ran"));
+        });
+        describe("afterEach", () => {
+          afterEach(late, 100);
+          test("body runs", () => console.log("afterEach: body ran"));
+        });
+        describe("afterAll", () => {
+          afterAll(late, 100);
+          test("body runs", () => console.log("afterAll: body ran"));
+        });
+        describe("onTestFinished", () => {
+          test("body runs", () => {
+            onTestFinished(late, 100);
+            console.log("onTestFinished: body ran");
+          });
+        });
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) afterEach that takes done > body runs
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (fail) beforeAll > (unnamed)
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (fail) beforeEach > body is skipped
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (fail) afterEach > body runs
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (pass) afterAll > body runs
+      (fail) afterAll > (unnamed)
+        ^ a beforeEach/afterEach hook timed out for this test.
+      (fail) onTestFinished > body runs
+        ^ a beforeEach/afterEach hook timed out for this test.
+
+       1 pass
+       6 fail
+      Ran 7 tests across 1 file."
+      ,
+        "stdout": 
+      "bun test <version> (<revision>)
+      afterEach with done: body ran
+      afterEach: body ran
+      afterAll: body ran
+      onTestFinished: body ran"
+      ,
+      }
+    `);
+  });
+
+  test.concurrent("a late attempt of a retried test is a failed attempt", async () => {
+    // The second attempt is late too: an attempt that has to be in time depends on how fast it starts.
+    const { result } = await runFixture(
+      "retry",
+      /*js*/ `
+        import { test } from "bun:test";
+        ${defineTurn}
+        let attempts = 0;
+        test("is late in every attempt", async () => {
+          console.log("attempt", ++attempts);
+          await turn();
+          Bun.sleepSync(200);
+        }, { retry: 1, timeout: 100 });
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "blocks.test.js:
+      (fail) is late in every attempt (attempt 2)
+        ^ this test timed out after 100ms.
+
+       0 pass
+       1 fail
+      Ran 1 test across 1 file."
+      ,
+        "stdout": 
+      "bun test <version> (<revision>)
+      attempt 1
+      attempt 2"
+      ,
+      }
+    `);
+  });
+
+  test.concurrent("a late completion that already has a verdict keeps it", async () => {
+    // The tests of the first four files failed, or met their expected failure, before their completion
+    // arrived. That verdict stands, so those files print what they print without the check. The fifth file
+    // shows that the check runs.
+    const { result } = await runFixture("verdict-already-set", {
+      "1-rejects.test.js": /*js*/ `
+        import { test } from "bun:test";
+        ${defineTurn}
+        test("rejects after its timeout", async () => {
+          await turn();
+          Bun.sleepSync(200);
+          throw new Error("own error");
+        }, 100);
+      `,
+      "2-rejects-then-done.test.js": /*js*/ `
+        import { test } from "bun:test";
+        ${defineTurn}
+        test("rejects, then done() arrives after the timeout", async done => {
+          await turn();
+          Promise.resolve().then(() => {}).then(() => {}).then(() => {
+            Bun.sleepSync(200);
+            done();
+          });
+          throw new Error("rejected first");
+        }, 100);
+      `,
+      "3-failing-rejects.test.js": /*js*/ `
+        import { test } from "bun:test";
+        ${defineTurn}
+        test.failing("test.failing rejects after its timeout", async () => {
+          await turn();
+          Bun.sleepSync(200);
+          throw new Error("the expected failure");
+        }, 100);
+      `,
+      "4-failing-throws.test.js": /*js*/ `
+        import { test } from "bun:test";
+        test.failing("test.failing throws from a callback after its timeout", done => {
+          setImmediate(() => {
+            Bun.sleepSync(200);
+            throw new Error("the expected failure");
+          });
+        }, 100);
+      `,
+      "5-passes.test.js": /*js*/ `
+        import { test } from "bun:test";
+        ${defineTurn}
+        test("passes after its timeout", async () => {
+          await turn();
+          Bun.sleepSync(200);
+        }, 100);
+      `,
+    });
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 1,
+        "stderr": 
+      "1-rejects.test.js:
+      error: own error
+      (fail) rejects after its timeout
+
+      2-rejects-then-done.test.js:
+      error: rejected first
+      (fail) rejects, then done() arrives after the timeout
+
+      3-failing-rejects.test.js:
+      (pass) test.failing rejects after its timeout
+
+      4-failing-throws.test.js:
+      (pass) test.failing throws from a callback after its timeout
+
+      5-passes.test.js:
+      (fail) passes after its timeout
+        ^ this test timed out after 100ms.
+
+       2 pass
+       3 fail
+      Ran 5 tests across 5 files."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
 });
 
 test("jest.setTimeout will change default timeout", () => {

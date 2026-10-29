@@ -141,6 +141,32 @@ describe("node:test", () => {
     });
   });
 
+  test("should time out a test that completes after the runner's timeout, unless it already has a result", async () => {
+    // Not Node's result for the first test: `node --test --test-timeout=100` (v26.3.0) reports it as passed,
+    // because Node's timeout is a timer and a timer cannot fire while the test blocks the thread. The other
+    // three results are Node's.
+    const { exitCode, stderr } = await runTests(
+      ["30-late-completion.js", "30-late-failure.js", "30-late-skip.js"],
+      {},
+      ["--timeout", "100"],
+    );
+    const results = stderr
+      .split(/\r?\n/)
+      .filter(line => /^\((pass|fail|skip)\) |^  \^ |^error: /.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+    expect({ results, exitCode }).toEqual({
+      results: [
+        "(fail) completes after the runner's timeout",
+        "  ^ this test timed out after 100ms.",
+        "(pass) an Infinity timeout is never exceeded",
+        "error: own error",
+        "(fail) fails after the runner's timeout",
+        "(skip) skips itself after the runner's timeout",
+      ],
+      exitCode: 1,
+    });
+  });
+
   test("should not leak file-level beforeEach hooks across files in one process", async () => {
     const { exitCode, stderr } = await runTests(["14-root-hooks-a.js", "14-root-hooks-b.js"]);
     expect(stderr).toContain("4 pass");

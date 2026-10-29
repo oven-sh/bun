@@ -6,7 +6,8 @@
  *       Static scans of the linked executable against the expectations
  *       configure wrote into <spec.json> (see binary-expectations.ts):
  *       exported symbols, dynamic libraries + symbol-version ceilings,
- *       forbidden imports, static initializers, hardening bits, debug info.
+ *       forbidden imports, static initializers, hardening bits, the size of
+ *       the zero-filled data, debug info.
  *
  *   verify-binary.ts duplicates <nm> <rspfile> <report>
  *       Every object and archive on bun's link line, scanned for a symbol

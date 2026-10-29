@@ -3337,7 +3337,7 @@ pub mod bv2_impl {
                 this.transpiler.options.deprecated_namespace_object_setters;
             this.linker.options.ignore_dce_annotations =
                 this.transpiler.options.ignore_dce_annotations;
-            // SAFETY: `transpiler.options.{banner,footer,public_path,metafile_*}` are
+            // SAFETY: `transpiler.options.{banner,footer,public_path}` are
             // owned by the `'a`-lifetime `Transpiler` which outlives `this.linker`;
             // `LinkerOptions` stores `&'static [u8]` as an arena-erased lifetime
             // (see `interned_slice` contract — these are bundle-pass-interned).
@@ -3419,12 +3419,6 @@ pub mod bv2_impl {
             }
             this.linker.options.compile_mode = this.transpiler.options.compile_mode;
             this.linker.options.metafile = this.transpiler.options.metafile;
-            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
-            this.linker.options.metafile_json_path =
-                unsafe { interned_slice(&this.transpiler.options.metafile_json_path) };
-            // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
-            this.linker.options.metafile_markdown_path =
-                unsafe { interned_slice(&this.transpiler.options.metafile_markdown_path) };
 
             this.linker.dev_server = this.dev_server;
 
@@ -5654,7 +5648,7 @@ pub mod bv2_impl {
 
             // Generate markdown if metafile was generated and path specified
             let metafile_markdown: Option<Box<[u8]>> = match &metafile {
-                Some(mf) if !self.linker.options.metafile_markdown_path.is_empty() => {
+                Some(mf) if !self.transpiler.options.metafile_markdown_path.is_empty() => {
                     match crate::linker_context::metafile_builder::generate_markdown(mf) {
                         Ok(m) => Some(m),
                         Err(err) => {
@@ -5670,23 +5664,23 @@ pub mod bv2_impl {
             // Metafile paths are relative to outdir, like all other output files.
             // `LinkerContext::resolver()` wraps the `*mut Resolver` backref deref.
             let outdir = &self.linker.resolver().opts.output_dir;
-            if !self.linker.options.metafile_json_path.is_empty() {
+            if !self.transpiler.options.metafile_json_path.is_empty() {
                 if let Some(mf) = &metafile {
                     write_metafile_output(
                         &mut output_files,
                         outdir,
-                        self.linker.options.metafile_json_path,
+                        &self.transpiler.options.metafile_json_path,
                         mf,
                         crate::options::OutputKind::MetafileJson,
                     )?;
                 }
             }
-            if !self.linker.options.metafile_markdown_path.is_empty() {
+            if !self.transpiler.options.metafile_markdown_path.is_empty() {
                 if let Some(md) = &metafile_markdown {
                     write_metafile_output(
                         &mut output_files,
                         outdir,
-                        self.linker.options.metafile_markdown_path,
+                        &self.transpiler.options.metafile_markdown_path,
                         md,
                         crate::options::OutputKind::MetafileMarkdown,
                     )?;

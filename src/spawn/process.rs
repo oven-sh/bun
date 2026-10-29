@@ -513,10 +513,10 @@ impl Process {
             unsafe { (*poll).enable_keeping_process_alive(ctx) };
 
             // SAFETY: poll is live and `platform_event_loop` returns the live
-            // uws loop; both `&mut`s are scoped to the `register` call.
+            // uws loop; both borrows are scoped to the `register` call.
             match unsafe {
                 (*poll).register(
-                    &mut *self.event_loop.platform_event_loop(),
+                    &*self.event_loop.platform_event_loop(),
                     bun_io::PollKind::Process,
                     PROCESS_POLL_ONE_SHOT,
                 )
@@ -559,7 +559,7 @@ impl Process {
             // SAFETY: `platform_event_loop` returns the live uws loop; borrow
             // scoped to the `register` call.
             let maybe = fd.register(
-                unsafe { &mut *self.event_loop.platform_event_loop() },
+                unsafe { &*self.event_loop.platform_event_loop() },
                 bun_io::PollKind::Process,
                 PROCESS_POLL_ONE_SHOT,
             );

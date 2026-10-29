@@ -2122,23 +2122,27 @@ static void addImporter(ModuleImporters& importersOf, const String& importer, co
     importersOf.ensure(imported, [] { return Vector<String>(); }).iterator->value.append(importer);
 }
 
-static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& importersOf, Bun::JSCommonJSModule* importer, JSValue importedValue)
+// After moveLoadedModule() a module's filename is not its key in the require cache.
+using RequireKeys = UncheckedKeyHashMap<Bun::JSCommonJSModule*, String>;
+
+static void addRequirer(Zig::GlobalObject* globalObject, ModuleImporters& importersOf, const RequireKeys& requireKeys, Bun::JSCommonJSModule* importer, JSValue importedValue)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* imported = importedValue ? dynamicDowncast<Bun::JSCommonJSModule>(importedValue) : nullptr;
-    if (!imported || !importer->filename().isString() || !imported->filename().isString())
+    auto importedKey = imported ? requireKeys.find(imported) : requireKeys.end();
+    if (importedKey == requireKeys.end())
         return;
-    JSValue registered = JSValue::decode(JSC__JSMap__get(Bun::testFileRequireMap(globalObject), globalObject, JSValue::encode(imported->filename())));
-    RETURN_IF_EXCEPTION(scope, );
-    if (registered != imported)
+    if (auto importerKey = requireKeys.find(importer); importerKey != requireKeys.end()) {
+        addImporter(importersOf, importerKey->value, importedKey->value);
+        return;
+    }
+    if (!importer->filename().isString())
         return;
     String importerKey = asString(importer->filename())->value(globalObject);
     RETURN_IF_EXCEPTION(scope, );
-    String importedKey = asString(imported->filename())->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, );
-    addImporter(importersOf, importerKey, importedKey);
+    addImporter(importersOf, importerKey, importedKey->value);
 }
 
 static bool isInNodeModules(const String& path)
@@ -2157,7 +2161,8 @@ static bool isExternalizedByVitest(Zig::GlobalObject* globalObject, const String
     auto* entry = Bun::testFileModuleLoader(globalObject)->registryEntry(JSC::Identifier::fromString(globalObject->vm(), key));
     if (!entry || !dynamicDowncast<JSC::JSModuleRecord>(entry->record()))
         return true;
-    String path = withoutOriginalModuleQuery(key);
+    size_t query = key.find('?');
+    String path = query == notFound ? key : key.left(query);
     BunString borrowedPath = Bun::toString(path);
     return Bun__isESModuleByExtensionOrPackageType(globalObject, &borrowedPath);
 }
@@ -2346,9 +2351,21 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
         }
     }
 
+    JSValue requireKey, value;
+    RequireKeys requireKeys;
+    if (!evict.all) {
+        auto* entries = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Entries);
+        RETURN_IF_EXCEPTION(scope, );
+        while (entries->nextKeyValue(globalObject, requireKey, value)) {
+            auto* commonJSModule = dynamicDowncast<Bun::JSCommonJSModule>(value);
+            if (!commonJSModule || !requireKey.isString())
+                continue;
+            requireKeys.add(commonJSModule, asString(requireKey)->value(globalObject));
+            RETURN_IF_EXCEPTION(scope, );
+        }
+    }
     auto* iterator = JSC::JSMapIterator::create(vm, globalObject->mapIteratorStructure(), requireMap, JSC::IterationKind::Entries);
     RETURN_IF_EXCEPTION(scope, );
-    JSValue requireKey, value;
     while (iterator->nextKeyValue(globalObject, requireKey, value)) {
         if (evict.all) {
             if (!requireKey.isString())
@@ -2366,17 +2383,17 @@ __attribute__((minsize)) static void evictModulesAndTheirImporters(Zig::GlobalOb
             continue;
         // The wrapper of a require()d ES module isn't in its requirer's m_children, so only m_parent links the two.
         if (auto* parent = commonJSModule->m_parent.get()) {
-            addRequirer(globalObject, importersOf, parent, commonJSModule);
+            addRequirer(globalObject, importersOf, requireKeys, parent, commonJSModule);
             RETURN_IF_EXCEPTION(scope, );
         }
         for (auto& child : commonJSModule->m_children) {
-            addRequirer(globalObject, importersOf, commonJSModule, child.get());
+            addRequirer(globalObject, importersOf, requireKeys, commonJSModule, child.get());
             RETURN_IF_EXCEPTION(scope, );
         }
         if (auto* children = commonJSModule->m_childrenValue ? dynamicDowncast<JSC::JSArray>(commonJSModule->m_childrenValue.get()) : nullptr) {
             for (unsigned i = 0; i < children->length(); ++i) {
                 // canGetIndexQuickly() skips accessors, so no script runs here.
-                addRequirer(globalObject, importersOf, commonJSModule, children->canGetIndexQuickly(i) ? children->getIndexQuickly(i) : JSValue());
+                addRequirer(globalObject, importersOf, requireKeys, commonJSModule, children->canGetIndexQuickly(i) ? children->getIndexQuickly(i) : JSValue());
                 RETURN_IF_EXCEPTION(scope, );
             }
         }

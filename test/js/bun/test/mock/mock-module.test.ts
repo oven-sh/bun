@@ -1488,6 +1488,54 @@ describe.concurrent("a module mocked without a factory", () => {
       },
     );
 
+    test("later files mock a package that a library loaded while the first file mocked it", async () => {
+      const file = (mock: string, from: string, expected: string) => `
+        import { expect, test, ${mock.split(".")[0]} } from "${from}";
+        ${mock}("dep", () => ({ default: { who: () => "mock" }, who: () => "mock" }));
+        import cjsLib from "cjs-lib";
+        import own from "./own.cjs";
+        test("${mock}()", () => expect([own.who(), cjsLib.who()]).toEqual(${expected}));
+      `;
+      await expectFixturesToPass(
+        {
+          ...packages,
+          "own.cjs": `const dep = require("dep"); exports.who = () => dep.who();`,
+          "1.test.js": file("vi.mock", "vitest", `["mock", "real"]`),
+          "2.test.js": `
+            import { expect, test } from "vitest";
+            import cjsLib from "cjs-lib";
+            import own from "./own.cjs";
+            test("real", () => expect([own.who(), cjsLib.who()]).toEqual(["real", "real"]));
+          `,
+          "3.test.js": file("vi.mock", "vitest", `["mock", "real"]`),
+          "4.test.js": file("jest.mock", "bun:test", `["mock", "mock"]`),
+        },
+        4,
+      );
+    });
+
+    test.each(isolationFlags)("a query doesn't change whether Vitest externalizes a module %j", async args => {
+      await expectFixturesToPass(
+        {
+          ...packages,
+          "query.test.js": `
+            import { expect, test, vi } from "vitest";
+            vi.mock("dep", () => ({ default: { who: () => "mock" } }));
+            test("query", async () => {
+              const esmLib = await import("esm-lib/index.js?query");
+              const untypedEsmLib = await import("untyped-esm-lib/index.js?query");
+              expect([esmLib.who(), untypedEsmLib.who()]).toEqual(["real", "mock"]);
+              vi.resetModules();
+              expect(await import("esm-lib/index.js?query")).toBe(esmLib);
+              expect(await import("untyped-esm-lib/index.js?query")).not.toBe(untypedEsmLib);
+            });
+          `,
+        },
+        1,
+        args,
+      );
+    });
+
     test("jest.mock() and mock.module() mock it for them too, as in Jest", async () => {
       await expectFixturesToPass(
         {

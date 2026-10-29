@@ -2255,3 +2255,37 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+// `external` at the top level of bunfig.toml reaches `bun build` and the runtime. A bundle leaves a file
+// out when the lookup finds it at that path. The runtime loads what an import resolves to, so there
+// the import keeps the path it had before: the real one.
+test.concurrent(
+  "a path in bunfig.toml `external` matches the file an import finds in a bundle, not at runtime",
+  async () => {
+    using dir = tempDir("resolve-external-found-path", {
+      "bunfig.toml": `external = ["./link/s.ts"]\n`,
+      "real/s.ts": `export default import.meta.path;`,
+      "entry.ts": `import path from "./link/s"; console.log(path);`,
+    });
+    symlinkSync(join(String(dir), "real"), join(String(dir), "link"), "junction");
+    const bun = async (...args: string[]) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), ...args],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+    const [built, ran] = await Promise.all([bun("build", "entry.ts"), bun("entry.ts")]);
+    expect({ ...built, stdout: new Bun.Transpiler().scanImports(built.stdout).map(record => record.kind) }).toEqual({
+      stdout: ["import-statement"],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(built.stdout).not.toContain("import.meta.path");
+    expect(ran).toEqual({ stdout: join(String(dir), "real", "s.ts") + "\n", stderr: "", exitCode: 0 });
+  },
+);

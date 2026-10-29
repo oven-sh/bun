@@ -566,6 +566,12 @@ pub struct Resolver<'a> {
     /// over "module" in package.json
     pub prefer_module_field: bool,
 
+    /// A bundle sets this: a file that a lookup found is external when its
+    /// path is an `--external` path. It is unset for the runtime and for the
+    /// `bun test --changed` scan: `external` of bunfig.toml reaches them too,
+    /// and they emit nothing and load the path of an external result as it is.
+    pub match_found_path_externals: bool,
+
     /// This is an array of paths to resolve against. Used for passing an
     /// object '{ paths: string[] }' to `require` and `resolve`; This field
     /// is overwritten while the resolution happens.
@@ -649,6 +655,7 @@ impl<'a> Resolver<'a> {
             mutex: from.mutex,
             dir_cache: from.dir_cache,
             prefer_module_field: from.prefer_module_field,
+            match_found_path_externals: from.match_found_path_externals,
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
             custom_dir_paths: None,
@@ -1006,6 +1013,7 @@ impl<'a> Resolver<'a> {
             store_fd: false,
             standalone_module_graph: None,
             prefer_module_field: true,
+            match_found_path_externals: false,
             custom_dir_paths: None,
             esm_failure: None,
         }
@@ -1031,6 +1039,33 @@ impl<'a> Resolver<'a> {
             }
         }
         false
+    }
+
+    /// True iff `found` is a user-supplied `--external` path. `found` is the
+    /// path of the file as the lookup reached it, before `finalize_result`
+    /// follows a symlink in it.
+    #[inline(always)]
+    fn found_path_is_user_external(&mut self, found: &[u8], kind: ast::ImportKind) -> bool {
+        self.opts.external.abs_paths.count() > 0
+            && self.match_found_path_externals
+            && self.external_paths_match(found, kind)
+    }
+
+    /// Out of line, so that a resolve with no `--external` path runs the two tests above and no call.
+    #[inline(never)]
+    fn external_paths_match(&mut self, found: &[u8], kind: ast::ImportKind) -> bool {
+        // An external import keeps its specifier as written, and what loads the
+        // output resolves it again. Nothing does that for a CSS or HTML reference.
+        let is_external = !kind.is_entry_point()
+            && !kind.is_from_css()
+            && self.opts.external.abs_paths.contains(found);
+        if is_external && let Some(debug) = self.debug_logs.as_mut() {
+            debug.add_note_fmt(format_args!(
+                "The path \"{}\" is marked as external by the user",
+                bstr::BStr::new(found)
+            ));
+        }
+        is_external
     }
 
     /// Resolves `import_path` via the enclosing tsconfig's `paths`. Returns
@@ -1361,6 +1396,13 @@ impl<'a> Resolver<'a> {
                             .to_vec(),
                     );
                 }
+                // This result does not pass through `finalize_result`.
+                let flags = if self.found_path_is_user_external(res.path_pair.primary.text(), kind)
+                {
+                    ResultFlags::IS_EXTERNAL
+                } else {
+                    ResultFlags::default()
+                };
                 let _ = self.flush_debug_logs(FlushMode::Success);
                 self.extension_order = original_order;
                 return ResultUnion::Success(Result {
@@ -1370,6 +1412,7 @@ impl<'a> Resolver<'a> {
                     dirname_fd: res.dirname_fd,
                     file_fd: res.file_fd,
                     jsx: self.opts.jsx.clone(),
+                    flags,
                     ..Default::default()
                 });
             }
@@ -1747,6 +1790,11 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
     ) -> crate::CrateResult<()> {
         if result.flags.is_external() {
+            return Ok(());
+        }
+
+        if self.found_path_is_user_external(result.path_pair.primary.text(), kind) {
+            result.flags.set_external_kind(ExternalKind::External);
             return Ok(());
         }
 

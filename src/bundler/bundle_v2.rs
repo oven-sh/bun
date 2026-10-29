@@ -3226,6 +3226,7 @@ pub mod bv2_impl {
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
             transpiler.resolver.opts.mark_builtins_as_external =
                 transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
+            transpiler.resolver.match_found_path_externals = true;
 
             // SAFETY: `ssr_transpiler` intentionally aliases `transpiler` via a
             // raw `*mut` until bake installs a separate SSR transpiler; all
@@ -4494,6 +4495,9 @@ pub mod bv2_impl {
         ) -> Result<Box<BundleV2<'a>>, Error> {
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
+            // The scan follows imports and emits nothing. An import that only the
+            // found path makes external is an edge the caller has to see.
+            this.transpiler.resolver.match_found_path_externals = false;
 
             if this.transpiler.log().has_errors() {
                 return Err(crate::Error::BuildFailed);

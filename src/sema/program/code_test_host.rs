@@ -69,7 +69,7 @@ pub(super) struct StatementsHost {
     pub(super) events: Guarded<Vec<HostEvent>>,
     pub(super) is_case_sensitive: bool,
     pub(super) threads: usize,
-    pub(super) io_pool: Option<io_thread_pool::Ref>,
+    pub(super) io_pool: Option<&'static bun_threading::ThreadPool>,
 }
 
 impl Default for StatementsHost {
@@ -108,7 +108,7 @@ impl StatementsHost {
         OUTPUT.call_once(bun_core::output::stdio::init);
         StatementsHost {
             threads,
-            io_pool: Some(io_thread_pool::acquire().into()),
+            io_pool: Some(io_thread_pool::get()),
             ..self
         }
     }
@@ -286,7 +286,7 @@ impl Host for StatementsHost {
     }
 
     fn io_pool(&self) -> Option<&bun_threading::ThreadPool> {
-        self.io_pool.as_deref()
+        self.io_pool
     }
 }
 

@@ -485,16 +485,6 @@ where
         self.hashes[self.count as usize] = id;
         self.count += 1;
     }
-
-    /// Frees a task that [`Self::enqueue`] boxed and that will not run.
-    ///
-    /// # Safety
-    /// `this` must have been created via `heap::alloc` in [`Self::enqueue`]
-    /// and must not be used after this call.
-    pub unsafe fn deinit(this: *mut Self) {
-        // SAFETY: precondition — `this` came from heap::alloc in `enqueue`.
-        drop(unsafe { bun_core::heap::take(this) });
-    }
 }
 
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_event_loop::Taskable
@@ -510,7 +500,7 @@ where
     /// A file change the watcher thread posted that will not reload anything.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box `enqueue` posted.
-        unsafe { Self::deinit(this) }
+        drop(unsafe { bun_core::heap::take(this) });
     }
     /// Reloads the realm.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -591,7 +581,7 @@ where
                 core::ptr::NonNull::from(concurrent),
             ) {
                 // VM torn down while a change was pending: drop the reload task.
-                Self::deinit(that);
+                drop(bun_core::heap::take(that));
             }
         }
         self.count = 0;

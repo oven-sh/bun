@@ -1131,6 +1131,9 @@ pub mod fs {
                     return self.read_directory_error(dir, err);
                 }
             };
+            if store_fd && !entries.fd.is_valid() {
+                entries.fd = handle;
+            }
 
             // `EntriesOption::Entries` here holds an unbounded `&mut DirEntry` (raw, BSSMap-stored
             // pointer), so a fresh slot is a leaked `Box<DirEntry>` whose lifetime is the
@@ -1138,15 +1141,11 @@ pub mod fs {
             let slot: &'static mut DirEntry = match in_place {
                 Some(original) => {
                     original.data.clear();
+                    *original = entries;
                     original
                 }
-                None => Box::leak(Box::new(DirEntry::init(dir, generation))),
+                None => Box::leak(Box::new(entries)),
             };
-            if store_fd && !entries.fd.is_valid() {
-                entries.fd = handle;
-            }
-
-            *slot = entries;
             let result = EntriesOption::Entries(slot);
 
             let out = self.entries.put(&mut cache_result, result)?;

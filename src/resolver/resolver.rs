@@ -4789,6 +4789,7 @@ impl<'a> Resolver<'a> {
             let mut dir_entries_option: *mut Fs::file_system::real_fs::EntriesOption =
                 core::ptr::null_mut();
             let mut needs_iter = true;
+            // Raw: inside a loop, borrowck rejects the `'static` reborrow of `entries` (E0499).
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {

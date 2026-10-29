@@ -359,8 +359,9 @@ pub(crate) fn run_task(
         task_tag::StatWatcherHop => feature_arm!(
             [NodeFs],
             |watcher: crate::node::node_fs_stat_watcher::StatWatcher| -> JsResult<()> {
-                // SAFETY: posted by `StatWatcher::post_to_js_thread` with a ref held.
-                unsafe { crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher) }?;
+                // SAFETY: posted by `StatWatcher::post_to_js_thread`; the task owns that ref.
+                let watcher = unsafe { bun_ptr::RefPtr::from_raw(watcher) };
+                crate::node::node_fs_stat_watcher::StatWatcher::run_hop(watcher)?;
                 Ok(())
             }
         )?,

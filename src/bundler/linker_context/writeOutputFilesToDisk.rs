@@ -2,7 +2,6 @@ use crate::mal_prelude::*;
 use std::io::Write as _;
 
 use crate::Error;
-use bun_alloc::MaxHeapAllocator;
 use bun_ast::Loc;
 use bun_core::fmt::quote;
 use bun_core::{String as BunString, strings};
@@ -65,13 +64,6 @@ pub(crate) fn write_output_files_to_disk(
             return Err(e.into());
         }
     };
-    // Optimization: when writing to disk, we can re-use the memory
-    // between iterations: MaxHeapAllocator retains the largest allocation.
-    // DynAlloc is currently `()` so the arena
-    // handles below are placeholders; allocation routes through global mimalloc.
-    let mut max_heap_allocator = MaxHeapAllocator::init();
-    let mut _max_heap_allocator_source_map = MaxHeapAllocator::init();
-    let mut _max_heap_allocator_inline_source_map = MaxHeapAllocator::init();
 
     let mut pathbuf = bun_paths::path_buffer_pool::get();
     // SAFETY: c points to LinkerContext which is the `linker` field of BundleV2.
@@ -194,11 +186,6 @@ pub(crate) fn write_output_files_to_disk(
         }
 
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
-        // Reset the reusable
-        // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
-        // guard that resets on drop and derefs to the arena, so when
-        // `code_allocator` is wired up it can borrow through `_code_allocator`.
-        let _code_allocator = max_heap_allocator.scope();
 
         let rel_parent =
             paths::resolve_path::dirname::<paths::platform::Posix>(&chunk.final_rel_path);

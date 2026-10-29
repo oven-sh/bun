@@ -6045,13 +6045,6 @@ pub mod macho {
 pub struct DynLib {
     handle: *mut c_void,
 }
-// SAFETY: `handle` is an opaque OS handle from `dlopen`/`LoadLibrary`. The
-// underlying loader is process-global and internally synchronized; `dlsym`/
-// `GetProcAddress` may be called from any thread. Matches `std::DynLib`.
-unsafe impl Send for DynLib {}
-// SAFETY: see `Send` above — the OS loader is process-global and internally
-// synchronized, so `&DynLib` may be shared across threads.
-unsafe impl Sync for DynLib {}
 impl DynLib {
     /// `dlopen(path, RTLD_LAZY)` / `LoadLibraryW(path)`.
     pub fn open(path: &[u8]) -> core::result::Result<Self, bun_errno::SystemErrno> {

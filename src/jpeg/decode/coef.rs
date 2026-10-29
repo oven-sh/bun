@@ -76,7 +76,6 @@ impl CoefBits {
 }
 
 /// The samples of one component for one iMCU row.
-#[derive(Default)]
 pub(crate) struct Plane {
     pub(crate) data: Vec<u8>,
     pub(crate) stride: usize,

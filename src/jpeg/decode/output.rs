@@ -31,8 +31,14 @@ struct Upsampler {
     width: usize,
     /// The last row of the iMCU row above the current one. Has the room from the start.
     above: Vec<u8>,
-    /// `max_v_samp` upsampled rows. Unused if the component has full size.
-    buffer: Plane,
+    /// `max_v_samp` upsampled rows, unless the component has full size.
+    buffer: Option<Plane>,
+}
+
+/// Whether an iMCU row is the first of the image, and whether it is the last.
+struct Edges {
+    top: bool,
+    bottom: bool,
 }
 
 pub struct DecodeOptions {
@@ -153,15 +159,16 @@ impl Decoder<'_> {
                 (Source::Lossless(diff), true) => diff.output_data(&self, imcu_row, planes)?,
             }
             if !need_context {
+                let (top, bottom) = (imcu_row == 0, imcu_row + 1 == total);
+                emitter.emit(&mut upsamplers, &current, None, Edges { top, bottom })?;
+            } else if imcu_row > 0 {
+                let (top, bottom) = (imcu_row == 1, false);
                 emitter.emit(
                     &mut upsamplers,
                     &current,
-                    None,
-                    imcu_row == 0,
-                    imcu_row + 1 == total,
+                    Some(&next),
+                    Edges { top, bottom },
                 )?;
-            } else if imcu_row > 0 {
-                emitter.emit(&mut upsamplers, &current, Some(&next), imcu_row == 1, false)?;
                 for (upsampler, plane) in upsamplers.iter_mut().zip(&current) {
                     if upsampler.method.needs_context() {
                         upsampler.above.clear();
@@ -174,7 +181,8 @@ impl Decoder<'_> {
             }
         }
         if need_context {
-            emitter.emit(&mut upsamplers, &current, None, total == 1, true)?;
+            let (top, bottom) = (total == 1, true);
+            emitter.emit(&mut upsamplers, &current, None, Edges { top, bottom })?;
         }
 
         // Whatever follows has to be well formed up to the end of the image.
@@ -270,12 +278,10 @@ impl Decoder<'_> {
                     Vec::new()
                 },
                 buffer: if method == Method::FullSize {
-                    Plane::default()
+                    None
                 } else {
-                    Plane::new(
-                        output_width.next_multiple_of(h_out) as usize,
-                        v_out as usize,
-                    )?
+                    let stride = output_width.next_multiple_of(h_out) as usize;
+                    Some(Plane::new(stride, v_out as usize)?)
                 },
             });
         }
@@ -324,8 +330,7 @@ impl Emitter<'_> {
         upsamplers: &mut [Upsampler],
         current: &[Plane],
         below: Option<&[Plane]>,
-        top: bool,
-        bottom: bool,
+        Edges { top, bottom }: Edges,
     ) -> Result<()> {
         for rowgroup in 0..self.rowgroups {
             if self.rows_left == 0 {
@@ -333,6 +338,9 @@ impl Emitter<'_> {
             }
             for (ci, (upsampler, plane)) in upsamplers.iter_mut().zip(current).enumerate() {
                 let Upsampler { above, buffer, .. } = upsampler;
+                let Some(buffer) = buffer else {
+                    continue;
+                };
                 let (width, rows) = (upsampler.width, upsampler.rows);
                 let limit = if bottom { upsampler.last_rows } else { rows };
                 // `y` is one more than the row within the iMCU row, so that 0 is the row above it.
@@ -350,8 +358,7 @@ impl Emitter<'_> {
                     row.get(..width).ok_or(Error::Internal)
                 };
                 let first = rowgroup * upsampler.rowgroup_height + 1;
-                let stride = buffer.stride.max(1);
-                let mut out_rows = buffer.data.chunks_exact_mut(stride);
+                let mut out_rows = buffer.data.chunks_exact_mut(buffer.stride);
                 let mut out_row = || out_rows.next().ok_or(Error::Internal);
 
                 match upsampler.method {
@@ -363,8 +370,8 @@ impl Emitter<'_> {
                     }
                     Method::H1V2Fancy => {
                         for y in first..first + upsampler.rowgroup_height {
-                            upsample::h1v2_fancy(row(y)?, row(y - 1)?, true, out_row()?);
-                            upsample::h1v2_fancy(row(y)?, row(y + 1)?, false, out_row()?);
+                            let out = [out_row()?, out_row()?];
+                            upsample::h1v2_fancy(row(y - 1)?, row(y)?, row(y + 1)?, out);
                         }
                     }
                     Method::H2V2Fancy => {
@@ -394,10 +401,9 @@ impl Emitter<'_> {
                 for ((input, upsampler), plane) in
                     planes.iter_mut().zip(upsamplers.iter()).zip(current)
                 {
-                    *input = if upsampler.method == Method::FullSize {
-                        plane.row(rowgroup * upsampler.rowgroup_height + r)?
-                    } else {
-                        upsampler.buffer.row(r)?
+                    *input = match &upsampler.buffer {
+                        Some(buffer) => buffer.row(r)?,
+                        None => plane.row(rowgroup * upsampler.rowgroup_height + r)?,
                     };
                 }
                 color::convert(self.conversion, planes, self.output_width, self.pixels)?;

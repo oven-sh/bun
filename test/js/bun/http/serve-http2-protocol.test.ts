@@ -1148,6 +1148,17 @@ describe.concurrent("Bun.serve http2 protocol", () => {
       }
     });
 
+    test("content-length is held against the body", async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      try {
+        // Five bytes are announced and the stream ends here.
+        raw.write(frame(T.HEADERS, end, 1, Buffer.concat([start, named(4, "/hello"), named(CONTENT_LENGTH, "5")])));
+        expect(await raw.rst(1)).toBe(1);
+      } finally {
+        raw.close();
+      }
+    });
+
     test("one host stands in for :authority", async () => {
       const raw = await RawH2.connect(fx.port, secure);
       try {
@@ -1158,6 +1169,24 @@ describe.concurrent("Bun.serve http2 protocol", () => {
         raw.close();
       }
     });
+  });
+
+  test("100 Continue is a header block of its own and stays out of the dynamic table", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    try {
+      raw.headers(1, [...baseHeaders("/echo", "POST"), ["expect", "100-continue"]], F.END_HEADERS);
+      const interim = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
+      // A literal without indexing (RFC 7541 §6.2.2) under the name of static entry 8, :status.
+      expect(interim.payload[0]).toBe(0x08);
+      expect(hpackFields(interim.payload)).toHaveLength(1);
+      expect(decodeStatus(interim.payload)).toBe(100);
+      raw.write(frame(T.DATA, F.END_STREAM, 1, Buffer.from("body")));
+      const final = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1 && f !== interim);
+      expect(decodeStatus(final.payload)).toBe(201);
+      expect((await raw.body(1)).toString()).toBe("body");
+    } finally {
+      raw.close();
+    }
   });
 
   test("a header block of nothing but HPACK table size updates counts as an empty one", async () => {

@@ -3689,7 +3689,30 @@ describe("HPACK (RFC 7541)", () => {
 
     // Giving up runs JavaScript before the call returns, and that answers the streams that were held back.
     // In Node it does not, so they are answered after the call.
-    test.each<[string, (stream: http2.ServerHttp2Stream, answerHeld: () => void) => void]>([
+    type GiveUp = (stream: http2.ServerHttp2Stream, answerHeld: () => void) => void;
+    /** These exits only schedule a tick, so that is where the streams are answered. */
+    const beforeTheTick =
+      (headers: http2.OutgoingHttpHeaders, options: unknown): GiveUp =>
+      (stream, answerHeld) => {
+        const { nextTick } = process;
+        process.nextTick = ((...args: Parameters<typeof nextTick>) => (
+          answerHeld(),
+          nextTick(...args)
+        )) as typeof nextTick;
+        attempt(() =>
+          stream.respond({ ":status": 200, "x-new": "1", ...headers }, options as http2.ServerStreamResponseOptions),
+        );
+        process.nextTick = nextTick;
+        answerHeld();
+      };
+    test.each<[string, GiveUp]>([
+      ["respond() with options that are no object", beforeTheTick({}, 5)],
+      ["respond() with a parent out of range", beforeTheTick({}, { parent: -1, sendDate: false })],
+      ["respond() with a weight out of range", beforeTheTick({}, { weight: 0, sendDate: false })],
+      [
+        "respond() over maxSendHeaderBlockLength",
+        beforeTheTick({ "x-pad": Buffer.alloc(200, "~").toString() }, { sendDate: false }),
+      ],
       [
         "respond() with an aborted signal, for a block that a listener of 'aborted' encodes",
         (stream, answerHeld) => {
@@ -3714,7 +3737,7 @@ describe("HPACK (RFC 7541)", () => {
         },
       ],
     ])("in %s", async (_, giveUp) => {
-      const srv = http2.createServer();
+      const srv = http2.createServer({ maxSendHeaderBlockLength: 100 });
       srv.on("sessionError", () => {});
       const held: http2.ServerHttp2Stream[] = [];
       srv.on("stream", (stream, headers) => {

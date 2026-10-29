@@ -387,66 +387,40 @@ struct UnrefSourceMapRequest {
     // BACKREF: DevServer outlives the request; raw ptr avoids the `'static`
     // bound on `BodyReaderHandler` that a borrowed `&mut DevServer` would violate.
     dev: *mut DevServer,
-    body: uws::BodyReaderMixin<Self>,
 }
 
-bun_core::intrusive_field!(UnrefSourceMapRequest, body: uws::BodyReaderMixin<UnrefSourceMapRequest>);
-
 impl bun_uws_sys::body_reader_mixin::BodyReaderHandler for UnrefSourceMapRequest {
-    unsafe fn on_body(this: *mut Self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
-        // SAFETY: caller (BodyReaderMixin) passes the original heap-allocated
-        // pointer with full-allocation provenance and no live borrows.
-        unsafe { Self::run_with_body(this, body, resp) }.map_err(Into::into)
+    fn on_body(&mut self, body: &[u8], resp: AnyResponse) -> bun_uws_sys::Result<()> {
+        self.run_with_body(body, resp).map_err(Into::into)
     }
-    unsafe fn on_error(this: *mut Self) {
-        // SAFETY: caller passes the original heap-allocated pointer; finalize
-        // consumes it via heap::take exactly once.
-        unsafe { Self::finalize(this) }
+}
+
+impl Drop for UnrefSourceMapRequest {
+    fn drop(&mut self) {
+        // SAFETY: dev outlives the request
+        unsafe { (*self.dev).server }
+            .unwrap()
+            .on_static_request_complete();
     }
 }
 
 impl UnrefSourceMapRequest {
-    fn run<R>(dev: &mut DevServer, _: &mut Request, resp: &mut R)
-    where
-        R: bun_uws_sys::body_reader_mixin::BodyResponse,
-    {
+    fn run<const SSL: bool>(
+        dev: &mut DevServer,
+        _: &mut Request,
+        resp: &mut bun_uws_sys::response::Response<SSL>,
+    ) {
         dev.server
             .as_mut()
             .expect("server bound")
             .on_pending_request();
-        let ctx = Box::new(UnrefSourceMapRequest {
+        let ctx = UnrefSourceMapRequest {
             dev: std::ptr::from_mut::<DevServer>(dev),
-            body: uws::BodyReaderMixin::init(),
-        });
-        let raw = bun_core::heap::into_raw(ctx);
-        uws::BodyReaderMixin::<Self>::read_body(raw, resp);
-    }
-
-    /// SAFETY: `ctx` must be the pointer returned by `heap::alloc` in `run`;
-    /// called exactly once.
-    unsafe fn finalize(ctx: *mut UnrefSourceMapRequest) {
-        // SAFETY: caller contract — ctx is the original Box allocation; no
-        // live borrow of *ctx exists.
-        let ctx = unsafe { bun_core::heap::take(ctx) };
-        // SAFETY: dev outlives the request
-        unsafe {
-            (*ctx.dev)
-                .server
-                .as_mut()
-                .unwrap()
-                .on_static_request_complete()
         };
-        drop(ctx);
+        uws::BodyReaderMixin::read_body(ctx, resp);
     }
 
-    /// SAFETY: `ctx` must be the pointer returned by `heap::alloc` in `run`.
-    /// On `Ok` this consumes `ctx` via `finalize`; on `Err` ownership stays
-    /// with the caller (BodyReaderMixin → `on_error`).
-    unsafe fn run_with_body(
-        ctx: *mut UnrefSourceMapRequest,
-        body: &[u8],
-        r: AnyResponse,
-    ) -> crate::Result<()> {
+    fn run_with_body(&self, body: &[u8], r: AnyResponse) -> crate::Result<()> {
         if body.len() != 8 {
             return Err(crate::Error::InvalidRequest);
         }
@@ -455,18 +429,14 @@ impl UnrefSourceMapRequest {
             .map_err(|_| crate::Error::InvalidRequest)?;
         let generation = u32::from_ne_bytes(generation_bytes);
         let source_map_key = source_map_store::Key::init((generation as u64) << 32);
-        // SAFETY: ctx is live (caller contract); dev outlives the request; the
-        // exclusive reborrow is narrowed to `source_maps` for this statement.
-        let _ = unsafe { &mut (*(*ctx).dev).source_maps }.remove_or_upgrade_weak_ref(
+        // SAFETY: dev outlives the request; the exclusive reborrow is narrowed to
+        // `source_maps` for this statement.
+        let _ = unsafe { &mut (*self.dev).source_maps }.remove_or_upgrade_weak_ref(
             source_map_key,
             source_map_store::RemoveOrUpgradeMode::Remove,
         );
         r.write_status(b"204 No Content");
         r.end(b"", false);
-        // SAFETY: ctx is the original heap-allocated pointer; the only borrow
-        // derived from it points into a separate DevServer allocation and has
-        // ended.
-        unsafe { Self::finalize(ctx) };
         Ok(())
     }
 }

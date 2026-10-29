@@ -626,8 +626,8 @@ pub fn one_long_copy(distance: usize) -> Vec<u8> {
 
 /// Literals up to `before_end` bytes before the end of a ring buffer of 1024 bytes, a word of the static dictionary, which the
 /// decoder writes past that end, a literal, and a copy of 8 bytes from the end of the word. Returns the stream and what it
-/// decodes to.
-pub fn word_at_end(before_end: usize, len: usize, index: usize, transform: usize) -> (Vec<u8>, Vec<u8>) {
+/// decodes to. For a decoder with `attached` bytes of dictionaries, which come before the static one.
+pub fn word_at_end(before_end: usize, len: usize, index: usize, transform: usize, attached: usize) -> (Vec<u8>, Vec<u8>) {
     let literals = 1024 - before_end;
     let mut output = vec![97; literals];
     output.extend(dictionary_word(len, index, transform));
@@ -648,7 +648,7 @@ pub fn word_at_end(before_end: usize, len: usize, index: usize, transform: usize
     let (insert, insert_extra) = range_code(&INSERT_BASE, literals);
     let (copy, copy_extra) = range_code(&COPY_BASE, len);
     let commands = [command_symbol(insert, copy, false), command_symbol(1, 6, false)];
-    let far = distance_symbol(literals.min(1008) + 1 + index + (transform << size_bits(len)), 0, 0);
+    let far = distance_symbol(literals.min(1008) + 1 + attached + index + (transform << size_bits(len)), 0, 0);
     let near = distance_symbol(12, 0, 0);
     let distances = [far.0, near.0];
     for (bits, symbols) in [(10, commands), (6, distances)] {

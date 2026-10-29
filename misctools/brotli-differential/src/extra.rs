@@ -72,14 +72,16 @@ fn dec_longest_read(seed0: u64, iters: u64) {
 }
 
 /// A word of every length with every transform, from 1 to 38 bytes before the end of the ring buffer. The longest has 37 bytes.
+/// Half of the decoders have a dictionary, from which nothing was copied when the ring buffer is full.
 fn dec_word_at_end(seed: u64) {
     let mut rng = Rng(seed);
     let mut streams = 0;
     for (before_end, len, transform) in (0..38 * 21 * 121).map(|i| (1 + i / (21 * 121), 4 + i / 121 % 21, i % 121)) {
         let index = rng.below(1 << grammar::size_bits(len));
-        let (stream, output) = grammar::word_at_end(before_end, len, index, transform);
+        let dicts = if rng.chance(1, 2) { vec![vec![98; rng.range(1, 300)]] } else { Vec::new() };
+        let (stream, output) = grammar::word_at_end(before_end, len, index, transform, dicts.iter().map(Vec::len).sum());
         let schedule = if rng.chance(1, 2) { 0 } else { rng.next() | 1 };
-        let case = DecCase { stream, large_window: false, no_realloc: false, dicts: Vec::new(), schedule, max_output: usize::MAX };
+        let case = DecCase { stream, large_window: false, no_realloc: false, dicts, schedule, max_output: usize::MAX };
         match compare(&case, Some(&output)) {
             Ok(o) if o.result == 1 => streams += 1,
             Ok(o) => panic!("{before_end} bytes before the end, word {index} of {len} bytes, transform {transform}: result {} error {}", o.result, o.error),

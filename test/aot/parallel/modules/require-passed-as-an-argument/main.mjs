@@ -1,0 +1,30 @@
+// A file hands its own require to a function, which calls it with a written name.
+// Env of the executable: BUN_JSC_crashIfInterpreterIsUsed=1
+const settled = () => new Promise(resolve => setTimeout(resolve, 1));
+console.log("# a-wrapped-package-required");
+await import("./a-wrapped-package-required/a-wrapped-package-required.cjs");
+await settled();
+console.log("# a-wrapped-package-imported");
+await import("./a-wrapped-package-imported/a-wrapped-package-imported.mjs");
+await settled();
+console.log("# a-function-called-where-it-is-written");
+await import("./a-function-called-where-it-is-written/a-function-called-where-it-is-written.cjs");
+await settled();
+console.log("# an-arrow-function-called-where-it-is-written");
+await import("./an-arrow-function-called-where-it-is-written/an-arrow-function-called-where-it-is-written.cjs");
+await settled();
+console.log("# a-parameter-passed-on");
+await import("./a-parameter-passed-on/a-parameter-passed-on.cjs");
+await settled();
+console.log("# through-call-and-apply");
+await import("./through-call-and-apply/through-call-and-apply.cjs");
+await settled();
+console.log("# another-function-for-the-same-parameter");
+await import("./another-function-for-the-same-parameter/another-function-for-the-same-parameter.cjs");
+await settled();
+console.log("# a-function-that-other-hands-call-too");
+await import("./a-function-that-other-hands-call-too/a-function-that-other-hands-call-too.cjs");
+await settled();
+console.log("# a-name-that-stands-for-nothing");
+await import("./a-name-that-stands-for-nothing/a-name-that-stands-for-nothing.cjs");
+await settled();

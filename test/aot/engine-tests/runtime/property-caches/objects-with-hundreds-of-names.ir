@@ -1,0 +1,362 @@
+# const box = JSON.parse("[null]");
+# function hide(x) { box[0] = x; return box[0]; }
+# function readKey(o, k) { return o[k]; }
+# function hasKey(o, k) { return k in o; }
+# const [, , way, sizeText, turnsText] = argv;
+# const size = Number(sizeText), turns = Number(turnsText);
+# const table = hide(JSON.parse("{}"));
+# for (let i = 0; i < size; i++) table["k" + i] = i;
+# const absent = [];
+# for (let i = 0; i < 64; i++) absent.push("absent" + i);
+# const names = hide(JSON.parse(JSON.stringify(absent)));
+# for (const name of names) hide({})[name] = 1;
+# let found = 0;
+# if (way === "read") for (let i = 0; i < turns; i++) { if (readKey(table, names[i & 63]) !== undefined) found++; }
+# else for (let i = 0; i < turns; i++) { if (hasKey(table, names[i & 63])) found++; }
+# report(found === 0 && Object.keys(table).length === size);
+# FORM: AsRead
+# RUN(READ130): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "read", "130", "12800"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); for (const name of ["GetByValGeneric", "GetByVal", "GetByValAndCache", "InByValGeneric", "InByValAndCache"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 3200 ? "seldom" : calls); } };
+# REQUIRES(READ130): x86_64
+# RUN(READ300): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "read", "300", "12800"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); for (const name of ["GetByValGeneric", "GetByVal", "GetByValAndCache", "InByValGeneric", "InByValAndCache"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 3200 ? "seldom" : calls); } };
+# REQUIRES(READ300): x86_64
+# RUN(READ3000): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "read", "3000", "12800"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); for (const name of ["GetByValGeneric", "GetByVal", "GetByValAndCache", "InByValGeneric", "InByValAndCache"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 3200 ? "seldom" : calls); } };
+# REQUIRES(READ3000): x86_64
+# RUN(IN130): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "in", "130", "12800"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); for (const name of ["GetByValGeneric", "GetByVal", "GetByValAndCache", "InByValGeneric", "InByValAndCache"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 3200 ? "seldom" : calls); } };
+# REQUIRES(IN130): x86_64
+# RUN(IN300): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "in", "300", "12800"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); for (const name of ["GetByValGeneric", "GetByVal", "GetByValAndCache", "InByValGeneric", "InByValAndCache"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 3200 ? "seldom" : calls); } };
+# REQUIRES(IN300): x86_64
+# RUN(IN3000): run-in-shell --aotCountsPath=/dev/null globalThis.argv = ["", "", "in", "3000", "12800"]; globalThis.report = (...values) => { let text = ""; for (let i = 0; i < values.length; i++) text += (i ? " " : "") + values[i]; print(text); for (const name of ["GetByValGeneric", "GetByVal", "GetByValAndCache", "InByValGeneric", "InByValAndCache"]) { const calls = aotOperationCount("operationAOT" + name); print(name, calls < 3200 ? "seldom" : calls); } };
+# REQUIRES(IN3000): x86_64
+# An object serves as a dictionary of 130, 300 or 3,000 names and is asked 12,800 times for one of 64 names that it lacks.
+# It says so without the run time, but for one miss in sixteen and for names that share a place in the table.
+# READ130: true
+# READ130-NEXT: GetByValGeneric seldom
+# READ130-NEXT: GetByVal seldom
+# READ130-NEXT: GetByValAndCache seldom
+# READ130-NEXT: InByValGeneric seldom
+# READ130-NEXT: InByValAndCache seldom
+# READ130-NEXT: exited with 0
+# READ300: true
+# READ300-NEXT: GetByValGeneric seldom
+# READ300-NEXT: GetByVal seldom
+# READ300-NEXT: GetByValAndCache seldom
+# READ300-NEXT: InByValGeneric seldom
+# READ300-NEXT: InByValAndCache seldom
+# READ300-NEXT: exited with 0
+# READ3000: true
+# READ3000-NEXT: GetByValGeneric seldom
+# READ3000-NEXT: GetByVal seldom
+# READ3000-NEXT: GetByValAndCache seldom
+# READ3000-NEXT: InByValGeneric seldom
+# READ3000-NEXT: InByValAndCache seldom
+# READ3000-NEXT: exited with 0
+# IN130: true
+# IN130-NEXT: GetByValGeneric seldom
+# IN130-NEXT: GetByVal seldom
+# IN130-NEXT: GetByValAndCache seldom
+# IN130-NEXT: InByValGeneric seldom
+# IN130-NEXT: InByValAndCache seldom
+# IN130-NEXT: exited with 0
+# IN300: true
+# IN300-NEXT: GetByValGeneric seldom
+# IN300-NEXT: GetByVal seldom
+# IN300-NEXT: GetByValAndCache seldom
+# IN300-NEXT: InByValGeneric seldom
+# IN300-NEXT: InByValAndCache seldom
+# IN300-NEXT: exited with 0
+# IN3000: true
+# IN3000-NEXT: GetByValGeneric seldom
+# IN3000-NEXT: GetByVal seldom
+# IN3000-NEXT: GetByValAndCache seldom
+# IN3000-NEXT: InByValGeneric seldom
+# IN3000-NEXT: InByValAndCache seldom
+# IN3000-NEXT: exited with 0
+
+module m0 path="main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0
+variable g0 name="box" module=m0 declared={type=undefined|null|absent|Array flags=[IsExpected]} flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = Builtin builtin=JSON
+    v7 = PropGet v6 key="parse"
+    v8 = Convert v7 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v9 = String string="[null]"
+    v10 = Call v8, v6, v9 calleeKey="parse" calleeName="JSON.parse"
+    v11 = Convert v10 declared={type=undefined|null|Array flags=[IsExpected]}
+    PutModuleVariable v11 variable=g0
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="argv" [isFreeName]
+    v15 = IteratorOpen v14 elementCount=5 [isDestructuring]
+    Jump -> next b2()
+  b2() handler=b54():
+    v16 = IteratorResume v15 stepIndex=0
+    v17 = ResultAt v16
+    v18 = ResultAt v16 index=1
+    v19 = IteratorResume v15 stepIndex=1
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    v22 = IteratorResume v15 stepIndex=2
+    v23 = ResultAt v22
+    v24 = ResultAt v22 index=1
+    Jump -> next b3()
+  b3() handler=b54():
+    v25 = IteratorResume v15 stepIndex=3
+    v26 = ResultAt v25
+    v27 = ResultAt v25 index=1
+    Jump -> next b4()
+  b4() handler=b54():
+    v28 = IteratorResume v15 stepIndex=4
+    v29 = ResultAt v28
+    v30 = ResultAt v28 index=1
+    Jump -> next b5()
+  b5() handler=b54():
+    Jump -> next b6()
+  b6():
+    IteratorClose v15
+    Jump -> next b7()
+  b7():
+    v32 = Builtin builtin=Number
+    v33 = Call v32, -, v27 calleeName="Number"
+    v34 = Convert v33 declared={type=number flags=[IsExpected]}
+    v35 = Builtin builtin=Number
+    v36 = Call v35, -, v30 calleeName="Number"
+    v37 = Convert v36 declared={type=number flags=[IsExpected]}
+    v38 = Builtin builtin=JSON
+    v39 = PropGet v38 key="parse"
+    v40 = Convert v39 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v41 = String string="{}"
+    v42 = Call v40, v38, v41 calleeKey="parse" calleeName="JSON.parse"
+    v43 = Call v1, -, v42 calleeName="hide"
+    v44 = Convert v43 declared={type=undefined|null|object flags=[IsExpected]}
+    v45 = Integer
+    v46 = Convert v45 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b8(v46)
+  b8(v47):
+    LoopHint
+    v49 = Less v47, v34
+    Branch v49 -> taken b9(| 0, 1), notTaken b12(| 0, 1)
+  b9(v50, v51):
+    Jump -> next b10()
+  b10():
+    v52 = String string="k"
+    v53 = Add v52, v50
+    ElemSet v44, v53, v50
+    Jump -> next b11()
+  b11():
+    v55 = Increment v50
+    v56 = Convert v55 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b8(v56)
+  b12(v57, v58):
+    Jump -> next b13()
+  b13():
+    v59 = Data data=d0
+    v60 = Convert v59 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v61 = Convert v60 declared={type=undefined|null|Array flags=[IsExpected]}
+    v62 = Integer
+    v63 = Convert v62 declared={type=number flags=[IsExpected]}
+    Jump -> next b14(v63)
+  b14(v64):
+    LoopHint
+    v66 = Integer integer=64
+    v67 = Less v64, v66
+    Branch v67 -> taken b15(| 0), notTaken b18(| 0)
+  b15(v68):
+    Jump -> next b16()
+  b16():
+    v69 = PropGet v61 key="push"
+    v70 = Convert v69 declared={type=undefined|null|function flags=[IsExpected]}
+    v71 = String string="absent"
+    v72 = Add v71, v68
+    v73 = Call v70, v61, v72 calleeKey="push" calleeName="absent.push"
+    Jump -> next b17()
+  b17():
+    v74 = Increment v68
+    v75 = Convert v74 declared={type=number flags=[IsExpected]}
+    Jump -> next b14(v75)
+  b18(v76):
+    Jump -> next b19()
+  b19():
+    v77 = Builtin builtin=JSON
+    v78 = PropGet v77 key="parse"
+    v79 = Convert v78 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v80 = Builtin builtin=JSON
+    v81 = PropGet v80 key="stringify"
+    v82 = Convert v81 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v83 = Convert v61 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v84 = Call v82, v80, v83 calleeKey="stringify" calleeName="JSON.stringify"
+    v85 = Convert v84 declared={type=undefined|null|string flags=[IsExpected]}
+    v86 = Call v79, v77, v85 calleeKey="parse" calleeName="JSON.parse"
+    v87 = Call v1, -, v86 calleeName="hide"
+    v88 = Convert v87 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v89 = IteratorOpen v88
+    Jump -> next b20()
+  b20():
+    LoopHint
+    v91 = IteratorResume v89
+    v92 = ResultAt v91
+    v93 = ResultAt v91 index=1
+    Branch v92 -> taken b21(), notTaken b51()
+  b21():
+    v94 = Integer
+    v95 = Convert v94 declared={type=number flags=[IsExpected]}
+    v96 = String string="read"
+    v97 = StrictEq v24, v96
+    Branch v97 -> taken b22(| 0), notTaken b34(| 0)
+  b22(v98):
+    Jump -> next b23()
+  b23():
+    v99 = Integer
+    v100 = Convert v99 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b24(v95, v100)
+  b24(v101, v102):
+    LoopHint
+    v104 = Less v102, v37
+    Branch v104 -> taken b25(| 0, 1), notTaken b32(| 0, 1)
+  b25(v105, v106):
+    Jump -> next b26()
+  b26():
+    v107 = Integer integer=63
+    v108 = BitAnd v105, v107
+    v109 = ElemGet v88, v108
+    v110 = Call v3, -, v44, v109 calleeName="readKey"
+    v111 = TypeTest v110 testedType=undefined
+    Branch v111 -> taken b27(| 0), notTaken b28(| 0)
+  b27(v112):
+    Jump -> next b30(v101)
+  b28(v113):
+    Jump -> next b29()
+  b29():
+    v114 = Increment v101
+    v115 = Convert v114 declared={type=number flags=[IsExpected]}
+    Jump -> next b30(v115)
+  b30(v116):
+    Jump -> next b31()
+  b31():
+    v117 = Increment v105
+    v118 = Convert v117 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b24(v116, v118)
+  b32(v119, v120):
+    Jump -> next b33()
+  b33():
+    Jump -> next b46(v101)
+  b34(v121):
+    Jump -> next b35()
+  b35():
+    v122 = Integer
+    v123 = Convert v122 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b36(v95, v123)
+  b36(v124, v125):
+    LoopHint
+    v127 = Less v125, v37
+    Branch v127 -> taken b37(| 0, 1), notTaken b44(| 0, 1)
+  b37(v128, v129):
+    Jump -> next b38()
+  b38():
+    v130 = Integer integer=63
+    v131 = BitAnd v128, v130
+    v132 = ElemGet v88, v131
+    v133 = Call v5, -, v44, v132 calleeName="hasKey"
+    v134 = Convert v133 declared={type=boolean flags=[IsExpected]}
+    v135 = ToBoolean v134
+    Branch v135 -> taken b39(| 0), notTaken b41(| 0)
+  b39(v136):
+    Jump -> next b40()
+  b40():
+    v137 = Increment v124
+    v138 = Convert v137 declared={type=number flags=[IsExpected]}
+    Jump -> next b42(v138)
+  b41(v139):
+    Jump -> next b42(v124)
+  b42(v140):
+    Jump -> next b43()
+  b43():
+    v141 = Increment v128
+    v142 = Convert v141 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b36(v140, v142)
+  b44(v143, v144):
+    Jump -> next b45()
+  b45():
+    Jump -> next b46(v124)
+  b46(v145):
+    v146 = Builtin builtin=GlobalThis
+    v147 = PropGet v146 key="report" [isFreeName]
+    v148 = Integer
+    v149 = StrictEq v145, v148
+    v150 = ToBoolean v149
+    Branch v150 -> taken b47(| 0), notTaken b49(| 0)
+  b47(v151):
+    Jump -> next b48()
+  b48():
+    v152 = Builtin builtin=Object
+    v153 = Builtin builtin=ObjectKeys
+    v154 = Call v153, v152, v44 calleeName="Object.keys"
+    v155 = Convert v154 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v156 = PropGet v155 key="length"
+    v157 = Convert v156 declared={type=number flags=[IsExpected]}
+    v158 = StrictEq v157, v58
+    Jump -> next b50(v158)
+  b49(v159):
+    Jump -> next b50(v159)
+  b50(v160):
+    v161 = Call v147, -, v160 calleeName="report"
+    v162 = Undefined
+    Return v162
+  b51():
+    Jump -> next b52()
+  b52() handler=b53():
+    v163 = Data data=d1
+    v164 = Call v1, -, v163 calleeName="hide"
+    v165 = Convert v164 declared={type=undefined|null|object flags=[IsExpected]}
+    v166 = Integer integer=1
+    ElemSet v165, v93, v166
+    Jump -> next b20()
+  b53() role=IterationCleanup subject=v89:
+    v168 = CatchException
+    IteratorClose v89 completion=Throw
+    Rethrow v168
+  b54() role=IterationCleanup subject=v15:
+    v170 = CatchException
+    IteratorClose v15 completion=Throw
+    Rethrow v170
+}
+function f1 name="hide" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Jump -> next b1()
+  b1():
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="box"
+    v3 = Integer
+    ElemSet v2, v3, v0
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="box"
+    v7 = Integer
+    v8 = ElemGet v6, v7
+    Return v8
+}
+function f2 name="readKey" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = ElemGet v0, v1
+    Return v2
+}
+function f3 name="hasKey" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}, {type=anything}] results=[{type=boolean flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object, v1: anything):
+    Jump -> next b1()
+  b1():
+    v2 = ElemHas v0, v1
+    v3 = Convert v2 declared={type=boolean flags=[IsExpected]}
+    Return v3
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Object{layout=L0} module=m0

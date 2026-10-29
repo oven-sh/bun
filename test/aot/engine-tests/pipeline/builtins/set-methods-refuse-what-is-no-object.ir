@@ -1,0 +1,378 @@
+# The seven methods of Set.prototype that take another set throw a TypeError for an operand that is no object or is not passed, also where nobody uses the answer; the receiver is tested first.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+
+module m0 path="set-methods-refuse-what-is-no-object.js" displayPath="set-methods-refuse-what-is-no-object.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="ReadonlySetLike<number>" fields=[{key="has" declared={type=undefined|null|function|f1 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="keys" declared={type=undefined|null|function|f2 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="size" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] flags=[HasMembersWithoutLayout] declaredOrder=[1, 0, 2] ownFieldCount=3
+layout L1 module=m0 position=1627
+data d0 root=Array{contents=undefined|null|string elements=[String{value="union"}, String{value="intersection"}, String{value="difference"}, String{value="symmetricDifference"}, String{value="isSubsetOf"}, String{value="isSupersetOf"}, String{value="isDisjointFrom"}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0
+data d2 root=Array{contents=anything} module=m0
+data d3 root=Object{layout=L1} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d0
+    v1 = Convert v0 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v2 = Builtin builtin=Set
+    v3 = Data data=d1
+    v4 = Convert v3 declared={type=undefined|null|Array<number> flags=[IsExpected]}
+    v5 = Construct v2, -, v4 calleeName="Set"
+    v6 = Convert v5 declared={type=undefined|null|Set<number> flags=[IsExpected]}
+    v7 = IteratorOpen v1
+    Jump -> next b1()
+  b1():
+    v8 = IteratorResume v7
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b2(), notTaken b17()
+  b2():
+    Jump -> next b3()
+  b3() handler=b5():
+    Jump -> next b4()
+  b4():
+    Jump -> next b6()
+  b5() role=CatchHandler:
+    Jump -> next b6()
+  b6():
+    v11 = PropGet v6 key="intersection"
+    v12 = Convert v11 declared={type=undefined|null|function flags=[IsExpected]}
+    v13 = NewObject layout=L0
+    v14 = FinishObject v13
+    v15 = Call v12, v6, v14 calleeKey="intersection" calleeName="set.intersection"
+    v16 = Builtin builtin=Map
+    v17 = Builtin builtin=Set
+    v18 = NewArray v16, v17 contents=undefined|null|function|builtin(Map)|builtin(Set)
+    v19 = Convert v18 declared={type=undefined|null|Array<undefined|null|function|builtin(Map)|builtin(Set)> flags=[IsExpected]}
+    v20 = IteratorOpen v19
+    Jump -> next b7()
+  b7():
+    v21 = IteratorResume v20
+    v22 = ResultAt v21 index=1
+    Jump -> next b8()
+  b8() handler=b16():
+    v23 = Convert v22 declared={type=undefined|null|function|builtin(Map)|builtin(Set) flags=[IsExpected]}
+    v24 = Data data=d2
+    v25 = Convert v24 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v26 = Convert v25 declared={type=undefined|null|Array flags=[IsExpected]}
+    v27 = Builtin builtin=Reflect
+    v28 = Builtin builtin=ReflectOwnKeys
+    v29 = PropGet v23 key="prototype"
+    v30 = Convert v29 declared={type=undefined|null|Map|Set flags=[IsExpected]}
+    v31 = Call v28, v27, v30 calleeName="Reflect.ownKeys"
+    v32 = Convert v31 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[IsExpected]}
+    v33 = IteratorOpen v32
+    Jump -> next b9()
+  b9() handler=b16():
+    LoopHint
+    v35 = IteratorResume v33
+    v36 = ResultAt v35
+    v37 = ResultAt v35 index=1
+    Branch v36 -> taken b10(), notTaken b11()
+  b10() handler=b16():
+    v38 = Convert v26 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v39 = PropGet v38 key="join"
+    Jump -> next b7()
+  b11() handler=b16():
+    Jump -> next b12()
+  b12() handler=b15():
+    v40 = Convert v37 declared={type=undefined|null|string|symbol flags=[IsExpected]}
+    v41 = String string="constructor"
+    v42 = StrictEq v40, v41
+    Branch v42 -> taken b13(| 0), notTaken b14(| 0)
+  b13(v43) handler=b15():
+    Jump -> next b9()
+  b14(v44) handler=b15():
+    v45 = Builtin builtin=Reflect
+    v46 = Builtin builtin=ReflectGetOwnPropertyDescriptor
+    v47 = PropGet v23 key="prototype"
+    v48 = Convert v47 declared={type=undefined|null|Map|Set flags=[IsExpected]}
+    v49 = Call v46, v45, v48, v44 calleeName="Reflect.getOwnPropertyDescriptor"
+    v50 = Convert v49 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v51 = PropGet v50 key="value"
+    v52 = PropGet v50 key="value"
+    v53 = PropGet v52 key="call"
+    v54 = Convert v53 declared={type=undefined|null|function flags=[IsExpected]}
+    v55 = Construct v23 calleeName="unsafe"
+    v56 = Call v54, v52, v55 calleeKey="call" calleeName="desc.value.call"
+    v57 = Convert v56 declared={type=undefined|null|object flags=[IsExpected]}
+    v58 = Data data=d3
+    v59 = PropHas v58 key=@@iterator
+    Jump -> next b9()
+  b15() role=IterationCleanup subject=v33 handler=b16():
+    v60 = CatchException
+    Rethrow v60
+  b16() role=IterationCleanup subject=v20:
+    v61 = CatchException
+    Rethrow v61
+  b17():
+    Jump -> next b18()
+  b18() handler=b28():
+    v62 = Convert v10 declared={type=undefined|null|string flags=[IsExpected]}
+    v63 = Undefined
+    v64 = Null
+    v65 = Integer integer=1
+    v66 = String string="text"
+    v67 = Boolean boolean=true
+    v68 = BigInt digits="1"
+    v69 = Builtin builtin=Symbol
+    v70 = String string="s"
+    v71 = Call v69, -, v70 calleeName="Symbol" callNumber=2
+    v72 = Convert v71 declared={type=undefined|null|symbol flags=[IsExpected]}
+    v73 = NewArray v63, v64, v65, v66, v67, v68, v72 contents=undefined|null|boolean|number|string|symbol|bigint
+    v74 = Convert v73 declared={type=undefined|null|Array<undefined|null|boolean|number|string|symbol|bigint> flags=[IsExpected]}
+    v75 = IteratorOpen v74
+    Jump -> next b19()
+  b19() handler=b28():
+    LoopHint
+    v77 = IteratorResume v75
+    v78 = ResultAt v77
+    v79 = ResultAt v77 index=1
+    Branch v78 -> taken b20(), notTaken b21()
+  b20() handler=b28():
+    Jump -> next b1()
+  b21() handler=b28():
+    Jump -> next b22()
+  b22() handler=b27():
+    v80 = Convert v79 declared={type=undefined|null|boolean|number|string|symbol|bigint flags=[IsExpected]}
+    Jump -> next b23()
+  b23() handler=b25():
+    v81 = ElemGet v6, v62
+    v82 = Call v81, v6, v80 calleeName="set[name]"
+    Jump -> next b24()
+  b24() handler=b27():
+    Jump -> next b26()
+  b25() role=CatchHandler handler=b27():
+    Jump -> next b26()
+  b26() handler=b27():
+    Jump -> next b19()
+  b27() role=IterationCleanup subject=v75 handler=b28():
+    v83 = CatchException
+    Rethrow v83
+  b28() role=IterationCleanup subject=v7:
+    v84 = CatchException
+    Rethrow v84
+}
+function f1 name="has" module=m0 position=1115 kind=Arrow length=1 thisType={type=anything} parameters=[{type=number flags=[IsExpected]}] results=[{type=boolean flags=[IsExpected]}] functionTypes=[f3] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="keys" module=m0 position=1143 kind=Arrow thisType={type=anything} results=[{type=undefined|null|object flags=[IsExpected]}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f6]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: "union" = String string="union"
+# CHECK-NEXT: v1: "intersection" = String string="intersection"
+# CHECK-NEXT: v2: "difference" = String string="difference"
+# CHECK-NEXT: v3: "symmetricDifference" = String string="symmetricDifference"
+# CHECK-NEXT: v4: "isSubsetOf" = String string="isSubsetOf"
+# CHECK-NEXT: v5: "isSupersetOf" = String string="isSupersetOf"
+# CHECK-NEXT: v6: "isDisjointFrom" = String string="isDisjointFrom"
+# CHECK-NEXT: v7: 1 = Integer integer=1
+# CHECK-NEXT: v8: 2 = Integer integer=2
+# CHECK-NEXT: v9: Set<int[1, 2]> = NewSetFromData data=d4
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v10)
+# CHECK-NEXT: b1(v11: int[0, 7]):
+# CHECK-NEXT: v12: 7 = Integer integer=7
+# CHECK-NEXT: v13: boolean = Less v11, v12
+# CHECK-NEXT: Branch v13 -> taken b2(| 0), notTaken b19()
+# CHECK-NEXT: b2(v14: int[0, 6]):
+# CHECK-NEXT: Switch v14 cases=[0, 1, 2, 3, 4, 5] -> case b3(v0), case b3(v1), case b3(v2), case b3(v3), case b3(v4), case b3(v5), otherwise b3(v6)
+# CHECK-NEXT: b3(v15: "difference"|"intersection"|"isDisjointFrom"|"isSubsetOf"|"isSupersetOf"|"symmetricDifference"|"union"):
+# CHECK-NEXT: v16: 1 = Integer integer=1
+# CHECK-NEXT: v17: int[1, 7] = Add v14, v16
+# CHECK-NEXT: v18: "s" = String string="s"
+# CHECK-NEXT: v19: symbol = CallBuiltin -, v18 overload=Symbol/0 accessSite=14
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b4()
+# CHECK-NEXT: b4() handler=b5():
+# CHECK-NEXT: v21: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v22: undefined = Undefined
+# CHECK-NEXT: v23: anything = Call v21, v9, v22 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b5() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6() handler=b7():
+# CHECK-NEXT: v24: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v25: null = Null
+# CHECK-NEXT: v26: anything = Call v24, v9, v25 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b7() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b8()
+# CHECK-NEXT: b8() handler=b9():
+# CHECK-NEXT: v27: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v28: 1 = Integer integer=1
+# CHECK-NEXT: v29: anything = Call v27, v9, v28 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b9() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10() handler=b11():
+# CHECK-NEXT: v30: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v31: "text" = String string="text"
+# CHECK-NEXT: v32: anything = Call v30, v9, v31 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b11() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12() handler=b13():
+# CHECK-NEXT: v33: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v34: true = Boolean boolean=true
+# CHECK-NEXT: v35: anything = Call v33, v9, v34 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b13() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b14()
+# CHECK-NEXT: b14() handler=b15():
+# CHECK-NEXT: v36: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v37: bigint = BigInt digits="1"
+# CHECK-NEXT: v38: anything = Call v36, v9, v37 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: Jump -> next b16()
+# CHECK-NEXT: b15() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b16()
+# CHECK-NEXT: b16() handler=b17():
+# CHECK-NEXT: v39: anything = ElemGet v9, v15 accessSite=15
+# CHECK-NEXT: v40: anything = Call v39, v9, v19 calleeName="set[name]" accessSite=16
+# CHECK-NEXT: Jump -> next b18()
+# CHECK-NEXT: b17() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b18()
+# CHECK-NEXT: b18():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: Jump -> next b1(v17)
+# CHECK-NEXT: b19():
+# CHECK-NEXT: v42: anything = PropGet v9 key="intersection" accessSite=1
+# CHECK-NEXT: v43: anything ~ undefined|null|function = Upcast v42 castType=anything
+# CHECK-NEXT: v44: L0 = NewObject layout=L0 allocationSite=2 allocationClass=0
+# CHECK-NEXT: v45: L0 = FinishObject v44
+# CHECK-NEXT: v46: anything = Call v43, v9, v45 calleeKey="intersection" calleeName="set.intersection" accessSite=2
+# CHECK-NEXT: v47: builtin(Map) = Builtin builtin=Map
+# CHECK-NEXT: v48: builtin(Set) = Builtin builtin=Set
+# CHECK-NEXT: v49: false = Boolean
+# CHECK-NEXT: v50: 0 = Integer
+# CHECK-NEXT: Jump -> next b20(v49, v50)
+# CHECK-NEXT: b20(v51: boolean, v52: int[0, 2147483647]):
+# CHECK-NEXT: Branch v51 -> taken b21(), notTaken b22()
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v53: true = Boolean boolean=true
+# CHECK-NEXT: v54: undefined = Undefined
+# CHECK-NEXT: Jump -> next b26(v53, v54, v52)
+# CHECK-NEXT: b22():
+# CHECK-NEXT: v55: 2 = Integer integer=2
+# CHECK-NEXT: v56: boolean = Less v52, v55
+# CHECK-NEXT: Branch v56 -> taken b23(| 0), notTaken b25()
+# CHECK-NEXT: b23(v57: int[0, 1]):
+# CHECK-NEXT: Switch v57 cases=[0] -> case b24(v47), otherwise b24(v48)
+# CHECK-NEXT: b24(v58: builtin(Map)|builtin(Set)):
+# CHECK-NEXT: v59: 1 = Integer integer=1
+# CHECK-NEXT: v60: int[1, 2] = Add v57, v59
+# CHECK-NEXT: v61: false = Boolean
+# CHECK-NEXT: Jump -> next b26(v61, v58, v60)
+# CHECK-NEXT: b25():
+# CHECK-NEXT: v62: true = Boolean boolean=true
+# CHECK-NEXT: v63: undefined = Undefined
+# CHECK-NEXT: Jump -> next b26(v62, v63, v52)
+# CHECK-NEXT: b26(v64: boolean, v65: undefined|builtin(Map)|builtin(Set), v66: int[0, 2147483647]):
+# CHECK-NEXT: v67: builtin(Map)|builtin(Set) = RequireObjectCoercible v65 name="prototype"
+# CHECK-NEXT: v68: anything = PropGet v67 key="prototype" accessSite=3
+# CHECK-NEXT: v69: builtin(MapPrototype)|builtin(SetPrototype) = AssumeType v68 provenType=builtin(MapPrototype)|builtin(SetPrototype)
+# CHECK-NEXT: v70: Array<string|symbol> = CallBuiltin -, v69 overload=ReflectOwnKeys/0 accessSite=4
+# CHECK-NEXT: v71: Array<string|symbol, proven, pristine[Storage, Names, Dense]> = AssumeType v70 provenType=Array<string|symbol, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v72: 0 = Integer
+# CHECK-NEXT: Jump -> next b27(v72)
+# CHECK-NEXT: b27(v73: int[0, 4294967295] ~ 0):
+# CHECK-NEXT: Jump -> next b28(v73)
+# CHECK-NEXT: b28(v74: int[0, 4294967295]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v76: int[0, 4294967295] = CallBuiltin v71 overload=ArrayPrototypeLength/0
+# CHECK-NEXT: v77: boolean = Less v74, v76
+# CHECK-NEXT: Branch v77 -> taken b29(| 0), notTaken b48()
+# CHECK-NEXT: b29(v78: int[0, 4294967294]):
+# CHECK-NEXT: v79: boolean = HasArrayStorage v71 arrayStorage=Contiguous
+# CHECK-NEXT: Branch v79 -> taken b30(| 0), notTaken b34()
+# CHECK-NEXT: b30(v80: guard):
+# CHECK-NEXT: v81: boolean = IsInBounds v71, v78
+# CHECK-NEXT: Branch v81 -> taken b31(| 0), notTaken b34()
+# CHECK-NEXT: b31(v82: guard):
+# CHECK-NEXT: v83: guard = AllGuards v80, v82
+# CHECK-NEXT: v84: string|symbol = GetArrayElement v71, v78, v83 arrayStorage=Contiguous level=Expected [keyIsIntegral, isInBounds, storageIsUndecided]
+# CHECK-NEXT: v85: 1 = Integer integer=1
+# CHECK-NEXT: v86: int[1, 4294967295] = Add v78, v85
+# CHECK-NEXT: v87: "constructor" = String string="constructor"
+# CHECK-NEXT: v88: boolean = StrictEq v84, v87
+# CHECK-NEXT: Branch v88 -> taken b32(), notTaken b33()
+# CHECK-NEXT: b32():
+# CHECK-NEXT: Jump -> next b28(v86)
+# CHECK-NEXT: b33():
+# CHECK-NEXT: v89: anything = PropGet v67 key="prototype" accessSite=6
+# CHECK-NEXT: Jump -> next b38(v86, v84, v89)
+# CHECK-NEXT: b34() frequency=Unlikely:
+# CHECK-NEXT: v90: undefined|string|symbol = ElemGet v71, v78 [keyIsIntegral, storageIsUndecided]
+# CHECK-NEXT: v91: 1 = Integer integer=1
+# CHECK-NEXT: v92: int[1, 4294967295] = Add v78, v91
+# CHECK-NEXT: v93: "constructor" = String string="constructor"
+# CHECK-NEXT: v94: boolean = StrictEq v90, v93
+# CHECK-NEXT: Branch v94 -> taken b35(), notTaken b36()
+# CHECK-NEXT: b35() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b27(v92)
+# CHECK-NEXT: b36() frequency=Unlikely:
+# CHECK-NEXT: v95: anything = PropGet v67 key="prototype" accessSite=6
+# CHECK-NEXT: v96: boolean = TypeTest v90 testedType=string|symbol
+# CHECK-NEXT: Branch v96 -> taken b37(| 0), notTaken b41()
+# CHECK-NEXT: b37(v97: string|symbol) frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b38(v92, v97, v95)
+# CHECK-NEXT: b38(v98: int[1, 4294967295], v99: string|symbol, v100: anything):
+# CHECK-NEXT: v101: builtin(MapPrototype)|builtin(SetPrototype) = AssumeType v100 provenType=builtin(MapPrototype)|builtin(SetPrototype)
+# CHECK-NEXT: v102: undefined = CallBuiltin -, v101, v99 overload=ReflectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=7
+# CHECK-NEXT: v103: boolean = ResultAt v102
+# CHECK-NEXT: v104: 1 = Integer integer=1
+# CHECK-NEXT: v105: int[0, 1] = ToNumber v103
+# CHECK-NEXT: v106: i32 = LShift v104, v105
+# CHECK-NEXT: v107: anything = ResultAt v102 index=1
+# CHECK-NEXT: v108: 1 = Integer integer=1
+# CHECK-NEXT: v109: int[0, 1] = BitAnd v106, v108
+# CHECK-NEXT: v110: boolean = ToBoolean v109
+# CHECK-NEXT: Branch v110 -> taken b39(), notTaken b40()
+# CHECK-NEXT: b39() frequency=Rare:
+# CHECK-NEXT: v111: undefined = Undefined
+# CHECK-NEXT: v112: never = RequireObjectCoercible v111 name="value"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b40():
+# CHECK-NEXT: Jump -> next b44(v98, v107)
+# CHECK-NEXT: b41() frequency=Unlikely:
+# CHECK-NEXT: v113: fact = Specified
+# CHECK-NEXT: v114: builtin(MapPrototype)|builtin(SetPrototype) = AssumeType v95, v113 provenType=builtin(MapPrototype)|builtin(SetPrototype)
+# CHECK-NEXT: v115: string|symbol = ToPropertyKey v90 calledBuiltin=ReflectGetOwnPropertyDescriptor
+# CHECK-NEXT: v116: undefined = CallBuiltin -, v114, v115 overload=ReflectGetOwnPropertyDescriptor/0 builtinCallForm=Fields accessSite=7
+# CHECK-NEXT: v117: boolean = ResultAt v116
+# CHECK-NEXT: v118: 1 = Integer integer=1
+# CHECK-NEXT: v119: int[0, 1] = ToNumber v117
+# CHECK-NEXT: v120: i32 = LShift v118, v119
+# CHECK-NEXT: v121: anything = ResultAt v116 index=1
+# CHECK-NEXT: v122: 1 = Integer integer=1
+# CHECK-NEXT: v123: int[0, 1] = BitAnd v120, v122
+# CHECK-NEXT: v124: boolean = ToBoolean v123
+# CHECK-NEXT: Branch v124 -> taken b42(), notTaken b43()
+# CHECK-NEXT: b42() frequency=Rare:
+# CHECK-NEXT: v125: undefined = Undefined
+# CHECK-NEXT: v126: never = RequireObjectCoercible v125 name="value"
+# CHECK-NEXT: Unreachable
+# CHECK-NEXT: b43() frequency=Unlikely:
+# CHECK-NEXT: Jump -> next b44(v92, v121)
+# CHECK-NEXT: b44(v127: int[1, 4294967295], v128: anything):
+# CHECK-NEXT: v129: anything = PropGet v128 key="call" accessSite=10
+# CHECK-NEXT: v130: anything ~ undefined|null|function = Upcast v129 castType=anything
+# CHECK-NEXT: v131: anything ~ object = Construct v67 calleeName="unsafe" accessSite=11 callees=[builtin(Map), builtin(Set)]
+# CHECK-NEXT: v132: object = AssumeType v131 provenType=object
+# CHECK-NEXT: v133: boolean = TypeTest v130 testedType=builtin(FunctionPrototypeCall)
+# CHECK-NEXT: Branch v133 -> taken b45(), notTaken b46()
+# CHECK-NEXT: b45():
+# CHECK-NEXT: v134: anything = Call v128, v132 calleeName="desc.value.call" accessSite=12
+# CHECK-NEXT: Jump -> next b47()
+# CHECK-NEXT: b46() frequency=Unlikely:
+# CHECK-NEXT: v135: anything = Call v130, v128, v132 calleeKey="call" calleeName="desc.value.call" accessSite=12 callees=[builtin(FunctionPrototypeCall), ..]
+# CHECK-NEXT: Jump -> next b47()
+# CHECK-NEXT: b47():
+# CHECK-NEXT: Jump -> next b28(v127)
+# CHECK-NEXT: b48():
+# CHECK-NEXT: Jump -> next b20(v64, v66)
+# CHECK-NEXT: }

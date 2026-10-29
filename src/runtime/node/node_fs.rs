@@ -403,6 +403,14 @@ fn is_in_executable(path: &[u8]) -> bool {
         .is_some_and(|graph| graph.contains_file(path) || graph.find_dir(path))
 }
 
+/// What the executable holds lies on the file system that holds the executable.
+fn path_for_statfs<'a>(path: &'a PathLike<'_>, buf: &'a mut PathBuffer) -> &'a ZStr {
+    match bun_core::self_exe_path() {
+        Ok(executable) if is_in_executable(path.slice()) => executable,
+        _ => path.slice_z(buf),
+    }
+}
+
 fn lies_below_embedded_file(path: &[u8]) -> bool {
     let Some(graph) = graph_in_front_of_disk(path) else {
         return false;
@@ -417,7 +425,7 @@ fn lies_below_embedded_file(path: &[u8]) -> bool {
     false
 }
 
-/// An error names each path as the caller wrote it, and nothing lies below a file.
+/// An error names each path as the caller wrote it, and nothing lies below a file: ENOTDIR, which Windows reports as ENOENT.
 pub(crate) fn error_for_caller(
     paths: [Option<&PathLike<'_>>; 2],
     mut err: sys::Error,
@@ -425,7 +433,8 @@ pub(crate) fn error_for_caller(
     if standalone_module_graph().is_none() {
         return err;
     }
-    if err.get_errno() == E::ENOENT
+    if cfg!(not(windows))
+        && err.get_errno() == E::ENOENT
         && (lies_below_embedded_file(&err.path) || lies_below_embedded_file(&err.dest))
     {
         err.errno = E::ENOTDIR as _;
@@ -435,7 +444,9 @@ pub(crate) fn error_for_caller(
             continue;
         };
         for shown in [&mut err.path, &mut err.dest] {
-            if let Some(below) = shown.strip_prefix(path.joined.as_slice())
+            // Some calls on Windows hand the system the path behind `\\?\`.
+            let joined = shown.strip_prefix(b"\\\\?\\").unwrap_or(&shown[..]);
+            if let Some(below) = joined.strip_prefix(path.joined.as_slice())
                 && (below.is_empty() || bun_paths::is_sep_any(below[0]))
             {
                 *shown = [path.written.as_slice(), below].concat().into_boxed_slice();
@@ -1242,9 +1253,9 @@ mod _async_tasks {
                     let args: &args::StatFS = args_as!(args::StatFS);
                     // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
                     // across the libuv enqueue (copies `path` internally).
-                    let path = args
-                        .path
-                        .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf });
+                    let path = path_for_statfs(&args.path, unsafe {
+                        &mut binding.node_fs.get_mut().sync_error_buf
+                    });
                     // SAFETY: libuv copies `path` internally before return.
                     let rc = unsafe {
                         uv::uv_fs_statfs(
@@ -2797,8 +2808,7 @@ mod _async_tasks {
             let basename_z = ZStr::from_buf(&basename, basename.len() - 1);
             let mut buf = bun_paths::path_buffer_pool::get();
             // SAFETY: readdir_task (ParentRef) outlives subtask via subtask_count
-            // refcount. `from_raw_mut` was used at enqueue, so write provenance is
-            // present; this work-pool callback is the sole holder of `&mut` to the
+            // refcount; this work-pool callback is the sole holder of `&mut` to the
             // parent's per-result fields (it pushes to a lock-free queue).
             unsafe { readdir_task.assume_mut() }.perform_work(basename_z, &mut buf, false);
         }
@@ -2823,12 +2833,8 @@ mod _async_tasks {
             let prev = self.subtask_count.fetch_add(1, Ordering::Relaxed);
             debug_assert!(prev > 0);
             WorkPool::schedule_new(ReaddirSubtask {
-                // SAFETY: `self` is a `Box<AsyncReaddirRecursiveTask>` (stable
-                // address) and outlives every subtask via the `subtask_count`
-                // refcount it just bumped. Write provenance from `&mut self`.
-                readdir_task: unsafe {
-                    bun_ptr::ParentRef::from_raw_mut(core::ptr::from_mut(self))
-                },
+                // `self` lives in its heap `Job`, and the `subtask_count` just bumped keeps it alive.
+                readdir_task: bun_ptr::ParentRef::from_ref_mut(self),
                 basename: basename_owned,
                 task: WorkPoolTask::default(),
             });
@@ -2958,11 +2964,8 @@ mod _async_tasks {
                     next: bun_threading::Link::new(),
                     value: ResultListEntryValue::from_vec(clone),
                 });
-                // SAFETY: freshly boxed node; `into_raw` yields a valid owned non-null pointer.
-                unsafe {
-                    self.result_list_queue
-                        .push(NonNull::new_unchecked(bun_core::heap::into_raw(list)))
-                };
+                self.result_list_queue
+                    .push(bun_core::heap::into_raw_nn(list));
             }
 
             self.on_subtask_done();
@@ -8173,35 +8176,48 @@ impl NodeFS {
                 }
             };
 
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            let flags = sys::O::PATH; // O_PATH is faster
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
+            let is_only_in_the_executable = |err: &sys::Error| {
+                err.get_errno() == E::ENOENT
+                    && (is_source_path(path.as_bytes())
+                        || is_embedded_in_compiled_program(path.as_bytes()))
+            };
 
-            let fd = match sys::open(path, flags, 0) {
-                Err(err)
-                    if err.get_errno() == E::ENOENT
-                        && (is_source_path(path.as_bytes())
-                            || is_embedded_in_compiled_program(path.as_bytes())) =>
-                {
+            #[cfg(target_os = "macos")]
+            let buf = match Syscall::get_full_path(path, &mut outbuf) {
+                Err(err) if is_only_in_the_executable(&err) => {
                     return Ok(encode_path_result(path.as_bytes(), args.encoding));
                 }
-                Err(err) => return Err(err.with_path(path)),
-                Ok(fd_) => fd_,
-            };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
-
-            let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
-                Err(err) => return Err(err.with_path(path)),
+                Err(err) => return Err(err),
                 Ok(buf_) => buf_,
             };
+            #[cfg(not(target_os = "macos"))]
+            let buf = {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                let flags = sys::O::PATH; // O_PATH is faster
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
-            // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can
-            // end like that too.
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            if buf.ends_with(b" (deleted)") && Syscall::fstat(fd)?.st_nlink == 0 {
-                return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
-            }
+                let fd = match sys::open(path, flags, 0) {
+                    Err(err) if is_only_in_the_executable(&err) => {
+                        return Ok(encode_path_result(path.as_bytes(), args.encoding));
+                    }
+                    Err(err) => return Err(err.with_path(path)),
+                    Ok(fd_) => fd_,
+                };
+                let _close = scopeguard::guard(fd, |fd| fd.close());
+
+                let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
+                    Err(err) => return Err(err.with_path(path)),
+                    Ok(buf_) => buf_,
+                };
+
+                // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can end like that too.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                if buf.ends_with(b" (deleted)") && Syscall::fstat(fd)?.st_nlink == 0 {
+                    return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
+                }
+                buf
+            };
 
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {
@@ -8330,12 +8346,7 @@ impl NodeFS {
     }
 
     pub(crate) fn statfs(&mut self, args: &args::StatFS, _: Flavor) -> Maybe<ret::StatFS> {
-        // What the executable holds lies on the file system that holds the executable.
-        let path = match bun_core::self_exe_path() {
-            Ok(executable) if is_in_executable(args.path.slice()) => executable,
-            _ => args.path.slice_z(&mut self.sync_error_buf),
-        };
-        match Syscall::statfs(path) {
+        match Syscall::statfs(path_for_statfs(&args.path, &mut self.sync_error_buf)) {
             Ok(result) => Ok(ret::StatFS::init(&result, args.big_int)),
             Err(err) => Err(err),
         }
@@ -9694,7 +9705,7 @@ impl NodeFS {
 
     #[cfg(windows)]
     #[inline]
-    pub(crate) fn uv_dispatch<R, A, const F: NodeFSFunctionEnum>(
+    pub(crate) fn uv_dispatch<R, A: FsArgument, const F: NodeFSFunctionEnum>(
         &mut self,
         args: &A,
         rc: uv::ReturnCodeI64,
@@ -9703,6 +9714,7 @@ impl NodeFS {
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
         <Op<{ F }> as NodeFSDispatch<R, A>>::run_uv(self, args, rc)
+            .map_err(|err| error_for_caller(args.paths(), err))
     }
 
     /// Variant of [`Self::uv_dispatch`] for `uv_callbackreq` — passes the live
@@ -9710,7 +9722,7 @@ impl NodeFS {
     /// needs it).
     #[cfg(windows)]
     #[inline]
-    pub(crate) fn uv_dispatch_req<R, A, const F: NodeFSFunctionEnum>(
+    pub(crate) fn uv_dispatch_req<R, A: FsArgument, const F: NodeFSFunctionEnum>(
         &mut self,
         args: &A,
         req: &mut uv::fs_t,
@@ -9720,6 +9732,7 @@ impl NodeFS {
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
         <Op<{ F }> as NodeFSDispatch<R, A>>::run_uv_req(self, args, req, rc)
+            .map_err(|err| error_for_caller(args.paths(), err))
     }
 }
 

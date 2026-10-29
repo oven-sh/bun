@@ -3,8 +3,8 @@
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "node:path";
+import { built, slot, spawned } from "./harness/commands";
 import { compileCommand } from "./harness/flags";
-import { built, slot, spawned } from "./run-programs";
 import { describe, test } from "./supported";
 
 // The collection is asked for from a timer, where no frame of the program names a list.

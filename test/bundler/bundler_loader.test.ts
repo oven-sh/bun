@@ -1,5 +1,6 @@
 import { fileURLToPath, Loader } from "bun";
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import fs, { readdirSync } from "node:fs";
 import { join } from "path";
 import { itBundled } from "./expectBundled";
@@ -154,9 +155,8 @@ describe("bundler", async () => {
       // The plugin variant resolves every import through the onResolve
       // fallback path (a plugin that matches but defers to the default resolver).
       // Its first import takes the other path: onResolve returns aliased.json.
-      // That module stays keyed by path and takes the loader of its extension,
-      // so the import attribute has no effect there yet. The plain import that
-      // follows must be the parsed object, whatever the aliased import gets.
+      // The import keeps its `with { type }` on the path the plugin returned,
+      // and the plain import that follows is the parsed object.
       for (const withPlugin of [false, true]) {
         const deferred: string[] = [];
         itBundled(`bun/loader-same-file-under-two-import-attributes${withPlugin ? "-plugin" : ""}`, {
@@ -168,7 +168,7 @@ describe("bundler", async () => {
             withPlugin
               ? `import aliased from 'alias:aliased' with { type: 'text' };
           import aliasedObj from './aliased.json';`
-              : `const aliased = '', aliasedObj = { k: 2 };`
+              : `const aliased = '{"k":2}', aliasedObj = { k: 2 };`
           }
           import { readFileSync } from 'node:fs';
           import { join } from 'node:path';
@@ -189,7 +189,7 @@ describe("bundler", async () => {
             pageText,
             pageFile !== pageText, readFileSync(join(import.meta.dirname, pageFile), 'utf8') === pageText,
             cfg.c, cfg === cfgFromAsText,
-            aliased != null, typeof aliasedObj, aliasedObj.k,
+            aliased, typeof aliasedObj, aliasedObj.k,
           ]));
         `,
             "/as-text.ts": /* js */ `
@@ -221,12 +221,77 @@ describe("bundler", async () => {
             }
           },
           run: {
-            stdout: '["object",1,"string","{\\"j\\":1}",true,true,true,"<p>hi</p>",true,true,3,true,true,"object",2]',
+            stdout:
+              '["object",1,"string","{\\"j\\":1}",true,true,true,"<p>hi</p>",true,true,3,true,"{\\"k\\":2}","object",2]',
           },
         });
       }
     });
   }
+
+  // a.mjs and b.mjs are parsed on worker threads. The one whose result reached
+  // the bundle thread first used to decide the loader for both imports of the
+  // shared file, so the same sources gave several bundles, and none of them
+  // gave each importer the value it asked for.
+  describe("one file imported plainly and as text builds to one bundle", () => {
+    const cases = {
+      "code and text": {
+        shared: { name: "lib.mjs", contents: "export const n = 1;\nexport default 0;\n" },
+        plainImporter: `import { n } from "./lib.mjs";\nconsole.log("a", n);\n`,
+        stdout: `a 1\nb "export const n = 1;\\nexport default 0;\\n"\n`,
+      },
+      "json and text": {
+        shared: { name: "d.json", contents: `{ "x": 1 }\n` },
+        plainImporter: `import o from "./d.json";\nconsole.log("a", JSON.stringify(o));\n`,
+        stdout: `a {"x":1}\nb "{ \\"x\\": 1 }\\n"\n`,
+      },
+    };
+    // A debug build takes about a quarter of a second for each build.
+    const builds = isASAN || isDebug ? 12 : 30;
+
+    for (const [name, { shared, plainImporter, stdout }] of Object.entries(cases)) {
+      test.concurrent(
+        `${name}: ${builds} builds`,
+        async () => {
+          using dir = tempDir("loader-plain-and-text", {
+            [shared.name]: shared.contents,
+            "app.mjs": `import "./a.mjs";\nimport "./b.mjs";\n`,
+            "a.mjs": plainImporter,
+            "b.mjs": `import t from "./${shared.name}" with { type: "text" };\nconsole.log("b", JSON.stringify(t));\n`,
+            // The builds run at once in one process: they share one thread pool, so the
+            // parse results reach each build in a different order.
+            "build-many.mjs": `
+              const builds = await Promise.all(
+                Array.from({ length: ${builds} }, async () => {
+                  const build = await Bun.build({ entrypoints: ["./app.mjs"], target: "node", throw: false });
+                  return build.success ? await build.outputs[0].text() : "the build failed: " + build.logs.join("\\n");
+                }),
+              );
+              const bundles = [...new Set(builds)];
+              await Bun.write("bundle.js", bundles[0]);
+              console.log(JSON.stringify(bundles.map(bundle => builds.filter(build => build === bundle).length)));
+            `,
+          });
+          const cwd = String(dir);
+          const run = async (cmd: string[]) => {
+            await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+            return { stdout, stderr, exitCode };
+          };
+
+          // How many builds gave each distinct bundle: one bundle, from every build.
+          expect(await run(["build-many.mjs"])).toEqual({ stdout: `[${builds}]\n`, stderr: "", exitCode: 0 });
+          expect(await run(["bundle.js"])).toEqual({ stdout, stderr: "", exitCode: 0 });
+
+          // `bun build` gives the same result.
+          const cli = await run(["build", "--no-install", "app.mjs", "--target=node", "--outdir=out"]);
+          expect({ stderr: cli.stderr, exitCode: cli.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+          expect(await run([join("out", "app.js")])).toEqual({ stdout, stderr: "", exitCode: 0 });
+        },
+        30_000,
+      );
+    }
+  });
 
   // An HTML import from a server build turns into a manifest module plus a
   // browser entry point that the linker finds again by path, so it stays keyed
@@ -244,29 +309,170 @@ describe("bundler", async () => {
     run: { stdout: '["string",true]' },
   });
 
-  // The two imports sit in one module, so they meet in one resolve queue, and
-  // the import with the attribute comes first. The second run entry runs the
-  // source file: `bun run` gives the same two values.
-  itBundled("bun/loader-same-file-under-two-import-attributes-in-one-module", {
+  // The two imports sit in one module, in either order. The second run entry
+  // runs the source file: `bun run` gives the same two values.
+  for (const [order, imports] of Object.entries({
+    "text-first": `import asText from "./data.json" with { type: "text" };\nimport asJson from "./data.json";`,
+    "json-first": `import asJson from "./data.json";\nimport asText from "./data.json" with { type: "text" };`,
+  })) {
+    itBundled(`bun/loader-same-file-under-two-import-attributes-in-one-module-${order}`, {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          ${imports}
+          console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+        `,
+        "/data.json": `{"a":1}`,
+      },
+      onAfterBundle(api) {
+        const out = api.readFile("/out.js");
+        expect(out).toContain("// data.json with { type: 'text' }\n");
+        expect(out).toContain("// data.json\n");
+      },
+      run: [
+        { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+        { file: "/entry.ts", stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
+      ],
+    });
+  }
+
+  // A re-export keeps its `with { type }`. The parser used to drop it, so the
+  // file took the loader of its extension unless a direct import with the type
+  // came first.
+  itBundled("bun/loader-type-attribute-on-re-export", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.ts": /* js */ `
+        import direct from "./direct.mustache" with { type: "text" };
+        import { viaBarrel, ns, onlyViaBarrel } from "./barrel.ts";
+        console.log(JSON.stringify([direct, viaBarrel, ns.default, onlyViaBarrel]));
+      `,
+      "/barrel.ts": /* js */ `
+        export { default as viaBarrel } from "./direct.mustache" with { type: "text" };
+        export * as ns from "./direct.mustache" with { type: "text" };
+        export { default as onlyViaBarrel } from "./barrel-only.mustache" with { type: "text" };
+      `,
+      "/direct.mustache": `Hello {{name}}`,
+      "/barrel-only.mustache": `Bye {{name}}`,
+    },
+    run: { stdout: '["Hello {{name}}","Hello {{name}}","Hello {{name}}","Bye {{name}}"]' },
+  });
+
+  // A typed sqlite re-export is external, like a typed sqlite import. The type
+  // used to be dropped, and the database became a file asset.
+  itBundled("bun/loader-sqlite-type-attribute-on-re-export", {
+    target: "bun",
+    outdir: "/out",
+    files: {
+      "/entry.ts": `export { default as db } from "./data.db" with { type: "sqlite" };`,
+      "/data.db": "not read at build time",
+    },
+    onAfterBundle(api) {
+      expect(api.readFile("/out/entry.js")).toContain(`from "./data.db" with { type: "sqlite" }`);
+      expect(readdirSync(api.outdir)).toEqual(["entry.js"]);
+    },
+  });
+
+  // A .json path is JSON by default, so `with { type: "jsonc" }` asks for another
+  // module of it. The first of the two loaders to arrive used to parse the file
+  // for both importers.
+  itBundled("bun/loader-json-next-to-jsonc", {
     target: "bun",
     files: {
       "/entry.ts": /* js */ `
-        import asText from "./data.json" with { type: "text" };
-        import asJson from "./data.json";
-        console.log(JSON.stringify({ text: asText.trim(), json: asJson }));
+        import strict from "./config.json";
+        import { lenient } from "./lenient";
+        console.log(JSON.stringify([strict, lenient, strict === lenient]));
       `,
-      "/data.json": `{"a":1}`,
+      "/lenient.ts": /* js */ `
+        import lenient from "./config.json" with { type: "jsonc" };
+        export { lenient };
+      `,
+      "/config.json": `{"a":1}`,
     },
-    onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain("// data.json with { type: 'text' }\n");
-      expect(out).toContain("// data.json\n");
-    },
-    run: [
-      { stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
-      { file: "/entry.ts", stdout: '{"text":"{\\"a\\":1}","json":{"a":1}}' },
-    ],
+    run: { stdout: '[{"a":1},{"a":1},false]' },
   });
+
+  // An onResolve plugin answers a typed import with a path. The import keeps its
+  // `with { type }` on that path, beside a direct import of the same file or
+  // alone, and the plain import of the file is the parsed object. Each module of
+  // the file is loaded once.
+  {
+    const loaded: string[] = [];
+    itBundled("bun/loader-type-attribute-on-a-path-a-plugin-returned", {
+      target: "bun",
+      files: {
+        "/entry.ts": /* js */ `
+          import viaPlugin from "virtual:data" with { type: "text" };
+          import direct from "./data.json" with { type: "text" };
+          import plain from "./data.json";
+          import aloneViaPlugin from "virtual:alone" with { type: "text" };
+          console.log(JSON.stringify([viaPlugin, direct, plain, aloneViaPlugin]));
+        `,
+        "/data.json": `{"j":1}`,
+        "/alone.json": `{"k":2}`,
+      },
+      plugins(builder) {
+        builder.onResolve({ filter: /^virtual:/ }, args => ({
+          path: join(args.importer, "..", args.path === "virtual:data" ? "data.json" : "alone.json"),
+        }));
+        builder.onLoad({ filter: /\.json$/ }, args => {
+          loaded.push(args.path.replaceAll("\\", "/").split("/").pop()!);
+          return undefined;
+        });
+      },
+      onAfterBundle() {
+        expect(loaded.sort()).toEqual(["alone.json", "data.json", "data.json"]);
+      },
+      run: { stdout: '["{\\"j\\":1}","{\\"j\\":1}",{"j":1},"{\\"k\\":2}"]' },
+    });
+  }
+
+  // An import that stays external is not a module of the build, whatever its
+  // path is. `external: ["<dir>/*"]` matches the specifier of b.mjs's import and
+  // not a.mjs's. The external import used to be bound to the bundled file when
+  // that file was in the graph first.
+  test.concurrent(
+    "bun/loader-external-import-by-the-path-of-a-bundled-file",
+    async () => {
+      using dir = tempDir("loader-external-absolute", {
+        "lib.mjs": `console.log("lib runs");\nexport default "lib";\n`,
+        "a.mjs": `import lib from "./lib.mjs";\nconsole.log("a", lib);\n`,
+        "app.mjs": `import "./a.mjs";\nimport "./b.mjs";\n`,
+      });
+      const cwd = String(dir);
+      const external = join(cwd, "lib.mjs").replaceAll("\\", "/");
+      await Bun.write(join(cwd, "b.mjs"), `import lib from ${JSON.stringify(external)};\nconsole.log("b", lib);\n`);
+      await Bun.write(
+        join(cwd, "build-many.mjs"),
+        `
+          const builds = await Promise.all(
+            Array.from({ length: ${isASAN || isDebug ? 12 : 30} }, async () => {
+              const build = await Bun.build({ entrypoints: ["./app.mjs"], target: "node", external: [${JSON.stringify(external.slice(0, -"lib.mjs".length) + "*")}], throw: false });
+              return build.success ? await build.outputs[0].text() : "the build failed: " + build.logs.join("\\n");
+            }),
+          );
+          const bundles = [...new Set(builds)];
+          await Bun.write("bundle.mjs", bundles[0]);
+          console.log(bundles.length);
+        `,
+      );
+      const run = async (cmd: string[]) => {
+        await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      };
+      expect(await run(["build-many.mjs"])).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+      // The external import loads the file itself: it runs a second time, first.
+      expect(await run(["bundle.mjs"])).toEqual({
+        stdout: "lib runs\nlib runs\na lib\nb lib\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
 
   // The text request used to be folded into the entry point's own JS module:
   // `No matching export in "entry.ts" for import "default"`.

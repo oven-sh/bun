@@ -1264,6 +1264,88 @@ describe("bundler", () => {
     run: { stdout: JSON.stringify({ a: "from a", b: "from b", sameA: "same", sameB: "same", icon: "icon" }) },
   });
 
+  // The executable keeps one file for each embedded path. It stores a text
+  // module as a string body and a file asset as the file's bytes, so a text
+  // import and a file import of the same bytes under one name need two paths.
+  // With one path the runtime parsed the asset as JavaScript:
+  // `SyntaxError: Unexpected token '<'`.
+  itBundled("compile/TextImportAndFileImportOfSameBytes", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import otherFilePath from "./a/page.tpl" with { type: "file" };
+        import otherFileText from "./b/page.tpl" with { type: "text" };
+        import sameFilePath from "./same.tpl" with { type: "file" };
+        import sameFileText from "./same.tpl" with { type: "text" };
+        console.log(JSON.stringify({
+          otherFileText,
+          otherFile: await Bun.file(otherFilePath).text(),
+          sameFileText,
+          sameFile: await Bun.file(sameFilePath).text(),
+          embeddedFiles: Bun.embeddedFiles.length,
+        }));
+      `,
+      "/a/page.tpl": "<p>caf\u00e9 \u2014 page</p>",
+      "/b/page.tpl": "<p>caf\u00e9 \u2014 page</p>",
+      "/same.tpl": "<p>caf\u00e9 \u2014 same</p>",
+    },
+    run: {
+      stdout: JSON.stringify({
+        otherFileText: "<p>caf\u00e9 \u2014 page</p>",
+        otherFile: "<p>caf\u00e9 \u2014 page</p>",
+        sameFileText: "<p>caf\u00e9 \u2014 same</p>",
+        sameFile: "<p>caf\u00e9 \u2014 same</p>",
+        embeddedFiles: 2,
+      }),
+    },
+  });
+
+  // An embedded database and a file asset of the same bytes share one embedded
+  // path. The runtime opens the database only when the loader of that file is
+  // sqlite, so that copy is the one the executable keeps. With the asset kept,
+  // the runtime parsed the database as JavaScript:
+  // `SyntaxError: Unexpected identifier 'format'`.
+  const sqliteFile = (message: string) => {
+    const db = new Database(":memory:");
+    db.exec("create table messages (message text)");
+    db.prepare("insert into messages values (?)").run(message);
+    return db.serialize();
+  };
+  const otherSqliteFile = sqliteFile("other");
+  itBundled("compile/EmbeddedSqliteAndFileImportOfSameBytes", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import { Database } from "bun:sqlite";
+        import otherFilePath from "./a/db.sqlite" with { type: "file" };
+        import otherFileDb from "./b/db.sqlite" with { type: "sqlite", embed: "true" };
+        import sameFilePath from "./same.sqlite" with { type: "file" };
+        import sameFileDb from "./same.sqlite" with { type: "sqlite", embed: "true" };
+        const message = db => db.query("select message from messages").get().message;
+        const fromFile = async path => message(Database.deserialize(await Bun.file(path).bytes()));
+        console.log(JSON.stringify({
+          otherFileDb: message(otherFileDb),
+          otherFile: await fromFile(otherFilePath),
+          sameFileDb: message(sameFileDb),
+          sameFile: await fromFile(sameFilePath),
+          embeddedFiles: Bun.embeddedFiles.length,
+        }));
+      `,
+      "/a/db.sqlite": otherSqliteFile,
+      "/b/db.sqlite": otherSqliteFile,
+      "/same.sqlite": sqliteFile("same"),
+    },
+    run: {
+      stdout: JSON.stringify({
+        otherFileDb: "other",
+        otherFile: "other",
+        sameFileDb: "same",
+        sameFile: "same",
+        embeddedFiles: 2,
+      }),
+    },
+  });
+
   // A browser chunk of a full-stack executable cannot reach the embedded
   // module graph, so its text imports stay inline string literals.
   itBundled("compile/TextImportClientChunkStaysInline", {

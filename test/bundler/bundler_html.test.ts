@@ -1,4 +1,7 @@
-import { describe, expect } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1101,6 +1104,33 @@ body {
       expect(js).toContain('"My App"');
       expect(js).not.toContain(manifestMatch![1]);
     },
+  });
+
+  // The same pair through `bun build`, with the link first, and the script is
+  // run: it used to print `string undefined`.
+  test("html/manifest-link-beside-json-import", async () => {
+    using dir = tempDir("html-manifest-link", {
+      "m.json": `{ "name": "made-up-manifest" }\n`,
+      "a.mjs": `import m from "./m.json";\nconsole.log(typeof m, m.name);\n`,
+      "page.html": `<!doctype html>\n<html><head><link rel="manifest" href="./m.json"><script type="module" src="./a.mjs"></script></head><body></body></html>\n`,
+    });
+    const cwd = String(dir);
+    const run = async (cmd: string[]) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    };
+
+    const build = await run(["build", "--no-install", "page.html", "--outdir=out"]);
+    expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const written = readdirSync(join(cwd, "out"));
+    const manifests = written.filter(name => name.endsWith(".json"));
+    expect(manifests).toHaveLength(1);
+    expect(readFileSync(join(cwd, "out", manifests[0]), "utf8")).toBe(`{ "name": "made-up-manifest" }\n`);
+
+    const script = written.find(name => name.endsWith(".js"))!;
+    expect(await run([join("out", script)])).toEqual({ stdout: "object made-up-manifest\n", stderr: "", exitCode: 0 });
   });
 
   // Test that other non-JS/CSS file types referenced via URL imports are copied as assets

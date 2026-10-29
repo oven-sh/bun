@@ -1702,13 +1702,14 @@ impl QuicEndpoint {
         let (session, _handle) = QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             endpoint_handle,
             null_mut(),
             true,
             self.application(true),
         )?;
         let applied = self.apply_server_session_options(global, session);
+        let session = core::ptr::from_ref(session).cast_mut();
         self.sessions.with_mut(|v| v.push(session));
         self.pending_new_sessions.with_mut(|v| v.push(session));
         self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
@@ -1844,7 +1845,7 @@ impl QuicEndpoint {
         match QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             endpoint_handle,
             conn,
             true,
@@ -1854,12 +1855,12 @@ impl QuicEndpoint {
                 if let Err(err) = self.apply_server_session_options(global, session) {
                     crate::dispatch::fold(Err(err));
                 }
-                self.sessions.with_mut(|v| v.push(session));
-                self.pending_new_sessions.with_mut(|v| v.push(session));
+                let session_ptr = core::ptr::from_ref(session).cast_mut();
+                self.sessions.with_mut(|v| v.push(session_ptr));
+                self.pending_new_sessions.with_mut(|v| v.push(session_ptr));
                 self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
-                // SAFETY: session was just created.
-                unsafe { (*session).note_handshake_ok(handshaken) };
-                session
+                session.note_handshake_ok(handshaken);
+                session_ptr
             }
             Err(e) => {
                 // Abort like the sibling null-return branches, or the conn
@@ -2107,7 +2108,7 @@ impl QuicEndpoint {
     fn apply_server_session_options(
         &self,
         global: &JSGlobalObject,
-        session: *mut QuicSession,
+        session: &QuicSession,
     ) -> JsResult<()> {
         if let Some(options) = self
             .server_session_options
@@ -2115,8 +2116,7 @@ impl QuicEndpoint {
             .as_ref()
             .map(bun_jsc::Strong::get)
         {
-            // SAFETY: `session` was just created and is live.
-            unsafe { (*session).apply_options(global, options) }?;
+            session.apply_options(global, options)?;
         }
         Ok(())
     }
@@ -2340,12 +2340,13 @@ impl QuicEndpoint {
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             this_value.to_js(),
             null_mut(),
             false,
             self.application(false),
         )?;
+        let session_ptr = core::ptr::from_ref(session).cast_mut();
         // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
         let sni = config.servername.as_ref();
         let local = self.local_addr.get();
@@ -2373,7 +2374,7 @@ impl QuicEndpoint {
                 local.as_ptr().cast(),
                 remote.as_ptr().cast(),
                 core::ptr::from_ref(self).cast_mut().cast(),
-                session.cast(),
+                session_ptr.cast(),
                 sni.map_or(null(), |s| s.as_ptr().cast()),
                 0,
                 resume_ptr,
@@ -2387,24 +2388,20 @@ impl QuicEndpoint {
         };
         self.send_scope_depth.set(self.send_scope_depth.get() - 1);
         if conn.is_null() {
-            // SAFETY: `session` was just created and nothing else owns it.
-            unsafe { (*session).teardown(global) };
+            session.teardown(global);
             return Ok(JSValue::UNDEFINED);
         }
-        // SAFETY: `conn` is live; out-params are stack slots.
-        unsafe {
-            lsquic::lsquic_conn_set_ctx(conn, session.cast());
-            (*session).conn.set(conn);
-            (*session).cache_sockaddrs(conn);
-            // `conn` is set above, so teardown clears the conn's ctx and the
-            // late callbacks no-op instead of reaching an unrooted session.
-            if let Err(e) = (*session).apply_options(global, options) {
-                (*session).teardown(global);
-                return Err(e);
-            }
-            if resume_len != 0 {
-                (*session).apply_peer_datagram_budget();
-            }
+        // SAFETY: `conn` is live.
+        unsafe { lsquic::lsquic_conn_set_ctx(conn, session_ptr.cast()) };
+        session.conn.set(conn);
+        session.cache_sockaddrs(conn);
+        // `conn` is set above, so teardown clears its ctx and no late callback reaches the session.
+        if let Err(e) = session.apply_options(global, options) {
+            session.teardown(global);
+            return Err(e);
+        }
+        if resume_len != 0 {
+            session.apply_peer_datagram_budget();
         }
         // keepAlive is per-session in Node.
         // SAFETY: `conn` is live (checked above).
@@ -2414,7 +2411,7 @@ impl QuicEndpoint {
                 c.use_preferred_address(true);
             }
         }
-        self.sessions.with_mut(|v| v.push(session));
+        self.sessions.with_mut(|v| v.push(session_ptr));
         self.add_stat(IDX_STATS_CLIENT_SESSIONS, 1);
         self.schedule_process();
         Ok(handle)
@@ -2431,7 +2428,7 @@ impl QuicEndpoint {
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,
-            core::ptr::from_ref(self).cast_mut(),
+            self,
             this_value,
             null_mut(),
             false,
@@ -2454,12 +2451,9 @@ impl QuicEndpoint {
         probe[off] = VERNEG_PROBE_CID_LEN as u8;
         off += 1;
         probe[off..off + VERNEG_PROBE_CID_LEN].copy_from_slice(&scid);
-        // SAFETY: `session` was just created and is kept alive by its JS
-        // wrapper (`handle`).
-        unsafe {
-            (*session).verneg.set(Some((version, min_version)));
-            (*session).remote_addr.set(remote);
-        }
+        session.verneg.set(Some((version, min_version)));
+        session.remote_addr.set(remote);
+        let session = core::ptr::from_ref(session).cast_mut();
         self.pending_verneg
             .with_mut(|v| v.push((session, scid, now_ns())));
         // A probe has no engine, so nothing else would ever arm the timer that

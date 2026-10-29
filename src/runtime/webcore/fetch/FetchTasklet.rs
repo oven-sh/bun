@@ -33,7 +33,6 @@ use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink;
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
-use crate::webcore::response::HeadersRef;
 use crate::webcore::sink::ReadableSinkController;
 use crate::webcore::streams::EncodedChunk;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
@@ -1643,12 +1642,7 @@ impl FetchTasklet {
             b"statusText".as_slice(),
             bun_string_jsc::create_utf8_for_js(global_this, response.status)?,
         );
-        // SAFETY: `create_from_pico_headers` returns a fresh refcount=1 FetchHeaders*.
-        let mut headers = unsafe {
-            HeadersRef::adopt(FetchHeaders::create_from_pico_headers(
-                response.headers.list,
-            ))
-        };
+        let mut headers = FetchHeaders::create_from_pico_headers(response.headers.list);
         error.put(
             global_this,
             b"headers".as_slice(),
@@ -1877,8 +1871,7 @@ impl FetchTasklet {
         };
         Response::init(
             crate::webcore::response::Init {
-                // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.
-                headers: Some(unsafe { HeadersRef::adopt(headers) }),
+                headers: Some(headers),
                 status_code,
                 status_text,
                 ..Default::default()

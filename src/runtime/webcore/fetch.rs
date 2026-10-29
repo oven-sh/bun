@@ -1096,7 +1096,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             break 'brk Some(headers__.as_ptr());
                         }
 
-                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
+                        if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)? {
                             break 'brk Some(created_headers.insert(headers__).as_ptr());
                         }
 
@@ -1125,7 +1125,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             break 'brk Some(headers__.as_ptr());
                         }
 
-                        if let Some(headers__) = HeadersRef::create_from_js(ctx, headers_value)? {
+                        if let Some(headers__) = FetchHeaders::create_from_js(ctx, headers_value)? {
                             break 'brk Some(created_headers.insert(headers__).as_ptr());
                         }
 

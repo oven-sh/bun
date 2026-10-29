@@ -5,9 +5,9 @@ use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
 use crate::Error;
-use bun_io as io;
 #[cfg(not(windows))]
-use bun_io::IntrusiveIoRequest as _;
+use bun_core::IntrusiveField as _;
+use bun_io as io;
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, SystemError};
 use bun_sys::{self as sys, Fd};
@@ -110,7 +110,7 @@ pub(crate) struct WriteFile {
 }
 
 bun_threading::intrusive_work_task!(WriteFile, task);
-bun_io::intrusive_io_request!(WriteFile, io_request);
+bun_core::intrusive_field!(WriteFile, io_request: io::Request);
 
 // ──────────────────────────────────────────────────────────────────────────
 // FileOpener / FileCloser
@@ -230,7 +230,7 @@ impl WriteFile {
         bun_output::scoped_log!(WriteFile, "WriteFile.onRequestWritable()");
         request.scheduled = false;
         // SAFETY: `request` points to WriteFile.io_request (intrusive); recover parent.
-        let this = unsafe { WriteFile::from_io_request(std::ptr::from_mut(request)) };
+        let this = unsafe { WriteFile::from_field_ptr(std::ptr::from_mut(request)) };
         // SAFETY: `this` is the live parent (see above); io thread owns it while parked.
         if !unsafe { (*this).io_parking.arm() } {
             // SAFETY: as above.
@@ -555,7 +555,8 @@ mod windows_impl {
     use super::*;
     use core::ptr::null_mut;
 
-    use bun_io::{self as aio, IntrusiveUvFs as _, KeepAlive};
+    use bun_core::IntrusiveField as _;
+    use bun_io::{self as aio, KeepAlive};
     // `bun_jsc::EventLoop` is a *module* (namespace re-export); the struct
     // lives one level deeper.
     use bun_jsc::{ConcurrentTask, event_loop::EventLoop};
@@ -583,7 +584,7 @@ mod windows_impl {
         pub(crate) owned_fd: bool,
     }
 
-    bun_io::intrusive_uv_fs!(WriteFileWindows, io_request);
+    bun_core::intrusive_field!(WriteFileWindows, io_request: uv::fs_t);
 
     #[derive(thiserror::Error, Debug)]
     pub(crate) enum WriteFileWindowsError {
@@ -811,7 +812,7 @@ mod windows_impl {
             // pointer (NOT `&mut`) because the paths below may free `*this`
             // (`throw`/`do_write_loop` → `deinit`), and a `&mut` argument/local
             // would be invalidated by that deallocation (Stacked Borrows).
-            let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_uv_fs(req) };
+            let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_field_ptr(req) };
             debug_assert!(core::ptr::eq(
                 this,
                 // SAFETY: req == &(*this).io_request; data was set to `this` in create/open.
@@ -979,7 +980,7 @@ mod windows_impl {
             // pointer (NOT `&mut`) because the paths below may free `*this`
             // (`throw`/`do_write_loop` → `deinit`), and a `&mut` would be
             // invalidated by that deallocation (Stacked Borrows).
-            let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_uv_fs(req) };
+            let this: *mut WriteFileWindows = unsafe { WriteFileWindows::from_field_ptr(req) };
             debug_assert!(core::ptr::eq(
                 this,
                 // SAFETY: req == &(*this).io_request; data was set to `this` in do_write_loop.

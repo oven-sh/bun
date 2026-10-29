@@ -6587,7 +6587,7 @@ pub(crate) trait FileCloser: Sized {
 /// (`opened_fd`, `close_after_io`, `state`, `io_request`, `io_poll`, `task`),
 /// an inherent `update()`, and a [`bun_io::Tag`] variant named after the type.
 /// The type must also carry `bun_threading::intrusive_work_task!` and
-/// `bun_io::intrusive_io_request!`, which provide the parent-pointer recovery
+/// `bun_core::intrusive_field!` for `io_request`, which provide the parent-pointer recovery
 /// used by the two trampolines.
 macro_rules! impl_file_closer {
     ($T:ident) => {
@@ -6620,9 +6620,9 @@ macro_rules! impl_file_closer {
             }
 
             fn schedule_close(request: &mut ::bun_io::Request) -> ::bun_io::Action<'_> {
-                use ::bun_io::IntrusiveIoRequest as _;
+                use ::bun_core::IntrusiveField as _;
                 // SAFETY: `request` is `&mut self.io_request` (intrusive); recover parent.
-                let this = unsafe { $T::from_io_request(::core::ptr::from_mut(request)) };
+                let this = unsafe { $T::from_field_ptr(::core::ptr::from_mut(request)) };
                 fn on_done(ctx: *mut ()) {
                     // SAFETY: ctx is `self as *mut Self` set below.
                     let this = unsafe { ::bun_ptr::callback_ctx::<$T>(ctx.cast()) };

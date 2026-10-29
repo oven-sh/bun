@@ -22,8 +22,7 @@ pub(crate) struct HuffDecoder {
 }
 
 impl HuffDecoder {
-    /// Motion JPEG frames usually leave out the tables of the standard, so they stand in for whatever is undefined when
-    /// decoding begins.
+    /// Motion JPEG frames usually leave out the tables of the standard, so they stand in for what is undefined by now.
     pub(crate) fn new(decoder: &mut Decoder) -> Result<Self> {
         let [dc0, dc1, ..] = &mut decoder.dc_huff;
         let [ac0, ac1, ..] = &mut decoder.ac_huff;
@@ -60,14 +59,7 @@ impl HuffDecoder {
         Ok(())
     }
 
-    /// Decodes one MCU into blocks that the caller has zeroed.
-    ///
-    /// libjpeg-turbo has two ways to do it. The fast one does not know what to do about a marker: it takes any FF that
-    /// is not followed by 00 for one, goes on with zeros, and at the end of the MCU throws its state away so that the
-    /// slow one starts the MCU over. The coefficients it stored stay, though, and the slow one only stores nonzero
-    /// ones. They read the same bits unless the FF was padding before a stuffed FF 00, which the slow one takes for
-    /// data. Then the MCU ends up with coefficients from both, so both are here, with how far ahead they read, which
-    /// decides when the fast one gets to see an FF and when it is used at all.
+    /// Decodes one MCU into zeroed blocks. As in libjpeg-turbo, the slow way starts over where the fast one gives up.
     #[inline]
     pub(crate) fn decode_mcu(&mut self, input: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
         let use_fast = self.start_mcu(input);
@@ -82,8 +74,7 @@ impl HuffDecoder {
         Ok(())
     }
 
-    /// Takes care of a restart marker that is due. Returns whether the fast way is safe: it does not look for the end of
-    /// the data.
+    /// Takes care of a restart marker that is due. Returns whether the fast way is safe, which never looks for the end.
     #[inline]
     fn start_mcu(&mut self, input: &mut Input) -> bool {
         /// The most that a block can take up, generously.
@@ -159,6 +150,7 @@ impl HuffDecoder {
         Ok(last_dc_val)
     }
 
+    /// Only stores what is not zero, and takes FF FF 00 for data: there what the fast way stored shows in the pixels.
     fn decode_mcu_slow(&mut self, input: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
         let mut bits = SlowBits {
             bits: self.bits,

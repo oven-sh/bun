@@ -1,5 +1,4 @@
-//! The whole of decoding after the header: choosing the parts (jdmaster.c), running the scans (jdapistd.c, jdinput.c),
-//! and taking the samples through upsampling and color conversion row by row (jdmainct.c, jdsample.c).
+//! All of decoding after the header (jdmaster.c, jdapistd.c, jdinput.c, jdmainct.c, jdsample.c).
 
 use super::arith::ArithDecoder;
 use super::coef::{CoefController, Entropy, Plane};
@@ -35,7 +34,7 @@ struct Upsampler {
     buffer: Option<Plane>,
 }
 
-/// Whether an iMCU row is the first of the image, and whether it is the last.
+/// Whether an iMCU row is the first of the image, and whether it is the last. Beyond those the outermost row repeats.
 struct Edges {
     top: bool,
     bottom: bool,
@@ -57,8 +56,7 @@ impl Decoder<'_> {
         )
     }
 
-    /// Decodes the image into 4 bytes per pixel: RGB and an alpha of 255, or for `ColorSpace::Cmyk` and
-    /// `ColorSpace::Ycck`, CMYK as the stream has it, which in Adobe's files means 255 is no ink.
+    /// 4 bytes per pixel: R, G, B, 255 or, for `Cmyk` and `Ycck`, CMYK as the stream has it: for Adobe, 255 is no ink.
     pub fn decode(mut self, options: &DecodeOptions) -> Result<Vec<u8>> {
         let &DecodeOptions { eighths, max_scans } = options;
         if !(1..=DCTSIZE).contains(&eighths) || (eighths != DCTSIZE && !self.scalable()) {
@@ -196,8 +194,7 @@ impl Decoder<'_> {
         Ok(pixels.into_flattened())
     }
 
-    /// A subsampled component is brought closer to full size by a larger inverse DCT where that works out, which saves
-    /// upsampling.
+    /// Where it works out, a larger inverse DCT brings a subsampled component closer to full size and saves upsampling.
     fn scale_components(&mut self, min_dct_scaled_size: u32) {
         for comp in &mut self.components {
             let mut ssize = min_dct_scaled_size;
@@ -293,7 +290,7 @@ impl Decoder<'_> {
         self.input.insufficient_data = false;
         if !self.progressive {
             for i in 0..self.components_in_scan {
-                // libjpeg decodes the component again: a pass over the image for a handful of bytes, up to `max_scans` times.
+                // libjpeg decodes the component again: a pass over the image for a few bytes, up to `max_scans` times.
                 if core::mem::replace(&mut self.scan_component_mut(i)?.scanned, true) {
                     return Err(Error::RedundantScan);
                 }
@@ -323,8 +320,7 @@ struct Emitter<'p> {
 }
 
 impl Emitter<'_> {
-    /// Writes the rows of the image that the iMCU row in `current` makes. `below` is the iMCU row after it, if the
-    /// upsampling looks at it. Above the top and below the bottom of the image the outermost row repeats.
+    /// Writes the rows of the image that the iMCU row in `current` makes. `below` is the next, if upsampling needs it.
     fn emit(
         &mut self,
         upsamplers: &mut [Upsampler],

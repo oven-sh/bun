@@ -101,6 +101,7 @@ pub(crate) struct McuBlock {
     ac_needed: bool,
 }
 
+/// Decodes 8-bit sequential and progressive streams, Huffman or arithmetic, and lossless Huffman ones of up to 8 bits.
 pub struct Decoder<'a> {
     input: Input<'a>,
     saw_soi: bool,
@@ -222,12 +223,12 @@ impl<'a> Decoder<'a> {
         self.color_space
     }
 
-    /// Whether `decode` takes fewer than 8 eighths: the streams for which TurboJPEG takes a cropping region.
+    /// Whether `decode` scales. Not what `tj3SetCroppingRegion` refuses: with TurboJPEG, Bun decoded that at full size.
     pub fn scalable(&self) -> bool {
         !self.lossless && self.precision == 8 && self.subsampling_known()
     }
 
-    /// Whether the sampling factors are one of 4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1 and 4:4:1, or the image is gray.
+    /// Whether TurboJPEG 3.1 has a name for the sampling factors: 4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1, 4:4:1 or gray.
     fn subsampling_known(&self) -> bool {
         let Some((first, others)) = self.components.split_first() else {
             return false;
@@ -394,8 +395,7 @@ impl<'a> Decoder<'a> {
         })
     }
 
-    /// A later scan may come after the slot of a quantization table was redefined, so each component keeps the table
-    /// its first scan began with.
+    /// A slot may be redefined before a later scan, so each component keeps the table that its first scan began with.
     pub(crate) fn latch_quant_tables(&mut self) -> Result<()> {
         for i in 0..self.components_in_scan {
             let ci = self.scan_component_index(i)?;

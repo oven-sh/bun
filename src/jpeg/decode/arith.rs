@@ -9,9 +9,7 @@ use super::{
 use crate::alloc::try_box;
 use crate::error::{Error, Result};
 
-/// Table D.2 of the standard. For each state of the probability estimation: Qe in the high 16 bits, then the next state
-/// after the more probable symbol, then the next state after the less probable one, with the bit on top of it that says
-/// whether the two symbols trade places. State 113 is a fixed probability of one half.
+/// Table D.2 of the standard: Qe (16 bits), state after an MPS (8), whether the MPS flips (1), state after an LPS (7).
 #[rustfmt::skip]
 const ARITAB: [u32; 114] = [
     0x5a1d0181, 0x2586020e, 0x11140310, 0x080b0412, 0x03d80514, 0x01da0617,

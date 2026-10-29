@@ -1,5 +1,4 @@
-//! Between the entropy decoder and the inverse DCT (jdcoefct.c): one MCU at a time if the stream has a single scan, the
-//! coefficients of the whole image otherwise.
+//! Between the entropy decoder and the inverse DCT (jdcoefct.c): an MCU at a time or, with several scans, the image.
 
 use super::arith::ArithDecoder;
 use super::huff::HuffDecoder;
@@ -47,8 +46,7 @@ impl Entropy {
         }
     }
 
-    /// For each component, how precisely each coefficient is known so far, and how precisely it was before the current
-    /// scan. Only progressive streams keep track.
+    /// Only progressive streams keep track.
     fn coef_bits(&self) -> Option<&CoefBits> {
         match self {
             Entropy::Huff(_) => None,
@@ -58,11 +56,12 @@ impl Entropy {
     }
 }
 
-/// `current[ci][k]` is the number of low bits of coefficient `k` (in zigzag order) of component `ci` that are still
-/// missing, or -1 if nothing of it has been seen. `previous` is the same as of the scan before.
+/// How precisely each coefficient is known, by component and place in zigzag order.
 #[derive(Default)]
 pub(crate) struct CoefBits {
+    /// The number of low bits that are still missing, or -1 if nothing has been seen.
     pub(crate) current: Vec<[i32; 64]>,
+    /// `current` as of the scan before.
     pub(crate) previous: Vec<[i32; 64]>,
 }
 
@@ -326,8 +325,7 @@ impl CoefController {
         Ok(())
     }
 
-    /// Smoothing estimates the low AC coefficients that a progressive stream has not delivered in full, which only
-    /// happens if it breaks off early.
+    /// Smoothing estimates low AC coefficients that a progressive stream which breaks off has not delivered in full.
     pub(crate) fn start_output_pass(&mut self, decoder: &Decoder) -> Result<()> {
         // A component that no scan has mentioned has no table, and comes out gray.
         let tables = decoder
@@ -353,7 +351,7 @@ impl CoefController {
             .zip(&coef_bits.previous)
             .zip(&mut latches)
         {
-            // These divide.
+            // Smoothing divides by these. They are `u16`s, so this is not a byte search for `bun_highway`.
             if low_frequencies(&comp.quant_table?).contains(&0u16) {
                 return None;
             }

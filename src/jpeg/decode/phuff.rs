@@ -33,6 +33,7 @@ pub(crate) struct PHuffDecoder {
     se: usize,
     al: u32,
     blocks_in_mcu: usize,
+    /// An AC scan has one component and one block in an MCU.
     blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
 }
 
@@ -67,7 +68,7 @@ pub(crate) fn start_progressive_scan(decoder: &Decoder, coef_bits: &mut CoefBits
             previous.fill(0);
         }
         let band = current.get_mut(first..=last).ok_or(Error::Internal)?;
-        // A coefficient has one first scan, and every later one adds a bit. libjpeg takes any scan, as in `start_input_pass`.
+        // A coefficient has one first scan, and each later one adds a bit. libjpeg takes any: see `start_input_pass`.
         let al = i32::from(al);
         let coded = |&bits: &i32| bits >= 0 && (ah == 0 || al >= bits);
         if band.iter().any(coded) {
@@ -156,6 +157,7 @@ impl PHuffDecoder {
                 bits.ensure(input, s);
                 diff = huff_extend(bits.get(s), s);
             }
+            // jdhuff.c lets this sum wrap.
             *last_dc = last_dc.checked_add(diff).ok_or(Error::BadDctCoef)?;
             let [dc, ..] = mcu.block(index).ok_or(Error::Internal)?;
             *dc = last_dc.wrapping_shl(self.al) as i16;
@@ -172,7 +174,6 @@ impl PHuffDecoder {
             self.eobrun -= 1;
             return Ok(());
         }
-        // An AC scan has one component and one block in an MCU.
         let [info, ..] = self.blocks;
         let table = self.tables.get(info.ac_selector)?;
         let block = mcu.block(0).ok_or(Error::Internal)?;
@@ -225,7 +226,6 @@ impl PHuffDecoder {
         if input.insufficient_data {
             return Ok(());
         }
-        // An AC scan has one component and one block in an MCU.
         let [info, ..] = self.blocks;
         let table = self.tables.get(info.ac_selector)?;
         let block = mcu.block(0).ok_or(Error::Internal)?;

@@ -148,6 +148,7 @@ impl DiffController {
                     let s = u32::from(bits.decode(input, table));
                     *diff = match s {
                         0 => 0,
+                        // No bits follow.
                         16 => 32768,
                         _ => {
                             bits.ensure(input, s);
@@ -170,6 +171,7 @@ impl DiffController {
         for yoffset in 0..decoder.mcu_rows_in_imcu_row(self.input_imcu_row)? {
             if self.restarts.due(&mut decoder.input) {
                 self.bits.reset();
+                // As in jddiffct.c, not the standard: of several rows of MCUs in an iMCU row the top one starts over.
                 self.first_row.fill(true);
             }
             self.decode_mcus(decoder, yoffset as usize)?;

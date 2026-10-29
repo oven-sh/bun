@@ -1,11 +1,4 @@
-//! Dequantization and the inverse DCT, at every output size from 1x1 to 14x14 that scaling needs (jddctmgr.c,
-//! jidctint.c, jidctred.c).
-//!
-//! All sizes give what libjpeg-turbo gives on x86-64, bit for bit, whatever the coefficients. For coefficients that an
-//! encoder can produce there is only one answer. For others it depends on where the arithmetic wraps or saturates:
-//! - 8x8, 4x4 and 2x2 are SSE2 or AVX2 assembly there, which works on 16-bit lanes. `idct8x8`, `idct4x4` and `idct2x2`
-//!   do what those instructions do, lane by lane, in a form that compilers turn back into vector code.
-//! - The other sizes are C with a 64-bit `long`.
+//! Dequantization and the inverse DCT at every size that scaling needs (jddctmgr.c, jidctint.c, jidctred.c).
 
 use super::Block;
 use crate::lanes::{column, descale, from_columns, madd, map, transpose};
@@ -23,7 +16,7 @@ fn rows<T>(block: &[T; 64]) -> &[[T; 8]] {
     block.as_chunks::<8>().0
 }
 
-// ---- The sizes that are assembly in libjpeg-turbo. See `lanes`.
+// ---- 8x8, 4x4, 2x2: assembly in libjpeg-turbo. What no encoder makes wraps and saturates as in its 16-bit lanes.
 
 /// packsswb and paddb with 128.
 #[inline(always)]
@@ -210,6 +203,7 @@ fn idct4x4_pass2(rows: &[[i16; 4]; 8]) -> [[u8; 4]; 4] {
 
 pub(crate) fn idct4x4(coefs: &Block, table: &DctTable) -> [[u8; 4]; 4] {
     if all_zero(coefs, rows_mask(0b1110_1110)) {
+        // The assembly's shortcut, as in `idct8x8`.
         let row = [0, 1, 2, 3, 5, 6, 7].map(|lane| {
             let [dc, ..] = dequantize(coefs, table, lane);
             dc.wrapping_shl(PASS1_BITS)
@@ -247,10 +241,9 @@ pub(crate) fn idct2x2(coefs: &Block, table: &DctTable) -> [[u8; 2]; 2] {
     })
 }
 
-// ---- The sizes that are C in libjpeg-turbo.
+// ---- The other sizes: C in libjpeg-turbo. What no encoder makes wraps as in its `long` of 64 bits.
 
-/// `sample_range_limit[CENTERJSAMPLE + (x & RANGE_MASK)]`: `x + 128` clamped to a byte, for the `x` from -512 to 511 that
-/// has the same low 10 bits.
+/// `sample_range_limit[CENTERJSAMPLE + (x & RANGE_MASK)]`: the low 10 bits of `x`, taken as signed, plus 128, clamped.
 #[inline(always)]
 fn range_limit(x: i32) -> u8 {
     let x = ((x & 1023) ^ 512) - 512;
@@ -323,8 +316,7 @@ macro_rules! int {
 int!(W32, i32);
 int!(W64, i64);
 
-/// One pass over one row or column: `f` is the transform before its final shift. The first input comes with the scale
-/// and the rounding of the result already in it.
+/// One row or column. `f` is the transform before its final shift. Its first input comes scaled and with the rounding.
 #[inline(always)]
 fn pass<T: Int, const K: usize, const N: usize>(
     input: &[i32; K],
@@ -338,9 +330,7 @@ fn pass<T: Int, const K: usize, const N: usize>(
     map(f(x), |v| v.shr(shift))
 }
 
-/// The sums of the first pass fit in 32 bits if its inputs are smaller than this. A sum is linear in the inputs, and the
-/// magnitudes of its factors add up to less than `10 << CONST_BITS` in every transform below (9.7 in `idct14`). What
-/// wraps on the way to a sum that fits does no harm.
+/// Inputs below this keep the first pass's sums in 32 bits: the factors of a sum add up to under `10 << CONST_BITS`.
 const MAX_INPUT_FOR_32_BITS: i32 = 1 << 14;
 
 #[inline(never)]
@@ -374,12 +364,12 @@ fn scaled<const K: usize, const N: usize, const LANES: usize>(
     for ((input, coefs), table) in input.iter_mut().zip(rows(coefs)).zip(rows(table)) {
         for ((input, &coef), &q) in input.iter_mut().zip(coefs).zip(table) {
             *input = i32::from(coef) * i32::from(q);
+            // Good enough for a maximum: the bound is a power of two.
             largest |= input.unsigned_abs();
         }
     }
 
-    // The second pass keeps bits 18 to 27 of its sums, which 32-bit arithmetic gets right whatever is above them. They
-    // depend on more bits of the first pass's sums than 32-bit arithmetic has, unless those sums fit.
+    // 32 bits do for the second pass, which keeps bits 18 to 27 of its sums, but for the first only if its sums fit.
     let workspace = if largest < MAX_INPUT_FOR_32_BITS as u32 {
         scaled_pass1(&input, &narrow)
     } else {
@@ -404,7 +394,7 @@ scaled_idct!(idct10x10, idct10, 10, 12);
 scaled_idct!(idct12x12, idct12, 12, 12);
 scaled_idct!(idct14x14, idct14, 14, 16);
 
-// The transforms below are jidctint.c's, statement by statement.
+// The transforms below are the second passes of jidctint.c, statement by statement. Its first passes come to the same.
 
 #[inline(always)]
 fn idct3<T: Int>([dc, x1, x2]: [T; 3]) -> [T; 3] {

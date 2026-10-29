@@ -4,8 +4,7 @@ use crate::markers::{M_EOI, M_RST0, M_RST7, M_SOF0};
 
 pub(crate) struct Input<'a> {
     data: &'a [u8],
-    /// May be past the end of `data`: the stream goes on with EOI markers forever, so that a truncated file decodes as
-    /// far as it goes.
+    /// May be past the end of `data`, where EOI markers follow forever: a truncated file decodes as far as it goes.
     pos: usize,
     /// A marker code that has been read and not handled, or 0. No entropy decoder reads past it.
     pub(crate) unread_marker: u8,
@@ -78,8 +77,7 @@ impl<'a> Input<'a> {
         self.unread_marker = c;
     }
 
-    /// Called by an entropy decoder where it expects a restart marker. If `unread_marker` is still set afterwards, the
-    /// decoder cannot read past it and the next segment is empty.
+    /// Called where a restart marker is due.
     pub(crate) fn read_restart_marker(&mut self) {
         if self.unread_marker == 0 {
             self.next_marker();

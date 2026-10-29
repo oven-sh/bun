@@ -22,11 +22,7 @@ impl Method {
     }
 }
 
-/// The output samples are 1/4 and 3/4 of the way between the centers of the input samples, so each is 3/4 of the nearer
-/// and 1/4 of the further one. A half is rounded down for the left one and up for the right one. Past either end the
-/// edge sample repeats, which leaves the outermost samples as they are.
-///
-/// The result is `(3 * near + far + bias) >> shift`.
+/// `(3 * near + far + bias) >> shift` toward the neighbor on either side. Past either end the edge sample repeats.
 fn fancy(
     input: impl DoubleEndedIterator<Item = u16> + Clone,
     output: &mut [[u8; 2]],

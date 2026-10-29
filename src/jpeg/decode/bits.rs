@@ -1,9 +1,4 @@
 //! Bits and Huffman codes out of an entropy-coded segment (jdhuff.h and the shared part of jdhuff.c).
-//!
-//! To every decoder here a segment is its bits up to the marker that ends it, and then zeros without end. The first zero
-//! that is used sets `Input::insufficient_data`. How far ahead of the decoder the bytes are read cannot be seen from
-//! outside, because reading never goes past a marker and whatever is between the last used bit and the marker is
-//! dropped.
 
 use super::NUM_HUFF_TABLES;
 use super::input::Input;
@@ -25,8 +20,7 @@ pub(crate) struct DerivedTable {
     /// `huffval[code + valoffset[k]]` is the symbol of a code of length `k`.
     valoffset: [i32; 17],
     huffval: [u8; 256],
-    /// By the next 8 bits: the length of the code they begin with in the high byte and its symbol in the low byte. The
-    /// length is 9 if the code is longer than 8 bits.
+    /// By the next 8 bits: `length << 8 | symbol` of the code that they begin with. A longer code has the length 9.
     lookup: [u16; 1 << LOOKAHEAD],
     /// For each length from 9 to 16: the least 16 bits that begin with no code of up to that length.
     long_limits: [u16; 8],
@@ -201,14 +195,14 @@ impl<T> Tables<T> {
     }
 }
 
-/// `x` is `s` bits read after a symbol `s`: the upper half of their range stands for itself, the lower half for the
-/// negative numbers.
+/// The value of the `s` bits `x` after a symbol `s`: the upper half of their range is itself, the lower is negative.
 #[inline(always)]
 pub(crate) fn huff_extend(x: i32, s: u32) -> i32 {
     let range = 1 << s;
     x + (((x - (range >> 1)) >> 31) & (1 - range))
 }
 
+/// A segment's bits up to its marker, then zeros. It never reads past the marker, so reading ahead does not show.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct BitReader {
     /// The low `bits_left` bits have not been used yet.
@@ -221,10 +215,7 @@ impl BitReader {
         *self = Self::default();
     }
 
-    /// Reads bytes until the buffer is full or a marker comes. Afterwards there are at least `nbits` bits, made up if
-    /// need be.
-    ///
-    /// By value, here and in `decode_slow`, so that a reader that is a local variable can stay in registers.
+    /// Fills up to a marker, then makes up zeros to have `nbits`. By value, as `decode_slow`, to stay in registers.
     #[inline(never)]
     fn filled(mut self, input: &mut Input, nbits: u32) -> Self {
         if input.unread_marker == 0 {
@@ -351,8 +342,7 @@ impl Bits for SlowBits<'_, '_> {
     }
 }
 
-/// libjpeg-turbo's faster way to read bits, for where the data cannot run out. It stops at nothing: once it has seen an
-/// FF that is not followed by 00 it supplies zeros.
+/// libjpeg-turbo's faster way to read bits, where the data cannot run out. After an FF without a 00 it supplies zeros.
 pub(crate) struct FastBitReader<'a> {
     bits: BitReader,
     data: &'a [u8],
@@ -385,6 +375,7 @@ impl<'a> FastBitReader<'a> {
         }
     }
 
+    /// As far ahead as libjpeg-turbo reads, which decides when it gets to see an FF.
     #[inline(always)]
     fn fill_6_bytes(&mut self) {
         if let Some(&chunk) = self
@@ -417,8 +408,7 @@ impl Bits for FastBitReader<'_> {
         self.bits.get(n)
     }
 
-    /// libjpeg-turbo looks whether to fill once more, between the code and the value. The next look makes up for that,
-    /// and `catch_up` does where there may be none.
+    /// libjpeg-turbo looks whether to fill once more, before the value. The next look or `catch_up` makes up for that.
     #[inline(always)]
     fn short_coefficient(&mut self, table: &AcTable) -> Option<ShortCoefficient> {
         self.fill();

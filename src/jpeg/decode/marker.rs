@@ -137,7 +137,7 @@ impl Decoder<'_> {
             let id = self.input.byte();
             let selectors = self.input.byte();
 
-            // As in libjpeg, slot `ci` of the scan is what excuses component `ci`, whichever component that slot holds.
+            // As in libjpeg, component `ci` is passed over if slot `ci` of the scan is taken, by whichever component.
             let found = self
                 .components
                 .iter()

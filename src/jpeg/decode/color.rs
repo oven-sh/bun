@@ -22,8 +22,7 @@ fn ycc_to_rgb(y: u8, cb: u8, cr: u8) -> [u8; 3] {
     [r, g, b].map(|v| v.clamp(0, 255) as u8)
 }
 
-/// Converts one row of `width` pixels and appends it to `output`, which has room for it. `planes` has a row of each
-/// component.
+/// Appends a row of `width` pixels to `output`, which has room for it. `planes` has a row of each component.
 pub(crate) fn convert(
     conversion: Conversion,
     planes: [&[u8]; 4],

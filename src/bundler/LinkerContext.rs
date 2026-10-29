@@ -2581,13 +2581,7 @@ impl<'a> LinkerContext<'a> {
     /// (its output embeds that chunk's path or id) has the widths folded into
     /// its own hash so that its name changes with its bytes.
     ///
-    /// A chunk that prints a page's manifest hashes the manifest's literal bytes
-    /// and, at each listed chunk, that chunk's isolated hash, and it reaches
-    /// every listed chunk. Such a chunk reaches the chunks of several pages,
-    /// whose order is not the same in every build of one tree, so it and the
-    /// chunks that reach it digest the rest of their closure as a sum. The
-    /// manifests are emitted here, once per page, and returned for the caller
-    /// to render once the chunks are named.
+    /// Also returns the manifest of each page that a chunk prints, for the caller to render.
     pub(crate) fn final_chunk_hashes(
         &self,
         chunks: &[Chunk],
@@ -2670,12 +2664,7 @@ impl<'a> LinkerContext<'a> {
                             for part in manifest.parts() {
                                 match part {
                                     Part::Literal(bytes) => hash.write(bytes),
-                                    Part::Chunk(listed, _) => {
-                                        // Two listed chunks can trade places and keep the closure.
-                                        let listed_hash = chunks[listed as usize].isolated_hash;
-                                        hash.write(&listed_hash.to_ne_bytes());
-                                        out.push(listed);
-                                    }
+                                    Part::Chunk(listed, _) => out.push(listed),
                                 }
                             }
                             if printers.last() != Some(&chunk_index) {
@@ -2721,6 +2710,7 @@ impl<'a> LinkerContext<'a> {
             .map(|(i, bits)| {
                 let mut hash = ContentHasher::default();
                 hash.write(&own[i].to_ne_bytes());
+                // A manifest reaches the chunks of several pages, and their order differs between builds.
                 let reaches_manifest = printers.iter().any(|&printer| bits.is_set(printer));
                 let mut rest: u64 = 0;
                 let mut iter = bits.iterator::<true, true>();

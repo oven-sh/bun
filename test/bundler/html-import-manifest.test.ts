@@ -882,56 +882,6 @@ console.log("About manifest:", aboutHtml);
       expect(mismatches(second, edited)).toEqual(none);
     });
 
-    // Both manifests list the chunks of `x.js` and `y.js`, which no entry point
-    // owns, so their entries in `files` differ only in path and etag. The two
-    // routes of page `b` trade what they import. That trades the places of the
-    // two chunks, and page `a` lists them with no other change.
-    test("when two listed chunks trade places", async () => {
-      const route = (name: string, shared: string) =>
-        `import { ${shared} } from "./${shared}.js"; console.log("${name}", ${shared});`;
-      using dir = tempDir("html-import-hash-places", {
-        "x.js": `export const x = "x";`,
-        "y.js": `export const y = "y";`,
-        ...Object.fromEntries(
-          ["a", "b"].flatMap(name => [
-            [`server.${name}.js`, `import page from "./${name}.html"; console.log(page);`],
-            [
-              `${name}.html`,
-              `<!doctype html><html><body><script type="module" src="./${name}.client.js"></script></body></html>`,
-            ],
-            [`${name}.client.js`, `import("./${name}.route1.js"); import("./${name}.route2.js");`],
-            [`${name}.route1.js`, route(name, "x")],
-            [`${name}.route2.js`, route(name, "y")],
-          ]),
-        ),
-      });
-      /** The chunk that prints the manifest of page `a`, and the paths of its listed chunks that have no `input`. */
-      async function observed() {
-        // The routes of the page that the scan finds last decide the order of the two chunks.
-        const options = {
-          entrypoints: ["server.a.js", "server.b.js"],
-          splitting: true,
-          plugins: [findLast("server.b.js")],
-        };
-        const printer = (await build(String(dir), options)).find(output => output.path.startsWith("server.a-"))!;
-        const [manifest] = parseManifests(printer.text);
-        return { printer, shared: manifest.files.filter(file => file.input === undefined).map(file => file.path) };
-      }
-
-      const before = await observed();
-      writeFileSync(join(String(dir), "b.route1.js"), route("b", "y"));
-      writeFileSync(join(String(dir), "b.route2.js"), route("b", "x"));
-      const after = await observed();
-
-      expect(before.shared).toHaveLength(2);
-      expect(after.shared).toEqual(before.shared.toReversed());
-      expect({
-        text: before.printer.text !== after.printer.text,
-        path: before.printer.path !== after.printer.path,
-        hash: before.printer.hash !== after.printer.hash,
-      }).toEqual(renamed);
-    });
-
     // `bun build` writes the chunks to disk itself.
     test.each(["bun", "node"])("when client JS changes, from the CLI with --target=%s", async target => {
       using dir = tempDir("html-import-hash-cli", files);

@@ -50,11 +50,11 @@ use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
 
-/// A page's manifest before the chunks are named: `json` is every byte except the
-/// listed chunks' paths and etags, and `refs` says where those go.
+/// A page's manifest before the chunks are named.
 pub(crate) struct Template {
+    /// Every byte except the listed chunks' paths and etags.
     json: Vec<u8>,
-    /// In `at` order.
+    /// Where those go, in `at` order.
     refs: Vec<ChunkRef>,
     /// `--compile`: the server-side public path, printed before each chunk's path.
     public_path: Option<Box<[u8]>>,
@@ -96,8 +96,7 @@ pub(crate) enum Part<'a> {
 }
 
 impl Template {
-    /// The manifest in print order. `final_chunk_hashes` and `resolve` both read it
-    /// from here: what one prints, the other hashed or followed as an edge.
+    /// The manifest in print order, for `resolve` to print and for `final_chunk_hashes` to hash.
     pub(crate) fn parts(&self) -> impl Iterator<Item = Part<'_>> {
         let mut literal_start = 0;
         let tail = self.refs.last().map_or(0, |last| last.at as usize);
@@ -131,10 +130,7 @@ impl Template {
                 }
                 Part::Chunk(chunk, ChunkValue::Etag) => {
                     let chunk = &chunks[chunk as usize];
-                    // The HTML chunk's body embeds the hashed paths of its JS/CSS
-                    // chunks, so its etag must change when those do. `isolated_hash`
-                    // by design excludes those substitutions; the placeholder hash
-                    // folds them in (`final_chunk_hashes`).
+                    // Not `isolated_hash`: that leaves out the paths of the chunks this one names.
                     let hash = chunk.template.placeholder.hash;
                     write_etag(writer, hash.map_or(chunk.isolated_hash, |h| h.value))?;
                 }
@@ -165,6 +161,9 @@ pub(crate) struct Manifest {
     /// `json` as the contents of a double-quoted JavaScript string, which is what a chunk prints.
     pub(crate) escaped: Vec<u8>,
 }
+
+/// What orders a listing: a rank, the file's source path, its isolated hash, and then its index.
+type ListingKey<'a> = (u8, &'a [u8], u64, u32);
 
 /// Where an entry's path and etag come from.
 #[derive(Clone, Copy)]
@@ -245,8 +244,7 @@ fn write_etag(writer: &mut Vec<u8>, hash: u64) -> Result<(), crate::Error> {
     Ok(())
 }
 
-/// Walks what page `index` lists. This runs when the chunks are hashed, so what a
-/// chunk's final hash decides is left as a reference to that chunk.
+/// Walks what page `index` lists. The chunks have no names yet, so their paths and etags become references.
 pub(crate) fn emit(
     index: u32,
     graph: &Graph,
@@ -331,35 +329,29 @@ pub(crate) fn emit(
     let additional_output_files = &graph.additional_output_files;
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
 
-    // One tree has to give one listing. The order of the CSS chunks and the order of
-    // the copied files follow the order in which the scan found their files, so the
-    // stylesheets and the assets are listed by source path.
-    let mut listed: Vec<u32> = (0..chunks.len() as u32)
-        .filter(|&chunk_index| chunks_to_write.is_set(chunk_index as usize))
-        .collect();
-    let is_stylesheet =
-        |chunk_index: u32| matches!(chunks[chunk_index as usize].content, Content::Css(_));
-    let mut stylesheets: Vec<u32> = listed
-        .iter()
-        .copied()
-        .filter(|&i| is_stylesheet(i))
-        .collect();
-    stylesheets.sort_unstable_by_key(|&chunk_index| {
-        let ch = &chunks[chunk_index as usize];
-        (
-            sources[ch.entry_point.source_index() as usize].path.text,
-            ch.isolated_hash,
-        )
-    });
-    for (slot, stylesheet) in listed
-        .iter_mut()
-        .filter(|i| is_stylesheet(**i))
-        .zip(stylesheets)
-    {
-        *slot = stylesheet;
+    // Chunk index and the order of copied files follow the scan order, so neither orders the listing.
+    let mut listed: Vec<ListingKey<'_>> = Vec::new();
+    for (chunk_index, ch) in chunks.iter().enumerate() {
+        if !chunks_to_write.is_set(chunk_index) {
+            continue;
+        }
+        let is_page = ch.is_entry_point_file(browser_source_index);
+        let rank = match ch.content {
+            Content::Javascript(_) if is_page => 0,
+            Content::Html => 1,
+            Content::Javascript(_) => 2,
+            Content::Css(_) => 3,
+        };
+        let source_path: &[u8] = if ch.entry_point.is_entry_point() {
+            sources[ch.entry_point.source_index() as usize].path.text
+        } else {
+            b""
+        };
+        listed.push((rank, source_path, ch.isolated_hash, chunk_index as u32));
     }
+    listed.sort_unstable();
 
-    for chunk_index in listed {
+    for (_, _, _, chunk_index) in listed {
         let ch = &chunks[chunk_index as usize];
         if !first {
             writer.write_all(b",")?;
@@ -390,21 +382,25 @@ pub(crate) fn emit(
         )?;
     }
 
-    let mut assets: Vec<(&[u8], &crate::options::OutputFile)> = Vec::new();
-    for output_file in additional_output_files.iter() {
+    let mut assets: Vec<ListingKey<'_>> = Vec::new();
+    for (i, output_file) in additional_output_files.iter().enumerate() {
         if let Some(source_index) = output_file.source_index.unwrap() {
             if source_index.get() != server_source_index
                 && file_entry_bits[source_index.get() as usize].has_intersection(&entry_point_bits)
             {
-                assets.push((sources[source_index.get() as usize].path.text, output_file));
+                assets.push((
+                    0,
+                    sources[source_index.get() as usize].path.text,
+                    0,
+                    i as u32,
+                ));
             }
         }
     }
-    assets.sort_unstable_by_key(|&(source_path, output_file)| {
-        (source_path, &output_file.dest_path[..])
-    });
+    assets.sort_unstable();
 
-    for (source_path, output_file) in assets {
+    for (_, source_path, _, i) in assets {
+        let output_file = &additional_output_files[i as usize];
         if !first {
             writer.write_all(b",")?;
         }

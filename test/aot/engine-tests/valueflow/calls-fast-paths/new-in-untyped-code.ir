@@ -1,0 +1,429 @@
+# `new` on a known function or class in untyped code is an allocation and a direct call, which can be inlined.
+# IR= 0 makesPoints = Construct
+# IR= 1 makesPoints CreateThis
+# IR= 1 makesPoints CallDirect
+# IR= 0 makesBases = Construct
+# IR= 1 makesBases CreateThis
+# IR= 0 makesFields = Construct
+# IR= 1 makesFields CreateThis
+# IR= 0 makesLarge = Construct
+# IR= 2 makesLarge CallDirect
+# IR= 0 makesEither = Construct
+# IR= 1 makesEither TypeTest v[0-9]+ testedType=object
+# IR= 1 makesGiven = Construct
+# @ts-ignore
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="untyped.js" displayPath="untyped.js" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="main.ts" displayPath="main.ts" body=f19 requests=[{target=m0 completes=true isHoisted=true}, {target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.1" declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.2" declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.3" declared={type=absent|f10 flags=[IsFromCompiler]} flags=[IsImmutable]}, {key=@"binding.4" declared={type=absent|f11 flags=[IsFromCompiler]} flags=[IsImmutable]}] ownFieldCount=5
+layout L1 kind=Instance name="Point" module=m0 position=14 constructor=f1 fields=[{key="x" declared={type=anything} flags=[IsRequired]}, {key="y" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L2 kind=Instance name="Large" module=m0 position=140 constructor=f2 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}, {key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="e" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="f" declared={type=anything}}, {key="g" declared={type=anything}}, {key="h" declared={type=anything}}, {key="i" declared={type=undefined|null|string flags=[IsExpected]} flags=[IsRequired]}, {key="j" declared={type=undefined|null|Array flags=[IsExpected]} flags=[IsRequired]}, {key="k" declared={type=undefined|null|L2|L5|L6 flags=[IsExpected]} flags=[IsRequired]}, {key="l" declared={type=undefined|null|"bigint"|"boolean"|"function"|"number"|"object"|"string"|"symbol"|"undefined" flags=[IsExpected]} flags=[IsRequired]}, {key="m" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="n" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="o" declared={type=boolean flags=[IsExpected]} flags=[IsRequired]}, {key="p" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="q" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="r" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="s" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="t" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="u" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="v" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="w" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="z" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=24
+layout L3 kind=Instance name="MayReturnObject" module=m0 position=679 constructor=f3 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L4 kind=Instance name="Base" module=m0 position=69 constructor=f10 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L5 kind=Instance name="Fields" module=m0 position=115 constructor=f11 fields=[{key="a" declared={type=number flags=[IsExpected]} flags=[IsRequired]}, {key="b" declared={type=number flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=2
+layout L6 module=m0 position=409 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L7 module=m0 position=739 fields=[{key="x" declared={type=anything}}] ownFieldCount=1
+layout L8 module=m0 position=1370 fields=[{key="Point" declared={type=undefined|null|function|f1 flags=[IsExpected]} flags=[IsRequired]}, {key="makesBases" declared={type=undefined|null|function|f5 flags=[IsExpected]} flags=[IsRequired]}, {key="makesEither" declared={type=undefined|null|function|f8 flags=[IsExpected]} flags=[IsRequired]}, {key="makesFields" declared={type=undefined|null|function|f6 flags=[IsExpected]} flags=[IsRequired]}, {key="makesGiven" declared={type=undefined|null|function|f9 flags=[IsExpected]} flags=[IsRequired]}, {key="makesLarge" declared={type=undefined|null|function|f7 flags=[IsExpected]} flags=[IsRequired]}, {key="makesPoints" declared={type=undefined|null|function|f4 flags=[IsExpected]} flags=[IsRequired]}] declaredOrder=[0, 6, 1, 3, 5, 2, 4] ownFieldCount=7
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = NewClosure function=f2
+    v2 = Convert v1 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutEnvironmentField v0, v2 layout=L0 field=1
+    v4 = NewClosure v0 function=f7
+    v5 = Convert v4 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewObject layout=L8
+    v7 = Convert v5 declared={type=undefined|null|function|f7 flags=[IsExpected]}
+    PropDefine v6, v7 key="makesLarge"
+    v9 = FinishObject v6
+    PutModuleVariable v9 variable=g0
+    v11 = Undefined
+    Return v11
+}
+function f1 name="Point" module=m0 position=14 flags=[HasThis, HasExplicitName] length=2 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f12] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1
+function f2 name="Large" module=m0 position=140 flags=[HasThis, HasExplicitName] length=2 thisType={type=L2 flags=[IsExpected]} parameters=[{type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, IsLongConstructor] constructedClass=L2 {
+  b0(v0: L2, v1: i32, v2: i32):
+    Jump -> next b1()
+  b1():
+    v3 = Greater v1, v2
+    Branch v3 -> taken b2(| 0, 1), notTaken b4(| 0, 1)
+  b2(v4, v5):
+    Jump -> next b3()
+  b3():
+    Jump -> next b6(v4, v5)
+  b4(v6, v7):
+    Jump -> next b5()
+  b5():
+    Jump -> next b6(v6, v7)
+  b6(v8, v9):
+    v10 = Integer
+    v11 = Convert v10 declared={type=number flags=[IsExpected]}
+    Jump -> next b7(v11)
+  b7(v12):
+    LoopHint
+    v14 = Integer integer=2
+    v15 = Less v12, v14
+    Branch v15 -> taken b8(| 0), notTaken b11(| 0)
+  b8(v16):
+    Jump -> next b9()
+  b9():
+    v17 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v18 = PropGet v17 key="h"
+    v19 = Convert v18 declared={type=i32 flags=[IsExpected]}
+    v20 = Integer
+    v21 = BitOr v19, v20
+    v22 = Add v21, v16
+    Jump -> next b10()
+  b10():
+    v23 = Increment v16
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    Jump -> next b7(v24)
+  b11(v25):
+    Jump -> next b12()
+  b12():
+    v26 = Builtin builtin=String
+    v27 = Call v26, -, v8 calleeName="String"
+    v28 = Convert v27 declared={type=undefined|null|string flags=[IsExpected]}
+    v29 = NewArray v8 contents=anything
+    v30 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v31 = NewObject -, v8 layout=L6 fields=[0]
+    v32 = FinishObject v31
+    PropSet v30, v32 key="k"
+    v34 = TypeOf v9
+    v35 = Negate v8
+    v36 = BitNot v9
+    v37 = ToBoolean v8
+    v38 = LogicalNot v37
+    v39 = Integer integer=7
+    v40 = Mod v8, v39
+    v41 = Integer integer=3
+    v42 = Div v9, v41
+    v43 = BitOr v8, v9
+    v44 = BitAnd v8, v9
+    v45 = BitXor v8, v9
+    v46 = Integer integer=1
+    v47 = LShift v8, v46
+    v48 = Integer integer=1
+    v49 = RShift v9, v48
+    v50 = Integer integer=1
+    v51 = URShift v8, v50
+    v52 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v53 = PropGet v52 key="a"
+    v54 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v55 = PropGet v54 key="b"
+    v56 = Add v53, v55
+    v57 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v58 = PropGet v57 key="c"
+    v59 = Add v56, v58
+    v60 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v61 = PropGet v60 key="d"
+    v62 = Convert v61 declared={type=number flags=[IsExpected]}
+    v63 = Add v59, v62
+    v64 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v65 = PropGet v64 key="e"
+    v66 = Convert v65 declared={type=number flags=[IsExpected]}
+    v67 = Add v63, v66
+    v68 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v69 = PropGet v68 key="f"
+    v70 = Add v67, v69
+    v71 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v72 = PropGet v71 key="g"
+    v73 = Add v70, v72
+    v74 = Undefined
+    Return v74
+}
+function f3 name="MayReturnObject" module=m0 position=679 flags=[HasThis, HasExplicitName] length=1 thisType={type=L3 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=undefined|null|L7 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3
+function f4 name="makesPoints" module=m0 position=751 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = GetEnvironmentField v0 layout=L0
+    v11 = Integer integer=1
+    v12 = Construct v10, -, v7, v11 calleeName="Point"
+    v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v14 = PropGet v13 key="y"
+    v15 = Add v6, v14
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = Increment v7
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v16, v18)
+}
+function f5 name="makesBases" module=m0 position=852 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = GetEnvironmentField v0 layout=L0 field=3
+    v11 = CheckInitialized v10 name="Base"
+    v12 = Integer integer=1
+    v13 = Construct v11, -, v12 calleeName="Base"
+    v14 = Convert v13 declared={type=undefined|null|L4 flags=[IsExpected]}
+    v15 = PropGet v14 key="x"
+    v16 = Add v6, v15
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Increment v7
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v17, v19)
+}
+function f6 name="makesFields" module=m0 position=948 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = GetEnvironmentField v0 layout=L0 field=4
+    v11 = CheckInitialized v10 name="Fields"
+    v12 = Construct v11 calleeName="Fields"
+    v13 = Convert v12 declared={type=undefined|null|L5 flags=[IsExpected]}
+    v14 = PropGet v13 key="b"
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Add v6, v15
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = Increment v7
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v17, v19)
+}
+function f7 name="makesLarge" module=m0 position=1046 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = GetEnvironmentField v0 layout=L0 field=1
+    v11 = Integer integer=2
+    v12 = Construct v10, -, v7, v11 calleeName="Large"
+    v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v14 = PropGet v13 key="g"
+    v15 = Add v6, v14
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = Increment v7
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v16, v18)
+}
+function f8 name="makesEither" module=m0 position=1146 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = GetEnvironmentField v0 layout=L0 field=2
+    v11 = Integer integer=1
+    v12 = Construct v10, -, v11 calleeName="MayReturnObject"
+    v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|L7 flags=[IsExpected]}
+    v14 = PropGet v13 key="x"
+    v15 = Add v6, v14
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = Increment v7
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v16, v18)
+}
+function f9 name="makesGiven" module=m0 position=1254 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}, {type=anything}] results=[{type=number flags=[IsExpected]}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function, v1: anything):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = Convert v1 declared={type=number flags=[IsExpected]}
+    v10 = Integer integer=1
+    v11 = Integer integer=2
+    v12 = Construct v0, -, v10, v11 calleeName="F"
+    v13 = Convert v12 declared={type=undefined|null|number|string|symbol|bigint|L7 flags=[IsExpected]}
+    v14 = PropGet v13 key="x"
+    v15 = Add v6, v14
+    v16 = Convert v15 declared={type=number flags=[IsExpected]}
+    v17 = Increment v7
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v16, v18)
+}
+function f10 name="Base" module=m0 position=87 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L4
+function f11 name="Fields" module=m0 position=115 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L5
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = Convert v0 declared={type=undefined|null|L8 flags=[IsExpected]}
+    v2 = Convert v1 declared={type=undefined|null|object flags=[IsExpected]}
+    v3 = Convert v2 declared={type=undefined|null|object flags=[IsExpected]}
+    v4 = Convert v3 declared={type=undefined|null|object flags=[IsExpected]}
+    v5 = Convert v4 declared={type=undefined|null|object flags=[IsExpected]}
+    v6 = PropGet v5 key="makesLarge"
+    v7 = Convert v6 declared={type=undefined|null|function flags=[IsExpected]}
+    v8 = Integer integer=100000
+    v9 = Call v7, v5, v8 calleeKey="makesLarge" calleeName="m.makesLarge"
+    v10 = Undefined
+    Return v10
+}
+# -- generated: f0 Large makesLarge f19
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=CommonJsModule thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: env L0 = NewObject layout=L0 allocationSite=0
+# CHECK-NEXT: v1: f2 = NewClosure function=f2 allocationSite=1
+# CHECK-NEXT: PutEnvironmentField v0, v1 layout=L0 field=1
+# CHECK-NEXT: v3: f7 = NewClosure v0 function=f7 allocationSite=2
+# CHECK-NEXT: v4: L8 = NewObject layout=L8 allocationSite=3 allocationClass=2
+# CHECK-NEXT: PropDefine v4, v3 key="makesLarge" accessSite=0 receivers=[L8]
+# CHECK-NEXT: v6: L8 = FinishObject v4
+# CHECK-NEXT: PutModuleVariable v6 variable=g0
+# CHECK-NEXT: v8: undefined = Undefined
+# CHECK-NEXT: Return v8
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="Large"
+# CHECK: module=m0 position=140 flags=[HasThis, HasExplicitName] length=2 thisType={type=L2} parameters=[{type=i32 flags=[IsExpected]}, {type=2}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode, IsLongConstructor] constructedClass=L2 {
+# CHECK-NEXT: b0(v0: L2, v1: anything ~ i32, v2: 2):
+# CHECK-NEXT: v64: L2 = AssumeType v0 provenType=L2
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: v3: boolean = Greater v1, v2
+# CHECK-NEXT: Branch v3 -> taken b2(| 0, 1), notTaken b4(| 0, 1)
+# CHECK-NEXT: b2(v4: anything ~ int[3, 2147483647], v5: 2):
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3():
+# CHECK-NEXT: Jump -> next b6(v4, v5)
+# CHECK-NEXT: b4(v6: anything ~ int[-2147483648, 2], v7: 2):
+# CHECK-NEXT: Jump -> next b5()
+# CHECK-NEXT: b5():
+# CHECK-NEXT: Jump -> next b6(v6, v7)
+# CHECK-NEXT: b6(v8: anything ~ i32, v9: 2):
+# CHECK-NEXT: v65: int|whole ~ i32 = AssumeType v8 provenType=int|whole
+# CHECK-NEXT: v66: 2 = AssumeType v9 provenType=int
+# CHECK-NEXT: v10: 0 = Integer
+# CHECK-NEXT: Jump -> next b7(v10)
+# CHECK-NEXT: b7(v11: int[0, 2]):
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v13: 2 = Integer integer=2
+# CHECK-NEXT: v14: boolean = Less v11, v13
+# CHECK-NEXT: Branch v14 -> taken b8(| 0), notTaken b11(| 0)
+# CHECK-NEXT: b8(v15: int[0, 1]):
+# CHECK-NEXT: Jump -> next b9()
+# CHECK-NEXT: b9():
+# CHECK-NEXT: v16: anything = PropGet v64 key="h" accessSite=1 receivers=[L2]
+# CHECK-NEXT: v17: anything ~ i32 = Upcast v16 castType=anything
+# CHECK-NEXT: v18: 0 = Integer
+# CHECK-NEXT: v19: i32 = BitOr v17, v18
+# CHECK-NEXT: v20: int[-2147483648, 2147483648] = Add v19, v15
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v21: int[1, 2] = Increment v15
+# CHECK-NEXT: Jump -> next b7(v21)
+# CHECK-NEXT: b11(v22: 2):
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12():
+# CHECK-NEXT: v23: builtin(String) = Builtin builtin=String
+# CHECK-NEXT: v24: anything = Call v23, -, v65 calleeName="String" accessSite=2 callees=[builtin(String)]
+# CHECK-NEXT: v25: anything ~ undefined|null|string = Upcast v24 castType=anything
+# CHECK-NEXT: v26: Array<int|whole> = NewArray v65 contents=int|whole allocationSite=4 [contentsAreProven]
+# CHECK-NEXT: v62: 0 = Integer
+# CHECK-NEXT: v27: L6 = NewObject -, v62 layout=L6 fields=[0] allocationSite=5 allocationClass=1
+# CHECK-NEXT: PropSet v27, v65 key="a" accessSite=11 receivers=[L6]
+# CHECK-NEXT: v28: L6 = FinishObject v27
+# CHECK-NEXT: PropSet v64, v28 key="k" accessSite=3 receivers=[L2]
+# CHECK-NEXT: v30: string = TypeOf v66
+# CHECK-NEXT: v31: int|whole ~ int[-2147483647, 2147483648]|whole = Negate v65
+# CHECK-NEXT: v32: -3 = BitNot v66
+# CHECK-NEXT: v33: boolean = ToBoolean v65
+# CHECK-NEXT: v34: boolean = LogicalNot v33
+# CHECK-NEXT: v35: 7 = Integer integer=7
+# CHECK-NEXT: v36: int|whole ~ int[-6, 6]|whole = Mod v65, v35
+# CHECK-NEXT: v37: 3 = Integer integer=3
+# CHECK-NEXT: v38: number = Div v66, v37
+# CHECK-NEXT: v39: i32 = BitOr v65, v66
+# CHECK-NEXT: v40: int[0, 2] = BitAnd v65, v66
+# CHECK-NEXT: v41: i32 = BitXor v65, v66
+# CHECK-NEXT: v42: 1 = Integer integer=1
+# CHECK-NEXT: v43: i32 = LShift v65, v42
+# CHECK-NEXT: v44: 1 = Integer integer=1
+# CHECK-NEXT: v45: 1 = RShift v66, v44
+# CHECK-NEXT: v46: 1 = Integer integer=1
+# CHECK-NEXT: v47: int[0, 2147483647] = URShift v65, v46
+# CHECK-NEXT: v48: anything = PropGet v64 key="a" accessSite=4 receivers=[L2]
+# CHECK-NEXT: v49: anything = PropGet v64 key="b" accessSite=5 receivers=[L2]
+# CHECK-NEXT: v50: number|string|bigint = Add v48, v49
+# CHECK-NEXT: v67: int|whole = AssumeType v50 provenType=int|whole
+# CHECK-NEXT: v51: anything = PropGet v64 key="c" accessSite=6 receivers=[L2]
+# CHECK-NEXT: v52: number|string|bigint = Add v67, v51
+# CHECK-NEXT: v68: int|whole = AssumeType v52 provenType=int|whole
+# CHECK-NEXT: v53: anything ~ number = PropGet v64 key="d" accessSite=7 receivers=[L2]
+# CHECK-NEXT: v54: number|string|bigint ~ number = Add v68, v53
+# CHECK-NEXT: v69: int|whole = AssumeType v54 provenType=int|whole
+# CHECK-NEXT: v55: anything ~ number = PropGet v64 key="e" accessSite=8 receivers=[L2]
+# CHECK-NEXT: v56: number|string|bigint ~ number = Add v69, v55
+# CHECK-NEXT: v70: int|whole = AssumeType v56 provenType=int|whole
+# CHECK-NEXT: v57: anything = PropGet v64 key="f" accessSite=9 receivers=[L2]
+# CHECK-NEXT: v58: number|string|bigint = Add v70, v57
+# CHECK-NEXT: v71: int|whole = AssumeType v58 provenType=int|whole
+# CHECK-NEXT: v59: anything = PropGet v64 key="g" accessSite=10 receivers=[L2]
+# CHECK-NEXT: v60: number|string|bigint = Add v71, v59
+# CHECK-NEXT: v61: undefined = Undefined
+# CHECK-NEXT: Return v61
+# CHECK-NEXT: }
+# CHECK-LABEL: function {{*}}name="makesLarge"
+# CHECK: module=m0 position=1046 flags=[HasExplicitName] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=100000}] results=[{type=number flags=[IsExpected]}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: env L0, v1: 100000):
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: 0 = Integer
+# CHECK-NEXT: Jump -> next b1(v2, v3)
+# CHECK-NEXT: b1(v4: int|whole, v5: int|whole):
+# CHECK-NEXT: v15: int|whole = AssumeType v4 provenType=int|whole
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v7: 100000 = Upcast v1 castType=anything
+# CHECK-NEXT: v8: f2 = GetEnvironmentField v0 layout=L0 field=1
+# CHECK-NEXT: v9: 2 = Integer integer=2
+# CHECK-NEXT: v10: anything ~ object = Construct v8, -, v5, v9 calleeName="Large" accessSite=18 callees=[f2]
+# CHECK-NEXT: v16: L2 = AssumeType v10 provenType=L2
+# CHECK-NEXT: v11: anything = PropGet v16 key="g" accessSite=19 receivers=[L2]
+# CHECK-NEXT: v12: number|string|bigint = Add v15, v11
+# CHECK-NEXT: v17: int|whole = AssumeType v12 provenType=int|whole
+# CHECK-NEXT: v13: int|whole = Upcast v17 castType=number|string|bigint
+# CHECK-NEXT: v14: int|whole = Increment v5
+# CHECK-NEXT: Jump -> next b1(v13, v14)
+# CHECK-NEXT: }
+# CHECK-LABEL: function f19 module=
+# CHECK: m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: L8 = GetModuleVariable variable=g0
+# CHECK-NEXT: v1: L8 = Upcast v0 castType=anything
+# CHECK-NEXT: v6: L8 = AssumeType v1 provenType=undefined|L8
+# CHECK-NEXT: v2: f7 = PropGet v6 key="makesLarge" accessSite=24 receivers=[L8]
+# CHECK-NEXT: v7: f7 = AssumeType v2 provenType=f7
+# CHECK-NEXT: v3: 100000 = Integer integer=100000
+# CHECK-NEXT: v4: anything ~ number = Call v7, v6, v3 calleeKey="makesLarge" calleeName="m.makesLarge" accessSite=25 callees=[f7]
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }

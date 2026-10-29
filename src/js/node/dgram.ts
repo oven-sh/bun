@@ -170,6 +170,8 @@ function isBlockList(value: unknown): value is $Node.BlockList {
 }
 
 function loadClusterOfWorker() {
+  // Object lists a member from when it is first read. node:cluster, which the primary has no need to load here, reads these two when it loads.
+  const { values: _ObjectValues, keys: _ObjectKeys } = Object;
   const { isPrimary, loadChild } = require("internal/cluster/isPrimary");
   return isPrimary ? undefined : loadChild();
 }

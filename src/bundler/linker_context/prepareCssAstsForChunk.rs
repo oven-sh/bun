@@ -79,9 +79,7 @@ pub(crate) unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) 
 }
 
 fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {
-    // SAFETY: parse_graph backref; raw deref because `parse_graph` is held
-    // across the log write below (split borrow).
-    let parse_graph = unsafe { &*c.parse_graph };
+    let parse_graph = c.parse_graph();
     let asts = c.graph.ast.items_css();
 
     // Prepare CSS asts
@@ -247,13 +245,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>`
                                 // alias as `bun_js_printer::MangledProps`; no cast needed.
                                 Some(&c.mangled_props),
-                                // SAFETY: `to_css` takes `&bun_ast::symbol::Map`; `c.graph.symbols`
-                                // is `bun_ast::symbol::Map`. Both are
-                                // `{ symbols_for_source: NestedList }` (`UnsafeCell<T>` is
-                                // `repr(transparent)`), so layouts match — bridge by pointer cast.
-                                unsafe {
-                                    &*(&raw const c.graph.symbols).cast::<bun_ast::symbol::Map>()
-                                },
+                                &c.graph.symbols,
                             ) {
                                 Ok(v) => v,
                                 Err(e) => {

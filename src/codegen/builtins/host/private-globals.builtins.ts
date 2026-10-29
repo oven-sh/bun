@@ -16,9 +16,17 @@ const changesNothing = (returns: b.TableType): b.FunctionField => ({
 });
 
 const resultsOfFunctionsChangingNothing = {
-  inherits: b.bool,
   webStreamControllerError: b.undefined,
 };
+
+// ZigGlobalObject.cpp jsFunctionInherits: it asks the cell of the value for its class.
+const asksCellForItsClass = {
+  args: { operands: b.any.rest },
+  returns: b.bool,
+  capability: "none",
+  uses: { operands: b.inspected },
+  implementation: b.hostCall,
+} satisfies b.FunctionField;
 
 // ErrorCode.cpp: an error with a code is an instance of the kind of error the code stands for, with an object of its own for each code in front of the prototype of that kind.
 const kindsOfErrorsWithCode = ["Error", "TypeError", "RangeError", "SyntaxError", "URIError"];
@@ -130,6 +138,7 @@ export default b.declarations(
     createInternalModuleById: b.otherwiseBy(b.hostCall),
     // `require` hands an ES module to it.
     esmLoadSync: b.otherwiseBy(b.hostCall),
+    inherits: asksCellForItsClass,
     makeAbortError: makesAbortError,
     makeErrorWithCode: makesErrorWithCode,
     peekPromiseSettledValue: looksAtPromise(

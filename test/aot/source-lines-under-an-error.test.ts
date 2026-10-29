@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 import { mkdirSync, realpathSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { test } from "./supported";
 
 const files = {

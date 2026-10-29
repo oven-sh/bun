@@ -4,7 +4,7 @@ use super::{BuiltinPath, ModuleExport, SourceDialect};
 use crate::builtins::names::BuiltinNames;
 use crate::builtins::table::{
     self, BuiltinId, BuiltinName, ExportLookup, ModuleFlags, Mutability, Platforms, Prototype,
-    RuntimeModule,
+    RuntimeModule, Scope,
 };
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::Decl;
@@ -208,7 +208,10 @@ impl Resolver<'_, '_> {
         let object = self
             .value_of(operand)
             .or_else(|| self.held_value_of(operand))?;
-        match table::entry(table::canonical_id(object.path.id)).prototype {
+        let entry = table::entry(table::canonical_id(object.path.id));
+        match entry.prototype {
+            // Of what the host makes for each module the table lists on the object itself what stands on an object of the host right above it.
+            Prototype::Builtin(_) if entry.scope == Scope::Module => None,
             Prototype::Builtin(prototype) => Some(prototype),
             Prototype::Unknown | Prototype::Null => None,
         }

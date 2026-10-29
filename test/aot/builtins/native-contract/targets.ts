@@ -28,6 +28,7 @@ export type Unreachable = { name: string; path: string; mode: CallMode; reason: 
 const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   // The differential test calls these with the operands that their entries name. Here they would get everything.
   [/^process\.(binding|_linkedBinding|chdir|_rawDebug|stdout|stderr)\b/, "it changes the state of the process or takes over a standard stream"],
+  [/^%NodeCryptoBindingCrypto%\.scrypt/, "whatever it is passed, it computes for a thirtieth of a second"],
   [/^(alert|confirm|prompt)$/, "it waits for input"],
   [/^Atomics\.(waitAsync|pause)$/, "it blocks the thread"],
   [/^(fetch|postMessage)$/, "it starts a thread or opens a connection"],
@@ -38,25 +39,30 @@ const neverCalledNatives: ReadonlyMap<RegExp, string> = new Map([
   [/ffi\.bind\.ts:cc$|\.FfiBindTsCc$|^%FFI%|napi_body/i, "it compiles or loads machine code"],
   [/^Bun\.FFI\.(CString|closeCallback|toArrayBuffer|toBuffer)$/, "it takes a number for an address, and reads or frees what is there"],
   [/upgrade_?command|install_?binding|trim_testing|patch_testing\.?bind\.?ts:?apply|npmManifestTestHelpers|readTarball|loadNpmrc/i, "it works on files that its operands name outside the folder of the test"],
-  [/setSocketFault|clearSocketFaults|jsSetAsyncHooksEnabled|psiTrigger|injectStdioReadError|setMax\w+ForTesting|emitMemoryPressure|seedCacheForTesting|setDefaultCA$/i, "it changes how the rest of the process behaves"],
+  [/setSocketFault|clearSocketFaults|jsSetAsyncHooksEnabled|psiTrigger|injectStdioReadError|setMax\w+ForTesting|emitMemoryPressure|seedCacheForTesting/i, "it changes how the rest of the process behaves"],
   [/^%EventEmitter%\.prototype\.(removeAllListeners|off|removeListener|emit|setMaxListeners)$|^dispatchEvent$/, "with its own receiver it takes away or runs the handlers of the process"],
   [/^Bun\.Image\.(fromClipboard|hasClipboardImage|clipboardChangeCount)$/, "it reads the clipboard"],
   [/^Bun\.plugin\b|setConfigPlugins|setPages|checkFramework/, "it changes how modules are loaded"],
   [/doConnect|clusterRawBind|sendHelperPrimary|emitHandleIPCMessage/, "it opens a connection or writes to the channel of a parent process"],
   [/^%(Quic\w+|PostgresSQL\w+|MySQL\w+|PostgresBinding|MysqlBinding)%|node_quic_binding|postgres\.bind\.ts|mysql\.bind\.ts/, "it needs a server that the test does not have"],
   [
-    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|jsFunction_arrayBufferViewHasBuffer|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
+    /isLiveCellAtRawAddress|createNoOpForTesting|parseRoutePattern|jsFunction_arrayBufferViewHasBuffer|setServerCustomOptions|^%AsyncFromSyncIterator%|^%LinkTimeConstant:|^%NodeCryptoBinding%\.Cipher$|^private global makeErrorWithCode ERR_INVALID_ARG_VALUE$/,
     "only the code of Bun and of the engine calls it, and it takes the kinds of its operands on trust",
   ],
   [
     /createNativeFrameForTesting|orderedRemoveProbe|noProxyMatches|createStatsForIno|describeCheckerQueries|createMemfdForTesting|jsFunction_readFreedStringUnderASAN/i,
     "a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose",
   ],
+  [/jsFunction_(aotBuiltin(Entries|Mismatches)|builtinFeatureUses)|collectSyncWithoutSweep/, "a helper of Bun's own tests that takes no operand and a tenth of a second"],
   [
     /shellLex|shellParse|proxy_testing\.?bind\.?ts:?proxyFor|(operatingSystem|architecture)IsMatch|compareCodeResolution|describeCodeGraph/i,
     "a helper of Bun's own tests that does not come back for some operands",
   ],
 ]);
+
+// Behind such a call others do something else: no connection is secured with ciphers that do not exist, and no request has a head of one byte.
+// It is among the last calls of its process.
+export const leavesProcessChanged = /setTLSDefaultCiphers|setMaxHTTPHeaderSize/i;
 
 export function reasonTargetIsSkipped(path: string): string | undefined {
   for (const [pattern, reason] of neverCalledNatives) if (pattern.test(path)) return reason;
@@ -309,5 +315,5 @@ export function collectTargets(realm: Realm, filter: RegExp): (Target | Unreacha
       argumentCount: Math.max(callee.length, 1),
     });
   }
-  return targets;
+  return targets.sort((left, right) => Number(leavesProcessChanged.test(left.path)) - Number(leavesProcessChanged.test(right.path)));
 }

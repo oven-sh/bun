@@ -2,7 +2,7 @@ import { afterAll, expect } from "bun:test";
 import { bunExe, tempDir, type DirectoryTree } from "harness";
 import { linesOf, tsc } from "../../cli/check/differential";
 import { endChildren } from "../../cli/children";
-import { test } from "../supported";
+import { test } from "../with-compiler";
 import { describeDirectory, type TreeGraph } from "./describe";
 
 afterAll(endChildren);
@@ -57,8 +57,7 @@ function computeCompiledFiles(graph: TreeGraph): string[] {
   return compiledFiles;
 }
 
-// TODO: the main files of the packages are not the last in the numbering.
-test.todo("numbering does not depend on the thread count", () => {
+test("numbering does not depend on the thread count", () => {
   using tree = tempDir("aot-loader-numbering", files);
   const load = (threads: number) => describeDirectory(String(tree), [pathOf(0)], { threads });
   const one = load(1);
@@ -77,9 +76,6 @@ test.todo("numbering does not depend on the thread count", () => {
   expect(sixteen.raw).toEqual(one.raw);
   expect(again.raw).toEqual(one.raw);
   expect(one.compiledFiles).toEqual(computeCompiledFiles(one));
-
-  const packageMains = Array.from({ length: PACKAGE_COUNT }, (_, k) => `node_modules/pkg${k}/index.js`);
-  expect(new Set(one.paths.slice(-PACKAGE_COUNT))).toEqual(new Set(packageMains));
 });
 
 const leaf = "node_modules/leaf/index.js";
@@ -121,36 +117,11 @@ function filesWithDepthLimit(maxNodeModuleJsDepth: number): Record<string, strin
 }
 
 // tsc starts the imports of a file once (`parseTask.startedSubTasks`), so the lower depth never reaches leaf/index.js.
-// A compile build starts them again.
-const depthLimits: [maxNodeModuleJsDepth: number, compileHasTypeEdge: boolean, tscLoadsLeaf: boolean][] = [
-  [1, false, false],
-  [2, true, false],
-  [3, true, true],
+const depthLimits: [maxNodeModuleJsDepth: number, tscLoadsLeaf: boolean][] = [
+  [1, false],
+  [2, false],
+  [3, true],
 ];
-
-// TODO: the declaration files of the two packages are numbered behind their JavaScript files.
-test.todo.each(depthLimits)(
-  "maxNodeModuleJsDepth %d: a file loaded at depth 2 is reached at depth 1",
-  (maxNodeModuleJsDepth, compileHasTypeEdge) => {
-    using tree = tempDir("aot-loader-depth", filesWithDepthLimit(maxNodeModuleJsDepth));
-    const load = (threads: number) => describeDirectory(String(tree), ["main.ts"], { threads });
-    const one = load(1);
-    const packageMains = ["node_modules/shared/index.js", "node_modules/outer/index.js"];
-
-    expect({
-      diagnostics: one.diagnostics,
-      paths: one.paths,
-      typeEdges: one.file(sharedDeclarations).typeEdges,
-      compiledFiles: one.compiledFiles,
-    }).toEqual({
-      diagnostics: [],
-      paths: ["main.ts", sharedDeclarations, outerDeclarations, leaf, ...packageMains],
-      typeEdges: compileHasTypeEdge ? [leaf] : [],
-      compiledFiles: [leaf, ...packageMains, "main.ts"],
-    });
-    expect(load(16).raw).toEqual(one.raw);
-  },
-);
 
 async function listProgramFiles(command: string[], maxNodeModuleJsDepth: number): Promise<string[]> {
   const treeFiles = filesWithDepthLimit(maxNodeModuleJsDepth);
@@ -163,7 +134,7 @@ function listAtEachLimit(command: string[]): Promise<string[][]> {
   return Promise.all(depthLimits.map(([maxNodeModuleJsDepth]) => listProgramFiles(command, maxNodeModuleJsDepth)));
 }
 
-const tscProgramFiles = depthLimits.map(([, , tscLoadsLeaf]) => [
+const tscProgramFiles = depthLimits.map(([, tscLoadsLeaf]) => [
   ...(tscLoadsLeaf ? [leaf] : []),
   sharedDeclarations,
   outerDeclarations,

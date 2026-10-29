@@ -1529,7 +1529,7 @@ function cacheDefaultCACertificates() {
 
 let systemCACertificates: string[] | undefined;
 function cacheSystemCACertificates(): string[] {
-  // Named here and nowhere else: a program compiled ahead of time that never gets here does not load them at start.
+  // Bound here rather than at the top level, so a compiled program that never calls this does not reach the native function.
   systemCACertificates ||= ($newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1) as () => string[])();
   return systemCACertificates;
 }

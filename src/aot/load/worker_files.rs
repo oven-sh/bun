@@ -10,15 +10,18 @@ use bun_sema::hir::{
     BinOp, Branches, CallId, ExportSpecId, ExprId, ExprKind, PatId, PatKind, PropKey, PropKind,
     StmtKind,
 };
-use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter, is_exported};
+use bun_sema::import_sites::{
+    ENCODERS, Encoder, ImportSiteKind, find_values_of_parameter, is_exported,
+};
 use bun_sema::messages::Category;
 use bun_sema::program::{CodeAnswer, FileId, Files};
 use bun_sema_driver::Locator;
 use bun_sema_driver::host::to_native;
 
 use crate::builtins::{BuiltinId, Intrinsic, Resolved, RuntimeModule, table};
-use crate::compile::CodeOfWorkers;
+use crate::compile::{CodeOfWorkers, EntryPointPaths};
 use crate::diagnostics::{ShownPosition, new_driver_diagnostic, position_of_diagnostic};
+use crate::ir::parallel::{InParallel, map_each};
 use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::module_paths::{
     compute_module_path, compute_relative_path, with_separators_of_host,
@@ -64,35 +67,6 @@ impl WorkerFile {
 }
 
 const LOADERS_OF_CODE: [Loader; 4] = [Loader::Js, Loader::Jsx, Loader::Ts, Loader::Tsx];
-
-/// `None`: the function throws.
-type Encoder = fn(&[u8]) -> Option<Vec<u8>>;
-
-fn encode_uri_component(text: &[u8]) -> Option<Vec<u8>> {
-    if !is_valid_utf8(text) {
-        return None;
-    }
-    let mut encoded = Vec::with_capacity(text.len());
-    for &byte in text {
-        let is_mark = matches!(
-            byte,
-            b'-' | b'_' | b'.' | b'!' | b'~' | b'*' | b'\'' | b'(' | b')'
-        );
-        if byte.is_ascii_alphanumeric() || is_mark {
-            encoded.push(byte);
-        } else {
-            encoded.push(b'%');
-            encoded.extend(hex_byte_lower(byte).map(|digit| digit.to_ascii_uppercase()));
-        }
-    }
-    Some(encoded)
-}
-
-fn encode_base64(text: &[u8]) -> Option<Vec<u8>> {
-    let characters = core::str::from_utf8(text).ok()?.chars();
-    let bytes: Option<Vec<u8>> = characters.map(|it| u8::try_from(it).ok()).collect();
-    Some(bun_base64::encode_alloc(&bytes?))
-}
 
 pub(crate) struct WorkerSearch<'a> {
     pub limits: &'a LimitValues,
@@ -260,15 +234,27 @@ struct Walk<'a, 's> {
     /// Each file with its `WorkerFile::has_options`.
     copies: Vec<(FileId, bool)>,
     texts: Vec<WorkerFile>,
+    names: Vec<EntryPointPaths>,
     /// A Worker may start from what was not followed to its end, so from a text that is not among `texts`.
     has_unseen_start: bool,
+    constructs_node_workers: bool,
+}
+
+pub(crate) struct CodeThatStartsWorkers {
+    pub files: Vec<WorkerFile>,
+    /// The names that are written for `files` and are not the paths of their modules: the path that each would have as a file of the executable, and the file on disk that it leads to.
+    pub names: Vec<EntryPointPaths>,
+    pub code: CodeOfWorkers,
+    /// Some file calls `new` on the Worker of node:worker_threads.
+    pub constructs_node_workers: bool,
 }
 
 // `import path from "./worker.js" with { type: "file" }; new Worker(path)`, `new Worker("./worker.js")` and `new Worker("data:text/javascript,..")`: the build has seen the code that the Worker runs, or finds it. What the constructor is given is followed back through variables, parameters and exports to the import, to the path or to the text. In the order of their paths.
 pub(crate) fn find_code_that_starts_workers(
     files: &Files<'_>,
     search: &WorkerSearch<'_>,
-) -> (Vec<WorkerFile>, CodeOfWorkers) {
+    in_parallel: InParallel<'_>,
+) -> CodeThatStartsWorkers {
     let &WorkerSearch {
         limits,
         loaders,
@@ -290,14 +276,8 @@ pub(crate) fn find_code_that_starts_workers(
         blob_constructor: table::find_name(b"Blob").and_then(table::global),
         modules: [b"node:worker_threads".as_slice(), b"node:path", b"node:url"]
             .map(table::module_by_specifier),
-        encoders: [
-            (
-                b"encodeURIComponent".as_slice(),
-                encode_uri_component as Encoder,
-            ),
-            (b"btoa".as_slice(), encode_base64 as Encoder),
-        ]
-        .map(|(name, encode)| (table::find_name(name).and_then(table::global), encode)),
+        encoders: ENCODERS
+            .map(|(name, encode)| (table::find_name(name).and_then(table::global), encode)),
         variables_left: 0,
         parameters_left: 0,
         pending: Vec::new(),
@@ -306,9 +286,16 @@ pub(crate) fn find_code_that_starts_workers(
         start: (FileId(0), ExprId(0)),
         copies: Vec::new(),
         texts: Vec::new(),
+        names: Vec::new(),
         has_unseen_start: false,
+        constructs_node_workers: false,
     };
-    for &file in files.compiled_files() {
+    let compiled = files.compiled_files();
+    let (constructor, worker_threads) = (walk.constructor, walk.modules[0]);
+    let may_start_workers = map_each(compiled.to_vec(), in_parallel, &|file| {
+        may_start_workers(files, file, constructor, worker_threads)
+    });
+    for (&file, _) in compiled.iter().zip(may_start_workers).filter(|it| it.1) {
         walk.visit_file(file);
     }
     let code = match walk.has_unseen_start {
@@ -326,18 +313,57 @@ pub(crate) fn find_code_that_starts_workers(
     found.append(&mut walk.texts);
     found.sort_unstable();
     found.dedup();
-    (found, code)
+    walk.names.sort_unstable();
+    walk.names.dedup();
+    CodeThatStartsWorkers {
+        files: found,
+        names: walk.names,
+        code,
+        constructs_node_workers: walk.constructs_node_workers,
+    }
+}
+
+fn find_module_answered(
+    files: &Files<'_>,
+    file: FileId,
+    site: Option<usize>,
+) -> Option<RuntimeModule> {
+    let answer = site.and_then(|site| files.compiled(file)?.code_answers.get(site));
+    match answer {
+        Some(&CodeAnswer::HostModule(module)) => RuntimeModule::from_registry_id(module.0),
+        _ => None,
+    }
+}
+
+fn may_start_workers(
+    files: &Files<'_>,
+    file: FileId,
+    constructor: Option<BuiltinId>,
+    worker_threads: Option<RuntimeModule>,
+) -> bool {
+    let Some(source) = parsed_source(files, file) else {
+        return false;
+    };
+    let is_constructor = |&id: &BuiltinId| Some(table::canonical_id(id)) == constructor;
+    let mut sites = 0..files.analysis(file).import_sites.len();
+    source.builtins.mentioned().iter().any(is_constructor)
+        || sites.any(|site| {
+            let module = find_module_answered(files, file, Some(site));
+            module.is_some() && module == worker_threads
+        })
 }
 
 // Every code file that the program embeds with the `file` loader, sorted by path.
 pub(crate) fn find_embedded_code_files(
     files: &Files<'_>,
     loaders: &[(Vec<u8>, Loader)],
+    in_parallel: InParallel<'_>,
 ) -> Vec<WorkerFile> {
-    let compiled = files.compiled_files().iter();
-    let mut copies: Vec<WorkerFile> = compiled
-        .filter_map(|&file| describe_embedded_file(files, loaders, file))
-        .collect();
+    let compiled = files.compiled_files().to_vec();
+    let described = map_each(compiled, in_parallel, &|file| {
+        describe_embedded_file(files, loaders, file)
+    });
+    let mut copies: Vec<WorkerFile> = described.into_iter().flatten().collect();
     copies.sort_unstable();
     copies.dedup();
     copies
@@ -354,11 +380,14 @@ fn describe_embedded_file(
     copy: FileId,
 ) -> Option<WorkerFile> {
     let source = parsed_source(files, copy)?;
-    let path = files.module(copy).file_name();
     let is_copy = source.kind == SourceKind::Data && source.loader == Loader::File;
+    if !is_copy || source.is_from_plugin || source.plugin_module.is_some() {
+        return None;
+    }
+    let path = files.module(copy).file_name();
     let is_code =
         loader_named_by_path(loaders, path).is_some_and(|loader| script_kind_of(loader).is_some());
-    if !is_copy || !is_code || source.is_from_plugin || source.plugin_module.is_some() {
+    if !is_code {
         return None;
     }
     let hir = files.hir(copy);
@@ -388,16 +417,6 @@ impl Walk<'_, '_> {
         let Some(source) = parsed_source(files, file) else {
             return;
         };
-        let is_constructor = |&id: &BuiltinId| Some(table::canonical_id(id)) == self.constructor;
-        let sites = 0..files.analysis(file).import_sites.len();
-        if !source.builtins.mentioned().iter().any(is_constructor)
-            && !sites.into_iter().any(|site| {
-                let module = self.find_module_answered(file, Some(site));
-                module.is_some() && module == self.modules[0]
-            })
-        {
-            return;
-        }
         let (hir, bound) = (files.hir(file), files.bound(file));
         let decisions = &files.analysis(file).decisions;
         let mut callees: Vec<ExprId> = Vec::new();
@@ -417,6 +436,7 @@ impl Walk<'_, '_> {
                 continue;
             }
             callees.push(callee);
+            self.constructs_node_workers |= constructor.is_none();
             let mut arguments = hir.ids(hir[call].args);
             if let Some(argument) = arguments.next() {
                 let options = arguments.next();
@@ -426,6 +446,9 @@ impl Walk<'_, '_> {
                     && options.is_some_and(|it| self.follow_evaluated_text(file, argument, it));
                 if !is_text {
                     self.follow(file, argument);
+                }
+                if let Some(options) = options {
+                    self.follow_preloads(file, options);
                 }
             }
         }
@@ -594,11 +617,7 @@ impl Walk<'_, '_> {
     }
 
     fn find_module_answered(&self, file: FileId, site: Option<usize>) -> Option<RuntimeModule> {
-        let answer = site.and_then(|site| self.files.compiled(file)?.code_answers.get(site));
-        match answer {
-            Some(&CodeAnswer::HostModule(module)) => RuntimeModule::from_registry_id(module.0),
-            _ => None,
-        }
+        find_module_answered(self.files, file, site)
     }
 
     fn follow(&mut self, file: FileId, argument: ExprId) {
@@ -963,6 +982,40 @@ impl Walk<'_, '_> {
         true
     }
 
+    // `new Worker(path, { preload: "./first.ts" })` and `{ preload: ["./first.ts", ..] }`: the Worker loads those files in front of its own.
+    fn follow_preloads(&mut self, file: FileId, options: ExprId) {
+        self.variables_left = (self.limits).get(LimitId::MaxVariablesFollowedToLoader);
+        let mut names = Vec::new();
+        self.find_preloads(file, options, &mut names);
+        for name in names {
+            self.follow(file, name);
+        }
+    }
+
+    /// Adds what every `preload` names that the object literal writes, or a literal that it spreads.
+    fn find_preloads(&mut self, file: FileId, options: ExprId, names: &mut Vec<ExprId>) {
+        let (hir, atoms) = (self.files.hir(file), &self.files.atoms);
+        let ExprKind::Object(properties) = hir[self.find_initializer(file, options)].kind else {
+            return;
+        };
+        for property in properties.iter().map(|property| hir[property]) {
+            let key = property.key.name();
+            match property.kind {
+                PropKind::Spread => self.find_preloads(file, property.value, names),
+                PropKind::Init | PropKind::Shorthand
+                    if key.is_some_and(|key| atoms.bytes(key) == b"preload") =>
+                {
+                    let preload = self.find_initializer(file, property.value);
+                    match hir[preload].kind {
+                        ExprKind::Array(list) => names.extend(hir.ids(list)),
+                        _ => names.push(preload),
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     // `URL.createObjectURL(new Blob([text, ..], { type }))`
     fn follow_object_url(&mut self, file: FileId, call: CallId) -> Option<()> {
         let hir = self.files.hir(file);
@@ -1050,9 +1103,34 @@ impl Walk<'_, '_> {
             }
             false => None,
         };
+        // No extension is added to such a name, so it is not the same name without its end.
+        let names_directory =
+            matches!(text, [.., b'/'] | [.., b'/', b'.'] | [.., b'/', b'.', b'.']);
+        let find_on_disk = |named: &[u8]| {
+            let mut written = match runs_in_place {
+                true => named.to_vec(),
+                false => find_path_on_disk(&paths.root_directory, &root, named)?,
+            };
+            if names_directory {
+                written.push(b'/');
+            }
+            resolve_entry_point(&written)
+        };
+        let is_written_down = !runs_in_place && !names_directory;
         let Some(named) = named else {
-            // The executable finds it by the name of the package, or in its root.
-            return resolve_bare_name(text).is_some_and(|path| self.add_file(&path, None));
+            let Some(path) = resolve_bare_name(text) else {
+                return false;
+            };
+            if !is_written_down {
+                return self.add_file(&path, None);
+            }
+            // The executable looks below `node_modules` for the name, then in its root.
+            let in_root = join_below_root(&root, text);
+            let named = match find_on_disk(&in_root).is_some_and(|found| found == path) {
+                true => in_root,
+                false => join_below_root(&root, &[b"node_modules/", text].concat()),
+            };
+            return self.add_file(&path, Some(&named));
         };
         // What `..` makes of a path in the root lies beside the root. The executable holds what lies beside the root directory under `_.._`.
         let above_root = dirname::<Posix>(root.strip_suffix(b"/").unwrap_or(&root));
@@ -1063,15 +1141,11 @@ impl Walk<'_, '_> {
             }
             Some(_) | None => named,
         };
-        let written = match runs_in_place {
-            true => Some(named.clone()),
-            false => find_path_on_disk(&paths.root_directory, &root, &named),
-        };
-        let found = written.and_then(|written| resolve_entry_point(&written));
-        found.is_some_and(|path| self.add_file(&path, Some(&named)))
+        let found = find_on_disk(&named);
+        found.is_some_and(|path| self.add_file(&path, is_written_down.then_some(&named[..])))
     }
 
-    /// `named`: the path that the program names when it runs.
+    /// `named`: the path under which the executable is to find the file.
     fn add_file(&mut self, path: &[u8], named: Option<&[u8]>) -> bool {
         let &WorkerSearch {
             loaders,
@@ -1089,14 +1163,15 @@ impl Walk<'_, '_> {
             true => native_path.to_vec(),
             false => [&paths.module_prefix[..], &name[..]].concat(),
         };
-        // The program that runs looks for what it has named, with the extensions that a file of code can have.
-        let held_as = match runs_in_place {
-            true => native_path.to_vec(),
-            false => with_forward_slashes(compute_module_path(paths, &name)),
-        };
-        let is_found_again = named.is_none_or(|named| held_as.starts_with(named));
-        if !is_code || is_host_path(path) || !is_found_again {
+        if !is_code || is_host_path(path) {
             return false;
+        }
+        let held_as = with_forward_slashes(compute_module_path(paths, &name));
+        if let Some(named) = named.filter(|&named| named != held_as) {
+            self.names.push(EntryPointPaths {
+                public_path: named.to_vec(),
+                source_path: source_path_of(path),
+            });
         }
         self.texts.push(WorkerFile {
             source_path: source_path_of(path),
@@ -1253,20 +1328,6 @@ impl Walk<'_, '_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn texts_are_encoded_as_the_functions_of_the_language_encode_them() {
-        let encoded = encode_uri_component("a b;/?:@&=+$,#-_.!~*'()\u{e9}\u{20ac}".as_bytes());
-        let expected = b"a%20b%3B%2F%3F%3A%40%26%3D%2B%24%2C%23-_.!~*'()%C3%A9%E2%82%AC";
-        assert_eq!(encoded.as_deref(), Some(&expected[..]));
-        assert_eq!(encode_uri_component(b"\xed\xa0\x80"), None);
-        assert_eq!(encode_base64(b"ab").as_deref(), Some(&b"YWI="[..]));
-        assert_eq!(
-            encode_base64("\u{e9}".as_bytes()).as_deref(),
-            Some(&b"6Q=="[..])
-        );
-        assert_eq!(encode_base64("\u{20ac}".as_bytes()), None);
-    }
 
     #[test]
     fn paths_are_joined_as_node_path_joins_them() {

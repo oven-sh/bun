@@ -1,8 +1,7 @@
-# The declared overloads that test/aot/builtins/differential-cases.ts does not call or that do not pass: `<overload>: <why>`.
-# Written by: AOT_BUILTINS_UPDATE=1 TEST_PART=aot/builtins/differential bun test test/aot/parts.test.ts
+# The declared overloads that test/aot/builtins/differential.test.ts does not call or that do not pass: `<overload>: <why>`.
+# Written by: AOT_BUILTINS_UPDATE=1 bun test test/aot/builtins/differential.test.ts
 AtomicsWait/0: it is not called: it blocks the thread
 AtomicsWait/1: it is not called: it blocks the thread
-BuildArtifactPrototypeSlice/0: the process ended or did not come back
 BunBuild/0: it is not called: it blocks, starts a process or opens a socket
 BunBundleFeature/0: it is not called: this realm does not have its holder
 BunConnect/0: it is not called: it blocks, starts a process or opens a socket
@@ -40,8 +39,6 @@ CrashHandlerJscCrashHandlerRootError/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerSegfault/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerSegfaultInDll/0: the process ended or did not come back
 CrashHandlerJscCrashHandlerTrap/0: the process ended or did not come back
-DebugHTTPSServerPrototypePublish/0: the process ended or did not come back
-DebugHTTPServerPrototypePublish/0: the process ended or did not come back
 ExpectExtend/0: it differs in receiver
 FFIPrototypeClose/0: no set of operands selects it
 FFIPrototypeSymbols/0: no set of operands selects it
@@ -49,21 +46,20 @@ FileInternalReadableStreamSourcePrototypeSetRawMode/0: the process ended or did 
 FrameworkFileSystemRouterPrototypeMatch/0: no set of operands selects it
 FrameworkFileSystemRouterPrototypeToJSON/0: no set of operands selects it
 HTMLBundlePrototypeIndex/0: no set of operands selects it
-HTTPSServerPrototypePublish/0: the process ended or did not come back
-HTTPServerPrototypePublish/0: the process ended or did not come back
 ImportMetaResolve/0: it is not called: this realm does not have it
 ImportMetaResolveSync/0: it is not called: this realm does not have it
 MysqlBindingCreateConnection/0: it differs in parameters
 NativeBindgenBake_pluginsBindTsRestartProcess/0: the process ended or did not come back
-NativeBindgenBake_pluginsBindTsSetPages/0: the test itself threw: 47 |   const method = value[name] as Function;
+NativeBindgenBake_pluginsBindTsSetPages/0: it is not called: it changes how modules are loaded
+NativeBindgenBake_pluginsBindTsSetPages/1: it is not called: it changes how modules are loaded
 NativeBindgenFrameworkRouterBindTsParseRoutePattern/0: the process ended or did not come back
 NativeBindgenNode_cluster_bindingBindTsClusterCloseHandle/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenNode_cluster_bindingBindTsClusterCloseHandle/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenNode_cluster_bindingBindTsClusterRawBind/0: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeBindgenNode_cluster_bindingBindTsClusterRawBind/1: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeBindgenNode_fs_bindingBindTsBinding/0: it is not called: this realm does not have it
-NativeBindgenSocket_bodyBindTsGetBufferedAmount/0: the process ended or did not come back
-NativeBindgenUdp_socketBindTsConnect/0: the process ended or did not come back
+NativeBindgenUdp_socketBindTsConnect/0: it is not called: it asks the name servers about every string that is no address, and waits for them
+NativeBindgenUdp_socketBindTsConnect/1: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeBindgenUdp_socketBindTsDgramAdoptFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenUdp_socketBindTsDgramAdoptFd/1: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeBindgenUdp_socketBindTsDgramBindFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
@@ -81,10 +77,12 @@ NativeFunctionsBake_pluginsBindTsCheckFramework/0: it is not called: it changes 
 NativeFunctionsBake_pluginsBindTsRestartProcess/0: it is not called: it ends the process or makes it fail
 NativeFunctionsBake_pluginsBindTsSetConfigPlugins/0: it is not called: it changes how modules are loaded
 NativeFunctionsBake_pluginsBindTsSetPages/0: it is not called: it changes how modules are loaded
+NativeFunctionsBunProcessCppBun__Process__disconnect/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppJsFunctionDrainMicrotaskQueue/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppJsFunctionReportUncaughtException/0: it is not called: it ends the process or makes it fail
 NativeFunctionsBunProcessCppJsFunction_emitWarning/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppJsFunction_throwValue/0: it is not called: this realm does not have its holder
+NativeFunctionsBunProcessCppJsSend/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have its holder
 NativeFunctionsBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have its holder
 NativeFunctionsChecker_queries_testingBindTsDescribeCheckerQueries/0: it is not called: a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose
@@ -97,6 +95,9 @@ NativeFunctionsFrameworkRouterBindTsParseRoutePattern/0: it is not called: only 
 NativeFunctionsIni_jscBindTsLoadNpmrc/0: it is not called: it works on files that its operands name outside the folder of the test
 NativeFunctionsIpc_hostBindTsEmitHandleIPCMessage/0: it is not called: it opens a connection or writes to the channel of a parent process
 NativeFunctionsJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush/0: it is not called: this realm does not have its holder
+NativeFunctionsJSEnvironmentVariableMapCppJsEditWindowsEnvVar/0: it is not called: this realm does not have its holder
+NativeFunctionsJSEnvironmentVariableMapCppJsProcessEnvCoerceForWrite/0: it is not called: this realm does not have its holder
+NativeFunctionsJSEnvironmentVariableMapCppJsProcessEnvResetForDelete/0: it is not called: this realm does not have its holder
 NativeFunctionsJSEventListenerCppJsFunctionEmitUncaughtException/0: it is not called: this realm does not have its holder
 NativeFunctionsLinear_fifo_testingBindTsOrderedRemoveProbe/0: it is not called: a helper of Bun's own tests that takes the kinds of its operands on trust or reads freed memory on purpose
 NativeFunctionsMarkdownObjectInternalsBindTsSetMaxMarkdownBlockBytesForTesting/0: it is not called: it changes how the rest of the process behaves
@@ -129,18 +130,22 @@ NativeFunctionsStatBindTsCreateStatsForIno/0: it is not called: a helper of Bun'
 NativeFunctionsSubprocessBindTsInjectStdioReadError/0: it is not called: it changes how the rest of the process behaves
 NativeFunctionsTrim_testingBindTsReadTrimTable/0: it is not called: it works on files that its operands name outside the folder of the test
 NativeFunctionsTrim_testingBindTsTrimExecutable/0: it is not called: it works on files that its operands name outside the folder of the test
-NativeFunctionsUdp_socketBindTsConnect/0: the process ended or did not come back
+NativeFunctionsUdp_socketBindTsConnect/0: it is not called: it asks the name servers about every string that is no address, and waits for them
 NativeFunctionsUdp_socketBindTsDgramAdoptFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramBindFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramCloseFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsUdp_socketBindTsDgramListenFd/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NativeFunctionsVirtual_machine_exportsBindTsSetSyntheticAllocationLimitForTesting/0: it is not called: it ends the process or makes it fail
+NativeNewCppFunctionBunProcessCppBun__Process__disconnect/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppBun__Process__disconnect/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunctionDrainMicrotaskQueue/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunction_emitWarning/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunction_emitWarning/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunction_throwValue/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppJsFunction_throwValue/1: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppJsSend/0: it is not called: this realm does not have it
+NativeNewCppFunctionBunProcessCppJsSend/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppProcess_functionEmitHelper/0: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppProcess_functionEmitHelper/1: it is not called: this realm does not have it
 NativeNewCppFunctionBunProcessCppProcess_functionWriteWarning/0: it is not called: this realm does not have it
@@ -149,11 +154,16 @@ NativeNewCppFunctionErrorCodeCppNodeError_proto_toString/0: it is not called: th
 NativeNewCppFunctionErrorCodeCppNodeError_proto_toString/1: it is not called: this realm does not have it
 NativeNewCppFunctionJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush/0: it is not called: this realm does not have it
 NativeNewCppFunctionJSDirectStreamControllerCppJsWebStreamsHandler_onDirectEndOfTickFlush/1: it is not called: this realm does not have it
+NativeNewCppFunctionJSEnvironmentVariableMapCppJsEditWindowsEnvVar/0: it is not called: this realm does not have it
+NativeNewCppFunctionJSEnvironmentVariableMapCppJsEditWindowsEnvVar/1: it is not called: this realm does not have it
+NativeNewCppFunctionJSEnvironmentVariableMapCppJsProcessEnvCoerceForWrite/0: it is not called: this realm does not have it
+NativeNewCppFunctionJSEnvironmentVariableMapCppJsProcessEnvCoerceForWrite/1: it is not called: this realm does not have it
+NativeNewCppFunctionJSEnvironmentVariableMapCppJsProcessEnvResetForDelete/0: it is not called: this realm does not have it
+NativeNewCppFunctionJSEnvironmentVariableMapCppJsProcessEnvResetForDelete/1: it is not called: this realm does not have it
 NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/0: it is not called: this realm does not have it
 NativeNewCppFunctionJSEventListenerCppJsFunctionEmitUncaughtException/1: it is not called: this realm does not have it
 NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/0: it is not called: this realm does not have it
 NativeNewCppFunctionNodeModuleModuleCppJsFunctionSetCJSWrapperItem/1: it is not called: this realm does not have it
-NodeCryptoBindingCryptoScryptSync/0: the process ended or did not come back
 NodeJSFSPrototypeClose/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NodeJSFSPrototypeCloseCb/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
 NodeJSFSPrototypeCloseSync/0: it is not called: it closes, cuts or takes over whichever descriptor its operand numbers, those of the test too
@@ -242,7 +252,6 @@ ScopeFunctionsPrototypeSkip/0: it is not called: this realm does not have its ho
 ScopeFunctionsPrototypeSkipIf/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeTodo/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeTodoIf/0: it is not called: this realm does not have its holder
-ShadowRealmPrototypeImportValue/0: it is not called: it loads whatever its operand names
 ShellInterpreterPrototypeRun/0: no set of operands selects it
 Worker/1: it is not called: it starts a thread or opens a connection
 Worker/2: it is not called: it starts a thread or opens a connection

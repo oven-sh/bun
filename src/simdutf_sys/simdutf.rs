@@ -58,6 +58,11 @@ unsafe extern "C" {
     ) -> usize;
     pub fn simdutf__utf16_length_from_utf8(input: *const u8, length: usize) -> usize;
     pub fn simdutf__utf8_length_from_latin1(input: *const u8, length: usize) -> usize;
+    pub fn simdutf__convert_latin1_to_utf8(
+        input: *const u8,
+        length: usize,
+        utf8_buffer: *mut u8,
+    ) -> usize;
 }
 
 pub mod validate {

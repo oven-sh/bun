@@ -14,6 +14,7 @@ use bun_core::{self, Global, Output};
 use bun_core::{ZBox, ZStr, strings};
 use bun_install::CommandLineArguments;
 use bun_install::dependency::VersionTag;
+use bun_install::postinstall_optimizer;
 use bun_install::update_request::{self, UpdateRequest};
 use bun_parsers::json;
 use bun_paths::{self, DELIMITER};
@@ -498,18 +499,31 @@ impl BunxCommand {
             let is_in_package = |real: &[u8]| {
                 (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP))
             };
-            // The installer links the bin of a package with native builds into an optional dependency,
-            // and skips the install script that replaces the package's own file.
-            if let Some(entry) = entry
-                && let Ok(real) = bun_sys::realpath(&entry, &mut buf)
-                && (is_in_package(real)
-                    || Self::is_in_platform_package(transpiler, &package_json, real))
-            {
-                return Ok(InProject::Run(entry));
-            }
+            // The installer links the bin of a native dependency into its platform package, and skips
+            // the install script that replaces the package's own file.
+            let entry = match entry {
+                Some(entry)
+                    if bun_sys::realpath(&entry, &mut buf).is_ok_and(|real| {
+                        is_in_package(real)
+                            || Self::is_in_platform_package(
+                                transpiler,
+                                project,
+                                &package_json,
+                                real_dir,
+                                real,
+                            )
+                    }) =>
+                {
+                    return Ok(InProject::Run(entry));
+                }
+                entry => entry,
+            };
             let Some(file) = file else {
                 return Ok(Self::find_without_executable_file(
+                    transpiler,
+                    &package_json,
                     package_name,
+                    entry,
                     file_path,
                     real_dir,
                 ));
@@ -526,11 +540,24 @@ impl BunxCommand {
     /// The project has the package, and the file of its bin is not an executable file.
     #[cold]
     fn find_without_executable_file(
+        transpiler: &mut Transpiler,
+        package_json: &ZStr,
         package_name: &[u8],
+        entry: Option<ZBox>,
         file: Vec<u8>,
         real_dir: &[u8],
     ) -> InProject {
         let mut buf = bun_paths::path_buffer_pool::get();
+        let kinds = [b"optionalDependencies".as_slice()];
+        if let Some(entry) = entry
+            && let Ok(real) = bun_sys::realpath(&entry, &mut buf)
+            && Self::dependencies_with(transpiler, package_json, real_dir, real, &kinds)
+                .iter()
+                .any(|dependency_json| bun_sys::exists(dependency_json))
+        {
+            return InProject::Run(entry);
+        }
+
         let file = ZBox::from_vec(file);
         match bun_sys::realpath(&file, &mut buf) {
             Ok(real) if (real.strip_prefix(real_dir)).is_some_and(|rest| rest.starts_with(SEP)) => {
@@ -547,33 +574,78 @@ impl BunxCommand {
         }
     }
 
-    /// Whether `real` is in one of the `optionalDependencies` of the package at `package_json` that
-    /// has an `os` and a `cpu`. The installer links the bin of a package into no other package.
+    /// Whether the installer linked the bin of the package at `package_json` to `real`. It does that
+    /// for a native dependency of `project`, into a dependency with an `os` and a `cpu`.
     fn is_in_platform_package(
         transpiler: &mut Transpiler,
+        project: &[u8],
         package_json: &ZStr,
+        real_dir: &[u8],
         real: &[u8],
     ) -> bool {
-        let dependency_json =
-            Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
-                let optional = root.get(b"optionalDependencies")?;
-                let ExprData::EObjectJSON(optional) = &optional.data else {
-                    return None;
-                };
-                // `node_modules` can be a link to a folder of another name, which is the name in `real`.
-                optional.get().properties().iter().find_map(|dependency| {
-                    let name = dependency.key.slice();
-                    let (parent, _) = strings::rsplit_once(real, &[b"/", name, b"/"].concat())?;
-                    Some([parent, b"/", name, b"/package.json"].concat())
-                })
-            });
-        let Some(Some(dependency_json)) = dependency_json else {
+        let kinds = [b"dependencies".as_slice(), b"optionalDependencies"];
+        let dependencies =
+            Self::dependencies_with(transpiler, package_json, real_dir, real, &kinds);
+        let has_platform = dependencies.iter().any(|dependency_json| {
+            Self::read_package_json(transpiler, dependency_json, |dependency| {
+                dependency.get(b"os").is_some() && dependency.get(b"cpu").is_some()
+            })
+            .unwrap_or(false)
+        });
+        if !has_platform {
+            return false;
+        }
+        // Under an alias, the folder does not have the name of the package.
+        let name = Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
+            Some(root.get(b"name")?.as_utf8_string_literal()?.to_vec())
+        });
+        let Some(Some(name)) = name else {
             return false;
         };
-        Self::read_package_json(transpiler, &dependency_json, |root| {
-            root.get(b"os").is_some() && root.get(b"cpu").is_some()
+        let project_json = [project, SEP, b"package.json"].concat();
+        Self::read_package_json(transpiler, &project_json, |root| {
+            postinstall_optimizer::List::is_native_dependency(root, &name)
         })
         .unwrap_or(false)
+    }
+
+    /// Where the package.json is of each dependency of the package at `package_json`, in `real_dir`,
+    /// that `real` can be in. `kinds` are the fields of package.json that list the dependencies.
+    fn dependencies_with(
+        transpiler: &mut Transpiler,
+        package_json: &ZStr,
+        real_dir: &[u8],
+        real: &[u8],
+        kinds: &[&[u8]],
+    ) -> Vec<Vec<u8>> {
+        Self::read_package_json(transpiler, package_json.as_bytes(), |root| {
+            let mut found = Vec::new();
+            for kind in kinds {
+                let Some(dependencies) = root.get(kind) else {
+                    continue;
+                };
+                let ExprData::EObjectJSON(dependencies) = &dependencies.data else {
+                    continue;
+                };
+                for dependency in dependencies.get().properties().iter() {
+                    let name = dependency.key.slice();
+                    // `node_modules` can be a link to a folder of another name, which is the name in `real`.
+                    let Some((parent, _)) =
+                        strings::rsplit_once(real, &[b"/", name, b"/"].concat())
+                    else {
+                        continue;
+                    };
+                    let dir = [parent, b"/", name, b"/"].concat();
+                    // A folder above the project, which the package is in too, or `@scope/<name>`.
+                    if real_dir.starts_with(&dir) || bun_paths::basename(parent).starts_with(b"@") {
+                        continue;
+                    }
+                    found.push([dir.as_slice(), b"package.json"].concat());
+                }
+            }
+            found
+        })
+        .unwrap_or_default()
     }
 
     fn read_package_json<T>(
@@ -1014,8 +1086,7 @@ impl BunxCommand {
             new_path
         };
 
-        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir: &[u8] = unsafe { &*this_transpiler.fs }.top_level_dir();
+        let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
         let which_cwd: &[u8] = if ignore_cwd.is_empty() {
             top_level_dir
         } else {

@@ -84,7 +84,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
         for &(e, kind) in &declarations {
             let name = match kind {
                 JsDeclarationKind::ExportsProperty(_) => match hir[e].kind {
-                    ExprKind::Assign { target, .. } => match hir[target].kind {
+                    ExprKind::Assign { target, .. } => match hir.checked_kind(target) {
                         ExprKind::Dot { name, .. } => ExportName {
                             text: self.name(name).to_vec(),
                             is_identifier: true,
@@ -413,7 +413,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             let symbol = bound.symbol_of_expr(e);
             // `HasDynamicName`: an identifier isn't `IsSimpleInlineableExpression`, so `this[name] = e` doesn't declare
             // anything here.
-            let name = match hir[target].kind {
+            let name = match hir.checked_kind(target) {
                 ExprKind::Dot { name, .. } => Some(name),
                 ExprKind::Index { index, .. } if is_string_or_numeric_literal_like(hir, index) => {
                     self.c.literal_key(file, index)
@@ -437,7 +437,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
             if name == known::constructor {
                 continue;
             }
-            let name_text = match hir[target].kind {
+            let name_text = match hir.checked_kind(target) {
                 // `getLiteralTextOfNode`
                 ExprKind::Index { index, .. } => {
                     self.c.get_text_of_node(file, hir.node(index)).to_vec()
@@ -520,7 +520,7 @@ impl<'p> DeclarationEmit<'_, 'p, '_> {
                 return Some(self.c.type_of_symbol(symbol));
             }
             JsDeclarationKind::ExportsProperty(_) => match hir[e].kind {
-                ExprKind::Assign { target, .. } => match hir[target].kind {
+                ExprKind::Assign { target, .. } => match hir.checked_kind(target) {
                     ExprKind::Dot { name, .. } => Some(name),
                     ExprKind::Index { index, .. } => self.c.literal_key(file, index),
                     _ => None,

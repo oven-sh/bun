@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
-use bun_core::{String as BunString, ZStr};
+use bun_core::{String as BunString, StringView, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
@@ -496,19 +496,18 @@ impl Entry {
                     if chars.is_empty() {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
-                    // `chars` is `&mut [u16; char_len]` backed by contiguous
-                    // WTFString storage; reinterpret as bytes for pread via the
-                    // safe POD cast (`u16` → `u8` always satisfies size/align).
-                    let chars_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
-                    let read_bytes =
-                        file.pread_all(chars_bytes, self.metadata.output_byte_offset)?;
+                    let read_bytes = file.pread_all(
+                        bun_core::slice_as_bytes_mut(chars),
+                        self.metadata.output_byte_offset,
+                    )?;
                     if read_bytes as u64 != self.metadata.output_byte_length {
                         return Err(crate::CrateError::MissingData);
                     }
 
                     if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
-                        if hash(utf16_bytes) != self.metadata.output_hash {
+                        if hash(bun_core::slice_as_bytes(string.utf16()))
+                            != self.metadata.output_hash
+                        {
                             return Err(crate::CrateError::InvalidHash);
                         }
                     }
@@ -1007,7 +1006,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
             // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
             // and `output_code_bytes` outlives the synchronous `to_file` call.
-            let output_code = BunString::ascii(output_code_bytes);
+            let output_code = StringView::ascii(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),

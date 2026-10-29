@@ -1,0 +1,44 @@
+# Reflect get reads an exported variable that a function stores to.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="typed.ts" displayPath="typed.ts" body=f0 exports=[{name="fifth" variable=g0}, {name="setFifth" variable=g1}] namespaceLayout=L(m0)
+module m1 path="main.ts" displayPath="main.ts" body=f2 requests=[{target=m0 completes=true}] namespaceLayout=L(m1)
+entry module=m1
+variable g0 name="fifth" module=m0 declared={type=number|absent}
+variable g1 name="setFifth" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="setFifth" module=m0 position=23 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 module=m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=Reflect
+    v1 = Builtin builtin=ReflectGet
+    v2 = ModuleNamespace module=m0
+    v3 = Convert v2 declared={type=undefined|null|object} illTypedCause=Assertion
+    v4 = String string="fifth"
+    v5 = Call v1, v0, v3, v4 calleeName="Reflect.get"
+    v6 = Undefined
+    Return v6
+}
+# -- generated: f0 f2
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f2 module=
+# CHECK: m1 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(Reflect) = Builtin builtin=Reflect
+# CHECK-NEXT: v1: builtin(ReflectGet) = Builtin builtin=ReflectGet
+# CHECK-NEXT: v2: L(m0) = ModuleNamespace module=m0
+# CHECK-NEXT: v3: "fifth" = String string="fifth"
+# CHECK-NEXT: v4: anything = Call v1, v0, v2, v3 calleeName="Reflect.get" accessSite=0 callees=[builtin(ReflectGet)]
+# CHECK-NEXT: v5: undefined = Undefined
+# CHECK-NEXT: Return v5
+# CHECK-NEXT: }

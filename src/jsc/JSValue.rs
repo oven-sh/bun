@@ -803,7 +803,7 @@ impl JSValue {
     pub fn to_utf8(self, global: &JSGlobalObject) -> JsResult<bun_core::Utf8Bytes<'static>> {
         Ok(self.to_bun_string(global)?.into_utf8())
     }
-    pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
+    pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException<'_>) {
         JSC__JSValue__toZigException(self, global, exception)
     }
     pub fn to_error(self) -> Option<JSValue> {
@@ -1975,7 +1975,7 @@ unsafe extern "C" {
     safe fn JSC__JSValue__toZigException(
         this: JSValue,
         global: &JSGlobalObject,
-        exception: &mut ZigException,
+        exception: &mut ZigException<'_>,
     );
     safe fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
     // safe: `&mut [u8; 64]` is ABI-identical to the non-null 64-byte out-buffer
@@ -2300,7 +2300,7 @@ impl JSValue {
         global: &JSGlobalObject,
         property_name: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
-        let name = bun_core::String::borrow_utf8(property_name.as_ref());
+        let name = bun_core::StringView::borrow_utf8(property_name.as_ref());
         match self.get_own(global, &name)? {
             Some(prop) if !prop.is_undefined() => Ok(Some(prop)),
             _ => Ok(None),
@@ -2347,6 +2347,13 @@ impl JSValue {
             return Ok(None);
         }
         Ok(Some(v))
+    }
+    /// True for what a generator function compiled ahead of time has made. The engine's own generator objects have `JSType::JSGenerator`.
+    pub fn is_compiled_generator(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isCompiledGenerator(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isCompiledGenerator(self)
     }
     /// `JSValue.isClass` — true if the callable is a class constructor.
     pub fn is_class(self, global: &JSGlobalObject) -> bool {

@@ -134,7 +134,7 @@ pub struct Printer<'a> {
     pub(crate) pending_semicolon: bool,
     pub(crate) in_calc: bool,
     pub(crate) css_module: Option<css::CssModule<'a>>,
-    pub(crate) dependencies: Option<BumpVec<'a, css::Dependency>>,
+    pub(crate) dependencies: Option<BumpVec<'a, css::Dependency<'a>>>,
     pub(crate) remove_imports: bool,
     /// A mapping of pseudo classes to replace with class names that can be applied
     /// from JavaScript. Useful for polyfills, for example.

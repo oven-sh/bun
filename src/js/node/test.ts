@@ -391,15 +391,8 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
     if (typeof opts.setup === "function") await (opts.setup as (reporter: TestsStream) => unknown)(reporter);
 
     const files = opts.files ?? [];
-    let i = 0;
-    for (; i < files.length; i++) {
-      if (opts.signal?.aborted) break;
+    for (let i = 0; i < files.length; i++) {
       await runOneFile(files[i], opts, reporter, counts);
-    }
-    // Node cancels each not-yet-started FileTest with cancelledByParent rather
-    // than silently dropping it; an aborted run must not report success:true.
-    for (; i < files.length; i++) {
-      reportCancelledFile(files[i], opts, reporter, counts);
     }
 
     reporter.plan({ __proto__: null, nesting: 0, count: counts.topLevel });
@@ -419,29 +412,29 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
   reporter.endStream();
 }
 
-function reportCancelledFile(
-  file: string,
-  opts: ReturnType<typeof validateRunOptions>,
+// Node's Test#abortHandler: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1058-L1062
+function abortFailure(signal: AbortSignal) {
+  let error: any = signal.reason || $makeAbortError("The test was aborted");
+  try {
+    error.failureType = "testAborted";
+  } catch {
+    // Node throws here, for a primitive and for a frozen object. The reason becomes the cause of an AbortError.
+    error = $makeAbortError("The test was aborted", { cause: error });
+    error.failureType = "testAborted";
+  }
+  return error;
+}
+
+// The verdict of a file that has none from its child: the signal cancelled the file, or the child did not start.
+function reportFailedFile(
+  fileNode: object,
+  error: unknown,
+  count: "cancelled" | "failed",
+  durationMs: number,
   reporter: TestsStream,
   counts: Record<string, number>,
 ) {
-  const path = require("node:path");
-  const absolute = path.resolve(opts.cwd as string, file);
-  const fileNode = {
-    nesting: 0,
-    name: file,
-    type: "test",
-    testId: 1,
-    parentId: 0,
-    tags: [],
-    line: 1,
-    column: 1,
-    file: absolute,
-  };
-  const error = makeTestFailure("test did not finish before its parent and was cancelled", "cancelledByParent");
-  const details = { __proto__: null, duration_ms: 0, type: "test", error };
-  reporter.enqueue({ __proto__: null, ...fileNode });
-  reporter.dequeue({ __proto__: null, ...fileNode });
+  const details = { __proto__: null, duration_ms: durationMs, type: "test", error };
   reporter.complete({
     __proto__: null,
     ...fileNode,
@@ -451,8 +444,18 @@ function reportCancelledFile(
   });
   reporter.fail({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
   counts.tests++;
-  counts.cancelled++;
+  counts[count]++;
   counts.topLevel++;
+}
+
+// Promise.race([stop, awaited]) without the public `resolve` and `then`, which the caller's program can replace.
+function untilStopped<T>(stop: Promise<undefined>, awaited: Promise<T>): Promise<T | undefined> {
+  const first = $newPromise<T | undefined>();
+  const resolve = (value: T | undefined) => $resolvePromiseWithFirstResolvingFunctionCallCheck(first, value);
+  const reject = (err: unknown) => $rejectPromiseWithFirstResolvingFunctionCallCheck(first, err);
+  stop.$then(resolve, reject);
+  awaited.$then(resolve, reject);
+  return first;
 }
 
 async function runOneFile(
@@ -486,37 +489,75 @@ async function runOneFile(
   reporter.enqueue({ __proto__: null, ...fileNode });
   reporter.dequeue({ __proto__: null, ...fileNode });
 
-  const proc = Bun.spawn({
-    cmd: args,
-    cwd: opts.cwd as string,
-    env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
-    stdout: "pipe",
-    stderr: "pipe",
-    signal: opts.signal,
-  });
+  const signal: AbortSignal | undefined = opts.signal;
+  // Node reads the signal before it spawns: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1306-L1309
+  if (signal?.aborted) {
+    reportFailedFile(fileNode, abortFailure(signal), "cancelled", 0, reporter, counts);
+    return;
+  }
 
-  let drainStderr: Promise<void> | undefined;
+  let proc: import("bun").Subprocess<"ignore", "pipe", "pipe">;
   try {
-    let stderrText = "";
-    drainStderr = (async () => {
+    proc = Bun.spawn({
+      cmd: args,
+      cwd: opts.cwd as string,
+      env: { ...(opts.env ?? process.env), BUN_TEST_DRAIN_EVENT_LOOP: "1", [kRunChildEnv]: kRunChildEnvValue },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+  } catch (err) {
+    // Node fails the file with the spawn error: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/runner.js#L532-L534
+    const error = makeTestFailure(String((err as Error)?.message ?? err), "testCodeFailure");
+    error.cause = err;
+    reportFailedFile(fileNode, error, "failed", Date.now() - fileStarted, reporter, counts);
+    return;
+  }
+
+  // False after the abort, and after this function: nothing more of the child is published.
+  let live = true;
+  // Ends a wait for the child: it fulfills at the abort and rejects when the stderr reader fails.
+  let stop: Promise<undefined> | undefined;
+  let abortListener: Disposable | undefined;
+
+  try {
+    if (signal !== undefined) {
+      stop = $newPromise<undefined>();
+      addAbortListener ??= require("internal/abort_listener").addAbortListener;
+      // Node's abort listener ends the file test and its child: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1064-L1077
+      abortListener = addAbortListener!(signal, () => {
+        live = false;
+        proc.kill();
+        $resolvePromiseWithFirstResolvingFunctionCallCheck(stop!, undefined);
+      });
+    }
+
+    // Reads one pipe of the child to its end, and publishes each line while the file is live.
+    const readLines = async (pipe: unknown, publish: (line: string) => void) => {
       const decoder = new TextDecoder();
       let carry = "";
-      for await (const chunk of proc.stderr as any) {
-        const text = typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-        stderrText += text;
-        carry += text;
+      for await (const chunk of pipe as any) {
+        // Node reads on too, so the child never blocks: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/runner.js#L536-L538
+        if (!live) continue;
+        carry += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
         let nl;
-        while ((nl = carry.indexOf("\n")) !== -1) {
+        while (live && (nl = carry.indexOf("\n")) !== -1) {
           const line = carry.slice(0, nl);
           carry = carry.slice(nl + 1);
-          if (line.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: line + "\n" });
+          publish(line);
         }
       }
-      if (carry.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: carry + "\n" });
-    })();
-    // Defuse: a throwing test:stderr listener rejects this while the stdout
-    // loop is still suspended on I/O, before the finally's .catch attaches.
-    drainStderr.catch(() => {});
+      if (live && carry.length > 0) publish(carry);
+    };
+
+    let stderrText = "";
+    const drainStderr = readLines(proc.stderr, line => {
+      stderrText += line + "\n";
+      if (line.length > 0) reporter.stderr({ __proto__: null, file: absolute, message: line + "\n" });
+    });
+    // A test:stderr listener that throws fails this reader. Only a run with a signal has a wait that this can end.
+    drainStderr.$then(undefined, (err: unknown) => {
+      if (stop !== undefined) $rejectPromiseWithFirstResolvingFunctionCallCheck(stop, err);
+    });
 
     const handleStdoutLine = (line: string) => {
       if (line.length === 0) return;
@@ -531,6 +572,7 @@ async function runOneFile(
         const before = line.slice(0, marker).trimEnd();
         if (before.length > 0) {
           reporter.stdout({ __proto__: null, file: absolute, message: before + "\n" });
+          if (!live) return;
         }
       }
       let event;
@@ -543,21 +585,25 @@ async function runOneFile(
       republishChildEvent(event, absolute, reporter, fileCounts);
     };
 
-    const decoder = new TextDecoder();
-    let carry = "";
-    for await (const chunk of proc.stdout as any) {
-      carry += typeof chunk === "string" ? chunk : decoder.decode(chunk, { stream: true });
-      let nl;
-      while ((nl = carry.indexOf("\n")) !== -1) {
-        const line = carry.slice(0, nl);
-        carry = carry.slice(nl + 1);
-        handleStdoutLine(line);
-      }
-    }
-    if (carry.length > 0) handleStdoutLine(carry);
+    const drainStdout = readLines(proc.stdout, handleStdoutLine);
 
-    await drainStderr;
-    const exitCode = await proc.exited;
+    let exitCode: number | undefined;
+    if (stop === undefined) {
+      await drainStdout;
+      await drainStderr;
+      exitCode = await proc.exited;
+    } else {
+      // Node's file test ends at child exit and stdout end: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/runner.js#L557-L560
+      await untilStopped(stop, drainStdout);
+      exitCode = await untilStopped(stop, proc.exited);
+      if (!live) {
+        addRunCounts(counts, fileCounts);
+        reportFailedFile(fileNode, abortFailure(signal!), "cancelled", Date.now() - fileStarted, reporter, counts);
+        return;
+      }
+      // The file has its verdict. An abort from here on only ends this wait.
+      await untilStopped(stop, drainStderr);
+    }
 
     // A nonzero exit with no child-reported failures means the file itself died
     // (top-level throw); child-reported failures are already covered by the
@@ -615,8 +661,10 @@ async function runOneFile(
     }
     addRunCounts(counts, fileCounts);
   } finally {
-    proc.kill();
-    if (drainStderr !== undefined) await drainStderr.catch(() => {});
+    // The abort listener ended the child if it ran.
+    if (live) proc.kill();
+    live = false;
+    abortListener?.[Symbol.dispose]();
   }
 }
 

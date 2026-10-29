@@ -392,7 +392,7 @@ pub(crate) unsafe fn pwritev(
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Linux-only kernel features (epoll / pidfd / copy_file_range / sendfile /
+// Linux-only kernel features (epoll / pidfd / copy_file_range /
 // getdents64). These keep the *libc-convention* return shape (`-1` on error
 // with thread-local errno set) so existing callers in `bun_io`/`bun_runtime`
 // that decode via `GetErrno for isize` continue to work unchanged. The syscall
@@ -433,28 +433,6 @@ pub(crate) unsafe fn epoll_ctl(epfd: i32, op: i32, fd: i32, event: *mut libc::ep
     // SAFETY: raw `epoll_ctl(2)`; kernel validates `epfd`/`op`/`fd`; `event`
     // may be null for CTL_DEL (kernel ignores it).
     unsafe { libc::syscall(libc::SYS_epoll_ctl, epfd, op, fd, event) as i32 }
-}
-
-/// Raw `sendfile(2)` — libc-convention return.
-///
-/// Routed via `libc::syscall(SYS_sendfile, ..)` rather than rustix's
-/// `fs::sendfile` so that (a) `out_fd`/`in_fd == -1` yield EBADF instead of
-/// constructing a niche-invalid `BorrowedFd`, and (b) `offset` stays a raw
-/// `*mut loff_t` with no `&mut u64` type-pun.
-#[inline]
-pub(crate) unsafe fn sendfile(out_fd: i32, in_fd: i32, offset: *mut i64, count: usize) -> isize {
-    // libc 0.2.186 omits `SYS_sendfile` from its aarch64 syscall tables (gnu,
-    // musl, *and* android — every other arch has it). The
-    // generic-syscall ABI (aarch64/riscv64/loongarch64) places `sendfile` at
-    // 71; the legacy ABIs that *do* have the constant differ, so the polyfill
-    // is aarch64-only and the rest still come from `libc`.
-    #[cfg(target_arch = "aarch64")]
-    const SYS_SENDFILE: libc::c_long = 71;
-    #[cfg(not(target_arch = "aarch64"))]
-    const SYS_SENDFILE: libc::c_long = libc::SYS_sendfile;
-
-    // SAFETY: raw `sendfile(2)`; kernel validates fds; `offset` may be null.
-    unsafe { libc::syscall(SYS_SENDFILE, out_fd, in_fd, offset, count) as isize }
 }
 
 /// Raw `copy_file_range(2)` — libc-convention return.

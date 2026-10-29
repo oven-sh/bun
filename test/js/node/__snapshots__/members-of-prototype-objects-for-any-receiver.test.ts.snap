@@ -6508,15 +6508,9 @@ node:async_hooks.AsyncResource.prototype bind("a", 1)
 
 exports[`members of the prototype objects of node:diagnostics_channel 1`] = `
 "node:diagnostics_channel.Channel.prototype subscribe()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "subscription" argument must be of type function. Received undefined, stores _subscribers _stores <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
-  throws RangeError: Maximum call stack size exceeded., stores _subscribers _stores <- the prototype object
-  throws TypeError: Attempted to assign to readonly property. <- a number, a string
-  throws TypeError: Cannot set prototype of undefined or null <- undefined, null
+  throws TypeError ERR_INVALID_ARG_TYPE: The "subscription" argument must be of type function. Received undefined <- every receiver
 node:diagnostics_channel.Channel.prototype subscribe("a", 1)
-  throws TypeError ERR_INVALID_ARG_TYPE: The "subscription" argument must be of type function. Received type string ('a'), stores _subscribers _stores <- {}, an object without a prototype, an instance of another class, a proxy of {}, an heir of the prototype object, a proxy of such an heir
-  throws RangeError: Maximum call stack size exceeded., stores _subscribers _stores <- the prototype object
-  throws TypeError: Attempted to assign to readonly property. <- a number, a string
-  throws TypeError: Cannot set prototype of undefined or null <- undefined, null
+  throws TypeError ERR_INVALID_ARG_TYPE: The "subscription" argument must be of type function. Received type string ('a') <- every receiver
 node:diagnostics_channel.Channel.prototype unsubscribe()
   false <- every receiver
 node:diagnostics_channel.Channel.prototype unsubscribe("a", 1)
@@ -6553,24 +6547,33 @@ what is above object 1 unsubscribe()
   throws TypeError: undefined is not an object <- every receiver
 what is above object 1 unsubscribe("a", 1)
   true <- every receiver
+what is above object 1 hasSubscribers, read
+  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws TypeError: null is not an object <- null
 what is above object 1 traceSync()
-  throws TypeError: undefined is not an object <- every object, a number, a string
-  throws TypeError: Cannot destructure property 'start' from null or undefined value <- undefined, null
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object, undefined
+  throws TypeError: null is not an object <- null
 what is above object 1 traceSync("a", 1)
-  throws TypeError: undefined is not an object <- every object, a number, a string
-  throws TypeError: Cannot destructure property 'start' from null or undefined value <- undefined, null
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object, undefined
+  throws TypeError: null is not an object <- null
 what is above object 1 tracePromise()
-  throws TypeError: undefined is not an object <- every object, a number, a string
-  throws TypeError: Cannot destructure property 'start' from null or undefined value <- undefined, null
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object, undefined
+  throws TypeError: null is not an object <- null
 what is above object 1 tracePromise("a", 1)
-  throws TypeError: undefined is not an object <- every object, a number, a string
-  throws TypeError: Cannot destructure property 'start' from null or undefined value <- undefined, null
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object, undefined
+  throws TypeError: null is not an object <- null
 what is above object 1 traceCallback()
-  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received undefined <- every object, a number, a string
-  throws TypeError: Cannot destructure property 'start' from null or undefined value <- undefined, null
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object, undefined
+  throws TypeError: null is not an object <- null
 what is above object 1 traceCallback("a", 1)
-  throws TypeError ERR_INVALID_ARG_TYPE: The "callback" argument must be of type function. Received undefined <- every object, a number, a string
-  throws TypeError: Cannot destructure property 'start' from null or undefined value <- undefined, null
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws TypeError: undefined is not an object <- an heir of the prototype object, a proxy of such an heir, the prototype object, undefined
+  throws TypeError: null is not an object <- null
 "
 `;
 

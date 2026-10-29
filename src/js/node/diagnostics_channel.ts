@@ -1,5 +1,6 @@
 // Hardcoded module "node:diagnostics_channel"
 // Reference: https://github.com/nodejs/node/blob/fb47afc335ef78a8cef7eac52b8ee7f045300696/lib/diagnostics_channel.js
+// subscribe(), the order of runStores() and TracingChannel's trace methods follow v26.12.1 of that file, without its BoundedChannel.
 
 const { validateFunction } = require("internal/validators");
 
@@ -11,16 +12,12 @@ const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 const ArrayPrototypePush = Array.prototype.push;
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ArrayPrototypeSplice = Array.prototype.splice;
+const ObjectCreate = Object.create;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const PromisePrototype = $Promise.prototype;
+const PromisePrototypeThen = $Promise.prototype.$then;
 const SymbolHasInstance = Symbol.hasInstance;
-const PromiseResolve = Promise.$resolve.bind(Promise);
-const PromiseReject = Promise.$reject.bind(Promise);
-const PromisePrototypeThen = (
-  promise: Promise<unknown>,
-  onFulfilled: (value: unknown) => unknown,
-  onRejected: (error: unknown) => unknown,
-) => promise.then(onFulfilled, onRejected);
 
 type ChannelName = string | symbol;
 type Subscription = (message: unknown, name: ChannelName) => void;
@@ -173,10 +170,17 @@ class ActiveChannel {
       return fn.$apply(thisArg, args);
     };
 
-    for (const entry of this._stores!.entries()) {
-      const store = entry[0];
-      const transform = entry[1];
-      run = wrapStoreRun(store, data, run, transform);
+    const stores = this._stores!;
+    if (stores.size > 1) {
+      // The first store bound is the outermost one, as in Node.js since v26.1.0 (nodejs/node#61680).
+      const entries = $Array.from(stores);
+      for (let i = entries.length - 1; i >= 0; i--) {
+        run = wrapStoreRun(entries[i][0], data, run, entries[i][1]);
+      }
+    } else {
+      for (const entry of stores.entries()) {
+        run = wrapStoreRun(entry[0], data, run, entry[1]);
+      }
     }
 
     return run();
@@ -202,6 +206,7 @@ class Channel {
   }
 
   subscribe(subscription: Subscription) {
+    validateFunction(subscription, "subscription");
     markActive(this);
     this.subscribe(subscription);
   }
@@ -328,101 +333,200 @@ class TracingChannel {
     return done;
   }
 
-  traceSync(fn: Traced, context: TraceContext = {}, thisArg?: unknown, ...args: unknown[]) {
-    const { start, end, error } = this;
-
-    return start.runStores(context, () => {
-      try {
-        const result = fn.$apply(thisArg, args);
-        context.result = result;
-        return result;
-      } catch (err) {
-        context.error = err;
-        error.publish(context);
-        throw err;
-      } finally {
-        end.publish(context);
-      }
-    });
+  get hasSubscribers() {
+    return (
+      this.start.hasSubscribers ||
+      this.end.hasSubscribers ||
+      this.asyncStart.hasSubscribers ||
+      this.asyncEnd.hasSubscribers ||
+      this.error.hasSubscribers
+    );
   }
 
-  tracePromise(fn: Traced, context: TraceContext = {}, thisArg?: unknown, ...args: unknown[]) {
-    const { start, end, asyncStart, asyncEnd, error } = this;
-
-    function reject(err: unknown) {
-      context.error = err;
-      error.publish(context);
-      asyncStart.publish(context);
-      // TODO: Is there a way to have asyncEnd _after_ the continuation?
-      asyncEnd.publish(context);
-      return PromiseReject(err);
+  traceSync(fn: Traced, context: TraceContext | undefined = undefined, thisArg?: unknown, ...args: unknown[]) {
+    if (!this.hasSubscribers) {
+      return fn.$apply(thisArg, args);
     }
 
-    function resolve(result: unknown) {
-      context.result = result;
-      asyncStart.publish(context);
-      // TODO: Is there a way to have asyncEnd _after_ the continuation?
-      asyncEnd.publish(context);
+    return traceSyncSubscribed(this, fn, context === undefined ? ObjectCreate(null) : context, thisArg, args);
+  }
+
+  tracePromise(fn: Traced, context: TraceContext | undefined = undefined, thisArg?: unknown, ...args: unknown[]) {
+    if (!this.hasSubscribers) {
+      const result: any = fn.$apply(thisArg, args);
+      if (typeof result?.then !== "function") {
+        emitNonThenableWarning(fn);
+      }
       return result;
     }
 
-    return start.runStores(context, () => {
-      try {
-        let promise = fn.$apply(thisArg, args);
-        // Convert thenables to native promises
-        if (!(promise instanceof Promise)) {
-          promise = PromiseResolve(promise);
-        }
-        return PromisePrototypeThen(promise as Promise<unknown>, resolve, reject);
-      } catch (err) {
-        context.error = err;
-        error.publish(context);
-        throw err;
-      } finally {
-        end.publish(context);
-      }
-    });
+    return tracePromiseSubscribed(this, fn, context === undefined ? ObjectCreate(null) : context, thisArg, args);
   }
 
-  traceCallback(fn: Traced, position = -1, context: TraceContext = {}, thisArg?: unknown, ...args: unknown[]) {
-    const { start, end, asyncStart, asyncEnd, error } = this;
-
-    function wrappedCallback(this: unknown, err: unknown, res: unknown) {
-      if (err) {
-        context.error = err;
-        error.publish(context);
-      } else {
-        context.result = res;
-      }
-
-      // Using runStores here enables manual context failure recovery
-      asyncStart.runStores(context, () => {
-        try {
-          if (callback) {
-            return callback.$apply(this, arguments);
-          }
-        } finally {
-          asyncEnd.publish(context);
-        }
-      });
+  traceCallback(
+    fn: Traced,
+    position = -1,
+    context: TraceContext | undefined = undefined,
+    thisArg?: unknown,
+    ...args: unknown[]
+  ) {
+    if (!this.hasSubscribers) {
+      return fn.$apply(thisArg, args);
     }
 
-    const callback: Traced | undefined = ArrayPrototypeAt.$call(args, position);
-    validateFunction(callback, "callback");
-    ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
+    return traceCallbackSubscribed(
+      this,
+      fn,
+      position,
+      context === undefined ? ObjectCreate(null) : context,
+      thisArg,
+      args,
+    );
+  }
+}
 
-    return start.runStores(context, () => {
+// The three functions below are outside the methods so that a trace call with no subscriber creates no closure and no scope.
+
+function traceSyncSubscribed(tc: TracingChannel, fn: Traced, context: TraceContext, thisArg: unknown, args: unknown[]) {
+  const { start, end, error } = tc;
+  // Node.js's BoundedChannelScope: "end" is published only if start or end had a subscriber when the call began.
+  const callWindow = start.hasSubscribers || end.hasSubscribers;
+
+  return start.runStores(context, () => {
+    try {
+      const result = fn.$apply(thisArg, args);
+      context.result = result;
+      return result;
+    } catch (err) {
+      context.error = err;
+      error.publish(context);
+      throw err;
+    } finally {
+      if (callWindow) end.publish(context);
+    }
+  });
+}
+
+function tracePromiseSubscribed(
+  tc: TracingChannel,
+  fn: Traced,
+  context: TraceContext,
+  thisArg: unknown,
+  args: unknown[],
+) {
+  const { start, end, asyncStart, asyncEnd, error } = tc;
+  const callWindow = start.hasSubscribers || end.hasSubscribers;
+
+  return start.runStores(context, () => {
+    try {
+      const result: any = fn.$apply(thisArg, args);
+      // A value that is not a thenable goes back as it is, with a warning and no asyncStart or asyncEnd.
+      if (typeof result?.then !== "function") {
+        emitNonThenableWarning(fn);
+        context.result = result;
+        return result;
+      }
+
+      const onResolve = (value: unknown) => {
+        context.result = value;
+        publishContinuation(asyncStart, asyncEnd, context);
+        return value;
+      };
+      // An instance of a subclass and a promise of another realm are thenables here: only a direct Promise is chained.
+      if ($isPromise(result) && ObjectGetPrototypeOf.$call(null, result) === PromisePrototype) {
+        const onRejectWithRethrow = (err: unknown) => {
+          publishRejection(error, asyncStart, asyncEnd, context, err);
+          throw err;
+        };
+        return PromisePrototypeThen.$call(result, onResolve, onRejectWithRethrow);
+      }
+      // The caller keeps its thenable. What then() returns is dropped, so onReject must not throw again.
+      const onReject = (err: unknown) => publishRejection(error, asyncStart, asyncEnd, context, err);
+      result.then(onResolve, onReject);
+      return result;
+    } catch (err) {
+      context.error = err;
+      error.publish(context);
+      throw err;
+    } finally {
+      if (callWindow) end.publish(context);
+    }
+  });
+}
+
+// asyncEnd follows asyncStart at once: a promise has no point after its continuation. runStores() is for bound stores.
+function publishContinuation(asyncStart: AnyChannel, asyncEnd: AnyChannel, context: TraceContext) {
+  if (asyncStart._stores?.size) {
+    asyncStart.runStores(context, () => asyncEnd.publish(context));
+  } else {
+    asyncStart.publish(context);
+    asyncEnd.publish(context);
+  }
+}
+
+function publishRejection(
+  error: AnyChannel,
+  asyncStart: AnyChannel,
+  asyncEnd: AnyChannel,
+  context: TraceContext,
+  err: unknown,
+) {
+  context.error = err;
+  error.publish(context);
+  publishContinuation(asyncStart, asyncEnd, context);
+}
+
+function traceCallbackSubscribed(
+  tc: TracingChannel,
+  fn: Traced,
+  position: number,
+  context: TraceContext,
+  thisArg: unknown,
+  args: unknown[],
+) {
+  const { start, end, asyncStart, asyncEnd, error } = tc;
+
+  function wrappedCallback(this: unknown, err: unknown, res: unknown) {
+    if (err) {
+      context.error = err;
+      error.publish(context);
+    } else {
+      context.result = res;
+    }
+
+    const continuationWindow = asyncStart.hasSubscribers || asyncEnd.hasSubscribers;
+    // Using runStores here enables manual context failure recovery
+    return asyncStart.runStores(context, () => {
       try {
-        return fn.$apply(thisArg, args);
-      } catch (err) {
-        context.error = err;
-        error.publish(context);
-        throw err;
+        return callback.$apply(this, arguments);
       } finally {
-        end.publish(context);
+        if (continuationWindow) asyncEnd.publish(context);
       }
     });
   }
+
+  const callback: Traced = ArrayPrototypeAt.$call(args, position);
+  validateFunction(callback, "callback");
+  ArrayPrototypeSplice.$call(args, position, 1, wrappedCallback);
+
+  const callWindow = start.hasSubscribers || end.hasSubscribers;
+  return start.runStores(context, () => {
+    try {
+      return fn.$apply(thisArg, args);
+    } catch (err) {
+      context.error = err;
+      error.publish(context);
+      throw err;
+    } finally {
+      if (callWindow) end.publish(context);
+    }
+  });
+}
+
+function emitNonThenableWarning(fn: Traced) {
+  process.emitWarning(
+    `tracePromise was called with the function '${fn.name || "<anonymous>"}', which returned a non-thenable.`,
+  );
 }
 
 function tracingChannel(nameOrChannels: string | TraceChannels) {

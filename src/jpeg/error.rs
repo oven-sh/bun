@@ -73,6 +73,8 @@ pub enum Error {
     BadDctCoef,
     #[error("Huffman code size table overflow")]
     HuffCodeLengthOverflow,
+    #[error("Missing Huffman code table entry")]
+    HuffMissingCode,
     #[error("Invalid argument")]
     InvalidArgument,
     /// A state this crate rules out. It stands where C would index out of bounds.

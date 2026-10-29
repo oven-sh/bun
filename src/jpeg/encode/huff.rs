@@ -15,16 +15,28 @@ impl Output {
     #[inline(always)]
     pub(crate) fn extend(&mut self, bytes: &[u8]) {
         if self.bytes.try_reserve(bytes.len()).is_err() {
-            self.out_of_memory = true;
+            self.give_up();
             return;
         }
         self.bytes.extend_from_slice(bytes);
     }
 
-    pub(crate) fn finish(self) -> Result<Vec<u8>> {
+    #[cold]
+    fn give_up(&mut self) {
+        self.out_of_memory = true;
+        self.bytes = Vec::new();
+    }
+
+    /// For the outer loops, which would otherwise go on for nothing.
+    pub(crate) fn check(&self) -> Result<()> {
         if self.out_of_memory {
             return Err(bun_alloc::AllocError.into());
         }
+        Ok(())
+    }
+
+    pub(crate) fn finish(self) -> Result<Vec<u8>> {
+        self.check()?;
         Ok(self.bytes)
     }
 }
@@ -84,13 +96,18 @@ impl<'a> BitWriter<'a> {
         }
     }
 
+    pub(crate) fn check(&self) -> Result<()> {
+        self.out.check()
+    }
+
     /// Fills up the last byte with ones.
-    pub(crate) fn finish(mut self) {
+    pub(crate) fn finish(mut self) -> Result<()> {
         let padding = self.free_bits % 8;
         self.put((1 << padding) - 1, padding);
         let bytes = (self.buffer << (self.free_bits & 63)).to_be_bytes();
         let used = (64 - self.free_bits as usize) / 8;
         self.write_stuffed(bytes.get(..used).unwrap_or(&[]));
+        self.check()
     }
 }
 
@@ -347,6 +364,10 @@ pub(crate) fn optimal_table(counts: &Counts) -> Result<HuffSpec> {
     let mut huffval = [0u8; 256];
     let (_, real) = nodes.split_last().ok_or(Error::Internal)?;
     for node in real {
+        // Too frequent for the search above to have seen it.
+        if node.code_size == 0 {
+            return Err(Error::HuffMissingCode);
+        }
         let position = position.get_mut(node.code_size).ok_or(Error::Internal)?;
         *huffval.get_mut(*position).ok_or(Error::Internal)? = node.symbol as u8;
         *position += 1;

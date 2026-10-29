@@ -29,6 +29,13 @@ impl CorrectionBits {
 }
 
 impl Sink<'_, '_> {
+    pub(crate) fn check(&self) -> Result<()> {
+        match self {
+            Sink::Count(_) => Ok(()),
+            Sink::Write(bits, _) => bits.check(),
+        }
+    }
+
     #[inline(always)]
     fn symbol(&mut self, table: Table, symbol: u8) {
         match self {

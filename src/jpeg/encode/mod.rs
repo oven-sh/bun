@@ -372,9 +372,9 @@ impl Encoder<'_> {
                 huff::encode_block(&mut bits, mcu.cr, last_cr, &chroma_dc, &chroma_ac);
                 last_cr = mcu.cr.dc();
             }
+            bits.check()?;
         }
-        bits.finish();
-        Ok(())
+        bits.finish()
     }
 
     fn encode_progressive(&mut self, out: &mut Output) -> Result<()> {
@@ -408,6 +408,7 @@ impl Encoder<'_> {
                                     encoder.encode_refine(sink, block);
                                 }
                             }
+                            sink.check()?;
                         }
                         encoder.finish(sink);
                     }
@@ -468,7 +469,7 @@ impl Encoder<'_> {
             out.scan_header(scan);
             let mut bits = BitWriter::new(out);
             run(&mut Sink::Write(&mut bits, &tables))?;
-            bits.finish();
+            bits.finish()?;
         }
         Ok(())
     }

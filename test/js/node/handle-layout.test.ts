@@ -277,13 +277,16 @@ describe("ChildProcess", () => {
 
   // Node throws when spawn() is called on a child that has no handle. Bun starts the process, so the child needs a handle again.
   onlyBun("has a handle again when it is spawned again after its exit", async () => {
-    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" }) as WithHandle<ChildProcess>;
+    const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" }) as WithHandle<ChildProcess, ProcessHandle>;
+    const first = child._handle!;
     await once(child, "exit");
     const options = { file: process.execPath, args: [process.execPath, ...idleChild], stdio: "ignore" };
     (child as unknown as { spawn(options: object): void }).spawn(options);
     try {
       assert.ok(child._handle);
       assertRefused(child);
+      // The first handle keeps the child it was made for. It does not reach the new one.
+      assert.deepStrictEqual([child._handle === first, first.kill(0), child._handle!.kill(0)], [false, UV_ESRCH, 0]);
     } finally {
       assert.strictEqual(child.kill(), true);
     }

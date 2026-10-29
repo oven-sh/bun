@@ -1151,21 +1151,17 @@ const UV_ESRCH = process.platform === "win32" ? -4040 : -3;
 // Node's libuv calls `onexit`. Bun's exit path does not, so this is only what code that wraps it finds there.
 function onexit() {}
 
-let subprocessOf: (child: ChildProcess) => $Bindgen.Subprocess | null | undefined;
+let attachSubprocess: (handle: Process, subprocess: $Bindgen.Subprocess) => void;
 
 // What node keeps in `child._handle`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L267-L270
 class Process {
-  #owner: ChildProcess;
+  #subprocess: $Bindgen.Subprocess | null = null;
   onexit = onexit;
   // Node adds this key when the process starts. It is a key from construction here, so that spawn() allocates no out-of-line storage for it.
   pid: number | undefined = undefined;
 
-  constructor(owner: ChildProcess) {
-    this.#owner = owner;
-  }
-
   kill(signal: number) {
-    const subprocess = subprocessOf(this.#owner);
+    const subprocess = this.#subprocess;
     // No process, or one that has ended (Bun.spawn's `killed`): ESRCH, which is what kill(2) gives node for a pid that is gone.
     if (!subprocess || subprocess.killed) return UV_ESRCH;
     // Node's handle takes the signal as an int32, so no argument and a signal name are signal 0: https://github.com/nodejs/node/blob/v26.3.0/src/process_wrap.cc#L384-L387
@@ -1174,11 +1170,18 @@ class Process {
   }
 
   ref() {
-    subprocessOf(this.#owner)?.ref();
+    this.#subprocess?.ref();
   }
 
   unref() {
-    subprocessOf(this.#owner)?.unref();
+    this.#subprocess?.unref();
+  }
+
+  static {
+    attachSubprocess = function attachSubprocess(handle, subprocess) {
+      handle.#subprocess = subprocess;
+      handle.pid = subprocess.pid;
+    };
   }
 }
 
@@ -1194,7 +1197,7 @@ class ChildProcess extends EventEmitter {
   exitCode: number | null = null;
   spawnfile;
   // Own, enumerable and one per child as in node. Its `onexit` is a function, so structured clone refuses a child that has a handle.
-  _handle: Process | null = new Process(this);
+  _handle: Process | null = new Process();
   spawnargs;
   pid;
   channel;
@@ -1555,7 +1558,7 @@ class ChildProcess extends EventEmitter {
       }) as unknown as $Bindgen.Subprocess;
       this.pid = this.#handle!.pid;
       // A child that is spawned again after its exit gets a handle again.
-      (this._handle ??= new Process(this)).pid = this.pid;
+      attachSubprocess((this._handle ??= new Process()), this.#handle!);
 
       $debug("ChildProcess: spawn", this.pid, spawnargs);
 
@@ -1723,12 +1726,6 @@ class ChildProcess extends EventEmitter {
   unref() {
     const handle = this._handle;
     if (handle) handle.unref();
-  }
-
-  static {
-    subprocessOf = function subprocessOf(child) {
-      return child.#handle;
-    };
   }
 
   // Static initializer to make stdio properties enumerable on the prototype

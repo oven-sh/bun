@@ -1376,10 +1376,7 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     crate::impl_js_sink_forwarders!(start_takes_context);
 
     unsafe fn finalize(this: *mut Self) {
-        // Called from (a) `~JSFileSink` during lazy sweep, and (b) synchronously
-        // from `${name}__doClose` (prototype `.close()`). Must satisfy both
-        // contexts: no touching live JS cells (sweep), and no tearing down
-        // state that in-flight IO still needs (close).
+        // Runs in `~JSFileSink` (lazy sweep: touch no live JS cell) and in `.close()` (keep what in-flight IO needs).
 
         // SAFETY: caller contract — the wrapper's +1 is held until the trailing
         // `deref` below, so neither release here can free `this`.
@@ -1417,9 +1414,7 @@ impl crate::webcore::sink::ControlledSink for FileSink {
     fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
         AnyControlledSink::FileSink(this)
     }
-    /// A `ReadableSinkController` was collected with this sink still attached. `pipe` roots that cell until
-    /// `release_pipe` detaches it, so it only dies attached in the heap's last sweep. Unlike the
-    /// wrapper in [`finalize`](Self::finalize) it holds no ref: there is none to release for it.
+    /// `pipe` roots the controller until `release_pipe`, so it only dies attached in the heap's last sweep. It holds no ref.
     unsafe fn controller_finalize(this: *mut Self) {
         // SAFETY: caller contract; `_guard` keeps `this` live across the releases.
         unsafe {

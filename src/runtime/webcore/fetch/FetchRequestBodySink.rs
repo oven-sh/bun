@@ -225,8 +225,7 @@ impl crate::webcore::sink::JsSinkType for FetchRequestBodySink {
         // SAFETY: caller contract; `this` is not touched again after this line.
         let task = unsafe { (*this).task.take() };
         if let Some(task) = task {
-            // Balances the `ref_()` taken in `start_request_stream` when the
-            // assign_to_stream-result handler never ran to release it.
+            // Balances the `ref_()` of `start_request_stream` if the assign_to_stream-result handler never released it.
             FetchTasklet::deref(task.as_ptr());
         }
     }

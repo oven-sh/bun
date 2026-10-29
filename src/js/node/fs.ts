@@ -49,13 +49,29 @@ function ensureCallback(callback: ((...args: any[]) => unknown) | undefined) {
 
 type StatCb = (this: typeof fs, callback: Callback<[unknown]>, target: unknown, options: unknown) => void;
 
-// fs.stat(), fs.lstat() and fs.fstat() called with an options argument. It is not in those three functions so that
-// each of them stays within the 80 bytes of bytecode that the DFG inlines.
-function statWithOptions(statCb: StatCb, target: unknown, options: unknown, callback: unknown, isFstat: boolean) {
+const enum StatOp {
+  Stat,
+  Lstat,
+  Fstat,
+}
+
+// fs.stat(), fs.lstat() and fs.fstat() only choose between these two calls, so that each is 74 bytes of bytecode:
+// the DFG inlines a callee of up to 80 (maximumFunctionForCallInlineCandidateBytecodeCostForDFG).
+function statWithCallback(path: unknown, callback: Callback<[unknown]>) {
+  fs.statCb(wrapFsCallback(callback), path, undefined);
+}
+function lstatWithCallback(path: unknown, callback: Callback<[unknown]>) {
+  fs.lstatCb(wrapFsCallback(callback), path, undefined);
+}
+function fstatWithCallback(fd: unknown, callback: Callback<[unknown]>) {
+  fs.fstatCb(wrapFsCallback(callback), fd, undefined);
+}
+function statWithOptions(op: StatOp, target: unknown, options: unknown, callback: unknown) {
+  const statCb: StatCb = op === StatOp.Stat ? fs.statCb : op === StatOp.Lstat ? fs.lstatCb : fs.fstatCb;
   if ($isObject(options)) {
     const signal = (options as { signal?: unknown }).signal;
     if (signal !== undefined) {
-      statWithSignal(statCb, target, options, callback, isFstat, signal as AbortSignal);
+      statWithSignal(statCb, target, options, callback, op === StatOp.Fstat, signal as AbortSignal);
       return;
     }
   }
@@ -224,8 +240,8 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     fs.fchownCb(callback, fd, uid, gid);
   },
   fstat = function fstat(fd, options, callback?) {
-    if ($isCallable(options)) fs.fstatCb(wrapFsCallback(options), fd, undefined);
-    else statWithOptions(fs.fstatCb, fd, options, callback, true);
+    if ($isCallable(options)) fstatWithCallback(fd, options);
+    else statWithOptions(StatOp.Fstat, fd, options, callback);
   },
   fsync = function fsync(fd, callback) {
     callback = ensureCallback(callback);
@@ -450,12 +466,12 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
     fs.renameCb(callback, oldPath, newPath);
   },
   lstat = function lstat(path, options, callback?) {
-    if ($isCallable(options)) fs.lstatCb(wrapFsCallback(options), path, undefined);
-    else statWithOptions(fs.lstatCb, path, options, callback, false);
+    if ($isCallable(options)) lstatWithCallback(path, options);
+    else statWithOptions(StatOp.Lstat, path, options, callback);
   },
   stat = function stat(path, options, callback?) {
-    if ($isCallable(options)) fs.statCb(wrapFsCallback(options), path, undefined);
-    else statWithOptions(fs.statCb, path, options, callback, false);
+    if ($isCallable(options)) statWithCallback(path, options);
+    else statWithOptions(StatOp.Stat, path, options, callback);
   },
   statfs = function statfs(path, options, callback?) {
     if ($isCallable(options)) {

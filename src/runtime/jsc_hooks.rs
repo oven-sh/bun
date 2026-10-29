@@ -4842,8 +4842,7 @@ fn write_absolute(out_buf: &mut [u8], tmpdir: &[u8], name: &[u8]) -> Option<usiz
 /// `getuid()` check would never match in a setuid binary.
 #[cfg(unix)]
 fn extract_owner_uid() -> u32 {
-    // SAFETY: `geteuid` takes no arguments and cannot fail.
-    unsafe { libc::geteuid() as u32 }
+    bun_sys::c::geteuid() as u32
 }
 
 #[cfg(windows)]

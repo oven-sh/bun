@@ -144,8 +144,7 @@
   "src/runtime/node/fs_events.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "CoreFoundation",
-      "FSEventsLoop"
+      "CoreFoundation"
     ],
     "unsafe impl Sync": [
       "CoreFoundation",

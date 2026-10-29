@@ -250,8 +250,8 @@ pub(crate) type uws_websocket_upgrade_handler = Option<
     unsafe extern "C" fn(
         *mut c_void,
         *mut uws_res,
-        *mut Request,
-        *mut WebSocketUpgradeContext,
+        &mut Request,
+        &mut WebSocketUpgradeContext,
         usize,
     ),
 >;
@@ -500,16 +500,15 @@ where
     extern "C" fn on_upgrade(
         ptr: *mut c_void,
         res: *mut uws_res,
-        req: *mut Request,
-        context: *mut WebSocketUpgradeContext,
+        req: &mut Request,
+        context: &mut WebSocketUpgradeContext,
         id: usize,
     ) {
         if ptr.is_null() {
             return;
         }
         // SAFETY: `ptr` is the user-data passed to `uws_ws()` at registration
-        // time; uWS passes non-null req/context valid for the duration of the
-        // upgrade callback. We forward `ptr` as a *raw* `*mut Server` without
+        // time. We forward `ptr` as a *raw* `*mut Server` without
         // creating a `&mut Server` — the actual pointee type is discriminated
         // by `id` inside the implementer (see trait docs), and materializing a
         // typed reference here would be UB when `id` selects a different type.
@@ -517,8 +516,8 @@ where
             Server::on_websocket_upgrade(
                 ptr.cast::<Server>(),
                 res.cast::<uws::NewAppResponse<SSL>>(),
-                thunk::handle_mut(req),
-                thunk::handle_mut(context),
+                req,
+                context,
                 id,
             );
         }

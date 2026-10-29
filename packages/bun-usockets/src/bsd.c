@@ -1523,9 +1523,10 @@ static LIBUS_SOCKET_DESCRIPTOR bsd_create_unix_socket_address(const char *path, 
             memcpy(dirname_buf, path, dirname_len);
             dirname_buf[dirname_len] = 0;
 
-            // Keep open()'s errno (ENOENT, ENOTDIR, EACCES): it is the same
-            // error bind/connect would report for a path that fits sun_path.
-            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_RDONLY | O_DIRECTORY);
+            // O_SEARCH needs only search permission on the directory, like the
+            // path walk bind/connect do for a path that fits sun_path. Keep
+            // open()'s errno (ENOENT, ENOTDIR, EACCES) for the same reason.
+            int socket_dir_fd = open(dirname_buf, O_CLOEXEC | O_SEARCH | O_DIRECTORY);
             if (socket_dir_fd == -1) {
                 return LIBUS_SOCKET_ERROR;
             }

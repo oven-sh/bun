@@ -107,14 +107,16 @@ describe.skipIf(!isLinux)("unix domain socket long-path workaround", () => {
 // Linux and macOS both open the parent directory to shorten the address. When
 // that open() fails, the errno it set (ENOENT, ENOTDIR, EACCES) is the error
 // the user sees, the same as for a path that fits sun_path.
-describe.skipIf(isWindows)("unix domain socket long-path workaround: missing parent directory", () => {
+describe.skipIf(isWindows)("unix domain socket long-path workaround: parent directory errors", () => {
   // 120 bytes is past sun_path on both Linux (108) and macOS (104). The
-  // padding goes into the missing directory component, never created, so the
-  // path is at least that long whatever TMPDIR is and the basename stays short.
-  function makeMissingParentSockPath(prefix: string, minLength: number) {
-    const dir = tempDir(prefix, {});
-    const padLen = Math.max(1, minLength - String(dir).length - "/missing-/s.sock".length);
-    const sock = String(dir) + "/missing-" + Buffer.alloc(padLen, "d").toString() + "/s.sock";
+  // padding goes into the parent component, so the path is at least that long
+  // whatever TMPDIR is and the basename stays short.
+  function makeSockPath(prefix: string, parent: "missing" | "file", minLength: number) {
+    const dir = tempDir(prefix, parent === "file" ? { file: "" } : {});
+    const component = parent === "file" ? "/file/" : "/missing-";
+    const padLen = Math.max(1, minLength - String(dir).length - component.length - "/s.sock".length);
+    const pad = Buffer.alloc(padLen, "d").toString();
+    const sock = String(dir) + component + pad + "/s.sock";
     expect(sock.length).toBeGreaterThanOrEqual(minLength);
     return { dir, sock };
   }
@@ -130,43 +132,21 @@ describe.skipIf(isWindows)("unix domain socket long-path workaround: missing par
     return { stdout, stderr, exitCode };
   }
 
-  test.concurrent("net.connect reports ENOENT", async () => {
-    const { dir, sock } = makeMissingParentSockPath("sun-long-enoent-net-connect-", 120);
-    using _ = dir;
-    const fixture = `
+  const fixtures = {
+    "net.connect": `
       const net = require("node:net");
       net.connect(process.env.SOCK)
         .on("connect", () => { console.log("connected"); process.exit(1); })
         .on("error", e => { console.log("error:" + e.code + " syscall:" + e.syscall); process.exit(0); });
-    `;
-    expect(await run(fixture, sock)).toEqual({
-      stdout: "error:ENOENT syscall:connect\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
-
-  test.concurrent("net.createServer().listen reports ENOENT", async () => {
-    const { dir, sock } = makeMissingParentSockPath("sun-long-enoent-net-listen-", 120);
-    using _ = dir;
-    const fixture = `
+    `,
+    "net.createServer().listen": `
       const net = require("node:net");
       net.createServer()
         .on("listening", () => { console.log("listening"); process.exit(1); })
         .on("error", e => { console.log("error:" + e.code + " syscall:" + e.syscall); process.exit(0); })
         .listen(process.env.SOCK);
-    `;
-    expect(await run(fixture, sock)).toEqual({
-      stdout: "error:ENOENT syscall:listen\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
-
-  test.concurrent("Bun.connect rejects with ENOENT", async () => {
-    const { dir, sock } = makeMissingParentSockPath("sun-long-enoent-bun-connect-", 120);
-    using _ = dir;
-    const fixture = `
+    `,
+    "Bun.connect": `
       let cbCode = null;
       try {
         await Bun.connect({
@@ -177,29 +157,47 @@ describe.skipIf(isWindows)("unix domain socket long-path workaround: missing par
       } catch (e) {
         console.log("error:" + e.code + " connectError:" + cbCode);
       }
-    `;
-    expect(await run(fixture, sock)).toEqual({
-      stdout: "error:ENOENT connectError:ENOENT\n",
-      stderr: "",
-      exitCode: 0,
-    });
-  });
-
-  test.concurrent("Bun.listen throws ENOENT", async () => {
-    const { dir, sock } = makeMissingParentSockPath("sun-long-enoent-bun-listen-", 120);
-    using _ = dir;
-    const fixture = `
+    `,
+    "Bun.listen": `
       try {
         Bun.listen({ unix: process.env.SOCK, socket: { data() {} } });
         console.log("listening");
       } catch (e) {
         console.log("error:" + e.code);
       }
-    `;
-    expect(await run(fixture, sock)).toEqual({
-      stdout: "error:ENOENT\n",
-      stderr: "",
-      exitCode: 0,
-    });
+    `,
+    "Bun.serve": `
+      try {
+        Bun.serve({ unix: process.env.SOCK, fetch() { return new Response("ok"); } });
+        console.log("listening");
+      } catch (e) {
+        console.log("error:" + e.code);
+      }
+    `,
+  };
+
+  const expected = {
+    "net.connect": (code: string) => `error:${code} syscall:connect\n`,
+    "net.createServer().listen": (code: string) => `error:${code} syscall:listen\n`,
+    "Bun.connect": (code: string) => `error:${code} connectError:${code}\n`,
+    "Bun.listen": (code: string) => `error:${code}\n`,
+    "Bun.serve": (code: string) => `error:${code}\n`,
+  };
+
+  describe.each([
+    ["missing", "ENOENT"],
+    ["file", "ENOTDIR"],
+  ] as const)("parent is %s", (parent, code) => {
+    for (const api of Object.keys(fixtures) as (keyof typeof fixtures)[]) {
+      test.concurrent(`${api} reports ${code}`, async () => {
+        const { dir, sock } = makeSockPath(`sun-long-${code}-`, parent, 120);
+        using _ = dir;
+        expect(await run(fixtures[api], sock)).toEqual({
+          stdout: expected[api](code),
+          stderr: "",
+          exitCode: 0,
+        });
+      });
+    }
   });
 });

@@ -74,7 +74,7 @@ describe("plain Bun asks no registry for a package that is not installed", () =>
 
   test("for text on the command line, started beside the stored programs", async () => {
     using folder = tempDir("installs-no-packages", {});
-    expect(await ask(["-e", program], join(import.meta.dir, "programs"), join(String(folder), "cache"))).toEqual({
+    expect(await ask(["-e", program], join(import.meta.dir, "parallel"), join(String(folder), "cache"))).toEqual({
       asked: [],
       printed: nothingLoaded,
     });
@@ -98,7 +98,7 @@ const root = import.meta.dir;
 const cure = join(root, "harness", "without-installing-packages.ts");
 // Programs, and what belongs to them. They are started by a test or a tool, in a folder that it chose.
 const programFolders =
-  /(^|\/)(node_modules|programs|more-programs|apps|app|cases|fixtures|test262|each-case-alone|generated-programs)\//;
+  /(^|\/)(node_modules|programs|parallel|library-sweeps|more-programs|apps|app|cases|fixtures|test262|each-case-alone|generated-programs)\//;
 const sources = [...new Glob("**/*.{ts,mts,cts}").scanSync({ cwd: root })]
   .map(path => path.replaceAll(sep, "/"))
   .filter(path => !programFolders.test(path) && !path.endsWith(".d.ts"))
@@ -154,13 +154,13 @@ describe("the sources of the tests and tools", () => {
     // These name such a place for something else than the folder of a program that plain Bun runs.
     const otherUses = new Set([
       "every-image-of-an-executable-has-its-map.test.ts",
-      "generated/text-that-comes-at-run-time-changes-what-the-program-holds.ts",
+      "fuzz/generators/text-that-comes-at-run-time-changes-what-the-program-holds.ts",
       "hardened-environment.test.ts",
       "names-from-run-time-in-a-trimmed-executable.test.ts",
       "plain-bun-installs-no-packages.test.ts",
       "real-apps/run.ts",
       "the-fuzzer-keeps-a-wrong-answer-beside-a-clock.test.ts",
-      "trimmed-is-whole/environment-in-parts.ts",
+      "trimmed-is-whole/environment-tests.ts",
     ]);
     expect(
       sources.filter(

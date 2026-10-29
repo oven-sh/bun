@@ -6608,10 +6608,13 @@ pub(crate) trait FileOpener: Sized {
                         };
                         self_.set_errno(bun_errno::from_errno(err_enum as i32).into());
                         self_.set_system_error(
-                            bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
-                                .with_path(path_string_2.slice())
-                                .to_system_error()
-                                .into(),
+                            node::fs::error_for_caller(
+                                [Some(&path_string_2), None],
+                                bun_sys::Error::from_code(err_enum, bun_sys::Tag::open)
+                                    .with_path(path_string_2.slice()),
+                            )
+                            .to_system_error()
+                            .into(),
                         );
                         self_.set_opened_fd(bun_sys::Fd::INVALID);
                     } else {
@@ -6653,10 +6656,13 @@ pub(crate) trait FileOpener: Sized {
             if let Some(errno) = rc.errno() {
                 self.set_errno(bun_errno::from_errno(errno as i32).into());
                 self.set_system_error(
-                    bun_sys::Error::from_code(errno, bun_sys::Tag::open)
-                        .with_path(path_string.slice())
-                        .to_system_error()
-                        .into(),
+                    node::fs::error_for_caller(
+                        [Some(&path_string), None],
+                        bun_sys::Error::from_code(errno, bun_sys::Tag::open)
+                            .with_path(path_string.slice()),
+                    )
+                    .to_system_error()
+                    .into(),
                 );
                 self.set_opened_fd(bun_sys::Fd::INVALID);
                 // `callback` may free `self` (see comment above) — must be the

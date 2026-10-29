@@ -112,7 +112,7 @@ export default b.declarations(
       path: b.property(b.string, constantUnlessWritten),
       loaded: b.property(b.bool, constantUnlessWritten),
       paths: b.property(b.any),
-      // The graph of requests says which module objects these two lead to. To whoever has come to the object in a way that the build did not follow they are undefined.
+      // The graph of requests says which module objects these two lead to.
       parent: b.property(b.union(moduleObject, b.null)),
       children: b.property(b.union(b.instance("Array").holding({ element: moduleObject }), b.undefined)),
     },
@@ -215,6 +215,25 @@ export default b.declarations(
   }),
   b.inherits("node:module.prototype", "Object.prototype"),
   objectsMadeByNativeModuleMacro.flatMap(path => b.inherits(path, "Object.prototype")),
+  // It looks at a string. For anything else the answer is false.
+  b.fn("node:module.isBuiltin", {
+    args: { name: b.any.optional },
+    returns: b.bool,
+    capability: "heap",
+    throws: true,
+    uses: { name: b.inspected },
+    implementation: b.generic,
+  }),
+  // It converts its operand to a string and puts fixed text around it.
+  b.fn("node:module.wrap", {
+    args: { script: b.any.optional },
+    returns: b.string,
+    capability: "js",
+    throws: true,
+    runsOnlyOperandCode: true,
+    uses: { script: [b.runs("ToPrimitive")] },
+    implementation: b.generic,
+  }),
   b.fn("node:module.findSourceMap", {
     args: { path: b.any.optional },
     returns: b.union(b.instance("SourceMap"), b.undefined).fresh,
@@ -223,6 +242,8 @@ export default b.declarations(
     uses: { path: b.inspected },
     implementation: b.generic,
   }),
+  // The import and require() each get a function of their own.
+  b.namespace("utf-8-validate", {}, { scope: "Module" }),
   b.fn("utf-8-validate", {
     args: { buffer: bytes },
     returns: b.bool,

@@ -9,6 +9,7 @@ export const IMAGE_COMDAT_SELECT_ASSOCIATIVE = 5;
 export const IMAGE_SYM_CLASS_EXTERNAL = 2;
 export const IMAGE_SYM_CLASS_WEAK_EXTERNAL = 105;
 export const ordinarySectionName = /^\.(text|rdata|data|bss|xdata|pdata)(\$|$)/;
+export const builtinModulesSection = ".bunblt";
 
 export const scalarDeleting = (name: string) => (name.startsWith("??_E") ? "??_G" + name.slice(4) : name);
 

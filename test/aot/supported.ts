@@ -1,10 +1,18 @@
 // `test`, `describe` and `beforeAll` of bun:test for a file whose tests all need `--aot`. Where the Bun under test refuses the
-// flag (run-programs.ts asks it, and says so on stderr) every test is skipped, whatever is chained to it, and `beforeAll` does
+// flag (harness/compiler.ts asks it, and says so on stderr) every test is skipped, whatever is chained to it, and `beforeAll` does
 // nothing.
-import { beforeAll as beforeAllAnywhere, describe as describeAnywhere, test as testAnywhere } from "bun:test";
-import { unsupported } from "./run-programs";
+import {
+  beforeAll as beforeAllAnywhere,
+  describe as describeAnywhere,
+  setDefaultTimeout,
+  test as testAnywhere,
+} from "bun:test";
+import { unsupported } from "./harness/compiler";
 
 export { unsupported };
+
+// One build takes about as long as the whole default limit of bun:test.
+setDefaultTimeout(120_000);
 
 // bun:test refuses `.skipIf()`, `.todo` and the like on what is skipped already.
 export function alwaysSkipped<T extends object>(skipped: T): T {

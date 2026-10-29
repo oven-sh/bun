@@ -285,15 +285,25 @@ pub(crate) fn default_client_ssl_ctx(vm: &VirtualMachine) -> *mut bun_uws::SslCt
         .cast()
 }
 
+/// The `RuntimeHooks` slot, which the WebSocket client alone calls.
+#[inline(never)]
+fn default_client_ssl_ctx_for_websocket(vm: &VirtualMachine) -> *mut bun_uws::SslCtx {
+    bun_removable_features::removable_definition!(WebSocket, default_client_ssl_ctx_for_websocket);
+    default_client_ssl_ctx(vm)
+}
+
 /// `RareData.sslCtxCache().getOrCreateOpts(opts, &err)` — RuntimeHooks slot
 /// body. Per-VM digest-keyed weak `SSL_CTX*` cache; returns +1 ref or `None`
 /// on BoringSSL rejection (`err` populated).
 ///
+#[inline(never)]
 fn ssl_ctx_cache_get_or_create(
     _vm: &VirtualMachine,
     opts: &bun_uws::SocketContext::BunSocketContextOptions,
     err: &mut bun_uws::create_bun_socket_error_t,
 ) -> Option<bun_boringssl::c::OwnedSslCtx> {
+    // The WebSocket client alone calls it.
+    bun_removable_features::removable_definition!(WebSocket, ssl_ctx_cache_get_or_create);
     let state = runtime_state();
     debug_assert!(
         !state.is_null(),
@@ -1609,7 +1619,7 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
     timer_min_delay_ms,
     abort_signal_timeout_clock,
     timers_left,
-    default_client_ssl_ctx,
+    default_client_ssl_ctx: default_client_ssl_ctx_for_websocket,
     ssl_ctx_cache_get_or_create,
     create_node_fs,
     has_blob_url,

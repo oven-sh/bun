@@ -1,0 +1,7 @@
+# sabotage=LoadsFoldedIntoTheirUsersOutlastWrites: the program answers something else
+# FORM: AsRead
+# REQUIRES: x86_64
+# RUN: run-in-shell
+# OPTIONS: sabotage=LoadsFoldedIntoTheirUsersOutlastWrites
+# CHECK-NOT: 1068 180
+# PROGRAM-OF: loads-folded-into-their-users-outlast-writes-left-alone.ir

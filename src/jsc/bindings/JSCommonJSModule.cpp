@@ -1568,7 +1568,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireTestModule, (JSGlobalObject * globalOb
     static constexpr auto specifier = "bun:test"_s;
     if (Bun__throwIfModuleIsRemoved(globalObject, static_cast<uint16_t>(Bun::Feature::Test), specifier.characters(), specifier.length(), ErrorCode::MODULE_NOT_FOUND)) [[unlikely]]
         return {};
-    return JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::Abort, Bun::Bindgen::Generated::Jest::jsJest>(globalObject, callFrame);
+    // `Bun` lists a member from when it is first read, and this call stands for `Bun.jest(filename)`.
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    defaultGlobalObject(globalObject)->bunObject()->get(globalObject, Identifier::fromString(vm, "jest"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, (JSC::callRemovable<Bun::Feature::Test, JSC::RemovedFeatureStub::Abort, Bun::Bindgen::Generated::Jest::jsJest>(globalObject, callFrame)));
 }
 
 void RequireResolveFunctionPrototype::finishCreation(JSC::VM& vm)

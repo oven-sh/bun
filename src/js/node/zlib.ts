@@ -80,7 +80,7 @@ function zlibBuffer(engine: $Node.ZlibBase, buffer: ZlibInput, callback: ZlibCal
   engine.end(buffer);
 }
 
-const emptyOutBuffer = Buffer.alloc(0);
+const emptyOutBuffer = Buffer.from(new ArrayBuffer());
 function ignoreResult() {}
 
 function takeCallback(engine: $Node.ZlibBase): ZlibCallback {

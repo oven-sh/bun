@@ -221,6 +221,7 @@ pub enum Tag {
     ViWait,
     /// An N-API addon's `uv_timer_t` (POSIX, where Bun emulates libuv).
     UvTimer,
+    WorkerWaitsForRoom,
 }
 
 impl Tag {
@@ -265,7 +266,8 @@ impl Tag {
             | Tag::QuicEndpoint
             | Tag::FakeTimersTick
             | Tag::ViWait
-            | Tag::UvTimer => false,
+            | Tag::UvTimer
+            | Tag::WorkerWaitsForRoom => false,
         }
     }
 }

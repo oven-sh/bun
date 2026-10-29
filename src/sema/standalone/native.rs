@@ -591,6 +591,22 @@ unsafe extern "C" fn highway_odd_blocks(p: *const u8, len: usize, out: *mut u64)
         unsafe { out.add(word).write(marks) };
     }
 }
+/// For each byte, a bit for each kind of run that it goes on with: a name, blanks, the plain text of a string.
+static RUNS_OF_BYTE: [u8; 256] = {
+    let mut runs = [0; 256];
+    let mut c = 0u8;
+    loop {
+        let is_name = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
+        let is_blank = c == b'\t' || c == b' ';
+        let is_plain = c >= 0x20 && c < 0x80 && !matches!(c, b'"' | b'\'' | b'`' | b'$' | b'\\');
+        runs[c as usize] = is_name as u8 | (is_blank as u8) << 1 | (is_plain as u8) << 2;
+        if c == u8::MAX {
+            break;
+        }
+        c += 1;
+    }
+    runs
+};
 #[unsafe(no_mangle)]
 #[linkage = "weak"]
 unsafe extern "C" fn highway_scanner_run_stops(
@@ -605,19 +621,16 @@ unsafe extern "C" fn highway_scanner_run_stops(
     let planes =
         unsafe { core::slice::from_raw_parts_mut(out, 2 * plane_len + len.div_ceil(64) * 8) };
     for (block, chunk) in text.chunks(64).enumerate() {
-        let mut stops = [u64::MAX; 3];
+        let mut goes_on = [0u64; 3];
         for (i, &c) in chunk.iter().enumerate() {
-            let is_name = c.is_ascii_alphanumeric() || c == b'_' || c == b'$';
-            let is_blank = c == b'\t' || c == b' ';
-            let is_plain =
-                (0x20..0x80).contains(&c) && !matches!(c, b'"' | b'\'' | b'`' | b'$' | b'\\');
-            for (plane, is_in_run) in stops.iter_mut().zip([is_name, is_blank, is_plain]) {
-                *plane &= !(u64::from(is_in_run) << i);
-            }
+            let runs = u64::from(RUNS_OF_BYTE[c as usize]);
+            goes_on[0] |= (runs & 1) << i;
+            goes_on[1] |= (runs >> 1 & 1) << i;
+            goes_on[2] |= (runs >> 2) << i;
         }
-        for (plane, stops) in stops.iter().enumerate() {
+        for (plane, goes_on) in goes_on.iter().enumerate() {
             let at = plane * plane_len + block * 8;
-            planes[at..at + 8].copy_from_slice(&stops.to_le_bytes());
+            planes[at..at + 8].copy_from_slice(&(!goes_on).to_le_bytes());
         }
     }
 }

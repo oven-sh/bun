@@ -1,0 +1,242 @@
+# Integers beside `undefined` and `null`: in bit operations, as conditions, compared with each other, with constants and with nil.
+# FORM: AsRead
+# RUN: lower-to-air size f1
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="nullable-integers.ts" displayPath="nullable-integers.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+typesite w0 module=m0 position=2408 kind=Variable
+typesite w1 module=m0 position=327 kind=Parameter
+typesite w2 module=m0 position=310 kind=Result
+typesite w3 module=m0 position=1968 kind=Parameter
+typesite w4 module=m0 position=1995 kind=Parameter
+typesite w5 module=m0 position=2022 kind=Parameter
+typesite w6 module=m0 position=2048 kind=Parameter
+typesite w7 module=m0 position=2069 kind=Parameter
+typesite w8 module=m0 position=1954 kind=Result
+typesite w9 module=m0 position=206 kind=Field
+typesite w10 module=m0 position=227 kind=Field
+typesite w11 module=m0 position=243 kind=Field
+typesite w12 module=m0 position=258 kind=Field
+typesite w13 module=m0 position=286 kind=Field
+typesite w14 module=m0 position=2420 kind=CallResult
+typesite w15 module=m0 position=2476 kind=CallResult
+typesite w16 module=m0 position=2497 kind=CallResult
+typesite w17 module=m0 position=2518 kind=CallResult
+typesite w18 module=m0 position=2544 kind=CallResult
+typesite w19 module=m0 position=2579 kind=CallResult
+typesite w20 module=m0 position=2628 kind=CallResult
+typesite w21 module=m0 position=2677 kind=CallResult
+typesite w22 module=m0 position=2721 kind=CallResult
+typesite w23 module=m0 position=2773 kind=CallResult
+typesite w24 module=m0 position=2826 kind=CallResult
+typesite w25 module=m0 position=2875 kind=Element
+typesite w26 module=m0 position=372 kind=Assertion
+typesite w27 module=m0 position=405 kind=Assertion
+typesite w28 module=m0 position=443 kind=Assertion
+typesite w29 module=m0 position=483 kind=Assertion
+typesite w30 module=m0 position=519 kind=Assertion
+typesite w31 module=m0 position=553 kind=Assertion
+typesite w32 module=m0 position=587 kind=Assertion
+typesite w33 module=m0 position=2121 kind=CallResult
+typesite w34 module=m0 position=2159 kind=Field
+typesite w35 module=m0 position=2210 kind=Field
+layout L0 kind=Instance name="Links" module=m0 position=198 constructor=f3 fields=[{key="checkFlags" declared={type=undefined|number site=w9}}, {key="depth" declared={type=undefined|number site=w10}}, {key="wide" declared={type=undefined|number site=w11}}, {key="mark" declared={type=null|number site=w12} flags=[IsRequired]}, {key="both" declared={type=undefined|null|number site=w13}}] ownFieldCount=5
+variable g0 name="Links" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = NewClass v4 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = Convert v6 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    PutModuleVariable v7 variable=g0
+    v9 = Undefined
+    v10 = Undefined
+    v11 = Undefined
+    v12 = Null
+    v13 = Undefined
+    v14 = Call v3, -, v9, v10, v11, v12, v13 calleeName="make"
+    v15 = Convert v14 declared={type=undefined|null|L0 site=w14 flags=[OmitsNull, OmitsUndefined]}
+    v16 = Integer
+    v17 = Integer
+    v18 = Integer
+    v19 = Integer
+    v20 = Integer
+    v21 = Call v3, -, v16, v17, v18, v19, v20 calleeName="make"
+    v22 = Convert v21 declared={type=undefined|null|L0 site=w15 flags=[OmitsNull, OmitsUndefined]}
+    v23 = Integer integer=4
+    v24 = Integer integer=1
+    v25 = Integer integer=1
+    v26 = Integer integer=1
+    v27 = Integer integer=1
+    v28 = Call v3, -, v23, v24, v25, v26, v27 calleeName="make"
+    v29 = Convert v28 declared={type=undefined|null|L0 site=w16 flags=[OmitsNull, OmitsUndefined]}
+    v30 = Integer integer=-1
+    v31 = Integer integer=-1
+    v32 = Integer integer=-1
+    v33 = Integer integer=-1
+    v34 = Integer integer=-1
+    v35 = Call v3, -, v30, v31, v32, v33, v34 calleeName="make"
+    v36 = Convert v35 declared={type=undefined|null|L0 site=w17 flags=[OmitsNull, OmitsUndefined]}
+    v37 = Integer integer=6
+    v38 = Integer integer=2
+    v39 = Integer integer=4294967296
+    v40 = Integer integer=256
+    v41 = Null
+    v42 = Call v3, -, v37, v38, v39, v40, v41 calleeName="make"
+    v43 = Convert v42 declared={type=undefined|null|L0 site=w18 flags=[OmitsNull, OmitsUndefined]}
+    v44 = Integer integer=2147483647
+    v45 = Integer integer=3
+    v46 = Integer integer=8589934592
+    v47 = Integer integer=255
+    v48 = Integer integer=65536
+    v49 = Call v3, -, v44, v45, v46, v47, v48 calleeName="make"
+    v50 = Convert v49 declared={type=undefined|null|L0 site=w19 flags=[OmitsNull, OmitsUndefined]}
+    v51 = Integer integer=-2147483648
+    v52 = Integer integer=4
+    v53 = Integer integer=-4294967296
+    v54 = Integer integer=-256
+    v55 = Integer integer=-65536
+    v56 = Call v3, -, v51, v52, v53, v54, v55 calleeName="make"
+    v57 = Convert v56 declared={type=undefined|null|L0 site=w20 flags=[OmitsNull, OmitsUndefined]}
+    v58 = Integer integer=1
+    v59 = Undefined
+    v60 = Integer integer=4294967297
+    v61 = Null
+    v62 = Null
+    v63 = Call v3, -, v58, v59, v60, v61, v62 calleeName="make"
+    v64 = Convert v63 declared={type=undefined|null|L0 site=w21 flags=[OmitsNull, OmitsUndefined]}
+    v65 = Undefined
+    v66 = Integer integer=5
+    v67 = Integer integer=9007199254740991
+    v68 = Integer integer=7
+    v69 = Undefined
+    v70 = Call v3, -, v65, v66, v67, v68, v69 calleeName="make"
+    v71 = Convert v70 declared={type=undefined|null|L0 site=w22 flags=[OmitsNull, OmitsUndefined]}
+    v72 = Integer integer=65536
+    v73 = Integer integer=6
+    v74 = Integer integer=-9007199254740991
+    v75 = Integer integer=1073741824
+    v76 = Integer integer=-2147483648
+    v77 = Call v3, -, v72, v73, v74, v75, v76 calleeName="make"
+    v78 = Convert v77 declared={type=undefined|null|L0 site=w23 flags=[OmitsNull, OmitsUndefined]}
+    v79 = Integer integer=7
+    v80 = Integer
+    v81 = Integer integer=281474976710656
+    v82 = Integer
+    v83 = Integer
+    v84 = Call v3, -, v79, v80, v81, v82, v83 calleeName="make"
+    v85 = Convert v84 declared={type=undefined|null|L0 site=w24 flags=[OmitsNull, OmitsUndefined]}
+    v86 = NewArray v15, v22, v29, v36, v43, v50, v57, v64, v71, v78, v85 contents=undefined|null|L0
+    v87 = Convert v86 declared={type=undefined|null|Array<undefined|null|L0> site=w0 flags=[OmitsNull, OmitsUndefined]}
+    v88 = IteratorOpen v87
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v90 = IteratorResume v88
+    v91 = ResultAt v90
+    v92 = ResultAt v90 index=1
+    Branch v91 -> taken b2(), notTaken b3()
+  b2():
+    v93 = Undefined
+    Return v93
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v94 = Convert v92 declared={type=undefined|null|L0 site=w25 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v95 = Call v1, -, v94 calleeName="flagsOf"
+    Jump -> next b1()
+  b5() role=IterationCleanup subject=v88:
+    v96 = CatchException
+    Rethrow v96
+}
+function f1 name="flagsOf" module=m0 position=310 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="checkFlags"
+    v2 = Convert v1 declared={type=number site=w26} illTypedCause=Assertion
+    v3 = Integer integer=6
+    v4 = BitAnd v2, v3
+    v5 = PropGet v0 key="checkFlags"
+    v6 = Convert v5 declared={type=number site=w27} illTypedCause=Assertion
+    v7 = Integer integer=1
+    v8 = BitOr v6, v7
+    v9 = Integer integer=10
+    v10 = Mul v8, v9
+    v11 = Add v4, v10
+    v12 = PropGet v0 key="checkFlags"
+    v13 = Convert v12 declared={type=number site=w28} illTypedCause=Assertion
+    v14 = Integer integer=3
+    v15 = BitXor v13, v14
+    v16 = Integer integer=100
+    v17 = Mul v15, v16
+    v18 = Add v11, v17
+    v19 = PropGet v0 key="checkFlags"
+    v20 = Convert v19 declared={type=number site=w29} illTypedCause=Assertion
+    v21 = BitNot v20
+    v22 = Integer integer=1000
+    v23 = Mul v21, v22
+    v24 = Add v18, v23
+    v25 = PropGet v0 key="checkFlags"
+    v26 = Convert v25 declared={type=number site=w30} illTypedCause=Assertion
+    v27 = Integer integer=2
+    v28 = LShift v26, v27
+    v29 = Add v24, v28
+    v30 = PropGet v0 key="checkFlags"
+    v31 = Convert v30 declared={type=number site=w31} illTypedCause=Assertion
+    v32 = Integer integer=1
+    v33 = RShift v31, v32
+    v34 = Add v29, v33
+    v35 = PropGet v0 key="checkFlags"
+    v36 = Convert v35 declared={type=number site=w32} illTypedCause=Assertion
+    v37 = Integer integer=28
+    v38 = URShift v36, v37
+    v39 = Add v34, v38
+    v40 = Convert v39 declared={type=number site=w2}
+    Return v40
+}
+function f2 name="make" module=m0 position=1954 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|number site=w3}, {type=undefined|number site=w4}, {type=undefined|number site=w5}, {type=null|number site=w6}, {type=undefined|null|number site=w7}] results=[{type=undefined|null|L0 site=w8 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|number, v1: undefined|number, v2: undefined|number, v3: null|number, v4: undefined|null|number):
+    v5 = GetModuleVariable variable=g0
+    v6 = CheckInitialized v5 name="Links"
+    v7 = Construct v6 calleeName="Links"
+    v8 = Convert v7 declared={type=undefined|null|L0 site=w33 flags=[OmitsNull, OmitsUndefined]} illTypedCause=UnprovenCallee
+    v9 = Convert v0 declared={type=number} illTypedCause=Assertion
+    v10 = Integer
+    v11 = BitOr v9, v10
+    v12 = Convert v11 declared={type=undefined|number site=w34}
+    PropSet v8, v12 key="checkFlags"
+    v14 = Convert v1 declared={type=number} illTypedCause=Assertion
+    v15 = Integer
+    v16 = BitOr v14, v15
+    v17 = Convert v16 declared={type=undefined|number site=w35}
+    PropSet v8, v17 key="depth"
+    v19 = Null
+    Return v8
+}
+function f3 name="Links" module=m0 position=198 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0
+    v2 = NewObject v1 layout=L0
+    v3 = Convert v2 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = CallDirect v3 function=f4
+    Return v3
+}
+function f4 module=m0 position=198 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0 flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    Jump -> next b1()
+  b1():
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]}
+    v2 = Undefined
+    PropDefine v1, v2 key="checkFlags"
+    v4 = Undefined
+    Return v4
+}
+# -- generated: flagsOf
+# CHECK-LABEL: function {{*}}name="flagsOf"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 40, patchpoints: 0, rare instructions: 114
+# CHECK-NEXT: end of function f1

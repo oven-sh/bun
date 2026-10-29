@@ -7,6 +7,7 @@ use bun_paths::resolve_path;
 use bun_threading::Guarded;
 
 use super::paths::{relative_path, report_long_path};
+use super::plugins::with_separators_of_host;
 use super::services::BuildContext;
 use crate::ContentHasher;
 use crate::bun_fs as Fs;
@@ -105,7 +106,7 @@ fn create_embedded_file(
         false => name_under_root(context, file, &template),
     };
     let path = match runs_in_place {
-        true => file.path.to_vec(),
+        true => with_separators_of_host(file.path, cfg!(windows)).into_owned(),
         false => embedded_path(&context.module_prefix, &dest_path),
     };
     let output = OutputFile::init(Options {

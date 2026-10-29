@@ -3781,7 +3781,7 @@ bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); }
 size_t JSC__JSString__length(const JSC::JSString* arg0) { return arg0->length(); }
 
 // JSString::latin1_characters in src/jsc/JSString.rs reads these fields itself.
-static_assert(JSC::JSString::offsetOfValue() == 8 && JSC::JSString::isRopeInPointer == 1 && JSC::JSRopeString::isSubstringInPointer == 2 && JSC::JSRopeString::is8BitInPointer == 4, "JSString::m_fiber is mirrored in src/jsc/JSString.rs");
+static_assert(JSC::JSString::offsetOfValue() == 8 && JSC::JSString::isRopeInPointer == 1 && JSC::JSRopeString::isSubstringInPointer == 2, "JSString::m_fiber is mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSRopeString::offsetOfLength() == 16 && JSC::JSRopeString::offsetOfFiber1Lower() == 20 && JSC::JSRopeString::offsetOfFiber2() == 24 && JSC::JSRopeString::offsetOfFiber2Lower() == 26 && sizeof(JSC::JSRopeString) == 32, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSRopeString::CompactFibers::addressMask <= (1ULL << 48) - 1 && JSC::JSRopeString::CompactFibers::shiftOfFiber2InUpperWord == 16, "JSRopeString's fibers are mirrored in src/jsc/JSString.rs");
 static_assert(JSC::JSString::MaxLength == std::numeric_limits<int32_t>::max(), "JSString::MaxLength is mirrored in src/jsc/JSString.rs");
@@ -4617,6 +4617,7 @@ JSC::EncodedJSValue JSC__JSGlobalObject__generateHeapSnapshot(JSC::JSGlobalObjec
     snapshotBuilder.buildSnapshot();
 
     WTF::String jsonString = snapshotBuilder.json();
+    heapProfiler.clearSnapshots();
     if (jsonString.isNull()) [[unlikely]] {
         JSC::throwOutOfMemoryError(globalObject, scope);
         return {};

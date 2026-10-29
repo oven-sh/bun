@@ -1,0 +1,7 @@
+# drop-guard=GetSlotOrUndefined:0 leaves out, in every function, the first pointer beside a narrow reference that a GetSlotOrUndefined defines. The check of references fails the build
+# FORM: AsRead
+# OPTIONS: references=narrow check=validate-reference-guards drop-guard=GetSlotOrUndefined:0
+# RUN: compile
+# DIAGNOSTIC: NarrowReferenceWithoutPointer
+# CHECK: image empty
+# PROGRAM-OF: narrow-reference-out-of-an-optional-slot-has-a-pointer.ir

@@ -47,11 +47,13 @@ Buffer : alloc/wc allocUnsafe/wc allocUnsafeSlow/wc byteLength/wc compare/wc con
 Buffer.prototype : @@@nodejs.util.inspect.custom/wc @@species/- @@toStringTag/c asciiSlice/wc asciiWrite/wc base64Slice/wc base64Write/wc base64urlSlice/wc base64urlWrite/wc compare/wc constructor/wc copy/wc equals/wc fill/wc hexSlice/wc hexWrite/wc includes/wc indexOf/wc inspect/wc lastIndexOf/wc latin1Slice/wc latin1Write/wc offset/ac parent/ac readBigInt64/wc readBigInt64BE/wc readBigInt64LE/wc readBigUInt64/wc readBigUInt64BE/wc readBigUInt64LE/wc readBigUint64BE/wc readBigUint64LE/wc readDouble/wc readDoubleBE/wc readDoubleLE/wc readFloat/wc readFloatBE/wc readFloatLE/wc readInt16/wc readInt16BE/wc readInt16LE/wc readInt32/wc readInt32BE/wc readInt32LE/wc readInt8/wc readIntBE/wc readIntLE/wc readUInt16BE/wc readUInt16LE/wc readUInt32BE/wc readUInt32LE/wc readUInt8/wc readUIntBE/wc readUIntLE/wc readUint16BE/wc readUint16LE/wc readUint32BE/wc readUint32LE/wc readUint8/wc readUintBE/wc readUintLE/wc slice/wc subarray/wc swap16/wc swap32/wc swap64/wc toJSON/wc toLocaleString/wc toString/wc ucs2Slice/wc ucs2Write/wc utf16leSlice/wc utf16leWrite/wc utf8Slice/wc utf8Write/wc write/wc writeBigInt64BE/wc writeBigInt64LE/wc writeBigUInt64BE/wc writeBigUInt64LE/wc writeBigUint64BE/wc writeBigUint64LE/wc writeDouble/wc writeDoubleBE/wc writeDoubleLE/wc writeFloat/wc writeFloatBE/wc writeFloatLE/wc writeInt16BE/wc writeInt16LE/wc writeInt32BE/wc writeInt32LE/wc writeInt8/wc writeIntBE/wc writeIntLE/wc writeUInt16/wc writeUInt16BE/wc writeUInt16LE/wc writeUInt32/wc writeUInt32BE/wc writeUInt32LE/wc writeUInt8/wc writeUIntBE/wc writeUIntLE/wc writeUint16/wc writeUint16BE/wc writeUint16LE/wc writeUint32/wc writeUint32BE/wc writeUint32LE/wc writeUint8/wc writeUintBE/wc writeUintLE/wc
 Bun.Cookie : from/w length/c name/c parse/w prototype/-
 Bun.WebView : closeAll/wc length/c name/c prototype/-
+CompressionStream.prototype open : @@@nodejs.util.inspect.custom/wc
 DOMException : ABORT_ERR/- DATA_CLONE_ERR/- DOMSTRING_SIZE_ERR/- HIERARCHY_REQUEST_ERR/- INDEX_SIZE_ERR/- INUSE_ATTRIBUTE_ERR/- INVALID_ACCESS_ERR/- INVALID_CHARACTER_ERR/- INVALID_MODIFICATION_ERR/- INVALID_NODE_TYPE_ERR/- INVALID_STATE_ERR/- NAMESPACE_ERR/- NETWORK_ERR/- NOT_FOUND_ERR/- NOT_SUPPORTED_ERR/- NO_DATA_ALLOWED_ERR/- NO_MODIFICATION_ALLOWED_ERR/- QUOTA_EXCEEDED_ERR/- SECURITY_ERR/- SYNTAX_ERR/- TIMEOUT_ERR/- TYPE_MISMATCH_ERR/- URL_MISMATCH_ERR/- VALIDATION_ERR/- WRONG_DOCUMENT_ERR/- length/c name/c prototype/-
 DataView : BYTES_PER_ELEMENT/- length/? name/? prototype/-
 DataView.prototype : @@toStringTag/c buffer/ac byteLength/ac byteOffset/ac constructor/wc getBigInt64/wc getBigUint64/wc getFloat16/wc getFloat32/wc getFloat64/wc getInt16/wc getInt32/wc getInt8/wc getUint16/wc getUint32/wc getUint8/wc setBigInt64/wc setBigUint64/wc setFloat16/wc setFloat32/wc setFloat64/wc setInt16/wc setInt32/wc setInt8/wc setUint16/wc setUint32/wc setUint8/wc
 Date : UTC/wc length/? name/? now/wc parse/wc prototype/-
 Date.prototype : @@toPrimitive/c constructor/wc getDate/wc getDay/wc getFullYear/wc getHours/wc getMilliseconds/wc getMinutes/wc getMonth/wc getSeconds/wc getTime/wc getTimezoneOffset/wc getUTCDate/wc getUTCDay/wc getUTCFullYear/wc getUTCHours/wc getUTCMilliseconds/wc getUTCMinutes/wc getUTCMonth/wc getUTCSeconds/wc getYear/wc setDate/wc setFullYear/wc setHours/wc setMilliseconds/wc setMinutes/wc setMonth/wc setSeconds/wc setTime/wc setUTCDate/wc setUTCFullYear/wc setUTCHours/wc setUTCMilliseconds/wc setUTCMinutes/wc setUTCMonth/wc setUTCSeconds/wc setYear/wc toDateString/wc toGMTString/wc toISOString/wc toJSON/wc toLocaleDateString/wc toLocaleString/wc toLocaleTimeString/wc toString/wc toTemporalInstant/wc toTimeString/wc toUTCString/wc valueOf/wc
+DecompressionStream.prototype open : @@@nodejs.util.inspect.custom/wc
 DisposableStack : length/? name/? prototype/-
 DisposableStack.prototype : @@dispose/wc @@toStringTag/c adopt/wc constructor/wc defer/wc dispose/wc disposed/ac move/wc use/wc
 Error : appendStackTrace/wc captureStackTrace/wc isError/wc length/? name/? prepareStackTrace/? prototype/- stackTraceLimit/?
@@ -120,7 +122,11 @@ Promise.prototype : @@toStringTag/c catch/wc constructor/wc finally/wc then/wc
 Proxy : length/? name/? revocable/wc
 RangeError : length/? name/? prototype/-
 RangeError.prototype : constructor/wc message/wc name/wc
+ReadableByteStreamController.prototype open : @@@nodejs.util.inspect.custom/wc
 ReadableStream : from/wc length/c name/c prototype/-
+ReadableStream.prototype open : @@@nodejs.util.inspect.custom/wc
+ReadableStreamBYOBReader.prototype open : @@@nodejs.util.inspect.custom/wc
+ReadableStreamBYOBRequest.prototype open : @@@nodejs.util.inspect.custom/wc
 ReferenceError : length/? name/? prototype/-
 ReferenceError.prototype : constructor/wc message/wc name/wc
 Reflect : @@toStringTag/c apply/wc construct/wc defineProperty/wc deleteProperty/wc get/wc getOwnPropertyDescriptor/wc getPrototypeOf/wc has/wc isExtensible/wc ownKeys/wc preventExtensions/wc set/wc setPrototypeOf/wc
@@ -132,8 +138,6 @@ Response : error/w json/w length/c name/c prototype/- redirect/w
 Response.prototype : @@toStringTag/c arrayBuffer/w blob/w body/a bodyUsed/a bytes/w clone/w constructor/wc formData/w headers/a json/w ok/a redirected/a status/a statusText/a text/w textStream/w type/a url/a
 Set : @@species/ac length/? name/? prototype/-
 Set.prototype : @@iterator/wc @@toStringTag/c add/wc clear/wc constructor/wc delete/wc difference/wc entries/wc forEach/wc has/wc intersection/wc isDisjointFrom/wc isSubsetOf/wc isSupersetOf/wc keys/wc size/ac symmetricDifference/wc union/wc values/wc
-ShadowRealm : length/? name/? prototype/-
-ShadowRealm.prototype : @@toStringTag/c constructor/wc evaluate/wc importValue/wc
 SharedArrayBuffer : @@species/ac length/? name/? prototype/-
 SharedArrayBuffer.prototype : @@toStringTag/c byteLength/ac constructor/wc grow/wc growable/ac maxByteLength/ac slice/wc
 String : fromCharCode/wc fromCodePoint/wc length/? name/? prototype/- raw/wc
@@ -165,7 +169,9 @@ Temporal.ZonedDateTime : compare/wc from/wc length/? name/? prototype/-
 Temporal.ZonedDateTime.prototype : @@toStringTag/c add/wc calendarId/ac constructor/wc day/ac dayOfWeek/ac dayOfYear/ac daysInMonth/ac daysInWeek/ac daysInYear/ac epochMilliseconds/ac epochNanoseconds/ac equals/wc era/ac eraYear/ac getTimeZoneTransition/wc hour/ac hoursInDay/ac inLeapYear/ac microsecond/ac millisecond/ac minute/ac month/ac monthCode/ac monthsInYear/ac nanosecond/ac offset/ac offsetNanoseconds/ac round/wc second/ac since/wc startOfDay/wc subtract/wc timeZoneId/ac toInstant/wc toJSON/wc toLocaleString/wc toPlainDate/wc toPlainDateTime/wc toPlainTime/wc toString/wc until/wc valueOf/wc weekOfYear/ac with/wc withCalendar/wc withPlainTime/wc withTimeZone/wc year/ac yearOfWeek/ac
 TextDecoder.prototype : @@toStringTag/c constructor/wc decode/w encoding/a fatal/a ignoreBOM/a
 TextEncoder.prototype : @@toStringTag/c constructor/wc encode/wc encodeInto/wc encoding/ac
+TextEncoderStream.prototype open : @@@nodejs.util.inspect.custom/wc
 TransformStream : length/c name/c prototype/-
+TransformStream.prototype open : @@@nodejs.util.inspect.custom/wc
 TypeError : length/? name/? prototype/-
 TypeError.prototype : constructor/wc message/wc name/wc
 URIError : length/? name/? prototype/-
@@ -211,13 +217,14 @@ WebAssembly.Tag : length/? name/? prototype/-
 WebAssembly.Tag.prototype : @@toStringTag/c constructor/wc
 WebSocket : CLOSED/- CLOSING/- CONNECTING/- OPEN/- length/c name/c prototype/-
 WritableStream : length/c name/c prototype/-
+WritableStream.prototype open : @@@nodejs.util.inspect.custom/wc
 decodeURI : length/? name/?
 decodeURIComponent : length/? name/?
 encodeURI : length/? name/?
 encodeURIComponent : length/? name/?
 escape : length/? name/?
 eval : length/? name/?
-globalThis open : $vm/? AggregateError/wc Array/wc ArrayBuffer/wc AsyncDisposableStack/wc Atomics/wc BigInt/wc BigInt64Array/wc BigUint64Array/wc Boolean/wc DataView/wc Date/wc DisposableStack/wc Error/wc EvalError/wc FinalizationRegistry/wc Float16Array/wc Float32Array/wc Float64Array/wc Function/wc Infinity/- Int16Array/wc Int32Array/wc Int8Array/wc Intl/wc Iterator/wc JSON/wc Loader/? Map/wc Math/wc NaN/- Number/wc Object/wc Promise/wc Proxy/wc RangeError/wc ReferenceError/wc Reflect/wc RegExp/wc Set/wc ShadowRealm/wc SharedArrayBuffer/wc String/wc SuppressedError/wc Symbol/wc SyntaxError/wc Temporal/wc TypeError/wc URIError/wc Uint16Array/wc Uint32Array/wc Uint8Array/wc Uint8ClampedArray/wc WeakMap/wc WeakRef/wc WeakSet/wc WebAssembly/wc __disableSamplingProfiler/? __disableSuperSampler/? __dumpAndClearSamplingProfilerSamples/? __enableSamplingProfiler/? __enableSuperSampler/? __signpostStart/? __signpostStop/? __tracePointStart/? __tracePointStop/? decodeURI/wc decodeURIComponent/wc encodeURI/wc encodeURIComponent/wc escape/wc eval/wc gc/wc globalThis/wc isFinite/wc isNaN/wc parseFloat/wc parseInt/wc undefined/- unescape/wc
+globalThis open : $vm/? AggregateError/wc Array/wc ArrayBuffer/wc AsyncDisposableStack/wc Atomics/wc BigInt/wc BigInt64Array/wc BigUint64Array/wc Boolean/wc DataView/wc Date/wc DisposableStack/wc Error/wc EvalError/wc FinalizationRegistry/wc Float16Array/wc Float32Array/wc Float64Array/wc Function/wc Infinity/- Int16Array/wc Int32Array/wc Int8Array/wc Intl/wc Iterator/wc JSON/wc Loader/? Map/wc Math/wc NaN/- Number/wc Object/wc Promise/wc Proxy/wc RangeError/wc ReferenceError/wc Reflect/wc RegExp/wc Set/wc SharedArrayBuffer/wc String/wc SuppressedError/wc Symbol/wc SyntaxError/wc Temporal/wc TypeError/wc URIError/wc Uint16Array/wc Uint32Array/wc Uint8Array/wc Uint8ClampedArray/wc WeakMap/wc WeakRef/wc WeakSet/wc WebAssembly/wc __disableSamplingProfiler/? __disableSuperSampler/? __dumpAndClearSamplingProfilerSamples/? __enableSamplingProfiler/? __enableSuperSampler/? __signpostStart/? __signpostStop/? __tracePointStart/? __tracePointStop/? decodeURI/wc decodeURIComponent/wc encodeURI/wc encodeURIComponent/wc escape/wc eval/wc gc/wc globalThis/wc isFinite/wc isNaN/wc parseFloat/wc parseInt/wc undefined/- unescape/wc
 isFinite : length/? name/?
 isNaN : length/? name/?
 navigator : @@toStringTag/c hardwareConcurrency/ac platform/ac userAgent/ac

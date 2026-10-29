@@ -1,11 +1,13 @@
 import * as b from "bun-builtins-table";
 import {
   argumentsCell,
+  closesChannelCell,
   environmentCell,
   featuresCell,
   handedWarningsCell,
   releaseCell,
   runtimeArgumentsCell,
+  sendsOverChannelCell,
   tickShownToHooksCell,
   versionsCell,
 } from "./native-cells.ts";
@@ -19,6 +21,39 @@ const calledWithEvents = b.called({
   args: [],
   this: self,
   spreadArgs: b.any,
+  result: "Ignored",
+});
+// To the listeners of these events native code passes what was thrown or rejected with, a promise of the program, an Error, strings and numbers: nothing of a class of the host.
+// `message` and `worker` are not among them.
+const eventsThatPassNoObjectOfHost = b.enumeration([
+  "beforeExit",
+  "disconnect",
+  "exit",
+  "rejectionHandled",
+  "uncaughtException",
+  "uncaughtExceptionMonitor",
+  "unhandledRejection",
+  "warning",
+  "SIGALRM",
+  "SIGBREAK",
+  "SIGCHLD",
+  "SIGCONT",
+  "SIGHUP",
+  "SIGINT",
+  "SIGPIPE",
+  "SIGQUIT",
+  "SIGTERM",
+  "SIGTSTP",
+  "SIGUSR1",
+  "SIGUSR2",
+  "SIGWINCH",
+]);
+const calledWithWhatWasHandedOver = b.called({
+  afterwards: "TouchesOnlyWhatRowNames",
+  times: "PerEvent",
+  args: [],
+  this: self,
+  spreadArgs: b.nativeMemory,
   result: "Ignored",
 });
 const calledWithExitCode = b.called({
@@ -85,17 +120,28 @@ const methodOfEventEmitter = (signature: b.SignatureOptions): b.FunctionField[] 
   onOtherReceiver(Object.keys(signature.args ?? {})[0] ?? "event"),
 ];
 
-const addsListener = methodOfEventEmitter({
-  args: { event: b.any, listener: b.any },
-  returns: self,
-  capability: "js",
-  throws: true,
-  uses: {
-    this: b.inspected,
-    event: [b.retained, b.runs("ToPrimitive")],
-    listener: [b.retained, calledWithEvents],
+const addsListener = [
+  {
+    args: { event: eventsThatPassNoObjectOfHost, listener: b.any },
+    returns: self,
+    capability: "js",
+    throws: true,
+    uses: { this: b.inspected, event: b.inspected, listener: [b.retained, calledWithWhatWasHandedOver] },
+    this: nativeEmitter,
+    implementation: b.generic,
   },
-});
+  ...methodOfEventEmitter({
+    args: { event: b.any, listener: b.any },
+    returns: self,
+    capability: "js",
+    throws: true,
+    uses: {
+      this: b.inspected,
+      event: [b.retained, b.runs("ToPrimitive")],
+      listener: [b.retained, calledWithEvents],
+    },
+  }),
+] satisfies b.FunctionField[];
 
 const removesListener = methodOfEventEmitter({
   args: { event: b.propertyKey.loose, listener: b.any.optional },
@@ -359,6 +405,13 @@ const createdOnFirstRead = (holds: b.TableType) => b.property(holds, { createdOn
 const objectCreatedOnFirstRead = (cell: string) =>
   b.property(b.object, { createdOnFirstRead: { capability: "heap", uses: { this: [b.returnedFrom(cell)] } } });
 
+// constructProcessSend and constructProcessDisconnect in BunProcess.cpp: the first read makes a function of native code in a process that was started with a channel, and finds undefined in any other. It opens nothing.
+// runtime-dependencies.builtins.ts describes the functions.
+const functionOfChannel = (cell: string) =>
+  b.property(b.union(b.callable, b.undefined), {
+    createdOnFirstRead: { capability: "heap", uses: { this: [b.returnedFrom(cell)] } },
+  });
+
 const declareEach = <Declared extends b.Field>(names: readonly string[], field: Declared) =>
   Object.fromEntries(names.map(name => [name, field]));
 
@@ -484,6 +537,8 @@ export default b.declarations(
       _eval: nativeState(b.union(b.string, b.undefined), ignoresValue),
       argv: listOfStringsKeptIn(argumentsCell),
       connected: nativeState(b.union(b.bool, b.undefined), ignoresValue),
+      disconnect: functionOfChannel(closesChannelCell),
+      send: functionOfChannel(sendsOverChannelCell),
       debugPort: nativeState(b.f64, {
         value: b.f64.loose,
         capability: "heap",

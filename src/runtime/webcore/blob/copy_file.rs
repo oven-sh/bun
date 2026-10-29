@@ -388,17 +388,7 @@ impl CopyFile {
                     linux::sendfile(dest_fd.native(), src_fd.native(), None, remain)
                 }
                 TryWith::Splice => {
-                    // SAFETY: raw splice(2); both fds owned by caller, null offsets.
-                    unsafe {
-                        libc::splice(
-                            src_fd.native(),
-                            core::ptr::null_mut(),
-                            dest_fd.native(),
-                            core::ptr::null_mut(),
-                            remain,
-                            0,
-                        )
-                    }
+                    linux::splice(src_fd.native(), None, dest_fd.native(), None, remain, 0)
                 }
             };
 

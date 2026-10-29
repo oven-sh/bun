@@ -705,8 +705,7 @@ pub mod store {
         }
 
         /// Takes ownership of a `Box<[u8]>` (global allocator, `cap == len`).
-        /// Paired with [`Bytes::into_boxed_slice`] for round-tripping the
-        /// `is_temporary` handoff in `read_file`.
+        /// Paired with [`Bytes::into_boxed_slice`].
         pub fn init_owned(bytes: Box<[u8]>) -> Bytes {
             let len = bytes.len();
             let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();

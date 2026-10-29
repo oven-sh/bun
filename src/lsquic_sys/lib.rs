@@ -385,11 +385,9 @@ impl Conn {
     /// # Safety
     /// `raw` must be a live `lsquic_conn_t` for the lifetime of the returned
     /// value (i.e. until `on_conn_closed` returns for it).
-    #[inline]
     pub unsafe fn from_raw(raw: *mut lsquic_conn) -> Option<Self> {
         NonNull::new(raw).map(Self)
     }
-    #[inline]
     pub fn raw(&self) -> *mut lsquic_conn {
         self.0.as_ptr()
     }
@@ -408,7 +406,6 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_abort_silent(self.0.as_ptr()) }
     }
-    #[inline]
     pub fn abort_error(&self, is_app: bool, code: c_uint, reason: &core::ffi::CStr) {
         // SAFETY: as above; `reason` is NUL-terminated by construction.
         unsafe { lsquic_conn_abort_error(self.0.as_ptr(), is_app as c_int, code, reason.as_ptr()) }
@@ -500,11 +497,9 @@ pub struct Stream(NonNull<lsquic_stream>);
 impl Stream {
     /// # Safety
     /// `raw` must be a live `lsquic_stream_t` (i.e. until its `on_close`).
-    #[inline]
     pub unsafe fn from_raw(raw: *mut lsquic_stream) -> Option<Self> {
         NonNull::new(raw).map(Self)
     }
-    #[inline]
     pub fn raw(&self) -> *mut lsquic_stream {
         self.0.as_ptr()
     }

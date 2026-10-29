@@ -1388,7 +1388,6 @@ pub mod waiter_thread_posix {
         }
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        #[inline]
         fn eventfd(&self) -> Fd {
             Fd::from_native(self.eventfd.load(Ordering::Relaxed))
         }

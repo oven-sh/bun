@@ -834,7 +834,6 @@ pub fn secure_zero(bytes: &mut [u8]) {
 /// allocator reuses it. Zero it before dropping.
 ///
 /// Uses [`secure_zero`] so the zeroing cannot be elided by the optimizer.
-#[inline]
 pub fn free_sensitive(mut slice: Box<[u8]>) {
     secure_zero(&mut slice);
     drop(slice);
@@ -2165,7 +2164,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     }
 
     /// `at_index` on the two fields it reads, for a caller that holds the guard of `mutex`.
-    #[inline(always)]
     fn slot_at<'a>(
         overflow_list: &'a mut OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
         backing_buf: &'a mut [MaybeUninit<ValueType>; COUNT],

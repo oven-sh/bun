@@ -3160,13 +3160,11 @@ impl BlobExt for Blob {
         self.reported_estimated_size.get()
     }
 
-    #[inline]
     fn into_js(self, global_object: &JSGlobalObject) -> JSValue {
-        let this = Blob::new_box(self);
-        this.calculate_estimated_byte_size();
+        self.calculate_estimated_byte_size();
 
-        let is_s3 = this.is_s3();
-        let this = bun_core::heap::into_raw(this);
+        let is_s3 = self.is_s3();
+        let this = Blob::new(self);
         if is_s3 {
             return crate::webcore::s3_file::to_js_unchecked(global_object, this);
         }

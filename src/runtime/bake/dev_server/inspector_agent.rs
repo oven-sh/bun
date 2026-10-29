@@ -232,7 +232,6 @@ impl DevServer {
     /// The dev server's inspector agent, or `None` while the
     /// `BunFrontendDevServer` domain is disabled. The agent's state is
     /// `Cell`-based, so a shared borrow suffices. JS-thread only.
-    #[inline]
     pub(crate) fn inspector(&self) -> Option<BunFrontendDevServerAgent<'_>> {
         BunFrontendDevServerAgent::of(self.vm())
     }

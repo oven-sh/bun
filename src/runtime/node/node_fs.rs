@@ -1868,7 +1868,6 @@ mod _async_tasks {
         }
 
         /// [`Self::create`] for a caller that has no `Binding`.
-        #[inline(always)]
         pub(crate) fn schedule(
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<A>,

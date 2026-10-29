@@ -3071,7 +3071,6 @@ macro_rules! impl_cares_record_type {
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
             const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
                 c_ares::ares_reply_callback::<$ty, ResolveInfoRequest<$ty>>;
-            #[inline]
             fn cache(
                 resolver: &Resolver,
             ) -> &HiveArray<resolve_info_request::PendingCacheKey<Self>, 32> {
@@ -3166,7 +3165,6 @@ impl CAresRecordType for c_ares::struct_any_reply {
     const NS_TYPE: c_ares::NSType = c_ares::NSType::ns_t_any;
     const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
         c_ares::struct_any_reply::callback_wrapper::<ResolveInfoRequest<c_ares::struct_any_reply>>;
-    #[inline]
     fn cache(resolver: &Resolver) -> &HiveArray<resolve_info_request::PendingCacheKey<Self>, 32> {
         resolver.pending_any_cache_cares.get()
     }
@@ -3208,7 +3206,6 @@ macro_rules! hostent_newtype {
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
             const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
                 c_ares::struct_hostent::$wrapper::<ResolveInfoRequest<$name>>;
-            #[inline]
             fn cache(
                 resolver: &Resolver,
             ) -> &HiveArray<resolve_info_request::PendingCacheKey<Self>, 32> {
@@ -3256,7 +3253,6 @@ macro_rules! hostent_ttls_newtype {
             const NS_TYPE: c_ares::NSType = c_ares::NSType::$ns_type;
             const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int) =
                 c_ares::hostent_with_ttls::callback_wrapper::<ResolveInfoRequest<$name>>;
-            #[inline]
             fn cache(
                 resolver: &Resolver,
             ) -> &HiveArray<resolve_info_request::PendingCacheKey<Self>, 32> {

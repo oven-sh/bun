@@ -109,7 +109,6 @@ impl SmolStr {
         smol_str
     }
 
-    #[inline]
     pub fn from_char(char: u8) -> SmolStr {
         let mut inlined = Inlined::EMPTY;
         inlined.all_chars()[0] = char;
@@ -255,7 +254,6 @@ impl Inlined {
         &crate::bytes_of(&self.0)[..self.len() as usize]
     }
 
-    #[inline]
     fn all_chars(&mut self) -> &mut [u8; Self::MAX_LEN] {
         // The first 15 bytes of the backing u128 are the `data` field on little-endian.
         crate::bytes_of_mut(&mut self.0).first_chunk_mut().unwrap()

@@ -211,7 +211,6 @@ impl Unit for u8 {
     fn from_u16(_: u16) -> Self {
         unreachable!("Unit::from_u16 on u8")
     }
-    #[inline(always)]
     fn bytes(units: &[Self]) -> &[u8] {
         units
     }
@@ -219,7 +218,6 @@ impl Unit for u8 {
     fn from_bytes(bytes: &[u8]) -> &[Self] {
         bytes
     }
-    #[inline(always)]
     fn structural_index_chunk(
         chunk: &[Self],
         base_offset: usize,
@@ -273,7 +271,6 @@ impl Unit for u16 {
     fn from_u16(u: u16) -> Self {
         u
     }
-    #[inline(always)]
     fn bytes(units: &[Self]) -> &[u8] {
         bun_core::slice_as_bytes(units)
     }
@@ -281,7 +278,6 @@ impl Unit for u16 {
     fn from_bytes(_: &[u8]) -> &[Self] {
         unreachable!("Unit::from_bytes on u16")
     }
-    #[inline(always)]
     fn structural_index_chunk(
         chunk: &[Self],
         base_offset: usize,

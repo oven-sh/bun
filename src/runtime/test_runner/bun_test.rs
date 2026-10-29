@@ -1001,7 +1001,6 @@ impl BunTest {
         result
     }
 
-    #[inline]
     fn advance_inner(&mut self) -> JsResult<Advance> {
         match self.phase {
             Phase::Collection => {

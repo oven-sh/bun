@@ -341,7 +341,6 @@ impl QuicEndpoint {
         self.defer_closes.set(false);
     }
 
-    #[inline]
     fn server_ssl_ctx(&self) -> *mut lsquic::SSL_CTX {
         self.server_tls
             .get()

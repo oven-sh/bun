@@ -5,7 +5,6 @@ use super::*;
 impl DevServer {
     /// `extra_client_bits` is specified if it is possible that the client graph may
     /// increase in size while the bits are being used.
-    #[inline]
     pub(super) fn init_graph_trace_state(
         &self,
         extra_client_bits: usize,

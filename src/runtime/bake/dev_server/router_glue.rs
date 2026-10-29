@@ -190,7 +190,6 @@ pub(super) fn from_opaque_file_id<const SIDE: bake::Side>(
 impl DevServer {
     /// Returns posix style path, suitible for URLs and reproducible hashes.
     /// The caller must provide a PathBuffer from the pool.
-    #[inline]
     pub(crate) fn relative_path<'a>(
         &self,
         relative_path_buf: &'a mut PathBuffer,

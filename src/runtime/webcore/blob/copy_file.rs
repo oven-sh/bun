@@ -351,7 +351,6 @@ impl CopyFile {
 
     /// Adds what it copies to `total_written`, also when it fails.
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    #[inline(always)]
     fn copy_file_range_loop<const USE: TryWith, const CLEAR_APPEND_IF_INVALID: bool>(
         &mut self,
         total_written: &mut SizeType,

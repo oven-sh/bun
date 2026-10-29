@@ -67,10 +67,26 @@ void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
         return;
 
     if (JSValue error = cyclic->evaluationError(); error && !error.isEmpty()) {
-        status(Status::Errored);
-        m_evaluationException.set(vm, this, JSC::Exception::create(vm, error));
+        setEvaluationException(vm, JSC::Exception::create(vm, error));
     } else {
         status(Status::Evaluated);
+    }
+}
+
+void NodeVMModule::setEvaluationException(JSC::VM& vm, JSC::Exception* exception)
+{
+    if (m_status == Status::Errored)
+        return;
+
+    status(Status::Errored);
+    m_evaluationException.set(vm, this, exception);
+
+    auto* sourceTextThis = dynamicDowncast<NodeVMSourceTextModule>(this);
+    JSC::JSModuleRecord* record = sourceTextThis ? sourceTextThis->moduleRecordIfExists() : nullptr;
+    // A record that has not run gets the error too (ECMA-262 Evaluate() step 9.a), so that no later Evaluate() runs the module.
+    if (record && record->status() == JSC::CyclicModuleRecord::Status::Linked) {
+        record->setStatus(JSC::CyclicModuleRecord::Status::Evaluated);
+        record->setEvaluationError(vm, exception->value());
     }
 }
 
@@ -118,15 +134,13 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
 
 // A termination that unwound the evaluation is not the module's error (an enclosing vm run's timeout, or the
 // VM being stopped): leave the status to reconcileEvaluationState() and let it propagate.
-#define VM_RETURN_IF_EXCEPTION(scope__, value__)                \
-    do {                                                        \
-        if (JSC::Exception* exception = scope__.exception()) {  \
-            if (!vm.isTerminationException(exception)) {        \
-                status(Status::Errored);                        \
-                m_evaluationException.set(vm, this, exception); \
-            }                                                   \
-            return value__;                                     \
-        }                                                       \
+#define VM_RETURN_IF_EXCEPTION(scope__, value__)               \
+    do {                                                       \
+        if (JSC::Exception* exception = scope__.exception()) { \
+            if (!vm.isTerminationException(exception))         \
+                setEvaluationException(vm, exception);         \
+            return value__;                                    \
+        }                                                      \
     } while (false);
 
     AbstractModuleRecord* record {};
@@ -141,6 +155,9 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     }
 
     JSValue result {};
+    bool recordEvaluateReturned = false;
+    // The error of a dependency that has failed when the walk reaches it: nothing more runs, and this module fails with it.
+    JSC::Exception* dependencyFailure = nullptr;
 
     JSGlobalObject* callerGlobalObject = globalObject;
     NodeVMGlobalObject* nodeVmGlobalObject = NodeVM::getGlobalObjectFromContext(globalObject, m_context.get(), false);
@@ -150,8 +167,13 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     auto run = [&] {
         if (sourceTextThis) {
             status(Status::Evaluating);
-            evaluateDependencies(globalObject, record, timeout, breakOnSigint);
+            dependencyFailure = evaluateDependencies(globalObject, record, timeout, breakOnSigint);
             RETURN_IF_EXCEPTION(scope, );
+            if (dependencyFailure) {
+                // Not thrown yet: like an Evaluate() that fails, this call still does the microtask checkpoint below.
+                setEvaluationException(vm, dependencyFailure);
+                return;
+            }
             sourceTextThis->initializeImportMeta(globalObject);
             RETURN_IF_EXCEPTION(scope, );
             // Spec-style Evaluate(): returns the capability promise that
@@ -159,6 +181,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // finishes. Errors are stored on the record, not thrown.
             result = record->evaluate(globalObject);
             RETURN_IF_EXCEPTION(scope, );
+            recordEvaluateReturned = true;
         } else if (syntheticThis) {
             // Mark Evaluating before running the user's evaluation steps so a
             // re-entrant evaluate() from inside them rejects with
@@ -183,7 +206,7 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         if (!nodeVmGlobalObject || !nodeVmGlobalObject->hasOwnMicrotaskQueue())
             return;
         nodeVmGlobalObject->drainOwnMicrotasks();
-        if (scope.exception() || vm.hasTerminationRequest())
+        if (dependencyFailure || scope.exception() || vm.hasTerminationRequest())
             return;
         if (JSPromise* innerPromise = dynamicDowncast<JSPromise>(result)) {
             // Chaining on the inner-context promise from the caller's realm
@@ -216,17 +239,24 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         // This run's own termination becomes ERR_SCRIPT_EXECUTION_* here; that error, like a regular one,
         // marks the module errored and is rethrown by VM_RETURN_IF_EXCEPTION below.
         termination.finish(scope);
+        // An Evaluate() that had returned keeps its outcome when the microtask checkpoint after it is stopped.
+        if (recordEvaluateReturned && scope.exception()) [[unlikely]]
+            reconcileEvaluationState(vm);
         // Unwound by the timeout / SIGINT of a module this one is a dependency of (evaluateDependencies runs
         // each in its own scope): that termination keeps propagating to it, but this module's evaluation is
         // over too — errored with the same kind of error, rather than left "evaluating" for good.
         if (JSObject* error = termination.errorForEnclosingRunCutShort()) {
-            status(Status::Errored);
-            m_evaluationException.set(vm, this, JSC::Exception::create(vm, error));
+            setEvaluationException(vm, JSC::Exception::create(vm, error));
             return {};
         }
     }
 
     VM_RETURN_IF_EXCEPTION(scope, {});
+
+    if (dependencyFailure) {
+        scope.throwException(globalObject, dependencyFailure);
+        return {};
+    }
 
     if (sourceTextThis) {
         if (JSC::JSModuleRecord* cyclic = sourceTextThis->moduleRecordIfExists()) {
@@ -237,9 +267,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
                 // rejected promise) like the generator-based evaluation did.
                 if (auto* promise = dynamicDowncast<JSPromise>(result))
                     promise->markAsHandled();
-                status(Status::Errored);
                 auto* exception = JSC::Exception::create(vm, error);
-                m_evaluationException.set(vm, this, exception);
+                setEvaluationException(vm, exception);
                 scope.throwException(globalObject, exception);
                 return {};
             }
@@ -267,7 +296,7 @@ NodeVMModule::NodeVMModule(JSC::VM& vm, JSC::Structure* structure, WTF::String i
 {
 }
 
-void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint)
+JSC::Exception* NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractModuleRecord* record, uint32_t timeout, bool breakOnSigint)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -280,13 +309,13 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
             if (dependency->status() == Status::Unlinked) {
                 if (auto* syntheticDependency = dynamicDowncast<NodeVMSyntheticModule>(dependency)) {
                     syntheticDependency->link(globalObject, nullptr, nullptr, jsUndefined());
-                    RETURN_IF_EXCEPTION(scope, );
+                    RETURN_IF_EXCEPTION(scope, nullptr);
                 }
             }
 
             if (dependency->status() == Status::Linked) {
                 JSValue dependencyResult = dependency->evaluate(globalObject, timeout, breakOnSigint);
-                RETURN_IF_EXCEPTION(scope, );
+                RETURN_IF_EXCEPTION(scope, nullptr);
                 // Source text dependencies evaluate via the spec-style
                 // Evaluate() and return a capability promise. A still-pending
                 // promise means the dependency uses top-level await; the
@@ -295,9 +324,21 @@ void NodeVMModule::evaluateDependencies(JSGlobalObject* globalObject, AbstractMo
                 // (reconcileEvaluationState), so a pending result is fine
                 // here.
                 UNUSED_PARAM(dependencyResult);
+            } else if (dependency->status() != Status::Evaluated && request.m_phase != AbstractModuleRecord::ModulePhase::Defer) {
+                // JSC's walk throws at a record that has failed (InnerModuleEvaluation step 2). A vm.SyntheticModule has no such record: its importer runs, as in Node.js.
+                if (auto* sourceTextDependency = dynamicDowncast<NodeVMSourceTextModule>(dependency)) {
+                    JSC::JSModuleRecord* dependencyRecord = sourceTextDependency->moduleRecordIfExists();
+                    if (JSValue error = dependencyRecord ? dependencyRecord->evaluationError() : JSValue()) {
+                        // The module has no exception of its own yet when its record failed after a top-level await, or in the Evaluate() of another module.
+                        JSC::Exception* exception = dependency->evaluationException();
+                        return exception ? exception : JSC::Exception::create(vm, error);
+                    }
+                }
             }
         }
     }
+
+    return nullptr;
 }
 
 JSValue NodeVMModule::createModuleRecord(JSC::JSGlobalObject* globalObject)

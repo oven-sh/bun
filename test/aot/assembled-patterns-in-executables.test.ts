@@ -4,7 +4,8 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const sources = {
   "entry.ts": `
@@ -42,6 +43,7 @@ describe.skipIf(!!unsupported)("compile/aot/assembled-patterns-in-executables", 
           bunExe(),
           "build",
           "--compile",
+          ...withoutDebugInformation,
           "--minify",
           "--no-compile-function-source",
           ...flags,

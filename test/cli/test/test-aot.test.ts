@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
 import { bunEnv, bunExe, isLinux, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
+import { unsupported } from "../../aot/harness/commands";
 import { run } from "../../aot/harness/run";
-import { unsupported } from "../../aot/run-programs";
 import { cc, envWithoutExePath } from "../no-exe-path";
 
 const supported = !unsupported;

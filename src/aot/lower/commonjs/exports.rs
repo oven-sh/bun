@@ -12,7 +12,7 @@ use crate::ir::{FunctionKey, ModuleId, TypeTable, ValueId, VariableId, VariableK
 use crate::lower::captures::Capture;
 use crate::lower::member::{PropertyName, Reference};
 use crate::lower::scope::{BindingForm, BindingRef, Storage};
-use crate::lower::{FileLowering, FunctionLowering, module};
+use crate::lower::{FileLowering, FunctionLowering, member, module};
 use crate::modules::{
     DescribedPart, Member, ModuleRef, Shape, Site, SyntheticExportId, View, WrittenDescriptor,
 };
@@ -320,13 +320,26 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
     }
 
     pub(in crate::lower) fn lower_export_member(&mut self, access: ExprId) -> Option<ValueId> {
-        let member = find_bound_member(self.file, access)?;
+        let member = self.file.inputs.modules.member(self.file.file, access)?;
+        // What only stands for a namespace object holds no object to read from.
+        let namespace = match (member, self.find_receiver_view(access)) {
+            (Member::OnObject, Some(View::Namespace(module))) => Some(module),
+            (Member::OnObject, Some(View::Exports(_)) | None) => return None,
+            _ => None,
+        };
         let position = self.file.hir[access].pos;
         let holder = self.lower_root(access);
-        self.record_read_from_object(access);
-        self.set_position(position);
+        let Some(module) = namespace else {
+            self.record_read_from_object(access);
+            self.set_position(position);
+            self.test_holder(holder, NullishAccess::Read);
+            return emit_member_read(self, member);
+        };
         self.test_holder(holder, NullishAccess::Read);
-        emit_member_read(self, member)
+        let (_, key) = self.file.hir.member_key(access)?;
+        let object = self.emit_evaluated_namespace(module);
+        let name = self.lower_member_key(key);
+        Some(member::emit_member_read(self, access, object, name))
     }
 
     fn emit_evaluated_namespace(&mut self, module: ModuleRef) -> ValueId {

@@ -839,7 +839,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         // The selected context: a native SecureContext (a +1 reference that
-        // us_socket_sni_resolve consumes) or null to fall through to the
+        // us_socket_sni_resolve consumes) or `None` to fall through to the
         // listener's default context.
         let ctx = if !is_error {
             context

@@ -3353,7 +3353,7 @@ impl BlobExt for Blob {
 // JSC-integration methods (host fns, to_js/from_js, S3/file I/O state machines)
 // ──────────────────────────────────────────────────────────────────────────
 
-use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
+use self::write_file::WriteFileWaitFromLockedValueTask;
 use crate::api::archive::Archive;
 use crate::image::Image;
 use crate::node;
@@ -4215,31 +4215,21 @@ pub(crate) fn write_file_with_source_destination(
     let source_type = source_store.data.tag();
 
     if destination_type == store::DataTag::File && source_type == store::DataTag::Bytes {
-        let write_file_promise = bun_core::heap::into_raw(Box::new(WriteFilePromise {
-            promise: jsc::JSPromiseStrong::default(),
-            global_this: cx.global(),
-        }));
-
         // The borrowed views below are +0 on the store ref;
         // `WriteFile::create` takes its own ref.
         #[cfg(windows)]
         {
-            let promise = JSPromise::create(cx.global());
-            let promise_value = promise.as_value(cx.global());
+            let promise_value = JSPromise::create(cx.global()).to_js();
             promise_value.ensure_still_alive();
-            // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
-            unsafe {
-                (*write_file_promise)
-                    .promise
-                    .set(cx.global(), promise_value)
-            };
+            let mut promise = jsc::JSPromiseStrong::default();
+            promise.set(cx.global(), promise_value);
             match write_file::WriteFileWindows::create(
                 cx.vm().event_loop(),
                 cx.context(),
                 destination_blob.borrowed_view(),
                 source_blob.borrowed_view(),
-                write_file_promise,
-                WriteFilePromise::run,
+                promise,
+                cx.global(),
                 options.mkdirp_if_not_exists.unwrap_or(true),
             ) {
                 Err(write_file::WriteFileWindowsError::WriteFileWindowsDeinitialized) => {}
@@ -4257,13 +4247,11 @@ pub(crate) fn write_file_with_source_destination(
                 options.mkdirp_if_not_exists.unwrap_or(true),
             )
             .expect("unreachable");
-            // SAFETY: `write_file_promise` was just produced by heap::alloc above; sole owner.
-            let mut write_file_promise = unsafe { bun_core::heap::take(write_file_promise) };
             // Defer promise creation until we're just about to schedule the task.
-            write_file_promise.promise = jsc::JSPromiseStrong::init(cx.global());
-            let promise_value = write_file_promise.promise.value();
+            let promise = jsc::JSPromiseStrong::init(cx.global());
+            let promise_value = promise.value();
             promise_value.ensure_still_alive();
-            write_file::WriteFile::schedule(file_copier, write_file_promise, cx);
+            write_file::WriteFile::schedule(file_copier, promise, cx);
             return Ok(promise_value);
         }
     }

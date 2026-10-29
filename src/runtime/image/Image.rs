@@ -118,9 +118,7 @@ pub(crate) enum Source {
 // `Vec<u8>`, `ZString`, and
 // `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
 
-// These C++ helpers are
-// Image-specific (they pin/adopt typed-array storage for the off-thread
-// pipeline) and have no `bun_jsc` wrapper.
+// Image-specific (pins typed-array storage for the off-thread pipeline); no `bun_jsc` wrapper.
 unsafe extern "C" {
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
     /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a

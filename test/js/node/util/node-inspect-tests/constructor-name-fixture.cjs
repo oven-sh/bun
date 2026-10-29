@@ -1,6 +1,8 @@
 // The rows for the name that util.inspect gives a value whose prototype chain has no usable constructor.
-// internal-inspect.test.js runs them in Bun. Run as the main module, this file prints what the runtime prints for
-// each row, so that Node.js runs the same rows (it needs --experimental-shadow-realm).
+// internal-inspect.test.js runs them in Bun, and a program of test/aot runs them in a compiled executable. The
+// rows that need a ShadowRealm are in constructor-name-shadow-realm-fixture.cjs, which `--aot` does not compile.
+// Run as the main module, that file prints what the runtime prints for each row, so that Node.js runs the same
+// rows.
 //
 // Node.js takes the name from V8's GetConstructorName. That lookup reads data properties only: no getter and no
 // Proxy trap runs. UtilInspect.cpp has a port of its walk of the chain and of V8's word for a type. V8 first asks
@@ -93,7 +95,6 @@ const constructorNames = [
   ["constructor that is not a function", () => util.inspect(child(define(bare(), "constructor", data({ name: "Fake" })))), "Object <[Object: null prototype] {}> {}"],
   ["constructor that is a bound function", () => util.inspect(child(define(bare(), "constructor", data(Foo.bind(null))))), "Object <[Object: null prototype] {}> {}"],
   ["constructor that is a Proxy of a function", () => util.inspect(child(define(bare(), "constructor", data(new Proxy(Foo, {}))))), "Object <[Object: null prototype] {}> {}"],
-  ["constructor that is a function of a ShadowRealm", () => util.inspect(child(define(bare(), "constructor", data(new ShadowRealm().evaluate("(function Remote() {})"))))), "Object <[Object: null prototype] {}> {}"],
   ["constructor that is a built-in function written in JS", () => util.inspect(child(define(bare(), "constructor", data(Array.prototype.map)))), "map <[Object: null prototype] {}> {}"],
   ["constructor that is a native function", () => util.inspect(child(define(bare(), "constructor", data(native("parseInt"))))), "parseInt <[Object: null prototype] {}> {}"],
   ["constructor with no name", () => util.inspect(child(define(bare(), "constructor", data(noName)))), "Object <[Object: null prototype] {}> {}"],
@@ -144,7 +145,6 @@ const constructorNames = [
   ["class", () => util.inspect(reproto(class K {}, bare())), "[class K [Function <[Object: null prototype] {}>]]"],
   ["bound function", () => util.inspect(reproto(function f() {}.bind(null), bare())), "[Function: bound f] Function <[Object: null prototype] {}>"],
   ["class with a tag on the prototype", () => util.inspect(reproto(class K {}, tagged())), "[class K [Tag <[Object: null prototype] [Tag] {}>] [Tag]]"],
-  ["function of a ShadowRealm with a tag on the prototype", () => util.inspect(reproto(new ShadowRealm().evaluate("(function f() {})"), tagged())), "[Function: f] Tag <[Object: null prototype] [Tag] {}> [Tag]"],
   ["bound function with a tag on the prototype", () => util.inspect(reproto(function f() {}.bind(null), tagged())), "[Function: bound f] Tag <[Object: null prototype] [Tag] {}> [Tag]"],
   ["native function that is a prototype, with a tag on the prototype", () => util.inspect(asPrototype(reproto(native("parseInt"), tagged()))), "[Function: parseInt] Tag <[Object: null prototype] [Tag] {}> [Tag]"],
   ["object whose prototype is an async function", () => util.inspect(child(reproto(async function f() {}, bare()))), "Object <Function <[Object: null prototype] {}>> {}"],
@@ -240,17 +240,22 @@ const builtinName = make => ({
   prototype: nameOf(asPrototype(reproto(make(), bare()))),
 });
 
-module.exports = { constructorNames, builtinNames, differsFromNode, getterRuns, builtinName };
+// What the runtime prints for each row, with `names` in the place of `constructorNames`.
+const printed = names => ({
+  constructorNames: names.map(([label, print]) => {
+    getterRuns.length = 0;
+    return { label, printed: print(), getterRuns: [...getterRuns] };
+  }),
+  builtinNames: builtinNames.map(([label, make]) => ({ label, ...builtinName(make) })),
+  differsFromNode: differsFromNode.map(([label, print]) => ({ label, printed: print() })),
+});
 
-if (require.main === module) {
-  console.log(
-    JSON.stringify({
-      constructorNames: constructorNames.map(([label, print]) => {
-        getterRuns.length = 0;
-        return { label, printed: print(), getterRuns: [...getterRuns] };
-      }),
-      builtinNames: builtinNames.map(([label, make]) => ({ label, ...builtinName(make) })),
-      differsFromNode: differsFromNode.map(([label, print]) => ({ label, printed: print() })),
-    }),
-  );
-}
+module.exports = {
+  constructorNames,
+  builtinNames,
+  differsFromNode,
+  getterRuns,
+  builtinName,
+  printed,
+  helpers: { bare, child, data, define, reproto, tagged },
+};

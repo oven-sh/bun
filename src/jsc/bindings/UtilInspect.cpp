@@ -278,8 +278,10 @@ static JSString* getConstructorName(JSGlobalObject* globalObject, JSObject* rece
     // V8 first takes the constructor that made the receiver. JSC records no such constructor, so the lookup starts at the chain.
     for (JSObject* object = receiver; object;) {
         // A class, its prototype object and a function that `bun build --compile --aot` compiled make their own properties when something first looks for one.
-        if (vm.hasCompiledCode()) [[unlikely]]
+        if (vm.hasCompiledCode()) [[unlikely]] {
             AOT::PropertyWalk::materializeLazyProperties(vm, object);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
         JSValue tag = ownDataProperty(vm, object, vm.propertyNames->toStringTagSymbol);
 #if ENABLE(AOT)
         if (vm.hasCompiledCode() && AOT::isModuleNamespace(object)) {

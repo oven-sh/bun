@@ -6,9 +6,12 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import util from "util";
 import * as dataNamespace from "./constructor-export-fixture.json";
+import defer * as deferredNamespace from "./constructor-export-fixture.json";
 import constructorNameRows from "./constructor-name-fixture.cjs";
+import shadowRealmRows from "./constructor-name-shadow-realm-fixture.cjs";
 
-const { constructorNames, builtinNames, differsFromNode, getterRuns, builtinName } = constructorNameRows;
+const { builtinNames, differsFromNode, getterRuns, builtinName } = constructorNameRows;
+const constructorNames = [...constructorNameRows.constructorNames, ...shadowRealmRows.shadowRealmNames];
 
 test("no assertion failures", () => {
   // Errors in accessors are not triggered
@@ -146,7 +149,7 @@ test.skipIf((await nodeVersion()) !== process.versions.node)(
   "Node.js prints the names that the rows expect",
   async () => {
     await using proc = Bun.spawn({
-      cmd: [node, "--experimental-shadow-realm", join(import.meta.dir, "constructor-name-fixture.cjs")],
+      cmd: [node, "--experimental-shadow-realm", join(import.meta.dir, "constructor-name-shadow-realm-fixture.cjs")],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -170,13 +173,18 @@ test.skipIf((await nodeVersion()) !== process.versions.node)(
 
 test("util.inspect does not take the name of a module namespace from an export named constructor", () => {
   // Each key of a JSON file is an export. The namespace object of Bun has a prototype, so the lookup names it.
-  expect({ value: util.inspect(dataNamespace), pastDepth: util.inspect({ a: dataNamespace }, { depth: 0 }) }).toEqual({
+  expect({
+    value: util.inspect(dataNamespace),
+    pastDepth: util.inspect({ a: dataNamespace }, { depth: 0 }),
+    deferredPastDepth: util.inspect({ a: deferredNamespace }, { depth: 0 }),
+  }).toEqual({
     value:
       "Module <[Object: null prototype] {}> [Module] {\n" +
       "  constructor: { name: { toString: 1 } },\n" +
       "  default: { constructor: { name: [Object] } }\n" +
       "}",
     pastDepth: "{ a: [Module <Complex prototype> [Module]] }",
+    deferredPastDepth: "{ a: [Deferred Module <Complex prototype> [Deferred Module]] }",
   });
 });
 

@@ -1064,6 +1064,23 @@ test.concurrent.each(duplicateNames)(
   },
 );
 
+test("the duplicate FileHandle message names a handle below the prototype of a subclass by that class", async () => {
+  using dir = tempDir("worker-fh-duplicate", { "x.txt": "hello" });
+  const file = join(String(dir), "x.txt");
+  const fh: any = await fs.promises.open(file, "r");
+  const FileHandle = Object.getPrototypeOf(fh).constructor;
+  class Sub extends FileHandle {}
+  Object.setPrototypeOf(fh, Sub.prototype);
+  try {
+    expect(() => new Worker(file, { workerData: { fh }, transferList: [fh, fh] } as any)).toThrow(
+      expect.objectContaining({ name: "DataCloneError", message: "Transfer list contains duplicate Sub" }),
+    );
+  } finally {
+    Object.setPrototypeOf(fh, FileHandle.prototype);
+    await fh.close();
+  }
+});
+
 test("a FileHandle in transferList but not in workerData is detached without leaking", async () => {
   const dir = tmpdirSync("worker-fh-transfer");
   const file = join(dir, "x.txt");

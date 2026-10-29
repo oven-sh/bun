@@ -32,14 +32,9 @@ const child = Object.create;
 const reproto = Object.setPrototypeOf;
 const withConstructor = (value: unknown): object =>
   Object.defineProperty(bare(), "constructor", { value, writable: true, configurable: true });
+// No row throws: an error ends the program, and the run of plain Bun fails with it.
 function say(label: string, print: () => string) {
-  let printed: string;
-  try {
-    printed = print().replace(/\s+/g, " ");
-  } catch (error) {
-    printed = `${(error as Error).name}: ${(error as Error).message}`;
-  }
-  console.log(`${label}: ${printed}`);
+  console.log(`${label}: ${print().replace(/\s+/g, " ")}`);
 }
 
 // The table of the test of plain Bun. Its file is compiled with this one, so its functions and classes are compiled too.

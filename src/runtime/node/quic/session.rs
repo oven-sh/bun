@@ -365,7 +365,7 @@ pub(crate) struct QuicSession {
     /// MUST stay the first field — the C shim's thunks recover the vtable via
     /// `*(us_nq_vtable**)conn_ctx`.
     vtable: *const lsquic::NqVtable,
-    pub(super) conn: Cell<*mut lsquic::lsquic_conn>,
+    pub(super) conn: Cell<Option<lsquic::Conn>>,
     /// The owning endpoint (raw pointer; the JS-side Strong keeps it alive).
     endpoint: Cell<*mut QuicEndpoint>,
     endpoint_js: JsCell<Option<Strong>>,
@@ -421,7 +421,7 @@ impl QuicSession {
     fn new(global: &JSGlobalObject, vtable: *const lsquic::NqVtable) -> Self {
         Self {
             vtable,
-            conn: Cell::new(null_mut()),
+            conn: Cell::new(None),
             endpoint: Cell::new(null_mut()),
             endpoint_js: JsCell::new(None),
             is_server: Cell::new(false),
@@ -472,7 +472,7 @@ impl QuicSession {
         vtable: *const lsquic::NqVtable,
         endpoint: &'a QuicEndpoint,
         endpoint_handle: JSValue,
-        conn: *mut lsquic::lsquic_conn,
+        conn: Option<lsquic::Conn>,
         is_server: bool,
         application: Application,
     ) -> JsResult<(&'a QuicSession, JSValue)> {
@@ -534,21 +534,21 @@ impl QuicSession {
         this.this_value.with_mut(|r| r.set_strong(handle, global));
         this.write_stat(IDX_STATS_SESSION_CREATED_AT, now_ns());
         let _ = this.vtable;
-        if !conn.is_null() {
+        if let Some(conn) = conn {
             this.cache_sockaddrs(conn);
         }
         Ok((this, handle))
     }
 
-    pub(super) fn bind_conn(&self, conn: *mut lsquic::lsquic_conn) {
-        self.conn.set(conn);
+    pub(super) fn bind_conn(&self, conn: lsquic::Conn) {
+        self.conn.set(Some(conn));
         // SAFETY: `conn` is the live conn lsquic just promoted; `self` is
         // the session inside its wrapper (conn-ctx contract).
-        unsafe { lsquic::lsquic_conn_set_ctx(conn, core::ptr::from_ref(self).cast_mut().cast()) };
-        // SAFETY: `conn` is the live conn lsquic just promoted.
-        let promoted = unsafe { lsquic::Conn::from_raw(conn) };
-        if let (Some(ep), Some(c)) = (self.endpoint_ref(), promoted) {
-            for line in ep.take_early_keylog(c.ssl()) {
+        unsafe {
+            lsquic::lsquic_conn_set_ctx(conn.raw(), core::ptr::from_ref(self).cast_mut().cast())
+        };
+        if let Some(ep) = self.endpoint_ref() {
+            for line in ep.take_early_keylog(conn.ssl()) {
                 self.push_event(SessionEvent::Keylog(line));
             }
         }
@@ -562,13 +562,13 @@ impl QuicSession {
         }
     }
 
-    pub(super) fn cache_sockaddrs(&self, conn: *mut lsquic::lsquic_conn) {
+    pub(super) fn cache_sockaddrs(&self, conn: lsquic::Conn) {
         let mut local: *const c_void = null();
         let mut peer: *const c_void = null();
         // SAFETY: `conn` is live; out-params point at stack slots.
         if unsafe {
             lsquic::lsquic_conn_get_sockaddr(
-                conn,
+                conn.raw(),
                 core::ptr::from_mut(&mut local),
                 core::ptr::from_mut(&mut peer),
             )
@@ -675,18 +675,18 @@ impl QuicSession {
     }
     pub(super) fn defer_stream_abort(
         &self,
-        ls: *mut lsquic::lsquic_stream,
+        ls: lsquic::Stream,
         reset: Option<u64>,
         stop: Option<u64>,
     ) {
         let marker = self.write_marker.get();
         self.deferred_aborts.with_mut(|v| {
-            if let Some(e) = v.iter_mut().find(|e| e.ls == ls) {
+            if let Some(e) = v.iter_mut().find(|e| e.ls == ls.raw()) {
                 e.reset = e.reset.or(reset);
                 e.stop = e.stop.or(stop);
             } else {
                 v.push(DeferredAbort {
-                    ls,
+                    ls: ls.raw(),
                     reset,
                     stop,
                     marker,
@@ -702,7 +702,7 @@ impl QuicSession {
             return;
         }
         let entries = self.deferred_aborts.with_mut(core::mem::take);
-        if self.conn.get().is_null() {
+        if self.conn.get().is_none() {
             return;
         }
         let marker = self.write_marker.get();
@@ -751,7 +751,7 @@ impl QuicSession {
         &self,
         global: &JSGlobalObject,
         session_handle: JSValue,
-        raw: *mut lsquic::lsquic_stream,
+        raw: Option<lsquic::Stream>,
     ) -> JsResult<(super::stream::Key, &super::stream::QuicStream, JSValue)> {
         let key = super::stream::Key(self.next_stream_key.replace(self.next_stream_key.get() + 1));
         let (qs, handle) =
@@ -782,23 +782,17 @@ impl QuicSession {
         }
     }
 
-    pub(super) fn on_remote_stream(
-        &self,
-        raw: *mut lsquic::lsquic_stream,
-    ) -> *mut super::stream::QuicStream {
+    pub(super) fn on_remote_stream(&self, raw: lsquic::Stream) -> *mut super::stream::QuicStream {
         let global_ptr = self.global.get();
         if global_ptr.is_null() {
             return null_mut();
         }
         // SAFETY: sessions only exist on the JS thread of this realm.
         let global = unsafe { &*global_ptr };
-        match self.create_stream(global, self.handle(), raw) {
+        match self.create_stream(global, self.handle(), Some(raw)) {
             Ok((key, qs, _handle)) => {
                 qs.mark_wrote_to_lsquic();
-                // SAFETY: `raw` is the live stream lsquic just created.
-                if let Some(s) = unsafe { lsquic::Stream::from_raw(raw) } {
-                    self.bump_stream_stat(s.id(), false);
-                }
+                self.bump_stream_stat(raw.id(), false);
                 self.push_event(SessionEvent::StreamReady {
                     stream: key,
                     remote: true,
@@ -816,12 +810,7 @@ impl QuicSession {
     }
 
     fn refresh_conn_stats(&self) {
-        let conn = self.conn.get();
-        if conn.is_null() {
-            return;
-        }
-        // SAFETY: `conn` is live until on_conn_closed clears it.
-        let Some(info) = (unsafe { lsquic::Conn::from_raw(conn) }).and_then(|c| c.info()) else {
+        let Some(info) = self.conn().and_then(|c| c.info()) else {
             return;
         };
         // lsquic reports RTT in microseconds; Node's session.stats are
@@ -1021,7 +1010,7 @@ impl QuicSession {
                 // A remote stream that arrives already-reset while this
                 // session's close is in the same batch must never be
                 // surfaced (Node's onstream count excludes it).
-                if remote && self.conn.get().is_null() && stream.pre_reset_code().is_some() {
+                if remote && self.conn.get().is_none() && stream.pre_reset_code().is_some() {
                     stream.suppress_announce();
                     return Ok(());
                 }
@@ -1654,7 +1643,7 @@ impl QuicSession {
 
         // Matching Node: the server session exists and then closes with a
         // certificate_required transport error.
-        if !cert_ok && !self.destroyed.get() && !self.conn.get().is_null() {
+        if !cert_ok && !self.destroyed.get() && self.conn.get().is_some() {
             self.self_close.with_mut(|s| {
                 *s = Some((
                     false,
@@ -1759,28 +1748,28 @@ impl QuicSession {
         }
         let (error_type, code, reason): (i32, u64, Option<Vec<u8>>) = match taken {
             Some((app, code, reason)) => (if app { 1 } else { 0 }, code, Some(reason)),
-            None if self.conn.get().is_null() => {
-                match self.final_conn_status.with_mut(Option::take) {
+            None => match self.conn.get() {
+                None => match self.final_conn_status.with_mut(Option::take) {
                     Some((status, msg)) => {
                         map_conn_status(status, msg, self.handshake_reported.get())
                     }
                     None => (0, 0, None),
+                },
+                Some(conn) => {
+                    // Map the lsquic conn status to Node's QuicError shape.
+                    let mut buf = [0 as c_char; CONN_STATUS_ERRBUF_LEN];
+                    // SAFETY: `conn` is live until lsquic frees it after
+                    // `on_conn_closed` returns.
+                    let status = unsafe {
+                        lsquic::lsquic_conn_status(conn.raw(), buf.as_mut_ptr(), buf.len())
+                    };
+                    // SAFETY: `buf` is NUL-terminated by lsquic.
+                    let msg = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr()) }
+                        .to_bytes()
+                        .to_vec();
+                    map_conn_status(status, msg, self.handshake_reported.get())
                 }
-            }
-            None => {
-                // Map the lsquic conn status to Node's QuicError shape.
-                let mut buf = [0 as c_char; CONN_STATUS_ERRBUF_LEN];
-                // SAFETY: `conn` is non-null (checked above) and live
-                // until lsquic frees it after `on_conn_closed` returns.
-                let status = unsafe {
-                    lsquic::lsquic_conn_status(self.conn.get(), buf.as_mut_ptr(), buf.len())
-                };
-                // SAFETY: `buf` is NUL-terminated by lsquic.
-                let msg = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr()) }
-                    .to_bytes()
-                    .to_vec();
-                map_conn_status(status, msg, self.handshake_reported.get())
-            }
+            },
         };
         // `close_reported` is already latched above, so returning here would
         // mark the close delivered without ever delivering it and `closed`
@@ -1834,12 +1823,11 @@ impl QuicSession {
         }
         self.pending_local_bidi.with_mut(VecDeque::clear);
         self.pending_local_uni.with_mut(VecDeque::clear);
-        let conn = self.conn.replace(null_mut());
-        if !conn.is_null() {
+        if let Some(conn) = self.conn.take() {
             // SAFETY: `conn` is live until lsquic frees it inside
             // `on_conn_closed`; clearing the ctx breaks the back-pointer so
             // late callbacks no-op.
-            unsafe { lsquic::lsquic_conn_set_ctx(conn, null_mut()) };
+            unsafe { lsquic::lsquic_conn_set_ctx(conn.raw(), null_mut()) };
         }
         self.events.with_mut(Vec::clear);
         let ep = self.endpoint.replace(null_mut());
@@ -1920,7 +1908,7 @@ impl QuicSession {
         // A provisional session stashes its close here too, and `apply_close`
         // silently no-ops without a conn — draining it here would consume the
         // close that `bind_conn` is waiting to apply.
-        if self.conn.get().is_null() {
+        if self.conn.get().is_none() {
             return false;
         }
         if let Some((app, code, reason)) = self.pending_graceful.with_mut(Option::take) {
@@ -1990,7 +1978,7 @@ impl QuicSession {
             // All three branches below want the same values.
             let (app, code, reason) = self.parse_close_options(global, options.to_js())?;
             self.with_state(|s| s.graceful_close = 1);
-            if self.conn.get().is_null() {
+            if self.conn.get().is_none() {
                 if self.is_server.get() && !self.close_reported.get() {
                     self.pending_graceful
                         .with_mut(|p| *p = Some((app, code, reason)));
@@ -2017,7 +2005,7 @@ impl QuicSession {
             return Ok(());
         }
         let mut parse_error = None;
-        if !self.close_reported.get() && !self.conn.get().is_null() {
+        if !self.close_reported.get() && self.conn.get().is_some() {
             let options = options.to_js();
             if options.is_object() {
                 // Node's Destroy with close options. JS has already latched
@@ -2061,13 +2049,13 @@ impl QuicSession {
         body: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        if self.destroyed.get() || self.conn.get().is_null() {
+        if self.destroyed.get() || self.conn.get().is_none() {
             return Ok(JSValue::UNDEFINED);
         }
         let direction = direction.to_js();
         let body = body.to_js();
         let unidirectional = direction.is_number() && direction.as_number() == 1.0;
-        let (key, qs, handle) = self.create_stream(global, this_value.to_js(), null_mut())?;
+        let (key, qs, handle) = self.create_stream(global, this_value.to_js(), None)?;
         if unidirectional {
             self.pending_local_uni.with_mut(|q| q.push_back(key));
         } else {
@@ -2083,8 +2071,7 @@ impl QuicSession {
             // As in attach_source: a later setOutbound() throws instead of adding a second body.
             qs.with_state(|s| s.has_outbound = 1);
         }
-        // SAFETY: `conn` is non-null (checked above) and live.
-        if let Some(conn) = unsafe { lsquic::Conn::from_raw(self.conn.get()) } {
+        if let Some(conn) = self.conn() {
             if unidirectional {
                 conn.make_uni_stream();
             } else {
@@ -2100,7 +2087,7 @@ impl QuicSession {
         data: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        if self.destroyed.get() || self.conn.get().is_null() {
+        if self.destroyed.get() || self.conn.get().is_none() {
             return JSValue::from_uint64_no_truncate(global, 0);
         }
         let data = data.to_js();
@@ -2143,7 +2130,7 @@ impl QuicSession {
                 // Runs the user's `ondatagramstatus`, which can destroy this
                 // session or close the conn before we get back here.
                 self.report_datagram_abandoned(global, dropped_id)?;
-                if self.destroyed.get() || self.conn.get().is_null() {
+                if self.destroyed.get() || self.conn.get().is_none() {
                     return JSValue::from_uint64_no_truncate(global, 0);
                 }
             }
@@ -2151,8 +2138,7 @@ impl QuicSession {
         self.datagram_queue.with_mut(|q| q.push_back((id, payload)));
         // SAFETY: state buffer is live; ArrayBuffer storage is byte-aligned.
         unsafe { (&raw mut (*self.state_mut()).last_datagram_id).write_unaligned(id) };
-        // SAFETY: `conn` is non-null (checked above) and live.
-        if let Some(c) = unsafe { lsquic::Conn::from_raw(self.conn.get()) } {
+        if let Some(c) = self.conn() {
             c.want_datagram_write(true);
         }
         self.schedule_process();
@@ -2247,12 +2233,11 @@ impl QuicSession {
         obj.put(global, b"size", JSValue::js_number(f64::from(bits)));
         Ok(obj)
     }
-    /// The lsquic conn while it is attached. Non-null between binding
+    /// The lsquic conn while it is attached. Set between binding
     /// (create/connect) and `on_conn_closed` clearing it, so it is live for
     /// the duration of any JS-thread call that observes `Some`.
     fn conn(&self) -> Option<lsquic::Conn> {
-        // SAFETY: see doc comment.
-        unsafe { lsquic::Conn::from_raw(self.conn.get()) }
+        self.conn.get()
     }
     fn conn_ssl(&self) -> Option<*mut bun_boringssl_sys::SSL> {
         let ssl = self.conn()?.ssl().cast::<bun_boringssl_sys::SSL>();
@@ -2389,17 +2374,16 @@ impl QuicSession {
         // SAFETY: `Drop` nulls the lsquic ctx, so a non-null ctx is live.
         // `endpoint` and `streams` may be freed, so only touch `conn`.
         if let Some(session) = unsafe { super::ffi::ctx_ref::<QuicSession>(ctx) } {
-            session.conn.set(null_mut());
+            session.conn.set(None);
         }
     }
 }
 
 impl Drop for QuicSession {
     fn drop(&mut self) {
-        let conn = self.conn.get();
-        if !conn.is_null() {
-            // SAFETY: `on_conn_closed` and `teardown` null `conn`, so a non-null `conn` is live.
-            unsafe { lsquic::lsquic_conn_set_ctx(conn, null_mut()) };
+        if let Some(conn) = self.conn.get() {
+            // SAFETY: `on_conn_closed` and `teardown` clear `conn`, so one that is set is live.
+            unsafe { lsquic::lsquic_conn_set_ctx(conn.raw(), null_mut()) };
         }
     }
 }
@@ -2409,10 +2393,12 @@ lsquic_callback! {
         endpoint: &QuicEndpoint,
         c: *mut lsquic::lsquic_conn,
     ) -> *mut c_void = null_mut(); {
-        if c.is_null() {
+        // SAFETY: `c` is the live conn lsquic just created. The copy a session keeps is cleared
+        // before lsquic frees the conn (`on_conn_closed`, `on_closed_detached`, `teardown`).
+        let Some(conn) = (unsafe { lsquic::Conn::from_raw(c) }) else {
             return null_mut();
-        }
-        endpoint.on_new_conn(c).cast()
+        };
+        endpoint.on_new_conn(conn).cast()
     }
 
     pub(super) fn on_goaway_received(session: &QuicSession) {
@@ -2477,11 +2463,11 @@ lsquic_callback! {
         // The conn's streams die with it — pending deferred aborts hold raw
         // lsquic stream pointers that are about to be freed.
         session.deferred_aborts.with_mut(Vec::clear);
-        let conn = session.conn.get();
-        if !conn.is_null() {
+        if let Some(conn) = session.conn.get() {
             let mut buf = [0 as c_char; CONN_STATUS_ERRBUF_LEN];
             // SAFETY: `conn` is live for the duration of this callback.
-            let status = unsafe { lsquic::lsquic_conn_status(conn, buf.as_mut_ptr(), buf.len()) };
+            let status =
+                unsafe { lsquic::lsquic_conn_status(conn.raw(), buf.as_mut_ptr(), buf.len()) };
             // SAFETY: `buf` is NUL-terminated by lsquic.
             let msg = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr()) }
                 .to_bytes()
@@ -2492,7 +2478,7 @@ lsquic_callback! {
         }
         session.push_event(SessionEvent::Closed);
         // The lsquic_conn is freed immediately after this callback returns.
-        session.conn.set(null_mut());
+        session.conn.set(None);
     }
 
     pub(super) fn on_conncloseframe(
@@ -2552,8 +2538,7 @@ lsquic_callback! {
             .front()
             .map(|(id, p)| (*id, p.len()))
         else {
-            // SAFETY: the conn is live for this callback.
-            if let Some(c) = unsafe { lsquic::Conn::from_raw(session.conn.get()) } {
+            if let Some(c) = session.conn() {
                 c.want_datagram_write(false);
             }
             return -1;
@@ -2563,8 +2548,7 @@ lsquic_callback! {
             if max == 0 || len > max {
                 session.datagram_queue.with_mut(VecDeque::pop_front);
                 session.push_event(SessionEvent::DatagramStatus { id, sent: false });
-                // SAFETY: the conn is live for this callback.
-                if let Some(c) = unsafe { lsquic::Conn::from_raw(session.conn.get()) } {
+                if let Some(c) = session.conn() {
                     c.want_datagram_write(!session.datagram_queue.get().is_empty());
                 }
             }
@@ -2579,8 +2563,7 @@ lsquic_callback! {
         };
         session.push_event(SessionEvent::DatagramStatus { id, sent: true });
         if !session.datagram_queue.get().is_empty() {
-            // SAFETY: the conn is live for this callback.
-            if let Some(c) = unsafe { lsquic::Conn::from_raw(session.conn.get()) } {
+            if let Some(c) = session.conn() {
                 c.want_datagram_write(true);
             }
         }
@@ -2646,9 +2629,7 @@ lsquic_callback! {
         // SAFETY: `buf[..sz]` is valid for this callback (lsquic owns the
         // packet buffer).
         let payload = unsafe { core::slice::from_raw_parts(buf.cast::<u8>(), sz).to_vec() };
-        // SAFETY: `session.conn` is the live conn while this callback runs.
-        let early = unsafe { lsquic::Conn::from_raw(session.conn.get()) }
-            .is_some_and(|c| c.datagram_early());
+        let early = session.conn().is_some_and(|c| c.datagram_early());
         session.push_event(SessionEvent::Datagram { payload, early });
     }
 }

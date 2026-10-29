@@ -726,12 +726,14 @@ mod tests {
             (":status", "2000"),
             ("accept-encoding", ""),
             ("accept-encoding", "GZIP, DEFLATE"),
+            ("accept-encoding", "gzip"),
         ] {
             let indices = static_table::find_name(name.as_bytes()).unwrap();
             let found = static_table::find(indices, value.as_bytes());
             assert_eq!(found, None, "{name}: {value}");
         }
         assert_eq!(static_table::find_name(b"x-a"), None);
+        assert_eq!(static_table::find_name(b"Accept"), None);
         assert_eq!(static_table::find_name(b""), None);
     }
 
@@ -841,8 +843,10 @@ mod tests {
             let mut block = vec![0x00];
             block.extend(string(name_len, name_coded));
             block.extend(string(value_len, value_coded));
-            let decoded = decode(&mut Decoder::new(), &block).map(|fields| fields.len());
-            assert_eq!(decoded, if fits { Ok(1) } else { Err(Error::TooLarge) });
+            let field = (vec![b'a'; name_len], vec![b'a'; value_len], false);
+            let expected = fits.then(|| vec![field]).ok_or(Error::TooLarge);
+            let decoded = decode(&mut Decoder::new(), &block);
+            assert!(decoded == expected, "{name_len} {value_len}");
         }
         // A name that is far too long and then malformed: it is not decoded to its end.
         let mut name = hex("18c6318c63").repeat(MAX_FIELD_LEN / 2);

@@ -1018,14 +1018,11 @@ impl NetworkTask {
         } else if !self.streaming_extract_task.is_null() {
             let manager = self.package_manager.as_mut_ptr();
             let this: *mut NetworkTask = self;
-            // SAFETY: `init` returns a fresh heap allocation owned here.
-            self.tarball_stream = Some(unsafe {
-                bun_core::heap::take(TarballStream::init(
-                    self.streaming_extract_task,
-                    this,
-                    manager,
-                ))
-            });
+            self.tarball_stream = Some(TarballStream::init(
+                self.streaming_extract_task,
+                this,
+                manager,
+            ));
         }
         self.response = HTTPClientResult::default();
     }

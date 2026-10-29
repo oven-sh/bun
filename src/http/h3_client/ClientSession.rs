@@ -92,8 +92,7 @@ impl ClientSession {
     /// returned `&mut` does not alias `self`. HTTP-thread-only.
     #[inline]
     fn qsocket_mut<'s>(&self) -> Option<&'s mut quic::Socket> {
-        // Route through the shared [`quic_socket_mut`] accessor; see INVARIANT.
-        self.qsocket.map(|qs| quic_socket_mut(qs.as_ptr()))
+        self.qsocket.map(|qs| quic::Socket::opaque_mut(qs.as_ptr()))
     }
 
     /// `on_conn_close` runs from a later engine tick, so the registry is not
@@ -464,30 +463,15 @@ pub(super) fn client_mut<'a>(p: NonNull<HTTPClient<'static>>) -> &'a mut HTTPCli
 
 /// Upgrade a non-null `*mut quic::Socket` lsquic FFI handle to `&mut`.
 ///
-/// INVARIANT: every caller passes a non-null `quic::Socket` that lsquic owns
-/// and keeps live for the borrow's duration — either an `extern "C"` callback
-/// argument's connection (live for the callback), or a `ClientSession.qsocket` field (set
-/// by `ClientContext::connect`, valid until `on_conn_close`). The handle is an
+/// INVARIANT: the one caller, `ClientContext::connect`, passes the socket of a
+/// `ConnectResult::Socket`: quic.c returns 1 only with a non-null `*out_qs`, and
+/// keeps it live until `on_conn_close` has returned. The handle is an
 /// FFI-owned allocation distinct from any Rust struct holding it. All access
 /// is HTTP-thread-only. `quic::Socket` is zero-sized, so two `&mut` to one handle cannot conflict.
-/// Centralises the raw `&mut *qs` upgrade shared by `callbacks::on_stream_open`
-/// and `ClientSession::qsocket_mut`.
 #[inline(always)]
 pub(super) fn quic_socket_mut<'a>(qs: *mut quic::Socket) -> &'a mut quic::Socket {
     // SAFETY: see INVARIANT above.
     unsafe { &mut *qs }
-}
-
-/// Upgrade a non-null `*mut quic::Stream` lsquic FFI handle to `&mut`.
-///
-/// Same INVARIANT as [`quic_socket_mut`] — lsquic-owned, live for the
-/// borrow's duration (`Stream.qstream` is set in
-/// `on_stream_open` and nulled in `on_stream_close` / `detach`), FFI
-/// allocation distinct from any Rust holder, HTTP-thread-only.
-#[inline(always)]
-pub(super) fn quic_stream_mut<'a>(s: *mut quic::Stream) -> &'a mut quic::Stream {
-    // SAFETY: see [`quic_socket_mut`] INVARIANT.
-    unsafe { &mut *s }
 }
 
 /// Upgrade a `*mut Stream` (a `self.pending` entry, or one just removed from

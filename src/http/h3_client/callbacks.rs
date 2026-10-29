@@ -151,7 +151,7 @@ extern "C" fn on_stream_open(s: &mut quic::Stream, is_client: c_int) {
     }
     let Some(qs) = s.socket() else { return };
     // A caller of `make_stream` may hold a `&mut` to this connection: the handle is zero-sized, so the two cannot conflict.
-    let qs = super::client_session::quic_socket_mut(qs.as_ptr());
+    let qs = quic::Socket::opaque_mut(qs.as_ptr());
     let Some(session) = session_of(qs) else {
         s.close();
         return;

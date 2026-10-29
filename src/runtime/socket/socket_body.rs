@@ -2006,15 +2006,12 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Deliberately skips `US_FAULT_CHECK`'s `us_fault_armed` fast-path
             // load: session/keylog dispatch is a few calls per connection, not
             // a per-packet hot path, so the unarmed-case lock is fine.
-            // SAFETY: `out`/`clamp` are valid for the duration of the call.
-            if unsafe {
-                bun_uws_sys::fault_inject::us_fault_hit(
-                    bun_uws_sys::fault_inject::SESSION_BUFFER,
-                    -1,
-                    &mut out,
-                    &mut clamp,
-                )
-            } != 0
+            if bun_uws_sys::fault_inject::us_fault_hit(
+                bun_uws_sys::fault_inject::SESSION_BUFFER,
+                -1,
+                &mut out,
+                &mut clamp,
+            ) != 0
             {
                 return Err(global.throw_out_of_memory());
             }

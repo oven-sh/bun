@@ -5,6 +5,7 @@ use core::ffi::c_void;
 use core::marker::{PhantomData, PhantomPinned};
 use core::ptr::NonNull;
 
+use crate::virtual_machine::VirtualMachine;
 use crate::{
     ArrayBuffer, CommonString, ErrorCode, JSArray, JSGlobalObject, JSObject, JSString, JSValue,
     JsError, JsThread, PinnedArrayBuffer, ThreadIsolated, ThreadIsolatedArg,
@@ -47,6 +48,10 @@ impl<'a> JsHeap<'a> {
     #[inline(always)]
     pub unsafe fn global(&self) -> &JSGlobalObject {
         self.global_object()
+    }
+
+    pub fn bun_vm(&self) -> &'static VirtualMachine {
+        self.global_object().bun_vm()
     }
 
     #[inline(always)]

@@ -1086,7 +1086,7 @@ impl All {
     /// can fire afterwards even if the loop turns again.
     ///
     /// # Safety
-    /// `this` is the live per-thread `All`; JS thread; never on a VM that keeps running.
+    /// `this` is the live per-thread `All`; JS thread.
     pub(crate) unsafe fn disarm_all_for_vm_teardown(this: *mut Self) {
         let mut nodes: Vec<*mut EventLoopTimer> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();

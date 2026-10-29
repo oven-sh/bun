@@ -3,11 +3,12 @@
 //! like source code
 //! not little ones
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 // `bun_core::WTFStringImpl` is the *pointer* type (= `*mut WTFStringImplStruct`).
 use bun_core::WTFStringImpl;
+
+use crate::virtual_machine::VirtualMachine;
 
 pub(crate) type Hash = u32;
 
@@ -21,20 +22,13 @@ pub type Map =
 #[derive(Debug)]
 pub struct StringTooLong;
 
-pub type Callback = unsafe fn(ctx: *mut c_void, str: *mut RefString);
-
 pub struct RefString {
-    pub ptr: *const u8,
-    pub(crate) len: usize,
+    pub(crate) bytes: Box<[u8]>,
     pub(crate) hash: Hash,
     // `impl` is a Rust keyword — renamed to `impl_`.
     pub(crate) impl_: WTFStringImpl,
-
-    // No per-instance allocator — non-AST crate uses the
-    // global mimalloc allocator (see PORTING.md §Allocators). `destroy` below
-    // frees via `heap::take`.
-    pub ctx: Option<NonNull<c_void>>,
-    pub(crate) on_before_deinit: Option<Callback>,
+    /// Whether the VM's `ref_strings` holds it under `hash`.
+    pub(crate) interned: bool,
 }
 
 impl RefString {
@@ -58,9 +52,7 @@ impl RefString {
     }
 
     pub fn leak(&self) -> &[u8] {
-        // SAFETY: `ptr` points to a live allocation of `len` bytes for the
-        // lifetime of `self` (freed only in `destroy`).
-        unsafe { bun_core::ffi::slice(self.ptr, self.len) }
+        &self.bytes
     }
 
     pub fn deref(&self) {
@@ -79,26 +71,14 @@ impl RefString {
     /// call `this` is dangling.
     pub(crate) unsafe fn destroy(this: *mut RefString) {
         // SAFETY: caller contract — `this` is the unique live pointer to a
-        // `Box<RefString>`-allocated value whose `ptr`/`len` describe a
-        // `Box<[u8]>`-allocated buffer. All raw derefs and `from_raw` calls
-        // below operate on those owned allocations.
+        // `Box<RefString>`-allocated value.
         unsafe {
-            if let Some(on_before_deinit) = (*this).on_before_deinit {
-                // Caller guarantees `ctx` is set
-                // whenever `on_before_deinit` is set.
-                on_before_deinit((*this).ctx.unwrap().as_ptr(), this);
+            if (*this).interned {
+                VirtualMachine::get()
+                    .as_mut()
+                    .ref_strings
+                    .remove(&(*this).hash);
             }
-
-            // `allocator.free(this.leak())` — reconstitute the owned byte slice
-            // and drop it. Build the fat `*mut [u8]` as a raw pointer (no `&mut`
-            // materialized — the WTF::StringImpl finalizer may still hold a
-            // shared view at this instant, so forming `&mut [u8]` would assert
-            // exclusivity we cannot prove).
-            drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
-                (*this).ptr.cast_mut(),
-                (*this).len,
-            )));
-            // `allocator.destroy(this)`
             drop(bun_core::heap::take(this));
         }
     }

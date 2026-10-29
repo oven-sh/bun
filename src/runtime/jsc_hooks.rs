@@ -1510,58 +1510,35 @@ static __BUN_RUNTIME_HOOKS: RuntimeHooks = RuntimeHooks {
 // ════════════════════════════════════════════════════════════════════════════
 
 /// Apply the standalone-executable graph's runtime flags to the transpiler.
-///
-/// # Safety
-/// `graph` is the process-lifetime trait object whose data pointer is a
-/// `bun_standalone_graph::Graph` (the only implementor — set in
-/// `init_with_module_graph` / inherited from the parent VM).
-unsafe fn apply_standalone_runtime_flags(
-    transpiler: &mut bun_bundler::Transpiler<'static>,
-    graph: &'static dyn bun_resolver::StandaloneModuleGraph,
-) {
-    // SAFETY: per fn contract — sole implementor; trait-object data pointer IS
-    // the concrete `Graph` (originally upcast from `&Graph`, so the data
-    // pointer is `Graph`-aligned). Read-only downcast (`&*`, not `&mut *` —
-    // the shared-ref provenance carries no write permission); the body only
-    // reads `graph.flags`.
-    let graph = unsafe {
-        &*std::ptr::from_ref::<dyn bun_resolver::StandaloneModuleGraph>(graph)
-            .cast::<c_void>()
-            .cast::<bun_standalone_graph::Graph>()
-    };
-    crate::run_main::apply_standalone_runtime_flags(transpiler, graph);
+fn apply_standalone_runtime_flags(transpiler: &mut bun_bundler::Transpiler<'static>) {
+    if let Some(graph) = bun_standalone_graph::Graph::get_ref() {
+        crate::run_main::apply_standalone_runtime_flags(transpiler, graph);
+    }
 }
 
 /// Scan a Worker's `execArgv` for the flags that mean something there. Like the
 /// CLI parser, the scan stops at the first positional.
-///
-/// # Safety
-/// Each `WTFStringImpl` in `exec_argv` is a live WTF string (the C++
-/// `Worker::create` array, kept alive for the worker's lifetime).
-unsafe fn parse_worker_exec_argv_flags(
-    exec_argv: &[bun_core::WTFStringImpl],
-) -> Option<WorkerExecArgvFlags> {
+fn parse_worker_exec_argv_flags<'a>(
+    exec_argv: &'a [Option<&'a bun_core::WTFStringImplStruct>],
+) -> Option<WorkerExecArgvFlags<'a>> {
     let mut flags = WorkerExecArgvFlags {
         allow_addons: true,
         allow_ffi_cc: true,
         invalid: None,
     };
     if crate::cli::startup_options::may_refuse_options() {
-        // SAFETY: per fn contract: each entry that is not null is a live `WTFStringImpl*`.
         let words = exec_argv
             .iter()
-            .filter(|arg| !arg.is_null())
-            .map(|&arg| unsafe { &*arg }.to_owned_slice_z());
+            .filter_map(|arg| arg.map(|arg| arg.to_owned_slice_z()));
         let words: Vec<_> = words.collect();
         let words: Vec<&[u8]> = words.iter().map(|word| word.as_bytes()).collect();
         crate::cli::startup_options::warn_of_ignored_options(&words);
     }
-    for (index, &arg) in exec_argv.iter().enumerate() {
-        if arg.is_null() {
+    for &arg in exec_argv {
+        let Some(arg) = arg else {
             continue;
-        }
-        // SAFETY: per fn contract — `arg` is a live `WTFStringImpl*`.
-        let owned = unsafe { &*arg }.to_owned_slice_z();
+        };
+        let owned = arg.to_owned_slice_z();
         let bytes = owned.as_bytes();
         if bytes.first() != Some(&b'-') {
             break;
@@ -1577,7 +1554,7 @@ unsafe fn parse_worker_exec_argv_flags(
             bytes.strip_prefix(b"--disallow-code-generation-from-strings".as_slice()),
             Some([] | [b'=', ..])
         ) {
-            flags.invalid.get_or_insert(index);
+            flags.invalid.get_or_insert(arg);
         }
     }
     Some(flags)
@@ -1706,12 +1683,12 @@ unsafe fn close_timer_loop_handles_after_vm_destroyed(_vm: *mut VirtualMachine) 
 }
 
 /// `RuntimeHooks::disarm_all_timers_for_vm_teardown`.
-unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
+fn disarm_all_timers_for_vm_teardown() {
     let all = timer_all();
     if all.is_null() {
         return;
     }
-    // SAFETY: live per-thread `All`; JS thread; teardown has forbidden script.
+    // SAFETY: live per-thread `All`; JS thread.
     unsafe { crate::timer::All::disarm_all_for_vm_teardown(all) };
 }
 
@@ -2323,14 +2300,13 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
             // ── Watcher package_json lookup ─────────────────────────────────
             let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
             {
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set during VM init (BACKREF); cast recovers the concrete type.
-                let import_watcher: *mut bun_jsc::ImportWatcher =
-                    unsafe { &*jsc_vm }.bun_watcher.cast();
+                // SAFETY: `bun_watcher` is the `*mut Watcher`
+                // set during VM init (BACKREF).
+                let import_watcher = unsafe { &*jsc_vm }.bun_watcher;
                 if !import_watcher.is_null() {
                     // SAFETY: non-null per check above. Never read through the
                     // watchlist's stored fd; see
-                    // `ImportWatcher::snapshot_package_json`.
+                    // `Watcher::snapshot_package_json`.
                     let iw = unsafe { &*import_watcher };
                     package_json = iw.snapshot_package_json(hash);
                 }
@@ -2909,11 +2885,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // Pending imports → AsyncModule queue.
                 if parse_result.pending_imports.len() > 0 {
-                    let promise_ptr = extra.promise_ptr;
                     // The queue outlives this call, and a virtual source's bytes do not.
-                    if promise_ptr.is_null() || virtual_source.is_some() {
+                    let (Some(promise_ptr), None) = (extra.promise_ptr, virtual_source) else {
                         return Err(crate::Error::UnexpectedPendingResolution);
-                    }
+                    };
 
                     if parse_result.source.contents_is_recycled {
                         // this shared buffer is about to become owned by the AsyncModule struct
@@ -2951,7 +2926,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             bun_jsc::async_module::InitOpts {
                                 parse_result,
                                 path: *path,
-                                promise_ptr: Some(promise_ptr),
+                                promise_ptr,
                                 specifier,
                                 referrer,
                                 arena,
@@ -3345,11 +3320,9 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     bun_sys::Fd::INVALID
                 };
                 let hash = bun_watcher::Watcher::get_hash(path.text);
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set when `is_watcher_enabled()`; cast recovers the concrete
-                // type.
-                let watcher =
-                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+                // SAFETY: `bun_watcher` is the `*mut Watcher`
+                // set when `is_watcher_enabled()`.
+                let watcher = unsafe { &mut *(*jsc_vm).bun_watcher };
                 let added =
                     watcher.add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None);
                 if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
@@ -3440,9 +3413,9 @@ fn maybe_watch_file(
     {
         return;
     }
-    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
-    // `is_watcher_enabled()`; cast recovers the concrete type.
-    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    // SAFETY: `bun_watcher` is the `*mut Watcher` set when
+    // `is_watcher_enabled()`.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher };
     if matches!(
         watcher.add_file::<true>(
             input_file_fd,
@@ -4539,7 +4512,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     });
 
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
-    let mut promise: *mut JSInternalPromise = ptr::null_mut();
+    let promise: Cell<*mut JSInternalPromise> = Cell::new(ptr::null_mut());
     let extra = TranspileExtra {
         path: lr.path,
         loader: Cell::new(synchronous_loader),
@@ -4547,9 +4520,9 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         source_code_printer: printer_ptr,
         // Resolving a package asynchronously is the global object's loader's only.
         promise_ptr: if allow_promise && module_loader.is_empty() {
-            &raw mut promise
+            Some(&promise)
         } else {
-            ptr::null_mut()
+            None
         },
     };
     let args = TranspileArgs {
@@ -4566,11 +4539,11 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
     match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
         Ok(resolved) => {
             *ret = ErrorableResolvedSource::ok(resolved);
-            promise.cast::<c_void>()
+            promise.get().cast::<c_void>()
         }
         Err(crate::Error::AsyncModule) => {
-            debug_assert!(!promise.is_null());
-            promise.cast::<c_void>()
+            debug_assert!(!promise.get().is_null());
+            promise.get().cast::<c_void>()
         }
         Err(err) => {
             if let Some(value) = transpile_error_value(global, specifier, referrer, &mut log, err) {
@@ -4685,7 +4658,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         loader: Cell::new(loader),
         module_type: Cell::new(ModuleType::Unknown),
         source_code_printer: printer_ptr,
-        promise_ptr: ptr::null_mut(), // null forbids async resolution
+        promise_ptr: None, // forbids async resolution
     };
     let args = TranspileArgs {
         specifier,

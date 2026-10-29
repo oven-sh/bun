@@ -411,20 +411,6 @@ impl Timeout {
         // whole dispatch even though abort listeners can trigger GC.
         AbortSignal::opaque_ref(signal_ptr).signal(vm.global(), CommonAbortReason::Timeout);
     }
-
-    // This may run inside the "signal" call.
-    // Deliberately not `impl Drop` — Timeout is constructed/destroyed across FFI
-    // (see export fns below) and `deinit` needs a `vm` parameter.
-    unsafe fn deinit(this: *mut Timeout, vm: *mut VirtualMachine) {
-        // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.
-        unsafe {
-            Self::cancel(&mut *this, vm);
-            if let Some(context) = (*vm).timer_context((*this).context) {
-                context.untrack_timer(this.cast());
-            }
-            drop(bun_core::heap::take(this));
-        }
-    }
 }
 
 /// The returned `Timeout` is owned by `signal_` (stored in `m_timeout`) and
@@ -440,7 +426,7 @@ extern "C" fn AbortSignal__Timeout__create(
 
 /// # Safety
 /// `this` must be a live boxed `Timeout` returned from `AbortSignal__Timeout__create`.
-/// Must be called on the owning JS thread — `deinit` resolves the VM via the
+/// Must be called on the owning JS thread — this resolves the VM via the
 /// thread-local `VirtualMachine::get_mut_ptr()` and `Timeout::cancel` requires it.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
@@ -449,7 +435,14 @@ unsafe extern "C" fn AbortSignal__Timeout__deinit(this: *mut Timeout) {
     // we resolve the VM via the threadlocal instead of taking it as a
     // parameter (which the caller would have to dereference the dead
     // context to obtain).
-    // SAFETY: `this` is the pointer returned from AbortSignal__Timeout__create;
-    // VM singleton is process-lifetime.
-    unsafe { Timeout::deinit(this, VirtualMachine::get_mut_ptr()) }
+    let vm = VirtualMachine::get_mut_ptr();
+    // SAFETY: `this` is the box that AbortSignal__Timeout__create returned;
+    // `vm` is this thread's live VM.
+    unsafe {
+        Timeout::cancel(&mut *this, vm);
+        if let Some(context) = (*vm).timer_context((*this).context) {
+            context.untrack_timer(this.cast());
+        }
+        drop(bun_core::heap::take(this));
+    }
 }

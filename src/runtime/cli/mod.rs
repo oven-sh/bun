@@ -334,14 +334,13 @@ pub(crate) type DefineColonList = colon_list_type::ColonListType<&'static [u8]>;
 
 impl colon_list_type::ColonListValue for bun_options_types::schema::api::Loader {
     const IS_LOADER: bool = true;
-    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
+    fn resolve_value(input: &'static [u8]) -> crate::Result<Self> {
         arguments::loader_resolver(input)
     }
 }
 impl colon_list_type::ColonListValue for &'static [u8] {
-    fn resolve_value(input: &[u8]) -> crate::Result<Self> {
-        // SAFETY: argv slices are process-lifetime; see ColonListType::keys note.
-        Ok(unsafe { bun_ptr::detach_lifetime(input) })
+    fn resolve_value(input: &'static [u8]) -> crate::Result<Self> {
+        Ok(input)
     }
 }
 

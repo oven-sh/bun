@@ -582,7 +582,7 @@ impl RunCommand {
                         *optional_bun_path = self_path.as_bytes();
                         self_path
                     }
-                    result => {
+                    _ => {
                         let argv0_bytes = argv0.as_bytes();
                         if argv0_bytes.starts_with(dir.as_bytes()) {
                             // `self_exe_path()` failed and `argv[0]` is the shim
@@ -596,12 +596,14 @@ impl RunCommand {
                             *optional_bun_path = argv0_bytes;
                             argv0
                         } else {
-                            // No usable target — propagate the OS error when we
-                            // have one, otherwise leave PATH unmodified.
-                            return match result {
-                                Err(e) => Err(e.into()),
-                                Ok(_) => Ok(()),
-                            };
+                            // No usable target: leave PATH unmodified, as for a link that can't be created.
+                            bun_core::run_once! {{
+                                bun_core::warn!(
+                                    "failed to create <b>node<r> alias in {}, scripts that run <b>node<r> will not find it",
+                                    bun_core::fmt::fmt_os_path(dir.as_bytes(), Default::default()),
+                                );
+                            }}
+                            return Ok(());
                         }
                     }
                 }

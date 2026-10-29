@@ -2011,8 +2011,7 @@ fn make_placeholder(rgba: &[u8], sw: u32, sh: u32) -> Result<TaskResult, codecs:
 /// Per-side cap for a requested or derived side.
 const MAX_SIDE: u32 = 0x3FFFF;
 
-/// The side that keeps the source ratio once `given` is fixed. Ties round to
-/// even like sharp's `std::rint`. The quotient can exceed u32, hence the clamp.
+/// The side that keeps the source ratio once `given` is fixed, ties to even.
 fn derive_side(given: u32, src_given: u32, src_other: u32) -> u32 {
     ((given as f64) * (src_other as f64) / (src_given as f64))
         .round_ties_even()

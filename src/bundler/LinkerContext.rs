@@ -35,7 +35,9 @@ use bun_ast::SideEffects;
 use bun_resolver::Resolver;
 
 use crate::Graph::Graph;
-use crate::options::{CompileMode, Format, Loader, PlaceholderField, SourceMapOption, Target};
+use crate::options::{
+    CompileMode, Format, Loader, PathTemplate, PlaceholderField, SourceMapOption, Target,
+};
 use crate::{
     AdditionalFile, BundleV2, Chunk, CompileResultForSourceMap, ContentHasher, ImportTracker,
     LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
@@ -1993,7 +1995,7 @@ impl<'a> LinkerContext<'a> {
             }
             if chunk.template.needs(PlaceholderField::Dir) {
                 let dir = &chunk.template.placeholder.dir;
-                for segment in dir.split(|&byte| byte == b'/' || byte == b'\\') {
+                for segment in strings::split_any(dir, PathTemplate::DIR_SEPARATORS) {
                     hasher.write(segment);
                 }
             }

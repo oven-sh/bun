@@ -748,14 +748,16 @@ fn placeholder_dir(this: &LinkerContext, dir: &[u8]) -> crate::Result<Box<[u8]>>
 
 /// The deepest directory that holds both `a` and `b`.
 fn common_dir<'a>(a: &'a [u8], b: &[u8]) -> &'a [u8] {
-    let is_end = |path: &[u8], i: usize| i == path.len() || path[i] == b'/' || path[i] == b'\\';
+    let separators = PathTemplate::DIR_SEPARATORS;
     let mut common = 0;
-    for i in 0..=a.len().min(b.len()) {
-        match (is_end(a, i), is_end(b, i)) {
-            (true, true) => common = i,
-            (false, false) if a[i] == b[i] => {}
-            _ => break,
+    for (index, (in_a, in_b)) in strings::split_any(a, separators)
+        .zip(strings::split_any(b, separators))
+        .enumerate()
+    {
+        if in_a != in_b {
+            break;
         }
+        common += in_a.len() + usize::from(index > 0);
     }
     &a[..common]
 }

@@ -1037,7 +1037,7 @@ In the `chunk` template, Bun fills `[name]` and `[dir]` from the files that load
 
 For a chunk of shared JavaScript, `[dir]` is the deepest directory that contains every entrypoint that loads the chunk. For example, with `[dir]/[name]-[hash].[ext]`, a chunk that `pages/home.tsx` shares with the modules it loads through `import()` is `pages/home-chunk-<hash>.js`. A chunk that `pages/home.tsx` and `pages/about.tsx` share is `pages/shared-<hash>.js`.
 
-The name `shared` is the same in every build. Keep `[hash]` in the `chunk` template. Without it, two such chunks in one directory have the same path and the build fails, and two builds that write to one `outdir` replace each other's chunk.
+Several chunks of one build can have the same `[name]`, and `shared` is the same name in every build. Keep `[hash]` in the `chunk` template. Without it, two chunks with the same name in one directory fail the build, and two builds that write to one `outdir` replace each other's chunk.
 
 ### root
 

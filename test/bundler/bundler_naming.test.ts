@@ -910,16 +910,35 @@ describe("bundler", () => {
     },
   });
 
-  test("naming/SplitChunkCollision", async () => {
-    using dir = tempDir("naming-split-chunk-collision", {
-      "a.js": `import { x } from "./x.js"; console.log("a", x);`,
-      "b.js": `import { x } from "./x.js"; import { y } from "./y.js"; console.log("b", x, y);`,
-      "c.js": `import { y } from "./y.js"; console.log("c", y);`,
-      "x.js": `export const x = "X";`,
-      "y.js": `export const y = "Y";`,
-    });
+  // Without `[hash]`, two chunks with one name have one path.
+  test.each([
+    [
+      "shared",
+      ["a.js", "b.js", "c.js"],
+      {
+        "a.js": `import { x } from "./x.js"; console.log("a", x);`,
+        "b.js": `import { x } from "./x.js"; import { y } from "./y.js"; console.log("b", x, y);`,
+        "c.js": `import { y } from "./y.js"; console.log("c", y);`,
+        "x.js": `export const x = "X";`,
+        "y.js": `export const y = "Y";`,
+      },
+    ],
+    [
+      "main-chunk",
+      ["main.js"],
+      {
+        "main.js": `import("./lazy1.js"); import("./lazy2.js"); import("./lazy3.js");`,
+        "lazy1.js": `import { x } from "./x.js"; import { y } from "./y.js"; console.log("lazy1", x, y);`,
+        "lazy2.js": `import { x } from "./x.js"; console.log("lazy2", x);`,
+        "lazy3.js": `import { y } from "./y.js"; console.log("lazy3", y);`,
+        "x.js": `export const x = "X";`,
+        "y.js": `export const y = "Y";`,
+      },
+    ],
+  ])("naming/SplitChunkCollision: %s", async (name, entrypoints, files) => {
+    using dir = tempDir("naming-split-chunk-collision", files);
     const build = await Bun.build({
-      entrypoints: ["a.js", "b.js", "c.js"].map(entrypoint => join(String(dir), entrypoint)),
+      entrypoints: entrypoints.map(entrypoint => join(String(dir), entrypoint)),
       root: String(dir),
       splitting: true,
       naming: { chunk: "chunks/[name].[ext]" },
@@ -927,7 +946,7 @@ describe("bundler", () => {
     });
     expect(build.logs[0].message.split("\n").slice(0, 2)).toEqual([
       "Multiple files share the same output path",
-      "  ./chunks/shared.js:",
+      `  ./chunks/${name}.js:`,
     ]);
     expect(build.success).toBe(false);
   });

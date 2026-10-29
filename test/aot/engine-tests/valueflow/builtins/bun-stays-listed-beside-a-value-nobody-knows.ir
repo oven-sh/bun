@@ -1,0 +1,26 @@
+# somebody(Bun); chosen = choice === undefined ? somebody(Bun) : Bun; new chosen.Glob()
+# Bun has escaped, and the unknown value does not stand in for it: where Bun itself arrives, a name read from it is a use of the member
+# RUN: valueflow-solve used
+# CHECK: run BunGlob
+# CHECK-NOT: BunArchive
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Bun
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="somebody" [isFreeName]
+    v3 = Call v2, -, v0
+    v4 = PropGet v1 key="choice" [isFreeName]
+    v5 = TypeTest v4 testedType=undefined
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    Jump -> next b3(v3)
+  b2():
+    Jump -> next b3(v0)
+  b3(v6: anything):
+    v7 = PropGet v6 key="Glob"
+    v8 = Construct v7, -
+    Return v8
+}

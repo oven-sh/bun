@@ -27,6 +27,7 @@ import { type ManifestContext, externDeps, externPaths, transitiveLinkInputs, un
 const here = import.meta.dirname;
 const runScript = resolve(here, "run.ts");
 const planScript = resolve(here, "plan.ts");
+const generatedInputsScript = resolve(here, "check-generated-inputs.ts");
 /**
  * The scripts whose edit reruns an edge. A rustc edge names run.ts alone: what run.ts imports (fs.ts, cargo-env.ts,
  * error.ts) it uses for build scripts and for reporting, not for what rustc writes, and fs.ts is shared by the whole
@@ -79,6 +80,10 @@ export function registerRustUnitRules(n: Ninja, cfg: Config): void {
     restat: true,
     pool: "console",
   });
+  n.rule("rust_generated_inputs", {
+    command: `${cfg.jsRuntime} ${q(streamPath)} check --stamp=$out ${cfg.jsRuntime} ${q(generatedInputsScript)} $in`,
+    description: "check the generated files each crate waits for",
+  });
 }
 
 export interface RustPlanEdgeInputs {
@@ -109,11 +114,11 @@ export function emitRustPlan(n: Ninja, cfg: Config, dir: string, p: RustPlanEdge
 
 export interface RustEdgeInputs {
   /**
-   * What must exist before a workspace crate of this graph compiles (the `rust-codegen-ready` phony: generated
-   * `.rs` files the crates `include!`). Order-only: rustc's dep-info names every `include!`d file, so from the
-   * second build on exactly the crate that includes a changed file rebuilds.
+   * What must exist before a workspace crate of this graph compiles, by package name: the generated files it
+   * `include!`s. Order-only: rustc's dep-info names every `include!`d file, so from the second build on exactly
+   * the crate that includes a changed file rebuilds.
    */
-  localOrderOnly: string[];
+  generatedInputs: (packageName: string) => string[];
   /**
    * Build products a package reads that another edge makes, by package name (the Windows shim's executable, which
    * bun_install `include_bytes!`). Implicit inputs of every edge of the package, its build script's run included:
@@ -157,7 +162,8 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
           ];
     const packageInputs = inputs.implicitInputs[unit.pkg.name] ?? [];
     const common = [...scriptOutputs, ...rustcScriptDeps, ...packageInputs];
-    const orderOnly = [...inputs.vendorStamps, ...(unit.isLocal ? inputs.localOrderOnly : [])];
+    const orderOnly = [...inputs.vendorStamps, ...(unit.isLocal ? inputs.generatedInputs(unit.pkg.name) : [])];
+    const validations = unit === graph.root && inputs.rootValidations.length > 0 ? inputs.rootValidations : undefined;
 
     switch (manifest.kind) {
       case "lib":
@@ -174,6 +180,7 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
           inputs: [],
           implicitInputs: [...externs, unit.manifestPath, ...common],
           orderOnlyInputs: orderOnly,
+          ...(validations !== undefined ? { validations } : {}),
           vars: { ...vars, what: "" },
           depfile,
           earlyOutputPrefix: "@ninja-early-output@",
@@ -194,7 +201,7 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
           inputs: [],
           implicitInputs: [...new Set([...externs, ...all, unit.manifestPath, ...common])],
           orderOnlyInputs: orderOnly,
-          ...(unit === graph.root && inputs.rootValidations.length > 0 ? { validations: inputs.rootValidations } : {}),
+          ...(validations !== undefined ? { validations } : {}),
           vars: { ...vars, what },
           depfile,
         });
@@ -219,4 +226,33 @@ export function emitRustUnits(n: Ninja, ctx: ManifestContext, inputs: RustEdgeIn
         break;
     }
   }
+}
+
+export interface GeneratedInputsCheck {
+  directory: string;
+  crates: { name: string; depInfo: string; reads: string[] | "all" }[];
+}
+
+/** The edge that fails when a crate of `graph` read a file of `directory` that `readsOf` does not give its package. Returns its stamp. */
+export function emitGeneratedInputsCheck(
+  n: Ninja,
+  graph: ManifestContext["graph"],
+  directory: string,
+  readsOf: (packageName: string) => string[] | "all",
+): string {
+  const crates = graph.units.filter(unit => unit.isLocal && unit.kind !== "build-script-run");
+  const check: GeneratedInputsCheck = {
+    directory,
+    crates: crates.map(unit => ({ name: unit.crateName, depInfo: unit.depInfo!, reads: readsOf(unit.pkg.name) })),
+  };
+  const table = resolve(graph.dir, "generated-inputs.json");
+  const stamp = resolve(graph.dir, "generated-inputs.checked");
+  writeIfChanged(table, JSON.stringify(check, null, 1) + "\n");
+  n.build({
+    outputs: [stamp],
+    rule: "rust_generated_inputs",
+    inputs: [table],
+    implicitInputs: [generatedInputsScript, ...crates.map(unit => unit.output)],
+  });
+  return stamp;
 }

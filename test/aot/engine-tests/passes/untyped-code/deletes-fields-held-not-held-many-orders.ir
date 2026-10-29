@@ -1,0 +1,648 @@
+# Untyped code deletes names that the type of a record declares, from records that hold them and from records that do not, whatever the order in which a record got its properties: numbers of each kind, booleans, strings, objects; properties that were given a value of another kind, made accessors, made fixed; sealed and frozen records.
+# FORM: AsRead
+# RUN: valueflow-apply
+
+module m0 path="deletes-fields-held-not-held-many-orders.ts" displayPath="deletes-fields-held-not-held-many-orders.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Row" module=m0 position=348 fields=[{key="flag" declared={type=undefined|boolean}}, {key="fraction" declared={type=undefined|number}}, {key="id" declared={type=number} flags=[IsRequired]}, {key="inner" declared={type=undefined|null|L2 flags=[OmitsNull]}}, {key="large" declared={type=undefined|number}}, {key="text" declared={type=undefined|null|string flags=[IsExpected, OmitsNull]}}, {key="whole" declared={type=undefined|number}}] declaredOrder=[2, 6, 1, 4, 0, 5, 3] ownFieldCount=7
+layout L1 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function|f10 flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod, IsNeverWritten]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+layout L2 module=m0 position=456 fields=[{key="v" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" elements=[String{value="whole"}, String{value="fraction"}, String{value="large"}, String{value="flag"}, String{value="text"}, String{value="inner"}]} module=m0
+data d1 root=Array{contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"} module=m0
+data d2 root=Array{contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" elements=[String{value="whole"}]} module=m0
+data d3 root=Array{contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" elements=[String{value="flag"}, String{value="whole"}]} module=m0
+data d4 root=Array{contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" elements=[String{value="whole"}, String{value="flag"}]} module=m0
+data d5 root=Array{contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" elements=[String{value="text"}, String{value="inner"}, String{value="fraction"}]} module=m0
+data d6 root=Array{contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" elements=[String{value="large"}, String{value="text"}]} module=m0
+data d7 root=Array{contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" elements=[String{value="inner"}]} module=m0
+data d8 root=Array{contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" elements=[String{value="fraction"}, String{value="large"}, String{value="whole"}, String{value="flag"}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> flags=[OmitsNull, OmitsUndefined]}
+    v4 = NewClosure function=f2
+    v5 = Convert v4 declared={type=undefined|null|function|f2 flags=[OmitsNull, OmitsUndefined]}
+    v6 = NewClosure function=f3
+    v7 = Convert v6 declared={type=undefined|null|function|f3 flags=[OmitsNull, OmitsUndefined]}
+    v8 = NewClosure function=f4
+    v9 = Convert v8 declared={type=undefined|null|function|f4 flags=[OmitsNull, OmitsUndefined]}
+    v10 = NewClosure function=f5
+    v11 = Convert v10 declared={type=undefined|null|function|f5 flags=[OmitsNull, OmitsUndefined]}
+    v12 = NewClosure function=f6
+    v13 = Convert v12 declared={type=undefined|null|function|f6 flags=[OmitsNull, OmitsUndefined]}
+    v14 = Data data=d1
+    v15 = Data data=d2
+    v16 = Data data=d3
+    v17 = Data data=d4
+    v18 = Data data=d5
+    v19 = Data data=d6
+    v20 = NewArray contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"
+    v21 = NewArray contents=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"
+    v22 = PropGet v21 key="reverse"
+    v23 = Call v22, v21 calleeKey="reverse" calleeName="reverse"
+    v24 = Convert v23 declared={type=undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v25 = Data data=d7
+    v26 = Data data=d8
+    v27 = NewArray v14, v15, v16, v17, v18, v19, v20, v24, v25, v26 contents=undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">
+    v28 = Convert v27 declared={type=undefined|null|Array<undefined|null|Array> flags=[OmitsNull, OmitsUndefined]}
+    v29 = Integer
+    v30 = Convert v29 declared={type=number}
+    v31 = Integer
+    v32 = Convert v31 declared={type=number}
+    v33 = String string="sealed"
+    v34 = NewClosure function=f7
+    v35 = NewArray v33, v34 contents=undefined|null|string|function|f7|f8|f9
+    v36 = String string="frozen"
+    v37 = NewClosure function=f8
+    v38 = NewArray v36, v37 contents=undefined|null|string|function|f7|f8|f9
+    v39 = String string="closed"
+    v40 = NewClosure function=f9
+    v41 = NewArray v39, v40 contents=undefined|null|string|function|f7|f8|f9
+    v42 = NewArray v35, v38, v41 contents=undefined|null|Array<undefined|null|string|function|f7|f8|f9>
+    v43 = Convert v42 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string|function|f7|f8|f9>> flags=[OmitsNull, OmitsUndefined]}
+    v44 = Integer
+    v45 = Convert v44 declared={type=number}
+    v46 = Convert v28 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">>} illTypedCause=Assertion
+    v47 = IteratorOpen v46
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v49 = IteratorResume v47
+    v50 = ResultAt v49 index=1
+    Jump -> next b2()
+  b2() handler=b16():
+    v51 = Convert v50 declared={type=undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v52 = IteratorOpen v3
+    Jump -> next b3()
+  b3() handler=b16():
+    v53 = IteratorResume v52
+    v54 = ResultAt v53
+    v55 = ResultAt v53 index=1
+    Branch v54 -> taken b4(), notTaken b5()
+  b4() handler=b16():
+    Jump -> next b1()
+  b5() handler=b16():
+    Jump -> next b6()
+  b6() handler=b15():
+    v56 = Convert v55 declared={type=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v57 = Call v1, -, v51, v45 calleeName="make"
+    v58 = Convert v57 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v59 = Builtin builtin=Object
+    v60 = Builtin builtin=ObjectDefineProperty
+    v61 = NewClosure function=f10
+    v62 = Convert v61 declared={type=undefined|null|function|f10 flags=[IsExpected]}
+    v63 = NewObject layout=L1
+    PropDefine v63, v62 key="get"
+    v65 = Boolean boolean=true
+    v66 = Convert v65 declared={type=undefined|boolean}
+    v67 = Boolean boolean=true
+    v68 = Convert v67 declared={type=undefined|boolean}
+    PropDefine v63, v68 key="enumerable"
+    v70 = FinishObject v63
+    v71 = Call v60, v59, v58, v56, v70 calleeName="Object.defineProperty"
+    v72 = Convert v71 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v73 = PropGet v51 key="join"
+    v74 = String string="+"
+    v75 = Call v73, v51, v74 calleeKey="join" calleeName="order.join"
+    v76 = Convert v75 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v77 = String string=" a getter for "
+    v78 = Add v76, v77
+    v79 = Add v78, v56
+    v80 = String string=": "
+    v81 = Add v79, v80
+    v82 = NewClosure v56, v58 function=f11
+    v83 = Call v9, -, v82 calleeName="attempt"
+    v84 = Convert v83 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v85 = Add v81, v84
+    v86 = String string=" "
+    v87 = Add v85, v86
+    v88 = Call v11, -, v58 calleeName="show"
+    v89 = Convert v88 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v90 = Add v87, v89
+    v91 = Call v13, -, v90 calleeName="say"
+    v92 = Call v1, -, v51, v45 calleeName="make"
+    v93 = Convert v92 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v94 = Builtin builtin=Object
+    v95 = Builtin builtin=ObjectDefineProperty
+    v96 = Integer integer=1
+    v97 = Call v5, -, v56, v96 calleeName="valueOf"
+    v98 = Boolean
+    v99 = Convert v98 declared={type=undefined|boolean}
+    v100 = Boolean boolean=true
+    v101 = Convert v100 declared={type=undefined|boolean}
+    v102 = Boolean boolean=true
+    v103 = Convert v102 declared={type=undefined|boolean}
+    v104 = NewObject -, v97, v99, v101, v103 layout=L1 fields=[4, 0, 1, 5]
+    v105 = FinishObject v104
+    v106 = Call v95, v94, v93, v56, v105 calleeName="Object.defineProperty"
+    v107 = Convert v106 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v108 = PropGet v51 key="join"
+    v109 = String string="+"
+    v110 = Call v108, v51, v109 calleeKey="join" calleeName="order.join"
+    v111 = Convert v110 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v112 = String string=" fixed "
+    v113 = Add v111, v112
+    v114 = Add v113, v56
+    v115 = String string=": "
+    v116 = Add v114, v115
+    v117 = NewClosure v56, v93 function=f12
+    v118 = Call v9, -, v117 calleeName="attempt"
+    v119 = Convert v118 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v120 = Add v116, v119
+    v121 = String string=" "
+    v122 = Add v120, v121
+    v123 = NewClosure v93 function=f13
+    v124 = Call v9, -, v123 calleeName="attempt"
+    v125 = Convert v124 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v126 = Add v122, v125
+    v127 = String string=" "
+    v128 = Add v126, v127
+    v129 = NewClosure v93 function=f14
+    v130 = Call v9, -, v129 calleeName="attempt"
+    v131 = Convert v130 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v132 = Add v128, v131
+    v133 = String string=" "
+    v134 = Add v132, v133
+    v135 = Call v11, -, v93 calleeName="show"
+    v136 = Convert v135 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v137 = Add v134, v136
+    v138 = Call v13, -, v137 calleeName="say"
+    v139 = IteratorOpen v43
+    Jump -> next b7()
+  b7() handler=b15():
+    LoopHint
+    v141 = IteratorResume v139
+    v142 = ResultAt v141
+    v143 = ResultAt v141 index=1
+    Branch v142 -> taken b8(), notTaken b9()
+  b8() handler=b15():
+    v144 = Call v1, -, v51, v45 calleeName="make"
+    v145 = Convert v144 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v146 = Builtin builtin=Object
+    v147 = Builtin builtin=ObjectSetPrototypeOf
+    v148 = NewDictionary
+    v149 = ToPropertyKey v56
+    v150 = String string="above"
+    ElemDefine v148, v149, v150
+    v152 = PropGet v51 key="join"
+    v153 = String string="+"
+    v154 = Call v152, v51, v153 calleeKey="join" calleeName="order.join"
+    v155 = Convert v154 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v156 = String string=" below "
+    v157 = Add v155, v156
+    v158 = Add v157, v56
+    v159 = String string=": "
+    v160 = Add v158, v159
+    v161 = Call v7, -, v145, v56 calleeName="removeByKey"
+    v162 = Add v160, v161
+    v163 = String string=" "
+    v164 = Add v162, v163
+    v165 = Convert v145 declared={type=undefined|null|object flags=[IsExpected]}
+    v166 = ElemGet v165, v56
+    v167 = Add v164, v166
+    v168 = String string=" "
+    v169 = Add v167, v168
+    v170 = Call v11, -, v145 calleeName="show"
+    v171 = Convert v170 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v172 = Add v169, v171
+    v173 = Call v1, -, v51, v45 calleeName="make"
+    v174 = Convert v173 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v175 = Convert v174 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v176 = Integer integer=2
+    v177 = Mod v45, v176
+    v178 = PropGet v51 key="join"
+    v179 = String string="+"
+    v180 = Call v178, v51, v179 calleeKey="join" calleeName="order.join"
+    v181 = Convert v180 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v182 = String string=" beside "
+    v183 = Add v181, v182
+    v184 = Add v183, v56
+    v185 = String string=": "
+    v186 = Add v184, v185
+    v187 = Call v7, -, v174, v56 calleeName="removeByKey"
+    v188 = Add v186, v187
+    v189 = String string=" "
+    v190 = Add v188, v189
+    v191 = Call v11, -, v174 calleeName="show"
+    v192 = Convert v191 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v193 = Add v190, v192
+    v194 = String string=" "
+    v195 = Add v193, v194
+    v196 = String string="beside"
+    v197 = Call v7, -, v174, v196 calleeName="removeByKey"
+    v198 = Add v195, v197
+    v199 = String string=" "
+    v200 = Add v198, v199
+    v201 = Call v11, -, v174 calleeName="show"
+    v202 = Convert v201 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v203 = Add v200, v202
+    Jump -> next b3()
+  b9() handler=b15():
+    Jump -> next b10()
+  b10() handler=b14():
+    v204 = Convert v143 declared={type=undefined|null|Array<undefined|null|string|function|f7|f8|f9> flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v205 = IteratorOpen v204 elementCount=2 [isDestructuring]
+    Jump -> next b11()
+  b11() handler=b13():
+    v206 = IteratorResume v205 stepIndex=0
+    v207 = ResultAt v206 index=1
+    v208 = Convert v207 declared={type=undefined|null|string} illTypedCause=Assertion
+    v209 = IteratorResume v205 stepIndex=1
+    v210 = ResultAt v209 index=1
+    v211 = Convert v210 declared={type=undefined|null|function|f7|f8|f9} illTypedCause=Assertion
+    Jump -> next b12()
+  b12() handler=b14():
+    v212 = Call v1, -, v51, v45 calleeName="make"
+    v213 = Convert v212 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v214 = Call v211, -, v213 calleeName="close"
+    v215 = Convert v214 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v216 = PropGet v51 key="join"
+    v217 = String string="+"
+    v218 = Call v216, v51, v217 calleeKey="join" calleeName="order.join"
+    v219 = Convert v218 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v220 = String string=" "
+    v221 = Add v219, v220
+    v222 = Add v221, v208
+    v223 = String string=" "
+    v224 = Add v222, v223
+    v225 = Add v224, v56
+    v226 = String string=": "
+    v227 = Add v225, v226
+    v228 = NewClosure v56, v215 function=f15
+    v229 = Call v9, -, v228 calleeName="attempt"
+    v230 = Convert v229 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v231 = Add v227, v230
+    v232 = String string=" "
+    v233 = Add v231, v232
+    v234 = NewClosure v215 function=f16
+    v235 = Call v9, -, v234 calleeName="attempt"
+    v236 = Convert v235 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v237 = Add v233, v236
+    v238 = String string=" "
+    v239 = Add v237, v238
+    v240 = NewClosure v215 function=f17
+    v241 = Call v9, -, v240 calleeName="attempt"
+    v242 = Convert v241 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v243 = Add v239, v242
+    v244 = String string=" "
+    v245 = Add v243, v244
+    v246 = Call v11, -, v215 calleeName="show"
+    v247 = Convert v246 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v248 = Add v245, v247
+    v249 = Call v13, -, v248 calleeName="say"
+    Jump -> next b7()
+  b13() role=IterationCleanup subject=v205 handler=b14():
+    v250 = CatchException
+    IteratorClose v205 completion=Throw
+    Rethrow v250
+  b14() role=IterationCleanup subject=v139 handler=b15():
+    v252 = CatchException
+    IteratorClose v139 completion=Throw
+    Rethrow v252
+  b15() role=IterationCleanup subject=v52 handler=b16():
+    v254 = CatchException
+    IteratorClose v52 completion=Throw
+    Rethrow v254
+  b16() role=IterationCleanup subject=v47:
+    v256 = CatchException
+    Rethrow v256
+}
+function f1 name="make" module=m0 position=2059 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="valueOf" module=m0 position=605 kind=Arrow flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" flags=[IsExpected, OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=anything}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="removeByKey" module=m0 position=1335 flags=[IsChecked] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="attempt" module=m0 position=1415 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|function|f11|f12|f13|f14|f15|f16|f17 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f22] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="show" module=m0 position=1543 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f23] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 name="say" module=m0 position=1703 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] functionTypes=[f24] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 position=3544 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f26] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m0 position=3581 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f27] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 module=m0 position=3620 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f28] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 name="get" module=m0 position=3852 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] functionTypes=[f29] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 module=m0 position=3987 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f30] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m0 position=4271 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f31] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f13 module=m0 position=4319 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f32] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m0 position=4361 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f33] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f15 module=m0 position=4571 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole" flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f34] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 module=m0 position=4617 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f35] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 module=m0 position=4657 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f36] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f25 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f26 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f27]
+function f27 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25]
+function f28 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f25, f27]
+function f29 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f37]
+function f30 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f31 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f32 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f33 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f34 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f35 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f36 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f21]
+function f37 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: f1 = NewClosure function=f1 allocationSite=0
+# CHECK-NEXT: v1: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d0 allocationSite=1
+# CHECK-NEXT: v220: Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v1 provenType=Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v2: f2 = NewClosure function=f2 allocationSite=2
+# CHECK-NEXT: v3: f3 = NewClosure function=f3 allocationSite=3
+# CHECK-NEXT: v4: f4 = NewClosure function=f4 allocationSite=4
+# CHECK-NEXT: v5: f5 = NewClosure function=f5 allocationSite=5
+# CHECK-NEXT: v6: f6 = NewClosure function=f6 allocationSite=6
+# CHECK-NEXT: v7: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d1 allocationSite=7
+# CHECK-NEXT: v221: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v7 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v8: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d2 allocationSite=8
+# CHECK-NEXT: v222: Array<"whole", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v8 provenType=Array<"whole", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v9: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d3 allocationSite=9
+# CHECK-NEXT: v223: Array<"flag"|"whole", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<"flag"|"whole", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v10: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d4 allocationSite=10
+# CHECK-NEXT: v224: Array<"flag"|"whole", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v10 provenType=Array<"flag"|"whole", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d5 allocationSite=11
+# CHECK-NEXT: v225: Array<"fraction"|"inner"|"text", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<"fraction"|"inner"|"text", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v12: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d6 allocationSite=12
+# CHECK-NEXT: v226: Array<"large"|"text", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v12 provenType=Array<"large"|"text", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v13: Array<never> = NewArray contents=never allocationSite=13 [contentsAreProven]
+# CHECK-NEXT: v227: Array<never, proven, pristine[Storage, Names, Dense]> = AssumeType v13 provenType=Array<never, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v14: Array<never> = NewArray contents=never allocationSite=14 [contentsAreProven]
+# CHECK-NEXT: v228: Array<never, proven, pristine[Storage, Names]> = AssumeType v14 provenType=Array<never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v15: anything = PropGet v228 key="reverse" accessSite=0
+# CHECK-NEXT: v229: builtin(ArrayPrototypeReverse) = AssumeType v15 provenType=builtin(ArrayPrototypeReverse)
+# CHECK-NEXT: v16: anything = Call v229, v228 calleeKey="reverse" calleeName="reverse" accessSite=1 callees=[builtin(ArrayPrototypeReverse)]
+# CHECK-NEXT: v230: Array<never, proven, pristine[Storage, Names]> = AssumeType v16 provenType=Array<never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v17: Array<never, proven, pristine[Storage, Names]> = AssumeType v230 provenType=undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">
+# CHECK-NEXT: v231: Array<never, proven, pristine[Storage, Names]> = AssumeType v17 provenType=Array<never, proven, pristine[Storage, Names]>
+# CHECK-NEXT: v18: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d7 allocationSite=15
+# CHECK-NEXT: v232: Array<"inner", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v18 provenType=Array<"inner", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v19: Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"> = Data data=d8 allocationSite=16
+# CHECK-NEXT: v233: Array<"flag"|"fraction"|"large"|"whole", proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v19 provenType=Array<"flag"|"fraction"|"large"|"whole", proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v20: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, Contiguous> = NewArray v221, v222, v223, v224, v225, v226, v227, v231, v232, v233 contents=Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]> allocationSite=17 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v234: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v20 provenType=Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v21: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v234 castType=undefined|null|Array<undefined|null|Array>
+# CHECK-NEXT: v22: 0 = Integer
+# CHECK-NEXT: v23: 0 = Integer
+# CHECK-NEXT: v24: "sealed" = String string="sealed"
+# CHECK-NEXT: v25: f7 = NewClosure function=f7 allocationSite=18
+# CHECK-NEXT: v26: Array<string|f7|f8|f9, Contiguous> = NewArray v24, v25 contents=string|f7|f8|f9 allocationSite=19 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v235: Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v26 provenType=Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v27: "frozen" = String string="frozen"
+# CHECK-NEXT: v28: f8 = NewClosure function=f8 allocationSite=20
+# CHECK-NEXT: v29: Array<string|f7|f8|f9, Contiguous> = NewArray v27, v28 contents=string|f7|f8|f9 allocationSite=21 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v236: Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v30: "closed" = String string="closed"
+# CHECK-NEXT: v31: f9 = NewClosure function=f9 allocationSite=22
+# CHECK-NEXT: v32: Array<string|f7|f8|f9, Contiguous> = NewArray v30, v31 contents=string|f7|f8|f9 allocationSite=23 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v237: Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v32 provenType=Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v33: Array<Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, Contiguous> = NewArray v235, v236, v237 contents=Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> allocationSite=24 arrayStorage=Contiguous [contentsAreProven]
+# CHECK-NEXT: v238: Array<Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v33 provenType=Array<Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v34: 0 = Integer
+# CHECK-NEXT: v35: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = Upcast v21 castType=undefined|null|Array<undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">>
+# CHECK-NEXT: v239: Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v35 provenType=Array<Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v36: iteratorstate = IteratorOpen v239
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v38: undefined = IteratorResume v36
+# CHECK-NEXT: v39: anything = ResultAt v38 index=1
+# CHECK-NEXT: v240: undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]> = AssumeType v39 provenType=undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>
+# CHECK-NEXT: Jump -> next b2()
+# CHECK-NEXT: b2() handler=b16():
+# CHECK-NEXT: v40: undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]> = AssumeType v240 provenType=undefined|null|Array<undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole">
+# CHECK-NEXT: v241: undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]> = AssumeType v40 provenType=undefined|Array<"flag"|"fraction"|"inner"|"large"|"text"|"whole", proven, pristine[Storage, Names]>
+# CHECK-NEXT: v41: iteratorstate = IteratorOpen v220
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b3() handler=b16():
+# CHECK-NEXT: v42: undefined = IteratorResume v41
+# CHECK-NEXT: v43: boolean = ResultAt v42
+# CHECK-NEXT: v44: anything = ResultAt v42 index=1
+# CHECK-NEXT: v242: undefined|"flag"|"fraction"|"inner"|"large"|"text"|"whole" = AssumeType v44 provenType=undefined|"flag"|"fraction"|"inner"|"large"|"text"|"whole"
+# CHECK-NEXT: Branch v43 -> taken b4(), notTaken b5()
+# CHECK-NEXT: b4() handler=b16():
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b5() handler=b16():
+# CHECK-NEXT: Jump -> next b6()
+# CHECK-NEXT: b6() handler=b15():
+# CHECK-NEXT: v45: undefined|"flag"|"fraction"|"inner"|"large"|"text"|"whole" = AssumeType v242 provenType=undefined|null|"flag"|"fraction"|"inner"|"large"|"text"|"whole"
+# CHECK-NEXT: v46: undefined|null|L0 = Call v0, -, v241, v34 calleeName="make" accessSite=2 callees=[f1]
+# CHECK-NEXT: v47: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v48: builtin(ObjectDefineProperty) = Builtin builtin=ObjectDefineProperty
+# CHECK-NEXT: v49: f10 = NewClosure function=f10 allocationSite=25
+# CHECK-NEXT: v50: L1 = NewObject layout=L1 allocationSite=26 allocationClass=0
+# CHECK-NEXT: PropDefine v50, v49 key="get" accessSite=3 receivers=[L1]
+# CHECK-NEXT: v52: true = Boolean boolean=true
+# CHECK-NEXT: v53: true = Boolean boolean=true
+# CHECK-NEXT: PropDefine v50, v53 key="enumerable" accessSite=4 receivers=[L1]
+# CHECK-NEXT: v55: L1 = FinishObject v50
+# CHECK-NEXT: v56: anything = Call v48, v47, v46, v45, v55 calleeName="Object.defineProperty" accessSite=5 callees=[builtin(ObjectDefineProperty)]
+# CHECK-NEXT: v57: undefined|null|L0 = Check v56 expectedType=undefined|null|L0
+# CHECK-NEXT: v58: anything = PropGet v241 key="join" accessSite=6
+# CHECK-NEXT: v243: builtin(ArrayPrototypeJoin) = AssumeType v58 provenType=builtin(ArrayPrototypeJoin)
+# CHECK-NEXT: v59: "+" = String string="+"
+# CHECK-NEXT: v60: anything = Call v243, v241, v59 calleeKey="join" calleeName="order.join" accessSite=7 callees=[builtin(ArrayPrototypeJoin)]
+# CHECK-NEXT: v244: string = AssumeType v60 provenType=string
+# CHECK-NEXT: v61: string = AssumeType v244 provenType=undefined|null|string
+# CHECK-NEXT: v245: string = AssumeType v61 provenType=string
+# CHECK-NEXT: v62: " a getter for " = String string=" a getter for "
+# CHECK-NEXT: v63: string = Add v245, v62
+# CHECK-NEXT: v64: string = Add v63, v45
+# CHECK-NEXT: v65: ": " = String string=": "
+# CHECK-NEXT: v66: string = Add v64, v65
+# CHECK-NEXT: v67: f11 = NewClosure v45, v46 function=f11 allocationSite=27
+# CHECK-NEXT: v68: undefined|null|string = Call v4, -, v67 calleeName="attempt" accessSite=8 callees=[f4]
+# CHECK-NEXT: v69: string = Add v66, v68
+# CHECK-NEXT: v70: " " = String string=" "
+# CHECK-NEXT: v71: string = Add v69, v70
+# CHECK-NEXT: v72: undefined|null|string = Call v5, -, v46 calleeName="show" accessSite=9 callees=[f5]
+# CHECK-NEXT: v73: string = Add v71, v72
+# CHECK-NEXT: v74: anything = Call v6, -, v73 calleeName="say" accessSite=10 callees=[f6]
+# CHECK-NEXT: v75: undefined|null|L0 = Call v0, -, v241, v34 calleeName="make" accessSite=11 callees=[f1]
+# CHECK-NEXT: v76: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v77: builtin(ObjectDefineProperty) = Builtin builtin=ObjectDefineProperty
+# CHECK-NEXT: v78: 1 = Integer integer=1
+# CHECK-NEXT: v79: anything = Call v2, -, v45, v78 calleeName="valueOf" accessSite=12 callees=[f2]
+# CHECK-NEXT: v80: false = Boolean
+# CHECK-NEXT: v81: true = Boolean boolean=true
+# CHECK-NEXT: v82: true = Boolean boolean=true
+# CHECK-NEXT: v83: L1 = NewObject -, v79, v80, v81, v82 layout=L1 fields=[4, 0, 1, 5] allocationSite=28 allocationClass=0
+# CHECK-NEXT: v84: L1 = FinishObject v83
+# CHECK-NEXT: v85: anything = Call v77, v76, v75, v45, v84 calleeName="Object.defineProperty" accessSite=13 callees=[builtin(ObjectDefineProperty)]
+# CHECK-NEXT: v86: undefined|null|L0 = Check v85 expectedType=undefined|null|L0
+# CHECK-NEXT: v87: anything = PropGet v241 key="join" accessSite=14
+# CHECK-NEXT: v246: builtin(ArrayPrototypeJoin) = AssumeType v87 provenType=builtin(ArrayPrototypeJoin)
+# CHECK-NEXT: v88: "+" = String string="+"
+# CHECK-NEXT: v89: anything = Call v246, v241, v88 calleeKey="join" calleeName="order.join" accessSite=15 callees=[builtin(ArrayPrototypeJoin)]
+# CHECK-NEXT: v247: string = AssumeType v89 provenType=string
+# CHECK-NEXT: v90: string = AssumeType v247 provenType=undefined|null|string
+# CHECK-NEXT: v248: string = AssumeType v90 provenType=string
+# CHECK-NEXT: v91: " fixed " = String string=" fixed "
+# CHECK-NEXT: v92: string = Add v248, v91
+# CHECK-NEXT: v93: string = Add v92, v45
+# CHECK-NEXT: v94: ": " = String string=": "
+# CHECK-NEXT: v95: string = Add v93, v94
+# CHECK-NEXT: v96: f12 = NewClosure v45, v75 function=f12 allocationSite=29
+# CHECK-NEXT: v97: undefined|null|string = Call v4, -, v96 calleeName="attempt" accessSite=16 callees=[f4]
+# CHECK-NEXT: v98: string = Add v95, v97
+# CHECK-NEXT: v99: " " = String string=" "
+# CHECK-NEXT: v100: string = Add v98, v99
+# CHECK-NEXT: v101: f13 = NewClosure v75 function=f13 allocationSite=30
+# CHECK-NEXT: v102: undefined|null|string = Call v4, -, v101 calleeName="attempt" accessSite=17 callees=[f4]
+# CHECK-NEXT: v103: string = Add v100, v102
+# CHECK-NEXT: v104: " " = String string=" "
+# CHECK-NEXT: v105: string = Add v103, v104
+# CHECK-NEXT: v106: f14 = NewClosure v75 function=f14 allocationSite=31
+# CHECK-NEXT: v107: undefined|null|string = Call v4, -, v106 calleeName="attempt" accessSite=18 callees=[f4]
+# CHECK-NEXT: v108: string = Add v105, v107
+# CHECK-NEXT: v109: " " = String string=" "
+# CHECK-NEXT: v110: string = Add v108, v109
+# CHECK-NEXT: v111: undefined|null|string = Call v5, -, v75 calleeName="show" accessSite=19 callees=[f5]
+# CHECK-NEXT: v112: string = Add v110, v111
+# CHECK-NEXT: v113: anything = Call v6, -, v112 calleeName="say" accessSite=20 callees=[f6]
+# CHECK-NEXT: v114: iteratorstate = IteratorOpen v238
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b7() handler=b15():
+# CHECK-NEXT: LoopHint
+# CHECK-NEXT: v116: undefined = IteratorResume v114
+# CHECK-NEXT: v117: boolean = ResultAt v116
+# CHECK-NEXT: v118: anything = ResultAt v116 index=1
+# CHECK-NEXT: v249: undefined|Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v118 provenType=undefined|Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Branch v117 -> taken b8(), notTaken b9()
+# CHECK-NEXT: b8() handler=b15():
+# CHECK-NEXT: v119: undefined|null|L0 = Call v0, -, v241, v34 calleeName="make" accessSite=21 callees=[f1]
+# CHECK-NEXT: v122: object = NewDictionary
+# CHECK-NEXT: v250: Object = AssumeType v122 provenType=Object
+# CHECK-NEXT: v123: string|symbol = ToPropertyKey v45
+# CHECK-NEXT: v124: "above" = String string="above"
+# CHECK-NEXT: ElemDefine v250, v123, v124 accessSite=22
+# CHECK-NEXT: v126: anything = PropGet v241 key="join" accessSite=23
+# CHECK-NEXT: v251: builtin(ArrayPrototypeJoin) = AssumeType v126 provenType=builtin(ArrayPrototypeJoin)
+# CHECK-NEXT: v127: "+" = String string="+"
+# CHECK-NEXT: v128: anything = Call v251, v241, v127 calleeKey="join" calleeName="order.join" accessSite=24 callees=[builtin(ArrayPrototypeJoin)]
+# CHECK-NEXT: v252: string = AssumeType v128 provenType=string
+# CHECK-NEXT: v129: string = AssumeType v252 provenType=undefined|null|string
+# CHECK-NEXT: v253: string = AssumeType v129 provenType=string
+# CHECK-NEXT: v130: " below " = String string=" below "
+# CHECK-NEXT: v131: string = Add v253, v130
+# CHECK-NEXT: v132: string = Add v131, v45
+# CHECK-NEXT: v133: ": " = String string=": "
+# CHECK-NEXT: v134: string = Add v132, v133
+# CHECK-NEXT: v135: anything = Call v3, -, v119, v45 calleeName="removeByKey" accessSite=25 callees=[f3]
+# CHECK-NEXT: v136: string = Add v134, v135
+# CHECK-NEXT: v137: " " = String string=" "
+# CHECK-NEXT: v138: string = Add v136, v137
+# CHECK-NEXT: v139: anything = ElemGet v119, v45 accessSite=26 receivers=[]
+# CHECK-NEXT: v140: string = Add v138, v139
+# CHECK-NEXT: v141: " " = String string=" "
+# CHECK-NEXT: v142: string = Add v140, v141
+# CHECK-NEXT: v143: undefined|null|string = Call v5, -, v119 calleeName="show" accessSite=27 callees=[f5]
+# CHECK-NEXT: v144: string = Add v142, v143
+# CHECK-NEXT: v145: undefined|null|L0 = Call v0, -, v241, v34 calleeName="make" accessSite=28 callees=[f1]
+# CHECK-NEXT: v146: 2 = Integer integer=2
+# CHECK-NEXT: v147: 0 = Mod v34, v146
+# CHECK-NEXT: v148: anything = PropGet v241 key="join" accessSite=29
+# CHECK-NEXT: v254: builtin(ArrayPrototypeJoin) = AssumeType v148 provenType=builtin(ArrayPrototypeJoin)
+# CHECK-NEXT: v149: "+" = String string="+"
+# CHECK-NEXT: v150: anything = Call v254, v241, v149 calleeKey="join" calleeName="order.join" accessSite=30 callees=[builtin(ArrayPrototypeJoin)]
+# CHECK-NEXT: v255: string = AssumeType v150 provenType=string
+# CHECK-NEXT: v151: string = AssumeType v255 provenType=undefined|null|string
+# CHECK-NEXT: v256: string = AssumeType v151 provenType=string
+# CHECK-NEXT: v152: " beside " = String string=" beside "
+# CHECK-NEXT: v153: string = Add v256, v152
+# CHECK-NEXT: v154: string = Add v153, v45
+# CHECK-NEXT: v155: ": " = String string=": "
+# CHECK-NEXT: v156: string = Add v154, v155
+# CHECK-NEXT: v157: anything = Call v3, -, v145, v45 calleeName="removeByKey" accessSite=31 callees=[f3]
+# CHECK-NEXT: v158: string = Add v156, v157
+# CHECK-NEXT: v159: " " = String string=" "
+# CHECK-NEXT: v160: string = Add v158, v159
+# CHECK-NEXT: v161: undefined|null|string = Call v5, -, v145 calleeName="show" accessSite=32 callees=[f5]
+# CHECK-NEXT: v162: string = Add v160, v161
+# CHECK-NEXT: v163: " " = String string=" "
+# CHECK-NEXT: v164: string = Add v162, v163
+# CHECK-NEXT: v165: "beside" = String string="beside"
+# CHECK-NEXT: v166: anything = Call v3, -, v145, v165 calleeName="removeByKey" accessSite=33 callees=[f3]
+# CHECK-NEXT: v167: string = Add v164, v166
+# CHECK-NEXT: v168: " " = String string=" "
+# CHECK-NEXT: v169: string = Add v167, v168
+# CHECK-NEXT: v170: undefined|null|string = Call v5, -, v145 calleeName="show" accessSite=34 callees=[f5]
+# CHECK-NEXT: v171: string = Add v169, v170
+# CHECK-NEXT: Jump -> next b3()
+# CHECK-NEXT: b9() handler=b15():
+# CHECK-NEXT: Jump -> next b10()
+# CHECK-NEXT: b10() handler=b14():
+# CHECK-NEXT: v172: undefined|Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v249 provenType=undefined|null|Array<undefined|null|string|function>
+# CHECK-NEXT: v257: undefined|Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v172 provenType=undefined|Array<string|f7|f8|f9, proven, Contiguous, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v173: iteratorstate = IteratorOpen v257 elementCount=2 [isDestructuring]
+# CHECK-NEXT: Jump -> next b11()
+# CHECK-NEXT: b11() handler=b13():
+# CHECK-NEXT: v174: undefined = IteratorResume v173 stepIndex=0
+# CHECK-NEXT: v175: anything = ResultAt v174 index=1
+# CHECK-NEXT: v258: undefined|string|f7|f8|f9 = AssumeType v175 provenType=undefined|string|f7|f8|f9
+# CHECK-NEXT: v176: undefined|string = Check v258 expectedType=undefined|null|string
+# CHECK-NEXT: v177: undefined = IteratorResume v173 stepIndex=1
+# CHECK-NEXT: v178: anything = ResultAt v177 index=1
+# CHECK-NEXT: v259: undefined|string|f7|f8|f9 = AssumeType v178 provenType=undefined|string|f7|f8|f9
+# CHECK-NEXT: v179: undefined|f7|f8|f9 = Check v259 expectedType=undefined|null|function
+# CHECK-NEXT: v260: undefined|f7|f8|f9 = AssumeType v179 provenType=undefined|f7|f8|f9 [isBehindChecks]
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12() handler=b14():
+# CHECK-NEXT: v180: undefined|null|L0 = Call v0, -, v241, v34 calleeName="make" accessSite=35 callees=[f1]
+# CHECK-NEXT: v181: anything = Call v260, -, v180 calleeName="close" accessSite=36 callees=[f7, f8, f9]
+# CHECK-NEXT: v182: undefined|null|L0 = Check v181 expectedType=undefined|null|L0
+# CHECK-NEXT: v183: anything = PropGet v241 key="join" accessSite=37
+# CHECK-NEXT: v261: builtin(ArrayPrototypeJoin) = AssumeType v183 provenType=builtin(ArrayPrototypeJoin)
+# CHECK-NEXT: v184: "+" = String string="+"
+# CHECK-NEXT: v185: anything = Call v261, v241, v184 calleeKey="join" calleeName="order.join" accessSite=38 callees=[builtin(ArrayPrototypeJoin)]
+# CHECK-NEXT: v262: string = AssumeType v185 provenType=string
+# CHECK-NEXT: v186: string = AssumeType v262 provenType=undefined|null|string
+# CHECK-NEXT: v263: string = AssumeType v186 provenType=string
+# CHECK-NEXT: v187: " " = String string=" "
+# CHECK-NEXT: v188: string = Add v263, v187
+# CHECK-NEXT: v189: string = Add v188, v176
+# CHECK-NEXT: v190: " " = String string=" "
+# CHECK-NEXT: v191: string = Add v189, v190
+# CHECK-NEXT: v192: string = Add v191, v45
+# CHECK-NEXT: v193: ": " = String string=": "
+# CHECK-NEXT: v194: string = Add v192, v193
+# CHECK-NEXT: v195: f15 = NewClosure v45, v182 function=f15 allocationSite=32
+# CHECK-NEXT: v196: undefined|null|string = Call v4, -, v195 calleeName="attempt" accessSite=39 callees=[f4]
+# CHECK-NEXT: v197: string = Add v194, v196
+# CHECK-NEXT: v198: " " = String string=" "
+# CHECK-NEXT: v199: string = Add v197, v198
+# CHECK-NEXT: v200: f16 = NewClosure v182 function=f16 allocationSite=33
+# CHECK-NEXT: v201: undefined|null|string = Call v4, -, v200 calleeName="attempt" accessSite=40 callees=[f4]
+# CHECK-NEXT: v202: string = Add v199, v201
+# CHECK-NEXT: v203: " " = String string=" "
+# CHECK-NEXT: v204: string = Add v202, v203
+# CHECK-NEXT: v205: f17 = NewClosure v182 function=f17 allocationSite=34
+# CHECK-NEXT: v206: undefined|null|string = Call v4, -, v205 calleeName="attempt" accessSite=41 callees=[f4]
+# CHECK-NEXT: v207: string = Add v204, v206
+# CHECK-NEXT: v208: " " = String string=" "
+# CHECK-NEXT: v209: string = Add v207, v208
+# CHECK-NEXT: v210: undefined|null|string = Call v5, -, v182 calleeName="show" accessSite=42 callees=[f5]
+# CHECK-NEXT: v211: string = Add v209, v210
+# CHECK-NEXT: v212: anything = Call v6, -, v211 calleeName="say" accessSite=43 callees=[f6]
+# CHECK-NEXT: Jump -> next b7()
+# CHECK-NEXT: b13() role=IterationCleanup subject=v173 handler=b14():
+# CHECK-NEXT: v213: exception = CatchException
+# CHECK-NEXT: IteratorClose v173 completion=Throw
+# CHECK-NEXT: Rethrow v213
+# CHECK-NEXT: b14() role=IterationCleanup subject=v114 handler=b15():
+# CHECK-NEXT: v215: exception = CatchException
+# CHECK-NEXT: IteratorClose v114 completion=Throw
+# CHECK-NEXT: Rethrow v215
+# CHECK-NEXT: b15() role=IterationCleanup subject=v41 handler=b16():
+# CHECK-NEXT: v217: exception = CatchException
+# CHECK-NEXT: IteratorClose v41 completion=Throw
+# CHECK-NEXT: Rethrow v217
+# CHECK-NEXT: b16() role=IterationCleanup subject=v36:
+# CHECK-NEXT: v219: exception = CatchException
+# CHECK-NEXT: Rethrow v219
+# CHECK-NEXT: }

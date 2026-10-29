@@ -83,6 +83,7 @@ impl<'a> PipeReader<'a> {
 // outlives all handles (lives on `run`'s stack frame for the whole event loop).
 bun_io::impl_buffered_reader_parent! {
     MultiRunPipeReader for PipeReader<'a>;
+    feature = Tools;
     has_on_read_chunk = true;
     on_read_chunk = |this, chunk, _has_more| {
         let state = &mut *((*(*this).handle).state as *mut State);
@@ -441,7 +442,9 @@ impl<'a> State<'a> {
     /// ended; finishing on exit alone can drop output the exit notification
     /// beat. The exit path force-ends pipes a leftover child holds open
     /// (`drain_and_close_pipes`); on abort, exit alone suffices.
+    #[inline(never)]
     fn maybe_finish(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
+        bun_removable_features::removable_definition!(Tools, Self::maybe_finish);
         let exited = matches!(&handle.process, Some(p) if !matches!(p.status, Status::Running));
         let pipes_open = !handle.stdout_reader.ended || !handle.stderr_reader.ended;
         if handle.finished || !exited || (pipes_open && !self.aborted) {

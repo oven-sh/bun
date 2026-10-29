@@ -173,11 +173,8 @@ impl Snapshots {
         name_with_counter.extend_from_slice(counter_string);
 
         let name_hash: u64 = hash(&name_with_counter);
-        // reshaped for borrowck — `get` then early-return borrows `*self.values`
-        // immutably for the whole fn body (NLL limitation with returned borrows), preventing
-        // the later `insert`. Probe with `contains_key` first; re-lookup on hit.
-        if self.values.contains_key(&name_hash) {
-            return Ok(Some(&**self.values.get(&name_hash).unwrap()));
+        if let Some(existing) = self.values.get(&name_hash) {
+            return Ok(Some(&**existing));
         }
 
         // doesn't exist. append to file bytes and add to hashmap.

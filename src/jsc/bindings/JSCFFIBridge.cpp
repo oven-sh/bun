@@ -18,6 +18,38 @@
 #include "ZigGlobalObject.h"
 #include "headers-handwritten.h"
 
+#if defined(BUN_DISABLE_FFI)
+
+static JSC::EncodedJSValue throwBuiltWithoutFFI(JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    JSC::throwTypeError(globalObject, scope, "bun:ffi: this build of Bun does not call native functions"_s);
+    return {};
+}
+
+extern "C" JSC::EncodedJSValue Bun__CreateJSCFFIFunction(Zig::GlobalObject* globalObject, const EncodedSlice*, const uint8_t*, unsigned, uint8_t, void*, JSC::EncodedJSValue)
+{
+    return throwBuiltWithoutFFI(globalObject);
+}
+
+extern "C" JSC::EncodedJSValue Bun__CreateJSCFFICallback(Zig::GlobalObject* globalObject, JSC::EncodedJSValue, const uint8_t*, unsigned, uint8_t, bool)
+{
+    return throwBuiltWithoutFFI(globalObject);
+}
+
+extern "C" void Bun__JSCFFICallbackClose(JSC::EncodedJSValue)
+{
+}
+
+extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObject, int32_t, bool* threw, JSC::EncodedJSValue)
+{
+    throwBuiltWithoutFFI(globalObject);
+    *threw = true;
+    return 0;
+}
+
+#else
+
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Char) == 0, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Int64) == 7, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Uint64) == 8, "FFI::Type tag drift");
@@ -158,3 +190,5 @@ extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObjec
     }
     return slot;
 }
+
+#endif // defined(BUN_DISABLE_FFI)

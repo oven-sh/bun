@@ -363,8 +363,8 @@ impl CreateCommand {
             return CreateListExamplesCommand::exec(&ctx);
         }
 
-        // SAFETY: `fs::FileSystem::init` returns a process-global singleton pointer.
-        let filesystem: &mut fs::FileSystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        fs::FileSystem::init(None)?;
+        let filesystem = fs::FileSystem::get();
         // Process-lifetime: every mini event loop (the tasks', a Windows spawn's) keeps a pointer to it.
         let env_loader: &'static mut DotEnv::Loader = Box::leak(Box::new(DotEnv::Loader::init()));
         DotEnv::set_instance(std::ptr::from_mut::<DotEnv::Loader>(env_loader));
@@ -1249,8 +1249,8 @@ impl CreateCommand {
 
     pub(crate) fn extract_info() -> crate::Result<ExtractedInfo> {
         let example_tag;
-        // SAFETY: process-lifetime singleton; init returns *mut.
-        let filesystem = unsafe { &*fs::FileSystem::init(None)? };
+        fs::FileSystem::init(None)?;
+        let filesystem = fs::FileSystem::get();
 
         let create_options = CreateOptions::parse()?;
         let positionals = &create_options.positionals;
@@ -1602,7 +1602,7 @@ impl Example {
         ctx: &Command::Context,
         mut node: Option<&mut ProgressNode>,
         env_loader: &mut DotEnv::Loader,
-        filesystem: &mut fs::FileSystem,
+        filesystem: &fs::FileSystem,
     ) -> crate::Result<Vec<Example>> {
         let mut examples = Example::fetch_all(ctx, env_loader, node.as_deref_mut())?;
         if let Some(node_) = node {
@@ -2054,8 +2054,8 @@ struct CreateListExamplesCommand;
 
 impl CreateListExamplesCommand {
     fn exec(ctx: &Command::Context) -> crate::Result<()> {
-        // SAFETY: FileSystem::init returns the process-global singleton; valid for 'static.
-        let filesystem = unsafe { &mut *fs::FileSystem::init(None)? };
+        fs::FileSystem::init(None)?;
+        let filesystem = fs::FileSystem::get();
         let mut env_loader = DotEnv::Loader::init();
 
         env_loader.load_process()?;

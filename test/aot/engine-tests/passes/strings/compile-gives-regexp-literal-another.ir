@@ -1,0 +1,171 @@
+# RegExp.prototype.compile gives a literal another pattern and other flags: called on it, in a callee, through call, by a computed name, by text made at run time. source, flags, test, replace, match, split and search follow. And what `new RegExp` and `RegExp` make of constant operands, valid or not.
+# FORM: AsRead
+# DIAGNOSTIC: RegExpWithoutCode
+# RUN: lower-to-air size f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="/$bun/text/compile-gives-regexp-literal-another.js/0.cjs" displayPath="/$bun/text/compile-gives-regexp-literal-another.js/0.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports referrer=m1 body=f0
+module m1 path="compile-gives-regexp-literal-another.js" displayPath="compile-gives-regexp-literal-another.js" body=f2 namespaceLayout=L(m1)
+entry module=m1
+data d0 root=Array{contents=undefined|null|Array<undefined|null|string> elements=[Array{contents=undefined|null|string elements=[String{value="("}, String{value=""}]}, Array{contents=undefined|null|string elements=[String{value="a"}, String{value="gg"}]}, Array{contents=undefined|null|string elements=[String{value="a"}, String{value="x"}]}, Array{contents=undefined|null|string elements=[String{value="\\"}, String{value=""}]}, Array{contents=undefined|null|string elements=[String{value="(?<n>a)(?<n>b)"}, String{value=""}]}, Array{contents=undefined|null|string elements=[String{value="a"}, String{value="uv"}]}]} module=m1
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f1 name="anonymous" module=m0 position=1 flags=[IsSloppy, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    v1 = Undefined
+    Return v1
+}
+function f2 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f3
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewRegExp pattern="abc" regExpFlags=[Global]
+    v3 = Convert v2 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v4 = String string="abc"
+    v5 = PropGet v4 key="search"
+    v6 = Convert v5 declared={type=undefined|null|function flags=[IsExpected]}
+    v7 = Call v6, v4, v3 calleeKey="search" calleeName="search"
+    v8 = Builtin builtin=String
+    v9 = Call v8, -, v3 calleeName="String"
+    v10 = NewRegExp pattern="one"
+    v11 = Convert v10 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v12 = Call v1, -, v11 calleeName="mut"
+    v13 = String string="one qq"
+    v14 = PropGet v13 key="match"
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
+    v16 = Call v15, v13, v11 calleeKey="match" calleeName="match"
+    v17 = Convert v16 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v18 = Integer
+    v19 = ElemGet v17, v18
+    v20 = String string="a,qq,b"
+    v21 = PropGet v20 key="split"
+    v22 = Convert v21 declared={type=undefined|null|function flags=[IsExpected]}
+    v23 = Call v22, v20, v11 calleeKey="split" calleeName="split"
+    v24 = Convert v23 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v25 = PropGet v24 key="join"
+    v26 = Convert v25 declared={type=undefined|null|function flags=[IsExpected]}
+    v27 = String string="|"
+    v28 = Call v26, v24, v27 calleeKey="join" calleeName="join"
+    v29 = NewClosure function=f1
+    v30 = NewRegExp pattern="five"
+    v31 = Convert v30 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v32 = PropGet v31 key="compile"
+    v33 = String string="5"
+    v34 = Call v32, v31, v33 calleeKey="compile" calleeName="r5[k]"
+    v35 = Builtin builtin=RegExp
+    v36 = String string="a/b"
+    v37 = Construct v35, -, v36 calleeName="RegExp"
+    v38 = Builtin builtin=RegExp
+    v39 = String string="\n"
+    v40 = Construct v38, -, v39 calleeName="RegExp"
+    v41 = Builtin builtin=RegExp
+    v42 = String string=""
+    v43 = Construct v41, -, v42 calleeName="RegExp"
+    v44 = Builtin builtin=RegExp
+    v45 = Undefined
+    v46 = Construct v44, -, v45 calleeName="RegExp"
+    v47 = Builtin builtin=RegExp
+    v48 = Null
+    v49 = Construct v47, -, v48 calleeName="RegExp"
+    v50 = Builtin builtin=RegExp
+    v51 = Integer integer=5
+    v52 = Construct v50, -, v51 calleeName="RegExp"
+    v53 = Builtin builtin=RegExp
+    v54 = String string="[/]"
+    v55 = Call v53, -, v54 calleeName="RegExp"
+    v56 = Builtin builtin=RegExp
+    v57 = String string="\\/"
+    v58 = Construct v56, -, v57 calleeName="RegExp"
+    v59 = Convert v58 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v60 = PropGet v59 key="source"
+    v61 = Builtin builtin=String
+    v62 = Builtin builtin=RegExp
+    v63 = String string="/"
+    v64 = String string="gimsuy"
+    v65 = Construct v62, -, v63, v64 calleeName="RegExp"
+    v66 = Convert v65 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v67 = Call v61, -, v66 calleeName="String"
+    v68 = Builtin builtin=RegExp
+    v69 = NewRegExp pattern="x" regExpFlags=[Global]
+    v70 = Construct v68, -, v69 calleeName="RegExp"
+    v71 = Builtin builtin=RegExp
+    v72 = NewRegExp pattern="x" regExpFlags=[Global]
+    v73 = Undefined
+    v74 = Call v71, -, v72, v73 calleeName="RegExp"
+    v75 = Convert v74 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v76 = PropGet v75 key="flags"
+    v77 = Data data=d0
+    v78 = Convert v77 declared={type=undefined|null|Array<undefined|null|Array<undefined|null|string>> flags=[IsExpected]}
+    v79 = IteratorOpen v78
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v81 = IteratorResume v79
+    v82 = ResultAt v81
+    v83 = ResultAt v81 index=1
+    Branch v82 -> taken b2(), notTaken b15()
+  b2():
+    Jump -> next b3()
+  b3() handler=b5():
+    Jump -> next b4()
+  b4():
+    Jump -> next b6()
+  b5() role=CatchHandler:
+    Jump -> next b6()
+  b6():
+    Jump -> next b7()
+  b7() handler=b9():
+    Jump -> next b8()
+  b8():
+    Jump -> next b10()
+  b9() role=CatchHandler:
+    Jump -> next b10()
+  b10():
+    Jump -> next b11()
+  b11() handler=b13():
+    Jump -> next b12()
+  b12():
+    Jump -> next b14()
+  b13() role=CatchHandler:
+    Jump -> next b14()
+  b14():
+    v84 = Undefined
+    Return v84
+  b15():
+    Jump -> next b16()
+  b16() handler=b21():
+    v85 = Convert v83 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    Jump -> next b17()
+  b17() handler=b19():
+    v86 = Builtin builtin=RegExp
+    v87 = Integer
+    v88 = ElemGet v85, v87
+    v89 = Convert v88 declared={type=undefined|null|string flags=[IsExpected]}
+    v90 = Integer integer=1
+    v91 = ElemGet v85, v90
+    v92 = Convert v91 declared={type=undefined|null|string flags=[IsExpected]}
+    v93 = Construct v86, -, v89, v92 calleeName="RegExp"
+    Jump -> next b18()
+  b18() handler=b21():
+    Jump -> next b20()
+  b19() role=CatchHandler handler=b21():
+    Jump -> next b20()
+  b20() handler=b21():
+    Jump -> next b1()
+  b21() role=IterationCleanup subject=v79:
+    v94 = CatchException
+    Rethrow v94
+}
+function f3 name="mut" module=m1 position=566 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    v1 = PropGet v0 key="compile"
+    v2 = Convert v1 declared={type=undefined|null|function flags=[IsExpected]}
+    v3 = String string="q+"
+    v4 = Call v2, v0, v3 calleeKey="compile" calleeName="r.compile"
+    v5 = Undefined
+    Return v5
+}
+# -- generated: f2
+# CHECK-LABEL: function f2 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 84, patchpoints: 30, rare instructions: 49, polls: 1
+# CHECK-NEXT: end of function f2

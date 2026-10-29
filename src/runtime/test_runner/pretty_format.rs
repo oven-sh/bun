@@ -497,13 +497,17 @@ impl Tag {
             JSType::RegExpObject => Tag::String,
             JSType::Symbol => Tag::Symbol,
             JSType::BooleanObject => Tag::Boolean,
-            JSType::JSFunction => Tag::Function,
+            JSType::JSFunction
+            | JSType::CompiledClosure
+            | JSType::SlimClosure
+            | JSType::SlimClosureWithProperties => Tag::Function,
             JSType::WeakMap | JSType::Map => Tag::Map,
             JSType::WeakSet | JSType::Set => Tag::Set,
             JSType::JSDate => Tag::JSON,
             JSType::JSPromise => Tag::Promise,
             JSType::Object
             | JSType::FinalObject
+            | JSType::CompiledObject
             | JSType::ModuleNamespaceObject
             | JSType::GlobalObject => Tag::Object,
 
@@ -2412,15 +2416,7 @@ impl<'a> Formatter<'a> {
 
                     macro_rules! print_typed_slice {
                         ($t:ty) => {{
-                            // SAFETY: `Unaligned<$t>` has align 1 and the same size as `$t`, so any
-                            // `*const u8` is a valid `*const Unaligned<$t>`; `slice` is the live
-                            // backing store of a JSC typed array whose elements are valid `$t`.
-                            let slice_with_type: &[bun_core::Unaligned<$t>] = unsafe {
-                                core::slice::from_raw_parts(
-                                    slice.as_ptr().cast::<bun_core::Unaligned<$t>>(),
-                                    slice.len() / core::mem::size_of::<$t>(),
-                                )
-                            };
+                            let slice_with_type = bun_core::Unaligned::<$t>::slice_of(slice);
                             self.indent += 1;
                             for el in slice_with_type {
                                 writer.write_all(b"\n");

@@ -158,7 +158,7 @@ impl DevServer {
                     let bundle_index: u32 = route_bundle_index.get();
                     let generation: u32 = client_script_generation;
                     // Fixed 8-char native-endian byte hex per u32; `on_js_request`
-                    // slices exactly 16 chars and decodes via `parse_hex_to_int`.
+                    // slices exactly 16 chars and decodes via `parse_hex_to_u64`.
                     let mut hex = [0u8; 16];
                     bun_core::fmt::bytes_to_hex_lower(&bundle_index.to_ne_bytes(), &mut hex[..8]);
                     bun_core::fmt::bytes_to_hex_lower(&generation.to_ne_bytes(), &mut hex[8..]);

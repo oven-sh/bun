@@ -120,7 +120,7 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `getNameFromJsxElementAttributesContainer`
-    fn jsx_name_from_container(
+    pub(super) fn jsx_name_from_container(
         &mut self,
         file: FileId,
         location: Node,
@@ -145,7 +145,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getJsxElementChildrenPropertyName`
     pub(super) fn jsx_children_property_name(&mut self, file: FileId, location: Node) -> JsxName {
         if matches!(
-            self.p.files.options.jsx,
+            self.module_options(file).jsx,
             JsxEmit::ReactJsx | JsxEmit::ReactJsxDev
         ) {
             return JsxName::Name(known::children);
@@ -363,8 +363,8 @@ impl<'p, 's> Checker<'p, 's> {
     /// `None` is `errorType`.
     fn resolve_jsx_fragment_type(&mut self, file: FileId, e: ExprId) -> Option<TypeId> {
         let (hir, files) = (self.hir(file), self.files());
-        let (options, atoms) = (&files.options, self.atoms());
-        let name = super::errors_jsx::jsx_namespace(files, atoms, hir, true);
+        let (options, atoms) = (self.module_options(file), self.atoms());
+        let name = super::errors_jsx::jsx_namespace(options, atoms, hir, true);
         if options.jsx != JsxEmit::React && options.jsx_fragment_factory.is_empty()
             || atoms.bytes(name) == b"null"
         {
@@ -461,7 +461,7 @@ impl<'p, 's> Checker<'p, 's> {
 
     /// `getJsxPropsTypeForSignatureFromMember`. Returns the property `name` of `sig`'s instance
     /// type, or `None` if it has none.
-    fn jsx_props_from_member(&mut self, sig: SigId, name: Atom) -> Option<TypeId> {
+    pub(super) fn jsx_props_from_member(&mut self, sig: SigId, name: Atom) -> Option<TypeId> {
         // If the signature represents the signatures of a union's members, each member's instance
         // type is considered.
         let single_sig = [sig];
@@ -570,7 +570,7 @@ impl<'p, 's> Checker<'p, 's> {
                 // `{}` doesn't count.
                 ExprKind::Missing => {}
                 // Text is `string`, and so is a string literal in braces once it's widened.
-                ExprKind::String(_) => types.push((child, TypeId::STRING)),
+                ExprKind::String(_) | ExprKind::JsxText(_) => types.push((child, TypeId::STRING)),
                 _ => {
                     // `checkExpressionForMutableLocation` gets the `JsxExpression`, and
                     // `getContextualType` has no case for a child of an element. A fresh literal

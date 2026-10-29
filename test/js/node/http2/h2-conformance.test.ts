@@ -4164,15 +4164,19 @@ describe("HPACK (RFC 7541)", () => {
   test.each([1000, 29, 5])("Huffman coded values of every length, 1 long code in %d", async every => {
     const short = "012aceiost%-./3456789=A_bdfghlmnpru:BCDEFGHIJKLMNOPQRSTUVWYjkqvwxyz&*,;XZ";
     const long = "!\"()?'+|#>$@[]~^}<`{\\";
-    const headers: Record<string, string> = {};
-    for (let length = 0; length <= 110; length++) {
-      let value = "";
-      for (let i = 0; i < length; i++) {
-        const n = i * 31 + length * 7;
-        value += n % every === every - 1 ? long[n % long.length] : short[n % short.length];
+    const values = (from: number, to: number) => {
+      const headers: Record<string, string> = {};
+      for (let length = from; length <= to; length++) {
+        let value = "";
+        for (let i = 0; i < length; i++) {
+          const n = i * 31 + length * 7;
+          value += n % every === every - 1 ? long[n % long.length] : short[n % short.length];
+        }
+        headers[`x-${length}`] = value;
       }
-      headers[`x-${length}`] = value;
-    }
+      return headers;
+    };
+    const headers = values(0, 110);
 
     const { srv, seen, port } = await listen();
     const c = await RawH2.connect(port);
@@ -4191,9 +4195,11 @@ describe("HPACK (RFC 7541)", () => {
       expect((await c.waitFor(headersOrGoaway(1))).type).toBe(FrameType.HEADERS);
       expect(seen.pop()).toMatchObject(headers);
 
-      // Coded by the client.
-      await get(client, { ":path": "/", ...headers });
-      expect(seen.pop()).toMatchObject(headers);
+      // Coded by the client, which goes about 128 bytes and more in another way.
+      for (const sent of [headers, values(111, 200)]) {
+        await get(client, { ":path": "/", ...sent });
+        expect(seen.pop()).toMatchObject(sent);
+      }
     } finally {
       c.destroy();
       client.destroy();

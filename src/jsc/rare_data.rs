@@ -1052,22 +1052,17 @@ extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> Stdi
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) fn set_tls_default_ciphers(heap: &JsHeap<'_>, ciphers: &[u8]) {
-    // SAFETY: only the VM is taken from it.
-    let global_this = unsafe { heap.global() };
     // `bun_vm()` is the safe BACKREF accessor for the per-thread VM; `as_mut()`
     // is the audited single-JS-thread `&mut` escape hatch.
-    global_this
-        .bun_vm()
+    heap.bun_vm()
         .as_mut()
         .rare_data()
         .set_tls_default_ciphers(ciphers);
 }
 
 pub(crate) fn get_tls_default_ciphers<'a>(heap: &JsHeap<'a>) -> &'a [u8] {
-    // SAFETY: only the VM is taken from it.
-    let global_this = unsafe { heap.global() };
     // `bun_vm()` is the safe BACKREF accessor; see above.
-    let rare = global_this.bun_vm().as_mut().rare_data();
+    let rare = heap.bun_vm().as_mut().rare_data();
     match rare.tls_default_ciphers() {
         Some(c) => c,
         None => uws::get_default_ciphers().as_bytes(),

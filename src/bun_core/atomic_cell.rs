@@ -17,10 +17,12 @@
 //! See `docs/PORTING.md` §Global mutable state.
 
 use core::cell::UnsafeCell;
-use core::mem::ManuallyDrop;
+use core::marker::PhantomData;
 #[cfg(debug_assertions)]
 use core::sync::atomic::AtomicU64;
 use core::sync::atomic::{AtomicU8, Ordering};
+
+use crate::{NoUninit, bytes_of};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AtomicCell<T>
@@ -34,135 +36,27 @@ use core::sync::atomic::{AtomicU8, Ordering};
 /// Default ordering is **Acquire/Release**, not Relaxed — at least six of the
 /// data-race findings that motivated this type were "Relaxed gives no
 /// happens-before for the init it guards".
-#[repr(C)]
-pub struct AtomicCell<T: Copy> {
-    inner: UnsafeCell<T>,
-}
+pub struct AtomicCell<T>(AtomicU8, PhantomData<T>);
 
-// SAFETY: every shared access goes through an atomic op; `T: Atom ⊃ Copy` so
-// no drop glue races. `Atom`'s safety contract includes cross-thread transport.
-unsafe impl<T: Atom> Sync for AtomicCell<T> {}
-
-impl<T: Copy> AtomicCell<T> {
-    /// `const` constructor — required because most call sites are `static`
-    /// initializers.
+impl<T: NoUninit + Send> AtomicCell<T> {
     #[inline]
     pub const fn new(value: T) -> Self {
-        Self {
-            inner: UnsafeCell::new(value),
-        }
+        const { assert!(size_of::<T>() == 1) };
+        Self(AtomicU8::new(bytes_of(&value)[0]), PhantomData)
     }
-}
 
-impl<T: Atom> AtomicCell<T> {
     /// Acquire load.
     #[inline]
     pub fn load(&self) -> T {
-        // SAFETY: `inner` is live for `&self`; `T: Atom` upholds the
-        // size/padding contract.
-        unsafe { _dispatch_load(self.inner.get(), Ordering::Acquire) }
+        // SAFETY: `new` and `store` are the only writers, and each writes the one byte of a valid `T`.
+        unsafe { core::mem::transmute_copy(&self.0.load(Ordering::Acquire)) }
     }
 
     /// Release store.
     #[inline]
     pub fn store(&self, value: T) {
-        // SAFETY: as above.
-        unsafe { _dispatch_store(self.inner.get(), value, Ordering::Release) }
+        self.0.store(bytes_of(&value)[0], Ordering::Release);
     }
-}
-
-// ───────────────────────────────────────────────────────────────────────────
-// Atom — marker trait
-// ───────────────────────────────────────────────────────────────────────────
-
-/// Types storable in an [`AtomicCell`].
-///
-/// # Safety
-///
-/// Implementors guarantee:
-/// - `size_of::<Self>()` is 1.
-/// - `Self` has **no padding or otherwise-uninitialized bytes** (so
-///   reinterpreting as `uN` reads only initialized bits).
-/// - Round-tripping `Self → uN → Self` (where every `uN` value observed was
-///   produced from a valid `Self`) yields the original value. This is weaker
-///   than [`AnyBitPattern`](crate::AnyBitPattern) — `#[repr(u8)]` enums qualify because the
-///   cell only ever stores valid discriminants.
-/// - `Self` is safe to transport across threads when stored in an
-///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
-///   itself provides. This is what backs `AtomicCell<T: Atom>: Sync`.
-///
-/// Prefer the [`unsafe_impl_atom!`](crate::unsafe_impl_atom) macro over a
-/// hand-written `impl`.
-pub unsafe trait Atom: Copy {}
-
-/// Bit-reinterpret `a` as `B` without a size check (caller asserts the sizes
-/// match). Uses a `union` because `transmute` rejects a generic type.
-#[inline(always)]
-const unsafe fn xmute<A, B>(a: A) -> B {
-    #[repr(C)]
-    union U<A, B> {
-        a: ManuallyDrop<A>,
-        b: ManuallyDrop<B>,
-    }
-    // SAFETY: caller contract.
-    ManuallyDrop::into_inner(unsafe {
-        U::<A, B> {
-            a: ManuallyDrop::new(a),
-        }
-        .b
-    })
-}
-
-/// Implement [`Atom`] for a one-byte `Copy` type.
-///
-/// `unsafe` because the caller asserts the [`Atom`] safety contract. A `const _` assert checks the size.
-#[macro_export]
-macro_rules! unsafe_impl_atom {
-    ($($T:ty),+ $(,)?) => {$(
-        // Compile-time size gate — fires at the `impl` site, not at first use.
-        const _: () = ::core::assert!(
-            ::core::mem::size_of::<$T>() == 1,
-            concat!("Atom: size_of::<", stringify!($T), ">() must be 1"),
-        );
-        // SAFETY: caller of `unsafe_impl_atom!` upholds the rest of the
-        // contract; size checked above.
-        unsafe impl $crate::atomic_cell::Atom for $T {}
-    )+};
-}
-
-macro_rules! size_dispatch {
-    ($T:ty, $p:expr, |$a:ident: $A:ident, $I:ident| $body:expr) => {
-        match ::core::mem::size_of::<$T>() {
-            1 => {
-                type $A = AtomicU8;
-                type $I = u8;
-                // SAFETY: caller passes a live `*mut $T`; this arm
-                // is taken only when `size_of::<$T>()` matches `$A`'s width.
-                let $a = unsafe { &*($p as *const $A) };
-                $body
-            }
-            // `unsafe_impl_atom!`'s `const _` assert rejects every other width.
-            _ => unreachable!(),
-        }
-    };
-}
-
-#[inline(always)]
-unsafe fn _dispatch_load<T: Copy>(p: *mut T, ord: Ordering) -> T {
-    size_dispatch!(T, p, |a: A, I| {
-        // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; the loaded
-        // `I` was stored from a valid `T` so the `Atom` round-trip holds.
-        unsafe { xmute::<I, T>(a.load(ord)) }
-    })
-}
-#[inline(always)]
-unsafe fn _dispatch_store<T: Copy>(p: *mut T, v: T, ord: Ordering) {
-    size_dispatch!(T, p, |a: A, I| a.store(
-        // SAFETY: this arm has `size_of::<I>() == size_of::<T>()`; `T: Atom`
-        // guarantees no padding so every byte of `v` is initialized.
-        unsafe { xmute::<T, I>(v) },
-        ord,
-    ))
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -274,5 +168,18 @@ impl<T: ?Sized> ThreadCell<T> {
 impl<T: Default> Default for ThreadCell<T> {
     fn default() -> Self {
         Self::new(T::default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn atomic_cell_bool() {
+        let c = AtomicCell::new(false);
+        assert!(!c.load());
+        c.store(true);
+        assert!(c.load());
     }
 }

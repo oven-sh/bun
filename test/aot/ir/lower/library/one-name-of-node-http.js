@@ -1,7 +1,7 @@
 // RUN: link
 // OPTIONS: builtin-modules
 // CHECK-NOT: path="internal:cluster/child"
-// CHECK-NOT: function {{*}}name="socketOnData"
+// CHECK-NOT: function {{*}}name="socketOnDataInner"
 
 // Not the client's half of node:http, and of a cluster only what says that this is the primary.
 

@@ -142,11 +142,11 @@ struct ProjectResolver<'h> {
 /// Caches for lookups that are repeated often.
 #[derive(Default)]
 struct Caches<'h> {
-    /// Keyed by the flavor and the `tsconfig.json` path. An empty path means there's none.
-    resolvers: ShardedMap<Vec<u8>, ProjectResolver<'h>>,
-    /// Maps a flavor and a directory to the `tsconfig.json` path for its files. With [`Store::tsconfig`], the key has
+    /// One per flavor, keyed by the `tsconfig.json` path. An empty key means there's none.
+    resolvers: PerFlavor<ShardedMap<Vec<u8>, ProjectResolver<'h>>>,
+    /// One per flavor. Maps a directory to the `tsconfig.json` path for its files. With [`Store::tsconfig`], the key is
     /// a file.
-    configs: ShardedMap<Vec<u8>, Vec<u8>>,
+    configs: PerFlavor<ShardedMap<Vec<u8>, Vec<u8>>>,
     /// Caches [`Graph::scopes_in`] and [`Graph::scopes_of`].
     scopes: ShardedMap<Vec<u8>, Vec<Scope>>,
     /// Caches [`Graph::configs_of_typescript_resolver`], keyed by the directory and the projects, and
@@ -326,13 +326,25 @@ fn is_in_package(path: &[u8]) -> bool {
 }
 
 /// oxlint treats any other file as if it didn't exist.
-/// A cache key for what resolves differently in each flavor.
-fn cache_key(flavor: Flavor, key: &[u8]) -> Vec<u8> {
-    let tag: &[u8] = match flavor {
-        Flavor::Oxlint => b"o\0",
+/// A cache of what resolves differently in each flavor.
+#[derive(Default)]
+struct PerFlavor<T>(T, T);
+
+impl<T> PerFlavor<T> {
+    fn of(&self, flavor: Flavor) -> &T {
+        match flavor {
+            Flavor::EslintPluginImport => &self.0,
+            Flavor::Oxlint => &self.1,
+        }
+    }
+}
+
+/// The prefix of a cache key for what resolves differently in each flavor.
+fn flavor_key(flavor: Flavor) -> &'static [u8] {
+    match flavor {
         Flavor::EslintPluginImport => b"e\0",
-    };
-    [tag, key].concat()
+        Flavor::Oxlint => b"o\0",
+    }
 }
 
 fn is_read_by_oxlint(path: &[u8]) -> bool {
@@ -570,13 +582,12 @@ impl<'h> Graph<'h> {
     fn config_of(&self, flavor: Flavor, from: &[u8]) -> &[u8] {
         let directory = directory_of(from);
         if !flavor.resolves_as_node() {
-            let caches = self.caches();
-            let key = cache_key(flavor, directory);
-            return match caches.configs.get_ref(&key[..]) {
+            let configs = self.caches().configs.of(flavor);
+            return match configs.get_ref(directory) {
                 Some(config) => config,
                 None => {
                     let found = find_config(self.store.disk(), directory).unwrap_or_default();
-                    caches.configs.insert_ref(key, found)
+                    configs.insert_ref(directory.to_vec(), found)
                 }
             };
         }
@@ -588,14 +599,13 @@ impl<'h> Graph<'h> {
             if referenced.is_empty() {
                 return &own.config;
             }
-            let caches = self.caches();
-            let key = cache_key(flavor, from);
-            return match caches.configs.get_ref(&key[..]) {
+            let configs = self.caches().configs.of(flavor);
+            return match configs.get_ref(from) {
                 Some(config) => config,
                 None => {
                     let file_scope = referenced.iter().find(|it| it.has(from)).unwrap_or(own);
                     let config = file_scope.config.clone();
-                    caches.configs.insert_ref(key, config)
+                    configs.insert_ref(from.to_vec(), config)
                 }
             };
         }
@@ -613,14 +623,13 @@ impl<'h> Graph<'h> {
     /// Returns the resolver for the files that the config at `config` applies to. An empty `config` means no config.
     /// `directory` is the directory of one of those files.
     fn resolver_of(&self, flavor: Flavor, config: &[u8], directory: &[u8]) -> &ProjectResolver<'h> {
-        let caches = self.caches();
-        let key = cache_key(flavor, config);
-        if let Some(resolver) = caches.resolvers.get_ref(&key[..]) {
+        let resolvers = self.caches().resolvers.of(flavor);
+        if let Some(resolver) = resolvers.get_ref(config) {
             return resolver;
         }
         // One thread reads a config while the others that need it wait.
         let _loading = self.loading.lock();
-        if let Some(resolver) = caches.resolvers.get_ref(&key[..]) {
+        if let Some(resolver) = resolvers.get_ref(config) {
             return resolver;
         }
         let store: &'h Store = self.store;
@@ -643,7 +652,7 @@ impl<'h> Graph<'h> {
             base_url,
             es_module_interop,
         };
-        caches.resolvers.insert_ref(key, resolver)
+        resolvers.insert_ref(config.to_vec(), resolver)
     }
 
     /// `configured_paths` is the `paths` option, whose entries are relative to the working directory.
@@ -792,7 +801,8 @@ impl<'h> Graph<'h> {
         // A non-relative specifier resolves the same way in every file of a directory with the same `tsconfig.json`,
         // and it's slow to resolve.
         let key = [
-            &cache_key(flavor, config)[..],
+            flavor_key(flavor),
+            config,
             b"\0",
             directory_of(from),
             if is_require { b"\0r\0" } else { b"\0i\0" },

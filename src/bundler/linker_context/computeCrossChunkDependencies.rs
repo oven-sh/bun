@@ -816,16 +816,18 @@ fn declare_chunk_requires(
     let runtime_chunk = runtime_chunk as usize;
 
     let ast_flags = c.graph.ast.items_flags();
-    let holds = |chunk: &Chunk, flag: AstFlags| {
+    let flags_of_files = |chunk: &Chunk| {
         chunk
             .files_with_parts_in_chunk
             .keys()
             .iter()
-            .any(|&source_index| ast_flags[source_index as usize].contains(flag))
+            .fold(AstFlags::empty(), |flags, &source_index| {
+                flags | ast_flags[source_index as usize]
+            })
     };
     // A store to `require` in the chunk of the runtime module reaches every chunk through the binding that
     // they import. A chunk with a `require` of its own would not see it.
-    if holds(&chunks[runtime_chunk], AstFlags::ASSIGNS_REQUIRE) {
+    if flags_of_files(&chunks[runtime_chunk]).contains(AstFlags::ASSIGNS_REQUIRE) {
         return;
     }
 
@@ -842,10 +844,14 @@ fn declare_chunk_requires(
             || chunk
                 .flags
                 .contains(chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
-            || !holds(chunk, AstFlags::HAS_FILE_BOUND_REQUIRE)
-            // The store throws where the binding is an import. With a `require` of its own the chunk
-            // would have none to print the store to.
-            || holds(chunk, AstFlags::ASSIGNS_REQUIRE)
+        {
+            continue;
+        }
+        let flags = flags_of_files(chunk);
+        // A store throws where the binding is an import. With a `require` of its own the chunk would have
+        // no binding to print the store to.
+        if !flags.contains(AstFlags::HAS_FILE_BOUND_REQUIRE)
+            || flags.contains(AstFlags::ASSIGNS_REQUIRE)
         {
             continue;
         }

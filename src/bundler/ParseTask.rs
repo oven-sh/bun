@@ -428,6 +428,9 @@ import { createRequire } from \"node:module\";
 export var __require = /* @__PURE__ */ createRequire(import.meta.url);
 ";
 
+// `LinkerContext::read_own_require` recognises the two declarations above. A split chunk in another directory
+// than the chunk of this module makes its own `require` from the same initializer.
+
 // Copied from esbuild's runtime.go:
 //
 // > This fallback "require" function exists so that "typeof require" can

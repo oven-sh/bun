@@ -1014,7 +1014,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         unsafe {
             (*state)
                 .timer
-                .update_date_header_timer_if_necessary(loop_, vm)
+                .update_date_header_timer_if_necessary(loop_, &*vm)
         };
     }
     // SAFETY: `el` is the live per-thread event loop.
@@ -1166,7 +1166,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
         unsafe {
             (*state)
                 .timer
-                .update_date_header_timer_if_necessary(loop_, vm)
+                .update_date_header_timer_if_necessary(loop_, &*vm)
         };
     }
 
@@ -3872,11 +3872,8 @@ pub(crate) fn loader_for_path(
 
 /// `options.normalizeSpecifier(jsc_vm, slice)` — strip the VM's origin
 /// host/path prefix and split off the `?query`.
-///
-/// # Safety
-/// `jsc_vm` is the live per-thread VM.
-unsafe fn normalize_specifier_for_loader<'a>(
-    jsc_vm: *mut VirtualMachine,
+fn normalize_specifier_for_loader<'a>(
+    origin: &bun_url::URL<'_>,
     slice_: &'a [u8],
 ) -> (&'a [u8], &'a [u8], &'a [u8]) {
     let mut slice = slice_;
@@ -3888,10 +3885,8 @@ unsafe fn normalize_specifier_for_loader<'a>(
     if bun_core::strings::has_prefix_comptime(slice, b"data:") {
         return (slice, slice, b"");
     }
-    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-    let host = unsafe { &*jsc_vm }.origin.host;
-    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-    let opath = unsafe { &*jsc_vm }.origin.path;
+    let host = origin.host;
+    let opath = origin.path;
     if slice.starts_with(host) {
         slice = &slice[host.len()..];
     }
@@ -3936,7 +3931,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
 ) -> crate::Result<LoaderResult<'a>> {
     let (normalized_file_path_from_specifier, specifier, query) =
         // SAFETY: per fn contract.
-        unsafe { normalize_specifier_for_loader(jsc_vm, specifier_str) };
+        normalize_specifier_for_loader(unsafe { &(*jsc_vm).origin }, specifier_str);
     let mut path = Fs::Path::init(normalized_file_path_from_specifier);
 
     // SAFETY: per fn contract — `transpiler.options` is a value field of the VM.

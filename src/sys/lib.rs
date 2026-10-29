@@ -5115,8 +5115,6 @@ pub mod c {
     ))]
     pub use libc::{getloadavg, sockaddr_dl, sysctlbyname};
 
-    #[cfg(unix)]
-    pub use libc::dlsym;
     // Win32 file APIs frequently spelled `bun.C.*` (the namespace flattens
     // a slice of `kernel32` into `bun.C`). Re-export the handful node_fs.rs
     // reaches via `sys::c::*` so the call sites stay target-neutral.

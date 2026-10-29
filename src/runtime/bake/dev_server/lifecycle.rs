@@ -206,7 +206,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             &mut *addr_of_mut!((*p).server_transpiler).cast::<MaybeUninit<Transpiler<'static>>>(),
             &bundler_options.server,
         ) {
-            Ok(view) => bundler_framework_views.push(view),
+            Ok((_, view)) => bundler_framework_views.push(view),
             Err(err) => return Err(global.throw_error(err, generic_action)),
         }
         match framework.init_transpiler(
@@ -217,7 +217,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
             &mut *addr_of_mut!((*p).client_transpiler).cast::<MaybeUninit<Transpiler<'static>>>(),
             &bundler_options.client,
         ) {
-            Ok(view) => bundler_framework_views.push(view),
+            Ok((_, view)) => bundler_framework_views.push(view),
             Err(err) => return Err(global.throw_error(err, generic_action)),
         }
         if separate_ssr_graph {
@@ -229,7 +229,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &mut *addr_of_mut!((*p).ssr_transpiler),
                 &bundler_options.ssr,
             ) {
-                Ok(view) => bundler_framework_views.push(view),
+                Ok((_, view)) => bundler_framework_views.push(view),
                 Err(err) => return Err(global.throw_error(err, generic_action)),
             }
         } else {

@@ -642,5 +642,5 @@ pub(crate) fn get_deinit_count_for_testing() -> usize {
 
 type DebuggerId = jsc::debugger::DebuggerId;
 
-type BunFrontendDevServerAgent =
-    crate::bake::dev_server::inspector_agent::BunFrontendDevServerAgent;
+type BunFrontendDevServerAgent<'a> =
+    crate::bake::dev_server::inspector_agent::BunFrontendDevServerAgent<'a>;

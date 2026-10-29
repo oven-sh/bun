@@ -42,15 +42,28 @@ process.on("exit", () => {
 
 const notCalled = () => assert.fail(`${step}: the callback ran`);
 const typeError = received => ({
-  name: "TypeError",
+  type: TypeError,
   code: "ERR_INVALID_ARG_TYPE",
   message: `The "kind" argument must be of type number. Received ${received}`,
 });
 
-function refuses(stream, args, expected) {
+// A caller tells the class of the error with instanceof, so that is checked as well as the name.
+function refuses(stream, args, { type, code, message }) {
   const { pendingcb } = stream._writableState;
   const endListeners = stream.listenerCount("end");
-  assert.throws(() => stream.flush(...args), expected, step);
+  assert.throws(
+    () => stream.flush(...args),
+    error => {
+      assert(error instanceof type, `${step}: the error is not an instance of ${type.name}`);
+      assert.deepStrictEqual(
+        { name: error.name, code: error.code, message: error.message },
+        { name: type.name, code, message },
+        step,
+      );
+      return true;
+    },
+    step,
+  );
   assert.strictEqual(stream._writableState.pendingcb, pendingcb, `${step}: pendingcb`);
   assert.strictEqual(stream.listenerCount("end"), endListeners, `${step}: 'end' listeners`);
 }
@@ -79,7 +92,7 @@ async function main() {
       ]) {
         step = `${at}: flush(${kind})`;
         refuses(stream, [kind, notCalled], {
-          name: "RangeError",
+          type: RangeError,
           code: "ERR_OUT_OF_RANGE",
           message: `The value of "kind" is out of range. It must be ${must}. Received ${kind}`,
         });

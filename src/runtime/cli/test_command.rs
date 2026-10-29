@@ -2976,7 +2976,8 @@ impl TestCommand {
                 reporter.jest.snapshots.reset_counts();
             }
 
-            let failures_before = reporter.summary().fail + reporter.jest.unhandled_errors_between_tests;
+            let failures_before =
+                reporter.summary().fail + reporter.jest.unhandled_errors_between_tests;
             let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
@@ -3113,7 +3114,9 @@ impl TestCommand {
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
                 // a file that failed skips it, so a handle it left open cannot keep the process alive. Opt-in; one file per process.
                 if should_drain_event_loop() {
-                    if reporter.summary().fail + reporter.jest.unhandled_errors_between_tests == failures_before {
+                    if reporter.summary().fail + reporter.jest.unhandled_errors_between_tests
+                        == failures_before
+                    {
                         vm.on_before_exit();
                     } else {
                         // What on_before_exit() does when it skips the drain: a throw from an 'exit' listener ends the exit.

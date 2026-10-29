@@ -2658,9 +2658,9 @@ it.concurrent("dev error page lists only the build and resolve errors of its own
 });
 
 // The warning for the project's package.json is in the VM-wide log until the entry module settles,
-// and the process prints it then. A request that failed before that used to take the whole log:
-// the development error page listed the warning as a build warning, and nothing printed it.
-it.concurrent.each([true])(
+// and the process prints it then. A request that failed before that used to empty the log: nothing
+// printed the warning, and the development error page listed it as a build warning.
+it.concurrent.each([true, false])(
   "a request that fails leaves a warning logged at startup to be printed (development: %p)",
   async development => {
     using dir = tempDir("serve-error-startup-warning", {

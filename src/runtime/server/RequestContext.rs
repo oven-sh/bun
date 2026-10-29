@@ -3689,7 +3689,6 @@ where
             report_unhandled_error(vm, global_this, value);
         }
         self.render_production_error(status);
-        vm.log_mut().unwrap().reset();
     }
 
     pub(crate) fn run_error_handler_with_status_code_dont_check_responded(

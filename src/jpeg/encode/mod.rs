@@ -7,7 +7,8 @@ mod marker;
 mod phuff;
 mod sample;
 
-use crate::error::{Error, Result, try_vec};
+use crate::alloc::try_vec;
+use crate::error::{Error, Result};
 use crate::tables::{self, HuffSpec, MAX_DIMENSION, natural_order};
 use fdct::Divisors;
 use huff::{BitWriter, EncodeTable, Output, SequentialTable};

@@ -6,7 +6,8 @@ use super::phuff::{update_progression, validate_progression};
 use super::{
     Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, NUM_ARITH_TABLES, coef_at,
 };
-use crate::error::{Error, Result, try_box};
+use crate::alloc::try_box;
+use crate::error::{Error, Result};
 
 /// Table D.2 of the standard. For each state of the probability estimation: Qe in the high 16 bits, then the next state
 /// after the more probable symbol, then the next state after the less probable one, with the bit on top of it that says

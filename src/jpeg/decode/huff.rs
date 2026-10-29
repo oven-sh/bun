@@ -7,7 +7,8 @@ use super::bits::{
 use super::coef::McuBlocks;
 use super::input::Input;
 use super::{Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
-use crate::error::{Error, Result, try_box};
+use crate::alloc::try_box;
+use crate::error::{Error, Result};
 use crate::tables;
 
 #[derive(Default)]

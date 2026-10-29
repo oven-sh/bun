@@ -7,7 +7,8 @@
 
 use super::NUM_HUFF_TABLES;
 use super::input::Input;
-use crate::error::{Error, Result, try_box};
+use crate::alloc::try_box;
+use crate::error::{Error, Result};
 use crate::tables::HuffSpec;
 
 const LOOKAHEAD: u32 = 8;

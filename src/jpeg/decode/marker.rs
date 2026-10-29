@@ -1,7 +1,8 @@
 //! Marker segments (jdmarker.c) and the ICC profile they carry (jdicc.c).
 
 use super::{Component, Decoder, MAX_COMPONENTS_IN_SCAN, NUM_ARITH_TABLES};
-use crate::error::{Error, Result, try_box, try_vec_with_capacity};
+use crate::alloc::{try_box, try_vec_with_capacity};
+use crate::error::{Error, Result};
 use crate::markers::*;
 use crate::tables::{HuffSpec, natural_order};
 use std::borrow::Cow;

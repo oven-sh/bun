@@ -23,6 +23,7 @@
     clippy::unreachable
 )]
 
+mod alloc;
 mod decode;
 mod encode;
 mod error;

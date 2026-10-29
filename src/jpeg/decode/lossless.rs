@@ -3,7 +3,8 @@
 use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
 use super::coef::Plane;
 use super::{Decoder, MAX_BLOCKS_IN_MCU};
-use crate::error::{Error, Result, try_vec, try_vec_with_capacity};
+use crate::alloc::{try_vec, try_vec_with_capacity};
+use crate::error::{Error, Result};
 use core::cell::Cell;
 
 /// The rows of one component for one iMCU row, as numbers wider than a sample.

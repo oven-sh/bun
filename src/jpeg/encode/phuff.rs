@@ -2,7 +2,8 @@
 
 use super::huff::{BitWriter, Code, Counts, EncodeTable, bit_length, value_bits};
 use super::{Block, PerTable, Scan, Table};
-use crate::error::{Result, try_vec_with_capacity};
+use crate::alloc::try_vec_with_capacity;
+use crate::error::Result;
 
 /// The most correction bits that wait for the end of a run of blocks. How long such a run gets depends on it.
 const MAX_CORR_BITS: usize = 1000;

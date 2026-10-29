@@ -10,7 +10,8 @@ use super::marker::Reached;
 use super::phuff::PHuffDecoder;
 use super::upsample::{self, Method};
 use super::{ColorSpace, DCTSIZE, Decoder, last_group};
-use crate::error::{Error, Result, try_box, try_collect, try_vec_with_capacity};
+use crate::alloc::{try_box, try_collect, try_vec_with_capacity};
+use crate::error::{Error, Result};
 
 enum Source {
     Lossy(CoefController),

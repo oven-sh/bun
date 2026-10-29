@@ -2163,12 +2163,9 @@ pub(crate) fn install_isolated_packages(
         let mut download_node: ProgressNode;
         let mut install_node: ProgressNode = ProgressNode::default();
         let mut scripts_node: ProgressNode;
-        let progress: *mut Progress = &raw mut manager.progress;
-        // SAFETY: `progress` aliases `manager.progress`; reborrows below are
-        // disjoint from the other `manager.*` field accesses.
-        let progress = unsafe { &mut *progress };
 
         if manager.options.log_level.show_progress() {
+            let progress = &mut manager.progress;
             progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
             let root_node = progress.start(b"", 0);
             download_node = root_node.start(ProgressStrings::download(), 0);
@@ -2691,6 +2688,7 @@ pub(crate) fn install_isolated_packages(
         installer.record_update_request_trust();
 
         if installer.manager().options.log_level.show_progress() {
+            let progress = &mut installer.manager_mut().progress;
             progress.root.end();
             *progress = Progress::default();
         }

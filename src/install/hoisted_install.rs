@@ -203,9 +203,7 @@ pub(crate) fn install_hoisted_packages(
         // and `&mut PackageManager` simultaneously through `mgr_ptr`'s
         // provenance root.
         let log: *mut bun_ast::Log = this.log;
-        // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
-        // via `Box`, so `*mut Lockfile` does not overlap `*mut PackageManager`.
-        let lockfile_ptr: *mut crate::lockfile::Lockfile = unsafe { &raw mut *(*mgr_ptr).lockfile };
+        let lockfile_ptr: *mut crate::lockfile::Lockfile = &raw mut *this.lockfile;
         // SAFETY: `log` is the always-live logger backref (never null);
         // `mgr_ptr` see shadow-reborrow above.
         unsafe {
@@ -338,9 +336,7 @@ pub(crate) fn install_hoisted_packages(
     };
 
     {
-        // SAFETY: `mgr_ptr` is the provenance root; `lockfile` is heap-owned
-        // via `Box`, so deref the Box for the heap addr.
-        let lockfile_ptr: *mut crate::lockfile::Lockfile = unsafe { &raw mut *(*mgr_ptr).lockfile };
+        let lockfile_ptr: *mut crate::lockfile::Lockfile = &raw mut *this.lockfile;
         // BACKREF — outlives this install pass; `PackageInstaller` reaches `this` at the same time.
         let lockfile_ref = bun_ptr::BackRef::<crate::lockfile::Lockfile>::from(
             core::ptr::NonNull::new(lockfile_ptr).expect("lockfile BACKREF non-null"),

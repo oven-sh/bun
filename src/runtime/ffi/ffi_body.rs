@@ -638,6 +638,7 @@ impl CompileC {
         &mut self,
         global_this: &JSGlobalObject,
     ) -> crate::Result<NonNull<TCC::State>> {
+        let ctx = std::ptr::from_mut::<CompileC>(self);
         let tcc_options_owned: ZBox;
         let compile_options: &ZStr = if !self.flags.is_empty() {
             &self.flags
@@ -652,10 +653,10 @@ impl CompileC {
 
         // TODO: correctly handle invalid user-provided options
         let state_ptr = match TCC::State::init::<CompileC, true>(&TCC::Config {
-            options: Some(NonNull::from(compile_options)),
+            options: Some(compile_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
-                ctx: Some(std::ptr::from_mut::<CompileC>(self)),
+                ctx: Some(ctx),
                 handler: Self::handle_compilation_error,
             },
         }) {
@@ -2037,7 +2038,7 @@ impl Function {
             zstr!("-std=c11 -nostdlib -Wl,--export-all-symbols")
         };
         let state = match TCC::State::init::<Function, false>(&TCC::Config {
-            options: Some(NonNull::from(tcc_options)),
+            options: Some(tcc_options),
             output_type: TCC::OutputFormat::Memory,
             err: TCC::ConfigErr {
                 ctx: Some(std::ptr::from_mut::<Function>(self)),

@@ -193,7 +193,7 @@ pub trait HotReloaderCtx {
     /// Called from `Task::run` to perform the actual reload.
     fn reload(&mut self);
 
-    /// Returns whether anything was busted.
+    /// Returns whether the folder was ever looked up.
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
 
     fn log_level_at_least_info(&self) -> bool {

@@ -2318,11 +2318,18 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         Ok(ret)
     }
 
-    /// Returns true if the entry was removed.
+    /// Forgets the value of the key. Returns true if the key was ever looked up, also after an earlier `remove`.
     pub fn remove(&mut self, denormalized_key: &[u8]) -> bool {
         let _guard = self.mutex.lock();
         let _key = Self::key_hash(denormalized_key);
-        self.index.remove(&_key).is_some()
+        // The key stays: a caller that retries a miss after `remove` must not depend on who removed first.
+        match self.index.get_mut(&_key) {
+            Some(index) => {
+                *index = UNASSIGNED;
+                true
+            }
+            None => false,
+        }
     }
 }
 

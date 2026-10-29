@@ -5067,7 +5067,7 @@ fn write_bytes_to_file_fast<const NEEDS_OPEN: bool>(
 // C++ side declares `extern "C" SYSV_ABI void* JSDOMFile__construct(...)` (JSDOMFile.cpp).
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn JSDOMFile__construct(
+    pub fn JSDOMFile__construct(
         global_this: &JSGlobalObject,
         bits: JSValue,
         name: JSValue,
@@ -6295,7 +6295,7 @@ impl Internal {
 // C++ side declares `extern "C" SYSV_ABI bool JSDOMFile__hasInstance(...)` (JSDOMFile.cpp).
 bun_jsc::jsc_host_abi! {
     #[unsafe(no_mangle)]
-    pub unsafe fn JSDOMFile__hasInstance(
+    pub fn JSDOMFile__hasInstance(
         _a: JSValue,
         _b: &JSGlobalObject,
         value: JSValue,

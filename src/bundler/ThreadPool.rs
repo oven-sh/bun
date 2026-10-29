@@ -4,7 +4,7 @@
 //!
 //! `Worker::create` / `initialize_transpiler` build the per-worker
 //! `Transpiler` via `Transpiler::for_worker` (per-field deep clone — no
-//! bitwise struct copy); the self-referential `linker` backrefs are wired by
+//! bitwise struct copy); the self-referential `macro_context` is wired by
 //! `Transpiler::wire_after_move` once the value is at its final address.
 
 use core::mem::ManuallyDrop;
@@ -650,7 +650,7 @@ impl Worker {
             transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
             other_transpiler: None,
         });
-        // Wire self-referential `linker`/`macro_context` now that `transpiler`
+        // Wire the self-referential `macro_context` now that `transpiler`
         // is at its final address inside `WorkerData`.
         data.transpiler.wire_after_move();
 

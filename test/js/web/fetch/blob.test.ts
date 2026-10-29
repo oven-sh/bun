@@ -1,8 +1,9 @@
-import { estimateShallowMemoryUsageOf } from "bun:jsc";
-import { describe, expect, test } from "bun:test";
+import { estimateShallowMemoryUsageOf, serialize } from "bun:jsc";
+import { describe, expect, jest, test } from "bun:test";
 import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
 import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
+import { openAsBlob } from "node:fs";
 import path from "node:path";
 
 test("blob: imports have sourcemapped stacktraces", async () => {
@@ -660,7 +661,7 @@ describe("the type of a Blob slice", () => {
       fetchBodyWithOtherHeaders: await received(
         fetch(server.url, { method: "POST", body: await make(), headers: { "x-other": "1" } }),
       ),
-      requestBody: await received(fetch(new Request(server.url, { method: "POST", body: await make() }))),
+      requestBody: await received(fetch(new Request(server.url.href, { method: "POST", body: await make() }))),
       staticRoute: route.headers.get("content-type"),
       stream: (await new Response((await make()).stream()).blob()).type,
       clone: await received(fetch(server.url, { method: "POST", body: structuredClone(await make()) })),
@@ -720,6 +721,242 @@ describe("the type of a Blob slice", () => {
     } finally {
       URL.revokeObjectURL(url);
     }
+  });
+
+  // The receiver of each slice below has a size of 0. Its slice keeps nothing of it.
+  describe("of an empty Blob", () => {
+    // A body of 0 bytes sends no Content-Type, so the static route is the reader that tells.
+    test.each([
+      ["new Blob([]).slice(0, 0, type)", (type: string) => new Blob([]).slice(0, 0, type)],
+      ["new Blob([]).slice(type)", (type: string) => (new Blob([]) as Bun.BunFile).slice(type)],
+      ["new File([], name).slice(0, 0, type)", (type: string) => new File([], "a.bin").slice(0, 0, type)],
+    ])("%s is typed like new Blob([], { type })", async (_label, slice) => {
+      const sliced: Record<string, unknown> = {};
+      const constructed: Record<string, unknown> = {};
+      for (const type of ["image/png", "IMAGE/PNG", "application/x-foo"]) {
+        sliced[type] = await seenBy(() => slice(type));
+        constructed[type] = await seenBy(() => new Blob([], { type }));
+      }
+      expect(sliced).toEqual(constructed);
+      expect(sliced).toMatchObject({
+        "image/png": { type: "image/png", staticRoute: "image/png" },
+        "IMAGE/PNG": { type: "image/png", staticRoute: "image/png" },
+        "application/x-foo": { type: "application/x-foo", staticRoute: "application/x-foo" },
+      });
+    });
+
+    test("a contentType that is absent, empty or not valid gives no type", async () => {
+      const typedParent = () => new Blob([], { type: "image/png" });
+      const untyped = await seenBy(() => new Blob([]));
+      expect({
+        "slice()": await seenBy(() => typedParent().slice()),
+        'slice(0, 0, "")': await seenBy(() => typedParent().slice(0, 0, "")),
+        "slice(0, 0, notValid)": await seenBy(() => typedParent().slice(0, 0, "te\x09xt/plain")),
+      }).toEqual({ "slice()": untyped, 'slice(0, 0, "")': untyped, "slice(0, 0, notValid)": untyped });
+      expect(untyped).toMatchObject({ type: "", staticRoute: null });
+    });
+
+    const typedSlices = (empty: Blob) => ({
+      "slice(0, 0, type)": empty.slice(0, 0, "x/custom").type,
+      // Bun's own overloads. Node.js reads a string in these positions as a number.
+      "slice(type)": (empty as Bun.BunFile).slice("x/custom").type,
+      "slice(begin, type)": (empty as Bun.BunFile).slice(0, "x/custom").type,
+      "uppercase type": empty.slice(0, 0, "X/Custom").type,
+      "registered type": empty.slice(0, 0, "image/png").type,
+    });
+    const typed = {
+      "slice(0, 0, type)": "x/custom",
+      "slice(type)": "x/custom",
+      "slice(begin, type)": "x/custom",
+      "uppercase type": "x/custom",
+      "registered type": "image/png",
+    };
+    const serialized = (blob: Blob) => Buffer.from(serialize(blob)).toString("hex");
+
+    const inMemory: [string, () => Blob | Promise<Blob>][] = [
+      ["new Blob()", () => new Blob()],
+      ["new Blob([])", () => new Blob([])],
+      ['new Blob([""])', () => new Blob([""])],
+      ["new Blob([new Uint8Array(0)])", () => new Blob([new Uint8Array(0)])],
+      ["new Blob([], { type })", () => new Blob([], { type: "text/plain" })],
+      ["an empty slice of a Blob", () => new Blob(["abcdef"]).slice(6, 6)],
+      ["an empty slice of a Blob, with a type", () => new Blob(["abcdef"]).slice(6, 6, "text/plain")],
+      ["new File([], name)", () => new File([], "n.txt")],
+      ["new File([], name, { type })", () => new File([], "n.txt", { type: "text/plain" })],
+      ["structuredClone(new Blob([]))", () => structuredClone(new Blob([]))],
+      ['new Response("").blob()', () => new Response("").blob()],
+      [
+        "a File of 0 bytes from FormData",
+        () => {
+          const form = new FormData();
+          form.append("file", new File([], "n.txt"));
+          return form.get("file") as File;
+        },
+      ],
+    ];
+
+    test.each(inMemory)("%s", async (_, make) => {
+      const empty = await make();
+      const type = empty.type;
+      expect(empty.size).toBe(0);
+      expect(typedSlices(empty)).toEqual(typed);
+      // Unlike a Blob with bytes, an empty Blob does not pass a registered type on to its slice.
+      expect({
+        "slice()": empty.slice().type,
+        "slice(0, 0)": empty.slice(0, 0).type,
+        "slice(0, 0, undefined)": empty.slice(0, 0, undefined).type,
+        "empty type": empty.slice(0, 0, "").type,
+        "type with a character that is not allowed": empty.slice(0, 0, "te\x09xt/plain").type,
+      }).toEqual({
+        "slice()": "",
+        "slice(0, 0)": "",
+        "slice(0, 0, undefined)": "",
+        "empty type": "",
+        "type with a character that is not allowed": "",
+      });
+      // The slice is the Blob that the constructor makes, with the mark that a caller gave the type.
+      expect({
+        "slice()": serialized(empty.slice()),
+        "empty type": serialized(empty.slice(0, 0, "")),
+        "type with a character that is not allowed": serialized(empty.slice(0, 0, "te\x09xt/plain")),
+        "x/custom": serialized(empty.slice(0, 0, "x/custom")),
+        "image/png": serialized(empty.slice(0, 0, "image/png")),
+      }).toEqual({
+        "slice()": serialized(new Blob([])),
+        "empty type": serialized(new Blob([])),
+        "type with a character that is not allowed": serialized(new Blob([])),
+        "x/custom": serialized(new Blob([], { type: "x/custom" })),
+        "image/png": serialized(new Blob([], { type: "image/png" })),
+      });
+      expect(empty.type).toBe(type);
+    });
+
+    const storeBacked: [string, (dir: string) => Blob | Promise<Blob>][] = [
+      ["Bun.file() before anything reads its size", dir => Bun.file(path.join(dir, "empty.bin"))],
+      [
+        "Bun.file() after .size",
+        dir => {
+          const file = Bun.file(path.join(dir, "empty.bin"));
+          expect(file.size).toBe(0);
+          return file;
+        },
+      ],
+      [
+        "Bun.file() after exists()",
+        async dir => {
+          const file = Bun.file(path.join(dir, "empty.bin"));
+          expect(await file.exists()).toBe(true);
+          return file;
+        },
+      ],
+      [
+        "fs.openAsBlob() after .size",
+        async dir => {
+          const blob = await openAsBlob(path.join(dir, "empty.bin"));
+          expect(blob.size).toBe(0);
+          return blob;
+        },
+      ],
+      [
+        "a Bun.build() output of 0 bytes",
+        async dir => {
+          const { outputs } = await Bun.build({
+            entrypoints: [path.join(dir, "entry.js")],
+            loader: { ".bin": "file" },
+          });
+          return outputs.find(output => output.kind === "asset")!;
+        },
+      ],
+      [
+        "an empty slice of an S3 file",
+        () =>
+          new Bun.S3Client({ accessKeyId: "id", secretAccessKey: "secret", bucket: "bucket" }).file("key").slice(0, 0),
+      ],
+    ];
+
+    test.each(storeBacked)("%s", async (_, make) => {
+      using dir = tempDir("blob-slice-empty", {
+        "empty.bin": "",
+        "entry.js": `import asset from "./empty.bin"; console.log(asset);`,
+      });
+      const empty = await make(String(dir));
+      expect(typedSlices(empty)).toEqual(typed);
+      expect(empty.size).toBe(0);
+    });
+
+    test("the slice of an empty File is a Blob with no name", () => {
+      const slice = new File([], "n.txt", { type: "text/plain" }).slice(0, 0, "x/custom");
+      expect({ isFile: slice instanceof File, name: (slice as Partial<File>).name, type: slice.type }).toEqual({
+        isFile: false,
+        name: undefined,
+        type: "x/custom",
+      });
+    });
+
+    test("the type reaches a Response, a Request, FormData and structuredClone", async () => {
+      const empty = new Blob([]);
+      const slice = empty.slice(0, 0, "x/custom");
+      const other = empty.slice(0, 0, "x/other");
+      const form = new FormData();
+      form.append("file", slice, "a.bin");
+      expect({
+        slice: slice.type,
+        other: other.type,
+        response: new Response(slice).headers.get("content-type"),
+        request: new Request("http://localhost/", { method: "POST", body: slice }).headers.get("content-type"),
+        formData: (form.get("file") as File).type,
+        structuredClone: structuredClone(slice).type,
+        text: await slice.text(),
+      }).toEqual({
+        slice: "x/custom",
+        other: "x/other",
+        response: "x/custom",
+        request: "x/custom",
+        formData: "x/custom",
+        structuredClone: "x/custom",
+        text: "",
+      });
+    });
+
+    // A String object counts as a string. Its toString runs, as it does for a Blob with bytes.
+    test.each([
+      ["new Blob([])", () => new Blob([])],
+      ["new File([], name)", () => new File([], "n.txt")],
+      ["an empty slice of a Blob", () => new Blob(["abcdef"]).slice(6, 6)],
+      ["a Blob with bytes", () => new Blob(["abcdef"])],
+    ])("%s converts a String object that is given as the contentType", (_, make) => {
+      const error = new RangeError("toString failed");
+      const toString = jest.fn(() => "X/Custom");
+      const converted = Object.assign(new String("x/ignored"), { toString }) as unknown as string;
+      const throwing = Object.assign(new String("x/ignored"), {
+        toString() {
+          throw error;
+        },
+      }) as unknown as string;
+      const blob = make();
+      expect(blob.slice(0, 0, converted).type).toBe("x/custom");
+      expect(toString).toHaveBeenCalledTimes(1);
+      let thrown: unknown;
+      try {
+        blob.slice(0, 0, throwing);
+      } catch (caught) {
+        thrown = caught;
+      }
+      expect(thrown).toBe(error);
+    });
+
+    test("the size of the receiver is read before its arguments are converted", () => {
+      using dir = tempDir("blob-slice-empty", { "empty.bin": "" });
+      const file = Bun.file(path.join(String(dir), "empty.bin"));
+      // Nothing has read the size of the file when slice is called. The conversion of the type reads it.
+      const type = Object.assign(new String("x/ignored"), { toString: () => (file.size, "x/custom") });
+      const slice = file.slice(0, 0, type as unknown as string);
+      expect({ size: file.size, type: slice.type, name: slice.name }).toEqual({
+        size: 0,
+        type: "x/custom",
+        name: file.name,
+      });
+    });
   });
 });
 

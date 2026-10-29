@@ -1761,13 +1761,7 @@ impl BlobExt for Blob {
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
 
-        if self.size.get() == 0 {
-            let ptr = Blob::new(Blob::init_empty(global_this));
-            // SAFETY: `ptr` just came from `heap::alloc` in `Blob::new`; spelled
-            // `BlobExt::to_js(&*ptr, ..)` to pick the `&self` impl over the
-            // by-value `JsClass::to_js`.
-            return Ok(unsafe { BlobExt::to_js(&*ptr, global_this) });
-        }
+        let receiver_is_empty = self.size.get() == 0;
 
         let size_i64 = i64::try_from(self.size.get()).unwrap_or(i64::MAX);
 
@@ -1801,17 +1795,25 @@ impl BlobExt for Blob {
             }
         }
 
-        let mut blob_content_type = BlobContentType::default();
-        if content_type.is_string() {
+        let blob_content_type = if content_type.is_string() {
             let content_type_view = content_type.to_js_string_view(global_this)?;
             let slicer = content_type_view.to_utf8();
             let slice = slicer.slice();
-            if is_valid_blob_type(slice) {
-                blob_content_type = match global_this.bun_vm().as_mut().mime_type(slice) {
-                    Some(mime) => BlobContentType::from(mime),
-                    None => BlobContentType::from_lowercased(slice),
-                };
+            if !is_valid_blob_type(slice) {
+                BlobContentType::default()
+            } else if let Some(mime) = global_this.bun_vm().as_mut().mime_type(slice) {
+                BlobContentType::from(mime)
+            } else {
+                BlobContentType::from_lowercased(slice)
             }
+        } else {
+            BlobContentType::default()
+        };
+
+        // Nothing of an empty receiver is kept: the slice is what `new Blob([], { type })` gives.
+        if receiver_is_empty {
+            let parent = Blob::init_empty(global_this);
+            return Ok(parent.get_slice_from(global_this, 0, 0, blob_content_type));
         }
 
         Ok(self.get_slice_from(global_this, relative_start, relative_end, blob_content_type))

@@ -440,12 +440,19 @@ it.concurrent.skipIf(!isLinux && !isMacOS)(
       stderr: "pipe",
       env: { ...server.env, BUN_TMPDIR: String(stagingRoot) },
     });
-    await downloadRequested.promise;
+    const stderrText = proc.stderr.text();
+    // Fail with the output of `bun upgrade` if it exits before it asks for the download.
+    const exitedEarly = proc.exited.then(async code => {
+      throw new Error(`bun upgrade exited before the download (code ${code}):\n${await stderrText}`);
+    });
+    exitedEarly.catch(() => {});
+
+    await Promise.race([downloadRequested.promise, exitedEarly]);
     writeFileSync(execPath + ".new", "#!/bin/sh\necho other\n", { mode: 0o755 });
     renameSync(execPath + ".new", execPath);
     replaced.resolve();
 
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([stderrText, proc.exited]);
     expectTargetsRelease(stderr, version);
     expect(stderr).toContain(" Upgraded.\n");
     expect(readdirSync(installDir)).toEqual([exeName]);

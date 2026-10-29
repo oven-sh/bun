@@ -353,6 +353,7 @@ for (const oldFile of ["unlinked", "moved aside"] as const) {
         "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
       });
       const { exe, proc } = watchWithOwnExe(String(dir));
+      const stderr = proc.stderr.text();
       const { waitFor, output } = stdoutWaiter(proc);
       await waitFor("iter first");
 
@@ -369,8 +370,9 @@ for (const oldFile of ["unlinked", "moved aside"] as const) {
         `console.log("iter second [" + process.execPath + "]"); setInterval(() => {}, 1000);`,
       );
 
-      await waitFor("]\n");
-      expect(output()).toContain(`iter second [${bunExe()}]\n`);
+      // Stdout ends when the session does. The session then said why on stderr.
+      const seen = await waitFor("]\n").then(output, () => stderr);
+      expect(seen).toContain(`iter second [${bunExe()}]\n`);
     },
   );
 }
@@ -399,53 +401,6 @@ it.skipIf(!restartsStartPath)("--watch does not follow its executable to a new n
   expect(await stderr).toContain(`error: Failed to reload "${exe}": ENOENT (execve)`);
 });
 
-// The kernel gives no path for the executable when /proc is not mounted or when the path is 4096 bytes or longer.
-// The shim fails that read. The session then has nothing to restart, and it says so.
-it.skipIf(!isLinux || !cc)("--watch reports an error when it cannot read the path of its executable", async () => {
-  using dir = tempDir("watch-exe-path-unknown", {
-    "entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
-    "shim.c":
-      NO_CORE_C +
-      /* c */ `
-#define _GNU_SOURCE
-#include <dlfcn.h>
-#include <errno.h>
-#include <string.h>
-#include <unistd.h>
-ssize_t readlink(const char *path, char *buf, size_t len) {
-  static ssize_t (*real)(const char *, char *, size_t);
-  if (!real) real = dlsym(RTLD_NEXT, "readlink");
-  if (strcmp(path, "/proc/self/exe") == 0) {
-    errno = ENOENT;
-    return -1;
-  }
-  return real(path, buf, len);
-}
-`,
-  });
-  const shimPath = await compileShim(String(dir));
-  const existing = bunEnv.LD_PRELOAD;
-  const proc = spawn({
-    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
-    cwd: String(dir),
-    env: { ...bunEnv, LD_PRELOAD: existing ? `${shimPath}:${existing}` : shimPath },
-    stdout: "pipe",
-    stderr: "pipe",
-    stdin: "ignore",
-  });
-  watchee = proc;
-  const stderr = proc.stderr.text();
-
-  const { waitFor, release } = stdoutWaiter(proc);
-  await waitFor("iter first");
-  release();
-
-  await Bun.write(join(String(dir), "entry.js"), `console.log("iter second");`);
-
-  expect(await stderr).toContain("error: Failed to reload: the path of the executable is not known\n");
-  expect(await proc.exited).toBe(1);
-});
-
 // The session has nothing to restart, and it says so.
 it.skipIf(!isLinux || !cc)("--watch reports an error when it cannot read the path of its executable", async () => {
   using dir = tempDir("watch-exe-path-unknown", {
@@ -470,6 +425,37 @@ it.skipIf(!isLinux || !cc)("--watch reports an error when it cannot read the pat
 
   expect(await stderr).toContain("error: Failed to reload: the path of the executable is not known\n");
   expect(await proc.exited).toBe(1);
+});
+
+// A process can start before /proc is mounted. No failed read of the path is kept, so the restart reads it again.
+it.skipIf(!isLinux || !cc)("--watch restarts when /proc is mounted after the session started", async () => {
+  using dir = tempDir("watch-proc-mounted-later", {
+    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  const mounted = join(String(dir), "mounted");
+  const proc = spawn({
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
+    cwd: join(String(dir), "app"),
+    env: await envWithoutExePath(String(dir), mounted),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  watchee = proc;
+  const stderr = proc.stderr.text();
+
+  const { waitFor, output } = stdoutWaiter(proc);
+  await waitFor("iter first");
+
+  writeFileSync(mounted, "");
+  await Bun.write(
+    join(String(dir), "app", "entry.js"),
+    `console.log("iter second [" + process.execPath + "]"); setInterval(() => {}, 1000);`,
+  );
+
+  // Stdout ends when the session does. The session then said why on stderr.
+  const seen = await waitFor("]\n").then(output, () => stderr);
+  expect(seen).toContain(`iter second [${bunExe()}]\n`);
 });
 
 // On Windows, the first --watch process acts as a manager that restarts the script in a child process on every change.

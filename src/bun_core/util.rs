@@ -2419,6 +2419,21 @@ impl<T> Once<T> {
         self.init_slow(f)
     }
 
+    /// `get_or_init` for an `f` that can fail: an `Err` is not stored, and racing threads can each run `f`.
+    #[inline(always)]
+    pub fn get_or_try_init<E>(&self, f: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
+        match self.get() {
+            Some(v) => Ok(v),
+            None => self.try_init_slow(f),
+        }
+    }
+
+    #[inline(never)]
+    fn try_init_slow<E>(&self, f: impl FnOnce() -> Result<T, E>) -> Result<&T, E> {
+        let v = f()?;
+        Ok(self.get_or_init(move || v))
+    }
+
     // `#[inline(never)]`, not `#[cold]`: the very first call to every `Once`
     // *always* lands here during single-threaded startup, so this is not a
     // rare branch — `#[cold]` would only relocate every monomorphisation into
@@ -2707,24 +2722,9 @@ fn os_entropy(bytes: &mut [u8]) {
 // Memoized into a process-lifetime
 // static buffer; thread-safe via `Once`. Returns a `&'static ZStr`.
 pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
-    static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
-    let r = CELL.get_or_init(|| {
-        #[cfg(any(target_os = "linux", target_os = "android"))]
-        {
-            let mut buf = PathBuffer::ZEROED;
-            // SAFETY: the path is NUL-terminated, and `readlink` writes at most `buf.len()` bytes into `buf`.
-            let len = unsafe {
-                libc::readlink(
-                    c"/proc/self/exe".as_ptr(),
-                    buf.as_mut_ptr().cast(),
-                    buf.len(),
-                )
-            };
-            // Not a result that fills the buffer: `readlink` cuts off what does not fit.
-            if len >= 0 && (len as usize) < buf.len() {
-                return Ok(ZBox::from_bytes(&buf[..len as usize]));
-            }
-        }
+    // Only a path is kept. Linux has none while `/proc` is not mounted, and a later call can find it mounted.
+    static CELL: Once<ZBox> = Once::new();
+    let path = CELL.get_or_try_init(|| -> crate::CrateResult<ZBox> {
         let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),
@@ -2763,11 +2763,8 @@ pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
             }
             Ok(ZBox::from_vec_with_nul(s.into_bytes()))
         }
-    });
-    match r {
-        Ok(z) => Ok(z.as_zstr()),
-        Err(e) => Err(*e),
-    }
+    })?;
+    Ok(path.as_zstr())
 }
 
 /// Linux composes `/proc/self/exe` when it is read, so read it before the file can be replaced (`bun upgrade`).

@@ -8344,8 +8344,8 @@ impl NodeFS {
 
     pub(crate) fn statfs(&mut self, args: &args::StatFS, _: Flavor) -> Maybe<ret::StatFS> {
         // What the executable holds lies on the file system that holds the executable.
-        let path = match bun_core::self_exe_path() {
-            Ok(executable) if is_in_executable(args.path.slice()) => executable,
+        let path = match is_in_executable(args.path.slice()).then(bun_core::self_exe_path) {
+            Some(Ok(executable)) => executable,
             _ => args.path.slice_z(&mut self.sync_error_buf),
         };
         match Syscall::statfs(path) {

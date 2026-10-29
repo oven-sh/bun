@@ -759,7 +759,12 @@ for (const [change, child] of [
         } catch (error) {
           child = error.code;
         }
-        console.log(JSON.stringify({ execPath: process.execPath, argv0: process.argv[0], child }));
+        // A Worker that starts now gets the same path. Node reads the path again for each Worker.
+        const worker = new Worker(URL.createObjectURL(new Blob(["postMessage(process.execPath)"])));
+        worker.onmessage = ({ data }) => {
+          console.log(JSON.stringify({ execPath: process.execPath, argv0: process.argv[0], worker: data, child }));
+          worker.terminate();
+        };
       `,
     });
     const exe = linkBunExe(String(dir));
@@ -773,7 +778,7 @@ for (const [change, child] of [
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ execPath: exe, argv0: exe, child });
+    expect(JSON.parse(stdout)).toEqual({ execPath: exe, argv0: exe, worker: exe, child });
     expect(exitCode).toBe(0);
   });
 }

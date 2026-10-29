@@ -118,14 +118,12 @@ fn generate_compile_result_for_css_chunk_impl(
                     return CompileResult::Css {
                         result: Err(crate::Error::PrintError),
                         source_index: Index::INVALID.get(),
-                        source_map: None,
                     };
                 }
             }
             CompileResult::Css {
                 result: Ok(allocating_writer.into_boxed_slice()),
                 source_index: Index::INVALID.get(),
-                source_map: None,
             }
         }
         CssImportOrderKind::SourceIndex(idx) => {
@@ -154,7 +152,6 @@ fn generate_compile_result_for_css_chunk_impl(
                     return CompileResult::Css {
                         result: Err(crate::Error::PrintError),
                         source_index: idx.get(),
-                        source_map: None,
                     };
                 }
             }
@@ -172,7 +169,6 @@ fn generate_compile_result_for_css_chunk_impl(
             CompileResult::Css {
                 result: Ok(output),
                 source_index: idx.get(),
-                source_map: None,
             }
         }
     }

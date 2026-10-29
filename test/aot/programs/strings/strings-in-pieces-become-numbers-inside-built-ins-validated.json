@@ -1,6 +1,0 @@
-{
-  "build": ["--aot-validate"],
-  "env": {
-    "BUN_JSC_collectContinuously": "1"
-  }
-}

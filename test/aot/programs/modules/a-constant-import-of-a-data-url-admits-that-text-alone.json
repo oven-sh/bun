@@ -1,4 +1,0 @@
-{
-  "skipInShell": "it needs the module loader of Bun",
-  "alone": "what is refused hangs on what else the executable holds: a package left outside of it admits every file"
-}

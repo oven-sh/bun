@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isGlibc, isLinux, isWindows } from "harness";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawned, unsupported } from "../aot/run-programs";
+import { spawned, unsupported } from "../aot/harness/commands";
 import { canTrim, featureNamed, getMappedSegments, model, tempDirForAotBuilds } from "./compile-trim-features";
 
 // An AOT-compiled program never runs the CLI or the JIT, so --aot removes the code that only those two need.
@@ -106,6 +106,11 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
     const { totalBytes } = measureFeature("ImageCompiler");
     console.log("the compiler takes", totalBytes, "bytes");
     expect(totalBytes).toBeLessThanOrEqual(mostBytesOfCompiler);
+  });
+
+  test.skipIf(!isGlibc || process.arch !== "x64")("every range of code of a page or more can be cut", () => {
+    const onlyFilled = readTrimTable(bunExe()).ranges.filter(each => each.isCode && !each.canBeCut);
+    expect(onlyFilled.filter(each => each.end - each.start >= 4096)).toEqual([]);
   });
 
   describe.skipIf(!!unsupported).each([[[] as string[]], [["--trim"]]])("with %j", flags => {

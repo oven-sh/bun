@@ -1,0 +1,114 @@
+# -- source: keys-object-loop-bun-nothing-names-loop.js
+# // A for-in loop over `Bun` asks whether its first key is there. Nothing in the program names that member. Then a rest pattern copies Object, and its own keys are listed.
+# // Alone: the order of the keys follows from which members were read first, and the other programs of a joined executable read some
+# for (const key in Bun) break;
+# const { assign, ...rest } = Object;
+# console.log(Reflect.ownKeys(Object).join());
+# /* Output:
+# length,name,prototype,hasOwn,groupBy,assign,getPrototypeOf,setPrototypeOf,getOwnPropertyDescriptor,getOwnPropertyDescriptors,getOwnPropertyNames,getOwnPropertySymbols,keys,defineProperty,defineProperties,create,seal,freeze,preventExtensions,isSealed,isFrozen,isExtensible,is,values,entries,fromEntries
+# */
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="keys-object-loop-bun-nothing-names-loop.js" displayPath="keys-object-loop-bun-nothing-names-loop.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 fields=[{key="create" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="defineProperties" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="defineProperty" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="entries" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="freeze" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="fromEntries" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="getOwnPropertyDescriptor" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="getOwnPropertyDescriptors" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="getOwnPropertyNames" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="getOwnPropertySymbols" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="getPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="groupBy" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="hasOwn" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="is" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="isExtensible" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="isFrozen" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="isSealed" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="keys" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="preventExtensions" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="prototype" declared={type=anything} flags=[IsRequired]}, {key="seal" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="setPrototypeOf" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="values" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsRequired, IsMethod]}] declaredOrder=[19, 10, 6, 8, 0, 2, 1, 20, 4, 18, 16, 15, 14, 17, 9, 13, 21, 22, 3, 7, 5, 12, 11] ownFieldCount=23
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="Bun" [isFreeName]
+    v2 = Convert v1 declared={type=builtin(Bun) flags=[IsExpected]}
+    v3 = ForInOpen v2
+    Jump -> next b2()
+  b2():
+    LoopHint
+    v5 = ForInStep v3, v2
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b4(), notTaken b3()
+  b3():
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b4()
+  b4():
+    v9 = Builtin builtin=Object
+    v10 = TypeTest v9 testedType=undefined|null
+    Branch v10 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v11):
+    Jump -> next b6()
+  b6() frequency=Unlikely:
+    v12 = NewRuntimeError runtimeError=NotDestructurable name="assign"
+    Throw v12
+  b7(v13):
+    v14 = PropGet v13 key="assign"
+    v15 = Convert v14 declared={type=undefined|null|function flags=[IsExpected]}
+    v16 = NewObject layout=L0
+    CopyDataProperties v16, v13 excludedKeys=["assign"]
+    v18 = FinishObject v16
+    v19 = Convert v18 declared={type=undefined|null|L0 flags=[IsExpected]}
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="console" [isFreeName]
+    v22 = Convert v21 declared={type=builtin(Console) flags=[IsExpected]}
+    v23 = PropGet v22 key="log"
+    v24 = Convert v23 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v25 = Builtin builtin=Reflect
+    v26 = Builtin builtin=ReflectOwnKeys
+    v27 = Builtin builtin=Object
+    v28 = Call v26, v25, v27 calleeName="Reflect.ownKeys"
+    v29 = Convert v28 declared={type=undefined|null|Array<undefined|null|string|symbol> flags=[IsExpected]}
+    v30 = PropGet v29 key="join"
+    v31 = Convert v30 declared={type=undefined|null|function flags=[IsExpected]}
+    v32 = Call v31, v29 calleeKey="join" calleeName="join"
+    v33 = Convert v32 declared={type=undefined|null|string flags=[IsExpected]}
+    v34 = Call v24, v22, v33 calleeKey="log" calleeName="console.log"
+    v35 = Undefined
+    Return v35
+}
+function f1 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f2 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f11 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f21 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f22 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f23 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f24 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: builtin(Bun) = Builtin builtin=Bun
+# CHECK-NEXT: v1: enumerator = ForInOpen v0
+# CHECK-NEXT: v2: 0 = Integer
+# CHECK-NEXT: v3: undefined = ForInStep v1, v0 position=v2
+# CHECK-NEXT: v4: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: InitializeBuiltin builtin=ObjectAssign
+# CHECK-NEXT: v6: L0 = NewObject layout=L0 allocationSite=0 allocationClass=0
+# CHECK-NEXT: CopyDataProperties v6, v4 excludedKeys=["assign"]
+# CHECK-NEXT: v8: builtin(Object) = Builtin builtin=Object
+# CHECK-NEXT: v9: Array<string|symbol> = CallBuiltin -, v8 overload=ReflectOwnKeys/0 accessSite=4
+# CHECK-NEXT: v10: Array<string|symbol, proven, pristine[Storage, Names, Dense]> = AssumeType v9 provenType=Array<string|symbol, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v11: string = CallBuiltin v10 overload=ArrayPrototypeJoin/0 accessSite=6
+# CHECK-NEXT: v12: undefined = CallBuiltin -, v11 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v13: undefined = Undefined
+# CHECK-NEXT: Return v13
+# CHECK-NEXT: }

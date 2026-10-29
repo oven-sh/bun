@@ -1,0 +1,109 @@
+# function tell(given: any) { const value: object = given;
+#   if ($isProxyObject(value)) proxy(); if (!$isMap(value)) noMap(); if (value instanceof Error) error(); if (Array.isArray(value)) list(); if (!Array.isArray(value)) noList(); if (ArrayBuffer.isView(value)) view(); }    tell({});
+# What arrives is an object that the program made: no proxy, no map, no list, no view, and Error.prototype does not stand above it. The arms behind those tests do not run, the arms behind their negations do.
+# RUN: valueflow-solve unreached
+# CHECK: unreached f2
+# CHECK-NOT: unreached f3
+# CHECK: unreached f4
+# CHECK: unreached f5
+# CHECK-NOT: unreached f6
+# CHECK: unreached f7
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f1
+    v1 = NewDictionary
+    v2 = Call v0, -, v1
+    Return
+}
+function f1 name="tell" role=Library length=1 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=undefined|null|object} illTypedCause=FromLooseType
+    v2 = HasJSType v1 first=11 last=11
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v4):
+    v5 = NewClosure function=f2
+    v6 = Call v5
+    Jump -> next b3()
+  b2(v7):
+    Jump -> next b3()
+  b3():
+    v8 = HasJSType v1 first=7 last=7
+    v9 = ToBoolean v8
+    v10 = LogicalNot v9
+    v11 = ToBoolean v10
+    Branch v11 -> taken b4(| 0), notTaken b5(| 0)
+  b4(v12):
+    v13 = NewClosure function=f3
+    v14 = Call v13
+    Jump -> next b6()
+  b5(v15):
+    Jump -> next b6()
+  b6():
+    v16 = Builtin builtin=Error
+    v17 = InstanceOf v1, v16
+    v18 = ToBoolean v17
+    Branch v18 -> taken b7(| 0), notTaken b8(| 0)
+  b7(v19):
+    v20 = NewClosure function=f4
+    v21 = Call v20
+    Jump -> next b9()
+  b8(v22):
+    Jump -> next b9()
+  b9():
+    v23 = Builtin builtin=Array
+    v24 = Builtin builtin=ArrayIsArray
+    v25 = Call v24, v23, v1
+    v26 = ToBoolean v25
+    Branch v26 -> taken b10(| 0), notTaken b11(| 0)
+  b10(v27):
+    v28 = NewClosure function=f5
+    v29 = Call v28
+    Jump -> next b12()
+  b11(v30):
+    Jump -> next b12()
+  b12():
+    v31 = Call v24, v23, v1
+    v32 = ToBoolean v31
+    v33 = LogicalNot v32
+    v34 = ToBoolean v33
+    Branch v34 -> taken b13(| 0), notTaken b14(| 0)
+  b13(v35):
+    v36 = NewClosure function=f6
+    v37 = Call v36
+    Jump -> next b15()
+  b14(v38):
+    Jump -> next b15()
+  b15():
+    v39 = Builtin builtin=ArrayBuffer
+    v40 = Builtin builtin=ArrayBufferIsView
+    v41 = Call v40, v39, v1
+    v42 = ToBoolean v41
+    Branch v42 -> taken b16(| 0), notTaken b17(| 0)
+  b16(v43):
+    v44 = NewClosure function=f7
+    v45 = Call v44
+    Return
+  b17(v46):
+    Return
+}
+function f2 name="proxy" results=[{type=anything}] {
+    Return
+}
+function f3 name="noMap" results=[{type=anything}] {
+    Return
+}
+function f4 name="error" results=[{type=anything}] {
+    Return
+}
+function f5 name="list" results=[{type=anything}] {
+    Return
+}
+function f6 name="noList" results=[{type=anything}] {
+    Return
+}
+function f7 name="view" results=[{type=anything}] {
+    Return
+}

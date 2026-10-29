@@ -11,7 +11,7 @@ about five minutes, one takes a second. The real test is `bun test test/aot`, wh
     <program>   its path under ../programs without the extension, e.g. strings/replace-all
 
 Other environment variables:
-    PROGRAMS        the folder of programs (default: ../programs)
+    PROGRAMS        the folder of programs (default: ../parallel)
     WRITTEN         a second folder of programs, for those that a script writes and nobody keeps: `bun test/aot/generate.ts all <folder>`. `all` takes what lies there too
     WORK            where intermediate files go (default: <temporary directory>/aot-quick); the files of a failure are not deleted
     WORDS           option words added to every compile, after the program's own, separated by blanks (`testaot list options`)
@@ -38,12 +38,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import toolchain
 
-PROGRAMS = os.path.realpath(os.environ.get("PROGRAMS", HERE + "/../programs"))
+PROGRAMS = os.path.realpath(os.environ.get("PROGRAMS", HERE + "/../parallel"))
 WRITTEN = os.path.realpath(os.environ["WRITTEN"]) if os.environ.get("WRITTEN") else None
 WORK = os.path.abspath(os.environ.get("WORK", os.path.join(tempfile.gettempdir(), "aot-quick")))
 EXTENSIONS = ("ts", "tsx", "js", "mts", "cts", "mjs", "cjs")
 MAIN_EXTENSIONS = ("cjs", "cts", "js", "mjs", "mts", "ts", "tsx")
-# The files in the folder of a topic that programs load and that are no programs themselves, as in ../run-programs.ts.
+# The files in the folder of a topic that programs load and that are no programs themselves.
 HELPERS = (
     "commonjs/describe-object.cjs",
     "strings/regexps-built-at-start.cjs",
@@ -56,7 +56,7 @@ HELPERS = (
 def all_programs(root=PROGRAMS):
     found = set()
 
-    # As `find` in ../run-programs.ts: a folder with a main.<ext> is one program, any other folder holds programs.
+    # A folder with a main.<ext> is one program, any other folder holds programs.
     def find(folder, name):
         if any(os.path.isfile(f"{folder}/main.{x}") for x in MAIN_EXTENSIONS):
             return found.add(name)
@@ -127,6 +127,13 @@ def where_it_died(ir, image, words, build_env, entry, env, has_own_environment, 
     return said + " | " + " ".join(toolchain.run_image(image, entry, env, run_options, cwd=cwd, seconds=200, under=follower)[1].split("\n")).strip()
 
 
+def options_in_comments(entry):
+    """What the comment lines of a program say of its build and its runs, in the words of <program>.json. ../run-parallel.ts says what they mean."""
+    text = open(entry, errors="replace").read()
+    lines = lambda name: re.findall(rf"^// {name}:[ \t]+(.*?)\s*$", text, re.M)
+    return {"build": [word for line in lines("Flags") for word in line.split()], "env": dict(line.split("=", 1) for line in lines("Env"))}
+
+
 def run_program(program):
     for root in filter(None, (PROGRAMS, WRITTEN)):
         base = os.path.join(root, program)
@@ -137,7 +144,7 @@ def run_program(program):
         return "NO IR: there is no such program"
     # main.<ext> of such a program only imports jsc-shell-functions.ts first, and the shell has those functions itself.
     source = first_existing([f"{base}/program.{x}" for x in EXTENSIONS]) or entry
-    options = json.load(open(base + ".json")) if os.path.isfile(base + ".json") else {}
+    options = json.load(open(base + ".json")) if os.path.isfile(base + ".json") else options_in_comments(entry)
     tsconfig = base + "/tsconfig.json"
     compiler_options = json.load(open(tsconfig)).get("compilerOptions", {}) if os.path.isfile(tsconfig) else {}
     skipped = skip_reason(base, options, compiler_options)

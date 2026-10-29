@@ -40,11 +40,14 @@ describe.concurrent("WebKit e8f704815e upgrade", () => {
     expect(() => new (revoke as any)()).toThrow(TypeError);
     expect(Proxy.revocable({}, {}).revoke).not.toBe(revoke);
 
-    // `length` and `name` are listed first even after one of them is deleted and defined again, as for every
-    // other function. The revoke function used to list them in the order they were added.
-    delete (revoke as any).length;
-    Object.defineProperty(revoke, "length", { value: 0, configurable: true });
-    expect(Reflect.ownKeys(revoke)).toEqual(["length", "name"]);
+    // After `length` is deleted and defined again, the revoke function lists its keys as any other function does.
+    // It used to list them in another order than an arrow function. The order itself is the engine's, so no list is written here.
+    const arrow = () => {};
+    for (const fn of [revoke, arrow]) {
+      delete (fn as any).length;
+      Object.defineProperty(fn, "length", { value: 0, configurable: true });
+    }
+    expect(Reflect.ownKeys(revoke)).toEqual(Reflect.ownKeys(arrow));
 
     expect(proxy.a).toBe(1);
     expect(revoke()).toBeUndefined();

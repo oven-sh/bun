@@ -642,10 +642,6 @@ devTest("page on a route that a catch-all route also matches reloads for its own
     await c.expectMessage("v1");
     await dev.fetch("/").expect.toInclude("<h1>Index</h1>");
 
-    // The html file of the other route: this client fails on a reload that the test does not expect.
-    await dev.patch("index.html", { find: "Index", replace: "Index2" });
-    expect(await c.elemText("h1")).toBe("App");
-
     // Its own html file, in one build with a script of the other route.
     await c.expectReload(async () => {
       await using _batch = await dev.batchChanges();
@@ -667,6 +663,8 @@ devTest("html file is saved after the page changed its URL to another route with
   async test(dev) {
     await using c = await dev.client("/a");
     await c.expectMessage("ready");
+    // The server watches b.html once a bundle has read it.
+    await dev.fetch("/b").expect.toInclude("<h1>B</h1>");
 
     // The page holds a.html. A browser loads the URL again, this client the URL it started with.
     await c.js`history.pushState(null, "", "/b")`;
@@ -676,12 +674,45 @@ devTest("html file is saved after the page changed its URL to another route with
     await c.output.waitForLine(routeReloadLine);
     await c.expectMessage("ready");
 
-    // The URL names the route of b.html, which a library can have put on screen with no request for that URL.
+    // The URL names the route of b.html, which a library can have put on screen without a page load.
     await c.js`history.pushState(null, "", "/b")`;
     await c.expectReload(async () => {
       await dev.patch("b.html", { find: "<h1>B</h1>", replace: "<h1>B2</h1>" });
     });
     await c.output.waitForLine(routeReloadLine);
     await c.expectMessage("ready");
+  },
+});
+
+devTest("page of an html route that set a server-side reload callback loads again for its html file", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["script.ts"], body: "<h1>Hello</h1>" }),
+    "script.ts": `
+      import { onServerSideReload } from "bun:bake/client";
+      import { value } from "./dep";
+      onServerSideReload(() => console.log("callback"));
+      console.log(value);
+    `,
+    "dep.ts": `export const value = "v1";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1");
+    // The page does not call the callback. It loads again.
+    await c.expectReload(async () => {
+      await dev.patch("index.html", { find: "Hello", replace: "World" });
+    });
+    await c.output.waitForLine(routeReloadLine);
+    await c.expectMessage("v1");
+    expect(await c.elemText("h1")).toBe("World");
+
+    await c.expectReload(async () => {
+      await using _batch = await dev.batchChanges();
+      await dev.patch("index.html", { find: "World", replace: "Again" });
+      await dev.write("dep.ts", `export const value = "v2";`);
+    });
+    await c.output.waitForLine(routeReloadLine);
+    await c.expectMessage("v2");
+    expect(await c.elemText("h1")).toBe("Again");
   },
 });

@@ -34,7 +34,6 @@ if (typeof IS_BUN_DEVELOPMENT !== "boolean") {
 let isPerformingRouteReload = false;
 let shouldPerformAnotherRouteReload = false;
 let currentRouteIndex: number = -1;
-const loadedPathname = location.pathname;
 
 /** False when an update since the last `onServerSideReload` call had no code for the browser. */
 let everyUpdateHadClientCode = true;
@@ -47,7 +46,8 @@ async function performRouteReload(hasClientCode = false) {
     return;
   }
 
-  if (onServerSideReload) {
+  // `hot_update` drops the modules of a frame that reloads an HTML route page: a callback would keep the old scripts.
+  if (onServerSideReload && config.htmlRouteIndex === undefined) {
     try {
       isPerformingRouteReload = true;
       do {
@@ -153,11 +153,9 @@ const handlers = {
       if (routeId === -1 || routeId == undefined) break;
       serverSideRoutesUpdated.add(routeId);
     } while (true);
-    // The page of an HTML route holds the html of one route. The route of its URL counts once the page changed its URL.
+    // The server finds `currentRouteIndex` by URL. On "/app/*" that is not the route whose html the page holds.
     const isServerSideRouteUpdate =
-      serverSideRoutesUpdated.has(config.htmlRouteIndex) ||
-      ((config.htmlRouteIndex === undefined || location.pathname !== loadedPathname) &&
-        serverSideRoutesUpdated.has(currentRouteIndex));
+      serverSideRoutesUpdated.has(config.htmlRouteIndex) || serverSideRoutesUpdated.has(currentRouteIndex);
     // List 2
     do {
       const routeId = reader.i32();

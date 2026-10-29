@@ -14,3 +14,10 @@ bun_core.workspace = true
 bun_highway.workspace = true
 bun_wyhash.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "hpack"
+harness = false

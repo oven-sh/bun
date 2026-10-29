@@ -741,6 +741,7 @@ dependencies = [
  "bun_core",
  "bun_highway",
  "bun_wyhash",
+ "criterion",
  "thiserror",
 ]
 

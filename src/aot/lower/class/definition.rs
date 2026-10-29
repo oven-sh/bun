@@ -1,6 +1,7 @@
 use bun_sema::atom::{Atom, known};
-use bun_sema::bind::{Binding, Decl};
-use bun_sema::hir::{ClassId, ExprKind, Flags, start_of};
+use bun_sema::bind::{Binding, Decl, ScopeId};
+use bun_sema::hir::{ClassId, ExprKind, Flags, MemberId, start_of};
+use smallvec::SmallVec;
 
 use super::members::ClassHead;
 use super::{
@@ -37,6 +38,54 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.evaluate_class(class, default_name, Some((binding, known::default)));
     }
 
+    fn enter_class_scopes(&mut self, class: ClassId) -> (Option<ScopeId>, ScopeId) {
+        let bound = self.file.bound;
+        let class_scope = bound.class_scope[class.idx()];
+        let inner = bound.inner_class_symbol(class).some();
+        let name_scope = inner.map(|inner| bound.symbol_scope(inner));
+        let name_scope = name_scope.filter(|&scope| scope != class_scope);
+        if let Some(scope) = name_scope {
+            self.enter_scope(scope);
+        }
+        self.enter_scope(class_scope);
+        (name_scope, class_scope)
+    }
+
+    fn leave_class_scopes(&mut self, (name_scope, class_scope): (Option<ScopeId>, ScopeId)) {
+        self.leave_scope(class_scope);
+        if let Some(scope) = name_scope {
+            self.leave_scope(scope);
+        }
+    }
+
+    fn resolve_heritage(&mut self, class: ClassId) -> Option<(ValueId, ValueId)> {
+        let extends = self.file.hir[class].extends.some()?;
+        let value = self.lower_expression(extends);
+        self.set_position(self.file.heritage_position(class));
+        Some((value, self.builder.resolve_heritage(value)))
+    }
+
+    pub(crate) fn lower_checks_of_left_out_class(&mut self, class: ClassId) {
+        let (hir, file) = (self.file.hir, self.file.file);
+        let left_out = self.file.inputs.library_functions.left_out_declarations();
+        let checks_heritage = left_out.is_heritage_check_kept(file, class);
+        let members = hir[class].members.iter();
+        let converted: SmallVec<[MemberId; 2]> = members
+            .filter(|&member| left_out.is_key_conversion_kept(file, member))
+            .collect();
+        if !checks_heritage && converted.is_empty() {
+            return;
+        }
+        let scopes = self.enter_class_scopes(class);
+        if checks_heritage {
+            self.resolve_heritage(class);
+        }
+        for member in converted {
+            self.lower_property_name(hir.runtime_member_key(member));
+        }
+        self.leave_class_scopes(scopes);
+    }
+
     fn evaluate_class(
         &mut self,
         class: ClassId,
@@ -55,19 +104,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
 
         let inner = bound.inner_class_symbol(class).some();
-        let class_scope = bound.class_scope[class.idx()];
-        let name_scope = inner.map(|inner| bound.symbol_scope(inner));
-        let name_scope = name_scope.filter(|&scope| scope != class_scope);
-        if let Some(scope) = name_scope {
-            self.enter_scope(scope);
-        }
-        self.enter_scope(class_scope);
-
-        let heritage = node.extends.some().map(|extends| {
-            let value = self.lower_expression(extends);
-            self.set_position(self.file.heritage_position(class));
-            (value, self.builder.resolve_heritage(value))
-        });
+        let scopes = self.enter_class_scopes(class);
+        let heritage = self.resolve_heritage(class);
         if has_instance_brand(hir, bound, class) {
             let layout = self.file.own_class_layout(class);
             self.set_position(node.start);
@@ -123,10 +161,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let value = self.emit_class_result(&plan, &evaluation, decoration, outer);
 
-        self.leave_scope(class_scope);
-        if let Some(scope) = name_scope {
-            self.leave_scope(scope);
-        }
+        self.leave_class_scopes(scopes);
         value
     }
 

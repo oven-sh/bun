@@ -361,7 +361,9 @@ impl<'p, 's> Checker<'p, 's> {
         let Some(frame) = self.frames.last_mut() else {
             return false;
         };
-        frame.drops_reported |= frame.may_substitute_constraints;
+        if frame.may_substitute_constraints {
+            frame.marks.drop_reported();
+        }
         frame.may_substitute_constraints
     }
 
@@ -612,7 +614,7 @@ impl<'p, 's> Checker<'p, 's> {
         if self.in_progress[(crate::util::fx_hash(&q) >> 54) as usize] == 0 {
             return None;
         }
-        let first = self.stack.iter().rposition(|&it| it == q)?;
+        let first = self.position_in_progress(q, 0)?;
         let pushed_at = self.flow_loop_pushed_since(first)?;
         let is_checked_once = !is_rechecked && self.is_rechecking();
         // Hides the first visit from `enter`, which still fails when time, native stack or query
@@ -4096,8 +4098,9 @@ impl<'p, 's> Checker<'p, 's> {
                 });
         // Results derived from a loop's incomplete type are final too (`taint_from`): nothing
         // resets the flag or a parameter's `links.resolvedType` when the loop completes.
-        let is_checked_again = (self.frames.last())
-            .is_some_and(|frame| frame.tainted && (!frame.incomplete_flow || frame.drops_reported));
+        let is_checked_again = (self.frames.last()).is_some_and(|frame| {
+            frame.marks.tainted() && (!frame.incomplete_flow || frame.marks.drops_reported())
+        });
         let is_check_final = is_argument_of_untyped_call || !is_checked_again;
         // `assignContextualParameterTypes`, `assignNonContextualParameterTypes`
         if is_context_sensitive {
@@ -4171,7 +4174,7 @@ impl<'p, 's> Checker<'p, 's> {
         if is_check_final {
             (self.p.context_checked).insert(&self.task, (file, func), assigned, Stored::new());
             self.context_checked_here.insert((file, func));
-        } else if let Some(at) = self.frames.iter().position(|frame| frame.tainted) {
+        } else if let Some(at) = self.frames.iter().position(|frame| frame.marks.tainted()) {
             let under = (at, self.frames[at].serial, (file, func), assigned);
             self.context_checked_under.push(under);
         }

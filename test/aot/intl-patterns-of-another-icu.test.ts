@@ -1,4 +1,4 @@
-// An executable may run with another ICU than the one that made its format patterns (test/aot/intl-fuzz/README.md). The programs
+// An executable may run with another ICU than the one that made its format patterns. The programs
 // about constant formatters print what plain Bun prints as built, with every pattern planned again by the ICU that runs, and with
 // every plan refused, when ICU formats everything.
 // The compiler makes no format patterns today: ICU formats everything at run time, and the option that these tests set does not exist.
@@ -8,12 +8,12 @@ import { join } from "node:path";
 import { run } from "./harness/run";
 import { test } from "./supported";
 
-const programs = join(import.meta.dir, "programs", "calls-fast-paths");
+const programs = join(import.meta.dir, "parallel", "calls-fast-paths");
 const names = [
   "intl-constant-formatters",
   "intl-constant-formatters-in-every-flow",
   "intl-constant-formatters-known-traps",
-  "intl-constant-formatters-when-the-time-zone-changes",
+  "intl-constant-formatters-time-zone",
   "to-locale-string-with-constant-arguments",
 ];
 const ways = { "as built": "0", "planned again": "1", "no plan": "2" };

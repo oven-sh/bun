@@ -3,7 +3,7 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isBuildKite, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { test as testCompiled } from "./supported";
 
 // The inner loop is int32 arithmetic with no calls, so nearly every sample has its pc in hot() itself.

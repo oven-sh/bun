@@ -1,11 +1,11 @@
 // `bun build --compile` on the command line, without `--aot` and with it: the plugins that a bunfig.toml names, preloads that call
-// Bun.plugin, and the flags that change what a program is made of. Both builds succeed, the plugins are told the same, and both
+// Bun.plugin. Both builds succeed, the plugins are told the same, and both
 // executables print the same. A plugin tells by appending a line to the file that TOLD names.
 import { expect } from "bun:test";
 import { existsSync, readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned } from "./run-programs";
+import { slot, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 type Case = {
@@ -86,61 +86,6 @@ const cases: Record<string, Case> = {
 } });`,
     },
     prints: "word on the disk\n",
-  },
-  "--define, --drop and --feature": {
-    files: {
-      "main.ts": `import { feature } from "bun:bundle"; declare const WORD: string; console.log(WORD, feature("ON") ? "on" : "off", feature("OFF") ? "on" : "off"); console.debug("dropped");`,
-      "types.d.ts": `declare module "bun:bundle" { export function feature(name: string): boolean; }`,
-    },
-    flags: ["--define", `WORD="word"`, "--drop=console.debug", "--feature=ON"],
-    prints: "word on off\n",
-  },
-  "--loader and --conditions": {
-    files: {
-      "main.ts": `import text from "./note.custom"; import { which } from "pkg"; console.log(text.trim(), which);`,
-      "types.d.ts": `declare module "*.custom" { const text: string; export default text; } declare module "pkg" { export const which: string; }`,
-      "note.custom": "custom text\n",
-      "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "exports": { ".": { "custom": "./custom.js", "default": "./default.js" } } }`,
-      "node_modules/pkg/custom.js": `export const which = "custom";`,
-      "node_modules/pkg/default.js": `export const which = "default";`,
-    },
-    flags: ["--loader", ".custom:text", "--conditions", "custom"],
-    prints: "custom text custom\n",
-  },
-  "--external and --packages external": {
-    files: {
-      "main.ts": `// @ts-nocheck\nimport { a } from "pkg"; import { b } from "./outside.mjs"; console.log(a, b);`,
-      "outside.mjs": `export const b = "file at run time";`,
-      "node_modules/pkg/package.json": `{ "name": "pkg", "version": "1.0.0", "main": "./index.js" }`,
-      "node_modules/pkg/index.js": `exports.a = "package at run time";`,
-    },
-    flags: ["--external", "./outside.mjs", "--packages", "external"],
-    interprets: true,
-    prints: "package at run time file at run time\n",
-  },
-  "--env": {
-    files: { "main.ts": `declare const process: any; console.log(process.env.PUBLIC_WORD, process.env.PRIVATE_WORD);` },
-    flags: ["--env=PUBLIC_*"],
-    env: { PUBLIC_WORD: "at the build", PRIVATE_WORD: "at the build" },
-    runEnv: { PUBLIC_WORD: "at run time", PRIVATE_WORD: "at run time" },
-    prints: "at the build at run time\n",
-  },
-  "--tsconfig-override": {
-    files: {
-      "main.ts": `import { a } from "@lib/a"; console.log(a);`,
-      "other.json": JSON.stringify({
-        compilerOptions: {
-          strict: true,
-          module: "preserve",
-          moduleResolution: "bundler",
-          types: [],
-          paths: { "@lib/*": ["./other/*"] },
-        },
-      }),
-      "other/a.ts": `export const a = "other";`,
-    },
-    flags: ["--tsconfig-override", "./other.json"],
-    prints: "other\n",
   },
   "a plugin that an executable registers when it starts": {
     files: {

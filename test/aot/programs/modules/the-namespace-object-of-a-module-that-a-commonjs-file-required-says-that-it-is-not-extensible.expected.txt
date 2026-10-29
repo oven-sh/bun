@@ -1,7 +1,0 @@
-true false false false
-true true false false
-false undefined false p,Symbol(Symbol.toStringTag)
-false undefined p,Symbol(Symbol.toStringTag)
-TypeError
-true false true
-true true p

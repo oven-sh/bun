@@ -4356,11 +4356,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let items_slice: &mut [js_ast::ClauseItem] = stmt.items.slice_mut();
         for i in 0..items_slice.len() {
-            // `ClauseItem` does not derive `Copy`; bit-copy via `ptr::read` —
-            // all fields are POD (`StoreStr`/`Loc`/`LocRef`).
-            // SAFETY: items_slice[i] is a live initialised `ClauseItem`; the
-            // original slot is overwritten or compacted below before any drop.
-            let mut item = unsafe { core::ptr::read(&raw const items_slice[i]) };
+            let mut item = items_slice[i];
             let name = self.load_name_from_ref(item.name.ref_);
             let r#ref = self.declare_symbol(js_ast::symbol::Kind::Import, item.name.loc, name)?;
             item.name.ref_ = r#ref;
@@ -7063,7 +7059,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         assign_target: js_ast::AssignTarget,
         is_delete_target: bool,
-        define_data: &DefineData,
+        define_data: &'a DefineData,
     ) -> Expr {
         // Callers gate on `!valueless()` before reaching here, so `value` is a
         // real Expr.Data by contract.
@@ -7074,15 +7070,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // contract so `handle_identifier`'s trailing `find_symbol`
                 // rebind runs against the *resolved* scope ref, not the
                 // define-time ref silently passed through with `None`.
-                let original_name: &[u8] = define_data
+                let original_name = define_data
                     .original_name()
                     .expect("identifier define must have original_name");
-                // SAFETY: `define_data` borrows `p.define: &'a Define`; the
-                // backing `original_name` bytes live for `'a`. Erase the local
-                // borrow lifetime to satisfy `handle_identifier`'s
-                // `Option<&'a [u8]>` param.
-                let original_name: &'a [u8] =
-                    unsafe { bun_collections::detach_lifetime(original_name) };
                 return self.handle_identifier(
                     loc,
                     id,
@@ -9976,18 +9966,7 @@ impl LowerUsingDeclarationsContext {
                 }
                 js_ast::StmtData::SExportClause(data) => {
                     // Merge export clauses together.
-                    // ClauseItem isn't `Clone` (POD-only fields, no derive);
-                    // shallow-copy via ptr::read.
-                    // arena-owned `StoreSlice<ClauseItem>` valid for 'a; the source
-                    // slot is never read again (this whole stmt is dropped via the
-                    // `continue` below) — safe to `ptr::read` each item.
-                    let items = data.items.slice();
-                    exports.reserve(items.len());
-                    for item in items {
-                        // SAFETY: arena-owned slot never read again (stmt dropped
-                        // via `continue` below); shallow move out is sound.
-                        exports.push(unsafe { core::ptr::read(item) });
-                    }
+                    exports.extend_from_slice(data.items.slice());
                     continue;
                 }
                 js_ast::StmtData::SFunction(_) => {

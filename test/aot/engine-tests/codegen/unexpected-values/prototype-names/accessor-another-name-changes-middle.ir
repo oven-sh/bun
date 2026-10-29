@@ -1,0 +1,127 @@
+# The loop reads an optional field, then an accessor of another name that the class has from the start, then the field again.
+# In one round the accessor, a conversion by valueOf or a conversion by toString puts the field's name on the prototype: the read right behind it must see that.
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="accessor-another-name-changes-middle.ts" displayPath="accessor-another-name-changes-middle.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Gauge" module=m0 position=481 constructor=f4
+data d0 root=Array{contents=undefined|null|L0} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = NewClass v6 layout=L0
+    v8 = FinishClass v7 layout=L0
+    v9 = Convert v8 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = Data data=d0
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v12 = Integer
+    v13 = Convert v12 declared={type=number}
+    Jump -> next b1(v13)
+  b1(v14: number):
+    LoopHint
+    v16 = Integer integer=3000
+    v17 = Less v14, v16
+    Branch v17 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v18):
+    v19 = PropGet v11 key="push"
+    v20 = Construct v9, -, v18 calleeName="Gauge"
+    v21 = Convert v20 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v22 = Call v19, v11, v21 calleeKey="push" calleeName="gauges.push"
+    v23 = Increment v18
+    v24 = Convert v23 declared={type=number}
+    Jump -> next b1(v24)
+  b3(v25):
+    v26 = Integer integer=5
+    v27 = ElemGet v11, v26
+    v28 = Convert v27 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v29 = Integer integer=10
+    v30 = Convert v29 declared={type=undefined|number}
+    PropSet v28, v30 key="peak"
+    v32 = NewArray v1, v3, v5 contents=undefined|null|function|f1|f2|f3
+    v33 = IteratorOpen v32
+    Jump -> next b4()
+  b4():
+    LoopHint
+    v35 = IteratorResume v33
+    v36 = ResultAt v35 index=1
+    Jump -> next b5()
+  b5() handler=b6():
+    v37 = Convert v36 declared={type=undefined|null|function|f1|f2|f3 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v38 = Builtin builtin=GlobalThis
+    v39 = PropGet v38 key="console" [isFreeName]
+    v40 = Convert v39 declared={type=builtin(Console) flags=[IsExpected]}
+    v41 = PropGet v40 key="log"
+    v42 = Convert v41 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v43 = PropGet v37 key="name"
+    v44 = Convert v43 declared={type=undefined|null|string} illTypedCause=Assertion
+    v45 = String string="afterwards:"
+    v46 = Integer integer=-1
+    v47 = Call v37, -, v11, v46 calleeName="run"
+    v48 = Convert v47 declared={type=number}
+    v49 = Integer
+    v50 = ElemGet v11, v49
+    v51 = Convert v50 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v52 = PropGet v51 key="peak"
+    v53 = Integer integer=5
+    v54 = ElemGet v11, v53
+    v55 = Convert v54 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v56 = PropGet v55 key="peak"
+    v57 = Convert v56 declared={type=number} illTypedCause=Assertion
+    v58 = Integer
+    v59 = Construct v9, -, v58 calleeName="Gauge"
+    v60 = Convert v59 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v61 = PropGet v60 key="peak"
+    v62 = Call v42, v40, v44, v45, v48, v52, v57, v61 calleeKey="log" calleeName="console.log"
+    v63 = PropGet v9 key="prototype"
+    v64 = Convert v63 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v65 = PropDelete v64 key="peak"
+    v66 = Builtin builtin=GlobalThis
+    v67 = PropGet v66 key="console" [isFreeName]
+    v68 = Convert v67 declared={type=builtin(Console) flags=[IsExpected]}
+    v69 = PropGet v68 key="log"
+    v70 = Convert v69 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v71 = PropGet v37 key="name"
+    v72 = Convert v71 declared={type=undefined|null|string} illTypedCause=Assertion
+    v73 = String string="gone again:"
+    v74 = Integer integer=-1
+    v75 = Call v37, -, v11, v74 calleeName="run"
+    v76 = Convert v75 declared={type=number}
+    v77 = Integer
+    v78 = ElemGet v11, v77
+    v79 = Convert v78 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v80 = PropGet v79 key="peak"
+    v81 = Call v70, v68, v72, v73, v76, v80 calleeKey="log" calleeName="console.log"
+    Jump -> next b4()
+  b6() role=IterationCleanup subject=v33:
+    v82 = CatchException
+    Rethrow v82
+}
+function f1 name="throughTheAccessor" module=m0 position=1006 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] functionTypes=[f5] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f2 name="throughValueOf" module=m0 position=1291 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] functionTypes=[f6] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="throughToString" module=m0 position=1550 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] functionTypes=[f7] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="Gauge" module=m0 position=549 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = Convert v1 declared={type=number}
+    PropSet v4, v5 key="id"
+    v7 = Undefined
+    Return v4
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f5]
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 220, patchpoints: 34, rare instructions: 54, polls: 2
+# CHECK-NEXT: end of function f0

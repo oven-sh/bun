@@ -10,10 +10,11 @@ use crate::elf::{
 use crate::elf_program_headers::{
     PAYLOAD_SEGMENT_COUNT, PT_BUN_PAYLOAD, PT_NULL, find_reserved_segment,
 };
+use crate::mapped_file::{ReadOnce, TemplateBytes};
 use crate::{align_up, read_struct, write_struct};
 
 pub enum Piece<'a> {
-    Bytes(&'a [u8]),
+    Bytes(ReadOnce<'a>),
     Zeros(u64),
     Length([u8; 8]),
 }
@@ -202,9 +203,9 @@ impl PayloadPlan {
     }
 }
 
-impl<'a> ElfFile<&'a mut [u8]> {
-    pub fn over(data: &'a mut [u8]) -> Result<ElfFile<&'a mut [u8]>, ElfError> {
-        validate_elf64_le(data)?;
+impl<'a> ElfFile<TemplateBytes<'a>> {
+    pub fn over(data: TemplateBytes<'a>) -> Result<ElfFile<TemplateBytes<'a>>, ElfError> {
+        validate_elf64_le(&data)?;
         Ok(ElfFile { data })
     }
 
@@ -218,17 +219,21 @@ impl<'a> ElfFile<&'a mut [u8]> {
         self.write_payload_headers(&plan);
 
         let head_end = plan.head_end();
-        let data: &'a [u8] = self.data;
+        let mut data = self.data.read_once();
+        let mut take_up_to = |end: u64| {
+            let end = usize::try_from(end).expect("int cast");
+            data.take_first(end - data.offset())
+        };
+        let head = take_up_to(head_end);
+        drop(take_up_to(plan.tail_start));
+        let tail = take_up_to(plan.tail_end);
         Ok([
-            Piece::Bytes(&data[..usize::try_from(head_end).expect("int cast")]),
+            Piece::Bytes(head),
             Piece::Zeros(plan.file_offset - head_end),
             Piece::Length((payload.len() as u64).to_le_bytes()),
-            Piece::Bytes(payload),
+            Piece::Bytes(ReadOnce::kept(payload)),
             Piece::Zeros(plan.aligned_size - plan.content_size),
-            Piece::Bytes(
-                &data[usize::try_from(plan.tail_start).expect("int cast")
-                    ..usize::try_from(plan.tail_end).expect("int cast")],
-            ),
+            Piece::Bytes(tail),
         ])
     }
 }
@@ -849,10 +854,10 @@ mod tests {
         let mut bytes = Vec::new();
         for piece in pieces {
             let start = bytes.len();
-            match piece {
+            match &piece {
                 Piece::Bytes(slice) => bytes.extend_from_slice(slice),
-                Piece::Zeros(count) => bytes.resize(start + count as usize, 0),
-                Piece::Length(length) => bytes.extend_from_slice(&length),
+                Piece::Zeros(count) => bytes.resize(start + *count as usize, 0),
+                Piece::Length(length) => bytes.extend_from_slice(length),
             }
             assert_eq!(piece.len(), (bytes.len() - start) as u64);
         }
@@ -861,7 +866,7 @@ mod tests {
 
     fn write_in_pieces(template: &[u8], payload: &[u8]) -> (Result<Vec<u8>, ElfError>, Vec<u8>) {
         let mut bytes = template.to_vec();
-        let written = ElfFile::over(&mut bytes)
+        let written = ElfFile::over(TemplateBytes::Kept(&mut bytes))
             .and_then(|elf| elf.bun_section_in_pieces(payload, None))
             .map(concatenate);
         (written, bytes)
@@ -869,7 +874,7 @@ mod tests {
 
     fn write_with_code(template: &[u8], payload: &[u8], code: Range<u64>) -> Vec<u8> {
         let mut bytes = template.to_vec();
-        let elf = ElfFile::over(&mut bytes).unwrap();
+        let elf = ElfFile::over(TemplateBytes::Kept(&mut bytes)).unwrap();
         concatenate(elf.bun_section_in_pieces(payload, Some(code)).unwrap())
     }
 

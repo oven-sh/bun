@@ -18,8 +18,8 @@ export type Rejection = {
   needs?: string;
   /** The loader rejects it though the file that it names neither imports nor throws anything. */
   isOfTheLoaderAlone?: true;
-  /** The message names the folder of the program, which an executable does not have. */
-  messageNamesAPath?: true;
+  /** The message names the folder of the program, which an executable does not have, or quotes the source, which docs/compiler/compatibility.mdx says an executable does otherwise. */
+  messageDiffers?: true;
   /** It begins its work in a then() of its own. */
   beginsInItsOwnThen?: true;
 };
@@ -81,7 +81,7 @@ const byTheLoader: Rejection[] = [
   {
     promise: `import("./nothing-" + made("here") + ".mjs")`,
     needs: `const made = text => text.split("").join("");`,
-    messageNamesAPath: true,
+    messageDiffers: true,
   },
   { promise: `import(Symbol("name"))` },
   { promise: `import("data:text/javascript,let let = 1 +")` },
@@ -134,7 +134,7 @@ const byBuiltIns: Rejection[] = [
 ];
 
 const byTheLanguage: Rejection[] = [
-  { promise: `(async value => value.member)(null)` },
+  { promise: `(async value => value.member)(null)`, messageDiffers: true },
   { promise: `(async (value = null.member) => value)()` },
   { promise: `(async ({ member }) => member)()` },
   { promise: `(async value => value())(undefined)` },
@@ -204,7 +204,7 @@ const byTheHost: Rejection[] = [
   },
   { promise: `WebAssembly.instantiate(new Uint8Array([1, 2, 3]))` },
   { promise: `WebAssembly.compile(new Uint8Array([1, 2, 3]))` },
-  { promise: `WebAssembly.instantiate(5)` },
+  { promise: `WebAssembly.instantiate(5)`, messageDiffers: true },
   {
     promise: `WebAssembly.instantiate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 4, 1, 96, 0, 0, 2, 7, 1, 1, 97, 1, 98, 0, 0]))`,
   },
@@ -280,7 +280,7 @@ const byTextOfTheRun: Rejection[] = [
   { promise: `(0, eval)('Promise.reject(new EvalError("of the text"))')` },
   { promise: `(0, eval)("(async () => null.member)()")` },
   { promise: `new Function("return Promise.all(5)")()` },
-  { promise: `new Function("value", "return (async () => value.member)()")(null)` },
+  { promise: `new Function("value", "return (async () => value.member)()")(null)`, messageDiffers: true },
   {
     promise: `runInNewContext('Promise.reject(new EvalError("of another realm"))')`,
     needs: `import { runInNewContext } from "node:vm";`,
@@ -417,7 +417,7 @@ export function nameOf(rejection: Rejection, handler: Handler, look: string) {
 
 export function generate(rejection: Rejection, handler: Handler, look: string) {
   const chosen = (look === everyLook ? looks : looks.filter(([name]) => name === look)).filter(
-    ([name]) => !rejection.messageNamesAPath || !looksThatShowTheMessage.includes(name),
+    ([name]) => !rejection.messageDiffers || !looksThatShowTheMessage.includes(name),
   );
   const seen = chosen
     .map(([name, expression]) => `console.log(${JSON.stringify(name + ":")}, ${expression("error")});`)

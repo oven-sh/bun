@@ -1,6 +1,4 @@
-// Programs of three to seven files in which ES modules and CommonJS modules need each other, in cycles too. Each is run by plain Bun and as an executable, and both have to print the same.
-//
-//   bun modules-of-both-kinds-that-need-each-other.ts --bun <bun> --work <folder> --out <folder> [--seconds 300] [--jobs 8] [--seed 1] [--flags "<flags of the build>"] [--node <node>] [--awaits] [--print <seed>]
+// Programs of three to seven files in which ES modules and CommonJS modules need each other, in cycles too. sources/modules-of-both-kinds-that-need-each-other.ts draws them.
 //
 //   a module      .mjs, .cjs, .js that is read as one or the other by what it holds, .ts with imports (not type-checked: what it reads of the others has no declared type)
 //   an ES module  takes the default, names, the namespace, or nothing; hands names on (`export { a } from`, `export * from`); imports by `import()` at the top or in a function that runs at the end
@@ -9,9 +7,9 @@
 //   an edge       goes to any module: on (a tree), back (a cycle), to the module itself, to the entry point
 //   what is read  at once, while the modules are still being evaluated: the kind of the value, its keys, a name; and again at the end, when all of them are through
 //
-//   --awaits      half of the ES modules await at their top, one to three times: a value, a settled promise, a thenable, a microtask, a tick, a timer, `for await`, an await that is never reached.
+//   with awaits   half of the ES modules await at their top, one to three times: a value, a settled promise, a thenable, a microtask, a tick, a timer, `for await`, an await that is never reached.
 //                 A CommonJS module that requires such a module gets it or an error, as in plain Bun. A program with `import()` at the top of a module is passed over: how soon a file
-//                 is loaded is not specified, and beside an await it shows. A graph that prints something else without its awaits too is counted and is no finding
+//                 is loaded is not specified, and beside an await it shows.
 //
 // Every read stands in a try, and an error prints its name alone: the words of an error are not compared.
 //
@@ -19,22 +17,9 @@
 // So is one in which the two part where a module that threw is asked for again, by itself or through a module that needs it, and the executable throws: plain Bun answers with the namespace object there if an ES module imported the file while it ran.
 // Where nobody got the error, an executable answers with that object too.
 //
-// Plain Bun reads files on several threads, and the order in which the texts arrive can show in what a program prints. The reference reads on one thread; an executable that prints what plain Bun prints on several, in one of forty runs, is counted and is no finding.
-//
-// Where the two part and --node is given, Node is asked: an executable that prints what Node prints is counted and is no finding.
-//
-// A finding: a command that ends by a signal or runs out of its clock, a build that is refused, an executable that prints something else. One folder a finding in --out, at most three of one kind and first difference.
-import { spawn } from "bun";
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
-import { join } from "path";
+// Plain Bun reads files on several threads, and the order in which the texts arrive can show in what a program prints: the reference reads on one thread, and an executable
+// that prints what plain Bun prints on several, in one of forty runs, is as right.
 import { Random } from "./random";
-
-const argument = (name: string, otherwise?: string) => {
-  const at = process.argv.indexOf("--" + name);
-  if (at > 0) return process.argv[at + 1];
-  if (otherwise === undefined) throw new Error(`--${name} is missing`);
-  return otherwise;
-};
 
 type Kind = "es" | "commonjs";
 interface Module {
@@ -205,131 +190,23 @@ function commonJSModule(random: Random, module: Module, modules: Module[]): stri
   return [...lines, ...parts, `say("${name} ends");`, ""].join("\n");
 }
 
-if (import.meta.main) {
-  if (process.argv.includes("--print")) {
-    const drawn = program(Number(argument("print")), process.argv.includes("--awaits"));
-    console.log(`// ${drawn.notes}\n// entry: ${drawn.entry}`);
-    for (const [file, text] of Object.entries(drawn.files)) if (file !== "show.cjs") console.log(`// ---- ${file}\n${text}`);
-    process.exit(0);
-  }
-  const bun = argument("bun");
-  const work = argument("work");
-  const out = argument("out");
-  const until = Date.now() + Number(argument("seconds", "300")) * 1000;
-  const firstSeed = Number(argument("seed", "1"));
-  const flags = argument("flags", "").split(/\s+/).filter(Boolean);
-  const node = argument("node", "");
-  const awaits = process.argv.includes("--awaits");
+// The next require() of a CommonJS module that threw runs it again under plain Bun, and throws the same error in an executable: docs/compiler/compatibility.mdx, "The module cache".
+export const runsModuleAgain = (out: string) => {
+  const begun = out.split("\n").filter(line => /^m\d+ begins$/.test(line));
+  return new Set(begun).size < begun.length;
+};
 
-  type Ended = { text: string; out: string; code: number | null; signal: string | number | null; late: boolean };
-  const run = async (command: string[], cwd: string, seconds: number, environment: Record<string, string> = {}): Promise<Ended> => {
-    const limited = ["/bin/sh", "-c", `prlimit --pid $$ --core=1:1 2> /dev/null || ulimit -c 0; exec "$@"`, "--", ...command];
-    const child = spawn(limited, { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, NO_COLOR: "1", ...environment } });
-    let late = false;
-    const timer = setTimeout(() => ((late = true), child.kill(9)), seconds * 1000);
-    const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
-    clearTimeout(timer);
-    return { text: stdout + stderr, out: stdout, code, signal: late ? null : child.signalCode, late };
-  };
-
-  const counts = new Map<string, number>();
-  const count = (what: string) => counts.set(what, (counts.get(what) ?? 0) + 1);
-  let findings = 0;
-  const shapeOf = (text: string) => text.replace(/\bm\d+(_\d+)?\b/g, "m").replace(/\d+/g, "N").replace(/[^\w{}:.]+/g, "-").slice(0, 90);
-  function finding(kind: string, folder: string, seed: number, notes: string, said: string, shape = "") {
-    findings++;
-    const group = `${kind}${shape ? " " + shapeOf(shape) : ""}`.replace(/[^\w{}:.-]+/g, "-");
-    count(`FINDING ${group}`);
-    if (readdirSync(out).filter(name => name.startsWith(group + "-seed-")).length >= 3) return;
-    const target = join(out, `${group}-seed-${seed}`);
-    rmSync(join(folder, "app"), { force: true });
-    cpSync(folder, target, { recursive: true });
-    writeFileSync(join(target, "finding.txt"), `${kind}\nseed ${seed}\nflags ${flags.join(" ")}\n${notes}\n\n${said.slice(0, 6000)}\n`);
-  }
-
-  // The next require() of a CommonJS module that threw runs it again under plain Bun, and throws the same error in an executable: docs/compiler/compatibility.mdx, "The module cache".
-  const runsModuleAgain = (out: string) => {
-    const begun = out.split("\n").filter(line => /^m\d+ begins$/.test(line));
-    return new Set(begun).size < begun.length;
-  };
-
-  // Where an ES module imported the file while it ran, plain Bun runs nothing again: the next request gets the namespace object of that import. An executable does the same where nobody got the error. Where somebody did it throws the same error,
-  // also where the request is for a module that needs the file. Where nobody catches the error, the module that goes on under plain Bun never ends in the executable.
-  const throwsForModuleThatThrew = (plain: string, compiled: string, notes: string) => {
-    const [expected, got] = [plain.split("\n"), compiled.split("\n")];
-    const at = expected.findIndex((line, index) => line !== got[index]);
-    const begun = expected.slice(0, at).flatMap(line => /^(m\d+) begins$/.exec(line)?.[1] ?? []);
-    const threw = new Set(begun.filter(name => !expected.includes(`${name} ends`)));
-    const needs = new Map(notes.split(" . ").map(each => [each.split(".")[0], each.split(" > ")[1].split(" ")]));
-    const reaches = (from: string, seen = new Set<string>()): boolean => threw.has(from) || (!seen.has(from) && (seen.add(from), (needs.get(from) ?? []).some(to => reaches(to, seen))));
-    const caught = /^m\d+ (?:early|late|late require|requires|then|late import) (m\d+)\b.* throws \w+$/.exec(got[at] ?? "")?.[1];
-    const goesOn = /^(m\d+) /.exec(expected[at] ?? "")?.[1];
-    const asked = caught ?? (goesOn !== undefined && !got.includes(`${goesOn} ends`) ? goesOn : undefined);
-    return asked !== undefined && reaches(asked);
-  };
-
-  // Whether the same graph without its awaits prints what plain Bun prints.
-  async function agreesWithoutAwaits(seed: number, job: number): Promise<boolean> {
-    const folder = join(work, `job-${job}-without`);
-    rmSync(folder, { recursive: true, force: true });
-    mkdirSync(folder, { recursive: true });
-    const { entry, files } = program(seed);
-    for (const [file, text] of Object.entries(files)) writeFileSync(join(folder, file), text);
-    const plain = await run([bun, "--no-install", entry], folder, 30, { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" });
-    const build = await run([bun, "build", "--compile", "--aot", "--aot-threads=1", ...flags, `./${entry}`, "--outfile", "app"], folder, 200);
-    const compiled = build.code === 0 ? await run(["./app"], folder, 200) : undefined;
-    rmSync(folder, { recursive: true, force: true });
-    return compiled !== undefined && compiled.out === plain.out && compiled.code === plain.code;
-  }
-
-  async function one(seed: number, job: number) {
-    const folder = join(work, "job-" + job);
-    rmSync(folder, { recursive: true, force: true });
-    mkdirSync(folder, { recursive: true });
-    const { entry, files, notes } = program(seed, awaits);
-    if (awaits && Object.values(files).some(text => /^import\(/m.test(text))) return void count("passed over: import() at the top of a module");
-    if (awaits && !Object.values(files).some(text => /^(.* )?(for )?await /m.test(text.split("setTimeout(async")[0]))) return void count("passed over: no module awaits");
-    for (const [file, text] of Object.entries(files)) writeFileSync(join(folder, file), text);
-    // The reference transpiles on one thread: the texts are read in the order in which they are asked for.
-    const plain = await run([bun, "--no-install", entry], folder, 30, { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" });
-    if (plain.signal) return finding("plain Bun ends by a signal", folder, seed, notes, plain.text);
-    if (plain.late) return void count("plain Bun is not through in its time");
-    const build = await run([bun, "build", "--compile", "--aot", "--aot-threads=1", ...flags, `./${entry}`, "--outfile", "app"], folder, 200);
-    if (build.late) return finding("the build hangs", folder, seed, notes, build.text);
-    if (build.signal || /\bpanic(ked)?\b|ASSERTION FAILED|internal compiler error/.test(build.text)) return finding("the build ends badly", folder, seed, notes, build.text, /^.*(panic|ASSERTION FAILED|internal compiler error).*$/m.exec(build.text)?.[0] ?? String(build.signal));
-    if (build.code !== 0 || !existsSync(join(folder, "app"))) {
-      // What plain Bun refuses as well is no program.
-      if (plain.code !== 0 && !plain.out.includes("begins")) return void count("refused by both");
-      return finding("the build is refused", folder, seed, notes, build.text, /^.*error.*$/im.exec(build.text)?.[0] ?? "");
-    }
-    let compiled = await run(["./app"], folder, 30);
-    // A machine under load makes a short run long: what is not through in its time gets five times as long, once.
-    if (compiled.late) compiled = await run(["./app"], folder, 200);
-    if (compiled.signal) return finding("the executable ends by a signal", folder, seed, notes, `${compiled.signal}\n${compiled.text}`, String(compiled.signal));
-    if (compiled.late) return finding("the executable hangs", folder, seed, notes, compiled.text);
-    if (compiled.out === plain.out && compiled.code === plain.code) return void count("as plain");
-    if (runsModuleAgain(plain.out)) return void count("a CommonJS module that threw runs again under plain Bun");
-    if (throwsForModuleThatThrew(plain.out, compiled.out, notes)) return void count("a module that threw is asked for again and the executable throws");
-    for (let again = 0; again < 40; again++) {
-      const onSeveralThreads = await run([bun, "--no-install", entry], folder, 30);
-      if (onSeveralThreads.out === compiled.out && onSeveralThreads.code === compiled.code) return void count("as plain Bun where it reads files on several threads");
-    }
-    if (node && !Object.keys(files).some(file => file.endsWith(".ts")) && (await run([node, entry], folder, 30)).out === compiled.out) return void count("plain Bun is by itself: the executable prints what Node prints");
-    if (awaits && !(await agreesWithoutAwaits(seed, job))) return void count("prints something else without its awaits too");
-    const [expected, got] = [plain.out.split("\n"), compiled.out.split("\n")];
-    const at = expected.findIndex((line, index) => line !== got[index]);
-    finding("the executable prints something else", folder, seed, notes, `exit codes ${plain.code} ${compiled.code}\nline ${at + 1}\nplain:    ${expected[at]}\ncompiled: ${got[at]}\n\n== plain\n${plain.text}\n== compiled\n${compiled.text}`, `${expected[at] ?? "the end"} | ${got[at] ?? "the end"}`);
-  }
-
-  mkdirSync(out, { recursive: true });
-  let next = firstSeed;
-  await Promise.all(
-    Array.from({ length: Number(argument("jobs", "8")) }, async (_, job) => {
-      while (Date.now() < until) await one(next++, job);
-      rmSync(join(work, "job-" + job), { recursive: true, force: true });
-    }),
-  );
-  console.log(`programs ${next - firstSeed} | findings ${findings}`);
-  for (const [what, times] of [...counts].sort((a, b) => b[1] - a[1])) console.log(String(times).padStart(6), what);
-  process.exit(0);
-}
+// Where an ES module imported the file while it ran, plain Bun runs nothing again: the next request gets the namespace object of that import. An executable does the same where nobody got the error. Where somebody did it throws the same error,
+// also where the request is for a module that needs the file. Where nobody catches the error, the module that goes on under plain Bun never ends in the executable.
+export const throwsForModuleThatThrew = (plain: string, compiled: string, notes: string) => {
+  const [expected, got] = [plain.split("\n"), compiled.split("\n")];
+  const at = expected.findIndex((line, index) => line !== got[index]);
+  const begun = expected.slice(0, at).flatMap(line => /^(m\d+) begins$/.exec(line)?.[1] ?? []);
+  const threw = new Set(begun.filter(name => !expected.includes(`${name} ends`)));
+  const needs = new Map(notes.split(" . ").map(each => [each.split(".")[0], each.split(" > ")[1].split(" ")]));
+  const reaches = (from: string, seen = new Set<string>()): boolean => threw.has(from) || (!seen.has(from) && (seen.add(from), (needs.get(from) ?? []).some(to => reaches(to, seen))));
+  const caught = /^m\d+ (?:early|late|late require|requires|then|late import) (m\d+)\b.* throws \w+$/.exec(got[at] ?? "")?.[1];
+  const goesOn = /^(m\d+) /.exec(expected[at] ?? "")?.[1];
+  const asked = caught ?? (goesOn !== undefined && !got.includes(`${goesOn} ends`) ? goesOn : undefined);
+  return asked !== undefined && reaches(asked);
+};

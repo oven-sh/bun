@@ -91,7 +91,7 @@ impl Order {
                     }
                 }
                 TestScheduleEntry::TestCallback(test_callback) => {
-                    self.generate_order_test(NonNull::from(&mut **test_callback))?
+                    self.generate_order_test(test_callback)?
                 }
             }
         }
@@ -145,20 +145,14 @@ impl Order {
         Ok(())
     }
 
-    /// # Safety
-    /// `current` must point to a live, uniquely-owned `ExecutionEntry` (Box-owned in
-    /// `DescribeScope.entries`) with mutable provenance for the duration of this call. The
-    /// `base.parent` chain reachable from `*current` must consist of live `DescribeScope` nodes.
-    pub(crate) fn generate_order_test(&mut self, current: NonNull<ExecutionEntry>) -> JsResult<()> {
-        // Stacked Borrows: `current` is reborrowed as `&mut` inside `list.append` and the skip-past
-        // loop below, so we never hold a long-lived `&mut` to it across those calls — each access
-        // dereferences the pointer locally.
-        // SAFETY: caller-guaranteed live `ExecutionEntry` (see safety doc above); read-only field access.
-        debug_assert!(unsafe { current.as_ref().base.has_callback == current.as_ref().callback.is_some() });
-        // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
-        let use_each_hooks = unsafe { current.as_ref().base.has_callback };
-        // SAFETY: caller-guaranteed live `ExecutionEntry` (see above); read-only field access.
-        let first_parent: Option<*mut DescribeScope> = unsafe { current.as_ref().base.parent };
+    pub(crate) fn generate_order_test(&mut self, current: &mut ExecutionEntry) -> JsResult<()> {
+        debug_assert!(current.base.has_callback == current.callback.is_some());
+        let use_each_hooks = current.base.has_callback;
+        let first_parent: Option<*mut DescribeScope> = current.base.parent;
+        let (retry_count, repeat_count, concurrent) =
+            (current.retry_count, current.repeat_count, current.base.concurrent);
+        // `list.append` and the skip-past loop below reborrow the entry through this pointer.
+        let current = NonNull::from(current);
 
         let mut list = EntryList::default();
 
@@ -221,12 +215,6 @@ impl Order {
         }
 
         // add these as a single sequence
-        // SAFETY: `current` still valid; re-derive fields locally so no `&mut` outlives the
-        // competing reborrows performed by `list.append` / the skip-past loop above.
-        let (retry_count, repeat_count, concurrent) = unsafe {
-            let cur = current.as_ref();
-            (cur.retry_count, cur.repeat_count, cur.base.concurrent)
-        };
         let sequences_start = self.sequences.len();
         self.sequences.push(ExecutionSequence::init(
             list.first.and_then(NonNull::new),

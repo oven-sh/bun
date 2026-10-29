@@ -1,0 +1,702 @@
+# Stack-allocated closures in functions with many live values.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="stack-closures-under-register-pressure.ts" displayPath="stack-closures-under-register-pressure.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent}}] ownFieldCount=1
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent}}, {key=@"binding.1" declared={type=number|absent}}] ownFieldCount=2
+variable g0 name="calls" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Integer integer=3
+    v5 = Call v1, -, v4 calleeName="first"
+    v6 = Convert v5 declared={type=number}
+    v7 = String string="\n"
+    v8 = Add v6, v7
+    v9 = Convert v8 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v10 = Integer
+    v11 = Convert v10 declared={type=number}
+    Jump -> next b1(v9, v11)
+  b1(v12: undefined|null|string, v13: number):
+    LoopHint
+    v15 = Integer integer=60
+    v16 = Less v13, v15
+    Branch v16 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v17):
+    v18 = Call v3, -, v17 calleeName="pressure"
+    v19 = Convert v18 declared={type=number}
+    v20 = String string="\n"
+    v21 = Add v19, v20
+    v22 = Add v12, v21
+    v23 = Convert v22 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v24 = Increment v17
+    v25 = Convert v24 declared={type=number}
+    Jump -> next b1(v23, v25)
+  b3(v26):
+    v27 = Undefined
+    Return v27
+}
+function f1 name="calls" module=m0 position=79 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f4|f5|f6|f7|f8|f9|f10|f11, v1: number):
+    v2 = Call v0, -, v1 calleeName="f"
+    v3 = Convert v2 declared={type=number}
+    v4 = Integer integer=1
+    v5 = Add v1, v4
+    v6 = Call v0, -, v5 calleeName="f"
+    v7 = Convert v6 declared={type=number}
+    v8 = Add v3, v7
+    v9 = Convert v8 declared={type=number}
+    Return v9
+}
+function f2 name="first" module=m0 position=204 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = NewObject layout=L0
+    v2 = NewClosure v1 function=f4
+    v3 = Convert v2 declared={type=undefined|null|function|f4 flags=[OmitsNull, OmitsUndefined]}
+    v4 = GetModuleVariable variable=g0
+    v5 = Integer integer=1
+    v6 = Call v4, -, v3, v5 calleeName="calls"
+    v7 = Convert v6 declared={type=number}
+    v8 = GetModuleVariable variable=g0
+    v9 = Integer integer=2
+    v10 = Call v8, -, v3, v9 calleeName="calls"
+    v11 = Convert v10 declared={type=number}
+    v12 = Add v7, v11
+    v13 = Convert v12 declared={type=number}
+    Return v13
+}
+function f3 name="pressure" module=m0 position=355 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = NewObject layout=L1
+    v2 = Convert v0 declared={type=number}
+    PutEnvironmentField v1, v2 layout=L1
+    v4 = Double number=0.25
+    v5 = Add v0, v4
+    v6 = Convert v5 declared={type=number}
+    PutEnvironmentField v1, v6 layout=L1 field=1
+    v8 = Integer integer=3
+    v9 = Mul v0, v8
+    v10 = Integer integer=1
+    v11 = Add v9, v10
+    v12 = Integer
+    v13 = BitOr v11, v12
+    v14 = Convert v13 declared={type=number}
+    v15 = Integer integer=4
+    v16 = Mul v0, v15
+    v17 = Integer integer=8
+    v18 = Add v16, v17
+    v19 = Integer
+    v20 = BitOr v18, v19
+    v21 = Convert v20 declared={type=number}
+    v22 = Integer integer=5
+    v23 = Mul v0, v22
+    v24 = Integer integer=15
+    v25 = Add v23, v24
+    v26 = Integer
+    v27 = BitOr v25, v26
+    v28 = Convert v27 declared={type=number}
+    v29 = Integer integer=6
+    v30 = Mul v0, v29
+    v31 = Integer integer=22
+    v32 = Add v30, v31
+    v33 = Integer
+    v34 = BitOr v32, v33
+    v35 = Convert v34 declared={type=number}
+    v36 = Integer integer=7
+    v37 = Mul v0, v36
+    v38 = Integer integer=29
+    v39 = Add v37, v38
+    v40 = Integer
+    v41 = BitOr v39, v40
+    v42 = Convert v41 declared={type=number}
+    v43 = Integer integer=8
+    v44 = Mul v0, v43
+    v45 = Integer integer=36
+    v46 = Add v44, v45
+    v47 = Integer
+    v48 = BitOr v46, v47
+    v49 = Convert v48 declared={type=number}
+    v50 = Integer integer=9
+    v51 = Mul v0, v50
+    v52 = Integer integer=43
+    v53 = Add v51, v52
+    v54 = Integer
+    v55 = BitOr v53, v54
+    v56 = Convert v55 declared={type=number}
+    v57 = Integer integer=10
+    v58 = Mul v0, v57
+    v59 = Integer integer=50
+    v60 = Add v58, v59
+    v61 = Integer
+    v62 = BitOr v60, v61
+    v63 = Convert v62 declared={type=number}
+    v64 = Integer integer=11
+    v65 = Mul v0, v64
+    v66 = Integer integer=57
+    v67 = Add v65, v66
+    v68 = Integer
+    v69 = BitOr v67, v68
+    v70 = Convert v69 declared={type=number}
+    v71 = Integer integer=12
+    v72 = Mul v0, v71
+    v73 = Integer integer=64
+    v74 = Add v72, v73
+    v75 = Integer
+    v76 = BitOr v74, v75
+    v77 = Convert v76 declared={type=number}
+    v78 = Integer integer=13
+    v79 = Mul v0, v78
+    v80 = Integer integer=71
+    v81 = Add v79, v80
+    v82 = Integer
+    v83 = BitOr v81, v82
+    v84 = Convert v83 declared={type=number}
+    v85 = Integer integer=14
+    v86 = Mul v0, v85
+    v87 = Integer integer=78
+    v88 = Add v86, v87
+    v89 = Integer
+    v90 = BitOr v88, v89
+    v91 = Convert v90 declared={type=number}
+    v92 = Integer integer=15
+    v93 = Mul v0, v92
+    v94 = Integer integer=85
+    v95 = Add v93, v94
+    v96 = Integer
+    v97 = BitOr v95, v96
+    v98 = Convert v97 declared={type=number}
+    v99 = Integer integer=16
+    v100 = Mul v0, v99
+    v101 = Integer integer=92
+    v102 = Add v100, v101
+    v103 = Integer
+    v104 = BitOr v102, v103
+    v105 = Convert v104 declared={type=number}
+    v106 = Integer integer=17
+    v107 = Mul v0, v106
+    v108 = Integer integer=99
+    v109 = Add v107, v108
+    v110 = Integer
+    v111 = BitOr v109, v110
+    v112 = Convert v111 declared={type=number}
+    v113 = Integer integer=18
+    v114 = Mul v0, v113
+    v115 = Integer integer=106
+    v116 = Add v114, v115
+    v117 = Integer
+    v118 = BitOr v116, v117
+    v119 = Convert v118 declared={type=number}
+    v120 = Integer integer=19
+    v121 = Mul v0, v120
+    v122 = Integer integer=113
+    v123 = Add v121, v122
+    v124 = Integer
+    v125 = BitOr v123, v124
+    v126 = Convert v125 declared={type=number}
+    v127 = Integer integer=20
+    v128 = Mul v0, v127
+    v129 = Integer integer=120
+    v130 = Add v128, v129
+    v131 = Integer
+    v132 = BitOr v130, v131
+    v133 = Convert v132 declared={type=number}
+    v134 = Integer integer=21
+    v135 = Mul v0, v134
+    v136 = Integer integer=127
+    v137 = Add v135, v136
+    v138 = Integer
+    v139 = BitOr v137, v138
+    v140 = Convert v139 declared={type=number}
+    v141 = Integer integer=22
+    v142 = Mul v0, v141
+    v143 = Integer integer=134
+    v144 = Add v142, v143
+    v145 = Integer
+    v146 = BitOr v144, v145
+    v147 = Convert v146 declared={type=number}
+    v148 = Double number=0.1
+    v149 = Mul v0, v148
+    v150 = Double number=0.5
+    v151 = Add v149, v150
+    v152 = Convert v151 declared={type=number}
+    v153 = Double number=0.2
+    v154 = Mul v0, v153
+    v155 = Double number=1.5
+    v156 = Add v154, v155
+    v157 = Convert v156 declared={type=number}
+    v158 = Double number=0.3
+    v159 = Mul v0, v158
+    v160 = Double number=2.5
+    v161 = Add v159, v160
+    v162 = Convert v161 declared={type=number}
+    v163 = Double number=0.4
+    v164 = Mul v0, v163
+    v165 = Double number=3.5
+    v166 = Add v164, v165
+    v167 = Convert v166 declared={type=number}
+    v168 = Double number=0.5
+    v169 = Mul v0, v168
+    v170 = Double number=4.5
+    v171 = Add v169, v170
+    v172 = Convert v171 declared={type=number}
+    v173 = Double number=0.6
+    v174 = Mul v0, v173
+    v175 = Double number=5.5
+    v176 = Add v174, v175
+    v177 = Convert v176 declared={type=number}
+    v178 = Double number=0.7
+    v179 = Mul v0, v178
+    v180 = Double number=6.5
+    v181 = Add v179, v180
+    v182 = Convert v181 declared={type=number}
+    v183 = Double number=0.8
+    v184 = Mul v0, v183
+    v185 = Double number=7.5
+    v186 = Add v184, v185
+    v187 = Convert v186 declared={type=number}
+    v188 = Double number=0.9
+    v189 = Mul v0, v188
+    v190 = Double number=8.5
+    v191 = Add v189, v190
+    v192 = Convert v191 declared={type=number}
+    v193 = Double number=0.1
+    v194 = Mul v0, v193
+    v195 = Double number=9.5
+    v196 = Add v194, v195
+    v197 = Convert v196 declared={type=number}
+    v198 = NewClosure function=f5
+    v199 = Convert v198 declared={type=undefined|null|function|f5 flags=[OmitsNull, OmitsUndefined]}
+    v200 = NewClosure v1 function=f6
+    v201 = Convert v200 declared={type=undefined|null|function|f6 flags=[OmitsNull, OmitsUndefined]}
+    v202 = NewClosure v1, v35 function=f7
+    v203 = Convert v202 declared={type=undefined|null|function|f7 flags=[OmitsNull, OmitsUndefined]}
+    v204 = NewClosure v1, v42, v49 function=f8
+    v205 = Convert v204 declared={type=undefined|null|function|f8 flags=[OmitsNull, OmitsUndefined]}
+    v206 = NewClosure v1, v56, v63, v70 function=f9
+    v207 = Convert v206 declared={type=undefined|null|function|f9 flags=[OmitsNull, OmitsUndefined]}
+    v208 = NewClosure v1, v77, v84, v91, v98 function=f10
+    v209 = Convert v208 declared={type=undefined|null|function|f10 flags=[OmitsNull, OmitsUndefined]}
+    v210 = NewClosure v1, v167, v172 function=f11
+    v211 = Convert v210 declared={type=undefined|null|function|f11 flags=[OmitsNull, OmitsUndefined]}
+    v212 = GetModuleVariable variable=g0
+    v213 = Integer integer=1
+    v214 = Call v212, -, v199, v213 calleeName="calls"
+    v215 = Convert v214 declared={type=number}
+    v216 = GetModuleVariable variable=g0
+    v217 = Integer integer=2
+    v218 = Call v216, -, v199, v217 calleeName="calls"
+    v219 = Convert v218 declared={type=number}
+    v220 = Add v215, v219
+    v221 = GetModuleVariable variable=g0
+    v222 = Integer integer=1
+    v223 = Call v221, -, v201, v222 calleeName="calls"
+    v224 = Convert v223 declared={type=number}
+    v225 = Add v220, v224
+    v226 = GetModuleVariable variable=g0
+    v227 = Integer integer=2
+    v228 = Call v226, -, v201, v227 calleeName="calls"
+    v229 = Convert v228 declared={type=number}
+    v230 = Add v225, v229
+    v231 = GetModuleVariable variable=g0
+    v232 = Integer integer=1
+    v233 = Call v231, -, v203, v232 calleeName="calls"
+    v234 = Convert v233 declared={type=number}
+    v235 = Add v230, v234
+    v236 = GetModuleVariable variable=g0
+    v237 = Integer integer=2
+    v238 = Call v236, -, v203, v237 calleeName="calls"
+    v239 = Convert v238 declared={type=number}
+    v240 = Add v235, v239
+    v241 = GetModuleVariable variable=g0
+    v242 = Integer integer=1
+    v243 = Call v241, -, v205, v242 calleeName="calls"
+    v244 = Convert v243 declared={type=number}
+    v245 = Add v240, v244
+    v246 = GetModuleVariable variable=g0
+    v247 = Integer integer=2
+    v248 = Call v246, -, v205, v247 calleeName="calls"
+    v249 = Convert v248 declared={type=number}
+    v250 = Add v245, v249
+    v251 = GetModuleVariable variable=g0
+    v252 = Integer integer=1
+    v253 = Call v251, -, v207, v252 calleeName="calls"
+    v254 = Convert v253 declared={type=number}
+    v255 = Add v250, v254
+    v256 = GetModuleVariable variable=g0
+    v257 = Integer integer=2
+    v258 = Call v256, -, v207, v257 calleeName="calls"
+    v259 = Convert v258 declared={type=number}
+    v260 = Add v255, v259
+    v261 = GetModuleVariable variable=g0
+    v262 = Integer integer=1
+    v263 = Call v261, -, v209, v262 calleeName="calls"
+    v264 = Convert v263 declared={type=number}
+    v265 = Add v260, v264
+    v266 = GetModuleVariable variable=g0
+    v267 = Integer integer=2
+    v268 = Call v266, -, v209, v267 calleeName="calls"
+    v269 = Convert v268 declared={type=number}
+    v270 = Add v265, v269
+    v271 = GetModuleVariable variable=g0
+    v272 = Integer integer=1
+    v273 = Call v271, -, v211, v272 calleeName="calls"
+    v274 = Convert v273 declared={type=number}
+    v275 = Add v270, v274
+    v276 = GetModuleVariable variable=g0
+    v277 = Integer integer=2
+    v278 = Call v276, -, v211, v277 calleeName="calls"
+    v279 = Convert v278 declared={type=number}
+    v280 = Add v275, v279
+    v281 = Convert v280 declared={type=number}
+    v282 = GetEnvironmentField v1 layout=L1
+    v283 = CheckInitialized v282 name="t"
+    v284 = Add v281, v283
+    v285 = GetEnvironmentField v1 layout=L1 field=1
+    v286 = CheckInitialized v285 name="u"
+    v287 = Add v284, v286
+    v288 = Add v287, v14
+    v289 = Add v288, v21
+    v290 = Add v289, v28
+    v291 = Add v290, v35
+    v292 = Add v291, v42
+    v293 = Add v292, v49
+    v294 = Add v293, v56
+    v295 = Add v294, v63
+    v296 = Add v295, v70
+    v297 = Add v296, v77
+    v298 = Add v297, v84
+    v299 = Add v298, v91
+    v300 = Add v299, v98
+    v301 = Add v300, v105
+    v302 = Add v301, v112
+    v303 = Add v302, v119
+    v304 = Add v303, v126
+    v305 = Add v304, v133
+    v306 = Add v305, v140
+    v307 = Add v306, v147
+    v308 = Add v307, v152
+    v309 = Add v308, v157
+    v310 = Add v309, v162
+    v311 = Add v310, v167
+    v312 = Add v311, v172
+    v313 = Add v312, v177
+    v314 = Add v313, v182
+    v315 = Add v314, v187
+    v316 = Add v315, v192
+    v317 = Add v316, v197
+    v318 = Convert v317 declared={type=number}
+    Return v318
+}
+function f4 name="add" module=m0 position=267 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f13] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="zero" module=m0 position=1145 kind=Arrow flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f14] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Integer integer=1
+    v2 = Add v0, v1
+    v3 = Convert v2 declared={type=number}
+    Return v3
+}
+function f6 name="one" module=m0 position=1189 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f15] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: number):
+    v2 = GetEnvironmentField v0 layout=L1
+    v3 = CheckInitialized v2 name="t"
+    v4 = Convert v3 declared={type=number}
+    Return v4
+}
+function f7 name="two" module=m0 position=1249 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=number}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f16] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: number, v2: number):
+    v3 = GetEnvironmentField v0 layout=L1
+    v4 = CheckInitialized v3 name="t"
+    v5 = Add v4, v2
+    v6 = Convert v5 declared={type=number}
+    PutEnvironmentField v0, v6 layout=L1
+    v8 = GetEnvironmentField v0 layout=L1
+    v9 = CheckInitialized v8 name="t"
+    v10 = Add v9, v1
+    v11 = Convert v10 declared={type=number}
+    Return v11
+}
+function f8 name="three" module=m0 position=1326 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=number}, {type=number}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f17] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: number, v2: number, v3: number):
+    v4 = GetEnvironmentField v0 layout=L1
+    v5 = CheckInitialized v4 name="t"
+    v6 = Add v5, v1
+    v7 = Add v6, v2
+    v8 = Convert v7 declared={type=number}
+    Return v8
+}
+function f9 name="four" module=m0 position=1397 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=number}, {type=number}, {type=number}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: number, v2: number, v3: number, v4: number):
+    v5 = GetEnvironmentField v0 layout=L1
+    v6 = CheckInitialized v5 name="t"
+    v7 = Add v6, v1
+    v8 = Add v7, v2
+    v9 = Add v8, v3
+    v10 = Convert v9 declared={type=number}
+    Return v10
+}
+function f10 name="five" module=m0 position=1473 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=number}, {type=number}, {type=number}, {type=number}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f19] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: number, v2: number, v3: number, v4: number, v5: number):
+    v6 = GetEnvironmentField v0 layout=L1
+    v7 = CheckInitialized v6 name="t"
+    v8 = Add v7, v5
+    v9 = Convert v8 declared={type=number}
+    PutEnvironmentField v0, v9 layout=L1
+    v11 = GetEnvironmentField v0 layout=L1
+    v12 = CheckInitialized v11 name="t"
+    v13 = Add v12, v1
+    v14 = Add v13, v2
+    v15 = Add v14, v3
+    v16 = Add v15, v4
+    v17 = Convert v16 declared={type=number}
+    Return v17
+}
+function f11 name="real" module=m0 position=1557 kind=Arrow flags=[IsChecked] length=1 captures=[{type=env L1 flags=[IsFromCompiler]}, {type=number}, {type=number}] thisType={type=anything} parameters=[{type=number}] results=[{type=number}] functionTypes=[f20] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1, v1: number, v2: number, v3: number):
+    v4 = GetEnvironmentField v0 layout=L1
+    v5 = CheckInitialized v4 name="t"
+    v6 = Add v5, v1
+    v7 = Add v6, v2
+    v8 = Convert v7 declared={type=number}
+    Return v8
+}
+function f12 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f13 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f14 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f15 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f16 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f12]
+# -- generated: pressure
+# CHECK-LABEL: function {{*}}name="pressure"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int32 b@19 = Trunc(b@18)
+# CHECK-NEXT: Double b@22 = IToD(b@19, v2:Add)
+# CHECK-NEXT: Int64 b@121 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v1:Double)
+# CHECK-NEXT: Double b@221 = Load(b@121, ControlDependent|Reads:Top, v1:Double)
+# CHECK-NEXT: Double b@23 = Add(b@22, b@221, v2:Add)
+# CHECK-NEXT: Int32 b@24 = Const32(3, v3:Integer)
+# CHECK-NEXT: Int32 b@25 = Mul(b@19, $3(b@24), v4:Mul)
+# CHECK-NEXT: Int32 b@26 = Const32(1, v5:Integer)
+# CHECK-NEXT: Int32 b@27 = Add(b@25, $1(b@26), v6:Add)
+# CHECK-NEXT: Int32 b@17 = Const32(2, v10:Mul)
+# CHECK-NEXT: Int32 b@16 = Shl(b@19, $2(b@17), v10:Mul)
+# CHECK-NEXT: Int32 b@32 = Const32(8, v11:Integer)
+# CHECK-NEXT: Int32 b@33 = Add(b@16, $8(b@32), v12:Add)
+# CHECK-NEXT: Int32 b@35 = Const32(5, v15:Integer)
+# CHECK-NEXT: Int32 b@36 = Mul(b@19, $5(b@35), v16:Mul)
+# CHECK-NEXT: Int32 b@37 = Const32(15, v17:Integer)
+# CHECK-NEXT: Int32 b@38 = Add(b@36, $15(b@37), v18:Add)
+# CHECK-NEXT: Int32 b@40 = Const32(6, v21:Integer)
+# CHECK-NEXT: Int32 b@41 = Mul(b@19, $6(b@40), v22:Mul)
+# CHECK-NEXT: Int32 b@42 = Const32(22, v23:Integer)
+# CHECK-NEXT: Int32 b@43 = Add(b@41, $22(b@42), v24:Add)
+# CHECK-NEXT: Int32 b@45 = Const32(7, v27:Integer)
+# CHECK-NEXT: Int32 b@46 = Mul(b@19, $7(b@45), v28:Mul)
+# CHECK-NEXT: Int32 b@47 = Const32(29, v29:Integer)
+# CHECK-NEXT: Int32 b@48 = Add(b@46, $29(b@47), v30:Add)
+# CHECK-NEXT: Int32 b@14 = Shl(b@19, $3(b@24), v34:Mul)
+# CHECK-NEXT: Int32 b@51 = Const32(36, v35:Integer)
+# CHECK-NEXT: Int32 b@52 = Add(b@14, $36(b@51), v36:Add)
+# CHECK-NEXT: Int32 b@54 = Const32(9, v39:Integer)
+# CHECK-NEXT: Int32 b@55 = Mul(b@19, $9(b@54), v40:Mul)
+# CHECK-NEXT: Int32 b@56 = Const32(43, v41:Integer)
+# CHECK-NEXT: Int32 b@57 = Add(b@55, $43(b@56), v42:Add)
+# CHECK-NEXT: Int32 b@59 = Const32(10, v45:Integer)
+# CHECK-NEXT: Int32 b@60 = Mul(b@19, $10(b@59), v46:Mul)
+# CHECK-NEXT: Int32 b@61 = Const32(50, v47:Integer)
+# CHECK-NEXT: Int32 b@62 = Add(b@60, $50(b@61), v48:Add)
+# CHECK-NEXT: Int32 b@64 = Const32(11, v51:Integer)
+# CHECK-NEXT: Int32 b@65 = Mul(b@19, $11(b@64), v52:Mul)
+# CHECK-NEXT: Int32 b@66 = Const32(57, v53:Integer)
+# CHECK-NEXT: Int32 b@67 = Add(b@65, $57(b@66), v54:Add)
+# CHECK-NEXT: Int32 b@69 = Const32(12, v57:Integer)
+# CHECK-NEXT: Int32 b@70 = Mul(b@19, $12(b@69), v58:Mul)
+# CHECK-NEXT: Int32 b@71 = Const32(64, v59:Integer)
+# CHECK-NEXT: Int32 b@72 = Add(b@70, $64(b@71), v60:Add)
+# CHECK-NEXT: Int32 b@74 = Const32(13, v63:Integer)
+# CHECK-NEXT: Int32 b@75 = Mul(b@19, $13(b@74), v64:Mul)
+# CHECK-NEXT: Int32 b@76 = Const32(71, v65:Integer)
+# CHECK-NEXT: Int32 b@77 = Add(b@75, $71(b@76), v66:Add)
+# CHECK-NEXT: Int32 b@79 = Const32(14, v69:Integer)
+# CHECK-NEXT: Int32 b@80 = Mul(b@19, $14(b@79), v70:Mul)
+# CHECK-NEXT: Int32 b@81 = Const32(78, v71:Integer)
+# CHECK-NEXT: Int32 b@82 = Add(b@80, $78(b@81), v72:Add)
+# CHECK-NEXT: Int32 b@84 = Mul(b@19, $15(b@37), v76:Mul)
+# CHECK-NEXT: Int32 b@85 = Const32(85, v77:Integer)
+# CHECK-NEXT: Int32 b@86 = Add(b@84, $85(b@85), v78:Add)
+# CHECK-NEXT: Int32 b@13 = Const32(4, v82:Mul)
+# CHECK-NEXT: Int32 b@12 = Shl(b@19, $4(b@13), v82:Mul)
+# CHECK-NEXT: Int32 b@90 = Const32(92, v83:Integer)
+# CHECK-NEXT: Int32 b@91 = Add(b@12, $92(b@90), v84:Add)
+# CHECK-NEXT: Int32 b@93 = Const32(17, v87:Integer)
+# CHECK-NEXT: Int32 b@94 = Mul(b@19, $17(b@93), v88:Mul)
+# CHECK-NEXT: Int32 b@95 = Const32(99, v89:Integer)
+# CHECK-NEXT: Int32 b@96 = Add(b@94, $99(b@95), v90:Add)
+# CHECK-NEXT: Int32 b@98 = Const32(18, v93:Integer)
+# CHECK-NEXT: Int32 b@99 = Mul(b@19, $18(b@98), v94:Mul)
+# CHECK-NEXT: Int32 b@100 = Const32(106, v95:Integer)
+# CHECK-NEXT: Int32 b@101 = Add(b@99, $106(b@100), v96:Add)
+# CHECK-NEXT: Int32 b@103 = Const32(19, v99:Integer)
+# CHECK-NEXT: Int32 b@104 = Mul(b@19, $19(b@103), v100:Mul)
+# CHECK-NEXT: Int32 b@105 = Const32(113, v101:Integer)
+# CHECK-NEXT: Int32 b@106 = Add(b@104, $113(b@105), v102:Add)
+# CHECK-NEXT: Int32 b@108 = Const32(20, v105:Integer)
+# CHECK-NEXT: Int32 b@109 = Mul(b@19, $20(b@108), v106:Mul)
+# CHECK-NEXT: Int32 b@110 = Const32(120, v107:Integer)
+# CHECK-NEXT: Int32 b@111 = Add(b@109, $120(b@110), v108:Add)
+# CHECK-NEXT: Int32 b@113 = Const32(21, v111:Integer)
+# CHECK-NEXT: Int32 b@114 = Mul(b@19, $21(b@113), v112:Mul)
+# CHECK-NEXT: Int32 b@115 = Const32(127, v113:Integer)
+# CHECK-NEXT: Int32 b@116 = Add(b@114, $127(b@115), v114:Add)
+# CHECK-NEXT: Int32 b@118 = Mul(b@19, $22(b@42), v118:Mul)
+# CHECK-NEXT: Int32 b@119 = Const32(134, v119:Integer)
+# CHECK-NEXT: Int32 b@120 = Add(b@118, $134(b@119), v120:Add)
+# CHECK-NEXT: Double b@233 = Load(b@121, offset = 8, ControlDependent|Reads:Top, v123:Double)
+# CHECK-NEXT: Double b@123 = Mul(b@22, b@233, v124:Mul)
+# CHECK-NEXT: Double b@124 = ConstDouble(5.000000e-01(4602678819172646912), v125:Double)
+# CHECK-NEXT: Double b@125 = Add(b@123, $0.500000(b@124), v126:Add)
+# CHECK-NEXT: Double b@313 = Load(b@121, offset = 16, ControlDependent|Reads:Top, v127:Double)
+# CHECK-NEXT: Double b@127 = Mul(b@22, b@313, v128:Mul)
+# CHECK-NEXT: Double b@128 = ConstDouble(1.500000e+00(4609434218613702656), v129:Double)
+# CHECK-NEXT: Double b@129 = Add(b@127, $1.500000(b@128), v130:Add)
+# CHECK-NEXT: Double b@239 = Load(b@121, offset = 24, ControlDependent|Reads:Top, v131:Double)
+# CHECK-NEXT: Double b@131 = Mul(b@22, b@239, v132:Mul)
+# CHECK-NEXT: Double b@347 = Load(b@121, offset = 32, ControlDependent|Reads:Top, v133:Double)
+# CHECK-NEXT: Double b@133 = Add(b@131, b@347, v134:Add)
+# CHECK-NEXT: Double b@178 = Load(b@121, offset = 40, ControlDependent|Reads:Top, v135:Double)
+# CHECK-NEXT: Double b@135 = Mul(b@22, b@178, v136:Mul)
+# CHECK-NEXT: Double b@299 = Load(b@121, offset = 48, ControlDependent|Reads:Top, v137:Double)
+# CHECK-NEXT: Double b@137 = Add(b@135, b@299, v138:Add)
+# CHECK-NEXT: Double b@138 = Mul(b@22, $0.500000(b@124), v140:Mul)
+# CHECK-NEXT: Double b@20 = Load(b@121, offset = 56, ControlDependent|Reads:Top, v141:Double)
+# CHECK-NEXT: Double b@140 = Add(b@138, b@20, v142:Add)
+# CHECK-NEXT: Double b@9 = Load(b@121, offset = 64, ControlDependent|Reads:Top, v143:Double)
+# CHECK-NEXT: Double b@142 = Mul(b@22, b@9, v144:Mul)
+# CHECK-NEXT: Double b@15 = Load(b@121, offset = 72, ControlDependent|Reads:Top, v145:Double)
+# CHECK-NEXT: Double b@144 = Add(b@142, b@15, v146:Add)
+# CHECK-NEXT: Double b@330 = Load(b@121, offset = 80, ControlDependent|Reads:Top, v147:Double)
+# CHECK-NEXT: Double b@146 = Mul(b@22, b@330, v148:Mul)
+# CHECK-NEXT: Double b@329 = Load(b@121, offset = 88, ControlDependent|Reads:Top, v149:Double)
+# CHECK-NEXT: Double b@148 = Add(b@146, b@329, v150:Add)
+# CHECK-NEXT: Double b@328 = Load(b@121, offset = 96, ControlDependent|Reads:Top, v151:Double)
+# CHECK-NEXT: Double b@150 = Mul(b@22, b@328, v152:Mul)
+# CHECK-NEXT: Double b@327 = Load(b@121, offset = 104, ControlDependent|Reads:Top, v153:Double)
+# CHECK-NEXT: Double b@152 = Add(b@150, b@327, v154:Add)
+# CHECK-NEXT: Double b@196 = Load(b@121, offset = 112, ControlDependent|Reads:Top, v155:Double)
+# CHECK-NEXT: Double b@154 = Mul(b@22, b@196, v156:Mul)
+# CHECK-NEXT: Double b@195 = Load(b@121, offset = 120, ControlDependent|Reads:Top, v157:Double)
+# CHECK-NEXT: Double b@156 = Add(b@154, b@195, v158:Add)
+# CHECK-NEXT: Double b@312 = Load(b@121, offset = 128, ControlDependent|Reads:Top, v161:Double)
+# CHECK-NEXT: Double b@159 = Add(b@123, b@312, v162:Add)
+# CHECK-NEXT: Int32 b@10 = Shl(b@19, $1(b@26), v164:Add)
+# CHECK-NEXT: Int32 b@350 = Add(b@19, b@46, v184:Add)
+# CHECK-NEXT: Int32 b@349 = Add(b@350, b@14, v185:Add)
+# CHECK-NEXT: Int32 b@227 = Const32(37, v29:Integer)
+# CHECK-NEXT: Int32 b@300 = Add(b@349, $37(b@227), v185:Add)
+# CHECK-NEXT: Int32 b@348 = Add(b@349, b@300, v188:Add)
+# CHECK-NEXT: Int32 b@226 = Const32(73, v35:Integer)
+# CHECK-NEXT: Int32 b@303 = Add(b@348, $73(b@226), v188:Add)
+# CHECK-NEXT: Int32 b@225 = Add($9(b@54), $10(b@59), v198:Add)
+# CHECK-NEXT: Int32 b@224 = Add($11(b@64), b@225, v198:Add)
+# CHECK-NEXT: Int32 b@346 = Mul(b@19, b@224, v198:Add)
+# CHECK-NEXT: Int32 b@223 = Add(b@19, b@346, v198:Add)
+# CHECK-NEXT: Int32 b@345 = Const32(101, v198:Add)
+# CHECK-NEXT: Int32 b@237 = Add(b@223, $101(b@345), v198:Add)
+# CHECK-NEXT: Int32 b@220 = Add(b@223, b@237, v202:Add)
+# CHECK-NEXT: Int32 b@343 = Const32(158, v53:Integer)
+# CHECK-NEXT: Int32 b@317 = Add(b@220, $158(b@343), v202:Add)
+# CHECK-NEXT: Int32 b@344 = Const32(16, v3:Integer)
+# CHECK-NEXT: Int32 b@222 = Add(b@19, $16(b@344), v233:Add)
+# CHECK-NEXT: Int32 b@219 = Shl(b@41, $2(b@17), v22:Mul)
+# CHECK-NEXT: Int32 b@218 = Shl(b@70, $2(b@17), v58:Mul)
+# CHECK-NEXT: Int32 b@217 = Shl(b@75, $2(b@17), v64:Mul)
+# CHECK-NEXT: Int32 b@338 = Shl(b@80, $2(b@17), v70:Mul)
+# CHECK-NEXT: Int32 b@337 = Shl(b@84, $2(b@17), v76:Mul)
+# CHECK-NEXT: Int32 b@336 = Shl(b@303, $1(b@26), v188:Add)
+# CHECK-NEXT: Int32 b@335 = Shl(b@317, $1(b@26), v202:Add)
+# CHECK-NEXT: Int32 b@334 = Shl(b@10, $1(b@26), v239:Add)
+# CHECK-NEXT: Int32 b@197 = Add(b@41, b@334, v239:Add)
+# CHECK-NEXT: Int32 b@319 = Add(b@197, b@219, v239:Add)
+# CHECK-NEXT: Int32 b@194 = Add(b@218, b@319, v239:Add)
+# CHECK-NEXT: Int32 b@316 = Add(b@194, b@217, v239:Add)
+# CHECK-NEXT: Int32 b@193 = Add(b@316, b@338, v239:Add)
+# CHECK-NEXT: Int32 b@315 = Add(b@193, b@337, v239:Add)
+# CHECK-NEXT: Int32 b@211 = Add(b@19, b@315, v239:Add)
+# CHECK-NEXT: Int32 b@333 = Add(b@211, b@222, v239:Add)
+# CHECK-NEXT: Int32 b@210 = Add(b@333, b@336, v239:Add)
+# CHECK-NEXT: Int32 b@332 = Add(b@210, b@335, v239:Add)
+# CHECK-NEXT: Int32 b@331 = Const32(1528, v239:Add)
+# CHECK-NEXT: Int32 b@309 = Add(b@332, $1528(b@331), v239:Add)
+# CHECK-NEXT: Double b@229 = IToD(b@222, v240:Add)
+# CHECK-NEXT: Double b@230 = Add(b@137, b@229, v240:Add)
+# CHECK-NEXT: Double b@231 = Add(b@140, b@230, v241:Add)
+# CHECK-NEXT: Double b@234 = Add(b@231, b@231, v244:Add)
+# CHECK-NEXT: Double b@235 = IToD(b@309, v245:Add)
+# CHECK-NEXT: Double b@236 = Add(b@234, b@235, v245:Add)
+# CHECK-NEXT: Double b@242 = Add(b@234, b@236, v251:Add)
+# CHECK-NEXT: Double b@243 = Add(b@229, b@242, v252:Add)
+# CHECK-NEXT: Double b@244 = Add(b@23, b@243, v253:Add)
+# CHECK-NEXT: Double b@245 = IToD(b@27, v254:Add)
+# CHECK-NEXT: Double b@246 = Add(b@244, b@245, v254:Add)
+# CHECK-NEXT: Double b@247 = IToD(b@33, v255:Add)
+# CHECK-NEXT: Double b@248 = Add(b@246, b@247, v255:Add)
+# CHECK-NEXT: Double b@249 = IToD(b@38, v256:Add)
+# CHECK-NEXT: Double b@250 = Add(b@248, b@249, v256:Add)
+# CHECK-NEXT: Double b@251 = IToD(b@43, v257:Add)
+# CHECK-NEXT: Double b@252 = Add(b@250, b@251, v257:Add)
+# CHECK-NEXT: Double b@253 = IToD(b@48, v258:Add)
+# CHECK-NEXT: Double b@254 = Add(b@252, b@253, v258:Add)
+# CHECK-NEXT: Double b@255 = IToD(b@52, v259:Add)
+# CHECK-NEXT: Double b@256 = Add(b@254, b@255, v259:Add)
+# CHECK-NEXT: Double b@257 = IToD(b@57, v260:Add)
+# CHECK-NEXT: Double b@258 = Add(b@256, b@257, v260:Add)
+# CHECK-NEXT: Double b@259 = IToD(b@62, v261:Add)
+# CHECK-NEXT: Double b@260 = Add(b@258, b@259, v261:Add)
+# CHECK-NEXT: Double b@261 = IToD(b@67, v262:Add)
+# CHECK-NEXT: Double b@262 = Add(b@260, b@261, v262:Add)
+# CHECK-NEXT: Double b@263 = IToD(b@72, v263:Add)
+# CHECK-NEXT: Double b@264 = Add(b@262, b@263, v263:Add)
+# CHECK-NEXT: Double b@265 = IToD(b@77, v264:Add)
+# CHECK-NEXT: Double b@266 = Add(b@264, b@265, v264:Add)
+# CHECK-NEXT: Double b@267 = IToD(b@82, v265:Add)
+# CHECK-NEXT: Double b@268 = Add(b@266, b@267, v265:Add)
+# CHECK-NEXT: Double b@269 = IToD(b@86, v266:Add)
+# CHECK-NEXT: Double b@270 = Add(b@268, b@269, v266:Add)
+# CHECK-NEXT: Double b@271 = IToD(b@91, v267:Add)
+# CHECK-NEXT: Double b@272 = Add(b@270, b@271, v267:Add)
+# CHECK-NEXT: Double b@273 = IToD(b@96, v268:Add)
+# CHECK-NEXT: Double b@274 = Add(b@272, b@273, v268:Add)
+# CHECK-NEXT: Double b@275 = IToD(b@101, v269:Add)
+# CHECK-NEXT: Double b@276 = Add(b@274, b@275, v269:Add)
+# CHECK-NEXT: Double b@277 = IToD(b@106, v270:Add)
+# CHECK-NEXT: Double b@278 = Add(b@276, b@277, v270:Add)
+# CHECK-NEXT: Double b@279 = IToD(b@111, v271:Add)
+# CHECK-NEXT: Double b@280 = Add(b@278, b@279, v271:Add)
+# CHECK-NEXT: Double b@281 = IToD(b@116, v272:Add)
+# CHECK-NEXT: Double b@282 = Add(b@280, b@281, v272:Add)
+# CHECK-NEXT: Double b@283 = IToD(b@120, v273:Add)
+# CHECK-NEXT: Double b@284 = Add(b@282, b@283, v273:Add)
+# CHECK-NEXT: Double b@285 = Add(b@125, b@284, v274:Add)
+# CHECK-NEXT: Double b@286 = Add(b@129, b@285, v275:Add)
+# CHECK-NEXT: Double b@287 = Add(b@133, b@286, v276:Add)
+# CHECK-NEXT: Double b@288 = Add(b@137, b@287, v277:Add)
+# CHECK-NEXT: Double b@289 = Add(b@140, b@288, v278:Add)
+# CHECK-NEXT: Double b@290 = Add(b@144, b@289, v279:Add)
+# CHECK-NEXT: Double b@291 = Add(b@148, b@290, v280:Add)
+# CHECK-NEXT: Double b@292 = Add(b@152, b@291, v281:Add)
+# CHECK-NEXT: Double b@293 = Add(b@156, b@292, v282:Add)
+# CHECK-NEXT: Double b@294 = Add(b@159, b@293, v283:Add)
+# CHECK-NEXT: Void b@295 = Return(b@294, Terminal)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@19: range = [0,59]
+# CHECK-NEXT: end of function f3

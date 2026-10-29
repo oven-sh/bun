@@ -18867,5 +18867,12 @@
       "a.ts": "declare const own: unique symbol;\nclass InStaticBlocks {\n    static a;\n    static accessor b;\n    static #c;\n    static d;\n    static {\n        this.a = Symbol.iterator;\n        this.b = Symbol.iterator;\n        this.#c = own;\n        this.d = Math.random() ? Symbol.iterator : undefined;\n    }\n    static store(given: symbol) {\n        InStaticBlocks.a = given;\n        InStaticBlocks.b = given;\n        InStaticBlocks.#c = given;\n        InStaticBlocks.d = given;\n    }\n}\nclass InTheConstructor {\n    a;\n    accessor b;\n    #c;\n    constructor() {\n        this.a = Symbol.iterator;\n        this.b = own;\n        this.#c = Symbol.asyncIterator;\n    }\n    store(given: symbol) {\n        this.a = given;\n        this.b = given;\n        this.#c = given;\n    }\n}\nconst a: typeof Symbol.iterator = InStaticBlocks.a;\nconst sentinel: number = \"\";\nexport {};\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"target\": \"esnext\", \"lib\": [\"esnext\"] } }\n"
     }
+  },
+  "names-of-globalthis-beside-a-global-block-and-an-ambient-module-in-a-script": {
+    "files": {
+      "a.ts": "type Names = keyof typeof globalThis;\nconst reserved: Extract<Names, `${string}global`> = 1;\nconst quoted: Extract<Names, `\"${string}\"`> = 1;\nconst declared: Extract<Names, `${string}TheBlock`> = 1;\nexport {};\n",
+      "script.d.ts": "declare global {\n    var insideTheBlock: number;\n}\ndeclare module \"an-ambient-module\" {\n    export const value: number;\n}\ndeclare var besideTheBlock: number;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"types\": [], \"target\": \"esnext\", \"lib\": [\"esnext\"] } }\n"
+    }
   }
 }

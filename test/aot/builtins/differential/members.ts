@@ -7,6 +7,7 @@ import { types } from "node:util";
 import { isObject, type CallMode, type DumpedEntry, type DumpedType, type Table } from "./table-description";
 
 export type Member = { holder: object | undefined; key: PropertyKey; descriptor: PropertyDescriptor | undefined };
+export type AnsweringBinding = { binding: DumpedEntry; field: PropertyKey | undefined };
 export type Invocation = {
   mode: CallMode;
   callee: Function | undefined;
@@ -62,6 +63,8 @@ function createHiddenRoots(): Map<string, () => unknown> {
     ["%ModuleObject%", () => require("./module-object.cjs")],
     ["%CompilerHelpers%", loadCompiledHelpers],
     ["%ModuleRequire%", () => require],
+    // The import and require() each get a function of their own.
+    ["utf-8-validate", () => require("utf-8-validate")],
   ]);
 }
 
@@ -70,6 +73,8 @@ export class Realm {
   #hiddenRoots = createHiddenRoots();
   #values = new Map<string, unknown>();
   #classesByPrototype: Map<object, string> | undefined;
+  #answeringBindings: Map<string, AnsweringBinding> | undefined;
+  #classesOfValues = new WeakMap<object, { prototype: object | null; classes: string[] }>();
   #knownObjects: Set<object> | undefined;
   #idsInThisBuild: Map<string, number> | undefined;
   #nativeNames: Map<string, string> | undefined;
@@ -95,19 +100,26 @@ export class Realm {
   }
 
   // The native binding that answers the object, by itself or as a field of what it answers.
-  bindingAnswering(token: string): { binding: DumpedEntry; field: PropertyKey | undefined } | undefined {
-    const names = ({ parts }: DumpedType) => parts.some(part => part.part === "Builtin" && part.builtin === token);
+  bindingAnswering(token: string): AnsweringBinding | undefined {
+    return (this.#answeringBindings ??= this.#findAnsweringBindings()).get(token);
+  }
+
+  // For each object the first binding that answers it.
+  #findAnsweringBindings(): Map<string, AnsweringBinding> {
+    const found = new Map<string, AnsweringBinding>();
+    const add = ({ parts }: DumpedType, answering: AnsweringBinding) => {
+      for (const part of parts) if (part.part === "Builtin" && !found.has(part.builtin)) found.set(part.builtin, answering);
+    };
     for (const binding of this.table.dump.entries) {
       const answer = binding.kind === "NativeBinding" ? binding.overloads.find(({ mode }) => mode === "Get")?.result.type : undefined;
       if (answer === undefined) continue;
-      if (names(answer)) return { binding, field: undefined };
+      add(answer, { binding, field: undefined });
       for (const part of answer.parts) {
         const layout = part.part === "Layout" ? this.table.layouts.get(part.layout) : undefined;
-        const index = layout?.fields.findIndex(field => names(field.type)) ?? -1;
-        if (index >= 0) return { binding, field: layout!.fields[index].name ?? index };
+        layout?.fields.forEach((field, index) => add(field.type, { binding, field: field.name ?? index }));
       }
     }
-    return undefined;
+    return found;
   }
 
   #findInAnswersOfBindings(token: string): unknown {
@@ -212,6 +224,15 @@ export class Realm {
   classesOf(value: unknown): string[] {
     if (!isObject(value)) return [];
     if (types.isProxy(value)) return ["Proxy"];
+    const prototype = Reflect.getPrototypeOf(value);
+    const known = this.#classesOfValues.get(value);
+    if (known?.prototype === prototype) return known.classes;
+    const classes = this.#findClassesOf(value);
+    this.#classesOfValues.set(value, { prototype, classes });
+    return classes;
+  }
+
+  #findClassesOf(value: object): string[] {
     const prototypes = this.#prototypes();
     const classes: string[] = [];
     let current: object | null = value;

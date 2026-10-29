@@ -1,0 +1,27 @@
+// Loads one program after another. Each imports a package of its own in one way.
+console.log("## cycles.half.cjs");
+await import("./cycles.half.cjs");
+console.log("## cycles.reassigned.cjs");
+await import("./cycles.reassigned.cjs");
+console.log("## cycles.classes.cjs");
+await import("./cycles.classes.cjs");
+console.log("## cycles.classes_derived_first.cjs");
+await import("./cycles.classes_derived_first.cjs");
+console.log("## cycles.classes_too_early.cjs");
+await import("./cycles.classes_too_early.cjs");
+console.log("## cycles.esm.mjs");
+await import("./cycles.esm.mjs");
+console.log("## cycles.self.mjs");
+await import("./cycles.self.mjs");
+console.log("## cycles.mixed.mjs");
+await import("./cycles.mixed.mjs");
+console.log("## cycles.mixed.cjs");
+await import("./cycles.mixed.cjs");
+console.log("## order.hoisted.mjs");
+await import("./order.hoisted.mjs");
+console.log("## order.req_in_function.cjs");
+await import("./order.req_in_function.cjs");
+console.log("## order.reexport_unused.mjs");
+await import("./order.reexport_unused.mjs");
+console.log("## order.throws_dyn.mjs");
+await import("./order.throws_dyn.mjs");

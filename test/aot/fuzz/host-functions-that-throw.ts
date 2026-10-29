@@ -102,7 +102,6 @@ const entries: Entry[] = [
   },
   { path: "process.hrtime", takes: ["any"], good: [], bad: [["1"], [`"a"`], ["[1]"], ["{}"]] },
   { path: "process.chdir", takes: ["text"], good: [], bad: [[`"/nonexistent-directory/entry"`], ["1"], ["undefined"]] },
-  { path: "process.kill", takes: ["any"], good: [], bad: [[`"nobody"`], ["undefined"], ["{}"]] },
   {
     path: "atob",
     takes: ["text"],

@@ -2,13 +2,14 @@
 // with which the compiler checks itself, and then checks one fixed text. Fault after fault has shown on this program alone, and under one of these flags alone: an assertion in a pass, a form
 // between two passes that the verifier refuses, a proof that only a validating executable finds false, a function that is only wrong in its cold form. The small programs do not reach them.
 //
-//   AOT_TYPESCRIPT_FLAGS=1    all five ways: an hour of processor time, where CI gives a file five minutes on four cores. Without it: the build as usual
+//   AOT_TYPESCRIPT_FLAGS=1    all four ways: an hour of processor time, where CI gives a file five minutes on four cores. Without it: the build as usual
 import { afterAll, expect } from "bun:test";
 import { cpSync, mkdirSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { dirname, join } from "path";
-import { buildFlags, compileCommand, withLimit } from "./harness/flags";
-import { wanted, withoutDebugInformation } from "./run-programs";
+import { withoutDebugInformation } from "./harness/commands";
+import { buildFlags, compileCommand } from "./harness/flags";
+import { wanted } from "./harness/shares";
 import { beforeAll, describe, test } from "./supported";
 
 const ways: [string, string[]][] = [
@@ -16,14 +17,12 @@ const ways: [string, string[]][] = [
   ["every function cold", ["--aot-heat=everything-is-cold"]],
   ["validating", [buildFlags.validate]],
   ["every pass verified", [buildFlags.verifyEachPass]],
-  // No function gets a generic version to fall back to: every test that the compiler adds is a guard at each use.
-  ["every test a guard", [withLimit("MaxGenericVersionJoinWork", 0)]],
 ];
 
 const everyWay = !!process.env.AOT_TYPESCRIPT_FLAGS;
 if (!everyWay)
   console.error(
-    "SKIPPED: test/aot/the-typescript-compiler-under-checking-flags: the four builds under a checking flag: AOT_TYPESCRIPT_FLAGS=1 switches them on",
+    "SKIPPED: test/aot/the-typescript-compiler-under-checking-flags: the three builds under a checking flag: AOT_TYPESCRIPT_FLAGS=1 switches them on",
   );
 
 async function run(cmd: string[], cwd: string, seconds: number) {

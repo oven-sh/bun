@@ -7,6 +7,7 @@ import {
   IMAGE_COMDAT_SELECT_ASSOCIATIVE,
   IMAGE_SCN_LNK_COMDAT,
   IMAGE_SYM_CLASS_EXTERNAL,
+  builtinModulesSection,
   notLoadedFlags,
   ordinarySectionName,
   scalarDeleting,
@@ -225,7 +226,15 @@ function findArchiveMembers(link: CoffLink, symbols: MapSymbol[]): Map<string, A
   return members;
 }
 
-function openObjects(chunks: Chunk[], members: Map<string, ArchiveMember[]>, files: Map<string, number>): InputObjects {
+function openObjects(
+  chunks: Chunk[],
+  members: Map<string, ArchiveMember[]>,
+  inputs: readonly string[],
+  files: Map<string, number>,
+): InputObjects {
+  // The map of chunks names a member of an archive as it names a file. Where an archive has such a member, a file of that name was linked only if the link names it.
+  const spell = (path: string) => path.replaceAll("\\", "/").toLowerCase();
+  const namedByLink = new Set(inputs.map(spell));
   const fdOf = (path: string) => {
     let fd = files.get(path);
     if (fd === undefined) files.set(path, (fd = openSync(path, "r")));
@@ -239,7 +248,7 @@ function openObjects(chunks: Chunk[], members: Map<string, ArchiveMember[]>, fil
     let read: CoffObject | undefined;
     const inArchives = members.get(object);
     let reason: UnreadReason = "NotFound";
-    if (existsSync(object)) {
+    if (existsSync(object) && (inArchives === undefined || namedByLink.has(spell(object)))) {
       reason = "NotAnObject";
       const fd = fdOf(object);
       read = CoffObject.open(fd, 0, fstatSync(fd).size);
@@ -476,7 +485,10 @@ function connectSections(
       const parent =
         section.selection === IMAGE_COMDAT_SELECT_ASSOCIATIVE ? placed.get(object)?.get(section.parent) : undefined;
       const isInImage = node !== undefined || parent !== undefined;
-      const isRoot = !(section.flags & IMAGE_SCN_LNK_COMDAT) || (isInImage && !ordinarySectionName.test(section.name));
+      // The linker keeps the built-in modules whoever reads them. They are needed by what refers to them.
+      const isRoot =
+        section.name !== builtinModulesSection &&
+        (!(section.flags & IMAGE_SCN_LNK_COMDAT) || (isInImage && !ordinarySectionName.test(section.name)));
       if (isRoot) roots.add(node ?? ensureUnplacedNode(object, name, index + 1));
       if (node !== undefined) addReferences(object, name, index + 1, node, true);
       if (parent !== undefined) successors[parent]!.add(node ?? ensureUnplacedNode(object, name, index + 1));
@@ -615,7 +627,7 @@ function createReading(link: CoffLink, files: Map<string, number>): GraphReading
     size: chunks.map(chunk => chunk.size),
     placedCount: count,
   };
-  const inputs = openObjects(chunks, findArchiveMembers(link, symbols), files);
+  const inputs = openObjects(chunks, findArchiveMembers(link, symbols), link.inputs, files);
   const ties = tieSymbolsToChunks(chunks, placedNodes, symbols, inputs, new Set(link.alternateNames));
   const records = readRecordSections(inputs.objects, image.isArm64 ? pointerRelocationArm64 : pointerRelocationX64);
   const connections = connectSections(chunks, inputs.objects, ties, knownToLinker);

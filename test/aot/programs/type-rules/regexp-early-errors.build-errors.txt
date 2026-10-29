@@ -1,4 +1,0 @@
-error: TS100307: Invalid regular expression: invalid backreference for Unicode pattern
-error: TS100307: Invalid regular expression: nothing to repeat
-error: TS100307: Invalid regular expression: invalid \k<> named backreference
-error: TS100307: Invalid regular expression: range out of order in character class

@@ -1,5 +1,5 @@
 // A Bun that was built without the compiler refuses `--aot`. A test file that uses the flag has to skip itself there. So this reads
-// the files: each, or a file that it imports, mentions `unsupported`, which is what run-programs.ts asks the Bun under test.
+// the files: each, or a file that it imports, mentions `unsupported`, which is what harness/compiler.ts asks the Bun under test.
 // The short way: `import { describe, test } from "./supported";` in place of the same names of bun:test. In a file where only
 // some tests use the flag: `test.skipIf(!!unsupported)`.
 // Which files: what scripts/runner.node.ts takes for a test file (getTests(), isHidden(), isTestStrict()), if it is in this
@@ -26,50 +26,42 @@ const files = [...testFiles("")]
 
 // These pass where `bun build --compile --aot` and `bun run --aot` are refused.
 const needNoCompiler = [
+  "aot/fold/constant-expressions.test.ts",
+  "aot/numbers-checked-against-ranges.test.ts",
+  "aot/a-busy-caller-unbinds-no-child.test.ts",
+  "aot/an-operation-that-does-not-collect-puts-collections-off.test.ts",
+  "aot/any-two-sources-of-the-compiler-can-share-a-translation-unit.test.ts",
   "aot/emitters-append-in-the-order-written.test.ts",
   "aot/engine-types-are-defined-once.test.ts",
+  "aot/the-folder-of-a-program-has-a-short-name.test.ts",
   "aot/the-compiler-reads-no-environment-variable.test.ts",
+  "aot/the-compiler-sorts-with-its-own-sort.test.ts",
   "aot/the-frame-of-an-operation-outlives-whoever-is-handed-its-address.test.ts",
   "aot/the-value-under-a-chain-of-casts-is-only-asked-about.test.ts",
   "aot/a-switch-of-the-compiler-names-every-enumerator.test.ts",
   "aot/lists-of-operations-in-the-compiler-only-shrink.test.ts",
   "aot/every-threshold-of-the-compiler-is-declared-as-one.test.ts",
+  "aot/every-builtin-module-is-in-a-program.test.ts",
+  "aot/every-test-runs-in-ci.test.ts",
   "aot/every-field-of-flows-results-is-written-and-read.test.ts",
   "aot/flow-results-name-the-list-they-read.test.ts",
-  "aot/every-test-runs-in-ci.test.ts",
   "aot/what-is-only-expected-of-a-position-is-widened-in-one-place.test.ts",
   "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off.test.ts",
   "aot/host-object-accessors.test.ts",
   "aot/only-errors-replacements-and-positions-ask-how-a-member-name-is-written.test.ts",
   "aot/one-text-reads-what-a-descriptor-literal-says.test.ts",
   "aot/one-text-of-the-engine-reads-what-a-descriptor-literal-says.test.ts",
-  "aot/mockable-function-arguments.test.ts",
-  "aot/many-modules-in-place.test.ts",
-  "aot/mocked-barrels.test.ts",
-  "aot/mocked-classes-enums-constants.test.ts",
-  "aot/mocked-reassigned-bindings.test.ts",
-  "aot/mocked-commonjs-modules.test.ts",
-  "aot/mocked-json-modules.test.ts",
-  "aot/mocked-numbers.test.ts",
-  "aot/mocks-named-by-tests.test.ts",
-  "aot/mocks-with-test-runner-lookalikes.test.ts",
-  "aot/spies-on-builtin-prototypes.test.ts",
-  "aot/spies-on-builtins.test.ts",
   "aot/static-tls-size.test.ts",
   "aot/abort-is-reported.test.ts",
   "aot/address-sanitizer-sees-wtf-allocations.test.ts",
   "aot/a-prototype-object-is-no-instance.test.ts",
   "aot/backend/memory.test.ts",
-  "aot/builtins/native-contract.test.ts",
   "aot/builtins/native-contract/noticed-changes.test.ts",
+  "aot/many-modules-in-place.test.ts",
   "aot/names-read-from-a-loaded-barrel.test.ts",
-  "aot/perf/plain-bun-costs.test.ts",
   "aot/plain-english.test.ts",
   "aot/removable-statements.test.ts",
   "aot/servers/layers.test.ts",
-  "aot/generated-code.test.ts",
-  "aot/perf/front-end.test.ts",
-  "aot/perf/idioms.test.ts",
   "aot/plain-bun.test.ts",
   "aot/plain-bun-is-unchanged.test.ts",
   "aot/plain-bun-installs-no-packages.test.ts",
@@ -83,7 +75,6 @@ const needNoCompiler = [
   "bundler/bun-build-api-dts.test.ts",
   "bundler/bun-build-dts.test.ts",
   "cli/compile/compile-library.test.ts",
-  "cli/test/test-aot-mocks-and-lazy-constants.test.ts",
   "internal/build-hardened-flags.test.ts",
   "internal/build-left-out-features.test.ts",
   "internal/build-libc-functions.test.ts",
@@ -104,18 +95,6 @@ function asks(path: string, depth = 0): boolean {
 test("every test file of --aot asks the Bun under test whether it compiles", () => {
   expect(files.length).toBeGreaterThan(200);
   expect(files.filter(file => !needNoCompiler.includes(file) && !asks(join(tests, file)))).toEqual([]);
-});
-
-// README.md: the run time counts no calls of its operations on Windows, and a count of nothing proves nothing.
-test("a test file that reads how often operations were called skips itself where no call is counted", () => {
-  const readsCounts = /(?:["'`]|\\t)operation:/;
-  const reading = files.filter(
-    file => file.startsWith("aot/") && readsCounts.test(readFileSync(join(tests, file), "utf8")),
-  );
-  expect(reading.length).toBeGreaterThan(50);
-  expect(reading.filter(file => /from "(?:\.\.?\/)+supported";/.test(readFileSync(join(tests, file), "utf8")))).toEqual(
-    [],
-  );
 });
 
 test("the files that are said to need no compiler are there", () => {

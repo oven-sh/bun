@@ -1,0 +1,423 @@
+# An object of which only fields are read can be replaced by its fields, until somebody asks who it is: ===, Object.is, a switch, indexOf and includes, a key of a Map, a member of a Set, a key of a WeakMap. Two objects with equal fields are two; one object is one, whichever way it came.
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="identity-of-objects-that-could-scalars.ts" displayPath="identity-of-objects-that-could-scalars.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Vec" module=m0 position=299 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] supertypes=[L1] ownFieldCount=2
+layout L1 flags=[IsTypeParameter, IsNeverAllocated] flow={allocation=NeverAllocated}
+variable g0 name="make" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+variable g1 name="counts" module=m0 declared={type=undefined|null|absent|Map<undefined|null|L0, number> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g2 name="seen" module=m0 declared={type=undefined|null|absent|Set<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g3 name="notes" module=m0 declared={type=undefined|null|absent|WeakMap<undefined|null|L0, undefined|null|string> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f3
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f4
+    v5 = Convert v4 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f5
+    v7 = Convert v6 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f6
+    v9 = Convert v8 declared={type=f6 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = NewClosure function=f7
+    v11 = Convert v10 declared={type=f7 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v12 = NewClosure function=f8
+    v13 = Convert v12 declared={type=f8 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v14 = NewClosure function=f9
+    v15 = Convert v14 declared={type=f9 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v16 = NewClosure function=f10
+    v17 = Convert v16 declared={type=f10 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v18 = NewClosure function=f11
+    v19 = Convert v18 declared={type=f11 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v20 = NewClosure function=f12
+    v21 = Convert v20 declared={type=f12 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v22 = NewClosure function=f13
+    v23 = Convert v22 declared={type=f13 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v24 = NewClosure function=f14
+    v25 = Convert v24 declared={type=f14 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v26 = NewClosure function=f15
+    v27 = Convert v26 declared={type=f15 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v28 = String string=""
+    v29 = Convert v28 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v30 = Integer
+    v31 = Convert v30 declared={type=number}
+    v32 = Integer
+    v33 = Convert v32 declared={type=number}
+    Jump -> next b1(v29, v31, v33)
+  b1(v34: undefined|null|string, v35: number, v36: number):
+    LoopHint
+    v38 = Integer integer=300
+    v39 = Less v36, v38
+    Branch v39 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v40):
+    v41 = GetModuleVariable variable=g0
+    v42 = Integer integer=1
+    v43 = Call v41, -, v40, v42 calleeName="make"
+    v44 = Convert v43 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v45 = GetModuleVariable variable=g0
+    v46 = Integer integer=1
+    v47 = Call v45, -, v40, v46 calleeName="make"
+    v48 = Convert v47 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v49 = Call v1, -, v44, v44 calleeName="same"
+    v50 = Convert v49 declared={type=boolean}
+    v51 = Call v1, -, v44, v48 calleeName="same"
+    v52 = Convert v51 declared={type=boolean}
+    v53 = GetModuleVariable variable=g0
+    v54 = Integer integer=1
+    v55 = Integer integer=1
+    v56 = Call v53, -, v54, v55 calleeName="make"
+    v57 = Convert v56 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v58 = GetModuleVariable variable=g0
+    v59 = Integer integer=1
+    v60 = Integer integer=1
+    v61 = Call v58, -, v59, v60 calleeName="make"
+    v62 = Convert v61 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v63 = Call v1, -, v57, v62 calleeName="same"
+    v64 = Convert v63 declared={type=boolean}
+    v65 = Call v3, -, v44, v44 calleeName="differ"
+    v66 = Convert v65 declared={type=boolean}
+    v67 = Call v3, -, v44, v48 calleeName="differ"
+    v68 = Convert v67 declared={type=boolean}
+    v69 = Call v5, -, v44, v44 calleeName="sameByObjectIs"
+    v70 = Convert v69 declared={type=boolean}
+    v71 = Call v5, -, v44, v48 calleeName="sameByObjectIs"
+    v72 = Convert v71 declared={type=boolean}
+    v73 = Call v7, -, v44, v44 calleeName="looselySame"
+    v74 = Convert v73 declared={type=boolean}
+    v75 = Call v7, -, v44, v48 calleeName="looselySame"
+    v76 = Convert v75 declared={type=boolean}
+    v77 = Null
+    v78 = Call v7, -, v44, v77 calleeName="looselySame"
+    v79 = Convert v78 declared={type=boolean}
+    v80 = Boolean boolean=true
+    v81 = Call v9, -, v44, v48, v80 calleeName="pick"
+    v82 = Convert v81 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v83 = StrictEq v82, v44
+    v84 = Boolean
+    v85 = Call v9, -, v44, v48, v84 calleeName="pick"
+    v86 = Convert v85 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v87 = StrictEq v86, v44
+    v88 = Integer integer=2
+    v89 = Mod v40, v88
+    v90 = Integer
+    v91 = StrictEq v89, v90
+    v92 = Call v9, -, v44, v44, v91 calleeName="pick"
+    v93 = Convert v92 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v94 = StrictEq v93, v44
+    v95 = Call v11, -, v44 calleeName="identity"
+    v96 = Convert v95 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v97 = StrictEq v96, v44
+    v98 = Call v11, -, v44 calleeName="identity"
+    v99 = Convert v98 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v100 = Call v11, -, v99 calleeName="identity"
+    v101 = Convert v100 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v102 = Call v11, -, v44 calleeName="identity"
+    v103 = Convert v102 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v104 = StrictEq v101, v103
+    v105 = GetModuleVariable variable=g0
+    v106 = Integer integer=2
+    v107 = Integer integer=2
+    v108 = Call v105, -, v106, v107 calleeName="make"
+    v109 = Convert v108 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v110 = Call v11, -, v109 calleeName="identity"
+    v111 = Convert v110 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v112 = GetModuleVariable variable=g0
+    v113 = Integer integer=2
+    v114 = Integer integer=2
+    v115 = Call v112, -, v113, v114 calleeName="make"
+    v116 = Convert v115 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v117 = Call v11, -, v116 calleeName="identity"
+    v118 = Convert v117 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v119 = StrictEq v111, v118
+    v120 = Call v13, -, v44, v48, v44 calleeName="bySwitch"
+    v121 = Convert v120 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v122 = Call v13, -, v44, v44, v44 calleeName="bySwitch"
+    v123 = Convert v122 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v124 = Call v13, -, v44, v48, v48 calleeName="bySwitch"
+    v125 = Convert v124 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v126 = NewArray v48, v44, v48, v44 contents=undefined|null|L0
+    v127 = Call v15, -, v126, v44 calleeName="positionIn"
+    v128 = Convert v127 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v129 = NewArray v48, v48 contents=undefined|null|L0
+    v130 = Call v15, -, v129, v44 calleeName="positionIn"
+    v131 = Convert v130 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v132 = GetModuleVariable variable=g0
+    v133 = Integer integer=1
+    v134 = Call v132, -, v40, v133 calleeName="make"
+    v135 = Convert v134 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v136 = NewArray v135 contents=undefined|null|L0
+    v137 = GetModuleVariable variable=g0
+    v138 = Integer integer=1
+    v139 = Call v137, -, v40, v138 calleeName="make"
+    v140 = Convert v139 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v141 = Call v15, -, v136, v140 calleeName="positionIn"
+    v142 = Convert v141 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v143 = NewArray v50, v52, v64, v66, v68, v70, v72, v74, v76, v79, v83, v87, v94, v97, v104, v119, v121, v123, v125, v128, v131, v142 contents=undefined|null|boolean|string
+    v144 = PropGet v143 key="join"
+    v145 = Call v144, v143 calleeKey="join" calleeName="join"
+    v146 = Convert v145 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v147 = Call v17, -, v44, v48 calleeName="sumAndCompare"
+    v148 = Convert v147 declared={type=number}
+    v149 = Call v17, -, v44, v44 calleeName="sumAndCompare"
+    v150 = Convert v149 declared={type=number}
+    v151 = Add v148, v150
+    v152 = GetModuleVariable variable=g0
+    v153 = Integer integer=1
+    v154 = Integer integer=2
+    v155 = Call v152, -, v153, v154 calleeName="make"
+    v156 = Convert v155 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v157 = GetModuleVariable variable=g0
+    v158 = Integer integer=1
+    v159 = Integer integer=2
+    v160 = Call v157, -, v158, v159 calleeName="make"
+    v161 = Convert v160 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v162 = Call v17, -, v156, v161 calleeName="sumAndCompare"
+    v163 = Convert v162 declared={type=number}
+    v164 = Add v151, v163
+    v165 = Add v35, v164
+    v166 = Convert v165 declared={type=number}
+    v167 = Increment v40
+    v168 = Convert v167 declared={type=number}
+    Jump -> next b1(v146, v166, v168)
+  b3(v169):
+    v170 = Builtin builtin=Map
+    v171 = Construct v170 calleeName="Map"
+    v172 = Convert v171 declared={type=undefined|null|Map<undefined|null|L0, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v172 variable=g1
+    v174 = Builtin builtin=Set
+    v175 = Construct v174 calleeName="Set"
+    v176 = Convert v175 declared={type=undefined|null|Set<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v176 variable=g2
+    v178 = Builtin builtin=GlobalThis
+    v179 = PropGet v178 key="WeakMap" [isFreeName]
+    v180 = Convert v179 declared={type=builtin(WeakMap) flags=[IsExpected]}
+    v181 = Construct v180 calleeName="WeakMap"
+    v182 = Convert v181 declared={type=undefined|null|WeakMap<undefined|null|L0, undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    PutModuleVariable v182 variable=g3
+    v184 = String string=""
+    v185 = Convert v184 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v186 = Integer
+    v187 = Convert v186 declared={type=number}
+    Jump -> next b4(v185, v187)
+  b4(v188: undefined|null|string, v189: number):
+    LoopHint
+    v191 = Integer integer=100
+    v192 = Less v189, v191
+    Branch v192 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v193):
+    v194 = GetModuleVariable variable=g0
+    v195 = Integer
+    v196 = Integer
+    v197 = Call v194, -, v195, v196 calleeName="make"
+    v198 = Convert v197 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v199 = Call v19, -, v198 calleeName="countIn"
+    v200 = Convert v199 declared={type=number}
+    v201 = Call v19, -, v198 calleeName="countIn"
+    v202 = Convert v201 declared={type=number}
+    v203 = GetModuleVariable variable=g0
+    v204 = Integer
+    v205 = Integer
+    v206 = Call v203, -, v204, v205 calleeName="make"
+    v207 = Convert v206 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v208 = Call v19, -, v207 calleeName="countIn"
+    v209 = Convert v208 declared={type=number}
+    v210 = Call v21, -, v198 calleeName="firstTime"
+    v211 = Convert v210 declared={type=boolean}
+    v212 = Call v21, -, v198 calleeName="firstTime"
+    v213 = Convert v212 declared={type=boolean}
+    v214 = GetModuleVariable variable=g0
+    v215 = Integer
+    v216 = Integer
+    v217 = Call v214, -, v215, v216 calleeName="make"
+    v218 = Convert v217 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v219 = Call v21, -, v218 calleeName="firstTime"
+    v220 = Convert v219 declared={type=boolean}
+    v221 = String string="first"
+    v222 = Call v23, -, v198, v221 calleeName="note"
+    v223 = Convert v222 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v224 = String string="second"
+    v225 = Call v23, -, v198, v224 calleeName="note"
+    v226 = Convert v225 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v227 = GetModuleVariable variable=g0
+    v228 = Integer
+    v229 = Integer
+    v230 = Call v227, -, v228, v229 calleeName="make"
+    v231 = Convert v230 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v232 = String string="other"
+    v233 = Call v23, -, v231, v232 calleeName="note"
+    v234 = Convert v233 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v235 = NewArray v200, v202, v209, v211, v213, v220, v223, v226, v234 contents=undefined|null|boolean|number|string
+    v236 = PropGet v235 key="join"
+    v237 = Call v236, v235 calleeKey="join" calleeName="join"
+    v238 = Convert v237 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v239 = Increment v193
+    v240 = Convert v239 declared={type=number}
+    Jump -> next b4(v238, v240)
+  b6(v241):
+    v242 = Integer
+    v243 = Convert v242 declared={type=number}
+    v244 = Integer
+    v245 = Convert v244 declared={type=number}
+    v246 = Integer
+    v247 = Convert v246 declared={type=number}
+    v248 = Integer
+    v249 = Convert v248 declared={type=number}
+    v250 = String string=""
+    v251 = Convert v250 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v252 = Integer
+    v253 = Convert v252 declared={type=number}
+    Jump -> next b7(v251, v253)
+  b7(v254: undefined|null|string, v255: number):
+    LoopHint
+    v257 = Integer integer=100
+    v258 = Less v255, v257
+    Branch v258 -> taken b8(| 0), notTaken b9(| 0)
+  b8(v259):
+    v260 = GetModuleVariable variable=g0
+    v261 = Call v260, -, v259, v259 calleeName="make"
+    v262 = Convert v261 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v263 = Call v25, -, v262 calleeName="makeReader"
+    v264 = Convert v263 declared={type=undefined|null|function|f16 flags=[OmitsNull, OmitsUndefined]}
+    v265 = Call v27, -, v264, v264 calleeName="sameFunction"
+    v266 = Convert v265 declared={type=boolean}
+    v267 = Call v25, -, v262 calleeName="makeReader"
+    v268 = Convert v267 declared={type=undefined|null|function|f16 flags=[OmitsNull, OmitsUndefined]}
+    v269 = Call v27, -, v264, v268 calleeName="sameFunction"
+    v270 = Convert v269 declared={type=boolean}
+    v271 = Call v25, -, v262 calleeName="makeReader"
+    v272 = Convert v271 declared={type=undefined|null|function|f16 flags=[OmitsNull, OmitsUndefined]}
+    v273 = Call v25, -, v262 calleeName="makeReader"
+    v274 = Convert v273 declared={type=undefined|null|function|f16 flags=[OmitsNull, OmitsUndefined]}
+    v275 = Call v27, -, v272, v274 calleeName="sameFunction"
+    v276 = Convert v275 declared={type=boolean}
+    v277 = NewArray v264 contents=undefined|null|function|f16
+    v278 = PropGet v277 key="includes"
+    v279 = Call v278, v277, v264 calleeKey="includes" calleeName="includes"
+    v280 = Convert v279 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v281 = Builtin builtin=Set
+    v282 = Construct v281 calleeName="Set"
+    v283 = Builtin builtin=SetPrototypeAdd [isNotReadFromHolder]
+    v284 = Call v283, v282, v264
+    v285 = Convert v282 declared={type=undefined|null|Set<undefined|null|function|f16> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v286 = PropGet v285 key="size"
+    v287 = NewArray v266, v270, v276, v280, v286 contents=boolean|number
+    v288 = PropGet v287 key="join"
+    v289 = Call v288, v287 calleeKey="join" calleeName="join"
+    v290 = Convert v289 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v291 = Increment v259
+    v292 = Convert v291 declared={type=number}
+    Jump -> next b7(v290, v292)
+  b9(v293):
+    v294 = Builtin builtin=GlobalThis
+    v295 = PropGet v294 key="console" [isFreeName]
+    v296 = Convert v295 declared={type=builtin(Console) flags=[IsExpected]}
+    v297 = PropGet v296 key="log"
+    v298 = Convert v297 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v299 = Call v298, v296, v254 calleeKey="log" calleeName="console.log"
+    v300 = Undefined
+    Return v300
+}
+function f1 name="make" module=m0 position=333 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=number}, {type=number}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number, v1: number):
+    v2 = Convert v0 declared={type=number}
+    v3 = Convert v1 declared={type=number}
+    v4 = NewObject -, v2, v3 layout=L0 fields=[0, 1]
+    v5 = FinishObject v4
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v6
+}
+function f2 name="same" module=m0 position=397 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="differ" module=m0 position=458 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 name="sameByObjectIs" module=m0 position=521 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="looselySame" module=m0 position=600 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|L0):
+    v2 = Eq v0, v1
+    v3 = Convert v2 declared={type=boolean}
+    Return v3
+}
+function f6 name="pick" module=m0 position=674 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=boolean}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 name="identity" module=m0 position=753 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0}] results=[{type=undefined|null|L0}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 name="bySwitch" module=m0 position=807 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f9 name="positionIn" module=m0 position=986 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 name="sumAndCompare" module=m0 position=1155 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f11 name="countIn" module=m0 position=2184 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = GetModuleVariable variable=g1
+    v2 = CheckInitialized v1 name="counts"
+    v3 = PropGet v2 key="get"
+    v4 = Call v3, v2, v0 calleeKey="get" calleeName="counts.get"
+    v5 = Convert v4 declared={type=undefined|number} illTypedCause=FromLooseType
+    v6 = Integer
+    v7 = Integer integer=1
+    v8 = Add v6, v7
+    v9 = Convert v8 declared={type=number}
+    v10 = GetModuleVariable variable=g1
+    v11 = CheckInitialized v10 name="counts"
+    v12 = PropGet v11 key="set"
+    v13 = Call v12, v11, v0, v9 calleeKey="set" calleeName="counts.set"
+    Return v9
+}
+function f12 name="firstTime" module=m0 position=2320 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = GetModuleVariable variable=g2
+    v2 = CheckInitialized v1 name="seen"
+    v3 = PropGet v2 key="has"
+    v4 = Call v3, v2, v0 calleeKey="has" calleeName="seen.has"
+    v5 = Convert v4 declared={type=boolean} illTypedCause=DeclarationWithoutBody
+    v6 = GetModuleVariable variable=g2
+    v7 = CheckInitialized v6 name="seen"
+    v8 = PropGet v7 key="add"
+    v9 = Call v8, v7, v0 calleeKey="add" calleeName="seen.add"
+    v10 = Boolean boolean=true
+    v11 = Convert v10 declared={type=boolean}
+    Return v11
+}
+function f13 name="note" module=m0 position=2465 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: undefined|null|string):
+    Jump -> next b1()
+  b1():
+    v2 = GetModuleVariable variable=g3
+    v3 = CheckInitialized v2 name="notes"
+    v4 = PropGet v3 key="get"
+    v5 = Call v4, v3, v0 calleeKey="get" calleeName="notes.get"
+    v6 = Convert v5 declared={type=undefined|null|string flags=[OmitsNull]} illTypedCause=FromLooseType
+    v7 = GetModuleVariable variable=g3
+    v8 = CheckInitialized v7 name="notes"
+    v9 = PropGet v8 key="set"
+    v10 = Call v9, v8, v0, v1 calleeKey="set" calleeName="notes.set"
+    Jump -> next b2(v6)
+  b2(v11):
+    Jump -> next b3()
+  b3():
+    v12 = String string="none"
+    Jump -> next b4(v12)
+  b4(v13):
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v14
+}
+function f14 name="makeReader" module=m0 position=3816 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|function|f16 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = NewClosure v0 function=f16
+    v2 = Convert v1 declared={type=undefined|null|function|f16 flags=[OmitsNull, OmitsUndefined]}
+    Return v2
+}
+function f15 name="sameFunction" module=m0 position=3882 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|function|f16 flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|function|f16 flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|function|f16, v1: undefined|null|function|f16):
+    v2 = StrictEq v0, v1
+    v3 = Convert v2 declared={type=boolean}
+    Return v3
+}
+function f16 module=m0 position=3869 kind=Arrow flags=[IsChecked] captures=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] thisType={type=anything} results=[{type=number}] functionTypes=[f18] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f17 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f19, f20]
+function f18 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f17]
+function f19 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f20 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 544, patchpoints: 90, rare instructions: 47, polls: 3
+# CHECK-NEXT: end of function f0

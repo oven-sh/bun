@@ -18,7 +18,7 @@ mod module_reach_tests;
 mod paths;
 mod program_reach;
 pub(crate) mod removable;
-mod runtime_reach;
+pub(crate) mod runtime_reach;
 #[cfg(test)]
 mod runtime_reach_tests;
 mod summary;
@@ -29,6 +29,7 @@ mod tests;
 #[cfg(test)]
 mod time_tests;
 
+use self::lower_stage::LoweredRuntimes;
 #[cfg(test)]
 pub(crate) use self::lower_stage::collect_file_inputs;
 #[cfg(test)]
@@ -37,20 +38,26 @@ pub use self::paths::{EntryPointPaths, FolderPaths};
 pub use bun_aot_interface::compile::{EntryPointPaths, FolderPaths};
 
 use self::import_graph::ImportGraph;
-use self::load_stage::AssetReads;
+use self::load_stage::{AssetReads, SharedByLoads};
 use self::module_list::ListedModules;
 use self::program_reach::LeftOutCode;
-use self::runtime_reach::loads_modules_by_computed_names;
-use crate::builtins::{BuiltinId, BuiltinNames, Platforms, RuntimeModule, table};
+use self::runtime_reach::{HeldLibraryCode, KnownRegions, loads_modules_by_computed_names};
+use crate::builtins::table::RuntimeFunctionRole;
+use crate::builtins::{
+    BuiltinId, BuiltinNames, Platforms, RuntimeFunction, RuntimeModule, RuntimeUses, table,
+};
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{
     Diagnostic, Diagnostics, InternalError, LoadMessages, ProgramView, ShownPosition,
     log_diagnostic_at,
 };
 use crate::emit::{ProgramBytes, emit_from, emit_with_external_bodies};
-use crate::engine::{self, EngineOptions, EngineRequest, EngineResult, feature_of, position_of};
+use crate::engine::{
+    self, EngineOptions, EngineRequest, EngineResult, FlowFindings, JudgeOfFlowFindings,
+    builtin_of, feature_of, position_of,
+};
 use crate::ir::Program;
-use crate::ir::generated::{FeatureUseKind, UnseenCodeCause};
+use crate::ir::generated::{BuiltinUse, FeatureUseKind, UnseenCodeCause};
 use crate::known_helpers::KnownHelpers;
 use crate::link::{BodyRemap, Leftovers, ProgramNames, run_beside, run_one_after_the_other};
 use crate::load::plugin_modules::is_path_of_entry_text;
@@ -60,12 +67,14 @@ use crate::load::worker_files::WorkerFile;
 use crate::load::{PerProject, ProjectId, Sources, host_platform};
 use crate::module_list::{ImportTarget, ModuleInput, ModuleList};
 use crate::modules::{ApplicationGraph, DeferredData, ModuleGraph};
-use crate::options::{EntryText, Options, PathOptions};
+use crate::options::{
+    EntryText, LibraryCode, LoadOptions, Options, PathOptions, WaysBetweenModuleObjects,
+};
 use crate::report::{ModuleLocator, SourceTexts};
 use crate::statistics::{LimitId, LimitValues, Stage, StageClock, StatisticId, Statistics};
 use bun_ast::{Kind, Loader, Log, Msg};
 use bun_core::ZBox;
-use bun_options_types::aot_options::Preload;
+use bun_options_types::aot_options::{Preload, TargetPlatform};
 use bun_sema::atom::Interner;
 use bun_sema::check::aot::BuiltinTypeSymbols;
 use bun_sema::program::{FileId, Files};
@@ -73,12 +82,13 @@ use bun_sema::resolve::CodeHost;
 use bun_sema::session::Session;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::{
-    CompileRequest, LoadedProgram, ThreadCaches, drop_thread_caches, for_each_parallel_in_runs,
-    run_on_one_thread_while,
+    ChosenThreads, CompileRequest, LoadedProgram, ThreadCaches, drop_thread_caches,
+    for_each_parallel_in_runs, run_on_one_thread_while,
 };
 use bun_sys::{Fd, File};
+use bun_threading::Guarded;
 use bun_trim::Feature;
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::collections::VecDeque;
@@ -115,6 +125,14 @@ pub struct Compilation {
     /// `summary.entry_points` lists all of them then, and `engine` is the program of the first.
     pub further_programs: Vec<EngineResult>,
     pub(crate) started_workers: StartedWorkers,
+    /// What of Bun's own code the programs use, by the word of the engine, and were handed over without.
+    library_code_lacked: RuntimeUses,
+    /// A program reads `process.mainModule`, by the word of the engine, and none of its files names a way to a module object.
+    reads_main_module_without_its_name: bool,
+    /// A program reads them, by the word of the engine, and lets a module object go where the front end has not followed them.
+    ways_read_out_of_sight: WaysBetweenModuleObjects,
+    /// No program reads them, by the word of the engine, and the front end has followed them because a file names them.
+    ways_named_that_nobody_reads: WaysBetweenModuleObjects,
 }
 
 /// What the files that were loaded say about the code that their Workers start from. The later one holds of two loads together.
@@ -134,6 +152,8 @@ pub(crate) struct StartedWorkers {
     pub code: CodeOfWorkers,
     /// What `find_code_that_starts_workers` found, and the `copies` that the engine saw passed to `new Worker()`.
     pub files: Vec<WorkerFile>,
+    /// `CodeThatStartsWorkers::names`
+    pub names: Vec<EntryPointPaths>,
     /// What `find_embedded_code_files` found.
     pub copies: Vec<WorkerFile>,
     /// Files that a Worker may start from and that the build did not compile for it.
@@ -141,6 +161,8 @@ pub(crate) struct StartedWorkers {
     /// The files of the application that the programs hold, each once, with the sizes of their texts.
     pub held_texts: Vec<(Vec<u8>, usize)>,
     pub writes_preload: bool,
+    /// `CodeThatStartsWorkers::constructs_node_workers`
+    pub constructs_node_workers: bool,
 }
 
 impl StartedWorkers {
@@ -148,6 +170,8 @@ impl StartedWorkers {
     pub(crate) fn remove_sources(&mut self, source_paths: &[Vec<u8>]) {
         self.files
             .retain(|file| !source_paths.contains(&file.source_path));
+        self.names
+            .retain(|name| !source_paths.contains(&name.source_path));
         self.copies
             .retain(|file| !source_paths.contains(&file.source_path));
         self.left_out
@@ -157,12 +181,14 @@ impl StartedWorkers {
     fn add(&mut self, further: StartedWorkers) {
         self.code = self.code.max(further.code);
         self.files.extend(further.files);
+        self.names.extend(further.names);
         self.copies.extend(further.copies);
         self.left_out.extend(further.left_out);
         self.held_texts.extend(further.held_texts);
         self.held_texts.shared_sort_unstable();
         self.held_texts.dedup();
         self.writes_preload |= further.writes_preload;
+        self.constructs_node_workers |= further.constructs_node_workers;
     }
 }
 
@@ -196,6 +222,7 @@ pub(crate) struct Build<'a> {
     provider: &'a dyn SourceProvider,
     caches: &'a ThreadCaches,
     threads: NonZeroUsize,
+    chosen_threads: Option<ChosenThreads>,
     platform: Platforms,
     limits: LimitValues,
     pub(crate) diagnostics: Diagnostics,
@@ -206,8 +233,10 @@ pub(crate) struct Build<'a> {
     leftovers: Vec<Leftovers>,
     // In ascending order.
     unreached_runtime_files: Vec<FileId>,
+    held_library_code: HeldLibraryCode,
     // Each with `QueryStatistics::closed_cycles`, which is not 0.
     circular_runtime_files: Vec<(FileId, u32)>,
+    lowered_runtimes: LoweredRuntimes,
     import_graph: Option<ImportGraph>,
     /// `QueryInputs::checked_elsewhere` of the program that is lowered as the application.
     pub(crate) checked_elsewhere: Vec<FileId>,
@@ -237,6 +266,19 @@ pub(crate) struct ProgramsOfOneLoad<'a> {
     pub are_all_of_the_build: bool,
     /// Of the program of a `WorkerFile`: `StartedWorkers::held_texts` of the programs before it.
     pub held_elsewhere: Option<&'a [(Vec<u8>, usize)]>,
+    /// Nothing is compiled. The load ends with `Build::is_one_program`: whether `mentions_worker_constructor` is false of one of the programs.
+    pub only_looks_for_worker_threads: bool,
+}
+
+/// What `compile_with_options` knows of the files that Workers start from while it compiles one program.
+#[derive(Copy, Clone)]
+struct KnownWorkerFiles<'a> {
+    /// Each of them may begin a program of its own.
+    splits: bool,
+    /// `TextsLeftOut::names`
+    left_out: &'a [Vec<u8>],
+    /// Filled by a build that ends ahead of the engine, which is no failure: one program has to hold these files with all the entry points.
+    of_the_one_program: &'a RefCell<Vec<WorkerFile>>,
 }
 
 #[derive(Clone)]
@@ -260,8 +302,14 @@ pub(crate) struct LoadedBuild<'b, 's> {
     pub can_load_code_at_run_time: bool,
     /// It can for no other reason than that a loader is given a name that the build does not know.
     pub loads_code_by_unknown_names_alone: bool,
+    /// `RuntimeRoots::keeps_code_without_names`
+    pub keeps_library_code_without_names: bool,
+    /// `RuntimeRoots::holds_guessed_code`
+    pub holds_guessed_library_code: bool,
     /// Waits until the plugins have answered for every asset. False: one of them is no asset, and the caller gives up.
     pub finish_asset_reads: &'b dyn Fn() -> bool,
+    /// What the load of Bun's own code has read off its files.
+    pub known_library_regions: &'b dyn Fn() -> Option<KnownRegions>,
 }
 
 pub(crate) struct BoundApplication<'b> {
@@ -296,9 +344,20 @@ struct FrontEndOutput {
     folders: Vec<FolderPaths>,
     modules: Option<ListedModules>,
     writes_preload: bool,
+    held_library_code: HeldLibraryCode,
+    names_way_to_module_objects: bool,
+    has_commonjs_entry_point: bool,
+    lets_process_out_of_sight: bool,
+    ways_not_followed_out_of_sight: WaysBetweenModuleObjects,
+    ways_followed_for_their_names: WaysBetweenModuleObjects,
 }
 
 impl FrontEndOutput {
+    // There is a main module, and the executable does not keep track of which file it is.
+    fn lacks_main_module(&self) -> bool {
+        self.has_commonjs_entry_point && !self.names_way_to_module_objects
+    }
+
     fn into_parts(self, statistics: Statistics) -> (Program, ProgramSummary) {
         let summary = ProgramSummary {
             entry_points: self.entry_points,
@@ -327,7 +386,28 @@ impl<'b, 's> LoadedBuild<'b, 's> {
     }
 }
 
+/// The front end of `compile`: it starts over where `compile` does for a reason that the front end knows.
 pub fn link_program(
+    options: &Options<'_>,
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> Result<LinkedProgram, BuildFailed> {
+    let said_before = (log.msgs.len(), log.warnings, log.errors);
+    let linked = link_program_with_options(options, provider, log);
+    match &linked {
+        Err(failure) if starts_over_without_brought_types(&options.load, failure) => {}
+        Ok(_) | Err(_) => return linked,
+    }
+    log.msgs.truncate(said_before.0);
+    (log.warnings, log.errors) = (said_before.1, said_before.2);
+    provider.clear_embedded_files();
+    let all: Vec<usize> = (0..options.entry_points.len()).collect();
+    let mut options = options_with_entry_points(options, &all);
+    options.load.takes_runtime_as_any = true;
+    link_program_with_options(&options, provider, log)
+}
+
+fn link_program_with_options(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
     log: &mut Log,
@@ -339,9 +419,18 @@ pub fn link_program(
         output.program.functions = body_remap.into_program_functions(&build.parallel_runner());
         output
     });
-    let (output, statistics) = build.finish(result, log)?;
+    let brought_bun_types = build.brings_bun_types;
+    let (output, statistics) = build.finish(result, log).map_err(|mut failure| {
+        failure.brought_bun_types = brought_bun_types;
+        failure
+    })?;
     let (program, summary) = output.into_parts(statistics);
     Ok(LinkedProgram { program, summary })
+}
+
+/// The declarations that a build brings along hold no program to what its project has not installed.
+fn starts_over_without_brought_types(load: &LoadOptions, failure: &BuildFailed) -> bool {
+    failure.brought_bun_types && !failure.is_internal_error && !load.takes_runtime_as_any
 }
 
 pub fn emit_program(
@@ -361,7 +450,6 @@ pub fn emit_program(
 // build ever holds only while the build stands near it. Further down the stages take the same blocks again a moment later,
 // and every block that is given back interrupts all the threads. What a stage frees when it ends stands right behind a peak:
 // that is given back as ever.
-/// While a build runs the allocator also hands out the memory that was freed last.
 struct KeepsFreeBlocksBelowThePeak {
     is_over: Arc<AtomicBool>,
     watcher: Option<JoinHandle<()>>,
@@ -379,7 +467,6 @@ impl KeepsFreeBlocksBelowThePeak {
         let is_first = BUILDS_THAT_KEEP_FREE_BLOCKS.fetch_add(1, Ordering::AcqRel) == 0;
         let watcher = (bun_alloc::USE_MIMALLOC && is_first)
             .then(|| {
-                Self::hand_out_last_freed_memory(true);
                 engine::give_freed_pages_back_after(engine::DELAY_UNTIL_THE_PROGRAM_IS_READ);
                 if !starts_thread {
                     return None;
@@ -390,11 +477,6 @@ impl KeepsFreeBlocksBelowThePeak {
             })
             .flatten();
         KeepsFreeBlocksBelowThePeak { is_over, watcher }
-    }
-
-    fn hand_out_last_freed_memory(does: bool) {
-        use bun_alloc::mimalloc::{Option, mi_option_set_default};
-        mi_option_set_default(Option::hand_out_last_freed, does.into());
     }
 
     fn watch(is_over: &AtomicBool) {
@@ -445,7 +527,6 @@ impl Drop for KeepsFreeBlocksBelowThePeak {
         if BUILDS_THAT_KEEP_FREE_BLOCKS.fetch_sub(1, Ordering::AcqRel) == 1
             && bun_alloc::USE_MIMALLOC
         {
-            Self::hand_out_last_freed_memory(false);
             engine::give_freed_pages_back_after(engine::USUAL_DELAY);
         }
         self.is_over.store(true, Ordering::Release);
@@ -549,30 +630,237 @@ fn names(program: &EngineResult, feature: Feature) -> bool {
     })
 }
 
+// The engine follows values, so it sees what no name in a source tells.
+fn find_library_code_lacked(
+    found: FlowFindings<'_>,
+    held: &HeldLibraryCode,
+    platform: Platforms,
+) -> RuntimeUses {
+    let used = found.builtins_used.iter();
+    let used = used.filter_map(|record| builtin_of(record.builtin));
+    let used: Vec<BuiltinId> = used.map(table::canonical_id).collect();
+    let mut needed = RuntimeUses::of_entries_used(used.iter().copied(), platform);
+    needed.add(&held.find_modules_left_out(&used));
+    // It has followed nothing, and keeps all that it was handed.
+    let has_followed_nothing = found.unseen_code.iter().any(|record| {
+        matches!(
+            record.cause,
+            UnseenCodeCause::FlowResultDisabled | UnseenCodeCause::LimitReached
+        )
+    });
+    if has_followed_nothing {
+        needed.add(&RuntimeUses::of_unseen_code(platform));
+    }
+    // Where the host hands anything to anything, every function of the host counts as called. Such a program holds those that it names.
+    let holds_named_functions_of_host_alone = table::STARTUP_MODULES
+        .iter()
+        .all(|module| held.holds_module(*module) || needed.modules.contains(module));
+    let entered = found.library_functions_lacked.iter();
+    let entered = entered.map(|record| RuntimeFunction(record.function));
+    let functions = entered.filter(|&function| {
+        table::runtime_function(function).is_some_and(|data| {
+            data.platforms.contains(platform)
+                && (!(holds_named_functions_of_host_alone
+                    && data.role == RuntimeFunctionRole::HostBuiltin)
+                    || held.is_left_to_engine(function))
+        })
+    });
+    needed.add(&RuntimeUses {
+        functions: functions.collect(),
+        ..RuntimeUses::default()
+    });
+    held.find_lacked(&needed)
+}
+
+// An executable keeps track of which file is the main module where the front end has seen somebody ask.
+// Code that the build does not see counts as reading all that it can get at, and is handed no module object of the program. Beside such code a read counts where code of the program lets `process` go out of sight.
+fn reads_main_module(found: FlowFindings<'_>, lets_process_out_of_sight: bool) -> bool {
+    (found.unseen_code.is_empty() || lets_process_out_of_sight)
+        && found.builtins_used.iter().any(|record| {
+            record.uses.contains(BuiltinUse::READ)
+                && builtin_of(record.builtin).map(table::canonical_id)
+                    == Some(BuiltinId::ProcessMainModule)
+        })
+}
+
+// The files around a module object keep theirs where the front end has seen somebody ask for them. Where it has lost sight of the object the engine says whether anybody asks.
+fn find_ways_read_out_of_sight(
+    found: FlowFindings<'_>,
+    not_followed: WaysBetweenModuleObjects,
+) -> WaysBetweenModuleObjects {
+    let is_used = |wanted: BuiltinId| {
+        found
+            .builtins_used
+            .iter()
+            .any(|record| builtin_of(record.builtin).map(table::canonical_id) == Some(wanted))
+    };
+    WaysBetweenModuleObjects {
+        children: not_followed.children && is_used(BuiltinId::ModuleObjectChildren),
+        parent: not_followed.parent && is_used(BuiltinId::ModuleObjectParent),
+    }
+}
+
+// A name in a file is a guess at what the engine knows.
+fn find_ways_named_that_nobody_reads(
+    found: FlowFindings<'_>,
+    followed_for_their_names: WaysBetweenModuleObjects,
+) -> WaysBetweenModuleObjects {
+    let read = find_ways_read_out_of_sight(found, followed_for_their_names);
+    WaysBetweenModuleObjects {
+        children: followed_for_their_names.children && !read.children,
+        parent: followed_for_their_names.parent && !read.parent,
+    }
+}
+
+pub(crate) fn library_code_of(numbers: &LibraryCode) -> RuntimeUses {
+    let modules_of = |numbers: &[u32]| {
+        let modules = numbers.iter().copied();
+        modules
+            .filter_map(RuntimeModule::from_registry_id)
+            .collect()
+    };
+    let exports_read = numbers.exports_read.iter();
+    RuntimeUses {
+        modules: modules_of(&numbers.modules),
+        modules_read_whole: modules_of(&numbers.modules_read_whole),
+        exports_read: exports_read
+            .filter_map(|&(module, name)| Some((RuntimeModule::from_registry_id(module)?, name)))
+            .collect(),
+        functions: numbers
+            .functions
+            .iter()
+            .copied()
+            .map(RuntimeFunction)
+            .collect(),
+    }
+}
+
+fn numbers_of(code: &RuntimeUses) -> LibraryCode {
+    let numbers_of =
+        |modules: &[RuntimeModule]| modules.iter().map(|it| it.registry_id()).collect();
+    let exports_read = code.exports_read.iter();
+    LibraryCode {
+        modules: numbers_of(&code.modules),
+        modules_read_whole: numbers_of(&code.modules_read_whole),
+        exports_read: exports_read
+            .map(|&(module, name)| (module.registry_id(), name))
+            .collect(),
+        functions: code.functions.iter().map(|function| function.0).collect(),
+    }
+}
+
+fn chooses_library_code_by_names(options: &Options<'_>) -> bool {
+    !options.load.keeps_library_code_without_names
+        && !options.load.omits_builtin_modules
+        && !options.aot.checks_only
+}
+
+// Which of Bun's own code a program needs is a guess where a member is read by its name. The engine knows.
+fn find_load_options_with_library_code_lacked(
+    options: &Options<'_>,
+    lacked: &RuntimeUses,
+) -> Option<LoadOptions> {
+    if !chooses_library_code_by_names(options) || lacked.is_empty() {
+        return None;
+    }
+    let mut load = options.load.clone();
+    let asked_before = library_code_of(&load.library_code_lacked);
+    let mut asked = asked_before.clone();
+    asked.add(lacked);
+    // There is no such code to be had.
+    if asked == asked_before {
+        return None;
+    }
+    // What came along needs more, again and again.
+    load.keeps_library_code_without_names = !asked_before.is_empty();
+    load.library_code_lacked = numbers_of(&asked);
+    Some(load)
+}
+
+fn find_load_options_with_what_engine_found(
+    options: &Options<'_>,
+    compiled: &Compilation,
+) -> Option<LoadOptions> {
+    find_load_options_with(
+        options,
+        &compiled.library_code_lacked,
+        compiled.reads_main_module_without_its_name,
+        compiled.ways_read_out_of_sight,
+        compiled.ways_named_that_nobody_reads,
+    )
+}
+
+fn find_load_options_with(
+    options: &Options<'_>,
+    library_code_lacked: &RuntimeUses,
+    reads_main_module_without_its_name: bool,
+    ways_read_out_of_sight: WaysBetweenModuleObjects,
+    ways_named_that_nobody_reads: WaysBetweenModuleObjects,
+) -> Option<LoadOptions> {
+    let mut load = find_load_options_with_library_code_lacked(options, library_code_lacked);
+    if !ways_read_out_of_sight.is_empty() && !options.aot.checks_only {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.ways_read_out_of_sight.add(ways_read_out_of_sight);
+    }
+    if !ways_named_that_nobody_reads.is_empty() && !options.aot.checks_only {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        (load.ways_named_that_nobody_reads).add(ways_named_that_nobody_reads);
+    }
+    if reads_main_module_without_its_name
+        && !options.load.reads_main_module_without_its_name
+        && !options.aot.checks_only
+    {
+        let load = load.get_or_insert_with(|| options.load.clone());
+        load.reads_main_module_without_its_name = true;
+    }
+    load
+}
+
+fn find_load_options_to_compile_again_with(
+    options: &Options<'_>,
+    compiled: &Result<Compilation, BuildFailed>,
+) -> Option<LoadOptions> {
+    let mut load = options.load.clone();
+    match compiled {
+        Err(failure) if starts_over_without_brought_types(&load, failure) => {
+            load.takes_runtime_as_any = true;
+        }
+        Ok(compiled) => return find_load_options_with_what_engine_found(options, compiled),
+        Err(_) => return None,
+    }
+    Some(load)
+}
+
 pub fn compile(
     options: &Options<'_>,
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
     let said_before = (log.msgs.len(), log.warnings, log.errors);
-    let runs_before = ENGINE_RUNS.get();
-    let mut compiled = match compile_with_options(options, provider, log) {
-        // The declarations that a build brings along hold no program to what its project has not installed.
-        Err(failure) if failure.brought_bun_types && !failure.is_internal_error => {
-            log.msgs.truncate(said_before.0);
-            (log.warnings, log.errors) = (said_before.1, said_before.2);
-            provider.clear_embedded_files();
-            let all: Vec<usize> = (0..options.entry_points.len()).collect();
-            let mut options = options_with_entry_points(options, &all);
-            options.load.takes_runtime_as_any = true;
-            compile_with_options(&options, provider, log)
-        }
-        compiled => compiled,
+    let runs_before = (ENGINE_RUNS.get(), WHOLE_ENGINE_RUNS.get());
+    SharedByLoads::begin_build();
+    let mut changed: Option<Options<'_>> = None;
+    let mut compiled = loop {
+        let options = changed.as_ref().unwrap_or(options);
+        let compiled = compile_with_options(options, provider, log);
+        let Some(load) = find_load_options_to_compile_again_with(options, &compiled) else {
+            break compiled;
+        };
+        log.msgs.truncate(said_before.0);
+        (log.warnings, log.errors) = (said_before.1, said_before.2);
+        provider.clear_embedded_files();
+        let all: Vec<usize> = (0..options.entry_points.len()).collect();
+        let mut options = options_with_entry_points(options, &all);
+        options.load = load;
+        changed = Some(options);
     };
+    SharedByLoads::end_build();
     if let Ok(compiled) = &mut compiled {
-        let runs = ENGINE_RUNS.get() - runs_before;
+        let runs = ENGINE_RUNS.get() - runs_before.0;
+        let whole_runs = WHOLE_ENGINE_RUNS.get() - runs_before.1;
         let statistics = &mut compiled.summary.statistics;
         statistics.count(StatisticId::EngineRuns, runs);
+        statistics.count(StatisticId::WholeEngineRuns, whole_runs);
     }
     compiled
 }
@@ -580,6 +868,8 @@ pub fn compile(
 thread_local! {
     // How often this thread has run the engine, also for programs that a build then threw away. A build runs it on the thread that called `compile`.
     static ENGINE_RUNS: Cell<u64> = const { Cell::new(0) };
+    // Those that did not end behind the flow analysis.
+    static WHOLE_ENGINE_RUNS: Cell<u64> = const { Cell::new(0) };
 }
 
 fn compile_with_options(
@@ -592,11 +882,18 @@ fn compile_with_options(
     let mut left_out = TextsLeftOut::default();
     loop {
         let options = with_worker_files.as_ref().unwrap_or(options);
-        let compiled = match with_worker_files {
-            None => Ok(compile_written_entry_points(options, provider, log)?),
-            Some(_) => compile_program(options, ProgramPlace::Only, provider, log),
-        };
         let splits = with_worker_files.is_none() && can_have_several_programs(options);
+        let of_the_one_program = RefCell::new(Vec::new());
+        let known = KnownWorkerFiles {
+            splits,
+            left_out: &left_out.names,
+            of_the_one_program: &of_the_one_program,
+        };
+        let compiled = match with_worker_files {
+            None => compile_written_entry_points(options, known, provider, log),
+            Some(_) => compile_program(options, ProgramPlace::Only, known, provider, log),
+        };
+        let of_the_one_program = of_the_one_program.into_inner();
         let longer = match compiled {
             Ok(compiled) => {
                 let added = add_programs_of_worker_files(
@@ -612,14 +909,13 @@ fn compile_with_options(
                         left_out.said.append_to(log);
                         return Ok(compiled);
                     }
-                    Err(found) => {
-                        let named = found.iter().filter(|file| file.is_named_by_path);
-                        (left_out.named_by_paths)
-                            .extend(named.map(|file| file.source_path.clone()));
-                        options_with_worker_files(options, &found)
-                    }
+                    Err(found) => left_out.add_worker_files(options, &found),
                 }
             }
+            Err(_) if !of_the_one_program.is_empty() => {
+                left_out.add_worker_files(options, &of_the_one_program)
+            }
+            Err(failure) if with_worker_files.is_none() => return Err(failure),
             Err(failure) => {
                 let texts = &options.load.entry_texts;
                 let starts_over = failure.brought_bun_types && !failure.is_internal_error;
@@ -658,6 +954,14 @@ struct TextsLeftOut {
 }
 
 impl TextsLeftOut {
+    /// The options of the one program that holds the files too.
+    fn add_worker_files<'a>(&mut self, options: &Options<'a>, files: &[WorkerFile]) -> Options<'a> {
+        let named = files.iter().filter(|file| file.is_named_by_path);
+        self.named_by_paths
+            .extend(named.map(|file| file.source_path.clone()));
+        options_with_worker_files(options, files)
+    }
+
     /// False: the build has failed for another reason. `first`: where the messages of the failed program begin.
     fn take_texts_with_errors(
         &mut self,
@@ -815,8 +1119,9 @@ fn add_programs_of_worker_files(
             options: core::slice::from_ref(&own),
             are_all_of_the_build: false,
             held_elsewhere: Some(&first.started_workers.held_texts),
+            only_looks_for_worker_threads: false,
         };
-        let compiled = compile_programs(&own, Some(of_one_load), provider, log);
+        let compiled = compile_programs(&own, Some(of_one_load), None, provider, log);
         forget_repeated_messages(log, said_before);
         let program = match compiled {
             // The file was not written for a Worker. It stays a plain embedded file.
@@ -923,15 +1228,20 @@ fn add_program(first: &mut Compilation, program: Compilation) {
         add_modules(listed, further);
     }
     first.started_workers.add(program.started_workers);
+    first.library_code_lacked.add(&program.library_code_lacked);
+    first.reads_main_module_without_its_name |= program.reads_main_module_without_its_name;
+    (first.ways_read_out_of_sight).add(program.ways_read_out_of_sight);
+    (first.ways_named_that_nobody_reads).add(program.ways_named_that_nobody_reads);
 }
 
 fn compile_written_entry_points(
     options: &Options<'_>,
+    known: KnownWorkerFiles<'_>,
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
     if !begins_program_at_each_entry_point(options) {
-        return compile_program(options, ProgramPlace::Only, provider, log);
+        return compile_program(options, ProgramPlace::Only, known, provider, log);
     }
     let said_before = (log.msgs.len(), log.warnings, log.errors);
     if let Some(compiled) = compile_program_at_each_entry_point(options, provider, log) {
@@ -940,7 +1250,7 @@ fn compile_written_entry_points(
     log.msgs.truncate(said_before.0);
     (log.warnings, log.errors) = (said_before.1, said_before.2);
     remove_program_files_of_further_entry_points(options);
-    compile_program(options, ProgramPlace::Only, provider, log)
+    compile_program(options, ProgramPlace::Only, known, provider, log)
 }
 
 fn remove_program_files_of_further_entry_points(options: &Options<'_>) {
@@ -966,33 +1276,68 @@ fn compile_program_at_each_entry_point(
     let mut programs: Vec<Option<Compilation>> = (0..count).map(|_| None).collect();
     // The files of all programs are read, bound and checked once, and each program is what its entry point leads to among them.
     let mut loads: VecDeque<Vec<usize>> = VecDeque::from([(0..count).collect::<Vec<usize>>()]);
+    // Of a program that is compiled again, with the code of Bun's own that it was found to lack. The others stay as they are.
+    let mut changed_loads: Vec<Option<LoadOptions>> = (0..count).map(|_| None).collect();
+    let mut workers_of_programs_compiled_again = StartedWorkers::default();
     while let Some(indexes) = loads.pop_front() {
         let said_before = log.msgs.len();
         let together = options_with_entry_points(options, &indexes);
         let each: Vec<Options<'_>> = (indexes.iter())
-            .map(|&index| options_with_entry_points(options, &[index]))
+            .map(|&index| {
+                let mut options = options_with_entry_points(options, &[index]);
+                if let Some(load) = &changed_loads[index] {
+                    options.load = load.clone();
+                }
+                options
+            })
             .collect();
         let of_one_load = ProgramsOfOneLoad {
             indexes: &indexes,
             options: &each,
             are_all_of_the_build: indexes.len() == count,
             held_elsewhere: None,
+            only_looks_for_worker_threads: false,
         };
-        let compiled = compile_programs(&together, Some(of_one_load), provider, log);
+        let compiled = compile_programs(&together, Some(of_one_load), None, provider, log);
         forget_repeated_messages(log, said_before);
         let compiled = match compiled {
             Err(failure) if failure.is_one_program => return None,
             Err(failure) => return Some(Err(failure)),
             Ok(compiled) => compiled,
         };
-        for (place, program) in compiled.programs {
+        let mut compiled_again = Vec::new();
+        for (place, mut program) in compiled.programs {
             match place {
                 ProgramPlace::Only => return Some(Ok(program)),
-                ProgramPlace::OneOfSeveral(_) if loads_modules_by_name(&program.engine) => {
+                ProgramPlace::OneOfSeveral(_)
+                    if !options.aot.separates_programs
+                        && loads_modules_by_name(&program.engine) =>
+                {
                     return None;
                 }
-                ProgramPlace::OneOfSeveral(index) => programs[index] = Some(program),
+                ProgramPlace::OneOfSeveral(index) => {
+                    let position = indexes.iter().position(|&it| it == index);
+                    let own = &each[position.expect("it was handed over")];
+                    match find_load_options_with_what_engine_found(own, &program) {
+                        Some(load) => {
+                            changed_loads[index] = Some(load);
+                            compiled_again.push(index);
+                            workers_of_programs_compiled_again.add(program.started_workers);
+                        }
+                        None => {
+                            program.library_code_lacked = RuntimeUses::default();
+                            program.reads_main_module_without_its_name = false;
+                            program.ways_read_out_of_sight = WaysBetweenModuleObjects::default();
+                            program.ways_named_that_nobody_reads =
+                                WaysBetweenModuleObjects::default();
+                            programs[index] = Some(program);
+                        }
+                    }
+                }
             }
+        }
+        if !compiled_again.is_empty() {
+            loads.push_back(compiled_again);
         }
         for left in compiled.left_entry_points {
             // A load of the same entry points would leave the same ones.
@@ -1010,7 +1355,10 @@ fn compile_program_at_each_entry_point(
         .iter()
         .any(|program| names(&program.engine, Feature::NodeWorker));
     let lacks_module = |program: &Compilation| !names(&program.engine, Feature::WorkerConstructor);
-    if starts_node_workers && programs[1..].iter().any(lacks_module) {
+    if !options.aot.separates_programs
+        && starts_node_workers
+        && programs[1..].iter().any(lacks_module)
+    {
         return None;
     }
     let mut programs = programs.into_iter();
@@ -1018,6 +1366,7 @@ fn compile_program_at_each_entry_point(
     for program in programs {
         add_program(&mut first, program);
     }
+    (first.started_workers).add(workers_of_programs_compiled_again);
     first.summary.folders.shared_sort_unstable();
     first.summary.folders.dedup();
     Some(Ok(first))
@@ -1080,12 +1429,22 @@ pub(crate) enum ProgramPlace {
 fn compile_program(
     options: &Options<'_>,
     place: ProgramPlace,
+    known: KnownWorkerFiles<'_>,
     provider: &dyn SourceProvider,
     log: &mut Log,
 ) -> Result<Compilation, BuildFailed> {
     debug_assert!(place == ProgramPlace::Only);
-    let mut compiled = compile_programs(options, None, provider, log)?;
+    let mut compiled = compile_programs(options, None, Some(known), provider, log)?;
     Ok(compiled.programs.pop().expect("a build has a program").1)
+}
+
+/// Whether the build loads again behind a run of the engine.
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum FurtherLoad {
+    /// For another program, whatever becomes of this one.
+    MayCome,
+    /// Only for the program that is compiled in place of this one.
+    ComesIfRunEnds,
 }
 
 struct CompiledPrograms {
@@ -1098,6 +1457,7 @@ struct CompiledPrograms {
 fn compile_programs<'a>(
     options: &'a Options<'a>,
     programs: Option<ProgramsOfOneLoad<'a>>,
+    known_worker_files: Option<KnownWorkerFiles<'_>>,
     provider: &'a dyn SourceProvider,
     log: &mut Log,
 ) -> Result<CompiledPrograms, BuildFailed> {
@@ -1152,7 +1512,30 @@ fn compile_programs<'a>(
         ProgramPlace::Only => 0,
         ProgramPlace::OneOfSeveral(index) => index,
     });
+    if let (Some(known), [(_, output)]) = (known_worker_files, &outputs[..]) {
+        let started = &build.started_workers;
+        let worker_files =
+            find_files_of_the_one_program(options, known, started, output, provider, log);
+        if !worker_files.is_empty() {
+            known.of_the_one_program.replace(worker_files);
+            return Err(build.finish::<()>(Err(Stage::Any), log).unwrap_err());
+        }
+    }
+    // A further load of a program that holds them all is spared little by what this load has parsed: that goes with the sessions of the load.
+    let holds_startup_modules = |output: &FrontEndOutput| {
+        let mut modules = table::STARTUP_MODULES.iter();
+        modules.all(|&module| output.held_library_code.holds_module(module))
+    };
+    if (outputs.iter()).all(|(_, output)| holds_startup_modules(output)) {
+        let session = SharedByLoads::take().and_then(SharedByLoads::into_session);
+        build.retired_sessions.extend(session);
+    }
     let mut compiled = Vec::with_capacity(outputs.len());
+    let mut library_code_lacked = Vec::with_capacity(outputs.len());
+    // Entry points that this load has left, and the files that Workers start from, are loaded by themselves.
+    let mut is_loaded_again =
+        !build.left_entry_points.is_empty() || !build.started_workers.files.is_empty();
+    let mut programs_to_ask = outputs.len();
     for (place, output) in outputs {
         build.place = place;
         let emitted = build
@@ -1165,7 +1548,37 @@ fn compile_programs<'a>(
         if options.aot.checks_only {
             engine_options.check_only();
         }
-        let engine = build.run_engine(bytes, &engine_options, &output);
+        let own = match (place, programs) {
+            (ProgramPlace::OneOfSeveral(index), Some(all)) => {
+                let position = all.indexes.iter().position(|&it| it == index);
+                position.map_or(options, |position| &all.options[position])
+            }
+            _ => options,
+        };
+        let (held, platform) = (&output.held_library_code, build.platform);
+        let lacks_main_module = output.lacks_main_module();
+        let lets_process_out_of_sight = output.lets_process_out_of_sight;
+        let ways_not_followed = output.ways_not_followed_out_of_sight;
+        let ways_followed = output.ways_followed_for_their_names;
+        // A program that is compiled again, with what the engine has found: nothing is made of it now.
+        let goes_on = |found: FlowFindings<'_>| {
+            let lacked = find_library_code_lacked(found, held, platform);
+            let reads_main_module =
+                lacks_main_module && reads_main_module(found, lets_process_out_of_sight);
+            let ways = find_ways_read_out_of_sight(found, ways_not_followed);
+            let nobody_reads = find_ways_named_that_nobody_reads(found, ways_followed);
+            find_load_options_with(own, &lacked, reads_main_module, ways, nobody_reads).is_none()
+        };
+        programs_to_ask -= 1;
+        let whole_runs = WHOLE_ENGINE_RUNS.get();
+        let further_load = match is_loaded_again || programs_to_ask > 0 {
+            true => FurtherLoad::MayCome,
+            false => FurtherLoad::ComesIfRunEnds,
+        };
+        let engine = build.run_engine(bytes, &engine_options, &output, &goes_on, further_load);
+        is_loaded_again |= WHOLE_ENGINE_RUNS.get() == whole_runs;
+        let lacked = find_library_code_lacked(engine.flow_findings(), held, platform);
+        library_code_lacked.push(lacked);
         if let Some(modules) = &mut output.modules {
             modules.count_code(engine.functions(), &output.names);
         }
@@ -1235,14 +1648,29 @@ fn compile_programs<'a>(
     let statistics = build.statistics;
     let mut programs: Vec<(ProgramPlace, Compilation)> = compiled
         .into_iter()
-        .map(|(place, engine, output)| {
+        .zip(library_code_lacked)
+        .map(|((place, engine, output), library_code_lacked)| {
+            let reads_main_module_without_its_name = output.lacks_main_module()
+                && reads_main_module(engine.flow_findings(), output.lets_process_out_of_sight);
+            let ways_read_out_of_sight = find_ways_read_out_of_sight(
+                engine.flow_findings(),
+                output.ways_not_followed_out_of_sight,
+            );
+            let ways_named_that_nobody_reads = find_ways_named_that_nobody_reads(
+                engine.flow_findings(),
+                output.ways_followed_for_their_names,
+            );
             let (_, summary) = output.into_parts(statistics.clone());
             let compilation = Compilation {
+                reads_main_module_without_its_name,
+                ways_read_out_of_sight,
+                ways_named_that_nobody_reads,
                 engine,
                 summary,
                 further_programs: Vec::new(),
                 // Of all that was loaded.
                 started_workers: started_workers.take().unwrap_or_default(),
+                library_code_lacked,
             };
             (place, compilation)
         })
@@ -1263,6 +1691,62 @@ fn compile_programs<'a>(
             has_early_errors: false,
         }),
     }
+}
+
+// What `add_programs_of_worker_files` answers with `Err`, as far as the front end can tell: the engine then runs once, for the program that holds them all.
+fn find_files_of_the_one_program(
+    options: &Options<'_>,
+    known: KnownWorkerFiles<'_>,
+    started: &StartedWorkers,
+    output: &FrontEndOutput,
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> Vec<WorkerFile> {
+    let is_entry_point = |file: &WorkerFile| {
+        (output.entry_points.iter()).any(|it| it.source_path == file.source_path)
+    };
+    let mut files: Vec<WorkerFile> = (started.files.iter())
+        .filter(|file| !is_entry_point(file) && !known.left_out.contains(&file.source_path))
+        .cloned()
+        .collect();
+    let has_options = files.iter().any(|file| file.has_options);
+    files.dedup_by(|a, b| a.source_path == b.source_path);
+    let are_one_program = !files.is_empty()
+        && (!known.splits
+            || (output.writes_preload && has_options)
+            || (started.constructs_node_workers
+                && lacks_worker_threads_in_a_program(options, &files, provider, log)));
+    match are_one_program {
+        true => files,
+        false => Vec::new(),
+    }
+}
+
+// The host loads node:worker_threads into the global of a Worker of that module, so the program of such a Worker holds the module. The files are loaded and nothing more.
+fn lacks_worker_threads_in_a_program(
+    options: &Options<'_>,
+    files: &[WorkerFile],
+    provider: &dyn SourceProvider,
+    log: &mut Log,
+) -> bool {
+    let said_before = (log.msgs.len(), log.warnings, log.errors);
+    let with_files = options_with_worker_files(options, files);
+    let indexes: Vec<usize> = (options.entry_points.len()..with_files.entry_points.len()).collect();
+    let together = options_with_entry_points(&with_files, &indexes);
+    let each: Vec<Options<'_>> = (indexes.iter())
+        .map(|&index| options_with_entry_points(&with_files, &[index]))
+        .collect();
+    let of_one_load = ProgramsOfOneLoad {
+        indexes: &indexes,
+        options: &each,
+        are_all_of_the_build: false,
+        held_elsewhere: None,
+        only_looks_for_worker_threads: true,
+    };
+    let loaded = compile_programs(&together, Some(of_one_load), None, provider, log);
+    log.msgs.truncate(said_before.0);
+    (log.warnings, log.errors) = (said_before.1, said_before.2);
+    matches!(loaded, Err(failure) if failure.is_one_program)
 }
 
 fn fail(
@@ -1300,7 +1784,13 @@ impl<'a> Build<'a> {
             provider,
             caches,
             threads: options.thread_count(),
-            platform: host_platform(),
+            chosen_threads: None,
+            platform: match options.aot.platform {
+                None => host_platform(),
+                Some(TargetPlatform::Darwin) => Platforms::DARWIN,
+                Some(TargetPlatform::Linux) => Platforms::LINUX,
+                Some(TargetPlatform::Windows) => Platforms::WINDOWS,
+            },
             limits,
             diagnostics: Diagnostics::new(),
             clock: StageClock::new(),
@@ -1308,7 +1798,9 @@ impl<'a> Build<'a> {
             retired_sessions: Vec::new(),
             leftovers: Vec::new(),
             unreached_runtime_files: Vec::new(),
+            held_library_code: HeldLibraryCode::default(),
             circular_runtime_files: Vec::new(),
+            lowered_runtimes: LoweredRuntimes::default(),
             import_graph: None,
             checked_elsewhere: Vec::new(),
             place: ProgramPlace::Only,
@@ -1363,6 +1855,7 @@ impl<'a> Build<'a> {
                 (build.programs).is_some_and(|programs| programs.held_elsewhere.is_some());
             if build.place != ProgramPlace::Only
                 && !begins_at_worker_file
+                && !build.options.aot.separates_programs
                 && loads_modules_by_computed_names(application, &bound.projects.application.graph)
             {
                 build.is_one_program = true;
@@ -1481,23 +1974,43 @@ impl<'a> Build<'a> {
         bytes: ProgramBytes,
         engine_options: &EngineOptions,
         output: &FrontEndOutput,
+        goes_on: JudgeOfFlowFindings<'_>,
+        further_load: FurtherLoad,
     ) -> EngineResult {
         self.clock.stop();
         ENGINE_RUNS.set(ENGINE_RUNS.get() + 1);
         let leftovers = core::mem::take(&mut self.leftovers);
         let started = Instant::now();
+        let has_ended_behind_flow_analysis = AtomicBool::new(false);
+        // It serves the loads that follow. Where none can, it goes while the engine goes on.
+        let mut shared_by_loads = Guarded::new(SharedByLoads::take());
         let ((), engine) = run_beside(
             &self.beside_runner(),
             move || drop(leftovers),
-            || engine::compile(bytes, engine_options),
+            || {
+                engine::compile(bytes, engine_options, &|found| {
+                    let goes_on = goes_on(found);
+                    has_ended_behind_flow_analysis.store(!goes_on, Ordering::Relaxed);
+                    if goes_on && further_load == FurtherLoad::ComesIfRunEnds {
+                        drop(shared_by_loads.lock().take());
+                    }
+                    goes_on
+                })
+            },
         );
         self.count_time(StatisticId::EngineCallNanoseconds, started);
+        if let Some(shared) = shared_by_loads.get_mut().take() {
+            SharedByLoads::keep(shared);
+        }
+        let has_ended_behind_flow_analysis = has_ended_behind_flow_analysis.into_inner();
+        WHOLE_ENGINE_RUNS.set(WHOLE_ENGINE_RUNS.get() + u64::from(!has_ended_behind_flow_analysis));
 
         let returned = Instant::now();
         self.statistics.add_values(engine.statistics());
         self.diagnostics
             .add_engine_records(&engine, &output.names, &output.texts);
         if engine_options.makes_image()
+            && !has_ended_behind_flow_analysis
             && engine.image().is_none()
             && !self.diagnostics.has_errors()
         {

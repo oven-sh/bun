@@ -6,7 +6,9 @@
 use crate::shell::ExitCode;
 use crate::shell::ast;
 use crate::shell::builtin::{Builtin, Kind as BuiltinKind};
-use crate::shell::interpreter::{CowFd, Interpreter, Node, NodeId, ShellExecEnv, StateKind, log};
+use crate::shell::interpreter::{
+    CowFd, Interpreter, Node, NodeId, RedirectTarget, ShellExecEnv, StateKind, log,
+};
 use crate::shell::io::{IO, OutKind as IoOutKind};
 use crate::shell::shell_body::subproc::{Readable, ShellSubprocess, StdioKind};
 use crate::shell::states::assigns::{AssignCtx, Assigns};
@@ -23,6 +25,7 @@ pub(crate) struct Cmd {
     pub(crate) io: IO,
     pub(crate) state: CmdState,
     pub args: Vec<Vec<u8>>,
+    /// The expanded word of a path redirect with its NUL, or empty when the word is ambiguous.
     pub(crate) redirection_file: Vec<u8>,
     pub(crate) redirection_fd: Option<*mut CowFd>,
     pub(crate) exec: Exec,
@@ -718,15 +721,8 @@ impl Cmd {
             return Ok(None);
         };
 
-        match redirect {
-            ast::Redirect::JsBuf(val) => {
-                // Safe accessor — single `unsafe` deref lives in
-                // `Interpreter::global_this_ref`.
-                let global = interp
-                    .global_this_ref()
-                    .expect("JS values not allowed in this context");
-                let jsval = interp.jsobj(global, val.idx)?;
-
+        match interp.redirect_target(this, redirect)? {
+            RedirectTarget::Object(global, jsval) => {
                 if let Some(buf) = jsval.as_array_buffer(global) {
                     if flags.stdin() {
                         let bytes = buf.byte_slice();
@@ -799,8 +795,8 @@ impl Cmd {
                     )));
                 }
             }
-            ast::Redirect::Atom(_) => {
-                if interp.as_cmd(this).redirection_file.is_empty() {
+            RedirectTarget::Path(path_buf, response) => {
+                if path_buf.is_empty() {
                     let argv0 = interp
                         .as_cmd(this)
                         .args
@@ -817,13 +813,6 @@ impl Cmd {
                         ),
                     )));
                 }
-                let path_buf: Vec<u8> = {
-                    let raw = &interp.as_cmd(this).redirection_file;
-                    let len = raw.len().saturating_sub(1);
-                    let mut v = raw[..len].to_vec();
-                    v.push(0);
-                    v
-                };
                 let path = bun_core::ZStr::from_buf(&path_buf, path_buf.len() - 1);
                 log!("Expanded Redirect: {}\n", bstr::BStr::new(path.as_bytes()));
                 let cwd_fd = interp.as_cmd(this).base.shell().cwd_fd;
@@ -849,6 +838,9 @@ impl Cmd {
                 };
                 interp.as_cmd_mut(this).redirection_fd = Some(CowFd::init(redirfd));
                 set_stdio_from_redirect(stdio, flags, redirfd);
+                if let Some(response) = response {
+                    response.consume_body();
+                }
             }
         }
         Ok(None)

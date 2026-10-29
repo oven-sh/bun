@@ -257,6 +257,30 @@ pub(crate) enum OutputNeedsIOSafeGuard {
 /// The shell promise's `reject` function and the error to call it with. Kept on the stack, where the GC sees it.
 pub(crate) type Rejection = (crate::jsc::JSValue, crate::jsc::JSValue);
 
+/// What the redirect of a command targets.
+pub(crate) enum RedirectTarget<'a> {
+    /// A file that the shell opens: the path word, NUL-terminated, or empty when the word is
+    /// ambiguous. A `Response` over `Bun.file(path)` is that word too, as the bare
+    /// `${Bun.file(path)}` is since template time (`handle_template_value`).
+    Path(Vec<u8>, Option<ResponseFile>),
+    /// Any other JS object.
+    Object(&'a crate::jsc::JSGlobalObject, crate::jsc::JSValue),
+}
+
+/// The `Response` whose body is the file of a [`RedirectTarget::Path`].
+pub(crate) struct ResponseFile(crate::jsc::JSValue);
+
+impl ResponseFile {
+    /// The redirect took the body. Call it once the file is open: a failed open leaves the body unread.
+    pub(crate) fn consume_body(self) {
+        if let Some(response) = self.0.as_class_ref::<crate::webcore::Response>() {
+            let body = response.get_body_value();
+            drop(body.use_());
+            debug_assert!(matches!(body, crate::webcore::body::Value::Used));
+        }
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Interpreter
 // ────────────────────────────────────────────────────────────────────────────
@@ -1088,12 +1112,28 @@ impl Interpreter {
         Some(crate::jsc::JSGlobalObject::opaque_ref(g))
     }
 
-    /// The `idx`th JS object interpolated into the script.
-    pub(crate) fn jsobj(
+    /// What `redirect`, the redirect of the command `cmd`, targets.
+    pub(crate) fn redirect_target(
         &self,
-        global: &crate::jsc::JSGlobalObject,
-        idx: u32,
-    ) -> crate::jsc::JsResult<crate::jsc::JSValue> {
+        cmd: NodeId,
+        redirect: &ast::Redirect,
+    ) -> crate::jsc::JsResult<RedirectTarget<'_>> {
+        let idx = match redirect {
+            ast::Redirect::Atom(_) => {
+                let path = self.as_cmd(cmd).redirection_file.clone();
+                debug_assert!(path.is_empty() || path.last() == Some(&0));
+                return Ok(RedirectTarget::Path(path, None));
+            }
+            ast::Redirect::JsBuf(jsbuf) => jsbuf.idx,
+        };
+        let Some(global) = self.global_this_ref() else {
+            ShellErr::Custom(
+                b"Invalid JS object reference in shell"
+                    .to_vec()
+                    .into_boxed_slice(),
+            )
+            .throw_mini()
+        };
         let jsobj = match self.this_value.try_get().and_then(js::jsobjs_get_cached) {
             Some(jsobjs) => jsobjs.get_direct_index(global, idx)?,
             None => crate::jsc::JSValue::ZERO,
@@ -1101,7 +1141,18 @@ impl Interpreter {
         if jsobj.is_empty() {
             return Err(global.throw(format_args!("Invalid JS object reference in shell")));
         }
-        Ok(jsobj)
+        if let Some(response) = jsobj.as_class_ref::<crate::webcore::Response>()
+            && let Some(store) = response.get_body_value().file_store(global)
+            && let Some(path) = crate::shell::shell_body::file_store_path(global, &store)?
+        {
+            let mut path = path.to_vec();
+            // An empty path stays an empty word, as an expansion to nothing does.
+            if !path.is_empty() {
+                path.push(0);
+            }
+            return Ok(RedirectTarget::Path(path, Some(ResponseFile(jsobj))));
+        }
+        Ok(RedirectTarget::Object(global, jsobj))
     }
 
     /// `mini` prints and exits(1); `js` raises a JS exception. Dispatch on

@@ -1178,9 +1178,7 @@ var logo = "https://cdn.example.com/logo-a7305bdef.svg";
 
 A map of global identifiers that Bun replaces at build time. A key is an identifier or a property path such as `process.env.NODE_ENV`. A path part can be a quoted string in brackets, as in `process.env["MY-VAR"]`. A key can also start with `this` or `import.meta`. A value is a JSON literal, a BigInt literal, an identifier, or a property path such as `globalThis.foo` or `import.meta.env`.
 
-A define matches its key written with dots, with optional chains, or with a string literal index. `process.env.NODE_ENV`, `process.env["NODE_ENV"]`, and `process?.env?.NODE_ENV` are all replaced. An index that is an expression, such as `process.env["NODE_" + "ENV"]`, is not replaced.
-
-Bun defines `process.env.NODE_ENV`, `process.env.BUN_ENV`, and `process.browser` when the build does not. With `target: "bun"` or `target: "node"`, these defaults do not match the optional-chain and string-index spellings. A key that you define matches every spelling.
+A define matches its key written with dots, with optional chains, or with a string literal index. A define for `config.mode` replaces `config.mode`, `config["mode"]`, and `config?.mode`. An index that is an expression, such as `config["mo" + "de"]`, is not replaced.
 
 <Tabs>
   <Tab title="JavaScript">

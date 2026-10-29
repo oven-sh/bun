@@ -112,8 +112,7 @@ impl core::ops::DerefMut for MappedFile {
 #[cfg(not(windows))]
 impl MappedFile {
     pub fn page_size() -> usize {
-        // SAFETY: sysconf has no precondition.
-        unsafe { libc::sysconf(libc::_SC_PAGESIZE) as usize }
+        bun_core::page_size()
     }
 
     fn map_zero_pages(&mut self, start: usize, end: usize) {

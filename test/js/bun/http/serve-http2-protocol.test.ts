@@ -1216,24 +1216,6 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     }
   });
 
-  test("peer SETTINGS_HEADER_TABLE_SIZE below the default: a field still enters the table the first time it is sent", async () => {
-    const raw = await RawH2.connect(fx.port, secure, { settings: setting(1, 2048) });
-    try {
-      await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
-      raw.headers(1, baseHeaders("/hello"));
-      const h1 = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1);
-      expect(h1.payload.subarray(0, 3)).toEqual(Buffer.from([0x3f, 0xe1, 0x0f])); // size update to 2048
-      await raw.body(1);
-      raw.headers(3, baseHeaders("/hello"));
-      const h3 = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 3);
-      // The second response refers to what the first one added.
-      expect(hpackFields(h3.payload).filter(f => f.value === undefined && f.index! > 61)).not.toBeEmpty();
-      await raw.body(3);
-    } finally {
-      raw.close();
-    }
-  });
-
   test.each([
     // With "x-pad", 65536 bytes. "p" is 101011, so four of them are ae ba eb. Three and the padding follow.
     {

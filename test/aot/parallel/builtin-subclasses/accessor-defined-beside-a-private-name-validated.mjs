@@ -1,4 +1,5 @@
 // An accessor defined on an instance of a class below a built-in class that declares a private name. The instance is a cell of the built-in class.
+// Flags: --aot-validate
 let hits = 0;
 class List extends Array {
   #p = 5;

@@ -84,6 +84,9 @@ last section.
   (`test/parallel-allowlist.json`), with no more of its concurrent tests under way than its share of the processors. The longer ones run beside one another too, each in a process of its own: one for every three
   processors, and no more than one for every three gigabytes of the machine. A file that judges by a clock, or by the memory that is
   held or left, says so in a line `// Runs alone: <why>`, and nothing else of the shard runs beside it.
+- **On Windows, CI runs all of this in the background** (`usesIdleCores` in `scripts/runner.node.ts`). Compiling is CPU-bound, and the
+  shard's serial tests leave most cores idle. The programs, then the long files, then the bucket run at the lowest priority while the
+  serial tests run, and their results are printed afterwards. A try that fails is repeated in the foreground.
 - **Every test runs on every push, on x64 and arm64: the programs of `parallel/` and a few folders of test files on Ubuntu
   (`distroOfAotTest` in `scripts/runner.node.ts`), the other test files on Debian. Neither repeats what the other runs. The other lanes (Alpine, Windows, macOS) run what asks the system**: processes, Workers and
   threads, the environment, files and paths, sockets, memory and its limits, faults, the image of an executable, native code. A

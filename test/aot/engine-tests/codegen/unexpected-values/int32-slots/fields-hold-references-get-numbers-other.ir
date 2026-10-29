@@ -771,7 +771,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f28 visibility=Private
 # -- generated: f0 typedView
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 539, patchpoints: 98, rare instructions: 417, polls: 4
+# CHECK-NEXT: instructions: 539, patchpoints: 98, rare instructions: 480, polls: 4
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="typedView"
 # CHECK: role=EntryChecks

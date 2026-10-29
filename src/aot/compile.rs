@@ -255,6 +255,10 @@ pub(crate) struct Build<'a> {
     /// The program is the placeholder of `Preload`.
     pub(crate) is_preloading: bool,
     pub(crate) is_one_program: bool,
+    /// Of a build of one program: `KnownWorkerFiles::splits` and `KnownWorkerFiles::left_out`.
+    pub(crate) known_worker_files: Option<(bool, Vec<Vec<u8>>)>,
+    /// `KnownWorkerFiles::of_the_one_program`, where the load can tell: it then ends ahead of all other stages.
+    pub(crate) files_of_the_one_program: Vec<WorkerFile>,
     /// The load expects whole-program analysis to stop, so it holds all of Bun's own code from the start.
     pub(crate) holds_whole_library_as_guess: bool,
     pub(crate) started_workers: StartedWorkers,
@@ -1548,6 +1552,8 @@ fn compile_programs<'a>(
         build.diagnostics.add_program_too_large_to_analyze();
     }
     build.programs = programs;
+    build.known_worker_files =
+        known_worker_files.map(|known| (known.splits, known.left_out.to_vec()));
     let body_placement = match options.aot.ir_output_path {
         Some(_) => BodyPlacement::InProgramBytes,
         None => BodyPlacement::External,
@@ -1556,6 +1562,10 @@ fn compile_programs<'a>(
         Ok(outputs) => outputs,
         Err(_) if build.has_left_all_entry_points => Vec::new(),
         Err(stage) => {
+            if let Some(known) = known_worker_files {
+                let files = core::mem::take(&mut build.files_of_the_one_program);
+                known.of_the_one_program.replace(files);
+            }
             let (is_one_program, brought_bun_types) =
                 (build.is_one_program, build.brings_bun_types);
             let mut failure = build.finish::<()>(Err(stage), log).unwrap_err();
@@ -1782,25 +1792,39 @@ fn find_files_of_the_one_program(
     started: &StartedWorkers,
     output: &FrontEndOutput,
 ) -> Vec<WorkerFile> {
-    let is_entry_point = |file: &WorkerFile| {
-        (output.entry_points.iter()).any(|it| it.source_path == file.source_path)
-    };
-    let mut files: Vec<WorkerFile> = (started.files.iter())
-        .filter(|file| !is_entry_point(file) && !known.left_out.contains(&file.source_path))
-        .cloned()
-        .collect();
+    let files = find_further_worker_files(started, known.left_out, |path| {
+        (output.entry_points.iter()).any(|it| it.source_path == path)
+    });
     let has_options = files.iter().any(|file| file.has_options);
-    files.dedup_by(|a, b| a.source_path == b.source_path);
-    // The host loads node:worker_threads into the global of a Worker of that module. So its program holds the module and the streams, the
-    // console and the file system behind it, as does the program that constructs it: on their own each would compile a copy of all that.
-    let are_one_program = !files.is_empty()
-        && (!known.splits
-            || (output.writes_preload && has_options)
-            || started.constructs_node_workers);
-    match are_one_program {
+    match joins_workers(known.splits, started) || (output.writes_preload && has_options) {
         true => files,
         false => Vec::new(),
     }
+}
+
+/// Whether the files that Workers start from are entry points of the program that starts them, as far as its load can tell.
+fn joins_workers(splits: bool, started: &StartedWorkers) -> bool {
+    // The host loads node:worker_threads into the global of a Worker of that module. So its program holds the module and the streams, the
+    // console and the file system behind it, as does the program that constructs it: on their own each would compile a copy of all that.
+    !splits || started.constructs_node_workers
+}
+
+/// The files that Workers start from and that are no entry points yet.
+fn find_further_worker_files(
+    started: &StartedWorkers,
+    left_out: &[Vec<u8>],
+    is_entry_point: impl Fn(&[u8]) -> bool,
+) -> Vec<WorkerFile> {
+    let mut files: Vec<WorkerFile> = (started.files.iter())
+        .filter(|file| !is_entry_point(&file.source_path) && !left_out.contains(&file.source_path))
+        .cloned()
+        .collect();
+    files.dedup_by(|repeated, kept| {
+        let is_same = repeated.source_path == kept.source_path;
+        kept.has_options |= is_same && repeated.has_options;
+        is_same
+    });
+    files
 }
 
 fn fail(
@@ -1863,6 +1887,8 @@ impl<'a> Build<'a> {
             has_left_all_entry_points: false,
             is_preloading: false,
             is_one_program: false,
+            known_worker_files: None,
+            files_of_the_one_program: Vec::new(),
             holds_whole_library_as_guess: false,
             started_workers: StartedWorkers::default(),
             brings_bun_types: false,

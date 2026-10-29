@@ -699,7 +699,7 @@ runtimefunction id=ArrayTraversalTraverseArray function=f23 visibility=Private
 # -- generated: f0 total listings
 # CHECK-LABEL: function f0 role=
 # CHECK: Source
-# CHECK-NEXT: instructions: 368, patchpoints: 60, rare instructions: 83, polls: 1
+# CHECK-NEXT: instructions: 368, patchpoints: 60, rare instructions: 117, polls: 1
 # CHECK-NEXT: end of function f0
 # CHECK-LABEL: function {{*}}name="total"
 # CHECK: role=Source
@@ -707,5 +707,5 @@ runtimefunction id=ArrayTraversalTraverseArray function=f23 visibility=Private
 # CHECK-NEXT: end of function f3
 # CHECK-LABEL: function {{*}}name="listings"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 739, patchpoints: 69, rare instructions: 245, polls: 1
+# CHECK-NEXT: instructions: 764, patchpoints: 69, rare instructions: 278, polls: 1
 # CHECK-NEXT: end of function f6

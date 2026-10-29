@@ -13,8 +13,8 @@
 # CHECK-NEXT: a class, without: 0 by name a round, asks nothing
 # CHECK-NEXT: a default under a symbol, with defaults: 0 by name a round, asks nothing
 # CHECK-NEXT: a default under a symbol, without: 0 by name a round, asks nothing
-# CHECK-NEXT: a field that only some objects get, with defaults: 0 by name a round, asks OwnPropertyKeys
-# CHECK-NEXT: a field that only some objects get, without: 0 by name a round, asks OwnPropertyKeys
+# CHECK-NEXT: a field that only some objects get, with defaults: 0 by name a round, asks nothing
+# CHECK-NEXT: a field that only some objects get, without: 0 by name a round, asks nothing
 # CHECK-NEXT: exited with 0
 
 module m0 path="main.mjs" displayPath="main.mjs" flags=[KeepsError] body=f0 namespaceLayout=L(m0)

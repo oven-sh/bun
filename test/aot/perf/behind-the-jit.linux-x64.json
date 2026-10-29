@@ -530,7 +530,6 @@
   "everyday-small-objects-run-by-a-loop/a-record-checked-field-by-field-by-closures-that-answer-with-small-objects": 1.34,
   "everyday-small-objects-run-by-a-loop/a-variable-of-the-global-object-under-a-key-set-and-put-back": 4.6,
   "everyday-small-objects-run-by-a-loop/the-arguments-kept-whole-in-a-new-object": 8.01,
-  "everyday-small-programs/count-vowels-by-a-pattern": 1.03,
   "everyday-small-programs/flood-fill-on-a-grid": 1.42,
   "everyday-small-programs/gzip-round-trip": 1.23,
   "everyday-small-programs/longest-common-subsequence": 2.06,

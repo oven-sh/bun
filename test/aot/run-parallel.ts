@@ -44,7 +44,7 @@
 //   // COUNT: <name> (= | >= | <=) <n>       what the executable must have counted when it ends: no clock, and the same on every machine.
 //                                      A name as BUN_JSC_aotCountsPath writes it (operation:operationAOTGetById, counter:CompiledStructuresMade), or all of a kind:
 //                                      operations (calls into the run time), arrivals (accesses that look a name up), branches (two-way branches of compiled code
-//                                      that ran), cells and bytes (what compiled code and its stubs allocate). The run has no collection. What the program starts counts too
+//                                      that ran), cells and bytes (what compiled code and its stubs allocate), allCells (with what the run time allocates). The run has no collection. What the program starts counts too
 // Those lines may also stand at the end, in front of the last comment: a stored output may name lines of the program, and a line more at the top moves them.
 // It may end with a comment that says what is expected where that is not what plain Bun does:
 //   /* Output: .. */                   what the executable prints. Behind a line `exit code <n>` stands the line that names the error
@@ -73,7 +73,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { availableParallelism, tmpdir } from "node:os";
+import { availableParallelism, getPriority, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { availableMemory, endAtMemoryLimitTogether } from "./harness/memory-limit";
 import { withoutCoreDump } from "./harness/without-core-dump";
@@ -362,12 +362,15 @@ const isASAN = (() => {
     return basename(process.execPath).includes("asan");
   }
 })();
+// On Windows CI runs the driver at low priority in the background of other tests, which may take every core for a minute.
+const patience = getPriority() > 0 ? 3 : 1;
 /** In seconds, for a run or the build of one program, and for each further program of a build. A build that is ended for nothing is made twice, so the limit is several times what a busy machine takes. */
 const timeLimit = (cmd: string[], programs = 1) =>
-  (isASAN || cmd.some(flag => /^--aot-(validate$|verify-each-pass$|check=.*\bverify-each-pass\b)/.test(flag))
+  patience *
+  ((isASAN || cmd.some(flag => /^--aot-(validate$|verify-each-pass$|check=.*\bverify-each-pass\b)/.test(flag))
     ? 240
     : 90) +
-  (isASAN ? 30 : 15) * (programs - 1);
+    (isASAN ? 30 : 15) * (programs - 1));
 const secondsToAnswer = 3;
 
 /** Each child leads a process group of its own, which holds whatever it starts. */
@@ -679,6 +682,7 @@ function countedByRun(text: string) {
     ["branches", 0],
     ["cells", 0],
     ["bytes", 0],
+    ["allCells", 0],
   ]);
   const add = (name: string, count: number) => counted.set(name, (counted.get(name) ?? 0) + count);
   for (const line of text.split("\n")) {
@@ -686,6 +690,8 @@ function countedByRun(text: string) {
       add("cells", Number(line.split(" ").at(-2)));
       add("bytes", Number(line.split(" ").at(-1)));
     }
+    // The free lists that were used up. Cells that the run time allocates for the program count here too.
+    if (line.startsWith("refill ")) add("allCells", Number(line.split(" ").at(-2)));
     const [count, name] = line.split("\t");
     if (name === undefined) continue;
     add(name, Number(count));

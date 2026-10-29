@@ -2,7 +2,8 @@ use super::import_graph::ImportGraph;
 use super::runtime_reach::ReachWhileLoading;
 use super::{
     Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, chooses_library_code_by_names,
-    library_code_of, mentions_worker_constructor, preload_of,
+    find_further_worker_files, joins_workers, library_code_of, mentions_worker_constructor,
+    preload_of,
 };
 use crate::builtins::{BuiltinNames, RuntimeUses};
 use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
@@ -592,6 +593,23 @@ impl<'a> Build<'a> {
             self.started_workers.names = found.names;
             self.started_workers.code = found.code;
             self.started_workers.constructs_node_workers = found.constructs_node_workers;
+        }
+        if let Some((splits, left_out)) = &self.known_worker_files
+            && joins_workers(*splits, &self.started_workers)
+        {
+            // A text that a Worker starts from is an entry point under the name that the build has given it.
+            let mut entry_points = options.entry_points.clone();
+            let loaded = files.entry_points().iter();
+            entry_points
+                .extend(loaded.map(|&first| source_path_of(files.module(first).file_name())));
+            self.files_of_the_one_program =
+                find_further_worker_files(&self.started_workers, left_out, |path| {
+                    entry_points.iter().any(|it| it == path)
+                });
+            // The build starts over with them. Nothing but the load is thrown away.
+            if !self.files_of_the_one_program.is_empty() {
+                return Err(Stage::Load);
+            }
         }
         if !self.started_workers.copies.is_empty() || !self.started_workers.files.is_empty() {
             self.started_workers.held_texts = texts_of_program_files(files)

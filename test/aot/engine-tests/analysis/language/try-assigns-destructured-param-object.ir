@@ -178,5 +178,5 @@ function f17 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # -- generated: walk
 # CHECK-LABEL: function {{*}}name="walk"
 # CHECK: role=Source
-# CHECK-NEXT: instructions: 263, patchpoints: 18, rare instructions: 143, polls: 1
+# CHECK-NEXT: instructions: 263, patchpoints: 18, rare instructions: 176, polls: 1
 # CHECK-NEXT: end of function f19

@@ -3220,8 +3220,8 @@
     "untyped": 7
   },
   "everyday-objects/keys-around-a-field-created-late-are-listed": {
-    "typed": 862.2,
-    "untyped": 878
+    "typed": 256.5,
+    "untyped": 269.5
   },
   "everyday-objects/keys-then-read": {
     "typed": 174.7,
@@ -3503,6 +3503,14 @@
     "typed": 857,
     "untyped": 857
   },
+  "everyday-patterns-out-of-run-time-text/many-groups-after-an-astral-class": {
+    "typed": 13701.2,
+    "untyped": 13701.3
+  },
+  "everyday-patterns-out-of-run-time-text/many-groups-on-astral-text": {
+    "typed": 1463.8,
+    "untyped": 1463.8
+  },
   "everyday-patterns-out-of-run-time-text/one-of-eight-words-in-a-command": {
     "typed": 2367.6,
     "untyped": 2367.6
@@ -3628,8 +3636,8 @@
     "untyped": 1993.9
   },
   "everyday-small-programs/count-vowels-by-a-pattern": {
-    "typed": 2334.7,
-    "untyped": 2334.5
+    "typed": 1428.2,
+    "untyped": 1428.2
   },
   "everyday-small-programs/five-classes-deep": {
     "typed": 7,

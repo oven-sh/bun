@@ -133,3 +133,11 @@ test("a server that reads a form", async () => {
     exitCode: 0,
   });
 });
+
+// The function that `format` returns takes no locale. It uses the locale of its formatter.
+test("formatters keep the locales that they are made with", async () => {
+  const { locales } = await report(
+    `const numbers = new Intl.NumberFormat("de"); console.log(numbers.format(1234.5), [1, 2].map(new Intl.NumberFormat("fr").format), new Intl.DateTimeFormat("ja").format(0));`,
+  );
+  expect(locales).toBe("locales: de, fr, ja");
+});

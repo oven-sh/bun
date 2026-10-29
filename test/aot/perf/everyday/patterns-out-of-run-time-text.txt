@@ -1,5 +1,5 @@
 // Patterns whose text the build cannot know: names, globs turned into patterns, words looked for in a command. Eight go back over the same places again and again.
-// The last three start an unbounded run at every bracket of one long line and never match.
+// Three start an unbounded run at every bracket of one long line and never match. The last two have a hundred capture groups and a subject of astral characters.
 //// globstar-that-matches
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("^(?:.*/)?src/.*\\.tsx?$" + nothing);
@@ -267,6 +267,20 @@ function turn(i: number): number {
 const nothing = String(Date.now()).slice(99);
 const pattern = new RegExp("\\[.*\\]\\(#" + nothing);
 const subjects: string[] = ["[a](".repeat(300) + "x" + nothing, "[b](".repeat(300) + "y" + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// many-groups-on-astral-text
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("<" + "(a)".repeat(100) + "\\u{1f000}" + nothing, "u");
+const subjects: string[] = ["\u{e0041}".repeat(200) + nothing, "\u{e0042}".repeat(200) + nothing];
+function turn(i: number): number {
+  return pattern.test(subjects[i & 1]!) ? 1 : 2;
+}
+//// many-groups-after-an-astral-class
+const nothing = String(Date.now()).slice(99);
+const pattern = new RegExp("[\\u{e0000}-\\u{e0fff}][<>]" + "(a)".repeat(100) + nothing, "u");
+const subjects: string[] = ["\u{e0041}".repeat(200) + nothing, "\u{e0042}".repeat(200) + nothing];
 function turn(i: number): number {
   return pattern.test(subjects[i & 1]!) ? 1 : 2;
 }

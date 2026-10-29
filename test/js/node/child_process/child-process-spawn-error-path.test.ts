@@ -1,6 +1,7 @@
 /**
  * This test runs under `bun test` and (via node:test/node:assert) under
- * `node --experimental-strip-types --test`, so it imports nothing from the harness.
+ * `node --experimental-strip-types --test`, so it imports nothing from the harness:
+ * `fs.mkdtempSync` stands in for `tempDir`, and `process.env` for `bunEnv`.
  *
  * node reports the file as the `path` of a spawn that fails, whatever `argv0` is:
  * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L1127-L1129 (spawnSync)
@@ -124,9 +125,13 @@ describe("a spawn that fails names the file as its path", () => {
           for (;;) fds.push(fs.openSync("/dev/null", "r"));
         } catch {}
         const sync = fields(cp.spawnSync("true", ["a"], { stdio: "pipe" }).error);
+        // \`cgroup\` is an option of bun, and node ignores it. With one descriptor free again, bun opens the
+        // cgroup and the pipes still fail: that error is not about the cgroup, so it names the file too.
+        fs.closeSync(fds.pop());
+        const cgroup = fields(cp.spawnSync("true", ["a"], { stdio: "pipe", cgroup: process.env.CGROUP }).error);
         cp.spawn("true", ["a"], { stdio: "pipe" }).on("error", error => {
           for (const fd of fds) fs.closeSync(fd);
-          console.log(JSON.stringify({ spawnSync: sync, spawn: fields(error) }));
+          console.log(JSON.stringify({ spawnSync: sync, spawnSyncWithCgroup: cgroup, spawn: fields(error) }));
         });
       }
       // A debug build of bun reads its internal modules from disk on first use, and that needs a descriptor.
@@ -136,8 +141,9 @@ describe("a spawn that fails names the file as its path", () => {
         cp.spawn("true", [], { stdio: "pipe" }).on("close", main);
       });`;
     // The limit is low so that the loop above is short. A runtime cannot raise it again: `ulimit -n` also sets the hard limit.
+    using tmp = tempDir();
     const { stdout, status } = spawnSync("/bin/sh", ["-c", 'ulimit -n 128 && exec "$1" -e "$2"', "sh", exe, script], {
-      env,
+      env: { ...env, CGROUP: tmp.dir },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "inherit"],
     });
@@ -146,6 +152,7 @@ describe("a spawn that fails names the file as its path", () => {
       {
         result: {
           spawnSync: { code: "EMFILE", path: "true", syscall: "spawnSync true", spawnargs: ["a"] },
+          spawnSyncWithCgroup: { code: "EMFILE", path: "true", syscall: "spawnSync true", spawnargs: ["a"] },
           spawn: { code: "EMFILE", path: "true", syscall: "spawn true", spawnargs: ["a"] },
         },
         status: 0,

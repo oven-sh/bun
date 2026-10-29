@@ -1871,27 +1871,32 @@ describe("argv0", () => {
   });
 
   // node:child_process names the file as the path of a spawn that fails. A cgroup failure still names the cgroup.
-  it.skipIf(!isLinux)(
-    "node:child_process keeps the cgroup as the path of a spawn that could not enter it",
-    async () => {
-      using dir = tempDir("spawn-argv0-cgroup", {});
-      const missing = join(String(dir), "no-such-cgroup");
-      const fields = (error: any) => ({ code: error?.code, path: error?.path });
+  it.skipIf(!isLinux)("node:child_process keeps what names the cgroup on a spawn that could not enter it", async () => {
+    using dir = tempDir("spawn-argv0-cgroup", {});
+    const missing = join(String(dir), "no-such-cgroup");
+    const fields = (error: any) => ({ code: error?.code, path: error?.path, fd: error?.fd });
 
-      const { promise, resolve, reject } = Promise.withResolvers<Error>();
-      const child = cpSpawn("true", [], { cgroup: missing } as any);
-      child.on("error", resolve);
-      child.on("spawn", () => reject(new Error("the spawn did not fail")));
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    const child = cpSpawn("true", [], { cgroup: missing } as any);
+    child.on("error", resolve);
+    child.on("spawn", () => reject(new Error("the spawn did not fail")));
 
+    // A directory with no cgroup.procs, given by descriptor: the error names the descriptor and has no path.
+    const fd = openSync(String(dir), "r");
+    try {
       expect({
-        spawnSync: fields(cpSpawnSync("true", [], { cgroup: missing } as any).error),
-        spawn: fields(await promise),
+        byPath: fields(cpSpawnSync("true", [], { cgroup: missing } as any).error),
+        byPathAsync: fields(await promise),
+        byDescriptor: fields(cpSpawnSync("true", [], { cgroup: fd } as any).error),
       }).toEqual({
-        spawnSync: { code: "ENOENT", path: missing },
-        spawn: { code: "ENOENT", path: missing },
+        byPath: { code: "ENOENT", path: missing, fd: undefined },
+        byPathAsync: { code: "ENOENT", path: missing, fd: undefined },
+        byDescriptor: { code: "ENOENT", path: undefined, fd },
       });
-    },
-  );
+    } finally {
+      closeSync(fd);
+    }
+  });
 });
 
 describe("option combinations", () => {

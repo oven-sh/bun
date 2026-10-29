@@ -105,7 +105,7 @@ trait RequestCtxOps: RequestCtx {
     type Server;
     fn create_in(
         slot: *mut Self,
-        server: *mut Self::Server,
+        server: &Self::Server,
         req: &mut Self::Req,
         resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -153,7 +153,7 @@ where
     #[inline]
     fn create_in(
         slot: *mut Self,
-        server: *mut ThisServer,
+        server: &ThisServer,
         req: &mut Self::Req,
         any_resp: uws::AnyResponse,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -2424,21 +2424,18 @@ where
         resp: &mut R,
     ) {
         debug_assert!(!user_route.server.is_null());
-        // SAFETY: `UserRoute.server` is the owning `*mut NewServer` (write
-        // provenance), a back-pointer to the owning server, which outlives
-        // every route it registered.
-        let server_ref = unsafe { bun_ptr::BackRef::from_raw_mut(user_route.server) };
-        let server_ptr = server_ref.as_ptr();
+        // SAFETY: `UserRoute.server` is a back-pointer to the owning server,
+        // which outlives every route it registered.
+        let server = unsafe { &*user_route.server };
         let index = user_route.id;
 
-        let Some(server_js) = server_ref.js_value_for_dispatch() else {
+        let Some(server_js) = server.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
 
         let should_deinit_context = core::cell::Cell::new(false);
-        let Some(mut prepared) = Self::prepare_js_request_context_for::<Ctx, R>(
-            server_ptr,
+        let Some(mut prepared) = server.prepare_js_request_context_for::<Ctx, R>(
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
@@ -2448,7 +2445,7 @@ where
             return;
         };
 
-        let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
+        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         let call_route = if Ctx::IS_MUX {
             Bun__ServerRouteList__callRouteH3
@@ -2456,7 +2453,7 @@ where
             Bun__ServerRouteList__callRoute
         };
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-        let global = bun_opaque::opaque_deref(server_ref.global_this);
+        let global = bun_opaque::opaque_deref(server.global_this);
         let response_value = match jsc::from_js_host_call(global, || {
             call_route(
                 global,
@@ -2472,17 +2469,11 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        Self::handle_request_for::<Ctx>(
-            server_ptr,
-            &should_deinit_context,
-            &prepared,
-            req,
-            response_value,
-        );
+        server.handle_request_for::<Ctx>(&should_deinit_context, &prepared, req, response_value);
     }
 
     fn handle_request_for<Ctx: RequestCtxOps<Server = Self>>(
-        this: *mut Self,
+        &self,
         should_deinit_context: &core::cell::Cell<bool>,
         prepared: &PreparedRequestFor<Ctx>,
         req: &mut Ctx::Req,
@@ -2498,9 +2489,9 @@ where
 
         // SAFETY: `prepared.ctx` was allocated by `prepare_js_request_context_for`
         // for this frame and cannot be freed while `defer_deinit_...` is set (set
-        // by the caller until cleared below); `this` is the live server backref.
-        let (ctx, server) = unsafe { (&*prepared.ctx, &*this) };
-        RequestCtxOps::on_response(ctx, server, prepared.js_request, response_value);
+        // by the caller until cleared below).
+        let ctx = unsafe { &*prepared.ctx };
+        RequestCtxOps::on_response(ctx, self, prepared.js_request, response_value);
         // Reference in the stack here in case it is not for whatever reason
         prepared.js_request.ensure_still_alive();
 
@@ -2531,10 +2522,8 @@ where
             respond_stopped_503(resp);
             return;
         };
-        let self_ptr: *mut Self = self.as_ctx_ptr();
         let should_deinit_context = core::cell::Cell::new(false);
-        let Some(prepared) = Self::prepare_js_request_context_for::<Ctx, R>(
-            self_ptr,
+        let Some(prepared) = self.prepare_js_request_context_for::<Ctx, R>(
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
@@ -2555,17 +2544,11 @@ where
                 Err(err) => global.take_exception(err),
             };
 
-        Self::handle_request_for::<Ctx>(
-            self_ptr,
-            &should_deinit_context,
-            &prepared,
-            req,
-            response_value,
-        );
+        self.handle_request_for::<Ctx>(&should_deinit_context, &prepared, req, response_value);
     }
 
     fn prepare_js_request_context_for<Ctx: RequestCtxOps<Server = Self>, R: RespLike>(
-        this: *mut Self,
+        &self,
         req: &mut Ctx::Req,
         resp: &mut R,
         should_deinit_context: Option<DeferDeinitFlag>,
@@ -2573,9 +2556,6 @@ where
         method: Option<http::Method>,
     ) -> Option<PreparedRequestFor<Ctx>> {
         jsc::mark_binding!();
-        // SAFETY: `this` is the live heap server registered as the callback
-        // user-data; everything below only needs `&Self`.
-        let server = unsafe { &*this };
 
         // We need to register the handler immediately since uSockets will not buffer.
         //
@@ -2607,7 +2587,7 @@ where
                 // Abort the request very early. For H2/H3 a per-request error
                 // is a stream error; close_connection would take down every
                 // sibling stream on the connection.
-                if len > server.config.get().max_request_body_size {
+                if len > self.config.get().max_request_body_size {
                     RespLike::write_status(resp, b"413 Request Entity Too Large");
                     RespLike::end_without_body(resp, !Ctx::IS_MUX);
                     return None;
@@ -2618,14 +2598,14 @@ where
             None
         };
 
-        server.on_pending_request();
+        self.on_pending_request();
 
         ReqLike::set_yield(req, false);
-        RespLike::timeout(resp, server.config.get().idle_timeout);
+        RespLike::timeout(resp, self.config.get().idle_timeout);
 
         // Since we do timeouts by default, we should tell the user when
         // this happens - but limit it to only warn once.
-        if server.should_add_timeout_handler_for_warning() {
+        if self.should_add_timeout_handler_for_warning() {
             // We need to pass it a pointer, any pointer should do.
             // SAFETY: the user-data pointer is an opaque sentinel — `on_timeout_for_idle_warn`
             // ignores it and reads the static directly. `AtomicBool::as_ptr` yields a `*mut`
@@ -2652,13 +2632,13 @@ where
         let ctx_slot: *mut Ctx = unsafe {
             if Ctx::IS_MUX {
                 debug_assert!(
-                    !server.mux_request_pool.get().is_null(),
+                    !self.mux_request_pool.get().is_null(),
                     "HTTP/2 or HTTP/3 request dispatched but mux_request_pool was never allocated"
                 );
-                let slot = (*server.mux_request_pool.get()).claim();
+                let slot = (*self.mux_request_pool.get()).claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),
-                    this,
+                    self,
                     req,
                     any_resp,
                     should_deinit_context,
@@ -2667,10 +2647,10 @@ where
                 // SAFETY: `create_in` fully initialized the slot via `MaybeUninit::write`.
                 slot.assume_init().as_ptr().cast()
             } else {
-                let slot = (*server.request_pool).claim();
+                let slot = (*self.request_pool).claim();
                 Ctx::create_in(
                     slot.addr().as_ptr().cast(),
-                    this,
+                    self,
                     req,
                     any_resp,
                     should_deinit_context,
@@ -2683,8 +2663,7 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &*ctx_slot };
 
-        server
-            .vm()
+        self.vm()
             .jsc_vm()
             .deprecated_report_extra_memory(core::mem::size_of::<Ctx>());
 
@@ -2694,8 +2673,8 @@ where
         // same slot. Paired drop in `RequestContext::deinit` / `Request::destroy`.
         ctx.set_request_body(Some(body_hive.clone()));
 
-        let _context = server.vm().enter_context(server.context.get());
-        let signal = AbortSignal::new(&server.global());
+        let _context = self.vm().enter_context(self.context.get());
+        let signal = AbortSignal::new(&self.global());
         ctx.set_signal(signal);
         // S008: `AbortSignal` is an `opaque_ffi!` ZST — safe deref.
         bun_opaque::opaque_deref_mut(signal).pending_activity_ref();
@@ -2790,7 +2769,7 @@ where
                 if let Some(body) = ctx.request_body_mut() {
                     *body = BodyValue::Locked(crate::webcore::body::PendingValue {
                         task: Some(NonNull::new(ctx_slot).unwrap().cast::<c_void>()),
-                        global: server.global_this,
+                        global: self.global_this,
                         on_start_buffering: Some(Ctx::on_start_buffering_callback),
                         on_start_streaming: Some(Ctx::on_start_streaming_request_body_callback),
                         on_readable_stream_available: Some(
@@ -2811,10 +2790,10 @@ where
             js_request: match create_js_request {
                 // SAFETY: from `Request::new` above; the wrapper adopts its ref.
                 CreateJsRequest::Yes => unsafe {
-                    Request::to_js(request_object_ptr, &server.global())
+                    Request::to_js(request_object_ptr, &self.global())
                 },
                 CreateJsRequest::Bake => {
-                    match Request::to_js_for_bake(request_object_ptr, &server.global()) {
+                    match Request::to_js_for_bake(request_object_ptr, &self.global()) {
                         Ok(v) => v,
                         Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
                         Err(_) => return None,
@@ -2838,22 +2817,18 @@ where
         // `NewServer` (which outlives every `UserRoute` in its `user_routes`
         // vec); non-null by invariant.
         debug_assert!(!this.server.is_null());
-        // SAFETY: `UserRoute.server` is the owning `*mut NewServer` (write provenance),
-        // set at construction and non-null while the route is registered.
-        let server_ref = unsafe { bun_ptr::BackRef::from_raw_mut(this.server) };
-        let server_ptr = server_ref.as_ptr();
+        // SAFETY: `UserRoute.server` is the owning `NewServer`, set at
+        // construction and non-null while the route is registered.
+        let server = unsafe { &*this.server };
         let index = this.id;
 
-        let Some(server_js) = server_ref.js_value_for_dispatch() else {
+        let Some(server_js) = server.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
         };
 
         let should_deinit_context = core::cell::Cell::new(false);
-        // SAFETY: `server_ptr` is the live heap server registered for this route;
-        // `req`/`resp` are the live uWS handles passed to the route handler.
-        let Some(mut prepared) = Self::prepare_js_request_context(
-            server_ptr,
+        let Some(mut prepared) = server.prepare_js_request_context(
             req,
             resp,
             Some(bun_ptr::BackRef::new(&should_deinit_context)),
@@ -2868,10 +2843,10 @@ where
                 .upgrade_context
                 .set(UpgradeState::Pending(NonNull::from(upgrade_ctx)))
         };
-        let _entered = server_ref.vm().enter_event_loop_scope_without_checkpoint();
+        let _entered = server.vm().enter_event_loop_scope_without_checkpoint();
         let server_request_list = Self::js_route_list_get_cached(server_js).unwrap();
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe deref.
-        let global = bun_opaque::opaque_deref(server_ref.global_this);
+        let global = bun_opaque::opaque_deref(server.global_this);
         let response_value = match jsc::from_js_host_call(global, || {
             Bun__ServerRouteList__callRoute(
                 global,
@@ -2887,13 +2862,7 @@ where
             Err(err) => global.take_exception(err),
         };
 
-        Self::handle_request(
-            server_ptr,
-            &should_deinit_context,
-            &prepared,
-            req,
-            response_value,
-        );
+        server.handle_request(&should_deinit_context, &prepared, req, response_value);
     }
 
     /// # Safety
@@ -2924,12 +2893,11 @@ where
         }
         // Access `this` as *ThisServer only if id is 0
         debug_assert!(id == 0);
-        let self_ptr: *mut Self = this;
         // SAFETY: for `id == 0` the registered user-data IS `*mut Self`
         // (mod.rs `app.ws("/*", self_ptr, 0, ..)`); live for the request's
         // duration. Shared — the `on_request` call below re-enters JS, so no
         // `&mut` may span it (pending-request accounting is a `Cell`).
-        let this = unsafe { &*self_ptr };
+        let this = unsafe { &*this };
         let Some(server_js) = this.js_value_for_dispatch() else {
             respond_stopped_503(resp);
             return;
@@ -2953,7 +2921,7 @@ where
         let should_deinit_context = core::cell::Cell::new(false);
         <ServerRequestContext<SSL, DEBUG> as RequestCtxOps>::create_in(
             ctx_slot.addr().as_ptr(),
-            self_ptr,
+            this,
             req,
             RespLike::to_any_response(resp),
             Some(bun_ptr::BackRef::new(&should_deinit_context)),

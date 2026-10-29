@@ -1043,17 +1043,12 @@ impl<'a> LinkerContext<'a> {
 
     // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
     // `chunk_index`. Writes: `chunk.intermediate_output`, `chunk.isolated_hash`,
-    // `chunk.output_source_map` (per-chunk, disjoint by `*mut Chunk`). Reads
+    // `chunk.output_source_map` (per-chunk, disjoint by `&mut Chunk`). Reads
     // `ctx.c`/`ctx.chunks` shared. Never forms `&mut LinkerContext` — the
     // `post_process_*` callees take `GenerateChunkCtx` by value and deref
     // `ctx.c` to `&LinkerContext` for read-only graph access plus per-chunk
     // raw-ptr writes (see `postProcessJSChunk.rs`).
-    pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: *mut Chunk, chunk_index: usize) {
-        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
-        // the duration of this body. ctx.c points into BundleV2.linker;
-        // container_of pattern. `Worker::get` only reads `bundle.graph.pool`
-        // (shared), so a `&` is sufficient and avoids aliasing.
-        let chunk: &mut Chunk = unsafe { &mut *chunk };
+    pub(crate) fn generate_chunk(ctx: &GenerateChunkCtx, chunk: &mut Chunk, chunk_index: usize) {
         let worker = crate::thread_pool::Worker::get(ctx.bundle());
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         let worker: &mut crate::thread_pool::Worker = &mut **worker;
@@ -1073,18 +1068,15 @@ impl<'a> LinkerContext<'a> {
 
     // CONCURRENCY: `each_ptr` callback — runs on worker threads, one task per
     // `chunk_index`. Writes: `chunk.renamer` only (per-chunk, disjoint by
-    // `*mut Chunk`). Reads `ctx.c.graph.{ast,meta,symbols}` SoA columns and
+    // `&mut Chunk`). Reads `ctx.c.graph.{ast,meta,symbols}` SoA columns and
     // `ctx.c.options` shared. `rename_symbols_in_chunk` takes `*mut
     // LinkerContext` raw and never materializes `&mut LinkerContext` while
     // peer renamer tasks are live (see its CONCURRENCY note).
     pub(crate) fn generate_js_renamer(
         ctx: &GenerateChunkCtx,
-        chunk: *mut Chunk,
+        chunk: &mut Chunk,
         chunk_index: usize,
     ) {
-        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task; deref for
-        // the body. container_of pattern — see `generate_chunk` above.
-        let chunk: &mut Chunk = unsafe { &mut *chunk };
         let worker = crate::thread_pool::Worker::get(ctx.bundle());
         let mut worker = scopeguard::guard(worker, |w| w.unget());
         if let crate::chunk::Content::Javascript(_) = chunk.content {
@@ -1096,11 +1088,9 @@ impl<'a> LinkerContext<'a> {
     /// slot `assign_cross_chunk_names` did not pin. Writes `chunk.renamer` only.
     pub(crate) fn finish_js_renamer(
         _ctx: &GenerateChunkCtx,
-        chunk: *mut Chunk,
+        chunk: &mut Chunk,
         _chunk_index: usize,
     ) {
-        // SAFETY: `each_ptr` hands us a unique `*mut Chunk` per task.
-        let chunk: &mut Chunk = unsafe { &mut *chunk };
         if let crate::bun_renamer::ChunkRenamer::Minify(r) = &mut chunk.renamer {
             // Only allocation can fail here.
             bun_core::handle_oom(r.finish());
@@ -1749,8 +1739,8 @@ pub struct ChunkMeta {
 pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 
 /// Note: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
-/// `Ctx: Sync + Copy` and the same context is observed from every worker
-/// thread. Each task only writes to its own `*mut Chunk` slot; reads of
+/// `Ctx: Sync` and the same context is observed from every worker
+/// thread. Each task only writes to its own `Chunk` slot; reads of
 /// `c`/`chunks` are disjoint or read-only.
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
@@ -1760,7 +1750,7 @@ pub struct GenerateChunkCtx<'a> {
     /// `GenerateChunkCtx` (joined via the batch's `group.wait()`), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
     /// safe `Deref`. Read-only: each task writes only through its own
-    /// `*mut Chunk`.
+    /// `&mut Chunk` or `*mut Chunk`.
     pub(crate) chunks: bun_ptr::BackRef<[Chunk<'a>]>,
     /// Backref to this task's `Chunk` (an element of `chunks`). Constructed
     /// via [`bun_ptr::BackRef::new_mut`] so the stored `NonNull` carries write

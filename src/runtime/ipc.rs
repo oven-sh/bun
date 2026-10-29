@@ -112,6 +112,7 @@ impl InternalMsgHolder {
 
     pub(crate) fn flush(&mut self, global: &JSGlobalObject) -> JsResult<()> {
         debug_assert!(self.is_ready());
+        let messages = core::mem::take(&mut self.messages);
         // `&mut self` carries LLVM `noalias`, but
         // `dispatch_unsafe` → `event_loop.run_callback` runs the JS IPC
         // listener which can re-enter via a fresh `&mut Self` from the
@@ -121,8 +122,6 @@ impl InternalMsgHolder {
         // of the loop — ASM-verified PROVEN_CACHED. Launder so each iteration
         // re-reads through an opaque pointer.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
-        // SAFETY: `this` aliases the live `&mut self`; single JS thread.
-        let messages = core::mem::take(unsafe { &mut (*this).messages });
         for strong in messages {
             if let Some(message) = strong.get() {
                 // SAFETY: `this` is still live across re-entry — the IPC

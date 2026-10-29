@@ -519,10 +519,12 @@ describe("malformed JPEG", () => {
     expect(await survives(new Bun.Image(buf).metadata())).toBe("rejected");
   });
 
+  const segment = (marker: number, ...data: number[]) => [0xff, marker, 0, data.length + 2, ...data];
+  const table = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+  const gray16x16 = Uint8Array.from(Buffer.alloc(16 * 16 * 4, Buffer.from([128, 128, 128, 255])));
+
   /** A gray progressive JPEG with no entropy-coded data at all. Each of `scans` is [Ss, Se, Ah << 4 | Al]. */
   function progressiveWithoutData(width: number, height: number, scans: number[][]): Buffer {
-    const segment = (marker: number, ...data: number[]) => [0xff, marker, 0, data.length + 2, ...data];
-    const table = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
     return Buffer.from([
       ...[0xff, 0xd8],
       ...segment(0xdb, 0, ...new Array(64).fill(16)),
@@ -536,15 +538,76 @@ describe("malformed JPEG", () => {
 
   // Every scan costs a pass over the whole image, and an empty one is 10 bytes long.
   test("more than 500 scans are refused", async () => {
-    const withScans = (count: number) =>
-      progressiveWithoutData(16, 16, [[0, 0, 0x01], ...new Array(count - 1).fill([0, 0, 0x10])]);
+    // The DC coefficient, then each AC coefficient by itself from bit 13 down, so that every scan adds something.
+    const scans = [[0, 0, 0x00]];
+    for (let k = 1; k < 64; k++) {
+      scans.push([k, k, 13]);
+      for (let al = 12; al >= 0; al--) scans.push([k, k, ((al + 1) << 4) | al]);
+    }
+    const withScans = (count: number) => progressiveWithoutData(16, 16, scans.slice(0, count));
     // Without data every coefficient is 0.
-    expect(await rgbaOf(withScans(500))).toEqual(
-      Uint8Array.from(Buffer.alloc(16 * 16 * 4, Buffer.from([128, 128, 128, 255]))),
-    );
+    expect(await rgbaOf(withScans(500))).toEqual(gray16x16);
     await expect(new Bun.Image(withScans(501)).png().bytes()).rejects.toMatchObject({
       code: "ERR_IMAGE_DECODE_FAILED",
     });
+  });
+
+  // libjpeg-turbo decodes any scan, so 500 times a dozen bytes bought 500 passes, each at the price of a full scan.
+  test.each([
+    [
+      "a first scan of a coefficient that has had one",
+      [
+        [0, 0, 0x00],
+        [0, 0, 0x00],
+      ],
+    ],
+    [
+      "a first scan of a band that overlaps an earlier one",
+      [
+        [0, 0, 0x00],
+        [1, 5, 0x00],
+        [5, 63, 0x00],
+      ],
+    ],
+    [
+      "a refinement scan that adds no bit",
+      [
+        [0, 0, 0x01],
+        [0, 0, 0x10],
+        [0, 0, 0x10],
+      ],
+    ],
+  ])("%s is refused", async (_, scans) => {
+    expect(await rgbaOf(progressiveWithoutData(16, 16, scans.slice(0, -1)))).toEqual(gray16x16);
+    await expect(new Bun.Image(progressiveWithoutData(16, 16, scans)).png().bytes()).rejects.toMatchObject({
+      code: "ERR_IMAGE_DECODE_FAILED",
+    });
+  });
+
+  test.each([
+    ["baseline", 0xc0],
+    ["extended sequential", 0xc1],
+    ["lossless", 0xc3],
+    ["arithmetic-coded", 0xc9],
+  ])("%s: a second scan of a component is refused", async (_, sof) => {
+    /** Three components and no entropy-coded data. Each of `scans` lists the components in it. */
+    const withScans = (...scans: number[][]) =>
+      Buffer.from([
+        ...[0xff, 0xd8],
+        ...segment(0xdb, 0, ...new Array(64).fill(16)),
+        ...segment(sof, 8, 0, 16, 0, 16, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0),
+        ...segment(0xc4, 0x00, ...table),
+        ...segment(0xc4, 0x10, ...table),
+        // In a lossless stream Ss picks the predictor.
+        ...scans.flatMap(ids =>
+          segment(0xda, ids.length, ...ids.flatMap(id => [id, 0x00]), ...(sof === 0xc3 ? [1, 0, 0] : [0, 63, 0])),
+        ),
+        ...[0xff, 0xd9],
+      ]);
+    expect(await new Bun.Image(withScans([1], [2], [3])).png().bytes()).toBeInstanceOf(Uint8Array);
+    for (const jpeg of [withScans([1], [1]), withScans([1], [2, 3], [3]), withScans([1, 2], [3], [2])]) {
+      await expect(new Bun.Image(jpeg).png().bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
+    }
   });
 
   test("a bad first scan is refused before there is room for the coefficients of 268 megapixels", async () => {

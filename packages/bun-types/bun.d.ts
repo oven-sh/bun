@@ -9767,8 +9767,9 @@ declare module "bun" {
      *   A damaged JPEG that libjpeg-turbo would decode with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
      *   Blocks with no data come back flat grey.
-     *   A JPEG with more than 500 scans rejects. Encoders write about 10, and
-     *   each scan costs a pass over the whole image.
+     *   A JPEG with more than 500 scans rejects, and so does one with a scan of
+     *   what an earlier scan has already coded. Encoders write about 10 scans and
+     *   none of them twice, and each costs a pass over the whole image.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
      * - `ERR_OUT_OF_MEMORY` — a codec reported a failed allocation. The JPEG
      *   codec reports all of its own. Elsewhere in the pipeline a failed

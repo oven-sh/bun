@@ -302,19 +302,17 @@ bun_opaque::opaque_ffi! {
 
 impl PacketBuffer {
     pub fn get_peer(&self, index: c_int) -> &sockaddr_storage {
-        // SAFETY: uSockets guarantees a non-null, properly-aligned peer pointer for
-        // indices < packet count. The returned storage lives inside the C-owned packet
-        // buffer, which is loaned to the data callback for its duration; C does not
-        // write to it before the callback returns. The returned lifetime is tied to
-        // this handle.
+        // SAFETY: for `index < packet_count`, uSockets returns a non-null, aligned pointer
+        // into the C-owned packet buffer, which is loaned to the data callback for its
+        // duration. C does not write to it before the callback returns. The returned
+        // borrow is tied to `&self`.
         unsafe { &*us_udp_packet_buffer_peer(self, index) }
     }
 
     pub fn get_payload(&self, index: c_int) -> &[u8] {
-        // SAFETY: for `index < packet_count`, uSockets returns a non-null
-        // pointer to `len` initialized bytes inside the loop's receive buffer,
-        // which C writes again at the next receive on this loop. The returned
-        // borrow is tied to `&self`.
+        // SAFETY: for `index < packet_count`, uSockets returns a non-null pointer to `len`
+        // initialized bytes inside the loop's receive buffer, which C writes again at the
+        // next receive on this loop. The returned borrow is tied to `&self`.
         unsafe {
             let payload = us_udp_packet_buffer_payload(self, index);
             let len = us_udp_packet_buffer_payload_length(self, index);

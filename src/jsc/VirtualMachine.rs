@@ -168,7 +168,7 @@ pub struct VirtualMachine {
     /// Hot-reload import watcher (heap `Box`, installed by
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
     /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
-    pub bun_watcher: *mut crate::hot_reloader::ImportWatcher,
+    pub bun_watcher: *mut bun_watcher::Watcher,
     pub(crate) console: *mut crate::console_object::ConsoleObject,
     // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
     // used because VM is self-referential and cannot carry `<'a>`.
@@ -1530,12 +1530,12 @@ impl VirtualMachine {
     }
 
     /// Raw accessor for the hot-reload import watcher. `bun_watcher` is the
-    /// `*mut ImportWatcher` installed by
+    /// `*mut Watcher` installed by
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
     /// `Box` heap allocation), or null when hot reload is disabled.
     ///
     /// NOTE: unlike `event_loop_mut`, the pointee is **not** JS-thread-only —
-    /// the inner `Box<Watcher>` is held as `&mut Watcher` for the lifetime of
+    /// it is held as `&mut Watcher` for the lifetime of
     /// the spawned file-watcher thread (`Watcher::thread_main`), and
     /// `RuntimeTranspilerStore` reads it from transpiler workers. The pointee
     /// guards itself with an internal mutex, so we
@@ -1543,29 +1543,23 @@ impl VirtualMachine {
     /// keep the cross-thread hazard visible. Callers must scope any reborrow to
     /// a single mutex-guarded `Watcher` operation.
     #[inline]
-    pub(crate) fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
+    pub(crate) fn bun_watcher_ptr(&self) -> *mut bun_watcher::Watcher {
         self.bun_watcher
     }
 
     /// Shuts down the file watcher. Its thread reads this VM while handling a change, so this waits
     /// for the current change to finish and prevents new ones.
     fn stop_import_watcher(&mut self) {
-        use crate::hot_reloader::ImportWatcher;
         if self.bun_watcher.is_null() {
             return;
         }
         // SAFETY: `install_bun_watcher` leaked this box, and the other threads that read it have finished.
         // Keep it installed until `shutdown` returns because the in-progress change still reads it.
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = unsafe { &mut *self.bun_watcher };
-        // SAFETY: the box is the one `Watcher::init` returned.
-        unsafe { bun_watcher::Watcher::shutdown(&raw mut **w, false) };
+        // The box is the one `Watcher::init` returned.
+        unsafe { bun_watcher::Watcher::shutdown(self.bun_watcher, false) };
         self.transpiler.resolver.watcher = None;
-        let watcher = core::mem::replace(&mut self.bun_watcher, core::ptr::null_mut());
-        // SAFETY: as above.
-        let watcher = unsafe { bun_core::heap::take(watcher) };
-        let (ImportWatcher::Hot(w) | ImportWatcher::Watch(w)) = *watcher;
         // `shutdown` transferred ownership to the watcher thread.
-        let _ = Box::into_raw(w);
+        self.bun_watcher = core::ptr::null_mut();
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
@@ -4746,11 +4740,10 @@ impl VirtualMachine {
         }
         let watcher = self.bun_watcher_ptr();
         if !watcher.is_null() {
-            // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
+            // SAFETY: `bun_watcher` is a live `Box<Watcher>` leaked in
             // `enable_hot_module_reloading`. The pointee is shared with the
-            // file-watcher thread (see `bun_watcher_ptr` doc) — the enum
-            // discriminant is write-once at install and read-only thereafter,
-            // and `add_file_by_path_slow` serializes the inner watchlist write
+            // file-watcher thread (see `bun_watcher_ptr` doc),
+            // and `add_file_by_path_slow` serializes the watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
             let _ = unsafe { (*watcher).add_file_by_path_slow(path) };
@@ -4761,7 +4754,7 @@ impl VirtualMachine {
     /// enabled.
     pub fn watcher_for_threads(&self) -> Option<impl Fn(&[u8]) + Send + Sync + 'static> {
         struct Shared {
-            watcher: *mut crate::hot_reloader::ImportWatcher,
+            watcher: *mut bun_watcher::Watcher,
             _ticket: crate::Ticket,
         }
         // SAFETY: it carries a `Ticket` for the VM that has the watcher. The pointee is made to be

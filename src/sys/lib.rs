@@ -298,12 +298,13 @@ pub mod dir_iterator {
     // `State` so the per-dir heap allocation is gone too. The kernel fills
     // `[0..rc]` before we read; we never index past `end_index`.
     #[repr(C, align(8))]
-    struct AlignedBuf(core::mem::MaybeUninit<[u8; BUF_SIZE]>);
+    struct AlignedBuf([core::mem::MaybeUninit<u8>; BUF_SIZE]);
     impl AlignedBuf {
         #[inline(always)]
         const fn uninit() -> Self {
-            AlignedBuf(core::mem::MaybeUninit::uninit())
+            AlignedBuf([const { core::mem::MaybeUninit::uninit() }; BUF_SIZE])
         }
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         #[inline(always)]
         fn as_mut_ptr(&mut self) -> *mut u8 {
             self.0.as_mut_ptr().cast()
@@ -380,14 +381,7 @@ pub mod dir_iterator {
             loop {
                 if self.index >= self.end_index {
                     // glibc doesn't expose getdents64; go straight to the syscall.
-                    // SAFETY: buf is valid for BUF_SIZE bytes; fd is a plain c_int.
-                    let rc = unsafe {
-                        super::linux_syscall::getdents64(
-                            dir.native(),
-                            self.buf.as_mut_ptr(),
-                            BUF_SIZE,
-                        )
-                    };
+                    let rc = super::linux_syscall::getdents64(dir.native(), &mut self.buf.0);
                     if rc < 0 {
                         return Err(Error::from_code_int(super::last_errno(), Tag::getdents64));
                     }

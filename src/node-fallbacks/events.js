@@ -466,35 +466,9 @@ function addAbortListener(signal, listener) {
   let removeEventListener;
   if (signal.aborted) {
     let disposed = false;
+    // The listener gets no event here: a page cannot make a trusted one, and the host may have no `Event`.
     queueMicrotask(() => {
-      if (disposed) return;
-      let event;
-      try {
-        // Only a dispatch sets the target of an event, so own properties name the signal until one does.
-        event = new Event("abort");
-        Object.defineProperty(event, "target", {
-          configurable: true,
-          get: () => {
-            try {
-              return Reflect.get(Object.getPrototypeOf(event), "target", event) ?? signal;
-            } catch {
-              // The object of a stub for `Event` can inherit a `target` that throws.
-              return signal;
-            }
-          },
-        });
-        Object.defineProperty(event, "currentTarget", { value: signal, configurable: true });
-      } catch {
-        // The host of a bundle may have no `Event` that a page can construct and change. The listener then gets no argument, as before.
-        listener();
-        return;
-      }
-      listener(event);
-      try {
-        delete event.currentTarget;
-      } catch {
-        // The listener sealed or froze its event.
-      }
+      if (!disposed) listener();
     });
     removeEventListener = () => {
       disposed = true;

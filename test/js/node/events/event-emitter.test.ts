@@ -1086,67 +1086,25 @@ describe("addAbortListener on a signal that is aborted already", () => {
     });
     expect([event.bubbles, event.cancelable]).toEqual([false, false]);
     expect(Object.getPrototypeOf(event)).toBe(Event.prototype);
+    // Every Event of Bun has an own `isTrusted`. The event has no other own name.
+    expect(Object.getOwnPropertyNames(event)).toEqual(["isTrusted"]);
     // Nothing is dispatched, so the listeners that are on the signal do not run.
     expect(otherListener).not.toHaveBeenCalled();
   });
 
-  // The AbortSignal of happy-dom or jsdom is such an object.
-  test("the event names a signal that is no EventTarget", async () => {
-    const signal: { aborted: boolean; self?: object } = { aborted: true };
-    signal.self = signal;
-    const describeOwn = (event: Event) => ({
-      ...describeEvent(event, signal),
-      srcElement: event.srcElement === signal,
-      keys: Object.keys(event),
-      json: JSON.stringify(event),
-      ownNames: Object.getOwnPropertyNames(event),
-    });
-    let event!: Event;
-    let during: object | undefined;
-    EventEmitter.addAbortListener(signal as unknown as AbortSignal, received => {
-      event = received;
-      during = describeOwn(received);
-    });
+  // The AbortSignal of happy-dom or jsdom is such an object. Node.js gives it an event too. Bun does not: only an AbortSignal gets one.
+  test("a signal that is no AbortSignal still gets the call with no argument, and dispose() cancels it", async () => {
+    class Signal extends EventTarget {
+      aborted = true;
+    }
+    const calls: string[] = [];
+    for (const signal of [{ aborted: true }, new Signal()] as unknown as AbortSignal[]) {
+      EventEmitter.addAbortListener(signal, (...args: unknown[]) => void calls.push(`kept, ${args.length} arguments`));
+      EventEmitter.addAbortListener(signal, () => void calls.push("disposed"))[Symbol.dispose]();
+    }
     await nextTurn();
 
-    const own = { srcElement: true, keys: ["isTrusted"], json: '{"isTrusted":true}', ownNames: ["isTrusted"] };
-    expect({ during, after: describeOwn(event) }).toEqual({
-      during: {
-        type: "abort",
-        isTrusted: true,
-        target: true,
-        currentTarget: true,
-        eventPhase: Event.AT_TARGET,
-        ...own,
-      },
-      after: { type: "abort", isTrusted: true, target: true, currentTarget: false, eventPhase: Event.NONE, ...own },
-    });
-  });
-
-  test("an event that no signal has does not name a target before a dispatch", () => {
-    const event = new Event("abort");
-    expect([event.target, event.currentTarget, event.srcElement]).toEqual([null, null, null]);
-  });
-
-  test("a later dispatch of the event of such a signal names its own target", async () => {
-    let event!: Event;
-    EventEmitter.addAbortListener({ aborted: true } as unknown as AbortSignal, received => void (event = received));
-    await nextTurn();
-
-    const other = new EventTarget();
-    const describeTargets = () => ({
-      target: event.target === other,
-      currentTarget: event.currentTarget === other,
-      srcElement: event.srcElement === other,
-    });
-    let during: object | undefined;
-    other.addEventListener("abort", () => void (during = describeTargets()));
-    other.dispatchEvent(event);
-
-    expect({ during, after: describeTargets() }).toEqual({
-      during: { target: true, currentTarget: true, srcElement: true },
-      after: { target: true, currentTarget: false, srcElement: true },
-    });
+    expect(calls).toEqual(["kept, 0 arguments", "kept, 0 arguments"]);
   });
 
   test("dispose() before the microtask runs cancels the call", async () => {
@@ -1220,8 +1178,8 @@ describe("addAbortListener on a signal that is aborted already", () => {
     expect(order).toEqual(["sync", "promise before", "listener abort store", "promise after"]);
   });
 
-  test.concurrent("the event of a listener that throws stays as it was during the call", async () => {
-    // Node.js resets nothing after a throw, and the listener that is queued next still runs.
+  test.concurrent("a listener that throws gives an uncaught error, and the next listener still runs", async () => {
+    // Bug for bug with Node.js v26.12.1: lib/internal/events/abort_listener.js has no try/finally, so the event stays in its dispatch state.
     const script = `
       const { addAbortListener } = require("node:events");
       const signal = AbortSignal.abort();

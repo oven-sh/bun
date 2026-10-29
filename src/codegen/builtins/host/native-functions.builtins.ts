@@ -256,16 +256,16 @@ export default b.declarations(
     reads: externalState,
     implementation: b.hostCall,
   }),
-  // The `abort` event for the listener of an aborted signal. Its wrapper names the signal in a slot that the class Event does not list, so no class is named.
+  // The `abort` event for the listener of an aborted signal, or undefined for an object that is no AbortSignal. Its wrapper keeps the signal in a slot that the class Event does not list, so no class is named.
   b.static(cpp("JSEventTargetNode.cpp", "jsFunctionNodeEventsArmAbortEvent"), {
     args: { signal: b.any.optional },
-    returns: b.object,
+    returns: b.union(b.object, b.undefined),
     capability: "heap",
     throws: true,
     uses: { signal: b.handedOver },
     implementation: b.hostCall,
   }),
-  // It ends the phase of that event, which `eventPhase` and `currentTarget` read.
+  // It ends the dispatch state of that event: the phase and the current target.
   b.static(cpp("JSEventTargetNode.cpp", "jsFunctionNodeEventsFinishAbortEvent"), {
     args: { event: b.any.optional },
     returns: b.undefined,

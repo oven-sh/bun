@@ -7,6 +7,7 @@
 #include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "JSEventTarget.h"
 #include "JSEvent.h"
+#include "JSAbortSignal.h"
 #include "EventNames.h"
 #include "WebCoreJSClientData.h"
 #include "JavaScriptCore/JSArray.h"
@@ -55,22 +56,31 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsArmAbortEvent, (JSGlobalObject * le
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
+    // Only an AbortSignal gets an event: `--trim` keeps the class Event for each program that can hold one, and for no other EventTarget.
+    auto* signal = dynamicDowncast<JSAbortSignal>(callFrame->argument(0));
+    if (!signal)
+        return JSValue::encode(jsUndefined());
+
     Ref<Event> event = Event::create(eventNames().abortEvent, Event::CanBubble::No, Event::IsCancelable::No);
     event->setEventPhase(Event::AT_TARGET);
+    event->setTarget(RefPtr<EventTarget> { &signal->wrapped() });
+    event->setCurrentTarget(&signal->wrapped());
 
     JSValue wrapper = toJSNewlyCreated(lexicalGlobalObject, defaultGlobalObject(lexicalGlobalObject), WTF::move(event));
     RETURN_IF_EXCEPTION(throwScope, {});
 
-    // A signal need not be an EventTarget, so the wrapper names it: JSEvent answers this slot where the event has no native target.
-    asObject(wrapper)->putDirect(vm, WebCore::builtinNames(vm).signalPrivateName(), callFrame->argument(0), PropertyAttribute::DontEnum | 0);
+    // The `reason` of a signal lives on its wrapper, and an Event marks no wrapper: this slot keeps it. Nothing reads the slot.
+    asObject(wrapper)->putDirect(vm, WebCore::builtinNames(vm).signalPrivateName(), signal, PropertyAttribute::DontEnum | 0);
 
     return JSValue::encode(wrapper);
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeEventsFinishAbortEvent, (JSGlobalObject*, CallFrame* callFrame))
 {
-    if (auto* wrapper = dynamicDowncast<JSEvent>(callFrame->argument(0)))
+    if (auto* wrapper = dynamicDowncast<JSEvent>(callFrame->argument(0))) {
+        wrapper->wrapped().setCurrentTarget(nullptr);
         wrapper->wrapped().setEventPhase(Event::NONE);
+    }
 
     return JSValue::encode(jsUndefined());
 }

@@ -1,7 +1,7 @@
 const { validateAbortSignal, validateFunction } = require("internal/validators");
 const { resistStopPropagation } = require("internal/shared");
 
-type ArmAbortEvent = (signal: AbortSignal) => Event;
+type ArmAbortEvent = (signal: AbortSignal) => Event | undefined;
 type FinishAbortEvent = (event: Event) => void;
 
 let armAbortEvent: ArmAbortEvent | undefined;
@@ -29,8 +29,13 @@ function addAbortListener(signal: AbortSignal, listener: (event: Event) => void)
         "jsFunctionNodeEventsFinishAbortEvent",
         1,
       ) as FinishAbortEvent);
-      // No dispatch: it would call the signal's other listeners again. As in node, a listener that throws leaves the event armed.
+      // No dispatch: it would call the signal's other listeners again. Node gives every object that has `aborted` an event. Here only an AbortSignal gets one.
       const event = arm(signal);
+      if (event === undefined) {
+        (listener as () => void)();
+        return;
+      }
+      // Bug for bug with node, which has no `finally` here: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/events/abort_listener.js#L44-L46
       listener(event);
       finish(event);
     });

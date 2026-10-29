@@ -1866,7 +1866,7 @@ pub mod bv2_impl {
     bun_opaque::opaque_ffi! { pub struct JSBundleCompletionTask; }
 
     /// Erase `&[u8]` to `&'static [u8]` for storage in lifetime-erased
-    /// slots (`LinkerOptions`, AST strings).
+    /// slots (`LinkerOptions`, `ParseTask` contents).
     ///
     /// # Safety
     /// Caller guarantees `s` is one of:
@@ -3855,12 +3855,8 @@ pub mod bv2_impl {
                         bun_core::todo_panic!("separate_ssr_graph=false");
                     }
 
-                    // SAFETY: arena slice — `alloc` (== `self.graph.heap`) outlives
-                    // the produced AST. See `interned_slice` contract.
-                    let astr = |s: &[u8]| -> &'static [u8] { unsafe { interned_slice(s) } };
-
                     let client_path = server.new_expr(E::EString {
-                        data: astr(
+                        data: bun_ast::StoreStr::new(
                             alloc.alloc_slice_copy(
                                 format!(
                                     "{}",
@@ -3872,12 +3868,11 @@ pub mod bv2_impl {
                                 )
                                 .as_bytes(),
                             ),
-                        )
-                        .into(),
+                        ),
                         ..Default::default()
                     });
                     let ssr_path = server.new_expr(E::EString {
-                        data: astr(
+                        data: bun_ast::StoreStr::new(
                             alloc.alloc_slice_copy(
                                 format!(
                                     "{}",
@@ -3889,8 +3884,7 @@ pub mod bv2_impl {
                                 )
                                 .as_bytes(),
                             ),
-                        )
-                        .into(),
+                        ),
                         ..Default::default()
                     });
 
@@ -3898,7 +3892,7 @@ pub mod bv2_impl {
                     for (export_name_string, client_item) in
                         keys.iter().zip(client_manifest_items.iter_mut())
                     {
-                        let server_key_string = astr(
+                        let server_key_string = bun_ast::StoreStr::new(
                             alloc.alloc_slice_copy(
                                 format!(
                                     "{}#{}",
@@ -3913,14 +3907,14 @@ pub mod bv2_impl {
                             ),
                         );
                         let export_name = server.new_expr(E::EString {
-                            data: astr(export_name_string).into(),
+                            data: bun_ast::StoreStr::new(export_name_string),
                             ..Default::default()
                         });
 
                         // write dependencies on the underlying module, not the proxy
                         server_manifest_props.push(G::Property {
                             key: Some(server.new_expr(E::EString {
-                                data: server_key_string.into(),
+                                data: server_key_string,
                                 ..Default::default()
                             })),
                             value: Some(server.new_expr(E::Object {
@@ -7473,23 +7467,17 @@ pub mod bv2_impl {
             );
             js_parser_options.bundle = true;
 
-            // SAFETY: `alloc_str` returns a `&mut str` into the bundler arena, which
-            // outlives this AST. `E::EString.data` is `&'static [u8]` per the
-            // arena-erasure convention. See `interned_slice` contract.
-            let unique_key: &'static [u8] = unsafe {
-                interned_slice(
-                    self.arena()
-                        .alloc_str(&format!(
-                            "{}",
-                            chunk::UniqueKey {
-                                prefix: self.unique_key,
-                                kind: chunk::QueryKind::HtmlImport,
-                                index: self.graph.html_imports.server_source_indices.len() as u32,
-                            },
-                        ))
-                        .as_bytes(),
-                )
-            };
+            let unique_key: &[u8] = self
+                .arena()
+                .alloc_str(&format!(
+                    "{}",
+                    chunk::UniqueKey {
+                        prefix: self.unique_key,
+                        kind: chunk::QueryKind::HtmlImport,
+                        index: self.graph.html_imports.server_source_indices.len() as u32,
+                    },
+                ))
+                .as_bytes();
 
             // Extract raw pointers so the `&mut self` borrow from
             // `transpiler_for_target` doesn't overlap `self.arena()` below.

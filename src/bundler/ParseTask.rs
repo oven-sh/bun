@@ -2593,11 +2593,7 @@ pub mod parse_worker {
                     }
                 }),
             };
-            // SAFETY: ARENA — `bump: &'static Bump` (worker arena pinned for the
-            // bundle pass), so `bump.alloc(..)` already yields a `&'static` borrow.
-            unsafe {
-                bun_collections::detach_ref::<js_parser::options::Framework>(bump.alloc(projected))
-            }
+            &*bump.alloc(projected)
         });
 
         // The browser copy of a page of a `clientPages` router drops the exports that its router

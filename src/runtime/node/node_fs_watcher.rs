@@ -158,7 +158,7 @@ impl Taskable for FSWatchTaskPosix {
     /// same as the refused-post path in `enqueue`.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.
-        unsafe { Self::deinit(this) };
+        unsafe { bun_core::heap::take(this) }.deinit();
     }
     /// The watcher closes with the context that started it (`abort_handle`); a batch that arrives
     /// afterwards finds it closed.
@@ -261,7 +261,7 @@ impl FSWatchTaskPosix {
                 ));
                 if let bun_jsc::vm_handle::Posted::Refused(_) = self.ctx().post(node) {
                     // VM torn down: nobody will emit these events.
-                    Self::deinit(that);
+                    bun_core::heap::take(that).deinit();
                 }
             }
             return;
@@ -288,25 +288,15 @@ impl FSWatchTaskPosix {
 impl FSWatchTaskPosix {
     /// `FSWatchTaskPosix.deinit`. **Not** `impl Drop`:
     /// this is only ever called on heap clones produced by `enqueue()` (via the
-    /// task dispatcher), never on the embedded `FSWatcher.current_task` field —
-    /// the assert below enforces that. A `Drop` impl would also fire on
+    /// task dispatcher), never on the embedded `current_task`. A `Drop` impl would also fire on
     /// `*self = Self{..}` in `append()` and on `heap::take` in `finalize`,
-    /// where `self` *is* `current_task`, which would always trip the assert.
-    ///
-    /// # Safety
-    /// `this` must be the unique `heap::alloc` pointer produced by
-    /// `enqueue()`.
-    pub(crate) unsafe fn deinit(this: *mut Self) {
-        // SAFETY: caller contract — `this` is the unique live heap clone from
-        // `enqueue()`; reclaim ownership (paired with its `heap::alloc`).
-        let mut task = unsafe { bun_core::heap::take(this) };
-        task.clean_entries();
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!core::ptr::eq(task.ctx().current_task.as_ptr(), this));
-        }
-        // SAFETY: the ref `enqueue()` took.
-        unsafe { FSWatcher::unref_task(task.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()) };
+    /// where `self` *is* `current_task`.
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn deinit(mut self: Box<Self>) {
+        self.clean_entries();
+        // SAFETY: `ctx` is private and only `enqueue()` boxes a task with it set, after
+        // `ref_task()`.
+        unsafe { FSWatcher::unref_task(self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()) };
     }
 }
 
@@ -382,7 +372,7 @@ impl Taskable for FSWatchTaskWindows {
     /// As the POSIX task.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract.
-        unsafe { Self::deinit(this) };
+        unsafe { bun_core::heap::take(this) }.deinit();
     }
     /// As `FSWatchTaskPosix`.
     unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
@@ -514,15 +504,11 @@ impl FSWatchTaskWindows {
     /// `FSWatchTaskWindows.deinit`. Explicit, not
     /// `impl Drop`, to mirror `FSWatchTaskPosix::deinit` so the dispatcher can
     /// call `FSWatchTask::deinit` uniformly.
-    ///
-    /// # Safety
-    /// `this` must be the unique `heap::alloc` pointer produced by
-    /// `append_abort()` / `on_path_update_windows()`.
-    pub(crate) unsafe fn deinit(this: *mut Self) {
-        // SAFETY: paired with `heap::alloc` at the enqueue site.
-        let task = unsafe { bun_core::heap::take(this) };
-        // SAFETY: the ref taken at the enqueue site.
-        unsafe { FSWatcher::unref_task(task.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()) };
+    #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
+    pub(crate) fn deinit(self: Box<Self>) {
+        // SAFETY: `ctx` is private and only `append_abort()` and `on_path_update_windows()` box a
+        // task with it set, after `ref_task()`.
+        unsafe { FSWatcher::unref_task(self.ctx.expect("FSWatchTask.ctx unset").as_mut_ptr()) };
     }
 }
 

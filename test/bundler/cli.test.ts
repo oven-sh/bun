@@ -544,6 +544,31 @@ describe.concurrent("the default root of a multi-entry build", () => {
     );
     expect(await outputs(String(dir), names)).toEqual(names.map(name => name.slice("pages/".length, -3) + ".js"));
   });
+
+  // A directory holds an entry point only if a path separator follows the directory's name in that entry point:
+  // `ab` does not hold `abc/y.ts`, and `cli` does not hold `cli.ts`.
+  test.each([
+    [
+      ["./ab/x.ts", "./abc/y.ts"],
+      ["ab/x.js", "abc/y.js"],
+    ],
+    [
+      ["./x/y/a.ts", "./x/yy/b.ts"],
+      ["y/a.js", "yy/b.js"],
+    ],
+    [
+      ["./cli.ts", "./cli/worker.ts"],
+      ["cli.js", "cli/worker.js"],
+    ],
+  ])("ends at a path separator, not inside a name: %j", async (entryPoints, expected) => {
+    using dir = tempDir(
+      "build-root-name-prefix",
+      Object.fromEntries(
+        entryPoints.map(entry => [entry.slice("./".length), `console.log(${JSON.stringify(entry)});`]),
+      ),
+    );
+    expect(await outputs(String(dir), entryPoints)).toEqual(expected);
+  });
 });
 
 // macOS and Windows read files on the IO pool by default.

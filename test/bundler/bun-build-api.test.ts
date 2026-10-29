@@ -814,6 +814,37 @@ describe("Bun.build", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A directory holds an entry point only if a path separator follows the directory's name in that entry point:
+  // `ab` does not hold `abc/y.ts`, and `cli` does not hold `cli.ts`.
+  test("the default root ends at a path separator, not inside a name", async () => {
+    using dir = tempDir("build-root-name-prefix", {
+      "ab/x.ts": `console.log("x");`,
+      "abc/y.ts": `console.log("y");`,
+      "x/y/a.ts": `console.log("a");`,
+      "x/yy/b.ts": `console.log("b");`,
+      "cli.ts": `console.log("cli");`,
+      "cli/worker.ts": `console.log("worker");`,
+    });
+    const names = async (outdir: string, entrypoints: string[]) => {
+      const result = await Bun.build({
+        entrypoints: entrypoints.map(entry => join(String(dir), entry)),
+        outdir: join(String(dir), outdir),
+      });
+      return result.outputs
+        .map(output => path.relative(join(String(dir), outdir), output.path).replaceAll("\\", "/"))
+        .sort();
+    };
+    expect({
+      siblings: await names("dist1", ["ab/x.ts", "abc/y.ts"]),
+      nestedSiblings: await names("dist2", ["x/y/a.ts", "x/yy/b.ts"]),
+      fileBesideDirectory: await names("dist3", ["cli.ts", "cli/worker.ts"]),
+    }).toEqual({
+      siblings: ["ab/x.js", "abc/y.js"],
+      nestedSiblings: ["y/a.js", "yy/b.js"],
+      fileBesideDirectory: ["cli.js", "cli/worker.js"],
+    });
+  });
+
   test("BuildArtifact properties", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties", {

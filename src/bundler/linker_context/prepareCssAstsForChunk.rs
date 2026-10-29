@@ -232,15 +232,9 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 Some(ImportInfo {
                                     import_records: &entry.condition_import_records,
                                     ast_urls_for_css: parse_graph.ast.items_url_for_css(),
-                                    // SAFETY: read-only `&[Box<[u8]>]`→`&[&[u8]]` view; relies on
-                                    // fat-pointer field-order equivalence (see fn doc).
-                                    ast_unique_key_for_additional_file: unsafe {
-                                        bun_ptr::boxed_slices_as_borrowed(
-                                            parse_graph
-                                                .input_files
-                                                .items_unique_key_for_additional_file(),
-                                        )
-                                    },
+                                    ast_unique_key_for_additional_file: parse_graph
+                                        .input_files
+                                        .items_unique_key_for_additional_file(),
                                 }),
                                 // `LocalsResultsMap` is the same `ArrayHashMap<Ref, Box<[u8]>>`
                                 // alias as `bun_js_printer::MangledProps`; no cast needed.

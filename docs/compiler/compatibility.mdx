@@ -140,3 +140,5 @@ Keep a `FinalizationRegistry` at module level, or somewhere your program reads i
 | Breakpoints and `debugger`                  | `bun --inspect-brk ./app.ts`               |
 | `cc()` from `bun:ffi`, on Linux             | Compile the C file first, then `dlopen()`  |
 | Over 32 GB of objects in a thread           | `--aot-huge-heap`                          |
+| `this` in `--define` or `--drop`            | Name a global, like `globalThis.mode`      |
+| An `import.meta` value in `--define`        | Name a global, like `globalThis.mode`      |

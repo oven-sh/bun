@@ -1,7 +1,12 @@
 use bun_alloc::Arena;
+use bun_aot::diagnostic_codes::Code;
+use bun_aot::diagnostics::log_diagnostic;
 use bun_ast::expr::Data;
 use bun_ast::{Expr, Loc, Log};
-use bun_js_parser::defines::{Define as DefineTable, DefineData};
+use bun_js_parser::defines::{
+    Define as DefineTable, DefineData, define_key_parts, push_define_key_index,
+};
+use bun_js_parser::lexer::is_identifier;
 use bun_sema::atom::{Atom, Interner};
 use bun_sema::fold::{Constant, Define, DefinePath, DefineRoot, DefineValue, FoldOptions};
 use bun_sema::hir_from_data::DataValue;
@@ -23,10 +28,12 @@ pub(crate) fn fold_options<'s>(
 ) -> FoldOptions<'s> {
     let table = &*options.define;
     let defines = with_ast_scope(|scratch| convert_defines(table, scratch, arena, atoms, log));
-    let dropped_calls = dropped_call_paths(&options.drop, arena, atoms);
+    let plain_path_defines = plain_path_define_paths(table, arena, atoms);
+    let dropped_calls = dropped_call_paths(&options.drop, arena, atoms, log);
     let features = feature_atoms(options, atoms);
     FoldOptions {
         defines: arena.alloc_slice_copy(&defines),
+        plain_path_defines: arena.alloc_slice_copy(&plain_path_defines),
         dropped_calls: arena.alloc_slice_copy(&dropped_calls),
         features: arena.alloc_slice_copy(&features),
         preserves_unused_imports: options.trim_unused_imports == Some(false),
@@ -40,11 +47,16 @@ fn collect_define_entries(table: &DefineTable) -> Vec<DefineEntry<'_>> {
         parts: vec![&**key],
         data,
     });
+    let this = table.this.iter().map(|data| DefineEntry {
+        parts: vec![THIS],
+        data,
+    });
     let dots = table.dots.values().flatten().map(|dot| DefineEntry {
         parts: dot.parts.iter().map(|part| &**part).collect(),
         data: &dot.data,
     });
     let mut entries: Vec<DefineEntry<'_>> = identifiers
+        .chain(this)
         .chain(dots)
         .filter(|entry| !entry.data.valueless())
         .collect();
@@ -62,17 +74,60 @@ fn convert_defines<'s>(
 ) -> Vec<Define<'s>> {
     let mut defines = Vec::new();
     for entry in collect_define_entries(table) {
+        let key = key_text(&entry.parts);
+        if entry.parts[0] == THIS || is_read_where_it_stands(entry.data) {
+            let value = entry.data.original_name.as_deref().unwrap_or_default();
+            let option = [b"--define ", &key[..], b"=", value].concat();
+            log_diagnostic(log, Code::UnsupportedOption, &[&option]);
+            continue;
+        }
         match define_value(entry.data, scratch, arena, atoms) {
             Ok(value) => defines.push(Define {
                 path: define_path(&entry.parts, arena, atoms),
                 value,
             }),
-            Err(error) => {
-                report_not_data(log, &entry.parts.join(&b'.'), "the --define value", error)
-            }
+            Err(error) => report_not_data(log, &key, "the --define value", error),
         }
     }
     defines
+}
+
+fn plain_path_define_paths<'s>(
+    table: &DefineTable,
+    arena: &'s Arena,
+    atoms: &Interner<'s>,
+) -> Vec<DefinePath<'s>> {
+    let entries = collect_define_entries(table).into_iter();
+    let plain = entries.filter(|entry| entry.data.plain_path_only());
+    plain
+        .map(|entry| define_path(&entry.parts, arena, atoms))
+        .collect()
+}
+
+const THIS: &[u8] = b"this";
+
+/// The key as --define takes it: a part that is no identifier stands in `["..."]`.
+fn key_text(parts: &[&[u8]]) -> Vec<u8> {
+    let mut text = parts[0].to_vec();
+    for part in &parts[1..] {
+        if is_identifier(part) {
+            text.push(b'.');
+            text.extend_from_slice(part);
+        } else {
+            push_define_key_index(&mut text, part);
+        }
+    }
+    text
+}
+
+/// A path that starts with `this`, `import.meta` or `null`. `bun build` reads those where the defined name stands, and none of them is a global.
+fn is_read_where_it_stands(data: &DefineData) -> bool {
+    let name = match data.value {
+        Data::EIdentifier(_) => data.original_name.as_deref().unwrap_or_default(),
+        _ => return false,
+    };
+    let first = bun_core::strings::split(name, b".").next();
+    matches!(first, Some(b"this" | b"import" | b"null"))
 }
 
 fn define_path<'s>(parts: &[&[u8]], arena: &'s Arena, atoms: &Interner<'s>) -> DefinePath<'s> {
@@ -120,7 +175,10 @@ fn define_value<'s>(
             };
             data_value_from_expr(&root, scratch, arena, atoms).map(define_value_from_data)
         }
+        // `bun build` has a number for either name alone, and so stores to no such define.
         Data::EIdentifier(_) => match data.original_name.as_deref() {
+            Some(b"NaN") => Ok(DefineValue::Constant(Constant::Number(f64::NAN))),
+            Some(b"Infinity") => Ok(DefineValue::Constant(Constant::Number(f64::INFINITY))),
             Some(name) if !name.is_empty() => {
                 let path = bun_core::strings::split(name, b".");
                 Ok(DefineValue::GlobalPath(intern_slice(path, arena, atoms)))
@@ -147,17 +205,27 @@ fn dropped_call_paths<'s>(
     dropped: &[Box<[u8]>],
     arena: &'s Arena,
     atoms: &Interner<'s>,
+    log: &mut Log,
 ) -> Vec<DefinePath<'s>> {
-    let mut paths: Vec<Vec<&[u8]>> = dropped
-        .iter()
-        .filter(|item| !item.is_empty())
-        .map(|item| bun_core::strings::split(item, b".").collect())
-        .collect();
+    let mut paths: Vec<Vec<Box<[u8]>>> = Vec::new();
+    for item in dropped.iter().filter(|item| !item.is_empty()) {
+        let parts = define_key_parts(item);
+        if &*parts[0] != THIS {
+            paths.push(parts);
+        } else if parts.len() > 1 {
+            // `bun build` drops a call of a member of the file's `this`, and no call of `this` alone.
+            let option = [b"--drop=", &item[..]].concat();
+            log_diagnostic(log, Code::UnsupportedOption, &[&option]);
+        }
+    }
     paths.sort_unstable();
     paths.dedup();
     paths
         .iter()
-        .map(|parts| define_path(parts, arena, atoms))
+        .map(|parts| {
+            let parts: Vec<&[u8]> = parts.iter().map(|part| &**part).collect();
+            define_path(&parts, arena, atoms)
+        })
         .collect()
 }
 
@@ -332,6 +400,132 @@ mod tests {
         );
         let bun_env = [atoms.intern(b"env"), atoms.intern(b"BUN_ENV")];
         assert!(find_define(&options, process, &bun_env).is_some());
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn defaults_of_a_server_build_are_plain_path_defines() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let options = fold(&USER_DEFINES, &[], session.arena(), &atoms);
+        let plain: Vec<Vec<u8>> = options
+            .plain_path_defines
+            .iter()
+            .map(|path| path_parts(path, &atoms).join(&b'.'))
+            .collect();
+        assert_eq!(plain, [&b"process.browser"[..], b"process.env.BUN_ENV"]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn quoted_part_of_a_key_is_a_member() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let entries = [
+            (r#"process.env["MY-VAR"]"#, "1"),
+            (r#"config["deep"]"#, "2"),
+        ];
+        let dropped: [&[u8]; 1] = [br#"tools["trace-all"]"#];
+        let options = fold(&entries, &dropped, session.arena(), &atoms);
+
+        let number = |value| Some(DefineValue::Constant(Constant::Number(value)));
+        let process = DefineRoot::Global(atoms.intern(b"process"));
+        let my_var = [atoms.intern(b"env"), atoms.intern(b"MY-VAR")];
+        assert_eq!(find_define(&options, process, &my_var), number(1.0));
+        let config = DefineRoot::Global(atoms.intern(b"config"));
+        let deep = [atoms.intern(b"deep")];
+        assert_eq!(find_define(&options, config, &deep), number(2.0));
+
+        let dropped_calls: Vec<Vec<Vec<u8>>> = options
+            .dropped_calls
+            .iter()
+            .map(|path| path_parts(path, &atoms))
+            .collect();
+        assert_eq!(dropped_calls, [[&b"tools"[..], b"trace-all"]]);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn nan_and_infinity_alone_are_numbers() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let entries = [
+            ("A", "NaN"),
+            ("B", "Infinity"),
+            ("C", "NaN.x"),
+            ("D", "a.if"),
+        ];
+        let options = fold(&entries, &[], session.arena(), &atoms);
+
+        let is_nan =
+            |value| matches!(value, Some(DefineValue::Constant(Constant::Number(n))) if n.is_nan());
+        assert!(is_nan(global_value(&options, &atoms, b"A")));
+        assert_eq!(
+            global_value(&options, &atoms, b"B"),
+            Some(DefineValue::Constant(Constant::Number(f64::INFINITY)))
+        );
+        let member_of_nan = [atoms.intern(b"NaN"), atoms.intern(b"x")];
+        assert_eq!(
+            global_value(&options, &atoms, b"C"),
+            Some(DefineValue::GlobalPath(&member_of_nan))
+        );
+        let keyword_member = [atoms.intern(b"a"), atoms.intern(b"if")];
+        assert_eq!(
+            global_value(&options, &atoms, b"D"),
+            Some(DefineValue::GlobalPath(&keyword_member))
+        );
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn what_is_read_where_the_name_stands_is_reported_and_left_out() {
+        let session = Session::new();
+        let atoms = Interner::new_in(&session);
+        let entries = [
+            ("this", "window"),
+            ("this.flag", "1"),
+            ("FROM_THIS", "this.x"),
+            ("META", "import.meta.env"),
+            ("OF_NULL", "null.x"),
+            ("LEVEL", "41"),
+        ];
+        let dropped: [&[u8]; 2] = [b"this.trace", b"console"];
+        let (options, log) = fold_configured(
+            |options, scratch| {
+                options.define = create_table(&entries, &dropped, scratch);
+                options.drop = dropped.iter().map(|item| Box::from(*item)).collect();
+            },
+            session.arena(),
+            &atoms,
+        );
+        let mut reported: Vec<&[u8]> = log.msgs.iter().map(|msg| &*msg.data.text).collect();
+        reported.sort_unstable();
+        let unsupported = |option: &str| format!("TS100050: --aot does not support {option}");
+        let mut expected = [
+            unsupported("--define this=window"),
+            unsupported("--define this.flag=1"),
+            unsupported("--define FROM_THIS=this.x"),
+            unsupported("--define META=import.meta.env"),
+            unsupported("--define OF_NULL=null.x"),
+            unsupported("--drop=this.trace"),
+        ];
+        expected.sort_unstable();
+        let expected: Vec<&[u8]> = expected.iter().map(|text| text.as_bytes()).collect();
+        assert_eq!(reported, expected);
+        assert_eq!(log.errors, 6);
+
+        assert!(global_value(&options, &atoms, b"LEVEL").is_some());
+        for name in [&b"this"[..], b"FROM_THIS", b"META", b"OF_NULL"] {
+            assert_eq!(global_value(&options, &atoms, name), None);
+        }
+        let this = DefineRoot::Global(atoms.intern(b"this"));
+        assert_eq!(find_define(&options, this, &[atoms.intern(b"flag")]), None);
+        let dropped_calls: Vec<Vec<u8>> = options
+            .dropped_calls
+            .iter()
+            .map(|path| path_parts(path, &atoms).join(&b'.'))
+            .collect();
+        assert_eq!(dropped_calls, [&b"console"[..]]);
     }
 
     #[test]

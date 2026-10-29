@@ -32,6 +32,9 @@ impl<'s> Folder<'_, 's> {
             | ExprKind::Instantiation { expr, .. } => self.fold_cast(e, expr),
             ExprKind::Ident(name) => self.fold_ident(e, name),
             ExprKind::Dot { obj, chain, .. } | ExprKind::Index { obj, chain, .. } => {
+                if let Some(folded) = self.fold_path_link(e, chain) {
+                    return folded;
+                }
                 match self.fold_short_circuit(e, obj, chain) {
                     Some(folded) => folded,
                     None => self.fold_member(e, chain),

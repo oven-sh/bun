@@ -720,22 +720,7 @@ pub mod defines {
                 return Ok(());
             }
 
-            // Only a key with `[` needs the grammar. Without one the grammar gives the `.` split, or fails into it.
-            let parsed = if strings::contains_char(key, b'[') {
-                parse_define_key(key).ok()
-            } else {
-                None
-            };
-            let parts: Vec<Box<[u8]>> = match parsed {
-                Some(parts) => parts,
-                None => {
-                    let mut parts = Vec::with_capacity(strings::count_char(key, b'.') + 1);
-                    for split in strings::split(key, b".") {
-                        parts.push(Box::from(split));
-                    }
-                    parts
-                }
-            };
+            let parts = define_key_parts(key);
             if parts.len() == 1 {
                 self.identifiers.put_assume_capacity(&parts[0], value);
                 return Ok(());
@@ -868,6 +853,21 @@ pub mod defines {
         let mut parts: Vec<Box<[u8]>> = Vec::new();
         for_each_define_key_part(key, |part| parts.push(Box::from(part)))?;
         Ok(parts)
+    }
+
+    /// The parts that `Define::insert` files a key under: `process.env["NODE-ENV"]` is `process`, `env`, `NODE-ENV`.
+    pub fn define_key_parts(key: &[u8]) -> Vec<Box<[u8]>> {
+        // Only a key with `[` needs the grammar. Without one the grammar gives the `.` split, or fails into it.
+        if strings::contains_char(key, b'[')
+            && let Ok(parts) = parse_define_key(key)
+        {
+            return parts;
+        }
+        let mut parts = Vec::with_capacity(strings::count_char(key, b'.') + 1);
+        for split in strings::split(key, b".") {
+            parts.push(Box::from(split));
+        }
+        parts
     }
 
     /// Checks a define key against the grammar, without a copy of its parts.

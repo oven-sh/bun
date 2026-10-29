@@ -187,10 +187,8 @@ export const knownToday: Record<string, string> = {
     'written: "error: ReferenceError: Cannot access \'c\' before initialization.\\n      at /$bunfs/root/c0; each file: "error: error: Cannot find module \'./b.ts\' from \'/$bunfs/root/c000/entry.js\'\\n\\nexit 1", b; each file: code bytes 14799 -> 14257, operations 873 -> 850; bundled: "c\\ng\\ne\\nf\\nd\\nc\\n\\nexit 0", bun run "error: 1 | // @ts-nocheck\\n2 | import { c } from \\"',
   "esbuild/default: default/DefineImportMeta":
     'written: "the process ended: 1 TypeError: Invalid URL |  input: \\"./c000/start-the-case.mjs\\", |   ; | 4 |  | 5 | const mark = process.env.AOT_MARK; | 6 | for (const program of JSON.parse(readFileSync(process.env.AOT_TASKS, \\"utf; each file: "the process ended: 1 TypeError: Invalid URL |  input: \\"./c000/start-the-case.mjs\\", |   ; | 4 |  | 5 | const mark = process.env.AOT_MARK; | 6 | for (const program of JSON.parse(readFileSync(process.env.AOT_TASKS, \\"utf; each file: code bytes 229 -> 169, operations 11 -> 9; bundled: "the process ended: 1 TypeError: Invalid URL |  input: \\"./c000/start-the-case.mjs\\", |   ; | 4 |  | 5 | const mark = process.env.AOT_MARK; | 6 | for (const program of JSON.parse(readFileSync(process.env.AOT_TASKS, \\"utf; bundled: code bytes 229 -> 169, operations 11 -> 9',
-  "esbuild/default: default/DefineOptionalChain":
-    "each file: code bytes 173362 -> 173337, operations 8241 -> 8239; bundled: code bytes 173362 -> 173337, operations 8241 -> 8239",
-  "esbuild/default: default/DefineOptionalChainLowered":
-    "each file: code bytes 173547 -> 173522, operations 8253 -> 8251; bundled: code bytes 173547 -> 173522, operations 8253 -> 8251",
+  "esbuild/default: default/DefineThis":
+    "written: the build: error: TS100050: --aot does not support --define this.foo.bar=_replaced_foo_bar | error: TS100050: --aot does not support --define this.foo=_replaced_foo | error: TS100050: --aot does not support --define this=_replaced",
   "esbuild/default: default/DirectEvalTainting2NoBundle":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/DirectEvalTaintingNoBundle":

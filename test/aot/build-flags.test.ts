@@ -13,7 +13,7 @@ const packages = {
   "node_modules/mine/r.js": `export const jsx = (t, p) => "mine:" + t + JSON.stringify(p); export const jsxs = jsx; export const jsxDEV = jsx; export const Fragment = "f";`,
 };
 
-const pathsThatEndInBrackets = {
+const pathsWrittenInBrackets = {
   flags: [
     '--define=config.flat="built"',
     '--define=config.level.deep="built"',
@@ -56,14 +56,15 @@ const honored: Record<string, { flags: string[]; files: Record<string, string>; 
     },
     prints: "42 named true number staging\n",
   },
-  "--define and --drop of a path that the program ends in brackets": {
-    ...pathsThatEndInBrackets,
+  // A call is dropped through brackets only where they end the callee: `tools["trace"].deep` is a value.
+  "--define and --drop of a path that the program writes in brackets": {
+    ...pathsWrittenInBrackets,
     prints:
-      "built run run run\nbuilt built run run\nbuilt built undefined built undefined\n[ 1 ] undefined other undefined\ncalled: b,d,e\n",
+      "built built built built\nbuilt built built built\nbuilt built built built built\n[ 1 ] [ 1 ] other other\ncalled: d\n",
   },
-  "--define and --drop of a path that the program ends in brackets, with --minify-syntax": {
-    ...pathsThatEndInBrackets,
-    flags: [...pathsThatEndInBrackets.flags, "--minify-syntax"],
+  "--define and --drop of a path that the program writes in brackets, with --minify-syntax": {
+    ...pathsWrittenInBrackets,
+    flags: [...pathsWrittenInBrackets.flags, "--minify-syntax"],
     prints:
       "built built built built\nbuilt built built built\nbuilt built built built built\n[ 1 ] [ 1 ] other other\ncalled: \n",
   },

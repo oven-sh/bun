@@ -17,9 +17,6 @@ assert.equal(evaluated++, 7);
 tools.trace("dropped");
 tools.trace.deep("dropped");
 tools.trace?.deep("dropped");
-try {
-  tools?.trace("called: ?. is inside the dropped path");
-} catch (e) {
-  console.log((e as Error).message, evaluated);
-}
+tools?.trace("dropped: ?. is a step of the path like a dot");
+tools?.trace.deep("dropped");
 console.log(evaluated, tools.keep("kept"));

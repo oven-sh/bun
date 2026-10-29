@@ -74,6 +74,7 @@ use bun_jsc::AbortSignalRef;
 #[cfg(windows)]
 use bun_paths::resolve_path::PosixToWinNormalizer;
 use bun_picohttp as picohttp;
+use bun_ptr::RefPtr;
 use bun_resolver::data_url::DataURL;
 use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
@@ -194,7 +195,7 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
         }
     };
 
-    let response = bun_core::heap::into_raw(Box::new(Response::init(
+    let response = RefPtr::new(Response::init(
         response::Init {
             status_code: 200,
             status_text: BunString::create_atom(b"OK"),
@@ -203,17 +204,9 @@ fn data_url_response(url: BunString, global_this: &JSGlobalObject) -> JSValue {
         Body::new(BodyValue::Blob(blob)),
         url,
         false,
-    )));
+    ));
 
-    // Ownership of the boxed Response is transferred to the JS GC via
-    // `make_maybe_pooled` (which stores the raw `*mut Response` in the wrapper
-    // and finalizes it). Dropping a `Box<Response>` here would be a UAF.
-    JSPromise::resolved_promise_value(
-        global_this,
-        // SAFETY: `response` is a freshly allocated heap `Response`; ownership
-        // transfers to JSC.
-        Response::make_maybe_pooled(global_this, response),
-    )
+    JSPromise::resolved_promise_value(global_this, Response::to_js(response, global_this))
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1402,7 +1395,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
         };
 
-        let response = bun_core::heap::into_raw(Box::new(Response::init(
+        let response = RefPtr::new(Response::init(
             response::Init {
                 status_code: 200,
                 ..Default::default()
@@ -1410,15 +1403,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             Body::new(BodyValue::Blob(blob_to_use)),
             url_string,
             false,
-        )));
+        ));
 
-        // Ownership of the boxed Response transfers to the JS GC; see
-        // `data_url_response` for the rationale.
         return Ok(JSPromise::resolved_promise_value(
             global_this,
-            // SAFETY: `response` is a freshly allocated heap `Response`; ownership
-            // transfers to JSC.
-            Response::make_maybe_pooled(global_this, response),
+            Response::to_js(response, global_this),
         ));
     }
 
@@ -2003,7 +1992,7 @@ impl<'a> S3StreamWrapper<'a> {
         // Box<Self> and Box<[u8]> Drop at end of scope.
         match result {
             s3::S3UploadResult::Success => {
-                let response = Box::new(Response::init(
+                let response = RefPtr::new(Response::init(
                     response::Init {
                         method: Method::PUT,
                         status_code: 200,
@@ -2013,15 +2002,12 @@ impl<'a> S3StreamWrapper<'a> {
                     BunString::create_atom_if_possible(self_.url.href),
                     false,
                 ));
-                // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
-                // ownership transfers to JSC.
-                let response_js =
-                    Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
+                let response_js = Response::to_js(response, global);
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }
             s3::S3UploadResult::Failure(err) => {
-                let response = Box::new(Response::init(
+                let response = RefPtr::new(Response::init(
                     response::Init {
                         method: Method::PUT,
                         status_code: 500,
@@ -2036,10 +2022,7 @@ impl<'a> S3StreamWrapper<'a> {
                     false,
                 ));
 
-                // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
-                // ownership transfers to JSC.
-                let response_js =
-                    Response::make_maybe_pooled(global, bun_core::heap::into_raw(response));
+                let response_js = Response::to_js(response, global);
                 response_js.ensure_still_alive();
                 self_.promise.resolve(global, response_js)?;
             }

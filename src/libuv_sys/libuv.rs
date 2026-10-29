@@ -2757,7 +2757,7 @@ unsafe extern "C" {
     /// Winsock is initialized on first use inside libuv; anything that calls
     /// ws2_32 directly (or through uSockets) must call this first.
     /// Thread-safe and idempotent (uv_once).
-    pub fn uv__winsock_ensure();
+    pub safe fn uv__winsock_ensure();
 
     // dns
     pub fn uv_getaddrinfo(
@@ -2782,9 +2782,10 @@ unsafe extern "C" {
     pub fn uv_uptime(uptime: *mut f64) -> c_int;
     pub fn uv_getrusage(rusage: *mut uv_rusage_t) -> c_int;
     pub fn uv_os_homedir(buffer: *mut u8, size: *mut usize) -> ReturnCode;
+    /// Not `safe fn`: calls through a pointer that only `uv__winapi_init` fills.
     pub fn uv_os_getppid() -> uv_pid_t;
     pub fn uv_os_getpriority(pid: uv_pid_t, priority: *mut c_int) -> c_int;
-    pub fn uv_translate_sys_error(sys_errno: c_int) -> c_int;
+    pub safe fn uv_translate_sys_error(sys_errno: c_int) -> c_int;
     pub fn uv_cpu_info(cpu_infos: *mut *mut uv_cpu_info_t, count: *mut c_int) -> c_int;
     pub fn uv_free_cpu_info(cpu_infos: *mut uv_cpu_info_t, count: c_int);
     pub fn uv_interface_addresses(
@@ -2794,8 +2795,7 @@ unsafe extern "C" {
     pub fn uv_free_interface_addresses(addresses: *mut uv_interface_address_t, count: c_int);
     pub fn uv_os_uname(buffer: *mut uv_utsname_t) -> c_int;
     pub fn uv_cwd(buffer: *mut c_char, size: *mut usize) -> c_int;
-    pub fn uv_get_total_memory() -> u64;
-    pub fn uv_disable_stdio_inheritance();
+    pub safe fn uv_get_total_memory() -> u64;
 
     // fs
     pub fn uv_fs_req_cleanup(req: *mut fs_t);

@@ -58,11 +58,9 @@ fn connect(fd: Fd, address: &Address) -> sys::Maybe<()> {
 
 impl SystemIo {
     pub(crate) fn new(resolver: *mut Resolver, vm: &VirtualMachine) -> Self {
-        // SAFETY: idempotent (`uv_once`). libuv otherwise starts Winsock lazily.
+        // libuv otherwise starts Winsock lazily.
         #[cfg(windows)]
-        unsafe {
-            bun_libuv_sys::uv__winsock_ensure()
-        };
+        bun_libuv_sys::uv__winsock_ensure();
         Self {
             resolver,
             vm: bun_ptr::BackRef::new(vm),

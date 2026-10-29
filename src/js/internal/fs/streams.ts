@@ -315,8 +315,10 @@ function ReadStream(
     }
   }
 
-  // Node wraps the HANDLE before validating the other options, which leaks the
-  // CRT fd when one of them throws. Wrapping last leaves the caller owning it.
+  // Node wraps the HANDLE before validating start and end, and leaks the CRT fd
+  // when that validation throws. Wrapping after it leaves the caller owning the
+  // HANDLE on those errors. The base constructor below still validates options
+  // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
   if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
   Readable.$call(this, options);
@@ -606,8 +608,10 @@ function WriteStream(
     }
   }
 
-  // Node wraps the HANDLE before validating the other options, which leaks the
-  // CRT fd when one of them throws. Wrapping last leaves the caller owning it.
+  // Node wraps the HANDLE before validating start and end, and leaks the CRT fd
+  // when that validation throws. Wrapping after it leaves the caller owning the
+  // HANDLE on those errors. The base constructor below still validates options
+  // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
   if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
   Writable.$call(this, options);

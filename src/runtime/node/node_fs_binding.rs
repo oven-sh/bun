@@ -417,11 +417,9 @@ pub(crate) fn windows_handle_to_fd(cx: &mut JsScope<'_>, handle: JsLocal<'_>) ->
 
     #[cfg(windows)]
     {
-        use core::cmp::Ordering;
         // `streams.ts` has already checked `typeof handle === "bigint"`.
-        let handle = bun_jsc::JSBigInt::from_js(handle.to_js())
-            .expect("windowsHandle is validated as a bigint");
-        if handle.order(i64::MAX) == Ordering::Greater || handle.order(i64::MIN) == Ordering::Less {
+        let value = handle.to_js();
+        if !value.is_big_int_in_int64_range(i64::MIN, i64::MAX) {
             return Err(global
                 .err(
                     bun_jsc::ErrorCode::ERR_OUT_OF_RANGE,
@@ -429,6 +427,8 @@ pub(crate) fn windows_handle_to_fd(cx: &mut JsScope<'_>, handle: JsLocal<'_>) ->
                 )
                 .throw());
         }
+        let handle =
+            bun_jsc::JSBigInt::from_js(value).expect("windowsHandle is validated as a bigint");
         let fd =
             bun_core::fd::uv_open_osfhandle(handle.to_int64() as isize as *mut core::ffi::c_void);
         if fd == -1 {

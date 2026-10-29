@@ -205,7 +205,9 @@ pub(super) fn apply_default_with(
     };
     let default_value = match name {
         Some((binding, name, position)) => {
-            let key = lowering.file.given_name_key(default, binding, name, position);
+            let key = lowering
+                .file
+                .given_name_key(default, binding, name, position);
             lowering.lower_named_evaluation(default, PropertyName::Constant(key))
         }
         None => lowering.lower_expression(default),

@@ -829,8 +829,7 @@ impl WebWorker {
     /// the worker is blocked in, so this waits as long as that call does (as
     /// Node's JoinThread does).
     #[unsafe(export_name = "WebWorker__join")]
-    pub(crate) extern "C" fn join(this: *mut WebWorker) {
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+    pub(crate) extern "C" fn join(this: &WebWorker) {
         this.join_thread();
         bun_removable_features::removable_body!(WorkerConstructor, ReturnDefault, {
             // SAFETY: parent thread; `parent` outlives its children (it joins them).
@@ -857,8 +856,7 @@ impl WebWorker {
     /// worker.ref()/.unref(). Parent thread; the proxy holds a ref on `this`
     /// and gates out calls once the keep-alive has been released.
     #[unsafe(export_name = "WebWorker__setRef")]
-    pub(crate) extern "C" fn set_ref(this: *mut WebWorker, value: bool) {
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+    pub(crate) extern "C" fn set_ref(this: &WebWorker, value: bool) {
         this.with_parent_poll_ref(|poll| {
             if value {
                 poll.ref_(bun_io::js_vm_ctx());
@@ -872,8 +870,7 @@ impl WebWorker {
     /// TerminationException in its VM at the next safepoint, wake its loop.
     /// Parent thread.
     #[unsafe(export_name = "WebWorker__requestTermination")]
-    pub(crate) extern "C" fn request_termination(this: *mut WebWorker) {
-        let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
+    pub(crate) extern "C" fn request_termination(this: &WebWorker) {
         // The handle's lock is taken *before* the flag is published: a worker
         // that breaks out of its loop because it saw the flag then blocks in
         // shutdown() (unpublish) until `terminated_by_parent` and the stop are
@@ -902,11 +899,10 @@ impl WebWorker {
     /// The parent is releasing this thread: drop the keep-alive on the parent's
     /// loop and forget it as a child. Parent thread.
     #[unsafe(export_name = "WebWorker__releaseParentPollRef")]
-    pub(crate) extern "C" fn release_parent_poll_ref(this: *mut WebWorker) {
-        let this_ref = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
-        this_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
+    pub(crate) extern "C" fn release_parent_poll_ref(this: &WebWorker) {
+        this.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
         // SAFETY: parent thread; `parent` outlives its children (it joins them).
-        let children = unsafe { &mut (*this_ref.parent).child_workers };
+        let children = unsafe { &mut (*this.parent).child_workers };
         if let Some(i) = children.iter().position(|&c| core::ptr::eq(c, this)) {
             children.swap_remove(i);
         }

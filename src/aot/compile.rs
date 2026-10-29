@@ -632,20 +632,16 @@ impl KeepsFreeBlocksBelowThePeak {
 
     fn resident_now() -> usize {
         let mut resident = 0;
-        let unused = core::ptr::null_mut();
-        // SAFETY: it writes a number through each pointer that is not null.
-        unsafe {
-            bun_alloc::mimalloc::mi_process_info(
-                unused,
-                unused,
-                unused,
-                &raw mut resident,
-                unused,
-                unused,
-                unused,
-                unused,
-            );
-        }
+        bun_alloc::mimalloc::mi_process_info(
+            None,
+            None,
+            None,
+            Some(&mut resident),
+            None,
+            None,
+            None,
+            None,
+        );
         resident
     }
 }

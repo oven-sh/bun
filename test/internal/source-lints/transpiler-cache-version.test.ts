@@ -10,11 +10,13 @@ const file = "src/jsc/RuntimeTranspilerCache.rs";
 // number, one reads what the other printed.
 function read(text: string) {
   const constant = /^const EXPECTED_VERSION: u32 = (\d+);$/m.exec(text);
+  // An entry is its `/// Version N:` line and the `///` lines that follow it.
+  const entry = /^\/\/\/ Version (\d+):(.*(?:\n\/\/\/(?! Version \d+:).*)*)$/gm;
   return {
     version: constant ? Number(constant[1]) : null,
-    entries: Array.from(text.matchAll(/^\/\/\/ Version (\d+):(.*)$/gm), match => ({
+    entries: Array.from(text.matchAll(entry), match => ({
       version: Number(match[1]),
-      text: match[2].trim(),
+      text: match[2].replace(/\n\/\/\/ ?/g, "\n").trim(),
     })),
   };
 }
@@ -59,19 +61,21 @@ test("the version of the runtime transpiler cache is not lower than in HEAD or i
 });
 
 // Two pull requests can take the same number. The one that merges second keeps the entry of the first and takes a
-// higher number for its own.
+// higher number for its own. A merge cannot tell a reworded entry from the entry of another pull request, so the entry
+// at the number of a parent keeps its text until a higher number lands. An older entry can change.
 test("a merge does not keep the number of a parent for an entry that the parent does not list", () => {
   const parents = parentsOfHead();
   const reused = (parents.length > 1 ? parents : []).flatMap(commit => {
     const parent = readAt(commit);
     if (!parent || parent.version !== current.version) return [];
     const listed = new Map(parent.entries.map(entry => [entry.version, entry.text]));
-    // A reworded old entry is not a new one. Another text at the number of the parent is.
     const added = current.entries.find(
       ({ version, text }) => !listed.has(version) || (version === parent.version && listed.get(version) !== text),
     );
-    const found = `${commit.slice(0, 10)} has EXPECTED_VERSION ${parent.version} and does not list`;
-    return added ? [`${found} "Version ${added.version}: ${added.text}": take a number above ${parent.version}`] : [];
+    if (!added) return [];
+    const entry = `"Version ${added.version}: ${added.text.split("\n")[0]}"`;
+    const rule = `a new entry takes a number above ${parent.version}, the entry at ${parent.version} keeps its text`;
+    return [`${commit.slice(0, 10)} has EXPECTED_VERSION ${parent.version} and does not list ${entry}: ${rule}`];
   });
   expect(reused).toEqual([]);
 });

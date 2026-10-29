@@ -307,7 +307,7 @@ pub(crate) mod Jest {
 
     pub(crate) fn runner() -> Option<&'static mut TestRunner<'static>> {
         // SAFETY: non-null is `reporter.jest` of `TestCommand::exec`, which clears `RUNNER` before `drop(reporter)`.
-        runner_ptr().map(|p| unsafe { &mut *p.as_ptr() })
+        NonNull::new(RUNNER.load(Ordering::Relaxed)).map(|p| unsafe { &mut *p.as_ptr() })
     }
 
     /// Raw-pointer accessor for callers that must not materialise

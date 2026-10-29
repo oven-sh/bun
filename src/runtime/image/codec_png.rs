@@ -14,6 +14,7 @@ unsafe extern "C" {
     /// Null or a fresh context, which lives until `spng_ctx_free`.
     safe fn spng_ctx_new(flags: c_int) -> Option<&'static mut spng_ctx>;
     fn spng_ctx_free(ctx: *mut spng_ctx);
+    /// `buf` must stay readable and unchanged until `spng_ctx_free`: safe imports read it.
     fn spng_set_png_buffer(ctx: &mut spng_ctx, buf: *const u8, len: usize) -> c_int;
     fn spng_decoded_image_size(ctx: &mut spng_ctx, fmt: c_int, out: &mut usize) -> c_int;
     fn spng_decode_image(
@@ -34,6 +35,7 @@ unsafe extern "C" {
         fmt: c_int,
         flags: c_int,
     ) -> c_int;
+    /// The caller owns the buffer (libc `free`), and every call that succeeds returns the same one.
     safe fn spng_get_png_buffer(ctx: &mut spng_ctx, len: &mut usize, err: &mut c_int) -> *mut u8;
     safe fn spng_set_option(ctx: &mut spng_ctx, opt: c_int, value: c_int) -> c_int;
     safe fn spng_set_crc_action(ctx: &mut spng_ctx, critical: c_int, ancillary: c_int) -> c_int;
@@ -50,7 +52,8 @@ unsafe extern "C" {
     /// is still a valid PNG. The `profile` pointer it hands back is owned by
     /// the context and freed with `spng_ctx_free`; dupe out before then.
     safe fn spng_get_iccp(ctx: &mut spng_ctx, iccp: &mut Iccp) -> c_int;
-    fn spng_set_iccp(ctx: &mut spng_ctx, iccp: *const Iccp) -> c_int;
+    /// `profile_name` needs a NUL. `profile` must stay readable until `spng_ctx_free`: encoding reads it.
+    fn spng_set_iccp(ctx: &mut spng_ctx, iccp: &Iccp) -> c_int;
 }
 
 #[repr(C)]
@@ -121,7 +124,9 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     // never less than libpng's default of 8 MB, so a small `maxPixels` still takes any usual profile.
     let max_inflated = max_pixels.saturating_mul(4).clamp(8 << 20, i32::MAX as u64) as usize;
     let _ = spng_set_chunk_limits(&mut ctx, max_inflated, usize::MAX);
-    // SAFETY: later calls on ctx read `bytes`, which stays readable until ctx is freed (end of scope).
+    // SAFETY: later calls on ctx read `bytes`, which stays readable and unchanged until ctx is
+    // freed (end of scope). It may alias a JS ArrayBuffer: "unchanged" is then the "don't mutate
+    // while a terminal is pending" contract that codec_jpeg.rs names.
     if unsafe { spng_set_png_buffer(&mut ctx, bytes.as_ptr(), bytes.len()) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
@@ -210,7 +215,7 @@ fn embed_iccp(ctx: &mut spng_ctx, icc_profile: Option<&[u8]>) {
     iccp.profile_name[..name.len()].copy_from_slice(name);
     // SAFETY: libspng copies `iccp`, whose name is NUL-terminated. It keeps `p` and reads it while it
     // encodes. `p` stays readable until ctx is freed: both callers free ctx before they return.
-    let _ = unsafe { spng_set_iccp(ctx, &raw const iccp) };
+    let _ = unsafe { spng_set_iccp(ctx, &iccp) };
 }
 
 pub(crate) fn encode(

@@ -797,16 +797,14 @@ pub(crate) extern "C" fn CompressionStreamCoder__create(
 /// Releases the C++ cell's reference; see [`CompressionStreamCoder::ref_count`].
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn CompressionStreamCoder__destroy(this: *mut CompressionStreamCoder) {
+pub(crate) extern "C" fn CompressionStreamCoder__destroy(
+    this: Option<bun_ptr::RefPtr<CompressionStreamCoder>>,
+) {
     bun_removable_features::removable_definition!(
         CompressionStreams,
         CompressionStreamCoder__destroy
     );
-    if !this.is_null() {
-        // SAFETY: `this` was returned by `CompressionStreamCoder__create` and
-        // the cell's reference has not been released yet.
-        unsafe { bun_ptr::ThreadSafeRefCount::<CompressionStreamCoder>::deref(this) };
-    }
+    drop(this);
 }
 
 /// One JS-thread [`step`](CompressionStreamCoder::step): returns its output as

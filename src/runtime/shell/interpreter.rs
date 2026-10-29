@@ -30,6 +30,7 @@ use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::{JsCell, JsCellRefExt as _, JsRef};
 use core::cell::Cell;
 use core::fmt;
+use core::ops::ControlFlow;
 use std::sync::atomic::Ordering;
 
 use bun_sys::{self, Fd};
@@ -2451,30 +2452,29 @@ pub(crate) enum OutputTaskState {
 /// take `(&mut Interpreter, NodeId)` (NodeId style — the parent builtin lives
 /// inside the interpreter's node arena).
 ///
-/// `child` is the heap-allocated `OutputTask` itself, passed so `write_*` can
-/// register it as the IOWriter callback target.
+/// `child` is the `OutputTask` itself: `write_*` keep it until the IOWriter
+/// chunk completes (`Break`), or hand it back after a synchronous write (`Continue`).
 pub(crate) trait OutputTaskVTable: Sized {
     fn write_err(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
+        child: Box<OutputTask<Self>>,
         errbuf: &[u8],
-    ) -> Option<Yield>;
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>>;
     fn on_write_err(interp: &Interpreter, cmd: NodeId);
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield>;
+        child: Box<OutputTask<Self>>,
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>>;
     fn on_write_out(interp: &Interpreter, cmd: NodeId);
     fn on_done(interp: &Interpreter, cmd: NodeId) -> Yield;
 }
 
 /// A task that can write to stdout and/or stderr.
 ///
-/// Heap-allocated (`heap::alloc`) so the IOWriter can hold a raw pointer to
-/// it across async chunks; freed by `deinit`.
+/// Owned by the running frame, or by the builtin while an IOWriter chunk is
+/// in flight; freed by `deinit`.
 pub(crate) struct OutputTask<P: OutputTaskVTable> {
     /// Owning Cmd node (the builtin's `cmd` id).
     pub(crate) parent: NodeId,
@@ -2494,83 +2494,73 @@ impl<P: OutputTaskVTable> OutputTask<P> {
     }
 
     /// Takes the freshly-constructed task by `Box` (callers always pair `new`
-    /// → `start`), leaks it to the raw `*mut Self` the IOWriter callback chain
-    /// needs, and drives the first state transition. The box is reclaimed by
-    /// [`Self::deinit`] (via `heap::take`) when the task reaches `Done`.
-    pub(crate) fn start(me: Box<Self>, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
-        // Leak so `P::write_*` can stash `this` as the IOWriter's `ChildPtr`;
-        // address is stable for the task's lifetime. Re-derive `&mut` per
-        // step (the `P::*` callbacks re-enter via raw `this`, not a reborrow
-        // of `me`).
-        let this = bun_core::heap::into_raw(me);
-        // SAFETY: `this` is a fresh, uniquely-owned heap allocation.
-        unsafe {
-            let me = &mut *this;
-            log!(
-                "OutputTask(0x{:x}) start errbuf={:?}",
-                this as usize,
-                errbuf.map(|b| b.len())
-            );
-            me.state = OutputTaskState::WaitingWriteErr;
-            if let Some(err) = errbuf {
-                if let Some(y) = P::write_err(interp, me.parent, this, err) {
-                    return y;
-                }
-                return Self::next(this, interp);
+    /// → `start`) and drives the first state transition. The box is dropped by
+    /// [`Self::deinit`] when the task reaches `Done`.
+    pub(crate) fn start(mut me: Box<Self>, interp: &Interpreter, errbuf: Option<&[u8]>) -> Yield {
+        log!(
+            "OutputTask(0x{:x}) start errbuf={:?}",
+            std::ptr::from_ref(&*me) as usize,
+            errbuf.map(|b| b.len())
+        );
+        me.state = OutputTaskState::WaitingWriteErr;
+        if let Some(err) = errbuf {
+            return match P::write_err(interp, me.parent, me, err) {
+                ControlFlow::Break(y) => y,
+                ControlFlow::Continue(me) => Self::next(me, interp),
+            };
+        }
+        me.state = OutputTaskState::WaitingWriteOut;
+        let mut me = match P::write_out(interp, me.parent, me) {
+            ControlFlow::Break(y) => return y,
+            ControlFlow::Continue(me) => me,
+        };
+        P::on_write_out(interp, me.parent);
+        me.state = OutputTaskState::Done;
+        Self::deinit(me, interp)
+    }
+
+    pub(crate) fn next(mut me: Box<Self>, interp: &Interpreter) -> Yield {
+        match me.state {
+            OutputTaskState::WaitingWriteErr => {
+                P::on_write_err(interp, me.parent);
+                me.state = OutputTaskState::WaitingWriteOut;
+                let mut me = match P::write_out(interp, me.parent, me) {
+                    ControlFlow::Break(y) => return y,
+                    ControlFlow::Continue(me) => me,
+                };
+                P::on_write_out(interp, me.parent);
+                me.state = OutputTaskState::Done;
+                Self::deinit(me, interp)
             }
-            me.state = OutputTaskState::WaitingWriteOut;
-            if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
-                return y;
+            OutputTaskState::WaitingWriteOut => {
+                P::on_write_out(interp, me.parent);
+                me.state = OutputTaskState::Done;
+                Self::deinit(me, interp)
             }
-            P::on_write_out(interp, me.parent);
-            me.state = OutputTaskState::Done;
-            Self::deinit(this, interp)
+            OutputTaskState::Done => panic!("Invalid state"),
         }
     }
 
-    pub(crate) unsafe fn next(this: *mut Self, interp: &Interpreter) -> Yield {
-        // SAFETY: caller contract — see `start`.
-        unsafe {
-            let me = &mut *this;
-            match me.state {
-                OutputTaskState::WaitingWriteErr => {
-                    P::on_write_err(interp, me.parent);
-                    me.state = OutputTaskState::WaitingWriteOut;
-                    if let Some(y) = P::write_out(interp, me.parent, this, &mut me.output) {
-                        return y;
-                    }
-                    P::on_write_out(interp, me.parent);
-                    me.state = OutputTaskState::Done;
-                    Self::deinit(this, interp)
-                }
-                OutputTaskState::WaitingWriteOut => {
-                    P::on_write_out(interp, me.parent);
-                    me.state = OutputTaskState::Done;
-                    Self::deinit(this, interp)
-                }
-                OutputTaskState::Done => panic!("Invalid state"),
-            }
-        }
-    }
-
-    pub(crate) unsafe fn on_io_writer_chunk(
-        this: *mut Self,
+    pub(crate) fn on_io_writer_chunk(
+        me: Box<Self>,
         interp: &Interpreter,
         _written: usize,
         _err: Option<bun_sys::SystemError>,
     ) -> Yield {
-        log!("OutputTask(0x{:x}) onIOWriterChunk", this as usize);
-        // SAFETY: `this` is the live heap-allocated `OutputTask` guaranteed by
-        // this fn's caller contract; forwarded unchanged to `next`.
-        unsafe { Self::next(this, interp) }
+        log!(
+            "OutputTask(0x{:x}) onIOWriterChunk",
+            std::ptr::from_ref(&*me) as usize
+        );
+        Self::next(me, interp)
     }
 
-    /// Fires `on_done` then frees.
-    unsafe fn deinit(this: *mut Self, interp: &Interpreter) -> Yield {
-        // SAFETY: `this` was heap-allocated in `new`; reclaim and drop.
-        let me = unsafe { bun_core::heap::take(this) };
+    /// Frees, then fires `on_done`.
+    fn deinit(me: Box<Self>, interp: &Interpreter) -> Yield {
         debug_assert!(me.state == OutputTaskState::Done);
-        log!("OutputTask(0x{:x}) deinit", this as usize);
+        log!(
+            "OutputTask(0x{:x}) deinit",
+            std::ptr::from_ref(&*me) as usize
+        );
         let parent = me.parent;
         drop(me);
         P::on_done(interp, parent)

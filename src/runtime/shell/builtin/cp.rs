@@ -9,17 +9,18 @@ use crate::shell::interpreter::{
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
 use crate::shell::{ExitCode, ShellErr};
+use core::ops::ControlFlow;
 
 #[derive(Default)]
 pub(crate) struct Cp {
     pub(crate) opts: Opts,
     pub(crate) state: State,
-    /// FIFO of in-flight OutputTask pointers awaiting an IOWriter chunk
-    /// completion. Stopgap until `WriterTag` can carry the `*mut OutputTask`
+    /// FIFO of in-flight `OutputTask`s awaiting an IOWriter chunk
+    /// completion. Stopgap until `WriterTag` can carry the `OutputTask`
     /// directly (see mkdir.rs `Exec::output_queue`). Lives on `Cp` (not
     /// `ExecState`) because `print_shell_cp_task` is also driven from
     /// `State::Ebusy` on Windows; both states must be able to stash/pop.
-    pub(crate) output_queue: std::collections::VecDeque<*mut OutputTask<Cp>>,
+    pub(crate) output_queue: std::collections::VecDeque<Box<OutputTask<Cp>>>,
 }
 
 #[derive(Default)]
@@ -200,9 +201,7 @@ impl Cp {
             return Builtin::done(interp, cmd, 1);
         }
         if let Some(task) = Self::state_mut(interp, cmd).output_queue.pop_front() {
-            // SAFETY: `task` was heap-allocated in `OutputTask::new` and
-            // pushed by `write_err`/`write_out`; not yet freed.
-            return unsafe { OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e) };
+            return OutputTask::<Cp>::on_io_writer_chunk(task, interp, written, e);
         }
         Self::next(interp, cmd)
     }
@@ -331,9 +330,9 @@ impl OutputTaskVTable for Cp {
     fn write_err(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
+        child: Box<OutputTask<Self>>,
         errbuf: &[u8],
-    ) -> Option<Yield> {
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
@@ -342,14 +341,14 @@ impl OutputTaskVTable for Cp {
             // machine and reclaim the box (stopgap for missing WriterTag).
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stderr
                     .enqueue(childptr, errbuf, safeguard),
             );
         }
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stderr, errbuf);
-        None
+        ControlFlow::Continue(child)
     }
     fn on_write_err(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
@@ -359,25 +358,24 @@ impl OutputTaskVTable for Cp {
     fn write_out(
         interp: &Interpreter,
         cmd: NodeId,
-        child: *mut OutputTask<Self>,
-        output: &mut OutputSrc,
-    ) -> Option<Yield> {
+        child: Box<OutputTask<Self>>,
+    ) -> ControlFlow<Yield, Box<OutputTask<Self>>> {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
+            let buf = child.output.slice().to_vec();
             Self::state_mut(interp, cmd).output_queue.push_back(child);
             let childptr = ChildPtr::new(cmd, WriterTag::Builtin);
-            let buf = output.slice().to_vec();
-            return Some(
+            return ControlFlow::Break(
                 Builtin::of_mut(interp, cmd)
                     .stdout
                     .enqueue(childptr, &buf, safeguard),
             );
         }
-        let buf = output.slice().to_vec();
+        let buf = child.output.slice().to_vec();
         let _ = Builtin::write_no_io(interp, cmd, IoKind::Stdout, &buf);
-        None
+        ControlFlow::Continue(child)
     }
     fn on_write_out(interp: &Interpreter, cmd: NodeId) {
         if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {

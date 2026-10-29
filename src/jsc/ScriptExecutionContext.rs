@@ -524,31 +524,24 @@ unsafe extern "C" fn Bun__VirtualMachine__rootContext(
 
 /// ModuleGraph.cpp's `ErrorHandlerContextScope`: the context native code entered becomes
 /// `context` ([`ContextId::NONE`]: none). Returns the one to put back.
-///
-/// # Safety
-/// `vm` is this thread's live VM.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
-    vm: *mut crate::VirtualMachineRef,
+extern "C" fn Bun__VirtualMachine__replaceEnteredContext(
+    vm: &crate::VirtualMachineRef,
     context: ContextId,
 ) -> ContextId {
-    // SAFETY: fn contract.
-    let vm = unsafe { &*vm };
     vm.entered_context
         .replace((context != ContextId::NONE).then_some(context))
         .unwrap_or(ContextId::NONE)
 }
 
-/// # Safety
-/// `vm` is this thread's live VM.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__ScriptExecutionContext__create(
-    vm: *mut crate::VirtualMachineRef,
+extern "C" fn Bun__ScriptExecutionContext__create(
+    vm: &mut crate::VirtualMachineRef,
     dom_context: *mut core::ffi::c_void,
     identifier: u32,
 ) -> *mut ScriptExecutionContext {
-    // SAFETY: fn contract.
-    unsafe { (*vm).create_graph_context(dom_context, ContextId::from_raw(identifier)) }.as_ptr()
+    vm.create_graph_context(dom_context, ContextId::from_raw(identifier))
+        .as_ptr()
 }
 
 /// # Safety

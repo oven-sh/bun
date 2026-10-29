@@ -6,7 +6,7 @@
 //! This is the single source of truth for "split a path into prefix slices and
 //! never yield the Windows root (`C:`, `C:\`, `\\server\share\`) as a component".
 //! Replaces the four hand-rolled copies in `bun_sys` (posix+windows),
-//! `bun_libarchive` (u16) and `bun` (`make_path`, which already called the
+//! `bun_archive` (u16) and `bun` (`make_path`, which already called the
 //! `component_iterator` free fn below before it existed).
 
 use crate::PathChar;

@@ -24,8 +24,7 @@
   "src/jsc/NodeCompileCache.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
-      "AlignedBlob",
-      "CacheState"
+      "AlignedBlob"
     ]
   },
   "src/jsc/RuntimeTranspilerStore.rs": {
@@ -61,6 +60,7 @@
   "src/jsc/web_worker.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
+      "OwnedByThread",
       "ThreadStart"
     ]
   },
@@ -99,6 +99,9 @@
       "DotenvSingleton"
     ]
   },
+  "src/runtime/cli/fuzzilli_compile_loop.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/cli/lint_js.rs": {
     "thread spawn": 1,
     "unsafe impl Send": [
@@ -114,6 +117,11 @@
   },
   "src/runtime/cli/run_command.rs": {
     "HTTPThread::schedule": 1
+  },
+  "src/runtime/cli/run_compiled.rs": {
+    "unsafe impl Send": [
+      "SharedWatcher"
+    ]
   },
   "src/runtime/dns_jsc/dns.rs": {
     "WorkPool::schedule*": 1,
@@ -189,22 +197,6 @@
       "PathWatcherManager"
     ]
   },
-  "src/runtime/shell/IOReader.rs": {
-    "unsafe impl Send": [
-      "IOReader"
-    ],
-    "unsafe impl Sync": [
-      "IOReader"
-    ]
-  },
-  "src/runtime/shell/IOWriter.rs": {
-    "unsafe impl Send": [
-      "IOWriter"
-    ],
-    "unsafe impl Sync": [
-      "IOWriter"
-    ]
-  },
   "src/runtime/shell/builtin/cp.rs": {
     "WorkPool::schedule*": 1
   },
@@ -245,9 +237,6 @@
   "src/runtime/webcore/blob/write_file.rs": {
     "WorkPool::schedule*": 2,
     "intrusive_work_task!": [
-      "WriteFile"
-    ],
-    "unsafe impl Send": [
       "WriteFile"
     ]
   },

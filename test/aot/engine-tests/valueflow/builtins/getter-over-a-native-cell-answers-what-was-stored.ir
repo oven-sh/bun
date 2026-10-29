@@ -1,0 +1,34 @@
+# listener = Bun.listen({ data: first, socket: undefined }); listener.data(); listener.data = second; listener.data()
+# `data` of a listener answers what native code keeps in the cell behind it: the function that came in with the options and the one that was stored later. It answers no object that nobody knows
+# RUN: valueflow-solve calls
+# CHECK: f0 v6 -> BunListen
+# CHECK-NEXT: f0 v8 -> f1 f2
+# CHECK-NEXT: f0 v11 -> f1 f2
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Options" fields=[{key="data" declared={type=anything} flags=[IsRequired]}, {key="socket" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Undefined
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = Builtin builtin=Bun
+    v4 = Builtin builtin=BunListen
+    v5 = NewClosure function=f2
+    v6 = Call v4, v3, v2
+    v7 = PropGet v6 key="data"
+    v8 = Call v7, -
+    PropSet v6, v5 key="data" mode=Strict
+    v10 = PropGet v6 key="data"
+    v11 = Call v10, -
+    Return
+}
+function f1 name="first" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}
+function f2 name="second" kind=Arrow results=[{type=anything}] {
+  b0():
+    Return
+}

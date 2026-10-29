@@ -1,0 +1,48 @@
+# readline = require("node:readline"); input(process.getBuiltinModule); readline.other; readline.lazy
+# A loader in hands that nobody follows loads by name, so native code holds what the module of the library exports, and whatever it holds is written like what has escaped: an accessor nobody knows may lie
+# on the object that holds the exports, and the read of `other` hands the object to it. So the object has escaped. Nobody searches such an object when it escapes: the getter `lazy` on it is only held.
+# The read that names `lazy` starts at that very object, beside the unknown object above it. It still finds the getter there and enters it. The getter beside it, which nothing names, stays unreached.
+# RUN: valueflow-solve unreached
+# CHECK-NOT: unreached f1
+# CHECK-NOT: unreached f2
+# CHECK: unreached f3
+# RUN(ESCAPED): valueflow-why escaped=f2 reached=f2
+# ESCAPED: escaped=f2
+# ESCAPED: reached=f2
+# ESCAPED-NEXT: f2 <- CallGroup
+
+module m0 path="/app/main.cjs" displayPath="main.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0
+module m1 path="node:readline" displayPath="node:readline" kind=RuntimeSource exportRule=RuntimeModule requireResult=DefaultExport runtimeModule=NodeReadline body=f1
+entry module=m0
+layout L0 name="Exports" fields=[{key="other" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = RequireModule module=m1 referrer=m0 specifier="node:readline"
+    v1 = Builtin builtin=ProcessGetBuiltinModule
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="input" [isFreeName]
+    v4 = Call v3, -, v1
+    v5 = PropGet v0 key="other"
+    v6 = PropGet v0 key="lazy"
+    Return v6
+}
+function f1 name="readline" module=m1 kind=Module role=Library results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = NewClosure function=f2
+    DefineGetter v1, v2 key="lazy"
+    v4 = NewClosure function=f3
+    DefineGetter v1, v4 key="unnamed"
+    Return v1
+}
+function f2 name="lazy" module=m1 kind=Getter role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=7
+    Return v0
+}
+function f3 name="unnamed" module=m1 kind=Getter role=Library thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=8
+    Return v0
+}

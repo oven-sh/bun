@@ -45,8 +45,7 @@ impl Default for Context {
             avail_in: 0,
             avail_out: 0,
             flush: Op::process,
-            // SAFETY: all-zero is a valid LastResult (c_int 0 / enum 0).
-            last_result: unsafe { bun_core::ffi::zeroed_unchecked() },
+            last_result: LastResult { e: 0 },
             error: c::BrotliDecoderErrorCode2::NO_ERROR,
             dictionary: Vec::new(),
             prepared_dictionary: None,
@@ -162,6 +161,17 @@ mod _impl {
             // Racing an in-flight async write would alias `&mut Context`
             // across threads; a closed `Context` cannot be re-initialized.
             self.throw_unless_idle(global_this)?;
+            let feature = if self.stream.get().mode == bun_zlib::NodeMode::BROTLI_ENCODE {
+                bun_removable_features::Feature::BrotliEncoder
+            } else {
+                bun_removable_features::Feature::BrotliDecoder
+            };
+            if bun_removable_features::is_removed(feature) {
+                return Err(crate::removed_feature::throw_for_removed_feature(
+                    global_this,
+                    feature,
+                ));
+            }
 
             // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
@@ -250,7 +260,7 @@ mod _impl {
 
             let params_ = params_buf.as_u32();
 
-            for (i, &d) in params_.iter().enumerate() {
+            for (i, d) in params_.iter().map(|d| d.get()).enumerate() {
                 // (d == -1) {
                 if d == u32::MAX {
                     continue;
@@ -556,9 +566,8 @@ mod _impl {
             }
         }
 
-        pub(crate) fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
-            *avail_in = u32::try_from(self.avail_in).expect("int cast");
-            *avail_out = u32::try_from(self.avail_out).expect("int cast");
+        pub(crate) fn write_result(&self) -> [u32; 2] {
+            [self.avail_out, self.avail_in].map(|n| u32::try_from(n).expect("int cast"))
         }
 
         pub(crate) fn get_error_info(&self) -> Error {

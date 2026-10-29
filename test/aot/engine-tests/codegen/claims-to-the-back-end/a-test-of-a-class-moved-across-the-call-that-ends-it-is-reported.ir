@@ -1,0 +1,6 @@
+# sabotage=NoCallWrites: the check in the compiled code stops the run
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# OPTIONS: check=MovedLoads sabotage=NoCallWrites
+# CHECK: AOT claim check: LoadMayMove
+# PROGRAM-OF: a-name-appears-on-the-prototype-while-a-loop-reads-an-absent-field-passes.ir

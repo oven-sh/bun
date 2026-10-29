@@ -240,7 +240,8 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_type_of_symbol(&mut self, sym: Sym) -> TypeId {
         loop {
             let ty = self.resolve_type_of_symbol_once(sym);
-            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
+            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query(Query::Symbol(sym))
+            {
                 return ty;
             }
             if let Some(known) = self.p.symbol_types.get(&self.task, &sym) {
@@ -427,7 +428,7 @@ impl<'p, 's> Checker<'p, 's> {
     ) {
         let code = if ty == TypeId::ERROR {
             2502
-        } else if self.p.files.options.no_implicit_any && !is_bare_parameter {
+        } else if self.module_options(at.0).no_implicit_any && !is_bare_parameter {
             7022
         } else {
             return;
@@ -893,7 +894,7 @@ impl<'p, 's> Checker<'p, 's> {
                         return TypeId::EMPTY_OBJECT;
                     }
                     let ty = self.type_of_expr(file, e);
-                    return if is_json {
+                    return if is_json || self.is_made_by_loader(file) {
                         self.widened(ty)
                     } else {
                         self.widened_for_declaration(ty, None)
@@ -1123,7 +1124,7 @@ impl<'p, 's> Checker<'p, 's> {
         let hir = self.hir(file);
         let before = self.non_cacheable_mark();
         let ty = self.check_expression_cached_ex(file, e, CheckMode::empty());
-        match hir[e].kind {
+        match hir.checked_kind(e) {
             // `argumentsSymbol` isn't a property of any type.
             ExprKind::Ident(name)
                 if name == known::arguments
@@ -1388,7 +1389,9 @@ impl<'p, 's> Checker<'p, 's> {
             .symbol()
             .unwrap_or_else(|| files.module_value(module));
         // `getTypeWithSyntheticDefaultOnly`
-        if files.is_only_importable_as_default(file, module) {
+        if files.is_only_importable_as_default(file, module)
+            || self.has_only_default_at_run_time(file, ty)
+        {
             return Some(self.intern(TypeData::Anon {
                 origin: Origin::Namespace {
                     module: value,
@@ -1415,8 +1418,7 @@ impl<'p, 's> Checker<'p, 's> {
         {
             return None;
         }
-        let usage = files.emit_syntax_of_import(file);
-        let with_default = self.has_synthetic_default_import_type(ty, usage, module);
+        let with_default = self.has_synthetic_default_import_type(ty, file, module);
         Some(self.intern(TypeData::Anon {
             origin: Origin::Namespace {
                 module: value,
@@ -1434,7 +1436,7 @@ impl<'p, 's> Checker<'p, 's> {
     pub(super) fn has_synthetic_default_import_type(
         &mut self,
         ty: TypeId,
-        usage: ResolutionMode,
+        usage: impl crate::program::Usage,
         module: Sym,
     ) -> bool {
         if let Some(&known) = self.synthetic_default_import_types.get(&ty) {
@@ -1629,7 +1631,7 @@ impl<'p, 's> Checker<'p, 's> {
             return None;
         }
         // `getEmitSyntaxForModuleSpecifierExpression` of the argument of `require`.
-        let usage = ResolutionMode::Require;
+        let usage = (file, ResolutionMode::Require);
         let has_synthetic_default = files.is_only_importable_as_default(usage, module)
             || self.can_have_synthetic_default(usage, module);
         if !self.leave_alias_targets(resolving) || !has_synthetic_default {
@@ -1752,7 +1754,10 @@ impl<'p, 's> Checker<'p, 's> {
         name: Option<(FileId, PatId)>,
         has_type_node: bool,
     ) -> TypeId {
-        let ty = if !has_type_node && matches!(self.data(ty), TypeData::UniqueSymbol { .. }) {
+        let ty = if !has_type_node
+            && matches!(self.data(ty), TypeData::UniqueSymbol { .. })
+            && !self.keeps_unique_symbol(name)
+        {
             TypeId::SYMBOL
         } else {
             ty
@@ -1761,6 +1766,7 @@ impl<'p, 's> Checker<'p, 's> {
         // `getTypeOfVariableOrParameterOrPropertyWorker` uses `symbol.ValueDeclaration`.
         if let Some((file, pat)) = name
             && self.contains_widening_type(ty)
+            && self.module_options(file).no_implicit_any
             && self.value_declaration_of_variable_name(file, pat) == (file, pat)
             && self.report_errors_from_widening(ty)
         {
@@ -1776,11 +1782,9 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// `reportErrorsFromWidening`. Returns true if `reportImplicitAny` still has to be called,
-    /// which is left to the caller, since it knows the declaration.
+    /// which is left to the caller, since it knows the declaration. So is `noImplicitAny`, which it asks of the declaration's file.
     pub(super) fn report_errors_from_widening(&mut self, ty: TypeId) -> bool {
-        self.p.files.options.no_implicit_any
-            && self.contains_widening_type(ty)
-            && !self.report_widening_errors_in_type(ty)
+        self.contains_widening_type(ty) && !self.report_widening_errors_in_type(ty)
     }
 
     /// `reportWideningErrorsInType`: 7018
@@ -1858,7 +1862,7 @@ impl<'p, 's> Checker<'p, 's> {
         ty: TypeId,
         kind: WideningKind,
     ) {
-        if !self.p.files.options.no_implicit_any || !self.contains_widening_type(ty) {
+        if !self.module_options(file).no_implicit_any || !self.contains_widening_type(ty) {
             return;
         }
         let f = &self.hir(file)[func];
@@ -1925,7 +1929,12 @@ impl<'p, 's> Checker<'p, 's> {
     /// whose type resolves to `ty`: 7005, 7006 7019 7051, 7031.
     pub(super) fn report_implicit_any_of_name(&mut self, file: FileId, pat: PatId, ty: TypeId) {
         let (hir, bound) = (self.hir(file), self.bound(file));
-        if !self.p.files.options.no_implicit_any || hir.is_js && !self.is_check_js(file) {
+        if !self.module_options(file).no_implicit_any || hir.is_js && !self.is_check_js(file) {
+            return;
+        }
+        if let PatParent::Param(root) = root_declaration(bound, pat)
+            && self.is_given_to_what_has_no_declaration(file, bound.param_fn[root.idx()])
+        {
             return;
         }
         let start = hir[pat].pos;
@@ -2179,7 +2188,9 @@ impl<'p, 's> Checker<'p, 's> {
     /// `getUndefinedProperty`. It's created once per name, from the first property it's requested
     /// for, and keeps that property's declarations.
     fn get_undefined_property(&mut self, prop: &Prop) -> Prop<'s> {
-        if let Some(cached) = self.undefined_properties.get(&prop.name) {
+        // Which files share a checker depends on the number of threads.
+        let is_shared = !self.p.files.is_compile_build();
+        if is_shared && let Some(cached) = self.undefined_properties.get(&prop.name) {
             return cached.clone_in(self.arena);
         }
         // `undefinedOrMissingType`, which isn't widened again wherever it's copied to.
@@ -2196,8 +2207,10 @@ impl<'p, 's> Checker<'p, 's> {
             mapper: MapperId::IDENTITY,
             name_type: self.name_type_of_copy(TypeId::UNRESOLVED, prop),
         };
-        self.undefined_properties
-            .insert(prop.name, result.clone_in(self.arena));
+        if is_shared {
+            self.undefined_properties
+                .insert(prop.name, result.clone_in(self.arena));
+        }
         result
     }
 
@@ -2380,12 +2393,13 @@ impl<'p, 's> Checker<'p, 's> {
         context: usize,
     ) -> TypeId {
         let original = self.type_of_prop(prop, mapper);
-        if self.may_require_widening(original) {
+        let widened = if self.may_require_widening(original) {
             let prop_context = self.get_child_context(context, prop.name);
             self.get_widened_type_with_context(original, Some(prop_context))
         } else {
             original
-        }
+        };
+        self.widened_type_of_literal_member(prop, widened)
     }
 
     /// `WideningContext.getChildContext`
@@ -2854,7 +2868,7 @@ impl<'p, 's> Checker<'p, 's> {
         widened: TypeId,
     ) -> Option<TypeId> {
         if !self.hir(file).is_js {
-            None
+            self.implicit_any_in_non_strict_file(file, widened)
         } else if self.is_empty_literal_type(widened) {
             Some(TypeId::ANY)
         } else if self.is_empty_array_literal_type(widened) {
@@ -2862,6 +2876,32 @@ impl<'p, 's> Checker<'p, 's> {
         } else {
             None
         }
+    }
+
+    /// Without `strictNullChecks`, `getWidenedType` turns `null` and `undefined` into `any`, and `[]` into `any[]`.
+    fn implicit_any_in_non_strict_file(&mut self, file: FileId, widened: TypeId) -> Option<TypeId> {
+        if self.hir(file).is_js || !self.is_non_strict_file_in_strict_program(file) {
+            None
+        } else if matches!(widened, TypeId::NULL | TypeId::UNDEFINED) {
+            Some(TypeId::ANY)
+        } else if self.is_empty_array_literal_type(widened) {
+            Some(self.array_of(TypeId::ANY))
+        } else {
+            None
+        }
+    }
+
+    /// `widened` is the widened type of `prop`.
+    pub(super) fn widened_type_of_literal_member(
+        &mut self,
+        prop: &Prop,
+        widened: TypeId,
+    ) -> TypeId {
+        let PropSource::Literal(file, _) = prop.source else {
+            return widened;
+        };
+        self.implicit_any_in_non_strict_file(file, widened)
+            .unwrap_or(widened)
     }
 
     /// `getNonUndefinedType`: `ty` without `undefined`. If the constraint of some generic member
@@ -3329,7 +3369,7 @@ impl<'p, 's> Checker<'p, 's> {
         // For anything else it's the iterated type of the whole, if the iteration gets that far
         // (`includeUndefinedInIndexSignature`).
         let element = self.iterated_type_of_destructuring(ty);
-        if self.p.files.options.no_unchecked_indexed_access {
+        if self.no_unchecked_indexed_access_at(nodes.map_or(AccessNode::Other, |it| it.1)) {
             self.optional(element)
         } else {
             element
@@ -3587,7 +3627,7 @@ impl<'p, 's> Checker<'p, 's> {
         // A catch variable can only be annotated `any` or `unknown`.
         if stmt.is_some() && matches!(hir[stmt].kind, StmtKind::Try { .. }) {
             if decl.ty.is_none() {
-                return if self.p.files.options.use_unknown_in_catch_variables {
+                return if self.module_options(file).use_unknown_in_catch_variables {
                     TypeId::UNKNOWN
                 } else {
                     TypeId::ANY
@@ -3624,14 +3664,17 @@ impl<'p, 's> Checker<'p, 's> {
         // When an implicit `any` is an error, control flow analysis determines the type of the
         // variable at each position. This depends on the syntax of the initializer, not on its
         // type.
-        if self.p.files.options.no_implicit_any
+        if self.follows_variables_that_start_empty(file)
             && is_name
             && !decl.flags.intersects(Flags::EXPORT | Flags::AMBIENT)
             && hir.kind != FileKind::Declaration
         {
             match decl.init.is_some().then(|| hir[decl.init].kind) {
+                None if !is_constant && self.follows_untyped_variables(file) => {
+                    return TypeId::AUTO;
+                }
                 // `isNullOrUndefined`
-                None | Some(ExprKind::Null) if !is_constant => return TypeId::AUTO,
+                Some(ExprKind::Null) if !is_constant => return TypeId::AUTO,
                 Some(ExprKind::Ident(known::undefined))
                     if !is_constant && self.bound(file).symbol_of_expr(decl.init).is_none() =>
                 {
@@ -3741,7 +3784,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `reportErrorsFromWidening`. Under strictNullChecks there's no widening type.
         let options = &self.p.files.options;
-        let reports = options.no_implicit_any && !options.strict_null_checks;
+        let reports = self.module_options(file).no_implicit_any && !options.strict_null_checks;
         // A single checker would already have collected `file`'s diagnostics and resolved the names
         // in the pattern.
         if reports && !self.is_reported_in_time(None, file) {
@@ -4314,7 +4357,9 @@ impl<'p, 's> Checker<'p, 's> {
     fn resolve_return_type_of_fn(&mut self, file: FileId, func: FnId) -> TypeId {
         loop {
             let ty = self.resolve_return_type_of_fn_once(file, func);
-            if self.unwind_to != self.stack.len() || !self.retry_too_deep_query() {
+            if self.unwind_to != self.stack.len()
+                || !self.retry_too_deep_query(Query::Return(file, func))
+            {
                 return ty;
             }
             if let Some((known, _)) = self.p.fn_return_types.get(&self.task, &(file, func)) {
@@ -4521,6 +4566,12 @@ impl<'p, 's> Checker<'p, 's> {
                 ret = self.widen_literal_for_context(ret, contextual);
             }
             ret = self.get_widened_type(ret);
+            // A function that returns nothing where `undefined` is expected has `undefined` too.
+            if ret != TypeId::UNDEFINED
+                && let Some(any) = self.implicit_any_in_non_strict_file(file, ret)
+            {
+                ret = any;
+            }
             if is_async {
                 return self.promise_of(ret);
             }
@@ -4962,7 +5013,7 @@ impl<'p, 's> Checker<'p, 's> {
             && self.reliability == 0
             // A frame that drops its diagnostics reports them when it is evaluated again.
             && !(self.reported.len() > reported
-                && self.frames.last().is_some_and(|frame| frame.drops_reported))
+                && (self.frames.last()).is_some_and(|frame| frame.marks.drops_reported()))
         {
             self.p.awaited_types.insert(&self.task, ty, awaited, stored);
         }
@@ -5329,10 +5380,10 @@ impl<'p, 's> Checker<'p, 's> {
             return has_string.then_some(TypeId::STRING);
         }
         let element = self.index_type_of_type(arrays, TypeId::NUMBER)?;
+        let options = error_node.map_or(self.p.files.options, |at| self.module_options(at.0));
         Some(if !has_string {
             element
-        } else if self.is_string_like(element) && !self.p.files.options.no_unchecked_indexed_access
-        {
+        } else if self.is_string_like(element) && !options.no_unchecked_indexed_access {
             TypeId::STRING
         } else {
             self.union_reduced(&[element, TypeId::STRING])

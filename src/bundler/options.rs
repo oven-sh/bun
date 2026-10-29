@@ -41,7 +41,6 @@ pub use bun_collections::StringSet;
 
 pub(crate) fn validate_path(
     log: &mut bun_ast::Log,
-    _fs: &mut Fs::Implementation,
     cwd: &[u8],
     rel_path: &[u8],
     path_kind: &[u8],
@@ -91,7 +90,7 @@ pub(crate) fn is_node_builtin(str: &[u8]) -> bool {
     bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, Default::default())
 }
 
-const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
+pub(crate) const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
     (b"/bun:", b""),
     // (b"/src:", b""),
     // (b"/blob:", b""),
@@ -109,9 +108,8 @@ fn default_wildcard_patterns() -> Vec<WildcardPattern> {
 
 /// Free fn for the same orphan-rule
 /// reason as [`is_node_builtin`]; stays at bundler tier because it needs
-/// `Fs`/`logger`/`NODE_BUILTIN_PATTERNS`.
+/// `logger`/`NODE_BUILTIN_PATTERNS`.
 pub(crate) fn init_external_modules(
-    fs: &mut Fs::Implementation,
     cwd: &[u8],
     externals: &[&[u8]],
     log: &mut bun_ast::Log,
@@ -168,7 +166,7 @@ pub(crate) fn init_external_modules(
         } else if bun_paths::is_package_path(external) {
             result.node_modules.insert(external).expect("unreachable");
         } else {
-            let normalized = validate_path(log, fs, cwd, external, b"external path");
+            let normalized = validate_path(log, cwd, external, b"external path");
 
             if !normalized.is_empty() {
                 result.abs_paths.insert(&normalized).expect("unreachable");
@@ -1306,6 +1304,8 @@ pub struct BundleOptions<'a> {
     pub inline_entrypoint_import_meta_main: bool,
     pub minify_whitespace: bool,
     pub minify_syntax: bool,
+    /// See `Features::is_library` of the parser.
+    pub is_library: bool,
     pub minify_identifiers: bool,
     pub keep_names: bool,
     pub dead_code_elimination: bool,
@@ -1414,6 +1414,11 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
 }
 
 impl<'a> BundleOptions<'a> {
+    pub(crate) fn clear_output_dir(&mut self) {
+        self.output_dir = Box::default();
+        self.output_dir_handle = None;
+    }
+
     pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
     }
@@ -1534,6 +1539,7 @@ impl<'a> BundleOptions<'a> {
             inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
             minify_whitespace: self.minify_whitespace,
             minify_syntax: self.minify_syntax,
+            is_library: self.is_library,
             minify_identifiers: self.minify_identifiers,
             keep_names: self.keep_names,
             dead_code_elimination: self.dead_code_elimination,
@@ -1685,7 +1691,6 @@ impl<'a> BundleOptions<'a> {
     }
 
     pub(crate) fn from_api(
-        fs: &mut Fs::FileSystem,
         log: *mut bun_ast::Log,
         transform: api::TransformOptions,
     ) -> Result<BundleOptions<'a>, crate::Error> {
@@ -1792,6 +1797,7 @@ impl<'a> BundleOptions<'a> {
             inline_entrypoint_import_meta_main: false,
             minify_whitespace: false,
             minify_syntax: false,
+            is_library: false,
             minify_identifiers: false,
             keep_names: false,
             dead_code_elimination: true,
@@ -1921,10 +1927,8 @@ impl<'a> BundleOptions<'a> {
 
         // Reborrow the raw `*mut Log`
         // for the duration of this call only.
-        let top_level_dir = fs.top_level_dir();
         opts.external = init_external_modules(
-            &mut fs.fs,
-            top_level_dir,
+            Fs::FileSystem::get().top_level_dir(),
             &transform
                 .external
                 .iter()

@@ -146,57 +146,40 @@ pub(super) fn origin_forbidden(resp: AnyResponse) {
 
 /// `extern "C"` trampoline: recovers `&mut DevServer` from user-data and wraps
 /// the raw `uws_res` as `AnyResponse`, then calls the handler for `ID`.
-#[allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "the SAFETY note above the match covers the eight identical call-scoped reborrows"
-)]
 pub(super) extern "C" fn dev_route_tramp<const SSL: bool, const ID: DevHandlerId>(
     res: *mut bun_uws_sys::uws_res,
     req: *mut bun_uws_sys::Request,
     ud: *mut c_void,
 ) {
-    // SAFETY: `ud`/`req`/`res` were registered by `set_routes` and outlive the
-    // route; uWS guarantees they are non-null in handler callbacks. `dev` is
-    // re-derived per statement so no `&mut DevServer` spans the guard reads.
-    let dev = ud.cast::<DevServer>();
-    let req = req.cast::<Request>();
+    // SAFETY: `ud` is the `DevServer` that `set_routes` registered; the server clears
+    // the routes before it drops it. uWS passes a non-null `Request*` that is valid
+    // for the callback and that nothing else uses meanwhile. Every handler below takes
+    // `&mut DevServer`, so this asks for no more exclusivity than they do.
+    let (dev, req) = unsafe { (&mut *ud.cast::<DevServer>(), &mut *req) };
     let resp = if SSL {
         AnyResponse::SSL(res.cast::<bun_uws_sys::response::TLSResponse>())
     } else {
         AnyResponse::TCP(res.cast::<bun_uws_sys::response::TCPResponse>())
     };
-    // SAFETY: uWS passes a non-null `Request*` valid for the callback; shared,
-    // call-scoped reborrow.
-    if !is_allowed_dev_host(unsafe { &*dev }, unsafe { &*req }) {
+    if !is_allowed_dev_host(dev, req) {
         return host_forbidden(resp);
     }
-    // SAFETY: as above.
     if matches!(ID, DevHandlerId::ReportError | DevHandlerId::UnrefSourceMap)
-        && !is_allowed_dev_origin(unsafe { &*req })
+        && !is_allowed_dev_origin(req)
     {
         return origin_forbidden(resp);
     }
-    // SAFETY: as above — the exclusive borrow is consumed by the single handler
-    // call; nothing else stores or re-derives this `Request` pointer.
     match ID {
-        DevHandlerId::JsRequest => on_js_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
-        DevHandlerId::AssetRequest => {
-            on_asset_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
-        }
-        DevHandlerId::SrcRequest => {
-            on_src_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
-        }
-        DevHandlerId::ReportError => {
-            on_report_error_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
-        }
-        DevHandlerId::UnrefSourceMap => {
-            on_unref_source_map_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp)
-        }
-        DevHandlerId::NotFound => on_not_found(unsafe { &mut *dev }, unsafe { &mut *req }, resp),
+        DevHandlerId::JsRequest => on_js_request(dev, req, resp),
+        DevHandlerId::AssetRequest => on_asset_request(dev, req, resp),
+        DevHandlerId::SrcRequest => on_src_request(dev, req, resp),
+        DevHandlerId::ReportError => on_report_error_request(dev, req, resp),
+        DevHandlerId::UnrefSourceMap => on_unref_source_map_request(dev, req, resp),
+        DevHandlerId::NotFound => on_not_found(dev, req, resp),
         DevHandlerId::Request => {
             // The catch-all route can reach a framework request handler; this
             // trampoline folds what bundling for it left pending.
-            crate::dispatch::fold(on_request(unsafe { &mut *dev }, unsafe { &mut *req }, resp));
+            crate::dispatch::fold(on_request(dev, req, resp));
         }
     }
 }
@@ -281,7 +264,7 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
     let hex = &route_id[route_id.len() - min_len..][..::core::mem::size_of::<u64>() * 2];
-    let Some(id) = parse_hex_to_int::<u64>(hex) else {
+    let Some(id) = parse_hex_to_u64(hex) else {
         return not_found(resp);
     };
 
@@ -341,7 +324,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
         return not_found(resp);
     }
     let hex = &param[..::core::mem::size_of::<u64>() * 2];
-    let Some(hash) = parse_hex_to_int::<u64>(hex) else {
+    let Some(hash) = parse_hex_to_u64(hex) else {
         return not_found(resp);
     };
     debug_log!("onAssetRequest {} {}", hash, bstr::BStr::new(param));
@@ -352,7 +335,7 @@ fn on_asset_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     StaticRoute::on(asset.this_ptr(), resp);
 }
 
-pub(super) use bun_core::fmt::parse_hex_to_int;
+pub(super) use bun_core::fmt::parse_hex_to_u64;
 
 fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     if req.header(b"open-in-editor").is_none() {

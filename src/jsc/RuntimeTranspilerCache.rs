@@ -495,19 +495,18 @@ impl Entry {
                     if chars.is_empty() {
                         return Err(crate::CrateError::Alloc(bun_alloc::AllocError));
                     }
-                    // `chars` is `&mut [u16; char_len]` backed by contiguous
-                    // WTFString storage; reinterpret as bytes for pread via the
-                    // safe POD cast (`u16` → `u8` always satisfies size/align).
-                    let chars_bytes: &mut [u8] = bytemuck::cast_slice_mut(chars);
-                    let read_bytes =
-                        file.pread_all(chars_bytes, self.metadata.output_byte_offset)?;
+                    let read_bytes = file.pread_all(
+                        bun_core::slice_as_bytes_mut(chars),
+                        self.metadata.output_byte_offset,
+                    )?;
                     if read_bytes as u64 != self.metadata.output_byte_length {
                         return Err(crate::CrateError::MissingData);
                     }
 
                     if self.metadata.output_hash != 0 {
-                        let utf16_bytes: &[u8] = bytemuck::cast_slice(string.utf16());
-                        if hash(utf16_bytes) != self.metadata.output_hash {
+                        if hash(bun_core::slice_as_bytes(string.utf16()))
+                            != self.metadata.output_hash
+                        {
                             return Err(crate::CrateError::InvalidHash);
                         }
                     }
@@ -660,7 +659,7 @@ impl RuntimeTranspilerCache {
         // `abs_buf` (no NUL-terminating `_z` variant), so go straight to the
         // underlying joiner with the same `top_level_dir` + `Loose` platform
         // that `absBufZ` used.
-        let top = FileSystem::instance().top_level_dir();
+        let top = FileSystem::get().top_level_dir();
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
             let parts: &[&[u8]] = &[dir, b"bun", b"@t@"];

@@ -383,7 +383,7 @@ fn update_package_json_and_install_with_manager_with_updates(
 
     // may or may not be the package json we are editing
     let top_level_dir_without_trailing_slash =
-        strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+        strings::without_trailing_slash(FileSystem::get().top_level_dir());
 
     let mut root_package_json_path_buf = bun_paths::path_buffer_pool::get();
     let root_package_json_path: &ZStr = 'root_package_json_path: {
@@ -525,7 +525,7 @@ pub(super) fn remove_leftover_node_modules(manager: &mut PackageManager) {
     crate::prune::prune_bins(&node_modules);
     if manager.options.global {
         let mut global_node_modules =
-            strings::without_trailing_slash(FileSystem::instance().top_level_dir()).to_vec();
+            strings::without_trailing_slash(FileSystem::get().top_level_dir()).to_vec();
         global_node_modules.push(bun_paths::SEP);
         global_node_modules.extend_from_slice(b"node_modules");
         crate::prune::prune_global_bins(manager.options.bin_path.as_bytes(), &global_node_modules);
@@ -643,7 +643,7 @@ pub fn update_package_json_and_install_and_cli(
                         bun_which::which(
                             &mut path_buf,
                             path_env,
-                            FileSystem::instance().top_level_dir(),
+                            FileSystem::get().top_level_dir(),
                             basename,
                         )
                         .is_none()

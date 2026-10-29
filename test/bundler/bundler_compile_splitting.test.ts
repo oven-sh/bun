@@ -267,7 +267,7 @@ describe("bundler", () => {
       },
       onAfterBundle(api) {
         const file = readFileSync(api.outfile);
-        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined as any, "latin1");
         expect(trailer).toBeGreaterThan(0);
         // `Offsets { byte_count: usize, modules_ptr: StringPointer, entry_point_id: u32, compile_exec_argv_ptr: StringPointer, flags: u32 }`
         const offsets = trailer - 32;
@@ -337,7 +337,7 @@ describe("bundler", () => {
       },
       onAfterBundle(api) {
         const file = readFileSync(api.outfile);
-        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined, "latin1");
+        const trailer = file.lastIndexOf("\n---- Bun! ----\n", undefined as any, "latin1");
         expect(trailer).toBeGreaterThan(0);
         const offsets = trailer - 32;
         const base = offsets - Number(file.readBigUInt64LE(offsets));
@@ -597,6 +597,50 @@ describe("bundler", () => {
       });
     }
 
+    // A chunk that is only linked statically has no module namespace object.
+    itBundled("compile/splitting/NamespaceObjectsOnlyForImportedChunks", {
+      compile: true,
+      splitting: true,
+      bytecode: true,
+      format: "esm",
+      files: {
+        "/entry.ts": /* js */ `
+          import { heapStats } from "bun:jsc";
+          import { shared } from "./shared.ts";
+          const count = (type: string) => heapStats().objectTypeCounts[type] ?? 0;
+          const before = { namespaces: count("ModuleNamespaceObject"), records: count("ModuleRecord") };
+          const { one } = await import("./one.ts");
+          const { two } = require("./two.ts") as typeof import("./two.ts");
+          const bundled = Object.keys(require.cache).filter(key => key.includes("$bunfs") || key.includes("~BUN"));
+          console.log(shared(), one(), two());
+          // The chunks share code, so more of them were loaded than were asked for by name.
+          console.log("chunks other than the two asked for:", bundled.length > 2, count("ModuleRecord") - before.records > 2);
+          console.log("namespace objects added:", count("ModuleNamespaceObject") - before.namespaces);
+          const wrapped = bundled.map(key => typeof require.cache[key]?.exports);
+          console.log("after reading", wrapped.length > 2, "chunks out of require.cache:", count("ModuleNamespaceObject") - before.namespaces === wrapped.length);
+        `,
+        "/shared.ts": /* js */ `
+          export function shared() { return "shared"; }
+        `,
+        "/common.ts": /* js */ `
+          export function common() { return "common"; }
+        `,
+        "/one.ts": /* js */ `
+          import { shared } from "./shared.ts";
+          import { common } from "./common.ts";
+          export function one() { return "one+" + shared() + "+" + common(); }
+        `,
+        "/two.ts": /* js */ `
+          import { common } from "./common.ts";
+          export function two() { return "two+" + common(); }
+        `,
+      },
+      run: {
+        stdout:
+          "shared one+shared+common two+common\nchunks other than the two asked for: true true\nnamespace objects added: 2\nafter reading true chunks out of require.cache: true",
+      },
+    });
+
     // The executable embeds its entry point at `/$bunfs/root/<outfile>`. A chunk that loads the entry point with
     // `import()` or `require()` must name that path, and must get the module that already ran, not a second copy.
     // The "api" backend of `itBundled` sets `naming.entry` to the name of the outfile, and that also names the chunk of
@@ -628,6 +672,33 @@ describe("bundler", () => {
       entryPointsRaw: ["./main.ts", "./tool.ts"],
       outfile: "dist/out",
       run: { file: "dist/out", stdout: "main ran\nmain main" },
+    });
+
+    // See splitting/SharedChunkOwnerLoadTimeRead. The main thread enters the cycle of m2.js, m5.js and m6.js at m5.js,
+    // the worker at m6.js.
+    itBundled("compile/splitting/SharedChunkOwnerLoadTimeRead", {
+      backend: "cli",
+      compile: true,
+      splitting: true,
+      files: {
+        "/index.js": /* js */ `
+          const m = await import("./m5.js");
+          console.log("ok", m.w5);
+          new Worker("./worker.js");
+        `,
+        "/worker.js": `import "./flag.js"; import "./m6.js"; console.log("worker");`,
+        "/flag.js": `globalThis.IS_WORKER = true;`,
+        "/m2.js": `export { v5 as x } from "./m5.js"; export function v2() { return 2 }`,
+        "/m5.js": /* js */ `
+          import { v2 } from "./m2.js"; import { v6 } from "./m6.js";
+          export function v5() { return v2 }
+          export const w5 = globalThis.IS_WORKER ? null : v6.toUpperCase();
+        `,
+        "/m6.js": `import { v2 } from "./m2.js"; export const w6 = typeof v2; export let v6 = "six";`,
+      },
+      entryPointsRaw: ["./index.js", "./worker.js"],
+      outfile: "dist/out",
+      run: { file: "dist/out", stdout: "ok SIX\nworker" },
     });
 
     // The chunk of the entry point has the name of the executable, and so do its source map and its metafile output.

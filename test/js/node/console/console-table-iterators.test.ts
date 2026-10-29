@@ -92,8 +92,7 @@ test.concurrent("console.Console#table shows what a Map or Set iterator has left
   expect(exitCode).toBe(0);
 });
 
-// Every key and value of an iterator is a cell of its own, so an object that is
-// not an array reaches the isBuffer() check of the cell formatter.
+// Every key and value of an iterator is a cell of its own, also when it is an object.
 test.concurrent("console.Console#table formats object keys and values of a Map or Set iterator", async () => {
   const { stdout, exitCode } = await run(/* js */ `
     c.table(new Map([["a", { x: 1 }], [{ k: 1 }, [1, 2]]]).entries());

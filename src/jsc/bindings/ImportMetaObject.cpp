@@ -43,12 +43,15 @@
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include "BunCompiledModules.h"
 #include "JSCommonJSModule.h"
+#include "ModuleGraph.h"
 #include <JavaScriptCore/JSPromise.h>
 #include "PathInlines.h"
 #include "wtf/text/StringView.h"
 
 #include "isBuiltinModule.h"
+#include "VectorSizeLimit.h"
 #include "WebCoreJSBuiltins.h"
 
 namespace Zig {
@@ -197,6 +200,27 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
     return result;
 }
 
+// require() hands a native addon to process.dlopen without asking the module loader, and it answers a module that has run from its cache.
+static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC::JSValue resolvedPath)
+{
+    if (!Bun::hasCompiledModules()) [[likely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
+    auto resolved = resolvedPath.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, );
+    if (auto module = Bun::compiledModuleForPath(resolved)) {
+        scope.release();
+        JSC::AOT::willAnswerWithModule(globalObject, *module);
+        return;
+    }
+    size_t query = resolved.find('?');
+    StringView path = query == notFound ? StringView(resolved) : StringView(resolved).left(static_cast<unsigned>(query));
+    if (!path.endsWith(".node"_s))
+        return;
+    if (JSValue error = Bun::errorIfCodeOutsideImageIsRefused(globalObject, Bun::ErrorCode::MODULE_NOT_FOUND, resolved))
+        JSC::throwException(globalObject, scope, error);
+}
+
 extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -205,11 +229,22 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
 
     JSC::JSValue moduleName = callFrame->argument(0);
     JSValue from = callFrame->argument(1);
-    bool isESM = callFrame->argument(2).asBoolean();
+    bool isESM = callFrame->argument(2).isTrue();
     bool isRequireDotResolve = callFrame->argument(3).isTrue();
     JSValue userPathList = callFrame->argument(4);
     JSValue parentModule = callFrame->argument(5);
     JSValue resolveFilenameOptions = callFrame->argument(6);
+
+    // require() / require.resolve() from a disposed Bun.ModuleGraph's module throws.
+    if (auto* requirer = dynamicDowncast<Bun::JSCommonJSModule>(parentModule)) {
+        Bun::throwIfModuleGraphDisposed(lexicalGlobalObject, scope, requirer->moduleGraph());
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    if (!isRequireDotResolve) {
+        Bun::willRequire(lexicalGlobalObject, moduleName);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
         if (moduleName.isString()) {
@@ -228,32 +263,40 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (!isESM) {
         if (globalObject) [[likely]] {
             if (globalObject->hasOverriddenModuleResolveFilenameFunction) [[unlikely]] {
-                auto overrideHandler = uncheckedDowncast<JSObject>(globalObject->m_moduleResolveFilenameFunction.getInitializedOnMainThread(globalObject));
-                if (overrideHandler) [[likely]] {
-                    ASSERT(overrideHandler->isCallable());
-
-                    MarkedArgumentBuffer args;
-                    args.append(moduleName);
-                    args.append(parentModule);
-                    args.append(jsBoolean(false));
-                    args.append(resolveFilenameOptions);
-
-                    JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
-                    JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, JSC::getCallData(overrideHandler), thisValue, args);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    if (!isRequireDotResolve) {
-                        JSString* string = result.toString(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        auto str = string->value(globalObject);
-                        RETURN_IF_EXCEPTION(scope, {});
-                        WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
-                        if (!prefixed.isNull()) {
-                            return JSValue::encode(jsString(vm, prefixed));
-                        }
-                        return JSC::JSValue::encode(string);
-                    }
-                    return JSC::JSValue::encode(result);
+                JSValue overrideHandler = globalObject->m_moduleResolveFilenameOverride.get();
+                JSC::CallData overrideCallData = JSC::getCallData(overrideHandler);
+                if (overrideCallData.type == JSC::CallData::Type::None) [[unlikely]] {
+                    return JSC::throwVMTypeError(lexicalGlobalObject, scope, "Module._resolveFilename is not a function"_s);
                 }
+
+                MarkedArgumentBuffer args;
+                args.append(moduleName);
+                args.append(parentModule);
+                args.append(jsBoolean(false));
+                args.append(resolveFilenameOptions);
+
+                JSValue thisValue = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
+                JSValue result = JSC::profiledCall(lexicalGlobalObject, ProfilingReason::API, overrideHandler, overrideCallData, thisValue, args);
+                RETURN_IF_EXCEPTION(scope, {});
+                if (!isRequireDotResolve) {
+                    JSString* string = result.toString(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    auto str = string->value(globalObject);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    // The override bypasses the resolver, which is what normally rejects null bytes.
+                    if (str->contains('\0')) [[unlikely]] {
+                        Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, "path"_s, string, "must be a string, Uint8Array, or URL without null bytes"_s);
+                        return {};
+                    }
+                    WTF::String prefixed = Bun::isUnprefixedNodeBuiltin(str);
+                    if (!prefixed.isNull()) {
+                        return JSValue::encode(jsString(vm, prefixed));
+                    }
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, string);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    return JSC::JSValue::encode(string);
+                }
+                return JSC::JSValue::encode(result);
             }
         }
 
@@ -288,7 +331,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     WTF::String pathStr = path.toWTFString(globalObject);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;
-                    paths.append(Bun::toStringRef(pathStr));
+                    BunString pathRef = Bun::toStringRef(pathStr);
+                    if (!Bun::tryAppendWithinLimit(paths, pathRef)) [[unlikely]] {
+                        pathRef.deref();
+                        throwOutOfMemoryError(globalObject, scope);
+                        goto cleanup;
+                    }
                 }
 
                 result = Bun__resolveSyncWithPaths(lexicalGlobalObject, JSC::JSValue::encode(moduleName), JSValue::encode(from), isESM, isRequireDotResolve, paths.begin(), paths.size());
@@ -299,6 +347,12 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
                     result = {};
                     goto cleanup;
+                }
+
+                if (!isRequireDotResolve) {
+                    throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result));
+                    if (scope.exception()) [[unlikely]]
+                        result = {};
                 }
 
             cleanup:
@@ -326,6 +380,11 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
     if (!JSC::JSValue::decode(result).isString()) {
         JSC::throwException(lexicalGlobalObject, scope, JSC::JSValue::decode(result));
         return {};
+    }
+
+    if (!isESM && !isRequireDotResolve) {
+        throwIfResolvedFileIsRefused(lexicalGlobalObject, JSC::JSValue::decode(result));
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     scope.release();
@@ -504,7 +563,10 @@ JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsG
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
-    return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSObject* env = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(env);
 }
 
 extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_main(JSC::JSGlobalObject*);
@@ -518,17 +580,40 @@ JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_main, (JSGlobalObject * lexica
     // Only Zig::GlobalObject creates ImportMetaObject structures (see createStructure). Its Bun.main and thread
     // are the ones that matter, no matter which realm reads the property.
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(thisObject->globalObject());
-    if (!globalObject->scriptExecutionContext()->isMainThread())
-        return JSValue::encode(jsBoolean(false));
-
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue path = thisObject->pathProperty.getInitializedOnMainThread(thisObject);
+    if (Bun::JSModuleGraph* graph = thisObject->moduleGraph()) {
+        JSValue mainPath = graph->mainPath();
+        if (!mainPath.isString())
+            return JSValue::encode(jsBoolean(false));
+        // The graph's main is a registry key: the path, and the query if there is one.
+        WTF::URL url(thisObject->url);
+        auto mainKey = asString(mainPath)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+#if OS(WINDOWS)
+        if (Bun::hasCompiledModules()) [[unlikely]] {
+            auto key = makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark());
+            return JSValue::encode(jsBoolean(url.protocolIsFile() && makeStringByReplacingAll(mainKey.data, '/', '\\') == makeStringByReplacingAll(key, '/', '\\')));
+        }
+#endif
+        return JSValue::encode(jsBoolean(url.protocolIsFile() && mainKey.data == makeString(url.fileSystemPath(), url.queryWithLeadingQuestionMark())));
+    }
+
+    // In an executable, `require.main === module` in a CommonJS file reads this property, and the file that a Worker starts with is the main module of its thread.
+    if (!globalObject->scriptExecutionContext()->isMainThread() && !(Bun::hasCompiledModules() && JSC::AOT::entryPointIsCommonJS(globalObject)))
+        return JSValue::encode(jsBoolean(false));
     JSValue bunMain = JSValue::decode(BunObject_getter_main(globalObject));
     RETURN_IF_EXCEPTION(scope, {});
+    JSValue path = thisObject->pathProperty.getInitializedOnMainThread(thisObject);
     bool isMain = JSValue::strictEqual(globalObject, path, bunMain);
     RETURN_IF_EXCEPTION(scope, {});
+    // The name of a text that a Worker starts from is no path. createFromSpecifier() makes a path of it for this object.
+    if (!isMain && Bun::hasCompiledModules() && bunMain.isString()) [[unlikely]] {
+        auto name = asString(bunMain)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        isMain = URL::fileURLWithFileSystemPath(name.data).string() == thisObject->url;
+    }
 
     return JSValue::encode(jsBoolean(isMain));
 }
@@ -642,7 +727,7 @@ void ImportMetaObject::finishCreation(VM& vm)
             path = meta->url;
         }
 
-        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path);
+        auto* object = Bun::JSCommonJSModule::createBoundRequireFunction(init.vm, meta->globalObject(), path, meta->moduleGraph());
         RETURN_IF_EXCEPTION(scope, );
         ASSERT(object);
         init.set(uncheckedDowncast<JSFunction>(object));
@@ -704,6 +789,11 @@ void ImportMetaObject::finishCreation(VM& vm)
     });
 }
 
+void ImportMetaObject::setModuleGraph(JSC::VM& vm, Bun::JSModuleGraph* graph)
+{
+    m_moduleGraph.setMayBeNull(vm, this, graph);
+}
+
 template<typename Visitor>
 void ImportMetaObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -711,6 +801,7 @@ void ImportMetaObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(fn, info());
     Base::visitChildren(fn, visitor);
 
+    visitor.append(fn->m_moduleGraph);
     fn->requireProperty.visit(visitor);
     fn->urlProperty.visit(visitor);
     fn->dirProperty.visit(visitor);

@@ -159,7 +159,7 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 ///   reinterpreting as `uN` reads only initialized bits).
 /// - Round-tripping `Self → uN → Self` (where every `uN` value observed was
 ///   produced from a valid `Self`) yields the original value. This is weaker
-///   than `bytemuck::AnyBitPattern` — `#[repr(u8)]` enums qualify because the
+///   than [`AnyBitPattern`](crate::AnyBitPattern) — `#[repr(u8)]` enums qualify because the
 ///   cell only ever stores valid discriminants.
 /// - `Self` is safe to transport across threads when stored in an
 ///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
@@ -381,44 +381,6 @@ unsafe impl<U> Atom for *mut U {
         // SAFETY: `p` is 8-aligned and live; `*mut U` and `AtomicPtr<U>` have
         // identical layout (see `_atomic_load`).
         unsafe { (*(p as *const AtomicPtr<U>)).compare_exchange(cur, new, s, f) }
-    }
-}
-
-// SAFETY: same as `*mut U`; the cast goes through `*mut U`.
-unsafe impl<U> Atom for *const U {
-    #[inline]
-    unsafe fn _atomic_load(p: *mut Self, ord: Ordering) -> Self {
-        // SAFETY: `p` is `AtomicCell<*const U>::inner.get()`, 8-aligned via
-        // `_align`; `*const U` and `AtomicPtr<U>` have identical layout.
-        unsafe { (*(p as *const AtomicPtr<U>)).load(ord).cast_const() }
-    }
-    #[inline]
-    unsafe fn _atomic_store(p: *mut Self, v: Self, ord: Ordering) {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe { (*(p as *const AtomicPtr<U>)).store(v.cast_mut(), ord) }
-    }
-    #[inline]
-    unsafe fn _atomic_cas(
-        p: *mut Self,
-        cur: Self,
-        new: Self,
-        s: Ordering,
-        f: Ordering,
-    ) -> Result<Self, Self> {
-        // SAFETY: `p` is 8-aligned and live; `*const U` and `AtomicPtr<U>`
-        // have identical layout (see `_atomic_load`).
-        unsafe {
-            match (*(p as *const AtomicPtr<U>)).compare_exchange(
-                cur.cast_mut(),
-                new.cast_mut(),
-                s,
-                f,
-            ) {
-                Ok(x) => Ok(x.cast_const()),
-                Err(x) => Err(x.cast_const()),
-            }
-        }
     }
 }
 

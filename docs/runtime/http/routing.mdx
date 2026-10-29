@@ -190,6 +190,7 @@ Bun.serve({
 - **Last-Modified support** - Uses file modification time for `If-Modified-Since` headers
 - **If-Modified-Since** - Returns `304 Not Modified` when file hasn't changed since client's cached version
 - **Range request support** - Automatically handles partial content requests with `Content-Range` headers
+- **If-Range** - Sends the full file instead of a `206` when the `If-Range` validator is not the response's strong `ETag` or its exact `Last-Modified`
 - **Streaming transfers** - Uses buffered reader with backpressure handling for efficient memory usage
 - **Memory efficient** - Only buffers small chunks during transfer, not entire file
 - **Best for**: Large files, dynamic content, user uploads, files that change frequently
@@ -206,7 +207,14 @@ Bun.serve({
 });
 ```
 
-Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains `.`, `..`, empty segments, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment. On Linux the open uses `openat2(RESOLVE_IN_ROOT)`, so the kernel clamps symlinks that would escape `dir`.
+Bun percent-decodes the part of the request URL after the prefix once and opens it relative to `dir`. Bun rejects non-canonical paths with `404`, so the served path is always the path the router matched. A path is non-canonical if it contains `.`, `..`, empty segments, `%2F`, or a `%XX` sequence encoding a character that may appear literally in a path segment.
+
+A symlink never leads out of `dir`. Bun resolves symlinks as if `dir` were the root directory:
+
+- A `..` stops at `dir`.
+- An absolute target starts from `dir`. A symlink to `/var/data/logo.png` serves `var/data/logo.png` in `dir`, or is a `404` if there is no such file.
+
+These are the rules of `openat2(RESOLVE_IN_ROOT)` on Linux. Bun applies them itself on macOS, on FreeBSD, and on Linux when `openat2` is not available. On Windows, Bun follows symlinks wherever they lead.
 
 <Info>
   Routing is case-sensitive, but filesystems on macOS and Windows are case-insensitive by default. As a result, a
@@ -219,7 +227,7 @@ Directory routes share the response path with file routes:
 
 - **Content-Type** is set from the file extension.
 - **Last-Modified** and a weak `ETag` (`W/"<size>-<mtime>"`) are sent on every response, and `If-Modified-Since` / `If-None-Match` are honored with `304 Not Modified`.
-- **Range requests** are supported with `Accept-Ranges: bytes` and `Content-Range`.
+- **Range requests** are supported with `Accept-Ranges: bytes` and `Content-Range`. `If-Range` is honored with the `Last-Modified` date. The `ETag` is weak, so it never matches `If-Range`, and the response is the full file.
 - A request that resolves to a directory without a trailing `/` receives a `301` redirect to the trailing-slash URL. With the trailing slash, Bun serves `index.html` from that directory.
 - Missing files return `404`.
 

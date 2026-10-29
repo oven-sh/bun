@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { isPhaseGroupHeader } from "../../scripts/ci-log-phase.mjs";
 import { parseLog } from "../../scripts/ci-slowest-tests";
-import { parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
+import { entryOfProgram, parseLog as parseDurations } from "../../scripts/update-test-durations.mjs";
 
 // Buildkite prefixes each line with an APC timestamp: ESC `_bk;t=<ms>` BEL.
 const bk = (ts: number, body: string) => `\x1b_bk;t=${ts}\x07${body}`;
@@ -9,7 +11,7 @@ const gray = (s: string) => `\x1b[90m${s}\x1b[0m`;
 
 describe("scripts/ci-slowest-tests.ts parseLog", () => {
   test("does not charge the parallel-safe phase to the last serial test", () => {
-    // runner.node.mjs prints serial headers via startGroup (`--- [N/M] path`)
+    // runner.node.ts prints serial headers via startGroup (`--- [N/M] path`)
     // and parallel-safe headers via plain console.log (`[N/M] path`). A regex
     // that insists on `--- ` treats the first parallel header as invisible and
     // the last serial test swallows the whole phase (79.5s observed for a
@@ -120,7 +122,7 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
   });
 
   test("ignores stray `--- ` lines that are test output, not group headers", () => {
-    // pipeTestStdout in runner.node.mjs sanitises `--- ` in streamed test
+    // pipeTestStdout in runner.node.ts sanitises `--- ` in streamed test
     // output, but a chunk boundary can split the token and the coordinator/
     // retry-preview paths write raw. Seen in build #86086: a `bun patch` diff
     // inside `test/cli/install/bun-patch.test.ts`'s span and `--- ps ---`
@@ -146,12 +148,14 @@ describe("scripts/ci-slowest-tests.ts parseLog", () => {
 
 describe("phase-header boundary", () => {
   // Both log parsers share this allowlist (scripts/ci-log-phase.mjs); if
-  // runner.node.mjs grows a new phase between the serial tests and the next
+  // runner.node.ts grows a new phase between the serial tests and the next
   // `[N/M]` header, add it there and here.
   test.each([
     [true, `--- napi prebuild: 3 addon(s), 23.9s`],
     [true, `--- [52-257/829] 206 files in parallel (3\u00d7)`],
     [true, `--- Running 444 parallel-safe tests (3-wide)`],
+    [true, `--- Running 217 programs compiled ahead of time (3-wide)`],
+    [true, `--- Running 9 files that build many executables (3-wide)`],
     [true, `--- End`],
     [true, `--- Summary`],
     [true, `--- Received SIGTERM, exiting...`],
@@ -164,6 +168,19 @@ describe("phase-header boundary", () => {
   ])("%p %s", (expected, body) => {
     expect(isPhaseGroupHeader(body)).toBe(expected);
   });
+});
+
+test("what .buildkite/update-test-durations.yml runs with node imports no TypeScript", () => {
+  const root = join(import.meta.dir, "..", "..");
+  const importsOf = (file: string): string[] =>
+    [...readFileSync(file, "utf8").matchAll(/^import .* from "(\.[^"]+)";$/gm)].flatMap(([, path]) => {
+      const imported = join(dirname(file), path);
+      return /\.m?ts$/.test(imported) ? [imported] : [imported, ...importsOf(imported)];
+    });
+  const commands = readFileSync(join(root, ".buildkite", "update-test-durations.yml"), "utf8");
+  const scripts = [...commands.matchAll(/^ +node (scripts\/\S+)/gm)].map(([, script]) => script);
+  expect(scripts).toContain("scripts/update-parallel-allowlist.mjs");
+  expect(scripts.filter(script => importsOf(join(root, script)).some(file => /\.m?ts$/.test(file)))).toEqual([]);
 });
 
 describe("scripts/update-test-durations.mjs parseLog", () => {
@@ -192,5 +209,37 @@ describe("scripts/update-test-durations.mjs parseLog", () => {
       ["test/js/node/test/parallel/p1.js", 3],
       ["test/js/node/test/parallel/p2.js", 500],
     ]);
+  });
+
+  test("does not charge the programs compiled ahead of time to the preceding test, and times them by what they say", () => {
+    // A program's line says what it took: its own build or its share of one, and its run.
+    const log = [
+      bk(0, `--- ${gray("[1/5]")} test/last-serial.test.ts`),
+      bk(700, `--- Running 3 programs compiled ahead of time (4-wide)`),
+      bk(90000, `${gray("[2/5]")} test/aot/parallel/a.ts ${gray("(compile 1400 ms, run 14 ms)")}`),
+      bk(90001, `${gray("[3/5]")} test/aot/parallel/b/main.ts ${gray("(compile 2990 ms, run 9 ms)")}`),
+      bk(90002, `${gray("[4/5]")} test/aot/parallel/workers/c.mjs ${gray("(compile 9400 ms, run 310 ms)")}`),
+      bk(90100, `--- ${gray("[5/5]")} vendor/x/package.json`),
+      bk(90300, `--- End`),
+    ].join("\r\r\n");
+
+    expect(parseDurations(log)).toEqual([
+      ["test/last-serial.test.ts", 700],
+      ["test/aot/parallel/a.ts", 1414],
+      ["test/aot/parallel/b/main.ts", 2999],
+      ["test/aot/parallel/workers/c.mjs", 9710],
+      ["vendor/x/package.json", 200],
+    ]);
+    expect(Object.fromEntries(parseLog(log))).toEqual({
+      "test/last-serial.test.ts": 700,
+      "vendor/x/package.json": 200,
+    });
+  });
+
+  test("a program compiled ahead of time has an entry once it took long, and keeps it", () => {
+    expect(entryOfProgram({ default: 400, asan: 2100 }, undefined)).toBeUndefined();
+    expect(entryOfProgram({ default: 900, asan: 4000 }, undefined)).toEqual({ default: 900, asan: 4000 });
+    // It shares a build since it has the entry, and takes little there.
+    expect(entryOfProgram({ default: 300, asan: 1200 }, { default: 900 })).toEqual({ default: 900 });
   });
 });

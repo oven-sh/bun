@@ -1,0 +1,17 @@
+# for (const name in process) ;
+# Each step looks for the name that it hands out, and the host makes a member when it is first looked for.
+# LIBRARY: own
+# RUN: valueflow-why used-builtin=ProcessAllowedNodeEnvironmentFlags used-builtin=ProcessCwd
+# CHECK: used-builtin=ProcessAllowedNodeEnvironmentFlags
+# CHECK-NEXT: by ForInOpen
+# CHECK: used-builtin=ProcessCwd
+# CHECK-NEXT: not held
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Process
+    v1 = ForInOpen v0
+    Return
+}

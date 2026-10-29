@@ -608,10 +608,11 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     /// the index — keeping its SwissTable grow path off the subsequent
     /// `push_entry` loop. No-op when the index hasn't materialised yet (it will
     /// be built at the right size by [`rebuild_index`] when the map first
-    /// crosses [`INDEX_THRESHOLD`], since that reads `self.keys.capacity()`).
+    /// crosses [`INDEX_THRESHOLD`], since that reads `self.hashes.capacity()`).
+    /// Not `self.keys.capacity()`, which is `usize::MAX` for a zero-sized `K`.
     #[inline]
     fn reserve_index_to_capacity(&mut self) {
-        let cap = self.keys.capacity();
+        let cap = self.hashes.capacity();
         if let Some(index) = self.index.as_deref_mut() {
             index_reserve(index, &self.hashes, cap);
         }
@@ -800,7 +801,7 @@ impl<K, V, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
     fn rebuild_index(&mut self) {
         self.index = Some(rebuild_index_from_hashes(
             &self.hashes,
-            self.keys.capacity(),
+            self.hashes.capacity(),
         ));
     }
 
@@ -1148,12 +1149,6 @@ impl<'a, K, V, C, A: MapAllocator> VacantEntry<'a, K, V, C, A> {
 }
 
 impl<'a, K, V, C, A: MapAllocator> MapEntry<'a, K, V, C, A> {
-    pub fn or_insert(self, default: V) -> &'a mut V {
-        match self {
-            MapEntry::Occupied(o) => o.into_mut(),
-            MapEntry::Vacant(v) => v.insert(default),
-        }
-    }
     pub fn or_insert_with<F: FnOnce() -> V>(self, f: F) -> &'a mut V {
         match self {
             MapEntry::Occupied(o) => o.into_mut(),
@@ -1231,18 +1226,6 @@ impl<K: Default, V: Default, C, A: MapAllocator> ArrayHashMap<K, V, C, A> {
         }
         let i = self.push_entry(K::default(), V::default(), h);
         Ok(self.gop_at(i, false))
-    }
-}
-
-impl<K, V, C, A: MapAllocator> ArrayHashMapExt for ArrayHashMap<K, V, C, A> {
-    type Key = K;
-    type Value = V;
-    type Iterator<'a>
-        = Iter<'a, K, V>
-    where
-        Self: 'a;
-    fn iterator(&mut self) -> Iter<'_, K, V> {
-        ArrayHashMap::iterator(self)
     }
 }
 
@@ -1529,11 +1512,8 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
     /// slice by reference; never freed on drop.
     #[inline]
     pub(crate) const fn borrowed(s: &'static [u8]) -> Self {
-        // `&[u8]`'s pointer is always non-null (dangling for `len == 0`).
-        // SAFETY: `as_ptr()` on a slice reference is never null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(s.as_ptr().cast_mut()) };
         Self {
-            ptr,
+            ptr: core::ptr::NonNull::from_ref(s).cast(),
             len_tag: s.len(),
             _alloc: PhantomData,
         }
@@ -1550,13 +1530,9 @@ impl<A: Allocator + Default> StringHashMapKey<A> {
         );
         // Discard the stored `A` — for every `A` in use (`Global`,
         // `DefaultAlloc`, `AstAlloc`) it is a ZST, so `A::default()` in `Drop`
-        // is the same instance. `into_raw_with_allocator` because on current
-        // nightly `Box::into_raw` is restricted to `Box<T, Global>`.
-        let (raw, _alloc) = Box::into_raw_with_allocator(b);
-        // SAFETY: `Box::into_raw_with_allocator` never returns null.
-        let ptr = unsafe { core::ptr::NonNull::new_unchecked(raw.cast::<u8>()) };
+        // is the same instance.
         Self {
-            ptr,
+            ptr: Box::into_non_null_with_allocator(b).0.cast(),
             len_tag: len | SHMK_OWNED_BIT,
             _alloc: PhantomData,
         }

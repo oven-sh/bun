@@ -4,6 +4,7 @@
 #include "wtf/text/WTFString.h"
 
 #include "ncrypto.h"
+#include "headers-handwritten.h"
 #include <openssl/asn1.h>
 #include <openssl/bn.h>
 #include <openssl/dh.h>
@@ -1031,7 +1032,9 @@ bool X509View::isCA() const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return false;
-    return X509_check_ca(const_cast<X509*>(cert_)) == 1;
+    // BoringSSL also answers 1 for a v1 root, where OpenSSL answers 2.
+    X509* cert = const_cast<X509*>(cert_);
+    return X509_check_ca(cert) == 1 && (X509_get_extension_flags(cert) & EXFLAG_BCONS);
 }
 
 bool X509View::isIssuedBy(const X509View& issuer) const
@@ -1063,26 +1066,22 @@ bool X509View::checkPublicKey(const EVPKeyPointer& pkey) const
 // options were no-ops. This implements OpenSSL's semantics over the same
 // matcher fetch()/tls.connect use.
 extern "C" int Bun__X509__checkHost(X509* x509, const uint8_t* host, size_t host_len,
-    uint32_t flags, uint8_t** out_peer, size_t* out_len);
+    uint32_t flags, BunString* out_peer);
 
 X509View::CheckMatch X509View::checkHost(const std::span<const char> host,
     int flags,
-    DataPointer* peerName) const
+    WTF::String* peerName) const
 {
     ClearErrorOnReturn clearErrorOnReturn;
     if (cert_ == nullptr) return CheckMatch::NO_MATCH;
-    uint8_t* peer = nullptr;
-    size_t peerLen = 0;
+    BunString peer = { BunStringTag::Empty, nullptr };
     switch (Bun__X509__checkHost(const_cast<X509*>(cert_),
         reinterpret_cast<const uint8_t*>(host.data()), host.size(),
-        static_cast<uint32_t>(flags), &peer, &peerLen)) {
+        static_cast<uint32_t>(flags), peerName ? &peer : nullptr)) {
     case 0:
         return CheckMatch::NO_MATCH;
     case 1: {
-        if (peer != nullptr) {
-            DataPointer name(peer, peerLen);
-            if (peerName != nullptr) *peerName = WTF::move(name);
-        }
+        if (peerName != nullptr) *peerName = peer.transferToWTFString();
         return CheckMatch::MATCH;
     }
     case -2:
@@ -1558,7 +1557,32 @@ DataPointer DHPointer::stateless(const EVPKeyPointer& ourKey,
 // ============================================================================
 // KDF
 
+static const EVP_MD* findDigestByName(const WTF::StringView name);
+
 const EVP_MD* getDigestByName(const WTF::StringView name)
+{
+    struct FoundLast {
+        std::array<Latin1Character, 16> name;
+        size_t length;
+        const EVP_MD* digest;
+    };
+    static thread_local constinit FoundLast last {};
+
+    if (!name.is8Bit() || !name.length() || name.length() > last.name.size())
+        return findDigestByName(name);
+    auto characters = name.span8();
+    if (characters.size() == last.length && !memcmp(characters.data(), last.name.data(), last.length))
+        return last.digest;
+    const EVP_MD* digest = findDigestByName(name);
+    if (digest) {
+        memcpy(last.name.data(), characters.data(), characters.size());
+        last.length = characters.size();
+        last.digest = digest;
+    }
+    return digest;
+}
+
+static const EVP_MD* findDigestByName(const WTF::StringView name)
 {
     // Historically, "dss1" and "DSS1" were DSA aliases for SHA-1
     // exposed through the public API.
@@ -1633,14 +1657,19 @@ const EVP_MD* getDigestByName(const WTF::StringView name)
         }
     }
 
-    auto nameUtf8 = name.utf8();
-    return EVP_get_digestbyname(nameUtf8.data());
+    // utf8() asserts on failure. A name too long to convert isn't a digest.
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return nullptr;
+    return EVP_get_digestbyname(nameUtf8->legacyCStringPointer());
 }
 
 const EVP_CIPHER* getCipherByName(const WTF::StringView name)
 {
-    auto nameUtf8 = name.utf8();
-    return EVP_get_cipherbyname(nameUtf8.data());
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return nullptr;
+    return EVP_get_cipherbyname(nameUtf8->legacyCStringPointer());
 }
 
 bool checkHkdfLength(const Digest& md, size_t length)
@@ -1663,6 +1692,11 @@ DataPointer hkdf(const Digest& md,
     ClearErrorOnReturn clearErrorOnReturn;
 
     if (!checkHkdfLength(md, length) || info.len > INT_MAX || salt.len > INT_MAX) {
+        return {};
+    }
+
+    // Node.js (OpenSSL) rejects a zero-length derivation; BoringSSL accepts it.
+    if (length == 0) {
         return {};
     }
 
@@ -2428,8 +2462,7 @@ const Cipher Cipher::FromName(WTF::StringView name)
         if (remain == "256"_s) return Cipher::AES_256_CBC();
     }
 
-    auto nameUtf8 = name.utf8();
-    return Cipher(EVP_get_cipherbyname(nameUtf8.data()));
+    return Cipher(getCipherByName(name));
 }
 
 const Cipher Cipher::FromNid(int nid)
@@ -3408,11 +3441,14 @@ DataPointer Cipher::recover(const EVPKeyPointer& key,
 
 // ============================================================================
 
-int Ec::GetCurveIdFromName(const char* name)
+int Ec::GetCurveIdFromName(WTF::StringView name)
 {
-    int nid = EC_curve_nist2nid(name);
+    auto nameUtf8 = name.tryGetUTF8();
+    if (!nameUtf8) [[unlikely]]
+        return NID_undef;
+    int nid = EC_curve_nist2nid(nameUtf8->legacyCStringPointer());
     if (nid == NID_undef) {
-        nid = OBJ_sn2nid(name);
+        nid = OBJ_sn2nid(nameUtf8->legacyCStringPointer());
     }
     return nid;
 }

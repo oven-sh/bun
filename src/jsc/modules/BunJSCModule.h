@@ -463,7 +463,7 @@ JSC_DEFINE_HOST_FUNCTION(functionNeverInlineFunction,
     return JSValue::encode(setNeverInline(globalObject, callFrame));
 }
 
-extern "C" bool Bun__mkdirp(JSC::JSGlobalObject*, const char*);
+extern "C" bool Bun__mkdirp(const char*);
 extern "C" void Bun__VirtualMachine__setSamplingProfilerDirectory(void* bunVM, const BunString* directory);
 
 JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
@@ -489,7 +489,7 @@ JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler,
                 return {};
             }
             auto pathCString = toUTF8CString(String(path));
-            if (!Bun__mkdirp(globalObject, pathCString.legacyCStringPointer())) {
+            if (!Bun__mkdirp(pathCString.legacyCStringPointer())) {
                 throwVMError(
                     globalObject, scope,
                     createTypeError(globalObject, "directory couldn't be created"_s));

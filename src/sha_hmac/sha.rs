@@ -116,8 +116,7 @@ macro_rules! new_evp {
                 // ctx is zeroed POD; EVP_MD_CTX_init writes it in place.
                 ffi::EVP_MD_CTX_init(&mut this.ctx);
 
-                // SAFETY: ctx initialised by EVP_MD_CTX_init above; md is non-null.
-                let rc: c_int = unsafe { ffi::EVP_DigestInit(&mut this.ctx, md) };
+                let rc: c_int = ffi::EVP_DigestInit(&mut this.ctx, md);
                 debug_assert!(rc == 1);
 
                 this
@@ -218,7 +217,7 @@ pub mod evp {
     }
 
     impl Algorithm {
-        pub fn md(self) -> Option<*const ffi::EVP_MD> {
+        pub fn md(self) -> Option<&'static ffi::EVP_MD> {
             // BoringSSL EVP_* md getters are `safe fn` returning a static const
             // singleton (never NULL for the ones listed here).
             match self {

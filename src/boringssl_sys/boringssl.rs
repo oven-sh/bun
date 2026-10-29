@@ -444,7 +444,7 @@ impl X509 {
         let mut len: c_uint = 0;
         // SAFETY: `self` is live; `X509_digest` writes at most `EVP_MAX_MD_SIZE` bytes to `out`.
         unsafe {
-            let md = match self.signature_digest_nid() {
+            let md: *const EVP_MD = match self.signature_digest_nid() {
                 NID_undef => return None,
                 NID_md5 | NID_sha1 => EVP_sha256(),
                 nid => EVP_get_digestbynid(nid),
@@ -670,22 +670,22 @@ unsafe extern "C" {
     pub fn ASN1_STRING_to_UTF8(out: *mut *mut u8, in_: *const ASN1_STRING) -> c_int;
 
     // ── EVP digest getters (infallible, return static singletons) ────────
-    pub safe fn EVP_md4() -> *const EVP_MD;
-    pub safe fn EVP_md5() -> *const EVP_MD;
-    pub safe fn EVP_ripemd160() -> *const EVP_MD;
-    pub safe fn EVP_sha1() -> *const EVP_MD;
-    pub safe fn EVP_sha224() -> *const EVP_MD;
-    pub safe fn EVP_sha256() -> *const EVP_MD;
-    pub safe fn EVP_sha384() -> *const EVP_MD;
-    pub safe fn EVP_sha512() -> *const EVP_MD;
-    pub safe fn EVP_sha512_224() -> *const EVP_MD;
-    pub safe fn EVP_sha512_256() -> *const EVP_MD;
-    pub safe fn EVP_sha3_224() -> *const EVP_MD;
-    pub safe fn EVP_sha3_256() -> *const EVP_MD;
-    pub safe fn EVP_sha3_384() -> *const EVP_MD;
-    pub safe fn EVP_sha3_512() -> *const EVP_MD;
-    pub safe fn EVP_blake2b256() -> *const EVP_MD;
-    pub safe fn EVP_blake2b512() -> *const EVP_MD;
+    pub safe fn EVP_md4() -> &'static EVP_MD;
+    pub safe fn EVP_md5() -> &'static EVP_MD;
+    pub safe fn EVP_ripemd160() -> &'static EVP_MD;
+    pub safe fn EVP_sha1() -> &'static EVP_MD;
+    pub safe fn EVP_sha224() -> &'static EVP_MD;
+    pub safe fn EVP_sha256() -> &'static EVP_MD;
+    pub safe fn EVP_sha384() -> &'static EVP_MD;
+    pub safe fn EVP_sha512() -> &'static EVP_MD;
+    pub safe fn EVP_sha512_224() -> &'static EVP_MD;
+    pub safe fn EVP_sha512_256() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_224() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_256() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_384() -> &'static EVP_MD;
+    pub safe fn EVP_sha3_512() -> &'static EVP_MD;
+    pub safe fn EVP_blake2b256() -> &'static EVP_MD;
+    pub safe fn EVP_blake2b512() -> &'static EVP_MD;
 
     // ── EVP digest ctx ───────────────────────────────────────────────────
     // POD context by exclusive reference: BoringSSL only zero-initialises the
@@ -693,8 +693,9 @@ unsafe extern "C" {
     pub safe fn EVP_MD_CTX_init(ctx: &mut EVP_MD_CTX);
     pub fn EVP_MD_CTX_cleanup(ctx: *mut EVP_MD_CTX) -> c_int;
     pub fn EVP_MD_CTX_copy_ex(out: *mut EVP_MD_CTX, in_: *const EVP_MD_CTX) -> c_int;
-    pub fn EVP_MD_CTX_size(ctx: *const EVP_MD_CTX) -> usize;
-    pub fn EVP_DigestInit(ctx: *mut EVP_MD_CTX, type_: *const EVP_MD) -> c_int;
+    pub safe fn EVP_MD_size(md: &EVP_MD) -> usize;
+    // Starts with `EVP_MD_CTX_init`: what `ctx` held before is never read.
+    pub safe fn EVP_DigestInit(ctx: &mut EVP_MD_CTX, type_: &EVP_MD) -> c_int;
     pub fn EVP_DigestInit_ex(
         ctx: *mut EVP_MD_CTX,
         type_: *const EVP_MD,
@@ -707,7 +708,7 @@ unsafe extern "C" {
         md_out: *mut u8,
         out_size: *mut c_uint,
     ) -> c_int;
-    pub fn EVP_get_digestbyname(name: *const c_char) -> *const EVP_MD;
+    pub fn EVP_get_digestbyname(name: *const c_char) -> Option<&'static EVP_MD>;
     pub fn EVP_MD_do_all_sorted(
         callback: extern "C" fn(*const EVP_MD, *const c_char, *const c_char, *mut c_void),
         arg: *mut c_void,

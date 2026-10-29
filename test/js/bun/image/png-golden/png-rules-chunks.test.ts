@@ -32,6 +32,7 @@ describe("chunks before the image", () => {
   test("an indexed image needs PLTE, of 1 to 256 colors", async () => {
     await rejects(indexed, indices, iend);
     await rejects(indexed, chunk("PLTE"), indices, iend);
+    await rejects(indexed, chunk("PLTE"), palette, indices, iend);
     await rejects(indexed, chunk("PLTE", Buffer.alloc(4)), indices, iend);
     await rejects(indexed, chunk("PLTE", Buffer.alloc(257 * 3)), indices, iend);
     expect(await pixels(indexed, chunk("PLTE", Buffer.alloc(256 * 3, 9)), indices, iend)).toEqual(
@@ -123,6 +124,26 @@ describe("chunks before the image", () => {
     expect(await rgb(16, [9, 1, 9, 2, 9, 3], [9, 1, 9, 2, 9, 3, 9, 1, 9, 2, 9, 4])).toEqual(["09090900", "090909ff"]);
   });
 
+  test("a tRNS of the wrong length is passed over, and is not the first of its kind", async () => {
+    const trns = (...data: number[][]) => data.map(data => chunk("tRNS", data));
+    const gray = (...data: number[][]) => pixels(ihdr(2, 1, 8, GRAY), ...trns(...data), idat([5, 6]), iend);
+    for (const wrong of [[0], [0, 6, 0]]) {
+      expect(await gray(wrong)).toEqual(["050505ff", "060606ff"]);
+      expect(await gray(wrong, [0, 5])).toEqual(["05050500", "060606ff"]);
+    }
+    const rgb = (...data: number[][]) => pixels(ihdr(2, 1, 8, RGB), ...trns(...data), idat([1, 2, 3, 4, 5, 6]), iend);
+    for (const wrong of [
+      [0, 4, 0, 5, 0],
+      [0, 4, 0, 5, 0, 6, 0],
+    ]) {
+      expect(await rgb(wrong)).toEqual(["010203ff", "040506ff"]);
+      expect(await rgb(wrong, [0, 1, 0, 2, 0, 3])).toEqual(["01020300", "040506ff"]);
+    }
+    for (const wrong of [[], [7, 8, 9]]) {
+      expect((await pixels(indexed, palette, ...trns(wrong, [6]), indices, iend))[0]).toBe("0a0b0c06");
+    }
+  });
+
   test("tRNS means nothing where there is an alpha channel", async () => {
     expect(await pixels(rgbaHeader, chunk("tRNS", [0, 1, 0, 2, 0, 3]), rgbaData, iend)).toEqual(["01020304"]);
   });
@@ -182,7 +203,10 @@ describe("chunks before the image", () => {
         maxPixels: 1,
       });
     const passedOver = { pixels: ["01020304"], profile: null };
-    expect((await withStream(zlib.deflateSync(Buffer.alloc(limit)))).profile?.length).toBe(limit);
+    const largest = zlib.deflateSync(Buffer.alloc(limit));
+    expect((await withStream(largest)).profile?.length).toBe(limit);
+    // Without its checksum, too.
+    expect((await withStream(largest.subarray(0, -4))).profile?.length).toBe(limit);
     expect(await withStream(zlib.deflateSync(Buffer.alloc(limit + 1)))).toEqual(passedOver);
     // One that breaks off there is cut short, like one that breaks off anywhere.
     const open = (size: number) => zlib.deflateSync(Buffer.alloc(size), { finishFlush: zlib.constants.Z_SYNC_FLUSH });

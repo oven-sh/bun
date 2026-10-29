@@ -13,6 +13,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, emptyProcessMaxRSS, gcTick, isASAN, isDebug, rss, runFixtureMaxRSS, tempDir } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
+import { linesAtATime } from "./png-golden/check";
 
 // Several tests below force `backend = "bun"` to reach the static decoders
 // regardless of platform; restore after every test so a throw can't leak the
@@ -486,13 +487,15 @@ describe("malformed PNG structure", () => {
     expect(await hasProfile(withProfile(1 << 20))).toBe(true);
   });
 
-  // The largest image the default maxPixels allows, 1 GiB of RGBA, and its first row.
+  // 1 GiB of RGBA, the most the default maxPixels allows, and one row more than are inflated before any is looked at.
+  const firstRows = (line: number) => (linesAtATime(line) + 1) * line;
   test.concurrent.each([
-    ["1-bit", 16383, 16383, 1, 0, 0, 1 + 2048],
-    ["1-bit, interlaced", 16383, 16383, 1, 0, 1, 1 + 256],
-    ["RGBA", 16383, 16383, 8, 6, 0, 1 + 16383 * 4],
-    ["RGB", 16383, 16383, 8, 2, 0, 1 + 16383 * 3],
-    ["RGB, interlaced", 16383, 16383, 8, 2, 1, 1 + 2048 * 3],
+    ["1-bit", 16383, 16383, 1, 0, 0, firstRows(1 + 2048)],
+    // Narrow, because the seven rows between two of the first pass are written with them: 16 MiB.
+    ["1-bit, interlaced", 8, Math.floor(16383 ** 2 / 8), 1, 0, 1, firstRows(1 + 1)],
+    ["RGBA", 16383, 16383, 8, 6, 0, firstRows(1 + 16383 * 4)],
+    ["RGB", 16383, 16383, 8, 2, 0, firstRows(1 + 16383 * 3)],
+    ["RGB, interlaced", 16383, 16383, 8, 2, 1, firstRows(1 + 2048 * 3)],
     // A row of 512 MiB, and only its filter type.
     ["one very wide row", 1 << 26, 1, 16, 6, 0, 1],
   ])("memory is written to as the rows come, not when the header does: %s", async (_, ...args) => {

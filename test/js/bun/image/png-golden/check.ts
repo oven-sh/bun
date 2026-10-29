@@ -4,6 +4,11 @@ import { isASAN, isDebug } from "harness";
 /** These builds run JavaScript and zlib many times slower, so they get a part of what the others get. */
 export const slow = isDebug || isASAN;
 
+/** `AHEAD_LEN` in src/png/decoder.rs: so many bytes of lines are inflated at a time. */
+export const aheadLength = 128 * 1024;
+/** How many lines of so many bytes that is. */
+export const linesAtATime = (line: number) => Math.floor(aheadLength / line);
+
 const IDAT = 0x49444154;
 const ICCP = 0x69434350;
 

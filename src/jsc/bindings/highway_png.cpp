@@ -126,7 +126,7 @@ static HWY_INLINE void UnfilterSub(uint8_t* HWY_RESTRICT row, size_t len)
     SubPixels<BPP>(row, i, len);
 }
 
-// The same for every size of pixel, so there is one of it.
+// Shared by all sizes of pixel. What is not inlined has to be in scripts/verify-baseline-static/allowlist-x64*.txt.
 static HWY_NOINLINE void UnfilterUp(uint8_t* HWY_RESTRICT row, const uint8_t* HWY_RESTRICT above, size_t len)
 {
     const hn::ScalableTag<uint8_t> d;
@@ -190,22 +190,22 @@ static HWY_INLINE void PaethPixels(uint8_t* HWY_RESTRICT row, const uint8_t* HWY
             a = row[i];
             c = b;
         }
-        return;
+    } else {
+        const typename Pixel<BPP>::Wide d;
+        const auto three_c_minus_b = [&](auto b, auto c) HWY_ATTR { return hn::Sub(hn::Add(c, hn::Add(c, c)), b); };
+        auto a = hn::PromoteTo(d, Pixel<BPP>::LoadBefore(row, from));
+        auto c = hn::PromoteTo(d, Pixel<BPP>::LoadBefore(above, from));
+        auto b = Pixel<BPP>::LoadWide(above + from);
+        auto ahead = three_c_minus_b(b, c);
+        size_t i = from;
+        for (; i + 2 * BPP <= to; i += BPP) {
+            a = PaethPixel<BPP>(a, b, c, ahead, row + i);
+            c = b;
+            b = Pixel<BPP>::LoadWide(above + i + BPP);
+            ahead = three_c_minus_b(b, c);
+        }
+        PaethPixel<BPP>(a, b, c, ahead, row + i);
     }
-    const typename Pixel<BPP>::Wide d;
-    const auto three_c_minus_b = [&](auto b, auto c) HWY_ATTR { return hn::Sub(hn::Add(c, hn::Add(c, c)), b); };
-    auto a = hn::PromoteTo(d, Pixel<BPP>::LoadBefore(row, from));
-    auto c = hn::PromoteTo(d, Pixel<BPP>::LoadBefore(above, from));
-    auto b = Pixel<BPP>::LoadWide(above + from);
-    auto ahead = three_c_minus_b(b, c);
-    size_t i = from;
-    for (; i + 2 * BPP <= to; i += BPP) {
-        a = PaethPixel<BPP>(a, b, c, ahead, row + i);
-        c = b;
-        b = Pixel<BPP>::LoadWide(above + i + BPP);
-        ahead = three_c_minus_b(b, c);
-    }
-    PaethPixel<BPP>(a, b, c, ahead, row + i);
 }
 
 // Whether the block at `above + at` repeats the pixel in front of it.

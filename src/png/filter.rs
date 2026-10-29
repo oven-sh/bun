@@ -35,8 +35,9 @@ pub(crate) fn unfilter(
     Ok(())
 }
 
-/// The alpha does not count: see `make_opaque()`. `rgba` has the room.
-pub(crate) fn push_rgb_as_rgba(rgb: &[u8], rgba: &mut Vec<u8>) {
+/// The alpha does not count: see `make_opaque()`.
+pub(crate) fn push_rgb_as_rgba(rgb: &[u8], rgba: &mut Vec<u8>) -> Result<()> {
+    rgba.try_reserve(rgb.len() / 3 * 4)?;
     // Four pixels at a time.
     let (fours, rest) = rgb.as_chunks::<12>();
     for &[r0, g0, b0, r1, g1, b1, r2, g2, b2, r3, g3, b3] in fours {
@@ -45,6 +46,7 @@ pub(crate) fn push_rgb_as_rgba(rgb: &[u8], rgba: &mut Vec<u8>) {
     for &[r, g, b] in rest.as_chunks().0 {
         rgba.extend_from_slice(&[r, g, b, 0]);
     }
+    Ok(())
 }
 
 pub(crate) fn make_opaque(rgba: &mut [u8]) {

@@ -5,7 +5,7 @@ import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 import zlib from "node:zlib";
 import { differences } from "../../archive-golden/observe";
-import { decoded } from "./check";
+import { aheadLength, decoded, linesAtATime } from "./check";
 import { decode, decodes, decodeToHex, iccpOf, idat, pixels, rejects } from "./decode";
 import {
   adam7,
@@ -52,6 +52,9 @@ describe("the image", () => {
     );
   });
 
+  // The same rows in a stored block that is not the last, and nothing behind it.
+  const unfinished = Buffer.from([0x78, 0x01, 0x00, 6, 0, ~6 & 255, 255, 0, 1, 2, 0, 3, 4]);
+
   test("nothing after the last pixel is looked at", async () => {
     const whole = png(header, chunk("IDAT", stream));
     expect((await decode(whole)).pixels).toEqual(expected);
@@ -63,8 +66,15 @@ describe("the image", () => {
     // Not the rest of the stream either: more rows, or no end.
     const longer = zlib.deflateSync(Buffer.from([0, 1, 2, 0, 3, 4, 9, 9, 9, 9]));
     expect(await pixels(header, chunk("IDAT", longer), iend)).toEqual(expected);
-    const stored = Buffer.from([0x78, 0x01, 0x00, 6, 0, ~6 & 255, 255, 0, 1, 2, 0, 3, 4]);
-    expect(await pixels(header, chunk("IDAT", stored), iend)).toEqual(expected);
+    expect(await pixels(header, chunk("IDAT", unfinished), iend)).toEqual(expected);
+  });
+
+  // As with libspng, and as in libpng.
+  test("but zlib goes on by itself to the next block, if it has been given that much of the stream", async () => {
+    // There is no such block as this.
+    const badBlock = Buffer.from([0xff]);
+    await rejects(header, chunk("IDAT", Buffer.concat([unfinished, badBlock])), iend);
+    expect(await pixels(header, chunk("IDAT", unfinished), chunk("IDAT", badBlock), iend)).toEqual(expected);
   });
 
   // libspng read the chunks after IDAT when asked for the profile, and gave none if they were bad or missing.
@@ -131,31 +141,38 @@ describe("the image", () => {
     expect(await code(1, 0, 1, GRAY)).toBe("ERR_IMAGE_DECODE_FAILED");
   });
 
-  test("pixels that no machine has room for are out of memory, and not the end of the process", async () => {
-    const file = png(ihdr(2 ** 30 - 1, 2 ** 19, 1, GRAY), idat([0]), iend);
-    await using child = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const image = new Bun.Image(Buffer.from(process.env.FILE, "base64"), { maxPixels: 1e15 });
+  // 8-bit RGBA makes room for itself.
+  test.concurrent.each([
+    ["gray", GRAY, 1],
+    ["RGBA", RGBA, 8],
+  ])(
+    "pixels that no machine has room for are out of memory, and not the end of the process: %s",
+    async (_, ...format) => {
+      const file = png(ihdr(2 ** 30 - 1, 2 ** 19, format[1], format[0]), idat([0]), iend);
+      await using child = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const image = new Bun.Image(Buffer.from(process.env.FILE, "base64"), { maxPixels: 1e15 });
         console.log(await image.png().bytes().then(() => "decoded", error => error.code));`,
-      ],
-      env: {
-        ...bunEnv,
-        FILE: file.toString("base64"),
-        // Or it ends the process.
-        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
-      },
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
-    // It warns of the allocation.
-    expect({ stdout, exitCode, stderr: exitCode ? stderr : "" }).toEqual({
-      stdout: "ERR_OUT_OF_MEMORY\n",
-      exitCode: 0,
-      stderr: "",
-    });
-  });
+        ],
+        env: {
+          ...bunEnv,
+          FILE: file.toString("base64"),
+          // Or it ends the process.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "allocator_may_return_null=1"].filter(Boolean).join(":"),
+        },
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([child.stdout.text(), child.stderr.text(), child.exited]);
+      // It warns of the allocation.
+      expect({ stdout, exitCode, stderr: exitCode ? stderr : "" }).toEqual({
+        stdout: "ERR_OUT_OF_MEMORY\n",
+        exitCode: 0,
+        stderr: "",
+      });
+    },
+  );
 
   // What follows IHDR is enough for any of them.
   const rest = [chunk("PLTE", [1, 2, 3, 4, 5, 6]), chunk("IDAT", zlib.deflateSync(Buffer.alloc(1 + 8))), iend];
@@ -232,42 +249,74 @@ describe("the image", () => {
     expect(wrong).toEqual([]);
   });
 
-  // Lines of less than 4096 bytes are inflated 64 KiB at a time, and no further than the last of them. Longer ones
-  // are inflated each by itself.
-  test("short lines, long lines, and both in one image", async () => {
-    // Each row is one value all the way, which leaves little for JavaScript to do.
-    const value = (y: number) => (y * 37 + 11) & 255;
-    const check = async (colorType: number, width: number, height: number, interlaced = false) => {
-      const channels = colorType === GRAY ? 1 : colorType === RGB ? 3 : 4;
-      const lines: Buffer[] = [];
-      for (const [x0, y0, dx, dy] of interlaced ? adam7 : [[0, 0, 1, 1]]) {
-        const length = Math.ceil((width - x0) / dx) * channels;
-        // None and Up take turns.
-        for (let y = y0, up = 0; y < height && length > 0; y += dy, up ^= 2)
-          lines.push(Buffer.from([up]), Buffer.alloc(length, up ? value(y) - value(y - dy) : value(y)));
-      }
-      // What follows the last line would be a filter that does not exist.
-      const stream = zlib.deflateSync(Buffer.concat([...lines, Buffer.alloc(9, 9)]), { level: height & 1 });
-      const file = png(ihdr(width, height, 8, colorType, interlaced ? 1 : 0), chunk("IDAT", stream), iend);
-      const expected = Array.from({ length: height }, (_, y) => {
-        const pixel = [value(y), value(y), value(y), colorType === RGBA ? value(y) : 255];
-        return Buffer.concat([Buffer.alloc(1), Buffer.alloc(width * 4, Buffer.from(pixel))]);
-      });
-      const same = Buffer.concat(expected).equals((await decoded(file)).lines);
-      return same ? [] : [`color type ${colorType}, ${width} by ${height}${interlaced ? ", interlaced" : ""}`];
+  test("as much is inflated at a time as the tests take it to be", async () => {
+    const source = await Bun.file(join(import.meta.dir, "../../../../../src/png/decoder.rs")).text();
+    expect(source).toContain(`const AHEAD_LEN: usize = ${aheadLength / 1024} * 1024;`);
+    expect(source).toContain("pass.row_bytes < AHEAD_LEN / 2");
+  });
+
+  // 8-bit RGBA, not interlaced, is inflated in whole lines to the end of the image. The rest, to a buffer if two fit.
+  test("few lines, many lines, short ones, long ones, and both in one image", async () => {
+    // A row is one value all the way. The values repeat after a prime number of rows, where no later batch begins.
+    const period = 251;
+    const value = (y: number) => ((y % period) * 37 + 11) & 255;
+    const rows = (count: number, row: (i: number) => Buffer[]) => {
+      const some = Buffer.concat(Array.from({ length: Math.min(count, period) }, (_, i) => row(i)).flat());
+      return Buffer.alloc((some.length / Math.min(count, period)) * count, some);
     };
+    const check = async (format: readonly [number, number], width: number, height: number, interlaced = false) => {
+      const [colorType, depth] = format;
+      const bpp = ((colorType === GRAY ? 1 : colorType === RGB ? 3 : 4) * depth) / 8;
+      const lines = (interlaced ? adam7 : [[0, 0, 1, 1]])
+        .filter(([x0, y0]) => x0 < width && y0 < height)
+        .map(([x0, y0, dx, dy]) =>
+          // All but the first of a period are Up, so each takes the row before it to be right, wherever that came from.
+          rows(Math.ceil((height - y0) / dy), i => [
+            Buffer.from([i ? 2 : 0]),
+            Buffer.alloc(Math.ceil((width - x0) / dx) * bpp, value(y0 + i * dy) - (i ? value(y0 + (i - 1) * dy) : 0)),
+          ]),
+        );
+      // Stored if the height is even, and in seven chunks.
+      const stream = zlib.deflateSync(Buffer.concat(lines), { level: height & 1 });
+      const part = Math.ceil(stream.length / 7);
+      const idats = Array.from({ length: 7 }, (_, i) => chunk("IDAT", stream.subarray(i * part, (i + 1) * part)));
+      const file = png(ihdr(width, height, depth, colorType, interlaced ? 1 : 0), ...idats, iend);
+      const expected = rows(height, y => [
+        Buffer.alloc(1),
+        Buffer.alloc(width * 4, Buffer.from([value(y), value(y), value(y), colorType === RGBA ? value(y) : 255])),
+      ]);
+      const fault = await decoded(file).then(
+        ({ lines }) => (expected.equals(lines) ? "" : "other pixels"),
+        error => error.code ?? String(error),
+      );
+      return fault ? [`${format}, ${width} by ${height}${interlaced ? ", interlaced" : ""}: ${fault}`] : [];
+    };
+    const [gray, rgb, rgba, rgba16] = [
+      [GRAY, 8],
+      [RGB, 8],
+      [RGBA, 8],
+      [RGBA, 16],
+    ] as const;
+    /** As many lines of so many bytes as are inflated at a time, and some more or less. */
+    const heights = (line: number, ...more: number[]) => more.map(more => linesAtATime(line) + more);
     const wrong = await Promise.all([
-      // 64 KiB of lines, and a line more or less.
-      ...[1023, 1024, 1025, 2049].map(height => check(GRAY, 63, height)),
-      ...[163, 164, 165].map(height => check(RGBA, 100, height)),
-      check(RGB, 100, 240),
-      // Lines of 4095 to 4097 bytes.
-      ...[4094, 4095, 4096].map(width => check(GRAY, width, 10)),
-      ...[1023, 1024].map(width => check(RGBA, width, 10)),
-      ...[1364, 1365, 1366].map(width => check(RGB, width, 10)),
-      // Of the seven passes, the last, the last three or the last five have the long ones.
-      ...[4100, 8190, 8191, 16400].map(width => check(GRAY, width, 9, true)),
-      check(RGB, 2731, 9, true),
+      ...heights(64, -1, 0, 1, aheadLength / 64 + 1).map(height => check(gray, 63, height)),
+      ...heights(301, 0, 1).map(height => check(rgb, 100, height)),
+      ...heights(401, -1, 0, 1, 2).map(height => check(rgba, 100, height)),
+      ...heights(5, -1, 0, 1).map(height => check(rgba, 1, height)),
+      // Two lines of RGBA at a time, one because two are too much, one that alone is too much.
+      ...[aheadLength / 8 - 1, aheadLength / 8, aheadLength / 4].flatMap(width =>
+        [1, 2, 3, 4].map(height => check(rgba, width, height)),
+      ),
+      // The longest line of which two fit in the buffer, and the shortest of which they do not.
+      ...[aheadLength / 2 - 1, aheadLength / 2].flatMap(width => [4, 5].map(height => check(gray, width, height))),
+      ...[Math.floor(aheadLength / 6), Math.ceil(aheadLength / 6)].map(width => check(rgb, width, 5)),
+      // They do in all seven passes, or in all but the last, the last three or the last five.
+      ...[1 / 32, 1 / 16, 1 / 8, 1 / 4].flatMap(part =>
+        [5, 6, 9].map(height => check(rgba16, aheadLength * part, height, true)),
+      ),
+      check(rgb, Math.ceil(aheadLength / 6), 9, true),
+      check(rgba, aheadLength / 8, 9, true),
     ]);
     expect(wrong.flat()).toEqual([]);
   });
@@ -419,7 +468,7 @@ describe("the image", () => {
   // of a block or the last.
   const block = 16;
   const busy = 4 * block;
-  test("the blocks are as long as the next two tests take them to be", async () => {
+  test("the blocks are as long as the tests below take them to be", async () => {
     const source = await Bun.file(join(import.meta.dir, "../../../../../src/jsc/bindings/highway_png.cpp")).text();
     expect(source).toContain(`constexpr size_t kBlock = ${block};`);
     expect(source).toContain("constexpr size_t kBusy = 4 * kBlock;");
@@ -466,6 +515,34 @@ describe("the image", () => {
       }),
     );
     expect(wrong.flat()).toEqual([]);
+  });
+
+  test("Paeth looks for one pixel over and over in the row above, and not in the row itself", async () => {
+    const random = randomBytes(4);
+    const length = busy + 3 * block;
+    await expectToDecode(
+      pixelFormats
+        // The pixels that a block holds whole. Not RGB, which gets an alpha of 0 while it is filtered and of 255 after.
+        .filter(format => block % ((format[1] * format[2]) / 8) === 0)
+        .map(format => {
+          const bpp = (format[1] * format[2]) / 8;
+          const unfiltered = new Uint8Array(length);
+          let at = 0;
+          return filteredImage(format, length / bpp, [0, 4], predicted => {
+            const [row, i] = [Math.floor(at / length), at++ % length];
+            const start = i - (i % block);
+            let filtered = random();
+            // The row above is noise, but for zeros from two pixels in front of the first look to the end of its block.
+            if (row === 0 && i >= busy - 2 * bpp && i < busy + block) filtered = 0;
+            // Under the first of them is a zero too, so the pixel in front of the look is the same filtered or not.
+            if (row === 1 && i >= busy - 2 * bpp && i < busy - bpp) filtered = -predicted;
+            // That block and the next repeat the pixel in front of them, as long as they are filtered and it is not.
+            if (row === 1 && (start === busy || start === busy + block)) filtered = unfiltered[start - bpp + (i % bpp)];
+            unfiltered[i] = filtered + predicted;
+            return filtered;
+          });
+        }),
+    );
   });
 
   test("Paeth under a row that is the same pixel over and over in places", async () => {

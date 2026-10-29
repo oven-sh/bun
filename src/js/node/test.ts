@@ -412,19 +412,6 @@ async function runFiles(opts: ReturnType<typeof validateRunOptions>, reporter: T
   reporter.endStream();
 }
 
-// Node's Test#abortHandler: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1058-L1062
-function abortFailure(signal: AbortSignal) {
-  let error: any = signal.reason || $makeAbortError("The test was aborted");
-  try {
-    error.failureType = "testAborted";
-  } catch {
-    // Node throws here, for a primitive and for a frozen object. The reason becomes the cause of an AbortError.
-    error = $makeAbortError("The test was aborted", { cause: error });
-    error.failureType = "testAborted";
-  }
-  return error;
-}
-
 // The verdict of a file that has none from its child: the signal cancelled the file, or the child did not start.
 function reportFailedFile(
   fileNode: object,
@@ -439,7 +426,7 @@ function reportFailedFile(
     ...fileNode,
     type: undefined,
     testNumber: 1,
-    details: { __proto__: null, duration_ms: durationMs, type: "test", passed: false, error },
+    details: { __proto__: null, duration_ms: durationMs, type: "test", error, passed: false },
   });
   const details = { __proto__: null, duration_ms: durationMs, type: "test", error };
   reporter.fail({ __proto__: null, ...fileNode, type: undefined, testNumber: 1, details });
@@ -1490,6 +1477,19 @@ function makeTestFailure(message: string, failureType?: string) {
   const error = new Error(message);
   (error as { code?: string }).code = "ERR_TEST_FAILURE";
   if (failureType !== undefined) (error as { failureType?: string }).failureType = failureType;
+  return error;
+}
+
+// Node's Test#abortHandler: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/test.js#L1058-L1062
+function abortFailure(signal: AbortSignal) {
+  let error: any = signal.reason || $makeAbortError("The test was aborted");
+  try {
+    error.failureType = "testAborted";
+  } catch {
+    // Node throws here, for a primitive and for a frozen object. The reason becomes the cause of an AbortError.
+    error = $makeAbortError("The test was aborted", { cause: error });
+    error.failureType = "testAborted";
+  }
   return error;
 }
 

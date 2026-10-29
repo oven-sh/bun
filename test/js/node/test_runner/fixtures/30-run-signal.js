@@ -22,6 +22,15 @@ const files = {
     require("node:fs").writeFileSync(process.env.STARTED, "started");
     require("node:test").test("late", () => {});
   `,
+  "never-sync.js": `
+    require("node:test").test("never ends", { timeout: 60_000 }, () => {
+      const end = Date.now() + 60_000;
+      while (Date.now() < end);
+    });
+  `,
+  "never-async.js": `
+    require("node:test").test("never ends", { timeout: 60_000 }, () => new Promise(resolve => setTimeout(resolve, 60_000)));
+  `,
   // SIGTERM ends this child: its "exit" listener does not run.
   "dies.js": `
     const { writeFileSync } = require("node:fs");
@@ -128,6 +137,27 @@ function outcomeOf(stream, reason) {
     stream.resume();
   });
 }
+
+// The case of Node.js, test/parallel/test-runner-run.mjs: "should accept a signal".
+test("fails each of two files that never end when a timeout signal aborts", { timeout }, async () => {
+  const signal = AbortSignal.timeout(50);
+  const stream = run({ files: ["never-sync.js", "never-async.js"], cwd: dir, env, signal });
+  const errors = [];
+  let passed = 0;
+  stream.on("test:fail", data => errors.push(data.details.error));
+  stream.on("test:pass", () => passed++);
+
+  assert.deepStrictEqual(
+    { ...(await outcomeOf(stream)), passed, errorsAreTheReason: errors.map(error => error === signal.reason) },
+    {
+      success: false,
+      counts: { tests: 2, passed: 0, failed: 0, cancelled: 2 },
+      failed: ["never-sync.js", "never-async.js"].map(name => ({ name, failureType: "testAborted", isReason: false })),
+      passed: 0,
+      errorsAreTheReason: [true, true],
+    },
+  );
+});
 
 test("cancels a file whose child handles SIGTERM and exits with code 0", { skip: !isPosix, timeout }, async () => {
   const controller = new AbortController();

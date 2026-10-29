@@ -537,7 +537,7 @@ describe("node:test run() signal", () => {
     // The todo test is the one difference from Node.js. Three tests need POSIX signals.
     const summary = stderr.split("\n").flatMap(line => line.match(/^ *(\d+ (?:pass|skip|todo|fail))$/)?.[1] ?? []);
     expect({ summary, stderr, exitCode }).toMatchObject({
-      summary: isWindows ? ["7 pass", "3 skip", "1 todo", "0 fail"] : ["10 pass", "1 todo", "0 fail"],
+      summary: isWindows ? ["8 pass", "3 skip", "1 todo", "0 fail"] : ["11 pass", "1 todo", "0 fail"],
       exitCode: 0,
     });
   }, 30_000);
@@ -547,8 +547,8 @@ describe("node:test run() signal", () => {
     async () => {
       using dir = tempDir("node-test-run-signal-node", {});
       await using proc = Bun.spawn({
-        cmd: [node!, "--test-reporter=tap", fixture],
-        env: { ...bunEnv, RUN_SIGNAL_DIR: String(dir) },
+        cmd: [node!, "--v8-pool-size=1", "--test-reporter=tap", fixture],
+        env: { ...bunEnv, UV_THREADPOOL_SIZE: "2", RUN_SIGNAL_DIR: String(dir) },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -624,6 +624,7 @@ describe("node:test run() signal", () => {
       kills: 1,
     };
     const destroyed = (endedAtThrow: boolean) => ({ endedAtThrow, destroyedWith: "the listener throws", kills: 1 });
+    const destroyedAtOnce = { ...destroyed(true), afterTheEnd: { readsTheOtherPipe: true, published: [] } };
     const destroyedAtEndOfStdout = {
       ...destroyed(false),
       endedAtEndOfStdout: true,
@@ -646,6 +647,11 @@ describe("node:test run() signal", () => {
         publishedAfterTheEnd: [],
         outcome: cancelled("a.js", 2),
         kills: 1,
+        detailsKeys: {
+          "test:pass before the abort": ["duration_ms", "type"],
+          "test:complete a.js": ["duration_ms", "type", "error", "passed"],
+          "test:fail a.js": ["duration_ms", "type", "error"],
+        },
         spawnFollowsTheSignal: false,
         decodedAfterAbort: 0,
         readsThePipes: true,
@@ -670,8 +676,11 @@ describe("node:test run() signal", () => {
         outcome: passed,
         kills: 1,
       },
-      "a test:stdout listener throws, with a signal": destroyed(true),
-      "a test:stdout listener throws, without a signal": destroyed(true),
+      // Node.js fails the file with the error of a listener, as an uncaught exception, and goes on:
+      // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/test_runner/harness.js#L164-L165
+      // Bun destroys the stream with that error, on main too. These rows pin when, and what comes after.
+      "a test:stdout listener throws, with a signal": destroyedAtOnce,
+      "a test:stdout listener throws, without a signal": destroyedAtOnce,
       // The runner publishes the rest of stdout first, as on main.
       "a test:stderr listener throws, with a signal": destroyed(false),
       "a test:stderr listener throws, without a signal": destroyed(false),
@@ -701,6 +710,7 @@ describe("node:test run() signal", () => {
         killsOfTheSecondChild: 1,
         abortListeners: { whileTheSecondFileRuns: 1, afterTheRun: 0 },
       },
+      // Node.js publishes the first file and a plan of 1. It reports the other two to listeners after the summary.
       "the signal is aborted before run(), with three files": {
         outcome: {
           success: false,

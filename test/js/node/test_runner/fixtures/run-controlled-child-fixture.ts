@@ -116,6 +116,7 @@ function observe(stream: Stream, reason?: unknown) {
   const stderr: string[] = [];
   const errors: any[] = [];
   const failed: { name: string; failureType: unknown; isReason: boolean }[] = [];
+  const detailsKeys: Record<string, string[]> = {};
   let summary: { success: boolean; counts: Record<string, number> } | undefined;
   let plan: number | undefined;
   let destroyedWith: string | undefined;
@@ -124,6 +125,7 @@ function observe(stream: Stream, reason?: unknown) {
   const emit = stream.emit;
   stream.emit = function (this: Stream, type: string, data: any) {
     if (type.startsWith("test:")) types.push(type);
+    if (data?.details) detailsKeys[`${type} ${data.name}`] = Object.keys(data.details);
     if (data?.details && Object.getPrototypeOf(data.details) !== null)
       detailsWithPrototype.push(`${type} ${data.name}`);
     if (type === "test:stderr") stderr.push(data.message);
@@ -149,6 +151,8 @@ function observe(stream: Stream, reason?: unknown) {
     settled: () => closed.then(tick),
     stderr,
     errors,
+    /** The keys of each `details` object, in their order. */
+    detailsKeys,
     plan: () => plan,
     destroyedWith: () => destroyedWith,
     /** From here on, `published()` lists the types of the events. */
@@ -199,6 +203,7 @@ await scenario("the abort comes while the child runs", async () => {
     publishedAfterAbort,
     publishedAfterTheEnd: watch.published().slice(publishedAfterAbort.length),
     outcome: watch.outcome(),
+    detailsKeys: watch.detailsKeys,
     kills: child.kills,
     spawnFollowsTheSignal,
     decodedAfterAbort: decodes - decodesBefore,
@@ -280,9 +285,17 @@ for (const source of ["stdout", "stderr"] as const) {
       child[source].write("a line\n");
 
       const endedAtThrow = await watch.endedNow();
+      // The file ended for a test:stdout listener. The runner still reads stderr, and publishes nothing of it.
+      const afterTheEnd = source === "stdout" ? { readsTheOtherPipe: false, published: [] as string[] } : undefined;
+      if (afterTheEnd) {
+        watch.mark();
+        child.stderr.write("after the throw\n");
+        afterTheEnd.readsTheOtherPipe = await child.stderr.isRead();
+        afterTheEnd.published = watch.published();
+      }
       child.end(0);
       await watch.settled();
-      return { endedAtThrow, destroyedWith: watch.destroyedWith(), kills: child.kills };
+      return { endedAtThrow, destroyedWith: watch.destroyedWith(), kills: child.kills, afterTheEnd };
     });
   }
 }

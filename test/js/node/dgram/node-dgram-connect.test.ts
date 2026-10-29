@@ -162,6 +162,7 @@ describe("dgram connect() reads the address as the UDP handle does", () => {
     options: Partial<dgram.SocketOptions>,
     address: string,
     code: string,
+    skip?: boolean,
   ][] = [
     ["a link-local address whose zone names no interface", "udp6", {}, "fe80::1%nosuch0", "EINVAL"],
     [
@@ -170,17 +171,18 @@ describe("dgram connect() reads the address as the UDP handle does", () => {
       {},
       `fe80::1%${loopbackInterface}`,
       "ENETUNREACH",
+      loopbackInterface === undefined,
     ],
     // 2 ** 32 + 1 names no interface. It is not the index 1, which the loopback interface has.
     ["a link-local address whose zone is a number past 32 bits", "udp6", {}, "fe80::1%4294967297", "EINVAL"],
     ["an IPv4-mapped address from an IPv6-only socket", "udp6", { ipv6Only: true }, "::ffff:127.0.0.1", "ENETUNREACH"],
     ["the broadcast address without SO_BROADCAST", "udp4", {}, "255.255.255.255", "EACCES"],
   ];
-  for (const [name, type, options, address, code] of refusedByLinux) {
+  for (const [name, type, options, address, code, skip = false] of refusedByLinux) {
     test(
       `${type}: ${name} is connect ${code}`,
       {
-        skip: process.platform !== "linux" || (type === "udp6" && !hasIPv6Loopback),
+        skip: skip || process.platform !== "linux" || (type === "udp6" && !hasIPv6Loopback),
       },
       async () => {
         const socket = await bound(type, options);

@@ -3420,8 +3420,6 @@ pub(crate) struct Resolver {
     pub(crate) abort_handle: bun_jsc::AbortHandle,
 }
 
-bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
-
 bun_jsc::impl_abort_handle_owner!(Resolver, abort_handle, |this, _cause| {
     // SAFETY: trait contract — `this` is live (armed ⇒ `destroy_channel` has
     // not run); it may free itself inside, and is not touched after.

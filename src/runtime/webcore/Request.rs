@@ -1131,7 +1131,7 @@ impl Request {
 
                 if let Some(response) = value.as_direct::<Response>() {
                     // SAFETY: `as_direct` returned a live `*mut Response` owned by the JS wrapper.
-                    let response = unsafe { &mut *response };
+                    let response = unsafe { &*response };
                     if !fields.contains(Fields::Method) {
                         req.method = response.get_method();
                         fields.insert(Fields::Method);

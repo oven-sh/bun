@@ -356,6 +356,7 @@ pub mod defines {
         }
     }
 
+    /// Threads share it only through the read-only `Box<Define>`, and the `StoreRef`s in `value` point into immutable, process-lifetime AST stores.
     #[derive(Clone)]
     pub struct DefineData {
         pub value: ExprData,
@@ -368,14 +369,6 @@ pub mod defines {
         pub original_name: Option<Box<[u8]>>,
         pub flags: Flags,
     }
-
-    // SAFETY: `ExprData` contains `StoreRef` raw pointers into immutable,
-    // process-lifetime AST stores. `DefineData` is only shared across threads
-    // via the read-only `Box<Define>` after init. Never written through.
-    unsafe impl Send for DefineData {}
-    // SAFETY: see `Send` impl above — the `StoreRef` targets are immutable and
-    // process-lifetime, and `DefineData` is read-only after init.
-    unsafe impl Sync for DefineData {}
 
     impl Default for DefineData {
         fn default() -> Self {

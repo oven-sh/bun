@@ -23,7 +23,7 @@
 //! - A handle keeps the process alive while it is started and ref'd ([`RefState`]).
 
 use core::cell::Cell;
-use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
+use core::ffi::{CStr, c_int, c_uint, c_void};
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
 
@@ -43,8 +43,6 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 bun_output::declare_scope!(uv, hidden);
 
 unsafe extern "C" {
-    /// Crashes the same way the stubs do. `name` must be static. Never returns.
-    fn CrashHandler__unsupportedUVFunction(name: *const c_char);
     /// Returns null while the GC is sweeping. `HandleScopeImpl__close` accepts null.
     safe fn HandleScopeImpl__open(global: &JSGlobalObject) -> *mut c_void;
     fn HandleScopeImpl__close(global: &JSGlobalObject, scope: *mut c_void);
@@ -52,9 +50,7 @@ unsafe extern "C" {
 
 #[cold]
 fn unsupported(function: &'static CStr) -> ! {
-    // SAFETY: `function` is a static NUL-terminated string.
-    unsafe { CrashHandler__unsupportedUVFunction(function.as_ptr()) };
-    unreachable!("CrashHandler__unsupportedUVFunction returned");
+    bun_crash_handler::unsupported_uv_function(function.to_bytes())
 }
 
 /// Holds a handle scope open while an addon's callback runs on the JS thread. Node's

@@ -146,7 +146,7 @@ mod lib_c {
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
+            let dns_lookup = DNSLookup::init(this, global_this, context);
             // SAFETY: inflight points into resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
             // SAFETY: dns_lookup just heap-allocated; owned by the inflight list.
@@ -160,7 +160,7 @@ mod lib_c {
         let request = GetAddrInfoRequest::init(
             cache,
             get_addr_info_request::Backend::CAres,
-            Some(this.as_ctx_ptr()),
+            this,
             global_this,
             context,
             PendingCacheField::PendingHostCacheNative,
@@ -247,7 +247,7 @@ pub(crate) mod lib_uv_backend {
         let cache =
             this.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheNative);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(this.as_ctx_ptr(), global_this, context);
+            let dns_lookup = DNSLookup::init(this, global_this, context);
             unsafe { (*inflight).append(dns_lookup) };
             return Ok(unsafe { (*dns_lookup).promise.value() });
         }
@@ -255,7 +255,7 @@ pub(crate) mod lib_uv_backend {
         let request = GetAddrInfoRequest::init(
             cache,
             get_addr_info_request::Backend::Libc(get_addr_info_request::LibcBackend::uv_uninit()),
-            Some(this.as_ctx_ptr()),
+            this,
             global_this,
             context,
             PendingCacheField::PendingHostCacheNative,
@@ -453,7 +453,7 @@ pub(crate) mod resolve_info_request {
 impl<T: CAresRecordType> ResolveInfoRequest<T> {
     fn init(
         cache: LookupCacheHit<Self>,
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         name: &[u8],
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
@@ -461,11 +461,10 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
-            resolver_for_caching: resolver,
+            resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: CAresLookup {
-                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
+                resolver: Some(resolver.ref_guard()),
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
                 promise: JSPromiseStrong::init(global_this),
@@ -483,8 +482,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         if let LookupCacheHit::New(new) = cache {
             // SAFETY: `new` is &mut into resolver's HiveArray buffer
             unsafe {
-                (*request).resolver_for_caching = resolver;
-                let pos = T::cache(&*resolver.unwrap()).index_of(new).unwrap();
+                let pos = T::cache(resolver).index_of(new).unwrap();
                 (*request).pending_slot = Some(pos as u8);
                 (*new).lookup = request;
             }
@@ -584,7 +582,7 @@ pub(crate) mod get_host_by_addr_info_request {
 impl GetHostByAddrInfoRequest {
     fn init(
         cache: LookupCacheHit<Self>,
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         name: &[u8],
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
@@ -592,11 +590,10 @@ impl GetHostByAddrInfoRequest {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
-            resolver_for_caching: resolver,
+            resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: CAresReverse {
-                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
+                resolver: Some(resolver.ref_guard()),
                 global_this: bun_ptr::BackRef::new(global_this),
                 context,
                 promise: JSPromiseStrong::init(global_this),
@@ -612,8 +609,7 @@ impl GetHostByAddrInfoRequest {
         if let LookupCacheHit::New(new) = cache {
             // SAFETY: `new` is &mut into resolver's HiveArray buffer; resolver/request are live.
             unsafe {
-                (*request).resolver_for_caching = resolver;
-                let pos = (*resolver.unwrap())
+                let pos = resolver
                     .pending_addr_cache_cares
                     .get()
                     .index_of(new)
@@ -837,7 +833,7 @@ pub(crate) mod get_name_info_request {
 impl GetNameInfoRequest {
     fn init(
         cache: LookupCacheHit<Self>,
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         name: Box<[u8]>,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
@@ -845,7 +841,7 @@ impl GetNameInfoRequest {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
-            resolver_for_caching: resolver,
+            resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: CAresNameInfo {
                 global_this: bun_ptr::BackRef::new(global_this),
@@ -863,8 +859,7 @@ impl GetNameInfoRequest {
         if let LookupCacheHit::New(new) = cache {
             // SAFETY: `new` points into the resolver's HiveArray buffer; resolver/request are live.
             unsafe {
-                (*request).resolver_for_caching = resolver;
-                let pos = (*resolver.unwrap())
+                let pos = resolver
                     .pending_nameinfo_cache_cares
                     .get()
                     .index_of(new)
@@ -1162,7 +1157,7 @@ impl GetAddrInfoRequest {
     pub(crate) fn init(
         cache: CacheHit,
         backend: get_addr_info_request::Backend,
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
         cache_field: PendingCacheField,
@@ -1172,11 +1167,10 @@ impl GetAddrInfoRequest {
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             backend,
-            resolver_for_caching: resolver,
+            resolver_for_caching: Some(resolver.as_ctx_ptr()),
             pending_slot: None,
             head: DNSLookup {
-                // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-                resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
+                resolver: Some(resolver.ref_guard()),
                 global_this: bun_ptr::BackRef::new(global_this),
                 promise: JSPromiseStrong::init(global_this),
                 poll_ref,
@@ -1191,8 +1185,7 @@ impl GetAddrInfoRequest {
         if let CacheHit::New(new) = cache {
             // SAFETY: `new` is &mut into resolver's HiveArray buffer; resolver/request are live.
             unsafe {
-                (*request).resolver_for_caching = resolver;
-                let pos = (*resolver.unwrap())
+                let pos = resolver
                     .pending_host_cache(cache_field)
                     .index_of(new)
                     .unwrap();
@@ -1445,7 +1438,7 @@ impl CAresReverse {
     }
 
     fn init(
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
         name: &[u8],
@@ -1453,8 +1446,7 @@ impl CAresReverse {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-            resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
+            resolver: Some(resolver.ref_guard()),
             global_this: bun_ptr::BackRef::new(global_this),
             context,
             promise: JSPromiseStrong::init(global_this),
@@ -1569,7 +1561,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
     }
 
     fn init(
-        resolver: Option<*mut Resolver>,
+        resolver: &Resolver,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
         name: &[u8],
@@ -1577,8 +1569,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         Self::new(Self {
-            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-            resolver: resolver.map(|r| unsafe { RefPtr::init_ref(r) }),
+            resolver: Some(resolver.ref_guard()),
             global_this: bun_ptr::BackRef::new(global_this),
             context,
             promise: JSPromiseStrong::init(global_this),
@@ -1713,7 +1704,7 @@ impl DNSLookup {
     }
 
     fn init(
-        resolver: *mut Resolver,
+        resolver: &Resolver,
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> *mut Self {
@@ -1723,8 +1714,7 @@ impl DNSLookup {
         poll_ref.ref_(js_event_loop_ctx());
 
         bun_core::heap::into_raw(Box::new(Self {
-            // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
-            resolver: Some(unsafe { RefPtr::init_ref(resolver) }),
+            resolver: Some(resolver.ref_guard()),
             global_this: bun_ptr::BackRef::new(global_this),
             poll_ref,
             promise: JSPromiseStrong::init(global_this),
@@ -4919,21 +4909,14 @@ impl Resolver {
         let key = get_host_by_addr_info_request::PendingCacheKey::init(ip);
         let cache = self.get_or_put_into_resolve_pending_cache::<GetHostByAddrInfoRequest>(&key);
         if let LookupCacheHit::Inflight(inflight) = cache {
-            let cares_reverse =
-                CAresReverse::init(Some(self.as_ctx_ptr()), global_this, context, ip);
+            let cares_reverse = CAresReverse::init(self, global_this, context, ip);
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(cares_reverse) };
             // SAFETY: `cares_reverse` was just heap-allocated; owned by the inflight list.
             return Ok(unsafe { (*cares_reverse).promise.value() });
         }
 
-        let request = GetHostByAddrInfoRequest::init(
-            cache,
-            Some(self.as_ctx_ptr()),
-            ip,
-            global_this,
-            context,
-        );
+        let request = GetHostByAddrInfoRequest::init(cache, self, ip, global_this, context);
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
@@ -5209,8 +5192,7 @@ impl Resolver {
         let cache = self.get_or_put_into_resolve_pending_cache::<ResolveInfoRequest<T>>(&key);
         if let LookupCacheHit::Inflight(inflight) = cache {
             // CAresLookup will have the name ownership
-            let cares_lookup =
-                CAresLookup::<T>::init(Some(self.as_ctx_ptr()), global_this, context, name);
+            let cares_lookup = CAresLookup::<T>::init(self, global_this, context, name);
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(cares_lookup) };
             // SAFETY: `cares_lookup` was just heap-allocated; owned by the inflight list.
@@ -5219,7 +5201,7 @@ impl Resolver {
 
         let request = ResolveInfoRequest::<T>::init(
             cache,
-            Some(self.as_ctx_ptr()),
+            self,
             name, // CAresLookup will have the ownership
             global_this,
             context,
@@ -5264,7 +5246,7 @@ impl Resolver {
         let cache =
             self.get_or_put_into_pending_cache(&key, PendingCacheField::PendingHostCacheCares);
         if let CacheHit::Inflight(inflight) = cache {
-            let dns_lookup = DNSLookup::init(self.as_ctx_ptr(), global_this, context);
+            let dns_lookup = DNSLookup::init(self, global_this, context);
             // SAFETY: `inflight` points into the resolver's pending-cache HiveArray slot.
             unsafe { (*inflight).append(dns_lookup) };
             // SAFETY: `dns_lookup` was just heap-allocated; owned by the inflight list.
@@ -5275,7 +5257,7 @@ impl Resolver {
         let request = GetAddrInfoRequest::init(
             cache,
             get_addr_info_request::Backend::CAres,
-            Some(self.as_ctx_ptr()),
+            self,
             global_this,
             context,
             PendingCacheField::PendingHostCacheCares,
@@ -5722,7 +5704,7 @@ impl Resolver {
 
         let request = GetNameInfoRequest::init(
             cache,
-            Some(resolver.as_ctx_ptr()),
+            resolver,
             cache_name, // transfer ownership here
             global_this,
             context,

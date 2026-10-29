@@ -80,7 +80,7 @@ unsafe impl Sync for ThreadPool {}
 
 impl ThreadPool {
     /// Inherent associated type so call sites that wrote
-    /// `ThreadPool::Worker::get(ctx)`
+    /// `ThreadPool::Worker::get(pool)`
     /// resolve without a separate module path.
     pub type Worker = Worker;
 
@@ -568,20 +568,10 @@ impl Worker {
         WORKER_LIVE_COUNT.fetch_sub(1, Ordering::SeqCst);
     }
 
-    // returns `&'static mut` (detached) — the `Worker` is
-    // heap-pinned (heap::alloc in `get_worker`) and outlives any `ctx`
-    // borrow. Tying it to `ctx`'s lifetime would
-    // forbid the `worker` ↔ `ctx` re-borrows in `ParseTask::run_*`.
-    pub(crate) fn get(ctx: &BundleV2<'_>) -> &'static mut Worker {
-        // SAFETY: `ctx` is a BACKREF; `graph.pool` is a `NonNull<ThreadPool>`
-        // pointing at the bundle-owned pool that outlives every worker. We only
-        // need a shared `&ThreadPool` — `get_worker` takes `&self` and serializes
-        // map mutation via the internal `bun_threading::Guarded`, so concurrent
-        // entry from multiple worker threads is sound.
-        let pool: &ThreadPool = ctx.graph.pool();
+    pub(crate) fn get(pool: &ThreadPool) -> &'static mut Worker {
         let worker = pool.get_worker(bun_threading::current_thread_id());
         if !worker.has_created {
-            worker.create(ctx);
+            worker.create();
         }
 
         worker.ast_memory_store.push();
@@ -599,7 +589,7 @@ impl Worker {
         self.ctx = bun_ptr::BackRef::from(NonNull::from(v2).cast::<BundleV2<'static>>());
     }
 
-    fn create(&mut self, ctx: &BundleV2<'_>) {
+    fn create(&mut self) {
         // `bun_perf::trace` takes a generated `PerfEvent` enum, and
         // the generator hasn't emitted `Bundler.Worker.create` yet (only
         // `_Stub`). Dropped to avoid mis-attributing the span.
@@ -625,13 +615,12 @@ impl Worker {
         *self.ast_memory_store = bun_ast::ASTMemoryAllocator::borrowing(arena_ref);
 
         let log: *mut bun_ast::Log = arena_ref.alloc(bun_ast::Log::init());
-        self.ctx = bun_ptr::BackRef::from(NonNull::from(ctx).cast::<BundleV2<'static>>());
         // Use a fresh Bump (no nested-arena type yet).
         self.temporary_arena = Some(bun_alloc::Arena::new());
         self.stmt_list = Some(StmtList::init());
         let data = self.data.insert(WorkerData {
             log,
-            transpiler: Self::initialize_transpiler(log, ctx.transpiler(), arena_ref),
+            transpiler: Self::initialize_transpiler(log, self.ctx.transpiler(), arena_ref),
             other_transpiler: None,
         });
         // Wire the self-referential `macro_context` now that `transpiler`
@@ -663,7 +652,7 @@ impl Worker {
         let data = self.data.as_mut().expect("Worker.data set in create()");
         if target == Target::Browser && data.transpiler.options.target != target {
             if data.other_transpiler.is_none() {
-                // `ctx` is a `BackRef` (set in `create()`); the `BundleV2`
+                // `ctx` is a `BackRef` (set in `init()`); the `BundleV2`
                 // outlives every worker — safe `Deref`.
                 let client: &Transpiler<'_> = self.ctx.client_transpiler_ref().unwrap();
                 // SAFETY: `self.arena` points at `self.heap` (set in `create()`),

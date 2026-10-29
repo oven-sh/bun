@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
 test("--rerun-each should run tests exactly N times", async () => {
@@ -285,4 +285,202 @@ test("--rerun-each re-evaluates a file whose path is not ASCII", async () => {
   expect(stdout.match(/Run #\d/g)).toEqual(["Run #1", "Run #2", "Run #3"]);
   expect(stdout + stderr).toMatch(/3 pass/);
   expect(exitCode).toBe(0);
+});
+
+// Preload-level beforeAll/afterAll are the setup and teardown of the whole run. A rerun of the first
+// file must not set up again, and a rerun of the last file must not run after the teardown.
+// --isolate keeps the pair around every run of every file.
+describe("--rerun-each and preload-level beforeAll/afterAll", () => {
+  const files = {
+    "preload.ts": `
+      import { beforeAll, afterAll } from "bun:test";
+      beforeAll(() => console.log("preload beforeAll"));
+      afterAll(() => console.log("preload afterAll"));
+    `,
+    "preload-async.ts": `
+      import { beforeAll, afterAll } from "bun:test";
+      beforeAll(() => console.log("preload beforeAll"));
+      afterAll(async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        console.log("preload afterAll");
+      });
+    `,
+    "a.test.ts": `
+      import { test } from "bun:test";
+      test("a", () => console.log("test a"));
+    `,
+    "b.test.ts": `
+      import { test } from "bun:test";
+      test("b", () => console.log("test b"));
+    `,
+    "throws.test.ts": `
+      import { test } from "bun:test";
+      test("c", () => console.log("test c"));
+      throw new Error("this file fails to load");
+    `,
+    "throws-on-second-run.test.ts": `
+      import { test } from "bun:test";
+      if (globalThis.loadedOnce) throw new Error("this file fails to load on its second run");
+      globalThis.loadedOnce = true;
+      test("d", () => console.log("test d"));
+    `,
+    "dep.ts": `export default 0;`,
+    // The factory never settles, so the file fails to load after its module is evaluated.
+    "mock-never-settles.test.ts": `
+      import { mock, test } from "bun:test";
+      import "./dep.ts";
+      mock.module("./dep.ts", () => new Promise(() => {}));
+      test("m", () => console.log("test m"));
+    `,
+    // The rejection is reported while the module waits.
+    "stray.test.ts": `
+      Promise.reject(new Error("stray rejection"));
+      await new Promise(resolve => setImmediate(resolve));
+      throw new Error("this file fails to load");
+    `,
+    // The rejection is reported during the first load only, and the file loads.
+    "stray-on-first-run.test.ts": `
+      import { test } from "bun:test";
+      if (!globalThis.strayedOnce) {
+        globalThis.strayedOnce = true;
+        Promise.reject(new Error("stray rejection"));
+      }
+      test("e", () => console.log("test e"));
+    `,
+  };
+
+  async function run(args: string[], extraFiles: Record<string, string> = {}) {
+    using dir = tempDir("test-rerun-each-preload-hooks", { ...files, ...extraFiles });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A --parallel worker's console.log arrives on the coordinator's stderr.
+    return { events: (stdout + stderr).match(/^(preload|test) .+$/gm), exitCode };
+  }
+
+  const preload = ["--preload", "./preload.ts"];
+  const before = "preload beforeAll";
+  const after = "preload afterAll";
+
+  test.concurrent.each([
+    {
+      name: "once around one file",
+      args: ["--rerun-each=3", "./a.test.ts"],
+      events: [before, "test a", "test a", "test a", after],
+      exitCode: 0,
+    },
+    {
+      // A file that fails to load runs none of its tests and is not run again, so its first run is also its last.
+      name: "once when the last file fails to load",
+      args: ["--rerun-each=2", "./a.test.ts", "./throws.test.ts"],
+      events: [before, "test a", "test a", after],
+      exitCode: 1,
+    },
+    {
+      name: "once when the last file fails to load on its second run",
+      args: ["--rerun-each=3", "./a.test.ts", "./throws-on-second-run.test.ts"],
+      events: [before, "test a", "test a", "test a", "test d", after],
+      exitCode: 1,
+    },
+    {
+      name: "to the end of an async afterAll when the last file fails to load",
+      preload: "./preload-async.ts",
+      args: ["--rerun-each=2", "./a.test.ts", "./throws.test.ts"],
+      events: [before, "test a", "test a", after],
+      exitCode: 1,
+    },
+    {
+      name: "to the end of an async afterAll when the last file fails to load on its second run",
+      preload: "./preload-async.ts",
+      args: ["--rerun-each=3", "./a.test.ts", "./throws-on-second-run.test.ts"],
+      events: [before, "test a", "test a", "test a", "test d", after],
+      exitCode: 1,
+    },
+    {
+      name: "once when a mock.module() factory of the last file never settles",
+      args: ["--rerun-each=2", "./a.test.ts", "./mock-never-settles.test.ts"],
+      events: [before, "test a", "test a", after],
+      exitCode: 1,
+    },
+    {
+      name: "once when the first file fails to load",
+      args: ["--rerun-each=2", "./throws.test.ts", "./a.test.ts"],
+      events: [before, "test a", "test a", after],
+      exitCode: 1,
+    },
+    {
+      name: "once when the first file fails to load after a stray rejection",
+      args: ["--rerun-each=2", "./stray.test.ts", "./a.test.ts"],
+      events: [before, "test a", "test a", after],
+      exitCode: 1,
+    },
+  ])("$name", async ({ preload: file = "./preload.ts", args, events, exitCode }) => {
+    expect(await run(["--preload", file, ...args])).toEqual({ events, exitCode });
+  });
+
+  test.concurrent("once around two files, and around every run with --isolate", async () => {
+    const [shared, isolated] = await Promise.all([
+      run([...preload, "--rerun-each=2", "./a.test.ts", "./b.test.ts"]),
+      run([...preload, "--rerun-each=2", "--isolate", "./a.test.ts", "./b.test.ts"]),
+    ]);
+    expect(shared).toEqual({ events: [before, "test a", "test a", "test b", "test b", after], exitCode: 0 });
+    expect(isolated).toEqual({
+      events: [before, "test a", after, before, "test a", after, before, "test b", after, before, "test b", after],
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent("once when the last file fails to load after a stray rejection", async () => {
+    const [twice, once] = await Promise.all([
+      run([...preload, "--rerun-each=2", "./a.test.ts", "./stray.test.ts"]),
+      run([...preload, "./a.test.ts", "./stray.test.ts"]),
+    ]);
+    expect(twice).toEqual({ events: [before, "test a", "test a", after], exitCode: 1 });
+    expect(once).toEqual({ events: [before, "test a", after], exitCode: 1 });
+  });
+
+  test.concurrent("once when a rejection is reported during the first load of the last file", async () => {
+    const { events, exitCode } = await run([
+      ...preload,
+      "--rerun-each=2",
+      "./a.test.ts",
+      "./stray-on-first-run.test.ts",
+    ]);
+    // Only the hooks: the rejection decides how many of the file's own tests run.
+    expect({ hooks: events?.filter(event => event.startsWith("preload")), last: events?.at(-1), exitCode }).toEqual({
+      hooks: [before, after],
+      last: after,
+      exitCode: 1,
+    });
+  });
+
+  // A worker does not know which file is its last, so the hooks wrap every file it runs.
+  test.concurrent("once around every file in a --parallel --no-isolate worker", async () => {
+    // The huge scale-up delay keeps both files on one worker, so the events arrive in order.
+    const { events, exitCode } = await run([
+      ...preload,
+      "--rerun-each=2",
+      "--parallel=2",
+      "--parallel-delay=1000000",
+      "--no-isolate",
+      "./throws.test.ts",
+      "./a.test.ts",
+    ]);
+    // The worker can get the files in either order, so compare what each "preload beforeAll" starts.
+    const perFile = events?.join(",").split(new RegExp(`,(?=${before})`));
+    expect(perFile?.sort()).toEqual([[before, after].join(","), [before, "test a", "test a", after].join(",")]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("once with rerunEach and preload in bunfig.toml", async () => {
+    const result = await run(["./a.test.ts", "./b.test.ts"], {
+      "bunfig.toml": `[test]\nrerunEach = 2\npreload = ["./preload.ts"]\n`,
+    });
+    expect(result).toEqual({ events: [before, "test a", "test a", "test b", "test b", after], exitCode: 0 });
+  });
 });

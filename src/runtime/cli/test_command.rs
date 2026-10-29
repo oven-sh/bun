@@ -3264,7 +3264,13 @@ impl TestCommand {
             let bun_test_root = &mut jest::Jest::runner().unwrap().bun_test_root;
             // Determine if this file should run tests concurrently based on glob pattern
             let should_run_concurrent = reporter.jest.should_file_run_concurrently(file_id);
-            bun_test_root.enter_file(file_id, reporter, should_run_concurrent, first_last);
+            // The preload-level hooks wrap the whole loop, not every run. --isolate keeps them around every run.
+            let isolate = vm.test_isolation_enabled;
+            let run_first_last = bun_test::FirstLast {
+                first: first_last.first && (isolate || repeat_index == 0),
+                last: first_last.last && (isolate || repeat_index + 1 == repeat_count),
+            };
+            bun_test_root.enter_file(file_id, reporter, should_run_concurrent, run_first_last);
             let bun_test_root_ptr: *mut bun_test::BunTestRoot = bun_test_root;
             let global = vm.global();
             // `--isolate` swaps the global after the last repeat.
@@ -3373,6 +3379,8 @@ impl TestCommand {
                 buntest.is_loading = false;
                 // Skips this file's tests, but preload hooks due with this file still run.
                 buntest.collection.root_scope.failed |= failed_to_load;
+                // A file that fails to load is not run again, so this run ends the loop and owes the afterAll.
+                buntest.first_last.last |= failed_to_load && first_last.last;
 
                 // Automatically execute bun_test tests
                 if buntest.result_queue.readable_length() == 0 {

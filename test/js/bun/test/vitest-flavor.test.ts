@@ -4678,6 +4678,8 @@ describe.concurrent("test.extend()", () => {
           [...before, ...a, "shared teardown", "first teardown"],
           ["b", "shared setup", ...after],
         ],
+        // With --rerun-each: before the first run of the first file and after the last run of the last.
+        [[...a, "shared teardown"], ["b"]],
       ],
       // The preload runs again for each file.
       [
@@ -4686,8 +4688,10 @@ describe.concurrent("test.extend()", () => {
           [...before, ...a, ...after, "first teardown"],
           [...before, "b", "shared setup", ...after, "first teardown"],
         ],
+        // With --rerun-each: again for each run.
+        undefined,
       ],
-    ])("%s", async (flag, [logOfA, logOfB]) => {
+    ])("%s", async (flag, [logOfA, logOfB], [secondRunOfA, firstRunOfB] = [logOfA, logOfB]) => {
       const hooks = `
         extended.beforeAll(({ first }) => console.log("beforeAll", first));
         extended.afterAll(({ shared, last }) => console.log("afterAll", shared, last));
@@ -4697,7 +4701,7 @@ describe.concurrent("test.extend()", () => {
       const [once, twice] = await Promise.all([run(flag), run(flag, "--rerun-each=2")]);
       expect({ log: once.log, exitCode: once.exitCode }).toEqual({ log: [...logOfA, ...logOfB], exitCode: 0 });
       expect({ log: twice.log, exitCode: twice.exitCode }).toEqual({
-        log: [...logOfA, ...logOfA, ...logOfB, ...logOfB],
+        log: [...logOfA, ...secondRunOfA, ...firstRunOfB, ...logOfB],
         exitCode: 0,
       });
     });

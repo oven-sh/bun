@@ -238,6 +238,7 @@ test("a process that exits before it answers leaves one line in the output chann
   const fromExtension = new SocketFramer(() => request.resolve());
   bun.on("data", (data: Buffer) => fromExtension.onData(bun as any, data));
   bun.on("error", request.reject);
+  bun.on("close", () => request.reject(new Error("the extension closed the socket before it sent a request")));
   await request.promise;
   bun.destroy();
 

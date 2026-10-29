@@ -188,6 +188,10 @@ impl Decoder<'_> {
         if !self.has_multiple_scans && matches!(self.read_markers()?, Reached::Sos) {
             return Err(Error::EoiExpected);
         }
+        // The caller takes the size from the header.
+        if emitter.rows_left != 0 {
+            return Err(Error::Internal);
+        }
         Ok(pixels.into_flattened())
     }
 

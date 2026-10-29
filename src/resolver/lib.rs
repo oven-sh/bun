@@ -117,10 +117,7 @@ pub mod fs {
                     args: core::fmt::Arguments<'_>,
                 ) -> core::result::Result<&'static [u8], bun_alloc::AllocError> {
                     // SAFETY: see `append_slice`.
-                    let s = unsafe { bun_alloc::BSSStringList::print($backing(), args)? };
-                    // SAFETY: storage owned by the process-lifetime `BSSStringList`
-                    // singleton (never freed); `Interned` is the canonical proof type.
-                    Ok(unsafe { bun_ptr::Interned::assume(s) }.as_bytes())
+                    unsafe { bun_alloc::BSSStringList::print($backing(), args) }
                 }
                 #[inline]
                 pub fn exists(&self, value: &[u8]) -> bool {

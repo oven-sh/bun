@@ -1,18 +1,23 @@
 use super::import_graph::ImportGraph;
+use super::runtime_reach::ReachWhileLoading;
 use super::{
-    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, mentions_worker_constructor,
-    preload_of,
+    Build, LoadedBuild, LoadedProject, Options, ProgramsOfOneLoad, library_code_of,
+    mentions_worker_constructor, preload_of,
 };
-use crate::builtins::BuiltinNames;
+use crate::builtins::{BuiltinNames, RuntimeUses};
 use crate::diagnostics::{Diagnostics, InternalError, LoadMessages, ProgramView};
+use crate::link::run_beside;
 use crate::load::fold_inputs::{
     ProgramFacts, create_application_fold_inputs, create_runtime_fold_inputs,
 };
 use crate::load::host::{LoadHost, LoadHostInput, create_disk};
+use crate::load::is_in_archive_of_bun;
 use crate::load::named_loads::resolve_loads_through_imported_loaders;
 use crate::load::runtime_host::RuntimeHost;
 use crate::load::runtime_modules::RuntimeModules;
-use crate::load::runtime_roots::{RuntimeRoots, collect_runtime_roots};
+use crate::load::runtime_roots::{
+    FurtherLibraryCode, RuntimeRoots, collect_runtime_roots, join_asks, join_root_paths,
+};
 use crate::load::sources::{
     FreezeInput, FrozenSources, check_unique_paths_across_projects, freeze_sources, parsed_source,
 };
@@ -31,13 +36,17 @@ use bun_sema::resolve::{CodeHost, CodeOptions};
 use bun_sema::session::Session;
 use bun_sema_driver::host::Disk;
 use bun_sema_driver::{
-    CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
-    find_configuration_of_each_entry_point, load_program_with_parsed_files, resolve_entry_point,
+    ChosenThreads, CompileRequest, EntryPoints, LoadFailure, LoadedProgram,
+    find_configuration_of_each_entry_point, fit_threads_to_sources, load_program_with_parsed_files,
+    resolve_entry_point,
 };
 use bun_threading::Guarded;
 use core::sync::atomic::Ordering;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::mem::take;
+use std::sync::Arc;
+#[cfg(any(test, feature = "test_support"))]
+use std::sync::OnceLock;
 use std::thread::Scope;
 use std::time::Instant;
 
@@ -95,6 +104,132 @@ struct ApplicationLoad<'l, 'scope, 'env, 'h, 's> {
     positions: &'l [usize],
 }
 
+/// The files that earlier loads have parsed.
+#[derive(Copy, Clone)]
+enum ParsedBefore<'s> {
+    Nothing,
+    ByThisBuild(&'s Run<'s>),
+    /// In a session that outlives those of the load.
+    ByEarlierLoads(&'s Run<'static>),
+}
+
+impl<'s> ParsedBefore<'s> {
+    fn load_program(
+        self,
+        session: &'s Session,
+        host: &dyn CodeHost,
+        request: &CompileRequest<'_, 's>,
+    ) -> Result<LoadedProgram<'s>, LoadFailure> {
+        match self {
+            ParsedBefore::Nothing => load_program_with_parsed_files(session, host, request, None),
+            ParsedBefore::ByThisBuild(parsed) => {
+                load_program_with_parsed_files(session, host, request, Some(parsed))
+            }
+            ParsedBefore::ByEarlierLoads(parsed) => {
+                load_program_with_parsed_files(session, host, request, Some(parsed))
+            }
+        }
+    }
+}
+
+/// A build loads once for each time that a program is compiled again, and once for each program that is loaded by itself. What a load
+/// reads out of the archive of Bun is parsed and bound for the first.
+pub(super) struct SharedByLoads {
+    parsed: Run<'static>,
+    atoms: Interner<'static>,
+    /// Behind the two, which borrow it.
+    session: Box<Session>,
+}
+
+thread_local! {
+    /// `Some`: `compile` runs on this thread. The loads of a build run on the thread that called it.
+    static SHARED_BY_LOADS: RefCell<Option<Option<Arc<SharedByLoads>>>> = const { RefCell::new(None) };
+}
+
+impl SharedByLoads {
+    fn new() -> SharedByLoads {
+        let session = Box::new(Session::new());
+        // SAFETY: the session stays where it is and outlives `parsed` and `atoms`, and both are handed out only for as long as `self` is borrowed.
+        let borrowed: &'static Session =
+            unsafe { &*std::ptr::from_ref::<Session>(session.as_ref()) };
+        let atoms = Interner::new_in(borrowed);
+        SharedByLoads {
+            parsed: Run::of_compile_builds(borrowed, atoms, is_in_archive_of_bun),
+            atoms,
+            session,
+        }
+    }
+
+    pub(super) fn begin_build() {
+        SHARED_BY_LOADS.set(Some(None));
+    }
+
+    pub(super) fn end_build() {
+        SHARED_BY_LOADS.set(None);
+    }
+
+    /// Whoever takes it decides whether a further load finds it: see `keep`.
+    pub(super) fn take() -> Option<Arc<SharedByLoads>> {
+        SHARED_BY_LOADS.with_borrow_mut(|of_build| of_build.as_mut()?.take())
+    }
+
+    pub(super) fn keep(shared: Arc<SharedByLoads>) {
+        SHARED_BY_LOADS.with_borrow_mut(|of_build| {
+            if let Some(kept) = of_build {
+                *kept = Some(shared);
+            }
+        });
+    }
+
+    /// For whoever drops the sessions of a load. `None`: a load still reads it.
+    pub(super) fn into_session(shared: Arc<SharedByLoads>) -> Option<Session> {
+        let SharedByLoads {
+            parsed, session, ..
+        } = Arc::into_inner(shared)?;
+        drop(parsed);
+        Some(*session)
+    }
+
+    fn of_running_build(options: &Options<'_>) -> Option<Arc<SharedByLoads>> {
+        if preload_of(options).is_some() {
+            return None;
+        }
+        SHARED_BY_LOADS.with_borrow_mut(|of_build| {
+            let kept = of_build.as_mut()?;
+            let shared = kept.get_or_insert_with(|| Arc::new(SharedByLoads::new()));
+            Some(Arc::clone(shared))
+        })
+    }
+}
+
+/// A test program builds thousands of small programs. What each reads out of the archive of Bun is parsed and bound for the first.
+#[cfg(any(test, feature = "test_support"))]
+struct SharedByBuilds {
+    atoms: Interner<'static>,
+    parsed: Run<'static>,
+}
+
+#[cfg(any(test, feature = "test_support"))]
+impl SharedByBuilds {
+    fn of_test_program() -> &'static SharedByBuilds {
+        static SESSION: OnceLock<Session> = OnceLock::new();
+        static SHARED: OnceLock<SharedByBuilds> = OnceLock::new();
+        SHARED.get_or_init(|| {
+            let session = SESSION.get_or_init(Session::new);
+            let atoms = Interner::new_in(session);
+            SharedByBuilds {
+                atoms,
+                parsed: Run::of_compile_builds(session, atoms, is_in_archive_of_bun),
+            }
+        })
+    }
+
+    fn serves(options: &Options<'_>) -> bool {
+        let mut own_texts = options.load.in_memory_files.iter();
+        preload_of(options).is_none() && !own_texts.any(|(path, _)| is_in_archive_of_bun(path))
+    }
+}
+
 struct SharedLoadInputs<'c, 's> {
     disk: &'c Disk,
     sessions: PerProject<&'s Session>,
@@ -107,7 +242,7 @@ struct SharedLoadInputs<'c, 's> {
     manifest: &'static Manifest,
     runtime_modules: &'c RuntimeModules,
     messages: &'c LoadMessages,
-    parsed_declarations: Option<&'s Run<'s>>,
+    parsed_before: ParsedBefore<'s>,
 }
 
 /// What the request for a load of Bun's own code borrows.
@@ -119,14 +254,18 @@ struct RuntimeLoadInputs<'c, 's> {
     loads_code_by_unknown_names_alone: bool,
 }
 
-// Programs that ask the same of Bun's own code share one load of it.
+// Programs that ask the same of Bun's own code share one load of it. So do programs that ask for functions of the language alone, which
+// stand in files that declare nothing for other files: each holds what it reaches of them.
 fn asks_the_same(a: &RuntimeRoots, b: &RuntimeRoots) -> bool {
-    a.paths == b.paths
+    let ask_for_the_language_alone = !a.asks.has_code_of_host() && !b.asks.has_code_of_host();
+    (a.paths == b.paths || ask_for_the_language_alone)
         && a.host_loaded_modules == b.host_loaded_modules
         && a.modules_named_at_run_time == b.modules_named_at_run_time
         && a.imports_cluster == b.imports_cluster
         && a.imports_uncompiled_code == b.imports_uncompiled_code
         && a.loads_by_unknown_path == b.loads_by_unknown_path
+        && a.keeps_code_without_names == b.keeps_code_without_names
+        && a.holds_guessed_code == b.holds_guessed_code
 }
 
 fn create_runtime_modules(archive: &'static Archive, options: &Options<'_>) -> RuntimeModules {
@@ -183,9 +322,28 @@ impl<'a> Build<'a> {
     ) -> Result<R, Stage> {
         self.clock.start(Stage::Load);
         let options = self.options;
+        self.chosen_threads = match options.aot.thread_count {
+            None => {
+                fit_threads_to_sources();
+                None
+            }
+            Some(_) => Some(ChosenThreads::new(self.threads)),
+        };
         let disk = create_disk(options, self.threads);
         let application_session = sessions.application;
-        let atoms = Interner::new_in(application_session);
+        let shared_by_loads = SharedByLoads::of_running_build(options);
+        let atoms = match &shared_by_loads {
+            Some(shared) => shared.atoms.for_files_of(application_session),
+            None => Interner::new_in(application_session),
+        };
+        #[cfg(any(test, feature = "test_support"))]
+        let shared_by_builds =
+            SharedByBuilds::serves(options).then(SharedByBuilds::of_test_program);
+        #[cfg(any(test, feature = "test_support"))]
+        let atoms = shared_by_builds.map_or(atoms, |shared| {
+            shared.atoms.for_files_of(application_session)
+        });
+        debug_assert!(core::ptr::eq(atoms.session(), application_session));
         let builtin_names = BuiltinNames::new(&atoms);
         let archive = Archive::embedded();
         let runtime_modules = create_runtime_modules(archive, options);
@@ -201,8 +359,17 @@ impl<'a> Build<'a> {
             &self.limits,
             self.platform,
         );
-        let parsed_declarations = preload_of(options).map(|_| {
-            &*(application_session.arena()).alloc(Run::of_compile_build(application_session, atoms))
+        let parsed_before = match (preload_of(options), &shared_by_loads) {
+            (None, None) => ParsedBefore::Nothing,
+            (None, Some(shared)) => ParsedBefore::ByEarlierLoads(&shared.parsed),
+            (Some(_), _) => ParsedBefore::ByThisBuild(
+                (application_session.arena())
+                    .alloc(Run::of_compile_build(application_session, atoms)),
+            ),
+        };
+        #[cfg(any(test, feature = "test_support"))]
+        let parsed_before = shared_by_builds.map_or(parsed_before, |shared| {
+            ParsedBefore::ByEarlierLoads(&shared.parsed)
         });
         let shared = SharedLoadInputs {
             disk: &disk,
@@ -215,9 +382,14 @@ impl<'a> Build<'a> {
             manifest: archive.manifest(),
             runtime_modules: &runtime_modules,
             messages: &messages,
-            parsed_declarations,
+            parsed_before,
         };
+        let parses_before = shared_by_loads.as_ref().map(|it| it.parsed.parses());
         let result = self.load_projects(&shared, asset_reads, then);
+        if let (Some(shared), Some(before)) = (&shared_by_loads, parses_before) {
+            let parses = (shared.parsed.parses() - before) as u64;
+            (self.statistics).count(StatisticId::SourceFilesOfBunParsed, parses);
+        }
         self.leftovers.push(Box::new(disk));
         result
     }
@@ -377,7 +549,8 @@ impl<'a> Build<'a> {
         let files = application.files();
         self.started_workers = Default::default();
         if !options.aot.checks_only {
-            self.started_workers.copies = find_embedded_code_files(files, &options.load.loaders);
+            self.started_workers.copies =
+                find_embedded_code_files(files, &options.load.loaders, &self.parallel_runner());
         }
         if !options.aot.checks_only && mentions_worker_constructor(files) {
             let code_from_root = CodeOptions {
@@ -395,8 +568,11 @@ impl<'a> Build<'a> {
                 resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
                 resolve_bare_name: &|name| resolve_entry_point(host, &code_from_root, name),
             };
-            (self.started_workers.files, self.started_workers.code) =
-                find_code_that_starts_workers(files, &search);
+            let found = find_code_that_starts_workers(files, &search, &self.parallel_runner());
+            self.started_workers.files = found.files;
+            self.started_workers.names = found.names;
+            self.started_workers.code = found.code;
+            self.started_workers.constructs_node_workers = found.constructs_node_workers;
         }
         if !self.started_workers.copies.is_empty() || !self.started_workers.files.is_empty() {
             self.started_workers.held_texts = texts_of_program_files(files)
@@ -410,6 +586,14 @@ impl<'a> Build<'a> {
         // Each program with its position and the file it begins at. A build of one program looks at all that was loaded.
         let programs: Vec<(usize, Option<FileId>)> = match self.programs {
             None => vec![(0, None)],
+            Some(of_one_load) if of_one_load.only_looks_for_worker_threads => {
+                self.is_one_program = files.entry_points().iter().any(|&first| {
+                    view(Some(first));
+                    !mentions_worker_constructor(files)
+                });
+                view(None);
+                return Err(Stage::Load);
+            }
             Some(ProgramsOfOneLoad {
                 held_elsewhere: Some(held),
                 indexes,
@@ -425,11 +609,13 @@ impl<'a> Build<'a> {
             }
             Some(of_one_load)
                 if files.entry_points().len() != positions.len()
-                    || are_one_program(
-                        files,
-                        of_one_load.indexes[positions[0]] == 0,
-                        &self.limits,
-                    ) =>
+                    || (!self.options.aot.separates_programs
+                        && are_one_program(
+                            files,
+                            of_one_load.indexes[positions[0]] == 0,
+                            self.started_workers.constructs_node_workers,
+                            &self.limits,
+                        )) =>
             {
                 let holds_all = of_one_load.are_all_of_the_build
                     && of_one_load.indexes.len() == positions.len();
@@ -455,13 +641,23 @@ impl<'a> Build<'a> {
         let is_read_again = self.programs.is_some();
         application.set_is_read_again(is_read_again);
         let first_files: Vec<Option<FileId>> = programs.iter().map(|program| program.1).collect();
-        let mut roots: Vec<RuntimeRoots> = first_files
+        let mut roots: Vec<RuntimeRoots> = programs
             .iter()
-            .map(|&first| {
+            .map(|&(position, first)| {
                 if first.is_some() {
                     view(first);
                 }
-                collect_runtime_roots(files, shared.runtime_modules, self.platform)
+                let of_program = self.programs.map(|all| &all.options[position].load);
+                let load = of_program.unwrap_or(&options.load);
+                let lacked_before = library_code_of(&load.library_code_lacked);
+                let further = FurtherLibraryCode {
+                    lacked_before: &lacked_before,
+                    // What is loaded ahead of a program serves whatever that program asks for.
+                    serves_unseen_code: load.keeps_library_code_without_names
+                        || options.can_load_code_at_run_time()
+                        || preload_of(options).is_some(),
+                };
+                collect_runtime_roots(files, shared.runtime_modules, self.platform, further)
             })
             .collect();
         let mut groups: Vec<Vec<usize>> = Vec::new();
@@ -475,13 +671,22 @@ impl<'a> Build<'a> {
         let mut runtime_to_keep = None;
         for (group_index, group) in groups.iter().enumerate() {
             let started = Instant::now();
+            self.lowered_runtimes.begin_load();
+            let asks = join_asks(group.iter().map(|&index| &roots[index].asks));
+            let of_group = group.iter().map(|&index| &roots[index]);
+            let mut root_paths = join_root_paths(shared.runtime_modules, of_group);
             let roots = &roots[group[0]];
             let session = match group_index {
                 0 => shared.sessions.runtime,
                 _ => &shared.further_runtime_sessions[group_index - 1],
             };
-            let inputs = self.create_runtime_load_inputs(shared, session, roots);
-            let runtime_request = self.create_runtime_request(shared, &inputs, roots);
+            // What is loaded ahead of a program serves whatever that program asks for.
+            let asks = preload_of(options).is_none().then_some(&asks);
+            let inputs = self.create_runtime_load_inputs(shared, session, roots, asks);
+            if !inputs.host.reads_types {
+                root_paths.clear();
+            }
+            let runtime_request = self.create_runtime_request(shared, &inputs, &root_paths);
             let RuntimeLoadInputs {
                 host: ref runtime_host,
                 can_load_code_at_run_time,
@@ -489,13 +694,30 @@ impl<'a> Build<'a> {
                 ..
             } = inputs;
             let kept = kept_runtime.take();
+            let mut frozen_application = None;
             let mut runtime = match kept.filter(|(known, _)| asks_the_same(known, roots)) {
                 Some((_, runtime)) => runtime,
+                // Each of several programs has options and a view of the files of its own.
+                None if self.programs.is_none() => {
+                    let input = self.create_freeze_input(shared, &application, None);
+                    let in_parallel = self.parallel_runner();
+                    let (frozen, runtime) = run_beside(
+                        &self.beside_runner(),
+                        || freeze_sources(&input, &in_parallel),
+                        || {
+                            let parsed_before = shared.parsed_before;
+                            parsed_before.load_program(session, runtime_host, &runtime_request)
+                        },
+                    );
+                    frozen_application = Some(frozen);
+                    self.finish_load(runtime, &runtime_request, shared.messages)?
+                }
                 None => self.load_runtime(shared, session, runtime_host, &runtime_request)?,
             };
             self.count_time(StatisticId::LoadRuntimeProjectNanoseconds, started);
 
-            runtime.set_is_read_again(is_read_again || shared.parsed_declarations.is_some());
+            let is_kept = matches!(shared.parsed_before, ParsedBefore::ByThisBuild(_));
+            runtime.set_is_read_again(is_read_again || is_kept);
             for &index in group {
                 if first_files[index].is_some() {
                     view(first_files[index]);
@@ -505,7 +727,8 @@ impl<'a> Build<'a> {
                     application: &application,
                     runtime: &runtime,
                 };
-                let sources = self.freeze_projects(shared, programs, roots)?;
+                let frozen_application = frozen_application.take();
+                let sources = self.freeze_projects(shared, programs, roots, frozen_application)?;
                 self.stop_if_errors(Stage::Load)?;
                 let projects = PerProject {
                     application: LoadedProject {
@@ -531,7 +754,15 @@ impl<'a> Build<'a> {
                     builtin_names: shared.builtin_names,
                     can_load_code_at_run_time,
                     loads_code_by_unknown_names_alone,
+                    keeps_library_code_without_names: roots.keeps_code_without_names,
+                    holds_guessed_library_code: roots.holds_guessed_code,
                     finish_asset_reads: project.finish_asset_reads,
+                    known_library_regions: &|| {
+                        let reach = runtime_host.reach.as_ref()?;
+                        let is_last = group.last() == Some(&index);
+                        let files = runtime.files();
+                        Some(reach.known_regions(shared.runtime_modules, files, is_last))
+                    },
                 };
                 result = Some(then(self, loaded)?);
             }
@@ -550,6 +781,7 @@ impl<'a> Build<'a> {
         shared: &SharedLoadInputs<'c, 's>,
         session: &'s Session,
         roots: &RuntimeRoots,
+        asks: Option<&'c RuntimeUses>,
     ) -> RuntimeLoadInputs<'c, 's> {
         let options = self.options;
         // A name that the build does not know may be the path of a file on disk. Code that the build does not see may name the module too.
@@ -582,6 +814,10 @@ impl<'a> Build<'a> {
                 platform: self.platform,
                 messages: shared.messages,
                 unreadable: Default::default(),
+                manifest: shared.manifest,
+                // Code that the build does not see may use all that a file holds, so all that a file asks for is read.
+                reach: (asks.filter(|_| !can_load_code_at_run_time)).map(ReachWhileLoading::new),
+                reads_types: can_load_code_at_run_time || asks.is_none_or(|asks| !asks.is_empty()),
             },
             can_load_code_at_run_time,
             loads_code_by_unknown_names_alone,
@@ -592,13 +828,13 @@ impl<'a> Build<'a> {
         &self,
         shared: &SharedLoadInputs<'_, 's>,
         inputs: &'r RuntimeLoadInputs<'_, 's>,
-        roots: &'r RuntimeRoots,
+        root_paths: &'r [Vec<u8>],
     ) -> CompileRequest<'r, 's>
     where
         'a: 'r,
     {
         CompileRequest {
-            entry_points: EntryPoints::Resolved(&roots.paths),
+            entry_points: EntryPoints::Resolved(root_paths),
             code: &inputs.code,
             fold: &inputs.fold,
             atoms: shared.atoms,
@@ -617,8 +853,7 @@ impl<'a> Build<'a> {
         host: &RuntimeHost<'_>,
         request: &CompileRequest<'_, 's>,
     ) -> Result<LoadedProgram<'s>, Stage> {
-        let parsed = shared.parsed_declarations;
-        let runtime = load_program_with_parsed_files(session, host, request, parsed);
+        let runtime = shared.parsed_before.load_program(session, host, request);
         self.finish_load(runtime, request, shared.messages)
     }
 
@@ -695,8 +930,8 @@ impl<'a> Build<'a> {
         request: &CompileRequest<'_, 's>,
         shared: &SharedLoadInputs<'_, 's>,
     ) -> Result<LoadedProgram<'s>, Stage> {
-        let (messages, parsed) = (shared.messages, shared.parsed_declarations);
-        let mut result = load_program_with_parsed_files(session, host, request, parsed);
+        let (messages, parsed_before) = (shared.messages, shared.parsed_before);
+        let mut result = parsed_before.load_program(session, host, request);
         if !host.reads_in_background_after_load()
             && !host.finish_background_reads()
             && result.is_ok()
@@ -704,7 +939,7 @@ impl<'a> Build<'a> {
         {
             drop(result);
             self.provider.clear_embedded_files();
-            result = load_program_with_parsed_files(session, host, request, parsed);
+            result = parsed_before.load_program(session, host, request);
         }
         self.finish_load(result, request, messages)
     }
@@ -740,28 +975,48 @@ impl<'a> Build<'a> {
         }
     }
 
+    /// `roots`: of Bun's own modules. `None`: `loaded` is the application.
+    fn create_freeze_input<'i, 's>(
+        &self,
+        shared: &SharedLoadInputs<'_, '_>,
+        loaded: &'i LoadedProgram<'s>,
+        roots: Option<&'i RuntimeRoots>,
+    ) -> FreezeInput<'i, 's>
+    where
+        'a: 'i,
+    {
+        FreezeInput {
+            project: match roots {
+                Some(_) => ProjectId::Runtime,
+                None => ProjectId::Application,
+            },
+            files: loaded.files(),
+            options: self.options,
+            manifest: shared.manifest,
+            host_loaded_modules: roots.map_or(&[], |it| &it.host_loaded_modules),
+            modules_named_at_run_time: roots.map_or(&[], |it| &it.modules_named_at_run_time),
+            is_world: false,
+        }
+    }
+
     fn freeze_projects(
         &mut self,
         shared: &SharedLoadInputs<'_, '_>,
         programs: PerProject<&LoadedProgram<'_>>,
         roots: &RuntimeRoots,
+        frozen_application: Option<Result<FrozenSources, InternalError>>,
     ) -> Result<PerProject<Sources>, Stage> {
-        let mut freeze = |project: ProjectId, roots: Option<&RuntimeRoots>| {
-            let loaded = *programs.get(project);
-            let input = FreezeInput {
-                project,
-                files: loaded.files(),
-                options: self.options,
-                manifest: shared.manifest,
-                host_loaded_modules: roots.map_or(&[], |it| &it.host_loaded_modules),
-                modules_named_at_run_time: roots.map_or(&[], |it| &it.modules_named_at_run_time),
-                is_world: false,
-            };
-            self.freeze_project(loaded, &input)
-        };
+        let in_parallel = self.parallel_runner();
+        let application = frozen_application.unwrap_or_else(|| {
+            let input = self.create_freeze_input(shared, programs.application, None);
+            freeze_sources(&input, &in_parallel)
+        });
+        let application = self.finish_freeze(programs.application, application)?;
+        let input = self.create_freeze_input(shared, programs.runtime, Some(roots));
+        let runtime = freeze_sources(&input, &in_parallel);
         let sources = PerProject {
-            application: freeze(ProjectId::Application, None)?,
-            runtime: freeze(ProjectId::Runtime, Some(roots))?,
+            application,
+            runtime: self.finish_freeze(programs.runtime, runtime)?,
         };
         let frozen = sources.as_ref();
         let frozen = frozen.map(|project, sources| (programs.get(project).files(), sources));
@@ -791,12 +1046,11 @@ impl<'a> Build<'a> {
         Ok(self.stop_at_internal_error(frozen)?.sources)
     }
 
-    fn freeze_project(
+    fn finish_freeze(
         &mut self,
         loaded: &LoadedProgram<'_>,
-        input: &FreezeInput<'_, '_>,
+        frozen: Result<FrozenSources, InternalError>,
     ) -> Result<Sources, Stage> {
-        let frozen = freeze_sources(input, &self.parallel_runner());
         let FrozenSources {
             sources,
             diagnostics,
@@ -818,10 +1072,16 @@ impl<'a> Build<'a> {
 // Of the files of several entry points. A global begins at each of them, and what the compiler proves holds for one global, so each begins
 // a program of its own. They are one program where that gains nothing or costs the executable its size:
 // - nothing starts a Worker, so there is one global;
+// - a Worker of node:worker_threads may begin at a program without that module, which the host loads into its global;
 // - a program loads a module by a name that the build does not know, which may be that of any entry point: it has to hold them all;
 // - the programs share much of their files, and a file is compiled once for each program that holds it;
 // - there are very many: pages or plugins that a pattern has found.
-fn are_one_program(files: &Files<'_>, has_first_of_build: bool, limits: &LimitValues) -> bool {
+fn are_one_program(
+    files: &Files<'_>,
+    has_first_of_build: bool,
+    constructs_node_workers: bool,
+    limits: &LimitValues,
+) -> bool {
     let limit = |limit: LimitId| usize::try_from(limits.get(limit)).unwrap_or(usize::MAX);
     let entry_points = files.entry_points();
     let view = |first: Option<FileId>| {
@@ -843,7 +1103,9 @@ fn are_one_program(files: &Files<'_>, has_first_of_build: bool, limits: &LimitVa
         }
         view(Some(first));
         let compiled = files.compiled_files();
-        are_one = (position == 0 && has_first_of_build && !mentions_worker_constructor(files))
+        let is_first_of_build = position == 0 && has_first_of_build;
+        are_one = ((is_first_of_build || constructs_node_workers)
+            && !mentions_worker_constructor(files))
             || loads_modules_by_names_that_are_not_constant(files);
         size_of_each += size_of(compiled);
         for &file in compiled {

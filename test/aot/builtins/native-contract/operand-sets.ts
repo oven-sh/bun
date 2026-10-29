@@ -1,11 +1,13 @@
-// Operands for a function about which nothing is declared: every combination of a few kinds of value, then every kind of real
+// Operands for a function about which nothing is declared: a few kinds of value, position by position, then every kind of real
 // object where an object got furthest, then plain objects with the names that the function was seen to look for.
 import { closeSync, mkdirSync, openSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import {
   contentOrigin,
   createCallback,
   everyCandidate,
+  everyFamily,
   findCandidate,
+  keepForNextCall,
   operandOrigin,
   type Candidate,
 } from "../differential/instances";
@@ -90,13 +92,15 @@ export const descriptorCandidate: Candidate = {
   name: "descriptor",
   kind: "Primitive",
   create() {
+    if (openDescriptor !== undefined) return openDescriptor;
     // An earlier call may have taken the file away or closed it to its owner.
     rmSync(scratchFile, { force: true, recursive: true });
     writeFileSync(scratchFile, "text");
     openDescriptor = openSync(scratchFile, "r+");
     return openDescriptor;
   },
-  release() {
+  release(isAsMade = false) {
+    if (isAsMade) return keepForNextCall(descriptorCandidate);
     try {
       if (openDescriptor !== undefined) closeSync(openDescriptor);
     } catch {}
@@ -104,7 +108,7 @@ export const descriptorCandidate: Candidate = {
   },
 };
 
-const combinedKinds = [
+export const combinedKinds = [
   "object:proxy",
   "object:primitives",
   "numbers:Array",
@@ -182,30 +186,22 @@ export const realObjects: Candidate[] = [
   realObject("objects:Array", () => [{ a: 1 }, { a: 2 }]),
 ];
 
+function kindOfRealObject({ name }: Candidate): string {
+  const family = everyFamily().find(({ scouts, others }) => scouts.some(other => other.name === name) || others.some(other => other.name === name));
+  if (family) return family.name;
+  if (name.startsWith("iterator:")) return "iterators";
+  if (name === "instance:class") return "ordinary objects";
+  return name.endsWith(":Array") ? "Array" : "views";
+}
+
 export const otherReceivers = ["object:proxy", "object:primitives", "callback:object", "function:class", "primitive:undefined"].map(findCandidate);
 
-const maxCombinedPositions = 3;
-
-export function combinedSets(receiver: Candidate, argumentCount: number, usesDescriptors: boolean): OperandSet[] {
-  const kinds = usesDescriptors
-    ? combinedKinds.map(kind => (kind.name === "primitive:1" ? descriptorCandidate : kind))
-    : combinedKinds;
-  let vectors: Candidate[][] = [[]];
-  for (let position = 0; position < Math.min(argumentCount, maxCombinedPositions); position++) {
-    vectors = vectors.flatMap(vector => kinds.map(kind => [...vector, kind]));
-  }
-  const sets = vectors.map(vector => createSet(receiver, vector));
-  if (argumentCount <= maxCombinedPositions) return sets;
-  // Past the third position each kind is passed in every further position at once.
-  const further = argumentCount - maxCombinedPositions;
-  return vectors.flatMap(vector => kinds.map(kind => createSet(receiver, [...vector, ...Array<Candidate>(further).fill(kind)])));
+export function kindsFor(usesDescriptors: boolean): Candidate[] {
+  return usesDescriptors ? combinedKinds.map(kind => (kind.name === "primitive:1" ? descriptorCandidate : kind)) : combinedKinds;
 }
 
-export function setsWithRealObjects(base: OperandSet): OperandSet[] {
-  return base.arguments.flatMap((_, position) =>
-    realObjects.map(candidate => createSet(base.receiver, base.arguments.with(position, candidate))),
-  );
-}
+// By what native code can take them for. The plain objects come first.
+export const kindsOfRealObjects: Candidate[][] = [...Map.groupBy(realObjects, kindOfRealObject).values()];
 
 export type NamesRead = Map<string, Set<string>>;
 

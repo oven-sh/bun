@@ -562,7 +562,7 @@ pub(crate) struct DevServer {
     // `Watcher::shutdown` instead.
     pub(crate) bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
     pub(crate) directory_watchers: DirectoryWatchStore,
-    /// Heap-owned via `heap::into_raw` so a still-queued
+    /// Heap-owned via `heap::alloc_nn` so a still-queued
     /// `HotReloadEvent.concurrent_task` can outlive `DevServer`; see the
     /// `next_event` check in `Drop`.
     pub(crate) watcher_atomics: ::core::ptr::NonNull<WatcherAtomics>,

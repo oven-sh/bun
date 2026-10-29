@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "./harness/run";
-import { test } from "./supported-with-counted-calls";
+import { test } from "./supported";
 
 const calls = 2000;
 // Fractions take a whole word of the frame each, so this many of them are more than the allocator of small objects has a size for, also where its blocks are 64 KB.

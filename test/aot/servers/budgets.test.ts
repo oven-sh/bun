@@ -1,5 +1,5 @@
 // What the servers under ./app and ./tanstack cost, held against ./budgets.json, which only goes down.
-// Opt-in by hand, like ./servers.test.ts. CI runs one unit per server: `aot/servers/budgets-of-<name>` in ../parts.mts.
+// This file asks nothing by itself: ./budgets-of-<name>.test.ts asks it for one server each.
 //
 // Each server is built twice: the way a user builds it, for the size of its code, and with a counter on each side of each branch
 // (../harness/counted-run.ts). The counted server answers a fixed number of rounds, one request of each route of ./answers.ts a
@@ -45,6 +45,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { dirname, join } from "path";
+import { unsupported } from "../harness/commands";
 import {
   alwaysFailing,
   buildCounted,
@@ -58,7 +59,6 @@ import {
   type CountedWork,
   type Exchange,
 } from "../harness/counted-run";
-import { unsupported } from "../run-programs";
 import { routes } from "./answers";
 import { filterRequested, installPackages, requestedServers } from "./run-servers";
 
@@ -96,7 +96,9 @@ const budgets: Record<string, StoredBudget> = existsSync(budgetsPath)
   ? JSON.parse(readFileSync(budgetsPath, "utf8"))
   : {};
 const mode = process.env.AOT_BUDGETS;
-const measuresThisPlatform = isLinux && process.arch === "x64";
+// CI tests Linux on x64 under three distributions (EXPECTED_PLATFORM_DISTRO, .buildkite/ci.ts). The numbers are the same under each, so one counts them.
+const distribution = process.env.EXPECTED_PLATFORM_DISTRO;
+const measuresThisPlatform = isLinux && process.arch === "x64" && (!distribution || distribution === "debian");
 const measuresThisBuild = !isDebug && !isASAN;
 
 const exchanges: Exchange[] = routes.map(route => ({
@@ -302,12 +304,11 @@ describe.skipIf(skipped)("compile/aot/servers/budgets", () => {
     async name => {
       const folder = name === "tanstack" ? tanstack : name === "typescript" ? typescript : app;
       const source = name === "tanstack" ? "serve.ts" : name === "typescript" ? "typescript-check.ts" : `${name}.ts`;
-      const code = await codeOf(folder, `./${source}`, flags);
-      const build = await buildCounted(
-        folder,
-        name === "typescript" ? `./${source}` : entryThatExitsWhenTold(folder, source),
-        flags,
-      );
+      // Side by side: where one build has work for one thread only, the other has the processors.
+      const [code, build] = await Promise.all([
+        codeOf(folder, `./${source}`, flags),
+        buildCounted(folder, name === "typescript" ? `./${source}` : entryThatExitsWhenTold(folder, source), flags),
+      ]);
       const work =
         name === "typescript"
           ? await countScript(build, folder, "2322 2345 2322\n", { warmUp: 5, units: 20 })

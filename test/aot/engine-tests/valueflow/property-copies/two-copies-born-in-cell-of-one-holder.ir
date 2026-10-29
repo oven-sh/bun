@@ -1,0 +1,65 @@
+# Two copies born in the cell of one holder.
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="two-copies-born-in-cell-of-one-holder.ts" displayPath="two-copies-born-in-cell-of-one-holder.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Box" module=m0 position=139 fields=[{key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="place" declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="size" declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[2, 1, 0] ownFieldCount=3
+layout L1 name="Place" module=m0 position=95 fields=[{key="left" declared={type=number} flags=[IsRequired]}, {key="top" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L2 name="Size" module=m0 position=51 fields=[{key="high" declared={type=number} flags=[IsRequired]}, {key="wide" declared={type=number} flags=[IsRequired]}] declaredOrder=[1, 0] ownFieldCount=2
+data d0 root=Object{layout=L0 members=[{key="size" value=Object{layout=L2 members=[{key="wide" value=Number{value=1}}, {key="high" value=Number{value=2}}]}}, {key="place" value=Object{layout=L1 members=[{key="left" value=Number{value=3}}, {key="top" value=Number{value=4}}]}}, {key="name" value=String{value="b"}}]} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v4 = Integer integer=1
+    v5 = Convert v4 declared={type=number}
+    Jump -> next b1(v3, v5)
+  b1(v6: undefined|null|L0, v7: number):
+    LoopHint
+    v9 = Integer integer=40
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v11):
+    v12 = Integer integer=3
+    v13 = Mod v11, v12
+    v14 = Call v1, -, v6, v13 calleeName="grow"
+    v15 = Convert v14 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v16 = Increment v11
+    v17 = Convert v16 declared={type=number}
+    Jump -> next b1(v15, v17)
+  b3(v18):
+    v19 = Undefined
+    Return v19
+}
+function f1 name="grow" module=m0 position=189 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0, v1: number):
+    v2 = NewObject layout=L2
+    v3 = FinishObject v2
+    v4 = Convert v3 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]}
+    v5 = PropGet v0 key="place"
+    v6 = NewObject layout=L1
+    CopyDataProperties v6, v5
+    v8 = PropGet v0 key="place"
+    v9 = PropGet v8 key="top"
+    v10 = Sub v9, v1
+    v11 = Convert v10 declared={type=number}
+    PropDefine v6, v11 key="top"
+    v13 = FinishObject v6
+    v14 = Convert v13 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v15 = PropGet v0 key="name"
+    v16 = Add v15, v1
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v18 = NewObject -, v4, v14, v17 layout=L0 fields=[2, 1, 0]
+    v19 = FinishObject v18
+    v20 = Convert v19 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    Return v20
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 159, patchpoints: 7, rare instructions: 57, polls: 1
+# CHECK-NEXT: end of function f0

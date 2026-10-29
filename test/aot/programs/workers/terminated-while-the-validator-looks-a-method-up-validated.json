@@ -1,4 +1,0 @@
-{
-  "build": ["--aot-validate"],
-  "skipInShell": "needs Workers"
-}

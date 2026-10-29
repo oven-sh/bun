@@ -597,6 +597,15 @@ void JSModuleGraph::finishCreation(VM& vm, JSGlobalObject* globalObject)
     auto* zigGlobal = defaultGlobalObject(globalObject);
     zigGlobal->setAsyncContextTrackingEnabled(true);
     m_loader->setAsyncContext(vm, createModuleGraphFrame(zigGlobal, this, jsUndefined()));
+    // A load keeps the async context of its caller for its jobs (the AsyncLocalStorage stores of an
+    // import()). The host's hooks run in those jobs, and so do the modules of the realm's own loader,
+    // and neither is a graph's: they outlive it. So a load that begins in a graph's context keeps none,
+    // and its jobs run in whatever is current, as they always did.
+    JSModuleLoader::AsyncContextOfLoadFilter outsideModuleGraphs = [](JSGlobalObject* realm, JSValue asyncContext) -> JSValue {
+        return moduleGraphOfFrame(defaultGlobalObject(realm), asyncContext) ? jsUndefined() : asyncContext;
+    };
+    m_loader->setAsyncContextOfLoadFilter(outsideModuleGraphs);
+    zigGlobal->moduleLoader()->setAsyncContextOfLoadFilter(outsideModuleGraphs);
 }
 
 JSLexicalEnvironment* JSModuleGraph::overlay() const

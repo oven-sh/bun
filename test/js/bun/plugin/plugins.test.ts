@@ -2129,7 +2129,22 @@ describe.concurrent("AsyncLocalStorage in what an import() loads", () => {
       module.exports = {};
     `,
     "beside-enters.mjs": `note("body beside-enters.mjs");`,
-    "of-the-host.mjs": `note("body of-the-host.mjs in " + (Bun.ModuleGraph.current ? "a graph's context" : "the host's context"));`,
+    // A module of the host with a top-level await, and a module of a graph whose dependency a hook of the host loads.
+    "of-the-host-awaits.mjs": `
+      const where = () => (Bun.ModuleGraph.current ? "a graph's context" : "the host's context");
+      note("body of-the-host-awaits.mjs in " + where());
+      const { promise, resolve } = Promise.withResolvers();
+      globalThis.letHostModuleGoOn = resolve;
+      hostModuleWaits();
+      await promise;
+      note("body of-the-host-awaits.mjs behind its await in " + where());
+    `,
+    "graph-imports.cjs": `exports.go = () => import("./imports-where.mjs");`,
+    "imports-where.mjs": `
+      import "./dependency.where";
+      note("body imports-where.mjs in " + (Bun.ModuleGraph.current ? "a graph's context" : "the host's context"));
+    `,
+    "dependency.where": "",
     "required.mjs": `
       import "./required-dependency.mjs";
       note("body required.mjs");
@@ -2142,6 +2157,86 @@ describe.concurrent("AsyncLocalStorage in what an import() loads", () => {
       note("body imported-inside.mjs");
     `,
     "below-imported-inside.mjs": `note("body below-imported-inside.mjs");`,
+    "imports-shared.mjs": `
+      import "./shared.cjs";
+      note("body imports-shared.mjs");
+    `,
+    "requires-shared.mjs": `
+      import "./shared.cjs";
+      note("body requires-shared.mjs");
+    `,
+    "shared.cjs": `
+      note("body shared.cjs");
+      module.exports = {};
+    `,
+    "imports-middle.mjs": `
+      import "./middle.mjs";
+      note("body imports-middle.mjs");
+    `,
+    "requires-middle.mjs": `
+      import "./middle.mjs";
+      note("body requires-middle.mjs");
+    `,
+    "middle.mjs": `
+      import "./below-middle.cjs";
+      note("body middle.mjs");
+    `,
+    "below-middle.cjs": `
+      note("body below-middle.cjs");
+      module.exports = {};
+    `,
+    "graph-app.cjs": `
+      exports.go = () =>
+        storage.run("caller", () => {
+          require("./graph-required.mjs");
+          note("after require()");
+        });
+    `,
+    "graph-required.mjs": `
+      import "./shared.cjs";
+      import "./enters.cjs";
+      import "./below-middle.cjs";
+      note("body graph-required.mjs");
+    `,
+    "calls-import-of-waits.mjs": `
+      note("body calls-import-of-waits.mjs");
+      globalThis.importedInside = storage.run("import", () => import("./above-await.mjs"));
+    `,
+    "above-await.mjs": `
+      import "./awaits-immediate.mjs";
+      note("body above-await.mjs");
+    `,
+    "awaits-immediate.mjs": `
+      note("awaits-immediate.mjs before its await");
+      await new Promise(resolve => setImmediate(resolve));
+      note("awaits-immediate.mjs behind its await");
+    `,
+    // waits-for-second.mjs waits behind waits-for-first.mjs. A require() under a store settles what the first one
+    // waits for.
+    "gates.cjs": `
+      globalThis.first = Promise.withResolvers();
+      globalThis.second = Promise.withResolvers();
+      globalThis.requireUnderStore = () => storage.run("require", () => require("./settles-first.mjs"));
+      module.exports = {};
+    `,
+    "settles-first.mjs": `
+      note("body settles-first.mjs");
+      first.resolve();
+    `,
+    "waits-for-first.mjs": `
+      setImmediate(() => {
+        requireUnderStore();
+        setImmediate(() => second.resolve());
+      });
+      await first.promise;
+      note("waits-for-first.mjs behind its await");
+    `,
+    "waits-for-second.mjs": `
+      import "./waits-for-first.mjs";
+      note("waits-for-second.mjs before its await");
+      await second.promise;
+      note("waits-for-second.mjs behind its await");
+    `,
   };
   async function run(entry: string, source: string, env: Record<string, string> = {}) {
     using dir = tempDir("plugin-async-local-storage", { ...files, [entry]: source });
@@ -2436,21 +2531,70 @@ describe.concurrent("AsyncLocalStorage in what an import() loads", () => {
   });
 
   // What the host calls through run() runs in the graph's context, and so does a module that it imports there.
-  it("a module of the host that is imported inside graph.run() runs in the graph's context", async () => {
+  // The context of a graph is in the same slot as the stores, and what runs in it ends with the graph. The jobs of a
+  // load run the host's hooks and the modules of the host's own loader, which are not a graph's. So a load that begins
+  // in a graph's context keeps no context, and its jobs run as they did before a load kept any.
+  it("a module of the host that is imported inside graph.run() runs in the host's context and outlives the graph", async () => {
     expect(
       await run(
         "entry.mjs",
         `
-          import { note, report } from "./storage.mjs";
+          import { note, report, storage } from "./storage.mjs";
+          const atAwait = Promise.withResolvers();
+          globalThis.hostModuleWaits = atAwait.resolve;
           const graph = new Bun.ModuleGraph({ globals: { note } });
-          await graph.run(() => import("./of-the-host.mjs"));
+          graph.run(() => storage.run("in graph.run()", () => import("./of-the-host-awaits.mjs")));
+          await atAwait.promise;
+          graph.dispose();
+          letHostModuleGoOn();
+          await import("./of-the-host-awaits.mjs");
           report();
         `,
       ),
-    ).toEqual({ stdout: ["body of-the-host.mjs in a graph's context: undefined"], stderr: "", exitCode: 0 });
+    ).toEqual({
+      stdout: [
+        "body of-the-host-awaits.mjs behind its await in the host's context: undefined",
+        "body of-the-host-awaits.mjs in the host's context: undefined",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
-  it("require() of an ES module stays in the context of its caller, and an import() inside it has its own", async () => {
+  it("a hook of the host for a dependency of a graph's module runs in the host's context", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { note, report, storage } from "./storage.mjs";
+          Bun.plugin({
+            name: "where",
+            setup(build) {
+              build.onLoad({ filter: /\\.where$/ }, () => {
+                note("onLoad dependency.where in " + (Bun.ModuleGraph.current ? "a graph's context" : "the host's context"));
+                return { contents: "export default 1;", loader: "js" };
+              });
+            },
+          });
+          const graph = new Bun.ModuleGraph({ globals: { note } });
+          const app = await graph.import(import.meta.dir + "/graph-imports.cjs");
+          await graph.run(() => storage.run("in graph.run()", app.default.go));
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        "body imports-where.mjs in a graph's context: undefined",
+        "onLoad dependency.where in the host's context: undefined",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A synchronous load also runs the jobs of an import() that a module calls meanwhile. They run inside the call of
+  // require(), so in the context of its caller. Node.js loads that import() later, in the store of its call.
+  it("require() of an ES module stays in the context of its caller, with an import() that the module calls", async () => {
     expect(
       await run(
         "entry.cjs",
@@ -2469,10 +2613,165 @@ describe.concurrent("AsyncLocalStorage in what an import() loads", () => {
       stdout: [
         "after require(): entered by required.mjs",
         "after run(): undefined",
-        "body below-imported-inside.mjs: inside",
-        "body imported-inside.mjs: inside",
+        "body below-imported-inside.mjs: entered by required.mjs",
+        "body imported-inside.mjs: entered by required.mjs",
         "body required-dependency.mjs: A",
         "body required.mjs: A",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A synchronous load is no import(): all of it runs inside the call of require(), in the context of the caller.
+  it("what a CommonJS file enters under require() of an ES module reaches the modules behind it and the caller", async () => {
+    expect(
+      await run(
+        "entry.cjs",
+        `
+          const { note, report, storage } = require("./storage.mjs");
+          storage.run("A", () => {
+            require("./imports-enters.mjs");
+            note("after require()");
+          });
+          note("after run()");
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        "after require(): entered by enters.cjs",
+        "after run(): undefined",
+        "body beside-enters.mjs: entered by enters.cjs",
+        "body enters.cjs: entered by enters.cjs",
+        "body imports-enters.mjs: entered by enters.cjs",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A synchronous load takes over what an import() is fetching, and runs the jobs of that import() that come due
+  // meanwhile. All of it runs inside the call of require(), in the context of its caller: no module there reads the
+  // store of the import().
+  it.each([
+    {
+      fetched: "a CommonJS file that the required module imports too",
+      filter: "\\/shared\\.cjs",
+      imported: "imports-shared.mjs",
+      required: "requires-shared.mjs",
+      modules: ["imports-shared.mjs", "requires-shared.mjs", "shared.cjs"],
+    },
+    {
+      fetched: "an ES module, and a job of the import() asks for the CommonJS file below it",
+      filter: "\\/middle\\.mjs",
+      imported: "imports-middle.mjs",
+      required: "requires-middle.mjs",
+      modules: ["below-middle.cjs", "imports-middle.mjs", "middle.mjs", "requires-middle.mjs"],
+    },
+  ])(
+    "require() runs what an import() is loading in the context of its caller: $fetched",
+    async ({ filter, imported, required, modules }) => {
+      expect(
+        await run(
+          "entry.cjs",
+          `
+            const { note, report, storage } = require("./storage.mjs");
+            let didRequire = false;
+            Bun.plugin({
+              name: "requires-while-the-import-fetches",
+              setup(build) {
+                // The import() asks for the module here and fetches it behind this hook. The fetch is not done before
+                // the jobs that are queued now have run.
+                build.onResolve({ filter: /${filter}$/ }, () => {
+                  if (didRequire) return;
+                  didRequire = true;
+                  queueMicrotask(() => storage.run("require", () => require("./${required}")));
+                });
+              },
+            });
+            storage.run("import", () => import("./${imported}")).then(report);
+          `,
+        ),
+      ).toEqual({ stdout: modules.map(name => `body ${name}: require`), stderr: "", exitCode: 0 });
+    },
+  );
+
+  // A module that waits for a top-level await runs in a later job. That job belongs to the load whose job began to
+  // evaluate the awaiting module. The synchronous load begins it here, inside the call of require(), but the job runs
+  // after the call: under the store of the import().
+  it("a module behind a top-level await runs in the store of its import() where require() began the graph", async () => {
+    expect(
+      await run(
+        "entry.cjs",
+        `
+          const { note, report, storage } = require("./storage.mjs");
+          storage.run("require", () => require("./calls-import-of-waits.mjs"));
+          importedInside.then(report);
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        "awaits-immediate.mjs before its await: require",
+        "awaits-immediate.mjs behind its await: require",
+        "body above-await.mjs: import",
+        "body calls-import-of-waits.mjs: require",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // The load of the entry point keeps no store. What require() has in the slot while it runs a job of that load is
+  // not handed to the jobs behind it.
+  it("a require() under a store that settles a top-level await of the entry point leaves no store behind", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { note, report } from "./storage.mjs";
+          import "./gates.cjs";
+          import "./waits-for-second.mjs";
+          note("body entry.mjs");
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        "body entry.mjs: undefined",
+        "body settles-first.mjs: require",
+        "waits-for-first.mjs behind its await: undefined",
+        // The call of require() ran this module as far as its await.
+        "waits-for-second.mjs before its await: require",
+        "waits-for-second.mjs behind its await: require",
+      ].sort(),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A graph's loader has an async context of its own, and the host runs the code of a graph's modules. Inside a graph
+  // require() is what it is outside: the CommonJS files of a required ES module run in the context of the caller, and
+  // what one of them enters stays. The body of an ES module of a graph runs in the graph's own context.
+  it("require() inside a Bun.ModuleGraph keeps the context of its caller for the CommonJS files of an ES module", async () => {
+    expect(
+      await run(
+        "entry.mjs",
+        `
+          import { note, report, storage } from "./storage.mjs";
+          const graph = new Bun.ModuleGraph({ globals: { note, storage } });
+          const app = await graph.import(import.meta.dir + "/graph-app.cjs");
+          graph.run(app.default.go);
+          report();
+        `,
+      ),
+    ).toEqual({
+      stdout: [
+        "after require(): entered by enters.cjs",
+        "body below-middle.cjs: entered by enters.cjs",
+        "body enters.cjs: entered by enters.cjs",
+        "body graph-required.mjs: undefined",
+        "body shared.cjs: caller",
       ],
       stderr: "",
       exitCode: 0,

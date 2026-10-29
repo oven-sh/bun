@@ -523,7 +523,7 @@ pub(crate) fn file_generation() -> u32 {
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
-/// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a
+/// `done`'s bound `DoneCallback.entry` names the intended sequence so a
 /// late call after the watchdog moved on cannot mark the currently-running one.
 pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     use super::execution::Result as ExecResult;
@@ -537,25 +537,11 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     let Some(dcb) = wrapper.as_class_ref::<bun_test::DoneCallback>() else {
         return;
     };
-    let (dcb_ref, dcb_called) = (dcb.r#ref.get().as_deref(), dcb.called.get());
-    let bound = match dcb_ref {
-        Some(refdata) => refdata.phase,
-        // `r#ref` unset: `.then()` fired inside run_test_callback's microtask
-        // drain before it stamps the DoneCallback. `get_current_state_data()`
-        // can't name a sequence inside a concurrent group, but
-        // `on_stack_entry_data` holds exactly the `cfg_data` that
-        // `run_test_callback` was invoked with (set/restored around it), so
-        // the mark lands on the right sequence under --concurrent too.
-        None if !dcb_called => match buntest.execution.on_stack_entry_data.get() {
-            Some(entry_data) => bun_test::RefDataValue::Execution {
-                group_index: buntest.execution.group_index,
-                entry_data: Some(entry_data),
-            },
-            None => buntest.get_current_state_data(),
-        },
+    let bound = dcb.entry;
+    if dcb.called.get() {
         // done() already ran and reported — nothing left to mark.
-        None => return,
-    };
+        return;
+    }
     let Some((sequence_ptr, _)) =
         buntest.execution.get_current_and_valid_execution_sequence(&bound)
     else {

@@ -797,6 +797,22 @@ impl BunTest {
         Self::bun_test_then_or_catch(cx.global(), value.to_js(), context, true)
     }
 
+    fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
+        if let Some(strong) = clone_active_strong() {
+            let this = strong.get();
+            let is_running_test = this.execution.get_current_and_valid_execution_sequence(entry).is_some_and(|(sequence, _)| {
+                // SAFETY: points into `this.execution.sequences`, which nothing else borrows here.
+                let sequence = unsafe { sequence.as_ref() };
+                sequence.active_entry == sequence.test_entry
+            });
+            if is_running_test {
+                this.on_uncaught_exception(global_this, Some(error), false, entry);
+                return;
+            }
+        }
+        let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error, false);
+    }
+
     pub(crate) fn bun_test_done_callback(
         cx: &mut JsScope<'_>,
         this_value: JsLocal<'_>,
@@ -812,6 +828,9 @@ impl BunTest {
         let value = error.to_js();
 
         let was_error = !value.is_empty_or_undefined_or_null();
+        if was_error && !this.called.get() {
+            this.errored.set(true);
+        }
         if this.called.get() {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."
@@ -819,7 +838,7 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                Self::on_done_error(global_this, &this.entry, value);
             }
         }
         this.called.set(true);
@@ -1116,7 +1135,7 @@ impl BunTest {
 
         if cfg_done_parameter {
             bun_core::scoped_log!(bun_test_group, "callTestCallback -> appending done callback param: data {}", cfg_data);
-            done_callback = DoneCallback::create_unbound(global_this);
+            done_callback = DoneCallback::create_unbound(global_this, cfg_data);
             done_arg = match DoneCallback::bind(done_callback, global_this) {
                 Ok(v) => v,
                 Err(e) => {
@@ -1177,10 +1196,12 @@ impl BunTest {
         // over-count and the done-callback path would never observe
         // `has_one_ref()`.
         let mut dcb_ref: Option<NonNull<RefData>> = None;
+        let mut done_errored = false;
         if !done_callback.is_empty() && !result.is_empty() {
             if let Some(dcb_data) = done_callback.as_class_ref::<DoneCallback>() {
                 if dcb_data.called.get() {
                     // done callback already called or the callback errored; add result immediately
+                    done_errored = dcb_data.errored.get();
                 } else {
                     let r = Self::ref_(this_strong, cfg_data);
                     let alias = NonNull::new(r.as_ptr())
@@ -1228,6 +1249,11 @@ impl BunTest {
                             Bun__TestScope__Describe2__bunTestCatch,
                         );
                         // TODO: properly propagate exception upwards
+                        if done_errored {
+                            // `done(err)` ends the entry without the promise, here as in `bun_test_done_callback`.
+                            // SAFETY: re-derived after the JS callback returned; sole `&mut` at this point.
+                            unsafe { (*this).add_result(cfg_data) };
+                        }
                         return None;
                     }
                     PromiseStatus::Fulfilled => {

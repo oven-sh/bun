@@ -627,6 +627,66 @@ describe("junit reporter", () => {
     expect(stderr).toContain(`Failed to write JUnit report to ${outfile}`);
     expect(exitCode).toBe(0);
   });
+
+  it("records done(err) as the failure of its own test case in a concurrent group", async () => {
+    await using tmpDir = tempDir("junit-done-concurrent", {
+      "package.json": "{}",
+      "done.test.js": `
+        import { test } from "bun:test";
+        test.concurrent("sync", done => { done(new Error("sync done boom")); });
+        test.concurrent("async", done => { setTimeout(() => done(new Error("async done boom")), 1); });
+        test.concurrent("ok", done => { done(); });
+      `,
+    });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn([bunExe(), "test", "--reporter=junit", "--reporter-outfile", junitPath], {
+      cwd: tmpDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const result = await xml2js.parseStringPromise(await file(junitPath).text(), { strict: true });
+    const suite = result.testsuites.testsuite[0];
+    expect(suite.$).toMatchObject({ tests: "3", failures: "2" });
+    expect(
+      Object.fromEntries(suite.testcase.map(testcase => [testcase.$.name, testcase.failure?.[0].$.message ?? null])),
+    ).toEqual({
+      sync: "sync done boom",
+      async: "async done boom",
+      ok: null,
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  it("records each failure that node:test passes to done() under --concurrent", async () => {
+    const fixture = join(import.meta.dir, "..", "node", "test_runner", "fixtures", "31-failure-kinds.js");
+    await using tmpDir = tempDir("junit-node-test-concurrent", { "package.json": "{}" });
+
+    const junitPath = join(tmpDir, "junit.xml");
+    await using proc = spawn(
+      [bunExe(), "test", "--concurrent", "--reporter=junit", "--reporter-outfile", junitPath, fixture],
+      { cwd: tmpDir, env: bunEnv, stdout: "pipe", stderr: "pipe" },
+    );
+    const [, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const result = await xml2js.parseStringPromise(await file(junitPath).text(), { strict: true });
+    const suite = result.testsuites.testsuite[0];
+    expect(suite.$).toMatchObject({ tests: "6", failures: "4" });
+    expect(
+      Object.fromEntries(suite.testcase.map(testcase => [testcase.$.name, testcase.failure?.[0].$.message ?? null])),
+    ).toEqual({
+      "a test body that throws": "thrown error",
+      "a failed assertion": expect.stringContaining("1 !== 2"),
+      "a rejected promise": "rejected promise",
+      "an unmet t.plan()": "plan expected 2 assertions but received 1",
+      "a test that passes": null,
+      "a test after the failures that waits for an unref'd immediate": null,
+    });
+    expect(exitCode).toBe(1);
+  });
 });
 
 function filterJunitXmlOutput(xmlContent) {

@@ -1,3 +1,4 @@
+use core::cell::Cell;
 use core::ffi::{c_char, c_void};
 use std::rc::Rc;
 
@@ -1416,7 +1417,7 @@ pub enum PipeReaderState {
 
 pub(crate) struct PipeReader {
     pub(crate) reader: IOReader,
-    pub(crate) process: Option<*mut ShellSubprocess>,
+    pub(crate) process: Cell<Option<*mut ShellSubprocess>>,
     pub(crate) event_loop: EventLoopHandle,
     pub(crate) state: PipeReaderState,
     #[cfg(not(windows))]
@@ -1606,10 +1607,8 @@ impl PipeReader {
         );
         // Clear the backref so any
         // late `on_reader_done`/`on_reader_error` after the Subprocess is freed
-        // can't follow it. Rc only yields `&Self`; write through the
-        // allocation pointer (single-threaded shell, no live `&`/`&mut` here).
-        // SAFETY: see `rc_as_mut_ptr` rationale; field is a plain `Option<*mut _>`.
-        unsafe { (*rc_as_mut_ptr(&self)).process = None };
+        // can't follow it.
+        self.process.set(None);
         // Dropping `self` releases the strong ref.
     }
 
@@ -1678,7 +1677,7 @@ impl PipeReader {
         // `Rc::from(Box<T>)` would reallocate into a new RcInner and leave
         // every BufferedReader callback with a dangling parent pointer.
         let rc = Rc::new(PipeReader {
-            process: Some(process),
+            process: Cell::new(Some(process)),
             reader,
             event_loop,
             #[cfg(not(windows))]
@@ -1716,7 +1715,7 @@ impl PipeReader {
         event_loop: EventLoopHandle,
     ) -> bun_sys::Result<()> {
         // self.ref();
-        self.process = Some(process);
+        self.process.set(Some(process));
         self.event_loop = event_loop;
         #[cfg(windows)]
         {
@@ -1812,8 +1811,7 @@ impl PipeReader {
         // Snapshot `interp` *before* the Cmd call: `try_signal_done_to_cmd`
         // → `Cmd::buffered_output_close` → `close_io` may overwrite the
         // `Readable::Pipe` slot, and the trampoline must not re-read `*me`.
-        // SAFETY: see `rc_as_mut_ptr`; raw read, no borrow held.
-        let interp = unsafe { (*me).interp };
+        let interp = guard.interp;
         // SAFETY: see `rc_as_mut_ptr` + `try_signal_done_to_cmd` contract —
         // raw `*mut`, no `&mut PipeReader` protector across the Cmd re-entry.
         let y = unsafe { Self::try_signal_done_to_cmd(me) };
@@ -1824,12 +1822,12 @@ impl PipeReader {
         // is still pinned.
         // SAFETY: see `rc_as_mut_ptr`; raw accesses, no borrow held.
         unsafe {
-            if (*me).process.is_none() {
+            if (*me).process.get().is_none() {
                 (*me).buffered_output = BufferedOutput::default();
             }
         }
         Self::run_yield_with(interp, y);
-        if let Some(process) = guard.process {
+        if let Some(process) = guard.process.get() {
             // SAFETY: `process` is the heap-allocated `ShellSubprocess` (stable
             // address), freed only by `Cmd::deinit` after every PipeReader has
             // signalled done (this call). Shared borrow scoped to `kind`.
@@ -1887,7 +1885,7 @@ impl PipeReader {
             // SAFETY: caller contract — short-lived shared borrow for the
             // read-only `is_done()` / log; no Cmd re-entry yet.
             let me = unsafe { &*this };
-            (me.is_done(), me.out_type, me.process)
+            (me.is_done(), me.out_type, me.process.get())
         };
         if !done {
             return Yield::Suspended;

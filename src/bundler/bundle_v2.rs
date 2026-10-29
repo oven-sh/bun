@@ -6511,6 +6511,7 @@ pub mod bv2_impl {
             });
 
             if let Some(err) = resolve_result.last_error {
+                core::hint::cold_path();
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
 
@@ -6557,6 +6558,9 @@ pub mod bv2_impl {
                     // row for this file stays `None`); dropped exactly once.
                     unsafe { core::ptr::drop_in_place(css_ref.as_ptr()) };
                 }
+
+                // `ResultError.log` is not read for `Step::Resolve`.
+                result.log.append_to(this.transpiler.log_mut());
 
                 parse_result.value = parse_task::ResultValue::Err(parse_task::ResultError {
                     err,

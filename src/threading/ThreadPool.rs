@@ -1137,9 +1137,8 @@ impl ThreadPool {
     /// Gives back one `spawned` slot and returns the word it replaced.
     ///
     /// # Safety
-    /// `pool` is live. After `(*pool).join_event.notify()` the joiner may return and the pool
-    /// may be **deallocated**, so this fn takes `*const Self` (no `&self` protector) and never
-    /// touches `pool` past that point.
+    /// `pool` is live on entry. Once `join_event.notify()` wakes the joiner the pool may be
+    /// deallocated, so this fn does not touch `pool` after that.
     unsafe fn release_slot(pool: *const Self) -> Sync {
         let one_spawned = {
             let mut s = Sync::zero();
@@ -1162,32 +1161,23 @@ impl ThreadPool {
     }
 
     /// # Safety
-    /// `pool` is the worker's owning pool, as for [`Self::release_slot`]: the shutdown chain
-    /// follows worker-stack `.next` links, not `pool`. `thread` is the calling worker's own
-    /// stack-local `Thread`.
+    /// `pool` is live on entry, as for [`Self::release_slot`]. `thread` is the calling worker's
+    /// stack-local `Thread`, which outlives this call.
     unsafe fn unregister(pool: *const Self, thread: NonNull<Thread>) {
         // SAFETY: `pool` is live on entry.
         unsafe { Self::release_slot(pool) };
         // ── `*pool` may be invalid past this point. ──
 
-        // Wait for a shutdown signal by the thread pool join()er.
-        // `thread` is the calling worker's own stack-local `Thread`
-        // (set in `ThreadRegistration::new`); it lives on this OS thread's
-        // stack and outlives the entire `unregister` call. BackRef invariant
-        // — pointee outlives holder — covers the `join_event.wait()` and
-        // `.next` reads below.
+        // Wait for the shutdown signal of the pool's join()er.
         let thread = bun_ptr::BackRef::from(thread);
         thread.join_event.wait(None);
 
-        // After receiving the shutdown signal, shutdown the next thread in the pool.
-        // We have to do that without touching the thread pool itself since its memory is invalidated by now.
-        // So just follow our .next link.
+        // Then shut down the next thread. The pool may be gone, so follow the `.next` link.
         let Some(next_thread) = NonNull::new(thread.next) else {
             return;
         };
-        // `next_thread` is a registered worker still blocked in
-        // `join_event.wait()`; the BackRef invariant (pointee outlives holder)
-        // holds for the duration of this `notify()` call.
+        // `next_thread` is a registered worker still blocked in `join_event.wait()`, so it
+        // outlives this `notify()`.
         bun_ptr::BackRef::from(next_thread).join_event.notify();
     }
 

@@ -262,7 +262,7 @@ impl JSSourceMap {
             return Ok(JSValue::create_empty_object(global, 0));
         }
 
-        let Some(mapping) = self.sourcemap.find_mapping(
+        let Some(mapping) = self.sourcemap.find_segment(
             Ordinal::from_zero_based(line_offset),
             Ordinal::from_zero_based(column_offset),
         ) else {
@@ -271,6 +271,13 @@ impl JSSourceMap {
 
         let name = self.mapping_name_to_js(global, &mapping)?;
         let source = self.source_name_to_js(global, &mapping)?;
+        // Node's entry for a 1-field segment has the generated position and nothing else.
+        let [original_line, original_column] = if mapping.is_unmapped() {
+            [JSValue::UNDEFINED; 2]
+        } else {
+            [mapping.original.lines, mapping.original.columns]
+                .map(|ordinal| JSValue::js_number(ordinal.zero_based() as f64))
+        };
         // SAFETY: C++ FFI; arguments are valid JSValues and a live JSGlobalObject.
         // `as_ptr()` derives `*mut` via the struct's `UnsafeCell` interior, so the
         // C++ callee may mutate the global without laundering a read-only pointer.
@@ -279,8 +286,8 @@ impl JSSourceMap {
                 global.as_mut_ptr(),
                 JSValue::js_number(mapping.generated.lines.zero_based() as f64),
                 JSValue::js_number(mapping.generated.columns.zero_based() as f64),
-                JSValue::js_number(mapping.original.lines.zero_based() as f64),
-                JSValue::js_number(mapping.original.columns.zero_based() as f64),
+                original_line,
+                original_column,
                 source,
                 name,
             )

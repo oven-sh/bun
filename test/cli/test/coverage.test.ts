@@ -1155,6 +1155,44 @@ test("reports an uncalled function on the last line of a // @bun file without a 
   expect(exitCode).toBe(0);
 });
 
+// A 1-field segment says that the code after it has no original position, so a function that starts there is not
+// a function of the source.
+test.concurrent.each([
+  ["AAAA", "FNF:2\nFNH:2\n"],
+  // "6B" is a 1-field segment at column 29, where `added` starts.
+  ["AAAA,6B", "FNF:1\nFNH:1\n"],
+])("a function that the map of a // @bun file un-maps is not reported: %s", async (segments, functions) => {
+  const code = "export function f(){return 1}export function added(){return 2}";
+  expect(code.indexOf("export function added")).toBe(29);
+  using dir = tempDir("cov-one-field-segment", {
+    "lib.js": `// @bun\n${code}\n//# sourceMappingURL=lib.js.map\n`,
+    "lib.js.map": JSON.stringify({
+      version: 3,
+      sources: ["lib.js"],
+      sourcesContent: [null],
+      names: [],
+      mappings: `;${segments};`,
+    }),
+    "lib.test.ts": `
+      import { expect, test } from "bun:test";
+      import { f, added } from "./lib.js";
+      test("calls both", () => { expect(f() + added()).toBe(3); });
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain(" 1 pass");
+  const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+  expect(lcov.split("end_of_record").find(record => record.includes("SF:lib.js\n"))).toContain(functions);
+  expect(exitCode).toBe(0);
+});
+
 // `braces.ts` in `source-positions-corpus.ts` has this for a file that Bun transpiles and reports by its source map.
 test.concurrent.each(["// @bun", "// @bun with a source map", "coverageIgnoreSourcemaps"])(
   "both braces of an object are listed and no brace of a block is: %s",

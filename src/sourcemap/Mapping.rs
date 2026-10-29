@@ -202,11 +202,31 @@ impl List {
         Ok(())
     }
 
+    /// Appends the row of a 1-field segment. Not through `append`: the compiler inlines that
+    /// into `parse`'s loop only while `parse` is its one caller.
+    #[cold]
+    #[inline(never)]
+    fn append_unmapped(&mut self, generated: LineColumnOffset) {
+        let row = Mapping::unmapped(generated);
+        bun_core::handle_oom(self.ensure_total_capacity(self.len() + 1));
+        match &mut self.r#impl {
+            ListValue::WithoutNames(list) => list.append_assume_capacity(MappingWithoutName {
+                generated: row.generated,
+                original: row.original,
+                source_index: row.source_index,
+            }),
+            ListValue::WithNames(list) => list.append_assume_capacity(row),
+        }
+    }
+
     pub(crate) fn len(&self) -> usize {
         both_lists!(&self.r#impl, |list| list.len())
     }
 
-    pub fn find(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
+    /// The row of the last segment at or before `line:column` on that line. It can be the row
+    /// of a 1-field segment ([`Mapping::is_unmapped`]).
+    #[inline]
+    pub fn find_segment(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
         match &self.r#impl {
             ListValue::WithoutNames(list) => {
                 if let Some(i) =
@@ -225,6 +245,13 @@ impl List {
         }
 
         None
+    }
+
+    /// The mapping that covers `line:column`. None after a 1-field segment: the code there has
+    /// no original position.
+    pub fn find(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
+        self.find_segment(line, column)
+            .filter(|mapping| !mapping.is_unmapped())
     }
 
     pub fn generated(&self) -> &[LineColumnOffset] {
@@ -408,6 +435,25 @@ impl Lookup {
 }
 
 impl Mapping {
+    /// The row of a 1-field segment: generated code that has no original position.
+    pub(crate) const fn unmapped(generated: LineColumnOffset) -> Mapping {
+        Mapping {
+            generated,
+            original: LineColumnOffset {
+                lines: Ordinal::INVALID,
+                columns: Ordinal::INVALID,
+            },
+            source_index: -1,
+            name_index: -1,
+        }
+    }
+
+    /// True for the row of a 1-field segment. `parse` rejects a negative original line in input.
+    #[inline]
+    pub fn is_unmapped(&self) -> bool {
+        !self.original.lines.is_valid()
+    }
+
     #[inline]
     pub fn original_line(&self) -> i32 {
         self.original.lines.zero_based()
@@ -552,20 +598,23 @@ pub fn parse(
 
         remain = &remain[generated_column_delta.start..];
 
-        // According to the specification, it's valid for a mapping to have 1,
-        // 4, or 5 variable-length fields. Having one field means there's no
-        // original location information, which is pretty useless. Just ignore
-        // those entries.
+        // A 1-field segment: the code from this column on has no original position.
         if remain.len() == 0 {
+            // ECMA-426 reads a 1-field segment that ends the string like any other
+            // (`Mapping : GeneratedColumn`). Node v26 reads it as a 4-field segment with zero
+            // deltas, which https://github.com/nodejs/node/pull/66264 fixes.
+            mapping.append_unmapped(generated);
             break;
         }
 
         match remain[0] {
             b',' => {
+                mapping.append_unmapped(generated);
                 remain = &remain[1..];
                 continue;
             }
             b';' => {
+                mapping.append_unmapped(generated);
                 continue;
             }
             _ => {}
@@ -858,6 +907,30 @@ fn parse_simd(
             r
         }
     };
+
+    // The kernel writes the columns by hand: a row is a mapping, or exactly `Mapping::unmapped`.
+    if cfg!(debug_assertions) {
+        for i in base..base + rows {
+            let row = match &mapping.r#impl {
+                ListValue::WithoutNames(list) => list.get(i).to_named(),
+                ListValue::WithNames(list) => *list.get(i),
+            };
+            let columns = [
+                row.original.lines.zero_based(),
+                row.original.columns.zero_based(),
+                row.source_index,
+            ];
+            assert!(
+                columns.iter().all(|&value| value >= 0)
+                    || (columns == [-1; 3] && row.name_index == -1),
+                "kernel row {i}: original {}:{} source {} name {}",
+                columns[0],
+                columns[1],
+                columns[2],
+                row.name_index,
+            );
+        }
+    }
 
     scoped_log!(
         SourceMap,

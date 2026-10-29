@@ -4,8 +4,8 @@
 // once with BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP=1 to force the scalar
 // decode) and the full mapping list must be byte-identical.
 
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 
 const BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
@@ -37,83 +37,141 @@ type Entry = {
   name: string | null;
 };
 
-// Spawn a child that constructs the SourceMap and dumps findEntry results at
-// every probe point. The child runs with or without the SIMD path. The
-// payload (which can be tens of KiB) is piped over stdin rather than
-// embedded in `-e`, since Windows caps the command line at ~32 KiB.
+type Dump = { entries: Entry[]; origins: Array<string | null>; error: string | null; debug: string };
+
+// A child constructs the SourceMap and dumps findEntry results (and the
+// file name findOrigin gives) at every probe point. It reads one case per
+// line of stdin (a payload can be tens of KiB) and answers with one RESULT
+// line. Scoped debug logs (BUN_DEBUG_SourceMap) go to stdout before it.
+const RESULT = "\x01result ";
 const dumpScript = `
   const { SourceMap } = require("node:module");
-  const { payload, probes } = await Bun.stdin.json();
-  let error = null;
-  let entries = [];
-  try {
-    const map = new SourceMap(payload);
-    for (const [l, c] of probes) {
-      const e = map.findEntry(l, c);
-      entries.push({
-        generatedLine: e.generatedLine ?? null,
-        generatedColumn: e.generatedColumn ?? null,
-        originalLine: e.originalLine ?? null,
-        originalColumn: e.originalColumn ?? null,
-        originalSource: e.originalSource ?? null,
-        name: e.name ?? null,
-      });
+  for await (const line of console) {
+    if (!line) continue;
+    const { payload, probes } = JSON.parse(line);
+    let error = null;
+    let entries = [];
+    let origins = [];
+    try {
+      const map = new SourceMap(payload);
+      for (const [l, c] of probes) {
+        const e = map.findEntry(l, c);
+        entries.push({
+          generatedLine: e.generatedLine ?? null,
+          generatedColumn: e.generatedColumn ?? null,
+          originalLine: e.originalLine ?? null,
+          originalColumn: e.originalColumn ?? null,
+          originalSource: e.originalSource ?? null,
+          name: e.name ?? null,
+        });
+        origins.push(map.findOrigin(l, c).fileName ?? null);
+      }
+    } catch (err) {
+      error = String(err);
     }
-  } catch (err) {
-    error = String(err);
+    await Bun.write(Bun.stdout, ${JSON.stringify(RESULT)} + JSON.stringify({ entries, origins, error }) + "\\n");
   }
-  process.stdout.write(JSON.stringify({ entries, error }));
 `;
 
-async function dumpMappings(
+// One child with the SIMD path and one without serve every case. A debug
+// build takes about half a second to start, and a pair of children per
+// test, all started at once, ran every test past the default timeout.
+function startDecoder(disableSimd: boolean) {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "-e", dumpScript],
+    env: {
+      ...bunEnv,
+      BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP: disableSimd ? "1" : undefined,
+      // Debug builds only: the SourceMap scoped log shows whether the SIMD
+      // path ran (see assertSimdMatchesScalar).
+      BUN_DEBUG_SourceMap: isDebug ? "1" : undefined,
+    },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const waiting: Array<PromiseWithResolvers<Dump>> = [];
+  let stopped: Error | undefined;
+  const exited = (async () => {
+    const stderr = proc.stderr.text();
+    const utf8 = new TextDecoder();
+    let partial = "";
+    let debug: string[] = [];
+    for await (const chunk of proc.stdout) {
+      const lines = (partial + utf8.decode(chunk, { stream: true })).split("\n");
+      partial = lines.pop()!;
+      for (const line of lines) {
+        if (!line.startsWith(RESULT)) {
+          debug.push(line);
+          continue;
+        }
+        waiting.shift()!.resolve({ ...JSON.parse(line.slice(RESULT.length)), debug: debug.join("\n") });
+        debug = [];
+      }
+    }
+    const result = { exitCode: await proc.exited, stderr: await stderr };
+    // A child that stops early fails the cases that wait for it, and the
+    // ones that come later.
+    stopped = new Error(`the child exited: ${JSON.stringify(result)}`);
+    for (const { reject } of waiting) reject(stopped);
+    return result;
+  })();
+  return {
+    decode(request: object): Promise<Dump> {
+      if (stopped) return Promise.reject(stopped);
+      const result = Promise.withResolvers<Dump>();
+      waiting.push(result);
+      proc.stdin.write(JSON.stringify(request) + "\n");
+      proc.stdin.flush();
+      return result.promise;
+    },
+    close() {
+      proc.stdin.end();
+      return exited;
+    },
+  };
+}
+
+let decoders: Record<"simd" | "scalar", ReturnType<typeof startDecoder>>;
+beforeAll(() => {
+  decoders = { simd: startDecoder(false), scalar: startDecoder(true) };
+});
+afterAll(async () => {
+  const [simd, scalar] = await Promise.all([decoders.simd.close(), decoders.scalar.close()]);
+  expect({ simd, scalar }).toMatchObject({ simd: { exitCode: 0 }, scalar: { exitCode: 0 } });
+});
+
+function dumpMappings(
   mappings: string,
   sourcesLen: number,
   namesLen: number,
   probes: Array<[number, number]>,
   disableSimd: boolean,
-): Promise<{ entries: Entry[]; error: string | null; debug: string }> {
+): Promise<Dump> {
   const sources = Array.from({ length: sourcesLen }, (_, i) => `s${i}.js`);
   const names = Array.from({ length: namesLen }, (_, i) => `n${i}`);
-  const env = { ...bunEnv };
-  if (disableSimd) {
-    env.BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP = "1";
-  } else {
-    delete env.BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP;
-  }
-  // Debug builds only: enable the SourceMap scoped log so the caller can
-  // verify the SIMD path actually fired (see assertSimdMatchesScalar).
-  if (isDebug) env.BUN_DEBUG_SourceMap = "1";
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", dumpScript],
-    env,
-    stdin: new Blob([JSON.stringify({ payload: { version: 3, sources, names, mappings }, probes })]),
-    stdout: "pipe",
-    stderr: "pipe",
+  return decoders[disableSimd ? "scalar" : "simd"].decode({
+    payload: { version: 3, sources, names, mappings },
+    probes,
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode !== 0) {
-    throw new Error(`child exited ${exitCode}\nstderr: ${stderr}\nstdout: ${stdout}`);
-  }
-  // Scoped debug logs (BUN_DEBUG_SourceMap) go to stdout; the JSON payload
-  // is the final line with no trailing newline.
-  const lines = stdout.split("\n");
-  const json = lines[lines.length - 1];
-  const debug = lines.slice(0, -1).join("\n") + stderr;
-  return { ...JSON.parse(json), debug };
 }
 
 // Build a mappings string from a list of generated lines, each a list of
 // [genColDelta, srcIdxDelta, origLineDelta, origColDelta, nameIdxDelta?]
 // segments. Returns probe points at every segment's ABSOLUTE
-// (generatedLine, generatedColumn) so findEntry hits it exactly.
+// (generatedLine, generatedColumn) so findEntry hits it exactly: `probes`
+// for the 4- and 5-field segments, `oneFieldProbes` for the [genColDelta]
+// ones.
 function build(lines: number[][][]): {
   mappings: string;
   probes: Array<[number, number]>;
+  oneFieldProbes: Array<[number, number]>;
   sourcesLen: number;
   namesLen: number;
 } {
   const parts: string[] = [];
   const probes: Array<[number, number]> = [];
+  const oneFieldProbes: Array<[number, number]> = [];
   let srcMax = 0;
   let nameMax = 0;
   let src = 0;
@@ -128,6 +186,8 @@ function build(lines: number[][][]): {
         src += seg[1];
         srcMax = Math.max(srcMax, src);
         probes.push([li, genCol]);
+      } else {
+        oneFieldProbes.push([li, genCol]);
       }
       if (seg.length >= 5) {
         name += seg[4];
@@ -139,6 +199,7 @@ function build(lines: number[][][]): {
   return {
     mappings: parts.join(";"),
     probes,
+    oneFieldProbes,
     sourcesLen: srcMax + 1,
     namesLen: nameMax + 1,
   };
@@ -157,6 +218,7 @@ async function assertSimdMatchesScalar(
   ]);
   expect({ label, error: simd.error }).toEqual({ label, error: scalar.error });
   expect({ label, entries: simd.entries }).toEqual({ label, entries: scalar.entries });
+  expect({ label, origins: simd.origins }).toEqual({ label, origins: scalar.origins });
   // Prove the SIMD path actually ran (debug builds only: the scoped log is
   // compiled out of release). Guards against the feature flag or threshold
   // silently routing both children through the scalar path.
@@ -164,7 +226,33 @@ async function assertSimdMatchesScalar(
     expect({ label, simdRan: simd.debug.includes("simd consumed") }).toEqual({ label, simdRan: true });
     expect({ label, scalarRan: scalar.debug.includes("simd consumed") }).toEqual({ label, scalarRan: false });
   }
-  return scalar;
+  return { ...scalar, simdDebug: simd.debug };
+}
+
+// The entry of a 1-field segment: its generated position and nothing else.
+function unmapped(generatedLine: number, generatedColumn: number): Entry {
+  return { generatedLine, generatedColumn, originalLine: null, originalColumn: null, originalSource: null, name: null };
+}
+
+function mapped(
+  generatedLine: number,
+  generatedColumn: number,
+  originalLine: number,
+  originalColumn: number,
+  name: string | null = null,
+): Entry {
+  return { generatedLine, generatedColumn, originalLine, originalColumn, originalSource: "s0.js", name };
+}
+
+// The kernel leaves less than one block (64 bytes at most) to the scalar
+// loop unless it bails. Debug builds log how far it got.
+function expectKernelDecodedAllBlocks(label: string, simdDebug: string) {
+  if (!isDebug) return;
+  const [consumed, total] = simdDebug
+    .match(/simd consumed (\d+)\/(\d+)/)!
+    .slice(1)
+    .map(Number);
+  expect({ label, leftToScalar: total - consumed < 64 }).toEqual({ label, leftToScalar: true });
 }
 
 describe.concurrent("SourceMap SIMD mappings decode", () => {
@@ -289,22 +377,220 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     expect(scalar.entries[139].name).toBe("n0");
   });
 
-  test("1-field (generated-column-only) segments are skipped but accumulate", async () => {
+  test("1-field (generated-column-only) segments are entries without an original position", async () => {
     // Interleave 1-field and 4-field so the generated column a 4-field
     // segment lands on depends on the preceding 1-field deltas.
     const lines: number[][][] = [[]];
     for (let i = 0; i < 150; i++) {
       lines[0].push([3]); // 1-field
-      lines[0].push([2, 0, 0, 1]); // 4-field; probed
+      lines[0].push([2, 0, 0, 1]); // 4-field
     }
-    const { mappings, probes, sourcesLen } = build(lines);
+    const { mappings, probes, oneFieldProbes, sourcesLen } = build(lines);
     expect(mappings.length).toBeGreaterThanOrEqual(128);
-    const scalar = await assertSimdMatchesScalar("1-field-interleaved", mappings, sourcesLen, 0, probes);
+    const scalar = await assertSimdMatchesScalar("1-field-interleaved", mappings, sourcesLen, 0, [
+      ...probes,
+      ...oneFieldProbes,
+    ]);
     expect(scalar.error).toBeNull();
-    // The k'th 4-field segment lands at gen column 5*k + 5 - 0 = 5k+5... check one.
-    expect(scalar.entries[0].generatedColumn).toBe(5);
-    expect(scalar.entries[1].generatedColumn).toBe(10);
+    expectKernelDecodedAllBlocks("1-field-interleaved", scalar.simdDebug);
+    // The k'th 1-field segment lands at generated column 5k + 3 and the
+    // k'th 4-field one at 5k + 5.
+    expect(scalar.entries).toEqual([
+      ...Array.from({ length: 150 }, (_, k) => mapped(0, 5 * k + 5, 0, k + 1)),
+      ...Array.from({ length: 150 }, (_, k) => unmapped(0, 5 * k + 3)),
+    ]);
+    expect(scalar.origins).toEqual([...Array(150).fill("s0.js"), ...Array(150).fill(null)]);
   });
+
+  // Each case repeats one line 20 times. Every block then holds a ';', so
+  // the kernel's per-segment loop decodes it, and the rows fit in the first
+  // 4096 bytes of their allocation, which ASAN fills with 0xbe: a column the
+  // kernel did not write does not read as 0.
+  const none: Entry = {
+    generatedLine: null,
+    generatedColumn: null,
+    originalLine: null,
+    originalColumn: null,
+    originalSource: null,
+    name: null,
+  };
+  test.each([
+    {
+      label: "first on a line, between 4-field segments, two in a row, last on a line",
+      // Columns 3 (1-field), 5, 9 (1-field), 11 (1-field), 14, 15 (1-field).
+      line: () => [[3], [2, 0, 1, 0], [4], [2], [3, 0, 0, 1], [1]],
+      expected: (i: number): Array<[number, Entry]> => [
+        [2, none],
+        [3, unmapped(i, 3)],
+        [4, unmapped(i, 3)],
+        [5, mapped(i, 5, i + 1, i)],
+        [8, mapped(i, 5, i + 1, i)],
+        [9, unmapped(i, 9)],
+        [10, unmapped(i, 9)],
+        [11, unmapped(i, 11)],
+        [13, unmapped(i, 11)],
+        [14, mapped(i, 14, i + 1, i + 1)],
+        [15, unmapped(i, 15)],
+        [40, unmapped(i, 15)],
+      ],
+    },
+    {
+      label: "negative column deltas",
+      // In the string: 9, 5 (1-field), 12, 10, 11 (1-field). Sorted: 5, 9, 10, 11, 12.
+      line: () => [[9, 0, 1, 0], [-4], [7, 0, 0, 1], [-2, 0, 0, 1], [1]],
+      expected: (i: number): Array<[number, Entry]> => [
+        [4, none],
+        [5, unmapped(i, 5)],
+        [8, unmapped(i, 5)],
+        [9, mapped(i, 9, i + 1, 2 * i)],
+        [10, mapped(i, 10, i + 1, 2 * i + 2)],
+        [11, unmapped(i, 11)],
+        [12, mapped(i, 12, i + 1, 2 * i + 1)],
+        [30, mapped(i, 12, i + 1, 2 * i + 1)],
+      ],
+    },
+    {
+      label: "between 5-field segments",
+      // Columns 2 (name 2i), 5 (1-field), 7 (name 2i + 1).
+      line: (i: number) => [[2, 0, 1, 0, i === 0 ? 0 : 1], [3], [2, 0, 0, 1, 1]],
+      expected: (i: number): Array<[number, Entry]> => [
+        [2, mapped(i, 2, i + 1, i, `n${2 * i}`)],
+        [4, mapped(i, 2, i + 1, i, `n${2 * i}`)],
+        [5, unmapped(i, 5)],
+        [6, unmapped(i, 5)],
+        [7, mapped(i, 7, i + 1, i + 1, `n${2 * i + 1}`)],
+        [20, mapped(i, 7, i + 1, i + 1, `n${2 * i + 1}`)],
+      ],
+    },
+    {
+      label: "column deltas of 2 to 7 VLQ characters",
+      line: () => [
+        [40],
+        [1, 0, 1, 0],
+        [1000],
+        [1, 0, 0, 1],
+        [40000],
+        [1, 0, 0, 1],
+        [1200000],
+        [1, 0, 0, 1],
+        [20000000],
+        [1, 0, 0, 1],
+        [600000000],
+        [1, 0, 0, 1],
+      ],
+      expected: (i: number): Array<[number, Entry]> => [
+        [40, unmapped(i, 40)],
+        [41, mapped(i, 41, i + 1, 5 * i)],
+        [1041, unmapped(i, 1041)],
+        [1042, mapped(i, 1042, i + 1, 5 * i + 1)],
+        [41042, unmapped(i, 41042)],
+        [41043, mapped(i, 41043, i + 1, 5 * i + 2)],
+        [1241043, unmapped(i, 1241043)],
+        [1241044, mapped(i, 1241044, i + 1, 5 * i + 3)],
+        [21241044, unmapped(i, 21241044)],
+        [21241045, mapped(i, 21241045, i + 1, 5 * i + 4)],
+        [621241045, unmapped(i, 621241045)],
+        [621241046, mapped(i, 621241046, i + 1, 5 * i + 5)],
+      ],
+    },
+  ])("1-field segments: $label", async ({ label, line, expected }) => {
+    const lines = Array.from({ length: 20 }, (_, i) => line(i));
+    const { mappings, sourcesLen, namesLen } = build(lines);
+    expect(mappings.length).toBeGreaterThanOrEqual(128);
+    const probes: Array<[number, number]> = [];
+    const entries: Entry[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      for (const [column, entry] of expected(i)) {
+        probes.push([i, column]);
+        entries.push(entry);
+      }
+    }
+    const scalar = await assertSimdMatchesScalar(label, mappings, sourcesLen, namesLen, probes);
+    expect(scalar.error).toBeNull();
+    expectKernelDecodedAllBlocks(label, scalar.simdDebug);
+    expect({ label, entries: scalar.entries }).toEqual({ label, entries });
+    expect({ label, origins: scalar.origins }).toEqual({ label, origins: entries.map(entry => entry.originalSource) });
+  });
+
+  test("a map of 1-field segments only, without sources", async () => {
+    // 130 segments and 129 delimiters: the kernel's row capacity is exact.
+    const lines: number[][][] = [Array.from({ length: 100 }, () => [1])];
+    for (let i = 0; i < 30; i++) lines.push([[2]]);
+    const { mappings, oneFieldProbes } = build(lines);
+    expect(mappings.length).toBeGreaterThanOrEqual(128);
+    const scalar = await assertSimdMatchesScalar("1-field-only", mappings, 0, 0, [[0, 0], [1, 1], ...oneFieldProbes]);
+    expect(scalar.error).toBeNull();
+    expectKernelDecodedAllBlocks("1-field-only", scalar.simdDebug);
+    expect(scalar.entries).toEqual([
+      none,
+      none,
+      ...Array.from({ length: 100 }, (_, k) => unmapped(0, k + 1)),
+      ...Array.from({ length: 30 }, (_, k) => unmapped(k + 1, 2)),
+    ]);
+    expect(scalar.origins).toEqual(Array(132).fill(null));
+  });
+
+  test.each([false, true])(
+    "a frame of // @bun code after a 1-field segment in a 128+ byte map (scalar only: %p)",
+    async disableSimd => {
+      // "EAIE" maps line 3 column 2 to original.ts 5:3 and "G" un-maps that
+      // line from column 5. "EAGA" maps line 6 column 2 to original.ts 8:3.
+      // The kernel stores no names for a runtime map.
+      const mappingLines: string[] = Array(84).fill("");
+      mappingLines[2] = "EAIE,G";
+      mappingLines[5] = "EAGA";
+      for (let i = 14; i < mappingLines.length; i++) mappingLines[i] = "AACA";
+      const mappings = mappingLines.join(";");
+      expect(mappings.length).toBeGreaterThanOrEqual(128);
+      using dir = tempDir("sourcemap-simd-one-field", {
+        "entry.js": `// @bun
+function unmapped() {
+  throw new Error("unmapped");
+}
+function mapped() {
+  throw new Error("mapped");
+}
+for (const fn of [unmapped, mapped]) {
+  try {
+    fn();
+  } catch (e) {
+    console.log(e.stack.split("\\n")[1].trim());
+  }
+}
+//# sourceMappingURL=entry.js.map
+`,
+        "entry.js.map": JSON.stringify({
+          version: 3,
+          sources: ["original.ts"],
+          sourcesContent: [null],
+          names: [],
+          mappings,
+        }),
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "entry.js"],
+        env: {
+          ...bunEnv,
+          BUN_FEATURE_FLAG_DISABLE_SIMD_SOURCEMAP: disableSimd ? "1" : undefined,
+          BUN_DEBUG_SourceMap: isDebug ? "1" : undefined,
+        },
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const frames = stdout
+        .replaceAll(String(dir), "<dir>")
+        .replaceAll("\\", "/")
+        .split(/\r?\n/)
+        .filter(line => line.startsWith("at "));
+      expect({ frames, exitCode }).toEqual({
+        frames: ["at unmapped (<dir>/entry.js:3:18)", "at mapped (<dir>/original.ts:8:3)"],
+        exitCode: 0,
+      });
+      if (isDebug) expect((stdout + stderr).includes("simd consumed")).toBe(!disableSimd);
+    },
+  );
 
   test("semicolon runs (line resets) and trailing ';'", async () => {
     // 60 lines, some empty (';;'), each non-empty line has a few segments.
@@ -337,9 +623,12 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
       filler.push([1000, 0, 1000, 1000]); // 10-byte body (3+1+3+3); seg_len=10 passes the >10 bail
       filler.push([1, 0, 0, 1]);
       while (filler.length < 80) filler.push([1, 0, 0, 0]);
-      const { mappings, probes, sourcesLen } = build([filler]);
+      const { mappings, probes, oneFieldProbes, sourcesLen } = build([filler]);
       expect(mappings.length).toBeGreaterThanOrEqual(128);
-      const scalar = await assertSimdMatchesScalar(`straddle-${pad}`, mappings, sourcesLen, 0, probes);
+      const scalar = await assertSimdMatchesScalar(`straddle-${pad}`, mappings, sourcesLen, 0, [
+        ...probes,
+        ...oneFieldProbes,
+      ]);
       expect(scalar.error).toBeNull();
       expect(scalar.entries[0]).toEqual({
         generatedLine: 0,
@@ -349,6 +638,8 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
         originalSource: "s0.js",
         name: null,
       });
+      // The filler: one entry without an original position per column.
+      expect(scalar.entries.slice(probes.length)).toEqual(Array.from({ length: pad }, (_, k) => unmapped(0, k + 1)));
     });
   }
 
@@ -438,7 +729,9 @@ describe.concurrent("SourceMap SIMD mappings decode", () => {
     // Probe the 5-field row at column 61 and every tail row after it.
     for (let i = 0; i <= 41; i++) probes.push([0, 61 + i]);
     expect(mappings.length).toBeGreaterThanOrEqual(128);
-    await assertSimdMatchesScalar("6-field", mappings, 1, 1, probes);
+    const scalar = await assertSimdMatchesScalar("6-field", mappings, 1, 1, probes);
+    // The 6th field reads as a 1-field segment at column 62, as in Node.
+    expect(scalar.entries[61]).toEqual(unmapped(0, 62));
   });
 
   test("over-long VLQ (>= 8 cont bytes): SIMD bails, scalar rejects", async () => {

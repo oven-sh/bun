@@ -1245,9 +1245,10 @@ pub struct ParseMappingsOut {
     pub cap: usize,
 }
 
-/// SIMD decode of a source-map `mappings` string. Writes one row per 4- or
-/// 5-field segment (accumulated absolute values) into `out`, up to
-/// `out.cap`. On return, `err_at` is the byte offset in `bytes` where the
+/// SIMD decode of a source-map `mappings` string. Writes one row per
+/// segment (accumulated absolute values) into `out`, up to `out.cap`. The
+/// row of a 1-field segment holds its generated position and -1 in every
+/// other column. On return, `err_at` is the byte offset in `bytes` where the
 /// caller should resume with the scalar decoder (== len when the whole
 /// input was consumed), and `state` holds the accumulator at that offset.
 /// Returns the number of rows written.

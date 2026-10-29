@@ -245,7 +245,16 @@ impl ParsedSourceMap {
         self.mappings.find(line, column)
     }
 
-    /// Every mapping, in generated order.
+    /// Like [`Self::find_mapping`], but the row of a 1-field segment is returned as it is
+    /// ([`Mapping::is_unmapped`]).
+    pub fn find_segment(&self, line: Ordinal, column: Ordinal) -> Option<Mapping> {
+        if let Some(ism) = &self.internal {
+            return ism.find(line, column);
+        }
+        self.mappings.find_segment(line, column)
+    }
+
+    /// Every mapping, in generated order. The rows of 1-field segments are not mappings.
     pub fn for_each_mapping(&self, mut each: impl FnMut(Mapping)) {
         if let Some(ism) = &self.internal {
             return ism.for_each(each);
@@ -256,12 +265,15 @@ impl ParsedSourceMap {
             self.mappings.source_index(),
         );
         for i in 0..generated.len() {
-            each(Mapping {
+            let mapping = Mapping {
                 generated: generated[i],
                 original: original[i],
                 source_index: source_index[i],
                 name_index: -1,
-            });
+            };
+            if !mapping.is_unmapped() {
+                each(mapping);
+            }
         }
     }
 
@@ -330,6 +342,10 @@ impl ParsedSourceMap {
             }
             writer.write_all(VLQ::encode(gn.columns.zero_based() - last_col).slice())?;
             last_col = gn.columns.zero_based();
+            if !orig.lines.is_valid() {
+                // A 1-field segment.
+                continue;
+            }
             writer.write_all(VLQ::encode(*source_index - last_src).slice())?;
             last_src = *source_index;
             writer.write_all(VLQ::encode(orig.lines.zero_based() - last_ol).slice())?;

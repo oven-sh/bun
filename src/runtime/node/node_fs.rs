@@ -5562,20 +5562,17 @@ impl NodeFS {
             // first; fall back to read/write on cross-device or unsupported
             // fd types.
             'cfr: loop {
-                // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI.
-                // Null offsets so the kernel advances the file's seek position, keeping the
+                // No offsets so the kernel advances the file's seek position, keeping the
                 // read/write fallback (which uses the seek position) coherent if we ever
                 // break mid-loop.
-                let rc: isize = unsafe {
-                    sys::freebsd::copy_file_range(
-                        src_fd.native(),
-                        core::ptr::null_mut(),
-                        dest_fd.native(),
-                        core::ptr::null_mut(),
-                        (i32::MAX - 1) as usize,
-                        0,
-                    )
-                } as isize;
+                let rc: isize = sys::freebsd::copy_file_range(
+                    src_fd.native(),
+                    None,
+                    dest_fd.native(),
+                    None,
+                    (i32::MAX - 1) as usize,
+                    0,
+                );
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
                         if rc == 0 {
@@ -5704,17 +5701,14 @@ impl NodeFS {
                 loop {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            sys::page_size(),
-                            0,
-                        )
-                    };
+                    let written = sys::linux::copy_file_range(
+                        src_fd.native(),
+                        Some(&mut off_in_copy),
+                        dest_fd.native(),
+                        Some(&mut off_out_copy),
+                        sys::page_size(),
+                        0,
+                    );
                     if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
                         written,
                         sys::Tag::copy_file_range,
@@ -5742,17 +5736,14 @@ impl NodeFS {
                 }
             } else {
                 while size > 0 {
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            size,
-                            0,
-                        )
-                    };
+                    let written = sys::linux::copy_file_range(
+                        src_fd.native(),
+                        Some(&mut off_in_copy),
+                        dest_fd.native(),
+                        Some(&mut off_out_copy),
+                        size,
+                        0,
+                    );
                     if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
                         written,
                         sys::Tag::copy_file_range,
@@ -6151,13 +6142,13 @@ impl NodeFS {
     }
 
     pub(crate) fn mkdir_recursive(&mut self, args: &args::Mkdir) -> Maybe<ret::Mkdir> {
-        self.mkdir_recursive_impl::<()>(args, &())
+        self.mkdir_recursive_impl::<()>(args, &mut ())
     }
 
     pub(crate) fn mkdir_recursive_impl<Ctx: MkdirCtx>(
         &mut self,
         args: &args::Mkdir,
-        ctx: &Ctx,
+        ctx: &mut Ctx,
     ) -> Maybe<ret::Mkdir> {
         let mut buf = paths::path_buffer_pool::get();
         let path = match args.path.os_path_kernel32(&mut *buf) {
@@ -6185,15 +6176,15 @@ impl NodeFS {
         return_path: bool,
     ) -> Maybe<ret::Mkdir> {
         if return_path {
-            self.mkdir_recursive_os_path_impl::<(), true>(&(), path, mode)
+            self.mkdir_recursive_os_path_impl::<(), true>(&mut (), path, mode)
         } else {
-            self.mkdir_recursive_os_path_impl::<(), false>(&(), path, mode)
+            self.mkdir_recursive_os_path_impl::<(), false>(&mut (), path, mode)
         }
     }
 
     pub(crate) fn mkdir_recursive_os_path_impl<Ctx: MkdirCtx, const RETURN_PATH: bool>(
         &mut self,
-        ctx: &Ctx,
+        ctx: &mut Ctx,
         path: &OSPathSliceZ,
         mode: Mode,
     ) -> Maybe<ret::Mkdir> {
@@ -9298,17 +9289,14 @@ impl NodeFS {
                 loop {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            sys::page_size(),
-                            0,
-                        )
-                    };
+                    let written = sys::linux::copy_file_range(
+                        src_fd.native(),
+                        Some(&mut off_in_copy),
+                        dest_fd.native(),
+                        Some(&mut off_out_copy),
+                        sys::page_size(),
+                        0,
+                    );
                     if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
                         written,
                         sys::Tag::copy_file_range,
@@ -9341,17 +9329,14 @@ impl NodeFS {
                 while size > 0 {
                     // Linux Kernel 5.3 or later
                     // Not supported in gVisor
-                    // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                    let written = unsafe {
-                        sys::linux::copy_file_range(
-                            src_fd.native(),
-                            &raw mut off_in_copy,
-                            dest_fd.native(),
-                            &raw mut off_out_copy,
-                            size,
-                            0,
-                        )
-                    };
+                    let written = sys::linux::copy_file_range(
+                        src_fd.native(),
+                        Some(&mut off_in_copy),
+                        dest_fd.native(),
+                        Some(&mut off_out_copy),
+                        size,
+                        0,
+                    );
                     if let Some(err) = Maybe::<ret::CopyFile>::errno_sys_p(
                         written,
                         sys::Tag::copy_file_range,
@@ -9470,17 +9455,14 @@ impl NodeFS {
                 } else {
                     size.saturating_sub(wrote.get() as usize)
                 };
-                // SAFETY: src_fd/dest_fd are valid open fds; copy_file_range is the libc FFI
-                let rc: isize = unsafe {
-                    sys::freebsd::copy_file_range(
-                        src_fd.native(),
-                        &mut off_in,
-                        dest_fd.native(),
-                        &mut off_out,
-                        want,
-                        0,
-                    )
-                } as isize;
+                let rc: isize = sys::freebsd::copy_file_range(
+                    src_fd.native(),
+                    Some(&mut off_in),
+                    dest_fd.native(),
+                    Some(&mut off_out),
+                    want,
+                    0,
+                );
                 match sys::get_errno(rc) {
                     E::SUCCESS => {
                         if rc == 0 {
@@ -9851,7 +9833,7 @@ pub(crate) enum ReadFileStringType {
 
 /// Trait for `mkdirRecursiveImpl` Ctx parameter (`void` does nothing).
 pub(crate) trait MkdirCtx {
-    fn on_create_dir(&self, _path: &OSPathSliceZ) {}
+    fn on_create_dir(&mut self, _path: &OSPathSliceZ) {}
 }
 impl MkdirCtx for () {}
 

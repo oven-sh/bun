@@ -33,7 +33,13 @@ const fdOutOfRange = {
 function rejection(promise: Promise<unknown>) {
   return promise.then(
     () => "resolved",
-    e => ({ string: String(e), code: e.code, syscall: e.syscall, ownName: Object.hasOwn(e, "name") }),
+    e => ({
+      string: String(e),
+      code: e.code,
+      syscall: e.syscall,
+      ownName: Object.hasOwn(e, "name"),
+      plainError: Object.getPrototypeOf(e) === Error.prototype,
+    }),
   );
 }
 
@@ -71,7 +77,7 @@ describe("a closed FileHandle", () => {
       Object.fromEntries(
         calls.map(([method, syscall]) => [
           method,
-          { string: "Error: file closed", code: "EBADF", syscall, ownName: false },
+          { string: "Error: file closed", code: "EBADF", syscall, ownName: false, plainError: true },
         ]),
       ),
     );
@@ -137,6 +143,7 @@ describe("a FileHandle in the transferList of a Worker", () => {
       code: "EBADF",
       syscall: "fstat",
       ownName: false,
+      plainError: true,
     };
     assert.deepStrictEqual(await rejection(handle.stat()), transferred);
     // close() does nothing on the sending side and does not change the reason.
@@ -156,6 +163,7 @@ describe("a FileHandle in the transferList of a Worker", () => {
       code: "EBADF",
       syscall: "fstat",
       ownName: false,
+      plainError: true,
     });
   });
 });

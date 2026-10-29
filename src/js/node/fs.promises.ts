@@ -511,7 +511,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     [kClosePromise]: Promise<void> | null | undefined;
     [kRefs]: number;
     declare [kLocked]: boolean | undefined;
-    declare [kCloseReason]: string | undefined;
+    [kCloseReason]: string | undefined;
     // needs to exist for https://github.com/nodejs/node/blob/8641d941893/test/parallel/test-worker-message-port-transfer-fake-js-transferable.js to pass
     [Symbol("messaging_transfer_symbol")]() {}
 
@@ -1599,7 +1599,7 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
     [kDeserialize]({ fd, flag, [kCloseReason]: reason }) {
       this[kFd] = fd;
       this[kFlag] = flag;
-      if (this[kCloseReason] !== reason) this[kCloseReason] = reason;
+      this[kCloseReason] = reason;
       if (fd !== -1) {
         (fileHandleRegistry ??= new FinalizationRegistry(onFileHandleCollected)).register(
           this,

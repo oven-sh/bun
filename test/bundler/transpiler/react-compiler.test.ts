@@ -1253,6 +1253,14 @@ describe("bundler", () => {
           same.push("m");
           return <div arr={arr} out={twice} />;
         }
+        // The method of the array gives each row to the local, which can write to \`seen\`.
+        function PassedToAMethodOfAnArray(props) {
+          const rows = [[props.x], [props.x + 1]];
+          const seen = [];
+          const keep = props.e ? Boolean : row => { seen.push(row[0]); return row[0] > 1; };
+          const shown = rows.filter(keep);
+          return <div shown={shown} seen={seen} />;
+        }
         // The two of each of these are one function, or two of one shape. The local has no type either, and the
         // memo cache has two slots more for it.
         function OneFunctionOnBothPaths(props) {
@@ -1283,6 +1291,7 @@ describe("bundler", () => {
           CalledBeforeItIsOneOfTwo,
           CalledAfterItIsOneOfTwo,
           OneIsCalledAndOneIsMadeWithNew,
+          PassedToAMethodOfAnArray,
           OneFunctionOnBothPaths,
           OneOfTwoArrowsThatReturnNumbers,
         ];
@@ -1311,9 +1320,10 @@ describe("bundler", () => {
         'CalledBeforeItIsOneOfTwo [[1,"m"],4] [[1,"m"],4] [[1],3] [[1,"m"],4]',
         'CalledAfterItIsOneOfTwo [[1,"m"],4] [[1,"m"],4] [[1],3] [[1,"m"],4]',
         'OneIsCalledAndOneIsMadeWithNew [[1,"m"],4] [[1,"m"],4] [[1],4] [[1,"m"],4]',
+        "PassedToAMethodOfAnArray [[[2]],[1,2]] [[[2]],[1,2]] [[[1],[2]],[]] [[[2]],[1,2]]",
         "OneFunctionOnBothPaths [[1],1] [[1],1] [[1],1] [[1],1]",
         "OneOfTwoArrowsThatReturnNumbers [1,2] [1,2] [1,1] [1,2]",
-        "compiled 9",
+        "compiled 10",
         "sizes 7 5",
       ].join("\n"),
     },
@@ -1501,8 +1511,27 @@ describe("bundler", () => {
           return <div arr={arr} out={out} />;
         }
 
-        // Each render gets a \`mutate\` of its own, as from a parent that makes it when it renders.
-        const propsOf = e => ({ x: 1, n: 1, e, reset: false, arrow: true, mutate: a => { a.push("m"); return a.length; } });
+        // The rule is for functions. This local is an array after the loop as before, and the write to what can be
+        // a prop is refused: the component is not compiled.
+        function ArrayOrAPropInALoop(props) {
+          let list = [];
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) list = props.list;
+          }
+          list.push(props.x);
+          return <div list={list} />;
+        }
+
+        // Each render gets a \`mutate\` and a \`list\` of its own, as from a parent that makes them when it renders.
+        const propsOf = e => ({
+          x: 1,
+          n: 1,
+          e,
+          reset: false,
+          arrow: true,
+          list: ["p"],
+          mutate: a => { a.push("m"); return a.length; },
+        });
         const components = [
           ReassignedInALoop,
           SwappedInALoop,
@@ -1518,6 +1547,7 @@ describe("bundler", () => {
           NewFunctionReturnsTheOneBefore,
           OneOfTwoReturnsTheOneBefore,
           OneFunctionInALoop,
+          ArrayOrAPropInALoop,
         ];
         for (const component of components) {
           globalThis.rendering = component;
@@ -1525,7 +1555,7 @@ describe("bundler", () => {
           const render = e => JSON.stringify(Object.values(component(propsOf(e)).p));
           console.log(component.name, render(true), render(true), render(false), render(true));
         }
-        console.log("compiled", globalThis.caches.size);
+        console.log("compiled", globalThis.caches.size, globalThis.caches.has(ArrayOrAPropInALoop));
         console.log("sizes", globalThis.caches.get(OneFunctionInALoop).length);
       `,
       ...reactWithAMemoCachePerComponent,
@@ -1549,7 +1579,8 @@ describe("bundler", () => {
         'NewFunctionReturnsTheOneBefore [[1,"m"],"function",1] [[1,"m"],"function",1] [[1],"function",1] [[1,"m"],"function",1]',
         'OneOfTwoReturnsTheOneBefore [[1,"m"],"function",1] [[1,"m"],"function",1] [[1],"number",1] [[1,"m"],"function",1]',
         "OneFunctionInALoop [[1],1] [[1],1] [[1],1] [[1],1]",
-        "compiled 14",
+        'ArrayOrAPropInALoop [["p",1]] [["p",1]] [[1]] [["p",1]]',
+        "compiled 14 false",
         "sizes 11",
       ].join("\n"),
     },

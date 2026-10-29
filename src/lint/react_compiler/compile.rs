@@ -107,7 +107,7 @@ impl<'a> Compiler<'a> {
             Err(ConvertError::ThisParameter) => return Err(Vec::new()),
             Err(ConvertError::TooDeep) => return Err(vec![too_deep()]),
         };
-        let host = LintHost::new(&converted, arena, self.file.text());
+        let host = LintHost::new(&converted, self.file.text());
         let node = match &converted.root {
             Root::Function(function) => FunctionNode::Function(function),
             Root::Arrow(arrow) => FunctionNode::Arrow(arrow),

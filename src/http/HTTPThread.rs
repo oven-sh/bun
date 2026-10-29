@@ -336,18 +336,16 @@ impl HttpThread {
         self.uws_loop
     }
 
-    /// Mutable access to the live uSockets event loop.
+    /// The live uSockets event loop.
     ///
     /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
-    /// `has_awoken` Release store) and outlives the HTTP thread. The loop is a
-    /// separate C heap allocation disjoint from `self`. HTTP-thread-only at
-    /// every caller — `wakeup()` is the sole cross-thread entry and uses the
-    /// raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
-    /// upgrade repeated in `process_events`.
+    /// `has_awoken` Release store) and outlives the HTTP thread. HTTP-thread-only
+    /// at every caller — `wakeup()` is the sole cross-thread entry and uses the
+    /// raw FFI call instead.
     #[inline]
-    fn uws_loop_mut<'a>(&self) -> &'a mut uws::Loop {
+    fn uws_loop_ref(&self) -> &uws::Loop {
         // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.uws_loop }
+        unsafe { &*self.uws_loop }
     }
 
     /// `Instant::elapsed().as_nanos()` is u128; checked narrow to u64 —
@@ -1068,9 +1066,7 @@ impl HttpThread {
         // no happens-before for the init it guards" case.
         if self.has_awoken.load(Ordering::Acquire) {
             // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
-            // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
-            // cross-thread while the HTTP thread owns the loop, so forming
-            // `&mut Loop` here would alias.
+            // This runs on another thread and `Loop` is `!Sync`, so pass the raw pointer.
             unsafe { uws::us_wakeup_loop(self.uws_loop) };
         }
     }
@@ -1348,10 +1344,10 @@ mod _event_loop_draft {
 
     impl HttpThread {
         fn process_events(&mut self) -> ! {
-            let uws_loop = self.uws_loop_mut();
+            let uws_loop = self.uws_loop_ref();
             #[cfg(unix)]
             {
-                uws_loop.num_polls = uws_loop.num_polls.max(2);
+                uws_loop.num_polls.set(uws_loop.num_polls.get().max(2));
             }
             #[cfg(windows)]
             {
@@ -1378,7 +1374,7 @@ mod _event_loop_draft {
                 assert_abort_tracker_sockets_alive();
                 Output::flush();
 
-                let uws_loop = self.uws_loop_mut();
+                let uws_loop = self.uws_loop_ref();
                 uws_loop.inc();
                 uws_loop.tick();
                 uws_loop.dec();

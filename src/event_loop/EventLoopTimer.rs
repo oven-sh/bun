@@ -282,9 +282,9 @@ impl Tag {
 /// a field of a field (`timers.timer`).
 ///
 /// ```ignore
-/// bun_event_loop::impl_timer_owner!(JSValkeyClient;
-///     from_timer_ptr => timer,
-///     from_reconnect_timer_ptr => reconnect_timer,
+/// bun_event_loop::impl_timer_owner!(PostgresSQLConnection;
+///     from_timer_ptr => timers.timer,
+///     from_max_lifetime_timer_ptr => timers.max_lifetime_timer,
 /// );
 /// ```
 #[macro_export]

@@ -33,6 +33,27 @@ fn make_flags(has_html_chunk: bool, is_browser_chunk_from_server_build: bool) ->
     f
 }
 
+/// Whether `chunk` takes the entry point template. The script and the stylesheet of a page take the chunk template.
+#[inline]
+fn takes_entry_naming(chunk: &Chunk, kinds: &[crate::EntryPoint::Kind]) -> bool {
+    chunk.entry_point.is_entry_point()
+        && (matches!(chunk.content, chunk::Content::Html)
+            || (kinds[chunk.entry_point.source_index() as usize]
+                == crate::EntryPoint::Kind::UserSpecified
+                && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)))
+}
+
+/// What chose the `template` of `chunk`, for a message that names the option to change.
+pub(crate) fn chunk_named_by(c: &LinkerContext, chunk: &Chunk) -> chunk::NamedBy {
+    if chunk.flags.contains(chunk::Flags::NAMED_BY_OUTFILE) {
+        chunk::NamedBy::Outfile
+    } else if takes_entry_naming(chunk, c.graph.files.items_entry_point_kind()) {
+        chunk::NamedBy::Entry
+    } else {
+        chunk::NamedBy::Chunk
+    }
+}
+
 /// Returns `order`. If the `@import` chain is too deep, logs an error and returns
 /// an empty order. The logged error fails the build after `compute_chunks` returns.
 fn css_order_or_log<'a>(
@@ -647,15 +668,11 @@ pub(crate) fn compute_chunks<'a>(
                     ..Default::default()
                 },
             };
+            chunk.flags.insert(chunk::Flags::NAMED_BY_OUTFILE);
             continue;
         }
 
-        if chunk.entry_point.is_entry_point()
-            && (matches!(chunk.content, chunk::Content::Html)
-                || (kinds[chunk.entry_point.source_index() as usize]
-                    == crate::EntryPoint::Kind::UserSpecified
-                    && !chunk.flags.contains(chunk::Flags::HAS_HTML_CHUNK)))
-        {
+        if takes_entry_naming(chunk, kinds) {
             // Use fileWithTarget template if there are HTML imports and user hasn't manually set naming
             if has_server_html_imports && bv2.transpiler().options.entry_naming.is_empty() {
                 chunk.template = PathTemplate::FILE_WITH_TARGET.into();

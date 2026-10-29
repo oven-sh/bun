@@ -498,6 +498,17 @@ describe("decompressing frames whose size is known", () => {
     expect(zlib.zstdDecompressSync(inSmallWindow).equals(data)).toBe(true);
   });
 
+  it("frames one after the other whose matches are in a dictionary", () => {
+    const dictionary = noise(20_000);
+    const piece = (i: number) => dictionary.subarray((i * 7919) % 19_000).subarray(0, 8 + (i % 9));
+    const data = Buffer.concat(Array.from({ length: 1_500 }, (_, i) => piece(i)));
+    const frame = zlib.zstdCompressSync(data, { dictionary });
+    expect(blocks(frame)[0]).toBeGreaterThan(1_000);
+    // There is room for all three, so each is decoded in one go to where the one before it ends.
+    const decoded = zlib.zstdDecompressSync(Buffer.concat([frame, frame, frame]), { dictionary, chunkSize: 1 << 17 });
+    expect(decoded.equals(Buffer.concat([data, data, data]))).toBe(true);
+  });
+
   it("a frame that makes more than it says is refused", () => {
     for (const piece of pieces.filter(piece => piece.length >= 135_000)) {
       const frame = zstdCompressSync(piece.subarray(0, 135_000), { level: 1 });

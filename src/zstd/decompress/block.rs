@@ -1369,14 +1369,16 @@ fn resolve_offset(sequences: &mut [RawSequence], index: usize) -> u32 {
 
 /// What [`Executor::exec_batch`] works on. Positions in these fit in 32 bits, so that the compiler sees that nothing added
 /// to them overflows.
-struct BatchBuffers<'buf, 'a, 'dict> {
+struct BatchBuffers<'buf, 'a> {
     /// Where in the output buffer `buf` starts.
     start: usize,
     buf: &'buf mut [u8],
     lits: &'a [u8],
     /// What comes right before `buf`, if anything of the common kind does: this or, of `buf`, `within`.
-    dict: &'dict [u8],
+    dict: &'a [u8],
     within: Range<usize>,
+    /// [`ExtDict::Within::window`]
+    window: usize,
 }
 
 /// Turns sequences into output.
@@ -1646,19 +1648,17 @@ impl<'a> Executor<'_, 'a> {
         }
     }
 
-    /// `within` is of the whole output buffer.
     #[inline(always)]
-    fn batch_buffers<'dict>(
-        &mut self,
-        dict: &'dict [u8],
-        within: Range<usize>,
-    ) -> BatchBuffers<'_, 'a, 'dict> {
+    fn batch_buffers(&mut self) -> BatchBuffers<'_, 'a> {
         const MAX_BACK: usize = 3 << 30;
         let start = self.prefix_start.max(self.op.saturating_sub(MAX_BACK));
-        let (dict, within) = if start == self.prefix_start && within.start >= start {
-            (dict, within.start - start..within.end - start)
-        } else {
-            (&[][..], 0..0)
+        let is_whole = start == self.prefix_start;
+        let (dict, within, window) = match self.ext_dict {
+            ExtDict::Dict(dict) if is_whole => (dict, 0..0, 0),
+            ExtDict::Within { end, len, window } if is_whole && end - len >= start => {
+                (&[][..], end - len - start..end - start, window)
+            }
+            _ => (&[][..], 0..0, 0),
         };
         let lits = self.lits.get(..u32::MAX as usize).unwrap_or(self.lits);
         let buf = self.out.bytes();
@@ -1670,6 +1670,7 @@ impl<'a> Executor<'_, 'a> {
             lits,
             dict,
             within,
+            window,
         }
     }
 
@@ -1679,16 +1680,13 @@ impl<'a> Executor<'_, 'a> {
     ///
     /// The last offsets are those of the 3 sequences before, which are rewritten for that where it takes it.
     ///
-    /// Matches in what comes before the output are of the common kind if `EXT` tells that it is `dict`, or `within` of the
-    /// buffer that the output goes to. So are, with `CLOSE`, short matches from less than 16 bytes back.
+    /// `EXT` tells which kind [`Self::ext_dict`] is of, if matches in it are of the common kind. So are, with `CLOSE`, short
+    /// matches from less than 16 bytes back.
     #[inline(never)]
     fn exec_batch<const EXT: u8, const CLOSE: bool>(
         &mut self,
         sequences: &mut [RawSequence],
         mut index: usize,
-        dict: &[u8],
-        within: Range<usize>,
-        window: usize,
     ) -> usize {
         let op = self.op;
         let BatchBuffers {
@@ -1697,7 +1695,8 @@ impl<'a> Executor<'_, 'a> {
             lits,
             dict,
             within,
-        } = self.batch_buffers(dict, within);
+            window,
+        } = self.batch_buffers();
         let mut op = op.wrapping_sub(start) as u32;
         let mut lit_pos = 0u32;
 
@@ -1965,13 +1964,9 @@ impl<'a> Executor<'_, 'a> {
             last.offset_value = *offset as u32 + 3;
         }
         match self.ext_dict {
-            ExtDict::Dict(dict) if !dict.is_empty() => {
-                self.exec_in_turns::<EXT_DICT>(sequences, dict, 0..0, 0)
-            }
-            ExtDict::Within { end, len, window } if len != 0 => {
-                self.exec_in_turns::<EXT_WITHIN>(sequences, &[], end - len..end, window)
-            }
-            _ => self.exec_in_turns::<NO_EXT>(sequences, &[], 0..0, 0),
+            ExtDict::Dict(dict) if !dict.is_empty() => self.exec_in_turns::<EXT_DICT>(sequences),
+            ExtDict::Within { len, .. } if len != 0 => self.exec_in_turns::<EXT_WITHIN>(sequences),
+            _ => self.exec_in_turns::<NO_EXT>(sequences),
         }?;
         for (last, offset) in sequences.iter().rev().zip(prev_offset) {
             *offset = last.offset_value as usize - 3;
@@ -1979,22 +1974,16 @@ impl<'a> Executor<'_, 'a> {
         Ok(())
     }
 
-    /// Executes `sequences` but the first 3. What else it gets is for [`Self::exec_batch`].
+    /// Executes `sequences` but the first 3. `EXT` is for [`Self::exec_batch`].
     #[inline(always)]
-    fn exec_in_turns<const EXT: u8>(
-        &mut self,
-        sequences: &mut [RawSequence],
-        dict: &[u8],
-        within: Range<usize>,
-        window: usize,
-    ) -> Result<()> {
+    fn exec_in_turns<const EXT: u8>(&mut self, sequences: &mut [RawSequence]) -> Result<()> {
         let mut index = 3;
         let mut close = false;
         while index < sequences.len() {
             index = if close {
-                self.exec_batch::<EXT, true>(sequences, index, dict, within.clone(), window)
+                self.exec_batch::<EXT, true>(sequences, index)
             } else {
-                self.exec_batch::<EXT, false>(sequences, index, dict, within.clone(), window)
+                self.exec_batch::<EXT, false>(sequences, index)
             };
             if index < sequences.len() {
                 index = self.exec_others(sequences, index)?;
@@ -2054,6 +2043,59 @@ mod tests {
         }
         assert!(!copy_short_close_match(&mut [0; 64], 3, 4, 5));
         assert!(!copy_short_close_match(&mut [0; 64], 3, 0, 5));
+        Ok(())
+    }
+
+    #[test]
+    fn matches_in_a_dictionary_are_of_the_common_kind_wherever_the_output_starts() -> Result<()> {
+        let dict: Vec<u8> = (0..200).collect();
+        let lits = [b'l'; 64];
+        let sequence = |lit_length, match_length, offset: u32| RawSequence {
+            offset_value: offset + 3,
+            lit_length,
+            match_length: match_length - MINMATCH,
+        };
+        for prefix_start in [0, 50] {
+            let mut sequences = [
+                RawSequence::EMPTY,
+                RawSequence::EMPTY,
+                RawSequence::EMPTY,
+                sequence(0, 10, 150),
+                sequence(2, 40, 12 + 100),
+                sequence(1, 5, 4),
+                sequence(0, 8, 58 + 200),
+            ];
+            let expected = [
+                dict.sub(50..60)?,
+                b"ll",
+                dict.sub(100..140)?,
+                b"l",
+                &[137, 138, 139, b'l', 137],
+                dict.sub(..8)?,
+            ]
+            .concat();
+            let mut buf = [0xEE; 250];
+            let mut exec = Executor {
+                out: OutputBuffer::Whole(&mut buf),
+                in_one_call: true,
+                oend: 250,
+                op: prefix_start,
+                prefix_start,
+                ext_dict: ExtDict::Dict(&dict),
+                lits: &lits,
+                split: false,
+                lits_extra: &[],
+                lit_end_in_dst: 0,
+            };
+            assert_eq!(exec.exec_batch::<EXT_DICT, false>(&mut sequences, 3), 5);
+            assert_eq!(exec.exec_batch::<EXT_DICT, true>(&mut sequences, 5), 7);
+            assert_eq!(exec.op, prefix_start + expected.len());
+            assert_eq!(
+                *buf.sub(prefix_start..prefix_start + expected.len())?,
+                *expected
+            );
+            assert!(buf.sub(..prefix_start)?.iter().all(|&byte| byte == 0xEE));
+        }
         Ok(())
     }
 }

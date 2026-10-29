@@ -726,6 +726,40 @@ mod tests {
     }
 
     #[test]
+    fn matches_in_a_dictionary_are_found_from_every_frame_of_a_call() -> Result<()> {
+        let dict = Vec::from_iter((0..3000u32).map(|i| ((i * i % 251) ^ (i >> 3)) as u8));
+        // Short and long, from all over the dictionary and from its end on into the output, with a literal between.
+        let mut src = Vec::new();
+        for i in 0..if cfg!(miri) { 60 } else { 600 } {
+            // Where most are long, sequences are not executed in batches.
+            let len = if i % 11 == 0 { 70 } else { 3 + i * 7 % 45 };
+            let at = if i % 5 == 0 {
+                dict.len() - len / 2
+            } else {
+                i * 613 % (dict.len() - len)
+            };
+            src.extend_from_slice(dict.sub(at..dict.len().min(at + len))?);
+            let beyond = (at + len).saturating_sub(dict.len()).min(src.len());
+            let from_start = src.sub(..beyond)?.to_vec();
+            src.extend_from_slice(&from_start);
+            src.push(i as u8);
+        }
+        let mut cctx = CCtx::new();
+        cctx.load_dictionary(&dict)?;
+        let frame = frame_of(&mut cctx, &[&src])?;
+        assert!(frame.len() < src.len() / 3);
+
+        let (frames, all) = (frame.repeat(3), src.repeat(3));
+        let ddict = DDict::by_reference(&dict)?;
+        let mut there = vec![0; all.len()];
+        let written = DCtx::new().decompress_using_ddict(&mut there, &frames, &ddict);
+        assert!(written == Ok(all.len()) && there == all);
+        let appended = DCtx::new().decompress_to_vec(all.len(), &frames, Some(&ddict))?;
+        assert!(appended == all);
+        Ok(())
+    }
+
+    #[test]
     fn output_that_is_appended_is_what_output_that_is_there_is() -> Result<()> {
         let mut state = 1u32;
         let mut random = move || {

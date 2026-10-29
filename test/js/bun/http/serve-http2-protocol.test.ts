@@ -1216,6 +1216,26 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     }
   });
 
+  test("a response field enters the dynamic table, after the first few dozen only if it was sent lately", async () => {
+    const raw = await RawH2.connect(fx.port, secure);
+    try {
+      let id = -1;
+      /** Whether `x-pad` is spelled out. "p" takes 6 bits. */
+      const spelledOut = async (bytes: number) => {
+        raw.headers((id += 2), baseHeaders(`/big-headers?bytes=${bytes}`));
+        const { payload } = await raw.waitFor(f => f.type === T.HEADERS && f.streamId === id);
+        await raw.body(id);
+        return hpackFields(payload).some(f => f.value?.bytes.length === (bytes * 6) / 8);
+      };
+      expect([await spelledOut(100), await spelledOut(100)]).toEqual([true, false]);
+      // Each of these has at least three fields.
+      for (let i = 0; i < 14; i++) expect(await spelledOut(100)).toBe(false);
+      expect([await spelledOut(200), await spelledOut(200), await spelledOut(200)]).toEqual([true, true, false]);
+    } finally {
+      raw.close();
+    }
+  });
+
   test.each([
     // With "x-pad", 65536 bytes. "p" is 101011, so four of them are ae ba eb. Three and the padding follow.
     {

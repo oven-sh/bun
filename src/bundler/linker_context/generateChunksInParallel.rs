@@ -376,7 +376,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
 
         // Compute the final hashes of each chunk, then use those to create the final
         // paths of each chunk.
-        let hashes = c.final_chunk_hashes(chunks)?;
+        let (hashes, manifests) = c.final_chunk_hashes(chunks)?;
         for index in 0..chunks.len() {
             let chunk = &mut chunks[index];
             chunk.template.placeholder.hash = Some(hashes[index]);
@@ -516,6 +516,12 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
         if has_unusable_output_path {
             return Err(crate::Error::BuildFailed);
         }
+
+        // The listed chunks' paths were the last thing the manifests waited for.
+        c.parse_graph_mut().html_imports.manifests = manifests
+            .into_iter()
+            .map(|manifest| manifest.map(|manifest| manifest.render(chunks)).transpose())
+            .collect::<crate::Result<_>>()?;
     }
 
     // After final_rel_path is computed for all chunks, fix up module_info

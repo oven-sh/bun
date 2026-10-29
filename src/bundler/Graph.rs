@@ -99,6 +99,18 @@ pub struct HtmlImports {
     pub(crate) server_source_indices: Vec<IndexInt>,
     /// Source index of the HTML file being imported
     pub(crate) html_source_indices: Vec<IndexInt>,
+    /// The manifest of each page that a chunk prints. Set once the chunks are named.
+    pub(crate) manifests: Vec<Option<crate::HTMLImportManifest::Manifest>>,
+}
+
+impl HtmlImports {
+    /// What a chunk prints for the page at `index`.
+    pub(crate) fn printed_manifest(&self, index: usize) -> &[u8] {
+        &self.manifests[index]
+            .as_ref()
+            .expect("a chunk is named before it is printed")
+            .escaped
+    }
 }
 
 pub struct InputFile<'a> {

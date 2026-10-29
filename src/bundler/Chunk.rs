@@ -24,7 +24,6 @@ use crate::bun_fs;
 use crate::Graph::Graph;
 #[cfg(debug_assertions)]
 use crate::LinkerContext;
-use crate::html_import_manifest as HTMLImportManifest;
 use crate::options::{self, Loader};
 use crate::{
     AdditionalFile, CompileResult, LinkerGraph, PartRange, PathTemplate, cheap_prefix_normalizer,
@@ -778,15 +777,7 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    count += bun_core::fmt::count(format_args!(
-                                        "{}",
-                                        HTMLImportManifest::format_escaped_json(
-                                            piece.query.index(),
-                                            graph,
-                                            chunks,
-                                            linker_graph,
-                                        )
-                                    ));
+                                    count += graph.html_imports.printed_manifest(index).len();
                                     continue;
                                 }
                                 QueryKind::None | QueryKind::ChunkId => unreachable!(),
@@ -960,17 +951,9 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    let mut cursor: &mut [u8] = remain;
-                                    let before_len = cursor.len();
-                                    HTMLImportManifest::write_escaped_json(
-                                        piece.query.index(),
-                                        graph,
-                                        linker_graph,
-                                        chunks,
-                                        &mut cursor,
-                                    )
-                                    .expect("unreachable");
-                                    let written = before_len - cursor.len();
+                                    let manifest = graph.html_imports.printed_manifest(index);
+                                    let written = manifest.len();
+                                    remain[..written].copy_from_slice(manifest);
 
                                     if ENABLE_SOURCE_MAP_SHIFTS {
                                         // The placeholder was an HtmlImport unique key, which has

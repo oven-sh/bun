@@ -2580,14 +2580,31 @@ impl<'a> LinkerContext<'a> {
     /// widen until they differ, and every chunk that reaches a widened chunk
     /// (its output embeds that chunk's path or id) has the widths folded into
     /// its own hash so that its name changes with its bytes.
+    ///
+    /// A chunk that prints a page's manifest hashes the manifest's literal bytes
+    /// and, at each listed chunk, that chunk's isolated hash, and it reaches
+    /// every listed chunk. Such a chunk reaches the chunks of several pages,
+    /// whose order is not the same in every build of one tree, so it and the
+    /// chunks that reach it digest the rest of their closure as a sum. The
+    /// manifests are emitted here, once per page, and returned for the caller
+    /// to render once the chunks are named.
     pub(crate) fn final_chunk_hashes(
         &self,
         chunks: &[Chunk],
-    ) -> Result<Vec<bun_core::fmt::ContentHash>, AllocError> {
+    ) -> Result<
+        (
+            Vec<bun_core::fmt::ContentHash>,
+            Vec<Option<crate::HTMLImportManifest::Template>>,
+        ),
+        BunError,
+    > {
         let n = chunks.len();
+        let mut manifests: Vec<Option<crate::HTMLImportManifest::Template>> = Vec::new();
+        // The chunks that print a manifest.
+        let mut printers: Vec<usize> = Vec::new();
         let mut own: Vec<u64> = Vec::with_capacity(n);
         let mut edges: Vec<Vec<u32>> = Vec::with_capacity(n);
-        for chunk in chunks {
+        for (chunk_index, chunk) in chunks.iter().enumerate() {
             let mut hash = ContentHasher::default();
             let mut out: Vec<u32> = chunk
                 .cross_chunk_imports
@@ -2633,7 +2650,39 @@ impl<'a> LinkerContext<'a> {
                                 out.push(chunk_index);
                             }
                         }
-                        crate::chunk::QueryKind::None | crate::chunk::QueryKind::HtmlImport => {}
+                        crate::chunk::QueryKind::HtmlImport => {
+                            use crate::HTMLImportManifest::Part;
+                            let parse_graph = self.parse_graph();
+                            let index = piece.query.index();
+                            if manifests.is_empty() {
+                                let pages = parse_graph.html_imports.server_source_indices.len();
+                                manifests.resize_with(pages, || None);
+                            }
+                            let manifest = match &mut manifests[index as usize] {
+                                Some(manifest) => manifest,
+                                unset => unset.insert(crate::HTMLImportManifest::emit(
+                                    index,
+                                    parse_graph,
+                                    &self.graph,
+                                    chunks,
+                                )?),
+                            };
+                            for part in manifest.parts() {
+                                match part {
+                                    Part::Literal(bytes) => hash.write(bytes),
+                                    Part::Chunk(listed, _) => {
+                                        // Two listed chunks can trade places and keep the closure.
+                                        let listed_hash = chunks[listed as usize].isolated_hash;
+                                        hash.write(&listed_hash.to_ne_bytes());
+                                        out.push(listed);
+                                    }
+                                }
+                            }
+                            if printers.last() != Some(&chunk_index) {
+                                printers.push(chunk_index);
+                            }
+                        }
+                        crate::chunk::QueryKind::None => {}
                     }
                 }
             }
@@ -2672,11 +2721,21 @@ impl<'a> LinkerContext<'a> {
             .map(|(i, bits)| {
                 let mut hash = ContentHasher::default();
                 hash.write(&own[i].to_ne_bytes());
+                let reaches_manifest = printers.iter().any(|&printer| bits.is_set(printer));
+                let mut rest: u64 = 0;
                 let mut iter = bits.iterator::<true, true>();
                 while let Some(j) = iter.next() {
-                    if j != i {
+                    if j == i {
+                        continue;
+                    }
+                    if reaches_manifest {
+                        rest = rest.wrapping_add(own[j]);
+                    } else {
                         hash.write(&own[j].to_ne_bytes());
                     }
+                }
+                if reaches_manifest {
+                    hash.write(&rest.to_ne_bytes());
                 }
                 hash.digest()
             })
@@ -2710,7 +2769,7 @@ impl<'a> LinkerContext<'a> {
                 }
             }
         }
-        Ok(names)
+        Ok((names, manifests))
     }
 
     // Sort cross-chunk exports by chunk name for determinism

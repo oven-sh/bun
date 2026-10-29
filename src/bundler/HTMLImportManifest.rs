@@ -34,52 +34,154 @@
 //! that gets embedded directly into the JavaScript output.
 
 use crate::mal_prelude::*;
-use core::fmt;
 
 use bun_ast::Source;
 use bun_collections::AutoBitSet;
 use bun_collections::VecExt;
 use bun_core::strings;
-use bun_io::{FmtAdapter, Write};
+use bun_io::Write;
 use bun_js_printer::Encoding;
 use bun_paths::resolve_path::{platform, platform_to_posix_in_place, relative_normalized};
 use bun_resolver::fs::FileSystem;
 
 use crate::Graph::Graph;
 use crate::chunk::Content;
-use crate::options::{Loader, OutputFile, OutputKind};
+use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
 
-#[derive(Clone, Copy)]
-pub struct HTMLImportManifest<'a> {
-    pub(crate) index: u32,
-    pub(crate) graph: &'a Graph<'a>,
-    pub(crate) chunks: &'a [Chunk<'a>],
-    pub(crate) linker_graph: &'a LinkerGraph<'a>,
+/// A page's manifest before the chunks are named: `json` is every byte except the
+/// listed chunks' paths and etags, and `refs` says where those go.
+pub(crate) struct Template {
+    json: Vec<u8>,
+    /// In `at` order.
+    refs: Vec<ChunkRef>,
+    /// `--compile`: the server-side public path, printed before each chunk's path.
+    public_path: Option<Box<[u8]>>,
 }
 
-impl<'a> fmt::Display for HTMLImportManifest<'a> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut adapter = FmtAdapter::new(writer);
-        match write(
-            self.index,
-            self.graph,
-            self.linker_graph,
-            self.chunks,
-            &mut adapter,
-        ) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(fmt::Error),
+struct ChunkRef {
+    /// The offset in `json` the value is printed at.
+    at: u32,
+    chunk: u32,
+    value: ChunkValue,
+}
+
+impl ChunkRef {
+    /// A value of `chunk` that is printed where `json` ends now.
+    fn at_end_of(json: &[u8], chunk: u32, value: ChunkValue) -> ChunkRef {
+        ChunkRef {
+            at: json.len() as u32,
+            chunk,
+            value,
         }
     }
 }
 
-fn write_entry_item<W: Write + ?Sized>(
-    writer: &mut W,
+/// What a manifest prints of a listed chunk.
+#[derive(Clone, Copy)]
+pub(crate) enum ChunkValue {
+    /// Its final path, as a JSON string.
+    Path,
+    /// The `"etag"` header of its final hash.
+    Etag,
+}
+
+/// One part of a manifest.
+pub(crate) enum Part<'a> {
+    /// Bytes that are final before the chunks are named.
+    Literal(&'a [u8]),
+    /// A value of the chunk at this index.
+    Chunk(u32, ChunkValue),
+}
+
+impl Template {
+    /// The manifest in print order. `final_chunk_hashes` and `resolve` both read it
+    /// from here: what one prints, the other hashed or followed as an edge.
+    pub(crate) fn parts(&self) -> impl Iterator<Item = Part<'_>> {
+        let mut literal_start = 0;
+        let tail = self.refs.last().map_or(0, |last| last.at as usize);
+        self.refs
+            .iter()
+            .flat_map(move |chunk_ref| {
+                let literal = &self.json[literal_start..chunk_ref.at as usize];
+                literal_start = chunk_ref.at as usize;
+                [
+                    Part::Literal(literal),
+                    Part::Chunk(chunk_ref.chunk, chunk_ref.value),
+                ]
+            })
+            .chain(core::iter::once(Part::Literal(&self.json[tail..])))
+    }
+
+    fn resolve(&self, chunks: &[Chunk], writer: &mut Vec<u8>) -> Result<(), crate::Error> {
+        let mut prefixed: Vec<u8> = Vec::new();
+        for part in self.parts() {
+            match part {
+                Part::Literal(bytes) => writer.write_all(bytes)?,
+                Part::Chunk(chunk, ChunkValue::Path) => {
+                    let mut path: &[u8] = &chunks[chunk as usize].final_rel_path;
+                    if let Some(public_path) = &self.public_path {
+                        prefixed.clear();
+                        prefixed.extend_from_slice(public_path);
+                        prefixed.extend_from_slice(strings::remove_leading_dot_slash(path));
+                        path = &prefixed;
+                    }
+                    bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(path, writer)?;
+                }
+                Part::Chunk(chunk, ChunkValue::Etag) => {
+                    let chunk = &chunks[chunk as usize];
+                    // The HTML chunk's body embeds the hashed paths of its JS/CSS
+                    // chunks, so its etag must change when those do. `isolated_hash`
+                    // by design excludes those substitutions; the placeholder hash
+                    // folds them in (`final_chunk_hashes`).
+                    let hash = chunk.template.placeholder.hash;
+                    write_etag(writer, hash.map_or(chunk.isolated_hash, |h| h.value))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The chunks are named: prints the manifest.
+    pub(crate) fn render(self, chunks: &[Chunk]) -> Result<Manifest, crate::Error> {
+        // Each is at least as long as what it is made from.
+        let mut json: Vec<u8> = Vec::with_capacity(self.json.len());
+        self.resolve(chunks, &mut json)?;
+        // Extremely unfortunate, but necessary due to E.String not accepting pre-escaped input and this happening at the very end.
+        let mut escaped: Vec<u8> = Vec::with_capacity(json.len());
+        bun_js_printer::write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(
+            &json,
+            &mut escaped,
+        )?;
+        Ok(Manifest { json, escaped })
+    }
+}
+
+/// A page's manifest once the chunks are named.
+pub(crate) struct Manifest {
+    /// What `--compile --aot` embeds as data.
+    pub(crate) json: Vec<u8>,
+    /// `json` as the contents of a double-quoted JavaScript string, which is what a chunk prints.
+    pub(crate) escaped: Vec<u8>,
+}
+
+/// Where an entry's path and etag come from.
+#[derive(Clone, Copy)]
+enum Entry<'a> {
+    /// From the chunk at this index, once the chunks are named.
+    Chunk(u32),
+    Asset {
+        path: &'a [u8],
+        hash: u64,
+    },
+}
+
+fn write_entry_item(
+    writer: &mut Vec<u8>,
+    refs: &mut Vec<ChunkRef>,
     input: &[u8],
-    path: &[u8],
-    hash: u64,
+    entry: Entry<'_>,
     loader: Loader,
     kind: OutputKind,
 ) -> Result<(), crate::Error> {
@@ -92,7 +194,12 @@ fn write_entry_item<W: Write + ?Sized>(
     }
 
     writer.write_all(b"\"path\":")?;
-    bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(path, writer)?;
+    match entry {
+        Entry::Chunk(chunk) => refs.push(ChunkRef::at_end_of(writer, chunk, ChunkValue::Path)),
+        Entry::Asset { path, .. } => {
+            bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(path, writer)?
+        }
+    }
 
     writer.write_all(b",\"loader\":\"")?;
     // strum is configured snake_case, so this prints the lowercase tag name.
@@ -105,6 +212,26 @@ fn write_entry_item<W: Write + ?Sized>(
     })?;
     writer.write_all(b",\"headers\":{")?;
 
+    match entry {
+        Entry::Chunk(chunk) => refs.push(ChunkRef::at_end_of(writer, chunk, ChunkValue::Etag)),
+        Entry::Asset { hash, .. } => write_etag(writer, hash)?,
+    }
+
+    // Valid mime types are valid headers, which do not need to be escaped in JSON.
+    let mime = match entry {
+        // A chunk's loader decides its content type.
+        Entry::Chunk(_) => loader.to_mime_type(&[]),
+        Entry::Asset { path, .. } => loader.to_mime_type(&[path]),
+    };
+    writer.write_all(b"\"content-type\":\"")?;
+    writer.write_all(&mime.value)?;
+    writer.write_all(b"\"")?;
+
+    writer.write_all(b"}}")?;
+    Ok(())
+}
+
+fn write_etag(writer: &mut Vec<u8>, hash: u64) -> Result<(), crate::Error> {
     if hash > 0 {
         const BASE64_BUF_LEN: usize =
             bun_base64::encode_len_from_size(core::mem::size_of::<u64>()) + 2;
@@ -115,83 +242,20 @@ fn write_entry_item<W: Write + ?Sized>(
         writer.write_all(base64)?;
         writer.write_all(b"\",")?;
     }
-
-    // Valid mime types are valid headers, which do not need to be escaped in JSON.
-    let mime = loader.to_mime_type(&[path]);
-    writer.write_all(b"\"content-type\":\"")?;
-    writer.write_all(&mime.value)?;
-    writer.write_all(b"\"")?;
-
-    writer.write_all(b"}}")?;
     Ok(())
 }
 
-// Extremely unfortunate, but necessary due to E.String not accepting pre-escaped input and this happening at the very end.
-pub(crate) fn write_escaped_json<W: Write + ?Sized>(
+/// Walks what page `index` lists. This runs when the chunks are hashed, so what a
+/// chunk's final hash decides is left as a reference to that chunk.
+pub(crate) fn emit(
     index: u32,
     graph: &Graph,
     linker_graph: &LinkerGraph<'_>,
     chunks: &[Chunk],
-    writer: &mut W,
-) -> Result<(), crate::Error> {
-    let mut bytes: Vec<u8> = Vec::new();
-    write(index, graph, linker_graph, chunks, &mut bytes)?;
-    bun_js_printer::write_pre_quoted_string::<_, b'"', false, true, { Encoding::Utf8 }>(
-        &bytes, writer,
-    )?;
-    Ok(())
-}
-
-/// Newtype wrapper produced by [`HTMLImportManifest::format_escaped_json`].
-pub struct EscapedJson<'a>(pub HTMLImportManifest<'a>);
-
-impl<'a> fmt::Display for EscapedJson<'a> {
-    fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut adapter = FmtAdapter::new(writer);
-        match write_escaped_json(
-            self.0.index,
-            self.0.graph,
-            self.0.linker_graph,
-            self.0.chunks,
-            &mut adapter,
-        ) {
-            Ok(()) => Ok(()),
-            Err(_) => Err(fmt::Error),
-        }
-    }
-}
-
-impl<'a> HTMLImportManifest<'a> {
-    pub(crate) fn format_escaped_json(self) -> EscapedJson<'a> {
-        EscapedJson(self)
-    }
-}
-
-pub(crate) fn write<W: Write + ?Sized>(
-    index: u32,
-    graph: &Graph,
-    linker_graph: &LinkerGraph<'_>,
-    chunks: &[Chunk],
-    writer: &mut W,
-) -> Result<(), crate::Error> {
-    write_with_assets(
-        index,
-        graph,
-        linker_graph,
-        chunks,
-        &graph.additional_output_files,
-        writer,
-    )
-}
-
-pub(crate) fn write_with_assets<W: Write + ?Sized>(
-    index: u32,
-    graph: &Graph,
-    linker_graph: &LinkerGraph<'_>,
-    chunks: &[Chunk],
-    assets: &[OutputFile],
-    writer: &mut W,
-) -> Result<(), crate::Error> {
+) -> Result<Template, crate::Error> {
+    let mut json: Vec<u8> = Vec::new();
+    let mut refs: Vec<ChunkRef> = Vec::new();
+    let writer = &mut json;
     let browser_source_index = graph.html_imports.html_source_indices.slice()[index as usize];
     let server_source_index = graph.html_imports.server_source_indices.slice()[index as usize];
     let sources: &[Source] = graph.input_files.items_source();
@@ -227,21 +291,11 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
 
             if matches!(ch.content, Content::Html) {
                 writer.write_all(b"\"index\":")?;
-                if inject_compiler_filesystem_prefix {
-                    temp_buffer.clear();
-                    temp_buffer.extend_from_slice(public_path);
-                    temp_buffer
-                        .extend_from_slice(strings::remove_leading_dot_slash(&ch.final_rel_path));
-                    bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(
-                        &temp_buffer,
-                        writer,
-                    )?;
-                } else {
-                    bun_js_printer::write_json_string::<_, { Encoding::Utf8 }>(
-                        &ch.final_rel_path[..],
-                        writer,
-                    )?;
-                }
+                refs.push(ChunkRef::at_end_of(
+                    writer,
+                    chunk_index as u32,
+                    ChunkValue::Path,
+                ));
                 writer.write_all(b",")?;
             }
         }
@@ -274,7 +328,7 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
 
     let mut first = true;
 
-    let additional_output_files = assets;
+    let additional_output_files = &graph.additional_output_files;
     let file_entry_bits: &[AutoBitSet] = linker_graph.files.items_entry_bits();
     let mut already_visited_output_file = AutoBitSet::init_empty(additional_output_files.len())?;
 
@@ -295,28 +349,11 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
                 )
             };
 
-            let path: &[u8] = if inject_compiler_filesystem_prefix {
-                temp_buffer.clear();
-                temp_buffer.extend_from_slice(public_path);
-                temp_buffer
-                    .extend_from_slice(strings::remove_leading_dot_slash(&ch.final_rel_path));
-                &temp_buffer[..]
-            } else {
-                &ch.final_rel_path
-            };
-
             write_entry_item(
                 writer,
+                &mut refs,
                 input,
-                path,
-                // The HTML chunk's body embeds the hashed paths of its JS/CSS
-                // chunks, so its etag must change when those do. `isolated_hash`
-                // by design excludes those substitutions; the placeholder hash
-                // folds them in via `appendIsolatedHashesForImportedChunks`.
-                ch.template
-                    .placeholder
-                    .hash
-                    .map_or(ch.isolated_hash, |h| h.value),
+                Entry::Chunk(chunk_index as u32),
                 ch.content.loader(),
                 if ch.entry_point.is_entry_point() {
                     OutputKind::EntryPoint
@@ -365,9 +402,12 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
 
                 write_entry_item(
                     writer,
+                    &mut refs,
                     path_for_key,
-                    path,
-                    output_file.hash.value,
+                    Entry::Asset {
+                        path,
+                        hash: output_file.hash.value,
+                    },
                     output_file.loader,
                     output_file.output_kind,
                 )?;
@@ -376,46 +416,11 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
     }
 
     writer.write_all(b"]}")?;
-    Ok(())
-}
-
-pub mod html_import_manifest {
-    use crate::Graph::Graph;
-    use crate::{LinkerGraph, chunk::Chunk};
-
-    pub use super::{EscapedJson, HTMLImportManifest};
-
-    #[inline]
-    pub(crate) fn format_escaped_json<'a>(
-        index: u32,
-        graph: &'a Graph,
-        chunks: &'a [Chunk],
-        linker_graph: &'a LinkerGraph,
-    ) -> EscapedJson<'a> {
-        super::HTMLImportManifest {
-            index,
-            graph,
-            chunks,
-            linker_graph,
-        }
-        .format_escaped_json()
-    }
-
-    pub(crate) fn write_escaped_json(
-        index: u32,
-        graph: &Graph,
-        linker_graph: &LinkerGraph<'_>,
-        chunks: &[Chunk],
-        w: &mut &mut [u8],
-    ) -> Result<(), core::fmt::Error> {
-        let taken = core::mem::take(w);
-        let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
-        super::write_escaped_json(index, graph, linker_graph, chunks, &mut fbs)
-            .map_err(|_| core::fmt::Error)?;
-        let bun_io::FixedBufferStream { buffer, pos } = fbs;
-        *w = &mut buffer[pos..];
-        Ok(())
-    }
+    Ok(Template {
+        json,
+        refs,
+        public_path: inject_compiler_filesystem_prefix.then(|| Box::from(public_path)),
+    })
 }
 
 /// The manifest's `input` / asset-key form of a source path: root-relative, `/`-separated.

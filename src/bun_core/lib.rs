@@ -372,8 +372,6 @@ pub mod vec {
 
     /// Reserve `additional`, advance `len` by `additional`, and return the
     /// newly-exposed (uninitialized) tail.
-    /// Generic free-fn form of `bun_collections::VecExt::writable_slice` so
-    /// `bun_core::string` can call it without a `bun_collections` edge.
     ///
     /// # Safety
     /// Caller must fully write the returned slice before any read of

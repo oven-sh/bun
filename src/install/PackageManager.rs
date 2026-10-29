@@ -1047,10 +1047,11 @@ impl PackageManager {
         let pm: *mut PackageManager = self;
         // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
         // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
-        // never alias overlapping bytes. The one callee that reaches
-        // `manager.lockfile` again is `populate_manifest_cache`, after a pnpm or
-        // yarn migration, and it only reads. Both raw pointers below are derived
+        // never alias overlapping bytes. Both raw pointers below are derived
         // from `self`, so the caller's borrow stays on the Stacked-Borrows stack.
+        // FIXME: a migration still reaches `manager.lockfile` while `*lf` is borrowed.
+        // `Package::parse_with_json` (yarn v1) reads it, and `populate_manifest_cache`
+        // (npm, pnpm, yarn) reads it and stores to `scratch.dependency_list_queue`.
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;

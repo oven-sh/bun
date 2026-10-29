@@ -375,7 +375,8 @@ mod windows {
             name: *const u16,
         ) -> HANDLE;
         fn SetEvent(h: HANDLE) -> BOOL;
-        fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
+        /// A bad handle yields `WAIT_FAILED`.
+        safe fn WaitForSingleObject(h: HANDLE, ms: DWORD) -> DWORD;
         fn WaitForMultipleObjects(n: DWORD, h: *const HANDLE, wait_all: BOOL, ms: DWORD) -> DWORD;
         fn CloseHandle(h: HANDLE) -> BOOL;
     }
@@ -418,8 +419,7 @@ mod windows {
                 unsafe { drop(bun_core::heap::take(task.as_ptr())) };
                 break;
             }
-            // SAFETY: `shutdown` is valid for the thread's lifetime.
-            if unsafe { WaitForSingleObject(handles[0], HOLDOFF_MS) } == WAIT_OBJECT_0 {
+            if WaitForSingleObject(handles[0], HOLDOFF_MS) == WAIT_OBJECT_0 {
                 break;
             }
         }

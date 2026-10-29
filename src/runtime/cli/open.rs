@@ -355,8 +355,7 @@ fn auto_close(argv: Vec<Box<[u8]>>) {
 pub(crate) struct EditorContext {
     pub(crate) editor: Option<Editor>,
     pub name: Vec<u8>,
-    /// In the `FileSystem`'s `dirname_store`, so never freed.
-    pub path: &'static [u8],
+    pub path: Vec<u8>,
 }
 
 impl EditorContext {
@@ -373,33 +372,26 @@ impl EditorContext {
     }
 
     pub(crate) fn detect_editor(&mut self, env: &mut dot_env::Loader) {
-        let intern = |path: &[u8]| {
-            Fs::FileSystem::get()
-                .dirname_store
-                .append_slice(path)
-                .expect("unreachable")
-        };
+        // first: choose from user preference
+        // /usr/bin/vim
+        if !self.name.is_empty() && bun_paths::is_absolute(&self.name) {
+            self.editor =
+                Some(Editor::by_name(bun_paths::basename(&self.name)).unwrap_or(Editor::Other));
+            self.path.clone_from(&self.name);
+            return;
+        }
+
         let mut buf = bun_paths::path_buffer_pool::get();
         let cwd = Fs::FileSystem::get().top_level_dir();
 
-        // first: choose from user preference
-        if !self.name.is_empty() {
-            // /usr/bin/vim
-            if bun_paths::is_absolute(&self.name) {
-                self.editor =
-                    Some(Editor::by_name(bun_paths::basename(&self.name)).unwrap_or(Editor::Other));
-                self.path = intern(&self.name);
-                return;
-            }
-
-            // "vscode"
-            if let Some(editor_) = Editor::by_name(bun_paths::basename(&self.name))
-                && let Some(path) = Editor::find(env, editor_, &mut buf, cwd)
-            {
-                self.editor = Some(editor_);
-                self.path = intern(path);
-                return;
-            }
+        // "vscode"
+        if !self.name.is_empty()
+            && let Some(editor_) = Editor::by_name(bun_paths::basename(&self.name))
+            && let Some(path) = Editor::find(env, editor_, &mut buf, cwd)
+        {
+            self.editor = Some(editor_);
+            self.path = path.to_vec();
+            return;
         }
 
         // EDITOR=code
@@ -407,14 +399,14 @@ impl EditorContext {
             && let Some(path) = Editor::find(env, editor_, &mut buf, cwd)
         {
             self.editor = Some(editor_);
-            self.path = intern(path);
+            self.path = path.to_vec();
             return;
         }
 
         // Don't know, so we will just guess based on what exists
         if let Some((editor_, path)) = Editor::by_fallback(env, &mut buf, cwd) {
             self.editor = Some(editor_);
-            self.path = intern(path);
+            self.path = path.to_vec();
             return;
         }
 

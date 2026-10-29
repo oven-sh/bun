@@ -782,9 +782,7 @@ impl PackageManagerCommand {
             }
             let log_level = pm.options.log_level;
             let pm_raw: *mut PackageManager = pm;
-            // SAFETY: the `Box<Lockfile>` pointee is a separate allocation, and
-            // `detect_and_load_other_lockfile` reaches `manager.lockfile` only in
-            // `populate_manifest_cache`, which only reads it.
+            // SAFETY: same split as `PackageManager::load_lockfile_from_cwd`, with the same FIXME.
             let load_lockfile = unsafe {
                 let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
                 let log: *mut bun_ast::Log = (*pm_raw).log;

@@ -565,22 +565,18 @@ pub unsafe fn enqueue_parse_npm_package(
 ) -> *mut ThreadPool::Task {
     // SAFETY: `network_task` is a freshly-vended pool slot whose `'static`
     // reborrow matches the `Task<'static>` slot lifetime.
-    let task_value = unsafe {
-        Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
-            log: bun_ast::Log::init(),
-            tag: crate::package_manager_task::Tag::PackageManifest,
-            request: crate::package_manager_task::Request {
-                package_manifest: ManuallyDrop::new(
-                    crate::package_manager_task::PackageManifestRequest {
-                        network: &mut *network_task,
-                        name,
-                    },
-                ),
-            },
-            id: task_id,
-            ..Task::uninit()
-        }
+    let network = unsafe { &mut *network_task };
+    let task_value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::PackageManifest,
+        request: crate::package_manager_task::Request {
+            package_manifest: ManuallyDrop::new(
+                crate::package_manager_task::PackageManifestRequest { network, name },
+            ),
+        },
+        id: task_id,
+        ..Task::uninit()
     };
     let task = this.preallocated_resolve_tasks.get_init(task_value);
     // SAFETY: `task` points to a freshly initialized pool slot.
@@ -2818,23 +2814,23 @@ pub(crate) fn create_extract_task_for_streaming(
 ) -> *mut Task::Task<'static> {
     // SAFETY: `network_task` is a freshly-vended pool slot whose `'static`
     // reborrow matches the `Task<'static>` slot lifetime.
-    let task_value = unsafe {
-        Task::Task {
-            package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
-            log: bun_ast::Log::init(),
-            tag: crate::package_manager_task::Tag::Extract,
-            request: crate::package_manager_task::Request {
-                extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
-                    network: &mut *network_task,
-                    tarball: ExtractTarball {
-                        skip_verify: this.skips_verify(tarball.resolution.tag),
-                        ..*tarball
-                    },
-                }),
-            },
-            id: (*network_task).task_id,
-            ..Task::uninit()
-        }
+    let network = unsafe { &mut *network_task };
+    let id = network.task_id;
+    let task_value = Task::Task {
+        package_manager: Some(bun_ptr::ParentRef::from_ref_mut(&mut *this)),
+        log: bun_ast::Log::init(),
+        tag: crate::package_manager_task::Tag::Extract,
+        request: crate::package_manager_task::Request {
+            extract: ManuallyDrop::new(crate::package_manager_task::ExtractRequest {
+                network,
+                tarball: ExtractTarball {
+                    skip_verify: this.skips_verify(tarball.resolution.tag),
+                    ..*tarball
+                },
+            }),
+        },
+        id,
+        ..Task::uninit()
     };
     this.preallocated_resolve_tasks
         .get_init(task_value)
@@ -3609,22 +3605,13 @@ fn get_or_put_resolved_package(
             // `string_bytes` is not resized between here and the `find_result` lookup.
             let name_str = this.lockfile.str_detached(&name);
 
-            let scope = bun_ptr::BackRef::new(
-                // SAFETY: `this_ptr` is the live exclusive `this` borrow; `options`
-                // is read-only here and disjoint from the `manifests` mutation below.
-                unsafe { &(*this_ptr).options }.scope_for_package_name(name_str),
-            );
+            let scope = this.options.scope_for_package_name(name_str);
             // SAFETY: `manifests` projected from `this_ptr`; the lookup holds
             // only that disjoint field borrow alongside the shared `options`
-            // / `lockfile` projections above. `scope` points into
-            // `(*this_ptr).options`, disjoint from `manifests`.
-            let Some(manifest) = (unsafe { &mut (*this_ptr).manifests }).by_name_hash(
-                cache_ctx,
-                scope.get(),
-                name_str,
-                name_hash,
-                needs_ext,
-            ) else {
+            // / `lockfile` borrows above.
+            let Some(manifest) = (unsafe { &mut (*this_ptr).manifests })
+                .by_name_hash(cache_ctx, scope, name_str, name_hash, needs_ext)
+            else {
                 // The registry doesn't have the name. `run_tasks` sent the dependency back here
                 // after the 404.
                 if version.tag == dependency::version::Tag::DistTag

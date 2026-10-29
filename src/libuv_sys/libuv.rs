@@ -2782,6 +2782,7 @@ unsafe extern "C" {
     pub fn uv_uptime(uptime: *mut f64) -> c_int;
     pub fn uv_getrusage(rusage: *mut uv_rusage_t) -> c_int;
     pub fn uv_os_homedir(buffer: *mut u8, size: *mut usize) -> ReturnCode;
+    /// Not `safe fn`: calls through a pointer that only `uv__winapi_init` fills.
     pub fn uv_os_getppid() -> uv_pid_t;
     pub fn uv_os_getpriority(pid: uv_pid_t, priority: *mut c_int) -> c_int;
     pub safe fn uv_translate_sys_error(sys_errno: c_int) -> c_int;
@@ -2795,7 +2796,6 @@ unsafe extern "C" {
     pub fn uv_os_uname(buffer: *mut uv_utsname_t) -> c_int;
     pub fn uv_cwd(buffer: *mut c_char, size: *mut usize) -> c_int;
     pub safe fn uv_get_total_memory() -> u64;
-    pub fn uv_disable_stdio_inheritance();
 
     // fs
     pub fn uv_fs_req_cleanup(req: *mut fs_t);

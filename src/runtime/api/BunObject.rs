@@ -687,7 +687,7 @@ thread_local! {
         const { core::cell::RefCell::new(crate::cli::open::EditorContext {
             editor: None,
             name: Vec::new(),
-            path: b"",
+            path: Vec::new(),
         }) };
 }
 
@@ -737,7 +737,7 @@ pub(crate) fn open_in_editor<'a>(
             return Err(heap.error(format_args!("No file path specified")));
         }
 
-        if let Err(err) = editor.open(edit.path, path, options.line, options.column) {
+        if let Err(err) = editor.open(&edit.path, path, options.line, options.column) {
             return Err(heap.error(format_args!("Opening editor failed {}", err.name())));
         }
 

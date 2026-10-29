@@ -587,22 +587,7 @@ impl<'a> HTTPClientResult<'a> {
     /// after the callback returns, so the stored form carries `body: &[]`.
     #[inline]
     pub fn without_borrowed_body(self) -> HTTPClientResult<'static> {
-        HTTPClientResult {
-            body: &[],
-            body_owned: self.body_owned,
-            has_more: self.has_more,
-            redirected: self.redirected,
-            can_stream: self.can_stream,
-            is_http2: self.is_http2,
-            fail: self.fail,
-            dns_error: self.dns_error,
-            dns_hostname: self.dns_hostname,
-            metadata: self.metadata,
-            body_size: self.body_size,
-            certificate_info: self.certificate_info,
-            connect_errno: self.connect_errno,
-            proxy_connect_response: self.proxy_connect_response,
-        }
+        HTTPClientResult { body: &[], ..self }
     }
 }
 
@@ -816,6 +801,7 @@ pub struct HTTPClient<'a> {
     /// Some HTTP servers (such as npm) report Last-Modified times but ignore If-Modified-Since.
     /// This is a workaround for that.
     pub if_modified_since: &'a [u8],
+    /// The `Content-Length` header that `build_request` returns points into this.
     pub(crate) request_content_len_buf: [u8; b"18446744073709551615".len()],
 
     pub(crate) http_proxy: Option<URL<'a>>,
@@ -2647,7 +2633,6 @@ impl<'a> HTTPClient<'a> {
                     _ => Default::default(),
                 };
                 if let Some(content_length) = framing.content_length {
-                    // The header keeps a pointer into `self.request_content_len_buf`.
                     let value: &[u8] = bun_core::fmt::int_as_bytes(
                         &mut self.request_content_len_buf,
                         content_length,
@@ -3045,7 +3030,7 @@ impl<'a> HTTPClient<'a> {
             compress_body::CompressOutput::Spilled => self.compressed_request_body.as_slice(),
         };
         self.compressed_body_len = slice.len();
-        // `compressed_request_body` is only rewritten on the next attempt, after `state.reset()`.
+        // The `Vec` is next rewritten only once `reset()`/`init()` has re-seated this cursor.
         self.state.request_body = bun_ptr::RawSlice::new(slice);
         self.state.flags.body_compressed = true;
         Ok(())

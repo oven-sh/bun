@@ -36,7 +36,7 @@ impl Default for PathPair<'_> {
 }
 
 impl<'r> PathPair<'r> {
-    pub(crate) fn iter(&mut self) -> impl Iterator<Item = &mut crate::fs::Path<'r>> {
+    pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = &mut crate::fs::Path<'r>> {
         core::iter::once(&mut self.primary)
             .chain(&mut self.secondary)
             .filter(|path| !path.is_disabled)

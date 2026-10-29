@@ -199,7 +199,7 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
       const a = ${JSON.stringify(sleep)};
       const b = process.argv[2];
       // Alternate absolute editor paths so the cached editor name is replaced
-      // on each call.
+      // on each call. A thread that borrowed the old one would read freed memory.
       for (let i = 0; i < 8; i++) {
         try { Bun.openInEditor("0.3", { editor: i % 2 ? b : a }); } catch {}
       }

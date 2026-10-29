@@ -1426,13 +1426,13 @@ impl Run<'_> {
 
     /// Wire `--eval`/`--print`
     /// node-module globals and `--expose-gc` into the JSC global object.
-    fn add_conditional_globals(vm: &VirtualMachine, ctx: &ContextData) {
+    fn add_conditional_globals(global: &JSGlobalObject, ctx: &ContextData) {
         let ro = &ctx.runtime_options;
         if !ro.eval.script.is_empty() {
-            bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(vm.global());
+            bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(global);
         }
         if ro.expose_gc {
-            bun_jsc::cpp::JSC__JSGlobalObject__addGc(vm.global());
+            bun_jsc::cpp::JSC__JSGlobalObject__addGc(global);
         }
     }
 
@@ -1446,7 +1446,8 @@ impl Run<'_> {
             entry_path: mut entry,
             unchecked,
         } = self;
-        let _api_lock = vm.global().vm().get_api_lock();
+        let global = vm.global();
+        let _api_lock = global.vm().get_api_lock();
 
         vm.hot_reload = ctx.debug.hot_reload;
         vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
@@ -1487,7 +1488,7 @@ impl Run<'_> {
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
         }
 
-        Self::add_conditional_globals(vm, ctx);
+        Self::add_conditional_globals(global, ctx);
 
         // ── redis preconnect (must run under the API lock) ─────────────────
         'do_redis_preconnect: {

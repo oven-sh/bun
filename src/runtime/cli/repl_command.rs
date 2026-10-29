@@ -249,10 +249,11 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 
     fn setup_repl_environment(&mut self) -> bun_jsc::JsResult<()> {
         let vm = VirtualMachine::get().as_mut();
+        let global = vm.global();
 
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
         // This must be done inside the API lock as it allocates JS objects
-        bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(vm.global());
+        bun_jsc::cpp::Bun__ExposeNodeModuleGlobals(global);
 
         // Set up require(), module, __filename, __dirname relative to cwd
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
@@ -261,14 +262,14 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // which opens a `TopExceptionScope` before the call (post-hoc `has_exception()`
         // would assert under `BUN_JSC_validateExceptionChecks=1`).
         unsafe {
-            bun_jsc::cpp::Bun__REPL__setupGlobalRequire(&*vm.global, cwd.as_ptr(), cwd.len())?;
+            bun_jsc::cpp::Bun__REPL__setupGlobalRequire(global, cwd.as_ptr(), cwd.len())?;
         }
 
         // Set timezone if specified
         // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
         if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
             if !tz.is_empty() {
-                let _ = vm.global().set_time_zone(&EncodedSlice::from_bytes(tz));
+                let _ = global.set_time_zone(&EncodedSlice::from_bytes(tz));
             }
         }
 

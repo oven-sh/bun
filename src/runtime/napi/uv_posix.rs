@@ -47,7 +47,7 @@ unsafe extern "C" {
     fn CrashHandler__unsupportedUVFunction(name: *const c_char);
     /// Returns null while the GC is sweeping. `HandleScopeImpl__close` accepts null.
     safe fn HandleScopeImpl__open(global: &JSGlobalObject) -> *mut c_void;
-    fn HandleScopeImpl__close(global: *const JSGlobalObject, scope: *mut c_void);
+    fn HandleScopeImpl__close(global: &JSGlobalObject, scope: *mut c_void);
 }
 
 #[cold]

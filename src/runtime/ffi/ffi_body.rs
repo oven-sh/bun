@@ -1282,10 +1282,10 @@ impl FFI {
 
     pub(crate) fn close_callback(callback: JsLocal<'_>) {
         unsafe extern "C" {
-            fn Bun__JSCFFICallbackClose(callback: JSValue);
+            /// Type-checks the cell (`dynamicDowncast`) before use.
+            safe fn Bun__JSCFFICallbackClose(callback: JSValue);
         }
-        // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (jsDynamicCast) before use.
-        unsafe { Bun__JSCFFICallbackClose(callback.to_js()) };
+        Bun__JSCFFICallbackClose(callback.to_js());
     }
 
     pub(crate) fn callback<'a>(

@@ -2798,12 +2798,13 @@ pub(crate) mod mock {
 // Extract the matcher_fn from a JSCustomExpectMatcherFunction instance
 #[inline]
 fn get_custom_matcher_fn(this_value: JSValue, global_this: &JSGlobalObject) -> Option<JSValue> {
-    // SAFETY: FFI call with valid JSValue and &JSGlobalObject
+    // SAFETY: `this_value` is the callee of a host call, so it is a cell.
     let matcher_fn = unsafe { Bun__JSWrappingFunction__getWrappedFunction(this_value, global_this) };
     if matcher_fn.is_empty() { None } else { Some(matcher_fn) }
 }
 
 unsafe extern "C" {
+    /// `wrapped_fn` must be an object.
     fn Bun__JSWrappingFunction__create(
         global_this: *const JSGlobalObject,
         symbol_name: &bun_core::String,
@@ -2811,6 +2812,7 @@ unsafe extern "C" {
         function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
     ) -> JSValue;
+    /// `this` must be a cell: `asCell()` is not checked.
     fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: *const JSGlobalObject) -> JSValue;
 
     safe fn ExpectMatcherUtils__getSingleton(global_this: &JSGlobalObject) -> JSValue;

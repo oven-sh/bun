@@ -331,9 +331,10 @@ pub(crate) fn has_clipboard_image() -> bool {
 }
 
 unsafe extern "C" {
+    /// Not `safe fn`: it messages `NSPasteboard`, for which AppKit documents no thread guarantee.
     fn bun_coregraphics_clipboard_change_count() -> i64;
 }
 pub(crate) fn clipboard_change_count() -> i64 {
-    // SAFETY: pure getter, no preconditions.
+    // SAFETY: only reads `changeCount`, and only on a JS thread, never on the work pool.
     unsafe { bun_coregraphics_clipboard_change_count() }
 }

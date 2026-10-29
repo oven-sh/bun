@@ -115,12 +115,15 @@ pub fn install_with_manager(
         Enable::FORCE_SAVE_LOCKFILE,
         manager.options.enable.force_save_lockfile()
             || changed_config_version
-            || matches!(&load_result, lockfile::LoadResult::Ok(ok)
-                // if migrated always save a new lockfile
-                if ok.migrated != lockfile::Migrated::None
-                    // if loaded from binary and save-text-lockfile is passed
-                    || (ok.format == lockfile::Format::Binary
-                        && manager.options.save_text_lockfile.unwrap_or(false))),
+            || matches!(
+                &load_result,
+                lockfile::LoadResult::Ok(ok)
+                    // if migrated always save a new lockfile
+                    if ok.migrated != lockfile::Migrated::None
+                        // if loaded from binary and save-text-lockfile is passed
+                        || (ok.format == lockfile::Format::Binary
+                            && manager.options.save_text_lockfile.unwrap_or(false))
+            ),
     );
 
     if manager.subcommand == Subcommand::Dedupe {
@@ -1046,9 +1049,12 @@ pub fn install_with_manager(
             && (did_meta_hash_change
                 || had_any_diffs
                 || !manager.update_requests.is_empty()
-                || matches!(&load_result, lockfile::LoadResult::Ok(ok)
-                    if ok.serializer_result.packages_need_update
-                        || ok.serializer_result.migrated_from_lockb_v2)
+                || matches!(
+                    &load_result,
+                    lockfile::LoadResult::Ok(ok)
+                        if ok.serializer_result.packages_need_update
+                            || ok.serializer_result.migrated_from_lockb_v2
+                )
                 || manager.lockfile.is_empty()
                 || manager.options.enable.force_save_lockfile()));
 

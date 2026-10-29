@@ -608,7 +608,7 @@ impl Lockfile {
         log: &mut bun_ast::Log,
     ) -> LoadResult {
         let result = self.read_from_dir(ATTEMPT_LOADING_FROM_OTHER_LOCKFILE, dir, manager, log);
-        if let LoadResult::Ok(_) = &result {
+        if matches!(result, LoadResult::Ok(_)) {
             self.rebase_folder_dependencies().unwrap_or_oom();
         }
         result

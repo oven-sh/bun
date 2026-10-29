@@ -612,7 +612,8 @@ mod pe {
     /// collapsing to `&[u8]` here would freeze it to read-only and make the
     /// later `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
-        // SAFETY: FFI calls.
+        // SAFETY: `from_executable` is the only caller. It runs once, on the main thread at
+        // startup, so nothing races the first call.
         let length = unsafe { Bun__getStandaloneModuleGraphPELength() };
         if length == 0 {
             return None;

@@ -2309,6 +2309,7 @@ mod draft {
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     unsafe extern "C" {
+        /// Returns a static NUL-terminated string.
         safe fn gnu_get_libc_version() -> *const c_char;
     }
 

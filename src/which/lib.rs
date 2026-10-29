@@ -50,7 +50,6 @@ fn is_valid(buf: &mut PathBuffer, cwd: &[u8], segment: &[u8], bin: &[u8]) -> Opt
     }
     buf[prefix_len..prefix_len + bin.len()].copy_from_slice(bin);
     buf[len] = 0;
-    // SAFETY: buf[len] == 0 written above
     let filepath = ZStr::from_buf(&buf[..], len);
     if !bun_sys::is_executable_file_path(filepath) {
         return None;
@@ -131,7 +130,6 @@ fn utf16_result_into<'a>(buf: &'a mut PathBuffer, result: &[u16]) -> &'a ZStr {
     let result_converted_ptr = result_converted.as_ptr();
     buf[result_converted_len] = 0;
     debug_assert!(result_converted_ptr == buf.as_ptr());
-    // SAFETY: buf[result_converted_len] == 0 written above
     ZStr::from_buf(&buf[..], result_converted_len)
 }
 
@@ -188,7 +186,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
                     cwd_trimmed,
                     strings::without_prefix_comptime(bin, b"./"),
                 ) {
-                    // SAFETY: is_valid wrote NUL at buf[len]
+                    // `is_valid` wrote NUL at buf[len]
                     return Some(ZStr::from_buf(&buf[..], len as usize));
                 }
             }
@@ -205,7 +203,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
                 cwd_for_relative_segment
             };
             if let Some(len) = is_valid(buf, cwd_prefix, segment, bin) {
-                // SAFETY: is_valid wrote NUL at buf[len]
+                // `is_valid` wrote NUL at buf[len]
                 return Some(ZStr::from_buf(&buf[..], len as usize));
             }
         }
@@ -298,7 +296,7 @@ fn search_bin<'a>(
 ) -> Option<&'a mut [u16]> {
     {
         if try_as_spelled {
-            // SAFETY: caller wrote NUL at buf[path_size]
+            // The caller wrote NUL at buf[path_size]
             if bun_sys::exists_os_path(WStr::from_buf(&buf[..], path_size), true) {
                 return Some(&mut buf[..path_size]);
             }
@@ -310,7 +308,6 @@ fn search_bin<'a>(
                 let end = path_size + 1 + ext.len();
                 buf[path_size + 1..end].copy_from_slice(ext);
                 buf[end] = 0;
-                // SAFETY: buf[end] == 0 written above
                 if bun_sys::exists_os_path(WStr::from_buf(&buf[..], end), true) {
                     return Some(&mut buf[..end]);
                 }

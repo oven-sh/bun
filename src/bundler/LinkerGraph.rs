@@ -255,10 +255,16 @@ pub struct LinkerGraph<'a> {
     pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
 }
 
-// SAFETY: the raw pointers belong to owning containers (`BitSet`,
-// `MultiArrayList`). `Symbol.link` is a `Cell`, which `follow()` writes only to
-// shorten a chain; `link()` shortens them all with `follow_all()` before
-// workers follow any.
+// SAFETY: workers share `&LinkerGraph`. What is not `Sync` on its own:
+// - The `MultiArrayList`s. Workers write their columns through `split_raw()` and
+//   `items_raw()`, and each task writes only the rows of its own file or chunk
+//   (see the CONCURRENCY notes on the tasks).
+// - The `BitSet`s, which workers only read.
+// - `Symbol.link`, a `Cell` that `follow()` writes only to shorten a chain.
+//   `LinkerContext::link()` shortens them all with `follow_all()` before workers
+//   follow any. The dev server skips `link()`: its links come from the parser and
+//   stay within one file, and tasks that run at the same time work on different files.
+// Only the bundle thread allocates from the arena; workers use `worker.arena()`.
 unsafe impl Sync for LinkerGraph<'_> {}
 
 impl<'a> LinkerGraph<'a> {

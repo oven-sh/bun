@@ -8929,8 +8929,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if part.import_record_indices.is_empty() {
-                            // Bump-arena slice; Vec::from_bump_slice marks origin
-                            // Borrowed so Drop is a no-op (arena ownership).
                             // The *old* value is a bitwise duplicate of
                             // `parts[idx].import_record_indices` and may be Owned —
                             // overwrite without running Drop, which would double-free the original.

@@ -2302,24 +2302,6 @@ pub mod bv2_impl {
         }
     }
 
-    /// RAII guard returned by [`BundleV2::decrement_scan_counter_on_drop`].
-    /// Decrements the bundle's pending-scan counter when dropped, without
-    /// holding a unique borrow across
-    /// the body. Stores a raw pointer; caller guarantees the `BundleV2` outlives it.
-    pub struct ScanCounterGuard {
-        bv2: *mut BundleV2<'static>,
-    }
-
-    impl Drop for ScanCounterGuard {
-        fn drop(&mut self) {
-            // SAFETY: constructed from `&mut BundleV2` in
-            // `decrement_scan_counter_on_drop`; the guard is a local that drops at
-            // scope exit while the `BundleV2` it points to is still alive. The
-            // lifetime is erased to `'static` only for storage — never observed.
-            unsafe { (*self.bv2).decrement_scan_counter() };
-        }
-    }
-
     impl<'a> BundleV2<'a> {
         pub(crate) fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
             // RAII guard — `Ctx` ends the span on Drop.
@@ -3499,15 +3481,6 @@ pub mod bv2_impl {
                     .dev_server
                     .unwrap_or_else(|| panic!("No dev server attached in asynchronous bundle job"));
                 self.finish_from_bake_dev_server(&dev).expect("oom");
-            }
-        }
-
-        /// RAII guard that decrements the scan counter on drop. Captures `self` as
-        /// a raw pointer so the returned guard does not hold a `&mut` borrow for the
-        /// rest of the scope; the caller must ensure `self` outlives the guard.
-        pub(crate) fn decrement_scan_counter_on_drop(&mut self) -> ScanCounterGuard {
-            ScanCounterGuard {
-                bv2: std::ptr::from_mut::<BundleV2<'a>>(self).cast::<BundleV2<'static>>(),
             }
         }
 
@@ -4974,22 +4947,15 @@ pub mod bv2_impl {
                 this.graph.pending_items += 1;
             }
             // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
-            struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
-            impl Drop for LoadDeinitGuard {
-                fn drop(&mut self) {
-                    // SAFETY: `self.0` is the live `&mut Load`; the guard drops before that borrow ends.
-                    unsafe {
-                        let l = &mut *self.0;
-                        drop(core::mem::take(&mut l.path));
-                        drop(core::mem::take(&mut l.namespace));
-                        drop(core::mem::replace(
-                            &mut l.value,
-                            jsc_api::JSBundler::LoadValue::Consumed,
-                        ));
-                    }
-                }
-            }
-            let load_deinit = LoadDeinitGuard(std::ptr::from_mut(load));
+            let mut load_deinit = scopeguard::guard(load, |l| {
+                drop(core::mem::take(&mut l.path));
+                drop(core::mem::take(&mut l.namespace));
+                drop(core::mem::replace(
+                    &mut l.value,
+                    jsc_api::JSBundler::LoadValue::Consumed,
+                ));
+            });
+            let load: &mut jsc_api::JSBundler::Load = &mut **load_deinit;
             bun_core::scoped_log!(
                 Bundle,
                 "onLoad: ({}, {:?})",
@@ -5194,25 +5160,18 @@ pub mod bv2_impl {
                 resolve.owner,
                 jsc_api::JSBundler::RequestOwner::Bundle
             ));
-            // RAII guard captures `this`
-            // as a raw pointer so it does not hold a unique borrow across the body.
-            let _dec_guard = this.decrement_scan_counter_on_drop();
+            // Runs last: the decrement can finish a dev server bundle, which frees `resolve`'s arena.
+            let mut this = scopeguard::guard(this, |this| this.decrement_scan_counter());
+            let this: &mut BundleV2 = &mut **this;
             // `Resolve` is arena-allocated (no Drop); free its owned heap fields on every exit path.
-            struct ResolveDeinitGuard(*mut jsc_api::JSBundler::Resolve);
-            impl Drop for ResolveDeinitGuard {
-                fn drop(&mut self) {
-                    // SAFETY: `self.0` is the live `&mut Resolve`; the guard drops before that borrow ends.
-                    unsafe {
-                        let r = &mut *self.0;
-                        drop(core::mem::take(&mut r.import_record));
-                        drop(core::mem::replace(
-                            &mut r.value,
-                            jsc_api::JSBundler::ResolveValue::Consumed,
-                        ));
-                    }
-                }
-            }
-            let _resolve_deinit = ResolveDeinitGuard(std::ptr::from_mut(resolve));
+            let mut resolve = scopeguard::guard(resolve, |r| {
+                drop(core::mem::take(&mut r.import_record));
+                drop(core::mem::replace(
+                    &mut r.value,
+                    jsc_api::JSBundler::ResolveValue::Consumed,
+                ));
+            });
+            let resolve: &mut jsc_api::JSBundler::Resolve = &mut **resolve;
             bun_core::scoped_log!(
                 Bundle,
                 "onResolve: ({}:{}, {:?})",

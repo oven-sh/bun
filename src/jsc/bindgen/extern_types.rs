@@ -91,7 +91,7 @@ impl<T: Copy> ExternVector<T> {
         let items = unsafe { core::slice::from_raw_parts(self.data, self.length as usize) };
         let result = items.iter().map(|item| convert(*item)).collect();
         // SAFETY: allocated by `Bun::MimallocMalloc`; ownership was transferred.
-        unsafe { bun_alloc::basic::free_without_size(self.data.cast()) };
+        unsafe { bun_alloc::mimalloc::mi_free(self.data.cast()) };
         result
     }
 }

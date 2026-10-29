@@ -23,7 +23,6 @@ use core::ffi::{c_uint, c_void};
 use core::ptr::NonNull;
 
 use bun_boringssl_sys as boringssl;
-use bun_collections::ByteVecExt;
 use bun_core::timespec;
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{StreamingWriter, WriteStatus};
@@ -222,7 +221,7 @@ impl WindowsNamedPipe {
         let _keep_alive = self.keep_alive();
         // SAFETY: `nread` bytes written by libuv into on_read_alloc's slice.
         self.incoming
-            .with_mut(|incoming| unsafe { incoming.uv_commit(nread) });
+            .with_mut(|incoming| unsafe { bun_core::vec::commit_spare(incoming, nread) });
 
         self.reset_timeout();
 
@@ -1132,7 +1131,7 @@ impl uv::StreamReader for WindowsNamedPipe {
         // `on_read` commits the byte count.
         let incoming = unsafe { &mut *this.incoming.as_ptr() };
         // SAFETY: libuv writes into this region before `on_read` commits it.
-        let spare = unsafe { incoming.uv_alloc_spare_u8(suggested_size) };
+        let spare = unsafe { bun_core::vec::reserve_spare_bytes(incoming, suggested_size) };
         &mut spare[..suggested_size]
     }
     #[inline]

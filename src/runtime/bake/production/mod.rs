@@ -284,6 +284,37 @@ fn write_sourcemap_to_disk(
     Ok(())
 }
 
+/// The resolver gives an empty listing to a directory that it can enter but cannot read, when an
+/// earlier lookup went through that directory. A root with no entries is listed if it opens.
+fn router_root_is_listed(info: &resolver::DirInfo, abs_root: &[u8]) -> bool {
+    info.get_entries_const()
+        .is_some_and(|entries| !entries.data.is_empty())
+        || bun_sys::open_dir_absolute(abs_root)
+            .map(bun_sys::Dir::from_fd)
+            .is_ok()
+}
+
+/// Reports the root of router type `index`: the resolver has no listing for it, so the build has
+/// no routes from it.
+#[cold]
+fn report_unreadable_router_root(framework: &bake::Framework, index: usize, abs_root: &[u8]) {
+    let root = bun_core::fmt::quote(abs_root);
+    match bun_sys::open_dir_absolute(abs_root).map(bun_sys::Dir::from_fd) {
+        Err(err) => Output::err(err.name(), "Cannot read the router root {}", (root,)),
+        // The directory opens, so the resolver has another reason to give no listing.
+        Ok(_) => Output::err_generic("The resolver cannot load the router root {}", (root,)),
+    }
+    if framework.is_built_in_react {
+        bun_core::note!(
+            "The \"react\" framework reads its pages ({}) from this directory",
+            bun_core::fmt::fmt_slice(&framework.file_system_router_types[index].extensions, ", ")
+        );
+    } else {
+        bun_core::note!("This directory is 'fileSystemRouterTypes[{}].root'", index);
+    }
+    Output::flush();
+}
+
 fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<()> {
     // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
     // `as_ptr()` is `Copy` and does not borrow `pt`.
@@ -552,14 +583,18 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         owned_paths: Vec::new(),
     };
 
-    for fsr in &framework.file_system_router_types {
+    let mut unreadable_roots: usize = 0;
+    for (index, fsr) in framework.file_system_router_types.iter().enumerate() {
         let mut buf = bun_paths::path_buffer_pool::get();
         let joined_root =
             resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut buf[..], &[&fsr.root]);
         let Some(entry) = server_transpiler
             .resolver
             .read_dir_info_ignore_error(joined_root)
+            .filter(|info| router_root_is_listed(info, joined_root))
         else {
+            report_unreadable_router_root(framework, index, joined_root);
+            unreadable_roots += 1;
             continue;
         };
         let server_file =
@@ -602,7 +637,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         &mut server_transpiler.resolver,
         router::InsertionContext::wrap(&mut route_scan),
     )?;
-    if route_scan.invalid_routes > 0 {
+    if route_scan.invalid_routes > 0 || unreadable_roots > 0 {
         Global::crash();
     }
 

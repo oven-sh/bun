@@ -245,6 +245,9 @@ declare module "bun" {
     interface FrameworkFileSystemRouterType {
       /**
        * Relative to project root. For example: `src/pages`.
+       *
+       * `bun build --app` fails when it cannot read this directory. A framework
+       * with optional roots lists only the roots that exist.
        */
       root: string;
       /**

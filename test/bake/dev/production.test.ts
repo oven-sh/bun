@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, existsSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir, unprivilegedSpawnOptions, type DirectoryTree } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
@@ -518,18 +518,184 @@ export default function () {
       }),
     });
 
-    // Run the build command - should not crash even with no pages
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(dir).throws(false);
+    // The React framework reads its pages from "pages". The build used to skip a root that it
+    // could not read. With nothing to bundle it hit a StringBuilder assertion, and later it
+    // printed "done" and exited with code 0.
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`.cwd(dir).env(bunEnv).throws(false);
 
-    // The build should complete successfully (or fail gracefully, not crash)
-    // We're testing that it doesn't crash with the StringBuilder assertion
-    expect(exitCode).toBeDefined();
+    const lines = normalizePath(stderr.toString()).split(/\r?\n/);
+    expect(lines.slice(lines.indexOf("Bundling routes") + 1)).toEqual([
+      `ENOENT: Cannot read the router root "${normalizePath(path.join(dir, "pages"))}"`,
+      `note: The "react" framework reads its pages (.tsx, .jsx) from this directory`,
+      "",
+    ]);
+    expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
+  });
 
-    // If it fails, it should be a graceful failure, not a crash
-    if (exitCode !== 0) {
-      expect(stderr.toString()).not.toContain("reached unreachable code");
-      expect(stderr.toString()).not.toContain("assert(this.cap > 0)");
+  // A router type reads its routes from the directory `root`. The build used to skip a root that
+  // the resolver had no listing for, with no message and exit code 0: it bundled and wrote
+  // nothing, or it wrote only the pages of the other router types.
+  describe("router roots that cannot be read", () => {
+    const router = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+    // The framework can prerender every page of these fixtures, so only a root stops a build.
+    // `config` is the source text of the router types. `setup` runs in the build, before the roots are read.
+    const fixture = (config: string, files: DirectoryTree, setup = "") => ({
+      "app.ts": `${setup}
+        export default { app: { framework: { fileSystemRouterTypes: ${config} } } };
+      `,
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          return { files: { "/index.html": String(meta.pageModule.default()) } };
+        }
+      `,
+      ...files,
+    });
+    const roots = (...roots: string[]) => JSON.stringify(roots.map(root => ({ ...router, root })));
+    const page = (name: string) => `export default () => ${JSON.stringify(name)};`;
+    // The two lines of a report: the error with the absolute root, and the option that names the root.
+    const report = (error: string, root: string, index: number) => [
+      `${error} the router root "${normalizePath(root)}"`,
+      `note: This directory is 'fileSystemRouterTypes[${index}].root'`,
+    ];
+
+    async function build(dir: string, spawnOptions: { uid?: number; gid?: number } = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts"],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+        ...spawnOptions,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = normalizePath(stderr).split(/\r?\n/);
+      const dist = path.join(dir, "dist");
+      const result = {
+        // The build reads the roots after this line. Its reports follow, or the line of the render step.
+        afterConfig: lines.slice(lines.indexOf("Bundling routes") + 1).filter(line => line !== ""),
+        stdout,
+        pages: existsSync(dist) ? Array.from(new Bun.Glob("**/*.html").scanSync(dist), normalizePath).sort() : null,
+        exitCode,
+      };
+      return { result, stderr };
     }
+    const failed = (...afterConfig: string[]) => ({ afterConfig, stdout: "", pages: null, exitCode: 1 });
+
+    test.concurrent.each([
+      ["that does not exist", "ENOENT", { "routes/index.ts": page("index") }],
+      ["that is a file", "ENOTDIR", { "route": "not a directory" }],
+    ])("fails the build for a root %s", async (_, errno, files) => {
+      using dir = tempDir("bake-production-unreadable-root", fixture(roots("route"), files));
+      const { result, stderr } = await build(String(dir));
+      expect(result, stderr).toEqual(failed(...report(`${errno}: Cannot read`, path.join(String(dir), "route"), 0)));
+    });
+
+    test.concurrent("fails the build when one of two roots does not exist", async () => {
+      using dir = tempDir(
+        "bake-production-one-root-missing",
+        fixture(roots("src/pages", "routes"), { "routes/index.ts": page("index") }),
+      );
+      const { result, stderr } = await build(String(dir));
+      expect(result, stderr).toEqual(failed(...report("ENOENT: Cannot read", path.join(String(dir), "src/pages"), 0)));
+    });
+
+    test.concurrent("reports every root and every route before it fails the build", async () => {
+      using dir = tempDir(
+        "bake-production-unreadable-roots",
+        fixture(roots("missing", "routes", "../bake-production-no-root"), {
+          "routes/index.ts": page("index"),
+          "routes/[oops.ts": page("oops"),
+        }),
+      );
+      const { result, stderr } = await build(String(dir));
+      expect(result, stderr).toEqual(
+        failed(
+          ...report("ENOENT: Cannot read", path.join(String(dir), "missing"), 0),
+          ...report("ENOENT: Cannot read", path.join(String(dir), "..", "bake-production-no-root"), 2),
+          `error: "routes/[oops.ts" is not a valid route`,
+          `               -------`,
+          `               Missing "]" to match this route parameter`,
+        ),
+      );
+    });
+
+    // The resolver looks up at most 256 directories that it has not seen, so it has no listing for
+    // a root that is 257 directories below the project. Windows: not run, the path is longer than MAX_PATH.
+    test.concurrent.skipIf(isWindows)(
+      "fails the build for a root that opens, when the resolver cannot load it",
+      async () => {
+        const root = Array(257).fill("a").join("/");
+        using dir = tempDir(
+          "bake-production-unloadable-root",
+          fixture(roots(root), { [`${root}/index.ts`]: page("index") }),
+        );
+        const { result, stderr } = await build(String(dir));
+        expect(result, stderr).toEqual(
+          failed(...report("error: The resolver cannot load", path.join(String(dir), root), 0)),
+        );
+      },
+    );
+
+    test.concurrent("leaves the files of an earlier build as they are", async () => {
+      using dir = tempDir(
+        "bake-production-unreadable-root-old-dist",
+        fixture(roots("route"), { "dist/index.html": "the earlier build" }),
+      );
+      const { result, stderr } = await build(String(dir));
+      expect(result, stderr).toEqual({
+        ...failed(...report("ENOENT: Cannot read", path.join(String(dir), "route"), 0)),
+        pages: ["index.html"],
+      });
+      expect(await Bun.file(path.join(String(dir), "dist", "index.html")).text()).toBe("the earlier build");
+    });
+
+    // POSIX only: `unprivilegedSpawnOptions` runs the build as a user that the mode bits apply to.
+    // Not concurrent: it can change the modes of the directories above the test's own.
+    // The build can enter a root of mode 0o311. It finds the entry point below that root, and the
+    // resolver then has an empty listing for the root.
+    test.skipIf(isWindows).each([
+      ["that it has no permission to read", 0o000, "./server.ts"],
+      ["that it can enter but cannot read", 0o311, "./routes/_lib/server.ts"],
+    ])("fails the build for a root %s", async (_, mode, serverEntryPoint) => {
+      using dir = tempDir(
+        "bake-production-root-no-permission",
+        fixture(JSON.stringify([{ ...router, serverEntryPoint }]), {
+          "routes/index.ts": page("index"),
+          "routes/_lib/server.ts": `export * from "../../server.ts";`,
+        }),
+      );
+      const root = path.join(String(dir), "routes");
+      using unprivileged = unprivilegedSpawnOptions(String(dir));
+      chmodSync(root, mode);
+      using restoreMode = { [Symbol.dispose]: () => chmodSync(root, 0o755) };
+      const { result, stderr } = await build(String(dir), unprivileged);
+      expect(result, stderr).toEqual(failed(...report("EACCES: Cannot read", root, 0)));
+    });
+
+    // Builds to the end, which uses every core, so it runs alone.
+    // The root "empty" exists and has no files. The build has no routes from it, and that is valid.
+    test("builds a framework that lists only the roots that exist", async () => {
+      const setup = `import { existsSync } from "node:fs";`;
+      using dir = tempDir(
+        "bake-production-optional-roots",
+        fixture(
+          `${roots("src/pages", "routes", "empty")}.filter(router => existsSync(router.root))`,
+          { "routes/index.ts": page("index"), "empty": {} },
+          setup,
+        ),
+      );
+      const { result, stderr } = await build(String(dir));
+      expect(result, stderr).toEqual({
+        afterConfig: ["Rendering routes"],
+        stdout: "done\n",
+        pages: ["index.html"],
+        exitCode: 0,
+      });
+    });
   });
 
   test("client-side component with default import should work", async () => {

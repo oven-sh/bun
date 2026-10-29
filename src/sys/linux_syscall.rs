@@ -28,21 +28,6 @@ use bun_core::ZStr;
 // Glue: rustix ↔ bun_sys primitive types
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Reinterpret a raw posix fd as a `BorrowedFd` for the duration of a single
-/// rustix call. SAFETY: `fd` must be a valid open descriptor (and ≠ -1; that
-/// value is `BorrowedFd`'s niche) for the duration of the call. Caller-owned;
-/// rustix never closes a `BorrowedFd`.
-///
-/// The lifetime is unbounded (chosen by inference at each call site) rather
-/// than `'static` — every use in this module is a single-expression borrow,
-/// so inference picks a local lifetime and the wrapper cannot accidentally
-/// outlive the real fd.
-#[inline(always)]
-unsafe fn bfd<'a>(fd: i32) -> BorrowedFd<'a> {
-    // SAFETY: forwarded — see fn doc.
-    unsafe { BorrowedFd::borrow_raw(fd) }
-}
-
 /// rustix `Errno` → raw positive errno (matches `libc::E*` constants on Linux).
 #[inline(always)]
 fn raw(e: Errno) -> i32 {
@@ -196,7 +181,7 @@ pub(crate) fn lstat(path: &ZStr) -> Result<libc::stat, i32> {
 #[inline]
 pub(crate) fn fstatat(dir: i32, path: &ZStr, flags: i32) -> Result<libc::stat, i32> {
     // SAFETY: `dir` is caller-owned (or AT_FDCWD) for the call.
-    let dir = unsafe { bfd(dir) };
+    let dir = unsafe { BorrowedFd::borrow_raw(dir) };
     let at = rustix::fs::AtFlags::from_bits_retain(flags as u32);
     retry(|| rustix::fs::statat(dir, path.as_cstr(), at)).map(stat_to_libc)
 }

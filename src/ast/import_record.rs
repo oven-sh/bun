@@ -21,7 +21,7 @@ pub struct ImportRecord<'a> {
 
     /// The original import specifier as written in source code (e.g., "./foo.js").
     /// This is preserved before resolution overwrites `path` with the resolved path.
-    /// Used for metafile generation.
+    /// Used for metafile generation and to match the specifier of `import.meta.hot.accept`.
     pub original_path: &'a [u8],
 
     /// Pack all boolean flags into 4 bytes to reduce padding overhead.

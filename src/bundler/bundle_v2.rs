@@ -6618,10 +6618,7 @@ pub mod bv2_impl {
                 }
 
                 // For non-dev-server builds, barrel-deferred records need their
-                // source_index cleared so they don't get linked. For dev server,
-                // skip this — is_unused is also set by ConvertESMExportsForHmr
-                // deduplication, and clearing those source_indices breaks module
-                // identity (e.g., __esModule on ESM namespace objects).
+                // source_index cleared so they don't get linked.
                 if import_record
                     .flags
                     .contains(bun_ast::ImportRecordFlags::IS_UNUSED)

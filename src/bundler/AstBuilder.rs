@@ -349,9 +349,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
                                 },
                             )?;
                         }
-                        // convertStmt: `deduplicatedImport` is a no-op for
-                        // AstBuilder (each generated file emits at most one
-                        // import per record), so just forward the stmt.
+                        // convertStmt forwards an import statement as it is.
                         hmr_stmts.push(*stmt);
                     }
                     bun_ast::StmtData::SLocal(mut st) if st.is_export => {

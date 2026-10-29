@@ -5,6 +5,7 @@
 
 use core::ffi::c_char;
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 use std::io::Write as _;
 
 use bun_core::{Global, Output};
@@ -517,10 +518,7 @@ impl<'a> WorkerLoop<'a> {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }
-        // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
-        unsafe {
-            WORKER_CMDS.write(Some(&raw mut self.cmds));
-        }
+        WORKER_CMDS.store(&raw mut self.cmds, Ordering::Relaxed);
 
         // Test hook: "abort" dies by SIGABRT (the startup-panic branch),
         // anything else exits 1 (the bounded-respawn branch). Real init
@@ -705,8 +703,7 @@ fn worker_flush_aggregates(
 
 /// Set in `run_as_worker` so `worker_emit_test_done` (called from
 /// `CommandLineReporter.handleTestCompleted`) can reach the channel.
-// PORTING.md §Global mutable state: single-worker-thread ptr slot → RacyCell.
-static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::RacyCell::new(None);
+static WORKER_CMDS: AtomicPtr<WorkerCommands> = AtomicPtr::new(core::ptr::null_mut());
 // Lifetime note: stores an 'a-bound pointer as 'static; sound because the
 // pointee outlives all callers (process exits before it's dropped).
 
@@ -720,10 +717,10 @@ pub(crate) fn worker_emit_test_done(
     formatted_line: &[u8],
     test: Option<&test_command::TestCaseReport<'_>>,
 ) {
-    // SAFETY: single-threaded worker; WORKER_CMDS only written/read on this thread.
-    let Some(cmds_ptr) = (unsafe { WORKER_CMDS.read() }) else {
+    let cmds_ptr = WORKER_CMDS.load(Ordering::Relaxed);
+    if cmds_ptr.is_null() {
         return;
-    };
+    }
     // SAFETY: cmds_ptr was set from &mut WorkerCommands in run_as_worker; pointee
     // outlives all callers (process exits before it is dropped).
     let cmds = unsafe { &mut *cmds_ptr };

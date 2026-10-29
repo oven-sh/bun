@@ -1515,6 +1515,25 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     raw.close();
   });
 
+  // The list may have 200 fields, and twice that closes the connection.
+  test.each([
+    [200, 200],
+    [201, 431],
+    [400, 431],
+    [401, "ENHANCE_YOUR_CALM"],
+  ])("a header list of exactly %d fields → %s", async (total, expected) => {
+    const raw = await RawH2.connect(fx.port, secure);
+    const base = baseHeaders("/hello");
+    raw.headers(1, [
+      ...base,
+      ...Array.from({ length: total - base.length }, (_, i): [string, string] => ["x-" + i, "1"]),
+    ]);
+    const answer = await raw.waitFor(f => (f.type === T.HEADERS && f.streamId === 1) || f.type === T.GOAWAY);
+    if (answer.type === T.GOAWAY) expect(answer.payload.readUInt32BE(4)).toBe(0xb);
+    expect(answer.type === T.GOAWAY ? "ENHANCE_YOUR_CALM" : decodeStatus(answer.payload)).toBe(expected);
+    raw.close();
+  });
+
   test("more than 200 header fields → 431, connection survives", async () => {
     const raw = await RawH2.connect(fx.port, secure);
     const many: [string, string][] = [];

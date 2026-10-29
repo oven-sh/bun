@@ -1150,6 +1150,25 @@ describe.concurrent("HPACK in fetch() over HTTP/2", () => {
     );
   });
 
+  test("a request that is sent again is nothing but references", async () => {
+    const blocks: Buffer[] = [];
+    await withAdversarialServer(
+      {
+        onStream: (socket, id, _, block) => {
+          blocks.push(block);
+          socket.write(frame(1, 5, id, hpackStatus200));
+        },
+      },
+      async (url, state) => {
+        for (let i = 0; i < 2; i++)
+          expect((await fetch(url + "/some/path", { ...h2, method: "DELETE" })).status).toBe(200);
+        expect(state.connections).toBe(1);
+        expect(blocks[0].some(byte => byte < 0x80)).toBe(true);
+        expect(blocks[1].toString("hex")).toMatch(/^([89a-f].)+$/);
+      },
+    );
+  });
+
   test("1xx blocks and trailers still reach the decoder", async () => {
     const responses = [
       [

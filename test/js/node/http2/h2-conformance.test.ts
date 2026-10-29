@@ -3226,12 +3226,15 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
-  test("a server's encoder follows the client's SETTINGS_HEADER_TABLE_SIZE", async () => {
+  test.each([
+    ["alone in its frame", Buffer.alloc(0)],
+    ["followed by SETTINGS_INITIAL_WINDOW_SIZE", settingsPayload(0x4, 65535)],
+  ])("a server's encoder follows the client's SETTINGS_HEADER_TABLE_SIZE, %s", async (_, more) => {
     const { srv, port } = await listen();
     const c = await RawH2.connect(port);
     try {
       c.sendPreface();
-      c.sendFrame(FrameType.SETTINGS, 0, 0, settingsPayload(HEADER_TABLE_SIZE, 0));
+      c.sendFrame(FrameType.SETTINGS, 0, 0, Buffer.concat([settingsPayload(HEADER_TABLE_SIZE, 0), more]));
       await c.waitFor(isSettingsAck);
       c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
       const first = await c.waitFor(headersOrGoaway(1));
@@ -3241,6 +3244,25 @@ describe("HPACK (RFC 7541)", () => {
       // spell everything out, so they only differ by the size update.
       expect(first.payload[0]).toBe(0x20);
       expect(second.payload).toEqual(first.payload.subarray(1));
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test("the GOAWAY for a block that does not decode names the last stream that was opened", async () => {
+    const { srv, port } = await listen();
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET"));
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET"));
+      await c.waitFor(headersOrGoaway(3));
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, Buffer.from([0x80]));
+      const goaway = await c.waitForGoaway();
+      expect(goawayErrorCode(goaway)).toBe(ErrorCode.COMPRESSION_ERROR);
+      expect(goaway.payload.readUInt32BE(0)).toBe(3);
     } finally {
       c.destroy();
       srv.close();

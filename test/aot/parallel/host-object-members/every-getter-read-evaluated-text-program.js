@@ -93,6 +93,7 @@ request.credentials: "include"
 request.destination: ""
 request.headers: object Headers
 request.integrity: ""
+request.keepalive: false
 request.method: "POST"
 request.mode: "cors"
 request.redirect: "follow"

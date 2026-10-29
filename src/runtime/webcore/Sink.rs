@@ -416,10 +416,10 @@ where
     /// A new JS object, which takes over one claim on `sink`.
     pub(crate) fn create_object(
         global: &JSGlobalObject,
-        sink: &mut T,
+        sink: NonNull<T>,
         subprocess: Option<NonNull<Subprocess<'static>>>,
     ) -> JSValue {
-        Self::new(NonNull::from(sink), subprocess).to_js(global)
+        Self::new(sink, subprocess).to_js(global)
     }
 
     /// The sink of `value`, unless that is not such an object or it is closed.

@@ -446,8 +446,7 @@ EventEmitter.prototype.emit = function emit(this: any, ...args: any[]) {
   return ret;
 };
 
-// node puts a function in EventEmitter.init that does this and then calls the init that was there:
-// https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L446. Here every text that constructs an emitter calls it first.
+// What node's replaced EventEmitter.init does first: https://github.com/nodejs/node/blob/v26.3.0/lib/domain.js#L446
 domainHooks.bindEmitter = function bindEmitter(emitter: any) {
   ObjectDefineProperty(emitter, "domain", {
     __proto__: null,

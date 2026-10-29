@@ -8140,8 +8140,6 @@ pub mod posix {
         pub max: u64,
     }
     #[cfg(unix)]
-    bun_core::impl_zeroable!(Rlimit);
-    #[cfg(unix)]
     #[derive(Clone, Copy)]
     #[repr(i32)]
     pub enum RlimitResource {

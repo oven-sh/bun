@@ -990,20 +990,19 @@ impl CommandLineReporter {
         let attempts = (initial_retry_count - sequence.remaining_retry_count) + 1;
         let initial_repeat_count = test_entry.repeat_count;
         let repeats = (initial_repeat_count - sequence.remaining_repeat_count) + 1;
-        let mut scopes_stack: BoundedArray<*const bun_test::DescribeScope, 64> =
-            BoundedArray::default();
-        let mut parent_: Option<*const bun_test::DescribeScope> =
-            test_entry.base.parent.map(|p| p.cast_const());
+        let mut scopes_stack: BoundedArray<&bun_test::DescribeScope, 64> = BoundedArray::default();
+        let mut parent_ = test_entry.base.parent;
 
         while let Some(scope) = parent_ {
+            // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
+            let scope = unsafe { &*scope };
             if scopes_stack.push(scope).is_err() {
                 break;
             }
-            // SAFETY: scope is a live DescribeScope pointer kept alive for the test run
-            parent_ = unsafe { (*scope).base.parent.map(|p| p.cast_const()) };
+            parent_ = scope.base.parent;
         }
 
-        let scopes: &[*const bun_test::DescribeScope] = scopes_stack.as_slice();
+        let scopes: &[&bun_test::DescribeScope] = scopes_stack.as_slice();
         let display_label: &[u8] = test_entry.base.name.as_deref().unwrap_or(b"(unnamed)");
 
         // Quieter output when claude code is in use.
@@ -1065,9 +1064,7 @@ impl CommandLineReporter {
             if Output::enable_ansi_colors_stderr() {
                 for i in 0..scopes.len() {
                     let index = (scopes.len() - 1) - i;
-                    let scope = scopes[index];
-                    // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                    let name: &[u8] = scopes[index].base.name.as_deref().unwrap_or(b"");
                     if name.is_empty() {
                         continue;
                     }
@@ -1086,9 +1083,7 @@ impl CommandLineReporter {
             } else {
                 for i in 0..scopes.len() {
                     let index = (scopes.len() - 1) - i;
-                    let scope = scopes[index];
-                    // SAFETY: scope is alive for duration of test run
-                    let name: &[u8] = unsafe { (*scope).base.name.as_deref() }.unwrap_or(b"");
+                    let name: &[u8] = scopes[index].base.name.as_deref().unwrap_or(b"");
                     if name.is_empty() {
                         continue;
                     }

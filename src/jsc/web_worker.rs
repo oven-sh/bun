@@ -233,7 +233,7 @@ unsafe extern "C" {
     safe fn WebWorker__postOutOfMemoryError(proxy: *mut c_void);
     safe fn WebWorker__postFailedToStartError(proxy: *mut c_void);
     /// The address space a compiled program's thread needs for its tables, taken
-    /// by the thread that starts it. False: there is none. `pages` may be null.
+    /// by the thread that starts it. False: there is none. `*pages` may be null.
     safe fn Bun__AOT__tryReservePagesForNewThread(
         pages: &mut *mut c_void,
         threads_are_ending: bool,
@@ -330,11 +330,11 @@ impl WebWorker {
     }
 
     /// Borrowed from the C++ `WorkerOptions` (kept alive by the owning
-    /// `WebCore::Worker`).
+    /// `WorkerMessagingProxy`).
     #[inline]
     pub fn argv(&self) -> &[Option<&WTFStringImplStruct>] {
         // SAFETY: `argv_ptr[..argv_len]` is borrowed from C++ WorkerOptions
-        // (BACKREF — kept alive by the owning Worker for `self`'s lifetime).
+        // (BACKREF — kept alive by the owning proxy for `self`'s lifetime).
         // Each entry is a `WTF::String`: null, or a `StringImpl` that it keeps alive.
         // `(null, 0)` is tolerated by `ffi::slice`.
         unsafe { bun_core::ffi::slice(self.argv_ptr.cast(), self.argv_len) }
@@ -992,8 +992,7 @@ impl WebWorker {
         self.arena.set(Some(bun_alloc::Arena::new()));
 
         // Checkpoint before the expensive part: initWorker builds a full JSC
-        // VM. If a parent's request_termination() fired while we were cloning the env
-        // above, bail now rather than spending ~50–100ms (release) creating a
+        // VM. If a parent's request_termination() fired, bail now rather than spending ~50–100ms (release) creating a
         // VM that will immediately tear down.
         if self.has_requested_terminate() {
             self.shutdown();
@@ -1055,8 +1054,8 @@ impl WebWorker {
             b.options.env.behavior =
                 bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
 
-            if crate::virtual_machine::standalone_module_graph().is_some() {
-                (hooks.apply_standalone_runtime_flags)(b);
+            if let Some(graph) = crate::virtual_machine::standalone_module_graph() {
+                (hooks.apply_standalone_runtime_flags)(b, graph);
             }
         }
 

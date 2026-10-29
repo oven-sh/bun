@@ -2043,7 +2043,7 @@ where
                         // Copy the headers like `new Request(url, { headers })` does.
                         // S008: `FetchHeaders` is an opaque ZST FFI handle — safe deref.
                         headers =
-                            bun_opaque::opaque_deref_mut(headers__.as_ptr()).clone_this(global)?;
+                            Some(bun_opaque::opaque_deref(headers__.as_ptr()).clone_this(global)?);
                     } else {
                         headers = FetchHeaders::create_from_js(global, headers_)?;
                     }

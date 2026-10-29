@@ -652,10 +652,10 @@ pub(crate) fn run_task(
                 store: *mut RuntimeTranspilerStore = cast_ptr!(RuntimeTranspilerStore),
                 el: &mut EventLoop = el,
                 global: &JSGlobalObject = global,
-                vm: &mut VirtualMachine = vm,
+                jsc_vm: &bun_jsc::VM = vm.jsc_vm(),
             ) {
                 // SAFETY: §Dispatch — tag identifies pointee; live for this dispatch.
-                unsafe { &mut *store }.run_from_js_thread(el.into(), global, vm.jsc_vm());
+                unsafe { &mut *store }.run_from_js_thread(el.into(), global, jsc_vm);
             }
         ),
 

@@ -1382,11 +1382,7 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // `deref` below, so neither release here can free `this`.
         unsafe { FileSink::release_refs_stranded_by_shutdown(this) };
 
-        // Per-wrapper accounting is on `ref_count` directly: each path that
-        // hands `self` to C++ (`to_js` / `to_js_for_subprocess`) gives it the
-        // caller's ref, and `finalize`'s `deref()` below releases it.
-        // `pending`/`pipe` are left for `deinit` (Box drop) since in-flight IO
-        // may still need them.
+        // Releases the ref that `to_js`/`to_js_for_subprocess` gave the wrapper; `pending`/`pipe` stay for in-flight IO.
         // SAFETY: as above; the `deref` is the last use of `this`.
         unsafe {
             (*this).js_sink_ref.with_mut(|r| r.deinit());

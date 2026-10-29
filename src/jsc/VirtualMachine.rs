@@ -370,6 +370,7 @@ pub struct VirtualMachine {
     /// Workers created on this thread and not yet released by it. Parent-thread
     /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
     /// `teardown` takes the rest for `join_child_workers`.
+    /// Each is alive until that release, which drops the ref its proxy holds.
     pub child_workers: Vec<bun_ptr::ParentRef<crate::web_worker::WebWorker>>,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
     pub(crate) jobs: crate::JsCell<crate::job::JobList>,
@@ -1578,9 +1579,8 @@ impl VirtualMachine {
         unsafe { EventLoop::enter_scope_without_checkpoint(self.event_loop) }
     }
 
-    /// Safe shared-reference accessor for the process-lifetime dotenv loader
-    /// (`vm.transpiler.env`). The loader is allocated once during VM init and
-    /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
+    /// Safe shared-reference accessor for the dotenv loader (`vm.transpiler.env`).
+    /// It lives as long as the VM: a Worker's VM frees its own in `destroy()`.
     #[inline]
     pub fn env_loader(&self) -> &'static bun_dotenv::Loader {
         self.env_loader_opt()
@@ -1593,7 +1593,7 @@ impl VirtualMachine {
     #[inline]
     pub(crate) fn env_loader_opt(&self) -> Option<&'static bun_dotenv::Loader> {
         // SAFETY: when non-null, `transpiler.env` is set during `Transpiler::init`
-        // to a process-lifetime allocation; never freed while a VM is installed.
+        // to a loader that outlives the VM, or that the last step of `destroy()` frees.
         unsafe { self.transpiler.env.as_ref() }
     }
 
@@ -2956,8 +2956,13 @@ pub struct RuntimeHooks {
         enable_ansi_colors: bool,
     ) -> JsResult<bool>,
     /// Applies `--compile`-baked runtime flags to the
-    /// worker's transpiler. The caller gates the call on [`standalone_module_graph`].
-    pub apply_standalone_runtime_flags: fn(transpiler: &mut Transpiler<'static>),
+    /// worker's transpiler. `graph` is the same trait object stored in
+    /// `vm.standalone_module_graph` (the high tier downcasts to its concrete
+    /// `bun_standalone_graph::Graph` — the sole implementor).
+    pub apply_standalone_runtime_flags: unsafe fn(
+        transpiler: &mut Transpiler<'static>,
+        graph: &'static dyn bun_resolver::StandaloneModuleGraph,
+    ),
     /// Parse a Worker's `execArgv` for the flags in [`WorkerExecArgvFlags`].
     /// `None` if parsing failed.
     pub parse_worker_exec_argv_flags: for<'a> fn(
@@ -4055,9 +4060,6 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
     pub log: Option<NonNull<bun_ast::Log>>,
-    // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
-    // outlives the VM, so the inner lifetime is erased to `'static`.
-    pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
     /// See [`InitOptions::owned_env_loader`].
     pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub smol: bool,
@@ -4947,7 +4949,6 @@ impl VirtualMachine {
             transform_options: opts.args,
             graph: Some(graph),
             log: opts.log,
-            env_loader: opts.env_loader,
             owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
@@ -4978,7 +4979,6 @@ impl VirtualMachine {
             transform_options: opts.args,
             graph: opts.graph,
             log: opts.log,
-            env_loader: opts.env_loader,
             owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             eval_mode: opts.eval,
@@ -5020,7 +5020,6 @@ impl VirtualMachine {
         let init_opts = InitOptions {
             transform_options: opts.args,
             log: opts.log,
-            env_loader: opts.env_loader,
             owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,

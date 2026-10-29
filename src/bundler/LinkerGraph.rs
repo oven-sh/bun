@@ -255,6 +255,12 @@ pub struct LinkerGraph<'a> {
     pub(crate) import_member_bindings: bun_ast::ast_result::ImportMemberBindings,
 }
 
+// SAFETY: the raw pointers belong to owning containers (`BitSet`,
+// `MultiArrayList`). `Symbol.link` is a `Cell`, which `follow()` writes only to
+// shorten a chain; `link()` shortens them all with `follow_all()` before
+// workers follow any.
+unsafe impl Sync for LinkerGraph<'_> {}
+
 impl<'a> LinkerGraph<'a> {
     #[inline]
     pub(crate) fn arena(&self) -> &'a Arena {

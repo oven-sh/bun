@@ -15,6 +15,7 @@
 "safe_fn_returns_shared_mut:src/bundler/ThreadPool.rs" = 2
 "safe_fn_returns_shared_mut:src/bundler/transpiler.rs" = 2
 "unsafe_send_covers_more_than_pointers:src/bundler/Chunk.rs" = 1
+"unsafe_send_covers_more_than_pointers:src/bundler/LinkerGraph.rs" = 1
 
 [bun_collections]
 "unused_pub:src/collections/StaticHashMap.rs" = 4

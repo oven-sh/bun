@@ -1579,9 +1579,8 @@ impl VirtualMachine {
         unsafe { EventLoop::enter_scope_without_checkpoint(self.event_loop) }
     }
 
-    /// Safe shared-reference accessor for the process-lifetime dotenv loader
-    /// (`vm.transpiler.env`). The loader is allocated once during VM init and
-    /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
+    /// Safe shared-reference accessor for the dotenv loader (`vm.transpiler.env`).
+    /// It lives as long as the VM: a Worker's VM frees its own in `destroy()`.
     #[inline]
     pub fn env_loader(&self) -> &'static bun_dotenv::Loader {
         self.env_loader_opt()

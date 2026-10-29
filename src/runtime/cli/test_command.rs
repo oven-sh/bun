@@ -1434,11 +1434,7 @@ impl CommandLineReporter {
         vm.exit_handler.exit_code = 1;
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
         vm.exit_handler.requested = true;
-        let vm_ptr: *mut VirtualMachine = vm;
-        // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-        // `run_with_api_lock` takes `&self` only, so the closure holds the
-        // unique mutable access on this single-threaded path.
-        vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
         // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
         self.jest.bun_test_root.deinit_for_exit();
@@ -1447,8 +1443,7 @@ impl CommandLineReporter {
         unsafe {
             jest::Jest::RUNNER.write(None);
         }
-        // SAFETY: as above; `global_exit()` diverges, so the closure is the sole mutator.
-        vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() })
+        vm.run_with_api_lock_mut(|vm| vm.global_exit())
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
@@ -2008,8 +2003,6 @@ impl TestCommand {
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
-            // SAFETY: `vm` is the live per-thread VM; `reporter`/`ctx` outlive
-            // this never-returning call.
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
 
@@ -2069,11 +2062,7 @@ impl TestCommand {
                             }
                             vm.exit_handler.exit_code = 1;
                             vm.is_shutting_down = true;
-                            let vm_ptr: *mut VirtualMachine = vm;
-                            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                            // `run_with_api_lock` takes `&self` only and `global_exit()`
-                            // diverges, so the closure is the sole mutator.
-                            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                            vm.run_with_api_lock_mut(|vm| vm.global_exit());
                         }
                     }
                 }
@@ -2140,11 +2129,7 @@ impl TestCommand {
                     }
                     vm.exit_handler.exit_code = 1;
                     vm.is_shutting_down = true;
-                    let vm_ptr: *mut VirtualMachine = vm;
-                    // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                    // `run_with_api_lock` takes `&self` only and `global_exit()`
-                    // diverges, so the closure is the sole mutator.
-                    vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                    vm.run_with_api_lock_mut(|vm| vm.global_exit());
                 }
             }
         }
@@ -2330,11 +2315,7 @@ impl TestCommand {
             if !vm.is_watcher_enabled() {
                 Global::exit(1);
             }
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            vm.run_with_api_lock_mut(Self::run_event_loop_for_watch);
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
@@ -2682,11 +2663,7 @@ impl TestCommand {
         }
 
         if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            vm.run_with_api_lock_mut(Self::run_event_loop_for_watch);
         }
         let summary = reporter.summary();
 
@@ -2706,13 +2683,7 @@ impl TestCommand {
         vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
         vm.exit_handler.requested = exit_is_requested();
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
-        {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
-        }
+        vm.run_with_api_lock_mut(VirtualMachine::on_exit);
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
@@ -2728,13 +2699,7 @@ impl TestCommand {
         drop(reporter);
         // `global_exit()` does not return, so nothing is dropped after it.
         drop(all_test_files);
-        {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only and `global_exit()`
-            // diverges, so the closure is the sole mutator.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
-        }
+        vm.run_with_api_lock_mut(|vm| vm.global_exit());
         Ok(())
     }
 
@@ -2823,17 +2788,14 @@ impl TestCommand {
         // path; the parallel worker path in runner.rs does wire one.
         // Reintroduce here if it shows up in profiles.
         vm_.event_loop_ref().ensure_waker();
-        // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
-        // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
-        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm_);
-        let mut ctx = Context {
-            reporter: reporter_,
-            vm: vm_,
-            files: files_,
-        };
-        // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
-        // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
-        unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
+        vm_.run_with_api_lock_mut(|vm| {
+            Context {
+                reporter: reporter_,
+                vm,
+                files: files_,
+            }
+            .begin()
+        });
     }
 
     pub(crate) fn run(

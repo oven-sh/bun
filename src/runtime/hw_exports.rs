@@ -280,19 +280,12 @@ mod sql_hooks {
 pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
     let global = cx.global();
     let result = result.to_js();
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
+    bun_jsc::ConsoleObject::message_with_type_and_level(
+        bun_jsc::ConsoleObject::MessageType::Log,
+        bun_jsc::ConsoleObject::MessageLevel::Log,
+        global,
+        &[result],
+    );
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }
@@ -300,19 +293,12 @@ pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLoca
 pub(crate) fn on_reject_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
     let global = cx.global();
     let result = result.to_js();
-    // SAFETY: `vals[..len]` is the single stack `result`; `ctype` is ignored by
-    // `message_with_type_and_level` (it always resolves the per-VM console via
-    // `vm_console(global)`), so null is fine.
-    unsafe {
-        bun_jsc::ConsoleObject::message_with_type_and_level(
-            core::ptr::null_mut(),
-            bun_jsc::ConsoleObject::MessageType::Log,
-            bun_jsc::ConsoleObject::MessageLevel::Log,
-            global,
-            &raw const result,
-            1,
-        );
-    }
+    bun_jsc::ConsoleObject::message_with_type_and_level(
+        bun_jsc::ConsoleObject::MessageType::Log,
+        bun_jsc::ConsoleObject::MessageLevel::Log,
+        global,
+        &[result],
+    );
     // SAFETY: bun_vm() never null for a Bun-owned global.
     bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
 }

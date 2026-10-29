@@ -651,6 +651,7 @@ export default function Client() {
 
         const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --debug-no-minify`
           .cwd(dir)
+          .env(bunEnv)
           .throws(false);
 
         expect(stderr.toString()).not.toContain("React Client Manifest");

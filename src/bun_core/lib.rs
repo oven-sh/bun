@@ -210,9 +210,7 @@ pub mod os {
     use core::ffi::c_char;
 
     // Stored as raw (ptr, len) — NOT `&'static mut [_]` — so `environ()` (which
-    // hands out a shared `&[_]`) never aliases a live `&mut`. A `&'static mut`
-    // global would be UB the moment a reader
-    // borrows while a writer holds the swapped-out `&mut`.
+    // hands out a shared `&[_]`) never aliases a live `&mut`.
     static mut ENVIRON: (*mut *mut c_char, usize) = (core::ptr::null_mut(), 0);
 
     /// SAFETY: single-threaded startup only; `ptr` must be valid for `len`

@@ -21,8 +21,10 @@ const PRINTERS = ["src/jsc/ConsoleObject.rs", "src/jsc/VirtualMachine.rs"];
 // iterator of its own, which nobody else holds.
 const ALLOWED = new Set(["for_each_listed", "print_map_like", "print_set"]);
 
-// A call with a closure is `Iterator::for_each`, not `JSValue::for_each`.
-const jsValueForEach = /\.for_each\((?!\s*(?:\||move\b))|JSValue::for_each\(/;
+// `JSValue::for_each` takes `(global, ctx, callback)`: a comma follows its first
+// argument, or rustfmt ends the line at the `(`. `Iterator::for_each` takes one
+// closure or one function, and does not match.
+const jsValueForEach = /\.for_each\(\s*(?:$|[^|]+?,)|JSValue::for_each\(/;
 const functionStart = /^\s*(?:pub(?:\([a-z]+\))?\s+)?(?:unsafe\s+)?(?:extern\s+"C"\s+)?fn\s+(\w+)/;
 
 test("a printer walks a value through formatter::for_each_listed", () => {

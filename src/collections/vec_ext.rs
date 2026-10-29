@@ -29,19 +29,11 @@ pub trait VecExt<T>: Sized {
         T: Clone;
     fn move_from_list(list: Vec<T>) -> Self;
     fn from_owned_slice(items: Box<[T]>) -> Self;
-    /// Copies `items` into a fresh allocation. Callers may pass the bump
-    /// slice directly, or skip the intermediate bump alloc entirely and pass
-    /// the stack array — both compile to one memcpy into the global heap.
+    /// Copies `items` into a fresh `A` allocation.
     fn from_arena_slice(items: &[T]) -> Self
     where
         T: Copy;
-    /// Consumes an `ArenaVec` (sole owner
-    /// of its elements + arena buffer), bitwise-moves every element into a
-    /// fresh global-allocator `Vec<T>`, and leaks the now-logically-empty
-    /// arena buffer back to the bump (reclaimed on arena reset, which never
-    /// runs element destructors). Ownership of every `T` transfers exactly
-    /// once, so no double-drop and no allocator-identity confusion is
-    /// possible at the call site.
+    /// Moves the elements of `v` into a fresh `A` allocation and frees `v`'s arena buffer.
     fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
     /// Wrap a borrowed slice as a `Vec<T>` that **must not be dropped or
     /// grown**.  Same hazard as the original — callers wrap in `ManuallyDrop`.
@@ -88,8 +80,7 @@ pub trait VecExt<T>: Sized {
     /// # Safety
     /// Returns `&mut [T]` over `additional` uninitialized elements. Caller
     /// must fully initialize the slice before any read/drop. Prefer
-    /// [`unused_capacity_slice`] + `set_len` for non-POD `T`.
-    /// Uses `reserve_exact` so the allocation grows
+    /// [`reserve_spare`] + `set_len` for non-POD `T`. Uses `reserve_exact` so the allocation grows
     /// to *exactly* `len + additional`. Use when the buffer is the final
     /// single-shot blob (sourcemap finalize, etc.).
     unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T];

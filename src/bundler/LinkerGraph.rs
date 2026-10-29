@@ -472,8 +472,7 @@ pub(crate) fn generate_symbol_import_and_use(
     let dependencies =
         &mut parts[source_index as usize].as_mut_slice()[part_index as usize].dependencies;
     dependencies.extend(part_ids.iter().map(move |&part_id| Dependency {
-        // `bun_ast::Index` is structurally identical; convert by value until the two unify.
-        source_index: bun_ast::Index::init(source_index_to_import_from.get()),
+        source_index: source_index_to_import_from,
         part_index: part_id,
     }));
     Ok(())

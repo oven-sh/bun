@@ -1,6 +1,8 @@
 #[cfg(any(windows, target_os = "macos"))]
 use core::ffi::c_void;
 use core::ffi::{c_char, c_int};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use core::sync::atomic::AtomicI32;
 #[cfg(unix)]
 use core::sync::atomic::AtomicU32;
 use core::sync::atomic::Ordering;
@@ -1050,7 +1052,7 @@ pub mod waiter_thread_posix {
     pub struct WaiterThreadPosix {
         pub(crate) started: AtomicU32,
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        pub(crate) eventfd: Fd,
+        pub(crate) eventfd: AtomicI32,
         pub(crate) js_process: ProcessQueue,
     }
 
@@ -1058,23 +1060,12 @@ pub mod waiter_thread_posix {
 
     pub struct NewQueue<T: 'static> {
         pub(crate) queue: ConcurrentQueue<T>,
-        // The active list holds raw `*T` whose strong ref was taken
-        // by the caller before `append()` (Process::watch does `self.ref_()`).
-        // The matching `deref()` happens in `on_wait_pid_from_waiter_thread`.
-        //
-        // `UnsafeCell` so `loop_` can take `&self`: the waiter thread is the
-        // *sole* mutator of `active`, but producers concurrently hold `&self`
-        // to push onto `queue` — a `&mut self` on the waiter side would alias
-        // those producer borrows (forbidden aliased-&mut). With `&self` on
-        // both sides the only interior mutation goes through this cell.
-        pub(crate) active: core::cell::UnsafeCell<Vec<*mut T>>,
     }
 
     impl<T: 'static> NewQueue<T> {
         pub(crate) const fn new() -> Self {
             Self {
                 queue: ConcurrentQueue::new(),
-                active: core::cell::UnsafeCell::new(Vec::new()),
             }
         }
     }
@@ -1237,13 +1228,8 @@ pub mod waiter_thread_posix {
             }));
         }
 
-        pub(crate) fn loop_(&self) {
-            // The dedicated waiter thread is the only caller of `loop_` and
-            // the only code path that touches `active`; producers (`append`)
-            // only touch `self.queue`. Move the Vec out and work on it by
-            // value so no reference into the cell spans the loop body.
-            // SAFETY: sole accessor per above; the swap cannot race or alias.
-            let mut active = unsafe { core::ptr::replace(self.active.get(), Vec::new()) };
+        /// `active` is the waiter thread's list of the processes it has taken off the queue and not reaped yet.
+        fn loop_(&self, active: &mut Vec<*mut T>) {
             {
                 let batch = self.queue.pop_batch();
                 active.reserve(batch.count);
@@ -1294,11 +1280,6 @@ pub mod waiter_thread_posix {
                     i += 1;
                 }
             }
-
-            // Put the (possibly reallocated) Vec back; the placeholder left by
-            // the swap above is empty and allocation-free.
-            // SAFETY: sole accessor per the comment at the top of this fn.
-            unsafe { *self.active.get() = active };
         }
     }
 
@@ -1397,39 +1378,12 @@ pub mod waiter_thread_posix {
 
     const STACK_SIZE: usize = 512 * 1024;
 
-    // Singleton. The waiter
-    // thread is the sole mutator of `js_process.active`; producers only touch
-    // the lock-free `queue`. Wrapped so the address is stable for the SIGCHLD
-    // handler / waiter loop without taking `&mut` to a `static mut`.
-    struct Instance(core::cell::UnsafeCell<WaiterThreadPosix>);
-    // SAFETY: see field-level access notes above.
-    unsafe impl Sync for Instance {}
-    static INSTANCE: Instance = Instance(core::cell::UnsafeCell::new(WaiterThreadPosix {
+    static INSTANCE: WaiterThreadPosix = WaiterThreadPosix {
         started: AtomicU32::new(0),
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        eventfd: Fd::INVALID,
+        eventfd: AtomicI32::new(Fd::INVALID.native()),
         js_process: ProcessQueue::new(),
-    }));
-
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    #[inline]
-    fn instance() -> *mut WaiterThreadPosix {
-        INSTANCE.0.get()
-    }
-
-    /// Shared borrow of the singleton — sole deref site for the set-once
-    /// `INSTANCE` cell. All fields are either atomic (`started`),
-    /// interior-mutable (`js_process.active` via `UnsafeCell`, `js_process.queue`
-    /// lock-free), or write-once-before-spawn (`eventfd`, set in `start()` under
-    /// `START_LOCK` before any reader thread exists), so a shared `&'static` is
-    /// sound. The lone mutating write (`eventfd` in `start()`) goes through the
-    /// raw [`instance()`] pointer; no `&` from this accessor is live across it.
-    #[inline]
-    fn instance_ref() -> &'static WaiterThreadPosix {
-        // SAFETY: see doc comment — process-lifetime singleton, fields are
-        // atomic / interior-mutable / write-once-before-readers.
-        unsafe { &*INSTANCE.0.get() }
-    }
+    };
 
     impl WaiterThreadPosix {
         #[inline]
@@ -1442,23 +1396,28 @@ pub mod waiter_thread_posix {
             bun_spawn_sys::waiter_thread_flag::get()
         }
 
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        #[inline]
+        fn eventfd(&self) -> Fd {
+            Fd::from_native(self.eventfd.load(Ordering::Relaxed))
+        }
+
         /// Starts the thread on first use. If that fails, the next call retries.
         pub(crate) fn start() -> bun_sys::Result<()> {
             debug_assert!(bun_spawn_sys::waiter_thread_flag::get());
 
-            if instance_ref().started.load(Ordering::Acquire) > 0 {
+            if INSTANCE.started.load(Ordering::Acquire) > 0 {
                 return Ok(());
             }
             let _guard = START_LOCK.lock_guard();
-            if instance_ref().started.load(Ordering::Relaxed) > 0 {
+            if INSTANCE.started.load(Ordering::Relaxed) > 0 {
                 return Ok(());
             }
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            if !instance_ref().eventfd.is_valid() {
+            if !INSTANCE.eventfd().is_valid() {
                 let fd = bun_sys::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC)?;
-                // SAFETY: `START_LOCK` is held and the thread doesn't exist yet, so nothing reads `eventfd`.
-                unsafe { (*instance()).eventfd = fd };
+                INSTANCE.eventfd.store(fd.native(), Ordering::Relaxed);
             }
 
             // Dropping the JoinHandle detaches the thread.
@@ -1471,22 +1430,20 @@ pub mod waiter_thread_posix {
                         bun_sys::Tag::pthread_create,
                     )
                 })?;
-            instance_ref().started.store(1, Ordering::Release);
+            INSTANCE.started.store(1, Ordering::Release);
             Ok(())
         }
 
         /// Only call this after `start()` returns `Ok`.
         pub(crate) fn append(process: *mut Process) {
-            // `js_process.queue` is an MPSC lock-free queue; `append` is the
-            // producer half and only touches `queue`, never `active`.
-            instance_ref().js_process.append(process);
+            // `js_process.queue` is an MPSC lock-free queue; `append` is the producer half.
+            INSTANCE.js_process.append(process);
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 let one: [u8; 8] = (1usize).to_ne_bytes();
                 // SAFETY: write(2) is async-signal-safe; eventfd valid after start().
-                let n =
-                    unsafe { libc::write(instance_ref().eventfd.native(), one.as_ptr().cast(), 8) };
+                let n = unsafe { libc::write(INSTANCE.eventfd().native(), one.as_ptr().cast(), 8) };
                 if n < 0 {
                     panic!("Failed to write to eventfd");
                 }
@@ -1524,31 +1481,24 @@ pub mod waiter_thread_posix {
     extern "C" fn wakeup(_: c_int) {
         let one: [u8; 8] = (1usize).to_ne_bytes();
         // eventfd is write-once in start() before this handler is installed.
-        let _ = bun_sys::write(instance_ref().eventfd, &one).unwrap_or(0);
+        let _ = bun_sys::write(INSTANCE.eventfd(), &one).unwrap_or(0);
     }
 
-    pub(crate) fn loop_() {
+    fn loop_() {
         // SAFETY: NUL-terminated literal.
         Output::Source::configure_named_thread(bun_core::ZStr::from_static(b"Waitpid\0"));
         WaiterThreadPosix::reload_handlers();
-        // We must NOT materialize a long-lived `&mut WaiterThreadPosix` here:
-        // the JS thread's `append()` and the SIGCHLD handler `wakeup()`
-        // concurrently form shared borrows of `js_process` / `eventfd` via the
-        // same singleton, and a live `&mut` covering those fields would be UB
-        // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
-        let this: &'static WaiterThreadPosix = instance_ref();
+        let mut active = Vec::new();
 
         #[allow(unused_labels)]
         'outer: loop {
-            // `loop_` takes `&self`; coexists soundly with producer `&NewQueue`
-            // in `append()` (interior mutability via `active: UnsafeCell`).
-            this.js_process.loop_();
+            INSTANCE.js_process.loop_(&mut active);
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // `eventfd` is written once in `start()` before this thread is
                 // spawned; read-only thereafter.
-                let efd = this.eventfd;
+                let efd = INSTANCE.eventfd();
                 let mut polls = [libc::pollfd {
                     fd: efd.native(),
                     events: (libc::POLLIN | libc::POLLERR) as _,

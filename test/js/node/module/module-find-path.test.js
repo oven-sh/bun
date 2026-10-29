@@ -135,7 +135,7 @@ const abs = (...segments) => join(root, ...segments);
 // A path under `root` that is relative to the current directory. On Windows it stays absolute when
 // the temporary directory is on another drive.
 const rel = (...segments) => relative(process.cwd(), abs(...segments));
-// `/`, or `C:\\` on Windows. No directory lists it.
+// `/`, or `C:\` on Windows. No directory lists it.
 const fileSystemRoot = parse(root).root;
 const fromFileSystemRoot = (...segments) => relative(fileSystemRoot, abs(...segments)).replaceAll(sep, "/");
 const shown = text => text.replaceAll(root, "<root>").replaceAll(sep, "/");
@@ -202,7 +202,6 @@ test("an entry of paths is a directory that holds the request", () => {
     ".. from an entry that does not exist": find("..", [abs("lib", "sub", "nowhere")]),
     "a name, then ../..": find("sub/../../top", [abs("lib")]),
     "an entry with a slash at its end": find("a", [abs("lib") + sep]),
-    "the root of the file system": find("./" + fromFileSystemRoot("lib", "a"), [fileSystemRoot]),
     "an entry with a .. segment": find("a", [abs("lib", "sub") + sep + ".."]),
     "a symlink is followed": find("./index", [abs("linked")]),
     "names that are not ASCII": find("çödé", [abs("lib", "ünï")]),
@@ -232,11 +231,15 @@ test("an entry of paths is a directory that holds the request", () => {
     ".. from an entry that does not exist": "<root>/lib/sub/index.js",
     "a name, then ../..": "<root>/top.js",
     "an entry with a slash at its end": "<root>/lib/a.js",
-    "the root of the file system": "<root>/lib/a.js",
     "an entry with a .. segment": "<root>/lib/a.js",
     "a symlink is followed": "<root>/plugins/node_modules/plug/index.js",
     "names that are not ASCII": "<root>/lib/ünï/çödé.js",
   });
+});
+
+// Node.js v26.3.0 on Windows does not search `C:\`. Its loader asks the file system about `\\?\C:`, which is the volume.
+(isWindows && !isBun ? test.skip : test)("the root of the file system is an entry like another", () => {
+  expect(find("./" + fromFileSystemRoot("lib", "a"), [fileSystemRoot])).toBe("<root>/lib/a.js");
 });
 
 test("nothing is looked up outside the entries", () => {

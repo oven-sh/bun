@@ -72,14 +72,12 @@ impl RefString {
     pub(crate) unsafe fn destroy(this: *mut RefString) {
         // SAFETY: caller contract — `this` is the unique live pointer to a
         // `Box<RefString>`-allocated value.
-        unsafe {
-            if (*this).interned {
-                VirtualMachine::get()
-                    .as_mut()
-                    .ref_strings
-                    .remove(&(*this).hash);
-            }
-            drop(bun_core::heap::take(this));
+        let this = unsafe { bun_core::heap::take(this) };
+        if this.interned {
+            VirtualMachine::get()
+                .as_mut()
+                .ref_strings
+                .remove(&this.hash);
         }
     }
 }

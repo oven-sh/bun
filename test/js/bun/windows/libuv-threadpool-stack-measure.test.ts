@@ -118,6 +118,18 @@ describe.skipIf(!isWindows)("libuv pool measurements (temporary)", () => {
     }
   }
 
+  // The work path after the pool has started: page faults and time for 10,000 requests.
+  for (const header of ["as built", "one page"] as const) {
+    for (const run of [1, 2, 3]) {
+      test(`page faults: header ${header}, run ${run}`, async () => {
+        const exe = header === "one page" ? copyWithOnePageStackCommit() : bunExe();
+        const measured = await measure(exe, "page-faults", undefined);
+        console.log("MEASURE page-faults", JSON.stringify({ header, run, ...measured }));
+        expect(measured.exitCode).toBe(0);
+      }, 120_000);
+    }
+  }
+
   // Which calls start the pool. With 24 threads in it, a call that starts it adds at least 24 threads.
   for (const name of [
     "nothing",

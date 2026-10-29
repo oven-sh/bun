@@ -24,7 +24,8 @@ import { LIBC_ALLOCATION_SYMBOLS } from "../source.ts";
 // instead of in uv__init, with uv__winsock_ensure() for callers that reach
 // ws2_32 directly (oven-sh/libuv#15), LoadLibraryExW for those lazy
 // loads (oven-sh/libuv#16), and a thread's explicit stack size taken as the
-// size to reserve, not to commit (upstream libuv#5279).
+// size to reserve, not to commit (oven-sh/libuv#19, from upstream
+// libuv#5279).
 // To bump, update `bun`.
 const LIBUV_COMMIT = "aaffdcbd6768728ed4857e4b1315be87af66ee86";
 

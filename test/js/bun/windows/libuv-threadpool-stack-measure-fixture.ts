@@ -14,6 +14,8 @@ const { symbols: kernel32 } = dlopen("kernel32.dll", {
   GlobalMemoryStatusEx: { args: ["ptr"], returns: "i32" },
   GetModuleHandleA: { args: ["ptr"], returns: "ptr" },
   GetProcAddress: { args: ["ptr", "ptr"], returns: "ptr" },
+  GetCurrentProcess: { args: [], returns: "u64" },
+  K32GetProcessMemoryInfo: { args: ["u64", "ptr", "u32"], returns: "i32" },
 });
 
 function threadCount() {
@@ -46,7 +48,37 @@ function memoryStatus() {
   };
 }
 
+function pageFaults() {
+  // PROCESS_MEMORY_COUNTERS: cb, PageFaultCount, then eight sizes.
+  const counters = Buffer.alloc(72);
+  if (!kernel32.K32GetProcessMemoryInfo(kernel32.GetCurrentProcess(), counters, counters.length))
+    throw new Error("K32GetProcessMemoryInfo failed");
+  return counters.readUInt32LE(4);
+}
+
 const [, , name, dir] = process.argv;
+
+// "page-faults": the work path of a pool that has started. 1,000 requests to warm up, then 10,000 that are counted.
+if (name === "page-faults") {
+  const statfsOnce = () =>
+    new Promise<void>((resolve, reject) => fs.statfs(dir, err => (err ? reject(err) : resolve())));
+  for (let i = 0; i < 1000; i++) await statfsOnce();
+  const faultsBefore = pageFaults();
+  const commitBefore = Bun.unsafe.memoryFootprint()!;
+  const startedAt = performance.now();
+  for (let i = 0; i < 10000; i++) await statfsOnce();
+  const ms = performance.now() - startedAt;
+  console.log(
+    JSON.stringify({
+      name,
+      faults: pageFaults() - faultsBefore,
+      commit: Bun.unsafe.memoryFootprint()! - commitBefore,
+      ms,
+      threads: threadCount(),
+    }),
+  );
+  process.exit(0);
+}
 const existing = path.join(dir, "data.txt");
 const out = path.join(dir, `out-${process.pid}.txt`);
 

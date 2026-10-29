@@ -153,6 +153,8 @@ pub(crate) struct ExecutionSequence {
     pub(crate) remaining_repeat_count: u32,
     pub(crate) remaining_retry_count: u32,
     pub(crate) attempt: u32,
+    /// Bit `n` is set when attempt `n` failed and a retry replaced it.
+    pub(crate) retried_attempts: u64,
     pub(crate) result: Result,
     pub(crate) executing: bool,
     pub(crate) started_at: Timespec,
@@ -178,6 +180,7 @@ impl ExecutionSequence {
             remaining_retry_count: retry_count,
             // defaults:
             attempt: 0,
+            retried_attempts: 0,
             result: Result::Pending,
             executing: false,
             started_at: Timespec::EPOCH,
@@ -498,8 +501,8 @@ impl Execution {
         Some((NonNull::from(sequence), NonNull::from(group)))
     }
 
-    /// `data` names an earlier attempt of a sequence of this file: a failed one, already reported when it was retried.
-    fn is_earlier_attempt(&mut self, data: &RefDataValue) -> bool {
+    /// `data` names an attempt of a sequence of this file that failed and was retried. The retry reported that failure.
+    fn is_retried_attempt(&mut self, data: &RefDataValue) -> bool {
         let RefDataValue::Execution { group_index, entry_data: Some(entry_data) } = data else {
             return false;
         };
@@ -512,7 +515,9 @@ impl Execution {
             return false;
         };
         let seq_abs = group.sequence_start + entry_data.sequence_index;
-        seq_abs < group.sequence_end && self.sequences[seq_abs].attempt != entry_data.attempt
+        seq_abs < group.sequence_end
+            && entry_data.attempt < u64::BITS
+            && self.sequences[seq_abs].retried_attempts & (1 << entry_data.attempt) != 0
     }
 
     /// `sequence` / `group` are carried as `NonNull` (raw-pointer semantics) because they point into
@@ -556,6 +561,9 @@ impl Execution {
             // Handle retry logic: if test failed and we have retries remaining, retry it
             if test_failed && sequence.remaining_retry_count > 0 {
                 sequence.remaining_retry_count -= 1;
+                if sequence.attempt < u64::BITS {
+                    sequence.retried_attempts |= 1 << sequence.attempt;
+                }
                 Execution::discard_junit_failure(buntest);
                 Execution::reset_sequence(sequence);
                 return;
@@ -764,6 +772,7 @@ impl Execution {
         // Preserve retry/repeat counts across reset
         *sequence = ExecutionSequence {
             attempt: sequence.attempt.wrapping_add(1),
+            retried_attempts: sequence.retried_attempts,
             ..ExecutionSequence::init(
                 sequence.first_entry,
                 sequence.test_entry,
@@ -793,8 +802,8 @@ impl Execution {
         let Some((sequence_ptr, _group_ptr)) =
             self.get_current_and_valid_execution_sequence(user_data)
         else {
-            if self.is_earlier_attempt(user_data) {
-                // A retry absorbs the failure of the attempt before it, late errors included.
+            if self.is_retried_attempt(user_data) {
+                // A retry absorbs the failure of the attempt it replaced, late errors included.
                 return HandleUncaughtExceptionResult::HideError;
             }
             return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;

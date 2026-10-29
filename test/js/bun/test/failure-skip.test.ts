@@ -26,55 +26,55 @@ async function runFailureSkip(failurePoints: string[], via: string): Promise<str
 describe.each(["throw", "done"])("failure-skip, a failure through %s", async via => {
   const testFailureSkip = (failurePoints: string[]) => runFailureSkip(failurePoints, via);
 
-  test("none", async () => {
+  test.concurrent("none", async () => {
     expect(await testFailureSkip([])).toMatchInlineSnapshot(
       `"beforeall1,beforeall2,beforeeach1,beforeeach2,test1,aftereach1,aftereach2,beforeeach1,beforeeach2,test2,aftereach1,aftereach2,afterall1,afterall2"`,
     );
   });
-  test("beforeall1", async () => {
+  test.concurrent("beforeall1", async () => {
     // expect(await testFailureSkip(["beforeall1"])).toMatchInlineSnapshot(`"beforeall1"`);
     expect(await testFailureSkip(["beforeall1"])).toMatchInlineSnapshot(`"beforeall1,afterall1,afterall2"`); // breaking change
   });
-  test("beforeall2", async () => {
+  test.concurrent("beforeall2", async () => {
     // expect(await testFailureSkip(["beforeall2"])).toMatchInlineSnapshot(`"beforeall1,beforeall2"`);
     expect(await testFailureSkip(["beforeall2"])).toMatchInlineSnapshot(`"beforeall1,beforeall2,afterall1,afterall2"`); // breaking change
   });
-  test("beforeeach1", async () => {
+  test.concurrent("beforeeach1", async () => {
     expect(await testFailureSkip(["beforeeach1"])).toMatchInlineSnapshot(
       `"beforeall1,beforeall2,beforeeach1,aftereach1,aftereach2,beforeeach1,aftereach1,aftereach2,afterall1,afterall2"`,
     );
   });
-  test("beforeeach2", async () => {
+  test.concurrent("beforeeach2", async () => {
     expect(await testFailureSkip(["beforeeach2"])).toMatchInlineSnapshot(
       `"beforeall1,beforeall2,beforeeach1,beforeeach2,aftereach1,aftereach2,beforeeach1,beforeeach2,aftereach1,aftereach2,afterall1,afterall2"`,
     );
   });
-  test("test1", async () => {
+  test.concurrent("test1", async () => {
     expect(await testFailureSkip(["test1"])).toMatchInlineSnapshot(
       `"beforeall1,beforeall2,beforeeach1,beforeeach2,test1,aftereach1,aftereach2,beforeeach1,beforeeach2,test2,aftereach1,aftereach2,afterall1,afterall2"`,
     );
   });
-  test("test2", async () => {
+  test.concurrent("test2", async () => {
     expect(await testFailureSkip(["test2"])).toMatchInlineSnapshot(
       `"beforeall1,beforeall2,beforeeach1,beforeeach2,test1,aftereach1,aftereach2,beforeeach1,beforeeach2,test2,aftereach1,aftereach2,afterall1,afterall2"`,
     );
   });
-  test("aftereach1", async () => {
+  test.concurrent("aftereach1", async () => {
     expect(await testFailureSkip(["aftereach1"])).toMatchInlineSnapshot(
       `"beforeall1,beforeall2,beforeeach1,beforeeach2,test1,aftereach1,beforeeach1,beforeeach2,test2,aftereach1,afterall1,afterall2"`,
     );
   });
-  test("aftereach2", async () => {
+  test.concurrent("aftereach2", async () => {
     expect(await testFailureSkip(["aftereach2"])).toMatchInlineSnapshot(
       `"beforeall1,beforeall2,beforeeach1,beforeeach2,test1,aftereach1,aftereach2,beforeeach1,beforeeach2,test2,aftereach1,aftereach2,afterall1,afterall2"`,
     );
   });
-  test("afterall1", async () => {
+  test.concurrent("afterall1", async () => {
     expect(await testFailureSkip(["afterall1"])).toMatchInlineSnapshot(
       `"beforeall1,beforeall2,beforeeach1,beforeeach2,test1,aftereach1,aftereach2,beforeeach1,beforeeach2,test2,aftereach1,aftereach2,afterall1"`,
     );
   });
-  test("afterall2", async () => {
+  test.concurrent("afterall2", async () => {
     expect(await testFailureSkip(["afterall2"])).toMatchInlineSnapshot(
       `"beforeall1,beforeall2,beforeeach1,beforeeach2,test1,aftereach1,aftereach2,beforeeach1,beforeeach2,test2,aftereach1,aftereach2,afterall1,afterall2"`,
     );

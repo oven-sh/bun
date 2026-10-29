@@ -457,6 +457,39 @@ describe("done(err) fails the test whose done() received it", () => {
     });
   });
 
+  // An async callback that takes `done` passes when its promise fulfills (#41613), so a passed
+  // attempt can leave its done uncalled. No retry absorbed that attempt: its late done(err) is
+  // an error of the run, even though a repeat replaced the attempt.
+  test.concurrent("but the late done(err) of a repeat that passed is an error", async () => {
+    const run = await runFixture(`
+      import { it } from "bun:test";
+      const late = Promise.withResolvers();
+      let attempt = 0;
+      it("passes before its done(err)", async done => {
+        if (++attempt === 1) {
+          setTimeout(() => {
+            done(new Error("late boom"));
+            late.resolve();
+          }, 1);
+        }
+      }, { repeats: 1 });
+      it("is running when it arrives", async () => { await late.promise; });
+    `);
+    expect(run).toEqual({
+      exitCode: 1,
+      stdout: "bun test <version> (<revision>)",
+      results: [
+        "(pass) passes before its done(err) (run 2)",
+        "# Unhandled error between tests",
+        "error: late boom",
+        "(pass) is running when it arrives",
+        "2 pass",
+        "0 fail",
+        "1 error",
+      ].join("\n"),
+    });
+  });
+
   // The test of the first file ends when it throws, so nothing there calls its done(). A test of
   // the second file calls it. The entry it names is gone with the first file: the error is
   // reported, and the test that called it is not failed or ended early.

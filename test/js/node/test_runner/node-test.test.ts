@@ -120,16 +120,20 @@ describe("node:test", () => {
   test.each(["node:test", "bun:test"])(
     "should exit after a failed %s file that left a handle open under BUN_TEST_DRAIN_EVENT_LOOP",
     async module => {
-      const { exitCode, stdout, stderr } = await runTests(["32-failure-leaves-handle.js"], {
-        BUN_TEST_DRAIN_EVENT_LOOP: "1",
-        TEST_MODULE: module,
-      });
+      // A child that keeps draining is killed after 20s and fails on `signalCode`, not on the test's own timeout.
+      const { exitCode, signalCode, stdout, stderr } = await runTests(
+        ["32-failure-leaves-handle.js"],
+        { BUN_TEST_DRAIN_EVENT_LOOP: "1", TEST_MODULE: module },
+        [],
+        20_000,
+      );
       expect(stdout).toContain("EXIT 1");
       expect(stdout).not.toContain("BEFORE_EXIT");
-      expect({ ...report(stderr), exitCode }).toEqual({
+      expect({ ...report(stderr), exitCode, signalCode }).toEqual({
         tests: { "fails and leaves an interval": "fail" },
         summary: { pass: 0, fail: 1 },
         exitCode: 1,
+        signalCode: null,
       });
     },
   );
@@ -409,23 +413,21 @@ function report(stderr: string) {
   };
 }
 
-async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = []) {
+// `timeout` kills a child that does not exit on its own; the caller then sees its `signalCode`.
+async function runTests(filenames: string[], env: Record<string, string> = {}, args: string[] = [], timeout?: number) {
   const testPaths = filenames.map(filename => join(import.meta.dirname, "fixtures", filename));
-  const {
-    exited,
-    stdout: stdoutStream,
-    stderr: stderrStream,
-  } = spawn({
+  const proc = spawn({
     cmd: [bunExe(), "test", ...args, ...testPaths],
     env: { ...bunEnv, ...env },
     stderr: "pipe",
+    timeout,
   });
   const [exitCode, stdout, stderr] = await Promise.all([
-    exited,
-    new Response(stdoutStream).text(),
-    new Response(stderrStream).text(),
+    proc.exited,
+    new Response(proc.stdout).text(),
+    new Response(proc.stderr).text(),
   ]);
-  return { exitCode, stdout, stderr };
+  return { exitCode, signalCode: proc.signalCode, stdout, stderr };
 }
 
 describe("node:test mock", () => {

@@ -110,8 +110,7 @@ export function renderToStaticHtml(
   const stream = new StaticRscInjectionStream(rscPayload);
   const promise = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
   const Root = () => React.use(promise);
-  // React calls `onError` for each render error. An error inside a <Suspense> boundary is recoverable: the
-  // boundary renders its fallback and `onAllReady` still fires. So `onError` only collects the errors.
+  // An error inside a <Suspense> boundary is recoverable, so `onError` only collects.
   const errors: unknown[] = [];
   let shellFailed = false;
   const { pipe } = renderToPipeableStream(<Root />, {

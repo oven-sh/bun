@@ -18,7 +18,7 @@ import {
   tmpdirSync,
   withoutAggressiveGC,
 } from "harness";
-import { spawn as cpSpawn, spawnSync as cpSpawnSync } from "node:child_process";
+import { type ChildProcess, spawn as cpSpawn, spawnSync as cpSpawnSync } from "node:child_process";
 import {
   closeSync,
   fstatSync,
@@ -1870,28 +1870,36 @@ describe("argv0", () => {
     });
   });
 
+  // The 'error' event of a node:child_process spawn that fails.
+  const errorEvent = (child: ChildProcess) => {
+    const { promise, resolve, reject } = Promise.withResolvers<Error>();
+    child.once("error", resolve);
+    child.once("spawn", () => reject(new Error("the spawn did not fail")));
+    child.once("close", () => reject(new Error("the child closed with no 'error' event")));
+    return promise;
+  };
+
   // node:child_process names the file as the path of a spawn that fails. A cgroup failure still names the cgroup.
   it.skipIf(!isLinux)("node:child_process keeps what names the cgroup on a spawn that could not enter it", async () => {
     using dir = tempDir("spawn-argv0-cgroup", {});
     const missing = join(String(dir), "no-such-cgroup");
     const fields = (error: any) => ({ code: error?.code, path: error?.path, fd: error?.fd });
 
-    const { promise, resolve, reject } = Promise.withResolvers<Error>();
-    const child = cpSpawn("true", [], { cgroup: missing } as any);
-    child.on("error", resolve);
-    child.on("spawn", () => reject(new Error("the spawn did not fail")));
-
     // A directory with no cgroup.procs, given by descriptor: the error names the descriptor and has no path.
     const fd = openSync(String(dir), "r");
     try {
+      const byPathAsync = errorEvent(cpSpawn("true", [], { cgroup: missing } as any));
+      const byDescriptorAsync = errorEvent(cpSpawn("true", [], { cgroup: fd } as any));
       expect({
         byPath: fields(cpSpawnSync("true", [], { cgroup: missing } as any).error),
-        byPathAsync: fields(await promise),
+        byPathAsync: fields(await byPathAsync),
         byDescriptor: fields(cpSpawnSync("true", [], { cgroup: fd } as any).error),
+        byDescriptorAsync: fields(await byDescriptorAsync),
       }).toEqual({
         byPath: { code: "ENOENT", path: missing, fd: undefined },
         byPathAsync: { code: "ENOENT", path: missing, fd: undefined },
         byDescriptor: { code: "ENOENT", path: undefined, fd },
+        byDescriptorAsync: { code: "ENOENT", path: undefined, fd },
       });
     } finally {
       closeSync(fd);
@@ -1910,14 +1918,10 @@ describe("argv0", () => {
     const missing = "no-such-command-for-the-cgroup-case";
     const fields = (error: any) => ({ code: error?.code, path: error?.path });
 
-    const { promise, resolve, reject } = Promise.withResolvers<Error>();
-    const child = cpSpawn(missing, [], { cgroup, env: bunEnv } as any);
-    child.on("error", resolve);
-    child.on("spawn", () => reject(new Error("the spawn did not fail")));
-
+    const spawned = errorEvent(cpSpawn(missing, [], { cgroup, env: bunEnv } as any));
     expect({
       spawnSync: fields(cpSpawnSync(missing, [], { cgroup, env: bunEnv } as any).error),
-      spawn: fields(await promise),
+      spawn: fields(await spawned),
       conversions,
     }).toEqual({
       spawnSync: { code: "ENOENT", path: missing },

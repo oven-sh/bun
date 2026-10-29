@@ -38,6 +38,7 @@ function errorEvent(file: string, args: string[], options: object) {
   const { promise, resolve, reject } = Promise.withResolvers<Error>();
   child.once("error", resolve);
   child.once("spawn", () => reject(new Error("the spawn did not fail")));
+  child.once("close", () => reject(new Error("the child closed with no 'error' event")));
   return promise;
 }
 

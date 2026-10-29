@@ -207,8 +207,7 @@ impl NapiEnv {
 
     /// Assert that we're not currently performing garbage collection
     pub(crate) fn check_gc(&self) {
-        // SAFETY: env is non-null; C++ side is read-only here.
-        unsafe { Bun__napi_check_gc(self.as_mut_ptr()) };
+        Bun__napi_check_gc(self);
     }
 
     pub(crate) fn get_and_clear_pending_exception(&self) -> Option<JSValue> {
@@ -292,7 +291,7 @@ unsafe extern "C" {
     -> *mut NapiHandleScope;
     pub(super) fn NapiHandleScope__close(env: *mut NapiEnv, current: *mut NapiHandleScope);
     fn NapiHandleScope__append(env: *mut NapiEnv, value: usize);
-    fn NapiHandleScope__escape(handle_scope: *mut NapiHandleScope, value: usize) -> bool;
+    safe fn NapiHandleScope__escape(handle_scope: &NapiHandleScope, value: JSValue) -> bool;
 }
 
 #[derive(Debug, thiserror::Error, strum::IntoStaticStr)]
@@ -328,9 +327,7 @@ impl NapiHandleScope {
     /// slot in the parent handle scope, allowing that value to outlive the current handle scope.
     /// Returns an error if escape() has already been called on this handle scope.
     fn escape(&self, value: JSValue) -> Result<(), EscapeError> {
-        // SAFETY: self is a valid handle scope; C++ writes the escape slot
-        // (interior mutability via `as_mut_ptr`).
-        if !unsafe { NapiHandleScope__escape(self.as_mut_ptr(), value.encoded()) } {
+        if !NapiHandleScope__escape(self, value) {
             return Err(EscapeError::EscapeCalledTwice);
         }
         Ok(())
@@ -2436,7 +2433,7 @@ unsafe extern "C" {
     ) -> napi_status;
 
     fn Bun__napi_cleanup_env_cpp(env: napi_env);
-    fn Bun__napi_check_gc(env: napi_env);
+    safe fn Bun__napi_check_gc(env: &NapiEnv);
 
     /// Returns false if the env has already torn down its registry.
     fn NapiEnv__registerThreadSafeFunction(env: *mut NapiEnv, tsfn: *mut c_void) -> bool;

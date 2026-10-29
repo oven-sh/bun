@@ -1166,9 +1166,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             } else {
                 errno
             };
-            // A unix-path connect keeps the errno that names the cause, and a
-            // connect that was closed keeps ECANCELED. Everything else is
-            // ECONNREFUSED.
             let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int
                 || errno == sys::SystemErrno::ENOTSOCK as c_int
                 || errno == sys::SystemErrno::EACCES as c_int

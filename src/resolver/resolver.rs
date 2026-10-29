@@ -6995,7 +6995,7 @@ pub(crate) struct BrowserMapPath<'b> {
     pub(crate) cleaned: &'b [u8],
     pub(crate) input_path: &'b [u8],
     pub(crate) extension_order: &'b [Box<[u8]>],
-    pub(crate) map: &'b BrowserMap,
+    pub(crate) map: &'static BrowserMap,
 }
 
 impl<'b> BrowserMapPath<'b> {
@@ -7008,11 +7008,7 @@ impl<'b> BrowserMapPath<'b> {
         let cleaned = self.cleaned;
         // Check for equality
         if let Some(result) = map.get(path_to_check) {
-            // SAFETY: ARENA — `BrowserMap` values are `Box<[u8]>` owned by a `'static`
-            // PackageJSON (allocated in `parse_package_json`, never freed — DirInfo
-            // cache is process-global); the `'b` borrow on `map` artificially shortens
-            // what is process-lifetime storage. `Interned` is the canonical proof type.
-            self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
+            self.remapped = result;
             return true;
         }
 
@@ -7033,8 +7029,7 @@ impl<'b> BrowserMapPath<'b> {
                 //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
                 // }
                 if let Some(_remapped) = map.get(new_path) {
-                    // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                    self.remapped = _remapped;
                     return true;
                 }
             }
@@ -7053,8 +7048,7 @@ impl<'b> BrowserMapPath<'b> {
         };
 
         if let Some(_remapped) = map.get(index_path) {
-            // SAFETY: ARENA — see `result` note above.
-            self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+            self.remapped = _remapped;
             return true;
         }
 
@@ -7072,8 +7066,7 @@ impl<'b> BrowserMapPath<'b> {
                 //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
                 // }
                 if let Some(_remapped) = map.get(new_path) {
-                    // SAFETY: ARENA — see `result` note above.
-                    self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
+                    self.remapped = _remapped;
                     return true;
                 }
             }

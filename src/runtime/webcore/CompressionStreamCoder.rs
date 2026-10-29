@@ -100,8 +100,7 @@ fn zlib_error(rc: zlib::ReturnCode, s: &zlib::ZStream) -> CodecError {
     }
 }
 
-/// The inflate stream `s` ended and more input follows it. Only gzip goes on,
-/// with its next member (RFC 1952 §2.2).
+/// More input follows the end of the inflate stream `s`: only gzip goes on, with its next member (RFC 1952 §2.2).
 fn next_member(s: &mut zlib::ZStream, gzip: bool) -> Result<(), CodecError> {
     if !gzip {
         return Err(CodecError::TrailingJunk);
@@ -208,8 +207,7 @@ impl Drop for CompressionStreamCoder {
     }
 }
 
-/// What a codec said when it gave up on its input. [`Failure::to_js`] reports it
-/// the way `node:zlib` reports the same failure.
+/// What a codec said when it gave up on its input, reported by [`Failure::to_js`] the way `node:zlib` reports it.
 #[derive(Clone, Copy)]
 enum Failure {
     /// The input ended before the compressed stream did.
@@ -904,10 +902,7 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
 }
 
 impl Failure {
-    /// The spec's `TypeError`, as Node.js builds it for these streams: no
-    /// message, the `code` of the `node:zlib` error for the same failure, and
-    /// that error (`message`, `errno`, `code`) as `cause`.
-    /// https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webstreams/adapters.js#L128-L150
+    /// The spec's `TypeError` with own `code`, and as `cause` the `Error` (`message`, `errno`, `code`) of `node:zlib` for the same failure.
     fn to_js(self, global: &JSGlobalObject) -> JSValue {
         let brotli_code;
         let (message, errno, code): (&'static [u8], c_int, &[u8]) = match self {
@@ -941,6 +936,7 @@ impl Failure {
         let cause = bun_core::String::static_(message).to_error_instance(global);
         cause.put(global, b"errno", JSValue::js_number_from_int32(errno));
         cause.put(global, b"code", code);
+        // No message, as Node.js builds it: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/webstreams/adapters.js#L128-L150
         let err = bun_core::String::EMPTY.to_type_error_instance(global);
         err.put_non_enumerable(global, b"cause", cause);
         err.put(global, b"code", code);

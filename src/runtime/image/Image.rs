@@ -1238,14 +1238,12 @@ impl BlobReadChain {
             unreachable!()
         };
         let blob_js = strong.get();
-        let Some(blob) = blob_js.as_::<Blob>() else {
+        let Some(blob) = blob_js.as_class_ref::<Blob>() else {
             drop(deliver);
             return Err(cx
                 .global()
                 .throw(format_args!("Image: Blob source is no longer a Blob")));
         };
-        // SAFETY: `as_` returned a non-null `*mut Blob` rooted by `blob_js`.
-        let blob = unsafe { &mut *blob };
 
         // Same Strong-ref contract as the regular pending_tasks bump — keeps
         // the wrapper (and its sourceJS slot) alive until the read settles.

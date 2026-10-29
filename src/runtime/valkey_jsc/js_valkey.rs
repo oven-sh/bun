@@ -1191,14 +1191,9 @@ impl JSValkeyClient {
         // Now counting idle time, not connect time.
         self.reset_connection_timeout();
 
-        let self_ptr = self.as_ctx_ptr();
-        let _defer = scopeguard::guard(self_ptr, |p| {
-            // SAFETY: `p` was `self.as_ctx_ptr()` at guard creation; the caller
-            // holds an intrusive ref across this scope so `*p` is live here.
-            unsafe {
-                (*p).client_mut().on_writable();
-                (*p).update_poll_ref();
-            }
+        let _defer = scopeguard::guard(self, |this| {
+            this.client_mut().on_writable();
+            this.update_poll_ref();
         });
         let global_object = self.global_object;
         let _exit = self.vm().enter_event_loop_scope();

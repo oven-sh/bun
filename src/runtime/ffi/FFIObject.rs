@@ -657,6 +657,15 @@ pub(crate) fn to_buffer<'a>(
     deallocator_context: Option<JsLocal<'a>>,
     deallocator: Option<JsLocal<'a>>,
 ) -> JsResult<JSValue> {
+    unsafe extern "C" {
+        fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
+            global: *const JSGlobalObject,
+            ptr: *mut u8,
+            len: usize,
+            ctx: *mut c_void,
+            deallocator: jsc::JSTypedArrayBytesDeallocator,
+        ) -> JSValue;
+    }
     let global_this = cx.global();
     let (ptr, len) = get_ptr_slice(
         global_this,
@@ -699,15 +708,6 @@ pub(crate) fn to_buffer<'a>(
     // No finalizer means borrow: the noop deallocator keeps GC from freeing
     // caller-owned storage (oven-sh/bun#35405).
     let callback = callback.or(Some(noop_bytes_deallocator));
-    unsafe extern "C" {
-        fn JSBuffer__bufferFromPointerAndLengthAndDeinit(
-            global: *const JSGlobalObject,
-            ptr: *mut u8,
-            len: usize,
-            ctx: *mut c_void,
-            deallocator: jsc::JSTypedArrayBytesDeallocator,
-        ) -> JSValue;
-    }
     // SAFETY: ptr/len came from get_ptr_slice; the `bun:ffi` user asserts that this
     // caller-owned FFI memory stays valid for the Buffer's lifetime. `callback`
     // controls disposal (a no-op when the storage stays caller-owned).

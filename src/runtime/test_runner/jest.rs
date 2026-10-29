@@ -519,6 +519,20 @@ pub(crate) fn file_generation() -> u32 {
     })
 }
 
+/// Reached only from `node:test`: fails the entry behind `done` with `failure`, whatever its value, and completes it.
+pub(crate) fn node_test_fail(
+    cx: &mut JsScope<'_>,
+    failure: JsLocal<'_>,
+    done: JsLocal<'_>,
+) -> JsResult<()> {
+    let global = cx.global();
+    let Some(dcb) = bun_test::DoneCallback::from_bound(done.to_js()) else {
+        return Err(global.throw(format_args!("Expected a bun:test done callback")));
+    };
+    let was_error = true;
+    bun_test::BunTest::finish_done(global, dcb, failure.to_js(), was_error)
+}
+
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides
 /// the running sequence's result so bun:test reports skip/todo instead of pass.
 /// `done`'s bound `DoneCallback.r#ref.phase` names the intended sequence so a
@@ -530,9 +544,7 @@ pub(crate) fn node_test_mark_result(todo: bool, done: JsLocal<'_>) {
     };
     // SAFETY: single-threaded JS VM; the strong is dropped before any re-borrow.
     let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
-    // `done` is a JSBoundFunction whose bound-this is the DoneCallback wrapper.
-    let wrapper = bun_jsc::cpp::Bun__JSBoundFunction__boundThis(done.to_js());
-    let Some(dcb) = wrapper.as_class_ref::<bun_test::DoneCallback>() else {
+    let Some(dcb) = bun_test::DoneCallback::from_bound(done.to_js()) else {
         return;
     };
     let (dcb_ref, dcb_called) = (dcb.r#ref.get().as_deref(), dcb.called.get());

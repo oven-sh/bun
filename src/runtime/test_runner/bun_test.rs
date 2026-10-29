@@ -811,7 +811,19 @@ impl BunTest {
 
         let value = error.to_js();
 
-        let was_error = !value.is_empty_or_undefined_or_null();
+        // As in Jest, only a truthy argument fails. Nullish is tested first so done() skips the ToBoolean call.
+        let was_error = !value.is_empty_or_undefined_or_null() && value.to_boolean();
+        Self::finish_done(global_this, this, value, was_error)
+    }
+
+    /// Completes the entry behind `this`. With `was_error`, `value` is reported as its failure, whatever it is.
+    #[inline(always)] // done() stays one call deep
+    pub(crate) fn finish_done(
+        global_this: &JSGlobalObject,
+        this: &DoneCallback,
+        value: JSValue,
+        was_error: bool,
+    ) -> JsResult<()> {
         if this.called.get() {
             // in Bun 1.2.20, this is a no-op
             // in Jest, this is "Expected done to be called once, but it was called multiple times."

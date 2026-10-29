@@ -70,8 +70,7 @@ pub(crate) fn validate_path(
     Box::from(out)
 }
 
-/// The default `root` of `bun build`, `Bun.build()` and the ahead-of-time compiler: the directory
-/// that holds every entry point, taken from their absolute paths, and never above the working directory.
+/// The default `root`: the directory that holds every entry point, never above the working directory.
 pub fn common_entry_directory(working_directory: &[u8], entry_points: &[&[u8]]) -> Vec<u8> {
     let paths: Vec<Vec<u8>> = entry_points
         .iter()

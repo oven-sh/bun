@@ -360,7 +360,7 @@ console.log(`API URL: ${apiUrl}`);
 | `import.meta.env.SSR`    | `false`        | `false`         |
 | `import.meta.env.STATIC` | `false`        | `false`         |
 
-The mode is the value Bun folds `process.env.NODE_ENV` to: `bun build --production`, a `NODE_ENV` (or `BUN_ENV`) variable in the environment or a `.env` file, or a `define` for `process.env.NODE_ENV`. A `Bun.serve` HTML route uses its `development` option instead. A `define` entry for one of these keys, or for the whole `import.meta.env` object, wins over the default. The `bun build --env=disable` flag skips them, as it skips `process.env.NODE_ENV`. `Bun.build({ env: "disable" })` still replaces them. Other `import.meta.env.*` names are not replaced.
+The mode is production when the value Bun folds `process.env.NODE_ENV` to is `"production"`: from `bun build --production`, a `NODE_ENV` (or `BUN_ENV`) variable in the environment or a `.env` file, or a `define` for `process.env.NODE_ENV`. Any other value, `test` or `staging` included, is development. A `Bun.serve` HTML route uses its `development` option instead. A `define` entry for one of these keys, or for the whole `import.meta.env` object, wins over the default. The `bun build --env=disable` flag skips them, as it skips `process.env.NODE_ENV`. `Bun.build({ env: "disable" })` still replaces them. Other `import.meta.env.*` names are not replaced.
 
 ## Echo console logs from browser to terminal
 

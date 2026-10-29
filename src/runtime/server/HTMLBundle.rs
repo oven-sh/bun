@@ -391,14 +391,22 @@ impl Route {
             config.minify.syntax = true;
         }
 
-        // The route's `development` flag, not `NODE_ENV`, picks the mode here,
-        // so these go in as explicit defines ahead of the bundler's defaults.
-        for (key, value) in bundler_options::default_user_defines::import_meta_env_defines(
-            /* is_production: */ !is_development,
-            /* ssr: */ false,
-            /* static_: */ false,
-        ) {
-            config.define.put(key, value)?;
+        // The route's `development` flag picks the mode, not `NODE_ENV`. A
+        // user define of the whole `import.meta.env` object keeps its keys.
+        let user_defines_import_meta = cli.args.serve_define.as_ref().is_some_and(|define| {
+            define
+                .keys
+                .iter()
+                .any(|key| &**key == b"import.meta.env" || &**key == b"import.meta")
+        });
+        if !user_defines_import_meta {
+            for (key, value) in bundler_options::default_user_defines::import_meta_env_defines(
+                /* is_production: */ !is_development,
+                /* ssr: */ false,
+                /* static_: */ false,
+            ) {
+                config.define.put(key, value)?;
+            }
         }
 
         if let Some(define) = &cli.args.serve_define {

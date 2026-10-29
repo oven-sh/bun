@@ -327,10 +327,9 @@ describe("bundler", () => {
       "import.meta.env": '{"MODE":"staging","DEV":false}',
     },
     onAfterBundle(api) {
-      const out = api.readFile("/out.js");
-      expect(out).toContain('"staging"');
-      expect(out).not.toContain('"development"');
-      expect(out).not.toContain("import.meta.env");
+      expect(api.readFile("/out.js")).toContain(
+        'console.log({ MODE: "staging", DEV: false }.MODE, { MODE: "staging", DEV: false }.DEV);',
+      );
     },
   });
   // With `--env inline` the inlined `NODE_ENV` wins over a user define for

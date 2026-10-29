@@ -802,11 +802,8 @@ pub mod default_user_defines {
         pub(crate) const KEY: &[u8] = b"process.browser";
     }
 
-    /// The `import.meta.env.*` keys (from Vite: https://vitejs.dev/guide/env-and-mode)
-    /// that fold to constants in browser output, because `import.meta.env` does
-    /// not exist in a browser. Every producer of a browser bundle (the
-    /// bundler's default defines, `Bun.serve` HTML routes, the bake dev server)
-    /// reads this one table. `BASE_URL` is not defined.
+    /// The Vite mode keys (https://vitejs.dev/guide/env-and-mode) that every
+    /// producer of a browser bundle folds, since a browser has no `import.meta.env`.
     pub fn import_meta_env_defines(
         is_production: bool,
         ssr: bool,
@@ -921,11 +918,9 @@ pub(crate) fn defines_from_transform_options(
             Box::from(b"\"development\"".as_slice())
         };
 
-        // The `process.env.NODE_ENV` the bundle folds is, in order: the
-        // inlined env value (`Define::init` inserts it after the user
-        // defines), a user define, the default. `BUN_ENV` and the
-        // `import.meta.env` mode follow it, so one bundle never mixes two
-        // modes.
+        // `BUN_ENV` and the `import.meta.env` mode follow the `NODE_ENV` the
+        // bundle folds: an inlined env value (`Define::init` puts it after the
+        // user defines), else a user define, else the default.
         let inlined_node_env = environment_defines
             .get(default_user_defines::node_env::KEY)
             .and_then(|data| data.value.e_string());
@@ -949,21 +944,14 @@ pub(crate) fn defines_from_transform_options(
             )?;
         }
 
-        // A browser has no `import.meta.env`, so `import.meta.env.DEV` throws
-        // unless it folds. The Bun runtime aliases it to `process.env`, so the
-        // bun targets keep the property access. Node has no alias either, but
-        // a node build is a server build (Vite sets `SSR: true` there), and
-        // that table is a separate decision. Only the browser target folds.
-        // A user define for the whole `import.meta.env` (or `import.meta`)
-        // object carries its own keys. A seeded dotted key would shadow it.
+        // Only the browser lacks `import.meta.env` (the Bun runtime aliases it
+        // to `process.env`). A user define of the whole object keeps its keys.
         if target == Target::Browser
             && !user_defines.contains(b"import.meta.env")
             && !user_defines.contains(b"import.meta")
         {
-            // Parse a user value like `from_input` does below, so
-            // `"production"`, `'production'` and `\"production\"` all select
-            // production. A malformed value reports its error once, from
-            // `from_input`.
+            // Same parser as `from_input`, so every quoting of `"production"`
+            // selects production. `from_input` reports a malformed value.
             let is_production = match inlined_node_env {
                 Some(inlined) => inlined.eql_comptime(b"production"),
                 None => {

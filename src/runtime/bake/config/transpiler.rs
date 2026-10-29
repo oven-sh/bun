@@ -169,8 +169,6 @@ pub(crate) fn add_import_meta_defines(
     use bun_bundler::defines::DefineData;
     use bun_bundler::options::default_user_defines::import_meta_env_defines;
 
-    // Note that it is not currently possible to have mixed
-    // modes (production + hmr dev server). `STATIC` marks a static build.
     for (key, value) in import_meta_env_defines(
         /* is_production: */ mode != Mode::Development,
         /* ssr: */ side == Side::Server,

@@ -780,16 +780,17 @@ lsquic_callback! {
                 &[dest.as_ptr().cast()],
             );
             if rv < 1 {
-                // SAFETY: `errno_ptr()` is this thread's errno slot.
-                unsafe {
-                    let e = bun_core::ffi::errno_ptr();
+                bun_core::ffi::with_errno(|e| {
                     // EMSGSIZE has to survive: it is how lsquic learns to drop
                     // an oversized packet and feed DPLPMTUD (ci_packet_too_large).
                     // Anything else it cannot act on becomes backpressure.
-                    if *e != libc::EAGAIN && *e != libc::EWOULDBLOCK && *e != libc::EMSGSIZE {
-                        *e = libc::EAGAIN;
+                    if e.get() != libc::EAGAIN
+                        && e.get() != libc::EWOULDBLOCK
+                        && e.get() != libc::EMSGSIZE
+                    {
+                        e.set(libc::EAGAIN);
                     }
-                }
+                });
                 break;
             }
             this.add_stat(IDX_STATS_PACKETS_SENT, 1);

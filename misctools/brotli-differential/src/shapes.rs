@@ -1646,6 +1646,33 @@ pub fn run_huge_dictionary(seed: u64, qualities: u64) {
     println!("ok: quality {q}, {} -> {}", totals.0, totals.1);
 }
 
+/// The input ends with a few bytes that a dictionary has too, followed there by zeros. The encoder looks a position up in a
+/// dictionary by 5 bytes. With fewer left it takes the bytes after the end of the input, which it has cleared, and so finds
+/// a copy that is shorter than any it finds elsewhere. Only qualities 10 and 11 still look for a copy at the last 4 bytes.
+pub fn run_dictionary_end(seed0: u64, iters: u64, qualities: u64) {
+    let qs = crate::args::qualities(qualities, 5..12);
+    let mut totals = (0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let random = |rng: &mut Rng, lo: usize, hi: usize| -> Vec<u8> { (0..rng.range(lo, hi)).map(|_| 1 | rng.next() as u8).collect() };
+        let end = random(&mut rng, 3, 9);
+        let mut dictionary = random(&mut rng, 0, 300);
+        dictionary.extend_from_slice(&end);
+        dictionary.extend_from_slice(&[0; 8][..rng.range(0, 8)]);
+        dictionary.extend(random(&mut rng, 8, 300));
+        // Random bytes, so that a short copy is worth it, and once more, or the encoder would store them as they are.
+        let mut data = random(&mut rng, 50, 300);
+        data.extend_from_within(..);
+        data.extend(random(&mut rng, 0, 20));
+        data.extend_from_slice(&end);
+        let params = vec![(1, q), (2, rng.range(10, 24) as u32)];
+        check("dictionary-end", seed, &mut rng, &data, &params, &[dictionary], &mut totals);
+    }
+    println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
+}
+
 /// What `run_commands` knows of the encoder while it lays out the input.
 struct Commands {
     data: Vec<u8>,

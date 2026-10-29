@@ -1937,17 +1937,17 @@ impl VirtualMachine {
         self.transpiler_store.enabled = true;
     }
 
-    pub fn enqueue_task(&mut self, task: bun_event_loop::Task) {
+    pub fn enqueue_task(&self, task: bun_event_loop::Task) {
         // accessed here (no overlapping `&mut EventLoop`).
         self.event_loop_mut().enqueue_task(task);
     }
 
-    pub fn tick(&mut self) {
+    pub fn tick(&self) {
         self.event_loop_mut().tick();
     }
 
     #[inline(always)]
-    pub fn drain_microtasks(&mut self) {
+    pub fn drain_microtasks(&self) {
         let _ = self.event_loop_mut().drain_microtasks();
     }
 

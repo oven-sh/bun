@@ -5369,6 +5369,7 @@ pub mod c {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub mod linux {
     use core::ffi::c_int;
+    use core::sync::atomic::AtomicU32;
     pub use libc::epoll_event;
     pub use libc::pollfd;
 
@@ -5456,33 +5457,7 @@ pub mod linux {
         pub const CTL_DEL: i32 = libc::EPOLL_CTL_DEL;
     }
     // ── futex ──
-    /// futex op (cmd + private flag), packed.
-    #[derive(Clone, Copy)]
-    pub struct FutexOp {
-        pub cmd: FutexCmd,
-        pub private: bool,
-    }
-    impl FutexOp {
-        #[inline]
-        fn raw(self) -> c_int {
-            self.cmd as c_int
-                | if self.private {
-                    libc::FUTEX_PRIVATE_FLAG
-                } else {
-                    0
-                }
-        }
-    }
-    #[derive(Clone, Copy)]
-    #[repr(i32)]
-    pub enum FutexCmd {
-        WAIT = libc::FUTEX_WAIT,
-        WAKE = libc::FUTEX_WAKE,
-        REQUEUE = libc::FUTEX_REQUEUE,
-        WAIT_BITSET = libc::FUTEX_WAIT_BITSET,
-        WAKE_BITSET = libc::FUTEX_WAKE_BITSET,
-    }
-    /// `syscall(SYS_futex, uaddr, op, val)` — 3-arg form (WAKE).
+    /// `FUTEX_WAKE` on a process-private futex.
     /// Returns the raw kernel rc (decode with `E::init`).
     // The kernel futex ABI returns `-errno` on
     // failure. `libc::syscall()` is the *glibc* wrapper —
@@ -5491,30 +5466,29 @@ pub mod linux {
     // this, every EAGAIN/EINTR from FUTEX_WAIT mis-decodes as EPERM and the
     // ThreadPool worker panics inside its idle wait.
     #[inline]
-    pub unsafe fn futex_3arg(uaddr: *const u32, op: FutexOp, val: u32) -> isize {
-        // SAFETY: caller contract — `uaddr` is `u32`-aligned; a WAKE only uses it as
-        // a key, so it need not point to live memory.
-        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val) };
+    pub fn futex_wake(uaddr: *const AtomicU32, val: u32) -> isize {
+        let op = libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG;
+        // SAFETY: WAKE takes these three arguments, and the kernel uses `uaddr` only as a key:
+        // it neither reads nor writes the word.
+        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr.cast::<u32>(), op, val) };
         if rc == -1 {
             -(errno() as isize)
         } else {
             rc as isize
         }
     }
-    /// `syscall(SYS_futex, uaddr, op, val, timeout)` — 4-arg form (WAIT).
+    /// `FUTEX_WAIT` on a process-private futex; `None` waits without a timeout.
     #[inline]
-    pub unsafe fn futex_4arg(
-        uaddr: *const u32,
-        op: FutexOp,
-        val: u32,
-        timeout: *const timespec,
-    ) -> isize {
+    pub fn futex_wait(uaddr: &AtomicU32, val: u32, timeout: Option<&timespec>) -> isize {
+        let op = libc::FUTEX_WAIT | libc::FUTEX_PRIVATE_FLAG;
         // `syscall` is variadic, and Miri checks the pointee type of each argument
         // against the one the kernel interface declares: `libc::timespec` here.
-        let timeout = timeout.cast::<libc::timespec>();
-        // SAFETY: caller contract — `uaddr` points to a live `u32`; `timeout`
-        // is null or points to a valid `timespec` for the syscall's duration.
-        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr, op.raw(), val, timeout) };
+        let timeout = timeout
+            .map_or(core::ptr::null(), core::ptr::from_ref)
+            .cast::<libc::timespec>();
+        // SAFETY: WAIT takes these four arguments. The kernel reads `uaddr`, which is live, and
+        // `timeout`, which is null or live, and writes neither.
+        let rc = unsafe { libc::syscall(libc::SYS_futex, uaddr.as_ptr(), op, val, timeout) };
         if rc == -1 {
             -(errno() as isize)
         } else {

@@ -2977,9 +2977,6 @@ mod _async_tasks {
             {
                 let list = self.result_list_queue.pop_batch();
                 let mut iter = list.iterator();
-                // we have to free only the previous one because the next value will
-                // be read by the iterator.
-                let mut to_destroy: Option<*mut ResultListEntry> = None;
 
                 // `reserve_exact`/`append_from` dispatch on the runtime tag.
                 let cap = self.result_list_count.swap(0, Ordering::Relaxed);
@@ -2989,18 +2986,9 @@ mod _async_tasks {
                     if val.is_null() {
                         break;
                     }
-                    if let Some(dest) = to_destroy {
-                        // SAFETY: paired with heap::alloc in write_results()
-                        unsafe { drop(bun_core::heap::take(dest)) };
-                    }
-                    to_destroy = Some(val);
-                    // SAFETY: `val` came from the queue and is live until heap::take above on the next iter
-                    self.result_list
-                        .append_from(&mut unsafe { &mut *val }.value);
-                }
-                if let Some(dest) = to_destroy {
-                    // SAFETY: paired with heap::alloc in write_results()
-                    unsafe { drop(bun_core::heap::take(dest)) };
+                    // SAFETY: boxed in `write_results`; `next` read its link before returning it.
+                    let mut entry = unsafe { bun_core::heap::take(val) };
+                    self.result_list.append_from(&mut entry.value);
                 }
             }
 
@@ -3013,21 +3001,13 @@ mod _async_tasks {
             self.result_list.clear();
             let batch = self.result_list_queue.pop_batch();
             let mut iter = batch.iterator();
-            let mut to_destroy: Option<*mut ResultListEntry> = None;
             loop {
                 let val = iter.next();
                 if val.is_null() {
                     break;
                 }
-                if let Some(dest) = to_destroy {
-                    // SAFETY: paired with heap::alloc in write_results()
-                    unsafe { drop(bun_core::heap::take(dest)) };
-                }
-                to_destroy = Some(val);
-            }
-            if let Some(dest) = to_destroy {
-                // SAFETY: paired with heap::alloc in write_results()
-                unsafe { drop(bun_core::heap::take(dest)) };
+                // SAFETY: boxed in `write_results`; `next` read its link before returning it.
+                drop(unsafe { bun_core::heap::take(val) });
             }
             self.result_list_count.store(0, Ordering::Relaxed);
         }

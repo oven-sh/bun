@@ -74,95 +74,12 @@ impl Binding {
             data: t.alloc_into_b(bump),
         }
     }
-}
 
-// ──────────────────────────────────────────────────────────────────────────
-// ToExpr — Rust cannot store `*mut P<'a, const ..>` in a non-generic field
-// nor take a fn item as a const generic, so the wrapper is type-erased:
-// `wrap` is a plain fn pointer that casts the erased `ctx` back to the
-// concrete `P` instantiation. The `*ExprType` context is **not** stored — it
-// is supplied at call time (`Binding::to_expr(.., ctx, ..)`) so the raw
-// pointer's Stacked-Borrows tag is a child of the *live* `&mut P` at the call
-// site rather than a stale tag captured during `prepare_for_visit_pass`
-// (which every later `&mut self` retag would invalidate). The struct is
-// `Copy` so the recursive `to_expr` can pass it by value.
-// ──────────────────────────────────────────────────────────────────────────
-
-#[derive(Copy, Clone)]
-pub struct ToExprWrapper {
-    /// Back-reference to `P.arena`. `BackRef` invariant: the arena is owned by
-    /// `P<'a>` and outlives every `ToExprWrapper` (which is stored on `P` and
-    /// only used during the visit pass). `None` only for the pre-wire
-    /// `dangling()` placeholder; niche-packed so layout matches `*const Arena`.
-    arena: Option<bun_ptr::BackRef<Arena>>,
-    wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr,
-}
-
-impl ToExprWrapper {
-    /// Placeholder used in `P::init` before `prepare_for_visit_pass` wires the
-    /// arena + trampoline.
-    pub const fn dangling() -> Self {
-        Self {
-            arena: None,
-            wrap: |_, _, _| unreachable!("ToExprWrapper used before prepare_for_visit_pass"),
-        }
-    }
-
-    /// `ExprType` is erased to `c_void`; callers (P.rs) supply a trampoline
-    /// closure that casts back to `*mut P<..>` and dispatches to
-    /// `P::wrap_identifier_{namespace,hoisting}`. Non-capturing closures
-    /// coerce to fn pointers, so this stays zero-cost.
-    /// The `*mut P` itself is passed per-call via `Binding::to_expr`.
-    #[inline]
-    pub fn new(arena: &Arena, wrap: fn(*mut core::ffi::c_void, crate::Loc, Ref) -> Expr) -> Self {
-        Self {
-            arena: Some(bun_ptr::BackRef::new(arena)),
-            wrap,
-        }
-    }
-
-    #[inline]
-    pub(crate) fn wrap_identifier(
-        &self,
-        ctx: *mut core::ffi::c_void,
-        loc: crate::Loc,
-        ref_: Ref,
-    ) -> Expr {
-        (self.wrap)(ctx, loc, ref_)
-    }
-
-    #[inline]
-    pub(crate) fn arena(&self) -> &Arena {
-        // `BackRef::get` encapsulates the deref under the owner-outlives-holder
-        // invariant; `expect` mirrors the prior `debug_assert!(!null)`.
-        self.arena
-            .as_ref()
-            .expect("ToExprWrapper not wired (prepare_for_visit_pass)")
-            .get()
-    }
-}
-
-impl Binding {
-    /// `ctx` is the type-erased `*mut P<..>` derived from the *caller's live*
-    /// `&mut P` (e.g. `core::ptr::addr_of_mut!(*p) as *mut c_void`). Threading
-    /// it per-call keeps the raw pointer's provenance under the active Unique
-    /// borrow, avoiding the stale-tag UB of storing it long-term.
-    ///
-    /// Accepts the wrapper by `Borrow` so both the by-value call-site in
-    /// `visitStmt.rs` (`p.to_expr_wrapper_namespace`) and the `&mut` call-site
-    /// in `maybe.rs` (`&mut p.to_expr_wrapper_hoisted`) type-check without
-    /// edits — `T: Borrow<T>` and `&mut T: Borrow<T>` are both blanket impls.
-    pub fn to_expr<W>(binding: &Binding, ctx: *mut core::ffi::c_void, wrapper: W) -> Expr
-    where
-        W: core::borrow::Borrow<ToExprWrapper>,
-    {
-        Self::to_expr_inner(binding, ctx, *wrapper.borrow())
-    }
-
-    fn to_expr_inner(
+    pub fn to_expr<C>(
         binding: &Binding,
-        ctx: *mut core::ffi::c_void,
-        wrapper: ToExprWrapper,
+        bump: &Arena,
+        ctx: &mut C,
+        wrap_identifier: impl Fn(&mut C, crate::Loc, Ref) -> Expr + Copy,
     ) -> Expr {
         let loc = binding.loc;
         match binding.data {
@@ -170,17 +87,16 @@ impl Binding {
                 data: ExprData::EMissing(E::Missing {}),
                 loc,
             },
-            B::BIdentifier(b) => wrapper.wrap_identifier(ctx, loc, b.r#ref),
+            B::BIdentifier(b) => wrap_identifier(ctx, loc, b.r#ref),
             B::BArray(b) => {
                 let b = b.get();
-                let bump = wrapper.arena();
                 let items = b.items();
                 let len = items.len();
                 let mut exprs = bun_alloc::ArenaVec::with_capacity_in(len, bump);
                 let mut i: usize = 0;
                 while i < len {
                     let item = &items[i];
-                    let expr = Self::to_expr_inner(&item.binding, ctx, wrapper);
+                    let expr = Self::to_expr(&item.binding, bump, ctx, wrap_identifier);
                     let converted = if b.has_spread && i == len - 1 {
                         Expr::init(E::Spread { value: expr }, expr.loc)
                     } else if let Some(default) = item.default_value {
@@ -202,7 +118,6 @@ impl Binding {
             }
             B::BObject(b) => {
                 let b = b.get();
-                let bump = wrapper.arena();
                 let props_in = b.properties();
                 let mut properties = bun_alloc::ArenaVec::with_capacity_in(props_in.len(), bump);
                 for item in props_in.iter() {
@@ -214,7 +129,7 @@ impl Binding {
                         } else {
                             G::PropertyKind::Normal
                         },
-                        value: Some(Self::to_expr_inner(&item.value, ctx, wrapper)),
+                        value: Some(Self::to_expr(&item.value, bump, ctx, wrap_identifier)),
                         initializer: item.default_value,
                         ..Default::default()
                     });

@@ -13,7 +13,7 @@ use crate::bin_real as bin;
 use crate::bin_real::Bin;
 use crate::bun_bunfig::Arguments as Command;
 use crate::bun_fs::FileSystem;
-use crate::bun_progress::{Node as ProgressNode, Progress};
+use crate::bun_progress::Node as ProgressNode;
 
 use crate::lifecycle_script_runner::{InstallCtx, LifecycleScriptSubprocess, UnfinishedScripts};
 // `Lockfile` here is the in-crate `crate::lockfile::Lockfile` (the
@@ -53,8 +53,6 @@ pub struct PackageInstaller<'a> {
     pub(crate) manager: *mut PackageManager,
     /// BACKREF into `(*manager).lockfile`. Never null.
     pub lockfile: *mut Lockfile,
-    /// BACKREF into `(*manager).progress`. Never null.
-    pub(crate) progress: *mut Progress,
 
     /// relative paths from `next` will be copied into this list.
     pub(crate) node_modules: NodeModulesFolder,
@@ -631,14 +629,6 @@ impl<'a> PackageInstaller<'a> {
         unsafe { &mut *self.lockfile }
     }
 
-    #[inline]
-    fn progress_mut(&self) -> &'a mut Progress {
-        // SAFETY: BACKREF into `manager.progress` — never null; disjoint from
-        // `*self`; the install pass is single-threaded so no concurrent `&mut
-        // Progress` exists. Same shape as `manager_mut`/`lockfile_mut`.
-        unsafe { &mut *self.progress }
-    }
-
     /// Increments the number of installed packages for the current tree and runs available scripts
     /// if the tree is finished.
     fn increment_tree_install_count(
@@ -1059,7 +1049,7 @@ impl<'a> PackageInstaller<'a> {
         let name = bstr::BStr::new(name);
         if log_level.show_progress() {
             if Output::enable_ansi_colors_stderr() {
-                self.progress_mut().log(format_args!(
+                self.manager_mut().progress.log(format_args!(
                     bun_core::pretty_fmt!(
                         "\n<r><red>error:<r> failed to {s} scripts for <b>{s}<r>: {s}\n",
                         true
@@ -1069,7 +1059,7 @@ impl<'a> PackageInstaller<'a> {
                     err.name(),
                 ));
             } else {
-                self.progress_mut().log(format_args!(
+                self.manager_mut().progress.log(format_args!(
                     bun_core::pretty_fmt!(
                         "\n<r><red>error:<r> failed to {s} scripts for <b>{s}<r>: {s}\n",
                         false

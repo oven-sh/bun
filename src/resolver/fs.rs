@@ -265,24 +265,20 @@ impl Entry {
 // `entry` is a RAW `*mut Entry`. A safe
 // `&self → &mut Entry` accessor would let two `get()` calls produce coexisting
 // aliased `&mut Entry` (PORTING.md §Forbidden).
-pub struct EntryLookup<'a> {
+pub struct EntryLookup {
     pub(crate) entry: *mut Entry,
-    // tie the lookup's nominal lifetime to the DirEntry it came from
-    _marker: core::marker::PhantomData<&'a Entry>,
 }
 
-impl<'a> EntryLookup<'a> {
+impl EntryLookup {
     /// Shared borrow of the looked-up `Entry`.
     ///
     /// # Safety (encapsulated)
-    /// `self.entry` is a slot in the process-lifetime `EntryStore` BSSMap
+    /// `self.entry` is a slot in the process-lifetime `EntryStore` BSSList
     /// singleton (see `dir_entry::EntryStore`); never freed. `cache` is
     /// behind `Cell` and `abs_path` behind `OnceLock`, so the interior writes through
-    /// `set_cache*()` / `abs_path_or_fill()` do not alias this `&Entry`. The
-    /// `PhantomData<&'a Entry>` ties the borrow to the `DirEntry` it was
-    /// looked up from.
+    /// `set_cache*()` / `abs_path_or_fill()` do not alias this `&Entry`.
     #[inline(always)]
-    pub fn entry(&self) -> &'a Entry {
+    pub fn entry(&self) -> &'static Entry {
         // SAFETY: ARENA — EntryStore-owned slot; see fn doc.
         unsafe { &*self.entry }
     }
@@ -433,14 +429,9 @@ impl DirEntry {
                 // `name_hash` instead of re-hashing.
                 if let Some(&existing_ptr) = map.get_hashed(name_hash, name_lc) {
                     // SAFETY: EntryStore-owned pointer, valid for lifetime of store
-                    let existing = unsafe { &mut *existing_ptr };
-                    // `MutexGuard` stores a `BackRef<Mutex>` (lifetime-erased), so
-                    // holding it does not borrow `existing` — the field writes
-                    // below remain unconstrained. Replaces the manual
-                    // `lock()` + `scopeguard(addr_of!(mutex), |m| (*m).unlock())`
-                    // backref-deref pair.
+                    let existing = unsafe { &*existing_ptr };
                     let _guard = existing.mutex.lock_guard();
-                    existing.dir = self.dir;
+                    // `dir` stays: `self` has the `dir` of the `DirEntry` that owns `map`.
 
                     // No cache rewrite here, even when the kind changed: a
                     // lock-free `kind()`/`symlink()` reader that already
@@ -559,7 +550,7 @@ impl DirEntry {
     // can pass a slice into the same threadlocal buffer they then mutate. The
     // lookup key is the lowercased basename; a case-mismatched query still
     // returns the stored entry.
-    pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
+    pub fn get(&self, query_: &[u8]) -> Option<EntryLookup> {
         Self::debug_assert_entries_mutex_held();
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
@@ -568,24 +559,15 @@ impl DirEntry {
 
         let query = strings::copy_lowercase_if_needed(query_, &mut scratch_lookup_buffer[..]);
         let &result_ptr = self.data.get(query)?;
-        Some(EntryLookup {
-            entry: result_ptr,
-            _marker: core::marker::PhantomData,
-        })
+        Some(EntryLookup { entry: result_ptr })
     }
 
     /// Looks up a cached entry by name. Takes a `&'static [u8]` that is
     /// already lowercase, so no per-call lowercasing buffer is needed.
-    pub(crate) fn get_comptime_query<'a>(
-        &'a self,
-        query_lower: &'static [u8],
-    ) -> Option<EntryLookup<'a>> {
+    pub(crate) fn get_comptime_query(&self, query_lower: &'static [u8]) -> Option<EntryLookup> {
         Self::debug_assert_entries_mutex_held();
         let &result_ptr = self.data.get(query_lower)?;
-        Some(EntryLookup {
-            entry: result_ptr,
-            _marker: core::marker::PhantomData,
-        })
+        Some(EntryLookup { entry: result_ptr })
     }
 
     /// True if a cached entry exists for the given already-lowercase name.

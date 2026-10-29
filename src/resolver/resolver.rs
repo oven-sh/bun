@@ -4182,7 +4182,7 @@ impl<'a> Resolver<'a> {
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
         package_json: &PackageJSON,
-        query: &crate::fs::EntryLookup<'static>,
+        query: &crate::fs::EntryLookup,
         out: &mut MatchResult,
     ) -> bool {
         let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {

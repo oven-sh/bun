@@ -1239,15 +1239,7 @@ macro_rules! get_zone {
     ($name:literal) => {{
         static ZONE: ::std::sync::OnceLock<&'static $crate::heap_breakdown::Zone> =
             ::std::sync::OnceLock::new();
-        *ZONE.get_or_init(|| {
-            // SAFETY: concat!($name, "\0") is a valid NUL-terminated string
-            // literal in static memory — valid for process lifetime.
-            unsafe {
-                $crate::heap_breakdown::Zone::init(
-                    concat!($name, "\0").as_ptr().cast::<::core::ffi::c_char>(),
-                )
-            }
-        })
+        *ZONE.get_or_init(|| $crate::heap_breakdown::Zone::init($name))
     }};
 }
 

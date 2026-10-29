@@ -1,6 +1,6 @@
+use core::ffi::{CStr, c_void};
 #[cfg(target_os = "macos")]
-use core::ffi::c_uint;
-use core::ffi::{c_char, c_void};
+use core::ffi::{c_char, c_uint};
 
 #[cfg(target_os = "macos")]
 #[allow(non_camel_case_types)]
@@ -27,24 +27,20 @@ bun_opaque::opaque_ffi! {
 unsafe impl Sync for Zone {}
 
 impl Zone {
-    /// # Safety
-    /// `name` must point to a NUL-terminated C string that remains valid for
-    /// the entire process lifetime — `malloc_set_zone_name` stores the pointer
-    /// (does not copy).
+    /// `'static`: `malloc_set_zone_name` may keep the pointer instead of copying.
     #[cfg(target_os = "macos")]
-    pub unsafe fn init(name: *const c_char) -> &'static Zone {
+    pub fn init(name: &'static CStr) -> &'static Zone {
         // SAFETY: malloc_create_zone is safe to call with (0, 0); returns a
-        // process-lifetime zone pointer. Caller guarantees `name` outlives the
+        // process-lifetime zone pointer. `name` is NUL-terminated and outlives the
         // process.
         unsafe {
             let zone = malloc_create_zone(0, 0);
-            malloc_set_zone_name(zone, name);
+            malloc_set_zone_name(zone, name.as_ptr());
             &*zone
         }
     }
     #[cfg(not(target_os = "macos"))]
-    #[allow(clippy::missing_safety_doc)]
-    pub unsafe fn init(_name: *const c_char) -> &'static Zone {
+    pub fn init(_name: &'static CStr) -> &'static Zone {
         unreachable!("heap_breakdown is macOS-only; guard call sites on ENABLED")
     }
 

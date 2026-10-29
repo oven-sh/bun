@@ -419,8 +419,6 @@ pub(crate) fn install_hoisted_packages(
                         .to_vec(),
                     tree_id: 0,
                 },
-                // SAFETY: `mgr_ptr` is the provenance root; raw place addr.
-                progress: unsafe { core::ptr::addr_of_mut!((*mgr_ptr).progress) },
                 skip_verify_installed_version_number,
                 skip_delete,
                 workspaces_seen: Vec::new(),

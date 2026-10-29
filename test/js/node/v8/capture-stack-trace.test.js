@@ -1806,7 +1806,8 @@ test("Error.captureStackTrace applies stackTraceLimit after caller removal", () 
   }
 });
 
-// `resumed` continues inside drainMicrotasks(), so JSC puts `awaiter` in front of `behindTheAwaitChain`.
+// `resumed` continues inside drainMicrotasks(), so JSC puts its two awaiters in front of `behindTheAwaitChain`.
+// `behindTheAwaitChain` has more callers than the limit, so the trace is as long as the limit.
 const capturesBehindAwaitChain = `
   let stack;
   async function resumed() {
@@ -1818,21 +1819,38 @@ const capturesBehindAwaitChain = `
   async function awaiter() {
     await resumed();
   }
+  async function outerAwaiter() {
+    await awaiter();
+  }
   function behindTheAwaitChain() {
-    awaiter();
+    outerAwaiter();
     drainMicrotasks();
   }
   function callerOfBehind() {
     behindTheAwaitChain();
     return stack;
   }
+  function below(depth) {
+    return depth === 0 ? callerOfBehind() : below(depth - 1) + "";
+  }
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = 10;
+  try {
+    below(12);
+  } finally {
+    Error.stackTraceLimit = limit;
+  }
 `;
 test.each([
-  ["the main context", code => new Function("drainMicrotasks", `${code}; return callerOfBehind();`)(drainMicrotasks)],
-  ["a node:vm context", code => vm.runInNewContext(`${code}; callerOfBehind();`, { drainMicrotasks })],
+  ["the main context", code => new Function("drainMicrotasks", `${code}; return stack;`)(drainMicrotasks)],
+  ["a node:vm context", code => vm.runInNewContext(`${code}; stack;`, { drainMicrotasks })],
 ])("Error.captureStackTrace finds a caller argument that is on the stack behind the await chain, in %s", (_, run) => {
   const lines = run(capturesBehindAwaitChain).split("\n");
-  expect(lines.slice(0, 2).map(line => line.trim().replace(/ \(.*$/, ""))).toEqual(["Error", "at callerOfBehind"]);
+  expect(lines.map(line => line.trim().replace(/ \(.*$/, ""))).toEqual([
+    "Error",
+    "at callerOfBehind",
+    ...Array(9).fill("at below"),
+  ]);
 });
 
 // Each row takes two captures from one call site: one with a limit and one with no limit.

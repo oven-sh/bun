@@ -1,22 +1,40 @@
-# Decoding HPACK's Huffman code with SIMD
+# HPACK's Huffman code
 
-The kernel is `src/jsc/bindings/highway_hpack.cpp`, its safe wrapper is
-`bun_highway::hpack_huffman_decode_short`, and its only caller is `huffman.rs` in this directory.
+`huffman.rs` in this directory decodes and codes the strings of a header block (RFC 7541 §5.2). On a
+CPU with AVX-512 VBMI it hands runs of short codes to a kernel,
+`src/jsc/bindings/highway_hpack.cpp`, through `bun_highway::hpack_huffman_decode_short`. Nothing
+else calls that kernel. This note says how the three work, what they cost and what else was tried.
 
-## The problem
+## The scalar decoder
 
-A Huffman decoder is a chain: where a code starts depends on how long the one before it was.
-`huffman.rs` walks that chain with one table lookup per two codes, and each lookup has to wait for
-the one before it. The time goes into waiting, about 9 cycles per lookup.
+A Huffman decoder is a chain: where a code starts depends on how long the one before it was. Each
+table lookup waits for the one before it, about 10 cycles, and that is where the time goes. So a
+lookup should yield as many symbols as a table that fits the L1 cache can give.
 
-## The idea
+A lookup takes the next 14 bits. They hold two codes of up to 7 bits: lower case, digits, upper
+case. An entry has 2 bytes, so the table has 32 KB:
 
-Take the lookups off the chain by doing them for every place a code could start.
+- the length of the codes, which is what the next lookup waits for, in a byte of its own,
+- the last symbol. Every symbol with a code of up to 14 bits is ASCII, so the top bit of that byte
+  says whether there is another symbol before it.
+
+That other symbol has a code of up to 8 bits. It comes from a table of 256 bytes, by the first 8
+bits, and nothing waits for it. Both are written as single bytes, the first one first, also if there
+is none: then the only symbol goes over it. So no branch and no select depends on how many there
+are.
+
+8 bytes of input are loaded at a time and serve four lookups with no check for the end. A code of
+more than 14 bits is found by comparing with the last code of each length. The last bytes, under 8,
+go through the same table with a check per lookup, and what is left of them has to be padding.
+
+## The kernel
+
+It takes the lookups off the chain by doing them for every place a code could start.
 
 1. Take 64 bits of input and look at all 64 bit offsets at once, as if a code started at each.
    `vpmultishiftqb` yields the 8 bits from every offset on. That is enough to tell the length and
-   the symbol of a code of up to 8 bits: all of `[0-9A-Za-z]` and ` %&*,-./:;=_` and the space,
-   99.2% of the bytes of the header values in the corpus of http2jp/hpack-test-case.
+   the symbol of a code of up to 8 bits: all of `[0-9A-Za-z]` and ` %&*,-./:;=_`, 99.2% of the bytes
+   of the header values in the corpus of http2jp/hpack-test-case.
 2. `jump[offset] = offset + length` is where the next code starts. Applying that table to itself
    (`vpermb`) gives the tables for 2, 4, 8 and 16 codes ahead. None of this depends on where the
    first code starts, so the blocks of a long string are worked out side by side.
@@ -25,15 +43,10 @@ Take the lookups off the chain by doing them for every place a code could start.
 
 Between one block and the next, the chain is a shift and a mask: byte `first` of the 16-jump table.
 
-## Where a walk stops
-
 Offsets 56 to 63 jump to themselves. That keeps a jump table at 64 entries, one `vpermb`, and a walk
-that leaves the first 56 bits stops at the offset where it left. A block is therefore 7 bytes.
-
-An offset where no short code starts also jumps to itself: a longer code, or the padding. The walk
+that leaves the first 56 bits stops at the offset where it left. A block is therefore 7 bytes. An
+offset where no short code starts also jumps to itself: a longer code, or the padding. The walk
 stops there, and so does the kernel.
-
-## What the kernel does not do
 
 It reports no errors. It stops before a code of more than 8 bits, before the padding, before a code
 that the input ends in the middle of, and when the output has no room for a block (16 bytes, of
@@ -41,7 +54,7 @@ which it may fill fewer: the rest is overwritten with whatever the shuffle left 
 goes on from the bit it stopped at: it decodes the long code and tries the kernel again, or checks
 the padding. So what is accepted, what is refused and with which error does not depend on the CPU.
 
-## When it is called
+### When it is called
 
 A call costs about 15 ns before the first symbol, which pays off from about a dozen symbols on.
 `huffman.rs` does not call it
@@ -53,15 +66,10 @@ A call costs about 15 ns before the first symbol, which pays off from about a do
 
 That leaves one call wasted on such text, and never a second one: a call that yields under 12
 symbols is the last one on that string. It costs 10 to 19 ns whatever the length. On Emerald Rapids,
-a string that starts with a short code and goes on with codes of 10 to 13 bits takes 40 ns instead of
-29 at 5 bytes, 60 instead of 44 at 12 and 127 instead of 108 at 40.
+a string that starts with a short code and goes on with codes of 10 to 13 bits takes 40 ns instead
+of 29 at 5 bytes, 60 instead of 44 at 12 and 127 instead of 108 at 40.
 
-Looking ahead before the call does not pay. One lookup ahead finds a long code that is the second or
-third symbol (`W/"5F3C..."` takes 47 ns instead of 59) and costs text 1.5%, a user agent 7%. Not
-calling where the next 57 bits have 7 ones in a row costs text 14 to 22%. Not calling for under 10
-bytes saves 1 to 10 ns at 5, 6, 8 and 9 bytes and costs 5 at 7, which is one block of the kernel.
-
-## Which CPUs
+### Which CPUs
 
 AVX-512 VBMI: Intel from Ice Lake on (not Alder Lake and later desktop parts), AMD from Zen 4 on.
 Highway's targets `AVX3_DL`, `AVX3_ZEN4`, `AVX3_SPR` and `AVX10_2`. Elsewhere the kernel is a stub
@@ -71,133 +79,11 @@ Without a 64-entry byte shuffle, one jump table costs more than the lookups it r
 and as many blends per 16 lanes. NEON has that shuffle (`TBL`/`TBX` with four registers), which
 Highway has no operation for. It has not been tried.
 
-## Numbers
-
-Xeon (Sapphire Rapids) at 2.1 GHz, compiled like a release build (`-march=nehalem`, LTO). One field
-with a name from the static table and a Huffman coded value, 512 different values per row, in ns.
-"Before" is the decoder this replaced: 32 bits at a time, long codes bit by bit. Both looked up 13
-bits at a time then: see "The table of the scalar decoder".
-
-| value                                    | before | scalar | kernel |
-| ---------------------------------------- | ------ | ------ | ------ |
-| 4 characters with codes of up to 8 bits  | 45     | 38     | 38     |
-| 8                                        | 56     | 51     | 36     |
-| 16                                       | 89     | 63     | 41     |
-| 32                                       | 139    | 104    | 58     |
-| 100                                      | 385    | 274    | 126    |
-| 1000                                     | 3706   | 2480   | 1037   |
-| 65, 1 in 40 with a code of 10 to 19 bits | 261    | 194    | 144    |
-| 65, 1 in 10                              | 293    | 208    | 217    |
-| 65, 1 in 2                               | 474    | 307    | 325    |
-| 200, all with codes of 14 bits           | 824    | 725    | 736    |
-| 200, all with codes of 28 bits           | 4419   | 1790   | 1824   |
-| 30 bytes from 0x80 up                    | 1175   | 491    | 491    |
-| `gzip, deflate, br`                      | 62     | 46     | 39     |
-| `{"a":1,"b":[true,null],"c":"x"}`        | 131    | 107    | 119    |
-| the values in http2jp/hpack-test-case    | 109    | 85     | 65     |
-
-With cold caches the kernel is further ahead. Prototypes of both, 8 strings at a time with 1 MB
-touched in between: 299 cycles a string against 155. With 8 MB: 842 against 317. The scalar decoder's
-table is 32 KB, the kernel's tables are 448 bytes.
-
-## What else was tried
-
-On the 10,654 strings that hpack-test-case sends as literals, 26 bytes on average, per string,
-against the scalar code of the time.
-
-| what                                                   | result                     |
-| ------------------------------------------------------ | -------------------------- |
-| encoded length, `pshufb` rows (SSE4)                   | 20 ns against 12.5: slower |
-| encoded length, `vpermi2b` (AVX-512 VBMI)              | 5.3 ns against 12.5        |
-| encoder, `pshufb` rows, lanes merged to 32 bits (SSE4) | 55 ns against 54           |
-| encoder, the same with 64-bit lanes (AVX2)             | 45 ns                      |
-| encoder, `vpermi2b`, 64-bit lanes (AVX-512 VBMI)       | 38 ns                      |
-| encoder, scalar, one pass, four codes per write        | 40.5 ns, see below         |
-| the whole crate compiled for AVX-512                   | no change either way       |
-| wyhash replaced by one multiplication                  | no change                  |
-| calling the kernel unless 7 ones in a row come up      | `p,` has 7 ones in a row   |
-
-The encoder's codes have to be joined bit by bit whatever finds them, and header strings are too
-short for the lookups to matter.
-
-The scalar one-pass encoder was in the crate for a day and was taken out again. It starts coding
-before it knows whether the code will be shorter than the text. On Sapphire Rapids it made the
-corpus 22% faster. On Cascade Lake the corpus took as long as before. On both, a string that is
-sent as it is took 1.3 to 2 times as long, and one of 1 to 3 bytes 1.1 to 1.3 times.
-
-With entries of 4 bytes, the scalar decoder's loop had to write a short code and a long code in two
-places. With one `write` after the `if` for both, the compiler loaded the four bytes of an entry one
-by one and put the two symbols together again: 23 instructions a lookup instead of 17. Sapphire
-Rapids hid most of that. On Cascade Lake text took 10 to 25% longer.
-
-## The table of the scalar decoder
-
-The numbers above are from a table of 13 bits with 4 bytes per entry. 13 bits do not hold two codes
-of 7 bits, which is what upper case has, so `SAMEORIGIN` took a lookup per character and longer than
-in the C code that this crate replaced, which looks up 16 bits in 256 KB.
-
-14 bits do. With entries of 4 bytes that is 64 KB, twice the L1 cache of most CPUs, so an entry has
-2 bytes now and the table is as big as it was:
-
-- the length of the codes, which is what the next lookup waits for, in a byte of its own,
-- the last symbol. Every symbol with a code of up to 14 bits is ASCII, so the top bit of that byte
-  says whether there is another symbol before it.
-
-That other symbol has a code of up to 8 bits. It comes from a table of 256 bytes, by the first 8
-bits, and nothing waits for it. Both are written as single bytes, the first one first, also if there
-is none: then the only symbol goes over it. So no branch and no select depends on how many there are.
-
-One field with a name from the static table, without the kernel, in ns. "13" is the table as it was,
-"64 KB" is 14 bits with entries of 4 bytes, "C" is ls-hpack 2.3.5.
-
-|                                             | Cascade Lake |      |       |      | Emerald Rapids |      |       |       |
-| ------------------------------------------- | ------------ | ---- | ----- | ---- | -------------- | ---- | ----- | ----- |
-| value                                       | 13           | now  | 64 KB | C    | 13             | now  | 64 KB | C     |
-| 8 characters with codes of up to 8 bits     | 62           | 55   | 58    | 71   | 44             | 37   | 40    | 51    |
-| 32                                          | 122          | 106  | 122   | 156  | 96             | 84   | 94    | 136   |
-| 100                                         | 285          | 244  | 298   | 410  | 251            | 223  | 255   | 397   |
-| 1000                                        | 2445         | 2111 | 2660  | 3868 | 2166           | 1913 | 2205  | 3996  |
-| 100, all with codes of 7 bits               | 380          | 202  | 202   | 303  | 350            | 195  | 190   | 293   |
-| 1000, all with codes of 5 bits              | 1823         | 1842 | 1818  | 1680 | 1670           | 1746 | 1664  | 1684  |
-| 100, all with codes of 8 bits               | 379          | 379  | 376   | 229  | 351            | 366  | 352   | 248   |
-| 200, 1 in 5 with a code of 10 to 19 bits    | 788          | 645  | 758   | 1710 | 678            | 584  | 639   | 1768  |
-| 200, all with codes of 14 bits              | 1111         | 757  | 751   | 798  | 651            | 697  | 680   | 925   |
-| 200, all with codes of 15 bits              | 1271         | 938  | 1139  | 804  | 718            | 749  | 761   | 941   |
-| `SAMEORIGIN`                                | 61           | 49   | 46    | 51   | 38             | 27   | 26    | 34    |
-| `GET, POST, PUT, DELETE, OPTIONS`           | 122          | 88   | 86    | 97   | 96             | 65   | 64    | 87    |
-| `Mon, 21 Oct 2013 20:13:21 GMT`             | 89           | 81   | 80    | 85   | 66             | 59   | 58    | 71    |
-| `text/html; charset=utf-8`                  | 74           | 71   | 69    | 78   | 49             | 49   | 49    | 64    |
-| the values in http2jp/hpack-test-case       | 106          | 96   | 100   | 138  | 76             | 70   | 73    | 111   |
-| 100 characters, 8 MB touched in between     | 4654         | 3978 | 5951  | 8833 | 5473           | 5329 | 6347  | 10457 |
-| the values in hpack-test-case, 8 MB touched | 2655         | 1987 | 2691  | 3207 | 2960           | 2994 | 3160  | 3994  |
-
-A lookup takes more instructions than it did: 23 to 27 instead of 17 on x64, 19 to 25 instead of 15
-on arm64. They are not what the loop waits for, so they cost nothing where strings differ from call
-to call, as above. With one string decoded over and over, which the branch predictor learns, on
-Sapphire Rapids: text 1.00 to 1.04 of the time, a URL 1.10, digits 1.02 to 1.11, base64 0.87 to 0.90,
-upper case 0.58 to 0.63.
-
-arm64 has not been timed. Counted under qemu, text takes 13.3 instructions a symbol instead of 9.8,
-upper case 13.3 instead of 17.6, codes of 14 bits 26 instead of 54. llvm-mca gives a window of four
-lookups the same number of cycles as before on Neoverse N1, V1 and V2, Ampere-1 and Apple M1, 4% more
-on Cortex-A76, and 19% more on Cortex-A55, which runs instructions in order.
-
-What did not work, each on text with 1 code in 5 of more than 8 bits or on codes of 5 bits only,
-against the table of 13 bits.
-
-| what                                                            | result                                |
-| --------------------------------------------------------------- | ------------------------------------- |
-| unpacking an entry into the old struct, `if count == 2`         | a branch: 1.5                         |
-| count and length in one byte                                    | the mask is on the chain: 1.17        |
-| picking the first symbol with `if`, the flag in the symbol      | a branch again: 1.5                   |
-| one bounds check per 8 bytes of input instead of one per lookup | no change: the time goes into waiting |
-
 ## The coder
 
 No SIMD here, but the same problem: where a code goes depends on the lengths of all the codes before
-it. The plain loop takes one byte at a time and writes 32 bits whenever it has that many, which is
-about every 5 bytes. When exactly depends on the text, so that branch is mispredicted, and so is the
-loop that writes the last 1 to 4 bytes.
+it. A loop that writes 32 bits whenever it has that many does so about every 5 bytes. When exactly
+depends on the text, so that branch is mispredicted, and so is a loop over the last 1 to 4 bytes.
 
 `encode` adds one code at a time to what is left too, but writes after every 7 bytes, whatever they
 are: 8 bytes, of which as many count as are full. 7 codes of 8 bits, the longest in plain text, and
@@ -206,119 +92,201 @@ the 7 bits that may be left from before are 63 bits. If the lengths add up to mo
 out the same way, with the padding. So its branches depend on the length of the text and not on the
 text.
 
-What is left is one shift by a variable count per code, which waits for the one before it. Without
-BMI2, which no x64 build of Bun assumes, that is three micro-operations on Intel up to Ice Lake. From
-64 bytes on, `encode_groups` takes 7 bytes at a time.
+What is left is one shift by a variable count per code, which waits for the one before it. From 128
+bytes on, where that wait begins to show, `encode_groups` takes 7 bytes at a time.
 
-1. Neighbours are joined by a multiplication: `code(a) * (1 << len(b)) + code(b)`. `1 << len` comes
-   from `SHIFTS`, 1 KB, the only table this adds.
+1. Neighbours are joined by a multiplication: `code(a) * (1 << len(b)) | code(b)`. `1 << len` comes
+   from `SHIFTS`, 1 KB.
 2. The pairs are joined by shifts, by lengths that are added up on the side.
 3. They are written as above.
 
-A group of more than 57 bits is written in two halves, of 4 and 3 bytes, if each has 57 bits at most:
-`{"a":1,` has 60, and one group in three of random printable characters has too many. Otherwise,
-which takes bytes that are not ASCII or several `\`, it is written byte by byte.
+A group of more than 57 bits is written in two halves, of 4 and 3 bytes, if each has 57 bits at
+most: `{"a":1,` has 60, and one group in three of random printable characters has too many.
+Otherwise it is written byte by byte. Four printable characters are enough for that: `{{{~` has 58
+bits, `\{{!` 59.
 
-The length is still counted in a pass of its own, so a string that is sent as it is costs what it
-did.
+The length is counted in a pass of its own before that, so a string that is sent as it is costs no
+more than the count and a copy.
 
-One string literal of characters with codes of up to 8 bits, on Emerald Rapids, in ns. Every row has
-16,384 different strings: the branch predictor learns 512 of them, and then the plain loop and the C
-code look up to 25% faster than they are. Each coder was compiled at four alignments, of which this
-is the middle. "C" is ls-hpack 2.3.5 with its table of 65,536 pairs, which is what Bun used before
-this crate. The last two rows are `encode` against the plain loop, other strings every time.
+## Numbers
 
-| characters                | 1    | 2    | 3    | 4    | 6    | 8    | 12   | 16   | 24   | 32   | 48   | 63   |
-| ------------------------- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
-| the plain loop            | 6.3  | 7.8  | 10.1 | 13.6 | 18.0 | 19.4 | 26.3 | 33.2 | 44.2 | 57.8 | 85.8 | 109  |
-| `encode`                  | 6.8  | 7.4  | 8.1  | 8.7  | 10.2 | 12.4 | 15.3 | 19.9 | 26.7 | 33.6 | 47.2 | 60.9 |
-| C                         | 6.1  | 6.7  | 8.1  | 12.6 | 13.5 | 13.7 | 21.9 | 26.3 | 33.6 | 40.5 | 48.4 | 63.3 |
-| 512 KB touched in between | 1.02 | 1.00 | 0.98 | 0.94 | 0.89 | 0.90 | 0.85 | 0.86 | 0.80 | 0.75 | 0.70 | 0.69 |
-| 8 MB touched in between   | 0.97 | 1.00 | 0.99 | 1.00 | 1.01 | 0.97 | 0.96 | 1.00 | 0.96 | 0.96 | 0.90 | 0.98 |
+`scripts/bench-hpack-rust.sh` runs `benches/hpack.rs`: one field with a name from the static table,
+in ns, through `Encoder::encode` and `Decoder::next`. With `--scalar` it leaves the kernel out.
+Every row has 16,384 different values (4,194 of 1000 bytes): the branch predictor learns 512 of
+them, and then code with branches that depend on the text looks up to 25% faster than it is. "C" is
+ls-hpack 2.3.5, which is what Bun used before this crate, with its table of 65,536 pairs and its
+decoder that looks up 16 bits in 256 KB, put into the same benchmark. Xeon (Emerald Rapids) at 2.1
+GHz, compiled like a release build (`-march=nehalem`, LTO), the lowest of 2 or 3 runs, for C in
+`encode/add` of up to 9.
 
-The last row is good to 5%. One character takes 0.5 ns longer than with the plain loop, for the wider
-write. `Encoder::encode` of a field with such a value takes 17 ns for 1 character either way, 35
-instead of 41 for 8, 59 instead of 84 for 32 and 84 instead of 135 for 63. `encode` is 440 bytes more
-code than the plain loop.
+`decode/skip`: kernel / scalar / C.
 
-Other CPUs were not measured. What can be said without them is about the work, not about the
-mispredicted branches, which are the point. The loop over whole groups has 10.6 instructions per byte
-on x64 and 10.1 on arm64; the plain loop with its writes has 13.8 and 13.4. Under qemu, arm64 runs
-104 instructions for a literal of 1 character (the plain loop 98), 218 for 8 (249), 584 for 32 (692)
-and 1064 for 63 (1280). llvm-mca 18, which takes every branch as predicted, gives these cycles per
-byte. Its Intel models come to 4.3 cycles per byte for `encode`, where Emerald Rapids takes 2.2, so
-they are left out.
+| length    | 1            | 8            | 32              | 63              | 64              | 100             | 1000                |
+| --------- | ------------ | ------------ | --------------- | --------------- | --------------- | --------------- | ------------------- |
+| text      | 22 / 21 / 23 | 35 / 37 / 54 | 52 / 89 / 146   | 80 / 144 / 278  | 79 / 150 / 274  | 111 / 242 / 449 | 893 / 2070 / 4093   |
+| url       | 22 / 21 / 22 | 41 / 36 / 52 | 64 / 74 / 137   | 100 / 136 / 255 | 102 / 143 / 273 | 151 / 223 / 390 | 1258 / 1964 / 3724  |
+| digits    | 23 / 21 / 21 | 34 / 28 / 44 | 54 / 65 / 105   | 72 / 125 / 190  | 74 / 122 / 192  | 107 / 212 / 291 | 767 / 1890 / 2708   |
+| base64    | 22 / 21 / 23 | 36 / 36 / 56 | 70 / 85 / 152   | 114 / 147 / 281 | 112 / 145 / 287 | 161 / 242 / 434 | 1370 / 2016 / 4302  |
+| upper     | 22 / 22 / 23 | 39 / 37 / 40 | 56 / 86 / 102   | 79 / 147 / 183  | 87 / 154 / 201  | 115 / 243 / 295 | 916 / 2104 / 2771   |
+| json      | 23 / 23 / 25 | 52 / 41 / 51 | 121 / 106 / 140 | 216 / 195 / 273 | 216 / 198 / 274 | 323 / 308 / 438 | 2843 / 2813 / 4057  |
+| printable | 23 / 23 / 24 | 46 / 40 / 51 | 106 / 91 / 160  | 169 / 168 / 352 | 177 / 163 / 348 | 265 / 261 / 626 | 2964 / 2918 / 11327 |
+| raw       | 17 / 18 / 19 | 16 / 18 / 20 | 18 / 18 / 20    | 18 / 18 / 39    | 19 / 19 / 30    | 19 / 19 / 33    | 51 / 53 / 208       |
 
-|                | Zen 1, 2 | Zen 3, 4 | Cortex-A55 | A76  | Neoverse N1 | N2, V1, V2 | Ampere-1 |
-| -------------- | -------- | -------- | ---------- | ---- | ----------- | ---------- | -------- |
-| the plain loop | 3.46     | 2.31     | 19.8       | 4.91 | 3.01        | 2.21       | 3.68     |
-| `encode`       | 2.65     | 2.01     | 9.1        | 3.44 | 2.44        | 2.43       | 2.58     |
+`encode/add`: Rust / C. Values of 1 byte come again while they are in the table, so most of those
+are references.
 
-What else was tried for short strings, against the plain loop.
+| length    | 1       | 8        | 32       | 63        | 64        | 100       | 1000        |
+| --------- | ------- | -------- | -------- | --------- | --------- | --------- | ----------- |
+| text      | 18 / 48 | 44 / 78  | 68 / 111 | 92 / 134  | 97 / 133  | 133 / 176 | 1016 / 1021 |
+| url       | 16 / 42 | 44 / 75  | 72 / 106 | 98 / 134  | 94 / 131  | 135 / 173 | 993 / 1108  |
+| digits    | 17 / 40 | 44 / 71  | 67 / 94  | 95 / 121  | 97 / 116  | 134 / 150 | 982 / 932   |
+| base64    | 19 / 49 | 44 / 76  | 68 / 116 | 98 / 138  | 95 / 133  | 132 / 171 | 994 / 1023  |
+| upper     | 18 / 48 | 44 / 77  | 69 / 105 | 94 / 125  | 101 / 119 | 134 / 154 | 995 / 942   |
+| json      | 19 / 44 | 47 / 87  | 75 / 121 | 114 / 166 | 115 / 165 | 170 / 225 | 1421 / 1453 |
+| printable | 21 / 49 | 48 / 90  | 72 / 133 | 108 / 171 | 107 / 169 | 162 / 229 | 1642 / 1543 |
+| raw       | 16 / 42 | 39 / 110 | 48 / 143 | 55 / 165  | 55 / 163  | 71 / 199  | 367 / 1003  |
 
-| what                                                        | result                                                                                                  |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| the plain loop, only its last bytes written at once         | 0.65 to 0.9 up to 4 characters, 0.95 above                                                              |
-| 7 codes joined on the side, then added to what is left      | 1.11 to 1.27 for 1 character, 0.63 to 0.75 from 8 on                                                    |
-| one loop over the bytes that writes where the index says so | 0.64 to 0.75 from 8 on; 16 instructions per byte, 18 to 38% more cycles than the plain loop in llvm-mca |
+The other rows, for text: `encode/skip` takes 14, 20, 40, 68, 69, 102 and 960 ns. `decode/add` takes
+up to 9 ns more than `decode/skip`. A field that is in the table takes 13 to 20 ns to encode up to
+100 characters (C 39 to 56) and 79 at 1000 (213), and 7 ns to decode (13 to 21). Two runs of a row
+differ by up to 5%. Behind C in `encode/add`: 1000 digits, upper case letters or printable
+characters, by 5 to 6%.
 
-`Encoder::encode` of one field with a name from the static table and a value that is not in the
-dynamic table, in ns. "Before" is the plain loop alone.
+The rest is from harnesses that are not in the repository: they need the C code, or touch memory
+between two calls. One string literal of text through the coder, other strings every time, against
+C, the worse of two runs:
 
-|                               | Cascade Lake |      |      | Emerald Rapids |      |      |
-| ----------------------------- | ------------ | ---- | ---- | -------------- | ---- | ---- |
-| value                         | before       | now  | C    | before         | now  | C    |
-| 64 characters of up to 8 bits | 198          | 137  | 187  | 123            | 86   | 132  |
-| 100                           | 282          | 185  | 236  | 184            | 128  | 162  |
-| 200                           | 503          | 311  | 352  | 333            | 215  | 250  |
-| 500                           | 1180         | 713  | 711  | 766            | 473  | 514  |
-| 1000                          | 2362         | 1361 | 1329 | 1500           | 926  | 998  |
-| 4000                          | 9221         | 5157 | 5007 | 5916           | 3553 | 3530 |
-| 300, 1 in 20 of 10 to 15 bits | 781          | 452  | 492  | 538            | 314  | 377  |
-| 1000 printable, at random     | 3308         | 2066 | 2081 | 2383           | 1480 | 1560 |
-| 1000 bytes, sent as they are  | 457          | 456  | 1998 | 340            | 339  | 1601 |
+| characters                | 1    | 8    | 16   | 32   | 63   | 64   | 100  | 1000 | 4000 |
+| ------------------------- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
+| in a loop                 | 1.11 | 0.93 | 0.77 | 0.85 | 1.00 | 1.00 | 1.08 | 1.24 | 1.26 |
+| 512 KB touched in between | 0.80 | 0.84 | 0.43 | 0.79 | 0.82 | 0.79 | 0.88 | 1.11 | 1.20 |
+| 8 MB touched in between   | 0.52 | 0.58 | 0.46 | 0.40 | 0.40 | 0.42 | 0.37 | 0.32 | 0.39 |
 
-Why 64: groups are more code and 6 more cache lines of table. One string literal, other strings every
-time, against the plain loop alone:
+In a loop the C code has its table of pairs in the cache, and the literal by itself is behind it: by
+up to 1.26 for text, and by 1.4 for hexadecimal digits from 32 and upper case from 64 characters on
+(Cascade Lake: text 1.25, those 1.35 to 1.6). The rest of `Encoder::encode` makes up for that in the
+table above. With 8 MB the C code has a cache miss for every other character. With 512 KB it depends
+on how much of its table is still in the L2 cache: its times differ by up to 1.6 between two runs.
+The scalar decoder with 8 MB touched in between: 100 characters 0.51 of C, the values of
+hpack-test-case 0.75; on Cascade Lake 0.45 and 0.62. The kernel is further ahead, with tables of 448
+bytes: prototypes of it and of a decoder with a table of 32 KB took 155 against 299 cycles a string
+with 1 MB touched in between, 317 against 842 with 8 MB.
 
-| characters                                        | 64   | 100  | 200  | 500  | 1000 | 4000 |
-| ------------------------------------------------- | ---- | ---- | ---- | ---- | ---- | ---- |
-| Cascade Lake, in a loop                           | 0.71 | 0.70 | 0.67 | 0.67 | 0.64 | 0.64 |
-| 512 KB touched in between (L1 is cold)            | 0.80 | 0.80 | 0.75 | 0.69 | 0.67 | 0.65 |
-| 8 MB touched in between (L2 is cold too)          | 1.05 | 1.01 | 0.93 | 0.85 | 0.76 | 0.66 |
-| Emerald Rapids, in a loop                         | 0.69 | 0.62 | 0.63 | 0.59 | 0.59 | 0.58 |
-| 512 KB touched in between                         | 0.89 | 0.84 | 0.76 | 0.66 | 0.63 | 0.58 |
-| 8 MB touched in between, on a host with a slow L3 | 1.28 | 1.22 | 1.16 | 1.01 | 0.84 | 0.65 |
+Xeon (Cascade Lake) at 2.8 GHz, which has no kernel, 512 values per row, the decoder against C: text
+of 8 to 1000 characters 0.77 to 0.55, the values of hpack-test-case 0.70, `SAMEORIGIN` 0.96, a date
+0.95, 1 code in 5 of 10 to 19 bits 0.38, codes of 7 bits alone 0.67, of 14 bits 0.95. Behind C:
+codes of 5 bits alone 1.10, of 15 bits 1.17, of 8 bits 1.66, since two of those need 16 bits of
+lookup.
 
-The last row is 140 to 200 ns, once per string. The C code takes two to four times as long as the
-loop there, up to 2000 characters: it has a cache miss for every other character.
+Written byte by byte, 7 bytes take longer than in a loop that writes 32 bits whenever it has 32.
+With 4 codes of 15 bits in half of the groups, which is about the most that a string can have and
+still be sent coded, a literal of 14 to 56 bytes takes 1.10 to 1.14 of the time of that loop. With
+such codes in a quarter of the groups it takes 1.07 to 1.10, in a tenth 1.01 to 1.02. At 70 bytes it
+takes 1.11, 1.09 and 1.03 of what `encode_groups` takes, whose halves hold such codes. Of the 9,222
+different strings of hpack-test-case that are sent coded, 6 have such a group, one each.
 
-And against the loop of `encode` alone, on Emerald Rapids:
+### Why groups, and why from 128 bytes on
 
-| characters                | 64   | 100  | 200  | 500  | 1000 | 4000 |
-| ------------------------- | ---- | ---- | ---- | ---- | ---- | ---- |
-| in a loop                 | 1.02 | 1.00 | 0.97 | 0.92 | 0.92 | 0.90 |
-| 512 KB touched in between | 1.10 | 1.07 | 1.00 | 0.95 | 0.92 | 0.91 |
-| 8 MB touched in between   | 1.21 | 1.28 | 1.18 | 1.11 | 1.03 | 0.97 |
+`encode_groups` is 35 lines, 750 bytes of code and 1 KB of table. One string literal of text, other
+strings every time, against the loop of `encode` alone, on Emerald Rapids:
 
-So there the groups pay only from 500 characters on. They are for Intel up to Ice Lake, where a shift
-by `cl` is three micro-operations. That comparison has not been measured.
+| characters                | 64   | 96   | 128  | 160  | 192  | 256  | 512  | 1000 | 4000 |
+| ------------------------- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
+| in a loop                 | 1.02 | 1.00 | 1.00 | 0.96 | 0.93 | 0.93 | 0.91 | 0.92 | 0.90 |
+| 512 KB touched in between | 1.10 | 1.07 | 1.06 | 1.02 | 1.01 | 0.98 | 0.94 | 0.92 | 0.91 |
+| 8 MB touched in between   | 1.25 | 1.23 | 1.24 | 1.27 | 1.23 | 1.26 | 1.19 | 1.03 | 0.97 |
 
-What else was tried for long strings, 1000 characters, against the plain loop alone, on Emerald
-Rapids.
+Digits and upper case give the first row again. What the groups buy is the column of 1000 bytes of
+`encode/add`. With the loop alone, and all three in one binary, text takes 1.07 of the time of the C
+code instead of 0.96, base64 1.05 instead of 0.97, digits 1.17 instead of 1.08, upper case 1.15
+instead of 1.06. What they cost is 150 to 250 ns for a string of 128 to 512 bytes that finds nothing
+in the cache. Under 128 bytes they gain nothing in that table, so there they are not used.
 
-| what                                                              | in a loop                                                              | 8 MB touched |
-| ----------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------ |
-| the structure of the C code: table of pairs, 64 bits, split write | 0.77                                                                   |              |
-| table of pairs, 3 pairs joined by shifts, write without a branch  | 0.64                                                                   | 1.38         |
-| 4, 6, 7 or 8 codes joined by shifts alone                         | 0.74 to 0.86                                                           |              |
-| groups of 8: upper case and printable text do not fit 57 bits     | 1.02 to 1.16 there                                                     |              |
-| code, length and shift in arrays of their own, for all lengths    | 0.55, but 1.01 to 1.05 at 8 to 24 characters                           |              |
-| the three in one entry of 8 bytes                                 | 0.77: loaded as one word and taken apart                               |              |
-| no pass for the length until a group could make the code longer   | 0.56, but 2.9 if such groups come last and the string is sent as it is |              |
-| lengths added up 8 at a time, or 8 bytes per load                 | 0.57; 1.08 to 1.21 for the pass on Cascade Lake                        |              |
+On Cascade Lake they matter less: 0.97 to 1.00 for text of 64 to 4000 characters in a loop. With 8
+MB touched in between it is 1.14 to 1.22 at 64 and 100 characters, 1.06 to 1.12 at 200 and 1.02 at
+500 and 1000. Printable characters are the exception, with 0.97 at 64, 0.93 at 100 and 0.86 from
+1000 on, in a loop. `Encoder::encode` takes 0.88 of the time of the C code at 200 characters there
+and 1.00 to 1.08 from 500 to 4000.
 
-How the loop is compiled matters as much as what it does. What cost 4 to 35% each: the byte by byte
-case inlined into the loop (it is `#[cold]` and takes its state by value now), the halves computed
-in each arm of the `if` instead of before it, `as_chunks`, which divides by 7 even for 3 bytes, and
-lengths added up as `u32` instead of `u8`.
+### CPUs that were not measured
+
+What can be said without them is about the work, not about mispredicted branches. llvm-mca 18 takes
+every branch as predicted.
+
+The coder: the loop of `encode` over whole groups has 10.6 instructions per byte on x64 and 10.1 on
+arm64. A loop that writes 32 bits at a time has 13.8 and 13.4 with its writes. Under qemu, arm64
+runs 104 instructions for a literal of 1 character (that loop 98), 218 for 8 (249), 584 for 32 (692)
+and 1064 for 63 (1280). Cycles per byte in llvm-mca, whose Intel models are left out because they
+come to 4.3 where Emerald Rapids takes 2.2:
+
+|                            | Zen 1, 2 | Zen 3, 4 | Cortex-A55 | A76  | Neoverse N1 | N2, V1, V2 | Ampere-1 |
+| -------------------------- | -------- | -------- | ---------- | ---- | ----------- | ---------- | -------- |
+| `encode`                   | 2.65     | 2.01     | 9.1        | 3.44 | 2.44        | 2.43       | 2.58     |
+| `encode_groups`            | 3.15     | 1.94     | 9.0        | 4.01 | 2.40        | 2.15       | 2.86     |
+| 32 bits whenever it has 32 | 3.46     | 2.31     | 19.8       | 4.91 | 3.01        | 2.21       | 3.68     |
+
+The decoder: a lookup takes 23 to 27 instructions on x64 and 19 to 25 on arm64. With entries of 4
+bytes that hold both symbols it would take 17 and 15. They are not what the loop waits for, so they
+cost nothing where strings differ from call to call, as above. With one string decoded over and
+over, which the branch predictor learns, on Sapphire Rapids, against a table of 13 bits with such
+entries: text 1.00 to 1.04 of the time, a URL 1.10, digits 1.02 to 1.11, base64 0.87 to 0.90, upper
+case 0.58 to 0.63. arm64 has not been timed. Counted under qemu, against that table, text takes 13.3
+instructions a symbol instead of 9.8, upper case 13.3 instead of 17.6, codes of 14 bits 26 instead
+of 54. llvm-mca gives a window of four lookups the same number of cycles on Neoverse N1, V1 and V2,
+Ampere-1 and Apple M1, 4% more on Cortex-A76, and 19% more on Cortex-A55, which runs instructions in
+order.
+
+## What else was tried
+
+1.00 is what ships. Emerald Rapids unless it says otherwise.
+
+| the decoder                                                     | result                                                                       |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 13 bits, entries of 4 bytes with both symbols (32 KB)           | text 1.13 to 1.19, upper case 1.2 to 1.9, codes of 5 bits alone 0.96 to 0.99 |
+| 14 bits, such entries (64 KB)                                   | text 1.05 to 1.26, upper case 0.94 to 1.00, 8 MB touched 1.06 to 1.50        |
+| such entries, one `write` for short and long codes              | 23 instructions a lookup instead of 17; on Cascade Lake 1.10 to 1.25         |
+| unpacking an entry of 2 bytes into a struct, `if count == 2`    | a branch: about 1.5                                                          |
+| count and length in one byte                                    | the mask is on the chain: about 1.17                                         |
+| picking the first symbol with `if`, the flag in the symbol      | a branch again: about 1.5                                                    |
+| one bounds check per 8 bytes of input instead of one per lookup | no change: the time goes into waiting                                        |
+| lookups without a check at the start of the last bytes          | no change at 7 bytes, 1.25 at 8                                              |
+| no call of the kernel if the code after the next lookup is long | `W/"5F3C..."` 0.80, text 1.015, a user agent 1.07                            |
+| none if the next 57 bits have 7 ones in a row                   | text 1.14 to 1.22: `p,` has 7 ones in a row                                  |
+| none for under 10 bytes                                         | 1 to 10 ns less at 5, 6, 8 and 9 bytes, 5 more at 7, one block of the kernel |
+| the whole crate compiled for AVX-512                            | no change                                                                    |
+| the tables aligned to a cache line, or 1 or 34 bytes into one   | no change, but the same code linked at another address differs by up to 5%   |
+
+| the coder                                                         | characters | result                                                                          |
+| ----------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------- |
+| 32 bits whenever it has 32, the last bytes in a loop              | up to 63   | 0.93 for 1, 1.05 for 2, 1.25 for 3, 1.6 to 1.9 from 4 on                        |
+| the same, the last bytes written at once                          | up to 63   | 0.94 for 1, 1.3 to 1.7 from 5 on                                                |
+| 7 codes joined on the side, then added to what is left            | up to 63   | 1.03 to 1.18 for 1, 1.1 to 1.25 from 8 on                                       |
+| one loop over the bytes that writes where the index says so       | up to 63   | 1.1 to 1.3 from 8 on, 16 instructions per byte                                  |
+| `encode_groups` from 28 bytes on                                  | 28 to 63   | 1.05 in a loop, 1.1 to 1.2 with 8 MB touched                                    |
+| byte by byte, but a write only where the next code does not fit   | up to 127  | JSON and printable 0.95 to 0.98, 4 codes of 15 bits in half of the groups 1.04  |
+| no `encode_groups`, with that arm                                 | 1000       | 1.08 to 1.12, printable 1.04, JSON 0.98                                         |
+| `encode_groups` without the two halves                            | 1000       | JSON and printable 1.15 to 1.3                                                  |
+| 32 bits whenever it has 32                                        | 1000       | 1.7; 1.55 on Cascade Lake                                                       |
+| the structure of the C code: table of pairs, 64 bits, split write | 1000       | 1.3                                                                             |
+| table of pairs, 3 pairs joined by shifts, write without a branch  | 1000       | 1.08; 1.6 with 8 MB touched                                                     |
+| 4, 6, 7 or 8 codes joined by shifts on the side                   | 1000       | 1.25 to 1.45                                                                    |
+| groups of 8                                                       | 1000       | upper case and printable text do not fit 57 bits: slower than 32 bits at a time |
+| code, length and shift in arrays of their own                     | 1000       | 0.93, but 1.01 to 1.05 at 8 to 24 characters                                    |
+| the three in one entry of 8 bytes                                 | 1000       | 1.3: loaded as one word and taken apart                                         |
+| no pass for the length until a group could make the code longer   | 1000       | 0.95, but 2.9 if such groups come last and the string is sent as it is          |
+| lengths added up 8 at a time, or 8 bytes per load                 | 1000       | 0.97; 1.08 to 1.21 for the pass on Cascade Lake                                 |
+
+How `encode_groups` is compiled matters as much as what it does. What costs 4 to 35% each: the byte
+by byte case inlined into the loop (it is `#[cold]` and takes its state by value), the halves
+computed in each arm of the `if` instead of before it, `as_chunks`, which divides by 7 even for 3
+bytes, and lengths added up as `u32` instead of `u8`.
+
+SIMD for the coder, on the 10,654 strings that hpack-test-case sends as literals, 26 bytes on
+average, on Sapphire Rapids, against 32 bits at a time: the length with `pshufb` rows (SSE4) 1.6,
+with `vpermi2b` (AVX-512 VBMI) 0.42; the codes with `pshufb` rows and 32-bit lanes (SSE4) 1.02, with
+64-bit lanes (AVX2) 0.83, with `vpermi2b` 0.70. `encode` takes 0.66 of that loop on text of 1 to 60
+characters. The codes have to be joined bit by bit whatever finds them, and header strings are too
+short for the lookups to matter. Starting to code before the length is known, against the same loop:
+hpack-test-case 0.78 on Sapphire Rapids and 1.0 on Cascade Lake, a string that is sent as it is 1.3
+to 2, one of 1 to 3 bytes 1.1 to 1.3. wyhash replaced by one multiplication in `Encoder::encode`: no
+change.

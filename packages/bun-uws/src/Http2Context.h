@@ -52,10 +52,12 @@ struct BunHpackField {
     int staticIndex;
 };
 enum BunHpackResult { BUN_HPACK_FIELD, BUN_HPACK_END_OF_BLOCK, BUN_HPACK_INVALID, BUN_HPACK_TOO_LARGE };
+/* bun_hpack::Indexing */
+enum BunHpackIndexing : uint8_t { BUN_HPACK_ADD, BUN_HPACK_SKIP, BUN_HPACK_NEVER };
 BunHpack *Bun__Hpack__create();
 void Bun__Hpack__destroy(BunHpack *hpack);
 void Bun__Hpack__setEncoderMaxCapacity(BunHpack *hpack, uint32_t maxCapacity);
-void Bun__Hpack__encode(BunHpack *hpack, const char *name, size_t nameLength, const char *value, size_t valueLength, bool addToTable);
+void Bun__Hpack__encode(BunHpack *hpack, const char *name, size_t nameLength, const char *value, size_t valueLength, BunHpackIndexing indexing);
 const char *Bun__Hpack__block(const BunHpack *hpack, size_t *length);
 void Bun__Hpack__clearBlock(BunHpack *hpack);
 BunHpackResult Bun__Hpack__decode(BunHpack *hpack, const unsigned char *block, size_t blockLength, size_t *position, BunHpackField *field);
@@ -1074,7 +1076,7 @@ inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStr
     wroteStreamBytes = true;
     Http2ResponseData *d = &stream->data;
     const char *base = d->hdrBuf.span().data();
-    for (auto &h : d->hdrs) Bun__Hpack__encode(hpack, base + h.nameOff, h.nameLen, base + h.valueOff, h.valueLen, /* addToTable */ true);
+    for (auto &h : d->hdrs) Bun__Hpack__encode(hpack, base + h.nameOff, h.nameLen, base + h.valueOff, h.valueLen, BUN_HPACK_ADD);
     d->hdrBuf.shrink(0);
     d->hdrs.shrink(0);
 
@@ -1099,7 +1101,7 @@ inline void Http2Connection::writeHeaderBlock(Http2Response *stream, bool endStr
 inline void Http2Connection::writeInformational(Http2Response *stream, std::string_view status) {
     char code[3] = {'1', '0', '0'};
     memcpy(code, status.data(), std::min<size_t>(status.size(), 3));
-    Bun__Hpack__encode(hpack, ":status", 7, code, 3, /* addToTable */ false);
+    Bun__Hpack__encode(hpack, ":status", 7, code, 3, BUN_HPACK_SKIP);
     size_t length = 0;
     const char *block = Bun__Hpack__block(hpack, &length);
     writeFrame(http2::HEADERS, http2::END_HEADERS, stream->id, block, (uint32_t) length);

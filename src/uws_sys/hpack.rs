@@ -62,15 +62,10 @@ unsafe extern "C" fn Bun__Hpack__encode(
     name_len: usize,
     value: *const u8,
     value_len: usize,
-    add_to_table: bool,
+    indexing: Indexing,
 ) {
     // SAFETY: the caller's `name_len` and `value_len` bytes, which outlive this call.
     let (name, value) = unsafe { (c_slice(name, name_len), c_slice(value, value_len)) };
-    let indexing = if add_to_table {
-        Indexing::Add
-    } else {
-        Indexing::Skip
-    };
     let encoded = this.encoder.encode(&mut this.block, name, value, indexing);
     if encoded.is_err() {
         this.encoder.encode_verbatim(&mut this.block, name, value);
@@ -126,11 +121,11 @@ mod tests {
     #[test]
     fn pointers_stay_valid_until_the_next_call() {
         let too_large = vec![b'~'; 70_000];
-        let fields: [(&[u8], &[u8], bool); 4] = [
-            (b":status", b"200", false),
-            (b"x-a", b"hello world", true),
-            (b"x-a", b"hello world", true),
-            (b"x-b", &too_large, true),
+        let fields: [(&[u8], &[u8], Indexing); 4] = [
+            (b":status", b"200", Indexing::Skip),
+            (b"x-a", b"hello world", Indexing::Add),
+            (b"x-a", b"hello world", Indexing::Add),
+            (b"x-b", &too_large, Indexing::Add),
         ];
         let mut field = HpackField {
             name: core::ptr::null(),
@@ -148,10 +143,10 @@ mod tests {
                 assert!(matches!(end, HpackResult::EndOfBlock));
 
                 Bun__Hpack__setEncoderMaxCapacity(&mut *hpack, capacity);
-                for (name, value, add) in fields {
+                for (name, value, indexing) in fields {
                     let (name_len, value_len) = (name.len(), value.len());
                     let (name, value) = (name.as_ptr(), value.as_ptr());
-                    Bun__Hpack__encode(&mut *hpack, name, name_len, value, value_len, add);
+                    Bun__Hpack__encode(&mut *hpack, name, name_len, value, value_len, indexing);
                 }
                 let mut len = 0;
                 let block = Bun__Hpack__block(&*hpack, &mut len);

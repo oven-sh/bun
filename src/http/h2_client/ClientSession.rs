@@ -605,7 +605,7 @@ impl ClientSession {
         }
         let request = client.h2_build_request(client.body_len_for_send());
         if let Err(err) = encode::write_request(self, client, stream_ref, &request) {
-            // encodeHeader pushes into the HPACK encoder's dynamic table per
+            // write_request pushes into the HPACK encoder's dynamic table per encode
             // call, so a mid-encode failure leaves entries the server will
             // never see. Mark the session unusable for future streams and
             // remove without RST — from the server's view this stream id was

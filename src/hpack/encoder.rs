@@ -9,6 +9,7 @@ use crate::{
 };
 
 /// What the encoder may do with a field (§6.2).
+#[repr(u8)] // C++: `BunHpackIndexing` (Http2Context.h)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Indexing {
     /// Enters the dynamic table, unless a table has it already, it does not fit, or the history keeps it out.

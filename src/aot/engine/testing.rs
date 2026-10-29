@@ -19,8 +19,7 @@ pub(super) fn to_words(bytes: &[u8]) -> Vec<u64> {
 }
 
 pub(super) fn bytes_of(words: &[u64]) -> &[u8] {
-    // SAFETY: every byte of an initialized `u64` is initialized, and the slice ends with `words`.
-    unsafe { core::slice::from_raw_parts(words.as_ptr().cast::<u8>(), size_of_val(words)) }
+    bun_core::slice_as_bytes(words)
 }
 
 fn bytes_of_records<T: ResultRecord>(records: &[T]) -> &[u8] {

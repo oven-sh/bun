@@ -13,6 +13,7 @@ import {
   symlinkSync,
 } from "node:fs";
 import { basename, join } from "node:path";
+import { envWithoutExePath } from "../no-exe-path";
 
 let watchee: Subprocess;
 
@@ -330,6 +331,32 @@ it.skipIf(isWindows)("--watch reports an error when its executable was deleted",
 
   expect(await stderr).toContain(`error: Failed to reload "${exe}`);
   expect(await stderr).toContain(`ENOENT (execve)`);
+  expect(await proc.exited).toBe(1);
+});
+
+// The session has nothing to restart, and it says so.
+it.skipIf(!isLinux || !cc)("--watch reports an error when it cannot read the path of its executable", async () => {
+  using dir = tempDir("watch-exe-path-unknown", {
+    "app/entry.js": `console.log("iter first"); setInterval(() => {}, 1000);`,
+  });
+  const proc = spawn({
+    cmd: [bunExe(), "--debug-crash-handler-use-trace-string", "--watch", "entry.js"],
+    cwd: join(String(dir), "app"),
+    env: await envWithoutExePath(String(dir)),
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+  watchee = proc;
+  const stderr = proc.stderr.text();
+
+  const { waitFor, release } = stdoutWaiter(proc);
+  await waitFor("iter first");
+  release();
+
+  await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter second");`);
+
+  expect(await stderr).toContain("error: Failed to reload: the path of the executable is not known\n");
   expect(await proc.exited).toBe(1);
 });
 

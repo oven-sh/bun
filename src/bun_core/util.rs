@@ -4374,7 +4374,13 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         envp.push(core::ptr::null());
 
         // we must clone selfExePath in case argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable");
+        let Ok(exec_path) = self_exe_path() else {
+            crate::err_generic!("Failed to reload: the path of the executable is not known");
+            if may_return {
+                return;
+            }
+            crate::Global::exit(1);
+        };
 
         libc::execve(
             exec_path.as_ptr(),
@@ -4405,9 +4411,9 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 }
 
-/// Replaces this process with Bun run with `args`.
+/// Replaces this process with the Bun at `exec_path` run with `args`.
 #[cfg(unix)]
-pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
+pub fn exec_self(exec_path: &ZStr, args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     unsafe extern "C" {
         safe fn on_before_reload_process_posix(close_inherited_fds: bool);
     }
@@ -4418,7 +4424,6 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
     argv.extend(args.iter().map(ZBox::from_bytes));
     let mut pointers: Vec<*const core::ffi::c_char> = argv.iter().map(|z| z.as_ptr()).collect();
     pointers.push(core::ptr::null());
-    let exec_path = self_exe_path().expect("unreachable").as_ptr();
     on_before_reload_process_posix(false);
     // SAFETY: `pointers` is a null-terminated array of NUL-terminated strings that outlive the call, `environ` is the
     // process's own, and `fcntl` takes no pointer.
@@ -4429,7 +4434,11 @@ pub fn exec_self(args: &[&[u8]], keep_open: Option<Fd>) -> i32 {
                 libc::fcntl(fd.native(), libc::F_SETFD, flags & !libc::FD_CLOEXEC);
             }
         }
-        libc::execve(exec_path, pointers.as_ptr().cast(), c_environ().cast());
+        libc::execve(
+            exec_path.as_ptr(),
+            pointers.as_ptr().cast(),
+            c_environ().cast(),
+        );
     }
     std::io::Error::last_os_error().raw_os_error().unwrap_or(-1)
 }

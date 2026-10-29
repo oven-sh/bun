@@ -1,8 +1,18 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
 import { chmodSync, copyFileSync, existsSync, linkSync } from "fs";
-import { bunEnv as bunEnv_, bunExe, forEachLine, isWindows, substDrive, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv as bunEnv_,
+  bunExe,
+  forEachLine,
+  isLinux,
+  isWindows,
+  substDrive,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import { basename, join } from "path";
+import { cc, envWithoutExePath } from "../no-exe-path";
 
 const bunEnv: typeof bunEnv_ = {
   ...bunEnv_,
@@ -1583,5 +1593,28 @@ describe.concurrent("bun run", () => {
       bunType: "object",
       exitCode: 0,
     });
+  });
+
+  // The node shim links to this bun. Without /proc the kernel gives no path for it, and `argv[0]` is no path when the
+  // shell found bun in PATH. The script runs without the shim, as when the link cannot be created.
+  it.skipIf(!isLinux || !cc)("--bun warns when it cannot read the path of its executable", async () => {
+    using dir = tempDir("bun-run-node-shim-no-exe-path", {
+      "package.json": JSON.stringify({ name: "shim-no-exe-path", scripts: { go: "echo ran" } }),
+    });
+    const pathBinDir = join(String(dir), "path-bin");
+    await $`mkdir -p ${pathBinDir} && ln -sf ${bunExe()} ${pathBinDir}/bun`.quiet();
+    const env = await envWithoutExePath(String(dir));
+
+    await using proc = Bun.spawn({
+      cmd: ["bun", "--bun", "run", "go"],
+      cwd: String(dir),
+      env: { ...env, PATH: `${pathBinDir}:${env.PATH ?? process.env.PATH}` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toMatch(/^warn: failed to create node alias in \S+, scripts that run node will not find it$/m);
+    expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
   });
 });

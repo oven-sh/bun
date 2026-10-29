@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
-import { bunEnv, bunExe, tempDirWithBunTypes as tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, tempDirWithBunTypes as tempDir } from "harness";
 import { join } from "path";
 import { run } from "../../aot/harness/run";
 import { unsupported } from "../../aot/run-programs";
+import { cc, envWithoutExePath } from "../no-exe-path";
 
 const supported = !unsupported;
 
@@ -449,4 +450,23 @@ describe.skipIf(!supported)("bun test --aot", () => {
     expect(stderr).toContain("./does-not-exist");
     expect(exitCode).toBe(1);
   });
+
+  // The run starts bun again for the test files. A test file with a type error takes it there without the build step
+  // that reads the path of the executable first.
+  test.concurrent.skipIf(!isLinux || !cc)(
+    "reports an error when it cannot read the path of its executable",
+    async () => {
+      using dir = tempDir("test-aot", {
+        "fine.test.ts": `import { expect, test } from "bun:test";\ntest("fine", () => expect(1).toBe(1));\n`,
+        "wrong.test.ts": `import { test } from "bun:test";\nconst n: number = "text";\ntest("never run", () => {});\n`,
+      });
+      const { stderr, exitCode } = await run(
+        [bunExe(), "test", "--aot", "fine.test.ts", "wrong.test.ts"],
+        String(dir),
+        await envWithoutExePath(String(dir)),
+      );
+      expect(stderr).toContain("error: --aot could not start bun again: the path of the executable is not known\n");
+      expect(exitCode).toBe(1);
+    },
+  );
 });

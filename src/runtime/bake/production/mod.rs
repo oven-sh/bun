@@ -1138,24 +1138,20 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             .map_err(js_err)?;
     }
 
-    // SAFETY: C++ never returns null (allocates a `JSPromise` on the GC heap);
-    // `JSPromise` is an opaque `UnsafeCell`-backed handle so `&mut *` is sound.
-    let render_promise = unsafe {
-        &mut *BakeRenderRoutesForProdStatic(
-            global,
-            &StringView::from_bytes(&root_dir_path),
-            pt.all_server_files.as_ref().unwrap().get(),
-            server_render_funcs,
-            server_param_funcs,
-            client_entry_urls,
-            route_patterns,
-            route_nested_files,
-            route_type_and_flags,
-            route_source_files,
-            route_param_info,
-            route_style_references,
-        )
-    };
+    let render_promise = BakeRenderRoutesForProdStatic(
+        global,
+        &StringView::from_bytes(&root_dir_path),
+        pt.all_server_files.as_ref().unwrap().get(),
+        server_render_funcs,
+        server_param_funcs,
+        client_entry_urls,
+        route_patterns,
+        route_nested_files,
+        route_type_and_flags,
+        route_source_files,
+        route_param_info,
+        route_style_references,
+    );
     render_promise.set_handled();
     // Rebind from the raw pointer: `PerThread::init`/`attach`/`load_bundled_module`
     // above accessed the same allocation through `pt.vm`, invalidating the

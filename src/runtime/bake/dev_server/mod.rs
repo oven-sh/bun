@@ -353,7 +353,7 @@ pub(crate) struct Options<'a> {
     pub broadcast_console_log_from_browser_to_server: bool,
 }
 
-// The fields `client_graph`, `server_graph`, `directory_watchers`, and `assets`
+// The fields `client_graph`, `server_graph` and `directory_watchers`
 // all use `@fieldParentPointer` to access DevServer's state. This pattern has
 // made it easier to group related fields together, but one must remember those
 // structures still depend on the DevServer pointer.

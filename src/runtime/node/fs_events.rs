@@ -99,7 +99,7 @@ static FSEVENTS_DEFAULT_LOOP: std::sync::OnceLock<&'static FSEventsLoop> =
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     const { assert!(core::mem::size_of::<T>() == core::mem::size_of::<*mut c_void>()) };
     // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
-    let ptr = unsafe { bun_sys::c::dlsym(handle, symbol.as_ptr()) };
+    let ptr = unsafe { libc::dlsym(handle, symbol.as_ptr()) };
     if ptr.is_null() {
         return None;
     }

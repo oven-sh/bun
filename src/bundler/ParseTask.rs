@@ -47,7 +47,7 @@ mod EventLoop {
 }
 
 // the per-file parse arena is held as `bump: &'static Bump` (the
-// worker arena is pinned for the entire bundle pass — see `run_with_source_code`),
+// worker arena is pinned for the entire bundle pass — see `Worker::arena`),
 // so `bump.alloc_*` / `ArenaString::into_bump_str` already yield `&'static`
 // borrows directly. No erasure helper is needed; `StoreStr::new` covers the
 // remaining AST-string sites (`E::String.data`, `FileLoaderHash.key`).
@@ -2229,10 +2229,7 @@ pub mod parse_worker {
         log: &mut Log,
         entry: &mut CacheEntry,
     ) -> core::result::Result<Success<'static>, AnyError> {
-        // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
-        // `'static` matches `JSAst = BundledAst<'static>`; the arena outlives all
-        // reads through the returned ASTs.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*this.arena) };
+        let bump: &'static Bump = this.arena();
         let worker_ctx = this.ctx;
 
         let mut transpiler = this.transpiler_for_target(task.known_target);
@@ -2323,7 +2320,8 @@ pub mod parse_worker {
         let resolver: *mut Resolver = unsafe { core::ptr::addr_of_mut!((*transpiler).resolver) };
         // SAFETY: `transpiler` is a live worker-owned `*mut Transpiler` (possibly
         // reassigned above); reborrow only the disjoint `options` field.
-        // `'static` erasure: the worker-owned `Transpiler` outlives the parse.
+        // `'static` erasure: symbol names in the returned AST can point into `define`, which,
+        // like `bump`, lives until `Worker::deinit`.
         let topts: &'static options::BundleOptions<'static> = unsafe { &(*transpiler).options };
 
         // Allocated in the worker arena so `js_parser::new_lazy_export_ast`'s
@@ -2371,11 +2369,8 @@ pub mod parse_worker {
         );
         opts.bundle = true;
         opts.warn_about_unbundled_modules = false;
-        // `AllowUnresolved` is the same nominal type on
-        // both sides (re-export in options.rs). `'static` erasure: `topts` borrows
-        // a worker-owned `Transpiler` that outlives the parse.
-        // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
-        opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
+        // `AllowUnresolved` is the same nominal type on both sides (re-export in options.rs).
+        opts.allow_unresolved = &topts.allow_unresolved;
         // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
         // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
         // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint

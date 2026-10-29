@@ -97,9 +97,6 @@ impl Linker {
     }
 
     pub(crate) fn init(log: *mut Log) -> Self {
-        // The accessor initializes `relative_paths_list` lazily on
-        // first `intern_path()` / `relative_paths_list()` call, so no eager
-        // poke is needed (it would be startup overhead for non-bundling code paths).
         Self { log }
     }
 

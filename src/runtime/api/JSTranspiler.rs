@@ -869,7 +869,7 @@ fn export_replacement_value(
         // The result outlives every parse, so don't allocate it in the thread-local store.
         return Ok(Some(Expr::allocate(
             arena,
-            bun_ast::E::EString::init(data),
+            bun_ast::E::EString::init_re_encode_utf8(data, arena),
             bun_ast::Loc::EMPTY,
         )));
     }

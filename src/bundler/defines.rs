@@ -53,7 +53,7 @@ fn env_string_store_put(
     // `Bun__setEnvValue` frees the env-map entry it points into.
     let value: &[u8] = bump.alloc_slice_copy(value);
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
-        bump.alloc(bun_ast::E::EString::init(value)),
+        bump.alloc(bun_ast::E::EString::init_re_encode_utf8(value, bump)),
     ));
     let data = DefineData::init(Options {
         value,
@@ -390,7 +390,8 @@ impl DefineDataExt for DefineData {
         // into a freed slab and `process.env.NODE_ENV` reads garbage.
         let mut expr = bun_parsers::json_parser::clone_out_of_store(&expr, &source, log, bump)?;
         clear_locs(&mut expr);
-        let data: ExprData = expr.data;
+        let mut data: ExprData = expr.data;
+        data.re_encode_utf8_strings(bump);
         let can_be_removed_if_unused = bun_ast::expr::Tag::is_primitive_literal(data.tag());
         Ok(DefineData {
             value: data,

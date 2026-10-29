@@ -3,14 +3,19 @@ use crate::{E, Expr, e};
 use bun_alloc::Arena; // bumpalo::Bump re-export
 
 /// Links both ropes into the result (see `EString::push`); sound because shared strings are never ropes.
-fn join_strings(left: &E::EString, right: &E::EString) -> E::EString {
+/// `None` when a UTF-16 operand makes the join a copy over the cap (see `EString::can_join`).
+fn join_strings(left: &E::EString, right: &E::EString, bump: &Arena) -> Option<E::EString> {
+    if !E::EString::can_join(&[left, right]) {
+        return None;
+    }
+
     let mut new = left.shallow_clone();
     let mut rhs = data::Store::append(right.shallow_clone());
 
-    new.push(&mut *rhs);
+    new.append(&mut *rhs, bump);
     new.prefer_template = new.prefer_template || right.prefer_template;
 
-    new
+    Some(new)
 }
 
 /// Concat two `TemplatePart` slices into the bump arena.
@@ -77,43 +82,30 @@ pub fn fold_string_addition(
                 rhs = str;
             }
 
-            if left.is_utf8() {
-                match rhs.data {
-                    // "bar" + "baz" => "barbaz"
-                    Data::EString(right) => {
-                        if right.is_utf8() {
-                            return Some(Expr::init(
-                                join_strings(left.get(), right.get()),
-                                lhs.loc,
-                            ));
-                        }
-                    }
-                    // "bar" + `baz${bar}` => `barbaz${bar}`
-                    Data::ETemplate(right) => {
-                        if right.head.is_utf8() {
-                            return Some(Expr::init(
-                                E::Template {
-                                    tag: None,
-                                    parts: right.parts,
-                                    head: e::TemplateContents::Cooked(join_strings(
-                                        left.get(),
-                                        right.head.cooked(),
-                                    )),
-                                },
-                                l.loc,
-                            ));
-                        }
-                    }
-                    _ => {
-                        // other constant-foldable ast nodes would have been converted to .e_string
+            match rhs.data {
+                // "bar" + "baz" => "barbaz"
+                Data::EString(right) => {
+                    if let Some(joined) = join_strings(left.get(), right.get(), bump) {
+                        return Some(Expr::init(joined, lhs.loc));
                     }
                 }
-
-                // "'x' + `y${z}`" => "`xy${z}`"
-                if let Data::ETemplate(t) = rhs.data {
-                    if t.tag.is_none() {
-                        // (intentionally empty)
+                // "bar" + `baz${bar}` => `barbaz${bar}`
+                Data::ETemplate(right) => {
+                    if let (None, e::TemplateContents::Cooked(head)) = (&right.tag, &right.head)
+                        && let Some(joined) = join_strings(left.get(), head, bump)
+                    {
+                        return Some(Expr::init(
+                            E::Template {
+                                tag: None,
+                                parts: right.parts,
+                                head: e::TemplateContents::Cooked(joined),
+                            },
+                            l.loc,
+                        ));
                     }
+                }
+                _ => {
+                    // other constant-foldable ast nodes would have been converted to .e_string
                 }
             }
 
@@ -130,64 +122,35 @@ pub fn fold_string_addition(
                 rhs = str;
             }
 
+            // Untagged: every part is cooked and unshared, so `rhs` joins onto the last one in place.
             if left.tag.is_none() {
+                let last: &mut E::EString = match left.parts().len() {
+                    0 => left.head.cooked_mut(),
+                    n => left.parts_mut()[n - 1].tail.cooked_mut(),
+                };
                 match rhs.data {
                     // `foo${bar}` + "baz" => `foo${bar}baz`
                     Data::EString(right) => {
-                        if right.is_utf8() {
-                            // Mutation of this node is fine because it will be not
-                            // be shared by other places. Note that e_template will
-                            // be treated by enums as strings, but will not be
-                            // inlined unless they could be converted into
-                            // .e_string.
-                            // `parts` is `StoreSlice<T>` (arena-owned, mutable
-                            // provenance) — write through `parts_mut()`.
-                            if !left.parts().is_empty() {
-                                let i = left.parts().len() - 1;
-                                let last_tail = &left.parts()[i].tail;
-                                if last_tail.is_utf8() {
-                                    let new_tail = e::TemplateContents::Cooked(join_strings(
-                                        last_tail.cooked(),
-                                        right.get(),
-                                    ));
-                                    left.parts_mut()[i].tail = new_tail;
-                                    return Some(lhs);
-                                }
-                            } else if left.head.is_utf8() {
-                                let new_head = join_strings(left.head.cooked(), right.get());
-                                left.head = e::TemplateContents::Cooked(new_head);
-                                return Some(lhs);
-                            }
+                        if let Some(joined) = join_strings(last, right.get(), bump) {
+                            *last = joined;
+                            return Some(lhs);
                         }
                     }
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
                     Data::ETemplate(right) => {
-                        if right.tag.is_none() && right.head.is_utf8() {
-                            if !left.parts().is_empty() {
-                                let i = left.parts().len() - 1;
-                                let last_tail = &left.parts()[i].tail;
-                                if last_tail.is_utf8() && right.head.is_utf8() {
-                                    let new_tail = e::TemplateContents::Cooked(join_strings(
-                                        last_tail.cooked(),
-                                        right.head.cooked(),
-                                    ));
-                                    left.parts_mut()[i].tail = new_tail;
-
-                                    let new_parts = if right.parts().is_empty() {
-                                        left.parts
-                                    } else {
-                                        concat_parts(bump, left.parts(), right.parts())
-                                    };
-                                    left.parts = new_parts;
-                                    return Some(lhs);
-                                }
-                            } else if left.head.is_utf8() && right.head.is_utf8() {
-                                let new_head =
-                                    join_strings(left.head.cooked(), right.head.cooked());
-                                left.head = e::TemplateContents::Cooked(new_head);
-                                left.parts = right.parts;
-                                return Some(lhs);
+                        if let (None, e::TemplateContents::Cooked(right_head)) =
+                            (&right.tag, &right.head)
+                            && let Some(joined) = join_strings(last, right_head, bump)
+                        {
+                            *last = joined;
+                            if !right.parts().is_empty() {
+                                left.parts = if left.parts().is_empty() {
+                                    right.parts
+                                } else {
+                                    concat_parts(bump, left.parts(), right.parts())
+                                };
                             }
+                            return Some(lhs);
                         }
                     }
                     _ => {

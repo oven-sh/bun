@@ -28,6 +28,39 @@ for (let backend of ["api", "cli"] as const) {
         },
       });
 
+    // Inlined values are raw environment bytes. A non-ASCII value has to fold like a source string literal under
+    // --minify-syntax: per UTF-16 code unit (`[0]`, template `.length`), with U+2028 as numeric whitespace (`+x`),
+    // and still join with a literal so that `require(process.env.DIR + "/m.js")` resolves at build time.
+    if (backend === "cli")
+      itBundled("env/inline non-ascii", {
+        env: {
+          INLINE_NON_ASCII: "é😀",
+          INLINE_LS_NUMBER: "\u2028 12 ",
+          INLINE_DIR: "./dér",
+        },
+        backend: backend,
+        dotenv: "inline",
+        minifySyntax: true,
+        files: {
+          "/a.js": `
+        const v = process.env.INLINE_NON_ASCII;
+        const m = require(process.env.INLINE_DIR + "/m.js");
+        console.log(JSON.stringify([v, process.env.INLINE_NON_ASCII[0], process.env.INLINE_NON_ASCII?.[1], \`\${process.env.INLINE_NON_ASCII}\`.length, process.env.INLINE_NON_ASCII === "é😀", +process.env.INLINE_LS_NUMBER, ~process.env.INLINE_LS_NUMBER, m]));
+      `,
+          "/dér/m.js": `module.exports = "from m";`,
+        },
+        onAfterBundle(api) {
+          expect(api.readFile("/out.js")).toContain("from m");
+        },
+        run: {
+          env: {
+            INLINE_NON_ASCII: "the run-time value, which inlining should have replaced",
+            INLINE_LS_NUMBER: "0",
+          },
+          stdout: '["é😀","é","\\ud83d",3,true,12,-13,"from m"]',
+        },
+      });
+
     // A variable from the process environment (not a .env file) is inlined at build time. It has to be one this
     // process started with (the api backend builds in-process), spelled as the environment spells it (on Windows the
     // inlined name is case-sensitive even though process.env is not: `Path`, not `PATH`).

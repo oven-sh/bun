@@ -374,7 +374,8 @@ pub struct VirtualMachine {
     /// Workers created on this thread and not yet released by it. Parent-thread
     /// only: `WebWorker::create` pushes, `release_parent_poll_ref` removes,
     /// `teardown` takes the rest for `join_child_workers`.
-    pub child_workers: Vec<*mut crate::web_worker::WebWorker>,
+    /// Each is alive until that release, which drops the ref its proxy holds.
+    pub child_workers: Vec<bun_ptr::ParentRef<crate::web_worker::WebWorker>>,
     /// This VM's live pool jobs (`bun_jsc::job`); JS thread only, zero-valid.
     pub(crate) jobs: crate::JsCell<crate::job::JobList>,
     /// The door out of this thread (`bun_jsc::vm_handle`): tickets for work

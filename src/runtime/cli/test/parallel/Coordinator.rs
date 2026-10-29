@@ -16,7 +16,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_ptr::Interned;
 
 use super::frame::{self, Frame};
-use super::worker::{Worker, WorkerPipe};
+use super::worker::{SpawnContext, Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
 
 // `Status` lives in `crate::api::bun::process`
@@ -243,8 +243,15 @@ impl<'a> Coordinator<'a> {
         let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
         w.out = WorkerPipe::new(w_ptr);
         w.err = WorkerPipe::new(w_ptr);
-        match w.start() {
-            Ok(()) => {}
+        match w.start(&SpawnContext {
+            vm: self.vm,
+            cwd: self.cwd,
+            argv: &self.argv,
+            envps: &self.envps,
+            #[cfg(windows)]
+            windows_job: self.windows_job,
+        }) {
+            Ok(()) => self.live_workers += 1,
             Err(e) => {
                 Output::err(e, "failed to spawn test worker", ());
                 if self.live_workers == 0 {
@@ -294,10 +301,10 @@ impl<'a> Coordinator<'a> {
 
     fn assign_work(&mut self, w: &mut Worker) {
         if self.stop_reason.is_some() {
-            return w.shutdown();
+            return w.shutdown(&mut self.frame);
         }
         if let Some(idx) = w.range.pop_front() {
-            return w.dispatch(idx, self.files[idx as usize].as_bytes());
+            return w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes());
         }
         // Steal the back half of the largest remaining range as a contiguous
         // block. The thief walks it forward via popFront, so both workers keep
@@ -315,16 +322,16 @@ impl<'a> Coordinator<'a> {
             let v = unsafe { &mut *v_ptr };
             if self.costs.is_some() {
                 if let Some(idx) = v.range.pop_front() {
-                    return w.dispatch(idx, self.files[idx as usize].as_bytes());
+                    return w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes());
                 }
             } else if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
                 if let Some(idx) = w.range.pop_front() {
-                    return w.dispatch(idx, self.files[idx as usize].as_bytes());
+                    return w.dispatch(&mut self.frame, idx, self.files[idx as usize].as_bytes());
                 }
             }
         }
-        w.shutdown();
+        w.shutdown(&mut self.frame);
     }
 
     fn bail_out(&mut self) {
@@ -351,7 +358,7 @@ impl<'a> Coordinator<'a> {
             unsafe {
                 let other = base.add(i);
                 if (*other).alive && (*other).inflight.is_none() {
-                    (*other).shutdown();
+                    (*other).shutdown(&mut self.frame);
                 }
             }
         }
@@ -701,8 +708,16 @@ impl<'a> Coordinator<'a> {
             w.out = WorkerPipe::new(w_ptr);
             w.err = WorkerPipe::new(w_ptr);
             w.reached_ready = false;
-            match w.start() {
+            match w.start(&SpawnContext {
+                vm: self.vm,
+                cwd: self.cwd,
+                argv: &self.argv,
+                envps: &self.envps,
+                #[cfg(windows)]
+                windows_job: self.windows_job,
+            }) {
                 Ok(()) => {
+                    self.live_workers += 1;
                     respawned = true;
                 }
                 Err(e) => {

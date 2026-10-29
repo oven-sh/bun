@@ -15,15 +15,16 @@ use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Sta
 use bun_core::{self, Output};
 #[cfg(windows)]
 use bun_jsc as jsc;
+use bun_jsc::virtual_machine::VirtualMachine;
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
 use super::file_range::FileRange;
-use super::frame;
+use super::frame::{self, Frame};
 
 pub(crate) struct Worker {
     // BACKREF to the owning Coordinator. Stored as `*const` for LIFETIMES.tsv
-    // parity, but mutation sites (`live_workers`, `on_worker_exit`, `frame`)
+    // parity, but mutation sites (`on_worker_exit`, `on_frame`, `try_reap`)
     // go through `cast_mut()`. The pointer is created from `&raw mut coord` in
     // runner.rs, so it carries write provenance (preserved across const casts);
     // that removes the read-only-provenance layer of UB but does NOT make the
@@ -77,12 +78,20 @@ pub(crate) struct Worker {
     pub(crate) startup_failures: u8,
 }
 
+/// What `Worker::start` borrows from the `Coordinator`.
+pub(crate) struct SpawnContext<'a> {
+    pub(crate) vm: &'a VirtualMachine,
+    pub(crate) cwd: &'a [u8],
+    pub(crate) argv: &'a [bun_spawn::CStrPtr],
+    pub(crate) envps: &'a [bun_dotenv::NullDelimitedEnvMap],
+    #[cfg(windows)]
+    pub(crate) windows_job: Option<*mut c_void>,
+}
+
 impl Worker {
-    pub(crate) fn start(&mut self) -> crate::Result<()> {
+    /// The caller counts the worker in `live_workers` on `Ok`.
+    pub(crate) fn start(&mut self, coord: &SpawnContext<'_>) -> crate::Result<()> {
         debug_assert!(!self.alive);
-        let coord_ptr = self.coord;
-        // SAFETY: coord backref is valid for the worker's lifetime (Coordinator owns workers slice).
-        let coord = unsafe { &*coord_ptr };
 
         // The parent pointers stay valid: Coordinator holds the workers in a stable slice.
         let out_ptr = (&raw mut self.out).cast::<c_void>();
@@ -166,8 +175,7 @@ impl Worker {
                     .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if !extra_pipes.is_empty() {
-                // coord.vm backref valid for worker lifetime; adopt() mutates the
-                // loop's socket context via interior mutability on the C side.
+                // adopt() mutates the loop's socket context via interior mutability on the C side.
                 if !Channel::adopt(&raw mut this.ipc, coord.vm, extra_pipes[0].fd()) {
                     return Err(crate::Error::ChannelAdoptFailed);
                 }
@@ -292,10 +300,6 @@ impl Worker {
             }
         }
         this.alive = true;
-        // SAFETY: see coord_ptr note above; the backref carries write
-        // provenance, but see the `coord` field doc for the residual
-        // &mut-Coordinator-during-drive aliasing caveat.
-        unsafe { (*coord_ptr.cast_mut()).live_workers += 1 };
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.
         process.set_exit_handler(unsafe {
@@ -313,8 +317,6 @@ impl Worker {
                 // recurses unboundedly while spawning real processes each frame.
                 // Resource cleanup is handled by the function-scope errdefer.
                 this.alive = false;
-                // SAFETY: see above.
-                unsafe { (*coord_ptr.cast_mut()).live_workers -= 1 };
                 Output::err(e, "watchOrReap failed for test worker", ());
                 return Err(crate::Error::ProcessWatchFailed);
             }
@@ -331,9 +333,7 @@ impl Worker {
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
     }
 
-    pub(crate) fn dispatch(&mut self, file_idx: u32, file: &[u8]) {
-        // SAFETY: coord backref valid; frame mutation — see `coord` field doc (provenance caveats).
-        let f = unsafe { &mut (*self.coord.cast_mut()).frame };
+    pub(crate) fn dispatch(&mut self, f: &mut Frame, file_idx: u32, file: &[u8]) {
         f.begin(frame::Kind::Run);
         f.u32(file_idx);
         f.str(file);
@@ -342,9 +342,7 @@ impl Worker {
         self.dispatched_at = bun_core::time::milli_timestamp();
     }
 
-    pub(crate) fn shutdown(&mut self) {
-        // SAFETY: coord backref valid; frame mutation — see `coord` field doc (provenance caveats).
-        let f = unsafe { &mut (*self.coord.cast_mut()).frame };
+    pub(crate) fn shutdown(&mut self, f: &mut Frame) {
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
         // Leave the channel open so the reader drains trailing

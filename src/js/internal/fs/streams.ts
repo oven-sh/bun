@@ -2,11 +2,8 @@
 const { Readable, Writable, finished } = require("node:stream");
 const fs = require("node:fs");
 const { read, write, fsync, writev } = fs;
-const fileHandleInternals = fs.promises.$data;
-const FileHandle = fileHandleInternals.FileHandle;
-const kRef: typeof fileHandleInternals.kRef = fileHandleInternals.kRef;
-const kUnref: typeof fileHandleInternals.kUnref = fileHandleInternals.kUnref;
-const kFd: typeof fileHandleInternals.kFd = fileHandleInternals.kFd;
+const fileHandles = require("internal/fs/file_handles");
+type FileHandleInternals = NonNullable<typeof fileHandles.internals>;
 type FileHandle = $Node.FileHandle;
 type FileSink = $Node.FileSink;
 type FD = number;
@@ -104,12 +101,31 @@ const kIoDone = Symbol("kIoDone");
 const kWriteStreamFastPath = Symbol("kWriteStreamFastPath");
 const kFs = Symbol("kFs");
 
-const {
-  read: fileHandlePrototypeRead,
-  write: fileHandlePrototypeWrite,
-  fsync: fileHandlePrototypeFsync,
-  writev: fileHandlePrototypeWritev,
-} = FileHandle.prototype as FileHandle & { fsync?: undefined };
+let FileHandle: FileHandleInternals["FileHandle"] | undefined;
+let kRef: FileHandleInternals["kRef"];
+let kUnref: FileHandleInternals["kUnref"];
+let kFd: FileHandleInternals["kFd"];
+let fileHandlePrototypeRead: FileHandle["read"];
+let fileHandlePrototypeWrite: FileHandle["write"];
+let fileHandlePrototypeFsync: undefined;
+let fileHandlePrototypeWritev: FileHandle["writev"];
+
+function takeFileHandleInternals(internals: FileHandleInternals) {
+  FileHandle = internals.FileHandle;
+  kRef = internals.kRef;
+  kUnref = internals.kUnref;
+  kFd = internals.kFd;
+  ({
+    read: fileHandlePrototypeRead,
+    write: fileHandlePrototypeWrite,
+    fsync: fileHandlePrototypeFsync,
+    writev: fileHandlePrototypeWritev,
+  } = FileHandle.prototype as FileHandle & { fsync?: undefined });
+}
+
+const { internals } = fileHandles;
+if (internals) takeFileHandleInternals(internals);
+else fileHandles.whenLoaded = takeFileHandleInternals;
 
 const fileHandleStreamFs = (fh: FileHandle) => ({
   // try to use the basic fs.read/write/fsync if available, since they are less
@@ -244,7 +260,7 @@ function ReadStream(
     }
     this.fd = fd as number;
     this[kFs] = customFs || fs;
-  } else if (typeof fd === "object" && fd instanceof FileHandle) {
+  } else if (typeof fd === "object" && FileHandle !== undefined && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }
@@ -493,7 +509,7 @@ function WriteStream(
     }
     this.fd = fd as number;
     this[kFs] = customFs || fs;
-  } else if (typeof fd === "object" && fd instanceof FileHandle) {
+  } else if (typeof fd === "object" && FileHandle !== undefined && fd instanceof FileHandle) {
     if (options.fs) {
       throw $ERR_METHOD_NOT_IMPLEMENTED("FileHandle with fs");
     }

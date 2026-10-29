@@ -20,7 +20,7 @@
 
 // RUN(FILES): link
 // FILES: module [[leaf]] path="{{*}}/imports/chain/m0.js"
-// FILES: module [[entry]] path="{{*}}/commonjs-requires-commonjs"
+// FILES: module [[entry]] path="{{*}}/commonjs-requires-commonjs.cjs"
 // FILES: function {{*}}module=[[leaf]] kind=CommonJsModule
 // FILES-NOT: PropSet
 // FILES-NOT: = NewObject

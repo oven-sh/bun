@@ -1,0 +1,7 @@
+{
+  "name": "left",
+  "version": "1.0.0",
+  "dependencies": {
+    "vector": "1.0.0"
+  }
+}

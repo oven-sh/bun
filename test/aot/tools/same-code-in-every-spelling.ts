@@ -42,7 +42,7 @@ export function functionsByOrder(map: string, code: Buffer) {
 
 /** Where the program `<topic>/<file or folder>` of ../programs lies. One that a `*.programs` file of its topic holds is written into `folder`. */
 export function storedProgram(program: string, folder: string) {
-  const stored = join(import.meta.dir, "..", "programs", program);
+  const stored = join(import.meta.dir, "..", "parallel", program);
   if (existsSync(stored)) return stored;
   const [topic, name] = [program.slice(0, program.indexOf("/")), program.slice(program.indexOf("/") + 1)];
   const packed = packedFiles(topic);

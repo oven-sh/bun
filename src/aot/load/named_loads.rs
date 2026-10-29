@@ -747,14 +747,20 @@ mod tests {
         self, NodeDgram, NodeHttp2, NodeOs, NodeReadline, NodeRepl, NodeTty, NodeV8, NodeVm,
         NodeZlib,
     };
+    use crate::builtins::RuntimeUses;
     use crate::compile::testing::{default_settings, with_bind_input};
     use crate::load::runtime_modules::RuntimeModules;
-    use crate::load::runtime_roots::collect_runtime_roots;
+    use crate::load::runtime_roots::{FurtherLibraryCode, collect_runtime_roots};
 
     fn root_modules(files: &[(&str, &str)]) -> Vec<RuntimeModule> {
         let runtime_modules = RuntimeModules::new(Archive::embedded(), false);
         with_bind_input(files, &default_settings(), |input| {
-            let roots = collect_runtime_roots(input.files, &runtime_modules, input.platform);
+            let further = FurtherLibraryCode {
+                lacked_before: &RuntimeUses::default(),
+                serves_unseen_code: false,
+            };
+            let roots =
+                collect_runtime_roots(input.files, &runtime_modules, input.platform, further);
             let is_root = |module: &RuntimeModule| {
                 let path = runtime_modules.module_path(*module);
                 path.is_some_and(|path| roots.paths.iter().any(|root| root == path))

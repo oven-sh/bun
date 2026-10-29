@@ -12,7 +12,6 @@
 // SIDEWAYS: [[right]]]
 // SIDEWAYS: layout [[right]] name="Right"
 // SIDEWAYS-NOT: supertypes=
-// SIDEWAYS: layout
 
 // RUN(UNRELATED): link
 // UNRELATED: layout {{*}}name="Unrelated"

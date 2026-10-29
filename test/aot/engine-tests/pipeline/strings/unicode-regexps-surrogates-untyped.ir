@@ -1,0 +1,506 @@
+# Regular expressions with the `u` flag on strings with surrogate pairs and unpaired surrogates (the same program without type annotations).
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="unicode-regexps-surrogates-untyped.js" displayPath="unicode-regexps-surrogates-untyped.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=undefined|null|string elements=[String{value="a"}, String{value="\u{44f}"}, String{value="\u{4e2d}"}, String{value="\u{d83d}"}, String{value="\u{de00}"}, String{value="\u{1f600}"}, String{value="\u{d800}"}, String{value="\u{dfff}"}, String{value="\u{10000}"}, String{value="\u{10ffff}"}, String{value="\u{ffff}"}, String{value=" "}]} module=m0
+data d1 root=Array{contents=anything} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Data data=d0
+    v5 = Convert v4 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v6 = Data data=d1
+    v7 = Convert v6 declared={type=undefined|null|Array<never> flags=[IsExpected]}
+    v8 = Convert v7 declared={type=undefined|null|Array flags=[IsExpected]}
+    v9 = IteratorOpen v5
+    Jump -> next b2()
+  b2():
+    v10 = IteratorResume v9
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Branch v11 -> taken b3(), notTaken b69()
+  b3():
+    v13 = NewRegExp pattern="." regExpFlags=[Unicode]
+    v14 = NewRegExp pattern="^.$" regExpFlags=[Unicode]
+    v15 = NewRegExp pattern="^..$" regExpFlags=[Unicode]
+    v16 = NewRegExp pattern="^...$" regExpFlags=[Unicode]
+    v17 = NewRegExp pattern=".$" regExpFlags=[Unicode]
+    v18 = NewRegExp pattern=".{2}" regExpFlags=[Unicode]
+    v19 = NewRegExp pattern=".+" regExpFlags=[DotAll, Unicode]
+    v20 = NewRegExp pattern=".*?\\u044F" regExpFlags=[Unicode]
+    v21 = NewRegExp pattern="\\p{L}" regExpFlags=[Unicode]
+    v22 = NewRegExp pattern="^\\p{L}+$" regExpFlags=[Unicode]
+    v23 = NewRegExp pattern="[^\\p{L}]" regExpFlags=[Unicode]
+    v24 = NewRegExp pattern="\\P{L}+" regExpFlags=[Unicode]
+    v25 = NewRegExp pattern="\\p{L}{2,}" regExpFlags=[Unicode]
+    v26 = NewRegExp pattern="[\\u{1F600}-\\u{1F64F}]" regExpFlags=[Unicode]
+    v27 = NewRegExp pattern="^[\\u{10000}-\\u{10ffff}]+$" regExpFlags=[Unicode]
+    v28 = NewRegExp pattern="[^\\u{10000}-\\u{10ffff}]" regExpFlags=[Unicode]
+    v29 = NewRegExp pattern="[\\ud800-\\udbff]" regExpFlags=[Unicode]
+    v30 = NewRegExp pattern="[\\udc00-\\udfff]" regExpFlags=[Unicode]
+    v31 = NewRegExp pattern="[^\\ud800-\\udfff]+" regExpFlags=[Unicode]
+    v32 = NewRegExp pattern="\\ud83d" regExpFlags=[Unicode]
+    v33 = NewRegExp pattern="\\ude00" regExpFlags=[Unicode]
+    v34 = NewRegExp pattern="\\u{1F600}" regExpFlags=[Unicode]
+    v35 = NewRegExp pattern="\\u{1F600}+" regExpFlags=[Unicode]
+    v36 = NewRegExp pattern="\\u{10ffff}$" regExpFlags=[Unicode]
+    v37 = NewRegExp pattern="\\S\\s" regExpFlags=[Unicode]
+    v38 = NewRegExp pattern="\\s\\S" regExpFlags=[Unicode]
+    v39 = NewRegExp pattern="(.)\\1" regExpFlags=[Unicode]
+    v40 = NewRegExp pattern="(\\p{L})\\1" regExpFlags=[Unicode]
+    v41 = NewRegExp pattern="(?:.\\p{L})+" regExpFlags=[Unicode]
+    v42 = NewRegExp pattern="^(?:\\p{L}|\\p{So})*$" regExpFlags=[Unicode]
+    v43 = NewRegExp pattern="\\p{Extended_Pictographic}" regExpFlags=[Unicode]
+    v44 = NewRegExp pattern="\\p{Cs}" regExpFlags=[Unicode]
+    v45 = NewRegExp pattern="\\P{Cs}" regExpFlags=[Unicode]
+    v46 = NewRegExp pattern="\\w|\\W" regExpFlags=[Unicode]
+    v47 = NewRegExp pattern="\\W\\w" regExpFlags=[Unicode]
+    v48 = NewRegExp pattern="\\b." regExpFlags=[Unicode]
+    v49 = NewRegExp pattern=".\\B" regExpFlags=[Unicode]
+    v50 = NewRegExp pattern="\\u042F" regExpFlags=[IgnoreCase, Unicode]
+    v51 = NewRegExp pattern="[\\u0430-\\u044F]+" regExpFlags=[IgnoreCase, Unicode]
+    v52 = NewRegExp pattern="[^\\u0430-\\u044F]" regExpFlags=[IgnoreCase, Unicode]
+    v53 = NewRegExp pattern="\\u{10000}|\\u4E2D" regExpFlags=[Unicode]
+    v54 = NewRegExp pattern="(?=.)\\p{L}" regExpFlags=[Unicode]
+    v55 = NewRegExp pattern="(?!\\p{L})." regExpFlags=[Unicode]
+    v56 = NewRegExp pattern="(?<=.)\\p{L}" regExpFlags=[Unicode]
+    v57 = NewRegExp pattern="(?<!\\p{L})." regExpFlags=[Unicode]
+    v58 = NewRegExp pattern="(?<=\\u{1F600})." regExpFlags=[Unicode]
+    v59 = NewRegExp pattern="[\\p{L}--[a-z]]" regExpFlags=[UnicodeSets]
+    v60 = NewRegExp pattern="[\\p{L}&&\\p{Script=Cyrillic}]" regExpFlags=[UnicodeSets]
+    v61 = NewRegExp pattern="^\\p{RGI_Emoji}$" regExpFlags=[UnicodeSets]
+    v62 = NewArray v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30, v31, v32, v33, v34, v35, v36, v37, v38, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48, v49, v50, v51, v52, v53, v54, v55, v56, v57, v58, v59, v60, v61 contents=undefined|null|RegExp
+    v63 = Convert v62 declared={type=undefined|null|Array<undefined|null|RegExp> flags=[IsExpected]}
+    v64 = NewRegExp pattern="." regExpFlags=[Unicode, Sticky]
+    v65 = NewRegExp pattern="\\p{L}" regExpFlags=[Unicode, Sticky]
+    v66 = NewRegExp pattern="[^\\p{L}]" regExpFlags=[Unicode, Sticky]
+    v67 = NewRegExp pattern="\\P{L}+" regExpFlags=[Unicode, Sticky]
+    v68 = NewRegExp pattern="[\\udc00-\\udfff]" regExpFlags=[Unicode, Sticky]
+    v69 = NewRegExp pattern="[\\u{10000}-\\u{10ffff}]" regExpFlags=[Unicode, Sticky]
+    v70 = NewRegExp pattern="." regExpFlags=[Global, Unicode]
+    v71 = NewRegExp pattern="\\p{So}|\\p{L}" regExpFlags=[Global, Unicode]
+    v72 = NewRegExp pattern="(?:)" regExpFlags=[Global, Unicode]
+    v73 = NewRegExp pattern=".??" regExpFlags=[Global, Unicode]
+    v74 = NewRegExp pattern="\\ude00" regExpFlags=[Global, Unicode]
+    v75 = NewRegExp pattern="\\S" regExpFlags=[Unicode, Sticky]
+    v76 = NewArray v64, v65, v66, v67, v68, v69, v70, v71, v72, v73, v74, v75 contents=undefined|null|RegExp
+    v77 = Convert v76 declared={type=undefined|null|Array<undefined|null|RegExp> flags=[IsExpected]}
+    v78 = Integer
+    v79 = Convert v78 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b4(v79)
+  b4(v80):
+    v81 = PropGet v63 key="length"
+    v82 = Convert v81 declared={type=number flags=[IsExpected]}
+    v83 = Less v80, v82
+    Branch v83 -> taken b5(| 0), notTaken b27(| 0)
+  b5(v84):
+    Jump -> next b6()
+  b6():
+    v85 = ElemGet v63, v84
+    v86 = Convert v85 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v87 = Integer
+    v88 = Convert v87 declared={type=number flags=[IsExpected]}
+    v89 = Integer integer=2166136261
+    v90 = Convert v89 declared={type=number flags=[IsExpected]}
+    v91 = IteratorOpen v8
+    Jump -> next b7(v88, v90)
+  b7(v92, v93):
+    LoopHint
+    v95 = IteratorResume v91
+    v96 = ResultAt v95
+    v97 = ResultAt v95 index=1
+    Branch v96 -> taken b8(), notTaken b10()
+  b8():
+    v98 = Builtin builtin=GlobalThis
+    v99 = PropGet v98 key="console" [isFreeName]
+    v100 = Convert v99 declared={type=builtin(Console) flags=[IsExpected]}
+    v101 = PropGet v100 key="log"
+    v102 = Convert v101 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v103 = String string="once"
+    v104 = Call v102, v100, v103, v84, v92, v93 calleeKey="log" calleeName="console.log"
+    Jump -> next b9()
+  b9():
+    v105 = Increment v84
+    v106 = Convert v105 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b4(v106)
+  b10():
+    Jump -> next b11()
+  b11() handler=b26():
+    v107 = Convert v97 declared={type=undefined|null|string flags=[IsExpected]}
+    v108 = PropGet v86 key="exec"
+    v109 = Convert v108 declared={type=undefined|null|function flags=[IsExpected]}
+    v110 = Call v109, v86, v107 calleeKey="exec" calleeName="re.exec"
+    v111 = Convert v110 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v112 = ToBoolean v111
+    Branch v112 -> taken b12(| 0), notTaken b22(| 0)
+  b12(v113) handler=b26():
+    Jump -> next b13()
+  b13() handler=b26():
+    v114 = Increment v92
+    v115 = Convert v114 declared={type=number flags=[IsExpected]}
+    Jump -> next b14()
+  b14() handler=b26():
+    v116 = PropGet v113 key="index"
+    v117 = Convert v116 declared={type=number flags=[IsExpected]}
+    v118 = Call v3, -, v93, v117 calleeName="mix"
+    v119 = Convert v118 declared={type=number flags=[IsExpected]}
+    v120 = Integer
+    v121 = ElemGet v113, v120
+    v122 = Convert v121 declared={type=undefined|null|string flags=[IsExpected]}
+    v123 = PropGet v122 key="length"
+    v124 = Convert v123 declared={type=number flags=[IsExpected]}
+    v125 = Call v3, -, v119, v124 calleeName="mix"
+    v126 = Convert v125 declared={type=number flags=[IsExpected]}
+    Jump -> next b15()
+  b15() handler=b26():
+    v127 = PropGet v113 key="length"
+    v128 = Convert v127 declared={type=number flags=[IsExpected]}
+    v129 = Integer integer=1
+    v130 = Greater v128, v129
+    Branch v130 -> taken b16(), notTaken b21(v126)
+  b16() handler=b26():
+    v131 = Integer integer=1
+    v132 = ElemGet v113, v131
+    v133 = Convert v132 declared={type=undefined|null|string flags=[IsExpected]}
+    v134 = TypeTest v133 testedType=undefined
+    Branch v134 -> taken b17(| 0), notTaken b18(| 0)
+  b17(v135) handler=b26():
+    Jump -> next b21(v126)
+  b18(v136) handler=b26():
+    Jump -> next b19()
+  b19() handler=b26():
+    v137 = Integer integer=1
+    v138 = ElemGet v113, v137
+    v139 = Convert v138 declared={type=undefined|null|string flags=[IsExpected]}
+    v140 = PropGet v139 key="length"
+    v141 = Convert v140 declared={type=number flags=[IsExpected]}
+    v142 = Call v3, -, v126, v141 calleeName="mix"
+    v143 = Convert v142 declared={type=number flags=[IsExpected]}
+    Jump -> next b20()
+  b20() handler=b26():
+    Jump -> next b21(v143)
+  b21(v144) handler=b26():
+    Jump -> next b25(v115, v144)
+  b22(v145) handler=b26():
+    Jump -> next b23()
+  b23() handler=b26():
+    v146 = Integer integer=977
+    v147 = Call v3, -, v93, v146 calleeName="mix"
+    v148 = Convert v147 declared={type=number flags=[IsExpected]}
+    Jump -> next b24()
+  b24() handler=b26():
+    Jump -> next b25(v92, v148)
+  b25(v149, v150) handler=b26():
+    Jump -> next b7(v149, v150)
+  b26() role=IterationCleanup subject=v91:
+    v151 = CatchException
+    Rethrow v151
+  b27(v152):
+    Jump -> next b28()
+  b28():
+    v153 = Integer
+    v154 = Convert v153 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b29(v154)
+  b29(v155):
+    v156 = PropGet v77 key="length"
+    v157 = Convert v156 declared={type=number flags=[IsExpected]}
+    v158 = Less v155, v157
+    Branch v158 -> taken b30(| 0), notTaken b52(| 0)
+  b30(v159):
+    Jump -> next b31()
+  b31():
+    v160 = ElemGet v77, v159
+    v161 = Convert v160 declared={type=undefined|null|RegExp flags=[IsExpected]}
+    v162 = Integer
+    v163 = Convert v162 declared={type=number flags=[IsExpected]}
+    v164 = Integer integer=2166136261
+    v165 = Convert v164 declared={type=number flags=[IsExpected]}
+    v166 = IteratorOpen v8
+    Jump -> next b32(v163, v165)
+  b32(v167, v168):
+    LoopHint
+    v170 = IteratorResume v166
+    v171 = ResultAt v170
+    v172 = ResultAt v170 index=1
+    Branch v171 -> taken b33(), notTaken b35()
+  b33():
+    v173 = Builtin builtin=GlobalThis
+    v174 = PropGet v173 key="console" [isFreeName]
+    v175 = Convert v174 declared={type=builtin(Console) flags=[IsExpected]}
+    v176 = PropGet v175 key="log"
+    v177 = Convert v176 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v178 = String string="from every place"
+    v179 = Call v177, v175, v178, v159, v167, v168 calleeKey="log" calleeName="console.log"
+    Jump -> next b34()
+  b34():
+    v180 = Increment v159
+    v181 = Convert v180 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b29(v181)
+  b35():
+    Jump -> next b36()
+  b36() handler=b51():
+    v182 = Convert v172 declared={type=undefined|null|string flags=[IsExpected]}
+    v183 = Integer
+    v184 = Convert v183 declared={type=number flags=[IsExpected]}
+    Jump -> next b37(v167, v168, v184)
+  b37(v185, v186, v187) handler=b51():
+    LoopHint
+    v189 = PropGet v182 key="length"
+    v190 = Convert v189 declared={type=number flags=[IsExpected]}
+    v191 = LessEq v187, v190
+    Branch v191 -> taken b38(| 0), notTaken b49(| 0)
+  b38(v192) handler=b51():
+    Jump -> next b39()
+  b39() handler=b51():
+    v193 = Convert v192 declared={type=number flags=[IsExpected]}
+    PropSet v161, v193 key="lastIndex"
+    v195 = PropGet v161 key="exec"
+    v196 = Convert v195 declared={type=undefined|null|function flags=[IsExpected]}
+    v197 = Call v196, v161, v182 calleeKey="exec" calleeName="re.exec"
+    v198 = Convert v197 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}
+    v199 = ToBoolean v198
+    Branch v199 -> taken b40(| 0), notTaken b44(| 0)
+  b40(v200) handler=b51():
+    Jump -> next b41()
+  b41() handler=b51():
+    v201 = Increment v185
+    v202 = Convert v201 declared={type=number flags=[IsExpected]}
+    Jump -> next b42()
+  b42() handler=b51():
+    v203 = PropGet v200 key="index"
+    v204 = Convert v203 declared={type=number flags=[IsExpected]}
+    v205 = Call v3, -, v186, v204 calleeName="mix"
+    v206 = Convert v205 declared={type=number flags=[IsExpected]}
+    v207 = Integer
+    v208 = ElemGet v200, v207
+    v209 = Convert v208 declared={type=undefined|null|string flags=[IsExpected]}
+    v210 = PropGet v209 key="length"
+    v211 = Convert v210 declared={type=number flags=[IsExpected]}
+    v212 = Call v3, -, v206, v211 calleeName="mix"
+    v213 = Convert v212 declared={type=number flags=[IsExpected]}
+    v214 = PropGet v161 key="lastIndex"
+    v215 = Convert v214 declared={type=number flags=[IsExpected]}
+    v216 = Call v3, -, v213, v215 calleeName="mix"
+    v217 = Convert v216 declared={type=number flags=[IsExpected]}
+    Jump -> next b43()
+  b43() handler=b51():
+    Jump -> next b47(v202, v217)
+  b44(v218) handler=b51():
+    Jump -> next b45()
+  b45() handler=b51():
+    v219 = Integer integer=977
+    v220 = PropGet v161 key="lastIndex"
+    v221 = Convert v220 declared={type=number flags=[IsExpected]}
+    v222 = Add v219, v221
+    v223 = Call v3, -, v186, v222 calleeName="mix"
+    v224 = Convert v223 declared={type=number flags=[IsExpected]}
+    Jump -> next b46()
+  b46() handler=b51():
+    Jump -> next b47(v185, v224)
+  b47(v225, v226) handler=b51():
+    Jump -> next b48()
+  b48() handler=b51():
+    v227 = Increment v192
+    v228 = Convert v227 declared={type=number flags=[IsExpected]}
+    Jump -> next b37(v225, v226, v228)
+  b49(v229) handler=b51():
+    Jump -> next b50()
+  b50() handler=b51():
+    Jump -> next b32(v185, v186)
+  b51() role=IterationCleanup subject=v166:
+    v230 = CatchException
+    Rethrow v230
+  b52(v231):
+    Jump -> next b53()
+  b53():
+    v232 = Integer
+    v233 = Convert v232 declared={type=number flags=[IsExpected]}
+    v234 = Integer integer=2166136261
+    v235 = Convert v234 declared={type=number flags=[IsExpected]}
+    v236 = IteratorOpen v8
+    Jump -> next b54(v233, v235)
+  b54(v237, v238):
+    LoopHint
+    v240 = IteratorResume v236
+    v241 = ResultAt v240
+    v242 = ResultAt v240 index=1
+    Branch v241 -> taken b55(), notTaken b56()
+  b55():
+    v243 = Builtin builtin=GlobalThis
+    v244 = PropGet v243 key="console" [isFreeName]
+    v245 = Convert v244 declared={type=builtin(Console) flags=[IsExpected]}
+    v246 = PropGet v245 key="log"
+    v247 = Convert v246 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v248 = String string="methods"
+    v249 = PropGet v8 key="length"
+    v250 = Convert v249 declared={type=number flags=[IsExpected]}
+    v251 = Call v247, v245, v248, v237, v238, v250 calleeKey="log" calleeName="console.log"
+    v252 = Undefined
+    Return v252
+  b56():
+    Jump -> next b57()
+  b57() handler=b68():
+    v253 = PropGet v242 key="match"
+    v254 = Convert v253 declared={type=undefined|null|function flags=[IsExpected]}
+    v255 = NewRegExp pattern="." regExpFlags=[Global, Unicode]
+    v256 = Call v254, v242, v255 calleeKey="match" calleeName="s.match"
+    v257 = ToBoolean v256
+    Branch v257 -> taken b58(| 0), notTaken b60(| 0)
+  b58(v258) handler=b68():
+    Jump -> next b59()
+  b59() handler=b68():
+    v259 = PropGet v258 key="length"
+    Jump -> next b62(v259)
+  b60(v260) handler=b68():
+    Jump -> next b61()
+  b61() handler=b68():
+    v261 = Integer
+    Jump -> next b62(v261)
+  b62(v262) handler=b68():
+    v263 = Add v237, v262
+    v264 = Convert v263 declared={type=number flags=[IsExpected]}
+    Jump -> next b63()
+  b63() handler=b68():
+    v265 = PropGet v242 key="replace"
+    v266 = Convert v265 declared={type=undefined|null|function flags=[IsExpected]}
+    v267 = NewRegExp pattern="\\p{L}" regExpFlags=[Global, Unicode]
+    v268 = String string="<$&>"
+    v269 = Call v266, v242, v267, v268 calleeKey="replace" calleeName="s.replace"
+    v270 = PropGet v269 key="length"
+    v271 = Convert v270 declared={type=i32 flags=[IsExpected]}
+    v272 = Call v3, -, v238, v271 calleeName="mix"
+    v273 = Convert v272 declared={type=number flags=[IsExpected]}
+    Jump -> next b64()
+  b64() handler=b68():
+    v274 = PropGet v242 key="split"
+    v275 = Convert v274 declared={type=undefined|null|function flags=[IsExpected]}
+    v276 = NewRegExp pattern="(?:)" regExpFlags=[Unicode]
+    v277 = Call v275, v242, v276 calleeKey="split" calleeName="s.split"
+    v278 = PropGet v277 key="length"
+    v279 = Convert v278 declared={type=i32 flags=[IsExpected]}
+    v280 = Call v3, -, v273, v279 calleeName="mix"
+    v281 = Convert v280 declared={type=number flags=[IsExpected]}
+    Jump -> next b65()
+  b65() handler=b68():
+    v282 = PropGet v242 key="search"
+    v283 = Convert v282 declared={type=undefined|null|function flags=[IsExpected]}
+    v284 = NewRegExp pattern="\\p{So}" regExpFlags=[Unicode]
+    v285 = Call v283, v242, v284 calleeKey="search" calleeName="s.search"
+    v286 = Convert v285 declared={type=number flags=[IsExpected]}
+    v287 = Integer integer=1
+    v288 = Add v286, v287
+    v289 = Call v3, -, v281, v288 calleeName="mix"
+    v290 = Convert v289 declared={type=number flags=[IsExpected]}
+    Jump -> next b66()
+  b66() handler=b68():
+    v291 = PropGet v242 key="replace"
+    v292 = Convert v291 declared={type=undefined|null|function flags=[IsExpected]}
+    v293 = NewRegExp pattern="[^\\p{L}]+" regExpFlags=[Global, Unicode]
+    v294 = String string=""
+    v295 = Call v292, v242, v293, v294 calleeKey="replace" calleeName="s.replace"
+    v296 = PropGet v295 key="length"
+    v297 = Convert v296 declared={type=i32 flags=[IsExpected]}
+    v298 = Call v3, -, v290, v297 calleeName="mix"
+    v299 = Convert v298 declared={type=number flags=[IsExpected]}
+    Jump -> next b67()
+  b67() handler=b68():
+    Jump -> next b54(v264, v299)
+  b68() role=IterationCleanup subject=v236:
+    v300 = CatchException
+    Rethrow v300
+  b69():
+    Jump -> next b70()
+  b70() handler=b78():
+    v301 = Convert v12 declared={type=undefined|null|string flags=[IsExpected]}
+    v302 = IteratorOpen v5
+    Jump -> next b71()
+  b71() handler=b78():
+    LoopHint
+    v304 = IteratorResume v302
+    v305 = ResultAt v304
+    v306 = ResultAt v304 index=1
+    Branch v305 -> taken b72(), notTaken b73()
+  b72() handler=b78():
+    Jump -> next b2()
+  b73() handler=b78():
+    Jump -> next b74()
+  b74() handler=b77():
+    v307 = Convert v306 declared={type=undefined|null|string flags=[IsExpected]}
+    v308 = PropGet v8 key="push"
+    v309 = Convert v308 declared={type=undefined|null|function flags=[IsExpected]}
+    v310 = Add v301, v307
+    v311 = Call v1, -, v310 calleeName="flat"
+    v312 = Call v309, v8, v311 calleeKey="push" calleeName="subjects.push"
+    Jump -> next b75()
+  b75() handler=b77():
+    Jump -> next b76()
+  b76() handler=b77():
+    Jump -> next b71()
+  b77() role=IterationCleanup subject=v302 handler=b78():
+    v313 = CatchException
+    Rethrow v313
+  b78() role=IterationCleanup subject=v9:
+    v314 = CatchException
+    Rethrow v314
+}
+function f1 name="flat" module=m0 position=142 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=JSON
+    v2 = PropGet v1 key="parse"
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v4 = Builtin builtin=JSON
+    v5 = PropGet v4 key="stringify"
+    v6 = Convert v5 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v7 = Call v6, v4, v0 calleeKey="stringify" calleeName="JSON.stringify"
+    v8 = Convert v7 declared={type=undefined|null|string flags=[IsExpected]}
+    v9 = Call v3, v1, v8 calleeKey="parse" calleeName="JSON.parse"
+    ReturnCall v9
+}
+function f2 name="mix" module=m0 position=1591 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=number flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: i32, v1: i32):
+    v2 = Builtin builtin=Math
+    v3 = Builtin builtin=MathImul
+    v4 = BitXor v0, v1
+    v5 = Integer integer=16777619
+    v6 = Call v3, v2, v4, v5 calleeName="Math.imul"
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = Integer
+    v9 = URShift v7, v8
+    v10 = Convert v9 declared={type=number flags=[IsExpected]}
+    Return v10
+}
+# -- generated: mix
+# CHECK-LABEL: function {{*}}name="mix"
+# CHECK: module=m0 position=1591 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=int[0, 4294967295]}, {type=i32 flags=[IsExpected]}] results=[{type=int[0, 4294967295]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] {
+# CHECK-NEXT: b0(v0: int[0, 4294967295] ~ int[0, 2147483647], v1: anything ~ i32):
+# CHECK-NEXT: v2: undefined|number ~ i32 = AssumeType v1 provenType=undefined|number
+# CHECK-NEXT: v3: boolean ~ true = TypeTest v2 testedType=i32
+# CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b4()
+# CHECK-NEXT: b1(v4: i32):
+# CHECK-NEXT: v5: boolean ~ true = TypeTest v0 testedType=i32
+# CHECK-NEXT: Branch v5 -> taken b2(| 0), notTaken b3(| 0)
+# CHECK-NEXT: b2(v6: int[0, 2147483647]):
+# CHECK-NEXT: v7: i32 = BitXor v6, v4
+# CHECK-NEXT: Jump -> next b5(v7)
+# CHECK-NEXT: b3(v8: int[2147483648, 4294967295]) frequency=Unlikely:
+# CHECK-NEXT: v9: i32 = BitXor v8, v4
+# CHECK-NEXT: Jump -> next b5(v9)
+# CHECK-NEXT: b4() frequency=Unlikely:
+# CHECK-NEXT: v10: i32 = BitXor v0, v2
+# CHECK-NEXT: Jump -> next b5(v10)
+# CHECK-NEXT: b5(v11: i32):
+# CHECK-NEXT: v12: 16777619 = Integer integer=16777619
+# CHECK-NEXT: v13: i32 = CallBuiltin -, v11, v12 overload=MathImul/0 accessSite=65
+# CHECK-NEXT: v14: 0 = Integer
+# CHECK-NEXT: v15: int[0, 4294967295] = URShift v13, v14
+# CHECK-NEXT: Return v15
+# CHECK-NEXT: }

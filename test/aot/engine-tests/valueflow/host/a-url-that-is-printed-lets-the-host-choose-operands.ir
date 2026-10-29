@@ -1,0 +1,17 @@
+# console.log(new URL("http://a/"))
+# The method of URL.prototype under Symbol.for("nodejs.util.inspect.custom") is listed without a row: it calls what the host loads at start-up. HostChoosesOperands (h7) goes up.
+# RUN: valueflow-why timeline
+# CHECK: flag h7
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="ErrorOptions" fields=[{key="cause" declared={type=anything}}] ownFieldCount=1
+function f0 name="main" module=m0 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=Console
+    v1 = Builtin builtin=ConsoleLog
+    v2 = Builtin builtin=URL
+    v3 = String string="http://a/"
+    v4 = Construct v2, -, v3
+    v5 = Call v1, v0, v4
+    Return v5
+}

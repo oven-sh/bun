@@ -1564,8 +1564,7 @@ impl ExampleTag {
     }
 }
 
-// Single-threaded CLI scratch state. Static, so that a `URL<'static>` can borrow from the `*_BUF`s.
-static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(None);
+// Single-threaded CLI scratch state.
 static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
     bun_core::RacyCell::new([0u8; 1024]);
 static NPM_REGISTRY_URL_BUF: bun_core::RacyCell<[u8; 1024]> = bun_core::RacyCell::new([0u8; 1024]);
@@ -1809,20 +1808,14 @@ impl Example {
             let written = cap - cursor.len();
             &url_buf[..written]
         });
-        // SAFETY: `api_url` borrows from the process-global `NPM_REGISTRY_URL_BUF`; single-threaded CLI.
-        unsafe {
-            *URL_.get() = Some(api_url.erase_lifetime());
-        }
 
-        // SAFETY: single-threaded CLI access to static URL_ (set just above)
         let mut http_proxy: Option<URL<'static>> = env_loader
-            .get_http_proxy_for(unsafe { (*URL_.get()).as_ref().unwrap() })
+            .get_http_proxy_for(&api_url)
             .map(|u| URL::parse_single_reader(crate::cli::cli_dupe(u.href)));
 
         let mut async_http = HTTP::AsyncHTTP::init_sync(
             HTTP::Method::GET,
-            // SAFETY: single-threaded CLI access to static URL_ (set just above)
-            unsafe { (*URL_.get()).clone() }.unwrap(),
+            api_url,
             Default::default(),
             b"",
             b"",

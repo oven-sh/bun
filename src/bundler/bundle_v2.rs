@@ -1970,7 +1970,7 @@ pub mod bv2_impl {
             // the overwritten value is correct), then boxes it on the global heap
             // (NOT the bump arena — the clone holds `Box`/`Vec`/`MimallocArena`
             // fields that need `Drop` to run) and wires the self-referential
-            // `linker`/`macro_context`. The box is parked on
+            // `macro_context`. The box is parked on
             // `self.owned_client_transpiler` so `deinit_without_freeing_arena`
             // releases it.
 

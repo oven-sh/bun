@@ -1583,9 +1583,8 @@ impl VirtualMachine {
         unsafe { EventLoop::enter_scope_without_checkpoint(self.event_loop) }
     }
 
-    /// Safe shared-reference accessor for the process-lifetime dotenv loader
-    /// (`vm.transpiler.env`). The loader is allocated once during VM init and
-    /// never freed; callers previously open-coded `unsafe { &*vm.transpiler.env }`.
+    /// Safe shared-reference accessor for the dotenv loader (`vm.transpiler.env`).
+    /// It lives as long as the VM: a Worker's VM frees its own in `destroy()`.
     #[inline]
     pub fn env_loader(&self) -> &'static bun_dotenv::Loader {
         self.env_loader_opt()
@@ -1598,7 +1597,7 @@ impl VirtualMachine {
     #[inline]
     pub(crate) fn env_loader_opt(&self) -> Option<&'static bun_dotenv::Loader> {
         // SAFETY: when non-null, `transpiler.env` is set during `Transpiler::init`
-        // to a process-lifetime allocation; never freed while a VM is installed.
+        // to a loader that outlives the VM, or that the last step of `destroy()` frees.
         unsafe { self.transpiler.env.as_ref() }
     }
 
@@ -4085,9 +4084,8 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
     pub log: Option<NonNull<bun_ast::Log>>,
-    // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
-    // outlives the VM, so the inner lifetime is erased to `'static`.
-    pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
+    /// See [`InitOptions::owned_env_loader`].
+    pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub smol: bool,
     // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
@@ -4990,7 +4988,7 @@ impl VirtualMachine {
             transform_options: opts.args,
             graph: Some(graph),
             log: opts.log,
-            env_loader: opts.env_loader,
+            owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
             eval_mode: false,
@@ -5020,7 +5018,7 @@ impl VirtualMachine {
             transform_options: opts.args,
             graph: opts.graph,
             log: opts.log,
-            env_loader: opts.env_loader,
+            owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
@@ -5061,7 +5059,7 @@ impl VirtualMachine {
         let init_opts = InitOptions {
             transform_options: opts.args,
             log: opts.log,
-            env_loader: opts.env_loader,
+            owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
             eval_mode: false,

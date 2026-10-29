@@ -3034,13 +3034,11 @@ pub mod formatter {
         fn for_each_prelude(
             ctx: &mut Self,
             global_this: &JSGlobalObject,
-            key: *mut EncodedSlice,
+            key: &EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
-            // SAFETY: caller passes a valid `*EncodedSlice`.
-            let key = unsafe { &*key };
             if key.eq_ascii(b"constructor") {
                 return None;
             }
@@ -3114,7 +3112,7 @@ pub mod formatter {
         pub(crate) extern "C" fn for_each(
             global_this: &JSGlobalObject,
             ctx_ptr: *mut c_void,
-            key: *mut EncodedSlice,
+            key: &EncodedSlice,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,

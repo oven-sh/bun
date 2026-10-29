@@ -604,7 +604,7 @@ impl UpgradedDuplex {
         Ok(())
     }
 
-    #[uws_callback(export = "UpgradedDuplex__encode_and_write")]
+    #[unsafe(export_name = "UpgradedDuplex__encode_and_write")]
     pub(crate) fn encode_and_write(&self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(UpgradedDuplex, "encodeAndWrite (len: {})", data.len());
         let _keep_alive = self.keep_alive();
@@ -615,7 +615,7 @@ impl UpgradedDuplex {
         0
     }
 
-    #[uws_callback(export = "UpgradedDuplex__raw_write")]
+    #[unsafe(export_name = "UpgradedDuplex__raw_write")]
     pub(crate) fn raw_write(&self, encoded_data: &[u8]) -> i32 {
         let _keep_alive = self.keep_alive();
         self.write_encrypted(encoded_data);
@@ -872,11 +872,11 @@ pub(crate) fn on_close_js(_: &mut JsScope<'_>, callee: JsLocal<'_>) {
 // `bun_uws::UpgradedDuplex` link-time-dispatch shims (cycle break).
 //
 // `src/uws_sys/lib.rs` declares `UpgradedDuplex` as an opaque handle and binds
-// these symbols via `extern "C"` so the low-tier socket dispatch can call into
+// these symbols via `extern` blocks so the low-tier socket dispatch can call into
 // the runtime without an upward crate dep. Signatures MUST match the
-// `unsafe extern "C"` block there.
+// `unsafe extern` blocks there.
 //
-// All but the three below are emitted by `#[uws_callback(export = "...")]` on the
+// All but the three below come from `#[uws_callback(export = "...")]` or `export_name` on the
 // inherent methods above; `ssl` keeps a hand-written shim because the safe
 // method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
 // raw pointer.

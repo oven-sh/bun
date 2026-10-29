@@ -1079,11 +1079,7 @@ fn expand_derive_parse(input: &DeriveInput) -> syn::Result<TokenStream2> {
                 let __id = __p.expect_ident()?;
                 #(#arms)*
                 ::core::result::Result::Err(
-                    __loc.new_unexpected_token_error(::bun_css::Token::Ident(
-                        // SAFETY: `__id` is a sub-slice of the parser's source
-                        // buffer (see `enum_property_util::parse`).
-                        unsafe { ::bun_css::css_parser::src_str(__id) },
-                    )),
+                    __loc.new_unexpected_token_error(::bun_css::Token::Ident(__id)),
                 )
             }
         }

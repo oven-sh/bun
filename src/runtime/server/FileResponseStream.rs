@@ -447,16 +447,12 @@ impl FileResponseStream {
             let (errno, sent, remain) = self.sendfile.with_mut(|sf| {
                 let adjusted = sf.remain.min(i32::MAX as u64);
                 let mut off: i64 = i64::try_from(sf.offset).expect("int cast");
-                // SAFETY: both fds are valid open file descriptors owned by `self`;
-                // `off` is a stack local.
-                let rc = unsafe {
-                    sys::linux::sendfile(
-                        sf.socket_fd.native(),
-                        self.fd.get().native(),
-                        &raw mut off,
-                        adjusted as usize,
-                    )
-                };
+                let rc = sys::linux::sendfile(
+                    sf.socket_fd.native(),
+                    self.fd.get().native(),
+                    Some(&mut off),
+                    adjusted as usize,
+                );
                 let errno = sys::get_errno(rc);
                 let sent: u64 =
                     u64::try_from((off - i64::try_from(sf.offset).expect("int cast")).max(0))

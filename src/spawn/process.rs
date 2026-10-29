@@ -1321,7 +1321,7 @@ pub mod waiter_thread_posix {
                     }
                 }
             }
-            EventLoopHandle::Mini(mut mini) => {
+            EventLoopHandle::Mini(mini) => {
                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
                     result,
                     subprocess: process,
@@ -1333,10 +1333,9 @@ pub mod waiter_thread_posix {
                         out,
                         ResultTaskMini::<T>::run_from_main_thread_mini,
                     );
-                    mini.get_mut()
-                        .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
-                            core::ptr::addr_of_mut!((*out).task),
-                        ));
+                    mini.enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
+                        core::ptr::addr_of_mut!((*out).task),
+                    ));
                 }
                 // `out` is now owned by the mini queue; freed in `run_from_main_thread_mini`.
             }

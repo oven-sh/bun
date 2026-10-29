@@ -4000,7 +4000,7 @@ struct LoaderResult<'a> {
 ///
 /// # Safety
 /// `jsc_vm` is the live per-thread VM; the returned borrows live as long as
-/// the input `specifier_str` / the VM's resolver caches.
+/// the input `specifier_str` / the VM's resolver caches / its `module_loader.eval_source`.
 unsafe fn get_loader_and_virtual_source<'a>(
     specifier_str: &'a [u8],
     jsc_vm: *mut VirtualMachine,
@@ -4032,9 +4032,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
             && specifier.ends_with(STDIN)
             && bun_paths::resolve_path::is_sep_any(specifier[specifier.len() - STDIN.len() - 1]);
         if is_eval || is_stdin {
-            // SAFETY: `eval_source` is heap-owned by the VM (`Box<Source>`); it
-            // outlives the synchronous transpile this borrow feeds into.
-            virtual_source = Some(unsafe { &*std::ptr::from_ref::<bun_ast::Source>(eval_source) });
+            virtual_source = Some(eval_source);
             loader = Some(Loader::Tsx);
         }
     }

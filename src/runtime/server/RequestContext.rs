@@ -1721,10 +1721,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
             return false;
         }
 
-        // SAFETY: `this.blob`'s backing bytes are owned by the (pinned)
-        // context and outlive `send_writable_bytes_for_blob`; the cell borrow
-        // ends here.
-        let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(this.blob.get().slice()) };
+        let bytes: &[u8] = this.blob.get().slice();
 
         let _ = this.send_writable_bytes_for_blob(bytes, write_offset, resp);
         true
@@ -4012,10 +4009,7 @@ impl<const SSL_ENABLED: bool, const DEBUG_MODE: bool, const MUX: bool>
     }
 
     pub(crate) fn render_bytes(&self) {
-        // SAFETY: `self.blob`'s backing bytes are owned by the context and
-        // outlive the `try_end`/`on_writable` calls below; the cell read ends
-        // here, before the (self-releasing) tail.
-        let bytes: &[u8] = unsafe { bun_ptr::detach_lifetime(self.blob.get().slice()) };
+        let bytes: &[u8] = self.blob.get().slice();
         if let Some(resp) = self.resp.get() {
             // SAFETY: FFI handle
             if !resp.try_end(bytes, bytes.len(), self.should_close_connection()) {

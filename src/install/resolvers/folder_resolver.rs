@@ -241,39 +241,28 @@ fn read_package_json_from_disk(
     // `manager` through the `pm` argument. Through `pm` it never derefs `log`,
     // and it derefs `lockfile` only under `Features::workspaces`, which none
     // of the `features` that `get_or_put` passes has.
-    //
-    // `log_mut()` reads the BACKREF `self.log: *mut Log` and returns the
-    // disjoint CLI `Log` allocation (lifetime decoupled from `&self`); call it
-    // safely *before* establishing `manager_ptr` so `log` is derived from a
-    // separate allocation and is unaffected by the `&mut *manager_ptr`
-    // reborrows below.
     let log: &mut bun_ast::Log = manager.log_mut();
-    let manager_ptr: *mut PackageManager = manager;
+    let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
 
     if resolver.tag == ResolutionTag::Workspace {
         let _tracer =
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
-        // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
-        // argument; `log` points into a separate `Log` allocation (see the
-        // borrow-splitting comment above), so this `&mut` reborrow aliases no
-        // other live reference.
-        let json = unsafe { &mut *manager_ptr }
+        let json = manager
             .workspace_package_json_cache
             .get_with_path(log, abs.as_bytes(), Default::default())
             .unwrap()?;
         // `Expr` is `Copy`; take a raw pointer to `source` so the borrow on
-        // `workspace_package_json_cache` ends before `&mut *manager_ptr` is
+        // `workspace_package_json_cache` ends before `&mut *manager` is
         // formed for `parse_with_json`.
         let root: Expr = json.root;
         let source: *const bun_ast::Source = &raw const json.source;
 
         // SAFETY: see the borrow-splitting comment above.
         unsafe {
-            let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
             package.parse_with_json(
                 &mut *lockfile,
-                &mut *manager_ptr,
+                manager,
                 log,
                 &*source,
                 root,
@@ -318,15 +307,7 @@ fn read_package_json_from_disk(
 
         // SAFETY: see the borrow-splitting comment above.
         unsafe {
-            let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
-            package.parse(
-                &mut *lockfile,
-                &mut *manager_ptr,
-                log,
-                &source,
-                resolver,
-                features,
-            )?;
+            package.parse(&mut *lockfile, manager, log, &source, resolver, features)?;
         }
     }
 

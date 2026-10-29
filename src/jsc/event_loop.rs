@@ -505,8 +505,7 @@ impl EventLoop {
             };
             // `exit()` drains before it decrements the count. Reset it so each test callback still drains its microtasks.
             let entered = core::mem::replace(&mut self.entered_event_loop_count, 0);
-            // SAFETY: the live per-thread VM that owns this loop (hook contract).
-            unsafe { (hooks.run_pending_test_step)(self.vm()) };
+            (hooks.run_pending_test_step)(vm.global());
             self.entered_event_loop_count = entered;
             if !self.drain_microtasks_once(vm, global_object, jsc_vm)? {
                 return Ok(());

@@ -2341,7 +2341,7 @@ impl VirtualMachine {
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);
             let mut passes = 0;
-            while self.event_loop_mut().deferred_tasks.run() && passes < EXIT_FLUSH_PASSES {
+            while passes < EXIT_FLUSH_PASSES && self.event_loop_mut().deferred_tasks.run() {
                 passes += 1;
             }
             self.is_inside_deferred_task_queue.set(false);

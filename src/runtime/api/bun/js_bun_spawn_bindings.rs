@@ -158,8 +158,6 @@ fn get_argv0(
 /// `storage` receives ownership of every NUL-terminated string whose pointer is
 /// pushed into `argv` / `argv0`; the caller's `Vec<ZBox>`
 /// is dropped after `spawn_process` returns.
-///
-/// Returns `cmd[0]` as the caller gave it.
 fn get_argv(
     global_this: &JSGlobalObject,
     args: JSValue,

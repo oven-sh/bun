@@ -185,7 +185,10 @@ impl GarbageCollectionController {
     }
 
     /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires without heap growth beyond the chatter slack, back to fast when it grows.
-    pub fn on_gc_repeating_timer(&self, vm: &VirtualMachine) {
+    ///
+    /// # Safety
+    /// `self` is `vm`'s own controller, and the timer dispatch has just popped its node.
+    pub unsafe fn on_gc_repeating_timer(&self, vm: &VirtualMachine) {
         self.gc_repeating_timer
             .with_mut(|t| t.state = TimerState::FIRED);
         if self.disabled.get() {

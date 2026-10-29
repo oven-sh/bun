@@ -1,0 +1,43 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -2641,8 +2641,15 @@
+ 
+ 
+ #define COMMON_WRITE_CHECKS() do {                                          \
++    if (lsquic_stream_is_write_reset(stream))                               \
++    {                                                                       \
++        LSQ_INFO("Attempt to write to stream after it had been reset");     \
++        errno = ECONNRESET;                                                 \
++        return -1;                                                          \
++    }                                                                       \
+     if ((stream->sm_bflags & SMBF_USE_HEADERS)                              \
+-            && !(stream->stream_flags & STREAM_HEADERS_SENT))               \
++            && (!(stream->stream_flags & STREAM_HEADERS_SENT)              \
++                || SSHS_BEGIN != stream->sm_send_headers_state))           \
+     {                                                                       \
+         if (SSHS_BEGIN != stream->sm_send_headers_state)                    \
+         {                                                                   \
+@@ -2657,12 +2664,6 @@
+             return -1;                                                      \
+         }                                                                   \
+     }                                                                       \
+-    if (lsquic_stream_is_write_reset(stream))                               \
+-    {                                                                       \
+-        LSQ_INFO("Attempt to write to stream after it had been reset");     \
+-        errno = ECONNRESET;                                                 \
+-        return -1;                                                          \
+-    }                                                                       \
+     if (stream->stream_flags & (STREAM_U_WRITE_DONE|STREAM_FIN_SENT))       \
+     {                                                                       \
+         LSQ_INFO("Attempt to write to stream after it was closed for "      \
+@@ -4283,6 +4284,10 @@
+                                                 hblock_sz - (size_t) nw);
+     stream->sm_hblock_sz = hblock_sz - (size_t) nw;
+     stream->sm_hblock_off = 0;
++    /* A previous header block switched to DATA readiness.  Restore encoder
++     * gating so later blocks cannot invoke user callbacks while pending.
++     */
++    stream->sm_write_avail = stream_write_avail_with_headers;
+     LSQ_DEBUG("stashed %u bytes of header block", stream->sm_hblock_sz);
+ 
+   end:

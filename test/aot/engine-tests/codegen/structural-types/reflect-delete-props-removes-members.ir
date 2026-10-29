@@ -358,7 +358,7 @@ function f105 module=m0 role=Signature thisType={type=anything} results=[{type=a
 # CHECK-NEXT: Int32 b@186 = Phi(ReadsLocalState, v3:Parameter)
 # CHECK-NEXT: Int64 b@187 = Patchpoint(runsWithoutFrame, resultConstraints = SomeRegister, v10:PropGet)
 # CHECK-NEXT: Int64 b@37 = Patchpoint(b@24:Register(%rax), b@187:Register(%rsi), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:jscRoot|Reads:Top, v10:PropGet)
-# CHECK-NEXT: Int64 b@38 = Load(b@10, offset = 8040, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v12:String)
+# CHECK-NEXT: Int64 b@38 = Load(b@10, offset = 8032, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v12:String)
 # CHECK-NEXT: Int64 b@39 = Load(b@38, offset = 32, ControlDependent|Reads:AOTInstance_stringCells, v12:String)
 # CHECK-NEXT: Void b@41 = Branch(b@39, Terminal, v12:String)
 # CHECK-NEXT: Successors: Then:#20, Else:Rare:#21

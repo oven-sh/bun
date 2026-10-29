@@ -322,7 +322,7 @@ function f1 name="long" module=m0 position=120 flags=[HasExplicitName] length=2 
 # CHECK: role=Source
 # CHECK-NEXT: BB#0: ; frequency = 1.000000
 # CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
-# CHECK-NEXT: Int64 b@21 = Load(b@10, offset = 8040, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:String)
+# CHECK-NEXT: Int64 b@21 = Load(b@10, offset = 8032, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v2:String)
 # CHECK-NEXT: Int64 b@22 = Load(b@21, offset = 32, ControlDependent|Reads:AOTInstance_stringCells, v2:String)
 # CHECK-NEXT: Void b@24 = Branch(b@22, Terminal, v2:String)
 # CHECK-NEXT: Successors: Then:#2, Else:Rare:#3

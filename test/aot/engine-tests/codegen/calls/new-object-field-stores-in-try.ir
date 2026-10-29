@@ -329,7 +329,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: Successors: Then:#10, Else:Rare:#11
 # CHECK-NEXT: BB#10: ; frequency = 0.940314
 # CHECK-NEXT: Predecessors: #9
-# CHECK-NEXT: Int64 b@130 = Load(b@10, offset = 8040, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v22:String)
+# CHECK-NEXT: Int64 b@130 = Load(b@10, offset = 8032, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v22:String)
 # CHECK-NEXT: Int64 b@131 = Load(b@130, ControlDependent|Reads:AOTInstance_stringCells, v22:String)
 # CHECK-NEXT: Void b@133 = Branch(b@131, Terminal, v22:String)
 # CHECK-NEXT: Successors: Then:#37, Else:Rare:#38
@@ -430,7 +430,7 @@ function f12 module=m0 role=Signature thisType={type=anything} results=[{type=an
 # CHECK-NEXT: BB#25: ; frequency = 0.058709
 # CHECK-NEXT: Predecessors: #2, #27, #26
 # CHECK-NEXT: Void b@81 = Store(b@65, b@34, offset = 40, ControlDependent|Writes:ObjectFields.11, v34:PutSlotOrAdd)
-# CHECK-NEXT: Int64 b@87 = Load(b@10, offset = 8040, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v38:String)
+# CHECK-NEXT: Int64 b@87 = Load(b@10, offset = 8032, ControlDependent|ReadsImmutable|Reads:AOTInstance_fixedFields, v38:String)
 # CHECK-NEXT: Int64 b@88 = Load(b@87, ControlDependent|Reads:AOTInstance_stringCells, v38:String)
 # CHECK-NEXT: Void b@90 = Branch(b@88, Terminal, v38:String)
 # CHECK-NEXT: Successors: Then:#28, Else:Rare:#29

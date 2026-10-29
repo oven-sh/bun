@@ -967,6 +967,7 @@ describe("bundler", () => {
     expect(chunkWith(alone, `"in-helper"`)).toEqual(["./a-chunk-[hash].js"]);
     expect(chunkWith(withB, `"in-helper"`)).toEqual(["./shared-[hash].js"]);
     expect(samePathOtherBytes(alone, withB)).toEqual([]);
+    expect(Object.keys(withB).filter(path => withB[path].includes("./a-chunk-"))).toEqual([]);
   });
 
   // Random graphs (splitting-fuzz.ts). The metafile lists the chunks that each output imports.

@@ -1032,10 +1032,10 @@ When you provide a string for the `naming` field, Bun uses it only for bundles t
 In the `chunk` template, Bun fills `[name]` and `[dir]` from the files that load the chunk:
 
 - **A chunk for an `import()`**, or for a `require()` that becomes its own chunk: `[name]` and `[dir]` are those of the imported file.
-- **A chunk of shared JavaScript that one entrypoint loads**, directly or through its `import()` calls: `[name]` is the name of the entrypoint followed by `-chunk`.
+- **A chunk of shared JavaScript that one entrypoint loads**, directly or through the chunks of its `import()` and `require()` calls: `[name]` is the name of the entrypoint followed by `-chunk`.
 - **Every other chunk of shared JavaScript**: `[name]` is `shared`.
 
-For a chunk of shared JavaScript, `[dir]` is the deepest directory that contains every entrypoint that loads the chunk. For example, with `[dir]/[name]-[hash].[ext]`, a chunk that `pages/home.tsx` shares with the modules it loads through `import()` is `pages/home-chunk-<hash>.js`. A chunk that `pages/home.tsx` and `pages/about.tsx` share is `pages/shared-<hash>.js`.
+For a chunk of shared JavaScript, `[dir]` is the deepest directory that contains every entrypoint that loads the chunk. For example, with `[dir]/[name]-[hash].[ext]`, a chunk that `pages/home.tsx` shares with the modules it loads through `import()` is `pages/home-chunk-<hash>.js`. A chunk that `pages/home.tsx` and `pages/about.tsx` share is `pages/shared-<hash>.js`. A chunk that no entrypoint loads has an empty `[dir]`.
 
 Several chunks of one build can have the same `[name]`, and `shared` is the same name in every build. Keep `[hash]` in the `chunk` template. Without it, two chunks with the same name in one directory fail the build, and two builds that write to one `outdir` replace each other's chunk.
 

@@ -780,34 +780,31 @@ pub(crate) fn name_chunks_without_entry_point(
     let entry_points_len = this.graph.entry_points.len();
     let kinds = this.graph.files.items_entry_point_kind();
     let mut roots: Vec<AutoBitSet> = Vec::with_capacity(chunks.len());
-    for chunk in chunks.iter() {
+    // Chunks with roots that the chunks they import do not have yet.
+    let mut pending: Vec<u32> = Vec::with_capacity(chunks.len());
+    for (index, chunk) in chunks.iter().enumerate() {
         let mut own = AutoBitSet::init_empty(entry_points_len)?;
         if let Some(entry_point_id) = chunk.entry_point.entry_point_id()
             && kinds[chunk.entry_point.source_index() as usize]
                 == crate::EntryPoint::Kind::UserSpecified
         {
             own.set(entry_point_id as usize);
+            pending.push(index as u32);
         }
         roots.push(own);
     }
     // Chunks can import each other in a cycle.
-    loop {
-        let mut changed = false;
-        for (importer, chunk) in chunks.iter().enumerate() {
-            for import in chunk.cross_chunk_imports.iter() {
-                let Ok([from, to]) =
-                    roots.get_disjoint_mut([importer, import.chunk_index as usize])
-                else {
-                    continue;
-                };
-                if !from.subset_of(to) {
-                    to.set_union(from);
-                    changed = true;
-                }
+    while let Some(importer) = pending.pop() {
+        for import in chunks[importer as usize].cross_chunk_imports.iter() {
+            let Ok([from, to]) =
+                roots.get_disjoint_mut([importer as usize, import.chunk_index as usize])
+            else {
+                continue;
+            };
+            if !from.subset_of(to) {
+                to.set_union(from);
+                pending.push(import.chunk_index);
             }
-        }
-        if !changed {
-            break;
         }
     }
 

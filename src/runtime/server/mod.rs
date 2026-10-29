@@ -1,7 +1,6 @@
 //! `Bun.serve()`: `NewServer` struct + lifecycle (start/stop/listen),
 //! `AnyServer` dispatch, `AnyRoute`, and per-file submodules.
 
-use bun_collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
@@ -2863,32 +2862,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
 
             // SNI: per-hostname contexts
-            let sni_len = this_ref
-                .config
-                .get()
-                .sni
-                .as_ref()
-                .map_or(0, |s| s.slice().len());
-            for i in 0..sni_len {
-                let (name_ptr, name_len, sni_opts) = {
-                    let cfg = this_ref.config.get();
-                    let sni_ssl_config = &cfg.sni.as_ref().unwrap().slice()[i];
-                    let Some(sni_name) = sni_ssl_config.server_name_cstr() else {
-                        continue;
-                    };
-                    if sni_name.to_bytes().is_empty() {
-                        continue;
-                    }
-                    (
-                        sni_name.as_ptr(),
-                        sni_name.to_bytes().len(),
-                        sni_ssl_config.as_usockets(),
-                    )
+            for sni_ssl_config in this_ref.config.get().sni.as_deref().unwrap_or_default() {
+                let Some(sni_name) = sni_ssl_config.server_name_cstr() else {
+                    continue;
                 };
-                // SAFETY: name_ptr/name_len point into config.sni[i].server_name.
-                let sni_name = unsafe { bun_core::ffi::cstr(name_ptr) };
-                // SAFETY: sni_name is a CStr; NUL invariant holds for ZStr.
-                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
+                if sni_name.to_bytes().is_empty() {
+                    continue;
+                }
+                let sni_opts = sni_ssl_config.as_usockets();
+                let z = bun_core::ZStr::from_cstr(sni_name);
 
                 if Self::HAS_H3 {
                     if let Some(h3_app) = this_ref.h3_app.get() {
@@ -2962,12 +2944,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // Owns the bracket-stripped copy of an IPv6 literal hostname; `host`
         // points into it, so it has to outlive the listen calls below.
         let mut stripped_hostname: Option<bun_core::ZBox> = None;
-        // The raw pointers reference `config.address`'s backing storage,
+        // `host` and the path reference `config.address`'s backing storage,
         // which the trampolines never touch (they only write `listener`/
         // `h3_listener`), so the bytes remain valid through the listen calls.
-        enum Addr {
+        enum Addr<'a> {
             Tcp { port: u16, host: *const c_char },
-            Unix { ptr: *const u8, len: usize },
+            Unix(&'a bun_core::ZStr),
         }
         let (addr, tcp, options) = {
             let cfg = this_ref.config.get();
@@ -2987,10 +2969,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     }
                     Addr::Tcp { port: *port, host }
                 }
-                server_config::Address::Unix(unix) => Addr::Unix {
-                    ptr: unix.as_ptr().cast(),
-                    len: unix.as_bytes().len(),
-                },
+                server_config::Address::Unix(unix) => Addr::Unix(unix.as_zstr()),
             };
             (addr, cfg.http1 || cfg.http2, cfg.get_usockets_options())
         };
@@ -3077,7 +3056,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     break;
                 }
             }
-            Addr::Unix { ptr, len } => {
+            Addr::Unix(path) => {
                 if Self::HAS_H3 {
                     if let Some(h3a) = this_ref.h3_app.take() {
                         // QUIC over AF_UNIX is non-standard and Alt-Svc can't
@@ -3088,15 +3067,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         unsafe { uws_sys::h3::App::destroy(h3a) };
                     }
                 }
-                // SAFETY: ptr/len reference `config.address`'s ZBox; NUL
-                // sentinel at `ptr[len]` holds for ZStr::from_raw.
-                let z = unsafe { bun_core::ZStr::from_raw(ptr, len) };
                 // SAFETY: app is a live uws handle owned by this server.
                 unsafe {
                     (*app).listen_on_unix_socket(
                         trampoline::on_listen_unix::<SSL, DEBUG>,
                         this.cast::<c_void>(),
-                        z,
+                        path,
                         options,
                     );
                 }

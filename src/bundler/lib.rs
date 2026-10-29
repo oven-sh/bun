@@ -436,7 +436,7 @@ bun_dispatch::link_interface! {
         fn eval_source() -> Option<*const bun_ast::Source<'static>>;
         // The path of the entry module, `None` when there is none (`bun bake`).
         fn main() -> Option<&'static [u8]>;
-        fn read_dir_info_package_json(dir: &[u8]) -> Option<*const bun_resolver::PackageJSON>;
+        fn read_dir_info_package_json(dir: &[u8]) -> Option<&'static bun_resolver::PackageJSON>;
         fn is_blob_url(specifier: &[u8]) -> bool;
         fn resolve_blob(specifier: &[u8]) -> Option<options::OpaqueBlob>;
         fn blob_loader(blob: options::OpaqueBlob) -> Option<bun_ast::Loader>;

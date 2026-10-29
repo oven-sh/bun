@@ -1797,15 +1797,11 @@ pub mod io {
     impl Write for Writer {
         #[inline]
         fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
-            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
-            // receives the same pointer it was registered with (see type doc).
-            unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
+            Writer::write_all(self, buf)
         }
         #[inline]
         fn flush(&mut self) -> crate::CrateResult<()> {
-            // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
-            // receives the same pointer it was registered with (see type doc).
-            unsafe { (self.flush)(core::ptr::from_mut(self)) }
+            Writer::flush(self)
         }
     }
 

@@ -15,8 +15,7 @@ use crate::webcore::node_types::{PathLike, PathOrFileDescriptor};
 use crate::webcore::s3::client as s3_client;
 use crate::webcore::s3::client::S3ErrorJsc as _;
 use crate::webcore::s3::client::{
-    S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsOptions,
-    S3ListObjectsResult,
+    S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3ListObjectsResult,
 };
 use bun_core::strings;
 use bun_http_types::MimeType::MimeType;
@@ -351,7 +350,6 @@ impl S3Ext for S3 {
         struct Wrapper {
             promise: bun_jsc::JSPromiseStrong,
             store: RefPtr<Store>,
-            resolved_list_options: S3ListObjectsOptions,
             // LIFETIMES.tsv: JSC_BORROW. `BackRef` for safe deref across the async callback.
             global: bun_ptr::BackRef<JSGlobalObject>,
         }
@@ -402,25 +400,17 @@ impl S3Ext for S3 {
 
         let options = s3_client::get_list_objects_options_from_js(cx.global(), list_options)?;
 
-        // Box the wrapper first so the options live on the heap, then hand a
-        // borrow to `list_objects` (which only reads them synchronously to
-        // build the search-params string). The wrapper retains ownership for
-        // `Drop` after the async callback.
-        let wrapper = bun_core::heap::into_raw(Box::new(Wrapper {
-            promise,
-            store,
-            resolved_list_options: options,
-            global: bun_ptr::BackRef::new(cx.global()),
-        }));
-
         s3_client::list_objects(
             &aws_options.credentials,
             cx.context(),
-            // SAFETY: `wrapper` is freshly leaked and untouched until the
-            // callback; this borrow ends before any other access.
-            unsafe { &(*wrapper).resolved_list_options },
+            &options,
             Wrapper::resolve,
-            wrapper.cast::<c_void>(),
+            bun_core::heap::into_raw(Box::new(Wrapper {
+                promise,
+                store,
+                global: bun_ptr::BackRef::new(cx.global()),
+            }))
+            .cast::<c_void>(),
         )?;
 
         Ok(value)

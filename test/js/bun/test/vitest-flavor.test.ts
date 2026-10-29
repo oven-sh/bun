@@ -2731,6 +2731,48 @@ describe.concurrent("behavior depends on the module a function is imported from"
     });
   });
 
+  test("toContain() on a DOM node", async () => {
+    const { log, exitCode } = await runTests({
+      "a.test.js": `
+        import * as bun from "bun:test";
+        import * as vitest from "vitest";
+        globalThis.Node = class Node {
+          children = [];
+          contains(other) {
+            return other === this || this.children.some(child => child.contains(other));
+          }
+        };
+        const [parent, child, grandchild, unrelated] = Array.from({ length: 4 }, () => new Node());
+        parent.children.push(child);
+        child.children.push(grandchild);
+        const outcome = fn => {
+          try { fn(); return "passes"; } catch (error) {
+            return error instanceof TypeError ? error.message : error.message.startsWith("Received value must be") ? "refused" : "fails";
+          }
+        };
+        for (const [name, { test, expect }] of Object.entries({ bun, vitest })) {
+          test(name, () => {
+            for (const [what, value] of Object.entries({ parent, child, grandchild, unrelated, text: "text" })) {
+              console.log(name, what, "|", outcome(() => expect(parent).toContain(value)), "|", outcome(() => expect(parent).not.toContain(value)));
+            }
+          });
+        }
+      `,
+    });
+    const notANode = "toContain() expected a DOM node as the argument, but got string";
+    expect({ log, exitCode }).toEqual({
+      log: [
+        ...["parent", "child", "grandchild", "unrelated", "text"].map(what => `bun ${what} | refused | refused`),
+        "vitest parent | passes | fails",
+        "vitest child | passes | fails",
+        "vitest grandchild | passes | fails",
+        "vitest unrelated | fails | passes",
+        `vitest text | ${notANode} | ${notANode}`,
+      ],
+      exitCode: 0,
+    });
+  });
+
   test(".resolves.toThrow() on a promise that resolved to an error", async () => {
     const { log, exitCode } = await runTests({
       "a.test.js": `

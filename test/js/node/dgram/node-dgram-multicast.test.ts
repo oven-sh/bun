@@ -189,24 +189,28 @@ const hasIPv6Loopback = await new Promise<boolean>(resolve => {
 
 // "an invalid Scope gets turned into #0 (default selection)": test-dgram-multicast-set-interface.js
 test("a zone that names no interface is interface 0", { skip: !hasIPv6Loopback }, async () => {
-  const results: any[] = [
-    await outcome(s => s.setMulticastInterface("::%nosuchzone0"), "udp6", "::1"),
-    await outcome(s => s.setMulticastInterface("::%nosuchzone0 junk"), "udp6", "::1"),
-  ];
+  // "::" is interface 0 with no zone. Linux and Windows take it as the default interface.
+  const interface0: any = await outcome(s => s.setMulticastInterface("::"), "udp6", "::1");
   if (process.platform === "darwin") {
-    // macOS does not take interface 0 for IPV6_MULTICAST_IF, in Node.js too. XNU answers EINVAL, and EADDRNOTAVAIL before macOS 14.4.
-    const code = results[0]?.code === "EADDRNOTAVAIL" ? "EADDRNOTAVAIL" : "EINVAL";
-    const refused = {
+    // macOS refuses interface 0 in setsockopt, in Node.js too: XNU answers EINVAL, and an older one EADDRNOTAVAIL.
+    const code = interface0?.code === "EADDRNOTAVAIL" ? "EADDRNOTAVAIL" : "EINVAL";
+    assert.deepStrictEqual(interface0, {
       name: "Error",
       code,
       errno: -os.constants.errno[code],
       syscall: "setMulticastInterface",
       message: `setMulticastInterface ${code}`,
-    };
-    assert.deepStrictEqual(results, [refused, refused]);
+    });
   } else {
-    assert.deepStrictEqual(results, [undefined, undefined]);
+    assert.strictEqual(interface0, undefined);
   }
+  assert.deepStrictEqual(
+    [
+      await outcome(s => s.setMulticastInterface("::%nosuchzone0"), "udp6", "::1"),
+      await outcome(s => s.setMulticastInterface("::%nosuchzone0 junk"), "udp6", "::1"),
+    ],
+    [interface0, interface0],
+  );
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.

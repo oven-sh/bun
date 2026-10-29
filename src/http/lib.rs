@@ -3283,15 +3283,15 @@ impl<'a> HTTPClient<'a> {
         };
         // ThreadSafeStreamBuffer is owned by the JS-side request body stream
         // and outlives this call (intrusive-refcounted; independent heap
-        // allocation, so `&mut` here does not alias `self`). Route through the
+        // allocation, so the borrow is not tied to `self`). Route through the
         // shared `from_attached` accessor (one centralised unsafe).
         let stream_buffer = ThreadSafeStreamBuffer::from_attached(stream_buffer_ptr);
         if upgrade_state == HTTPUpgradeState::Pending {
             // cannot drain yet, upgrade is waiting for upgrade
             return;
         }
-        let buffer = stream_buffer.acquire();
-        let was_empty = buffer.is_empty() && data.is_empty();
+        let mut locked = stream_buffer.lock();
+        let was_empty = locked.buffer.is_empty() && data.is_empty();
         if was_empty && ended {
             // nothing is buffered and the stream is done so we just release and detach
             //
@@ -3300,7 +3300,7 @@ impl<'a> HTTPClient<'a> {
             // keep-alive / redirect pooling gates, matching the
             // `ended && !has_backpressure` exit below.
             self.state.request_stage = RequestStage::Done;
-            stream_buffer.release();
+            drop(locked);
             self.request_stream_detach();
             if upgrade_state == HTTPUpgradeState::Upgraded {
                 // for upgraded connections we need to shutdown the socket to signal the end of the connection
@@ -3314,11 +3314,11 @@ impl<'a> HTTPClient<'a> {
         // `write_to_stream_using_buffer` touches only `state.request_sent_len`,
         // disjoint from `original_request_body` and `stream_buffer`.
         let has_backpressure =
-            match self.write_to_stream_using_buffer::<IS_SSL>(socket, buffer, data) {
+            match self.write_to_stream_using_buffer::<IS_SSL>(socket, &mut locked.buffer, data) {
                 Ok(b) => b,
                 Err(err) => {
                     // we got some critical error so we need to fail and close the connection
-                    stream_buffer.release();
+                    drop(locked);
                     self.request_stream_detach();
                     self.close_and_fail::<IS_SSL>(err, socket);
                     return;
@@ -3327,12 +3327,12 @@ impl<'a> HTTPClient<'a> {
 
         if has_backpressure {
             // we have backpressure so just release the buffer and wait for onWritable
-            stream_buffer.release();
+            drop(locked);
         } else {
             if ended {
                 // done sending everything so we can release the buffer and detach the stream
                 self.state.request_stage = RequestStage::Done;
-                stream_buffer.release();
+                drop(locked);
                 self.request_stream_detach();
                 if upgrade_state == HTTPUpgradeState::Upgraded {
                     // for upgraded connections we need to shutdown the socket to signal the end of the connection
@@ -3342,10 +3342,10 @@ impl<'a> HTTPClient<'a> {
             } else {
                 // only report drain if we send everything and previous we had something to send
                 if !was_empty {
-                    stream_buffer.report_drain();
+                    locked.report_drain();
                 }
                 // release the buffer so main thread can use it to send more data
-                stream_buffer.release();
+                drop(locked);
             }
         }
     }

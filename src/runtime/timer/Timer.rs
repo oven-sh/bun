@@ -25,28 +25,20 @@ use crate::jsc_hooks::timer_all_mut;
 // ════════════════════════════════════════════════════════════════════════════
 
 impl All {
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine`.
-    // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
-    // the raw pointer is intentional (avoids aliased-`&mut` across the
-    // jsc/runtime crate cycle — see DateHeaderTimer.rs).
     pub(crate) fn update_date_header_timer_if_necessary(
         &mut self,
         loop_: &UwsLoop,
-        vm: *mut VirtualMachine,
+        vm: &VirtualMachine,
     ) {
         if loop_.should_enable_date_header_timer() {
             // `is_date_timer_active()` is private to mod.rs; inline.
             if self.date_header_timer.event_loop_timer.state != EventLoopTimerState::ACTIVE {
-                // SAFETY: caller contract guarantees `vm` is valid.
-                unsafe {
-                    self.date_header_timer.enable(
-                        vm,
-                        // Be careful to avoid adding extra calls to bun.timespec.now()
-                        // when it's not needed.
-                        &Timespec::now(TimespecMockMode::ForceRealTime),
-                    );
-                }
+                self.date_header_timer.enable(
+                    vm,
+                    // Be careful to avoid adding extra calls to bun.timespec.now()
+                    // when it's not needed.
+                    &Timespec::now(TimespecMockMode::ForceRealTime),
+                );
             }
         } else {
             // don't un-schedule it here.
@@ -445,11 +437,7 @@ impl DateHeaderTimer {
     /// 1. If the timer was recently updated (< 1 second ago), just reschedule it
     /// 2. If the timer is stale (> 1 second since last update), update the date
     ///    immediately and reschedule
-    ///
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine`; its `uws_loop()`
-    /// must outlive this call.
-    unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
+    fn enable(&mut self, vm: &VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
         // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
@@ -464,9 +452,8 @@ impl DateHeaderTimer {
         if elapsed >= 1000 {
             // Update the date immediately since it's stale
             // updateDate() is an expensive function.
-            // SAFETY: `vm` is the live per-thread VM; `uws_loop()` returns its
-            // owned uws loop, which outlives this call.
-            unsafe { (*(*vm).uws_loop()).update_date() };
+            // SAFETY: `uws_loop()` returns the VM's own uws loop, which outlives this call.
+            unsafe { (*vm.uws_loop()).update_date() };
 
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
             // SAFETY: single JS thread; nothing `All::update` touches overlaps

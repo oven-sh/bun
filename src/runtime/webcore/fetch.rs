@@ -418,19 +418,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut range: Option<bun_core::ZBox> = None;
     let mut unix_socket_path: Box<[u8]> = Box::default();
 
-    // `url_proxy_buffer` gets reassigned while `url`/`proxy`
-    // still point into it (or into the buffer about to replace it). Detach the
-    // borrow-checker by parsing through a raw-pointer slice; the caller is
-    // responsible for keeping the backing allocation alive (it always becomes
-    // the new `url_proxy_buffer` before the old one is dropped).
-    macro_rules! parse_url_detached {
-        ($slice:expr) => {{
-            let s: &[u8] = $slice;
-            // SAFETY: `s` points into a Vec that is immediately adopted as
-            // `url_proxy_buffer` (or already is it); see note above.
-            ZigURL::parse(unsafe { bun_ptr::detach_lifetime(s) })
-        }};
-    }
     let mut url_type = URLType::Remote;
 
     let mut ssl_config: Option<http::ssl_config::SharedPtr> = None;
@@ -533,7 +520,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
     };
     let mut url_proxy_buffer = owned_url.into_href().into_vec();
-    let mut url = parse_url_detached!(&url_proxy_buffer[..]);
+    let mut url = ZigURL::parse(&url_proxy_buffer[..]);
     if url.is_file() {
         url_type = URLType::File;
     } else if url.is_blob() {
@@ -941,9 +928,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 buffer.extend_from_slice(&url_proxy_buffer);
                 buffer.extend_from_slice(&href);
                 let url_len = url.href.len();
-                url = parse_url_detached!(&buffer[0..url_len]);
-                proxy = Some(parse_url_detached!(&buffer[url_len..]));
                 url_proxy_buffer = buffer;
+                url = ZigURL::parse(&url_proxy_buffer[0..url_len]);
+                proxy = Some(ZigURL::parse(&url_proxy_buffer[url_len..]));
                 proxy_headers = headers;
                 proxy_respects_no_proxy = respect_no_proxy;
             }
@@ -1670,6 +1657,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         compress = None;
     }
 
+    // Read before the S3 branch replaces `url_proxy_buffer`, which `proxy` borrows.
+    let has_proxy = proxy.is_some();
     if url.is_s3() {
         // get ENV config — `Transpiler::env_mut` is the safe accessor for the
         // process-singleton dotenv loader (set during init).
@@ -1798,21 +1787,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         if let Some(proxy_) = &proxy {
             // proxy and url are in the same buffer lets replace it
-            let old_buffer = core::mem::take(&mut url_proxy_buffer);
-            // `defer allocator.free(old_buffer)` → drop(old_buffer) at end of scope.
             let mut buffer = vec![0u8; result.url.len() + proxy_.href.len()];
             buffer[0..result.url.len()].copy_from_slice(&result.url);
             buffer[result.url.len()..].copy_from_slice(proxy_.href);
             url_proxy_buffer = buffer;
 
-            url = parse_url_detached!(&url_proxy_buffer[0..result.url.len()]);
-            proxy = Some(parse_url_detached!(&url_proxy_buffer[result.url.len()..]));
-            drop(old_buffer);
+            url = ZigURL::parse(&url_proxy_buffer[0..result.url.len()]);
         } else {
             // replace headers and url of the request
             // allocator.free(url_proxy_buffer) — old Vec dropped on reassign.
             url_proxy_buffer = core::mem::take(&mut result.url).into();
-            url = parse_url_detached!(&url_proxy_buffer[..]);
+            url = ZigURL::parse(&url_proxy_buffer[..]);
             // result.url = ""; — fetch now owns this (mem::take above)
         }
 
@@ -1879,7 +1864,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // slices may dangle after the conversion. Convert to `Box<[u8]>` first
     // (stable heap address), then re-parse the URLs from the boxed buffer.
     let url_len = url.href.len(); // fat-pointer len read; no deref
-    let has_proxy = proxy.is_some();
     let url_proxy_boxed: Box<[u8]> = core::mem::take(&mut url_proxy_buffer).into_boxed_slice();
     // SAFETY: `url_proxy_boxed` is moved into `FetchOptions` alongside the URLs
     // that borrow it; `FetchTasklet` keeps the buffer alive for as long as the

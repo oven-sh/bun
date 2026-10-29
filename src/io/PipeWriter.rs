@@ -1361,12 +1361,9 @@ pub trait BaseWindowsPipeWriter: Sized {
         // no-op
     }
 
-    /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer; ownership
-    /// transfers to `self.source` (later freed via `close_and_destroy`).
-    unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
+    fn start_with_pipe(&mut self, pipe: Box<uv::Pipe>) -> sys::Result<()> {
         debug_assert!(self.source().is_none());
-        // SAFETY: caller contract — Box-allocated, ownership transfers.
-        *self.source_mut() = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+        *self.source_mut() = Some(Source::Pipe(pipe));
         let p = self.parent_ptr();
         self.set_parent(p);
         self.start_with_current_pipe()
@@ -1439,14 +1436,12 @@ pub trait BaseWindowsPipeWriter: Sized {
         self.start_with_current_pipe()
     }
 
-    /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer.
-    unsafe fn set_pipe(&mut self, pipe: *mut uv::Pipe) {
+    fn set_pipe(&mut self, pipe: Box<uv::Pipe>) {
         // The assignment below would Drop the prior Box WITHOUT uv_close, leaving
         // libuv with a dangling handle → UAF on next loop tick. All other
         // start_* paths assert empty; enforce the same invariant here.
         debug_assert!(self.source().is_none());
-        // SAFETY: caller contract — Box-allocated, ownership transfers.
-        *self.source_mut() = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
+        *self.source_mut() = Some(Source::Pipe(pipe));
         let p = self.parent_ptr();
         self.set_parent(p);
     }

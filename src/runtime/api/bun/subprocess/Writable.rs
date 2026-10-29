@@ -154,8 +154,7 @@ impl<'a> Writable<'a> {
                         // Ownership of the `Box<uv::Pipe>` transfers to the
                         // FileSink's writer (the sink takes over the heap
                         // pointer).
-                        let uv_pipe: *mut _ = bun_core::heap::into_raw(buffer);
-                        let pipe_ref = FileSink::create_with_pipe(evtloop, uv_pipe);
+                        let pipe_ref = FileSink::create_with_pipe(evtloop, buffer);
 
                         match pipe_ref.writer.with_mut(|w| w.start_with_current_pipe()) {
                             bun_sys::Result::Ok(()) => {}

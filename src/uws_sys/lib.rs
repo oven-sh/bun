@@ -216,7 +216,7 @@ pub mod socket_transfer {
 // SAFETY (safe fn): `UpgradedDuplex` is an `opaque_extern!` ZST handle (`!Freeze`
 // via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
 // ABI-identical to non-null `*const`/`*mut`. Shims taking only the handle +
-// scalars are `safe fn`; so are the two slice writers, whose Rust ABI takes `&[u8]`.
+// scalars are `safe fn`; the two `(ptr,len)` slice writers stay `unsafe fn`.
 unsafe extern "C" {
     safe fn UpgradedDuplex__ssl_error(this: &UpgradedDuplex) -> us_bun_verify_error_t;
     safe fn UpgradedDuplex__is_established(this: &UpgradedDuplex) -> bool;
@@ -229,16 +229,18 @@ unsafe extern "C" {
     ) -> *mut bun_boringssl_sys::SSL_SESSION;
     safe fn UpgradedDuplex__set_timeout(this: &mut UpgradedDuplex, seconds: core::ffi::c_uint);
     safe fn UpgradedDuplex__flush(this: &mut UpgradedDuplex);
+    fn UpgradedDuplex__encode_and_write(
+        this: *mut UpgradedDuplex,
+        ptr: *const u8,
+        len: usize,
+    ) -> i32;
+    fn UpgradedDuplex__raw_write(this: *mut UpgradedDuplex, ptr: *const u8, len: usize) -> i32;
     safe fn UpgradedDuplex__shutdown(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__shutdown_read(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__close(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__abandon_js_side(this: &mut UpgradedDuplex);
     safe fn UpgradedDuplex__pause_stream(this: &mut UpgradedDuplex) -> bool;
     safe fn UpgradedDuplex__resume_stream(this: &mut UpgradedDuplex) -> bool;
-}
-unsafe extern "Rust" {
-    safe fn UpgradedDuplex__encode_and_write(this: &mut UpgradedDuplex, data: &[u8]) -> i32;
-    safe fn UpgradedDuplex__raw_write(this: &mut UpgradedDuplex, data: &[u8]) -> i32;
 }
 impl UpgradedDuplex {
     #[inline]
@@ -280,11 +282,17 @@ impl UpgradedDuplex {
     }
     #[inline]
     pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
-        UpgradedDuplex__encode_and_write(self, data)
+        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
+        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
+        // borrowed for the call's duration; the callee only reads from it.
+        unsafe { UpgradedDuplex__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
-        UpgradedDuplex__raw_write(self, data)
+        // SAFETY: `&mut self` coerces to a non-null `*mut UpgradedDuplex` valid for
+        // the call, and `(data.as_ptr(), data.len())` is a valid readable region
+        // borrowed for the call's duration; the callee only reads from it.
+        unsafe { UpgradedDuplex__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub(crate) fn shutdown(&mut self) {
@@ -330,16 +338,17 @@ unsafe extern "C" {
     ) -> *mut bun_boringssl_sys::SSL_SESSION;
     safe fn WindowsNamedPipe__set_timeout(this: &mut WindowsNamedPipe, seconds: core::ffi::c_uint);
     safe fn WindowsNamedPipe__flush(this: &mut WindowsNamedPipe);
+    fn WindowsNamedPipe__encode_and_write(
+        this: *mut WindowsNamedPipe,
+        ptr: *const u8,
+        len: usize,
+    ) -> i32;
+    fn WindowsNamedPipe__raw_write(this: *mut WindowsNamedPipe, ptr: *const u8, len: usize) -> i32;
     safe fn WindowsNamedPipe__shutdown(this: &mut WindowsNamedPipe);
     safe fn WindowsNamedPipe__shutdown_read(this: &mut WindowsNamedPipe);
     safe fn WindowsNamedPipe__close(this: &mut WindowsNamedPipe);
     safe fn WindowsNamedPipe__pause_stream(this: &mut WindowsNamedPipe) -> bool;
     safe fn WindowsNamedPipe__resume_stream(this: &mut WindowsNamedPipe) -> bool;
-}
-#[cfg(windows)]
-unsafe extern "Rust" {
-    safe fn WindowsNamedPipe__encode_and_write(this: &mut WindowsNamedPipe, data: &[u8]) -> i32;
-    safe fn WindowsNamedPipe__raw_write(this: &mut WindowsNamedPipe, data: &[u8]) -> i32;
 }
 #[cfg(windows)]
 impl WindowsNamedPipe {
@@ -382,11 +391,11 @@ impl WindowsNamedPipe {
     }
     #[inline]
     pub(crate) fn encode_and_write(&mut self, data: &[u8]) -> i32 {
-        WindowsNamedPipe__encode_and_write(self, data)
+        unsafe { WindowsNamedPipe__encode_and_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub(crate) fn raw_write(&mut self, data: &[u8]) -> i32 {
-        WindowsNamedPipe__raw_write(self, data)
+        unsafe { WindowsNamedPipe__raw_write(self, data.as_ptr(), data.len()) }
     }
     #[inline]
     pub(crate) fn shutdown(&mut self) {

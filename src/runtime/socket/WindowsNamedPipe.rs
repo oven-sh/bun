@@ -840,7 +840,7 @@ impl WindowsNamedPipe {
         self.flags.get().is_ssl()
     }
 
-    #[unsafe(export_name = "WindowsNamedPipe__encode_and_write")]
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__encode_and_write")]
     pub(crate) fn encode_and_write(&self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(WindowsNamedPipe, "encodeAndWrite (len: {})", data.len());
         if let Some(r) = self.with_wrapper(|w| w.write_data(data)) {
@@ -850,7 +850,7 @@ impl WindowsNamedPipe {
         i32::try_from(data.len()).expect("int cast")
     }
 
-    #[unsafe(export_name = "WindowsNamedPipe__raw_write")]
+    #[bun_uws::uws_callback(export = "WindowsNamedPipe__raw_write")]
     pub(crate) fn raw_write(&self, encoded_data: &[u8]) -> i32 {
         self.internal_write(encoded_data);
         i32::try_from(encoded_data.len()).expect("int cast")
@@ -1053,7 +1053,7 @@ impl Drop for WindowsNamedPipe {
 // Hand-written `ssl` shim for the `bun_uws` cycle-break extern — the safe
 // method returns `Option<*mut SSL>` while the C ABI flattens to a nullable
 // raw pointer. All `WindowsNamedPipe__*` symbols but the three below are emitted by
-// `#[uws_callback(export = …)]` or `export_name` on the inherent methods above.
+// `#[uws_callback(export = …)]` on the inherent methods above.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn WindowsNamedPipe__set_inline_reject(this: &WindowsNamedPipe) {
     if let Some(wrapper) = this.wrapper_ref() {

@@ -192,7 +192,6 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
     let own_require_ref = c.chunk_require(chunk).0;
 
     if c.options.minify_identifiers {
-        let mut own_require_uses: u32 = 0;
         let first_top_level_slots: SlotCounts = {
             let mut slots = SlotCounts::default();
             for &i in files_in_order {
@@ -257,12 +256,6 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                     &part.symbol_uses,
                     stable_source_indices,
                 )?;
-                if let Some(own) = &c.own_require
-                    && own_require_ref.is_some()
-                    && let Some(uses) = part.symbol_uses.get(&own.runtime_ref)
-                {
-                    own_require_uses = own_require_uses.saturating_add(uses.count_estimate());
-                }
 
                 for declared_ref in part.declared_symbols.refs() {
                     minify_renamer.accumulate_symbol_use_count(
@@ -297,16 +290,22 @@ pub(crate) unsafe fn rename_symbols_in_chunk(
                 stable_source_indices,
             )?;
         }
-        if let Some(ref_) = own_require_ref {
-            minify_renamer.accumulate_symbol_use_count(
-                &mut top_level_symbols,
-                ref_,
-                own_require_uses.saturating_add(1),
-                stable_source_indices,
-            )?;
-        }
         top_level_symbols_all.extend_from_slice(&top_level_symbols);
         minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols_all)?;
+        if let Some(own) = &c.own_require
+            && own_require_ref.is_some()
+        {
+            // It prints where the runtime module's `__require` would, so it is used as often.
+            let uses = minify_renamer.top_level_count(own.runtime_ref).unwrap_or(0);
+            top_level_symbols.clear();
+            minify_renamer.accumulate_symbol_use_count(
+                &mut top_level_symbols,
+                own.ref_,
+                uses.saturating_add(1),
+                stable_source_indices,
+            )?;
+            minify_renamer.allocate_top_level_symbol_slots(&top_level_symbols)?;
+        }
 
         minify_renamer.name_minifier = Some(freq.compile());
         // With code splitting, names are assigned (`MinifyRenamer::finish`)

@@ -481,7 +481,7 @@ impl BlobExt for Blob {
     /// In-memory stores are duped before the callback so the ownership contract is
     /// uniform (and so the source Blob can outlive or be re-sliced independently);
     /// callers that already special-case `shared_view()` can keep doing that and
-    /// only call this when it's empty.
+    /// only call this when `in_memory_view()` is `None`.
     ///
     /// Every store kind hands `ctx` to exactly one `H::on_read_bytes` call:
     /// in-memory stores synchronously below, file stores from the read's
@@ -2320,6 +2320,7 @@ impl BlobExt for Blob {
         }
     }
 
+    #[inline]
     fn in_memory_view(&self) -> Option<&[u8]> {
         if self.needs_to_read_file() || self.is_s3() {
             return None;

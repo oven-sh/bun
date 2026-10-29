@@ -241,12 +241,136 @@ describe("Bun.Image", () => {
       for (const k of proxyKeys) process.env[k] = savedProxyEnv[k] ?? "";
     }
 
-    // A zero-length slice of an in-memory Blob still has a store but nothing
-    // to copy at construction, so it is delivered synchronously at terminal
-    // time; the empty buffer then fails to decode.
-    const empty = new Blob([cornersPng]).slice(0, 0);
-    await expect(new Bun.Image(empty).metadata()).rejects.toThrow(/unrecognised format/);
-    await expect(empty.image().png().bytes()).rejects.toThrow(/unrecognised format/);
+    // An array body takes the store out of each Blob in it (#38503 stops that).
+    // A file Blob that an Image holds is then zero-length and in memory, so the
+    // read delivers its zero bytes synchronously, inside the terminal call.
+    using dir = tempDir("image-store-moved", {});
+    const path = join(String(dir), "src.png");
+    await Bun.write(path, cornersPng);
+    const file = Bun.file(path);
+    const image = new Bun.Image(file);
+    new Response([file]);
+    expect(file.size).toBe(0);
+    await expect(image.metadata()).rejects.toThrow(/unrecognised format/);
+    await expect(image.png().bytes()).rejects.toThrow(/unrecognised format/);
+    // Taken after the move, the same Blob is zero bytes from construction on.
+    await expect(file.image().metadata()).rejects.toThrow(/unrecognised format/);
+  });
+
+  // Zero bytes in memory, in a Blob or a buffer, are input like any other bytes
+  // that hold no image: the constructor takes them and the terminals report the format.
+  describe("zero-byte input", () => {
+    const unknownFormat = {
+      code: "ERR_IMAGE_UNKNOWN_FORMAT",
+      message: expect.stringContaining("unrecognised format"),
+    };
+
+    // A zero-byte in-memory Blob is a Blob, whether or not it has a store.
+    const form = new FormData();
+    form.append("f", new File([], "a.png"));
+    const emptyBlobs: [string, () => Blob | Promise<Blob>][] = [
+      ["new Blob([])", () => new Blob([])],
+      ['new Blob([""])', () => new Blob([""])],
+      ["new Blob([new Uint8Array(0)])", () => new Blob([new Uint8Array(0)])],
+      ["new File([], name)", () => new File([], "a.png")],
+      ["Response#blob() of an empty body", () => new Response("").blob()],
+      ["FormData#get() of an empty file part", () => form.get("f") as File],
+      ["structuredClone(new Blob([]))", () => structuredClone(new Blob([]))],
+      ["new Blob([]).slice(0, 0)", () => new Blob([]).slice(0, 0)],
+      ["zero-length slice", () => new Blob([cornersPng]).slice(0, 0)],
+      ["slice of a zero-length slice", () => new Blob([cornersPng]).slice(0, 0).slice(0, 0)],
+    ];
+
+    test.each(emptyBlobs)("Blob: %s", async (_, make) => {
+      const blob = await make();
+      expect(blob.size).toBe(0);
+      for (const image of [() => new Bun.Image(blob), () => blob.image()]) {
+        expect(image()).toBeInstanceOf(Bun.Image);
+        await expect(image().metadata()).rejects.toMatchObject(unknownFormat);
+        await expect(image().png().bytes()).rejects.toMatchObject(unknownFormat);
+        // The synchronous body path decodes the same zero bytes.
+        expect(() => new Response(image())).toThrow(/unrecognised format/);
+        expect(() => new Request("http://localhost/", { method: "POST", body: image() })).toThrow(
+          /unrecognised format/,
+        );
+      }
+    });
+
+    test("Blob: a zero-byte Bun.build() output", async () => {
+      using dir = tempDir("image-empty-output", {
+        "entry.js": `import url from "./empty.png"; console.log(url);`,
+        "empty.png": "",
+      });
+      const build = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], loader: { ".png": "file" } });
+      const asset = build.outputs.find(output => output.kind === "asset")!;
+      expect(asset.size).toBe(0);
+      await expect(new Bun.Image(asset).metadata()).rejects.toMatchObject(unknownFormat);
+      await expect(new Bun.Image(asset).png().bytes()).rejects.toMatchObject(unknownFormat);
+    });
+
+    test("a value that is not a Blob is still an argument error", () => {
+      for (const input of [42, true, {}, []]) {
+        expect(() => new Bun.Image(input as any)).toThrow(
+          expect.objectContaining({
+            code: "ERR_INVALID_ARG_TYPE",
+            message: "Image() input must be a path string, data: URL, ArrayBuffer, TypedArray or Blob",
+          }),
+        );
+      }
+    });
+
+    // An empty buffer is zero bytes too. Only a buffer that was transferred
+    // away is detached.
+    const emptyBuffers: [string, () => ArrayBuffer | ArrayBufferView][] = [
+      ["new Uint8Array(0)", () => new Uint8Array(0)],
+      ["new ArrayBuffer(0)", () => new ArrayBuffer(0)],
+      ["Buffer.alloc(0)", () => Buffer.alloc(0)],
+      ["DataView over an empty ArrayBuffer", () => new DataView(new ArrayBuffer(0))],
+      ["Uint8Array over an empty ArrayBuffer", () => new Uint8Array(new ArrayBuffer(0))],
+      ["empty subarray of a large Uint8Array", () => new Uint8Array(8192).subarray(0, 0)],
+    ];
+
+    test.each(emptyBuffers)("buffer: %s", async (_, make) => {
+      const image = () => new Bun.Image(make() as ArrayBuffer);
+      await expect(image().metadata()).rejects.toMatchObject(unknownFormat);
+      await expect(image().png().bytes()).rejects.toMatchObject(unknownFormat);
+      await expect(image().placeholder()).rejects.toMatchObject(unknownFormat);
+      expect(() => new Response(image())).toThrow(/unrecognised format/);
+    });
+
+    test("buffer: the pin on an empty ArrayBuffer is released with the task", async () => {
+      // A pinned buffer answers transfer() with a copy and stays attached.
+      const viaTerminal = new ArrayBuffer(0);
+      await expect(new Bun.Image(viaTerminal).png().bytes()).rejects.toMatchObject(unknownFormat);
+      viaTerminal.transfer();
+      expect(viaTerminal.detached).toBe(true);
+
+      const viaBody = new ArrayBuffer(0);
+      expect(() => new Response(new Bun.Image(viaBody))).toThrow(/unrecognised format/);
+      viaBody.transfer();
+      expect(viaBody.detached).toBe(true);
+    });
+
+    test("buffer: a detached one is ERR_INVALID_STATE at every terminal", async () => {
+      const copy = () =>
+        cornersPng.buffer.slice(cornersPng.byteOffset, cornersPng.byteOffset + cornersPng.byteLength) as ArrayBuffer;
+      const detached = { code: "ERR_INVALID_STATE", message: expect.stringContaining("detached") };
+
+      const before = copy();
+      before.transfer();
+      await expect(new Bun.Image(before).metadata()).rejects.toMatchObject(detached);
+      await expect(new Bun.Image(before).png().bytes()).rejects.toMatchObject(detached);
+
+      for (const view of [(ab: ArrayBuffer) => new Uint8Array(ab), (ab: ArrayBuffer) => new DataView(ab)]) {
+        const ab = copy();
+        const img = new Bun.Image(view(ab) as Uint8Array);
+        expect(await img.metadata()).toEqual({ width: 4, height: 3, format: "png" });
+        ab.transfer();
+        await expect(img.metadata()).rejects.toMatchObject(detached);
+        await expect(img.png().bytes()).rejects.toMatchObject(detached);
+        expect(() => new Response(img)).toThrow(/detached/);
+      }
+    });
   });
 
   test("metadata() reads PNG dimensions", async () => {

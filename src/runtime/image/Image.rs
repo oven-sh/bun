@@ -377,14 +377,12 @@ fn source_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Source> {
         if !view.is_empty() {
             return Ok(Source::Owned(view.to_vec()));
         }
-        // Anything with a backing store but no in-memory view yet
-        // (`Bun.file()`, `Bun.s3()`, fd, …) — keep the JS object and read it
-        // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
-        // that store type does (file → ReadFile, S3 → fetch, etc.) without
-        // knowing about it here.
-        if blob.store.get().is_some() {
-            return Ok(Source::Blob(Strong::create(value, global)));
-        }
+        return Ok(match blob.in_memory_view() {
+            // Zero bytes in memory: `new Blob([])`, `.slice(0, 0)`, or a store that was moved out.
+            Some(_) => Source::Owned(Vec::new()),
+            // File, S3 or fd: read at the terminal, see `Source::Blob`.
+            None => Source::Blob(Strong::create(value, global)),
+        });
     }
     Err(global.throw_invalid_arguments(format_args!(
         "Image() input must be a path string, data: URL, ArrayBuffer, TypedArray or Blob",
@@ -670,6 +668,7 @@ impl Image {
         match self.source.get() {
             Source::JsBuffer => js::source_js_get_cached(this_value)
                 .and_then(|v: JSValue| v.as_array_buffer(global))
+                .filter(|ab| !ab.is_detached())
                 .map(|ab| {
                     // SAFETY: `ArrayBuffer` is a view struct (ptr+len); the
                     // bytes live in the JS heap, not in `ab` — the returned
@@ -718,47 +717,36 @@ impl Image {
                 match unsafe {
                     JSC__JSValue__borrowBytesForOffThread(v, &raw mut ptr, &raw mut len)
                 } {
+                    // Detached or null only: an empty buffer is 1, 2 or 3 with `len == 0`.
                     0 => Err(PinError::Detached),
                     // FastTypedArray (≤ fastSizeLimit elements, GC-movable): tiny
                     // by definition — dupe instead of forcing JSC to copy via
                     // tryCreate(span()) + allocate a butterfly.
                     1 => {
-                        if len == 0 {
-                            Err(PinError::Detached)
-                        } else {
-                            // SAFETY: classifier guarantees `ptr[0..len]` is
-                            // valid for the duration of this call (JS thread).
-                            let copied = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
-                            Ok((
-                                Input {
-                                    copied: Some(copied),
-                                    ..Default::default()
-                                },
-                                Pin::NONE,
-                            ))
-                        }
+                        // SAFETY: classifier guarantees `ptr[0..len]` is
+                        // valid for the duration of this call (JS thread).
+                        let copied = unsafe { bun_core::ffi::slice(ptr, len) }.to_vec();
+                        Ok((
+                            Input {
+                                copied: Some(copied),
+                                ..Default::default()
+                            },
+                            Pin::NONE,
+                        ))
                     }
                     // 2: Wasteful/DataView/JSArrayBuffer, pinned by the helper (unpin when done).
                     // 3: OversizeTypedArray held without adopting an ArrayBuffer; nothing to unpin.
                     kind @ (2 | 3) => {
-                        if len == 0 {
-                            if kind == 2 {
-                                // SAFETY: helper pinned `v`; unpin before erroring.
-                                unsafe { JSC__JSValue__unpinArrayBuffer(v) };
-                            }
-                            Err(PinError::Detached)
-                        } else {
-                            // SAFETY: pinned until the returned `Pin` drops (with the job's
-                            // Js side, or the sync caller's scope).
-                            let bytes = unsafe { bun_core::ffi::slice(ptr, len) };
-                            Ok((
-                                Input {
-                                    bytes: bun_ptr::RawSlice::new(bytes),
-                                    ..Default::default()
-                                },
-                                if kind == 2 { Pin(v) } else { Pin::NONE },
-                            ))
-                        }
+                        // SAFETY: pinned until the returned `Pin` drops (with the job's
+                        // Js side, or the sync caller's scope).
+                        let bytes = unsafe { bun_core::ffi::slice(ptr, len) };
+                        Ok((
+                            Input {
+                                bytes: bun_ptr::RawSlice::new(bytes),
+                                ..Default::default()
+                            },
+                            if kind == 2 { Pin(v) } else { Pin::NONE },
+                        ))
                     }
                     _ => unreachable!(),
                 }

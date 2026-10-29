@@ -1071,6 +1071,88 @@ test("Debugger.scriptParsed reports isModule and scriptLanguage from JSC's scrip
   ]);
 });
 
+// Runtime.evaluate and a pause go through JSC's InjectedScript. In the prebuilt WebKit it has
+// exception checks missing, which abort the child under validateExceptionChecks.
+const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...inspecteeEnv } = bunEnv;
+
+/** Starts `entry.mjs`, which calls `inspector.open()`. Resolves with the process and its WebSocket URL. */
+async function openInspectee(cwd: string) {
+  const proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: inspecteeEnv,
+    cwd,
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  let stderr = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stderr) {
+    stderr += decoder.decode(chunk, { stream: true });
+    const url = stderr.match(/Debugger listening on (ws:\S+)/)?.[1];
+    if (url) return { proc, url };
+  }
+  proc.kill();
+  throw new Error(`no inspector URL:\n${stderr}`);
+}
+
+/** A DevTools-protocol client. It counts the pauses, and resumes each one unless told not to. */
+async function connectDevToolsClient(url: string, { resume = true } = {}) {
+  const ws = new WebSocket(url);
+  const pending = new Map<number, (message: any) => void>();
+  const waiters: (() => void)[] = [];
+  let nextId = 1;
+  let isClosed = false;
+  const client = {
+    paused: 0,
+    logged: [] as string[],
+    send(method: string, params?: object) {
+      const id = nextId++;
+      ws.send(JSON.stringify({ id, method, params }));
+      return new Promise<any>((resolve, reject) =>
+        pending.set(id, message => (message ? resolve(message) : reject(new Error(`closed before ${method}`)))),
+      );
+    },
+    /** Resolves when `condition()` holds. It is checked again after each event. */
+    async until(condition: () => boolean) {
+      while (!condition()) {
+        if (isClosed) throw new Error("the inspector socket closed before the event");
+        await new Promise<void>(resolve => waiters.push(resolve));
+      }
+    },
+    close() {
+      const { promise, resolve } = Promise.withResolvers<void>();
+      if (isClosed) resolve();
+      else ws.addEventListener("close", () => resolve());
+      ws.close();
+      return promise;
+    },
+  };
+  ws.onmessage = event => {
+    const message = JSON.parse(String(event.data));
+    if (message.id) {
+      pending.get(message.id)?.(message);
+      pending.delete(message.id);
+      return;
+    }
+    if (message.method === "Debugger.paused") {
+      client.paused++;
+      if (resume) ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume" }));
+    } else if (message.method === "Runtime.consoleAPICalled") {
+      client.logged.push(message.params.args[0].value);
+    }
+    for (const waiter of waiters.splice(0)) waiter();
+  };
+  ws.onclose = () => {
+    isClosed = true;
+    for (const settle of pending.values()) settle(undefined);
+    pending.clear();
+    for (const waiter of waiters.splice(0)) waiter();
+  };
+  await new Promise((resolve, reject) => ((ws.onopen = resolve), (ws.onerror = reject)));
+  return client;
+}
+
 // The inspector backend has one set of agents for every client. A V8 session takes its
 // breakpoints with it, and the sessions that stay notice nothing.
 test.concurrent.each(["an inspector.Session", "a WebSocket client"])(
@@ -1079,80 +1161,22 @@ test.concurrent.each(["an inspector.Session", "a WebSocket client"])(
     using dir = tempDir("inspector-leaving-client", {
       "entry.mjs": `
 import inspector from "node:inspector";
+import { hit } from "./target.mjs";
 inspector.open(0, "127.0.0.1");
+globalThis.hit = hit;
 globalThis.session = new inspector.Session();
 session.connect();
-process.stdin.once("data", async () => {
-  globalThis.hit = (await import("./target.mjs")).hit;
-  hit();
-  console.log("first call done");
-});
+process.stdin.resume();
 `,
       "target.mjs": `export function hit() {
   return "hit";
 }
 `,
     });
-    // Runtime.evaluate goes through JSC's InjectedScript. In the prebuilt WebKit it has
-    // exception checks missing, which abort the child under validateExceptionChecks.
-    const { BUN_JSC_validateExceptionChecks, BUN_JSC_dumpSimulatedThrows, ...env } = bunEnv;
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "entry.mjs"],
-      env,
-      cwd: String(dir),
-      stdin: "pipe",
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-    let stderr = "";
-    let url: string | undefined;
-    const decoder = new TextDecoder();
-    for await (const chunk of proc.stderr) {
-      stderr += decoder.decode(chunk, { stream: true });
-      url = stderr.match(/Debugger listening on (ws:\S+)/)?.[1];
-      if (url) break;
-    }
-    if (!url) throw new Error(`no inspector URL:\n${stderr}`);
+    const { proc, url } = await openInspectee(String(dir));
+    await using _ = proc;
 
-    // A DevTools-protocol client. It resumes each pause, and counts them.
-    async function connect() {
-      const ws = new WebSocket(url!);
-      const pending = new Map<number, (message: any) => void>();
-      let nextId = 1;
-      const client = {
-        paused: 0,
-        logged: [] as string[],
-        closed: Promise.withResolvers<void>(),
-        send(method: string, params?: object) {
-          const id = nextId++;
-          ws.send(JSON.stringify({ id, method, params }));
-          return new Promise<any>((resolve, reject) =>
-            pending.set(id, message => (message ? resolve(message) : reject(new Error(`closed before ${method}`)))),
-          );
-        },
-        close: () => ws.close(),
-      };
-      ws.onmessage = event => {
-        const message = JSON.parse(String(event.data));
-        if (message.id) {
-          pending.get(message.id)?.(message);
-          pending.delete(message.id);
-        } else if (message.method === "Debugger.paused") {
-          client.paused++;
-          ws.send(JSON.stringify({ id: nextId++, method: "Debugger.resume" }));
-        } else if (message.method === "Runtime.consoleAPICalled") {
-          client.logged.push(message.params.args[0].value);
-        }
-      };
-      ws.onclose = () => {
-        client.closed.resolve();
-        for (const settle of pending.values()) settle(undefined);
-      };
-      await new Promise((resolve, reject) => ((ws.onopen = resolve), (ws.onerror = reject)));
-      return client;
-    }
-
-    const staying = await connect();
+    const staying = await connectDevToolsClient(url);
     await staying.send("Runtime.enable");
     await staying.send("Debugger.enable");
 
@@ -1160,37 +1184,120 @@ process.stdin.once("data", async () => {
     let leave: () => Promise<unknown>;
     if (leaving === "an inspector.Session") {
       // The Session forwards Debugger commands to the debugger thread and does not wait.
-      // That thread gets them before it sends this answer.
       await staying.send("Runtime.evaluate", {
         expression: `session.post("Debugger.enable"); session.post("Debugger.setBreakpointByUrl", ${JSON.stringify(breakpoint)})`,
       });
       leave = () => staying.send("Runtime.evaluate", { expression: "session.disconnect()" });
     } else {
-      const client = await connect();
+      const client = await connectDevToolsClient(url);
       await client.send("Debugger.enable");
       expect(await client.send("Debugger.setBreakpointByUrl", breakpoint)).toEqual({
         id: expect.any(Number),
         result: expect.objectContaining({ breakpointId: expect.any(String) }),
       });
-      leave = () => (client.close(), client.closed.promise);
+      leave = () => client.close();
     }
 
-    // The breakpoint of the client that is about to leave works: the first call pauses.
-    proc.stdin.write("go\n");
-    proc.stdin.flush();
-    await staying.send("Runtime.evaluate", { expression: "0" });
-    while (staying.logged.length === 0) await staying.send("Runtime.evaluate", { expression: "0" });
-    expect({ paused: staying.paused, logged: staying.logged }).toEqual({ paused: 1, logged: ["first call done"] });
+    // Calls hit() and says whether the program paused in it. The staying client resumes it.
+    const hitPauses = async () => {
+      const paused = staying.paused;
+      await staying.send("Runtime.evaluate", { expression: "hit()" });
+      return staying.paused !== paused;
+    };
 
-    // The commands below reach the inspected thread after the other client's disconnect:
-    // the debugger thread forwards both in the order it got them.
+    // Each client's commands reach the inspected thread on a connection of their own, in no
+    // order with the commands of another client. So the breakpoint works from some call on.
+    let calls = 0;
+    while (!(await hitPauses())) {
+      if (++calls === 1000) throw new Error("the breakpoint never paused the program");
+    }
+
+    // And it is gone from some call on, after its client left.
     await leave();
-    await staying.send("Runtime.evaluate", { expression: `hit(); console.log("second call done")` });
-    expect({ paused: staying.paused, logged: staying.logged }).toEqual({
-      paused: 1,
-      logged: ["first call done", "second call done"],
+    calls = 0;
+    while (await hitPauses()) {
+      if (++calls === 1000) throw new Error("the breakpoint of the client that left still pauses the program");
+    }
+
+    await staying.send("Runtime.evaluate", { expression: `hit(); console.log("after")` });
+    expect(staying.logged).toEqual(["after"]);
+    expect(proc.exitCode).toBeNull();
+    await staying.close();
+  },
+  30_000,
+);
+
+// A pause waits for a client that can resume it. The in-process Session cannot: its thread is
+// the one that is paused. Node does not wait for it either.
+test.concurrent(
+  "a pause does not wait for an inspector.Session after the DevTools client left",
+  async () => {
+    using dir = tempDir("inspector-session-pause", {
+      "entry.mjs": `
+import inspector from "node:inspector";
+inspector.open(0, "127.0.0.1");
+const session = new inspector.Session();
+session.connect();
+session.post("Debugger.enable");
+// Each line on stdin runs a debugger statement and then says so.
+process.stdin.on("data", data => {
+  for (const step of String(data).trim().split("\\n")) {
+    debugger;
+    console.log("done " + step);
+  }
+});
+`,
     });
-    staying.close();
+    const { proc, url } = await openInspectee(String(dir));
+    await using _ = proc;
+
+    // "done <step>" lines of the program, as they arrive.
+    const done: string[] = [];
+    let wake = () => {};
+    (async () => {
+      const decoder = new TextDecoder();
+      for await (const chunk of proc.stdout) {
+        done.push(...decoder.decode(chunk, { stream: true }).split("\n").filter(Boolean));
+        wake();
+      }
+      wake();
+    })();
+    const step = async (name: string) => {
+      proc.stdin.write(name + "\n");
+      proc.stdin.flush();
+    };
+    const untilDone = async (name: string) => {
+      while (!done.includes("done " + name)) {
+        if (proc.exitCode !== null) throw new Error(`the program exited before step ${name}`);
+        await new Promise<void>(resolve => (wake = resolve));
+      }
+    };
+
+    // With a client attached the statement pauses the program, and the client resumes it.
+    const first = await connectDevToolsClient(url);
+    await first.send("Debugger.enable");
+    await step("1");
+    await untilDone("1");
+    expect(first.paused).toBe(1);
+
+    // The client leaves while the program runs. Only the Session is left: nothing holds the program.
+    await first.close();
+    await step("2");
+    await untilDone("2");
+
+    // A client that attaches later gets a debugger that works. It leaves during the pause.
+    const second = await connectDevToolsClient(url, { resume: false });
+    await second.send("Debugger.enable");
+    await step("3");
+    await second.until(() => second.paused === 1);
+    expect(done).toEqual(["done 1", "done 2"]);
+    await second.close();
+    await untilDone("3");
+
+    await step("4");
+    await untilDone("4");
+    expect(done).toEqual(["done 1", "done 2", "done 3", "done 4"]);
+    expect(proc.exitCode).toBeNull();
   },
   30_000,
 );

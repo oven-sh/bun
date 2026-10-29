@@ -94,56 +94,79 @@ class Program implements AsyncDisposable {
 }
 
 // The tests move tens of megabytes through a debug build, which the default 5 s does not cover.
-const timeout = isASAN || isDebug ? 60_000 : 20_000;
+const timeout = isASAN || isDebug ? 120_000 : undefined;
 
-describe.concurrent.each([
-  ["bun --inspect", ["--inspect=127.0.0.1:0"], logger, "Console.enable"],
-  ["inspector.open()", [], `require("node:inspector").open(0, "127.0.0.1");` + logger, "Runtime.enable"],
-])("%s", (_, args, source, enable) => {
+// The command that enables the events of the logger, and the commands that turn the debugger on.
+type Command = [method: string, params?: object];
+const servers: [name: string, args: string[], source: string, enable: string, debuggerOn: Command[]][] = [
+  [
+    "bun --inspect",
+    ["--inspect=127.0.0.1:0"],
+    logger,
+    "Console.enable",
+    // JSC pauses at a `debugger` statement only on request.
+    [["Debugger.enable"], ["Debugger.setPauseOnDebuggerStatements", { enabled: true }]],
+  ],
+  [
+    "inspector.open()",
+    [],
+    `require("node:inspector").open(0, "127.0.0.1");` + logger,
+    "Runtime.enable",
+    [["Debugger.enable"]],
+  ],
+];
+
+describe.concurrent.each(servers)("%s", (_, args, source, enable, debuggerOn) => {
   test(
     "drops a frontend that stops reading and tells it why, and another frontend keeps its events",
     async () => {
       await using program = new Program(args, source);
       await program.until(() => program.url !== "", "the inspector URL");
+      // The witness reads all the time. It enables the same domain as the frontend that will stall.
+      const witness = await RawFrontend.connect(program.url);
       const stalled = await RawFrontend.connect(program.url);
-      let witness: RawFrontend | undefined;
       try {
-        await stalled.send(enable);
-        stalled.pause();
-        await program.log(32);
-
-        // A second frontend shows what the stalled one cannot. The debugger thread runs its
-        // tasks in order: once it answers a command, it has done what was queued for it
-        // before. After this answer, the stalled frontend's socket is full. It holds about
-        // 8 MB of the 32 MB, and the rest waits.
-        witness = await RawFrontend.connect(program.url);
         await witness.send(enable);
+        await stalled.send(enable);
+        // The frontend that will stall is a debugger. The witness is not.
+        for (const [method, params] of debuggerOn) await stalled.send(method, params);
 
-        // 8 MB more, twice the limit, and the stalled frontend takes none of it. After this
-        // answer, the debugger thread has seen that.
-        await program.log(8);
-        await witness.send("Runtime.evaluate", { expression: "0" });
+        // A socket whose frontend reads nothing still takes bytes for a moment, while the kernel
+        // grows its buffers, and each byte counts as a read. A round that is over before that
+        // moment finds a frontend that caught up. The second round meets buffers that are grown.
+        for (let round = 0; round < 2 && !stalled.closeFrame; round++) {
+          stalled.pause();
+          // One megabyte at a time: the witness has each one before the next is logged, so the
+          // program never queues for it. The stalled frontend takes what its socket holds, about
+          // 8 MB. It is dropped 4 MB later.
+          for (let megabyte = 0; megabyte < 32; megabyte++) {
+            await program.log(1);
+            await witness.until(() => witness.lines.size === program.lines, "the megabyte");
+          }
+          // The debugger thread runs its tasks in order: once it hands over this answer, it
+          // has done what was queued for the stalled frontend before.
+          await witness.send("Runtime.evaluate", { expression: "0" });
 
-        // The stalled frontend reads again. It gets what its socket held, then the reason.
-        // If nothing had dropped it, it would get every line and stay connected.
-        stalled.resume();
-        await stalled.until(() => stalled.lines.size === program.lines, "every line").catch(() => {});
+          // The stalled frontend reads again. It gets what its socket held, then the reason.
+          // If nothing dropped it, it gets every line and stays connected.
+          stalled.resume();
+          await stalled.until(() => stalled.lines.size === program.lines, "every line").catch(() => {});
+        }
         expect(stalled.closeFrame).toEqual({
           code: 1013,
           reason: expect.stringMatching(/^Inspector frontend read nothing while \d+ MB were queued for it$/),
         });
         expect(stalled.lines.size).toBeLessThan(program.lines);
 
-        // The other frontend still gets events after the stalled one left. This command is
-        // dispatched after that disconnect: both are tasks of the inspected thread, and the
-        // disconnect was posted first.
-        await witness.send("Runtime.evaluate", { expression: `console.log("#1000000 after")` });
-        await witness.until(() => witness!.lines.has(1000000), "a line logged after the stalled frontend left");
+        // The debugger went with the frontend that turned it on: nothing is left to resume the
+        // program, so this statement must not pause it. The domain both had enabled stays on.
+        await witness.send("Runtime.evaluate", { expression: `debugger; console.log("#1000000 after")` });
+        await witness.until(() => witness.lines.has(1000000), "a line logged after the stalled frontend left");
         expect(witness.closeFrame).toBeUndefined();
         expect(program.running).toBe(true);
       } finally {
         stalled.close();
-        witness?.close();
+        witness.close();
       }
     },
     timeout,

@@ -19,7 +19,7 @@ export class RawFrontend {
   // WebSocket frames, or the 4-byte length prefix of the socket transport.
   #webSocket: boolean;
   #nextId = 1;
-  #responses = new Map<number, (message: any) => void>();
+  #responses = new Map<number, { resolve: (message: any) => void; reject: (error: Error) => void }>();
   #waiters: (() => void)[] = [];
   // The frame that is arriving: its header bytes, then its payload. Console lines are large
   // and only their start matters, so an event keeps its first bytes and drops the rest.
@@ -36,6 +36,11 @@ export class RawFrontend {
     socket.on("error", () => {});
     socket.on("close", () => {
       this.ended = true;
+      const error = new Error(
+        `the connection ended before the response, close frame: ${JSON.stringify(this.closeFrame)}`,
+      );
+      for (const { reject } of this.#responses.values()) reject(error);
+      this.#responses.clear();
       this.#wake();
     });
   }
@@ -84,7 +89,10 @@ export class RawFrontend {
     }
   }
 
-  /** Sends a command and resolves with the response. The response only arrives while reading. */
+  /**
+   * Sends a command and resolves with the response. Rejects if the connection ends first.
+   * The response only arrives while reading.
+   */
   send(method: string, params: object = {}): Promise<any> {
     const id = this.#nextId++;
     const payload = Buffer.from(JSON.stringify({ id, method, params }));
@@ -98,7 +106,7 @@ export class RawFrontend {
       header.writeUInt32BE(payload.length);
       this.#socket.write(Buffer.concat([header, payload]));
     }
-    return new Promise(resolve => this.#responses.set(id, resolve));
+    return new Promise((resolve, reject) => this.#responses.set(id, { resolve, reject }));
   }
 
   pause(): void {
@@ -181,7 +189,7 @@ export class RawFrontend {
       return;
     }
     const message = JSON.parse(payload.toString("utf8"));
-    this.#responses.get(message.id)?.(message);
+    this.#responses.get(message.id)?.resolve(message);
     this.#responses.delete(message.id);
   }
 }

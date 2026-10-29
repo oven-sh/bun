@@ -102,6 +102,17 @@ enum class ConnectionStatus : int32_t {
 // A frontend is dropped once this much was queued for it since it last took a byte. Node queues without bound.
 static size_t stalledFrontendBacklog = 128 * 1024 * 1024;
 
+// Beside `<Domain>.enable` and `<Domain>.disable`: a command that turns something on, and the one that turns it off.
+static constexpr std::pair<ASCIILiteral, ASCIILiteral> commandsThatTurnOnAndOff[] = {
+    { "ScriptProfiler.startTracking"_s, "ScriptProfiler.stopTracking"_s },
+    { "Runtime.enableTypeProfiler"_s, "Runtime.disableTypeProfiler"_s },
+};
+
+static constexpr bool isMethodNameCharacter(char16_t character)
+{
+    return isASCIIAlphanumeric(character) || character == '.';
+}
+
 class BunInspectorConnection : public ThreadSafeRefCounted<BunInspectorConnection>, public Inspector::FrontendChannel {
 
 public:
@@ -212,18 +223,17 @@ public:
 
             connection->status = ConnectionStatus::Disconnected;
 
-            // Do not call .disconnect() if we never actually connected.
-            if (connection->hasEverConnected) {
-                // The controller's disconnectFrontend() disables every agent before its last-frontend check.
-                auto* inspectedGlobalObject = connection->globalObject;
-                auto& router = const_cast<Inspector::FrontendRouter&>(inspectedGlobalObject->inspectorController().frontendRouter());
-                if (router.frontendCount() > 1) {
-                    JSC::JSLockHolder locker(inspectedGlobalObject->vm());
+            // The controller's disconnectFrontend() disables every agent before its last-frontend check.
+            auto* inspectedGlobalObject = connection->globalObject;
+            auto& router = const_cast<Inspector::FrontendRouter&>(inspectedGlobalObject->inspectorController().frontendRouter());
+            if (!connection->hasEverConnected || router.frontendCount() > 1) {
+                JSC::JSLockHolder locker(inspectedGlobalObject->vm());
+                // A frontend that left before it was connected is not in the router, but its commands ran.
+                if (connection->hasEverConnected)
                     router.disconnectFrontend(connection.get());
-                    connection->disableDomainsOnlyThisFrontendEnabled();
-                } else {
-                    connection->inspector().disconnect(connection.get());
-                }
+                connection->turnOffWhatOnlyThisFrontendTurnedOn();
+            } else {
+                connection->inspector().disconnect(connection.get());
             }
 
             if (connection->unrefOnDisconnect) {
@@ -253,39 +263,54 @@ public:
         return status == ConnectionStatus::Disconnected || status == ConnectionStatus::Disconnecting;
     }
 
-    // Inspected thread. Only a frontend that turned the debugger on answers a pause.
+    // Inspected thread. A pause waits only for a frontend on a transport that turned the debugger on.
     bool canResumeProgram() const
     {
-        return !hasLeft() && enabledDomains.contains("Debugger"_s);
+        return hasTransport && !hasLeft() && turnOffCommands.contains("Debugger.disable"_s);
     }
 
-    // Inspected thread. Remembers the domains this frontend turned on: its `<domain>.enable` and `<domain>.disable` commands.
-    void trackEnabledDomains(const WTF::String& message)
+    // Inspected thread. Remembers what this frontend turned on, as the command that turns it off.
+    void trackTurnOffCommand(const WTF::String& message)
     {
-        if (!message.contains(".enable\""_s) && !message.contains(".disable\""_s)) [[likely]]
+        // A command that turns something on or off is short. The backend parses each command again.
+        if (message.length() > 1024)
             return;
 
         auto value = JSON::Value::parseJSON(message);
         auto object = value ? value->asObject() : nullptr;
-        if (!object)
+        // The backend runs no command without an integer id.
+        if (!object || !object->getInteger("id"_s))
             return;
 
         auto method = object->getString("method"_s);
-        bool enable = method.endsWith(".enable"_s);
-        if (!enable && !method.endsWith(".disable"_s))
+        String turnOff;
+        bool turnsOn = false;
+        if (method.endsWith(".enable"_s)) {
+            turnOff = makeString(StringView(method).left(method.length() - 6), "disable"_s);
+            turnsOn = true;
+        } else if (method.endsWith(".disable"_s))
+            turnOff = method;
+        else {
+            for (auto& [on, off] : commandsThatTurnOnAndOff) {
+                if (method == on || method == off) {
+                    turnOff = off;
+                    turnsOn = method == on;
+                    break;
+                }
+            }
+        }
+
+        // The name goes into a command as it is.
+        if (turnOff.isNull() || !StringView(turnOff).containsOnly<isMethodNameCharacter>())
             return;
 
-        auto domain = method.left(method.length() - (enable ? 7 : 8));
-        if (domain.isEmpty() || !StringView(domain).containsOnly<isASCIIAlphanumeric>())
-            return;
-
-        enabledDomains.removeAll(domain);
-        if (enable)
-            enabledDomains.append(WTF::move(domain));
+        turnOffCommands.removeAll(turnOff);
+        if (turnsOn)
+            turnOffCommands.append(WTF::move(turnOff));
     }
 
-    // Inspected thread. JSC keeps one state per domain for every frontend, so this one's leftovers could pause the program.
-    void disableDomainsOnlyThisFrontendEnabled()
+    // Inspected thread. JSC keeps one state for every frontend, so what only this frontend turned on goes off with it.
+    void turnOffWhatOnlyThisFrontendTurnedOn()
     {
         Vector<RefPtr<BunInspectorConnection>, 8> connections;
         {
@@ -293,14 +318,14 @@ public:
             connections.appendVector(inspectorConnections->get(scriptExecutionContextIdentifier));
         }
 
-        for (auto& domain : std::exchange(enabledDomains, {})) {
-            bool anotherFrontendEnabledIt = connections.containsIf([&](auto& other) {
-                return other.get() != this && other->status != ConnectionStatus::Disconnected && other->enabledDomains.contains(domain);
+        for (auto& command : std::exchange(turnOffCommands, {})) {
+            bool anotherFrontendTurnedItOn = connections.containsIf([&](auto& other) {
+                return other.get() != this && other->hasTransport && other->status != ConnectionStatus::Disconnected && other->turnOffCommands.contains(command);
             });
             // JSC asserts when a frontend disables a debugger that is not attached.
-            if (anotherFrontendEnabledIt || (domain == "Debugger"_s && !globalObject->debugger()))
+            if (anotherFrontendTurnedItOn || (command == "Debugger.disable"_s && !globalObject->debugger()))
                 continue;
-            inspector().dispatchMessageFromRemote(makeString("{\"id\":-1,\"method\":\""_s, domain, ".disable\"}"_s));
+            inspector().dispatchMessageFromRemote(makeString("{\"id\":-1,\"method\":\""_s, command, "\"}"_s));
         }
     }
 
@@ -442,7 +467,7 @@ public:
         if (!debugger) {
             for (auto message : messages) {
                 resolveWaitIfInitialized(message);
-                trackEnabledDomains(message);
+                trackTurnOffCommand(message);
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
 
                 if (!debugger) {
@@ -457,7 +482,7 @@ public:
         } else {
             for (auto message : messages) {
                 resolveWaitIfInitialized(message);
-                trackEnabledDomains(message);
+                trackTurnOffCommand(message);
                 dispatcher.dispatchMessageFromRemote(WTF::move(message));
             }
         }
@@ -723,14 +748,17 @@ public:
     JSC::Strong<JSC::Unknown> jsTransportUnsentBytesFunction {};
     JSC::Strong<JSC::Unknown> jsTransportDismissFunction {};
 
-    // Inspected thread only: the domains this frontend turned on.
-    WTF::Vector<WTF::String, 4> enabledDomains;
+    // Inspected thread only: the commands that turn off what this frontend turned on.
+    WTF::Vector<WTF::String, 4> turnOffCommands;
 
     std::atomic<ConnectionStatus> status = ConnectionStatus::Pending;
 
     bool unrefOnDisconnect = false;
 
     bool hasEverConnected = false;
+
+    // False for the in-process `inspector.Session`: no client reads its events or answers a pause.
+    bool hasTransport = false;
 };
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSend);
@@ -930,8 +958,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
         inspectorConnections->set(targetContext->identifier(), connections);
     }
     connection->jsBunDebuggerOnMessageFunction = { vm, onMessageFn };
-    if (JSValue unsentBytesFn = callFrame->argument(3); unsentBytesFn.isCallable())
+    if (JSValue unsentBytesFn = callFrame->argument(3); unsentBytesFn.isCallable()) {
         connection->jsTransportUnsentBytesFunction = { vm, unsentBytesFn };
+        connection->hasTransport = true;
+    }
     if (JSValue dismissFn = callFrame->argument(4); dismissFn.isCallable())
         connection->jsTransportDismissFunction = { vm, dismissFn };
     connection->connect();

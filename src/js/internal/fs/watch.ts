@@ -76,8 +76,8 @@ let closeNativeWatcherWithoutEvent: (watcher: FSWatcher) => void;
 let dispatchNativeEvent: (watcher: FSWatcher, eventType: string, filename: unknown) => void;
 let refNativeWatcher: (watcher: FSWatcher) => void;
 let unrefNativeWatcher: (watcher: FSWatcher) => void;
+let isNativeWatcherOpen: (watcher: FSWatcher) => boolean;
 let onFSEventChange: (this: FSEvent, status: number, eventType: string, filename: unknown) => void;
-let ownerOfFSEvent: (handle: FSEvent) => FSWatcher;
 
 let uvErrorMap: Map<number, [code: string, description: string]> | undefined;
 
@@ -99,10 +99,14 @@ function makeWatchUVException(status: number, filename: unknown) {
 
 class FSEvent {
   #owner: FSWatcher;
-  // An own key that holds a function, as in node, so structured clone refuses a watcher that has a handle: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L256
+  // An own function key, as in node, so structured clone refuses a watcher that has a handle: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L256
   onchange = onFSEventChange;
   constructor(owner: FSWatcher) {
     this.#owner = owner;
+  }
+  // https://github.com/nodejs/node/blob/v26.3.0/src/fs_event_wrap.cc#L110-L118
+  get initialized() {
+    return isNativeWatcherOpen(this.#owner);
   }
   close() {
     closeNativeWatcher(this.#owner);
@@ -126,9 +130,6 @@ class FSEvent {
         return;
       }
       dispatchNativeEvent(owner, eventType, filename);
-    };
-    ownerOfFSEvent = function ownerOfFSEvent(handle) {
-      return handle.#owner;
     };
   }
 }
@@ -228,8 +229,8 @@ class FSWatcher extends EventEmitter {
     const handle = this._handle;
     if (handle === null) return;
     assertFSEventHandle(handle);
-    // Node's `!handle.initialized`, read from the watcher of the handle because `this` can be an object that inherits from it: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L346
-    if (ownerOfFSEvent(handle).#watcher == null) return;
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/fs/watchers.js#L346
+    if (!handle.initialized) return;
     handle.close();
     this._handle = null;
   }
@@ -266,6 +267,9 @@ class FSWatcher extends EventEmitter {
       if (filename != null && watcher._ignoreMatcher?.(filename)) return;
       watcher.emit("change", eventType, filename);
       watcher.#listener(eventType, filename);
+    };
+    isNativeWatcherOpen = function isNativeWatcherOpen(watcher) {
+      return watcher.#watcher != null;
     };
     closeNativeWatcher = function closeNativeWatcher(watcher) {
       // Cleared first: the native close calls #onEvent("close"), which reads #watcher to tell who closed.

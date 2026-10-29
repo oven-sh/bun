@@ -5,8 +5,8 @@
 const ObjectKeys = Object.keys;
 const ArrayIsArray = Array.isArray;
 
-// Matches Node's sensitiveHeaders marker used by node:http2.
-const kSensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
+// node:http2 exports this symbol as `sensitiveHeaders`.
+const kSensitiveHeaders = Symbol("sensitiveHeaders");
 
 // Verbatim from Node lib/internal/http.js (checkIsHttpToken).
 const tokenRegExp = /^[\^_`a-zA-Z\-0-9!#$%&'*+.|~]+$/;
@@ -195,6 +195,7 @@ function buildNgHeaderString(
 }
 
 export default {
+  kSensitiveHeaders,
   assertValidPseudoHeader,
   assertValidPseudoHeaderTrailer,
   buildNgHeaderString,

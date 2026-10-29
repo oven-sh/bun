@@ -299,6 +299,38 @@ describe("HTTP/3 header encoding", () => {
     expect(await answered.promise).toBe("200");
     client.close();
   });
+
+  // The receiver of an HTTP/3 header block cannot see the never-index flag of a field, so this reads
+  // what the header builder hands to the encoder. The builder's module owns the symbol.
+  test("reads the never-index list under http2.sensitiveHeaders", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--expose-internals",
+        "-e",
+        /* js */ `
+          const { buildNgHeaderString, kSensitiveHeaders } = require("internal/quic/http2util");
+          const { sensitiveHeaders } = require("node:http2");
+          // One field is "name\\0value\\0flags". Flag 1 is never-index.
+          const flags = key => buildNgHeaderString({ "x-secret": "s", [key]: ["x-secret"] }, () => {})[0].charCodeAt(11);
+          console.log(JSON.stringify({
+            ownerHasTheExport: kSensitiveHeaders === sensitiveHeaders,
+            underTheExport: flags(sensitiveHeaders),
+            underSymbolFor: flags(Symbol.for("nodejs.http2.sensitiveHeaders")),
+          }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ ownerHasTheExport: true, underTheExport: 1, underSymbolFor: 0 }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 // lsquic decodes a header block that follows another one while the stream is

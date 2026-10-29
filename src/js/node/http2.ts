@@ -345,7 +345,8 @@ function getUnpackedSettings(buf?: any, options?: any): any {
   return settings;
 }
 
-const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
+const http2util = require("internal/quic/http2util");
+const sensitiveHeaders: typeof http2util.kSensitiveHeaders = http2util.kSensitiveHeaders;
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
 
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
@@ -4290,7 +4291,8 @@ class ServerHttp2Session extends Http2Session {
         requestPerf.firstHeader = performance.now() - requestPerf.start;
       }
       let rawheaders = headersTuple[0];
-      let headers = headersTuple[1];
+      let headers: HeadersObject = headersTuple[1];
+      headers[sensitiveHeaders] = headersTuple[2] || [];
       if (self.#strictFieldWhitespaceValidation) {
         // stripInvalidWhitespaceFields returns its input by identity when nothing was
         // stripped (the common case) — only then can the native-built object be reused.
@@ -5187,7 +5189,8 @@ class ClientHttp2Session extends Http2Session {
       // PUSH_PROMISE: surface the server-pushed stream (with its REQUEST headers) on the session
       // 'stream' event; its eventual response HEADERS will fire 'push' on the pushed stream.
       let rawheaders = headersTuple[0];
-      let headers = headersTuple[1];
+      let headers: HeadersObject = headersTuple[1];
+      headers[sensitiveHeaders] = headersTuple[2] || [];
       if (self.#strictFieldWhitespaceValidation) {
         // stripInvalidWhitespaceFields returns its input by identity when nothing was
         // stripped (the common case) — only then can the native-built object be reused.
@@ -5305,7 +5308,8 @@ class ClientHttp2Session extends Http2Session {
       ) => {
         if (!self || typeof stream !== "object" || stream.rstCode) return;
         let rawheaders = headersTuple[0];
-        let headers = headersTuple[1];
+        let headers: HeadersObject = headersTuple[1];
+        headers[sensitiveHeaders] = headersTuple[2] || [];
         if (self.#strictFieldWhitespaceValidation) {
           // stripInvalidWhitespaceFields returns its input by identity when nothing was
           // stripped (the common case) — only then can the native-built object be reused.

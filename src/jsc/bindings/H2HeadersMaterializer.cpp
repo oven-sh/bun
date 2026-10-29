@@ -12,8 +12,6 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSCast.h>
-#include <JavaScriptCore/Symbol.h>
-#include <wtf/text/SymbolImpl.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
 #include "HTTPHeaderIdentifiers.h"
@@ -182,17 +180,6 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
                 obj->putDirect(vm, ident, jsString(vm, WTF::move(joined)), 0);
             }
         }
-    }
-
-    // obj[Symbol.for("nodejs.http2.sensitiveHeaders")] = sensitive || []
-    {
-        JSValue sensitiveProp = sensitive;
-        if (!sensitive) {
-            sensitiveProp = JSC::constructEmptyArray(globalObject, nullptr, 0);
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-        auto symbolImpl = vm.symbolRegistry().symbolForKey("nodejs.http2.sensitiveHeaders"_s);
-        obj->putDirect(vm, Identifier::fromUid(vm, &symbolImpl.get()), sensitiveProp, 0);
     }
 
     JSC::JSArray* tuple = JSC::constructEmptyArray(globalObject, nullptr, 3);

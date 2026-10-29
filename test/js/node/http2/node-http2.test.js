@@ -7,6 +7,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import http2 from "node:http2";
 import https from "node:https";
+import { createRequire } from "node:module";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -4937,6 +4938,163 @@ it("http2 hands out the cached name strings for pseudo-headers and known header 
     client.close();
     server.close();
   }
+});
+
+// Node creates `http2.sensitiveHeaders` with Symbol("sensitiveHeaders"). Bun used to take it from the
+// registry under this key, so any code could name the never-index list of a header block.
+const registeredSensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
+
+it("http2.sensitiveHeaders is a symbol that the registry does not hold", () => {
+  const require = createRequire(import.meta.url);
+  const roads = [
+    require("http2").sensitiveHeaders,
+    require("node:http2").sensitiveHeaders,
+    process.getBuiltinModule("node:http2").sensitiveHeaders,
+  ];
+  expect({
+    type: typeof http2.sensitiveHeaders,
+    description: http2.sensitiveHeaders.description,
+    keyFor: Symbol.keyFor(http2.sensitiveHeaders),
+    isTheRegisteredSymbol: http2.sensitiveHeaders === registeredSensitiveHeaders,
+    oneValueByEveryRoad: roads.every(symbol => symbol === http2.sensitiveHeaders),
+  }).toEqual({
+    type: "symbol",
+    description: "sensitiveHeaders",
+    keyFor: undefined,
+    isTheRegisteredSymbol: false,
+    oneValueByEveryRoad: true,
+  });
+  // Only a symbol that is not registered can be held weakly.
+  expect(() => {
+    new WeakMap().set(http2.sensitiveHeaders, 1);
+    new WeakSet().add(http2.sensitiveHeaders);
+    new WeakRef(http2.sensitiveHeaders);
+    new FinalizationRegistry(() => {}).register(http2.sensitiveHeaders, 1);
+  }).not.toThrow();
+});
+
+// Each header block of the round trip below, and the one field that its sender lists as never-indexed.
+const listedAsSensitive = {
+  "request": "x-request",
+  "raw request": "x-raw-request",
+  "padded request": "x-padded-request",
+  "informational": "x-informational",
+  "push request": "x-push-request",
+  "push response": "x-push-response",
+  "response": "x-response",
+  "raw response": "x-raw-response",
+  "padded response": "x-padded-response",
+  "trailers": "x-trailers",
+};
+
+// Sends every block with its never-index list under `key`, and returns what the receiver of each block got.
+async function receivedHeaderBlocks(key) {
+  const blocks = {};
+  const record = name => headers => {
+    blocks[name] = {
+      fields: Object.keys(headers).filter(field => field.startsWith("x-")),
+      symbols: Object.getOwnPropertySymbols(headers),
+      list: Object.getOwnPropertyDescriptor(headers, http2.sensitiveHeaders),
+    };
+  };
+  const object = (name, more = {}) => ({ ...more, [listedAsSensitive[name]]: "1", [key]: [listedAsSensitive[name]] });
+  const raw = (name, ...first) => {
+    const fields = [...first, listedAsSensitive[name], "1"];
+    fields[key] = [listedAsSensitive[name]];
+    return fields;
+  };
+  // A receiver drops a field whose value starts with a space, and then builds its headers object in JS.
+  const padded = { "x-padded": " value" };
+
+  const failure = Promise.withResolvers();
+  const fail = failure.reject;
+  const server = http2.createServer();
+  server.on("error", fail);
+  server.on("sessionError", fail);
+  server.on("stream", (stream, headers) => {
+    stream.on("error", fail);
+    switch (headers[":path"]) {
+      case "/raw":
+        record("raw request")(headers);
+        stream.respond(raw("raw response", ":status", 200));
+        stream.end();
+        break;
+      case "/padded":
+        record("padded request")(headers);
+        stream.respond(object("padded response", { ":status": 200, ...padded }));
+        stream.end();
+        break;
+      default:
+        record("request")(headers);
+        stream.additionalHeaders(object("informational", { ":status": 103 }));
+        stream.pushStream(object("push request", { ":path": "/pushed" }), (error, push) => {
+          if (error) return fail(error);
+          push.on("error", fail);
+          push.respond(object("push response", { ":status": 200 }));
+          push.end();
+        });
+        stream.on("wantTrailers", () => stream.sendTrailers(object("trailers")));
+        stream.respond(object("response", { ":status": 200 }), { waitForTrailers: true });
+        stream.end();
+    }
+  });
+
+  let client;
+  try {
+    await Promise.race([once(server.listen(0, "127.0.0.1"), "listening"), failure.promise]);
+    client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+    client.on("error", fail);
+
+    const ended = stream => {
+      stream.on("error", fail);
+      stream.resume();
+      return once(stream, "end");
+    };
+    const pushed = Promise.withResolvers();
+    client.on("stream", (stream, headers) => {
+      record("push request")(headers);
+      stream.on("push", record("push response"));
+      pushed.resolve(ended(stream));
+    });
+
+    const request = client.request(object("request", { ":path": "/" }));
+    request.on("headers", record("informational"));
+    request.on("response", record("response"));
+    request.on("trailers", record("trailers"));
+    const rawRequest = client.request(raw("raw request", ":path", "/raw"));
+    rawRequest.on("response", record("raw response"));
+    const paddedRequest = client.request(object("padded request", { ":path": "/padded", ...padded }));
+    paddedRequest.on("response", record("padded response"));
+
+    await Promise.race([
+      Promise.all([ended(request), ended(rawRequest), ended(paddedRequest), pushed.promise]),
+      failure.promise,
+    ]);
+    return blocks;
+  } finally {
+    client?.close();
+    server.close();
+  }
+}
+
+const expectedHeaderBlocks = list =>
+  Object.fromEntries(
+    Object.entries(listedAsSensitive).map(([name, field]) => [
+      name,
+      {
+        fields: [field],
+        symbols: [http2.sensitiveHeaders],
+        list: { value: list(field), writable: true, enumerable: true, configurable: true },
+      },
+    ]),
+  );
+
+it("http2 a received header block lists the fields that its sender put under http2.sensitiveHeaders", async () => {
+  expect(await receivedHeaderBlocks(http2.sensitiveHeaders)).toEqual(expectedHeaderBlocks(field => [field]));
+});
+
+it('http2 a list under Symbol.for("nodejs.http2.sensitiveHeaders") marks no field', async () => {
+  expect(await receivedHeaderBlocks(registeredSensitiveHeaders)).toEqual(expectedHeaderBlocks(() => []));
 });
 
 it("http2 option range error messages use the options. prefix", () => {

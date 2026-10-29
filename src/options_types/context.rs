@@ -587,7 +587,7 @@ pub struct RuntimeOptions {
     pub redis_preconnect: bool,
     pub sql_preconnect: bool,
     pub eval: Eval,
-    pub preconnect: Vec<Box<[u8]>>,
+    pub preconnect: Vec<&'static [u8]>,
     pub experimental_http2_fetch: bool,
     pub experimental_http3_fetch: bool,
     pub dns_result_order: Box<[u8]>,
@@ -619,8 +619,8 @@ pub struct Eval {
 
 pub struct CpuProf {
     pub enabled: bool,
-    pub name: Box<[u8]>,
-    pub dir: Box<[u8]>,
+    pub name: &'static [u8],
+    pub dir: &'static [u8],
     pub interval: u32,
     pub md_format: bool,
     pub json_format: bool,
@@ -632,8 +632,8 @@ impl Default for CpuProf {
     fn default() -> Self {
         Self {
             enabled: false,
-            name: Box::default(),
-            dir: Box::default(),
+            name: b"",
+            dir: b"",
             interval: 1000,
             md_format: false,
             json_format: false,
@@ -645,8 +645,8 @@ impl Default for CpuProf {
 pub struct HeapProf {
     pub enabled: bool,
     pub text_format: bool,
-    pub name: Box<[u8]>,
-    pub dir: Box<[u8]>,
+    pub name: &'static [u8],
+    pub dir: &'static [u8],
 }
 
 impl Default for RuntimeOptions {

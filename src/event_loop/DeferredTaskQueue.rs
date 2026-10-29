@@ -32,12 +32,10 @@
 //! could unregister another's). A callback can also post a new entry: each HTTP/2 response sink's
 //! flush posts the connection's drain task, and `H2FrameParser` re-posts itself after a fatal send.
 //!
-//! One pass runs the entries that were registered when it started, once each, in the map's
-//! order, and skips the ones a callback unregistered before their turn. The map's order is
-//! registration order until a swap-remove: several `FileSink`s on one fd written in one tick
-//! flush in the order they were written. An entry posted during the pass waits for the next one. The
-//! next pass comes at once: `run()` reports such a post, and the event loop wakes itself so an
-//! idle loop does not sleep on the new entry until unrelated I/O or a timer.
+//! One pass runs the entries registered when it started, once each, in the map's order (the
+//! registration order until a swap-remove; several `FileSink`s on one fd rely on it), and skips
+//! the ones a callback unregistered. An entry posted during the pass waits for the next one,
+//! which the event loop schedules at once: `run()` reports the post and the loop wakes itself.
 
 use core::ffi::c_void;
 use core::ptr::NonNull;
@@ -56,12 +54,10 @@ pub struct DeferredTaskQueue {
     map: ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>,
     /// The keys of the pass that is running. Kept between passes for its allocation.
     pass: Vec<Option<NonNull<c_void>>>,
-    /// The entry whose callback is running. A post of this key from inside its own callback is
-    /// a re-registration (`H2FrameParser` uncorks and corks again while it flushes), not new
-    /// work: it waits for its own wakeup like a callback that returns `true`.
+    /// The entry whose callback is running. A post of this key from its own callback is a
+    /// re-registration (`H2FrameParser` re-corks while it flushes), not new work.
     running: Option<NonNull<c_void>>,
-    /// Set by `post_task`, cleared and read by `run()`: whether a pass posted an entry it left
-    /// for the next pass.
+    /// Whether the running pass posted an entry that waits for the next one.
     posted: bool,
 }
 
@@ -90,11 +86,8 @@ impl DeferredTaskQueue {
     /// wakeup, such as a writable socket.
     #[must_use = "an entry posted during the pass waits for the next one: run another pass or wake the loop"]
     pub fn run(&mut self) -> bool {
-        // `&mut self` is `noalias`, but every callback reaches this queue again through the
-        // VM (`post_task` from a sink's flush) and writes `posted`, `running` and the map. Go
-        // through a laundered raw pointer for the whole pass, so each access below is a
-        // short-lived borrow that the callback's writes are allowed to sit between (the
-        // pattern of `EventLoop::tick_immediate_tasks`).
+        // Callbacks reach this queue again through the VM, so no `&mut self` (`noalias`) may
+        // span a callback: launder it, as `EventLoop::tick_immediate_tasks` does.
         let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
         // SAFETY: `this` is the live queue for the whole pass; no borrow of it is held across
         // a callback.
@@ -103,9 +96,8 @@ impl DeferredTaskQueue {
         if queue().map.is_empty() {
             return false;
         }
-        // A copy of the keys, so that what callbacks post or unregister cannot move an entry
-        // past or under the cursor. A nested pass (a callback that drains microtasks) takes its
-        // own copy.
+        // The pass walks a copy of the keys: a post or an unregister from a callback cannot
+        // move an entry past or under the cursor.
         let mut keys = core::mem::take(&mut queue().pass);
         keys.clear();
         keys.extend_from_slice(queue().map.keys());

@@ -452,10 +452,8 @@ impl EventLoop {
         vm.is_inside_deferred_task_queue.set(true);
         let posted = self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
-        // An entry posted during the pass waits for the next one. Not every
-        // callback gets another pass before the loop polls (an immediate does
-        // not), so wake the loop instead of sleeping on the entry until
-        // unrelated I/O or a timer.
+        // An entry posted during the pass waits for the next one. An immediate
+        // gets no pass before the poll, so wake the loop instead of sleeping.
         if posted {
             self.wakeup();
         }

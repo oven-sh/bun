@@ -2334,10 +2334,9 @@ impl VirtualMachine {
 
         ExitHandler::dispatch_on_exit(self);
 
-        // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here. A pass
-        // can post an entry for the next pass, and no loop turn follows, so run the passes
-        // here. The longest chain a flush posts is sinks, then the HTTP/2 drain, then the
-        // sinks that the drain's stream retirements wrote to: three passes. One more is slack.
+        // process.exit() never reaches drain_microtasks; flush AutoFlusher sinks here, and the
+        // passes a flush posts (sinks, the HTTP/2 drain, sinks its retirements wrote to; one
+        // more as slack), since no loop turn follows.
         const EXIT_FLUSH_PASSES: u32 = 4;
         if !self.is_inside_deferred_task_queue.get() {
             self.is_inside_deferred_task_queue.set(true);

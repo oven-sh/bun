@@ -339,15 +339,12 @@ impl FontFamily {
             return Ok(FontFamily::Generic(value));
         }
 
-        // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
-        let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
         let value = input.expect_ident()?;
         // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
         while let Ok(ident) = input.try_parse(|p| p.expect_ident()) {
             if string.is_none() {
-                let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
+                let mut s = bun_alloc::ArenaVec::<u8>::new_in(input.arena());
                 s.extend_from_slice(value);
                 string = Some(s);
             }

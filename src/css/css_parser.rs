@@ -946,7 +946,7 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
     // `DeclarationList = bumpalo::Vec<'bump, Property>` needs the arena up
     // front, so cache it here (same `'static`-erased borrow `DeclarationBlock`
     // already uses crate-wide).
-    pub(crate) arena: &'a Bump,
+    pub(crate) arena: &'static Bump,
     pub(crate) options: &'a ParserOptions<'a>,
     pub(crate) state: TopLevelState,
     pub(crate) at_rule_parser: &'a mut AtRuleParserT,
@@ -958,7 +958,7 @@ pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
 
 impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT> {
     pub(crate) fn new(
-        arena: &'a Bump,
+        arena: &'static Bump,
         options: &'a ParserOptions<'a>,
         at_rule_parser: &'a mut AtRuleParserT,
         rules: &'a mut CssRuleList<AtRuleParserT::AtRule>,
@@ -977,15 +977,12 @@ impl<'a, AtRuleParserT: CustomAtRuleParser> TopLevelRuleParser<'a, AtRuleParserT
     }
 
     pub(crate) fn nested(&mut self) -> NestedRuleParser<'_, AtRuleParserT> {
-        // SAFETY: same `'static` erasure used by `DeclarationBlock::parse` —
-        // the arena outlives every `DeclarationList` produced here.
-        let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
         NestedRuleParser {
             arena: self.arena,
             options: self.options,
             at_rule_parser: &mut *self.at_rule_parser,
-            declarations: DeclarationList::new_in(bump),
-            important_declarations: DeclarationList::new_in(bump),
+            declarations: DeclarationList::new_in(self.arena),
+            important_declarations: DeclarationList::new_in(self.arena),
             rules: &mut *self.rules,
             is_in_style_rule: false,
             is_in_scope_rule: false,
@@ -1039,7 +1036,7 @@ impl ComposesCtx for NoComposesCtx {
 }
 
 pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
-    pub(crate) arena: &'a Bump,
+    pub(crate) arena: &'static Bump,
     pub(crate) options: &'a ParserOptions<'a>,
     pub(crate) at_rule_parser: &'a mut T,
     // todo_stuff.think_mem_mgmt
@@ -1434,15 +1431,12 @@ mod rule_parsers {
         ) -> CssResult<(DeclarationBlock<'static>, CssRuleList<T::AtRule>)> {
             // TODO: think about memory management in error cases
             let mut rules = CssRuleList::<T::AtRule>::default();
-            // SAFETY: see `TopLevelRuleParser::nested` — `'static` erasure of the
-            // parser arena.
-            let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(self.arena) };
             let mut nested_parser = NestedRuleParser::<T> {
                 arena: self.arena,
                 options: self.options,
                 at_rule_parser: &mut *self.at_rule_parser,
-                declarations: DeclarationList::new_in(bump),
-                important_declarations: DeclarationList::new_in(bump),
+                declarations: DeclarationList::new_in(self.arena),
+                important_declarations: DeclarationList::new_in(self.arena),
                 rules: &mut rules,
                 is_in_style_rule: self.is_in_style_rule || is_style_rule,
                 is_in_scope_rule: self.is_in_scope_rule && !is_style_rule,
@@ -2091,13 +2085,9 @@ mod rule_parsers {
 
         fn parse_value(this: &mut Self, name: &'static [u8], input: &mut Parser) -> CssResult<()> {
             // Note: split-borrow — see `NestedComposesCtx` above.
-            // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
-            // detach that borrow so `input` can be re-borrowed mutably below. The
-            // arena outlives the parser (it owns all parsed allocations).
-            let arena: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(input.arena()) };
             let mut ctx = NestedComposesCtx {
                 state: this.composes_state,
-                arena,
+                arena: this.arena,
                 composes: &mut *this.composes,
             };
             // CSS modules consume `composes`: it stays in the block of the rule, whatever comes before it.
@@ -2126,7 +2116,7 @@ mod rule_parsers {
             }
             let loc = input.current_source_location();
             let mut nested = NestedDeclarationsRule {
-                declarations: DeclarationBlock::new_in(arena),
+                declarations: DeclarationBlock::new_in(this.arena),
                 loc: Location {
                     source_index: this.options.source_index,
                     line: loc.line,
@@ -3183,7 +3173,7 @@ impl<'a> Parser<'a> {
     }
 
     #[inline]
-    pub(crate) fn arena(&self) -> &Bump {
+    pub(crate) fn arena(&self) -> &'a Bump {
         self.input.tokenizer.arena
     }
 

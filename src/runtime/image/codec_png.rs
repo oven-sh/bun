@@ -11,32 +11,39 @@ use crate::encoded_wrap_free;
 bun_opaque::opaque_ffi! { pub struct spng_ctx; }
 
 unsafe extern "C" {
-    safe fn spng_ctx_new(flags: c_int) -> *mut spng_ctx;
+    /// Null or a fresh context, which lives until `spng_ctx_free`.
+    safe fn spng_ctx_new(flags: c_int) -> Option<&'static mut spng_ctx>;
     fn spng_ctx_free(ctx: *mut spng_ctx);
-    fn spng_set_png_buffer(ctx: *mut spng_ctx, buf: *const u8, len: usize) -> c_int;
-    fn spng_decoded_image_size(ctx: *mut spng_ctx, fmt: c_int, out: *mut usize) -> c_int;
+    /// `buf` must stay readable and unchanged until `spng_ctx_free`: safe imports read it.
+    fn spng_set_png_buffer(ctx: &mut spng_ctx, buf: *const u8, len: usize) -> c_int;
+    fn spng_decoded_image_size(ctx: &mut spng_ctx, fmt: c_int, out: &mut usize) -> c_int;
     fn spng_decode_image(
-        ctx: *mut spng_ctx,
+        ctx: &mut spng_ctx,
         out: *mut u8,
         len: usize,
         fmt: c_int,
         flags: c_int,
     ) -> c_int;
-    fn spng_get_ihdr(ctx: *mut spng_ctx, ihdr: *mut Ihdr) -> c_int;
-    fn spng_set_ihdr(ctx: *mut spng_ctx, ihdr: *const Ihdr) -> c_int;
-    fn spng_set_plte(ctx: *mut spng_ctx, plte: *const Plte) -> c_int;
-    fn spng_set_trns(ctx: *mut spng_ctx, trns: *const Trns) -> c_int;
+    safe fn spng_get_ihdr(ctx: &mut spng_ctx, ihdr: &mut Ihdr) -> c_int;
+    safe fn spng_set_ihdr(ctx: &mut spng_ctx, ihdr: &Ihdr) -> c_int;
+    safe fn spng_set_plte(ctx: &mut spng_ctx, plte: &Plte) -> c_int;
+    safe fn spng_set_trns(ctx: &mut spng_ctx, trns: &Trns) -> c_int;
     fn spng_encode_image(
-        ctx: *mut spng_ctx,
+        ctx: &mut spng_ctx,
         img: *const u8,
         len: usize,
         fmt: c_int,
         flags: c_int,
     ) -> c_int;
-    fn spng_get_png_buffer(ctx: *mut spng_ctx, len: *mut usize, err: *mut c_int) -> *mut u8;
-    fn spng_set_option(ctx: *mut spng_ctx, opt: c_int, value: c_int) -> c_int;
-    fn spng_set_crc_action(ctx: *mut spng_ctx, critical: c_int, ancillary: c_int) -> c_int;
-    fn spng_set_chunk_limits(ctx: *mut spng_ctx, chunk_size: usize, cache_limit: usize) -> c_int;
+    /// The caller owns the buffer (libc `free`), and every call that succeeds returns the same one.
+    safe fn spng_get_png_buffer(ctx: &mut spng_ctx, len: &mut usize, err: &mut c_int) -> *mut u8;
+    safe fn spng_set_option(ctx: &mut spng_ctx, opt: c_int, value: c_int) -> c_int;
+    safe fn spng_set_crc_action(ctx: &mut spng_ctx, critical: c_int, ancillary: c_int) -> c_int;
+    safe fn spng_set_chunk_limits(
+        ctx: &mut spng_ctx,
+        chunk_size: usize,
+        cache_limit: usize,
+    ) -> c_int;
     /// iCCP chunk read/write — PNG carries an optional ICC profile alongside
     /// the pixels for every colour type (including indexed). `spng_get_iccp`
     /// returns non-zero when the source has no iCCP (or the chunk was
@@ -44,8 +51,9 @@ unsafe extern "C" {
     /// profile — because the pixels are still valid and a PNG without iCCP
     /// is still a valid PNG. The `profile` pointer it hands back is owned by
     /// the context and freed with `spng_ctx_free`; dupe out before then.
-    fn spng_get_iccp(ctx: *mut spng_ctx, iccp: *mut Iccp) -> c_int;
-    fn spng_set_iccp(ctx: *mut spng_ctx, iccp: *const Iccp) -> c_int;
+    safe fn spng_get_iccp(ctx: &mut spng_ctx, iccp: &mut Iccp) -> c_int;
+    /// `profile_name` needs a NUL. `profile` must stay readable until `spng_ctx_free`: encoding reads it.
+    fn spng_set_iccp(ctx: &mut spng_ctx, iccp: &Iccp) -> c_int;
 }
 
 #[repr(C)]
@@ -103,42 +111,40 @@ struct Trns {
 
 pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, codecs::Error> {
     // Skip adler32 and chunk-CRC verification (as libvips and stb_image do); they only cost decode time.
-    let ctx = spng_ctx_new(SPNG_CTX_IGNORE_ADLER32);
-    if ctx.is_null() {
+    let Some(ctx) = spng_ctx_new(SPNG_CTX_IGNORE_ADLER32) else {
         return Err(codecs::Error::OutOfMemory);
-    }
-    let _ctx_guard = scopeguard::guard(ctx, |c| {
+    };
+    let mut ctx = scopeguard::guard(ctx, |c| {
         // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
         unsafe { spng_ctx_free(c) }
     });
 
-    // SAFETY: ctx is valid.
-    let _ = unsafe { spng_set_crc_action(ctx, SPNG_CRC_USE, SPNG_CRC_USE) };
+    let _ = spng_set_crc_action(&mut ctx, SPNG_CRC_USE, SPNG_CRC_USE);
     // iCCP, zTXt and iTXt may inflate to at most the size of the largest RGBA buffer allowed, but
     // never less than libpng's default of 8 MB, so a small `maxPixels` still takes any usual profile.
     let max_inflated = max_pixels.saturating_mul(4).clamp(8 << 20, i32::MAX as u64) as usize;
-    // SAFETY: ctx is valid.
-    let _ = unsafe { spng_set_chunk_limits(ctx, max_inflated, usize::MAX) };
-    // SAFETY: ctx is valid; bytes outlives the ctx (freed at end of scope).
-    if unsafe { spng_set_png_buffer(ctx, bytes.as_ptr(), bytes.len()) } != 0 {
+    let _ = spng_set_chunk_limits(&mut ctx, max_inflated, usize::MAX);
+    // SAFETY: later calls on ctx read `bytes`, which stays readable and unchanged until ctx is
+    // freed (end of scope). It may alias a JS ArrayBuffer: "unchanged" is then the "don't mutate
+    // while a terminal is pending" contract that codec_jpeg.rs names.
+    if unsafe { spng_set_png_buffer(&mut ctx, bytes.as_ptr(), bytes.len()) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     let mut ihdr = Ihdr::default();
-    // SAFETY: ctx is valid; ihdr is a valid out-ptr.
-    if unsafe { spng_get_ihdr(ctx, &raw mut ihdr) } != 0 {
+    if spng_get_ihdr(&mut ctx, &mut ihdr) != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     codecs::guard(ihdr.width, ihdr.height, max_pixels)?;
     let mut size: usize = 0;
-    // SAFETY: ctx is valid; size is a valid out-ptr.
-    if unsafe { spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &raw mut size) } != 0 {
+    // SAFETY: ctx is a decoder. Only an encoder that has no IHDR yet divides by a zero height here.
+    if unsafe { spng_decoded_image_size(&mut ctx, SPNG_FMT_RGBA8, &mut size) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
     let mut out: Vec<u8> = Vec::with_capacity(size);
-    // SAFETY: ctx is valid; out has `size` bytes of capacity, which libspng only writes.
+    // SAFETY: out has `size` bytes of capacity, which libspng only writes.
     if unsafe {
         spng_decode_image(
-            ctx,
+            &mut ctx,
             out.as_mut_ptr(),
             size,
             SPNG_FMT_RGBA8,
@@ -164,8 +170,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
         profile_len: 0,
         profile: core::ptr::null_mut(),
     };
-    // SAFETY: ctx is valid; iccp is a valid out-ptr.
-    let icc: Option<Vec<u8>> = if unsafe { spng_get_iccp(ctx, &raw mut iccp) } == 0
+    let icc: Option<Vec<u8>> = if spng_get_iccp(&mut ctx, &mut iccp) == 0
         && iccp.profile_len > 0
         && !iccp.profile.is_null()
     {
@@ -193,7 +198,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
 /// every colour type (indexed-colour palettes live in the source space
 /// too, so dropping the profile there would silently reinterpret them as
 /// sRGB, same bug #30197 was filed for).
-fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
+fn embed_iccp(ctx: &mut spng_ctx, icc_profile: Option<&[u8]>) {
     let Some(p) = icc_profile else { return };
     if p.is_empty() {
         return;
@@ -208,8 +213,9 @@ fn embed_iccp(ctx: *mut spng_ctx, icc_profile: Option<&[u8]>) {
     };
     let name = b"ICC Profile";
     iccp.profile_name[..name.len()].copy_from_slice(name);
-    // SAFETY: ctx is valid; iccp is fully initialised; libspng only reads from it.
-    let _ = unsafe { spng_set_iccp(ctx, &raw const iccp) };
+    // SAFETY: libspng copies `iccp`, whose name is NUL-terminated. It keeps `p` and reads it while it
+    // encodes. `p` stays readable until ctx is freed: both callers free ctx before they return.
+    let _ = unsafe { spng_set_iccp(ctx, &iccp) };
 }
 
 pub(crate) fn encode(
@@ -219,21 +225,21 @@ pub(crate) fn encode(
     level: i8,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    let ctx = spng_ctx_new(SPNG_CTX_ENCODER);
-    if ctx.is_null() {
+    let Some(ctx) = spng_ctx_new(SPNG_CTX_ENCODER) else {
         return Err(codecs::Error::OutOfMemory);
-    }
-    let _ctx_guard = scopeguard::guard(ctx, |c| {
+    };
+    let mut ctx = scopeguard::guard(ctx, |c| {
         // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
         unsafe { spng_ctx_free(c) }
     });
 
-    // SAFETY: ctx is valid.
-    let _ = unsafe { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };
+    let _ = spng_set_option(&mut ctx, SPNG_ENCODE_TO_BUFFER, 1);
     if level >= 0 {
-        // SAFETY: ctx is valid.
-        let _ =
-            unsafe { spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, c_int::from(level.min(9))) };
+        let _ = spng_set_option(
+            &mut ctx,
+            SPNG_IMG_COMPRESSION_LEVEL,
+            c_int::from(level.min(9)),
+        );
     }
     let ihdr = Ihdr {
         width: w,
@@ -242,15 +248,14 @@ pub(crate) fn encode(
         color_type: SPNG_COLOR_TYPE_TRUECOLOR_ALPHA,
         ..Default::default()
     };
-    // SAFETY: ctx is valid; ihdr is fully initialised.
-    if unsafe { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {
+    if spng_set_ihdr(&mut ctx, &ihdr) != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
-    embed_iccp(ctx, icc_profile);
-    // SAFETY: ctx is valid; rgba is a valid readable buffer.
+    embed_iccp(&mut ctx, icc_profile);
+    // SAFETY: rgba is a valid readable buffer.
     if unsafe {
         spng_encode_image(
-            ctx,
+            &mut ctx,
             rgba.as_ptr(),
             rgba.len(),
             SPNG_FMT_PNG,
@@ -262,8 +267,7 @@ pub(crate) fn encode(
     }
     let mut len: usize = 0;
     let mut err: c_int = 0;
-    // SAFETY: ctx is valid; len/err are valid out-ptrs.
-    let buf = unsafe { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
+    let buf = spng_get_png_buffer(&mut ctx, &mut len, &mut err);
     let Some(buf) = NonNull::new(buf) else {
         return Err(codecs::Error::EncodeFailed);
     };
@@ -302,21 +306,21 @@ pub(crate) fn encode_indexed(
     )
     .map_err(|_| codecs::Error::OutOfMemory)?;
 
-    let ctx = spng_ctx_new(SPNG_CTX_ENCODER);
-    if ctx.is_null() {
+    let Some(ctx) = spng_ctx_new(SPNG_CTX_ENCODER) else {
         return Err(codecs::Error::OutOfMemory);
-    }
-    let _ctx_guard = scopeguard::guard(ctx, |c| {
+    };
+    let mut ctx = scopeguard::guard(ctx, |c| {
         // SAFETY: ctx was returned non-null by spng_ctx_new and is freed exactly once here.
         unsafe { spng_ctx_free(c) }
     });
 
-    // SAFETY: ctx is valid.
-    let _ = unsafe { spng_set_option(ctx, SPNG_ENCODE_TO_BUFFER, 1) };
+    let _ = spng_set_option(&mut ctx, SPNG_ENCODE_TO_BUFFER, 1);
     if level >= 0 {
-        // SAFETY: ctx is valid.
-        let _ =
-            unsafe { spng_set_option(ctx, SPNG_IMG_COMPRESSION_LEVEL, c_int::from(level.min(9))) };
+        let _ = spng_set_option(
+            &mut ctx,
+            SPNG_IMG_COMPRESSION_LEVEL,
+            c_int::from(level.min(9)),
+        );
     }
 
     let ihdr = Ihdr {
@@ -326,11 +330,10 @@ pub(crate) fn encode_indexed(
         color_type: SPNG_COLOR_TYPE_INDEXED,
         ..Default::default()
     };
-    // SAFETY: ctx is valid; ihdr is fully initialised.
-    if unsafe { spng_set_ihdr(ctx, &raw const ihdr) } != 0 {
+    if spng_set_ihdr(&mut ctx, &ihdr) != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
-    embed_iccp(ctx, icc_profile);
+    embed_iccp(&mut ctx, icc_profile);
 
     let mut plte = Plte {
         n_entries: u32::from(q.colors),
@@ -353,19 +356,17 @@ pub(crate) fn encode_indexed(
         ];
         trns.type3_alpha[i] = q.palette[i * 4 + 3];
     }
-    // SAFETY: ctx is valid; plte is fully initialised.
-    if unsafe { spng_set_plte(ctx, &raw const plte) } != 0 {
+    if spng_set_plte(&mut ctx, &plte) != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
-    // SAFETY: ctx is valid; trns is fully initialised.
-    if q.has_alpha && unsafe { spng_set_trns(ctx, &raw const trns) } != 0 {
+    if q.has_alpha && spng_set_trns(&mut ctx, &trns) != 0 {
         return Err(codecs::Error::EncodeFailed);
     }
 
-    // SAFETY: ctx is valid; q.indices is a valid readable buffer.
+    // SAFETY: q.indices is a valid readable buffer.
     if unsafe {
         spng_encode_image(
-            ctx,
+            &mut ctx,
             q.indices.as_ptr(),
             q.indices.len(),
             SPNG_FMT_PNG,
@@ -378,8 +379,7 @@ pub(crate) fn encode_indexed(
 
     let mut len: usize = 0;
     let mut err: c_int = 0;
-    // SAFETY: ctx is valid; len/err are valid out-ptrs.
-    let buf = unsafe { spng_get_png_buffer(ctx, &raw mut len, &raw mut err) };
+    let buf = spng_get_png_buffer(&mut ctx, &mut len, &mut err);
     let Some(buf) = NonNull::new(buf) else {
         return Err(codecs::Error::EncodeFailed);
     };

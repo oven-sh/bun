@@ -514,14 +514,11 @@ impl ChannelOwner for WorkerCommands {
 // support method-bearing local structs that need to be named in a generic call.
 struct WorkerLoop<'a> {
     reporter: &'a mut CommandLineReporter,
-    vm: *mut VirtualMachine,
     cmds: WorkerCommands,
 }
 
 impl<'a> WorkerLoop<'a> {
-    fn begin(&mut self) {
-        // SAFETY: vm pointer is valid for the worker's lifetime.
-        let vm = unsafe { &mut *self.vm };
+    fn begin(&mut self, vm: &mut VirtualMachine) {
         if !Channel::adopt(&raw mut self.cmds.channel, vm, Fd::from_uv(3)) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
@@ -629,36 +626,25 @@ impl<'a> WorkerLoop<'a> {
 
 /// Worker side: read framed commands from the IPC channel via the event loop,
 /// run each file with isolation, stream per-test events back. Never returns.
-///
-/// # Safety
-/// `vm` must be a valid, exclusively-accessed pointer to a live `VirtualMachine`
-/// for the entire duration of the call (i.e. for the rest of the process, since
-/// this never returns).
-// `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
-// while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
-// would alias. The `# Safety` contract above documents the caller's obligation.
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
-    vm: *mut VirtualMachine,
+    vm: &mut VirtualMachine,
     ctx: Command::Context,
 ) -> ! {
-    // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
-    let vm_ref = unsafe { &mut *vm };
-    vm_ref.test_isolation_enabled = ctx.test_options.isolate;
-    vm_ref.auto_killer.enabled = ctx.test_options.isolate;
+    vm.test_isolation_enabled = ctx.test_options.isolate;
+    vm.auto_killer.enabled = ctx.test_options.isolate;
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its
     // own arena the same way and notes the dropped read).
     let mut arena = bun_alloc::MimallocArena::new();
     // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*vm_ref.event_loop()).ensure_waker() };
-    vm_ref.arena = Some(NonNull::from(&mut arena));
+    unsafe { (*vm.event_loop()).ensure_waker() };
+    vm.arena = Some(NonNull::from(&mut arena));
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
     let mut wloop = WorkerLoop {
         reporter,
-        vm,
         cmds: WorkerCommands {
             channel: Channel::default(),
             pending_idx: None,
@@ -666,33 +652,30 @@ pub(crate) fn run_as_worker(
             done: false,
         },
     };
-    vm_ref.run_with_api_lock(|| wloop.begin());
+    vm.run_with_api_lock_mut(|vm| wloop.begin(vm));
 
-    worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
+    worker_flush_aggregates(wloop.reporter, vm, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / coverage_file.
-    vm_ref.run_with_api_lock(|| {
+    vm.run_with_api_lock(|| {
         while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
             // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm_ref.event_loop()).tick() };
+            unsafe { (*vm.event_loop()).tick() };
             if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
                 break;
             }
             // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm_ref.event_loop()).auto_tick() };
+            unsafe { (*vm.event_loop()).auto_tick() };
         }
     });
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
-    vm_ref.exit_handler.exit_code = 0;
-    vm_ref.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
-    vm_ref.exit_handler.requested = test_command::exit_is_requested();
-    vm_ref.run_with_api_lock(|| {
-        // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
-        unsafe {
-            (*vm).on_exit();
-            (*vm).global_exit()
-        }
+    vm.exit_handler.exit_code = 0;
+    vm.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
+    vm.exit_handler.requested = test_command::exit_is_requested();
+    vm.run_with_api_lock_mut(|vm| {
+        vm.on_exit();
+        vm.global_exit()
     });
     {
         Global::exit(0);

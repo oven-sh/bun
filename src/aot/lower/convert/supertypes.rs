@@ -9,6 +9,7 @@ use smallvec::{SmallVec, smallvec};
 use std::rc::Rc;
 
 use crate::builtins::id::BuiltinId;
+use crate::builtins::table;
 use crate::ir::generated::LimitId;
 use crate::ir::{ContentsSlot, DeclaredType, LayoutId, LayoutKey};
 use crate::lower::types::find_contents_type;
@@ -193,7 +194,8 @@ impl FileLowering<'_, '_, '_, '_> {
         kind: ConversionKind,
     ) {
         for expression in self.collect_flowing_operands(source) {
-            if let Some(builtin) = self.builtins.builtin_of_expression(expression) {
+            let builtin = self.builtins.builtin_of_expression(expression);
+            if let Some(builtin) = builtin.filter(|&builtin| table::is_callable(builtin)) {
                 self.record_builtin_member(builtin, target);
             }
             if let Ok(source_type) = self.queries.expression_type(expression) {

@@ -1,0 +1,1 @@
+{ "extends": "../../tsconfig.json", "compilerOptions": { "jsx": "react", "jsxFactory": "ns.x.h", "jsxFragmentFactory": "ns.x.Fragment" } }

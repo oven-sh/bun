@@ -1,3 +1,0 @@
-{
-  "runWithASAN": "compiled code writes the table of names of an object that keeps its names for itself"
-}

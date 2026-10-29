@@ -1271,10 +1271,10 @@ impl FFI {
 
     pub(crate) fn close_callback(callback: JsLocal<'_>) {
         unsafe extern "C" {
-            fn Bun__JSCFFICallbackClose(callback: JSValue);
+            /// Type-checks the cell (`dynamicDowncast`) before use.
+            safe fn Bun__JSCFFICallbackClose(callback: JSValue);
         }
-        // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (jsDynamicCast) before use.
-        unsafe { Bun__JSCFFICallbackClose(callback.to_js()) };
+        Bun__JSCFFICallbackClose(callback.to_js());
     }
 
     pub(crate) fn callback<'a>(
@@ -1336,11 +1336,11 @@ impl FFI {
 
     pub(crate) fn close<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {
         unsafe extern "C" {
-            fn Bun__FFI__closeFunctions(global: *const JSGlobalObject, library: JSValue) -> bool;
+            /// Type-checks `library` (`dynamicDowncast`) before use.
+            safe fn Bun__FFI__closeFunctions(global: &JSGlobalObject, library: JSValue) -> bool;
         }
         jsc::mark_binding();
-        // SAFETY: thin FFI wrapper. The C++ side type-checks the cell (dynamicDowncast) before use.
-        let is_running = unsafe { Bun__FFI__closeFunctions(cx.global(), this_value.to_js()) };
+        let is_running = Bun__FFI__closeFunctions(cx.global(), this_value.to_js());
         if is_running {
             // The running call returns into the compiled code, so leak it instead of letting `do_close` free it.
             self.shared_state.set(None);
@@ -1519,7 +1519,7 @@ impl FFI {
                     // if that fails, try resolving the filepath relative to the current working directory
                     let mut backup_buf = bun_paths::path_buffer_pool::get();
                     let backup_name =
-                        Fs::FileSystem::instance().abs_buf_checked(&[name], &mut backup_buf[..]);
+                        Fs::FileSystem::get().abs_buf_checked(&[name], &mut backup_buf[..]);
                     match backup_name.map(bun_sys::DynLib::open) {
                         Some(Ok(d)) => break 'brk d,
                         Some(Err(_)) | None => {
@@ -2367,7 +2367,7 @@ impl CompilerRT {
         // yet expose an inherent `tmpdir()`; reuse the crate-local
         // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
         use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
-        let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
+        let Ok(tmpdir) = Fs::FileSystem::get().tmpdir() else {
             return;
         };
 

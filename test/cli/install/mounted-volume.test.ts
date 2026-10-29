@@ -321,17 +321,25 @@ for (const openat2 of [true, false]) {
 // Without `openat2`, bun asks `rmdir` before it opens a directory that it is to delete.
 // sshfs answers EPERM there for a directory that has entries, which is no mount point.
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+// The shim says this the first time it changes an answer. A row that does not see it proves nothing.
+const rmdirSaidEperm = "rmdir-says-eperm-shim: ENOTEMPTY is EPERM";
 const rmdirSaysEperm = `
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <unistd.h>
 
 int unlinkat(int dirfd, const char *path, int flags) {
   static int (*real)(int, const char *, int);
+  static int said;
   if (!real) real = dlsym(RTLD_NEXT, "unlinkat");
   int rc = real(dirfd, path, flags);
-  if (rc != 0 && (flags & AT_REMOVEDIR) && errno == ENOTEMPTY) errno = EPERM;
+  if (rc != 0 && (flags & AT_REMOVEDIR) && errno == ENOTEMPTY) {
+    static const char marker[] = "${rmdirSaidEperm}\\n";
+    if (!__sync_lock_test_and_set(&said, 1)) (void)!write(2, marker, sizeof(marker) - 1);
+    errno = EPERM;
+  }
   return rc;
 }
 `;
@@ -356,6 +364,7 @@ for (const eperm of [false, true]) {
           await using proc = spawn({ cmd, cwd: root, env, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
           const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
           expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+          return stderr;
         };
         if (eperm) {
           await run(cc!, "-shared", "-fPIC", "-o", "shim.so", "shim.c", "-ldl");
@@ -364,11 +373,12 @@ for (const eperm of [false, true]) {
 
         await run(bunExe(), "install");
         mkdirSync(join(modules, "dep", "empty"));
-        await run(bunExe(), "install", "--force");
-        expect({ node_modules: await readdirSorted(modules), dep: await readdirSorted(join(modules, "dep")) }).toEqual({
-          node_modules: [".bin", "dep"],
-          dep: ["bin", "package.json"],
-        });
+        const forced = await run(bunExe(), "install", "--force");
+        expect({
+          shim: forced.includes(rmdirSaidEperm),
+          node_modules: await readdirSorted(modules),
+          dep: await readdirSorted(join(modules, "dep")),
+        }).toEqual({ shim: eperm, node_modules: [".bin", "dep"], dep: ["bin", "package.json"] });
 
         await run(bunExe(), "remove", "dep");
         expect(await readdirSorted(modules)).toEqual([".bin"]);

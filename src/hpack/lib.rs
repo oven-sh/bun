@@ -261,6 +261,15 @@ mod tests {
     }
 
     #[test]
+    fn a_short_huffman_string_takes_little_room() {
+        let (mut decoder, mut pos) = (Decoder::new(), 0);
+        let field = decoder.next(&hex("00 0161 811f"), &mut pos).unwrap();
+        assert_eq!(field.unwrap().value, b"a");
+        // In the middle of the block, so nothing was given back yet.
+        assert!(decoder.heap_size() < 1024);
+    }
+
+    #[test]
     fn a_large_table_is_not_moved_every_few_blocks() {
         let mut decoder = Decoder::new();
         decoder.set_max_capacity(1 << 20);

@@ -23,6 +23,7 @@ import { mkfifo } from "mkfifo";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
+import * as webStreams from "node:stream/web";
 import {
   consumers as directConsumers,
   expected as directExpected,
@@ -2372,6 +2373,92 @@ it("pipeTo and pipeThrough into a locked WritableStream fail with ERR_INVALID_ST
   expect(() => new ReadableStream().pipeThrough({ readable: new ReadableStream(), writable: destination })).toThrow(
     invalidState("Invalid state: The WritableStream is locked"),
   );
+});
+
+// The WHATWG members that return a promise refuse a wrong `this` with a rejected promise (WebIDL).
+// The TypeError carries Node's ERR_INVALID_THIS code and message (node compatibility).
+// Bun's own text(), json(), bytes(), blob() and readMany() throw on a wrong `this`. They are no subject here.
+it("the stream members that reject a wrong `this` reject with ERR_INVALID_THIS", async () => {
+  const instances = {
+    ReadableStream: () => new ReadableStream(),
+    ReadableStreamDefaultReader: () => new ReadableStream().getReader(),
+    ReadableStreamBYOBReader: () => new ReadableStream({ type: "bytes" }).getReader({ mode: "byob" }),
+    WritableStream: () => new WritableStream(),
+    WritableStreamDefaultWriter: () => new WritableStream().getWriter(),
+  };
+  const rejecting = [];
+  for (const [className, constructor] of Object.entries(webStreams)) {
+    if (typeof constructor !== "function") continue;
+    const prototype = constructor.prototype;
+    const instance = instances[className];
+    const wrongReceivers = [
+      {},
+      Object.create(null),
+      new Proxy({}, {}),
+      Object.create(prototype),
+      prototype,
+      7,
+      "text",
+      undefined,
+      null,
+      // An instance of another stream class.
+      constructor === ReadableStream ? new WritableStream() : new ReadableStream(),
+      // A Proxy of an instance, and an object that inherits from one. Node.js accepts these two:
+      // its brand check reads a symbol, which both forward. WebIDL refuses them.
+      ...(instance ? [new Proxy(instance(), {}), Object.create(instance())] : []),
+    ];
+    const invalidThis = {
+      status: "rejected",
+      reason: expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_THIS",
+        message: `Value of "this" must be of type ${className}`,
+      }),
+    };
+    for (const key of Reflect.ownKeys(prototype)) {
+      if (key === "constructor") continue;
+      const { get, value } = Object.getOwnPropertyDescriptor(prototype, key);
+      const member = get ?? value;
+      if (typeof member !== "function") continue;
+      // The first receiver gets a second call. A member that throws on a wrong `this` is no subject of this test.
+      const promises = [];
+      for (const receiver of [...wrongReceivers, wrongReceivers[0]]) {
+        try {
+          const result = member.call(receiver);
+          if (result instanceof Promise) promises.push(result);
+        } catch {}
+      }
+      if (promises.length === 0) continue;
+      const name = `${className}.${String(key)}`;
+      rejecting.push(name);
+      for (const outcome of await Promise.allSettled(promises)) {
+        expect({ member: name, ...outcome }).toEqual({ member: name, ...invalidThis });
+      }
+      // Every receiver got a promise, and the second call got its own.
+      expect({ member: name, promises: new Set(promises).size }).toEqual({
+        member: name,
+        promises: wrongReceivers.length + 1,
+      });
+    }
+  }
+  // Without this list the loop above passes when no member returns a promise.
+  expect(rejecting.sort()).toEqual([
+    "ReadableStream.cancel",
+    "ReadableStream.pipeTo",
+    "ReadableStreamBYOBReader.cancel",
+    "ReadableStreamBYOBReader.closed",
+    "ReadableStreamBYOBReader.read",
+    "ReadableStreamDefaultReader.cancel",
+    "ReadableStreamDefaultReader.closed",
+    "ReadableStreamDefaultReader.read",
+    "WritableStream.abort",
+    "WritableStream.close",
+    "WritableStreamDefaultWriter.abort",
+    "WritableStreamDefaultWriter.close",
+    "WritableStreamDefaultWriter.closed",
+    "WritableStreamDefaultWriter.ready",
+    "WritableStreamDefaultWriter.write",
+  ]);
 });
 
 it("new Response(stream).arrayBuffer() (bytes)", async () => {

@@ -388,7 +388,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBReaderPrototypeGetter_closed, (JSGl
 {
     const auto* reader = dynamicDowncast<JSReadableStreamBYOBReader>(JSValue::decode(thisValue));
     if (!reader) [[unlikely]]
-        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "The 'closed' getter can only be used on a ReadableStreamBYOBReader"_s)));
+        return JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createInvalidThisErrorForType(lexicalGlobalObject, "ReadableStreamBYOBReader"_s)));
     return JSValue::encode(reader->m_closedPromise.get());
 }
 
@@ -398,7 +398,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_cancel, (JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = dynamicDowncast<JSReadableStreamBYOBReader>(callFrame->thisValue());
     if (!reader) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamBYOBReader.prototype.cancel can only be called on a ReadableStreamBYOBReader"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createInvalidThisErrorForType(lexicalGlobalObject, "ReadableStreamBYOBReader"_s))));
     if (!reader->m_stream)
         RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_STATE_TypeError, "Invalid state: The reader is not attached to a stream"_s))));
     auto* promise = readableStreamReaderGenericCancel(lexicalGlobalObject, reader, callFrame->argument(0));
@@ -412,7 +412,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamBYOBReaderPrototypeFunction_read, (JSGl
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* reader = dynamicDowncast<JSReadableStreamBYOBReader>(callFrame->thisValue());
     if (!reader) [[unlikely]]
-        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, createTypeError(lexicalGlobalObject, "ReadableStreamBYOBReader.prototype.read can only be called on a ReadableStreamBYOBReader"_s))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(promiseRejectedWith(lexicalGlobalObject, Bun::createInvalidThisErrorForType(lexicalGlobalObject, "ReadableStreamBYOBReader"_s))));
 
     // WebIDL: a promise-returning operation turns argument-conversion failures into rejections.
     RELEASE_AND_RETURN(scope, JSValue::encode(promiseFromSteps(lexicalGlobalObject, [&] -> JSPromise* {

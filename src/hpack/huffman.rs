@@ -300,13 +300,16 @@ const KERNEL_MIN_BITS: usize = 40;
 /// A call of the SIMD kernel pays off from this many symbols on.
 const KERNEL_MIN_SYMBOLS: isize = 12;
 
+/// Its calls count as no further ahead than this, so that text it is of no use for ends them soon, whatever came before.
+const KERNEL_MAX_CREDIT: isize = 64;
+
 struct Decoder<'a> {
     src: &'a [u8],
     /// How many bits of `src` are decoded.
     bit_pos: usize,
     out: &'a mut [u8],
     written: usize,
-    /// How many symbols the SIMD kernel is ahead of paying off. Negative if there is none.
+    /// How many symbols the SIMD kernel is ahead of paying off, [`KERNEL_MAX_CREDIT`] at most. Negative if there is none.
     kernel_credit: isize,
 }
 
@@ -322,7 +325,8 @@ impl Decoder<'_> {
         let (bit_pos, written) = hpack_huffman_decode_short(self.src, self.bit_pos, out);
         self.bit_pos = bit_pos;
         self.written += written;
-        self.kernel_credit += written as isize - KERNEL_MIN_SYMBOLS;
+        let credit = self.kernel_credit + written as isize - KERNEL_MIN_SYMBOLS;
+        self.kernel_credit = credit.min(KERNEL_MAX_CREDIT);
         written > 0
     }
 

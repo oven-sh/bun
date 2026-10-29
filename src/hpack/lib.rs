@@ -470,21 +470,31 @@ mod tests {
         }
     }
 
+    fn kernel_calls(string: &[u8]) -> usize {
+        let mut coded = Vec::new();
+        huffman::encode(string, &mut coded);
+        huffman::test_kernel::CALLS.set(0);
+        assert_eq!(decode_huffman(&coded, string.len()), Ok(string.to_vec()));
+        huffman::test_kernel::CALLS.get()
+    }
+
     #[test]
     fn when_the_simd_kernel_is_called() {
-        let calls = |string: &[u8]| {
-            let mut coded = Vec::new();
-            huffman::encode(string, &mut coded);
-            huffman::test_kernel::CALLS.set(0);
-            assert_eq!(decode_huffman(&coded, string.len()), Ok(string.to_vec()));
-            huffman::test_kernel::CALLS.get()
-        };
+        let calls = kernel_calls;
         // 4 and 5 bytes, of a code of 8 bits that starts with 6 ones.
         assert_eq!((calls(b"ZZZZ"), calls(b"ZZZZZ")), (0, 1));
         // To the end, as the calls that yield few come after calls that yield many. None yields 29.
         assert!(calls(&[b'a'; 1000]) > 1000 / 29);
         // Never before a code of 10 bits, which starts with 7 ones, and not again after a call that yields one symbol.
         assert_eq!((calls(&[b'!'; 100]), calls(&b"a!!".repeat(30))), (0, 1));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn the_simd_kernel_is_given_up_on_however_well_it_did() {
+        // The first 1000 take 84 calls at most, as these yield 12 on average. The last 3000 would take over 100.
+        let mixed = [&[b'a'; 1000][..], &b"a!!".repeat(40), &[b'a'; 3000]].concat();
+        assert!(kernel_calls(&mixed) < 100);
     }
 
     #[test]

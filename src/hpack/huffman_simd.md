@@ -66,10 +66,15 @@ A call costs about 15 ns before the first symbol, which pays off from about a do
 
 That leaves one call wasted on a string of such text, which costs 10 to 19 ns whatever the length.
 On Emerald Rapids, a string that starts with a short code and goes on with codes of 10 to 13 bits
-takes 40 ns instead of 29 at 5 bytes, 60 instead of 44 at 12 and 127 instead of 108 at 40. Where
-such text follows plain text in one string, the average takes a few calls to come down: a URL of 72
-characters and then JSON gets calls that yield 65, 3, 1, 1 and 1 symbols. What is wasted stays under
-what the calls before it gained.
+takes 40 ns instead of 29 at 5 bytes, 60 instead of 44 at 12 and 127 instead of 108 at 40.
+
+Where such text follows plain text in one string, the average takes a few calls to come down: a URL
+of 72 characters and then JSON gets calls that yield 65, 3, 1, 1 and 1 symbols. Such a call costs
+about 20 ns, which is more than 12 symbols gain, so the calls before it count as 64 symbols ahead at
+most. That is six calls. As a share of the time without the kernel, plain characters and then JSON:
+24 and 40 take 1.15 to 1.18, 100 and 100 take 1.09, 200 and 260 take 0.99, 1000 and 1300 take 0.89.
+The limit has a price where plain text comes back: 500 plain characters, 100 of JSON and 500 plain
+ones take 0.73, and 0.65 without it. With 60 of JSON it makes no difference: 0.60.
 
 ### Which CPUs
 
@@ -181,6 +186,12 @@ of 8 to 1000 characters 0.77 to 0.55, the values of hpack-test-case 0.70, `SAMEO
 codes of 5 bits alone 1.10, of 15 bits 1.33, of 8 bits 1.79, since two of those need 16 bits of
 lookup.
 
+Those strings have codes of one length. On Emerald Rapids, with or without the kernel, codes of 15
+bits mixed at random with shorter ones take 1.2 to 1.6 of the time of C, 4.8 to 6.2 ns per byte of
+input: whether the table has the next code is then a branch that is mispredicted. With 14 bits in
+place of 15 it is 0.6 to 0.7. The dearest input that was found is ten lengths from 10 to 22 bits at
+random: 7 ns per byte, where C takes 11.5.
+
 Written byte by byte, 7 bytes take longer than in a loop that writes 32 bits whenever it has 32.
 With 4 codes of 15 bits in half of the groups, which is about the most that a string can have and
 still be sent coded, a literal of 14 to 56 bytes takes 1.10 to 1.14 of the time of that loop. With
@@ -256,6 +267,9 @@ order.
 | no call of the kernel if the code after the next lookup is long | `W/"5F3C..."` 0.80, text 1.015, a user agent 1.07                            |
 | none if the next 57 bits have 7 ones in a row                   | text 1.14 to 1.22: `p,` has 7 ones in a row                                  |
 | none for under 10 bytes                                         | 1 to 10 ns less at 5, 6, 8 and 9 bytes, 5 more at 7, one block of the kernel |
+| no limit on how far ahead its calls count as                    | 200 plain characters and 260 of JSON 1.19, 1000 and 1300 1.3                 |
+| a limit of 32 symbols, or of 96                                 | 500, 60 of JSON, 500: 1.20, or 200 and 260: 1.07                             |
+| a call that yields under 12 symbols is the last                 | a URL or base64 of 1000 characters 1.16, 500, 30 of JSON, 500: 1.37          |
 | the whole crate compiled for AVX-512                            | no change                                                                    |
 | the tables aligned to a cache line, or 1 or 34 bytes into one   | no change, but the same code linked at another address differs by up to 5%   |
 

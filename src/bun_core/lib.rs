@@ -945,12 +945,19 @@ macro_rules! intrusive_field {
     // lifetime before backtracking to this arm.
     ([$($gen:tt)*] $T:ty, $field:ident : $F:ty) => {
         unsafe impl<$($gen)*> $crate::IntrusiveField<$F> for $T {
-            const OFFSET: usize = ::core::mem::offset_of!($T, $field);
+            const OFFSET: usize = {
+                // `*mut $F` takes no deref coercion and is invariant, so `$field` is exactly a `$F`.
+                let _: fn(&mut $T) -> *mut $F = |t| &mut t.$field;
+                ::core::mem::offset_of!($T, $field)
+            };
         }
     };
     ($T:ty, $field:ident : $F:ty) => {
         unsafe impl $crate::IntrusiveField<$F> for $T {
-            const OFFSET: usize = ::core::mem::offset_of!($T, $field);
+            const OFFSET: usize = {
+                let _: fn(&mut $T) -> *mut $F = |t| &mut t.$field;
+                ::core::mem::offset_of!($T, $field)
+            };
         }
     };
 }

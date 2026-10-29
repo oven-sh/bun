@@ -138,9 +138,6 @@ pub struct WebWorker {
     status: Cell<Status>,
     // The VM's allocator IS this arena.
     arena: JsCell<Option<bun_alloc::Arena>>,
-    /// Cloned env for the worker VM; boxed on the global heap because the arena
-    /// does not run `Drop`. Reclaimed in `shutdown()`.
-    worker_env_loader: Cell<*mut bun_dotenv::Loader>,
     /// `process.exit(code)` ran; later error paths must not overwrite its code.
     exit_called: AtomicBool,
     /// The parent asked this thread to stop (`worker.terminate()` or an exiting
@@ -574,7 +571,6 @@ impl WebWorker {
             room_timer_rounds: Cell::new(0),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
-            worker_env_loader: Cell::new(core::ptr::null_mut()),
             exit_called: AtomicBool::new(false),
             terminated_by_parent: AtomicBool::new(false),
         });
@@ -996,15 +992,8 @@ impl WebWorker {
         // worker-thread only field; no other thread reads `arena`.
         self.arena.set(Some(bun_alloc::Arena::new()));
 
-        // `heap::alloc`'d and stashed on `self` so `shutdown()` step 5 reclaims
-        // it on every path — including the early-terminate checkpoint below,
-        // which calls `shutdown()` before the VM exists.
-        let loader_ptr: *mut bun_dotenv::Loader = bun_core::heap::into_raw(Box::new(env_loader));
-        self.worker_env_loader.set(loader_ptr);
-
         // Checkpoint before the expensive part: initWorker builds a full JSC
-        // VM. If a parent's request_termination() fired while we were cloning the env
-        // above, bail now rather than spending ~50–100ms (release) creating a
+        // VM. If a parent's request_termination() fired, bail now rather than spending ~50–100ms (release) creating a
         // VM that will immediately tear down.
         if self.has_requested_terminate() {
             self.shutdown();
@@ -1020,7 +1009,7 @@ impl WebWorker {
             self,
             virtual_machine::Options {
                 args: transform_options,
-                env_loader: NonNull::new(loader_ptr),
+                owned_env_loader: Some(Box::new(env_loader)),
                 graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             },
@@ -1334,7 +1323,6 @@ impl WebWorker {
 
         // worker-thread only field; no other thread reads `arena`.
         let mut arena = self.arena.replace(None);
-        let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
 
         // ---- 1. Unpublish vm ------------------------------------------------
         drop(self.vm_handle.lock().take());
@@ -1352,12 +1340,6 @@ impl WebWorker {
             "[{}] shutdown: VirtualMachine destroyed",
             self.execution_context_id
         );
-        // Reclaim the cloned env (`heap::alloc`'d in `start_vm()`; see field doc).
-        if !env_loader.is_null() {
-            // SAFETY: `heap::alloc`'d in `start_vm`; sole owner; the VM is
-            // gone so its raw `transpiler.env` borrow is dead.
-            drop(unsafe { bun_core::heap::take(env_loader) });
-        }
         // This thread's C++ thread_local destructors are not guaranteed to run
         // before the process exits, so free the HPACK scratch buffer that any
         // http2 session on this thread allocated.

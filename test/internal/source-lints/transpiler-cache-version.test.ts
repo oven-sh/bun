@@ -6,11 +6,17 @@ const root = path.resolve(import.meta.dir, "..", "..", "..");
 const file = "src/jsc/RuntimeTranspilerCache.rs";
 
 // A build reads only the cache entries of its own EXPECTED_VERSION. Each pull request that changes what the parser
-// prints takes a new number, and all of them edit the same line. If the number goes back to one that an earlier build
-// had, the new build reads what that build printed.
-function versionOf(text: string) {
+// prints takes a new number, and all of them edit the same line. If two builds that print differently have the same
+// number, one reads what the other printed.
+function read(text: string) {
   const constant = /^const EXPECTED_VERSION: u32 = (\d+);$/m.exec(text);
-  return constant ? Number(constant[1]) : null;
+  return {
+    version: constant ? Number(constant[1]) : null,
+    entries: Array.from(text.matchAll(/^\/\/\/ Version (\d+):(.*)$/gm), match => ({
+      version: Number(match[1]),
+      text: match[2].trim(),
+    })),
+  };
 }
 
 function git(...args: string[]) {
@@ -18,29 +24,54 @@ function git(...args: string[]) {
   return exitCode === 0 ? stdout.toString() : null;
 }
 
-const source = readFileSync(path.join(root, file), "utf8");
-const current = versionOf(source);
-
-test("each version of the runtime transpiler cache is listed once, in order", () => {
-  const listed = Array.from(source.matchAll(/^\/\/\/ Version (\d+):/gm), match => Number(match[1]));
-  expect(listed.filter((version, i) => i > 0 && version <= listed[i - 1])).toEqual([]);
-  expect(current).toBe(listed.at(-1)!);
-});
-
-// In a pull request HEAD is the merge commit. Its parents are the base branch and the head of the pull request. A merge
-// that keeps the number of the pull request where the base branch has a higher one fails here.
-test("the version of the runtime transpiler cache is not lower than in HEAD or its parents", () => {
-  const header = (git("cat-file", "commit", "HEAD") ?? "").split("\n\n", 1)[0];
-  const parents = Array.from(header.matchAll(/^parent ([0-9a-f]+)$/gm), match => match[1]);
+// In a pull request HEAD is the merge commit. Its parents are the base branch and the head of the pull request.
+function parentsOfHead() {
+  const head = git("cat-file", "commit", "HEAD");
+  if (head === null) throw new Error(`git cannot read HEAD in ${root}`);
+  const parents = Array.from(head.split("\n\n", 1)[0].matchAll(/^parent ([0-9a-f]+)$/gm), match => match[1]);
   // A checkout of one commit cannot read them: .github/workflows/source-lints.yml fetches two commits deep.
   const missing = parents.filter(parent => git("cat-file", "-e", `${parent}^{commit}`) === null);
-  expect(missing.map(parent => `${parent.slice(0, 10)} is not in this checkout: fetch two commits deep`)).toEqual([]);
+  if (missing.length > 0) throw new Error(`not in this checkout, fetch two commits deep: ${missing.join(", ")}`);
+  return parents;
+}
 
-  let highest = { version: current!, commit: "" };
-  for (const commit of ["HEAD", ...parents]) {
-    const version = versionOf(git("show", `${commit}:${file}`) ?? "");
-    if (version !== null && version > highest.version) highest = { version, commit };
-  }
-  const found = `EXPECTED_VERSION is ${current}, and ${highest.commit.slice(0, 10)} has ${highest.version}`;
-  expect(highest.commit ? [`${found}: take a number above ${highest.version}`] : []).toEqual([]);
+// null: the commit does not have the file.
+function readAt(commit: string) {
+  const text = git("show", `${commit}:${file}`);
+  return text === null ? null : read(text);
+}
+
+const current = read(readFileSync(path.join(root, file), "utf8"));
+
+test("each version of the runtime transpiler cache is listed once, in order", () => {
+  const listed = current.entries.map(entry => entry.version);
+  expect(listed.filter((version, i) => i > 0 && version <= listed[i - 1])).toEqual([]);
+  expect(current.version).toBe(listed.at(-1)!);
+});
+
+test("the version of the runtime transpiler cache is not lower than in HEAD or its parents", () => {
+  const lower = ["HEAD", ...parentsOfHead()].flatMap(commit => {
+    const version = readAt(commit)?.version ?? null;
+    const found = `EXPECTED_VERSION is ${current.version}, and ${commit.slice(0, 10)} has ${version}`;
+    return version !== null && current.version! < version ? [`${found}: take a number above ${version}`] : [];
+  });
+  expect(lower).toEqual([]);
+});
+
+// Two pull requests can take the same number. The one that merges second keeps the entry of the first and takes a
+// higher number for its own.
+test("a merge does not keep the number of a parent for an entry that the parent does not list", () => {
+  const parents = parentsOfHead();
+  const reused = (parents.length > 1 ? parents : []).flatMap(commit => {
+    const parent = readAt(commit);
+    if (!parent || parent.version !== current.version) return [];
+    const listed = new Map(parent.entries.map(entry => [entry.version, entry.text]));
+    // A reworded old entry is not a new one. Another text at the number of the parent is.
+    const added = current.entries.find(
+      ({ version, text }) => !listed.has(version) || (version === parent.version && listed.get(version) !== text),
+    );
+    const found = `${commit.slice(0, 10)} has EXPECTED_VERSION ${parent.version} and does not list`;
+    return added ? [`${found} "Version ${added.version}: ${added.text}": take a number above ${parent.version}`] : [];
+  });
+  expect(reused).toEqual([]);
 });

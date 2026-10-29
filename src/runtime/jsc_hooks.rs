@@ -1439,7 +1439,6 @@ mod vm_loader_ctx {
     use super::*;
     use crate::webcore::Blob;
     use bun_bundler::options::OpaqueBlob;
-    use bun_resolver::package_json::PackageJSON;
 
     /// Recover an [`OpaqueBlob`] as a shared `&Blob` (live until `blob_deinit`).
     ///
@@ -1478,7 +1477,6 @@ mod vm_loader_ctx {
                         dir_info
                             .package_json()
                             .or(dir_info.enclosing_package_json)
-                            .map(core::ptr::from_ref::<PackageJSON>)
                     }
                     _ => None,
                 }

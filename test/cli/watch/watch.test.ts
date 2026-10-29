@@ -373,6 +373,10 @@ for (const oldFile of ["unlinked", "moved aside"] as const) {
       // Stdout ends when the session does. The session then said why on stderr.
       const seen = await waitFor("]\n").then(output, () => stderr);
       expect(seen).toContain(`iter second [${bunExe()}]\n`);
+
+      // The session that the new file started watches on.
+      await Bun.write(join(String(dir), "app", "entry.js"), `console.log("iter third"); setInterval(() => {}, 1000);`);
+      await waitFor("iter third");
     },
   );
 }

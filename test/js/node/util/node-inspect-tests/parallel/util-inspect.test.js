@@ -3191,6 +3191,19 @@ test("no assertion failures 3", () => {
       "{ Symbol(Symbol.iterator): [Getter] }",
     );
   }
+
+  {
+    class Class {
+      get [Symbol.toStringTag]() {
+        return "Namespaced.Class";
+      }
+    }
+
+    class DerivedClass extends Class {}
+
+    assert.strictEqual(inspect(new Class()), "Namespaced.Class {}");
+    assert.strictEqual(inspect(new DerivedClass()), "DerivedClass [Namespaced.Class] {}");
+  }
 });
 
 // Utility functions

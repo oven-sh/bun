@@ -1215,9 +1215,14 @@ function getPrefix(constructor: string | null, tag: string, fallback: string, si
     return `[${fallback}${size}: null prototype] `;
   }
 
-  if (tag !== "" && constructor !== tag) {
+  if (tag !== "") {
+    const dot = StringPrototypeLastIndexOf.$call(tag, ".");
+    if (constructor === (dot >= 1 ? StringPrototypeSlice.$call(tag, dot + 1) : tag)) {
+      return `${tag}${size} `;
+    }
     return `${constructor}${size} [${tag}] `;
   }
+
   return `${constructor}${size} `;
 }
 

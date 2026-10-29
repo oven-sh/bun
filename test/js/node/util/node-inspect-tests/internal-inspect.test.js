@@ -1,7 +1,9 @@
 import assert from "assert";
 import { expect, test } from "bun:test";
-import { withoutAggressiveGC } from "harness";
+import { bunEnv, nodeExeAtLeast, withoutAggressiveGC } from "harness";
+import { join } from "node:path";
 import util from "util";
+import toStringTagRows from "./symbol-to-string-tag-fixture.cjs";
 
 test("no assertion failures", () => {
   // Errors in accessors are not triggered
@@ -33,6 +35,28 @@ test("boxed BigInt/Symbol with no prototype are still formatted as boxed primiti
     util.inspect(Object.setPrototypeOf(Object(Symbol("x")), null)),
     "[Symbol (null prototype): Symbol(x)]",
   );
+});
+
+// The rows are in the fixture.
+test.each(toStringTagRows)("util.inspect names %s like Node.js", (_, print, expected) => {
+  expect(print()).toBe(expected);
+});
+
+// Node.js has this rule for a Symbol.toStringTag since v26.9.0.
+const nodeWithTagRule = nodeExeAtLeast("26.9.0");
+test.skipIf(!nodeWithTagRule)("Node.js prints the same text for each Symbol.toStringTag row", async () => {
+  await using proc = Bun.spawn({
+    cmd: [nodeWithTagRule, join(import.meta.dir, "symbol-to-string-tag-fixture.cjs")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+    stdout: JSON.stringify(toStringTagRows.map(([label, , expected]) => [label, expected])),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // Arrays and typed arrays collect their non-index keys through the native

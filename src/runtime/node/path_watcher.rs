@@ -118,10 +118,6 @@ struct Locked {
 // publish ordered by the spawn happens-before — no data race. The manager is a
 // process-global singleton shared between the JS thread(s) and the reader thread.
 unsafe impl Sync for PathWatcherManager {}
-// SAFETY: same field invariants as `Sync` above; the manager is constructed on
-// one thread and only ever crosses threads as `&'static PathWatcherManager`,
-// whose `Send` bound reduces to `PathWatcherManager: Sync`.
-unsafe impl Send for PathWatcherManager {}
 
 impl Default for PathWatcherManager {
     fn default() -> Self {
@@ -236,9 +232,11 @@ pub(crate) type Callback = fn(ctx: Option<*mut c_void>, event: Event, is_file: b
 pub(crate) type UpdateEndCallback = fn(ctx: Option<*mut c_void>);
 
 impl PathWatcher {
-    /// Heap-allocate and return a raw pointer.
-    fn new(init: PathWatcher) -> *mut PathWatcher {
-        bun_core::heap::into_raw(Box::new(init))
+    /// Heap-allocate with `ctx` as the first handler and return a raw pointer.
+    fn new(init: PathWatcher, ctx: *mut c_void) -> *mut PathWatcher {
+        let mut this = Box::new(init);
+        handle_oom(this.handlers.put(ctx, ChangeEvent::default()));
+        bun_core::heap::into_raw(this)
     }
 
     /// Called from the platform reader thread with `manager.mutex` held.
@@ -466,7 +464,7 @@ pub(crate) fn watch(
     #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "freebsd")))]
     let _ = is_file;
     // New watcher: own the key and path.
-    let watcher = PathWatcher::new(PathWatcher {
+    let init = PathWatcher {
         manager: Some(manager),
         path: ZBox::from_bytes(resolved.as_bytes()),
         recursive,
@@ -474,9 +472,8 @@ pub(crate) fn watch(
         is_file,
         handlers: ArrayHashMap::default(),
         platform: PlatformWatch::default(),
-    });
-    // SAFETY: watcher just allocated; we hold the only reference.
-    unsafe { handle_oom((*watcher).handlers.put(ctx, ChangeEvent::default())) };
+    };
+    let watcher = PathWatcher::new(init, ctx);
     handle_oom(locked.watchers.put(key, watcher));
 
     // Linux/FreeBSD: `addWatch` mutates the platform dispatch maps (wd_map/entries)
@@ -946,24 +943,13 @@ impl Linux {
         let fd = manager.inotify_fd();
         let running: &AtomicBool = &manager.running;
         // Large enough for a burst of events; inotify guarantees whole events per read.
-        // `align(InotifyEvent)`: stack array `[u8; N]` is 1-aligned; box for 4-byte
-        // alignment so the `&InotifyEvent` cast is valid.
-        #[repr(C, align(4))]
-        struct AlignedBuf([u8; 64 * 1024]);
-        let mut buf = {
-            let mut b = Box::<AlignedBuf>::new_uninit();
-            // SAFETY: `AlignedBuf` is `repr(C)` over `[u8; N]`; `write_bytes`
-            // fully zero-initializes it before `assume_init`.
-            unsafe {
-                core::ptr::write_bytes(b.as_mut_ptr(), 0, 1);
-                b.assume_init()
-            }
-        };
+        // `u32` elements give the 4-byte alignment that the `&InotifyEvent` cast needs.
+        let mut buf: Box<[u32; 16 * 1024]> = bun_core::boxed_zeroed();
         let mut path_buf = bun_paths::path_buffer_pool::get();
         let mut rel_spill: Vec<u8> = Vec::new();
 
         while running.load(Ordering::Acquire) {
-            let rc = sys::linux::read(fd.native(), &mut buf.0);
+            let rc = sys::linux::read(fd.native(), bun_core::bytes_of_mut(&mut *buf));
             match sys::get_errno(rc) {
                 E::SUCCESS => {}
                 E::EAGAIN | E::EINTR => continue,
@@ -999,7 +985,7 @@ impl Linux {
             while i < n {
                 // SAFETY: inotify guarantees whole events and pads `name` so each
                 // header stays 4-byte aligned; `buf` is 4-byte aligned via
-                // `AlignedBuf`, so byte offset `i` always lands on an aligned
+                // its `u32`s, so byte offset `i` always lands on an aligned
                 // event header within the `n` bytes the kernel just wrote.
                 let ev: &InotifyEvent = unsafe {
                     &*core::ptr::from_ref(&*buf)
@@ -1063,7 +1049,7 @@ impl Linux {
 
                 let name: &[u8] = if ev.name_len > 0 {
                     // SAFETY: i was just advanced past this event's name_len bytes; offset is within buf[0..n].
-                    let name_ptr = unsafe { buf.0.as_ptr().add(i - ev.name_len as usize) };
+                    let name_ptr = unsafe { buf.as_ptr().byte_add(i - ev.name_len as usize) };
                     // SAFETY: kernel NUL-pads name within name_len bytes.
                     unsafe { bun_core::ffi::cstr(name_ptr.cast()).to_bytes() }
                 } else {

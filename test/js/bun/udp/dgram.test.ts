@@ -4,7 +4,7 @@ import { BlockList } from "node:net";
 import { networkInterfaces } from "node:os";
 import { Worker } from "node:worker_threads";
 
-import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, isWindows } from "harness";
+import { bunEnv, bunExe, bunRun, disableAggressiveGCScope, hasIPv6Loopback, isWindows } from "harness";
 import path from "path";
 import { nodeDataCases } from "./testdata";
 
@@ -676,17 +676,6 @@ test("getSendQueueCount()/Size() stay 0 for a synchronously accepted send", asyn
   expect({ size: socket.getSendQueueSize(), count: socket.getSendQueueCount() }).toEqual({ size: 0, count: 0 });
   socket.close();
 });
-
-// harness's isIPv6() reports interface addresses and is hardcoded false on
-// BuildKite Linux; what this test needs is only an IPv6 *loopback* bind.
-function hasIPv6Loopback() {
-  if (isWindows) return false;
-  const { UDP } = require("bun:internal-for-testing").exposedInternals["internal/dgram"];
-  const probe = new UDP();
-  const rc = probe.bind6("::1", 0, 0);
-  probe.close();
-  return rc === 0;
-}
 
 // rinfo.family reflects the packet's sockaddr, not the constructor's `type`:
 // a `udp4` socket adopting an IPv6 fd receives IPv6-tagged rinfo.

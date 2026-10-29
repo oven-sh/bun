@@ -510,10 +510,14 @@ mod draft {
             bun_sys::windows::kernel32::ExitProcess(3)
         }
         #[cfg(not(windows))]
-        // SAFETY: libc::abort has no preconditions; never returns.
-        unsafe {
-            libc::abort()
-        }
+        std::process::abort()
+    }
+
+    #[cfg(not(windows))]
+    unsafe extern "C" {
+        // safe: by-value `c_int` only; no memory-safety preconditions.
+        safe fn _exit(code: c_int) -> !;
+        safe fn raise(sig: c_int) -> c_int;
     }
     use super::cpu_features::CPUFeatures;
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -812,10 +816,7 @@ mod draft {
         #[cfg(windows)]
         bun_sys::windows::kernel32::ExitProcess(1);
         #[cfg(not(windows))]
-        // SAFETY: `_exit` has no preconditions and never returns.
-        unsafe {
-            libc::_exit(1)
-        }
+        _exit(1)
     }
 
     /// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
@@ -3155,10 +3156,7 @@ mod draft {
                     unsafe {
                         libc::execve(argv[0], argv.as_ptr(), bun_core::c_environ());
                     }
-                    // SAFETY: _exit is async-signal-safe in the forked child
-                    unsafe {
-                        libc::_exit(0);
-                    }
+                    _exit(0);
                 }
                 // success and failure cases: ignore the result
                 _ => {}
@@ -3216,11 +3214,8 @@ mod draft {
                 libc::pthread_sigmask(libc::SIG_UNBLOCK, &raw const set, core::ptr::null_mut());
             }
 
-            // SAFETY: raise has no preconditions; with SIG_DFL installed and
-            // the signal unblocked this terminates the process.
-            unsafe {
-                libc::raise(sig);
-            }
+            // With SIG_DFL installed and the signal unblocked this terminates the process.
+            raise(sig);
             // If we somehow get here, fall through to a guaranteed-fatal trap.
             core::intrinsics::abort();
         }

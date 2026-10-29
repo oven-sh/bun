@@ -29,7 +29,8 @@ const vm: {
       identifier: string,
       context: Context | undefined,
       exportNames: string[] | undefined,
-      evaluationSteps: (this: SyntheticModule) => unknown,
+      // The native constructor throws ERR_INVALID_ARG_TYPE for a value that is not callable.
+      evaluationSteps: ((this: SyntheticModule) => unknown) | undefined,
       module: Module,
     ): $Node.NodeVMModule;
   };

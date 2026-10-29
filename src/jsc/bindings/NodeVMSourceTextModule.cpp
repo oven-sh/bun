@@ -463,6 +463,7 @@ bool NodeVMSourceTextModule::bindLinkedModules(JSGlobalObject* globalObject, Str
                 worklist.append(sourceTextDependency);
             }
             record->setImportedModule(globalObject, requested[i], dependencyRecord);
+            RETURN_IF_EXCEPTION(scope, false);
         }
     }
 

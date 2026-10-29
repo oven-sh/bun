@@ -1,6 +1,8 @@
 /**
  * All tests in this file run in both Bun and Node.js: `bun test` runs them
- * here, and the last test runs this same file under Node.js.
+ * here, and the last test runs this same file under Node.js. So the file uses
+ * node:test and node:assert, which both have, and not bun:test. What only Bun
+ * can run is in vm.test.ts.
  *
  *   node --experimental-vm-modules vm-module-linked-modules.test.ts
  *
@@ -17,6 +19,9 @@ import { spawn } from "node:child_process";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+
+// Node.js has no "harness": a static import of it would keep Node.js from loading this file.
+const harness = process.versions.bun ? await import("harness") : undefined;
 
 type Modules = Record<string, vm.SourceTextModule>;
 
@@ -73,16 +78,22 @@ function graph(sources: Record<string, string>, realm = mainRealm) {
   return modules;
 }
 
+type Child = { stdout: string[]; stderr: string; signal: string | null; status: number | null };
+
 // Runs `script` in a process of its own, for an input that ends a Bun without the fix.
 function runInChild(script: string) {
-  const flags = process.versions.bun ? [] : ["--experimental-vm-modules", "--no-warnings"];
-  const child = spawn(process.execPath, [...flags, "-e", script], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = harness
+    ? spawn(harness.bunExe(), ["-e", script], { env: harness.bunEnv, stdio: ["ignore", "pipe", "pipe"] })
+    : spawn(process.execPath, ["--experimental-vm-modules", "--no-warnings", "-e", script], {
+        stdio: ["ignore", "pipe", "pipe"],
+      });
   let stdout = "";
+  let stderr = "";
   child.stdout.setEncoding("utf8").on("data", chunk => (stdout += chunk));
-  child.stderr.resume();
-  return new Promise<{ stdout: string[]; signal: string | null; status: number | null }>((resolve, reject) => {
+  child.stderr.setEncoding("utf8").on("data", chunk => (stderr += chunk));
+  return new Promise<Child>((resolve, reject) => {
     child.on("error", reject);
-    child.on("close", (status, signal) => resolve({ stdout: stdout.trim().split("\n"), signal, status }));
+    child.on("close", (status, signal) => resolve({ stdout: stdout.trim().split("\n"), stderr, signal, status }));
   });
 }
 
@@ -269,7 +280,7 @@ describe("two modules for one specifier with different import attributes", () =>
       "b1.instantiate() threw: SyntaxError",
       "a reads: v2",
     ];
-    assert.deepStrictEqual(child, { stdout: [...inOneContext, ...inOneContext], signal: null, status: 0 });
+    assert.deepStrictEqual(child, { stdout: [...inOneContext, ...inOneContext], stderr: "", signal: null, status: 0 });
   });
 
   // The four below are what Bun does for every module that another module imports. The first of two modules for
@@ -297,7 +308,7 @@ describe("two modules for one specifier with different import attributes", () =>
         await root.evaluate().catch(error => console.log("caught:", error.message));
       })();
     `);
-    assert.deepStrictEqual(child, { stdout: ["caught: from the first"], signal: null, status: 0 });
+    assert.deepStrictEqual(child, { stdout: ["caught: from the first"], stderr: "", signal: null, status: 0 });
   });
 
   // Bun rejects the link() of a module that an importer linked in the meantime (#47101): ERR_VM_MODULE_STATUS, and
@@ -567,54 +578,85 @@ describe("instantiate() links a module to the modules it has then", () => {
   });
 
   // A vm timeout ends the Link() of instantiate(), and no error handler of instantiate() runs for that. The
-  // deadline has to pass inside Link(), so the child makes Link() slower until it does.
+  // child tries until a deadline passes inside Link(): a longer Link() when Link() was through first, a later
+  // deadline when it passed before Link() made a module environment. Only Bun can count those environments. For
+  // Node.js a deadline that leaves the modules unlinked is enough.
   test("a module links to another module after a timeout ended the Link() of an importer", async () => {
     const child = await runInChild(`
       const vm = require("node:vm");
+      const environments = process.versions.bun
+        ? () => require("bun:jsc").heapStats().objectTypeCounts.JSModuleEnvironment ?? 0
+        : undefined;
       const make = (identifier, source) => new vm.SourceTextModule(source, { identifier });
+      // Nothing of a graph is collected, so the number of environments only goes up.
+      const kept = [];
+      const graph = leafCount => {
+        // A leaf that is slow to link: Link() makes its 100 functions. No graph has the source of another one.
+        let body = "";
+        for (let j = 0; j < 100; j++) body += "export function f" + j + "(x) { return x + " + leafCount + "; }\\n";
+        let importsOfLeaves = "";
+        for (let i = 0; i < leafCount; i++) importsOfLeaves += 'import "leaf' + i + '";\\n';
+        const a = make("a", 'import * as ns from "b"; export const read = () => Object.keys(ns).join();');
+        // a is the first request: Link() makes its environment, with the namespace of b1, before it reaches a leaf.
+        const b1 = make("b1", 'import "a";\\n' + importsOfLeaves + "export var v = 1;");
+        const b2 = make("b2", 'import "a"; export var v = 2; export var only2;');
+        const leaves = Array.from({ length: leafCount }, (_, i) => make("leaf" + i, body + "export default " + i + ";"));
+        a.linkRequests([b1]);
+        b1.linkRequests([a, ...leaves]);
+        kept.push(a, b1, b2, leaves);
+        return { a, b1, b2 };
+      };
+      const instantiate = (b1, timeout) => {
+        try {
+          vm.runInContext("b1.instantiate()", vm.createContext({ b1 }), { timeout });
+          return "no error";
+        } catch (error) {
+          return error.code;
+        }
+      };
 
       (async () => {
-        let read = "no timeout in Link()";
-        for (let leafCount = 16; leafCount <= 128; leafCount *= 2) {
-          // A leaf that is slow to link: Link() makes its 100 functions. No attempt has the source of another one.
-          let body = "";
-          for (let j = 0; j < 100; j++) body += "export function f" + j + "(x) { return x + " + leafCount + "; }\\n";
-          let importsOfLeaves = "";
-          for (let i = 0; i < leafCount; i++) importsOfLeaves += 'import "leaf' + i + '";\\n';
+        // What loads at its first use does so here, before an environment counts.
+        instantiate(graph(1).b1, 60_000);
+        environments?.();
 
-          const a = make("a", 'import * as ns from "b"; export const read = () => Object.keys(ns).join();');
-          // a is the first request: Link() gives it the namespace of b1 before it reaches the first leaf.
-          const b1 = make("b1", 'import "a";\\n' + importsOfLeaves + "export var v = 1;");
-          const b2 = make("b2", 'import "a"; export var v = 2; export var only2;');
-          const leaves = Array.from({ length: leafCount }, (_, i) => make("leaf" + i, body + "export default " + i + ";"));
-          a.linkRequests([b1]);
-          b1.linkRequests([a, ...leaves]);
-          let code = "no error";
-          try {
-            vm.runInContext("b1.instantiate()", vm.createContext({ b1 }), { timeout: 1 });
-          } catch (error) {
-            code = error.code;
+        let leafCount = 2;
+        let timeout = 1;
+        let result = "no deadline passed inside Link()";
+        while (leafCount <= 2048 && timeout <= 64) {
+          // A new graph for each attempt: a Link() that ended early makes the next instantiate() parse again.
+          const { a, b1, b2 } = graph(leafCount);
+          const before = environments?.();
+          const code = instantiate(b1, timeout);
+          if (code === "no error" || (code === "ERR_SCRIPT_EXECUTION_TIMEOUT" && a.status !== "unlinked")) {
+            leafCount *= 2;
+            continue;
           }
-          // Link() can also be through before the deadline: then the modules are linked.
-          if (code !== "ERR_SCRIPT_EXECUTION_TIMEOUT" || a.status !== "unlinked") continue;
+          if (code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") {
+            result = "instantiate() threw " + code;
+            break;
+          }
+          if (environments && environments() <= before) {
+            timeout *= 2;
+            continue;
+          }
           a.linkRequests([b2]);
           b2.linkRequests([a]);
           a.instantiate();
           await a.evaluate();
-          read = a.namespace.read();
+          result = "a reads: " + a.namespace.read();
           break;
         }
-        console.log(read);
+        console.log(result);
       })();
     `);
-    const read = child.stdout[0] === "no timeout in Link()" ? "no timeout in Link()" : "only2,v";
-    assert.deepStrictEqual(child, { stdout: [read], signal: null, status: 0 });
+    assert.deepStrictEqual(child, { stdout: ["a reads: only2,v"], stderr: "", signal: null, status: 0 });
   });
 });
 
 // Only in Bun: when Node.js runs this file it must not spawn itself again.
-if (typeof Bun !== "undefined") {
-  const { bunEnv, nodeExeAtLeast } = await import("harness");
+if (harness) {
+  const { bunEnv, nodeExeAtLeast } = harness;
   // The version whose results this file has.
   const node = nodeExeAtLeast("26.3.0");
 

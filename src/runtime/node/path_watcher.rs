@@ -101,8 +101,10 @@ pub(crate) struct PathWatcherManager {
 
     /// inotify/kqueue fd. Written before the reader thread spawns (Linux and
     /// FreeBSD: `Platform::init`; macOS: `Kqueue::start` under `mutex`, on the
-    /// first file watch) and not after. Hoisted out of `UnsafeCell<Platform>` so
-    /// reads are safe `Cell::get()` instead of raw deref.
+    /// first file watch). On macOS the reader resets it to `INVALID` under
+    /// `mutex` when it exits, and the next file watch starts a new one. Hoisted
+    /// out of `UnsafeCell<Platform>` so reads are safe `Cell::get()` instead of
+    /// raw deref.
     #[cfg(not(windows))]
     platform_fd: Cell<Fd>,
 
@@ -118,10 +120,10 @@ pub(crate) struct PathWatcherManager {
 
 // SAFETY: all interior-mutable state (`watchers`, `by_path`, `platform`
 // dispatch maps, `next_gen`) is only accessed while holding `mutex`. `running` is atomic.
-// `platform_fd` is written before the reader thread spawns (on macOS under
-// `mutex`, which every JS-thread read also holds) and not afterwards, so
-// cross-thread `Cell::get()` reads observe only the publish ordered by the spawn
-// happens-before — no data race. The manager is a process-global singleton
+// `platform_fd` is written before the reader thread spawns, and on macOS once
+// more when that thread exits, both under `mutex`, which every JS-thread read
+// also holds; the reader's own read is ordered by the spawn happens-before — no
+// data race. The manager is a process-global singleton
 // shared between the JS thread(s) and the reader thread.
 unsafe impl Sync for PathWatcherManager {}
 // SAFETY: same field invariants as `Sync` above; the manager is constructed on

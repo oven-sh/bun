@@ -1,14 +1,4 @@
-// The kernels of the JPEG codec (src/jpeg) that work on a row of samples, runtime-dispatched via Google Highway.
-//
-// All arithmetic is on integers, so every target gives the same bytes: those of the Rust function that each kernel
-// stands in for, which src/jpeg keeps for the rows that are left to it.
-//
-// A kernel only loads and stores whole vectors. The last one ends where the row ends and overlaps the one before, which
-// works because no kernel writes what it reads. A row too short for a vector of the CPU is done with vectors of 16 bytes,
-// and one too short for those is left to the caller: the kernel returns false and has done nothing.
-//
-// Derived from libjpeg-turbo's jdcolor.c, jccolor.c, jcsample.c and jdsample.c, and from simd/x86_64/jdcolext-sse2.asm and
-// jccolext-sse2.asm: see src/jpeg/NOTICE.md.
+// The row kernels of src/jpeg (jdcolor.c, jccolor.c, jcsample.c, jdsample.c, jdcolext-sse2.asm, jccolext-sse2.asm).
 
 // Left are SSSE3, AVX2 and one kind of NEON. The others make these kernels no faster, and SVE2_128 makes them slower.
 #undef HWY_DISABLED_TARGETS
@@ -40,7 +30,7 @@ static constexpr int32_t Fix(double x)
 
 static constexpr int32_t kOneHalf = 1 << 15;
 
-// The kernels with vectors of the size of `D8`.
+// The kernels with whole vectors like `D8`. A row's last one overlaps the one before: no kernel writes what it reads.
 template<class D8>
 struct JpegRows {
     using DU16 = hn::Repartition<uint16_t, D8>;
@@ -65,7 +55,7 @@ struct JpegRows {
         return hn::ShiftRight<1>(hn::Add(hn::MulHigh(hn::Add(x, x), hn::Set(d, static_cast<int16_t>(fraction))), hn::Set(d, 1)));
     }
 
-    // What jdcolor.c's tables hold. The whole part of a factor is added apart from its fraction, which fits 16 bits.
+    // The whole part of a factor is added apart from its fraction, which fits 16 bits.
     static HWY_INLINE void YccToRgb(V16 y, V16 cb, V16 cr, V16& r, V16& g, V16& b)
     {
         const D16 d;
@@ -85,7 +75,7 @@ struct JpegRows {
         g = hn::Add(hn::Sub(y, cr), fraction);
     }
 
-    // `out` gets 4 bytes for each of `n` pixels: R, G, B and 255, or with `k` what each of them lacks to 255 and K.
+    // `out` gets 4 bytes for each of `n` pixels: R, G, B, 255 or, with `k`, 255 - R, 255 - G, 255 - B, K.
     static HWY_INLINE bool FromYcc(const uint8_t* HWY_RESTRICT y, const uint8_t* HWY_RESTRICT cb, const uint8_t* HWY_RESTRICT cr,
         const uint8_t* HWY_RESTRICT k, uint8_t* HWY_RESTRICT out, size_t n)
     {
@@ -112,16 +102,14 @@ struct JpegRows {
     static HWY_INLINE void RgbaToYcc(V8 pixels, V32& y, V32& cb, V32& cr)
     {
         const D32 d32;
-        // Half minus epsilon, so that the largest result rounds to 255 and not to 256.
         const V32 offset = hn::Set(d32, (128 << 16) + kOneHalf - 1);
-        // x86 has an instruction that multiplies numbers of 16 bits and adds the products in pairs, and is slow to multiply
-        // numbers of 32 bits. Arm is the other way around.
+        // x86 multiplies 16-bit numbers and adds the products in pairs, and is slow with 32 bits. Arm is the reverse.
 #if HWY_ARCH_X86
         const D16 d;
         const DU16 du;
         const V16 rb = hn::BitCast(d, hn::PromoteEvenTo(du, pixels));
         const V16 ga = hn::BitCast(d, hn::PromoteOddTo(du, pixels));
-        // 16 bits with a sign hold neither 0.587 nor 0.5, but they do hold half of the one and the negative of the other.
+        // 16 bits with a sign hold neither 0.587 nor 0.5, but half of the one and the negative of the other.
         static_assert(Fix(0.58700) % 2 == 0 && -Fix(0.50000) == INT16_MIN);
         const V32 g = hn::WidenMulPairwiseAdd(d32, ga, Pairs(Fix(0.58700) / 2, 0));
         y = hn::Add(hn::Add(hn::WidenMulPairwiseAdd(d32, rb, Pairs(Fix(0.29900), Fix(0.11400))), hn::Set(d32, kOneHalf)), hn::Add(g, g));
@@ -178,7 +166,6 @@ struct JpegRows {
         const D16 d;
         const size_t N = hn::Lanes(d8);
         if (n < N || n % 2) return false;
-        // Rounding alternates between down and up, so as not to brighten or darken the image.
         const VU16 bias = hn::BitCast(DU16(), Pairs(1, 2));
         for (size_t i = 0, last = n - N;; i = HWY_MIN(i + N, last)) {
             const uint8_t *HWY_RESTRICT in0 = row0 + i * 2, *HWY_RESTRICT in1 = row1 + i * 2;
@@ -194,8 +181,7 @@ struct JpegRows {
         return hn::Add(hn::Add(v, v), v);
     }
 
-    // Whether `Promote` puts the even lanes in one vector and the odd ones in the other, which on x86 takes no shuffles.
-    // Otherwise it is the lower and the upper lanes, for which Arm has instructions that widen and narrow on the way.
+    // `Promote` gives the even and the odd lanes, which takes no shuffle on x86, or else the lower and the upper ones.
     static constexpr bool kEvenOdd = HWY_ARCH_X86;
 
     static HWY_INLINE void Promote(V8 v, VU16& a, VU16& b)
@@ -222,14 +208,12 @@ struct JpegRows {
         }
     }
 
-    // Makes a row twice as wide by linear interpolation: `out` gets 2 samples for each of the `n` of the row, which is
-    // `near_row` (jdsample.c's h2v1_fancy_upsample) or, with `kTwoRows`, 3 times `near_row` plus `far_row` (one row of
-    // h2v2_fancy_upsample).
+    // `out` gets 2 samples for each of the `n` of `near_row` or, with `kTwoRows`, of 3 times `near_row` plus `far_row`.
     template<bool kTwoRows>
     static HWY_INLINE bool Fancy(const uint8_t* HWY_RESTRICT near_row, const uint8_t* HWY_RESTRICT far_row, uint8_t* HWY_RESTRICT out, size_t n)
     {
         constexpr int kShift = kTwoRows ? 4 : 2;
-        // A half is rounded down for the left one of the two samples that a sample turns into, and up for the right one.
+        // A half is rounded down for the left one of a sample's two and up for the right one. Two rows: the reverse.
         constexpr uint16_t kBiasLeft = kTwoRows ? 8 : 1, kBiasRight = kTwoRows ? 7 : 2;
         const D8 d8;
         const DU16 d;
@@ -276,9 +260,11 @@ struct JpegRows {
     }
 };
 
+// A row too short for `Wide` is done by `Narrow`, and one too short for that by the caller: false, nothing written.
 using Wide = JpegRows<hn::ScalableTag<uint8_t>>;
 using Narrow = JpegRows<hn::CappedTag<uint8_t, 16>>;
 
+// All arithmetic is on integers: every target gives the bytes of the Rust function that the kernel stands in for.
 static bool JpegFromYccImpl(const uint8_t* y, const uint8_t* cb, const uint8_t* cr, const uint8_t* k, uint8_t* out, size_t n)
 {
     return Wide::FromYcc(y, cb, cr, k, out, n) || Narrow::FromYcc(y, cb, cr, k, out, n);

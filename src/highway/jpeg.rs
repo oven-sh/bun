@@ -1,7 +1,4 @@
-//! The kernels of `bun_jpeg` that work on a row of samples (`src/jsc/bindings/highway_jpeg.cpp`).
-//!
-//! Each returns false, having done nothing, for a row that is too short for vectors and for an output without room for the
-//! result. The caller then does the row itself. Of rows of different lengths, the shortest counts.
+//! The row kernels of `bun_jpeg` (highway_jpeg.cpp). Each goes by its shortest row and returns false if it did nothing.
 
 use super::scalar_only;
 
@@ -30,8 +27,7 @@ unsafe extern "C" {
     fn highway_jpeg_h2v2_fancy(near: *const u8, far: *const u8, out: *mut u8, n: usize) -> bool;
 }
 
-/// Appends a pixel for every sample of the rows: `[r, g, b, 255]`, or `[255 - r, 255 - g, 255 - b, k]` with a row of `k`.
-/// `out` does not grow: it has to have the room.
+/// Appends `[r, g, b, 255]` or, with `k`, `[255 - r, 255 - g, 255 - b, k]` for every sample. `out` must have the room.
 #[inline(always)]
 #[must_use]
 pub fn from_ycc(y: &[u8], cb: &[u8], cr: &[u8], k: Option<&[u8]>, out: &mut Vec<[u8; 4]>) -> bool {

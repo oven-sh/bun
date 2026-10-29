@@ -1,5 +1,4 @@
-// Testing-only JS binding for the kernels in highway_jpeg.cpp, in its own TU so that those stay free of JSC/WebKit headers
-// (as in highway_strings_testing.cpp).
+// Testing-only JS binding for the kernels in highway_jpeg.cpp, in its own TU so that those stay free of JSC headers.
 
 #include "root.h"
 
@@ -18,8 +17,6 @@ extern "C" bool highway_jpeg_h2v2_fancy(const uint8_t* near_row, const uint8_t* 
 
 namespace Bun {
 
-// `rows` are the pointers of the kernel in its order, each with at least the bytes that the kernel reads or writes there
-// for `n`. Returns what the kernel returns.
 BUN_DEFINE_HOST_FUNCTION(Bun__highwayJpegForTesting, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);

@@ -4,9 +4,7 @@
 
 namespace Bun {
 
-// Testing-only entry point for the kernels in highway_jpeg.cpp, exposed via `bun:internal-for-testing` so that a test can
-// give each of them rows of every length. Signature:
-//   (op: string, n: number, ...rows: (Uint8Array | null)[]) -> boolean
+// `highwayJpegForTesting` in src/js/internal-for-testing.ts.
 BUN_DECLARE_HOST_FUNCTION(Bun__highwayJpegForTesting);
 
 } // namespace Bun

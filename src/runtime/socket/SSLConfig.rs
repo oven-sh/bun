@@ -496,15 +496,8 @@ extern "C" fn Bun__WebSocket__parseSSLConfig(
 /// WebSocket.cpp can release ownership without leaking the heap allocation
 /// (and all duped cert/key/CA strings inside it) when `connect()` never
 /// hands the pointer off to an upgrade client.
-///
-/// # Safety
-/// `config` must be null or a pointer previously returned by
-/// `Bun__WebSocket__parseSSLConfig` whose ownership the caller is transferring
-/// back (i.e. not already freed or handed to an upgrade client).
+/// C++ gives back the `Box` it got from `parseSSLConfig`, never null.
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__WebSocket__freeSSLConfig(config: *mut bun_http::ssl_config::SSLConfig) {
-    // SAFETY: caller upholds the `# Safety` contract above — `config` is null
-    // or a live pointer from `Bun__WebSocket__parseSSLConfig` whose ownership
-    // is being transferred back. `heap::take` handles the null case.
-    drop(unsafe { bun_core::heap::take(config) });
+extern "C" fn Bun__WebSocket__freeSSLConfig(config: Box<bun_http::ssl_config::SSLConfig>) {
+    drop(config);
 }

@@ -402,7 +402,7 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
 impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
     unsafe fn on_websocket_upgrade(
         this: *mut Self,
-        res: *mut bun_uws_sys::NewAppResponse<SSL>,
+        res: &mut bun_uws_sys::NewAppResponse<SSL>,
         req: &mut Request,
         upgrade_ctx: &mut WebSocketUpgradeContext,
         id: usize,
@@ -413,36 +413,28 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
         // callback's duration. `res.upgrade(..)` synchronously runs `on_open`,
         // which reads the DevServer through the socket's backref, so no
         // `&mut DevServer` may span it — the pre-upgrade borrows below are
-        // scoped to their statements. uWS guarantees `res` is non-null and live
-        // for the upgrade callback (`Response<SSL>` is an opaque handle); every
-        // `&mut *res` below is likewise statement-scoped.
+        // scoped to their statements.
         //
         // SAFETY: `this` is the live DevServer registered for the upgrade callback.
         if !is_allowed_dev_host(unsafe { &*this }, req) {
-            // SAFETY: `res` is live for this callback (see Note above).
-            host_forbidden(unsafe { &mut *res }.as_any_response());
+            host_forbidden(res.as_any_response());
             return;
         }
         if !is_allowed_dev_origin(req) {
-            // SAFETY: `res` is live for this callback (see Note above).
-            origin_forbidden(unsafe { &mut *res }.as_any_response());
+            origin_forbidden(res.as_any_response());
             return;
         }
         // SAFETY: as above; the borrow is statement-scoped, ending before `upgrade`.
         let dw = bun_core::heap::into_raw(HmrSocket::new(unsafe { &mut *this }));
         // SAFETY: `this` is live (see above).
         let _ = unsafe { (*this).active_websocket_connections.insert(dw, ()) };
-        // SAFETY: `res` is live for this callback (see Note above); `on_open`
-        // (run synchronously inside `upgrade`) re-derives DevServer, not `res`.
-        let socket = unsafe {
-            (&mut *res).upgrade(
-                dw,
-                req.header(b"sec-websocket-key").unwrap_or(b""),
-                req.header(b"sec-websocket-protocol").unwrap_or(b""),
-                req.header(b"sec-websocket-extension").unwrap_or(b""),
-                Some(upgrade_ctx),
-            )
-        };
+        let socket = res.upgrade(
+            dw,
+            req.header(b"sec-websocket-key").unwrap_or(b""),
+            req.header(b"sec-websocket-protocol").unwrap_or(b""),
+            req.header(b"sec-websocket-extension").unwrap_or(b""),
+            Some(upgrade_ctx),
+        );
         if socket.is_null() {
             // The connection was already closed, so uWS never stored `dw` and `on_close` won't run.
             // SAFETY: `this` is live (see above).

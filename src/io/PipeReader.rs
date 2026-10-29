@@ -373,10 +373,6 @@ impl PosixBufferedReader {
         // The next read() call will re-register the poll if needed
     }
 
-    pub fn take_buffer(&mut self) -> Vec<u8> {
-        mem::take(&mut self._buffer)
-    }
-
     pub fn buffer(&mut self) -> &mut Vec<u8> {
         &mut self._buffer
     }
@@ -1138,10 +1134,6 @@ impl WindowsBufferedReader {
 
     pub fn disable_keeping_process_alive<C>(&mut self, _: C) {
         self.update_ref(false);
-    }
-
-    pub fn take_buffer(&mut self) -> Vec<u8> {
-        mem::take(&mut self._buffer)
     }
 
     pub fn buffer(&mut self) -> &mut Vec<u8> {

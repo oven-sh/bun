@@ -472,24 +472,28 @@ function verifyElf(spec: VerifySpec): void {
     report("hardening", `${props.length} hardening properties`, violations, props);
 
     if (expect.elf.zeroFilledBelow !== undefined) {
+      // A number that llvm-readobj no longer prints is a scan that could not run, not a size of zero.
+      const number = (b: string, key: string): bigint => {
+        const value = field(b, key);
+        assert(value !== undefined, `llvm-readobj printed no ${key} for a PT_LOAD segment of ${exe}`);
+        return BigInt(value);
+      };
       const tails = zeroFilledTails(
         phdrs
           .filter(b => /PT_LOAD/.test(field(b, "Type") ?? ""))
           .map(b => ({
-            vaddr: BigInt(field(b, "VirtualAddress") ?? 0),
-            fileSize: BigInt(field(b, "FileSize") ?? 0),
-            memSize: BigInt(field(b, "MemSize") ?? 0),
+            vaddr: number(b, "VirtualAddress"),
+            fileSize: number(b, "FileSize"),
+            memSize: number(b, "MemSize"),
             writable: flagsOf(b).includes("PF_W"),
           })),
       );
       const largest = Math.max(0, ...tails);
-      report(
-        "zero-filled data",
-        `${largest} bytes of zero-filled data`,
-        largest < expect.elf.zeroFilledBelow
-          ? []
-          : [`${largest} bytes in one mapping, expected fewer than ${expect.elf.zeroFilledBelow}`],
-      );
+      const found: string[] = [];
+      if (tails.length === 0) found.push("no writable PT_LOAD segment with zero-filled data");
+      else if (largest >= expect.elf.zeroFilledBelow)
+        found.push(`${largest} bytes in one mapping, expected fewer than ${expect.elf.zeroFilledBelow}`);
+      report("zero-filled data", `${largest} bytes of zero-filled data`, found);
     }
   }
 

@@ -414,8 +414,7 @@ fn read_limit(name: &bun_core::ZStr, default: u32) -> u32 {
 fn stop(reason: &str) -> ! {
     Output::flush();
     let _ = bun_sys::write(Fd::stderr(), format!("fuzzilli: {reason}\n").as_bytes());
-    // SAFETY: no preconditions.
-    unsafe { libc::abort() }
+    std::process::abort()
 }
 
 /// A build that takes more processor time ends by SIGXCPU.

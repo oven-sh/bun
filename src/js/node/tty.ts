@@ -3,25 +3,48 @@
 const { ErrnoException } = require("internal/shared");
 const { WriteStream, isatty } = require("internal/tty/write_stream");
 const net = require("node:net");
-const { TTY } = process.binding("tty_wrap");
+
+/** What `new TTY(fd, ctx)` fills in where libuv's `uv_tty_init` would have failed. */
+interface TTYInitContext {
+  errno?: number;
+  code?: string;
+  syscall?: string;
+  message?: string;
+}
+const { TTY } = process.binding("tty_wrap") as { TTY: $Bindgen.TTYConstructor };
+
+declare global {
+  namespace $Node {
+    interface TTYReadStream extends Socket {
+      fd: number;
+      isRaw: boolean;
+      isTTY: boolean;
+      setRawMode(flag: boolean): this;
+    }
+  }
+}
 
 // https://github.com/nodejs/node/blob/v26.3.0/lib/tty.js#L50
 // readableHighWaterMark: 0 makes every push() report backpressure, so the
 // handle only reads while a consumer pulls.
-function ReadStream(fd, options): void {
+function ReadStream(this: $Node.TTYReadStream, fd: number, options?: $Node.SocketOptions): void {
   if (!(this instanceof ReadStream)) {
-    return new ReadStream(fd, options);
+    return new ReadStream(fd, options) as any;
   }
   if (fd >> 0 !== fd || fd < 0) {
     throw $ERR_INVALID_FD(fd);
   }
 
-  const ctx: { code?: string; syscall?: string; message?: string; errno?: number } = {};
+  const ctx: TTYInitContext = {};
   const tty = new TTY(fd, ctx);
   const { code, syscall, message, errno } = ctx;
   if (code !== undefined) {
     // Node's ERR_TTY_INIT_FAILED is a SystemError: it carries the uv context.
-    const err = $ERR_TTY_INIT_FAILED(`${syscall} returned ${code} (${message})`);
+    const err = $ERR_TTY_INIT_FAILED(`${syscall} returned ${code} (${message})`) as Error & {
+      info?: TTYInitContext;
+      errno?: number;
+      syscall?: string;
+    };
     err.name = "SystemError";
     err.info = ctx;
     err.errno = errno;
@@ -42,10 +65,10 @@ function ReadStream(fd, options): void {
 }
 $toClass(ReadStream, "ReadStream", net.Socket);
 
-ReadStream.prototype.setRawMode = function (flag) {
+ReadStream.prototype.setRawMode = function (this: $Node.TTYReadStream, flag: boolean) {
   flag = !!flag;
   // Node does not throw when setting the mode fails: an error event is emitted.
-  const err = this._handle?.setRawMode(flag);
+  const err = (this._handle as unknown as $Node.StreamWrapHandle | null)?.setRawMode(flag);
   if (err) {
     this.emit("error", new ErrnoException(err, "setRawMode"));
     return this;

@@ -1,5 +1,6 @@
 #include "root.h"
 #include "wtf-bindings.h"
+#include "helpers.h"
 #include "BunTTYState.h"
 #include <wtf/StackBounds.h>
 #include <wtf/StackCheck.h>
@@ -7,6 +8,7 @@
 #include <wtf/dtoa.h>
 #include <wtf/DateMath.h>
 #include <wtf/NumberOfCores.h>
+#include <JavaScriptCore/JSDateMath-v8.h>
 #include <atomic>
 #include <cassert>
 
@@ -232,18 +234,23 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
-extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
+// JS `Date.parse` with no VM, except that a date-time with no time zone reads as UTC.
+extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t length)
 {
-    bool isLocalTime;
-    return WTF::parseES5Date({ string, length }, isLocalTime);
+    bool isLocalTime = false;
+    return v8::TimeClip(v8::ParseDateTimeString(byteCast<uint8_t>(string), length, isLocalTime));
 }
 
 namespace Bun {
-String base64URLEncodeToString(Vector<uint8_t> data)
+String base64URLEncodeToString(const Vector<uint8_t>& data)
 {
     auto size = data.size();
     size_t encodedLength = ((size * 4) + 2) / 3;
     if (!encodedLength)
+        return String();
+
+    // String::createUninitialized CRASH()es above String::MaxLength.
+    if (encodedLength > std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(String::MaxLength))) [[unlikely]]
         return String();
 
     std::span<Latin1Character> ptr;

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
 import { mkfifo } from "mkfifo";
 import path from "path";
 
@@ -126,6 +126,35 @@ test("--parallel marks a file whose worker exits mid-run as failed (no retry)", 
   expect(stderr).toContain("(worker crashed: exit code 7)");
   // summary counts the crash as one failure
   expect(stderr).toContain("Ran 3 tests across 3 files.");
+  expect(exitCode).toBe(1);
+});
+
+// The label must use the OS's name for the number the worker died from. Signal
+// 16 on Linux is SIGSTKFLT (it used to be labeled "SIG16"). SIGUSR2 is 31 on
+// macOS, where 31 used to be read with Linux numbering as SIGSYS, a crash
+// signal that aborted the whole run. Neither signal is a crash.
+const deathSignal = isLinux ? "SIGSTKFLT" : "SIGUSR2";
+test.skipIf(isWindows)(`--parallel labels a worker killed by ${deathSignal} with that name`, async () => {
+  using dir = tempDir("parallel-signal-name", {
+    "a.test.js": `import {test,expect} from "bun:test"; test("a",()=>expect(1).toBe(1));`,
+    "die.test.js": `
+      import {test} from "bun:test";
+      import {constants} from "os";
+      test("die", () => process.kill(process.pid, constants.signals.${deathSignal}));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain(`(worker crashed: ${deathSignal})`);
+  expect(stderr).toContain("Ran 2 tests across 2 files.");
   expect(exitCode).toBe(1);
 });
 
@@ -1087,6 +1116,37 @@ test("--parallel: a test writing garbage to fd 3 gets its worker killed and the 
   expect(exitCode).toBe(1);
 });
 
+// About 1 MB of todo lines overflows the socketpair send buffer, so the worker sends its
+// final RepeatBufs frame from its exit drain loop.
+test("--parallel: worker drains a backpressured final frame under the JSC API lock", async () => {
+  using dir = tempDir("parallel-drain-lock", {
+    "big.test.js": `import {test} from "bun:test";
+      import {socketFaultInjection as fault} from "bun:internal-for-testing";
+      // Short sends on the IPC fd guarantee a backlog on the builds where JSC asserts.
+      if (fault.available()) fault.set({ syscall: "send", action: "short", bytes: 65536, repeat: -1, fd: 3 });
+      const pad = Buffer.alloc(340, "t").toString();
+      for (let i = 0; i < 3000; i++) test.todo(pad + "-" + i);
+      for (let i = 0; i < 25; i++) test("p" + i, () => {});`,
+    "other.test.js": `import {test,expect} from "bun:test"; test("b1",()=>expect(1).toBe(1));`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  // The last todo line is streamed live and printed again in the repeat section built from the frame.
+  expect(stderr).toContain("3000 tests todo:");
+  expect(stderr.split("-2999").length - 1).toBe(2);
+  expect(stderr).toContain("3000 todo");
+  expect(stderr).toContain("26 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel --randomize without --seed is reproducible via the printed seed", async () => {
   const mk = (tag: string) =>
     `import {test,expect} from "bun:test";\n` +
@@ -1145,6 +1205,30 @@ test("--parallel forwards --experimental-http2-fetch to workers", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--parallel=2", "--experimental-http2-fetch"],
     env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", H2_TLS: JSON.stringify(tls) },
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("2 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
+
+test("--parallel forwards --use-openssl-ca to workers", async () => {
+  const fixture = `import {test,expect} from "bun:test";
+    import {getCACertificates, rootCertificates} from "node:tls";
+    test("no bundled roots", () => expect(getCACertificates("default")).not.toContain(rootCertificates[0]));`;
+  // The workers' environment has what .env sets, which the flag wins over.
+  using dir = tempDir("parallel-use-openssl-ca", {
+    "a.test.js": fixture,
+    "b.test.js": fixture,
+    ".env": "NODE_USE_SYSTEM_CA=1\n",
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--use-openssl-ca"],
+    env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0", NODE_USE_SYSTEM_CA: undefined },
     cwd: String(dir),
     stderr: "pipe",
     stdout: "pipe",
@@ -1399,8 +1483,9 @@ test.skipIf(isWindows)(
     // The grandchild is orphaned when the worker dies, so a zombie could still
     // answer kill(pid, 0). It records its own termination instead. A shell
     // keeps its startup out of the timing; the trap is armed before the pid
-    // is logged.
-    const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; echo grandchild=$$ >> "$PIDS"; while :; do sleep 60; done`;
+    // is logged. It blocks in `wait`, which a trapped signal interrupts: a
+    // foreground `sleep` would put the trap off until it ends.
+    const grandchild = `trap 'echo terminated=$$ >> "$PIDS"; exit 0' TERM; sleep 60 & echo grandchild=$$ >> "$PIDS"; wait`;
     const crasher = (how: string) => `
     import { test } from "bun:test";
     test("spawn then die", async () => {

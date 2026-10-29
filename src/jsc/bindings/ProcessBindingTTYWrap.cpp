@@ -8,6 +8,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 
 #include "ProcessBindingTTYWrap.h"
+#include "GeneratedTtyWrap.h"
 #include "NodeTTYModule.h"
 #include "WebCoreJSBuiltins.h"
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -131,8 +132,8 @@ JSValue createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
 
-    // The `TTY` handle class is generated from src/runtime/node/tty_wrap.classes.ts.
-    auto* constructor = uncheckedDowncast<Zig::GlobalObject>(globalObject)->JSTTYConstructor();
+    // The `TTY` handle class is generated from src/runtime/node/tty_wrap.bind.ts.
+    JSValue constructor = Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSTTY>(globalObject);
     obj->putDirect(vm, Identifier::fromString(vm, "TTY"_s), constructor, JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete);
 
     return obj;

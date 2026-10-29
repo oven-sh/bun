@@ -7,7 +7,7 @@ test("defineProperty", () => {
   expect(CJS.a).toBe(1);
   expect(CJS.b).toBe(2);
   // non-enumerable getter/setter are not copied, matching node.js
-  expect(CJS.c).toBe(undefined);
+  expect(CJS.c as number | undefined).toBe(undefined);
 
   expect(Bun.inspect(CJS.default)).toBe(`{\n  a: 1,\n  b: 2,\n  c: [Getter],\n}`);
 });

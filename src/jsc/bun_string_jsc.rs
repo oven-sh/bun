@@ -1,11 +1,12 @@
 //! JSC bridges for `bun_core::String` and `Utf8WithString`: the
 //! `StringJsc`/`Utf8WithStringJsc` extension traits and the free functions
 //! for bytes → JS string. Keeps `bun_core::string` free of
-//! `JSValue`/`JSGlobalObject`/`CallFrame` types.
+//! `JSValue`/`JSGlobalObject` types.
 
 use bun_core::{EncodedSlice, String, Tag, Utf8WithString, strings};
 
-use crate::{CallFrame, EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult};
+use crate::bindgen::{self, JsHeap};
+use crate::{EncodedSliceJsc as _, JSGlobalObject, JSValue, JsError, JsResult};
 
 // ── extern decls ────────────────────────────────────────────────────────────
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/
@@ -60,8 +61,6 @@ pub trait StringJsc {
     /// atomized, a borrowed `EncodedSlice` copied.
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue;
 }
 impl StringJsc for String {
     #[track_caller]
@@ -109,12 +108,6 @@ impl StringJsc for String {
     }
     fn to_type_error_instance(&self, global: &JSGlobalObject) -> JSValue {
         error_instance(self, global, ErrorKind::TypeError)
-    }
-    fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        error_instance(self, global, ErrorKind::SyntaxError)
-    }
-    fn to_range_error_instance(&self, global: &JSGlobalObject) -> JSValue {
-        error_instance(self, global, ErrorKind::RangeError)
     }
 }
 
@@ -208,11 +201,17 @@ pub fn owned_latin1_into_js(global_object: &JSGlobalObject, latin1: Vec<u8>) -> 
 /// UTF-16 `Vec<u16>` → JS string; the allocation is adopted by JSC.
 /// Throws `STRING_TOO_LONG` when over [`String::max_length`].
 pub fn owned_utf16_into_js(global_object: &JSGlobalObject, utf16: Vec<u16>) -> JsResult<JSValue> {
+    try_owned_utf16_into_js(global_object, utf16)
+        .ok_or_else(|| global_object.throw_string_too_long())
+}
+
+/// As [`owned_utf16_into_js`], `None` where that throws.
+pub fn try_owned_utf16_into_js(global_object: &JSGlobalObject, utf16: Vec<u16>) -> Option<JSValue> {
     if utf16.is_empty() {
-        return Ok(JSValue::js_empty_string(global_object));
+        return Some(JSValue::js_empty_string(global_object));
     }
     let utf16 = core::mem::ManuallyDrop::new(utf16);
-    EncodedSlice::utf16(&utf16).to_external_value(global_object)
+    EncodedSlice::utf16(&utf16).try_to_external_value(global_object)
 }
 
 #[track_caller]
@@ -221,16 +220,9 @@ pub fn parse_date(this: &String, global_object: &JSGlobalObject) -> JsResult<f64
     unsafe { crate::cpp::Bun__parseDate(global_object, this) }
 }
 
-// ── escapeRegExp host fns ───────────────────────────────────────────────────
-#[bun_jsc::host_fn]
-pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    let input_value = call_frame.argument(0);
-
-    if !input_value.is_string() {
-        return Err(global.throw(format_args!("expected string argument")));
-    }
-
-    let input = input_value.to_utf8(global)?;
+// ── escapeRegExp ────────────────────────────────────────────────────────────
+pub(crate) fn escape_reg_exp(input: &String) -> JsResult<Vec<u8>> {
+    let input = input.to_utf8();
 
     let mut buf: Vec<u8> = Vec::new();
 
@@ -239,21 +231,11 @@ pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
         return Err(JsError::OutOfMemory);
     }
 
-    create_utf8_for_js(global, &buf)
+    Ok(buf)
 }
 
-#[bun_jsc::host_fn]
-pub fn js_escape_reg_exp_for_package_name_matching(
-    global: &JSGlobalObject,
-    call_frame: &CallFrame,
-) -> JsResult<JSValue> {
-    let input_value = call_frame.argument(0);
-
-    if !input_value.is_string() {
-        return Err(global.throw(format_args!("expected string argument")));
-    }
-
-    let input = input_value.to_utf8(global)?;
+pub(crate) fn escape_reg_exp_for_package_name_matching(input: &String) -> JsResult<Vec<u8>> {
+    let input = input.to_utf8();
 
     let mut buf: Vec<u8> = Vec::new();
 
@@ -264,46 +246,27 @@ pub fn js_escape_reg_exp_for_package_name_matching(
         return Err(JsError::OutOfMemory);
     }
 
-    create_utf8_for_js(global, &buf)
+    Ok(buf)
 }
 
-// ── unicode TestingAPIs ─────────────────────────────────────────────────────
-pub mod unicode_testing_apis {
-    use super::*;
-
-    /// Used in JS tests, see `internal-for-testing.ts`.
-    /// Exercises the `sentinel = true` path of `toUTF16AllocForReal`, which is
-    /// otherwise only reachable from Windows-only `bun build --compile`
-    /// metadata code.
-    #[bun_jsc::host_fn]
-    pub fn to_utf16_alloc_sentinel(
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        if arguments.len() < 1 {
-            return Err(
-                global_this.throw(format_args!("toUTF16AllocSentinel: expected 1 argument"))
-            );
+/// Used in JS tests, see `internal-for-testing.ts`.
+/// Exercises the `sentinel = true` path of `toUTF16AllocForReal`, which is
+/// otherwise only reachable from Windows-only `bun build --compile`
+/// metadata code.
+pub(crate) fn to_utf16_alloc_sentinel<'a>(
+    heap: &JsHeap<'a>,
+    bytes: &[u8],
+) -> bindgen::Result<'a, String> {
+    let result = match strings::to_utf16_alloc_for_real(bytes, false, true) {
+        Ok(r) => r,
+        Err(err) => {
+            return Err(heap.error(format_args!("{err:?} toUTF16AllocForReal failed")));
         }
-        let Some(array_buffer) = arguments[0].as_array_buffer(global_this) else {
-            return Err(
-                global_this.throw(format_args!("toUTF16AllocSentinel: expected a Uint8Array"))
-            );
-        };
-        let bytes = array_buffer.byte_slice();
+    };
 
-        let result = match strings::to_utf16_alloc_for_real(bytes, false, true) {
-            Ok(r) => r,
-            Err(err) => {
-                return Err(global_this.throw(format_args!("{err:?} toUTF16AllocForReal failed")));
-            }
-        };
+    // `to_utf16_alloc_for_real(.., sentinel=true)` includes the trailing
+    // NUL **in** `result.len()`, so slice it off before handing to JSC.
+    debug_assert_eq!(result.last().copied(), Some(0));
 
-        // `to_utf16_alloc_for_real(.., sentinel=true)` includes the trailing
-        // NUL **in** `result.len()`, so slice it off before handing to JSC.
-        debug_assert_eq!(result.last().copied(), Some(0));
-
-        String::clone_utf16(&result[..result.len() - 1]).into_js(global_this)
-    }
+    Ok(String::clone_utf16(&result[..result.len() - 1]))
 }

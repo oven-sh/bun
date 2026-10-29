@@ -12,7 +12,11 @@ use bun_core::{FeatureFlags, strings};
 use bun_sys::{self as sys, Error as SysError, Fd};
 use bun_uws as uws;
 
+use crate::generated_bindgen::sink::{
+    ArrayBufferSinkStartOptions, SinkPath, js_ReadableSinkController as js,
+};
 use crate::webcore::blob::Any as AnyBlob;
+use crate::webcore::sink::{AnyControlledSink, ReadableSinkController};
 use crate::webcore::{AutoFlusher, ByteListPool};
 
 // scope statics renamed with `Log` suffix so they don't collide with
@@ -28,9 +32,9 @@ type ByteListPoolNode = bun_collections::pool::Node<Vec<u8>>;
 // NetworkSink stores a borrowed `*MultiPartUpload`. Now that `webcore::s3` is
 // wired, alias the module to the real type so `bun_s3::MultiPartUpload` resolves
 // for callers that still spell it that way.
-pub mod bun_s3 {
-    pub use crate::webcore::s3::MultiPartUpload;
-    pub use crate::webcore::s3::multipart::UploadBackpressure;
+pub(crate) mod bun_s3 {
+    pub(crate) use crate::webcore::s3::MultiPartUpload;
+    pub(crate) use crate::webcore::s3::multipart::UploadBackpressure;
 }
 
 /// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
@@ -42,17 +46,16 @@ type BlobSizeType = crate::webcore::BlobSizeType;
 const MAX_HIGH_WATER_MARK: i64 = 256 * 1024 * 1024;
 
 #[inline]
-fn high_water_mark_from_js(value: JSValue, min: BlobSizeType) -> BlobSizeType {
-    // `to_int64` maps NaN→0 and saturates ±Infinity; clamp in i64 before the
+fn high_water_mark(value: f64, min: BlobSizeType) -> BlobSizeType {
+    // `as i64` maps NaN→0 and saturates ±Infinity; clamp in i64 before the
     // unsigned cast so Infinity/negatives/out-of-range never reach the allocator.
-    let n = value.to_int64();
-    (min as i64).max(n).min(MAX_HIGH_WATER_MARK) as BlobSizeType
+    (min as i64).max(value as i64).min(MAX_HIGH_WATER_MARK) as BlobSizeType
 }
 
 // Compat: `webcore::SinkHandle` and Body refer to `streams::Result` / `streams::result::StreamError`.
-pub use StreamResult as Result;
-pub mod result {
-    pub use super::{StreamError, Writable};
+pub(crate) use StreamResult as Result;
+pub(crate) mod result {
+    pub(crate) use super::{StreamError, Writable};
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -60,7 +63,7 @@ pub mod result {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Options payload for the `Start::FileSink` variant.
-pub type FileSinkOptions = crate::webcore::file_sink::Options;
+pub(crate) type FileSinkOptions = crate::webcore::file_sink::Options;
 
 pub enum Start {
     Empty,
@@ -74,18 +77,6 @@ pub enum Start {
     FileSink(FileSinkOptions),
     Ready,
     OwnedAndDone(Vec<u8>),
-}
-
-#[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, core::marker::ConstParamTy)]
-pub enum StartTag {
-    ArrayBufferSink,
-    FileSink,
-    HTTPSResponseSink,
-    HTTPResponseSink,
-    NetworkSink,
-    FetchRequestBodySink,
-    HTMLRewriterSink,
 }
 
 impl Start {
@@ -107,170 +98,58 @@ impl Start {
         }
     }
 
-    pub fn from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Start> {
-        if value.is_empty_or_undefined_or_null() || !value.is_object() {
-            return Ok(Start::Empty);
+    /// `start(options)` of an `ArrayBufferSink`.
+    pub(crate) fn array_buffer_sink(options: &ArrayBufferSinkStartOptions) -> Start {
+        if options.as_uint8_array.is_none()
+            && options.stream.is_none()
+            && options.high_water_mark.is_none()
+        {
+            return Start::Empty;
         }
-
-        if let Some(chunk_size) = value.get(global_this, b"chunkSize")? {
-            if chunk_size.is_number() {
-                return Ok(Start::ChunkSize(high_water_mark_from_js(chunk_size, 0)));
-            }
-        }
-
-        Ok(Start::Empty)
-    }
-
-    /// Runtime-tag dispatcher for `from_js_with_tag`. The per-sink tag is
-    /// `JsSinkType::START_TAG` (a runtime `Option<StartTag>`); this match
-    /// re-enters the tag-specific body.
-    pub(crate) fn from_js_with_runtime_tag(
-        global_this: &JSGlobalObject,
-        value: JSValue,
-        tag: StartTag,
-    ) -> JsResult<Start> {
-        match tag {
-            StartTag::ArrayBufferSink => {
-                Self::from_js_with_tag::<{ StartTag::ArrayBufferSink }>(global_this, value)
-            }
-            StartTag::FileSink => {
-                Self::from_js_with_tag::<{ StartTag::FileSink }>(global_this, value)
-            }
-            StartTag::NetworkSink => {
-                Self::from_js_with_tag::<{ StartTag::NetworkSink }>(global_this, value)
-            }
-            StartTag::HTTPSResponseSink => {
-                Self::from_js_with_tag::<{ StartTag::HTTPSResponseSink }>(global_this, value)
-            }
-            StartTag::HTTPResponseSink => {
-                Self::from_js_with_tag::<{ StartTag::HTTPResponseSink }>(global_this, value)
-            }
-            StartTag::FetchRequestBodySink => {
-                Self::from_js_with_tag::<{ StartTag::FetchRequestBodySink }>(global_this, value)
-            }
-            StartTag::HTMLRewriterSink => {
-                Self::from_js_with_tag::<{ StartTag::HTMLRewriterSink }>(global_this, value)
-            }
+        Start::ArrayBufferSink {
+            chunk_size: options
+                .high_water_mark
+                .map_or(0, |value| high_water_mark(value, 0)),
+            as_uint8array: options.as_uint8_array.unwrap_or(false),
+            stream: options.stream.unwrap_or(false),
         }
     }
 
-    pub(crate) fn from_js_with_tag<const TAG: StartTag>(
-        global_this: &JSGlobalObject,
-        value: JSValue,
-    ) -> JsResult<Start> {
-        if value.is_empty_or_undefined_or_null() || !value.is_object() {
-            return Ok(Start::Empty);
-        }
-
-        match TAG {
-            StartTag::ArrayBufferSink => {
-                let mut as_uint8array = false;
-                let mut stream = false;
-                let mut chunk_size: BlobSizeType = 0;
-                let mut empty = true;
-
-                if let Some(val) =
-                    value.get_own(global_this, &bun_core::String::static_("asUint8Array"))?
-                {
-                    if val.is_boolean() {
-                        as_uint8array = val.to_boolean();
-                        empty = false;
-                    }
-                }
-
-                if let Some(val) = value.fast_get(global_this, jsc::BuiltinName::Stream)? {
-                    if val.is_boolean() {
-                        stream = val.to_boolean();
-                        empty = false;
-                    }
-                }
-
-                if let Some(chunk_size_val) =
-                    value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
-                {
-                    if chunk_size_val.is_number() {
-                        empty = false;
-                        chunk_size = high_water_mark_from_js(chunk_size_val, 0);
-                    }
-                }
-
-                if !empty {
-                    return Ok(Start::ArrayBufferSink {
-                        chunk_size,
-                        as_uint8array,
-                        stream,
-                    });
-                }
+    /// `start({ path, fd })` of a `FileSink`.
+    pub(crate) fn file_sink(
+        path: &SinkPath<'_>,
+        fd: Option<bun_jsc::bindgen::JsLocal<'_>>,
+    ) -> Start {
+        use bun_sys_jsc::FdJsc as _;
+        let error = |errno: sys::SystemErrno| {
+            Start::Err(SysError {
+                errno: errno as _,
+                syscall: sys::Tag::write,
+                ..Default::default()
+            })
+        };
+        let input_path = match (path, fd) {
+            (SinkPath::Path(path), _) => {
+                crate::webcore::PathOrFileDescriptor::Path(path.clone().into_utf8())
             }
-            StartTag::FileSink => {
-                if let Some(path) = value.fast_get(global_this, jsc::BuiltinName::Path)? {
-                    if !path.is_string() {
-                        return Ok(Start::Err(SysError {
-                            errno: sys::SystemErrno::EINVAL as _,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        }));
-                    }
+            (SinkPath::Other(_), _) => return error(sys::SystemErrno::EINVAL),
+            (SinkPath::Missing, None) => crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
+            (SinkPath::Missing, Some(fd)) => match Fd::from_js(fd.to_js()) {
+                Some(fd) => crate::webcore::PathOrFileDescriptor::Fd(fd),
+                None => return error(sys::SystemErrno::EBADF),
+            },
+        };
+        Start::FileSink(FileSinkOptions {
+            input_path,
+            ..Default::default()
+        })
+    }
 
-                    return Ok(Start::FileSink(FileSinkOptions {
-                        input_path: crate::webcore::PathOrFileDescriptor::Path(
-                            path.to_utf8(global_this)?,
-                        ),
-                        ..Default::default()
-                    }));
-                } else if let Some(fd_value) = value.get_truthy(global_this, b"fd")? {
-                    if !fd_value.is_any_int() {
-                        return Ok(Start::Err(SysError {
-                            errno: sys::SystemErrno::EBADF as _,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        }));
-                    }
-
-                    use bun_sys_jsc::FdJsc as _;
-                    if let Some(fd) = Fd::from_js(fd_value) {
-                        return Ok(Start::FileSink(FileSinkOptions {
-                            input_path: crate::webcore::PathOrFileDescriptor::Fd(fd),
-                            ..Default::default()
-                        }));
-                    } else {
-                        return Ok(Start::Err(SysError {
-                            errno: sys::SystemErrno::EBADF as _,
-                            syscall: sys::Tag::write,
-                            ..Default::default()
-                        }));
-                    }
-                }
-
-                return Ok(Start::FileSink(FileSinkOptions {
-                    input_path: crate::webcore::PathOrFileDescriptor::Fd(Fd::INVALID),
-                    ..Default::default()
-                }));
-            }
-            StartTag::NetworkSink
-            | StartTag::HTTPSResponseSink
-            | StartTag::HTTPResponseSink
-            | StartTag::FetchRequestBodySink
-            | StartTag::HTMLRewriterSink => {
-                let mut empty = true;
-                let mut chunk_size: BlobSizeType = 2048;
-
-                if let Some(chunk_size_val) =
-                    value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
-                {
-                    if chunk_size_val.is_number() {
-                        empty = false;
-                        chunk_size = high_water_mark_from_js(chunk_size_val, 256);
-                    }
-                }
-
-                if !empty {
-                    return Ok(Start::ChunkSize(chunk_size));
-                }
-            }
-        }
-
-        Ok(Start::Empty)
+    /// `start({ highWaterMark })` of every other sink.
+    pub(crate) fn chunk_size(value: Option<f64>) -> Start {
+        value.map_or(Start::Empty, |value| {
+            Start::ChunkSize(high_water_mark(value, 256))
+        })
     }
 }
 
@@ -309,6 +188,48 @@ impl StreamResult {
     }
 }
 
+/// One sink chunk in its source encoding, so whoever buffers it transcodes straight into its own buffer.
+#[derive(Clone, Copy)]
+pub(crate) enum EncodedChunk<'a> {
+    Bytes(&'a [u8]),
+    Latin1(&'a [u8]),
+    Utf16(&'a [u16]),
+}
+
+impl<'a> EncodedChunk<'a> {
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        match *self {
+            Self::Bytes(b) | Self::Latin1(b) => b.is_empty(),
+            Self::Utf16(u) => u.is_empty(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn utf8_len(&self) -> usize {
+        match *self {
+            Self::Bytes(b) => b.len(),
+            Self::Latin1(b) => bun_simdutf_sys::simdutf::length::utf8::from::latin1(b),
+            Self::Utf16(u) => {
+                bun_simdutf_sys::simdutf::length::utf8::from::utf16::le_with_replacement(u)
+            }
+        }
+    }
+
+    #[inline]
+    pub(crate) fn append_utf8_into(&self, out: &mut Vec<u8>) {
+        match *self {
+            Self::Bytes(b) => out.extend_from_slice(b),
+            Self::Latin1(b) => {
+                let _ = out.write_latin1(b);
+            }
+            Self::Utf16(u) => {
+                let _ = out.write_utf16(u);
+            }
+        }
+    }
+}
+
 pub enum StreamError {
     Error(SysError),
     AbortReason(CommonAbortReason),
@@ -326,12 +247,6 @@ impl StreamError {
 }
 
 impl StreamResult {
-    pub(crate) fn slice16(&self) -> &[u16] {
-        // Caller guarantees bytes are u16-aligned and even length;
-        // bytemuck checks both at runtime.
-        bytemuck::cast_slice(self.slice())
-    }
-
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             StreamResult::Owned(owned) => owned.slice(),
@@ -384,25 +299,28 @@ impl Default for WritablePending {
 // `WritablePending` / `WritableFuture` only own the JSPromiseStrong field —
 // JSPromiseStrong implements Drop, so no explicit Drop impl is needed here.
 
-pub enum WritableFuture {
+pub(crate) enum WritableFuture {
     None,
     Promise {
         strong: JSPromiseStrong,
         // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
         global: BackRef<JSGlobalObject>,
+        /// The context whose script is writing (as `PendingFuture::Promise`).
+        context: bun_jsc::ContextId,
     },
 }
 
 impl WritablePending {
-    pub(crate) fn promise(&mut self, global_this: &JSGlobalObject) -> *mut JSPromise {
+    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> *mut JSPromise {
         self.state = PendingState::Pending;
 
         match &self.future {
             WritableFuture::Promise { strong, .. } => std::ptr::from_mut::<JSPromise>(strong.get()),
             _ => {
                 self.future = WritableFuture::Promise {
-                    strong: JSPromiseStrong::init(global_this),
-                    global: BackRef::new(global_this),
+                    strong: JSPromiseStrong::init(cx.global()),
+                    global: BackRef::new(cx.global()),
+                    context: cx.context().id(),
                 };
                 match &self.future {
                     WritableFuture::Promise { strong, .. } => {
@@ -428,11 +346,20 @@ impl WritablePending {
         self.consumed = 0;
 
         match core::mem::replace(&mut self.future, WritableFuture::None) {
-            WritableFuture::Promise { mut strong, global } => Writable::fulfill_promise(
-                core::mem::replace(&mut self.result, Writable::Done),
-                strong.swap(),
-                &global,
-            ),
+            WritableFuture::Promise {
+                mut strong,
+                global,
+                context,
+            } => {
+                // A sink settles a write from its own completion (a libuv write callback on
+                // Windows), not from a queued task: for the script that is writing.
+                let entered = global.bun_vm().enter_context(context);
+                Writable::fulfill_promise(
+                    core::mem::replace(&mut self.result, Writable::Done),
+                    strong.swap(),
+                    &global.js_thread(entered.context()),
+                )
+            }
             WritableFuture::None => {}
         }
     }
@@ -444,24 +371,24 @@ impl Writable {
     pub(crate) fn fulfill_promise(
         result: Writable,
         promise: &mut JSPromise,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
     ) {
         // Adopt the caller's outstanding protect(); Drop unprotects on all paths.
         let _guard = jsc::js_value::Protected::adopt(promise.to_js());
         let settled = match result {
             Writable::Err(err) => {
-                promise.reject_with_async_stack(global_this, Ok(err.to_js(global_this)))
+                promise.reject_with_async_stack(cx.global(), Ok(err.to_js(cx.global())))
             }
-            Writable::Done => promise.resolve(global_this, JSValue::FALSE),
-            other => promise.resolve(global_this, other.to_js(global_this)),
+            Writable::Done => promise.resolve(cx.global(), JSValue::FALSE),
+            other => promise.resolve(cx.global(), other.to_js(cx)),
         };
         crate::dispatch::fold(settled);
     }
 
-    pub fn to_js(self, global_this: &JSGlobalObject) -> JSValue {
+    pub fn to_js(self, cx: &bun_jsc::JsThread<'_>) -> JSValue {
         match self {
             Writable::Err(err) => {
-                JSPromise::rejected_promise(global_this, err.to_js(global_this)).to_js()
+                JSPromise::rejected_promise(cx.global(), err.to_js(cx.global())).to_js()
             }
             Writable::Owned(len) => JSValue::from(len),
             // Negative sentinel; the writer awaits the drain via `flush(true)`.
@@ -474,7 +401,7 @@ impl Writable {
             Writable::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
                 // classification; exclusive borrow scoped to the call.
-                let prom = unsafe { (*pending).promise(global_this) };
+                let prom = unsafe { (*pending).promise(cx) };
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 JSPromise::opaque_ref(prom).to_js()
             }
@@ -514,11 +441,12 @@ impl Default for Pending {
 }
 
 impl Pending {
-    pub(crate) fn promise(&mut self, global_object: &JSGlobalObject) -> *mut JSPromise {
-        let prom = std::ptr::from_mut::<JSPromise>(JSPromise::create(global_object));
+    pub(crate) fn promise(&mut self, cx: &bun_jsc::JsThread<'_>) -> *mut JSPromise {
+        let prom = std::ptr::from_mut::<JSPromise>(JSPromise::create(cx.global()));
         self.future = PendingFuture::Promise {
             promise: prom,
-            global_this: BackRef::new(global_object),
+            global_this: BackRef::new(cx.global()),
+            context: cx.context().id(),
         };
         self.state = PendingState::Pending;
         prom
@@ -545,9 +473,6 @@ impl Pending {
     /// # Safety
     /// `this` must be a valid, uniquely-owned pointer previously produced by
     /// `bun_core::heap::into_raw` (via `Task::from_boxed` in `run_on_next_tick`).
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn run_from_js_thread(this: *mut Pending) {
         // SAFETY: this was heap-allocated in run_on_next_tick
         let mut boxed = unsafe { bun_core::heap::take(this) };
@@ -574,20 +499,27 @@ impl bun_event_loop::Taskable for Pending {
     unsafe fn release_unrun(this: *mut Self) {
         Pending::release_without_running(this);
     }
+    /// `Pending::run` checks the context whose script is reading: most sources call it from their
+    /// own completion, not through this task.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
-pub enum PendingFuture {
+pub(crate) enum PendingFuture {
     Promise {
         // JSC_BORROW: raw `*mut JSPromise`, GC-rooted via protect/unprotect (protected when
         // stored, unprotected when the future is fulfilled or deinitialized).
         promise: *mut JSPromise,
         // JSC_BORROW: process-lifetime VM global; safe `Deref` via `BackRef`.
         global_this: BackRef<JSGlobalObject>,
+        /// The context whose script is reading (it asked for this promise).
+        context: bun_jsc::ContextId,
     },
     Handler(PendingHandler),
 }
 
-pub struct PendingHandler {
+pub(crate) struct PendingHandler {
     pub ctx: *mut c_void,
     pub(crate) handler: PendingHandlerFn,
 }
@@ -596,7 +528,7 @@ type PendingHandlerFn = fn(ctx: *mut c_void, result: StreamResult);
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub enum PendingState {
+pub(crate) enum PendingState {
     None,
     Pending,
     Used,
@@ -625,7 +557,17 @@ impl Pending {
             PendingFuture::Promise {
                 promise,
                 global_this,
-            } => StreamResult::fulfill_promise(&mut self.result, *promise, global_this),
+                context,
+            } => {
+                // Most sources fulfil a read from their own completion, not from a queued task:
+                // settled for the script that is reading (for nobody, once its context stopped).
+                let entered = global_this.bun_vm().enter_context(*context);
+                StreamResult::fulfill_promise(
+                    &mut self.result,
+                    *promise,
+                    &global_this.js_thread(entered.context()),
+                )
+            }
             PendingFuture::Handler(h) => {
                 // Reset self.result to Done here —
                 // verify no caller reads it after run().
@@ -654,10 +596,10 @@ impl StreamResult {
     pub(crate) fn fulfill_promise(
         result: &mut StreamResult,
         promise: *mut JSPromise,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
     ) {
         // dropped (only used for read-only `event_loop()`) before any re-entrant call.
-        let vm = global_this.bun_vm();
+        let vm = cx.vm();
         // A long-lived `&mut EventLoop` / `&mut JSPromise` held across
         // re-entrant resolve/reject would alias any
         // `&mut` the re-entered JS path materializes through `vm.event_loop()` or the
@@ -682,30 +624,30 @@ impl StreamResult {
         // re-entrant call (no long-lived `&mut JSPromise` held).
         let settled = match result {
             StreamResult::Err(err) => {
-                let value = err.to_js(global_this);
+                let value = err.to_js(cx.global());
                 value.ensure_still_alive();
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
-                JSPromise::opaque_mut(promise).reject_with_async_stack(global_this, Ok(value))
+                JSPromise::opaque_mut(promise).reject_with_async_stack(cx.global(), Ok(value))
             }
             StreamResult::Done => {
-                JSPromise::opaque_mut(promise).resolve(global_this, JSValue::FALSE)
+                JSPromise::opaque_mut(promise).resolve(cx.global(), JSValue::FALSE)
             }
             _ => {
-                let value = result.to_js(global_this);
+                let value = result.to_js(cx);
                 *result = StreamResult::Temporary(RawSlice::EMPTY);
                 match value {
                     Ok(value) => {
                         value.ensure_still_alive();
-                        JSPromise::opaque_mut(promise).resolve(global_this, value)
+                        JSPromise::opaque_mut(promise).resolve(cx.global(), value)
                     }
-                    Err(err) => JSPromise::opaque_mut(promise).reject(global_this, Err(err)),
+                    Err(err) => JSPromise::opaque_mut(promise).reject(cx.global(), Err(err)),
                 }
             }
         };
         crate::dispatch::fold(settled);
     }
 
-    pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    pub fn to_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> JsResult<JSValue> {
         match self {
             StreamResult::Owned(list) => {
                 // The buffer is handed to JSC; the later
@@ -714,13 +656,13 @@ impl StreamResult {
                 // Drop so JSC's MarkedArrayBuffer_deallocator is the sole owner.
                 let mut taken = core::mem::ManuallyDrop::new(core::mem::take(list));
                 let ab = ArrayBuffer::from_bytes(taken.slice_mut(), JSType::Uint8Array);
-                ab.to_js(global_this)
+                ab.to_js(cx.global())
             }
             StreamResult::OwnedAndDone(list) => {
                 // see Owned arm above — same ownership transfer to JSC.
                 let mut taken = core::mem::ManuallyDrop::new(core::mem::take(list));
                 let ab = ArrayBuffer::from_bytes(taken.slice_mut(), JSType::Uint8Array);
-                ab.to_js(global_this)
+                ab.to_js(cx.global())
             }
             StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
                 // Allocate an uninitialized Uint8Array and
@@ -728,9 +670,9 @@ impl StreamResult {
                 // `ArrayBuffer::create` would do.
                 let temp_slice = temp.slice();
                 let array =
-                    JSValue::create_uninitialized_uint8_array(global_this, temp_slice.len())?;
+                    JSValue::create_uninitialized_uint8_array(cx.global(), temp_slice.len())?;
                 let mut buf = array
-                    .as_array_buffer(global_this)
+                    .as_array_buffer(cx.global())
                     .expect("freshly created Uint8Array has a backing buffer");
                 buf.slice_mut()[..temp_slice.len()].copy_from_slice(temp_slice);
                 Ok(array)
@@ -740,16 +682,16 @@ impl StreamResult {
             StreamResult::Pending(pending) => {
                 // SAFETY: pending is a valid borrowed pointer per BORROW_PARAM
                 // classification; exclusive borrow scoped to the call.
-                let promise = unsafe { (**pending).promise(global_this) };
+                let promise = unsafe { (**pending).promise(cx) };
                 // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
                 let promise_js = JSPromise::opaque_ref(promise).to_js();
                 promise_js.protect();
                 Ok(promise_js)
             }
             StreamResult::Err(err) => {
-                let js_err = err.to_js(global_this);
+                let js_err = err.to_js(cx.global());
                 js_err.ensure_still_alive();
-                Ok(JSPromise::rejected_promise(global_this, js_err).to_js())
+                Ok(JSPromise::rejected_promise(cx.global(), js_err).to_js())
             }
             // false == controller.close()
             // undefined == noop, but we probably won't send it
@@ -762,28 +704,85 @@ impl StreamResult {
 // SourceHandle
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Generic controller externs (defined in the generated `JSSink.cpp`). Every
-/// `JSReadable*SinkController` shares the `JSReadableSinkControllerBase`
-/// layout, so one symbol per operation suffices for all sink kinds.
-pub(crate) mod controller_abi {
-    unsafe extern "C" {
-        #[link_name = "JSSinkController__onReady"]
-        pub(crate) safe fn on_ready(
-            c: ::bun_jsc::JSValue,
-            amt: ::bun_jsc::JSValue,
-            off: ::bun_jsc::JSValue,
-        );
-        #[link_name = "JSSinkController__onClose"]
-        pub(crate) safe fn on_close(c: ::bun_jsc::JSValue, reason: ::bun_jsc::JSValue);
-        #[link_name = "JSSinkController__detachPtr"]
-        pub(crate) safe fn detach_ptr(c: ::bun_jsc::JSValue);
-        /// Returns undefined (drained inline), the pump promise, or the thrown Exception cell.
-        #[link_name = "JSSinkController__assignToStream"]
-        pub(crate) safe fn assign_to_stream(
-            g: &::bun_jsc::JSGlobalObject,
-            stream: ::bun_jsc::JSValue,
-            c: ::bun_jsc::JSValue,
-        ) -> ::bun_jsc::JSValue;
+/// The one GC root a native sink keeps while a stream is piped into it: its controller cell, which holds the stream, the done-promise and the failure value.
+#[derive(Default)]
+pub(crate) struct PipeCell(::bun_jsc::strong::Optional);
+
+impl PipeCell {
+    pub(crate) fn create(
+        cell: JSValue,
+        stream: JSValue,
+        done: JSValue,
+        global: &JSGlobalObject,
+    ) -> PipeCell {
+        js::set_pipe(cell, stream, done);
+        PipeCell(::bun_jsc::strong::Optional::create(cell, global))
+    }
+
+    pub(crate) fn cell(&self) -> Option<JSValue> {
+        self.0.get()
+    }
+
+    /// The pipe is over: a controller the user still holds must not keep the stream or the promise alive.
+    pub(crate) fn clear_slots(&self) {
+        if let Some(cell) = self.0.get() {
+            js::set_pipe(cell, JSValue::UNDEFINED, JSValue::UNDEFINED);
+        }
+    }
+
+    pub(crate) fn has_stream(&self) -> bool {
+        self.stream().is_some()
+    }
+
+    pub(crate) fn stream(&self) -> Option<crate::webcore::ReadableStream> {
+        let stream = js::pipe_stream(self.0.get()?);
+        if stream.is_empty() {
+            return None;
+        }
+        crate::webcore::ReadableStream::from_js_direct(stream)
+    }
+
+    pub(crate) fn take_stream(&self) -> Option<crate::webcore::ReadableStream> {
+        let stream = self.stream();
+        if let Some(cell) = self.0.get() {
+            js::clear_pipe_stream(cell);
+        }
+        stream
+    }
+
+    /// Root `cell` with nothing on it yet.
+    pub(crate) fn root(cell: JSValue, global: &JSGlobalObject) -> PipeCell {
+        PipeCell(::bun_jsc::strong::Optional::create(cell, global))
+    }
+
+    pub(crate) fn has_done(&self) -> bool {
+        self.done().is_some()
+    }
+
+    /// The promise the sink's owner or source awaits, until it is taken to be settled.
+    pub(crate) fn done(&self) -> Option<*mut JSPromise> {
+        js::pipe_done(self.0.get()?).as_promise()
+    }
+
+    pub(crate) fn set_done(&self, done: JSValue) {
+        debug_assert!(self.0.has(), "no controller cell to hold the promise");
+        if let Some(cell) = self.0.get() {
+            js::set_pipe_done(cell, done);
+        }
+    }
+
+    pub(crate) fn take_done(&self) -> Option<*mut JSPromise> {
+        js::take_pipe_done(self.0.get()?).as_promise()
+    }
+
+    pub(crate) fn set_error(&self, error: JSValue) {
+        if let Some(cell) = self.0.get() {
+            js::set_fail_reason(cell, error);
+        }
+    }
+
+    pub(crate) fn error(&self) -> Option<JSValue> {
+        js::fail_reason_get_cached(self.0.get()?)
     }
 }
 
@@ -858,7 +857,7 @@ pub enum SourceHandle {
     /// No source attached.
     #[default]
     None,
-    /// The C++ controller cell of a JS-stream pump (`JSSink::assign_to_stream`).
+    /// The C++ controller cell of a JS-stream pump (`ReadableSinkController::assign_to_stream`).
     JSController(JSValue),
     ByteStream(BackRef<crate::webcore::ByteStream>),
     FileReader(BackRef<crate::webcore::FileReader>),
@@ -887,6 +886,25 @@ impl SourceHandle {
         *self = SourceHandle::None;
     }
 
+    /// Disconnect the upstream source: JSController → detach; ByteStream → clear its SinkHandle.
+    pub(crate) fn detach(&mut self, global: &JSGlobalObject) {
+        match *self {
+            SourceHandle::JSController(value) => {
+                self.clear();
+                crate::dispatch::fold(ReadableSinkController::detach(value, global));
+            }
+            SourceHandle::ByteStream(bs) => {
+                bs.unpipe_without_deref();
+                self.clear();
+            }
+            SourceHandle::FileReader(fr) => {
+                fr.unpipe_without_deref();
+                self.clear();
+            }
+            _ => {}
+        }
+    }
+
     pub fn close(&mut self, err: Option<SysError>) {
         match *self {
             SourceHandle::None => {}
@@ -903,21 +921,67 @@ impl SourceHandle {
                     Some(err) => err.to_js(global),
                     None => JSValue::UNDEFINED,
                 };
-                crate::dispatch::fold(::bun_jsc::call_check_slow(global, || {
-                    controller_abi::on_close(cpp, reason)
-                }));
+                Self::close_js_controller(global, cpp, reason);
             }
             SourceHandle::ByteStream(p) => p.on_close(err),
             SourceHandle::FileReader(p) => p.on_close(err),
-            SourceHandle::Subprocess(p) => p.on_close(err),
-            // SAFETY: live backref; cleared before the pointee is freed.
-            SourceHandle::ShellWritable(mut p) => unsafe { p.get_mut() }.on_close(err),
-            SourceHandle::FetchResponseBody(p) => p.on_stream_cancelled(),
-            SourceHandle::S3DownloadBody(p) => p.on_stream_cancelled(),
+            SourceHandle::Subprocess(p) => {
+                bun_removable_features::removable_body!(Spawn, Abort, { p.on_close(err) })
+            }
+            SourceHandle::ShellWritable(mut p) => {
+                bun_removable_features::removable_body!(Shell, Abort, {
+                    // SAFETY: live backref; cleared before the pointee is freed.
+                    unsafe { p.get_mut() }.on_close(err)
+                })
+            }
+            SourceHandle::FetchResponseBody(p) => {
+                bun_removable_features::removable_body!(HttpClient, Abort, {
+                    p.on_stream_cancelled()
+                })
+            }
+            SourceHandle::S3DownloadBody(p) => {
+                bun_removable_features::removable_body!(S3Client, Abort, {
+                    p.on_stream_cancelled()
+                })
+            }
             SourceHandle::ServerRequestBody(_) => {}
-            SourceHandle::HTMLRewriter(p) => p.on_close(err),
+            SourceHandle::HTMLRewriter(p) => {
+                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_close(err) })
+            }
             SourceHandle::TestingCancelOnDrain(_) => {}
         }
+    }
+
+    /// [`close`](Self::close), with `reason` as the piped JS stream's cancel() argument.
+    pub fn abort(&mut self, reason: CommonAbortReason) {
+        match *self {
+            SourceHandle::JSController(_) => {
+                let global = VirtualMachine::get().global();
+                if global.has_exception() {
+                    return;
+                }
+                self.cancel(reason.to_js(global));
+            }
+            _ => self.close(None),
+        }
+    }
+
+    /// [`close`](Self::close), with an arbitrary JS `reason` for the piped JS stream's cancel().
+    pub fn cancel(&mut self, reason: JSValue) {
+        match *self {
+            SourceHandle::JSController(cpp) => {
+                let global = VirtualMachine::get().global();
+                if global.has_exception() {
+                    return;
+                }
+                Self::close_js_controller(global, cpp, reason);
+            }
+            _ => self.close(None),
+        }
+    }
+
+    fn close_js_controller(global: &JSGlobalObject, cpp: JSValue, reason: JSValue) {
+        crate::dispatch::fold(ReadableSinkController::on_close(cpp, global, reason));
     }
 
     pub fn ready(&mut self, _amount: Option<BlobSizeType>, _offset: Option<BlobSizeType>) {
@@ -928,16 +992,24 @@ impl SourceHandle {
                 if global.has_exception() {
                     return;
                 }
-                crate::dispatch::fold(::bun_jsc::call_check_slow(global, || {
-                    controller_abi::on_ready(cpp, JSValue::UNDEFINED, JSValue::UNDEFINED)
-                }));
+                crate::dispatch::fold(js::on_ready(cpp, global));
             }
             SourceHandle::ByteStream(p) => p.on_ready(),
             SourceHandle::FileReader(p) => p.on_ready(),
-            SourceHandle::FetchResponseBody(p) => p.on_ready(),
-            SourceHandle::ServerRequestBody(any) => any.on_request_body_stream_drained(),
-            SourceHandle::HTMLRewriter(p) => p.on_ready(),
-            SourceHandle::S3DownloadBody(p) => p.on_stream_drained(),
+            SourceHandle::FetchResponseBody(p) => {
+                bun_removable_features::removable_body!(HttpClient, Abort, { p.on_ready() })
+            }
+            SourceHandle::ServerRequestBody(any) => {
+                bun_removable_features::removable_body!(Serve, Abort, {
+                    any.on_request_body_stream_drained()
+                })
+            }
+            SourceHandle::HTMLRewriter(p) => {
+                bun_removable_features::removable_body!(HtmlRewriter, Abort, { p.on_ready() })
+            }
+            SourceHandle::S3DownloadBody(p) => {
+                bun_removable_features::removable_body!(S3Client, Abort, { p.on_stream_drained() })
+            }
             SourceHandle::TestingCancelOnDrain(p) => {
                 p.on_cancel();
             }
@@ -1013,14 +1085,14 @@ pub struct HTTPServerWritable<const SSL: bool> {
     // allocator field dropped — global mimalloc per §Allocators
     pub(crate) state: HTTPServerWritableState,
     pub(crate) source: SourceHandle,
-    pub(crate) pending_flush: Option<*mut JSPromise>,
+    /// The controller cell, rooted for the sink's life; it holds the `flush(true)` / `end()` promise ([`Self::pending_flush`]).
+    pub(crate) pipe: PipeCell,
     /// Backpressure promise returned from `write()` to a JS controller (direct
     /// stream `pull` or `readStreamIntoSink`). Resolved on drain via
     /// `flush_promise()` → `pending.run()`.
     pub(crate) pending: WritablePending,
     pub(crate) wrote_at_start_of_flush: BlobSizeType,
-    // JSC_BORROW: process-lifetime VM global; `None` until `flush_from_js`/
-    // `end_from_js` install it. Safe `Deref` via `BackRef`.
+    // JSC_BORROW: process-lifetime VM global, set at construction. Safe `Deref` via `BackRef`.
     pub global_this: Option<BackRef<JSGlobalObject>>,
     pub(crate) high_water_mark: BlobSizeType,
 
@@ -1035,15 +1107,13 @@ pub struct HTTPServerWritable<const SSL: bool> {
     pub(crate) source_pending_pull: bool,
     pub(crate) end_len: usize,
     /// This sink fully ended the uWS response (`res.end()` / a completed
-    /// `res.try_end()`). On HTTP/1 uWS `markDone()` drops `onAborted` at that
-    /// point, so the owning `RequestContext` is never told if the peer closes
-    /// afterwards and its `resp` must not be dereferenced again: by the time
-    /// the parked stream-resolution microtask runs, uSockets may already have
-    /// freed the socket (`us_internal_free_closed_sockets`) or recycled it
-    /// onto the next keep-alive request. `handle_resolve_stream` /
-    /// `handle_reject_stream` consult this instead of reading the response's
-    /// state. HTTP/1 only; see `end_already_responded_stream` for why
-    /// `Http3Response::markDone()` makes the H3 `resp` still safe to use.
+    /// `res.try_end()`). On HTTP/1 that drops `onAborted`, so the owning
+    /// `RequestContext` is never told the peer went away and must not
+    /// dereference `resp` again: uSockets may have freed or recycled the
+    /// socket by the time the stream reaction runs. `handle_resolve_stream` /
+    /// `handle_reject_stream` read this instead of the response state, and
+    /// act on it only for HTTP/1. An H2/H3 `resp` is still alive there, and
+    /// `on_abort` ends those requests when the transport frees the stream.
     pub(crate) ended_response: bool,
 
     pub(crate) on_first_write: Option<fn(Option<*mut c_void>)>,
@@ -1062,7 +1132,7 @@ impl<const SSL: bool> Default for HTTPServerWritable<SSL> {
             wrote: 0,
             state: HTTPServerWritableState::Writing,
             source: SourceHandle::default(),
-            pending_flush: None,
+            pipe: PipeCell::default(),
             pending: WritablePending::default(),
             wrote_at_start_of_flush: 0,
             global_this: None,
@@ -1107,50 +1177,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         "HTTPResponseSink"
     };
     // associated const with const-generic if — requires `#![feature(generic_const_exprs)]` or a trait-based dispatch.
-}
-
-/// Per-monomorphization JSSink wrapper alias. Mirrors
-/// `pub const JSSink = Sink.JSSink(@This(), name)`.
-pub type HTTPServerWritableJSSink<const SSL: bool> =
-    crate::webcore::sink::JSSink<HTTPServerWritable<SSL>>;
-
-// `HTTPServerWritable` is exposed to JS via `Sink.JSSink(@This(), name)` where
-// `name` ∈ {HTTPResponseSink, HTTPSResponseSink}. Const-generics
-// can't drive `#[link_name]`, so declare both extern sets in a private mod
-// and dispatch at call time on `SSL`. The branch is on a const generic;
-// the optimizer folds it to a direct call per monomorphization.
-mod http_sink_abi {
-    crate::decl_js_sink_externs!("HTTPResponseSink" as http);
-    crate::decl_js_sink_externs!("HTTPSResponseSink" as https);
-}
-
-macro_rules! http_sink_dispatch {
-    ($f:ident($($arg:expr),*)) => {
-        if SSL {
-            http_sink_abi::https::$f($($arg),*)
-        } else {
-            http_sink_abi::http::$f($($arg),*)
-        }
-    };
-}
-
-impl<const SSL: bool> crate::webcore::sink::JsSinkAbi for HTTPServerWritable<SSL> {
-    fn from_js_extern(value: JSValue) -> usize {
-        http_sink_dispatch!(from_js(value))
-    }
-    fn create_object_extern(
-        global: &JSGlobalObject,
-        object: *mut c_void,
-        destructor: usize,
-    ) -> JSValue {
-        http_sink_dispatch!(create_object(global, object, destructor))
-    }
-    fn set_destroy_callback_extern(value: JSValue, callback: usize) {
-        http_sink_dispatch!(set_destroy_callback(value, callback))
-    }
-    fn create_controller_extern(global: &JSGlobalObject, ptr: *mut c_void) -> JSValue {
-        http_sink_dispatch!(create_controller(global, ptr))
-    }
 }
 
 impl<const SSL: bool> HTTPServerWritable<SSL> {
@@ -1208,6 +1234,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.has_backpressure && self.end_len > 0
     }
 
+    /// uWS `end()`/`try_end()` just completed; `res` is still live here, so release the request-body pause too.
+    fn mark_response_ended(&mut self, res: uws::AnyResponse) {
+        self.has_backpressure = false;
+        self.ended_response = true;
+        res.resume();
+    }
+
     /// `len` bytes were accepted by `send`/`send_readable`. When uWS reports
     /// the socket is now backed up, return a pending Promise for JS-controller
     /// sources (direct-stream `pull` can `await controller.write()`; the
@@ -1254,7 +1287,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             self.handle_first_write_if_necessary();
             let success = res.try_end(buf, self.end_len, false);
             if success {
-                self.has_backpressure = false;
+                self.mark_response_ended(res);
                 self.handle_wrote(self.end_len);
             } else if self.res.is_some() {
                 self.has_backpressure = true;
@@ -1277,7 +1310,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // `on_writable()` below.
         if self.requested_end {
             res.end(buf, false);
-            self.has_backpressure = false;
+            self.mark_response_ended(res);
         } else {
             self.has_backpressure = matches!(res.write(buf), uws::WriteResult::Backpressure(_));
         }
@@ -1329,7 +1362,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             let end_len = self.end_len;
             let success = res.try_end(&self.buffer[base..], end_len, false);
             if success {
-                self.has_backpressure = false;
+                self.mark_response_ended(res);
                 self.handle_wrote(end_len);
             } else if self.res.is_some() {
                 self.has_backpressure = true;
@@ -1349,14 +1382,15 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // See `send_without_auto_flusher`.
         if self.requested_end {
             res.end(&self.buffer[base..], false);
-            self.has_backpressure = false;
+            self.mark_response_ended(res);
         } else {
             self.has_backpressure = matches!(
                 res.write(&self.buffer[base..]),
                 uws::WriteResult::Backpressure(_)
             );
         }
-        self.handle_wrote(buf_len);
+        // uWS took the `from` bytes in an earlier partial `try_end`; it now owns the whole slice.
+        self.handle_wrote(from + buf_len);
         bun_core::scoped_log!(
             HTTPServerWritableLog,
             "send: {} bytes (backpressure: {})",
@@ -1401,7 +1435,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
                 self.finalize();
                 return true;
             }
-            let had_flush_waiter = self.pending_flush.is_some();
+            let had_flush_waiter = self.pending_flush().is_some();
             self.flush_promise();
             if core::mem::take(&mut self.source_pending_pull)
                 && !had_flush_waiter
@@ -1451,14 +1485,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             total_written = chunk_len as u64;
 
             if self.requested_end {
+                debug_assert!(self.ended_response);
                 if let Some(res) = self.any_res() {
                     res.clear_on_writable();
-                    // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-                    res.resume();
                 }
-                // `send_readable` drained the parked `try_end`, so uWS has
-                // `markDone()`d the response and dropped its `onAborted`.
-                self.ended_response = true;
                 self.source.close(None);
                 self.flush_promise();
                 self.finalize();
@@ -1467,7 +1497,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         }
 
         // flush the javascript promise from calling .flush()
-        let had_flush_waiter = self.pending_flush.is_some();
+        let had_flush_waiter = self.pending_flush().is_some();
         self.flush_promise();
 
         // pending_flush or callback could have caused another send()
@@ -1558,7 +1588,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
     pub(crate) fn flush_from_js(
         &mut self,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         wait: bool,
     ) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "flushFromJS({})", wait);
@@ -1568,11 +1598,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return self.flush_from_js_no_wait();
         }
 
-        if let Some(prom) = self.pending_flush {
+        if let Some(prom) = self.pending_flush() {
             // A prior `flush(true)` is already waiting on the drain. Push any
             // data buffered since (below highWaterMark) so it reaches uWS now
             // rather than when `on_writable` fires.
-            if self.end_len == 0 && !self.readable_slice().is_empty() {
+            if self.end_len == 0 && !self.is_done() && !self.readable_slice().is_empty() {
                 let _ = self.send_readable(0);
             }
             // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
@@ -1581,7 +1611,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
         if self.is_done() {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                global_this,
+                cx.global(),
                 JSValue::from(0i32),
             ));
         }
@@ -1595,35 +1625,13 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             // otherwise fall through and let on_writable resolve the promise.
             if !self.has_backpressure {
                 return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                    global_this,
+                    cx.global(),
                     JSValue::from(slice_len),
                 ));
             }
         }
         self.wrote_at_start_of_flush = self.wrote;
-        self.pending_flush = Some(JSPromise::create(global_this));
-        self.global_this = Some(BackRef::new(global_this));
-        // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-        let promise_value = JSPromise::opaque_ref(self.pending_flush.unwrap()).to_js();
-        promise_value.protect();
-
-        bun_sys::Result::Ok(promise_value)
-    }
-
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
-        bun_core::scoped_log!(HTTPServerWritableLog, "flush()");
-        self.unregister_auto_flusher();
-
-        if !self.has_backpressure() || self.is_done() {
-            return bun_sys::Result::Ok(());
-        }
-
-        if self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.mark_done();
-            self.source.close(None);
-        }
-
-        bun_sys::Result::Ok(())
+        bun_sys::Result::Ok(self.park_pending_flush(cx.global()))
     }
 
     pub fn write(&mut self, data: &StreamResult) -> Writable {
@@ -1724,7 +1732,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.writable_result(len)
     }
 
-    pub(crate) fn write_utf16(&mut self, data: &StreamResult) -> Writable {
+    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> Writable {
         if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
@@ -1735,15 +1743,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return Writable::Done;
         }
 
-        let bytes = data.slice();
-
-        bun_core::scoped_log!(HTTPServerWritableLog, "writeUTF16({})", bytes.len());
+        bun_core::scoped_log!(HTTPServerWritableLog, "writeUTF16({})", size_of_val(text));
 
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        // bytes are u16-aligned per Result.slice16 invariant; bytemuck checks at runtime.
-        let utf16: &[u16] = bytemuck::cast_slice(bytes);
-        let written = match self.buffer.write_utf16(utf16) {
+        let written = match self.buffer.write_utf16(text) {
             Ok(n) => n,
             Err(_) => return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
         };
@@ -1764,37 +1768,34 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.unregister_auto_flusher();
     }
 
-    /// In this case, it's always an error
-    pub(crate) fn end(&mut self, err: Option<SysError>) -> bun_sys::Result<()> {
-        bun_core::scoped_log!(HTTPServerWritableLog, "end({:?})", err);
-
-        if self.requested_end {
-            return bun_sys::Result::Ok(());
-        }
-
-        if self.is_done() || self.res.is_none() || self.any_res().unwrap().has_responded() {
-            self.source.close(err);
-            self.mark_done();
-            self.finalize();
-            return bun_sys::Result::Ok(());
-        }
-
-        self.requested_end = true;
-        let readable_len = self.readable_slice().len();
-        self.end_len = readable_len;
-
-        if readable_len == 0 {
-            self.source.close(err);
-            self.mark_done();
-            // we do not close the stream here
-            // this.res.endStream(false);
-            self.finalize();
-            return bun_sys::Result::Ok(());
-        }
-        bun_sys::Result::Ok(())
+    /// `controller.close()`: flush and end like `controller.end()`; the owner awaits any parked `pending_flush`.
+    pub(crate) fn end(&mut self, _err: Option<SysError>) -> bun_sys::Result<()> {
+        let global_this = self
+            .global_this
+            .expect("HTTPServerWritable.global_this used before init");
+        self.finish(&global_this).map(|_| ())
     }
 
-    pub(crate) fn end_from_js(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
+    /// The source failed (`close(error)`, an errored pump): drop what is buffered and finish the sink; the owner closes the response as incomplete.
+    pub(crate) fn fail(&mut self) {
+        bun_core::scoped_log!(HTTPServerWritableLog, "fail()");
+
+        if self.requested_end {
+            return;
+        }
+
+        self.buffer.clear();
+        self.offset = 0;
+        self.source.close(None);
+        self.mark_done();
+        self.finalize();
+    }
+
+    pub(crate) fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        self.finish(cx.global())
+    }
+
+    fn finish(&mut self, global_this: &JSGlobalObject) -> bun_sys::Result<JSValue> {
         bun_core::scoped_log!(HTTPServerWritableLog, "endFromJS()");
 
         if self.requested_end {
@@ -1815,32 +1816,27 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
 
         if readable_len > 0 {
             if !self.send_readable(0) {
-                self.pending_flush = Some(JSPromise::create(global_this));
-                self.global_this = Some(BackRef::new(global_this));
-                // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-                let value = JSPromise::opaque_ref(self.pending_flush.unwrap()).to_js();
-                value.protect();
-                return bun_sys::Result::Ok(value);
+                return bun_sys::Result::Ok(self.park_pending_flush(global_this));
             }
-        } else {
-            if let Some(res) = self.any_res() {
-                res.end(b"", false);
-            }
+        } else if let Some(res) = self.any_res() {
+            res.end(b"", false);
+            self.mark_response_ended(res);
         }
 
-        if let Some(res) = self.any_res() {
-            // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-            res.resume();
-        }
-        // Both branches above fully ended the response through uWS, which
-        // `markDone()`s it and drops its `onAborted`.
-        self.ended_response = true;
+        debug_assert!(self.ended_response);
         self.mark_done();
         self.flush_promise();
         self.source.close(None);
         self.finalize();
 
         bun_sys::Result::Ok(JSValue::from(self.wrote))
+    }
+
+    /// The response is gone, so this sink never writes again. [`Self::abort`] tells the source.
+    pub(crate) fn revoke_response(&mut self) {
+        self.state = HTTPServerWritableState::Aborted;
+        self.res = None;
+        self.unregister_auto_flusher();
     }
 
     /// Takes `*mut Self`, not `&mut self`: closing the signal runs the controller's
@@ -1853,11 +1849,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         bun_core::scoped_log!(HTTPServerWritableLog, "onAborted()");
         // SAFETY: caller contract — `this` is live, and every access here is scoped
         // so no borrow spans the signal close below, which may free `*this`.
-        unsafe {
-            (*this).state = HTTPServerWritableState::Aborted;
-            (*this).res = None;
-            (*this).unregister_auto_flusher();
-        }
+        unsafe { (*this).revoke_response() };
 
         // SAFETY: nothing above freed `*this`; exclusive borrow scoped to the call.
         unsafe { (*this).flush_promise() };
@@ -1869,7 +1861,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // no reference into the allocation may be live across the call.
         // SAFETY: as above; `source` is copied out before the close.
         let mut source = unsafe { (*this).source };
-        source.close(None);
+        source.abort(CommonAbortReason::ConnectionClosed);
     }
 
     fn unregister_auto_flusher(&mut self) {
@@ -1912,14 +1904,10 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.auto_flusher.registered.set(false);
 
         if self.requested_end {
+            debug_assert!(self.ended_response);
             if let Some(res) = self.any_res() {
                 res.clear_on_writable();
-                // Release any request-body pause while `res` is live (see `end_already_responded_stream`).
-                res.resume();
             }
-            // `send_readable` drained the parked `try_end`/`end`, so uWS has
-            // `markDone()`d the response and dropped its `onAborted`.
-            self.ended_response = true;
             self.source.close(None);
             self.flush_promise();
             self.finalize();
@@ -1930,9 +1918,6 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     /// # Safety
     /// `this` must be a valid, uniquely-owned heap pointer to `Self` produced
     /// by `bun_core::heap::into_raw`; the caller transfers ownership.
-    // Forwards `this` to `bun_core::heap::take` without dereferencing it here;
-    // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn destroy(this: *mut Self) {
         bun_core::scoped_log!(HTTPServerWritableLog, "destroy()");
         // SAFETY: this was heap-allocated; destroy takes sole ownership. Reclaim
@@ -1944,13 +1929,29 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // Drop the GC root so the promise can be collected.
         this.pending.result = Writable::Done;
         this.pending.run();
-        if let Some(prom) = this.pending_flush.take() {
-            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
-            JSPromise::opaque_ref(prom).to_js().unprotect();
-        }
+        // A sink torn down without finalize() (assignToStream failed synchronously) still holds its pool checkout.
+        this.release_pooled_buffer();
         this.buffer.clear_and_free();
         this.unregister_auto_flusher();
         drop(this);
+    }
+
+    /// Hand the pool checkout back with the (emptied) buffer; `false` when nothing was checked out.
+    fn release_pooled_buffer(&mut self) -> bool {
+        let Some(pooled) = self.pooled_buffer.take() else {
+            return false;
+        };
+        self.buffer.clear();
+        if self.buffer.capacity() > 64 * 1024 {
+            self.buffer.clear_and_free();
+        }
+        // SAFETY: `pooled` is this sink's exclusive `ByteListPool` checkout; `data` is rewritten before the release.
+        unsafe {
+            (*pooled.as_ptr()).data =
+                core::mem::MaybeUninit::new(core::mem::take(&mut self.buffer));
+            ByteListPool::release(pooled.as_ptr());
+        }
+        true
     }
 
     /// This can be called _many_ times for the same instance
@@ -1987,32 +1988,36 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             debug_assert!(self.pooled_buffer.is_none());
         }
 
-        if let Some(pooled) = self.pooled_buffer {
-            self.buffer.clear();
-            if self.buffer.capacity() > 64 * 1024 {
-                self.buffer.clear_and_free();
-            }
-            // SAFETY: pooled is a valid pool node checkout
-            unsafe {
-                (*pooled.as_ptr()).data =
-                    core::mem::MaybeUninit::new(core::mem::take(&mut self.buffer));
-            }
-
-            self.buffer = Vec::<u8>::default();
-            self.pooled_buffer = None;
-            // SAFETY: `pooled` was obtained from `ByteListPool::get_node` and is
-            // exclusively owned by this stream; `data` was rewritten just above,
-            // so it is initialized. Ownership returns to the pool.
-            unsafe { ByteListPool::release(pooled.as_ptr()) };
-        } else if self.buffer.capacity() == 0 {
-            //
-        } else if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {
+        if self.release_pooled_buffer() || self.buffer.capacity() == 0 {
+            return;
+        }
+        if FeatureFlags::HTTP_BUFFER_POOLING && !ByteListPool::full() {
             let buffer = core::mem::take(&mut self.buffer);
             ByteListPool::push(buffer);
         } else {
             // Don't release this buffer until destroy() is called
             self.buffer.clear();
         }
+    }
+
+    /// The unsettled `flush(true)` / `end()` promise, held by the controller cell.
+    pub(crate) fn pending_flush(&self) -> Option<*mut JSPromise> {
+        self.pipe.done()
+    }
+
+    pub(crate) fn take_pending_flush(&mut self) -> Option<*mut JSPromise> {
+        self.pipe.take_done()
+    }
+
+    fn park_pending_flush(&mut self, global_this: &JSGlobalObject) -> JSValue {
+        // end() while a flush(true) waits on the same drain: one promise settles both.
+        if let Some(parked) = self.pending_flush() {
+            return JSPromise::opaque_ref(parked).to_js();
+        }
+        let promise = JSPromise::create(global_this).to_js();
+        self.global_this = Some(BackRef::new(global_this));
+        self.pipe.set_done(promise);
+        promise
     }
 
     /// Settle a parked `write()` and the pending `flush(true)`/`end()` promise.
@@ -2022,12 +2027,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         // Settle any `write()` → `Pending` promise first so a parked JS writer
         // wakes on every drain/teardown path that reaches here.
         self.pending.run();
-        if let Some(prom) = self.pending_flush.take() {
+        if let Some(prom) = self.take_pending_flush() {
             bun_core::scoped_log!(HTTPServerWritableLog, "flushPromise()");
 
             let global_this = self.global_this();
-            // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `* → &`/`&mut` deref.
-            JSPromise::opaque_ref(prom).to_js().unprotect();
+            let _keep = ::bun_jsc::EnsureStillAlive(JSPromise::opaque_ref(prom).to_js());
             let result = JSPromise::opaque_mut(prom).resolve(
                 global_this,
                 JSValue::js_number(self.wrote.saturating_sub(self.wrote_at_start_of_flush) as f64),
@@ -2054,17 +2058,8 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
     }
 }
 
-// `JsSinkType` impl: routes the codegen `${name}__{construct,write,end,flush,
-// start,getInternalFd,memoryCost}` thunks (via `JSSink::<Self>::js_*`) into
-// the inherent streaming methods above. Mirrors `Sink.JSSink(@This(), name)`.
 impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SSL> {
     const NAME: &'static str = Self::NAME;
-    const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<StartTag> = Some(if SSL {
-        StartTag::HTTPSResponseSink
-    } else {
-        StartTag::HTTPResponseSink
-    });
 
     crate::impl_js_sink_forwarders!();
 
@@ -2074,16 +2069,39 @@ impl<const SSL: bool> crate::webcore::sink::JsSinkType for HTTPServerWritable<SS
         // scoped to this call stays valid throughout.
         unsafe { (*this).finalize() }
     }
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, global)
-    }
-    fn source(&mut self) -> Option<&mut SourceHandle> {
-        Some(&mut self.source)
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
     }
 }
 
-pub type HTTPSResponseSink = HTTPServerWritable<true>;
-pub type HTTPResponseSink = HTTPServerWritable<false>;
+impl<const SSL: bool> crate::webcore::sink::ControlledSink for HTTPServerWritable<SSL> {
+    fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
+        if SSL {
+            AnyControlledSink::HTTPSResponseSink(this.cast())
+        } else {
+            AnyControlledSink::HTTPResponseSink(this.cast())
+        }
+    }
+
+    unsafe fn close_with_error(
+        this: *mut Self,
+        _global: &JSGlobalObject,
+        _reason: JSValue,
+    ) -> bun_sys::Result<()> {
+        // SAFETY: caller contract; `fail` does not free the sink.
+        unsafe { (*this).fail() };
+        bun_sys::Result::Ok(())
+    }
+    fn controller_created(&mut self, controller: JSValue, global: &JSGlobalObject) {
+        self.pipe = PipeCell::root(controller, global);
+    }
+    fn source(&mut self) -> &mut SourceHandle {
+        &mut self.source
+    }
+}
+
+pub(crate) type HTTPSResponseSink = HTTPServerWritable<true>;
+pub(crate) type HTTPResponseSink = HTTPServerWritable<false>;
 
 // ──────────────────────────────────────────────────────────────────────────
 // NetworkSink
@@ -2097,9 +2115,9 @@ pub struct NetworkSink {
     pub global_this: Option<BackRef<JSGlobalObject>>,
     /// Pending `flush()` promise. Serves both the user `s3file.writer().flush()`
     /// API and the `readDirectStream` / `BunAsyncIterableSource` pump, which
-    /// parks on `controller.flush(true)` (not `m_onPull`) on backpressure.
+    /// parks on `controller.flush(true)` (not the sink's onReady) on backpressure.
     /// Resolved by `on_writable`. The `readStreamIntoSink` pump no longer calls
-    /// `flush()` — it resumes via `source.ready()` → `m_onPull` — so no promise
+    /// `flush()` — it resumes via `source.ready()` → the sink's onReady — so no promise
     /// is allocated on that path.
     pub(crate) flush_promise: JSPromiseStrong,
     /// Backpressure promise returned from `write()` to a JS controller;
@@ -2158,13 +2176,6 @@ impl NetworkSink {
         Box::new(init)
     }
 
-    pub fn path(&self) -> Option<&[u8]> {
-        if let Some(task) = self.task_ref() {
-            return Some(&task.path);
-        }
-        None
-    }
-
     pub(crate) fn start(&mut self, _stream_start: &Start) -> bun_sys::Result<()> {
         if self.ended {
             return bun_sys::Result::Ok(());
@@ -2200,6 +2211,18 @@ impl NetworkSink {
         self.task = None;
     }
 
+    /// The `writer()` wrapper was collected before `end()`: nothing can finish the upload, so fail it.
+    fn abort_on_collect(&mut self) {
+        if self.ended || self.writer_holders.get() == 0 {
+            return;
+        }
+        self.ended = true;
+        self.done = true;
+        if let Some(task) = self.task_ref() {
+            task.fail_writer_collected();
+        }
+    }
+
     /// The S3 upload drained: settle the flush/write promises (terminal, like
     /// `flush_promise`) and wake the source.
     pub(crate) fn on_writable(
@@ -2213,7 +2236,6 @@ impl NetworkSink {
             flushed,
             task.state.get() as u8
         );
-        let _ = task;
         // SAFETY: `this` is the live sink; each access is scoped and ends
         // before the re-entrant wake below.
         let mut source = unsafe {
@@ -2234,13 +2256,9 @@ impl NetworkSink {
         source.ready(None, None);
     }
 
-    pub fn flush(&mut self) -> bun_sys::Result<()> {
-        bun_sys::Result::Ok(())
-    }
-
     pub(crate) fn flush_from_js(
         &mut self,
-        global_this: &JSGlobalObject,
+        cx: &bun_jsc::JsThread<'_>,
         _wait: bool,
     ) -> bun_sys::Result<JSValue> {
         if self.flush_promise.has_value() {
@@ -2248,16 +2266,16 @@ impl NetworkSink {
         }
         if self.done {
             return bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-                global_this,
+                cx.global(),
                 JSValue::js_number(0.0),
             ));
         }
         if self.task_ref().is_some_and(|t| !t.is_queue_empty()) {
-            self.flush_promise = JSPromiseStrong::init(global_this);
+            self.flush_promise = JSPromiseStrong::init(cx.global());
             return bun_sys::Result::Ok(self.flush_promise.value());
         }
         bun_sys::Result::Ok(JSPromise::resolved_promise_value(
-            global_this,
+            cx.global(),
             JSValue::js_number(0.0),
         ))
     }
@@ -2333,17 +2351,16 @@ impl NetworkSink {
         }
     }
 
-    pub(crate) fn write_utf16(&mut self, data: &StreamResult) -> Writable {
+    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
-        let bytes = data.slice();
-        let len = bytes.len() as BlobSizeType;
+        let len = size_of_val(text) as BlobSizeType;
         let has_source = !matches!(self.source, SourceHandle::None);
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
         let result = match self.task_ref() {
-            Some(task) => task.write_utf16(bytes, false),
+            Some(task) => task.write_utf16(text, false),
             None => return Writable::Owned(len),
         };
         match result {
@@ -2382,7 +2399,6 @@ impl NetworkSink {
     ///
     /// Raw `*mut Self`: `task.fail()` synchronously fires
     /// `S3UploadStreamWrapper::resolve`, which re-borrows this sink.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn fail_from_js_pump(this: *mut Self, global: &JSGlobalObject, reason: JSValue) {
         // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; the
         // borrow ends before `fail` re-enters.
@@ -2416,7 +2432,6 @@ impl NetworkSink {
     /// Raw `*mut Self` because `task.fail()`/`write_bytes(EOF)` synchronously
     /// fire `S3UploadStreamWrapper::resolve`, which re-borrows this sink, and
     /// the terminal `deref_` may drop rc→0 and free `*this` via `detach_sink`.
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn end_from_stream(this: *mut Self, err: Option<StreamError>) {
         // SAFETY: `this` is the live Box<NetworkSink> the wrapper owns; short
         // reborrows below do not span the re-entrant `fail`/`write_bytes` calls.
@@ -2475,10 +2490,7 @@ impl NetworkSink {
         unsafe { crate::webcore::s3::client::S3UploadStreamWrapper::deref(wrapper) };
     }
 
-    pub(crate) fn end_from_js(
-        &mut self,
-        _global_this: &JSGlobalObject,
-    ) -> bun_sys::Result<JSValue> {
+    pub(crate) fn end_from_js(&mut self, _cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
         let _ = self.end(None);
         if self.end_promise.has_value() {
             // we are already waiting for the end
@@ -2494,7 +2506,7 @@ impl NetworkSink {
     }
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        NetworkSinkJSSink::create_object(global_this, self, 0)
+        NetworkSinkJSSink::create_object(global_this, self, None)
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -2509,22 +2521,29 @@ impl NetworkSink {
     pub(crate) const NAME: &'static str = "NetworkSink";
 }
 
-crate::impl_js_sink_abi!(NetworkSink, "NetworkSink");
-
 impl crate::webcore::sink::JsSinkType for NetworkSink {
     const NAME: &'static str = Self::NAME;
-    const HAS_FLUSH_FROM_JS: bool = true;
-    const START_TAG: Option<StartTag> = Some(StartTag::NetworkSink);
 
     crate::impl_js_sink_forwarders!();
 
     unsafe fn finalize(this: *mut Self) {
         // SAFETY: trait contract — `this` is live and not used after this call.
         unsafe {
+            (*this).abort_on_collect();
             (*this).finalize();
             Self::release_writer_holder(this);
         }
     }
+    fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> bun_sys::Result<JSValue> {
+        Self::end_from_js(self, cx)
+    }
+}
+
+impl crate::webcore::sink::ControlledSink for NetworkSink {
+    fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
+        AnyControlledSink::NetworkSink(this)
+    }
+
     unsafe fn close_with_error(
         this: *mut Self,
         global: &JSGlobalObject,
@@ -2533,11 +2552,8 @@ impl crate::webcore::sink::JsSinkType for NetworkSink {
         Self::fail_from_js_pump(this, global, reason);
         bun_sys::Result::Ok(())
     }
-    fn end_from_js(&mut self, global: &JSGlobalObject) -> bun_sys::Result<JSValue> {
-        Self::end_from_js(self, global)
-    }
-    fn source(&mut self) -> Option<&mut SourceHandle> {
-        Some(&mut self.source)
+    fn source(&mut self) -> &mut SourceHandle {
+        &mut self.source
     }
 }
 
@@ -2551,9 +2567,11 @@ pub(crate) type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 // No caller pattern-matches on the variant — they only read `.tag()` or forward to the
 // promise.
 
-pub struct BufferAction {
+pub(crate) struct BufferAction {
     tag: BufferActionTag,
     promise: JSPromiseStrong,
+    /// The context whose script asked (as `PendingFuture::Promise`).
+    context: bun_jsc::ContextId,
 }
 
 #[repr(u8)]
@@ -2564,13 +2582,16 @@ pub enum BufferActionTag {
     Blob,
     Bytes,
     Json,
+    /// [`AnyBlob::to_json_source`].
+    JsonSource,
 }
 
 impl BufferAction {
-    pub(crate) fn new(tag: BufferActionTag, global: &JSGlobalObject) -> Self {
+    pub(crate) fn new(tag: BufferActionTag, cx: &bun_jsc::JsThread<'_>) -> Self {
         Self {
             tag,
-            promise: JSPromiseStrong::init(global),
+            promise: JSPromiseStrong::init(cx.global()),
+            context: cx.context().id(),
         }
     }
 
@@ -2581,18 +2602,24 @@ impl BufferAction {
     /// Settle the buffered `text()`/`json()`/`bytes()`/`blob()` promise.
     /// Terminal like the other settle primitives (`Pending::run`).
     pub(crate) fn fulfill(&mut self, global: &JSGlobalObject, blob: &mut AnyBlob) {
-        let settled = blob.wrap(jsc::AnyPromise::Normal(self.swap()), global, self.tag());
+        let entered = global.bun_vm().enter_context(self.context);
+        let settled = blob.wrap(
+            jsc::AnyPromise::Normal(self.swap()),
+            &global.js_thread(entered.context()),
+            self.tag(),
+        );
         crate::dispatch::fold(settled);
     }
 
     /// Terminal like [`fulfill`](Self::fulfill).
     pub(crate) fn reject(&mut self, global: &JSGlobalObject, err: &StreamError) {
+        let _context = global.bun_vm().enter_context(self.context);
         // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
         let settled = JSPromise::opaque_mut(self.swap()).reject(global, Ok(err.to_js(global)));
         crate::dispatch::fold(settled);
     }
 
-    pub fn value(&self) -> JSValue {
+    pub(crate) fn value(&self) -> JSValue {
         self.promise.value()
     }
 

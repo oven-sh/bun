@@ -1,0 +1,15 @@
+{
+  "name": "backend-packages",
+  "private": true,
+  "dependencies": {
+    "@google-cloud/storage": "8.4.0",
+    "@types/bcrypt": "6.0.0",
+    "@types/node": "26.6.5",
+    "argon2": "0.45.1",
+    "bcrypt": "6.0.0",
+    "bcryptjs": "3.0.3",
+    "ioredis": "6.0.0",
+    "sharp": "0.35.5",
+    "sql.js": "1.15.0"
+  }
+}

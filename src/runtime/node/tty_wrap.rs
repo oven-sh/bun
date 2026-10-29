@@ -15,8 +15,9 @@ use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(unix)]
 use bun_io::pipe_reader::PosixFlags;
 use bun_io::{BufferedReader, ReadState};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsStructure, JsWrapper};
 use bun_jsc::{
-    self as jsc, CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
+    self as jsc, EventLoopHandle, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
     MarkedArrayBuffer, StringJsc as _,
 };
 #[cfg(unix)]
@@ -25,12 +26,7 @@ use bun_sys::{self as sys, Fd};
 
 bun_output::declare_scope!(TTYWrap, hidden);
 
-pub use self::js::to_js;
-pub mod js {
-    pub use crate::generated_classes::js_TTY::{
-        from_js, get_constructor, onread_get_cached, onread_set_cached, to_js,
-    };
-}
+pub(crate) use crate::generated_bindgen::tty_wrap::js_TTY as js;
 
 const UV_EOF: i32 = -4095;
 
@@ -44,7 +40,7 @@ unsafe extern "C" {
 
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
-    pub struct Flags: u16 {
+    struct Flags: u16 {
         /// Between `readStart()` and `readStop()`.
         const READING        = 1 << 0;
         const CLOSED         = 1 << 1;
@@ -65,9 +61,8 @@ bitflags::bitflags! {
     }
 }
 
-#[bun_jsc::JsClass(no_construct, no_finalize)]
 #[derive(bun_ptr::RefCounted)]
-pub struct TTY {
+pub(crate) struct TTY {
     ref_count: bun_ptr::RefCount<TTY>,
 
     /// The fd JS passed in. `setRawMode`/`getWindowSize` act on it.
@@ -90,7 +85,15 @@ pub struct TTY {
     /// handle leaving raw mode never disturbs another on the same terminal.
     #[cfg(unix)]
     tty_state: Cell<bun_core::tty::State>,
+
+    /// Armed while open, for a handle that script of a `Bun.ModuleGraph` opened: it closes with the graph.
+    abort_handle: jsc::AbortHandle,
 }
+
+jsc::impl_abort_handle_owner!(TTY, abort_handle, |this, _cause| {
+    // SAFETY: trait contract: `this` is live, and the wrapper's ref outlasts the close.
+    unsafe { (*this).close_internal() }
+});
 
 enum StartError {
     Sys(sys::Error),
@@ -177,12 +180,14 @@ impl TTY {
 
     /// `new TTY(fd, ctx)`. An fd `uv_tty_init` rejects reports through `ctx`
     /// and yields a closed handle, as in Node.
-    pub(crate) fn constructor(
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-        this_value: JSValue,
-    ) -> JsResult<*mut TTY> {
-        let [fd_value, ctx] = callframe.arguments_as_array::<2>();
+    pub(crate) fn constructor<'a>(
+        cx: &mut JsScope<'a>,
+        structure: JsStructure<'a, Self>,
+        fd: JsLocal<'a>,
+        ctx: JsLocal<'a>,
+    ) -> JsResult<JsWrapper<'a, Self>> {
+        let global_object = cx.global();
+        let (fd_value, ctx) = (fd.to_js(), ctx.to_js());
         if !fd_value.is_number() {
             return Err(global_object.throw(format_args!("fd must be a number")));
         }
@@ -202,15 +207,17 @@ impl TTY {
             reader: JsCell::new(BufferedReader::init::<TTY>()),
             event_loop_handle,
             global_this: bun_ptr::BackRef::new(global_object),
-            this_value: JsCell::new(JsRef::init_weak(this_value)),
+            this_value: JsCell::new(JsRef::empty()),
             bytes_read: Cell::new(0),
             flags: Cell::new(Flags::empty()),
             parked_finish: Cell::new(None),
             #[cfg(unix)]
             tty_state: Cell::new(bun_core::tty::State::new()),
+            abort_handle: jsc::AbortHandle::for_owner::<TTY>(),
         }));
-        // SAFETY: just allocated; field writes go through the cells.
-        let this = unsafe { &*tty };
+        // SAFETY: the ref `RefCount::init()` took. The wrapper gets it below.
+        let owned = unsafe { bun_ptr::RefPtr::from_raw(tty) };
+        let this = owned.this_ptr();
         this.reader.with_mut(|r| r.set_parent(tty.cast::<c_void>()));
 
         if !uv_tty_init_accepts(fd) {
@@ -220,22 +227,30 @@ impl TTY {
                 ctx,
                 &sys::Error::from_code(sys::E::EINVAL, sys::Tag::open),
             )?;
-            return Ok(tty);
+        } else {
+            match this.start_reader() {
+                Ok(()) => {}
+                Err(StartError::Unpollable) => {
+                    this.update_flags(|f| f.insert(Flags::UNPOLLABLE));
+                }
+                // As Node does for a `uv_tty_init` failure: `ctx` gets the error, the handle is closed.
+                Err(StartError::Sys(err)) => {
+                    this.update_flags(|f| f.insert(Flags::CLOSED));
+                    Self::fill_init_error(global_object, ctx, &err)?;
+                }
+            }
         }
 
-        match this.start_reader() {
-            Ok(()) => {}
-            Err(StartError::Unpollable) => {
-                this.update_flags(|f| f.insert(Flags::UNPOLLABLE));
-            }
-            // As Node does for a `uv_tty_init` failure: `ctx` gets the error, the handle is closed.
-            Err(StartError::Sys(err)) => {
-                this.update_flags(|f| f.insert(Flags::CLOSED));
-                Self::fill_init_error(global_object, ctx, &err)?;
+        let this_value = structure.create(&cx.heap, owned);
+        this.this_value.set(JsRef::init_weak(this_value.to_js()));
+        if !this.flags.get().contains(Flags::CLOSED) {
+            let vm = cx.global().bun_vm();
+            if let Some(context) = vm.as_graph_context(vm.context_of_caller()) {
+                // SAFETY: heap-allocated above; leaves its context in `close_internal`.
+                unsafe { jsc::AbortHandle::arm_owner(this.as_ctx_ptr(), context) };
             }
         }
-
-        Ok(tty)
+        Ok(this_value)
     }
 
     fn fill_init_error(global: &JSGlobalObject, ctx: JSValue, err: &sys::Error) -> JsResult<()> {
@@ -329,16 +344,14 @@ impl TTY {
 
     // ── JS methods ────────────────────────────────────────────────────────
 
-    pub(crate) fn read_start(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn read_start(&self, _: &mut JsScope<'_>) -> i32 {
         bun_output::scoped_log!(TTYWrap, "readStart");
         let flags = self.flags.get();
         if flags.contains(Flags::UNPOLLABLE) {
-            return Ok(JSValue::js_number_from_int32(uv_errno(
-                sys::E::ENOTSUP as u16,
-            )));
+            return uv_errno(sys::E::ENOTSUP as u16);
         }
         if flags.intersects(Flags::CLOSED | Flags::READER_DONE) {
-            return Ok(JSValue::js_number_from_int32(0));
+            return 0;
         }
         self.update_flags(|f| f.insert(Flags::READING));
         let global = self.global();
@@ -353,44 +366,35 @@ impl TTY {
         if !self.flags.get().contains(Flags::UNREFFED) {
             self.with_reader(|r| r.update_ref(true));
         }
-        Ok(JSValue::js_number_from_int32(0))
+        0
     }
 
-    pub(crate) fn read_stop(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn read_stop(&self, _: &mut JsScope<'_>) -> i32 {
         bun_output::scoped_log!(TTYWrap, "readStop");
         self.update_flags(|f| f.remove(Flags::READING));
         if self.flags.get().contains(Flags::READER_STARTED) {
             self.with_reader(|r| r.pause());
         }
         self.this_value.with_mut(|v| v.downgrade());
-        Ok(JSValue::js_number_from_int32(0))
+        0
     }
 
-    pub(crate) fn do_ref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_ref(&self) {
         self.update_flags(|f| f.remove(Flags::UNREFFED));
         // Only an active handle holds the loop; `readStart()` adds the hold.
         if self.flags.get().contains(Flags::READING) {
             self.with_reader(|r| r.update_ref(true));
         }
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn do_unref(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn do_unref(&self) {
         self.update_flags(|f| f.insert(Flags::UNREFFED));
         self.with_reader(|r| r.update_ref(false));
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn set_raw_mode(
-        &self,
-        _g: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let raw = callframe.argument(0).to_boolean();
+    pub(crate) fn set_raw_mode(&self, raw: bool) -> i32 {
         if self.flags.get().contains(Flags::CLOSED) {
-            return Ok(JSValue::js_number_from_int32(uv_errno(
-                sys::E::EBADF as u16,
-            )));
+            return uv_errno(sys::E::EBADF as u16);
         }
         #[cfg(unix)]
         {
@@ -405,7 +409,7 @@ impl TTY {
                 bun_core::tty::SetAttrWhen::Drain,
             );
             self.tty_state.set(state);
-            Ok(JSValue::js_number_from_int32(-rc))
+            -rc
         }
         #[cfg(windows)]
         {
@@ -413,69 +417,45 @@ impl TTY {
             if self.fd == Fd::stdin() {
                 // It returns a positive `E` discriminant, 0 on success.
                 let rc = Source__setRawModeStdin(self.event_loop_handle.uv_loop(), raw);
-                let rc = if rc == 0 { 0 } else { uv_errno(rc as u16) };
-                return Ok(JSValue::js_number_from_int32(rc));
+                return if rc == 0 { 0 } else { uv_errno(rc as u16) };
             }
-            let rc = match self.with_reader(|r| r.set_raw_mode(raw)) {
+            match self.with_reader(|r| r.set_raw_mode(raw)) {
                 Ok(()) => 0,
                 Err(err) => uv_errno(err.errno),
-            };
-            Ok(JSValue::js_number_from_int32(rc))
+            }
         }
     }
 
     pub(crate) fn get_window_size(
         &self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let array = callframe.argument(0);
+        cx: &mut JsScope<'_>,
+        size: JsLocal<'_>,
+    ) -> JsResult<bool> {
+        let global_object = cx.global();
+        let array = size.to_js();
         if !array.is_object() {
             return Err(global_object.throw(format_args!("getWindowSize expects an array")));
         }
         let mut width: usize = 0;
         let mut height: usize = 0;
         if !Bun__ttyGetWindowSize(self.fd.uv(), &raw mut width, &raw mut height) {
-            return Ok(JSValue::from(false));
+            return Ok(false);
         }
         array.put_index(global_object, 0, JSValue::js_number(width as f64))?;
         array.put_index(global_object, 1, JSValue::js_number(height as f64))?;
-        Ok(JSValue::from(true))
+        Ok(true)
     }
 
-    pub(crate) fn close(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(&self, _: &mut JsScope<'_>) {
         self.close_internal();
-        Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn get_onread(&self, this_value: JSValue, _g: &JSGlobalObject) -> JSValue {
-        js::onread_get_cached(this_value).unwrap_or(JSValue::UNDEFINED)
+    pub(crate) fn get_bytes_read(&self) -> f64 {
+        self.bytes_read.get() as f64
     }
 
-    pub(crate) fn set_onread(
-        &self,
-        this_value: JSValue,
-        global_object: &JSGlobalObject,
-        value: JSValue,
-    ) -> bool {
-        js::onread_set_cached(this_value, global_object, value);
-        true
-    }
-
-    pub(crate) fn get_bytes_read(&self, _g: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(self.bytes_read.get() as f64)
-    }
-
-    pub(crate) fn get_bytes_written(&self, _g: &JSGlobalObject) -> JSValue {
-        JSValue::js_number_from_int32(0)
-    }
-
-    pub(crate) fn get_fd(&self, _g: &JSGlobalObject) -> JSValue {
-        JSValue::js_number_from_int32(self.fd.uv())
-    }
-
-    pub(crate) fn get_external_stream(&self, _g: &JSGlobalObject) -> JSValue {
-        JSValue::NULL
+    pub(crate) fn get_fd(&self) -> i32 {
+        self.fd.uv()
     }
 
     // ── internals ─────────────────────────────────────────────────────────
@@ -488,6 +468,7 @@ impl TTY {
             f.insert(Flags::CLOSED);
             f.remove(Flags::READING);
         });
+        self.abort_handle.leave();
         if self.flags.get().contains(Flags::READER_STARTED) {
             // `on_reader_done` releases the reader's ref once the poll and fd close.
             self.with_reader(|r| r.close());
@@ -516,6 +497,7 @@ impl TTY {
         }
         let global = self.global();
         global.bun_vm().event_loop_mut().run_callback(
+            bun_event_loop::ContextId::NONE,
             callback,
             global,
             this_value,

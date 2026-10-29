@@ -13,7 +13,7 @@ use bun_lint::ast;
 use bun_lint::language::LanguageOptions;
 use bun_lint_react_compiler::code_generation::{
     GenerationError, GenerationOptions, find_candidates, generate_function,
-    has_module_scope_opt_out, should_skip_compilation,
+    has_module_scope_opt_out,
 };
 use bun_sema::atom::Interner;
 use bun_sema::hir::{self, FileBuilder};
@@ -87,7 +87,7 @@ impl<'a> ReactCompiler<'a> {
         let tree: &hir::File<'s> = request.hir;
         let language = LanguageOptions::default();
         let file = ast::File::new(request.path, tree, request.bound, atoms, &language, None);
-        if should_skip_compilation(&file) || has_module_scope_opt_out(&file) {
+        if has_module_scope_opt_out(&file) {
             return None;
         }
         let candidates = find_candidates(&file);

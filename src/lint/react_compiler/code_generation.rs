@@ -1,6 +1,5 @@
 use crate::compile::Flavor;
 use crate::convert::{ConvertError, Converted, Root, convert};
-use crate::program::has_memo_cache_function_import;
 use crate::suppression::find_program_suppressions;
 use bun_alloc::Arena;
 use bun_ast::{
@@ -8,13 +7,14 @@ use bun_ast::{
     Stmt as JsStmt, StoreSlice, StoreStr, Symbol, flags,
 };
 use bun_lint::ast::walk::{Visitor, walk_node};
-use bun_lint::ast::{Expr, ExprKind, File, Func, Ident, List, Name, Node, Stmt, StmtKind};
+use bun_lint::ast::{Expr, ExprKind, File, Func, Ident, Import, List, Name, Node, Stmt, StmtKind};
 use bun_lint::span::Span;
 use bun_react_compiler::{
     CompileOutput, Host, JsxImportKind, PendingCompile, REACT_COMPILER_RUNTIME_MODULES,
     ReactCompilerOptions, ReactCompilerState, finish, maybe_compile_pending,
 };
 use std::fmt;
+use std::ops::ControlFlow;
 
 const SUPPRESSION_RULES: [&str; 2] = ["react-hooks/exhaustive-deps", "react-hooks/rules-of-hooks"];
 const REACT_WRAPPERS: [&str; 2] = ["forwardRef", "memo"];
@@ -91,11 +91,6 @@ pub struct GenerationError {
     pub text: String,
 }
 
-/// Upstream `should_skip_compilation`, as the parser asks it: the file imports `c` from the compiler runtime.
-pub fn should_skip_compilation<'a>(file: &'a File<'a>) -> bool {
-    has_memo_cache_function_import(file, &REACT_COMPILER_RUNTIME_MODULES, Flavor::Oxlint)
-}
-
 pub fn has_module_scope_opt_out<'a>(file: &'a File<'a>) -> bool {
     let has_prologue = (file.body().first()).is_some_and(|it| it.directive().is_some());
     has_prologue
@@ -104,10 +99,13 @@ pub fn has_module_scope_opt_out<'a>(file: &'a File<'a>) -> bool {
         })
 }
 
+/// None in a file that imports `c` from the compiler runtime: upstream `should_skip_compilation`.
 pub fn find_candidates<'a>(file: &'a File<'a>) -> Vec<Candidate<'a>> {
     let mut candidates = Vec::new();
     for statement in file.body() {
-        collect_candidates(statement, &mut candidates);
+        if collect_candidates(statement, &mut candidates).is_break() {
+            return Vec::new();
+        }
     }
     if candidates.is_empty() {
         return candidates;
@@ -214,7 +212,25 @@ fn directive_prologue<'a>(statements: List<'a, Stmt<'a>>) -> Vec<JsStmt> {
         .collect()
 }
 
-fn collect_candidates<'a>(statement: Stmt<'a>, candidates: &mut Vec<Candidate<'a>>) {
+/// A type-only import does not count: the parser drops it before its walk, and both drivers give one answer.
+fn is_memo_cache_function_import(import: Import<'_>) -> bool {
+    if import.is_type_only() || !import.has_named_imports() {
+        return false;
+    }
+    let module = import.spec().bytes();
+    let is_runtime = REACT_COMPILER_RUNTIME_MODULES
+        .iter()
+        .any(|name| name.as_bytes() == module);
+    is_runtime
+        && (import.named().iter())
+            .any(|specifier| !specifier.is_type_only() && specifier.imported().name().is("c"))
+}
+
+/// Breaks at an import of the memo cache function: the file is compiled already.
+fn collect_candidates<'a>(
+    statement: Stmt<'a>,
+    candidates: &mut Vec<Candidate<'a>>,
+) -> ControlFlow<()> {
     match statement.kind() {
         StmtKind::Fn(function) => candidates.extend(function_candidate(function, None, false)),
         StmtKind::ExportDefault(expression) | StmtKind::Expr(expression) => {
@@ -227,6 +243,11 @@ fn collect_candidates<'a>(statement: Stmt<'a>, candidates: &mut Vec<Candidate<'a
                 {
                     candidates.extend(expression_candidate(value, Some(name)));
                 }
+            }
+        }
+        StmtKind::Import(import) => {
+            if is_memo_cache_function_import(import) {
+                return ControlFlow::Break(());
             }
         }
         StmtKind::Empty
@@ -251,13 +272,13 @@ fn collect_candidates<'a>(statement: Stmt<'a>, candidates: &mut Vec<Candidate<'a
         | StmtKind::Break(_)
         | StmtKind::Continue(_)
         | StmtKind::Labeled { .. }
-        | StmtKind::Import(_)
         | StmtKind::ImportEquals(_)
         | StmtKind::ExportNamed(_)
         | StmtKind::ExportStar { .. }
         | StmtKind::ExportAssign(_)
         | StmtKind::ExportAsNamespace(_) => {}
     }
+    ControlFlow::Continue(())
 }
 
 fn expression_candidate<'a>(
@@ -789,20 +810,36 @@ mod tests {
     }
 
     #[test]
-    fn memo_cache_import_skips_the_file() {
-        let skips = |text: &str| with_file(text, should_skip_compilation);
-        assert!(skips("import { c as _c } from 'react/compiler-runtime';"));
-        assert!(skips("import { c } from 'react-compiler-runtime';"));
-        assert!(skips(
-            "f();\nimport { a, c } from 'react/compiler-runtime';"
-        ));
-        assert!(!skips("import { a as c } from 'react/compiler-runtime';"));
-        assert!(!skips("import c from 'react/compiler-runtime';"));
-        assert!(!skips("import * as c from 'react/compiler-runtime';"));
-        assert!(!skips("import type { c } from 'react/compiler-runtime';"));
-        assert!(!skips("import { type c } from 'react/compiler-runtime';"));
-        assert!(!skips("import { c } from './compiler-runtime';"));
-        assert!(!skips("export { c } from 'react/compiler-runtime';"));
+    fn file_that_imports_the_memo_cache_has_no_candidates() {
+        let candidates_with =
+            |import: &str| describe_candidates(&[import, "\n", COMPONENT].concat());
+        for compiled in [
+            "import { c as _c } from 'react/compiler-runtime';",
+            "import { c } from 'react-compiler-runtime';",
+            "f();\nimport { a, 'c' as cache } from 'react/compiler-runtime';",
+        ] {
+            assert_eq!(candidates_with(compiled), "", "{compiled}");
+        }
+        let import_last = [COMPONENT, "\nimport { c } from 'react/compiler-runtime';"].concat();
+        assert_eq!(describe_candidates(&import_last), "");
+        let opted_in = "function a() { 'use memo'; }";
+        assert_eq!(describe_candidates(opted_in), "a");
+        let opted_in = ["import { c } from 'react/compiler-runtime';\n", opted_in].concat();
+        assert_eq!(describe_candidates(&opted_in), "");
+
+        for written in [
+            "import { a as c } from 'react/compiler-runtime';",
+            "import c from 'react/compiler-runtime';",
+            "import { default as c } from 'react/compiler-runtime';",
+            "import * as c from 'react/compiler-runtime';",
+            "import type { c } from 'react/compiler-runtime';",
+            "import { type c } from 'react/compiler-runtime';",
+            "import { c } from './compiler-runtime';",
+            "export { c } from 'react/compiler-runtime';",
+            "declare module 'm' { import { c } from 'react/compiler-runtime'; }",
+        ] {
+            assert_eq!(candidates_with(written), "A", "{written}");
+        }
     }
 
     #[test]

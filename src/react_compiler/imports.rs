@@ -337,3 +337,7 @@ const REACT_17_18_RUNTIME_MODULE: &str = "react-compiler-runtime";
 /// The runtime module of each target. Upstream asks for its own target's, and no option sets one here.
 pub const REACT_COMPILER_RUNTIME_MODULES: [&str; 2] =
     [REACT_19_RUNTIME_MODULE, REACT_17_18_RUNTIME_MODULE];
+
+pub(crate) fn is_react_compiler_runtime_module(module: &[u8]) -> bool {
+    module == REACT_19_RUNTIME_MODULE.as_bytes() || module == REACT_17_18_RUNTIME_MODULE.as_bytes()
+}

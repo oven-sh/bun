@@ -8,7 +8,7 @@ import { RawFrontend } from "./raw-frontend";
 // The inspected program. It does what stdin tells it and says so on stderr:
 //   log   logs a batch of 8 lines, 1 MB of inspector messages, and prints "LOGGED <lines so far>"
 //   big   logs one line of 3 MB, a message of 6 MB, and prints "LOGGED <lines so far>"
-//   rss   prints "RSS <megabytes>"
+//   rss   collects garbage and prints "RSS <megabytes>"
 //   idle  stops reading stdin, so that only a frontend keeps the process alive, and prints "IDLE"
 // A line is "#<n> " and padding, so that a frontend can tell which lines arrived.
 const logger = `const pad = Buffer.alloc(64 * 1024, "L").toString();
@@ -24,6 +24,7 @@ process.stdin.on("data", data => {
     } else if (command === "big") {
       console.log("#" + lines++ + " " + Buffer.alloc(3 * 1024 * 1024, "L").toString());
     } else if (command === "rss") {
+      Bun.gc(true);
       process.stderr.write("RSS " + Math.round(process.memoryUsage.rss() / 1024 / 1024) + "\\n");
       continue;
     } else if (command === "idle") {
@@ -66,12 +67,12 @@ class Program implements AsyncDisposable {
 
   /**
    * `backlog`: megabytes queued for a frontend that reads nothing before the program drops it.
-   * The program's own limit is 128, too much for most tests. `undefined` keeps that limit.
+   * The program's own limit is 128, too much for most tests. `null` keeps that limit.
    */
-  constructor(args: string[], { backlog = "4" as string | undefined, env = {} as Record<string, string> } = {}) {
+  constructor(args: string[], { backlog = "4" as string | null, env = {} as Record<string, string> } = {}) {
     this.#proc = spawn({
       cmd: [bunExe(), ...args, join(String(this.#dir), "logger.js")],
-      env: { ...bunEnv, ...env, ...(backlog && { BUN_DEBUG_TEST_INSPECTOR_BACKLOG_MB: backlog }) },
+      env: { ...bunEnv, ...env, ...(backlog !== null && { BUN_DEBUG_TEST_INSPECTOR_BACKLOG_MB: backlog }) },
       stdin: "pipe",
       stdout: "ignore",
       stderr: "pipe",
@@ -130,7 +131,7 @@ class Program implements AsyncDisposable {
     await this.until(() => this.lines === lines, "the large line");
   }
 
-  /** The resident memory of the program in megabytes. */
+  /** The resident memory of the program in megabytes, after a collection. */
   async rss(): Promise<number> {
     this.megabytes = 0;
     this.#tell("rss");
@@ -443,7 +444,7 @@ test.skipIf(isASAN || isDebug)("the limit is 128 MB queued, and the memory comes
   const server = net.createServer(accept).listen(path);
   try {
     await new Promise(resolve => server.once("listening", resolve));
-    await using program = new Program([], { backlog: undefined, env: { BUN_INSPECT_CONNECT_TO: "unix://" + path } });
+    await using program = new Program([], { backlog: null, env: { BUN_INSPECT_CONNECT_TO: "unix://" + path } });
     const stalled = RawFrontend.accept(await accepted);
     try {
       await stalled.send("Console.enable");

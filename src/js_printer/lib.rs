@@ -7544,6 +7544,7 @@ impl BufferWriter {
     /// `false`. The printer never writes `Ast.hashbang`, because the module loader has no use
     /// for the line. A caller whose output is read as a file calls this on the empty buffer,
     /// before it prints: the printer appends, so its length and its source map count the line.
+    #[inline]
     pub fn write_hashbang(&mut self, hashbang: &[u8]) -> bool {
         if hashbang.is_empty() {
             return false;

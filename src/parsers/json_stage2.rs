@@ -91,7 +91,7 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         log: &'a mut Log,
         idx: &'i mut StructuralIndex<'s>,
         opts: JSONOptions,
-        arena: Option<&Bump>,
+        arena: Option<&'a Bump>,
     ) -> Self {
         // `root_ptr` both times: it takes `&mut JsonTape`, so neither arm can
         // hand `tape` a frozen, shared-reborrow pointer. The parser writes

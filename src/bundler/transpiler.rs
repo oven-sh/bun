@@ -1065,34 +1065,10 @@ impl<'a> Transpiler<'a> {
         opts: api::TransformOptions,
         env_loader_: Option<*mut dot_env::Loader>,
     ) -> crate::Result<Transpiler<'a>> {
-        let mut slot = core::mem::MaybeUninit::<Transpiler<'a>>::uninit();
-        Self::init_in_place(&mut slot, arena, log, opts, env_loader_)?;
-        // SAFETY: `init_in_place` returned `Ok`, so every field of `slot` was
-        // written exactly once.
-        Ok(unsafe { slot.assume_init() })
-    }
-
-    /// In-place sibling of [`Self::init`]: builds the `Transpiler` directly into
-    /// `dst` rather than returning it by value, so callers that already own its
-    /// final storage — most importantly `VirtualMachine.transpiler`, written by
-    /// [`init_runtime_state`](../runtime/jsc_hooks.rs) once per VM — avoid the
-    /// multi-KB `stack temporary → return slot → final home` double `memcpy`.
-    ///
-    /// On `Ok(())`, every field of `dst` is initialised. On `Err`, `dst` is
-    /// untouched (all fallible work happens before the first field write), so the
-    /// caller must not `assume_init` it.
-    pub(crate) fn init_in_place(
-        dst: &mut core::mem::MaybeUninit<Transpiler<'a>>,
-        arena: &'a Arena,
-        log: *mut bun_ast::Log,
-        opts: api::TransformOptions,
-        env_loader_: Option<*mut dot_env::Loader>,
-    ) -> crate::Result<()> {
         // Caller contract: `log` is the freshly-boxed per-VM `Log` from
         // `VirtualMachine::init` and is never null. Validate up front so the
         // deref sites below go through `NonNull` rather than the raw argument.
-        let log_nn =
-            core::ptr::NonNull::new(log).expect("Transpiler::init_in_place: log is non-null");
+        let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::init: log is non-null");
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
         // These two `create()`s are eager (not deferred to the first `parse()`)
@@ -1176,36 +1152,24 @@ impl<'a> Transpiler<'a> {
         let outbase = bundle_options.output_dir.clone();
         let resolve_results = Box::new(ResolveResults::default());
 
-        // Construct directly into the caller-owned storage instead of building a
-        // stack temporary and returning it. All fallible work is done; every
-        // field below is written exactly once.
-        let p = dst.as_mut_ptr();
-        // SAFETY: `dst` is an exclusively-borrowed, currently-uninitialised
-        // `MaybeUninit<Transpiler>`; each `write` initialises a distinct field
-        // and no field is read before it is written.
-        unsafe {
-            core::ptr::addr_of_mut!((*p).options).write(bundle_options);
-            core::ptr::addr_of_mut!((*p).log).write(log_nn.as_ptr());
-            core::ptr::addr_of_mut!((*p).arena).write(arena);
-            core::ptr::addr_of_mut!((*p).result).write(options::TransformResult {
+        Ok(Transpiler {
+            options: bundle_options,
+            log: log_nn.as_ptr(),
+            arena,
+            result: options::TransformResult {
                 outbase,
                 ..Default::default()
-            });
-            core::ptr::addr_of_mut!((*p).resolver).write(Resolver::init1(
-                log_nn,
-                fs,
-                resolver_opts,
-            ));
-            core::ptr::addr_of_mut!((*p).output_files).write(Vec::new());
-            core::ptr::addr_of_mut!((*p).resolve_results).write(resolve_results);
-            core::ptr::addr_of_mut!((*p).resolve_queue).write(ResolveQueue::default());
-            core::ptr::addr_of_mut!((*p).elapsed).write(0);
+            },
+            resolver: Resolver::init1(log_nn, fs, resolver_opts),
+            output_files: Vec::new(),
+            resolve_results,
+            resolve_queue: ResolveQueue::default(),
+            elapsed: 0,
             // .thread_pool = pool,
-            core::ptr::addr_of_mut!((*p).linker).write(crate::linker::Linker::init(log));
-            core::ptr::addr_of_mut!((*p).env).write(env_loader);
-            core::ptr::addr_of_mut!((*p).macro_context).write(None);
-        }
-        Ok(())
+            linker: crate::linker::Linker::init(log),
+            env: env_loader,
+            macro_context: None,
+        })
     }
 
     /// `'p` is the parse's own lifetime (arena, path, virtual source), not the `Transpiler`'s.

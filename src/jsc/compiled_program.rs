@@ -66,7 +66,7 @@ unsafe extern "C" {
 unsafe extern "C" {
     /// ZigGlobalObject.cpp
     fn Bun__isOptionThatCompiledCodeDoesNotTake(entry: *const core::ffi::c_char) -> bool;
-    /// patches/mimalloc/environment-sets-sizes-and-pace-only.patch
+    /// mimalloc, compiled with MI_GETENV_ALLOWED (scripts/build/deps/mimalloc.ts)
     fn mi_is_read_from_environment(name_in_lower_case: *const core::ffi::c_char) -> bool;
 }
 

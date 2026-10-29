@@ -2669,21 +2669,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     // ─── listen ──────────────────────────────────────────────────────────────
-    /// `config.http2`: attach an HTTP/2 context to `app`. On failure the
-    /// server is `deinit()`ed with an exception pending and `false` returned.
-    fn attach_http2(this: *mut Self, app: *mut uws_sys::NewApp<SSL>) -> bool
+    /// `config.http2`: attach an HTTP/2 context to `app`. On failure an
+    /// exception is pending and `false` returned.
+    fn attach_http2(&self, app: *mut uws_sys::NewApp<SSL>) -> bool
     where
         Self: ServerPools<SSL, DEBUG>,
     {
-        // SAFETY: `this` is the live boxed server from `init()`; short-lived shared read.
-        let (http2, is_node_http, http1, idle_timeout, has_dev_server) = unsafe {
-            let cfg = (*this).config.get();
+        let (http2, is_node_http, http1, idle_timeout, has_dev_server) = {
+            let cfg = self.config.get();
             (
                 cfg.http2,
                 cfg.is_node_http_server || !cfg.on_node_http_request.is_empty(),
                 cfg.http1,
                 u32::from(cfg.idle_timeout),
-                (*this).dev_server.get().is_some(),
+                self.dev_server.get().is_some(),
             )
         };
         if !http2 {
@@ -2697,12 +2696,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 "for node:http servers"
             };
             if !http1 {
-                // SAFETY: `this` is live; `global_this()` borrows the STATIC global, not `*this`.
-                let global = unsafe { (*this).global_this() };
-                let _ = global.throw_invalid_arguments(format_args!(
+                let _ = self.global_this().throw_invalid_arguments(format_args!(
                     "http1: false with http2: true is not supported {why}"
                 ));
-                Self::deinit(this);
                 return false;
             }
             bun_core::warn!("http2: true is ignored {}", why);
@@ -2712,12 +2708,10 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let Some(h2) =
             create_http2_app::<SSL>(bun_opaque::opaque_deref_mut(app), http1, idle_timeout)
         else {
-            // SAFETY: `this` is live; `global_this()` borrows the STATIC global, not `*this`.
-            let global = unsafe { (*this).global_this() };
+            let global = self.global_this();
             if !global.has_exception() {
                 let _ = global.throw(format_args!("Failed to create HTTP/2 server"));
             }
-            Self::deinit(this);
             return false;
         };
         // Streams parked on socket backpressure by a JS-driven write get their
@@ -2735,12 +2729,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .post_task(core::ptr::NonNull::new(app), drain);
         }
         bun_opaque::opaque_deref_mut(h2).on_schedule_drain(schedule_h2_drain, h2.cast::<c_void>());
-        // SAFETY: `this` is the live boxed server from `init()`.
-        let server = unsafe { &*this };
-        server.h2_app.set(Some(h2));
-        if server.mux_request_pool.get().is_null() {
-            server
-                .mux_request_pool
+        self.h2_app.set(Some(h2));
+        if self.mux_request_pool.get().is_null() {
+            self.mux_request_pool
                 .set(<Self as ServerPools<SSL, DEBUG>>::mux_request_pool());
         }
         true
@@ -2841,7 +2832,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     .mux_request_pool
                     .set(<Self as ServerPools<SSL, DEBUG>>::mux_request_pool());
             }
-            if !Self::attach_http2(this, app) {
+            if !this_ref.attach_http2(app) {
+                // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                Self::deinit(this);
                 return JSValue::ZERO;
             }
 
@@ -2960,7 +2953,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 }
             };
             this_ref.app.set(Some(app));
-            if !Self::attach_http2(this, app) {
+            if !this_ref.attach_http2(app) {
+                // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                Self::deinit(this);
                 return JSValue::ZERO;
             }
             route_list_value = this_ref.set_routes();

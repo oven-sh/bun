@@ -1438,11 +1438,7 @@ impl CommandLineReporter {
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
         // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
         self.jest.bun_test_root.deinit_for_exit();
-        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
-        // no concurrent reader exists on this shutdown path.
-        unsafe {
-            jest::Jest::RUNNER.write(None);
-        }
+        jest::Jest::RUNNER.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
         vm.run_with_api_lock_mut(|vm| vm.global_exit())
     }
 
@@ -1886,12 +1882,10 @@ impl TestCommand {
         });
         // `defer { if (reporter.reporters.junit) |fr| fr.deinit() }` — handled by Drop.
         reporter.repeat_count = ctx.test_options.repeat_count.max(1);
-        // SAFETY: single-threaded CLI startup; `reporter` is a `Box` that lives
-        // until `exec()` exits the process, so `&mut reporter.jest` remains
-        // valid for the process lifetime.
-        unsafe {
-            jest::Jest::RUNNER.write(Some(core::ptr::NonNull::from(&mut reporter.jest)));
-        }
+        jest::Jest::RUNNER.store(
+            &raw mut reporter.jest,
+            core::sync::atomic::Ordering::Relaxed,
+        );
         // `reporter.jest.test_options` is initialised in the struct
         // literal above (lifetime-erased); the post-init assignment is dropped.
 
@@ -2687,11 +2681,7 @@ impl TestCommand {
         // before dropping `reporter` so finalizers running inside the GC can't
         // observe a dangling `TestRunner`.
         reporter.jest.bun_test_root.deinit_for_exit();
-        // SAFETY: `RUNNER` is a `RacyCell` touched only from the single JS thread;
-        // no concurrent reader exists on this shutdown path.
-        unsafe {
-            jest::Jest::RUNNER.write(None);
-        }
+        jest::Jest::RUNNER.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Relaxed);
         drop(reporter);
         // `global_exit()` does not return, so nothing is dropped after it.
         drop(all_test_files);

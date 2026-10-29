@@ -5,7 +5,7 @@ use core::ptr::read_unaligned;
 
 use bun_collections::StringArrayHashMap;
 use bun_collections::index_sort;
-use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, slice_as_bytes};
+use bun_core::{StringBuilder, StringPointer, ZStr, bytes_of, read_prefix, slice_as_bytes};
 use bun_paths::{PathBuffer, path_buffer_pool, platform, resolve_path, strings};
 use bun_resolver::compiled_program::{
     CompiledEntryPoint, CompiledPackageName, CompiledProgram, ImageFile, compare_source_paths,
@@ -52,7 +52,7 @@ const _: () = assert!(size_of::<CompiledProgramRecord>() == RECORD_SIZE);
 const _: () = assert!(size_of::<CompiledEntryPointRecord>() == RECORD_SIZE);
 const _: () = assert!(cfg!(target_endian = "little"));
 
-bun_core::impl_no_uninit!(CompiledProgramRecord, CompiledEntryPointRecord);
+bun_core::impl_pod!(CompiledProgramRecord, CompiledEntryPointRecord);
 
 pub struct CompiledEntryPointInput<'a> {
     pub module_id: bun_aot::engine::EngineModuleId,
@@ -363,8 +363,7 @@ fn try_read(
         .iter()
         .zip(module_paths)
     {
-        // SAFETY: `RECORD_SIZE` readable bytes, and every bit pattern is a valid record.
-        let record: CompiledEntryPointRecord = unsafe { read_unaligned(bytes.as_ptr().cast()) };
+        let record: CompiledEntryPointRecord = read_prefix(bytes)?;
         let module_path = StringPointer {
             offset: u32::from_le_bytes(*offset),
             length: u32::from_le_bytes(*length),

@@ -101,22 +101,28 @@ impl DevServer {
         }
         files
     }
+}
 
-    /// Interface function for FrameworkRouter
-    pub(crate) fn get_file_id_for_router(
+/// What `FrameworkRouter::scan_all` needs of the `DevServer`, whose `router` it borrows meanwhile.
+pub(super) struct DevRouteScan<'a> {
+    pub(super) root: &'a [u8],
+    pub(super) server_graph: &'a mut IncrementalGraph<{ bake::Side::Server }>,
+    pub(super) route_lookup:
+        &'a mut ArrayHashMap<incremental_graph::ServerFileIndex, RouteIndexAndRecurseFlag>,
+}
+
+impl router::InsertionHandler for DevRouteScan<'_> {
+    fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
         associated_route: router::RouteIndex,
         file_kind: router::FileKind,
-    ) -> crate::Result<OpaqueFileId> {
-        let index = self
-            .server_graph
-            .insert_stale_extra(
-                abs_path,
-                bake::Graph::Server,
-                incremental_graph::RouteKind::Route,
-            )
-            .map_err(crate::Error::from)?;
+    ) -> Result<OpaqueFileId, AllocError> {
+        let index = self.server_graph.insert_stale_extra(
+            abs_path,
+            bake::Graph::Server,
+            incremental_graph::RouteKind::Route,
+        )?;
         self.route_lookup.put(
             index,
             RouteIndexAndRecurseFlag::new(associated_route, file_kind == router::FileKind::Layout),
@@ -124,18 +130,18 @@ impl DevServer {
         Ok(to_opaque_file_id::<{ bake::Side::Server }>(index))
     }
 
-    pub(crate) fn on_router_syntax_error(
-        &self,
+    fn on_router_syntax_error(
+        &mut self,
         rel_path: &[u8],
-        log: &router::TinyLog,
+        log: router::TinyLog,
     ) -> Result<(), AllocError> {
         // TODO: maybe this should track the error, send over HmrSocket?
         log.print(rel_path);
         Ok(())
     }
 
-    pub(crate) fn on_router_collision_error(
-        &self,
+    fn on_router_collision_error(
+        &mut self,
         rel_path: &[u8],
         other_id: OpaqueFileId,
         ty: router::FileKind,
@@ -149,7 +155,8 @@ impl DevServer {
         let mut buf = paths::path_buffer_pool::get();
         bun_core::pretty_errorln!(
             "  - <blue>{}<r>",
-            bstr::BStr::new(self.relative_path(
+            bstr::BStr::new(relative_path(
+                self.root,
                 &mut *buf,
                 &self.server_graph.bundled_files.keys()
                     [from_opaque_file_id::<{ bake::Side::Server }>(other_id).get() as usize]
@@ -157,33 +164,6 @@ impl DevServer {
         );
         Output::flush();
         Ok(())
-    }
-}
-
-impl router::InsertionHandler for DevServer {
-    fn get_file_id_for_router(
-        &mut self,
-        abs_path: &[u8],
-        associated_route: router::RouteIndex,
-        kind: router::FileKind,
-    ) -> Result<OpaqueFileId, AllocError> {
-        DevServer::get_file_id_for_router(self, abs_path, associated_route, kind)
-            .map_err(|_| AllocError)
-    }
-    fn on_router_syntax_error(
-        &mut self,
-        rel_path: &[u8],
-        fail: router::TinyLog,
-    ) -> Result<(), AllocError> {
-        DevServer::on_router_syntax_error(self, rel_path, &fail)
-    }
-    fn on_router_collision_error(
-        &mut self,
-        rel_path: &[u8],
-        other_id: OpaqueFileId,
-        file_kind: router::FileKind,
-    ) -> Result<(), AllocError> {
-        DevServer::on_router_collision_error(self, rel_path, other_id, file_kind)
     }
 }
 

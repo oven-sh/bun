@@ -307,7 +307,7 @@ impl<'a> ExportMaps<'a> {
             file,
             modules: file.modules()?,
             settings: Settings::new(file.settings()),
-            resolvers: Resolvers::of(file.settings())?,
+            resolvers: Resolvers::of(file)?,
             interop: OnceCell::new(),
             languages: [OnceCell::new(), OnceCell::new()],
             dependencies: RefCell::default(),

@@ -80,13 +80,13 @@ impl Rule for NoCycle {
             return None;
         }
         // How a specifier resolves depends on the settings, in every file the graph reaches.
-        Resolvers::of(file.settings())?;
+        Resolvers::of(file)?;
         modules.resolve_by(&|| {
             let settings = Arc::new(file.settings().clone());
             let same = Arc::clone(&settings);
             ResolveBy {
                 resolve: Box::new(move |modules, from, specifier, is_require| {
-                    let found = Resolvers::of(&settings)?.resolve_from(modules, from, specifier, is_require);
+                    let found = Resolvers::of_settings(&settings, false)?.resolve_from(modules, from, specifier, is_require);
                     found.file().map(<[u8]>::to_vec)
                 }),
                 is_known: Box::new(move |path, text| has_export_map(&Settings::new(&same), path, text)),

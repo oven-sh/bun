@@ -172,7 +172,7 @@ impl NoDuplicates {
     /// return.
     fn check_resolved<'a>(&self, cx: &Cx<'a, Self>) {
         let file = cx.file();
-        let Some(resolvers) = Resolvers::of(file.settings()) else {
+        let Some(resolvers) = Resolvers::of(file) else {
             return;
         };
         let imports = || {

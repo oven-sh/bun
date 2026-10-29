@@ -1265,6 +1265,15 @@ impl Modules for Graph<'_> {
         let found = match lookup {
             // No system allows a path that long.
             _ if specifier.len() > 4096 => return None,
+            Lookup::Oxlint => {
+                // oxc-resolver takes the query off the specifier.
+                let end = strings::last_index_of_char(specifier, b'?').unwrap_or(specifier.len());
+                let specifier = &specifier[..end];
+                self.follows_oxlint.store(true, Ordering::Relaxed);
+                let found =
+                    self.resolve_any_path(self.config_of(&from), &from, specifier, is_require);
+                found?.0.into_owned()
+            }
             Lookup::TypeScript(projects) => {
                 // `removeQuerystring`
                 let end = strings::last_index_of_char(specifier, b'?').unwrap_or(specifier.len());

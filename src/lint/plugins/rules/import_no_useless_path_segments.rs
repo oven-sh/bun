@@ -127,7 +127,7 @@ impl Rule for NoUselessPathSegments {
         if sources.is_empty() {
             return;
         }
-        let (Some(resolvers), Some(modules)) = (Resolvers::of(file.settings()), file.modules()) else {
+        let (Some(resolvers), Some(modules)) = (Resolvers::of(file), file.modules()) else {
             return;
         };
         let context = Context {

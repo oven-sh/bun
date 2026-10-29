@@ -142,9 +142,12 @@ pub struct IndirectExportEntry {
 /// Builds a file's [`Record`].
 pub type MakeRecord = for<'a> fn(&'a File<'a>) -> Record;
 
-/// One of eslint-plugin-import's resolvers.
+/// One of eslint-plugin-import's resolvers, or oxlint's.
 #[derive(Clone, Debug)]
 pub enum Lookup<'e> {
+    /// What oxlint's `import` rules resolve with: the graph's [`Flavor::Oxlint`] resolution, with the `tsconfig.json`
+    /// of `--tsconfig` or the nearest one.
+    Oxlint,
     /// eslint-import-resolver-typescript, with its `project` option verbatim.
     TypeScript(SmallVec<[&'e [u8]; 1]>),
     /// eslint-import-resolver-node, with its `extensions`.

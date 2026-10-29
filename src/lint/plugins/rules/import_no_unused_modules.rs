@@ -203,7 +203,7 @@ fn exports_something(stmt: Stmt) -> bool {
 /// True if `updateImportUsage` would add an export to the file's own list, which happens when the file imports
 /// something from itself that it didn't import when `doPreparation` read it.
 fn imports_from_itself<'a>(file: &'a File<'a>, path: &[u8], is_prepared: bool) -> bool {
-    let (Some(resolvers), Some(maps)) = (Resolvers::of(file.settings()), ExportMaps::of(file)) else { return false };
+    let (Some(resolvers), Some(maps)) = (Resolvers::of(file), ExportMaps::of(file)) else { return false };
     let (mut has_default, mut new_imports) = (false, FxHashMap::<&'a [u8], bool>::default());
     for stmt in file.body() {
         let StmtKind::Import(import) = stmt.kind() else { continue };

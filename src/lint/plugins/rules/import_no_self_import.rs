@@ -61,7 +61,7 @@ impl Rule for NoSelfImport {
             return;
         }
         let visited = visitor(is_oxlint).visit(file);
-        let Some(resolvers) = Resolvers::of(file.settings()) else {
+        let Some(resolvers) = Resolvers::of(file) else {
             return;
         };
         let file_path = paths::portable(file.path(), file.path());

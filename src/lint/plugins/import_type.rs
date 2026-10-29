@@ -106,7 +106,7 @@ impl<'a> ImportTypes<'a> {
     pub(crate) fn of(file: &'a File<'a>) -> Option<ImportTypes<'a>> {
         Some(ImportTypes {
             file,
-            resolvers: Resolvers::of(file.settings())?,
+            resolvers: Resolvers::of(file)?,
             settings: Settings::new(file.settings()),
             package_path: OnceCell::new(),
         })

@@ -2,6 +2,7 @@
 //! `settings["import/resolver"]`.
 
 use crate::import_settings::is_package_or_file_in_it;
+use crate::oxlint;
 use bun_core::strings;
 use bun_lint::modules::{Lookup, Modules};
 use bun_lint::paths;
@@ -13,12 +14,18 @@ use std::borrow::Cow;
 /// eslint-import-resolver-node's default extensions.
 const EXTENSIONS: [&[u8]; 4] = [b".mjs", b".js", b".json", b".node"];
 
+/// Bun's own modules, which the built-in config lists in `import/core-modules`. With an oxlint config they are core
+/// modules too.
+const BUN_MODULES: [&[u8]; 5] = [b"bun", b"bun:ffi", b"bun:jsc", b"bun:sqlite", b"bun:test"];
+
 /// A file's resolvers.
 pub(crate) struct Resolvers<'s> {
     /// `resolverReducer`'s `Map`, keyed by the name as written in the settings.
     map: SmallVec<[(&'s [u8], Lookup<'s>); 2]>,
     /// `settings["import/core-modules"]`: an array or a string.
     core_modules: Option<&'s Json>,
+    /// True if [`BUN_MODULES`] are core modules: the file is linted with an oxlint config.
+    has_bun_modules: bool,
 }
 
 /// The return value of `resolve`.
@@ -144,8 +151,16 @@ impl<'s> Resolvers<'s> {
         Some(())
     }
 
-    /// `None` if specifiers can't be resolved, because a resolver isn't supported or `resolve` throws.
-    pub(crate) fn of(settings: &'s Json) -> Option<Resolvers<'s>> {
+    /// The file's resolvers. `None` if specifiers can't be resolved, because a resolver isn't supported or `resolve`
+    /// throws.
+    pub(crate) fn of(file: &File<'s>) -> Option<Resolvers<'s>> {
+        Resolvers::of_settings(file.settings(), oxlint::is_followed(file))
+    }
+
+    /// [`Resolvers::of`] with the settings alone. `is_oxlint` says whether the file is linted with an oxlint config:
+    /// then the resolver that `import/resolver` and `import/resolve` leave unset is oxlint's own, instead of
+    /// eslint-import-resolver-node as in eslint-plugin-import.
+    pub(crate) fn of_settings(settings: &'s Json, is_oxlint: bool) -> Option<Resolvers<'s>> {
         // `new Set(..)`
         let core_modules = match settings.get(b"import/core-modules") {
             None | Some(Json::Null) => None,
@@ -155,17 +170,25 @@ impl<'s> Resolvers<'s> {
         let mut resolvers = Resolvers {
             map: SmallVec::new(),
             core_modules,
+            has_bun_modules: is_oxlint,
         };
+        let legacy = settings.get(b"import/resolve");
         match (settings.get(b"import/resolver")).filter(|it| it.is_truthy()) {
             Some(configured) => resolvers.resolver_reducer(configured)?,
+            None if is_oxlint && legacy.is_none() => {
+                resolvers.map.push((b"oxlint", Lookup::Oxlint))
+            }
             // "backward compatibility"
-            None => resolvers.set(b"node", settings.get(b"import/resolve"))?,
+            None => resolvers.set(b"node", legacy)?,
         }
         Some(resolvers)
     }
 
     /// `coreSet.has(specifier)`
     fn is_core_module(&self, specifier: &[u8]) -> bool {
+        if self.has_bun_modules && BUN_MODULES.contains(&specifier) {
+            return true;
+        }
         match self.core_modules {
             Some(Json::Array(items)) => items.iter().any(|it| it.as_str() == Some(specifier)),
             // `new Set(string)` holds the string's code points.

@@ -1066,6 +1066,110 @@ test.concurrent(
   },
 );
 
+// With an oxlint config, the `import` rules that oxlint doesn't have resolve imports the way oxlint's own do.
+describe.concurrent("import/resolver: unset with an .oxlintrc.json", () => {
+  const oxlintrc = (rules: object, settings?: object) =>
+    JSON.stringify({ plugins: ["import"], categories: { correctness: "off" }, rules, settings });
+  const project = {
+    "package.json": `{ "name": "app", "type": "module", "dependencies": { "lib": "*" } }`,
+    "f_ts.ts": "export const v = 1;\n",
+    "f_tsx.tsx": "export const v = 1;\n",
+    "f_mts.mts": "export const v = 1;\n",
+    "f_js.js": "export const v = 1;\n",
+    "f_mjs.mjs": "export const v = 1;\n",
+    "dir/index.ts": "export const v = 1;\n",
+    "data.json": "{}",
+    "node_modules/lib/package.json": JSON.stringify({
+      name: "lib",
+      type: "module",
+      exports: {
+        ".": "./dist/main.js",
+        "./same": "./same.js",
+        "./renamed": "./other.js",
+        "./conditional": { types: "./cond.d.ts", default: "./cond.js" },
+        "./star/*": "./dist/*.js",
+      },
+    }),
+    "node_modules/lib/dist/main.js": "export const v = 1;\n",
+    "node_modules/lib/same.js": "export const v = 1;\n",
+    "node_modules/lib/other.js": "export const v = 1;\n",
+    "node_modules/lib/cond.js": "export const v = 1;\n",
+    "node_modules/lib/cond.d.ts": "export declare const v: number;\n",
+    "node_modules/lib/dist/x.js": "export const v = 1;\n",
+  };
+  const found = [
+    "./f_ts",
+    "./f_tsx",
+    "./f_mts",
+    "./f_js",
+    "./f_mjs",
+    "./f_ts.ts",
+    "./f_js.js",
+    "./f_ts.js",
+    "./dir",
+    "./data.json",
+    "./f_ts?raw",
+    "lib",
+    "lib/same",
+    "lib/renamed",
+    "lib/conditional",
+    "lib/star/x",
+    "bun",
+    "bun:test",
+    "node:fs",
+  ];
+  const missing = ["./missing", "./f_ts.d.ts", "bun:missing", "other"];
+  const imports = [...found, ...missing].map(it => `import ${JSON.stringify(it)};\n`).join("");
+  const reported = missing.map((_, at) => `index.ts:${found.length + at + 1}:8 import/no-unresolved`);
+
+  test("import/no-unresolved resolves what bun runs", async () => {
+    const files = { ...project, ".oxlintrc.json": oxlintrc({ "import/no-unresolved": "error" }), "index.ts": imports };
+    const { problems, stderr } = await lint(files, ["index.ts"]);
+    expect({ problems, stderr }).toEqual({ problems: reported.sort(), stderr: "" });
+  });
+
+  test("a configured resolver still applies", async () => {
+    const config = oxlintrc({ "import/no-unresolved": "error" }, { "import/resolver": { typescript: true } });
+    const files = { ...project, ".oxlintrc.json": config, "index.ts": imports };
+    const { problems } = await lint(files, ["index.ts"]);
+    // eslint-import-resolver-typescript doesn't add `.mts` or `.mjs` to a name, and finds `./f_ts.ts` for `./f_ts.d.ts`.
+    const at = (specifier: string) =>
+      `index.ts:${[...found, ...missing].indexOf(specifier) + 1}:8 import/no-unresolved`;
+    const expected = [...reported.filter(it => it !== at("./f_ts.d.ts")), at("./f_mts"), at("./f_mjs")];
+    expect(problems).toEqual(expected.sort());
+  });
+
+  test("--tsconfig sets the tsconfig.json whose `paths` apply, as for oxlint's rules", async () => {
+    const paths = (to: string) => JSON.stringify({ compilerOptions: { paths: { "@lib/*": [`${to}/*`] } } });
+    const files = {
+      ".oxlintrc.json": oxlintrc({ "import/no-unresolved": "error", "import/no-cycle": "error" }),
+      "tsconfig.json": paths("./one"),
+      "aliases.json": paths("./two"),
+      "one/x.ts": `import "@lib/y";\nexport const one = 1;\n`,
+      "one/y.ts": "export const y = 1;\n",
+      "two/y.ts": `import "../src/a";\nexport const y = 2;\n`,
+      "src/a.ts": `import "@lib/x";\nimport "@lib/y";\nexport const a = 1;\n`,
+    };
+    const byDefault = await lint(files, ["src"]);
+    const withFlag = await lint(files, ["--tsconfig", "aliases.json", "src"]);
+    expect([byDefault.problems, withFlag.problems]).toEqual([
+      [],
+      ["src/a.ts:1:8 import/no-unresolved", "src/a.ts:2:8 import/no-cycle"],
+    ]);
+  });
+
+  test("import/no-restricted-paths sees an import that only resolves with a TypeScript extension", async () => {
+    const zones = [{ target: "./src/client", from: "./src/server" }];
+    const files = {
+      ".oxlintrc.json": oxlintrc({ "import/no-restricted-paths": ["error", { zones }] }),
+      "src/server/s.ts": "export const s = 1;\n",
+      "src/client/c.ts": `import { s } from "../server/s";\nexport const c = s;\n`,
+    };
+    const { problems } = await lint(files, ["src"]);
+    expect(problems).toEqual(["src/client/c.ts:1:19 import/no-restricted-paths"]);
+  });
+});
+
 test.concurrent("import/ignore with a RegExp object instead of a string: the package's rule runs", async () => {
   const theirs = `{ create: context => ({ Program(node) { context.report({ node, message: "theirs" }); } }) }`;
   const config = (ignore: string) => `export default [

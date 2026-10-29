@@ -399,7 +399,7 @@ pub use detach_lifetime_ref as detach_ref;
 /// `Interned` exists so that the ~80 open-coded `&[u8] → &'static [u8]` widens
 /// become a safe value flowing from the store, and so that the ~24 sites whose
 /// backing **does** drop can no longer pretend to be `'static` — they must
-/// switch to [`RawSlice<u8>`] / [`BackRef<T>`].
+/// switch to [`RawSlice<u8>`] / [`BackRef<T>`], or name the owner at a [`detach_lifetime`] call.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Ord, PartialOrd)]
 pub struct Interned(&'static [u8]);

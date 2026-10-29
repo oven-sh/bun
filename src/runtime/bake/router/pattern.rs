@@ -398,18 +398,13 @@ impl<'a> Part<'a> {
     /// (or other storage that outlives the owning `FrameworkRouter`).
     #[allow(unsafe_op_in_unsafe_fn)]
     pub(super) unsafe fn to_owned_part(self) -> Part<'static> {
-        // Variant-by-variant detach (no bitcast). `d` stays `unsafe fn` so a
-        // safe-signature wrapper does not hide the lifetime-widen.
-        #[inline(always)]
-        unsafe fn d(s: &[u8]) -> &'static [u8] {
-            // SAFETY: both callers are in `FrameworkRouter::insert`, whose patterns
-            // `scan_inner` allocates in the router's `pattern_string_arena`. Nothing
-            // resets that arena and it is the router's last field, so the bytes are
-            // freed when the router drops, after its `routes`. They are NOT
-            // process-lifetime: `'static` stands for "while the router lives", and a
-            // `Part` copied out of a `Route` must not be used after that.
-            unsafe { bun_ptr::detach_lifetime(s) }
-        }
+        use bun_ptr::detach_lifetime as d;
+        // SAFETY: both callers are in `FrameworkRouter::insert`, whose patterns
+        // `scan_inner` allocates in the router's `pattern_string_arena`. Nothing
+        // resets that arena and it is the router's last field, so the bytes are
+        // freed when the router drops, after its `routes`. They are NOT
+        // process-lifetime: `'static` stands for "while the router lives", and a
+        // `Part` copied out of a `Route` must not be used after that.
         match self {
             Part::Text(s) => Part::Text(d(s)),
             Part::Param(s) => Part::Param(d(s)),

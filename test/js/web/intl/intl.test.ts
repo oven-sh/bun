@@ -124,9 +124,13 @@ describe("Intl.DateTimeFormat", () => {
         );
       expect(format(alias)).toEqual(format(primary));
 
-      const zoned = Temporal.Instant.from("2025-07-15T00:00Z").toZonedDateTimeISO(alias);
+      const zoned = Temporal.Instant.from("1965-07-15T00:00Z").toZonedDateTimeISO(alias);
+      const inPrimary = zoned.withTimeZone(primary);
       expect(zoned.timeZoneId).toBe(alias);
-      expect(zoned.equals(zoned.withTimeZone(primary))).toBe(true);
+      expect(inPrimary.timeZoneId).toBe(primary);
+      expect(zoned.equals(inPrimary)).toBe(true);
+      // equals() does not compare the local time. That comes from the rules of the zone that ICU is given.
+      expect(zoned.toPlainDateTime().toString()).toBe(inPrimary.toPlainDateTime().toString());
     });
 
     test("in TZ, at startup and when assigned", async () => {

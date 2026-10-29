@@ -125,40 +125,68 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionGetOwnNonIndexProperties, (JSGlobalObject * g
     RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), keys)));
 }
 
-// JSMapIterator::nextWithAdvance in a loop, minus its writes to the iterator. Returns how many entries are left.
-template<typename Collection, typename Iterator>
-static uint32_t previewRemainingEntries(VM& vm, Iterator* iterator, uint32_t limit, MarkedArgumentBuffer& entries)
+static ALWAYS_INLINE bool nextEntry(VM& vm, JSMapIterator* iterator, JSValue& key, JSValue& value)
 {
-    using Helper = typename Collection::Helper;
+    auto next = iterator->nextWithAdvance(vm);
+    key = next.key;
+    value = next.value;
+    return !!key;
+}
 
-    JSCell* storageCell = iterator->tryGetStorage();
-    // An iterator made while the collection had no storage yet picks it up on its first next().
-    if (!storageCell)
-        storageCell = iterator->iteratedObject()->storage();
-    if (!storageCell || storageCell == vm.orderedHashTableSentinel())
+static ALWAYS_INLINE bool nextEntry(VM& vm, JSSetIterator* iterator, JSValue& key, JSValue& value)
+{
+    // A Set stores keys only. Its entries() pairs each key with itself.
+    key = value = iterator->nextWithAdvance(vm);
+    return !!key;
+}
+
+// Steps a private copy of `iterator` with the engine's own next(), so the caller's iterator does not move. Returns how many entries are left.
+template<typename Iterator>
+static uint32_t remainingEntries(VM& vm, Structure* structure, Iterator* iterator, uint32_t limit, MarkedArgumentBuffer& entries)
+{
+    Iterator* copy = Iterator::createWithInitialValues(vm, structure);
+    for (auto field : { Iterator::Field::Entry, Iterator::Field::IteratedObject, Iterator::Field::Storage, Iterator::Field::Kind }) {
+        // Storage is empty until the collection has one.
+        if (JSValue value = iterator->internalField(field).get())
+            copy->internalField(field).set(vm, copy, value);
+    }
+
+    JSValue key;
+    JSValue value;
+    if (!nextEntry(vm, copy, key, value))
         return 0;
 
+    // The collection holds at least what the iterator has left, so one allocation is enough.
     IterationKind kind = iterator->kind();
-    auto* storage = uncheckedDowncast<typename Collection::Storage>(storageCell);
-    typename Helper::Entry entry = iterator->entry();
+    size_t copied = std::min<size_t>(limit, iterator->iteratedObject()->size());
+    entries.ensureCapacity(kind == IterationKind::Entries ? copied * 2 : copied);
     uint32_t remaining = 0;
-    while (true) {
-        // Follows the tables a rehash or a clear() left behind, then skips deleted entries.
-        auto next = Helper::transitAndNext(vm, *storage, entry);
-        if (!next.storage)
-            break;
-        storage = next.storage;
-        entry = next.entry + 1;
+    do {
         if (remaining++ >= limit)
             continue;
-        // A Set stores keys only. Its entries() pairs each key with itself.
-        JSValue value = std::is_same_v<Collection, JSSet> ? next.key : next.value;
         if (kind != IterationKind::Values)
-            entries.append(next.key);
+            entries.append(key);
         if (kind != IterationKind::Keys)
             entries.append(value);
-    }
+    } while (nextEntry(vm, copy, key, value));
     return remaining;
+}
+
+// False if `value` is not a Map or Set iterator. `entries` is flat: [key, value, key, value, ...] when `isKeyValue`.
+static bool remainingEntriesOf(JSGlobalObject* globalObject, JSValue value, uint32_t limit, MarkedArgumentBuffer& entries, bool& isKeyValue, uint32_t& length)
+{
+    auto& vm = JSC::getVM(globalObject);
+    if (auto* mapIterator = dynamicDowncast<JSMapIterator>(value)) {
+        isKeyValue = mapIterator->kind() == IterationKind::Entries;
+        length = remainingEntries(vm, globalObject->mapIteratorStructure(), mapIterator, limit, entries);
+        return true;
+    }
+    if (auto* setIterator = dynamicDowncast<JSSetIterator>(value)) {
+        isKeyValue = setIterator->kind() == IterationKind::Entries;
+        length = remainingEntries(vm, globalObject->setIteratorStructure(), setIterator, limit, entries);
+        return true;
+    }
+    return false;
 }
 
 // internalBinding('util').previewEntries(iterator, true) plus a limit: [flat entries (at most `limit`), isKeyValue, entries left].
@@ -167,7 +195,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPreviewEntries, (JSGlobalObject * globalObjec
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue iteratorValue = callFrame->argument(0);
     JSValue limitValue = callFrame->argument(1);
     uint32_t limit = std::numeric_limits<uint32_t>::max();
     if (limitValue.isNumber()) {
@@ -182,13 +209,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionPreviewEntries, (JSGlobalObject * globalObjec
     MarkedArgumentBuffer entries;
     uint32_t length = 0;
     bool isKeyValue = false;
-    if (auto* mapIterator = dynamicDowncast<JSMapIterator>(iteratorValue)) {
-        isKeyValue = mapIterator->kind() == IterationKind::Entries;
-        length = previewRemainingEntries<JSMap>(vm, mapIterator, limit, entries);
-    } else if (auto* setIterator = dynamicDowncast<JSSetIterator>(iteratorValue)) {
-        isKeyValue = setIterator->kind() == IterationKind::Entries;
-        length = previewRemainingEntries<JSSet>(vm, setIterator, limit, entries);
-    } else
+    if (!remainingEntriesOf(globalObject, callFrame->argument(0), limit, entries, isKeyValue, length))
         return throwVMTypeError(globalObject, scope, "previewEntries() expects a Map or Set iterator"_s);
 
     if (entries.hasOverflowed()) [[unlikely]] {

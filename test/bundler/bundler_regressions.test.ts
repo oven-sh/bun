@@ -227,13 +227,16 @@ describe("bundler", () => {
         return buf;
       }
 
-      schemaEncode({filename: "heyyyy", to: [1,2,3], page: 123, random: Math.random(), from: 158})
+      console.log(schemaEncode({filename: "heyyyy", to: [1,2,3], page: 123, random: 0.5, from: 158}).toString("hex"))
       `,
     },
     minifySyntax: true,
     target: "bun",
     // #2948 ran the source file, so `/entry.js` runs as it is. `/out.js` is the bundle.
-    run: [{ file: "/entry.js" }, { file: "/out.js" }],
+    run: ["/entry.js", "/out.js"].map(file => ({
+      file,
+      stdout: "01010000000200000003000000000000000000e03f7b0006006865797979799e000000",
+    })),
   });
 
   // https://github.com/oven-sh/bun/issues/3660

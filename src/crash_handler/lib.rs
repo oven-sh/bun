@@ -2309,7 +2309,7 @@ mod draft {
 
     #[cfg(all(target_os = "linux", target_env = "gnu"))]
     unsafe extern "C" {
-        fn gnu_get_libc_version() -> *const c_char;
+        safe fn gnu_get_libc_version() -> *const c_char;
     }
 
     // Only populated after JSC::VM::tryCreate. C++ writes this as a plain
@@ -2351,8 +2351,7 @@ mod draft {
                 let platform = bun_analytics::GenerateHeader::generate_platform::for_os();
                 #[cfg(all(target_os = "linux", target_env = "gnu"))]
                 {
-                    // SAFETY: gnu_get_libc_version returns a static NUL-terminated string or null
-                    let version = unsafe { gnu_get_libc_version() };
+                    let version = gnu_get_libc_version();
                     let version_bytes: &[u8] = if version.is_null() {
                         b""
                     } else {

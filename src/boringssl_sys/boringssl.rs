@@ -1011,7 +1011,8 @@ unsafe extern "C" {
     pub fn OPENSSL_free(ptr: *mut c_void);
     pub fn SSL_CTX_get0_param(ctx: *mut SSL_CTX) -> *mut c_void;
     pub fn SSL_get_group_id(ssl: *const SSL) -> u16;
-    pub fn SSL_get_group_name(group_id: u16) -> *const c_char;
+    /// Returns a static NUL-terminated string, or NULL if unknown.
+    pub safe fn SSL_get_group_name(group_id: u16) -> *const c_char;
     pub fn X509_VERIFY_PARAM_set1_host(
         param: *mut c_void,
         name: *const c_char,
@@ -1239,7 +1240,8 @@ unsafe extern "C" {
     ) -> *mut EVP_PKEY;
     pub fn EVP_PKEY_free(pkey: *mut EVP_PKEY);
 
-    pub fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
+    /// Returns a static NUL-terminated string, never NULL.
+    pub safe fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
 
     pub fn X509_STORE_add_cert(store: *mut X509_STORE, x509: *mut X509) -> c_int;
     pub fn X509_STORE_add_crl(store: *mut X509_STORE, crl: *mut X509_CRL) -> c_int;

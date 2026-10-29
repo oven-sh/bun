@@ -689,6 +689,7 @@ impl PEFile {
 // directly access the .bun section from the current process memory without
 // loading the entire executable.
 unsafe extern "C" {
+    // Not `safe fn`: the first call fills two plain statics, a race from two threads.
     pub fn Bun__getStandaloneModuleGraphPELength() -> u64;
     pub fn Bun__getStandaloneModuleGraphPEData() -> *mut u8;
 }

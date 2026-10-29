@@ -368,7 +368,7 @@ mod windows {
     const HOLDOFF_MS: DWORD = 30_000;
 
     unsafe extern "system" {
-        fn CreateMemoryResourceNotification(kind: i32) -> HANDLE;
+        safe fn CreateMemoryResourceNotification(kind: i32) -> HANDLE;
         fn CreateEventW(
             attrs: *mut c_void,
             manual_reset: BOOL,
@@ -432,8 +432,7 @@ mod windows {
             return;
         }
 
-        // SAFETY: FFI; returns NULL on failure.
-        let notify = unsafe { CreateMemoryResourceNotification(LOW_MEMORY_RESOURCE_NOTIFICATION) };
+        let notify = CreateMemoryResourceNotification(LOW_MEMORY_RESOURCE_NOTIFICATION);
         if notify.is_null() {
             return;
         }

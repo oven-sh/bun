@@ -140,6 +140,19 @@ impl Pending {
         self.write(out);
     }
 
+    /// Adds the codes of up to [`GROUP_LEN`] bytes. If they do not fit 64 bits, writes them one by one.
+    #[inline(always)]
+    fn add_each(&mut self, group: &[u8], out: &mut Vec<u8>) {
+        let before = *self;
+        for &byte in group {
+            let (code, len) = code(byte);
+            self.add(code.into(), len.into());
+        }
+        if self.count > u64::BITS {
+            *self = before.put_each(group, out);
+        }
+    }
+
     #[cold]
     #[inline(never)]
     fn put_each(mut self, group: &[u8], out: &mut Vec<u8>) -> Self {
@@ -188,21 +201,15 @@ pub(crate) fn encode(mut src: &[u8], out: &mut Vec<u8>) {
         (pending, src) = encode_groups(src, out);
     }
     // Written every `GROUP_LEN` bytes and not when there are enough bits, which would depend on the text.
-    let (mut before, mut start) = (pending, 0);
-    for (i, &byte) in src.iter().enumerate() {
-        if i == start + GROUP_LEN {
-            if pending.count > u64::BITS {
-                pending = before.put_each(src.get(start..i).unwrap_or_default(), out);
-            }
-            pending.write(out);
-            (before, start) = (pending, i);
+    while let Some((group, rest)) = src.split_at_checked(GROUP_LEN) {
+        if rest.is_empty() {
+            break;
         }
-        let (code, len) = code(byte);
-        pending.add(code.into(), len.into());
+        pending.add_each(group, out);
+        pending.write(out);
+        src = rest;
     }
-    if pending.count > u64::BITS {
-        pending = before.put_each(src.get(start..).unwrap_or_default(), out);
-    }
+    pending.add_each(src, out);
     // The last byte is filled up with the start of EOS, which is all ones.
     let padding = pending.count.wrapping_neg() & 7;
     pending.put((1 << padding) - 1, padding, out);

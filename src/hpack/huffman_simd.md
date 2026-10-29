@@ -199,11 +199,12 @@ it. The plain loop takes one byte at a time and writes 32 bits whenever it has t
 about every 5 bytes. When exactly depends on the text, so that branch is mispredicted, and so is the
 loop that writes the last 1 to 4 bytes.
 
-`encode` takes one byte at a time too, but writes after every 7 bytes, whatever they are: 8 bytes, of
-which as many count as are full. 7 codes of 8 bits, the longest in plain text, and the 7 bits that
-may be left from before are 63 bits. If the lengths add up to more than 64 bits, the 7 bytes are
-coded again from what was left before them and written byte by byte. The last bytes go out the same
-way, with the padding. So its branches depend on the length of the text and not on the text.
+`encode` adds one code at a time to what is left too, but writes after every 7 bytes, whatever they
+are: 8 bytes, of which as many count as are full. 7 codes of 8 bits, the longest in plain text, and
+the 7 bits that may be left from before are 63 bits. If the lengths add up to more than 64 bits, the
+7 bytes are coded again from what was left before them and written byte by byte. The last bytes go
+out the same way, with the padding. So its branches depend on the length of the text and not on the
+text.
 
 What is left is one shift by a variable count per code, which waits for the one before it. Without
 BMI2, which no x64 build of Bun assumes, that is three micro-operations on Intel up to Ice Lake. From
@@ -229,24 +230,37 @@ this crate. The last two rows are `encode` against the plain loop, other strings
 
 | characters                | 1    | 2    | 3    | 4    | 6    | 8    | 12   | 16   | 24   | 32   | 48   | 63   |
 | ------------------------- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
-| the plain loop            | 6.3  | 7.8  | 10.4 | 13.6 | 18.1 | 19.4 | 26.2 | 33.4 | 44.2 | 58.0 | 85.7 | 110  |
-| `encode`                  | 6.9  | 7.7  | 8.5  | 9.1  | 11.1 | 13.5 | 16.8 | 21.2 | 30.0 | 39.4 | 63.5 | 81.2 |
-| C                         | 6.0  | 6.7  | 8.1  | 12.6 | 13.4 | 13.7 | 21.6 | 26.2 | 33.5 | 41.2 | 49.4 | 63.4 |
-| 512 KB touched in between | 1.02 | 1.01 | 1.00 | 0.96 | 0.95 | 0.94 | 0.92 | 0.90 | 0.84 | 0.79 | 0.76 | 0.77 |
-| 8 MB touched in between   | 1.01 | 1.01 | 1.02 | 0.96 | 0.96 | 1.00 | 0.95 | 0.96 | 0.97 | 0.97 | 1.00 | 0.98 |
+| the plain loop            | 6.3  | 7.8  | 10.1 | 13.6 | 18.0 | 19.4 | 26.3 | 33.2 | 44.2 | 57.8 | 85.8 | 109  |
+| `encode`                  | 6.8  | 7.4  | 8.1  | 8.7  | 10.2 | 12.4 | 15.3 | 19.9 | 26.7 | 33.6 | 47.2 | 60.9 |
+| C                         | 6.1  | 6.7  | 8.1  | 12.6 | 13.5 | 13.7 | 21.9 | 26.3 | 33.6 | 40.5 | 48.4 | 63.3 |
+| 512 KB touched in between | 1.02 | 1.00 | 0.98 | 0.94 | 0.89 | 0.90 | 0.85 | 0.86 | 0.80 | 0.75 | 0.70 | 0.69 |
+| 8 MB touched in between   | 0.97 | 1.00 | 0.99 | 1.00 | 1.01 | 0.97 | 0.96 | 1.00 | 0.96 | 0.96 | 0.90 | 0.98 |
 
-The last row is good to 4%. One character takes 0.6 ns longer than it did, for the wider write.
-`Encoder::encode` of a field with such a value takes 17 ns for 1 character as before, 36 instead of
-42 for 8, 65 instead of 85 for 32 and 104 instead of 138 for 63. `encode` is 250 bytes more code than
-the plain loop.
+The last row is good to 5%. One character takes 0.5 ns longer than with the plain loop, for the wider
+write. `Encoder::encode` of a field with such a value takes 17 ns for 1 character either way, 35
+instead of 41 for 8, 59 instead of 84 for 32 and 84 instead of 135 for 63. `encode` is 440 bytes more
+code than the plain loop.
+
+Other CPUs were not measured. What can be said without them is about the work, not about the
+mispredicted branches, which are the point. The loop over whole groups has 10.6 instructions per byte
+on x64 and 10.1 on arm64; the plain loop with its writes has 13.8 and 13.4. Under qemu, arm64 runs
+104 instructions for a literal of 1 character (the plain loop 98), 218 for 8 (249), 584 for 32 (692)
+and 1064 for 63 (1280). llvm-mca 18, which takes every branch as predicted, gives these cycles per
+byte. Its Intel models come to 4.3 cycles per byte for `encode`, where Emerald Rapids takes 2.2, so
+they are left out.
+
+|                | Zen 1, 2 | Zen 3, 4 | Cortex-A55 | A76  | Neoverse N1 | N2, V1, V2 | Ampere-1 |
+| -------------- | -------- | -------- | ---------- | ---- | ----------- | ---------- | -------- |
+| the plain loop | 3.46     | 2.31     | 19.8       | 4.91 | 3.01        | 2.21       | 3.68     |
+| `encode`       | 2.65     | 2.01     | 9.1        | 3.44 | 2.44        | 2.43       | 2.58     |
 
 What else was tried for short strings, against the plain loop.
 
-| what                                                          | result                                     |
-| ------------------------------------------------------------- | ------------------------------------------ |
-| the plain loop, only its last bytes written at once           | 0.65 to 0.9 up to 4 characters, 0.95 above |
-| 7 codes joined on the side, then added to what is left        | as now, but 1.11 to 1.27 for 1 character   |
-| a function that takes the 7 bytes and checks whether they fit | 1.03 of now: the slice is made every time  |
+| what                                                        | result                                                                                                  |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| the plain loop, only its last bytes written at once         | 0.65 to 0.9 up to 4 characters, 0.95 above                                                              |
+| 7 codes joined on the side, then added to what is left      | 1.11 to 1.27 for 1 character, 0.63 to 0.75 from 8 on                                                    |
+| one loop over the bytes that writes where the index says so | 0.64 to 0.75 from 8 on; 16 instructions per byte, 18 to 38% more cycles than the plain loop in llvm-mca |
 
 `Encoder::encode` of one field with a name from the static table and a value that is not in the
 dynamic table, in ns. "Before" is the plain loop alone.
@@ -281,11 +295,14 @@ loop there, up to 2000 characters: it has a cache miss for every other character
 
 And against the loop of `encode` alone, on Emerald Rapids:
 
-| characters                | 28   | 40   | 63   | 64   | 100  | 200  | 500  | 1000 | 4000 |
-| ------------------------- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- | ---- |
-| in a loop                 | 0.92 | 0.87 | 0.78 | 0.78 | 0.78 | 0.84 | 0.83 | 0.82 | 0.82 |
-| 512 KB touched in between | 1.08 | 1.05 | 0.95 | 1.00 | 0.95 | 0.91 | 0.85 | 0.83 | 0.82 |
-| 8 MB touched in between   | 1.17 | 1.21 | 1.15 | 1.23 | 1.14 | 1.14 | 1.05 | 0.99 | 0.90 |
+| characters                | 64   | 100  | 200  | 500  | 1000 | 4000 |
+| ------------------------- | ---- | ---- | ---- | ---- | ---- | ---- |
+| in a loop                 | 1.02 | 1.00 | 0.97 | 0.92 | 0.92 | 0.90 |
+| 512 KB touched in between | 1.10 | 1.07 | 1.00 | 0.95 | 0.92 | 0.91 |
+| 8 MB touched in between   | 1.21 | 1.28 | 1.18 | 1.11 | 1.03 | 0.97 |
+
+So there the groups pay only from 500 characters on. They are for Intel up to Ice Lake, where a shift
+by `cl` is three micro-operations. That comparison has not been measured.
 
 What else was tried for long strings, 1000 characters, against the plain loop alone, on Emerald
 Rapids.

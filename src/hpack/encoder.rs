@@ -11,11 +11,11 @@ use crate::{
 /// What the encoder may do with a field (§6.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Indexing {
-    /// Enters the dynamic table if it fits and the history, if there is one, admits it.
+    /// Enters the dynamic table, unless a table has it already, it does not fit, or the history keeps it out.
     Add,
     /// Left out of the table.
     Skip,
-    /// Spelled out and left out of the table, here and by whoever forwards it. For secrets (§7.1.3).
+    /// Its value is spelled out and it stays out of the table, here and with whoever forwards it. For secrets (§7.1.3).
     Never,
 }
 

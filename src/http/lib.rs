@@ -580,16 +580,13 @@ impl<'a> HTTPClientResult<'a> {
         }
     }
 
-    /// Widen the borrow to `'static` for self-referential storage.
+    /// Drops the borrowed `body` so the result can be stored past the callback.
     ///
     /// `body` is the only lifetime-carrying field; it borrows the HTTP
     /// thread's `decoded_body` scratch buffer, which is cleared immediately
     /// after the callback returns, so the stored form carries `body: &[]`.
-    ///
-    /// # Safety
-    /// Caller must not read `.body` from the returned value.
     #[inline]
-    pub unsafe fn detach_lifetime(self) -> HTTPClientResult<'static> {
+    pub fn without_borrowed_body(self) -> HTTPClientResult<'static> {
         HTTPClientResult {
             body: &[],
             body_owned: self.body_owned,

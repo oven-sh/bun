@@ -2145,8 +2145,7 @@ fn note_compile_cache_parse_failure(
 /// → `js_printer::print` → `ResolvedSource`.
 ///
 /// # Safety
-/// `jsc_vm` is the live per-thread VM; `args.extra` points at a live
-/// [`TranspileExtra`].
+/// `jsc_vm` is the live per-thread VM.
 #[unsafe(no_mangle)]
 unsafe fn __bun_transpile_source_code(
     jsc_vm: *mut VirtualMachine,
@@ -2179,8 +2178,8 @@ fn create_html_bundle(global_object: &JSGlobalObject, path: &[u8]) -> JSValue {
 
 /// Whether what is transpiled is static code (`ResolvedSource::is_static`), so that what is made of it is.
 fn is_input_static(jsc_vm: *mut VirtualMachine, args: &TranspileArgs<'_>) -> bool {
-    // SAFETY: as for `transpile_source_code_inner` — `jsc_vm` is the live per-thread VM and `extra` is live for the call.
-    let (vm, path) = unsafe { (&*jsc_vm, &(*args.extra).path) };
+    // SAFETY: as for `transpile_source_code_inner` — `jsc_vm` is the live per-thread VM.
+    let (vm, path) = (unsafe { &*jsc_vm }, &args.extra.path);
     match args.virtual_source {
         // The program itself, from `-e` or stdin. Any other is a plugin's text or a blob.
         Some(source) => vm
@@ -2202,11 +2201,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
     use Loader as L;
     let extra = args.extra;
 
-    // SAFETY: per fn contract — `extra` is a live `TranspileExtra` for the call.
-    let path: &Fs::Path = unsafe { &(*extra).path };
-    // SAFETY: per fn contract — `extra` is live for the call (see above).
-    let (loader, module_type): (Loader, ModuleType) =
-        unsafe { ((*extra).loader, (*extra).module_type) };
+    let path: &Fs::Path = &extra.path;
+    let (loader, module_type): (Loader, ModuleType) = (extra.loader.get(), extra.module_type.get());
 
     let disable_transpilying = args.flags.disable_transpiling();
     let specifier = args.specifier;
@@ -2631,15 +2627,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // `.wasm` discovered post-parse: recurse with
                 // the parsed source as virtual.
                 if parse_result.loader == L::Wasm {
-                    // SAFETY: per fn contract — `extra` is live for the call.
-                    let mut wasm_extra = unsafe {
-                        TranspileExtra {
-                            path: *path,
-                            loader: L::Wasm,
-                            module_type: ModuleType::Unknown,
-                            source_code_printer: (*extra).source_code_printer,
-                            promise_ptr: (*extra).promise_ptr,
-                        }
+                    let wasm_extra = TranspileExtra {
+                        path: *path,
+                        loader: Cell::new(L::Wasm),
+                        module_type: Cell::new(ModuleType::Unknown),
+                        source_code_printer: extra.source_code_printer,
+                        promise_ptr: extra.promise_ptr,
                     };
                     // Re-enter with `&parse_result.source` as `virtual_source`.
                     return transpile_source_code_inner::<DATA_ONLY>(
@@ -2652,7 +2645,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             virtual_source: Some(&parse_result.source),
                             global_object: args.global_object,
                             flags: args.flags,
-                            extra: &raw mut wasm_extra,
+                            extra: &wasm_extra,
                         },
                     );
                 }
@@ -2952,8 +2945,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // Pending imports → AsyncModule queue.
                 if parse_result.pending_imports.len() > 0 {
-                    // SAFETY: per fn contract — `extra` is live for the call.
-                    let promise_ptr = unsafe { &*extra }.promise_ptr;
+                    let promise_ptr = extra.promise_ptr;
                     // The queue outlives this call, and a virtual source's bytes do not.
                     if promise_ptr.is_null() || virtual_source.is_some() {
                         return Err(crate::Error::UnexpectedPendingResolution);
@@ -3044,11 +3036,11 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // contract.
                 // Note: do NOT bind a long-lived `&mut BufferPrinter`
                 // here — the `source_map_handler` / `print_with_source_map`
-                // calls below each rederive `&mut *(*extra).source_code_printer`
+                // calls below each rederive `&mut *extra.source_code_printer`
                 // from the raw pointer, which would invalidate any earlier
                 // Unique tag under Stacked Borrows. Rederive at each use-site
                 // instead (reset, mapper, print, get_written).
-                unsafe { (*(*extra).source_code_printer).ctx.reset() };
+                unsafe { (*extra.source_code_printer).ctx.reset() };
                 // Install the VM's sourcemap handler on the printer, then
                 // print the parse result (ESM, ASCII) with sourcemaps.
                 //
@@ -3056,7 +3048,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // the getter's lifetime, but the print call also needs
                 // `&mut vm.transpiler` and `&mut printer`. Per the raw-ptr
                 // aliasing convention at the top of this fn (see fn-level PORT
-                // NOTE), rederive from `jsc_vm`/`extra` raw ptrs at each
+                // NOTE), rederive from the `jsc_vm`/printer raw ptrs at each
                 // use-site so borrowck sees disjoint temporaries; the getter
                 // itself only stashes raw pointers (VirtualMachine.rs
                 // `SourceMapHandlerGetter`).
@@ -3072,12 +3064,12 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // this block returns, the `printer` binding is rederived from
                 // the raw pointer below — any earlier Unique tag is dead.
                 {
-                    // SAFETY: `jsc_vm` / `(*extra).source_code_printer` are live
+                    // SAFETY: `jsc_vm` / `extra.source_code_printer` are live
                     // for the call (fn contract); `mapper` does not escape this
                     // scope, so the unbounded `'a` from the raw-deref reborrow
                     // is bounded by the block.
                     let mut mapper =
-                        unsafe { (*jsc_vm).source_map_handler((*extra).source_code_printer) };
+                        unsafe { (*jsc_vm).source_map_handler(extra.source_code_printer) };
                     // SAFETY: per fn contract — `jsc_vm` / `extra.source_code_printer`
                     // are live; the printer borrow is scoped to this call.
                     let print_result = unsafe {
@@ -3088,7 +3080,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                             // the per-VM `transpiler_arena`.
                             &arena_guard.1,
                             parse_result,
-                            &mut *(*extra).source_code_printer,
+                            &mut *extra.source_code_printer,
                             bun_js_printer::Format::EsmAscii,
                             mapper.get(),
                             module_info_ptr,
@@ -3116,7 +3108,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                     // `TranspileExtra` contract; rederive after the print block
                     // (Stacked Borrows — see the matching note below).
                     let printer: &mut bun_js_printer::BufferPrinter =
-                        unsafe { &mut *(*extra).source_code_printer };
+                        unsafe { &mut *extra.source_code_printer };
                     let written = printer.ctx.get_written();
                     let node_compile_cache_blob = if bun_jsc::node_compile_cache::is_enabled()
                         && path.is_file()
@@ -3198,7 +3190,7 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 // earlier Unique tag under Stacked Borrows, so reading through
                 // a pre-print binding here would be UB.
                 let printer: &mut bun_js_printer::BufferPrinter =
-                    unsafe { &mut *(*extra).source_code_printer };
+                    unsafe { &mut *extra.source_code_printer };
                 let written = printer.ctx.get_written();
                 // Node compile cache hook (sync transpile path). `fetch` copies
                 // `written`; the printer may be replaced below.
@@ -3292,11 +3284,8 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
                 }
             }
             // Recurse as `.file`.
-            // SAFETY: per fn contract — `extra` is live for the call.
-            unsafe {
-                (*extra).loader = L::File;
-                (*extra).module_type = ModuleType::Unknown;
-            }
+            extra.loader.set(L::File);
+            extra.module_type.set(ModuleType::Unknown);
             transpile_source_code_inner::<DATA_ONLY>(jsc_vm, args)
         }
 
@@ -4603,10 +4592,10 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
 
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
     let mut promise: *mut JSInternalPromise = ptr::null_mut();
-    let mut extra = TranspileExtra {
+    let extra = TranspileExtra {
         path: lr.path,
-        loader: synchronous_loader,
-        module_type,
+        loader: Cell::new(synchronous_loader),
+        module_type: Cell::new(module_type),
         source_code_printer: printer_ptr,
         // Resolving a package asynchronously is the global object's loader's only.
         promise_ptr: if allow_promise && module_loader.is_empty() {
@@ -4623,7 +4612,7 @@ unsafe fn transpile_file<const DATA_ONLY: bool>(
         virtual_source: lr.virtual_source,
         global_object: global,
         flags: FetchFlags::Transpile,
-        extra: &raw mut extra,
+        extra: &extra,
     };
 
     match transpile_source_code_inner::<DATA_ONLY>(jsc_vm, &args) {
@@ -4743,10 +4732,10 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     });
 
     // ── `ModuleLoader.transpileSourceCode(...)` ─────────────────────────────
-    let mut extra = TranspileExtra {
+    let extra = TranspileExtra {
         path,
-        loader,
-        module_type: ModuleType::Unknown,
+        loader: Cell::new(loader),
+        module_type: Cell::new(ModuleType::Unknown),
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution
     };
@@ -4758,7 +4747,7 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
         virtual_source: Some(&virtual_source),
         global_object: global,
         flags: FetchFlags::Transpile,
-        extra: &raw mut extra,
+        extra: &extra,
     };
 
     match transpile_source_code_inner::<false>(jsc_vm, &args) {

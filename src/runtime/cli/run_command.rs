@@ -3808,7 +3808,7 @@ impl RunCommand {
         }
 
         let mut results = ResultList::new();
-        let mut descriptions: Vec<&[u8]> = Vec::new();
+        let mut descriptions: Vec<&'static [u8]> = Vec::new();
 
         if FILTER != Filter::ScriptExclude {
             if let Some(defaults) = default_completions {
@@ -4046,41 +4046,17 @@ impl RunCommand {
         this_transpiler.resolver.care_about_bin_folder = false;
         this_transpiler.resolver.care_about_scripts = false;
 
-        // `ShellCompletions` stores `&'static [&'static [u8]]`; the
-        // keys interned into `filename_store` / boxed from static tables outlive
-        // the process. The owning `results` ArrayHashMap is held in a process-
-        // lifetime arena slot so the borrowed keys remain valid.
-        let mut all_keys: Vec<&'static [u8]> = results
-            .keys()
-            .iter()
-            .map(|k| -> &'static [u8] {
-                // SAFETY: every key is a freshly-boxed `Box<[u8]>` owned by
-                // `results`. The owning `ArrayHashMap` is parked in the
-                // process-lifetime `runner_arena()` below and `bun_alloc::Arena`
-                // never runs `Drop`, so the boxed bytes live until process
-                // exit and erasing to `'static` is sound.
-                unsafe { ::core::slice::from_raw_parts(k.as_ptr(), k.len()) }
-            })
-            .collect();
-        strings::sort_asc(&mut all_keys);
-        // Park the owning maps in the runner arena (process-lifetime) so the
-        // `'static` slices above remain valid without leaking/forgetting.
-        let parked = runner_arena().alloc(results);
+        // `ShellCompletions` borrows the keys for `'static`: the arena never runs `Drop`.
+        let results: &'static ResultList = runner_arena().alloc(results);
         bun_core::asan::register_root_region(
-            std::ptr::from_ref::<ResultList>(parked).cast(),
+            std::ptr::from_ref::<ResultList>(results).cast(),
             ::core::mem::size_of::<ResultList>(),
         );
+        let mut all_keys: Vec<&'static [u8]> = results.keys().iter().map(|k| &**k).collect();
+        strings::sort_asc(&mut all_keys);
         shell_out.commands = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&all_keys));
-        shell_out.descriptions = std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(
-            // SAFETY: descriptions borrow into the package.json source buffer
-            // (process-lifetime); erase to `'static`.
-            unsafe {
-                ::core::slice::from_raw_parts(
-                    descriptions.as_ptr().cast::<&'static [u8]>(),
-                    descriptions.len(),
-                )
-            },
-        ));
+        shell_out.descriptions =
+            std::borrow::Cow::Borrowed(runner_arena().alloc_slice_copy(&descriptions));
 
         Ok(shell_out)
     }

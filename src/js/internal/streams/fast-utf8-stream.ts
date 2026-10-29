@@ -27,6 +27,23 @@ const kMaxWrite = 16 * 1024;
 const kContentModeBuffer = "buffer";
 const kContentModeUtf8 = "utf8";
 const kNullPrototype = { __proto__: null };
+const kFlush = Symbol("kFlush");
+
+// fsync() error codes meaning the file descriptor cannot be synchronized
+// (e.g. it is a pipe, socket, or TTY) or has already been closed. These are
+// not treated as flush failures.
+function isIgnorableFsyncError(err) {
+  switch (err?.code) {
+    case "EBADF":
+    case "EINVAL":
+    case "ENOTSUP":
+    case "EOPNOTSUPP":
+    case "EROFS":
+      return true;
+    default:
+      return false;
+  }
+}
 
 // A synchronous sleep, used only on the EAGAIN/EBUSY retry paths.
 function sleep(ms) {
@@ -63,7 +80,9 @@ class Utf8Stream extends EventEmitter {
   #ending = false;
   #reopening = false;
   #asyncDrainScheduled = false;
-  #flushPending = false;
+  #flushPending = 0;
+  #flushInProgress = 0;
+  #emittingFlush = false;
   #hwm = 16387; // 16 KB
   #file = null;
   #destroyed = false;
@@ -81,7 +100,7 @@ class Utf8Stream extends EventEmitter {
   #mkdir = false;
   #writingBuf: any = "";
   #write: (data: string | Uint8Array) => boolean;
-  #flush: (cb: FlushCallback | null) => void;
+  #flush: (cb: FlushCallback) => void;
   #flushSync: () => void;
   #actualWrite: () => void;
   #fsWriteSync: () => number;
@@ -200,7 +219,11 @@ class Utf8Stream extends EventEmitter {
     });
 
     if (this.#periodicFlush !== 0) {
-      this.#periodicFlushTimer = setInterval(() => this.flush(null), this.#periodicFlush);
+      this.#periodicFlushTimer = setInterval(() => {
+        if (this.#flushPending === 0 && this.#flushInProgress === 0) {
+          this.flush();
+        }
+      }, this.#periodicFlush);
       this.#periodicFlushTimer!.unref();
     }
   }
@@ -209,7 +232,7 @@ class Utf8Stream extends EventEmitter {
     return this.#write(data);
   }
 
-  flush(cb: ((err?: Error | null) => void) | null = function (_err) {}) {
+  flush(cb: FlushCallback = function (_err) {}) {
     this.#flush(cb);
   }
 
@@ -223,7 +246,9 @@ class Utf8Stream extends EventEmitter {
     }
 
     if (this.#opening) {
-      this.once("ready", () => this.reopen(file));
+      this.once("ready", () => {
+        if (!this.#destroyed) this.reopen(file);
+      });
       return;
     }
 
@@ -265,7 +290,7 @@ class Utf8Stream extends EventEmitter {
 
     if (this.#opening) {
       this.once("ready", () => {
-        this.end();
+        if (!this.#destroyed) this.end();
       });
       return;
     }
@@ -283,7 +308,7 @@ class Utf8Stream extends EventEmitter {
     if (this.#len > 0 && this.#fd >= 0) {
       this.#actualWrite();
     } else {
-      this.#actualClose();
+      this.#finishEnding();
     }
   }
 
@@ -291,7 +316,11 @@ class Utf8Stream extends EventEmitter {
     if (this.#destroyed) {
       return;
     }
+    const opening = this.#opening;
     this.#actualClose();
+    if (opening && this.#flushPending > 0) {
+      this.emit("error", $ERR_INVALID_STATE("Utf8Stream is destroyed"));
+    }
   }
 
   get mode() {
@@ -398,6 +427,18 @@ class Utf8Stream extends EventEmitter {
       }
     }
 
+    if (this.#destroyed) {
+      this.#writing = false;
+      if (this.#flushPending > 0) {
+        if (this.#len === 0) {
+          this.#scheduleDrain();
+        } else {
+          this.emit("error", $ERR_INVALID_STATE("Utf8Stream is destroyed"));
+        }
+      }
+      return;
+    }
+
     if (this.#fsync) {
       this.#fs.fsyncSync(this.#fd);
     }
@@ -407,25 +448,18 @@ class Utf8Stream extends EventEmitter {
       this.#writing = false;
       this.#reopening = false;
       this.reopen();
-    } else if (len > this.#minLength) {
+    } else if (len > 0 && (len > this.#minLength || this.#flushPending)) {
       this.#actualWrite();
     } else if (this.#ending) {
       if (len > 0) {
         this.#actualWrite();
       } else {
         this.#writing = false;
-        this.#actualClose();
+        this.#finishEnding();
       }
     } else {
       this.#writing = false;
-      if (this.#sync) {
-        if (!this.#asyncDrainScheduled) {
-          this.#asyncDrainScheduled = true;
-          process.nextTick(() => this.#emitDrain());
-        }
-      } else {
-        this.emit("drain");
-      }
+      this.#scheduleDrain();
     }
   }
 
@@ -473,14 +507,12 @@ class Utf8Stream extends EventEmitter {
       }
 
       // start
-      if ((!this.#writing && this.#len > this.#minLength) || this.#flushPending) {
+      if (!this.#writing && (this.#len > this.#minLength || this.#flushPending)) {
         this.#actualWrite();
-      } else if (reopening) {
+      } else if (reopening && !this.#writing) {
         // A 'ready' listener may have started a write; that write's completion
         // emits 'drain', so don't announce an empty buffer while it is in flight.
-        process.nextTick(() => {
-          if (!this.#writing) this.emit("drain");
-        });
+        process.nextTick(() => this.#emitDrain());
       }
     };
 
@@ -506,16 +538,58 @@ class Utf8Stream extends EventEmitter {
     }
   }
 
+  #scheduleDrain() {
+    if (this.#sync) {
+      if (!this.#asyncDrainScheduled) {
+        this.#asyncDrainScheduled = true;
+        process.nextTick(() => this.#emitDrain());
+      }
+    } else {
+      this.#emitDrain();
+    }
+  }
+
   #emitDrain() {
+    this.#asyncDrainScheduled = false;
+    if (this.#writing) return;
+    this.#emitFlush();
+    if (this.#writing || this.#destroyed) return;
     const hasListeners = this.listenerCount("drain") > 0;
     if (!hasListeners) return;
-    this.#asyncDrainScheduled = false;
     this.emit("drain");
   }
 
+  #finishEnding() {
+    if (!this.#ending || this.#writing || this.#destroyed) return;
+    if (this.#len > 0) {
+      this.#actualWrite();
+      return;
+    }
+    if (this.#flushPending > 0) this.#emitFlush();
+    if (this.#flushPending === 0 && this.#flushInProgress === 0 && !this.#writing && this.#len === 0) {
+      this.#actualClose();
+    }
+  }
+
+  #emitFlush() {
+    if (this.#emittingFlush) return;
+    this.#emittingFlush = true;
+    try {
+      this.emit(kFlush);
+    } finally {
+      this.#emittingFlush = false;
+    }
+  }
+
   #actualClose() {
+    if (this.#destroyed) return;
+
     if (this.#fd === -1) {
-      this.once("ready", () => this.#actualClose());
+      this.#destroyed = true;
+      this.once("ready", () => {
+        this.#destroyed = false;
+        this.#actualClose();
+      });
       return;
     }
 
@@ -557,7 +631,10 @@ class Utf8Stream extends EventEmitter {
 
   #actualWriteBuffer() {
     this.#writing = true;
-    this.#writingBuf = this.#writingBuf.length ? this.#writingBuf : mergeBuf(this.#bufs.shift(), this.#lens.shift());
+    if (!this.#writingBuf.length) {
+      // A flush registered while the file opens finds nothing queued. Node v26.12.1 throws in mergeBuf here.
+      this.#writingBuf = this.#bufs.length ? mergeBuf(this.#bufs.shift(), this.#lens.shift()) : kEmptyBuffer;
+    }
 
     if (this.#sync) {
       try {
@@ -602,6 +679,7 @@ class Utf8Stream extends EventEmitter {
 
     if (!this.#writing && this.#writingBuf.length > 0) {
       this.#bufs.unshift([this.#writingBuf]);
+      this.#lens.unshift(this.#writingBuf.length);
       this.#writingBuf = kEmptyBuffer;
     }
 
@@ -676,41 +754,60 @@ class Utf8Stream extends EventEmitter {
   }
 
   #callFlushCallbackOnDrain(cb: FlushCallback) {
-    this.#flushPending = true;
+    this.#flushPending++;
+    let waiting = true;
+    let completed = false;
+    let flushing = false;
+    const stopWaiting = () => {
+      if (!waiting) return false;
+      waiting = false;
+      this.off(kFlush, onDrain);
+      this.off("error", onError);
+      return true;
+    };
+    const complete = (err?: Error | null, finish = true) => {
+      if (completed) return;
+      completed = true;
+      if (flushing) this.#flushInProgress--;
+      try {
+        cb(err);
+      } finally {
+        if (finish) this.#finishEnding();
+      }
+    };
     const onDrain = () => {
+      if (!stopWaiting()) return;
+      this.#flushPending--;
+      this.#flushInProgress++;
+      flushing = true;
       // Only if fsync is false to avoid double fsync
       if (!this.#fsync && !this.#destroyed) {
         try {
           this.#fs.fsync(this.#fd, err => {
-            this.#flushPending = false;
-            // If the fd is closed, we ignore the error.
-            if (err?.code === "EBADF") {
-              cb();
+            if (isIgnorableFsyncError(err)) {
+              complete();
               return;
             }
-            cb(err);
+            complete(err);
           });
         } catch (err) {
-          this.#flushPending = false;
-          cb(err as Error);
+          complete(err as Error);
         }
       } else {
-        this.#flushPending = false;
-        cb();
+        complete();
       }
-      this.off("error", onError);
     };
     const onError = (err: Error) => {
-      this.#flushPending = false;
-      cb(err);
-      this.off("drain", onDrain);
+      if (!stopWaiting()) return;
+      this.#flushPending--;
+      complete(err, false);
     };
 
-    this.once("drain", onDrain);
+    this.once(kFlush, onDrain);
     this.once("error", onError);
   }
 
-  #flushBuffer(cb: FlushCallback | null) {
+  #flushBuffer(cb: FlushCallback) {
     validateFunction(cb, "cb");
 
     if (this.#destroyed) {
@@ -723,7 +820,7 @@ class Utf8Stream extends EventEmitter {
       throw error;
     }
 
-    if (this.#minLength <= 0) {
+    if (this.#minLength <= 0 && !this.#writing && this.#len === 0) {
       cb?.();
       return;
     }
@@ -744,7 +841,7 @@ class Utf8Stream extends EventEmitter {
     this.#actualWrite();
   }
 
-  #flushUtf8(cb: FlushCallback | null) {
+  #flushUtf8(cb: FlushCallback) {
     validateFunction(cb, "cb");
 
     if (this.#destroyed) {
@@ -757,7 +854,7 @@ class Utf8Stream extends EventEmitter {
       throw error;
     }
 
-    if (this.#minLength <= 0) {
+    if (this.#minLength <= 0 && !this.#writing && this.#len === 0) {
       cb?.();
       return;
     }
@@ -797,7 +894,7 @@ class Utf8Stream extends EventEmitter {
     }
 
     if (bufs.length === 0 || lens[lens.length - 1] + dataLength > this.#maxWrite) {
-      bufs.push([]);
+      bufs.push([data]);
       lens.push(dataLength);
     } else {
       (bufs[bufs.length - 1] as Uint8Array[]).push(data);

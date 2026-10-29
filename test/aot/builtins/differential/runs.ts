@@ -1,6 +1,6 @@
 import type { Candidate } from "./instances";
 import type { Log } from "./log";
-import type { Snapshot } from "./snapshots";
+import { compareSnapshots, type Change, type Snapshot } from "./snapshots";
 import type { OperandName } from "./table-description";
 
 export type Completion = { kind: "Returned"; value: unknown } | { kind: "Threw"; error: unknown };
@@ -24,6 +24,13 @@ export type Run = {
   yielded: unknown[];
   hasChangedRegExpState: boolean;
 };
+
+const changesOfRuns = new WeakMap<Run, Change[]>();
+
+/** What is different in the operands, and in what they reach, behind the call. */
+export function changesIn(run: Run): Change[] {
+  return changesOfRuns.getOrInsertComputed(run, () => compareSnapshots(run.before, run.after));
+}
 
 export function candidateOf(set: OperandSet, operand: OperandName): Candidate | undefined {
   return operand === "this" ? set.receiver : set.arguments[operand];

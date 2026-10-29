@@ -4,17 +4,14 @@ import { afterAll, expect } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { compileCommand } from "./harness/flags";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
+import { buildEnvironment, compileCommand } from "./harness/flags";
 import { describe, test } from "./supported";
 
 describe("compile/aot/a build that verifies each pass stops where an operation that may throw goes", () => {
   const root = String(tempDir("aot-operations-that-go", {}));
   afterAll(() => rmSync(root, { recursive: true, force: true }));
-  const program = join(
-    import.meta.dir,
-    "programs/conditions-of-passes/lists-of-constants-answer-what-they-hold-now.ts",
-  );
+  const program = join(import.meta.dir, "parallel/pass-conditions/lists-of-constants-answer-what-hold-now.ts");
   const build = (...flags: string[]) =>
     spawned(
       [
@@ -27,7 +24,7 @@ describe("compile/aot/a build that verifies each pass stops where an operation t
         join(root, isWindows ? "program.exe" : "program"),
       ],
       root,
-      bunEnv,
+      { ...bunEnv, [buildEnvironment.logsPhaseTimes]: "1" },
     );
 
   test("with the sabotage", async () => {
@@ -36,6 +33,9 @@ describe("compile/aot/a build that verifies each pass stops where an operation t
     expect(result.stderr + result.stdout).toMatch(
       /verification failed after \w+; function '\w+' \(f\d+\); v\d+ \(\w+\) in b\d+ may throw or run code, and is gone/,
     );
+    // An internal error ends the build where it is found: nothing is compiled a second time.
+    const lines = (result.stderr + result.stdout).split("\n");
+    expect(lines.filter(line => line.startsWith("AOT flow round 1 ")).length).toBe(1);
   }, 600_000);
 
   test("without it", async () => {

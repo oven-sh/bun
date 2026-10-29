@@ -1,4 +1,5 @@
-// For ../flow-schedules.test.ts and ../servers/schedules.test.ts: one program built under the usual schedule of flow's rules and under three others.
+// One program built under the usual schedule of flow's rules and under three others. What flow finds may not hang on the order in which its rules run: `--aot-testing=DelayFlowRules`,
+// `DelayOtherFlowRules` and both together are three other valid schedules, under which about half of the rules that are due in a round wait for a later one.
 import { expect } from "bun:test";
 import { bunExe, isWindows } from "harness";
 import { join } from "node:path";
@@ -26,17 +27,42 @@ export async function buildUnderEachSchedule(name: string, directory: string, en
     Object.entries(schedules).map(async ([schedule, switches]) => {
       const executable = join(directory, `${name}-${schedule}${isWindows ? ".exe" : ""}`);
       const report = join(directory, `${name}-${schedule}.report.json`);
-      const result = await run([bunExe(), "build", "--compile", "--aot", ...flags, ...switches, "--aot-report=" + report, entry, "--outfile", executable], directory);
-      expect({ schedule, errors: result.errors, exitCode: result.exitCode }).toEqual({ schedule, errors: [], exitCode: 0 });
+      const result = await run(
+        [
+          bunExe(),
+          "build",
+          "--compile",
+          "--aot",
+          ...flags,
+          ...switches,
+          "--aot-report=" + report,
+          entry,
+          "--outfile",
+          executable,
+        ],
+        directory,
+      );
+      expect({ schedule, errors: result.errors, exitCode: result.exitCode }).toEqual({
+        schedule,
+        errors: [],
+        exitCode: 0,
+      });
       const { summary } = (await Bun.file(report).json()) as { summary: { codeBytes: number; functions: number } };
       return { schedule, executable, codeBytes: summary.codeBytes, functions: summary.functions };
     }),
   );
   const usual = built[0];
-  console.log(`SCHEDULES ${name}: code ${built.map(it => it.codeBytes).join(" | ")} B, functions ${built.map(it => it.functions).join(" | ")} (${Object.keys(schedules).join(" | ")})`);
+  console.log(
+    `SCHEDULES ${name}: code ${built.map(it => it.codeBytes).join(" | ")} B, functions ${built.map(it => it.functions).join(" | ")} (${Object.keys(schedules).join(" | ")})`,
+  );
   for (const other of built.slice(1)) {
     const spread = Math.abs(other.codeBytes - usual.codeBytes) / usual.codeBytes;
-    expect({ schedule: other.schedule, codeBytes: other.codeBytes, usual: usual.codeBytes, within: spread <= mostSpread }).toEqual({
+    expect({
+      schedule: other.schedule,
+      codeBytes: other.codeBytes,
+      usual: usual.codeBytes,
+      within: spread <= mostSpread,
+    }).toEqual({
       schedule: other.schedule,
       codeBytes: other.codeBytes,
       usual: usual.codeBytes,

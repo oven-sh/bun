@@ -3,7 +3,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { built, slot, spawned, unsupported, withoutCoreDump } from "./run-programs";
+import { built, slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
 
 const programs: Record<string, { main: string; files: Record<string, string>; stdout: string; flags?: string[] }> = {
   "async generators that hand on to each other, taken by hand and by for await": {

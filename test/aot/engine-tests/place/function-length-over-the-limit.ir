@@ -1,0 +1,16 @@
+# A function object records in 16 bits how many parameters its function declares. A function that declares one more is an error of the build that names the limit
+# RUN: compile
+# DIAGNOSTIC: LimitExceeded 1
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = NewClosure function=f1
+    PropSet v0, v1 key="kept" mode=Strict @10
+    Return
+}
+function f1 name="many" length=65536 thisType={type=anything} results=[{type=anything}] {
+    v0 = Integer integer=1
+    Return v0
+}

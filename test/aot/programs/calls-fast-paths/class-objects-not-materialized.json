@@ -1,6 +1,0 @@
-{
-  "env": {
-    "JSC_seedOfVMRandomForFuzzer": "4194303"
-  },
-  "erased": "as plain Bun"
-}

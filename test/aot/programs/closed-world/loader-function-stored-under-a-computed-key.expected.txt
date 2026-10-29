@@ -1,4 +1,0 @@
-a property of the program's own: 1
-Module._resolveFilename: function
-Module.prototype.require: function
-a require with a constant name: b.txt

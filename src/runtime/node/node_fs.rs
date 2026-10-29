@@ -403,6 +403,14 @@ fn is_in_executable(path: &[u8]) -> bool {
         .is_some_and(|graph| graph.contains_file(path) || graph.find_dir(path))
 }
 
+/// What the executable holds lies on the file system that holds the executable.
+fn path_for_statfs<'a>(path: &'a PathLike<'_>, buf: &'a mut PathBuffer) -> &'a ZStr {
+    match bun_core::self_exe_path() {
+        Ok(executable) if is_in_executable(path.slice()) => executable,
+        _ => path.slice_z(buf),
+    }
+}
+
 fn lies_below_embedded_file(path: &[u8]) -> bool {
     let Some(graph) = graph_in_front_of_disk(path) else {
         return false;
@@ -417,7 +425,7 @@ fn lies_below_embedded_file(path: &[u8]) -> bool {
     false
 }
 
-/// An error names each path as the caller wrote it, and nothing lies below a file.
+/// An error names each path as the caller wrote it, and nothing lies below a file: ENOTDIR, which Windows reports as ENOENT.
 pub(crate) fn error_for_caller(
     paths: [Option<&PathLike<'_>>; 2],
     mut err: sys::Error,
@@ -425,7 +433,8 @@ pub(crate) fn error_for_caller(
     if standalone_module_graph().is_none() {
         return err;
     }
-    if err.get_errno() == E::ENOENT
+    if cfg!(not(windows))
+        && err.get_errno() == E::ENOENT
         && (lies_below_embedded_file(&err.path) || lies_below_embedded_file(&err.dest))
     {
         err.errno = E::ENOTDIR as _;
@@ -435,7 +444,9 @@ pub(crate) fn error_for_caller(
             continue;
         };
         for shown in [&mut err.path, &mut err.dest] {
-            if let Some(below) = shown.strip_prefix(path.joined.as_slice())
+            // Some calls on Windows hand the system the path behind `\\?\`.
+            let joined = shown.strip_prefix(b"\\\\?\\").unwrap_or(&shown[..]);
+            if let Some(below) = joined.strip_prefix(path.joined.as_slice())
                 && (below.is_empty() || bun_paths::is_sep_any(below[0]))
             {
                 *shown = [path.written.as_slice(), below].concat().into_boxed_slice();
@@ -1242,9 +1253,9 @@ mod _async_tasks {
                     let args: &args::StatFS = args_as!(args::StatFS);
                     // SAFETY (R-2): single-JS-thread `JsCell` projection; held only
                     // across the libuv enqueue (copies `path` internally).
-                    let path = args
-                        .path
-                        .slice_z(unsafe { &mut binding.node_fs.get_mut().sync_error_buf });
+                    let path = path_for_statfs(&args.path, unsafe {
+                        &mut binding.node_fs.get_mut().sync_error_buf
+                    });
                     // SAFETY: libuv copies `path` internally before return.
                     let rc = unsafe {
                         uv::uv_fs_statfs(
@@ -8340,12 +8351,7 @@ impl NodeFS {
     }
 
     pub(crate) fn statfs(&mut self, args: &args::StatFS, _: Flavor) -> Maybe<ret::StatFS> {
-        // What the executable holds lies on the file system that holds the executable.
-        let path = match bun_core::self_exe_path() {
-            Ok(executable) if is_in_executable(args.path.slice()) => executable,
-            _ => args.path.slice_z(&mut self.sync_error_buf),
-        };
-        match Syscall::statfs(path) {
+        match Syscall::statfs(path_for_statfs(&args.path, &mut self.sync_error_buf)) {
             Ok(result) => Ok(ret::StatFS::init(&result, args.big_int)),
             Err(err) => Err(err),
         }
@@ -9704,7 +9710,7 @@ impl NodeFS {
 
     #[cfg(windows)]
     #[inline]
-    pub(crate) fn uv_dispatch<R, A, const F: NodeFSFunctionEnum>(
+    pub(crate) fn uv_dispatch<R, A: FsArgument, const F: NodeFSFunctionEnum>(
         &mut self,
         args: &A,
         rc: uv::ReturnCodeI64,
@@ -9713,6 +9719,7 @@ impl NodeFS {
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
         <Op<{ F }> as NodeFSDispatch<R, A>>::run_uv(self, args, rc)
+            .map_err(|err| error_for_caller(args.paths(), err))
     }
 
     /// Variant of [`Self::uv_dispatch`] for `uv_callbackreq` — passes the live
@@ -9720,7 +9727,7 @@ impl NodeFS {
     /// needs it).
     #[cfg(windows)]
     #[inline]
-    pub(crate) fn uv_dispatch_req<R, A, const F: NodeFSFunctionEnum>(
+    pub(crate) fn uv_dispatch_req<R, A: FsArgument, const F: NodeFSFunctionEnum>(
         &mut self,
         args: &A,
         req: &mut uv::fs_t,
@@ -9730,6 +9737,7 @@ impl NodeFS {
         Op<{ F }>: NodeFSDispatch<R, A>,
     {
         <Op<{ F }> as NodeFSDispatch<R, A>>::run_uv_req(self, args, req, rc)
+            .map_err(|err| error_for_caller(args.paths(), err))
     }
 }
 

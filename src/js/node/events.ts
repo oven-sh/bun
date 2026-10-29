@@ -347,12 +347,16 @@ let isCaptureKeptOutOfEmit = false;
 
 function addCatch(emitter: $Node.EventEmitter, promise: Promise<unknown>, type: $Node.EventName, args: unknown[]) {
   if (!IS_COMPILED_AHEAD_OF_TIME && !isCaptureKeptOutOfEmit) {
-    // The JIT inlines emit() into its callers only while emit() is small, and these inlined into it make it large.
     isCaptureKeptOutOfEmit = true;
-    const { noInline } = require("bun:jsc");
-    noInline(arrayOf);
-    noInline(addCatch);
-    noInline(emitErrorApplied);
+    try {
+      // The JIT inlines emit() into its callers only while emit() is small, and these inlined into it make it large.
+      const { noInline } = require("bun:jsc");
+      noInline(arrayOf);
+      noInline(addCatch);
+      noInline(emitErrorApplied);
+    } catch {
+      // An executable that `--trim` built without bun:jsc: the three stay as they are.
+    }
   }
   promise.then(undefined, function (err) {
     // The callback is called with nextTick to avoid a follow-up rejection from this promise.

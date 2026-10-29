@@ -444,37 +444,59 @@ impl EventLoop {
         }
 
         jsc::mark_binding();
+        if self.drain_microtasks_once(vm, global_object, jsc_vm)? {
+            return self.run_pending_test_steps();
+        }
+        Ok(())
+    }
+
+    /// Returns whether `bun test` has a test or hook to run next.
+    #[inline(always)]
+    fn drain_microtasks_once(
+        &mut self,
+        vm: &VirtualMachine,
+        global_object: &JSGlobalObject,
+        jsc_vm: &jsc::VM,
+    ) -> Result<bool, Stopped> {
+        jsc_vm.release_weak_refs();
+
+        match JSC__JSGlobalObject__drainMicrotasks(global_object) {
+            drain_result::SUCCESS => {}
+            drain_result::STOPPED => return Err(Stopped),
+            // The exception is on its way to a fold, which drains after taking
+            // it; the deferred tasks wait for that checkpoint too.
+            drain_result::PENDING_EXCEPTION => return Ok(false),
+            _ => unreachable!(),
+        }
+
+        // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
+        // overlap `&mut self: EventLoop`, which is a value field of the VM).
+        vm.is_inside_deferred_task_queue.set(true);
+        self.deferred_tasks.run();
+        vm.is_inside_deferred_task_queue.set(false);
+
+        // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
+        // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
+        // `event_loop_handle` (which is the libuv loop).
+        if vm.event_loop_handle.is_some() {
+            vm.uws_loop_mut().drain_quic_if_necessary();
+        }
+
+        // Through `self`: `vm` would need one more saved register to outlive the calls above.
+        Ok(self.vm_ref().has_pending_test_step.get())
+    }
+
+    /// Runs the next test or hook before any other timer or I/O callback.
+    /// Jest and Vitest chain them with promises, so nothing runs in between.
+    /// Out of line, so that `drain_microtasks_with_global` needs no larger frame for it in programs that are not `bun test`.
+    #[cold]
+    #[inline(never)]
+    fn run_pending_test_steps(&mut self) -> Result<(), Stopped> {
+        let vm = self.vm_ref();
+        let global_object = self.global_ref();
+        let jsc_vm = vm.jsc_vm();
         loop {
-            jsc_vm.release_weak_refs();
-
-            match JSC__JSGlobalObject__drainMicrotasks(global_object) {
-                drain_result::SUCCESS => {}
-                drain_result::STOPPED => return Err(Stopped),
-                // The exception is on its way to a fold, which drains after taking
-                // it; the deferred tasks wait for that checkpoint too.
-                drain_result::PENDING_EXCEPTION => return Ok(()),
-                _ => unreachable!(),
-            }
-
-            // `Cell` write through `&VirtualMachine` — no `&mut VM` formed (would
-            // overlap `&mut self: EventLoop`, which is a value field of the VM).
-            vm.is_inside_deferred_task_queue.set(true);
-            self.deferred_tasks.run();
-            vm.is_inside_deferred_task_queue.set(false);
-
-            // Guard on `event_loop_handle` being set, but drain via `uws_loop_mut()`:
-            // on Windows the uSockets loop (`uws::Loop::get()`) is NOT
-            // `event_loop_handle` (which is the libuv loop).
-            if vm.event_loop_handle.is_some() {
-                vm.uws_loop_mut().drain_quic_if_necessary();
-            }
-
-            // Run the next test or hook before any other timer or I/O callback.
-            // Jest and Vitest chain them with promises, so nothing runs in between.
-            if !vm.has_pending_test_step.get()
-                || self.entered_event_loop_count > 1
-                || jsc_vm.is_entered()
-            {
+            if self.entered_event_loop_count > 1 || jsc_vm.is_entered() {
                 return Ok(());
             }
             vm.has_pending_test_step.set(false);
@@ -486,6 +508,9 @@ impl EventLoop {
             // SAFETY: the live per-thread VM that owns this loop (hook contract).
             unsafe { (hooks.run_pending_test_step)(self.vm()) };
             self.entered_event_loop_count = entered;
+            if !self.drain_microtasks_once(vm, global_object, jsc_vm)? {
+                return Ok(());
+            }
         }
     }
 

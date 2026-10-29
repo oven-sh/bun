@@ -1981,14 +1981,17 @@ describe("readline.createInterface()", () => {
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        expect({ rows: stdout.trimEnd().split(/\r?\n/), stderr, exitCode }).toEqual({
+        // A warning that Node.js writes to stderr (for NODE_OPTIONS, for a deprecation) is not part of the comparison.
+        const errors = name === "node" && exitCode === 0 ? "" : stderr;
+        expect({ rows: stdout.trimEnd().split(/\r?\n/), stderr: errors, exitCode }).toEqual({
           rows: historyOptionsOffInput,
           stderr: "",
           exitCode: 0,
         });
       },
-      // A debug build needs 2 to 3 s to load the readline and REPL stacks. Every other build keeps the default.
-      isDebug ? 15_000 : undefined,
+      // `bun test` gives a test 5 s and scripts/runner.node.ts gives it 90 s. A debug build needs 2 to 4 s to load the
+      // readline and REPL stacks, and more on a cold start. It gets the 90 s also without the runner.
+      isDebug ? 90_000 : undefined,
     );
   }
 

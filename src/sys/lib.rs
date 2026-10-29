@@ -4623,9 +4623,6 @@ pub struct PlatformIoVecConst {
     pub(crate) base: *const u8,
     pub len: usize,
 }
-// SAFETY: `{ *const u8, usize }` — `(null, 0)` is a valid empty iovec (S021).
-#[cfg(unix)]
-unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
 #[cfg(unix)]
 const _: () = assert!(
     core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<libc::iovec>()
@@ -4763,9 +4760,6 @@ pub struct PlatformIoVecConst {
     pub len: bun_libuv_sys::ULONG,
     pub(crate) base: *const u8,
 }
-// SAFETY: `{ ULONG, *const u8 }` — `(0, null)` is a valid empty `uv_buf_t` (S021).
-#[cfg(windows)]
-unsafe impl bun_core::ffi::Zeroable for PlatformIoVecConst {}
 #[cfg(windows)]
 const _: () = assert!(
     core::mem::size_of::<PlatformIoVecConst>() == core::mem::size_of::<bun_libuv_sys::uv_buf_t>()

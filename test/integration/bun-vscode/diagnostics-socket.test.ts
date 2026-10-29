@@ -3,6 +3,7 @@
 // the extension's diagnostics feature outside of VS Code, against this build of bun.
 import { afterAll, beforeAll, beforeEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { once } from "node:events";
 import * as net from "node:net";
 import { basename, join } from "node:path";
 import { SocketFramer } from "../../cli/inspect/socket-framer";
@@ -99,6 +100,8 @@ const context: ExtensionContext = {
   environmentVariableCollection: { clear() {}, replace: (name, value) => void (terminalEnv[name] = value) },
 };
 await feature.registerDiagnosticsSocket(context);
+if (!terminalEnv.BUN_INSPECT_CONNECT_TO)
+  throw new Error(`The extension did not start its socket:\n${output.join("\n")}`);
 // BunDiagnosticsManager.dispose() does not close the socket. It returns the disposable that does.
 afterAll(() => context.subscriptions.forEach(subscription => subscription.dispose()?.dispose()));
 
@@ -151,7 +154,9 @@ async function relay() {
       enabled.reject(new Error("the extension closed the inspector socket before bun answered"));
     });
   });
-  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const listening = once(server, "listening");
+  server.listen(0, "127.0.0.1");
+  await listening;
 
   return {
     url: `tcp://127.0.0.1:${(server.address() as net.AddressInfo).port}`,

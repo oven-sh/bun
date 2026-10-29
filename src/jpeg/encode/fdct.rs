@@ -50,14 +50,13 @@ impl Divisors {
     }
 }
 
-/// One dimension of the transform. With samples of 8 bits nothing here overflows.
+/// One dimension of the transform. `rescale` is for the two plain sums. Samples of 8 bits overflow nothing.
 #[inline(always)]
-fn fdct8<const FIRST: bool>([d0, d1, d2, d3, d4, d5, d6, d7]: [i16; 8]) -> [i16; 8] {
-    let shift = if FIRST {
-        CONST_BITS - PASS1_BITS
-    } else {
-        CONST_BITS + PASS1_BITS
-    };
+fn fdct8(
+    [d0, d1, d2, d3, d4, d5, d6, d7]: [i16; 8],
+    shift: u32,
+    rescale: impl Fn(i16) -> i16,
+) -> [i16; 8] {
     let rounded = |sum: i32| descale(sum + (1 << (shift - 1)), shift);
 
     let (tmp0, tmp7) = (d0 + d7, d0 - d7);
@@ -68,14 +67,6 @@ fn fdct8<const FIRST: bool>([d0, d1, d2, d3, d4, d5, d6, d7]: [i16; 8]) -> [i16;
     let (tmp10, tmp13) = (tmp0 + tmp3, tmp0 - tmp3);
     let (tmp11, tmp12) = (tmp1 + tmp2, tmp1 - tmp2);
 
-    let rescale = |v: i16| {
-        if FIRST {
-            v << PASS1_BITS
-        } else {
-            // -32768 is the sum of 64 samples of 0.
-            v.wrapping_add(1 << (PASS1_BITS - 1)) >> PASS1_BITS
-        }
-    };
     let z3 = tmp4 + tmp6;
     let z4 = tmp5 + tmp7;
     let (z3, z4) = (
@@ -109,8 +100,16 @@ fn center(samples: &[[u8; 8]; 8]) -> [[i16; 8]; 8] {
 }
 
 #[inline(never)]
-fn pass<const FIRST: bool>(data: &[[i16; 8]; 8]) -> [[i16; 8]; 8] {
-    from_columns(|lane| fdct8::<FIRST>(column(data, lane)))
+fn pass1(data: &[[i16; 8]; 8]) -> [[i16; 8]; 8] {
+    let rescale = |v: i16| v << PASS1_BITS;
+    from_columns(|lane| fdct8(column(data, lane), CONST_BITS - PASS1_BITS, rescale))
+}
+
+#[inline(never)]
+fn pass2(data: &[[i16; 8]; 8]) -> [[i16; 8]; 8] {
+    // -32768 is the sum of 64 samples of 0.
+    let rescale = |v: i16| v.wrapping_add(1 << (PASS1_BITS - 1)) >> PASS1_BITS;
+    from_columns(|lane| fdct8(column(data, lane), CONST_BITS + PASS1_BITS, rescale))
 }
 
 #[inline(never)]
@@ -138,7 +137,7 @@ fn quantize(coefs: &[[i16; 8]; 8], divisors: &Divisors) -> [[i16; 8]; 8] {
 pub(crate) fn forward(samples: &[[u8; 8]; 8], divisors: &Divisors) -> Block {
     // Rows first: the two passes round differently.
     let samples = center(&transpose(samples));
-    let coefs = pass::<false>(&transpose(&pass::<true>(&samples)));
+    let coefs = pass2(&transpose(&pass1(&samples)));
     let coefs = quantize(&coefs, divisors);
     Block {
         coefs,

@@ -9,6 +9,7 @@ mod sample;
 
 use crate::alloc::try_vec;
 use crate::error::{Error, Result};
+use crate::markers::{M_SOF0, M_SOF2};
 use crate::tables::{self, HuffSpec, MAX_DIMENSION};
 use crate::zigzag::natural_order;
 use fdct::Divisors;
@@ -350,7 +351,7 @@ impl Encoder<'_> {
     }
 
     fn encode_sequential(&mut self, out: &mut Output) -> Result<()> {
-        out.frame_header(self.width, self.height, false, &self.quant);
+        out.frame_header(M_SOF0, self.width, self.height, &self.quant);
         out.huff_table(Table::Luma, TableClass::Dc, &tables::STD_DC_LUMINANCE);
         out.huff_table(Table::Luma, TableClass::Ac, &tables::STD_AC_LUMINANCE);
         out.huff_table(Table::Chroma, TableClass::Dc, &tables::STD_DC_CHROMINANCE);
@@ -390,7 +391,7 @@ impl Encoder<'_> {
         let mut cr = BlockRows::new(Component::Cr, self.mcus_per_row, self.mcu_rows)?;
         self.transform(0, &mut y, &mut cb, &mut cr)?;
 
-        out.frame_header(self.width, self.height, true, &self.quant);
+        out.frame_header(M_SOF2, self.width, self.height, &self.quant);
         for scan in &PROGRESSIVE_SCANS {
             let al = u32::from(scan.al);
             let class = if scan.ss == 0 {

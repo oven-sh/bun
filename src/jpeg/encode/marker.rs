@@ -2,9 +2,7 @@
 
 use super::{Component, PerTable, Scan, Table};
 use crate::error::{Error, Result};
-use crate::markers::{
-    ICC_SIGNATURE, M_APP0, M_APP2, M_DHT, M_DQT, M_EOI, M_SOF0, M_SOF2, M_SOI, M_SOS,
-};
+use crate::markers::{ICC_SIGNATURE, M_APP0, M_APP2, M_DHT, M_DQT, M_EOI, M_SOI, M_SOS};
 use crate::tables::HuffSpec;
 use crate::zigzag::NATURAL_ORDER;
 
@@ -104,17 +102,14 @@ impl Output {
 
     pub(crate) fn frame_header(
         &mut self,
+        sof: u8,
         width: u16,
         height: u16,
-        progressive: bool,
         quant: &PerTable<[u16; 64]>,
     ) {
         self.quant_table(Table::Luma, &quant.luma);
         self.quant_table(Table::Chroma, &quant.chroma);
-        self.segment(
-            if progressive { M_SOF2 } else { M_SOF0 },
-            6 + 3 * Component::ALL.len(),
-        );
+        self.segment(sof, 6 + 3 * Component::ALL.len());
         // Bits in a sample.
         self.extend(&[8]);
         self.extend(&height.to_be_bytes());

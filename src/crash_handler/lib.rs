@@ -510,7 +510,10 @@ mod draft {
             bun_sys::windows::kernel32::ExitProcess(3)
         }
         #[cfg(not(windows))]
-        std::process::abort()
+        // SAFETY: libc::abort has no preconditions; never returns.
+        unsafe {
+            libc::abort()
+        }
     }
 
     #[cfg(not(windows))]

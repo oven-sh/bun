@@ -512,7 +512,7 @@ bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
 
-# Optimized in debug builds too, as every C dependency is: without it a test that decodes a large image takes minutes.
+# The codec's loops run for every sample of an image, and at opt-level 0 they take 20 to 60 times as long.
 # The overflow checks and debug assertions stay.
 [profile.dev.package.bun_jpeg]
 opt-level = 3

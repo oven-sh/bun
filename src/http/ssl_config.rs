@@ -30,6 +30,8 @@ pub struct SSLConfig {
     pub key: CStrSlice,
     pub cert: CStrSlice,
     pub ca: CStrSlice,
+    /// `ca` is the `tls.setDefaultCACertificates()` list. A server trusts it without naming it to clients, as in Node.
+    pub ca_is_default: bool,
     pub crl: CStrSlice,
 
     pub secure_options: u32,
@@ -143,6 +145,7 @@ impl Builder {
             && let Some(certs) = default_ca
         {
             config.ca = Some(certs.iter().map(|cert| bun_core::dupe_z(cert)).collect());
+            config.ca_is_default = true;
             config.requires_custom_request_ctx = true;
         }
         config
@@ -160,6 +163,7 @@ impl SSLConfig {
         key: None,
         cert: None,
         ca: None,
+        ca_is_default: false,
         crl: None,
         secure_options: 0,
         session_timeout: 0,
@@ -272,6 +276,7 @@ impl SSLConfig {
         ctx_opts.client_renegotiation_window = self.client_renegotiation_window;
         ctx_opts.session_timeout = self.session_timeout;
         ctx_opts.allow_partial_trust_chain = i32::from(self.allow_partial_trust_chain);
+        ctx_opts.ca_is_default = i32::from(self.ca_is_default);
         if !self.sigalgs.is_null() {
             ctx_opts.sigalgs = self.sigalgs;
         }
@@ -341,6 +346,9 @@ impl SSLConfig {
             return false;
         }
         if self.allow_partial_trust_chain != other.allow_partial_trust_chain {
+            return false;
+        }
+        if self.ca_is_default != other.ca_is_default {
             return false;
         }
         eq_cstr!(sigalgs);
@@ -417,6 +425,7 @@ impl SSLConfig {
         hasher.update(&self.secure_options.to_ne_bytes());
         hasher.update(&self.session_timeout.to_ne_bytes());
         hasher.update(&[self.allow_partial_trust_chain as u8]);
+        hasher.update(&[self.ca_is_default as u8]);
         hash_cstr!(sigalgs);
         hash_cstr!(ecdh_curve);
         hasher.update(&self.ssl_min_version.to_ne_bytes());
@@ -505,6 +514,7 @@ impl Clone for SSLConfig {
             key: clone_strings(&self.key),
             cert: clone_strings(&self.cert),
             ca: clone_strings(&self.ca),
+            ca_is_default: self.ca_is_default,
             crl: clone_strings(&self.crl),
             secure_options: self.secure_options,
             session_timeout: self.session_timeout,

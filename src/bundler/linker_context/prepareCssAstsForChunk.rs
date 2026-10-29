@@ -3,7 +3,7 @@ use crate::mal_prelude::*;
 use bun_alloc::{Arena as Bump, ArenaVec, ArenaVecExt};
 use bun_threading::thread_pool as ThreadPoolLib;
 
-use crate::{BundleV2, Chunk, LinkerContext};
+use crate::{Chunk, LinkerContext};
 
 use crate::bun_css::css_parser::{
     BundlerCssRule, BundlerCssRuleList, BundlerLayerBlockRule, BundlerMediaRule,
@@ -19,9 +19,7 @@ use bun_resolver::DataURL;
 
 use crate::chunk::{Content, CssImportOrderKind};
 
-// Raw pointers rather than `&mut` / `&` so that
-// (a) the container_of `container_of` recovery of `*mut BundleV2` from
-// `linker` retains write provenance over the whole bundle, and (b) multiple
+// Raw pointers rather than `&mut` / `&` so that multiple
 // tasks may hold pointers to the same `LinkerContext` concurrently without
 // materializing aliased Rust references.
 pub(crate) struct PrepareCssAstTask {
@@ -50,23 +48,18 @@ pub(crate) unsafe fn prepare_css_asts_for_chunk(task: *mut ThreadPoolLib::Task) 
         unsafe { &*bun_core::from_field_ptr!(PrepareCssAstTask, task, task) };
     let linker: *mut LinkerContext = prepare_css_asts.linker;
     let chunk: *mut Chunk = prepare_css_asts.chunk;
-    let worker = {
-        // SAFETY: `linker` is a raw `*mut` to `BundleV2.linker` (embedded by value),
-        // carrying provenance over the full `BundleV2` allocation. Recover the
-        // parent via container_of. `Worker::get` only needs `&BundleV2`.
-        let bundle_v2: &BundleV2 = unsafe { &*LinkerContext::bundle_v2_ptr(linker) };
-        ThreadPool::Worker::get(bundle_v2)
-    };
-    let worker = scopeguard::guard(worker, |w| w.unget());
-
     // SAFETY: `linker` outlives this task (owned by the bundle) and is shared
     // across every concurrently-running `PrepareCssAstTask`, so it must be a
     // shared `&LinkerContext` — never `&mut`, which would alias across worker
-    // threads. Each CSS chunk gets exactly one `PrepareCssAstTask` (see
+    // threads.
+    let linker: &LinkerContext = unsafe { &*linker };
+    let worker = scopeguard::guard(ThreadPool::Worker::get(&linker.pool), |w| w.unget());
+
+    // SAFETY: Each CSS chunk gets exactly one `PrepareCssAstTask` (see
     // generateChunksInParallel.rs), so `&mut *chunk` is unique. `worker.arena`
     // was initialized in `Worker::create()` and points at the worker's heap
     // arena.
-    prepare_css_asts_for_chunk_impl(unsafe { &*linker }, unsafe { &mut *chunk }, worker.arena());
+    prepare_css_asts_for_chunk_impl(linker, unsafe { &mut *chunk }, worker.arena());
 }
 
 fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &Bump) {

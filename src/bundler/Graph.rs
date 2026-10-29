@@ -208,8 +208,8 @@ impl<'a> Graph<'a> {
     /// scheduling.
     #[inline]
     pub(crate) fn pool_mut(&mut self) -> &mut ThreadPool {
-        // SAFETY: see `pool()`. `&mut self` excludes other safe borrows of
-        // `Graph`, so no aliasing `&ThreadPool` is live.
+        // SAFETY: see `pool()`. The one caller is `deinit_without_freeing_arena`, which first
+        // waits for the source map tasks and the IO tasks.
         unsafe { self.pool.get_mut() }
     }
 

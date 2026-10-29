@@ -60,7 +60,7 @@ pub type ThreadId = usize;
 
 /// Per-thread cache of [`current()`]. Without it, every call paid a syscall
 /// (`gettid`/`pthread_threadid_np`/`GetCurrentThreadId`). The
-/// bundler's `Worker::get(ctx)` calls `current()` once per scheduled task —
+/// bundler's `Worker::get(pool)` calls `current()` once per scheduled task —
 /// parse, line-offset table, quoted source contents, compile-result
 /// generation, link step 5 — so a 19 K-module build paid ~109 K `gettid`
 /// syscalls (~36 % of total syscall time on the rolldown `apps/10000` bench).

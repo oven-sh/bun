@@ -376,6 +376,25 @@ describe("hostile header dimensions", () => {
     expect((await new Bun.Image(small).resize(4, 4).png().bytes())[0]).toBe(0x89);
   });
 
+  // TurboJPEG counted pixels in an `int`.
+  test.each([2 ** 32, 1e15])(
+    "a JPEG of more than 2^31 - 1 pixels is not decoded with maxPixels: %d",
+    async maxPixels => {
+      const jpeg = Buffer.from(tinyJpeg);
+      const sof0 = jpeg.indexOf(Buffer.from([0xff, 0xc0]));
+      jpeg.writeUInt16BE(46341, sof0 + 5);
+      jpeg.writeUInt16BE(46341, sof0 + 7);
+      expect(await new Bun.Image(jpeg, { maxPixels }).metadata()).toEqual({
+        width: 46341,
+        height: 46341,
+        format: "jpeg",
+      });
+      await expect(new Bun.Image(jpeg, { maxPixels }).png().bytes()).rejects.toMatchObject({
+        code: "ERR_IMAGE_DECODE_FAILED",
+      });
+    },
+  );
+
   test("WebP VP8 frame header with absurd dims", async () => {
     // RIFF + WEBP + VP8 chunk header + 10-byte VP8 bitstream header where
     // bytes 6–9 encode width/height (14-bit each). Craft 16383×16383.
@@ -519,7 +538,10 @@ describe("malformed JPEG", () => {
   test("more than 500 scans are refused", async () => {
     const withScans = (count: number) =>
       progressiveWithoutData(16, 16, [[0, 0, 0x01], ...new Array(count - 1).fill([0, 0, 0x10])]);
-    expect(await new Bun.Image(withScans(500)).png().bytes()).toBeInstanceOf(Uint8Array);
+    // Without data every coefficient is 0.
+    expect(await rgbaOf(withScans(500))).toEqual(
+      Uint8Array.from(Buffer.alloc(16 * 16 * 4, Buffer.from([128, 128, 128, 255]))),
+    );
     await expect(new Bun.Image(withScans(501)).png().bytes()).rejects.toMatchObject({
       code: "ERR_IMAGE_DECODE_FAILED",
     });
@@ -539,11 +561,20 @@ describe("malformed JPEG", () => {
         buf.toString("base64"),
       ],
       env: bunEnv,
-      stderr: "inherit",
+      stdout: "pipe",
+      stderr: "pipe",
     });
-    // The coefficients would take 512 MB.
-    expect(await proc.stdout.text()).toBe("ERR_IMAGE_DECODE_FAILED little memory\n");
-    expect(await proc.exited).toBe(0);
+    const [stdout, rawStderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const stderr = rawStderr
+      .split("\n")
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    // The coefficients would take 512 MB. A debug build with ASAN takes 5 MB, so one bound does for every build.
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "ERR_IMAGE_DECODE_FAILED little memory\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // EXIF-specific: hostile IFD0 count / offsets must not loop or read OOB.
@@ -1324,11 +1355,13 @@ describe("concurrent terminals on one Image", () => {
       return b;
     };
     const webp = async (w, h, c) => Buffer.from(await new Bun.Image(bmp(w, h, c)).webp({ lossless: true }).bytes());
+    let options;
     ${setup}
     let settled = 0;
     for (let round = 0; round < 8; round++) {
       const jobs = [];
-      for (let i = 0; i < 32; i++) jobs.push(new Bun.Image(input).png().bytes().catch(() => {}).then(() => settled++));
+      for (let i = 0; i < 32; i++)
+        jobs.push(new Bun.Image(input, options).png().bytes().catch(() => {}).then(() => settled++));
       let done = false;
       const all = Promise.all(jobs).then(() => (done = true));
       while (!done) {
@@ -1342,10 +1375,23 @@ describe("concurrent terminals on one Image", () => {
     }
     console.log(settled);
   `;
+  const racingJpegs = [
+    "c33x31_s2x2",
+    "c33x31_s2x2_prog",
+    "c33x31_s2x2_ari",
+    "c33x31_s2x2_ariprog",
+    "c33x31_s2x2_rst1",
+    "c33x31_ll4",
+    "c17x15_ycck420seq",
+    "lossless/ll_2x2_big.jpg",
+    "icc/segments_3_1_2.jpg",
+    "wide/422.jpg",
+    "regress-s2_t10_i507779_sc8.jpg",
+  ];
   test.concurrent.each([
     [
       // libwebp parses the header more than once, so its output size can differ from the size it reported.
-      "dimensions",
+      "dimensions of a WebP",
       `
       const input = new Uint8Array(2048);
       const small = new Uint8Array(2048), large = new Uint8Array(2048);
@@ -1358,7 +1404,7 @@ describe("concurrent terminals on one Image", () => {
     [
       // libwebp's demuxer counts the chunks with a tag, then looks one up.
       // The filler chunks widen the gap between the two walks.
-      "ICCP tag",
+      "ICCP tag of a WebP",
       `
       const chunk = (tag, payload) => {
         const h = Buffer.alloc(8);
@@ -1382,7 +1428,24 @@ describe("concurrent terminals on one Image", () => {
       const rewrite = () => { input.set(JUNK, at); input.set(ICCP, at); };
       `,
     ],
-  ])("doesn't crash when the %s of a WebP input is rewritten while a pipeline is pending", async (_, setup) => {
+    [
+      // Streams of every kind take each other's place, so what the decoder has read does not fit what it reads next.
+      "whole of a JPEG",
+      `
+      import { load } from ${JSON.stringify(join(import.meta.dir, "jpeg-golden", "observe.ts"))};
+      const files = await load(${JSON.stringify(join(import.meta.dir, "jpeg-golden", "cases.json.gz"))});
+      const names = ${JSON.stringify(racingJpegs)};
+      const jpegs = names.map(name => Buffer.from(files.find(file => file.name === name).data, "base64"));
+      const input = new Uint8Array(Math.max(...jpegs.map(jpeg => jpeg.length)));
+      const padded = jpegs.map(jpeg => Buffer.concat([jpeg], input.length));
+      let next = 0;
+      const rewrite = () => { input.set(padded[next++ % padded.length]); };
+      rewrite();
+      // exif.rs searches the bytes with a function that asserts, in a debug build, that they hold still.
+      options = { autoOrient: false };
+      `,
+    ],
+  ])("doesn't crash when the %s input is rewritten while a pipeline is pending", async (_, setup) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", raceFixture(setup)],
       env: bunEnv,

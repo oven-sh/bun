@@ -3,6 +3,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
 import { join } from "path";
+import { hash, pngOfPixels } from "./jpeg-golden/observe";
 
 // ─── Fixture builders ───────────────────────────────────────────────────────
 // Fixtures are generated in-process so the test stays hermetic and we never
@@ -688,7 +689,42 @@ describe("Bun.Image", () => {
       expect(got).not.toBeNull();
       expect(got!.length).toBe(bigProfile.length);
       expect(Array.from(got!)).toEqual(Array.from(bigProfile));
+      // The decoder puts the segments together again.
+      const decoded = extractPngIccp(await new Bun.Image(jpg).png().bytes());
+      expect(decoded && Buffer.compare(decoded, bigProfile)).toBe(0);
     });
+
+    // The hashes are of what Bun 1.4.4 wrote, with libjpeg-turbo 3.2.0, baseline and progressive.
+    test.each([
+      [65_518, "1/1:65518", "cdd983522a", "c1b2cd9e97"],
+      [65_519, "1/1:65519", "0dfd74509c", "c643d1dd8b"],
+      [65_520, "1/2:65519 2/2:1", "d9d96171ef", "12df736340"],
+      [131_037, "1/2:65519 2/2:65518", "65bc7f294b", "b6f2758893"],
+      [131_038, "1/2:65519 2/2:65519", "ba75e91447", "eb2ac5aed0"],
+      [131_039, "1/3:65519 2/3:65519 3/3:1", "150255cfda", "a68ea3dc53"],
+    ])(
+      "a profile of %d bytes fills one APP2 segment after the other",
+      async (size, segments, baseline, progressive) => {
+        const profile = new Uint8Array(size);
+        for (let i = 0; i < size; i++) profile[i] = (i * 131 + 7) & 0xff;
+        const src = pngWithIccp(cornersPng, profile);
+        for (const expected of [baseline, progressive]) {
+          const jpg = await new Bun.Image(src).jpeg({ quality: 90, progressive: expected === progressive }).bytes();
+          // Of each segment its number, how many there are, and how much of the profile it holds.
+          const found: string[] = [];
+          for (let at = 2; jpg[at + 1] !== 0xda; at += 2 + ((jpg[at + 2] << 8) | jpg[at + 3])) {
+            if (jpg[at + 1] === 0xe2)
+              found.push(`${jpg[at + 16]}/${jpg[at + 17]}:${((jpg[at + 2] << 8) | jpg[at + 3]) - 16}`);
+          }
+          const decoded = extractPngIccp(await new Bun.Image(jpg).png().bytes());
+          expect({ segments: found.join(" "), jpeg: hash(jpg), decoded: decoded && hash(decoded) }).toEqual({
+            segments,
+            jpeg: expected,
+            decoded: hash(profile),
+          });
+        }
+      },
+    );
 
     test("EXIF auto-orient preserves the ICC profile — applyOrientation doesn't drop it", async () => {
       // Splice an APP1/EXIF Orientation=6 (90° CW) segment into a JPEG
@@ -855,6 +891,74 @@ describe("Bun.Image", () => {
       const { w, data } = decodePngRaw(await new Bun.Image(padded).png().bytes());
       expectQuadrants(data, w);
       expect(Buffer.compare(data, clean.data)).toBe(0);
+    });
+  });
+
+  // What is expected here is what Bun 1.4.4 did, with libjpeg-turbo 3.2.0.
+  describe("JPEG as libjpeg-turbo wrote and read it", () => {
+    test.each([
+      [65_500, 1, false, "48575:75da952b4b"],
+      [65_500, 1, true, "30263:32524a6719"],
+      [1, 65_500, false, "55820:265bf66a37"],
+      [1, 65_500, true, "30424:eba7d5dd7d"],
+      [65_501, 1, false, "ERR_IMAGE_ENCODE_FAILED"],
+      [65_501, 1, true, "ERR_IMAGE_ENCODE_FAILED"],
+      [1, 65_501, false, "ERR_IMAGE_ENCODE_FAILED"],
+      [1, 65_501, true, "ERR_IMAGE_ENCODE_FAILED"],
+    ])(
+      "the encoder takes 65500 pixels a side and no more: %d x %d, progressive: %p",
+      async (w, h, progressive, expected) => {
+        const row = new Uint8Array(Math.max(w, h) * 4);
+        for (let i = 0; i < row.length; i++) row[i] = (i * 5) >> 3;
+        const image = new Bun.Image(pngOfPixels(row.length / 4, 1, row));
+        if (h > 1) image.rotate(90);
+        const actual = await image
+          .jpeg({ quality: 80, progressive })
+          .bytes()
+          .then(
+            jpeg => `${jpeg.length}:${hash(jpeg)}`,
+            error => error.code,
+          );
+        expect(actual).toBe(expected);
+      },
+    );
+
+    // Rows of many vectors and many rows of MCUs, which the files of jpeg-golden are too small for.
+    describe.each([
+      [
+        "baseline 4:4:4",
+        "../../node/test/fixtures/person.jpg",
+        "cf4c831d6d",
+        ["180x240:4d3e722b02", "113x150:56af6d7254", "90x120:17880e3fa5", "23x30:b9dc4c25aa"],
+      ],
+      [
+        "baseline 4:2:0",
+        "../../node/test/fixtures/person-large.jpg",
+        "b8298542af",
+        ["1000x1333:f7169dfcc7", "625x834:9ed7838469", "500x667:a634d054a2", "125x167:7444229888"],
+      ],
+      [
+        "progressive 4:2:0",
+        "../../../../docs/images/cat.jpg",
+        "7e2fb9e2bc",
+        ["1194x1143:af70c6ad17", "747x715:5605aae187", "597x572:cf52e23e13", "150x143:196a7ff7e8"],
+      ],
+    ])("a photograph, %s", (_, path, file, pixels) => {
+      test.each([8, 5, 4, 1].map((eighths, i) => [eighths, pixels[i]] as const))(
+        "at %d/8",
+        async (eighths, expected) => {
+          const jpeg = await Bun.file(join(import.meta.dir, path)).bytes();
+          const { width, height } = await new Bun.Image(jpeg).metadata();
+          // A resize to exactly what the decoder gives at this scale is left to the decoder alone.
+          const { w, h, data } = decodePngRaw(
+            await new Bun.Image(jpeg)
+              .resize(Math.ceil((width * eighths) / 8), Math.ceil((height * eighths) / 8), { fit: "fill" })
+              .png({ compressionLevel: 1 })
+              .bytes(),
+          );
+          expect({ file: hash(jpeg), pixels: `${w}x${h}:${hash(data)}` }).toEqual({ file, pixels: expected });
+        },
+      );
     });
   });
 

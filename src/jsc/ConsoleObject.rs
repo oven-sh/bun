@@ -1504,27 +1504,6 @@ pub mod formatter {
         }
     }
 
-    /// RAII: `map.remove(value)` on drop iff `*armed`. Holds
-    /// raw pointers so the body can freely take `&mut self`; smaller than the
-    /// equivalent `scopeguard::defer!` closure under ASAN stack redzones.
-    pub(super) struct VisitedRemove {
-        map: *mut visited::Map,
-        armed: *const bool,
-        value: JSValue,
-    }
-    impl Drop for VisitedRemove {
-        #[inline]
-        fn drop(&mut self) {
-            // SAFETY: `map`/`armed` were taken via `addr_of!` on locals that
-            // outlive this guard; no other borrow is live at drop.
-            unsafe {
-                if *self.armed {
-                    let _ = (*self.map).remove(&self.value);
-                }
-            }
-        }
-    }
-
     /// Restore a field to `prev` at scope exit without holding a live borrow
     /// on `self` for the body of the scope. The guard reads at scope-exit
     /// time and never aliases: it captures a raw `*mut` to the field and
@@ -3274,19 +3253,10 @@ pub mod formatter {
                 return Ok(());
             }
 
-            // The body mutates both `self` and `remove_before_recurse`, so
-            // capture raw pointers and read the *current* `remove_before_recurse`
-            // at scope-exit time.
-            let _visited = VisitedRemove {
-                map: &raw mut self.map,
-                armed: &raw const remove_before_recurse,
-                value,
-            };
-
             // Each arm is hoisted to its own `#[inline(never)]` helper so the
             // `print_as` frame stays small enough to recurse 512 levels under
             // debug/ASAN before the stack-safety check fires.
-            match format {
+            let result = match format {
                 Tag::StringPossiblyFormatted => {
                     self.print_string_possibly_formatted::<ENABLE_ANSI_COLORS>(writer_, value)
                 }
@@ -3346,7 +3316,11 @@ pub mod formatter {
                 }
                 Tag::RevokedProxy => self.print_revoked_proxy::<ENABLE_ANSI_COLORS>(writer_),
                 Tag::Proxy => self.print_proxy::<ENABLE_ANSI_COLORS>(writer_, value),
+            };
+            if remove_before_recurse {
+                self.visited_remove(value);
             }
+            result
         }
     }
 

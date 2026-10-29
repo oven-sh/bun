@@ -93,7 +93,7 @@ impl Yes {
         // which matters for `yes` throughput.
         let err = {
             let cmd_node = interp.as_cmd_mut(cmd);
-            let shell = cmd_node.base.shell;
+            let shell = cmd_node.base.shell_mut();
             let Exec::Builtin(me) = &mut cmd_node.exec else {
                 unreachable!()
             };
@@ -101,8 +101,7 @@ impl Yes {
             let chunk = &yes.buffer[..yes.buffer_used];
             let mut err = None;
             for _ in 0..4 {
-                // SAFETY: `shell` is `cmd_node.base.shell`, live for the Cmd.
-                if let Err(e) = unsafe { stdout.write_no_io_to(shell, chunk) } {
+                if let Err(e) = stdout.write_no_io_to(shell, chunk) {
                     err = Some(e);
                     break;
                 }

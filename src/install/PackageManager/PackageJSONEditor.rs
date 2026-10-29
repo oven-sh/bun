@@ -231,14 +231,11 @@ pub fn edit_trusted_dependencies(
 ) -> Result<(), bun_alloc::AllocError> {
     let mut len = names_to_add.len();
 
-    let mut trusted_dependencies: &[Expr] = &[];
-    if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
-        if let bun_ast::ExprData::EArray(arr) = &query.expr.data {
-            // SAFETY: `arr` is a `StoreRef` into the AST arena which outlives
-            // this function; lifetime erased per the parser's `Str` convention.
-            trusted_dependencies = unsafe { bun_ptr::detach_lifetime(arr.items.slice()) };
-        }
-    }
+    let query = package_json.as_property(TRUSTED_DEPENDENCIES_STRING);
+    let trusted_dependencies: &[Expr] = match query.as_ref().map(|q| &q.expr.data) {
+        Some(bun_ast::ExprData::EArray(arr)) => arr.items.slice(),
+        _ => &[],
+    };
 
     let mut i = len;
     while i > 0 {
@@ -267,7 +264,7 @@ pub fn edit_trusted_dependencies(
 
     let mut needs_new_trusted_dependencies_list = true;
     let mut trusted_dependencies_array: Expr = 'brk: {
-        if let Some(query) = package_json.as_property(TRUSTED_DEPENDENCIES_STRING) {
+        if let Some(query) = query {
             if matches!(query.expr.data, bun_ast::ExprData::EArray(_)) {
                 needs_new_trusted_dependencies_list = false;
                 break 'brk query.expr;

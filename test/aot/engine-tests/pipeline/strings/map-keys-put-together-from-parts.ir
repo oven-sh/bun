@@ -1,0 +1,221 @@
+# FORM: AsRead
+# RUN: lower-to-air size f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="map-keys-put-together-from-parts.ts" displayPath="map-keys-put-together-from-parts.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Item" module=m0 position=10 fields=[{key="id" declared={type=number} flags=[IsRequired]}, {key="name" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] ownFieldCount=2
+data d0 root=Array{contents=undefined|null|L0} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Data data=d0
+    v3 = Convert v2 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=number}
+    v6 = Integer
+    v7 = Convert v6 declared={type=number}
+    Jump -> next b1(v7)
+  b1(v8: number):
+    LoopHint
+    v10 = Integer integer=300
+    v11 = Less v8, v10
+    Branch v11 -> taken b2(| 0), notTaken b3(| 0)
+  b2(v12):
+    v13 = PropGet v3 key="push"
+    v14 = Integer integer=65536
+    v15 = Integer integer=7
+    v16 = Mod v12, v15
+    v17 = Mul v14, v16
+    v18 = Integer integer=300
+    v19 = Add v17, v18
+    v20 = Integer integer=11
+    v21 = Mod v12, v20
+    v22 = Add v19, v21
+    v23 = Convert v22 declared={type=number}
+    v24 = Integer integer=3
+    v25 = Mod v12, v24
+    v26 = String string=""
+    v27 = Convert v26 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v28 = NewObject -, v23, v27 layout=L0 fields=[0, 1]
+    v29 = FinishObject v28
+    v30 = Call v13, v3, v29 calleeKey="push" calleeName="items.push"
+    v31 = Increment v12
+    v32 = Convert v31 declared={type=number}
+    Jump -> next b1(v32)
+  b3(v33):
+    v34 = Builtin builtin=Map
+    v35 = Construct v34 calleeName="Map"
+    v36 = Convert v35 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v37 = Builtin builtin=Map
+    v38 = Construct v37 calleeName="Map"
+    v39 = Convert v38 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v40 = Builtin builtin=Map
+    v41 = Construct v40 calleeName="Map"
+    v42 = Convert v41 declared={type=undefined|null|Map<undefined|null|string, number> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v43 = Integer
+    v44 = Convert v43 declared={type=number}
+    v45 = Integer integer=3
+    v46 = Less v44, v45
+    Branch v46 -> taken b4(| 0), notTaken b8(| 0)
+  b4(v47):
+    v48 = Integer
+    v49 = Convert v48 declared={type=number}
+    Jump -> next b5(v49)
+  b5(v50: number):
+    LoopHint
+    v52 = Convert v50 declared={type=i32 flags=[IsExpected]}
+    v53 = Convert v52 declared={type=i32 flags=[IsExpected]}
+    v54 = ElemGet v3, v53
+    v55 = Convert v54 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v56 = Integer integer=3
+    v57 = Mul v53, v56
+    v58 = Add v57, v47
+    v59 = PropGet v3 key="length"
+    v60 = Convert v59 declared={type=number} illTypedCause=Assertion
+    v61 = Mod v58, v60
+    v62 = ElemGet v3, v61
+    v63 = Convert v62 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v64 = PropGet v55 key="id"
+    v65 = Call v1, -, v63 calleeName="suffixOf"
+    v66 = Convert v65 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v67 = Add v64, v66
+    v68 = Convert v67 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v69 = PropGet v55 key="name"
+    v70 = Integer
+    v71 = ElemGet v3, v70
+    v72 = Convert v71 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v73 = Call v1, -, v72 calleeName="suffixOf"
+    v74 = Convert v73 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v75 = Add v69, v74
+    v76 = Convert v75 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v77 = Integer
+    v78 = ElemGet v3, v77
+    v79 = Convert v78 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v80 = Call v1, -, v79 calleeName="suffixOf"
+    v81 = Convert v80 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v82 = PropGet v55 key="name"
+    v83 = Add v81, v82
+    v84 = Integer integer=5
+    v85 = ElemGet v3, v84
+    v86 = Convert v85 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v87 = Call v1, -, v86 calleeName="suffixOf"
+    v88 = Convert v87 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v89 = Add v83, v88
+    v90 = Convert v89 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v91 = PropGet v55 key="id"
+    v92 = ToString v91
+    v93 = String string=","
+    v94 = PropGet v63 key="id"
+    v95 = ToString v94
+    v96 = Strcat v92, v93, v95
+    v97 = Convert v96 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v98 = String string=""
+    v99 = PropGet v55 key="id"
+    v100 = Add v98, v99
+    v101 = PropGet v63 key="id"
+    v102 = Add v100, v101
+    v103 = Convert v102 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v104 = PropGet v36 key="set"
+    v105 = PropGet v36 key="get"
+    v106 = Call v105, v36, v68 calleeKey="get" calleeName="byId.get"
+    v107 = Convert v106 declared={type=undefined|number} illTypedCause=FromLooseType
+    v108 = Integer
+    v109 = Integer integer=1
+    v110 = Add v108, v109
+    v111 = Call v104, v36, v68, v110 calleeKey="set" calleeName="byId.set"
+    v112 = PropGet v39 key="get"
+    v113 = Call v112, v39, v76 calleeKey="get" calleeName="byName.get"
+    v114 = Convert v113 declared={type=undefined|number} illTypedCause=FromLooseType
+    v115 = Integer
+    v116 = PropGet v39 key="get"
+    v117 = Call v116, v39, v90 calleeKey="get" calleeName="byName.get"
+    v118 = Convert v117 declared={type=undefined|number} illTypedCause=FromLooseType
+    v119 = Integer
+    v120 = PropGet v42 key="set"
+    v121 = PropGet v42 key="get"
+    v122 = Call v121, v42, v97 calleeKey="get" calleeName="byPair.get"
+    v123 = Convert v122 declared={type=undefined|number} illTypedCause=FromLooseType
+    v124 = Integer integer=1
+    v125 = Add v123, v124
+    v126 = Call v120, v42, v97, v125 calleeKey="set" calleeName="byPair.set"
+    v127 = PropGet v42 key="get"
+    v128 = Call v127, v42, v103 calleeKey="get" calleeName="byPair.get"
+    v129 = Convert v128 declared={type=undefined|number} illTypedCause=FromLooseType
+    v130 = Integer
+    v131 = PropGet v36 key="get"
+    v132 = Builtin builtin=String
+    v133 = PropGet v55 key="id"
+    v134 = Call v132, -, v133 calleeName="String"
+    v135 = Convert v134 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v136 = Call v1, -, v63 calleeName="suffixOf"
+    v137 = Convert v136 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v138 = Add v135, v137
+    v139 = Call v131, v36, v138 calleeKey="get" calleeName="byId.get"
+    v140 = Convert v139 declared={type=undefined|number} illTypedCause=FromLooseType
+    v141 = PropGet v36 key="get"
+    v142 = Call v141, v36, v68 calleeKey="get" calleeName="byId.get"
+    v143 = Convert v142 declared={type=undefined|number} illTypedCause=FromLooseType
+    v144 = StrictEq v140, v143
+    Branch v144 -> taken b7(), notTaken b6()
+  b6():
+    Jump -> next b7()
+  b7():
+    v145 = Increment v53
+    v146 = Convert v145 declared={type=number}
+    Jump -> next b5(v146)
+  b8(v147):
+    v148 = PropGet v36 key="get"
+    v149 = String string="1.5"
+    v150 = Call v148, v36, v149 calleeKey="get" calleeName="byId.get"
+    v151 = PropGet v36 key="get"
+    v152 = String string="NaN"
+    v153 = Call v151, v36, v152 calleeKey="get" calleeName="byId.get"
+    v154 = PropGet v36 key="get"
+    v155 = String string="4294967296"
+    v156 = Call v154, v36, v155 calleeKey="get" calleeName="byId.get"
+    v157 = PropGet v36 key="get"
+    v158 = String string="2147483648"
+    v159 = Call v157, v36, v158 calleeKey="get" calleeName="byId.get"
+    v160 = PropGet v36 key="get"
+    v161 = String string="-2147483648"
+    v162 = Call v160, v36, v161 calleeKey="get" calleeName="byId.get"
+    v163 = PropGet v36 key="get"
+    v164 = String string="1e+21"
+    v165 = Call v163, v36, v164 calleeKey="get" calleeName="byId.get"
+    v166 = PropGet v36 key="get"
+    v167 = String string="Infinity"
+    v168 = Call v166, v36, v167 calleeKey="get" calleeName="byId.get"
+    v169 = PropGet v36 key="get"
+    v170 = String string="300"
+    v171 = Call v169, v36, v170 calleeKey="get" calleeName="byId.get"
+    v172 = PropGet v36 key="get"
+    v173 = String string="65836"
+    v174 = Call v172, v36, v173 calleeKey="get" calleeName="byId.get"
+    v175 = PropGet v36 key="get"
+    v176 = String string="393526"
+    v177 = Call v175, v36, v176 calleeKey="get" calleeName="byId.get"
+    v178 = Integer
+    v179 = Convert v178 declared={type=number}
+    Jump -> next b9(v179)
+  b9(v180: number):
+    LoopHint
+    v182 = Increment v180
+    v183 = Convert v182 declared={type=number}
+    Jump -> next b9(v183)
+}
+function f1 name="suffixOf" module=m0 position=682 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="name"
+    v2 = String string="@"
+    v3 = PropGet v0 key="name"
+    v4 = Add v2, v3
+    v5 = Convert v4 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v5
+}
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 139, patchpoints: 20, rare instructions: 185, polls: 2
+# CHECK-NEXT: end of function f0

@@ -491,6 +491,36 @@ fn type_error_leaves_expected_types() {
 }
 
 #[test]
+fn only_recursively_private_functions_hide_what_is_written_inside_them() {
+    let text = r#"
+        $visibility = "Private";
+        export function filter() { return function insidePrivate() { return function deeper() {}; }; }
+        $linkTimeConstant;
+        export function find() { return function* insideLinkTimeConstant() {}; }
+        $visibility = "PrivateRecursive";
+        export function findIndex() { return function insideRecursive() { return function deepest() {}; }; }
+        export function at() { return function insidePublic() {}; }
+    "#;
+    let fragment = lower_array_prototype(text).fragment;
+    for (name, hidden) in [
+        ("insidePrivate", false),
+        ("deeper", false),
+        ("insideLinkTimeConstant", false),
+        ("insideRecursive", true),
+        ("deepest", true),
+        ("insidePublic", false),
+    ] {
+        assert_eq!(is_hidden(header_named(&fragment, name)), hidden, "{name}");
+    }
+    for export_name in ["filter", "find", "findIndex"] {
+        assert!(
+            is_hidden(array_header(&fragment, export_name)),
+            "{export_name}"
+        );
+    }
+}
+
+#[test]
 fn directives_name_and_hide_builtins() {
     let text = r#"
         $getter;

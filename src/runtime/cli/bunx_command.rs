@@ -1086,8 +1086,7 @@ impl BunxCommand {
             new_path
         };
 
-        // SAFETY: `Transpiler::init` always sets `fs` to the process singleton.
-        let top_level_dir: &[u8] = unsafe { &*this_transpiler.fs }.top_level_dir();
+        let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
         let which_cwd: &[u8] = if ignore_cwd.is_empty() {
             top_level_dir
         } else {

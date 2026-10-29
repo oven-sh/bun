@@ -555,7 +555,7 @@ pub struct PackageManager {
 
     pub(crate) global_link_dir: Option<bun_sys::Dir>,
     pub global_dir: Option<bun_sys::Dir>,
-    pub(crate) global_link_dir_path: Box<[u8]>,
+    pub(crate) global_link_dir_path: &'static [u8],
 
     pub(crate) on_wake: WakeHandler,
 
@@ -1218,24 +1218,18 @@ impl PackageManager {
         // `AnyEventLoop::tick_raw` takes the type-erased
         // `(*mut c_void, fn(*mut c_void) -> bool)`; trampoline through a small wrapper so
         // `is_done_fn` receives `&mut C` and can drive `run_tasks` / record `err`.
-        struct Erased<C> {
-            ctx: *mut C,
+        struct Erased<'c, C> {
+            ctx: &'c mut C,
             is_done: fn(&mut C) -> bool,
         }
         fn trampoline<C>(p: *mut c_void) -> bool {
-            let erased = p as *const Erased<C>;
-            // SAFETY: `p` is the `Erased<C>` local we pass to `tick_raw` below. We only
-            // read its two POD fields here (no `&mut Erased` materialized — the local
-            // `&mut erased` borrow in the caller is still notionally live across the call).
-            let (ctx_ptr, is_done) = unsafe { ((*erased).ctx, (*erased).is_done) };
-            // SAFETY: `ctx_ptr` was derived from the caller's exclusive `closure: &mut C`
-            // and the caller does not touch `closure` again until `tick_raw` returns, so
-            // this is the unique live `&mut C` for the duration of the callback.
-            let ctx = unsafe { &mut *ctx_ptr };
-            is_done(ctx)
+            // SAFETY: `p` is the `Erased<C>` local we pass to `tick_raw` below, which
+            // nothing else touches until `tick_raw` returns.
+            let erased = unsafe { bun_ptr::callback_ctx::<Erased<'_, C>>(p) };
+            (erased.is_done)(erased.ctx)
         }
-        let mut erased = Erased::<C> {
-            ctx: std::ptr::from_mut::<C>(closure),
+        let mut erased = Erased {
+            ctx: closure,
             is_done: is_done_fn,
         };
         // Derive the event-loop pointer through `this`'s raw provenance (NOT
@@ -1707,7 +1701,7 @@ fn allocate_package_manager(
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);
-        wr!(global_link_dir_path, Box::default());
+        wr!(global_link_dir_path, b"");
         wr!(on_wake, WakeHandler::default());
         wr!(
             peer_dependencies,

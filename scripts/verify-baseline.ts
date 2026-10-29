@@ -246,7 +246,7 @@ if (values["skip-emulation"]) {
   const aotProgram = join(aotDir, "baseline-cpu.ts");
   const aotExecutable = join(aotDir, isWindows ? "baseline-cpu.exe" : "baseline-cpu");
   try {
-    copyFileSync(join(repoRoot, "test", "aot", "programs", "language", "baseline-cpu.ts"), aotProgram);
+    copyFileSync(join(repoRoot, "test", "aot", "parallel", "language", "baseline-cpu.ts"), aotProgram);
     if (
       await runTest("Ahead-of-time compiler", ["build", "--compile", "--aot", aotProgram, "--outfile", aotExecutable])
     )

@@ -3601,8 +3601,8 @@ impl<'a> Parser<'a> {
     }
 
     /// The source text of the numeric token `next*` returned last, if an f32 may not hold it
-    /// (`1700000000.25`, `123456.78`), it has an exponent (`8e64`) or it touches another
-    /// number: `5.0.1` is `5.0` and `.1`, whose values print as `5.1`.
+    /// (`1700000000.25`, `123456.78`, `8e64`) or it touches another number: `5.0.1` is `5.0` and `.1`,
+    /// whose values print as `5.1`.
     #[inline]
     pub(crate) fn raw_number_text(&self) -> Option<&'static [u8]> {
         let cached = self.input.cached_token.as_ref()?;

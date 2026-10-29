@@ -147,7 +147,7 @@ pub(crate) struct FSWatchTaskPosix {
     ctx: Option<ParentRef<FSWatcher, bun_ptr::Mut>>,
     count: u8,
 
-    entries: [MaybeUninit<Entry>; 8],
+    entries: [MaybeUninit<Event>; 8],
     concurrent_task: ConcurrentTask,
 }
 
@@ -168,12 +168,6 @@ impl Taskable for FSWatchTaskPosix {
 }
 
 #[cfg(not(windows))]
-pub(crate) struct Entry {
-    event: Event,
-    needs_free: bool,
-}
-
-#[cfg(not(windows))]
 impl FSWatchTaskPosix {
     fn ctx(&self) -> &FSWatcher {
         // BACKREF — `ctx` is the live owning FSWatcher (set right after
@@ -183,7 +177,7 @@ impl FSWatchTaskPosix {
         self.ctx.as_ref().expect("FSWatchTask.ctx unset").get()
     }
 
-    pub(crate) fn append(&mut self, event: Event, needs_free: bool) {
+    pub(crate) fn append(&mut self, event: Event) {
         if self.count == 8 {
             self.enqueue();
             let ctx = self.ctx;
@@ -195,7 +189,7 @@ impl FSWatchTaskPosix {
             };
         }
 
-        self.entries[self.count as usize].write(Entry { event, needs_free });
+        self.entries[self.count as usize].write(event);
         self.count += 1;
     }
 
@@ -204,7 +198,7 @@ impl FSWatchTaskPosix {
         for i in 0..self.count as usize {
             // SAFETY: entries [0..count) were written by `append`.
             let entry = unsafe { self.entries[i].assume_init_ref() };
-            let emitted = match &entry.event {
+            let emitted = match entry {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),
                 Event::Error { err, close } => {
@@ -229,7 +223,7 @@ impl FSWatchTaskPosix {
     }
 
     pub(crate) fn append_abort(&mut self) {
-        self.append(Event::Abort, false);
+        self.append(Event::Abort);
         self.enqueue();
     }
 
@@ -271,14 +265,10 @@ impl FSWatchTaskPosix {
     }
 
     pub(crate) fn clean_entries(&mut self) {
-        for i in 0..self.count as usize {
-            // SAFETY: entries [0..count) were written by `append`.
-            let needs_free = unsafe { self.entries[i].assume_init_ref() }.needs_free;
-            if needs_free {
-                // SAFETY: entries [0..count) were written by `append`; dropped at most once
-                // (count is reset to 0 below).
-                unsafe { self.entries[i].assume_init_drop() };
-            }
+        for entry in &mut self.entries[..self.count as usize] {
+            // SAFETY: entries [0..count) were written by `append`; dropped at most once
+            // (count is reset to 0 below).
+            unsafe { entry.assume_init_drop() };
         }
         self.count = 0;
     }
@@ -551,7 +541,7 @@ impl FSWatcher {
             }
         }
 
-        this.current_task.with_mut(|t| t.append(event, true));
+        this.current_task.with_mut(|t| t.append(event));
     }
 
     #[cfg(windows)]

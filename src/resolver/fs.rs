@@ -67,10 +67,7 @@ impl strings::Appender for FilenameStoreAppender {
         // singleton; `BSSStringList::append` takes `*mut Self` and serializes on
         // its inner mutex (no aliased `&mut` is ever formed). Returned slice
         // borrows the singleton's never-freed storage.
-        let r = unsafe { FilenameStoreBacking::append(self.backing, &s)? };
-        // SAFETY: storage owned by the process-lifetime `BSSStringList` singleton
-        // (never freed); `Interned` is the canonical proof type for this widen.
-        Ok(unsafe { bun_ptr::Interned::assume(r) }.as_bytes())
+        unsafe { FilenameStoreBacking::append(self.backing, &s) }
     }
 }
 
@@ -528,17 +525,16 @@ impl DirEntry {
         // both cases the bytes are address-stable for the life of the process.
         // Widen to `'static` and store the slice directly.
         // SAFETY: `stored` is an `EntryStore` slot (never freed, never moved);
-        // `base_lowercase_` is never mutated after construction.
-        let key: &'static [u8] =
-            unsafe { &*core::ptr::from_ref::<[u8]>((*stored).base_lowercase()) };
+        // `base_lowercase_` is never mutated after construction. Shared, because
+        // `key` can point into the entry.
+        let stored_ref: &'static Entry = unsafe { &*stored };
+        let key = stored_ref.base_lowercase();
         // `(*stored).base_lowercase()` equals `name_lc` byte-for-byte (a fresh
         // entry interned `name_lc`; a recycled one matched it exactly above), so
         // `name_hash` is its hash too — insert without re-hashing.
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
-        // SAFETY: just produced from EntryStore append or prev_map lookup. Shared, because
-        // `key` can point into the entry.
-        Ok(Some(unsafe { &*stored }))
+        Ok(Some(stored_ref))
     }
 
     /// Debug-only contract check: every `.data` probe must run under

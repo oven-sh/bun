@@ -289,8 +289,7 @@ impl CoefController {
         if self.whole_image.is_empty() {
             self.whole_image.try_reserve(decoder.components.len())?;
             for comp in &decoder.components {
-                let blocks_per_row = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
-                let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
+                let (blocks_per_row, rows) = (comp.padded_width(), comp.padded_height());
                 self.whole_image.push(CoefArray {
                     blocks: try_vec_with_capacity(blocks_per_row * rows)?,
                     blocks_per_row,

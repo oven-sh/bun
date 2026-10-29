@@ -58,7 +58,7 @@ impl DiffController {
         let mut diff_buf = try_vec_with_capacity(decoder.components.len())?;
         let mut undiff_buf = try_vec_with_capacity(decoder.components.len())?;
         for comp in &decoder.components {
-            let stride = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
+            let stride = comp.padded_width();
             diff_buf.push(Rows::new(stride, comp.v_samp as usize)?);
             undiff_buf.push(Rows::new(stride, comp.v_samp as usize)?);
         }
@@ -256,9 +256,8 @@ impl DiffController {
         if self.whole_image.is_empty() {
             self.whole_image.try_reserve(decoder.components.len())?;
             for comp in &decoder.components {
-                let stride = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
-                let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
-                let data = try_vec_with_capacity(stride * rows)?;
+                let stride = comp.padded_width();
+                let data = try_vec_with_capacity(stride * comp.padded_height())?;
                 self.whole_image.push(Plane { data, stride });
             }
         }
@@ -267,8 +266,7 @@ impl DiffController {
             let comp = decoder.component(ci)?;
             let plane = self.whole_image.get_mut(ci).ok_or(Error::Internal)?;
             // Memory that no one has written to costs nothing, so not before the component's first scan.
-            let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
-            plane.data.resize(plane.stride * rows, 0);
+            plane.data.resize(plane.stride * comp.padded_height(), 0);
         }
         while self.input_imcu_row < decoder.total_imcu_rows {
             self.decompress_row(decoder, None)?;

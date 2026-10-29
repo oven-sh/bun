@@ -79,6 +79,18 @@ pub(crate) struct Component {
     last_col_width: u32,
 }
 
+impl Component {
+    /// `width_in_blocks` rounded up to whole MCUs of a scan with all the components.
+    fn padded_width(&self) -> usize {
+        self.width_in_blocks.next_multiple_of(self.h_samp) as usize
+    }
+
+    /// `height_in_blocks` rounded up likewise.
+    fn padded_height(&self) -> usize {
+        self.height_in_blocks.next_multiple_of(self.v_samp) as usize
+    }
+}
+
 /// What a block of an MCU is decoded with.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct McuBlock {
@@ -241,6 +253,11 @@ impl<'a> Decoder<'a> {
         usual || doubled || same
     }
 
+    /// The side of a data unit in samples.
+    fn data_unit(&self) -> u32 {
+        if self.lossless { 1 } else { DCTSIZE }
+    }
+
     pub(crate) fn component(&self, ci: usize) -> Result<&Component> {
         self.components.get(ci).ok_or(Error::Internal)
     }
@@ -265,7 +282,7 @@ impl<'a> Decoder<'a> {
 
     /// Once, when the first SOS has been read.
     fn initial_setup(&mut self) -> Result<()> {
-        let data_unit = if self.lossless { 1 } else { DCTSIZE };
+        let data_unit = self.data_unit();
 
         if self.height > MAX_DIMENSION || self.width > MAX_DIMENSION {
             return Err(Error::ImageTooBig(MAX_DIMENSION));
@@ -326,7 +343,7 @@ impl<'a> Decoder<'a> {
 
     /// Before each scan.
     pub(crate) fn per_scan_setup(&mut self) -> Result<()> {
-        let data_unit = if self.lossless { 1 } else { DCTSIZE };
+        let data_unit = self.data_unit();
         let interleaved = self.components_in_scan > 1;
         self.mcus_per_row = if interleaved {
             self.width.div_ceil(self.max_h_samp * data_unit)

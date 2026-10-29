@@ -2735,7 +2735,7 @@ pub fn init(
         let uws_loop = manager.event_loop.r#loop();
         // SAFETY: `uws_loop` is the live process-global `uws::Loop` (`r#loop()` above);
         // the handle's backref is `manager.event_loop`, owned by the singleton.
-        let uws_loop = unsafe { &mut *uws_loop };
+        let uws_loop = unsafe { &*uws_loop };
         EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
     }
     {

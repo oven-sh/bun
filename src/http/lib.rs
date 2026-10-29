@@ -2516,7 +2516,8 @@ impl<'a> HTTPClient<'a> {
         &buf[ptr.offset as usize..end]
     }
 
-    pub(crate) fn build_request(&mut self, body_len: usize) -> picohttp::Request<'static> {
+    /// The headers live in the HTTP thread's scratch buffer until the next call on any client.
+    pub(crate) fn build_request(&mut self, body_len: usize) -> picohttp::Request<'a> {
         let mut header_count: usize = 0;
         let header_entries = self.header_entries.slice();
         let header_names = header_entries.items_name();
@@ -2567,11 +2568,7 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"if-modified-since") => {
                     if self.flags.force_last_modified && self.if_modified_since.is_empty() {
-                        // SAFETY: header_str() returns a slice into self.header_buf which outlives
-                        // this client; lifetime is erased here only because we don't yet thread
-                        // struct lifetime params. The borrow is valid for the life of `self`.
-                        self.if_modified_since =
-                            unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
+                        self.if_modified_since = self.header_str(header_values[i]);
                     }
                 }
                 h if h == hash_header_const(HOST_HEADER_NAME) => {
@@ -2653,12 +2650,11 @@ impl<'a> HTTPClient<'a> {
                     _ => Default::default(),
                 };
                 if let Some(content_length) = framing.content_length {
+                    // The header keeps a pointer into `self.request_content_len_buf`.
                     let value: &[u8] = bun_core::fmt::int_as_bytes(
                         &mut self.request_content_len_buf,
                         content_length,
                     );
-                    // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
-                    let value: &[u8] = unsafe { bun_ptr::detach_lifetime(value) };
                     request_headers_buf[header_count] =
                         picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                     header_count += 1;
@@ -2675,8 +2671,6 @@ impl<'a> HTTPClient<'a> {
             } else {
                 let value: &[u8] =
                     bun_core::fmt::int_as_bytes(&mut self.request_content_len_buf, body_len);
-                // SAFETY: borrows `self.request_content_len_buf` which lives for `self`.
-                let value: &[u8] = unsafe { bun_ptr::detach_lifetime(value) };
                 request_headers_buf[header_count] =
                     picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                 header_count += 1;
@@ -2690,19 +2684,11 @@ impl<'a> HTTPClient<'a> {
             header_count += 1;
         }
 
-        // SAFETY: every borrowed slice points into storage that outlives the
-        // returned `Request` — `Method::as_str()` is `'static`; `url.pathname`
-        // borrows `self.url` (lives for the client); `request_headers_buf` is
-        // the per-HTTP-thread `SHARED_REQUEST_HEADERS_BUF` static. Return as
-        // `'static` so callers don't pin `&mut self` for the rest of their fn.
         picohttp::Request {
             method: self.method.as_str().as_bytes(),
-            // SAFETY: `url.pathname` borrows `self.url`, which outlives the returned `Request`.
-            path: unsafe { bun_ptr::detach_lifetime(self.url.pathname) },
+            path: self.url.pathname,
             minor_version: 1,
-            // SAFETY: `request_headers_buf` is the per-HTTP-thread
-            // `SHARED_REQUEST_HEADERS_BUF` static, outliving the returned `Request`.
-            headers: unsafe { bun_ptr::detach_lifetime(&request_headers_buf[0..header_count]) },
+            headers: &request_headers_buf[0..header_count],
             bytes_read: 0,
         }
     }
@@ -3062,15 +3048,8 @@ impl<'a> HTTPClient<'a> {
             compress_body::CompressOutput::Spilled => self.compressed_request_body.as_slice(),
         };
         self.compressed_body_len = slice.len();
-        // SAFETY: `slice` borrows either `LibdeflateState::shared_buffer`
-        // (HTTP-thread singleton, valid for the current synchronous callback —
-        // caller spills before yielding) or `self.compressed_request_body`
-        // (lives on `self`, only mutated by this function via `clear()` on the
-        // next attempt after `state.reset()`). `state.request_body` is a
-        // `RawSlice` cursor; this is the same erasure pattern
-        // `InternalState::init` uses for `original_request_body`.
-        self.state.request_body =
-            bun_ptr::RawSlice::new(unsafe { &*core::ptr::from_ref::<[u8]>(slice) });
+        // `compressed_request_body` is only rewritten on the next attempt, after `state.reset()`.
+        self.state.request_body = bun_ptr::RawSlice::new(slice);
         self.state.flags.body_compressed = true;
         Ok(())
     }
@@ -3087,11 +3066,7 @@ impl<'a> HTTPClient<'a> {
         }
         self.compressed_request_body
             .extend_from_slice(self.state.request_body.slice());
-        // SAFETY: `compressed_request_body` lives on `self`; same erasure as
-        // `compress_body_for_send`.
-        self.state.request_body = bun_ptr::RawSlice::new(unsafe {
-            &*core::ptr::from_ref::<[u8]>(self.compressed_request_body.as_slice())
-        });
+        self.state.request_body = bun_ptr::RawSlice::new(self.compressed_request_body.as_slice());
     }
 
     fn estimated_request_header_byte_length(&self) -> usize {

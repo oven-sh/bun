@@ -978,7 +978,7 @@ function whileSuspended(pid: number, change: () => void) {
       // A watcher thread that still runs reads the first events before the others exist.
       // A process that has exited stays a zombie while this loop runs, and never stops.
       const deadline = performance.now() + 5000;
-      for (let states: string[]; !(states = threadStates(pid)).every(state => state === "T");) {
+      for (let states: string[]; !(states = threadStates(pid)).every(state => state === "T"); ) {
         if (performance.now() > deadline) throw new Error(`process ${pid} did not stop: ${states.join("")}`);
       }
       change();
@@ -1103,6 +1103,29 @@ function traced(line: string) {
   ]);
 }
 
+/**
+ * Resolves to the first whole line of the BUN_WATCHER_TRACE file that `wanted` accepts. The watcher logs a batch
+ * before it handles it. Rejects once the process has exited with no such line.
+ */
+async function tracedBatch(
+  trace: string,
+  runner: { exited: Promise<number>; exitCode: number | null; signalCode: NodeJS.Signals | null },
+  wanted: (line: string) => boolean,
+) {
+  let exited = false;
+  runner.exited.then(() => (exited = true));
+  for (;;) {
+    const lines = readFileSync(trace, "utf8").split("\n").slice(0, -1);
+    const batch = lines.find(wanted);
+    if (batch) return batch;
+    if (exited) {
+      const status = runner.signalCode ?? runner.exitCode;
+      throw new Error(`the process exited (${status}) before it logged the batch:\n${lines.join("\n")}`);
+    }
+    await Bun.sleep(1);
+  }
+}
+
 // Only inotify names the changed entries of a folder. Its event for a rename of the folder itself has no name.
 it.skipIf(!isLinux).each(["--hot", "--watch"])(
   "%s reloads a file that is saved after its folder is renamed, in one batch of file events",
@@ -1131,10 +1154,7 @@ it.skipIf(!isLinux).each(["--hot", "--watch"])(
       writeFileSync(join(src, "lib", "a.js.tmp"), `export const value = 2;\n`);
       renameSync(join(src, "lib", "a.js.tmp"), join(src, "lib", "a.js"));
     });
-    // The watcher logs a batch before it handles it.
-    const logged = () => readFileSync(trace, "utf8").split("\n").slice(0, -1);
-    let batch: string | undefined;
-    while (!(batch = logged().find(line => line.includes(`/src/lib/":`)))) await Bun.sleep(1);
+    const batch = await tracedBatch(trace, runner, line => line.includes(`/src/lib/":`));
     expect(traced(batch)).toEqual([
       [src + "/", ["move_to"], ["lib", "lib.away"]],
       [src + "/lib/", ["rename", "write", "move_to", "create"], ["a.js", "a.js.tmp", "a.js.tmp"]],
@@ -1253,10 +1273,8 @@ it.if(isWindows)("reports a watched folder once for a burst of changes to its fi
     writeFileSync(join(src, "dep.js"), `export {};\nconsole.log("dep reloaded");\n`);
     writeFileSync(join(src, "main.js"), `import "./dep.js";\nconsole.log("main reloaded");\n`);
   });
-  // The watcher logs a batch before it handles it. The folder has an event for each of the two files in this one.
-  const logged = () => readFileSync(trace, "utf8").split("\n").slice(0, -1);
-  let batch: string | undefined;
-  while (!(batch = logged().find(line => line.includes("main.js") && line.includes("dep.js")))) await Bun.sleep(1);
+  // The folder has an event for each of the two files in this batch.
+  const batch = await tracedBatch(trace, runner, line => line.includes("main.js") && line.includes("dep.js"));
   expect(
     traced(batch)
       .map(([path]) => basename(path))

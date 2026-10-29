@@ -1074,12 +1074,11 @@ impl<'a> ReadFileUV<'a> {
         });
         // Keep the event loop alive while the async operation is pending
         event_loop.ref_keep_alive();
-        let this_ptr: *mut ReadFileUV = bun_core::heap::into_raw(this);
+        let this = bun_core::heap::release(this);
         // A request that libuv refuses completes inside this call: the checkpoint is the caller's.
         let _caller =
             jsc::virtual_machine::VirtualMachine::get().enter_event_loop_scope_without_checkpoint();
-        // SAFETY: this_ptr is freshly boxed and uniquely owned by the async op.
-        unsafe { (*this_ptr).get_fd(Self::on_file_open) };
+        this.get_fd(Self::on_file_open);
         // ownership now lives with the libuv request chain until finalize().
     }
 

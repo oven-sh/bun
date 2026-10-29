@@ -7389,16 +7389,16 @@ pub mod bv2_impl {
             // `transpiler_for_target` doesn't overlap `self.arena()` below.
             // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler /
             // BACKREF set in `BundleV2::init`).
-            let (define_ptr, log_ptr): (*mut bun_js_parser::Define, *mut bun_ast::Log) = {
+            let (define_ptr, log_ptr): (*const bun_js_parser::Define, *mut bun_ast::Log) = {
                 let transpiler = self.transpiler_for_target(target);
-                (&raw mut *transpiler.options.define, transpiler.log)
+                (&raw const *transpiler.options.define, transpiler.log)
             };
 
             let ast_for_html_entrypoint = JSAst::init(
                 bun_js_parser::new_lazy_export_ast(
                     heap,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
-                    unsafe { &mut *define_ptr },
+                    unsafe { &*define_ptr },
                     js_parser_options,
                     // SAFETY: `define`/`log` live for `'a` (owned by the Transpiler).
                     unsafe { &mut *log_ptr },

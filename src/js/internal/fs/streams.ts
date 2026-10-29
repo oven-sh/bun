@@ -52,6 +52,8 @@ interface FileStreamOptions extends $Node.ReadableOptions, $Node.WritableOptions
   start?: number;
   end?: number;
   flush?: boolean | null;
+  /** A raw Win32 `HANDLE`, wrapped in a file descriptor the stream owns. Windows only. */
+  windowsHandle?: bigint | null;
   $fastPath?: boolean;
 }
 
@@ -93,6 +95,9 @@ declare global {
 type FileStream = $Node.ReadStream | $Node.WriteStream;
 
 const { validateInteger, validateInt32, validateFunction } = require("internal/validators");
+
+const isWindows = process.platform === "win32";
+const windowsHandleToFd = $bindgen("node_fs_binding.bind.ts", "windowsHandleToFd");
 
 const kIsPerformingIO = Symbol("kIsPerformingIO");
 const kIoDone = Symbol("kIoDone");
@@ -225,6 +230,28 @@ function getStreamOptions(
   return options;
 }
 
+// https://github.com/nodejs/node/blob/98dbf6070e8439e530f1678b11962a0f3719e1f6/lib/internal/fs/streams.js#L169
+function validateWindowsHandle(
+  windowsHandle: unknown,
+  fd: FileStreamOptions["fd"],
+  customFs: FileStreamOptions["fs"],
+): asserts windowsHandle is bigint {
+  if (fd != null) {
+    throw $ERR_INCOMPATIBLE_OPTION_PAIR('Option "windowsHandle" cannot be used in combination with option "fd"');
+  }
+  if (!isWindows) {
+    throw $ERR_FEATURE_UNAVAILABLE_ON_PLATFORM(
+      "The feature windowsHandle is unavailable on the current platform, which is being used to run Node.js",
+    );
+  }
+  if (customFs) {
+    throw $ERR_METHOD_NOT_IMPLEMENTED("windowsHandle with fs");
+  }
+  if (typeof windowsHandle !== "bigint") {
+    throw $ERR_INVALID_ARG_TYPE("options.windowsHandle", "bigint", windowsHandle);
+  }
+}
+
 function ReadStream(
   this: $Node.ReadStream,
   path: string | URL | null | undefined,
@@ -239,9 +266,12 @@ function ReadStream(
   // Only buffers are supported.
   options.decodeStrings = true;
 
-  let { fd, autoClose, fs: customFs, start, end = Infinity } = options;
+  let { fd, autoClose, fs: customFs, start, end = Infinity, windowsHandle } = options;
 
-  if (fd == null) {
+  if (windowsHandle != null) {
+    validateWindowsHandle(windowsHandle, fd, customFs);
+    this[kFs] = fs;
+  } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
     this.path = getValidatedPath(path);
@@ -303,6 +333,12 @@ function ReadStream(
       throw $ERR_OUT_OF_RANGE("start", `<= "end" (here: ${end})`, start);
     }
   }
+
+  // Node wraps the HANDLE before validating start and end, and leaks the CRT fd
+  // when that validation throws. Wrapping after it leaves the caller owning the
+  // HANDLE on those errors. The base constructor below still validates options
+  // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
+  if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
   Readable.$call(this, options);
   return this as unknown as void;
@@ -452,7 +488,7 @@ function close(stream: FileStream, err: Error | null | undefined, cb: ErrorCallb
     return;
   }
 
-  if (!stream.fd) {
+  if (stream.fd == null) {
     cb(err);
   } else if (stream.flush) {
     stream[kFs].fsync!(stream.fd, flushErr => {
@@ -486,8 +522,11 @@ function WriteStream(
   // Only buffers are supported.
   options.decodeStrings = true;
 
-  let { fd, autoClose, fs: customFs, start, flush } = options;
-  if (fd == null) {
+  let { fd, autoClose, fs: customFs, start, flush, windowsHandle } = options;
+  if (windowsHandle != null) {
+    validateWindowsHandle(windowsHandle, fd, customFs);
+    this[kFs] = fs;
+  } else if (fd == null) {
     this[kFs] = customFs || fs;
     this.fd = null;
     // Internal $fastPath callers (writableFromFileSink) discard .path; do not
@@ -587,6 +626,12 @@ function WriteStream(
       this._construct = undefined;
     }
   }
+
+  // Node wraps the HANDLE before validating start and end, and leaks the CRT fd
+  // when that validation throws. Wrapping after it leaves the caller owning the
+  // HANDLE on those errors. The base constructor below still validates options
+  // such as highWaterMark and signal, and a throw there leaks the fd, as in Node.
+  if (windowsHandle != null) this.fd = windowsHandleToFd(windowsHandle);
 
   Writable.$call(this, options);
 

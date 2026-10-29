@@ -11,7 +11,7 @@ use bun_uws::quic;
 use bun_uws::quic::context::ConnectResult;
 
 use super::callbacks;
-use super::client_session::{ClientSession, quic_socket_mut, session_mut};
+use super::client_session::{ClientSession, session_mut};
 use super::pending_connect::PendingConnect;
 use super::stream::Stream;
 use crate::HTTPClient;
@@ -38,13 +38,12 @@ static LSQUIC_INIT_ONCE: std::sync::Once = std::sync::Once::new();
 impl ClientContext {
     /// Mutable access to the lsquic client engine.
     ///
-    /// INVARIANT: `qctx` is set once in `get_or_create` to a fresh
+    /// `qctx` is set once in `get_or_create` to a fresh
     /// `us_quic_socket_context_t` and is never freed (process-lifetime, same as
-    /// this singleton). HTTP-thread only, so the `&mut` is the sole live borrow.
+    /// this singleton).
     #[inline]
     fn qctx_mut(&mut self) -> &mut quic::Context {
-        // SAFETY: see INVARIANT above.
-        unsafe { &mut *self.qctx.as_ptr() }
+        quic::Context::opaque_mut(self.qctx.as_ptr())
     }
 
     /// Non-null pointer to the leaked process-lifetime singleton, if created.
@@ -91,8 +90,6 @@ impl ClientContext {
             qctx,
             sessions: Vec::new(),
         });
-        // Route through the existing [`qctx_mut`] / [`as_mut`] accessors (one
-        // centralised unsafe each) instead of an open-coded `qctx.as_mut()`.
         // `self_` is the freshly-boxed sole owner; callbacks don't fire until
         // the loop runs, so registering after construction is order-neutral.
         callbacks::register(Self::as_mut(self_).qctx_mut());
@@ -143,12 +140,9 @@ impl ClientContext {
                 .connect(host_z, port, host_z, reject, session.cast::<c_void>());
         match result {
             ConnectResult::Socket(qs) => {
-                session_mut(session).qsocket = NonNull::new(qs);
-                // `qs` is a fresh lsquic-owned socket — route the backref deref
-                // through the centralised [`quic_socket_mut`] accessor and use
-                // the safe `&mut` ext-slot accessor it exposes (sized for
-                // `*mut ClientSession` in `get_or_create`).
-                *quic_socket_mut(qs).ext::<ClientSession>() = NonNull::new(session);
+                session_mut(session).qsocket = Some(NonNull::from(&mut *qs));
+                // The ext slot is sized for `*mut ClientSession` in `get_or_create`.
+                *qs.ext::<ClientSession>() = NonNull::new(session);
                 bun_core::scoped_log!(
                     h3_client,
                     "connect {}:{} (sync)",

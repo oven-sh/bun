@@ -545,64 +545,41 @@ private:
     }
 };
 
-JSC::Structure* createJSStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
+// A name's index is its property offset. Only a BigIntStats has the last four.
+static constexpr ASCIILiteral statsFieldNames[] = {
+    "dev"_s, "ino"_s, "mode"_s, "nlink"_s, "uid"_s, "gid"_s, "rdev"_s, "size"_s, "blksize"_s, "blocks"_s,
+    "atimeMs"_s, "mtimeMs"_s, "ctimeMs"_s, "birthtimeMs"_s,
+    "atimeNs"_s, "mtimeNs"_s, "ctimeNs"_s, "birthtimeNs"_s
+};
+
+// Intentionally not defined, to force consteval to fail.
+PropertyOffset notAStatsField();
+
+static consteval PropertyOffset statsFieldOffset(std::string_view name)
 {
-    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
-        14);
-
-    // Add property transitions for all stat fields
-    PropertyOffset offset = 0;
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "dev"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ino"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "mode"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "nlink"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "uid"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "gid"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "rdev"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "size"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blksize"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blocks"_s), 0, offset);
-    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::atime));
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "atimeMs"_s), 0, offset);
-    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::mtime));
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "mtimeMs"_s), 0, offset);
-    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::ctime));
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ctimeMs"_s), 0, offset);
-    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::birthtime));
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "birthtimeMs"_s), 0, offset);
-
-    return structure;
+    for (PropertyOffset offset = 0; offset < static_cast<PropertyOffset>(std::size(statsFieldNames)); ++offset) {
+        if (name == std::string_view { statsFieldNames[offset].characters(), statsFieldNames[offset].length() })
+            return offset;
+    }
+    return notAStatsField();
 }
 
-JSC::Structure* createJSBigIntStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype)
-{
-    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray,
-        18);
+static constexpr unsigned statsFieldCount = statsFieldOffset("atimeNs");
+static constexpr unsigned bigIntStatsFieldCount = std::size(statsFieldNames);
+static_assert(statsFieldOffset("atimeMs") == static_cast<PropertyOffset>(DateFieldType::atime));
+static_assert(statsFieldOffset("mtimeMs") == static_cast<PropertyOffset>(DateFieldType::mtime));
+static_assert(statsFieldOffset("ctimeMs") == static_cast<PropertyOffset>(DateFieldType::ctime));
+static_assert(statsFieldOffset("birthtimeMs") == static_cast<PropertyOffset>(DateFieldType::birthtime));
 
-    // Add property transitions for all bigint stat fields
+static JSC::Structure* createStatsObjectStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* prototype, unsigned fieldCount)
+{
+    auto structure = Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::FinalObjectType, 0), JSFinalObject::info(), NonArray, fieldCount);
+
     PropertyOffset offset = 0;
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "dev"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ino"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "mode"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "nlink"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "uid"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "gid"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "rdev"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "size"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blksize"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "blocks"_s), 0, offset);
-    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::atime));
-    structure = structure->addPropertyTransition(vm, structure, identifier(vm, DateFieldType::atime), 0, offset);
-    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::mtime));
-    structure = structure->addPropertyTransition(vm, structure, identifier(vm, DateFieldType::mtime), 0, offset);
-    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::ctime));
-    structure = structure->addPropertyTransition(vm, structure, identifier(vm, DateFieldType::ctime), 0, offset);
-    ASSERT(offset + 1 == static_cast<PropertyOffset>(DateFieldType::birthtime));
-    structure = structure->addPropertyTransition(vm, structure, identifier(vm, DateFieldType::birthtime), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "atimeNs"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "mtimeNs"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "ctimeNs"_s), 0, offset);
-    structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, "birthtimeNs"_s), 0, offset);
+    for (unsigned i = 0; i < fieldCount; ++i) {
+        structure = structure->addPropertyTransition(vm, structure, JSC::Identifier::fromString(vm, statsFieldNames[i]), 0, offset);
+        ASSERT(offset == static_cast<PropertyOffset>(i));
+    }
 
     return structure;
 }
@@ -633,20 +610,20 @@ extern "C" JSC::EncodedJSValue Bun__createJSStatsObject(Zig::GlobalObject* globa
     auto* structure = getStructure<false>(globalObject);
     auto* object = JSC::JSFinalObject::create(vm, structure);
 
-    object->putDirectOffset(vm, 0, js_dev);
-    object->putDirectOffset(vm, 1, js_ino);
-    object->putDirectOffset(vm, 2, js_mode);
-    object->putDirectOffset(vm, 3, js_nlink);
-    object->putDirectOffset(vm, 4, js_uid);
-    object->putDirectOffset(vm, 5, js_gid);
-    object->putDirectOffset(vm, 6, js_rdev);
-    object->putDirectOffset(vm, 7, js_size);
-    object->putDirectOffset(vm, 8, js_blksize);
-    object->putDirectOffset(vm, 9, js_blocks);
-    object->putDirectOffset(vm, 10, js_atimeMs);
-    object->putDirectOffset(vm, 11, js_mtimeMs);
-    object->putDirectOffset(vm, 12, js_ctimeMs);
-    object->putDirectOffset(vm, 13, js_birthtimeMs);
+    object->putDirectOffset(vm, statsFieldOffset("dev"), js_dev);
+    object->putDirectOffset(vm, statsFieldOffset("ino"), js_ino);
+    object->putDirectOffset(vm, statsFieldOffset("mode"), js_mode);
+    object->putDirectOffset(vm, statsFieldOffset("nlink"), js_nlink);
+    object->putDirectOffset(vm, statsFieldOffset("uid"), js_uid);
+    object->putDirectOffset(vm, statsFieldOffset("gid"), js_gid);
+    object->putDirectOffset(vm, statsFieldOffset("rdev"), js_rdev);
+    object->putDirectOffset(vm, statsFieldOffset("size"), js_size);
+    object->putDirectOffset(vm, statsFieldOffset("blksize"), js_blksize);
+    object->putDirectOffset(vm, statsFieldOffset("blocks"), js_blocks);
+    object->putDirectOffset(vm, statsFieldOffset("atimeMs"), js_atimeMs);
+    object->putDirectOffset(vm, statsFieldOffset("mtimeMs"), js_mtimeMs);
+    object->putDirectOffset(vm, statsFieldOffset("ctimeMs"), js_ctimeMs);
+    object->putDirectOffset(vm, statsFieldOffset("birthtimeMs"), js_birthtimeMs);
 
     return JSC::JSValue::encode(object);
 }
@@ -730,24 +707,24 @@ extern "C" JSC::EncodedJSValue Bun__createJSBigIntStatsObject(Zig::GlobalObject*
 
     auto* object = JSC::JSFinalObject::create(vm, structure);
 
-    object->putDirectOffset(vm, 0, js_dev);
-    object->putDirectOffset(vm, 1, js_ino);
-    object->putDirectOffset(vm, 2, js_mode);
-    object->putDirectOffset(vm, 3, js_nlink);
-    object->putDirectOffset(vm, 4, js_uid);
-    object->putDirectOffset(vm, 5, js_gid);
-    object->putDirectOffset(vm, 6, js_rdev);
-    object->putDirectOffset(vm, 7, js_size);
-    object->putDirectOffset(vm, 8, js_blksize);
-    object->putDirectOffset(vm, 9, js_blocks);
+    object->putDirectOffset(vm, statsFieldOffset("dev"), js_dev);
+    object->putDirectOffset(vm, statsFieldOffset("ino"), js_ino);
+    object->putDirectOffset(vm, statsFieldOffset("mode"), js_mode);
+    object->putDirectOffset(vm, statsFieldOffset("nlink"), js_nlink);
+    object->putDirectOffset(vm, statsFieldOffset("uid"), js_uid);
+    object->putDirectOffset(vm, statsFieldOffset("gid"), js_gid);
+    object->putDirectOffset(vm, statsFieldOffset("rdev"), js_rdev);
+    object->putDirectOffset(vm, statsFieldOffset("size"), js_size);
+    object->putDirectOffset(vm, statsFieldOffset("blksize"), js_blksize);
+    object->putDirectOffset(vm, statsFieldOffset("blocks"), js_blocks);
     object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::atime), js_atimeMs);
     object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::mtime), js_mtimeMs);
     object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::ctime), js_ctimeMs);
     object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::birthtime), js_birthtimeMs);
-    object->putDirectOffset(vm, 14, js_atimeNs);
-    object->putDirectOffset(vm, 15, js_mtimeNs);
-    object->putDirectOffset(vm, 16, js_ctimeNs);
-    object->putDirectOffset(vm, 17, js_birthtimeNs);
+    object->putDirectOffset(vm, statsFieldOffset("atimeNs"), js_atimeNs);
+    object->putDirectOffset(vm, statsFieldOffset("mtimeNs"), js_mtimeNs);
+    object->putDirectOffset(vm, statsFieldOffset("ctimeNs"), js_ctimeNs);
+    object->putDirectOffset(vm, statsFieldOffset("birthtimeNs"), js_birthtimeNs);
 
     RELEASE_AND_RETURN(scope, JSC::JSValue::encode(object));
 }
@@ -810,16 +787,16 @@ inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallF
 
     auto* object = JSC::JSFinalObject::create(vm, structure);
 
-    object->putDirectOffset(vm, 0, dev);
-    object->putDirectOffset(vm, 1, ino);
-    object->putDirectOffset(vm, 2, mode);
-    object->putDirectOffset(vm, 3, nlink);
-    object->putDirectOffset(vm, 4, uid);
-    object->putDirectOffset(vm, 5, gid);
-    object->putDirectOffset(vm, 6, rdev);
-    object->putDirectOffset(vm, 7, size);
-    object->putDirectOffset(vm, 8, blksize);
-    object->putDirectOffset(vm, 9, blocks);
+    object->putDirectOffset(vm, statsFieldOffset("dev"), dev);
+    object->putDirectOffset(vm, statsFieldOffset("ino"), ino);
+    object->putDirectOffset(vm, statsFieldOffset("mode"), mode);
+    object->putDirectOffset(vm, statsFieldOffset("nlink"), nlink);
+    object->putDirectOffset(vm, statsFieldOffset("uid"), uid);
+    object->putDirectOffset(vm, statsFieldOffset("gid"), gid);
+    object->putDirectOffset(vm, statsFieldOffset("rdev"), rdev);
+    object->putDirectOffset(vm, statsFieldOffset("size"), size);
+    object->putDirectOffset(vm, statsFieldOffset("blksize"), blksize);
+    object->putDirectOffset(vm, statsFieldOffset("blocks"), blocks);
 
     object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::atime), atimeMs);
     object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::mtime), mtimeMs);
@@ -827,10 +804,10 @@ inline JSValue callJSStatsFunction(JSC::JSGlobalObject* globalObject, JSC::CallF
     object->putDirectOffset(vm, static_cast<unsigned>(DateFieldType::birthtime), birthtimeMs);
 
     if constexpr (isBigInt) {
-        object->putDirectOffset(vm, 14, atimeNs);
-        object->putDirectOffset(vm, 15, mtimeNs);
-        object->putDirectOffset(vm, 16, ctimeNs);
-        object->putDirectOffset(vm, 17, birthtimeNs);
+        object->putDirectOffset(vm, statsFieldOffset("atimeNs"), atimeNs);
+        object->putDirectOffset(vm, statsFieldOffset("mtimeNs"), mtimeNs);
+        object->putDirectOffset(vm, statsFieldOffset("ctimeNs"), ctimeNs);
+        object->putDirectOffset(vm, statsFieldOffset("birthtimeNs"), birthtimeNs);
     }
 
     return object;
@@ -950,7 +927,7 @@ extern "C" JSC::EncodedJSValue Bun__JSStatsObjectConstructor(Zig::GlobalObject* 
 void initJSStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* prototype = JSStatsPrototype::create(init.vm, init.global, JSStatsPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = createJSStatsObjectStructure(init.vm, init.global, prototype);
+    auto* structure = createStatsObjectStructure(init.vm, init.global, prototype, statsFieldCount);
     auto* constructor = JSStatsConstructor::create(init.vm, JSStatsConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);
@@ -960,7 +937,7 @@ void initJSStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 void initJSBigIntStatsClassStructure(JSC::LazyClassStructure::Initializer& init)
 {
     auto* prototype = JSBigIntStatsPrototype::create(init.vm, init.global, JSBigIntStatsPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    auto* structure = createJSBigIntStatsObjectStructure(init.vm, init.global, prototype);
+    auto* structure = createStatsObjectStructure(init.vm, init.global, prototype, bigIntStatsFieldCount);
     auto* constructor = JSBigIntStatsConstructor::create(init.vm, JSBigIntStatsConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype);
     init.setPrototype(prototype);
     init.setStructure(structure);

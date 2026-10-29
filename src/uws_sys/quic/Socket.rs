@@ -67,9 +67,8 @@ impl Socket {
         // the socket, sized and aligned for a single nullable-pointer slot.
         // Option<NonNull<T>> is niche-optimized to a single nullable pointer.
         // Uniqueness: the ext bytes are caller-only storage that the C library
-        // never reads or writes, and every Rust access goes through this method
-        // behind `&mut self`; the elided return lifetime reborrows `self`, so the
-        // borrow checker forbids a second live `&mut` to the slot.
+        // never reads or writes, and every Rust use is one read or one write of the
+        // slot, so no two `&mut` to it are live at once.
         unsafe { &mut *us_quic_socket_ext(self).cast::<Option<NonNull<T>>>() }
     }
 }

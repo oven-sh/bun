@@ -191,12 +191,11 @@ impl<'a> Transpiler<'a> {
     /// once the `Transpiler` is at its final address.
     ///
     /// # Safety
-    /// `from` must outlive the returned `Transpiler<'a>`. The few
-    /// lifetime-carrying borrows in `BundleOptions<'_>` / `Resolver<'_>`
-    /// (`framework`, `optimize_imports`, `standalone_module_graph`,
-    /// `env_loader`) are widened from `from`'s lifetime to `'a` via a
-    /// layout-preserving transmute — sound because those reference
-    /// process-lifetime data in every caller, but unprovable to borrowck.
+    /// `from` must outlive the returned `Transpiler<'a>`. The two
+    /// lifetime-carrying borrows in `BundleOptions<'_>` (`framework`,
+    /// `optimize_imports`) are widened from `from`'s lifetime to `'a` via a
+    /// layout-preserving transmute. What they and `resolver.env_loader`
+    /// point to must outlive `'a`.
     pub(crate) unsafe fn for_worker(
         from: &Transpiler<'_>,
         arena: &'a Arena,
@@ -213,8 +212,7 @@ impl<'a> Transpiler<'a> {
         };
         let resolver_opts = resolver_bundle_options_subset(&options);
         let log_nn = core::ptr::NonNull::new(log).expect("Transpiler::for_worker: log is non-null");
-        // SAFETY: see fn doc — `Resolver::for_worker` widens
-        // `standalone_module_graph` / `env_loader` lifetimes.
+        // SAFETY: see fn doc — what `env_loader` points to outlives `'a`.
         let resolver: Resolver<'a> =
             unsafe { Resolver::for_worker(&from.resolver, log_nn, resolver_opts) };
 

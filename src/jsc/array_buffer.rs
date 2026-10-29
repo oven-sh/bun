@@ -691,12 +691,9 @@ impl ArrayBuffer {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A JS ArrayBuffer/view whose backing store is pinned (cannot be detached or
-/// moved) for as long as this value lives; [`root`](Self::root) additionally
+/// moved) for as long as this value points into it; [`root`](Self::root) additionally
 /// GC-roots the cell. `Drop` releases what was taken. Constructed and dropped on the JS
 /// thread.
-///
-/// The one that [`copy_if_freeable_while_pinned`](Self::copy_if_freeable_while_pinned) copied holds
-/// no pin: its bytes are its own.
 pub struct PinnedArrayBuffer {
     buffer: ArrayBuffer,
     rooted: bool,
@@ -775,8 +772,7 @@ impl PinnedArrayBuffer {
     }
 
     /// Copies the bytes if they [`can_be_freed_while_pinned`](ArrayBuffer::can_be_freed_while_pinned),
-    /// so a later read can't fault, and releases the pin: nothing reads the JS storage after that,
-    /// so a transfer is free to move it. Returns `false` if the copy can't be allocated.
+    /// so a later read can't fault, then unpins. Returns `false` if the copy can't be allocated.
     pub fn copy_if_freeable_while_pinned(&mut self, global: &JSGlobalObject) -> bool {
         if self.copy.is_some() || !self.buffer.can_be_freed_while_pinned() {
             return true;

@@ -1,5 +1,4 @@
 use core::fmt;
-use core::ptr::NonNull;
 
 use bun_alloc::AllocError;
 use bun_collections::IntegerBitSet;
@@ -163,22 +162,10 @@ impl Query {
 #[derive(Default)]
 pub struct List {
     pub head: Query,
-    // BACKREF: alias into self.head.next chain
-    pub(crate) tail: Option<NonNull<Query>>,
 
     // OR
     pub next: Option<Box<List>>,
 }
-
-// SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
-// by this `List` (see `and_range`); it never aliases data owned by another
-// thread, so the whole structure moves between threads as a unit (the lockfile
-// thread pool relies on this). Auto-`!Send` from `NonNull` is overly
-// conservative here.
-unsafe impl Send for List {}
-// SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range`);
-// `&List` exposes no unsynchronized interior mutability.
-unsafe impl Sync for List {}
 
 impl Drop for List {
     fn drop(&mut self) {
@@ -195,30 +182,16 @@ impl Clone for List {
     fn clone(&self) -> Self {
         let mut out = List {
             head: self.head.clone(),
-            tail: None,
             next: None,
         };
-        if let Some(mut tail) = out.head.next.as_deref_mut() {
-            while let Some(ref mut next) = tail.next {
-                tail = next;
-            }
-            out.tail = Some(NonNull::from(tail));
-        }
 
         let mut src = &self.next;
         let mut dst = &mut out.next;
         while let Some(node) = src {
             let slot = dst.insert(Box::new(List {
                 head: node.head.clone(),
-                tail: None,
                 next: None,
             }));
-            if let Some(mut tail) = slot.head.next.as_deref_mut() {
-                while let Some(ref mut next) = tail.next {
-                    tail = next;
-                }
-                slot.tail = Some(NonNull::from(tail));
-            }
             src = &node.next;
             dst = &mut slot.next;
         }
@@ -316,27 +289,6 @@ impl List {
             rhs = rhs_next;
         }
     }
-
-    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
-        if !self.head.range.has_left() && !self.head.range.has_right() {
-            self.head.range = *range;
-            return Ok(());
-        }
-
-        let tail = Box::new(Query {
-            range: *range,
-            next: None,
-        });
-
-        let last_tail: &mut Query = match self.tail {
-            // SAFETY: self.tail aliases a Query owned by self.head.next chain; we hold &mut self.
-            Some(mut p) => unsafe { p.as_mut() },
-            None => &mut self.head,
-        };
-        // Taken after the `Box` has moved: the move would invalidate an earlier pointer.
-        self.tail = Some(NonNull::from(&mut **last_tail.next.insert(tail)));
-        Ok(())
-    }
 }
 
 pub(crate) type FlagsBitSet = IntegerBitSet<3>;
@@ -348,46 +300,17 @@ impl Flags {
     pub(crate) const SKIPPED: usize = 2;
 }
 
+#[derive(Clone)]
 pub struct Group {
     pub head: List,
-    // BACKREF: alias into self.head.next chain
-    pub(crate) tail: Option<NonNull<List>>,
 
     pub flags: FlagsBitSet,
-}
-
-// SAFETY: `tail` is a self-referential backref into the `head.next` chain owned
-// by this `Group` (see `or_range`); it never aliases data owned by another
-// thread, so the whole structure moves between threads as a unit (the
-// lockfile/resolver thread pool relies on this). Auto-`!Send` from `NonNull` is
-// overly conservative here.
-unsafe impl Send for Group {}
-// SAFETY: `tail` is only dereferenced through `&mut self` (see `and_range` and
-// `or_range`); `&Group` exposes no unsynchronized interior mutability.
-unsafe impl Sync for Group {}
-
-impl Clone for Group {
-    fn clone(&self) -> Self {
-        let mut out = Group {
-            head: self.head.clone(),
-            tail: None,
-            flags: self.flags,
-        };
-        if let Some(mut tail) = out.head.next.as_deref_mut() {
-            while let Some(ref mut next) = tail.next {
-                tail = next;
-            }
-            out.tail = Some(NonNull::from(tail));
-        }
-        out
-    }
 }
 
 impl Default for Group {
     fn default() -> Self {
         Self {
             head: List::default(),
-            tail: None,
             flags: FlagsBitSet::init_empty(),
         }
     }
@@ -402,11 +325,11 @@ impl<'a> fmt::Display for GroupFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let this = self.group;
 
-        if this.tail.is_none() && this.head.tail.is_none() && !this.head.head.range.has_left() {
+        if this.is_empty() {
             return Ok(());
         }
 
-        if this.tail.is_none() && this.head.tail.is_none() {
+        if this.head.next.is_none() && this.head.head.next.is_none() {
             return write!(f, "{}", this.head.fmt(self.buf));
         }
 
@@ -445,7 +368,6 @@ impl Group {
                     },
                     next: None,
                 },
-                tail: None,
                 next: None,
             },
             ..Default::default()
@@ -486,32 +408,14 @@ impl Group {
         self.head.eql(&rhs.head)
     }
 
-    pub(crate) fn and_range(&mut self, range: &Range) -> Result<(), AllocError> {
-        let tail: &mut List = match self.tail {
-            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
-            Some(mut p) => unsafe { p.as_mut() },
-            None => &mut self.head,
-        };
-        tail.and_range(range)
-    }
-
-    pub fn or_range(&mut self, range: &Range) -> Result<(), AllocError> {
-        if self.tail.is_none() && self.head.tail.is_none() && !self.head.head.range.has_left() {
-            self.head.head.range = *range;
-            return Ok(());
+    /// `a || b || ..`
+    pub fn any_of(ranges: impl Iterator<Item = Range>) -> Group {
+        let mut group = Group::default();
+        let mut tail = Tail::of(&mut group.head, false);
+        for range in ranges {
+            tail = tail.or_range(&range);
         }
-
-        let mut new_tail = Box::new(List::default());
-        new_tail.head.range = *range;
-
-        let prev_tail: &mut List = match self.tail {
-            // SAFETY: self.tail aliases a List owned by self.head.next chain; we hold &mut self.
-            Some(mut p) => unsafe { p.as_mut() },
-            None => &mut self.head,
-        };
-        // Taken after the `Box` has moved: the move would invalidate an earlier pointer.
-        self.tail = Some(NonNull::from(&mut **prev_tail.next.insert(new_tail)));
-        Ok(())
+        group
     }
 
     #[inline]
@@ -545,6 +449,55 @@ impl Group {
         version_buf: &[u8],
     ) -> bool {
         self.head.satisfies(version, group_buf, version_buf)
+    }
+}
+
+/// Where the next range goes in a `Group` that is being built.
+struct Tail<'a> {
+    /// The first range of the last `List`.
+    first: &'a mut Range,
+    and: &'a mut Option<Box<Query>>,
+    or: &'a mut Option<Box<List>>,
+    /// The `Group` has more than its first `Query`.
+    grown: bool,
+}
+
+impl<'a> Tail<'a> {
+    fn of(list: &'a mut List, grown: bool) -> Self {
+        Tail {
+            first: &mut list.head.range,
+            and: &mut list.head.next,
+            or: &mut list.next,
+            grown,
+        }
+    }
+
+    fn and_range(self, range: &Range) -> Self {
+        if !self.first.has_left() && !self.first.has_right() {
+            *self.first = *range;
+            return self;
+        }
+
+        let query = self.and.insert(Box::new(Query {
+            range: *range,
+            next: None,
+        }));
+        Tail {
+            and: &mut query.next,
+            grown: true,
+            ..self
+        }
+    }
+
+    fn or_range(self, range: &Range) -> Self {
+        if !self.grown && !self.first.has_left() {
+            *self.first = *range;
+            return self;
+        }
+
+        let mut list = Box::new(List::default());
+        list.head.range = *range;
+        Tail::of(self.or.insert(list), true)
     }
 }
 
@@ -755,9 +708,9 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
     let mut i: usize = 0;
     let mut list = Group {
         head: List::default(),
-        tail: None,
         flags: FlagsBitSet::init_empty(),
     };
+    let mut tail = Tail::of(&mut list.head, false);
 
     let mut token = Token::default();
 
@@ -990,11 +943,11 @@ fn parse_with(input: &[u8], sliced: SlicedString, floor: Tag) -> Result<Group, A
                 token.to_range(&parse_result, floor)
             };
 
-            if is_or {
-                list.or_range(&range)?;
+            tail = if is_or {
+                tail.or_range(&range)
             } else {
-                list.and_range(&range)?;
-            }
+                tail.and_range(&range)
+            };
 
             is_or = false;
             token.wildcard = Wildcard::None;
@@ -1047,30 +1000,5 @@ mod tests {
             let group = parse(bytes, SlicedString::init(bytes, bytes)).unwrap();
             assert_eq!(group.has_skipped(), expected, "{text:?}");
         }
-    }
-
-    #[test]
-    fn clone_caches_its_own_last_nodes() {
-        let bytes = b">=1.0.0 <2.0.0 || 3.0.0 || >=4.0.0 <5.0.0 <4.5.0";
-        let group = parse(bytes, SlicedString::init(bytes, bytes))
-            .unwrap()
-            .clone();
-        let mut list = &group.head;
-        loop {
-            let mut query = &list.head;
-            while let Some(next) = &query.next {
-                query = next;
-            }
-            assert_eq!(
-                list.tail.map(|tail| tail.as_ptr().cast_const()),
-                list.head.next.is_some().then_some(&raw const *query),
-            );
-            let Some(next) = &list.next else { break };
-            list = next;
-        }
-        assert_eq!(
-            group.tail.map(|tail| tail.as_ptr().cast_const()),
-            Some(&raw const *list),
-        );
     }
 }

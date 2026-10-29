@@ -391,20 +391,19 @@ macro_rules! thread_local_ast_store {
                 unsafe { INSTANCE.get().as_mut() }
             }
             #[inline]
-            pub fn memory_allocator() -> *mut $crate::ASTMemoryAllocator {
-                MEMORY_ALLOCATOR
-                    .get()
-                    .map_or(::core::ptr::null_mut(), ::bun_ptr::BackRef::as_ptr)
+            pub fn memory_allocator()
+            -> Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator, ::bun_ptr::Mut>> {
+                MEMORY_ALLOCATOR.get()
             }
             #[inline]
-            pub(crate) fn set_memory_allocator(p: *mut $crate::ASTMemoryAllocator) {
-                MEMORY_ALLOCATOR.set(::core::ptr::NonNull::new(p).map(|nn|
-                    // SAFETY: `p` is the caller's live allocator with write provenance.
-                    unsafe { ::bun_ptr::BackRef::from_raw_mut(nn.as_ptr()) }));
+            pub(crate) fn set_memory_allocator(
+                p: Option<::bun_ptr::BackRef<$crate::ASTMemoryAllocator, ::bun_ptr::Mut>>,
+            ) {
+                MEMORY_ALLOCATOR.set(p);
             }
 
             pub fn create() {
-                if !instance().is_null() || !memory_allocator().is_null() {
+                if !instance().is_null() || memory_allocator().is_some() {
                     return;
                 }
                 INSTANCE.set(Backing::init());
@@ -412,7 +411,7 @@ macro_rules! thread_local_ast_store {
 
             /// create || reset
             pub(crate) fn begin() {
-                if !memory_allocator().is_null() {
+                if memory_allocator().is_some() {
                     return;
                 }
                 match instance_mut() {
@@ -426,7 +425,7 @@ macro_rules! thread_local_ast_store {
             }
 
             pub fn reset() {
-                if DISABLE_RESET.get() || !memory_allocator().is_null() {
+                if DISABLE_RESET.get() || memory_allocator().is_some() {
                     return;
                 }
                 // Caller contract — instance is set when reset() is called.
@@ -448,7 +447,7 @@ macro_rules! thread_local_ast_store {
             }
 
             pub fn deinit() {
-                if instance().is_null() || !memory_allocator().is_null() {
+                if instance().is_null() || memory_allocator().is_some() {
                     return;
                 }
                 // SAFETY: checked non-null above; `destroy` frees the `Store`
@@ -460,7 +459,7 @@ macro_rules! thread_local_ast_store {
             #[inline]
             pub(crate) fn assert() {
                 if cfg!(debug_assertions) {
-                    if instance().is_null() && memory_allocator().is_null() {
+                    if instance().is_null() && memory_allocator().is_none() {
                         unreachable!("Store must be init'd");
                     }
                 }

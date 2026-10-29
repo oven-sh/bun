@@ -517,6 +517,10 @@ bun_transpiler = { path = "src/transpiler" }
 [profile.dev.package.bun_jpeg]
 opt-level = 3
 
+# It stands in for vector code that every test program runs over each byte it parses.
+[profile.dev.package.bun_sema_standalone]
+opt-level = 3
+
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
 

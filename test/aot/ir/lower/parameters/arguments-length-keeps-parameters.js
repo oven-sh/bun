@@ -10,9 +10,9 @@
 // ONE-NOT: = Create
 // ONE-NOT: MappedArgument
 
-// RUN(ENTRY): lower
-// ENTRY-NOT: TakesCallee
-// ENTRY-NOT: HasRestParameter
+// RUN(MAIN): lower
+// MAIN-NOT: TakesCallee
+// MAIN-NOT: HasRestParameter
 
 export function f(a, b) {
   if (arguments.length === 1) return a;

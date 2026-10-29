@@ -10258,10 +10258,8 @@ struct DeleteTreeStackItem {
     /// owner; this is just the raw fd for `Dir::borrow` at call sites.
     parent_dir: FD,
     iter: DirIterator::WrappedIterator,
-    /// `Some(n)` once the directory is re-walked after an ENOTEMPTY rmdir,
-    /// where `n` is the delete count at that point. A re-walk that removes
-    /// nothing means an entry is listed but cannot be removed (its unlink
-    /// keeps reporting ENOENT), so the next ENOTEMPTY is final.
+    /// Delete count when this directory was re-walked after an ENOTEMPTY rmdir.
+    /// A re-walk that removed nothing makes the next ENOTEMPTY final.
     deleted_at_retry: Option<usize>,
 }
 
@@ -10564,13 +10562,11 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
     sub_path: &[u8],
     kind_hint: sys::FileKind,
 ) -> crate::Result<()> {
-    // A pass that removes nothing and still ends in ENOTEMPTY would repeat
-    // forever: an entry is listed but its unlink keeps reporting ENOENT.
-    // A pass that ends in ENOENT is not that: the directory this pass
-    // opened is gone, so the tree did shrink.
+    // Delete count at the last ENOTEMPTY restart. A restart that removed
+    // nothing makes the next ENOTEMPTY final, as in `zig_delete_tree`.
     let mut deleted: usize = 0;
+    let mut stalled_at: Option<usize> = None;
     'start_over: loop {
-        let deleted_at_start = deleted;
         let mut dir = match zig_delete_tree_open_initial_subpath(self_, sub_path, kind_hint)? {
             Some(d) => d,
             None => return Ok(()),
@@ -10665,9 +10661,10 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                         continue 'start_over;
                     }
                     Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
-                        if deleted == deleted_at_start {
+                        if stalled_at == Some(deleted) {
                             return Err(dt_err(E::ENOTEMPTY));
                         }
+                        stalled_at = Some(deleted);
                         continue 'start_over;
                     }
                     Err(e) => {
@@ -10678,9 +10675,10 @@ fn zig_delete_tree_min_stack_size_with_kind_hint(
                 match dt_delete_dir(self_, sub_path) {
                     Ok(()) | Err(E::ENOENT) => return Ok(()),
                     Err(E::ENOTEMPTY) | Err(E::EEXIST) => {
-                        if deleted == deleted_at_start {
+                        if stalled_at == Some(deleted) {
                             return Err(dt_err(E::ENOTEMPTY));
                         }
+                        stalled_at = Some(deleted);
                         continue 'start_over;
                     }
                     Err(e) => return Err(dt_err(e)),

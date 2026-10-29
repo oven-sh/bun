@@ -18,6 +18,8 @@ const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
 // A LATE_NEEDLE directory gets a new file and an ENOTEMPTY on each of its
 // first LATE_COUNT rmdir calls: the re-walk removes that file, so each retry
 // makes progress and the walk must keep retrying until the real rmdir.
+// A needle of "*" matches every file below the root: the walk names them
+// relative to a directory fd, while the root itself is an absolute path.
 const SHIM_C = /* c */ `
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -31,16 +33,20 @@ const SHIM_C = /* c */ `
 static int (*real_unlinkat)(int, const char *, int);
 static int late_calls = 0;
 
+static int matches(const char *needle, const char *path, int flags) {
+  if (!needle || !path) return 0;
+  if (strcmp(needle, "*") == 0) return !(flags & AT_REMOVEDIR) && !strchr(path, '/');
+  return strstr(path, needle) != NULL;
+}
+
 int unlinkat(int dirfd, const char *path, int flags) {
   if (!real_unlinkat) real_unlinkat = dlsym(RTLD_NEXT, "unlinkat");
-  const char *needle = getenv("ENOENT_NEEDLE");
-  if (needle && path && strstr(path, needle)) {
+  if (matches(getenv("ENOENT_NEEDLE"), path, flags)) {
     real_unlinkat(dirfd, path, flags);
     errno = ENOENT;
     return -1;
   }
-  const char *stuck = getenv("STUCK_NEEDLE");
-  if (stuck && path && strstr(path, stuck)) {
+  if (matches(getenv("STUCK_NEEDLE"), path, flags)) {
     errno = ENOENT;
     return -1;
   }
@@ -244,6 +250,15 @@ describe.skipIf(!isLinux || !cc)("rm({recursive}) continues past a child that ra
       const late = `force:${force} depth ${depth}: retries while each re-walk removes something`;
       test.concurrent(late, async () => {
         expect(await run(late, { force, depth, env: { LATE_NEEDLE: "sub", LATE_COUNT: "2" } })).toEqual(removed);
+      });
+
+      // Every file raced to ENOENT and a new one appeared before the rmdir:
+      // the first ENOTEMPTY gets one re-walk even though nothing was counted.
+      const first = `force:${force} depth ${depth}: re-walks once after an ENOTEMPTY with no counted removal`;
+      test.concurrent(first, async () => {
+        expect(
+          await run(first, { force, depth, env: { ENOENT_NEEDLE: "*", LATE_NEEDLE: "sub", LATE_COUNT: "1" } }),
+        ).toEqual(removed);
       });
     }
   }

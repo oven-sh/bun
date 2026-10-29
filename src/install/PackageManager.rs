@@ -1008,10 +1008,9 @@ mod holder {
 
     // Process-lifetime env storage for `init()`. Owned by the singleton, never
     // freed. Avoids `Box::leak` per PORTING.md §Forbidden. Write-once during
-    // single-threaded init. `AtomicCell<*mut T>` — payload is `Copy` and
-    // pointer-sized, so `.store()` is a safe Release write.
-    pub(super) static ENV_LOADER: bun_core::AtomicCell<*mut dot_env::Loader> =
-        bun_core::AtomicCell::new(core::ptr::null_mut());
+    // single-threaded init.
+    pub(super) static ENV_LOADER: core::sync::atomic::AtomicPtr<dot_env::Loader> =
+        core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`.
     /// `OnceLock` per PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
@@ -2356,12 +2355,12 @@ pub fn init(
     // loader. Allocate into a process-lifetime static (same pattern as
     // `holder::RAW_PTR`) instead of `Box::leak`.
     let env: &mut dot_env::Loader = unsafe {
-        let mut loader_ptr = holder::ENV_LOADER.load();
+        let mut loader_ptr = holder::ENV_LOADER.load(Ordering::Acquire);
         // A second `init()` runs with a different cwd, so it keeps what the first one read from the
         // `--env-file` paths.
         if loader_ptr.is_null() {
             loader_ptr = bun_core::heap::alloc(dot_env::Loader::init());
-            holder::ENV_LOADER.store(loader_ptr);
+            holder::ENV_LOADER.store(loader_ptr, Ordering::Release);
         }
         &mut *loader_ptr
     };

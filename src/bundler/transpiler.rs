@@ -713,7 +713,7 @@ impl<'a> Transpiler<'a> {
                 // place under that lock, and `dot_env::Loader::load` does
                 // file I/O between probes.
                 let dir = {
-                    let _entries_lock = bun_resolver::fs::FileSystem::instance()
+                    let _entries_lock = bun_resolver::fs::FileSystem::get()
                         .fs
                         .entries_mutex
                         .lock_guard();

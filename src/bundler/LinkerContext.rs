@@ -76,7 +76,7 @@ pub struct LinkerContext<'a> {
     pub(crate) parse_graph: *mut Graph<'a>,
     pub graph: LinkerGraph<'a>,
     /// Backref into `Transpiler.log`, assigned in [`Self::load`]. Stored as a
-    /// raw pointer (like `parse_graph` / `resolver`) so `Default` can be
+    /// raw pointer (like `parse_graph` / `resolver`) so [`Self::new`] can use
     /// `null_mut()` instead of a dangling `&mut` (instant UB). Use
     /// [`Self::log`] / [`Self::log_mut`]; deref the field directly only for
     /// split-borrow patterns that hold other `self` borrows across the access.
@@ -85,7 +85,7 @@ pub struct LinkerContext<'a> {
     /// Backref into `BundleV2.transpiler.resolver` (LIFETIMES.tsv:
     /// GRAPHBACKED). `ParentRef` (not `*mut`) so the accessor and the
     /// split-borrow sites in `linker_context/*.rs` deref it via safe `Deref`
-    /// instead of open-coding a raw deref. `Option` because `Default` precedes
+    /// instead of open-coding a raw deref. `Option` because [`Self::new`] precedes
     /// [`Self::load`]. Read-only — never `assume_mut`.
     pub(crate) resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub(crate) cycle_detector: Vec<ImportTracker>,
@@ -154,11 +154,11 @@ unsafe impl<'a> Send for LinkerContext<'a> {}
 // SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for LinkerContext<'a> {}
 
-impl<'a> Default for LinkerContext<'a> {
-    fn default() -> Self {
+impl<'a> LinkerContext<'a> {
+    pub(crate) fn new(bump: &'a Bump) -> Self {
         Self {
             parse_graph: core::ptr::null_mut(),
-            graph: Default::default(),
+            graph: LinkerGraph::new(bump),
             log: core::ptr::null_mut(),
             resolver: None,
             cycle_detector: Vec::new(),
@@ -185,9 +185,7 @@ impl<'a> Default for LinkerContext<'a> {
             entry_point_part_indices: Vec::new(),
         }
     }
-}
 
-impl<'a> LinkerContext<'a> {
     /// container_of: `*LinkerContext` → `*BundleV2` via the embedded `.linker`
     /// field. Returns raw; caller
     /// decides `&*` vs `&mut *` per local aliasing rules (several callers run
@@ -482,8 +480,7 @@ use crate::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
 impl<'a> LinkerContext<'a> {
-    pub(crate) fn arena(&self) -> &Bump {
-        // LinkerGraph owns (a backref to) the bundle arena; see `LinkerGraph::arena`.
+    pub(crate) fn arena(&self) -> &'a Bump {
         self.graph.arena()
     }
 
@@ -1879,16 +1876,14 @@ impl<'a> GenerateChunkCtx<'a> {
     pub(crate) fn c(&self) -> &mut LinkerContext<'a> {
         // SAFETY: ParentRef into `BundleV2.linker`, valid for the
         // chunk-generation pass; this task's chunk row is disjoint from peers'.
-        // Constructed via `from_raw_mut` (write provenance) in
-        // `generate_chunks_in_parallel`.
         unsafe { self.c.assume_mut() }
     }
 }
 
-pub struct PendingPartRange<'a> {
+pub struct PendingPartRange<'c, 'a> {
     pub(crate) part_range: PartRange,
     pub(crate) task: ThreadPoolLib::CountedTask,
-    pub(crate) ctx: &'a GenerateChunkCtx<'a>,
+    pub(crate) ctx: &'c GenerateChunkCtx<'a>,
     pub(crate) i: u32,
 }
 
@@ -1915,10 +1910,10 @@ pub struct PendingPartRange<'a> {
 ///   - `chunk.files_with_parts_in_chunk` entries are updated via atomic RMW only,
 ///   - all other access through `ctx.c` / `ctx.chunk` during codegen is read-only.
 #[inline]
-pub(crate) unsafe fn pending_part_range_prologue<'a>(
+pub(crate) unsafe fn pending_part_range_prologue<'c, 'a>(
     task: *mut ThreadPoolLib::Task,
 ) -> (
-    &'a PendingPartRange<'a>,
+    &'c PendingPartRange<'c, 'a>,
     *mut Chunk<'a>,
     scopeguard::ScopeGuard<
         &'static mut crate::thread_pool::Worker,

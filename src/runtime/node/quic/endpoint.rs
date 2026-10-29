@@ -1829,28 +1829,12 @@ impl QuicEndpoint {
         // `sessions` non-empty and the finish gate never trips. CONNECTION_
         // REFUSED (not a code-0 close) is what makes the client reject.
         if self.closing.get() {
-            // SAFETY: `conn` is the live conn lsquic just created.
-            unsafe {
-                lsquic::lsquic_conn_abort_error(
-                    conn,
-                    0,
-                    QUIC_TRANSPORT_CONNECTION_REFUSED,
-                    core::ptr::null(),
-                );
-            }
+            handshaken.abort_error(false, QUIC_TRANSPORT_CONNECTION_REFUSED, c"");
             return null_mut();
         }
         let (busy, max_conns) = self.with_state(|s| (s.busy, s.max_connections_total));
         if busy != 0 || (max_conns > 0 && self.sessions.get().len() >= max_conns as usize) {
-            // SAFETY: `conn` is the live conn lsquic just created.
-            unsafe {
-                lsquic::lsquic_conn_abort_error(
-                    conn,
-                    0,
-                    QUIC_TRANSPORT_CONNECTION_REFUSED,
-                    core::ptr::null(),
-                );
-            }
+            handshaken.abort_error(false, QUIC_TRANSPORT_CONNECTION_REFUSED, c"");
             self.add_stat(IDX_STATS_SERVER_BUSY_COUNT, 1);
             return null_mut();
         }
@@ -1872,10 +1856,7 @@ impl QuicEndpoint {
             // Node's dead server goes silent, and `lsquic_conn_abort` sends a
             // CONNECTION_CLOSE -- use the silent variant the sibling in
             // session.rs uses.
-            // SAFETY: `conn` is the live conn lsquic just created.
-            if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
-                c.abort_silent();
-            }
+            handshaken.abort_silent();
             return null_mut();
         }
         match QuicSession::create(
@@ -1902,10 +1883,7 @@ impl QuicEndpoint {
                 // Abort like the sibling null-return branches, or the conn
                 // lingers with no session behind it.
                 crate::dispatch::fold(Err(e));
-                // SAFETY: `conn` is the live conn lsquic just created.
-                if let Some(c) = unsafe { lsquic::Conn::from_raw(conn) } {
-                    c.abort_silent();
-                }
+                handshaken.abort_silent();
                 null_mut()
             }
         }

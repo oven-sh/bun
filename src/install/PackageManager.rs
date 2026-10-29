@@ -1041,19 +1041,16 @@ impl PackageManager {
     /// Reshaped for borrowck — `Lockfile::load_from_cwd` takes the manager as
     /// a separate argument while the receiver borrows `self.lockfile`, which
     /// is a self-referential split borrow. Encapsulated here so callers stay
-    /// in safe code: the returned `LoadResult` mutably borrows `self` for its
-    /// lifetime, after which `self.lockfile` holds the loaded data.
-    pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(
-        &mut self,
-    ) -> lockfile::LoadResult<'_> {
+    /// in safe code.
+    pub fn load_lockfile_from_cwd<const ATTEMPT_OTHER: bool>(&mut self) -> lockfile::LoadResult {
         self.clear_cached_items_depending_on_lockfile_buffer();
         let pm: *mut PackageManager = self;
         // SAFETY: `self.lockfile` is `Box<Lockfile>` — its pointee lives in a
         // separate heap allocation, so `&mut Lockfile` and `&mut PackageManager`
-        // never alias overlapping bytes. `Lockfile::load_from_cwd` reads
-        // `manager.options`/`manager.log` only and never re-projects
-        // `manager.lockfile`. Both raw pointers below are derived from `self`,
-        // so the caller's borrow stays on the Stacked-Borrows stack.
+        // never alias overlapping bytes. The one callee that reaches
+        // `manager.lockfile` again is `populate_manifest_cache`, after a pnpm or
+        // yarn migration, and it only reads. Both raw pointers below are derived
+        // from `self`, so the caller's borrow stays on the Stacked-Borrows stack.
         unsafe {
             let lf: *mut Lockfile = &raw mut *(*pm).lockfile;
             let log: *mut bun_ast::Log = (*pm).log;
@@ -3188,8 +3185,8 @@ fn init_with_runtime_once(
 
     // Gate the disk load on the cached dir listing so the runtime auto-install
     // path doesn't open()/read() a lockfile that isn't there.
-    // `load_from_dir` mutates `*manager.lockfile` in place and returns a
-    // borrow of it, so `Ok` keeps the loaded value as-is.
+    // `load_from_dir` fills the lockfile in place, so `Ok` keeps the loaded
+    // value as-is.
     // `Lockfile::load_from_dir(manager, …)` is a
     // self-aliasing receiver+argument pair Rust forbids. Split-borrow by
     // temporarily moving the boxed lockfile out so the `&mut PackageManager`

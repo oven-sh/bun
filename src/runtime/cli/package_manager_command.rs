@@ -131,7 +131,7 @@ pub(crate) struct PackageManagerCommand;
 
 impl PackageManagerCommand {
     pub(crate) fn handle_load_lockfile_errors_for(
-        load_lockfile: &LoadResult<'_>,
+        load_lockfile: &LoadResult,
         log_level: LogLevel,
         nothing_to: &str,
     ) {
@@ -783,8 +783,9 @@ impl PackageManagerCommand {
             let log_level = pm.options.log_level;
             let pm_raw: *mut PackageManager = pm;
             // SAFETY: the `Box<Lockfile>` pointee is a separate allocation, and
-            // `detect_and_load_other_lockfile` never reaches `manager.lockfile`.
-            let mut load_lockfile = unsafe {
+            // `detect_and_load_other_lockfile` reaches `manager.lockfile` only in
+            // `populate_manifest_cache`, which only reads it.
+            let load_lockfile = unsafe {
                 let lockfile: *mut Lockfile = &raw mut *(*pm_raw).lockfile;
                 let log: *mut bun_ast::Log = (*pm_raw).log;
                 migration::detect_and_load_other_lockfile(
@@ -812,12 +813,7 @@ impl PackageManagerCommand {
                 Global::exit(0);
             }
             package_json_write_back::write_migrated(pm);
-            let lf: *mut Lockfile = &raw mut *load_lockfile.ok_mut().lockfile;
-            // SAFETY: `load_lockfile` is `Ok` (errors exited above), and `save_to_disk` reads only its
-            // scalar fields, never `ok.lockfile`, so `*lf` is the sole live view of the lockfile.
-            unsafe {
-                (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
-            }
+            pm.lockfile.save_to_disk(&load_lockfile, &pm.options);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
             PmVersionCommand::exec(ctx, pm, positionals, &cwd)?;

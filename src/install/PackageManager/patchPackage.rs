@@ -466,7 +466,7 @@ pub fn do_patch_commit(
     let mut lockfile: Box<Lockfile> = Box::default();
     let log = manager.log_mut();
     let load_result = lockfile.load_from_cwd::<true>(Some(manager), log);
-    let linker = load_result.node_linker(manager.options.node_linker);
+    let linker = load_result.node_linker(&lockfile, manager.options.node_linker);
     match load_result {
         lockfile::LoadResult::NotFound => {
             Output::err_generic(

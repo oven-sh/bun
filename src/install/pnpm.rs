@@ -388,12 +388,12 @@ fn importer_package_json(
     }
 }
 
-pub(crate) fn migrate_pnpm_lockfile<'a>(
-    lockfile: &'a mut Lockfile,
+pub(crate) fn migrate_pnpm_lockfile(
+    lockfile: &mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-) -> Result<LoadResult<'a>, MigratePnpmLockfileError> {
+) -> Result<LoadResult, MigratePnpmLockfileError> {
     lockfile.init_empty();
     crate::initialize_store();
     bun_core::analytics::Features::pnpm_migration_inc(1);
@@ -1215,7 +1215,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     )?;
 
     Ok(LoadResult::Ok(LoadResultOk {
-        lockfile,
         migrated: lockfile::Migrated::Pnpm,
         serializer_result: Default::default(),
         format: lockfile::Format::Text,

@@ -1,4 +1,5 @@
 use core::ptr::NonNull;
+use core::sync::atomic::{AtomicPtr, Ordering};
 use std::io::Write as _;
 
 use crate::cli::command::TestOptions;
@@ -301,13 +302,15 @@ pub(crate) type FileMap = ArrayHashMap<&'static [u8], FileId>;
 pub(crate) mod Jest {
     use super::*;
 
-    // JS-VM-thread-only singleton.
-    pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
-        bun_core::RacyCell::new(None);
+    // Worker threads load it too (`console_on_before_print`, `file_generation`).
+    pub(crate) static RUNNER: AtomicPtr<TestRunner<'static>> = AtomicPtr::new(core::ptr::null_mut());
 
     pub(crate) fn runner() -> Option<&'static mut TestRunner<'static>> {
-        // SAFETY: RUNNER is only ever accessed from the single JS VM thread.
-        unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
+        // SAFETY: covers liveness only. Non-null is `reporter.jest` of `TestCommand::exec`, which
+        // clears `RUNNER` before `drop(reporter)`; an error return leaves it set and the process
+        // exits in `handle_root_error`. Exclusivity is left to the callers: they overlap, and
+        // Workers get here through `console.log`.
+        NonNull::new(RUNNER.load(Ordering::Relaxed)).map(|p| unsafe { &mut *p.as_ptr() })
     }
 
     /// Raw-pointer accessor for callers that must not materialise
@@ -315,8 +318,7 @@ pub(crate) mod Jest {
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
-        // SAFETY: RUNNER is only ever accessed from the single JS VM thread.
-        unsafe { RUNNER.read() }
+        NonNull::new(RUNNER.load(Ordering::Relaxed))
     }
 
     #[unsafe(no_mangle)]
@@ -506,7 +508,7 @@ pub(crate) fn file_generation() -> u32 {
     // `runner_ptr()` rather than `runner()`: node:test calls this on every test
     // registration, and an exclusive `&mut TestRunner` would invalidate the
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
-    // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
+    // SAFETY: same invariant as `runner()`.
     Jest::runner_ptr().map_or(0, |p| unsafe {
         if VirtualMachine::get().worker_ref().is_none() {
             (*p.as_ptr()).node_test_used = true;

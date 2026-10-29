@@ -2228,6 +2228,7 @@ impl NodeHTTPResponse {
                     Self::disarm_on_writable_unless_owed(raw_response, js_this, global_object);
                     return Ok(JSValue::js_number_from_uint64(bytes_len as u64));
                 }
+                let tail = &bytes[consumed..];
                 scoped_log!(
                     NodeHTTPResponse,
                     "tryWriteBody partial: {} / {}",
@@ -2248,11 +2249,7 @@ impl NodeHTTPResponse {
                     None => Some(JSValue::ZERO),
                 };
                 if let Some(pinned_value) = pinned_value {
-                    let remaining = ptr::slice_from_raw_parts(
-                        // SAFETY: consumed < bytes_len, so the add is in-bounds.
-                        unsafe { bytes.as_ptr().add(consumed) },
-                        bytes_len - consumed,
-                    );
+                    let remaining = ptr::from_ref(tail);
                     // `string_or_buffer` owns the bytes (WTFStringImpl ref /
                     // borrowed ArrayBuffer / encoded Vec); move it so it
                     // outlives the write.
@@ -2268,7 +2265,7 @@ impl NodeHTTPResponse {
                         js::pending_write_buffer_set_cached(js_this, global_object, buffer_value);
                     }
                 } else {
-                    raw_response.spill_body(&bytes[consumed..]);
+                    raw_response.spill_body(tail);
                 }
                 js::on_writable_set_cached(
                     js_this,

@@ -2160,7 +2160,7 @@ impl Package<u64> {
             (features.is_main || features.is_workspace).then_some(&mut *pm),
         )
         .unwrap_or_default();
-        let mut workspace_range: Option<semver::query::Group> = None;
+        let mut workspace_range: Option<(semver::query::Group, &[u8])> = None;
         #[allow(non_snake_case)]
         let FEATURES = features;
         let name_hash = match dependency_version.tag {
@@ -2179,18 +2179,21 @@ impl Package<u64> {
                         {
                             let at = strings::last_index_of_char(input, b'@').unwrap_or(0);
                             if at > 0 {
-                                workspace_range = Some(
-                                    semver::query::parse(&input[at as usize + 1..], sliced)
+                                let range = &input[at as usize + 1..];
+                                workspace_range = Some((
+                                    semver::query::parse(range, sliced)
                                         .unwrap_or_else(|_| bun_core::out_of_memory()),
-                                );
+                                    range,
+                                ));
                                 break 'brk semver::string::Builder::string_hash(
                                     &input[0..at as usize],
                                 );
                             }
-                            workspace_range = Some(
+                            workspace_range = Some((
                                 semver::query::parse(input, sliced)
                                     .unwrap_or_else(|_| bun_core::out_of_memory()),
-                            );
+                                input,
+                            ));
                         }
                         external_alias.hash
                     }
@@ -2323,7 +2326,7 @@ impl Package<u64> {
                         .then(|| parsed.version.min());
                 }
                 if let Some(path) = workspace_path {
-                    if let Some(range) = &workspace_range {
+                    if let Some((range, range_literal)) = &workspace_range {
                         if let Some(ver) = workspace_version {
                             if range.satisfies(ver, buf, version_buf) {
                                 dependency_version.value.workspace = path;
@@ -2333,10 +2336,8 @@ impl Package<u64> {
 
                         // `foo@      `, `foo@^`, `foo@~` and `../foo` do not name a version, so
                         // they link the workspace whatever its version is, like `workspace:^`.
-                        // SAFETY: `range.input` borrows `lockfile.buffers.string_bytes`
-                        // (set by `semver::query::parse` above), which is live here.
                         let version_literal =
-                            strings::trim(unsafe { &*range.input }, &strings::WHITESPACE_CHARS);
+                            strings::trim(range_literal, &strings::WHITESPACE_CHARS);
                         if range.is_empty()
                             || range.is_star()
                             || SemverVersion::is_tagged_version_only(version_literal)

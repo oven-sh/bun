@@ -91,27 +91,17 @@ pub(crate) fn hostent_with_ttls_to_js_response(
             if addr.is_null() {
                 break;
             }
-            // bun_dns::Address (= bun_sys::net::Address) only exposes init_posix,
-            // so build a sockaddr_in/in6 on the stack and copy through that.
             let addr_string = {
                 // h_addrtype is c_short on Windows, c_int on POSIX; widen for the compare.
                 #[allow(clippy::useless_conversion)]
                 let address = if i32::from(hostent.h_addrtype) == c_ares::AF::INET6 {
                     // SAFETY: addr points to ≥16 bytes for AF_INET6.
                     let bytes: [u8; 16] = unsafe { *(addr as *const [u8; 16]) };
-                    let mut sa6: super::netc::sockaddr_in6 = bun_core::ffi::zeroed();
-                    sa6.sin6_family = super::netc::AF_INET6 as _;
-                    sa6.sin6_addr.s6_addr = bytes;
-                    // SAFETY: &sa6 is a valid sockaddr_in6.
-                    unsafe { bun_dns::Address::init_posix((&raw const sa6).cast()) }
+                    bun_dns::Address::from_ip(core::net::Ipv6Addr::from(bytes).into(), 0)
                 } else {
                     // SAFETY: addr points to ≥4 bytes for AF_INET.
                     let bytes: [u8; 4] = unsafe { *(addr as *const [u8; 4]) };
-                    let mut sa4: super::netc::sockaddr_in = bun_core::ffi::zeroed();
-                    sa4.sin_family = super::netc::AF_INET as _;
-                    sa4.sin_addr.s_addr = u32::from_ne_bytes(bytes);
-                    // SAFETY: &sa4 is a valid sockaddr_in.
-                    unsafe { bun_dns::Address::init_posix((&raw const sa4).cast()) }
+                    bun_dns::Address::from_ip(core::net::Ipv4Addr::from(bytes).into(), 0)
                 };
                 match address_to_js(&address, global_this) {
                     Ok(v) => v,

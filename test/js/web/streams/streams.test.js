@@ -2461,6 +2461,70 @@ it("the stream members that reject a wrong `this` reject with ERR_INVALID_THIS",
   ]);
 });
 
+// A byte stream refuses a chunk or view that is not an ArrayBufferView with a TypeError that carries
+// Node's ERR_INVALID_ARG_TYPE code and message (node compatibility). A missing argument is `undefined`.
+describe("a byte stream refuses a value that is not an ArrayBufferView with ERR_INVALID_ARG_TYPE", () => {
+  const notViews = [
+    [undefined, "undefined"],
+    [null, "null"],
+    [5, "type number (5)"],
+    ["x", "type string ('x')"],
+    [{}, "an instance of Object"],
+    [[], "an instance of Array"],
+    [new ArrayBuffer(1), "an instance of ArrayBuffer"],
+  ];
+  const invalidArgType = (argument, received) =>
+    expect.objectContaining({
+      name: "TypeError",
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `The "${argument}" argument must be an instance of Buffer, TypedArray, or DataView. Received ${received}`,
+    });
+
+  it("ReadableStreamBYOBReader.prototype.read() rejects", async () => {
+    const reader = new ReadableStream({ type: "bytes" }).getReader({ mode: "byob" });
+    const reads = [reader.read(), ...notViews.map(([value]) => reader.read(value))];
+    expect(await Promise.allSettled(reads)).toEqual(
+      ["undefined", ...notViews.map(([, received]) => received)].map(received => ({
+        status: "rejected",
+        reason: invalidArgType("view", received),
+      })),
+    );
+  });
+
+  // The message describes the value, and that reads its `constructor`. What the read throws is the rejection.
+  it("ReadableStreamBYOBReader.prototype.read() rejects with what a getter of the value throws", async () => {
+    const reader = new ReadableStream({
+      type: "bytes",
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+      },
+    }).getReader({ mode: "byob" });
+    const error = new RangeError("from the constructor getter");
+    const promise = reader.read({
+      get constructor() {
+        throw error;
+      },
+    });
+    expect(promise).toBeInstanceOf(Promise);
+    await expect(promise).rejects.toBe(error);
+    expect(await reader.read(new Uint8Array(2))).toEqual({ value: new Uint8Array([1, 2]), done: false });
+  });
+
+  it("ReadableByteStreamController.prototype.enqueue() throws", () => {
+    let controller;
+    new ReadableStream({
+      type: "bytes",
+      start(c) {
+        controller = c;
+      },
+    });
+    expect(() => controller.enqueue()).toThrow(invalidArgType("buffer", "undefined"));
+    for (const [value, received] of notViews) {
+      expect(() => controller.enqueue(value)).toThrow(invalidArgType("buffer", received));
+    }
+  });
+});
+
 it("new Response(stream).arrayBuffer() (bytes)", async () => {
   var queue = [Buffer.from("abdefgh")];
   var stream = new ReadableStream({

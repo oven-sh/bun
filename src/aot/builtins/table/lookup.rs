@@ -51,6 +51,11 @@ impl BuiltinEntry {
     pub fn implemented_by(&self) -> &'static [RuntimeFunction] {
         self.dependencies().implemented_by
     }
+
+    /// What hangs on the operands of the entry, or on what is done with a value that it hands out.
+    pub fn guessed_functions(&self) -> &'static [RuntimeFunction] {
+        self.dependencies().guessed
+    }
 }
 
 pub fn class_data(class: BuiltinClass) -> &'static ClassData {
@@ -274,6 +279,18 @@ pub fn well_known_symbol(id: BuiltinId) -> Option<WellKnownSymbol> {
     Some(SYMBOL_CONSTANTS[position].2)
 }
 
+pub fn is_callable(id: BuiltinId) -> bool {
+    match entry(id).kind {
+        BuiltinKind::Constructor | BuiltinKind::Function | BuiltinKind::Method => true,
+        BuiltinKind::Prototype => canonical_id(id) == BuiltinId::FunctionPrototype,
+        BuiltinKind::Namespace
+        | BuiltinKind::Accessor
+        | BuiltinKind::DataProperty
+        | BuiltinKind::Constant
+        | BuiltinKind::NativeBinding => false,
+    }
+}
+
 pub fn is_legal_builtin_constant(id: BuiltinId) -> bool {
     let entry = entry(id);
     match entry.kind {
@@ -329,6 +346,11 @@ pub fn host_reads(context: HostReadContext) -> impl Iterator<Item = &'static Hos
 /// Whether `builtin`, which is a canonical id, makes its answer out of text or bytes, and may make it with the layouts of the type that the answer is written under.
 pub fn is_parser(builtin: BuiltinId) -> bool {
     PARSERS.binary_search(&builtin).is_ok()
+}
+
+/// Whether `builtin`, which is a canonical id, answers a query that settles to rows.
+pub fn answers_query(builtin: BuiltinId) -> bool {
+    QUERY_FUNCTIONS.binary_search(&builtin).is_ok()
 }
 
 /// The ways to call or construct `builtin`, which is a canonical id, so that nothing a program can see happens when nobody uses the result.

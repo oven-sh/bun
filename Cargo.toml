@@ -512,6 +512,10 @@ bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
 
+# It stands in for vector code that every test program runs over each byte it parses.
+[profile.dev.package.bun_sema_standalone]
+opt-level = 3
+
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
 

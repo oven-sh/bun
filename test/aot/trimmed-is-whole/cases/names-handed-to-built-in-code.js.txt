@@ -110,8 +110,10 @@ const table = { a() { return 1; }, b() { return 2; } };
 [...table.__proto__] = [];
 tell(() => table["toSp" + given + "liced"](0).length);
 //// a-file-of-function-overrides-in-the-environment
+//@ alone
 //@ env BUN_JSC_functionOverrides=/dev/null
 console.log("ran");
 //// bytecode-validation-in-the-environment
+//@ alone
 //@ env BUN_JSC_validateBytecode=true
 console.log("ran");

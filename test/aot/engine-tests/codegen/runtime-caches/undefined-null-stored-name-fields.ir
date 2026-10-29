@@ -1,0 +1,178 @@
+# A field that its class declares as a number or a boolean gets undefined or null from code that knows nothing of the class, by name and by key, behind the constructor.
+# Typed code that reads the field afterwards sees what plain Bun sees, whether every constructor fills the field or it is created later, and so does whoever lists the keys.
+# FORM: AsRead
+# RUN: lower-to-air size f0 f2
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="undefined-null-stored-name-fields.ts" displayPath="undefined-null-stored-name-fields.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Instance name="Filled" module=m0 position=350 constructor=f3 fields=[{key="count" declared={type=number} flags=[IsRequired]}, {key="ratio" declared={type=number} flags=[IsRequired]}, {key="ready" declared={type=boolean} flags=[IsRequired]}] ownFieldCount=3
+data d0 root=Array{contents=undefined|null|L0} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = NewClass v4 layout=L0
+    v6 = FinishClass v5 layout=L0
+    v7 = Convert v6 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = Builtin builtin=JSON
+    v9 = PropGet v8 key="parse"
+    v10 = Convert v9 declared={type=builtin(JSONParse) flags=[IsExpected]}
+    v11 = String string="{\"values\":[null,1,2.5,true,false,-7,1e10],\"names\":[\"count\",\"ratio\",\"ready\"]}"
+    v12 = Call v10, v8, v11 calleeKey="parse" calleeName="JSON.parse"
+    v13 = Convert v12 declared={type=undefined|null|object flags=[IsExpected]}
+    v14 = Undefined
+    v15 = NewArray v14 contents=anything
+    v16 = Convert v13 declared={type=undefined|null|object flags=[IsExpected]}
+    v17 = PropGet v16 key="values"
+    v18 = Convert v17 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    AppendSpread v15, v18
+    v20 = Convert v15 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}
+    v21 = Integer
+    v22 = Convert v21 declared={type=number}
+    Jump -> next b1(v22)
+  b1(v23: number):
+    v24 = Integer integer=40
+    v25 = Less v23, v24
+    Branch v25 -> taken b2(| 0), notTaken b10(| 0)
+  b2(v26):
+    v27 = IteratorOpen v20
+    LoopHint
+    v29 = IteratorResume v27
+    v30 = ResultAt v29
+    Branch v30 -> taken b3(), notTaken b4()
+  b3():
+    v31 = Increment v26
+    v32 = Convert v31 declared={type=number}
+    Jump -> next b1(v32)
+  b4():
+    Jump -> next b5()
+  b5() handler=b9():
+    v33 = PropGet v20 key="length"
+    v34 = Convert v33 declared={type=number} illTypedCause=Assertion
+    v35 = Mod v26, v34
+    v36 = ElemGet v20, v35
+    v37 = Undefined
+    v38 = Null
+    v39 = Integer integer=3
+    v40 = NewArray v36, v37, v38, v39 contents=anything
+    v41 = IteratorOpen v40
+    Jump -> next b6()
+  b6() handler=b9():
+    LoopHint
+    Jump -> next b7()
+  b7() handler=b8():
+    v43 = Construct v7, -, v26 calleeName="Filled"
+    v44 = Convert v43 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v45 = Convert v44 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v46 = PropDelete v45 key="ratio"
+    v47 = Call v3, -, v44 calleeName="sumOfFilled"
+    Jump -> next b6()
+  b8() role=IterationCleanup subject=v41 handler=b9():
+    v48 = CatchException
+    Rethrow v48
+  b9() role=IterationCleanup subject=v27:
+    v49 = CatchException
+    Rethrow v49
+  b10(v50):
+    v51 = Data data=d0
+    v52 = Convert v51 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    v53 = Integer
+    v54 = Convert v53 declared={type=number}
+    Jump -> next b11(v54)
+  b11(v55: number):
+    LoopHint
+    v57 = Construct v7, -, v55 calleeName="Filled"
+    v58 = Convert v57 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v59 = Integer integer=5
+    v60 = Mod v55, v59
+    v61 = Integer
+    v62 = StrictEq v60, v61
+    Branch v62 -> taken b12(), notTaken b13()
+  b12():
+    v63 = Undefined
+    v64 = Call v1, -, v58, v63 calleeName="storeReady"
+    Jump -> next b13()
+  b13():
+    v65 = PropGet v52 key="push"
+    v66 = Call v65, v52, v58 calleeKey="push" calleeName="many.push"
+    v67 = Increment v55
+    v68 = Convert v67 declared={type=number}
+    Jump -> next b11(v68)
+}
+function f1 name="storeReady" module=m0 position=969 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v2, v1 key="ready"
+    v4 = Undefined
+    Return v4
+}
+function f2 name="sumOfFilled" module=m0 position=1224 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    v1 = PropGet v0 key="count"
+    v2 = Integer integer=1
+    v3 = Add v1, v2
+    v4 = ToString v3
+    v5 = String string=" "
+    v6 = PropGet v0 key="ratio"
+    v7 = Integer integer=2
+    v8 = Mul v6, v7
+    v9 = ToString v8
+    v10 = String string=" "
+    v11 = PropGet v0 key="ready"
+    v12 = ToBoolean v11
+    Branch v12 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v13):
+    v14 = String string="yes"
+    Jump -> next b3(v14)
+  b2(v15):
+    v16 = String string="no"
+    Jump -> next b3(v16)
+  b3(v17):
+    v18 = ToString v17
+    v19 = String string=" "
+    v20 = PropGet v0 key="count"
+    v21 = TypeTest v20 testedType=undefined
+    v22 = ToString v21
+    v23 = String string=" "
+    v24 = PropGet v0 key="ratio"
+    v25 = TypeTest v24 testedType=null
+    v26 = ToString v25
+    v27 = String string=" "
+    v28 = PropGet v0 key="ready"
+    v29 = TypeOf v28
+    v30 = ToString v29
+    v31 = Strcat v4, v5, v9, v10, v18, v19, v22, v23, v26, v27, v30
+    v32 = Convert v31 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    Return v32
+}
+function f3 name="Filled" module=m0 position=424 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: number):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = Double number=0.5
+    v6 = Add v1, v5
+    v7 = Convert v6 declared={type=number}
+    PropSet v4, v7 key="ratio"
+    v9 = Integer integer=1
+    v10 = BitAnd v1, v9
+    v11 = Integer integer=1
+    v12 = StrictEq v10, v11
+    v13 = Convert v12 declared={type=boolean}
+    PropSet v4, v13 key="ready"
+    v15 = Undefined
+    Return v4
+}
+# -- generated: f0 sumOfFilled
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: instructions: 97, patchpoints: 15, rare instructions: 66, polls: 1
+# CHECK-NEXT: end of function f0
+# CHECK-LABEL: function {{*}}name="sumOfFilled"
+# CHECK: role=Source
+# CHECK-NEXT: instructions: 70, patchpoints: 13, rare instructions: 46
+# CHECK-NEXT: end of function f2

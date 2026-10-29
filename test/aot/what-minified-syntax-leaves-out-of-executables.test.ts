@@ -3,8 +3,8 @@ import { afterAll, expect } from "bun:test";
 import { readFileSync, rmSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { built, spawned } from "./harness/commands";
 import { buildFlags, compileCommand } from "./harness/flags";
-import { built, spawned } from "./run-programs";
 import { beforeAll, describe, test } from "./supported";
 
 const sources = {

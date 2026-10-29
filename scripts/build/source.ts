@@ -496,11 +496,8 @@ export interface Dependency {
    * Files ending in `.patch` are applied with `git apply`. Other files are
    * OVERLAYS — copied into the source root as-is. Useful for injecting a
    * CMakeLists.txt into a project that lacks one (tinycc).
-   *
-   * Function form allows conditional patches (e.g. zlib's arm64-windows
-   * machine-type fix is only needed on that target).
    */
-  patches?: string[] | ((cfg: Config) => string[]);
+  patches?: string[];
 
   /**
    * Other deps whose headers this dep's sources include — e.g. a dep that
@@ -817,7 +814,7 @@ export function resolveDep(
 
   // Resolve conditional patches. Same list for the whole configure run —
   // we don't want patches changing between emitFetch and the hash check.
-  const patches = dep.patches === undefined ? [] : typeof dep.patches === "function" ? dep.patches(cfg) : dep.patches;
+  const patches = dep.patches ?? [];
 
   // DirectBuild sources are compiled in our ninja graph, so they are declared
   // as implicit outputs of fetch: ninja then knows where they come from.

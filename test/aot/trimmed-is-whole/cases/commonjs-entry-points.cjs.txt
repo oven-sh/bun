@@ -1,4 +1,5 @@
 // A CommonJS entry point. bun:main reads `then`, `fetch` and `app` from its exports.
+//@ build --no-builtin-modules
 //// exports-nothing
 console.log("run");
 //// exports-a-name
@@ -11,12 +12,14 @@ console.log(Object.keys(module.exports));
 //@ file other.cjs "exports.value = 1;\nexports.fetch = function () {};"
 console.log(require("./other.cjs").value);
 //// exports-fetch
+//@ alone
 exports.port = 0;
 exports.fetch = function () { return new Response("ok"); };
 console.debug = function (text) { console.log(String(text).replace(/:\d+$/, ":<port>")); process.exit(0); };
 //// exports-then
 exports.then = function (resolve) { console.log("asked"); resolve({}); };
 //// is-stored-on-by-what-it-requires
+//@ alone
 //@ file stores.cjs "const entry = require(\"./program.cjs\");\nentry.port = 0;\nentry.fetch = function () { return new Response(\"ok\"); };"
 require("./stores.cjs");
 console.debug = function (text) { console.log(String(text).replace(/:\d+$/, ":<port>")); process.exit(0); };
@@ -26,6 +29,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.value = 1;
 console.log(Object.keys(exports));
 //// says-that-it-was-an-es-module-and-exports-fetch
+//@ alone
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.port = 0;
 exports.fetch = function () { return new Response("ok"); };
@@ -36,10 +40,12 @@ if (typeof module !== "undefined" && module.exports) console.log("run");
 module.exports = function () {};
 console.log(typeof module.exports);
 //// exports-a-function-by-its-name
+//@ alone
 function main() { console.log("run"); }
 module.exports = main;
 if (require.main === module) main();
 //// exports-a-function-by-its-name-with-fetch-on-it
+//@ alone
 function app() {}
 app.port = 0;
 app.fetch = function () { return new Response("ok"); };

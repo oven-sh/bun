@@ -672,30 +672,13 @@ pub(super) fn finalize_bundle(
 
         // Get the source map if available and render to JSON
         let source_map_json = if !dev.server_graph.current_chunk_source_maps.is_empty() {
-            'json: {
-                // Create a temporary source map entry to render
-                let mut source_map_entry = source_map_store::Entry {
-                    ref_count: 1,
-                    ..Default::default()
-                };
+            // Create a temporary source map entry to render
+            let mut source_map_entry = source_map_store::Entry::default();
 
-                // Fill the source map entry
-                dev.server_graph.take_source_map(&mut source_map_entry)?;
-                // Note: erase to raw ptr so `render_json` can borrow the entry
-                // while the cleanup guard is armed.
-                let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
-                scopeguard::defer! {
-                    // SAFETY: `source_map_entry` is a stack local that outlives this guard.
-                    unsafe {
-                        (*entry_ptr).ref_count = 0;
-                        (*entry_ptr).deinit();
-                    }
-                };
+            // Fill the source map entry
+            dev.server_graph.take_source_map(&mut source_map_entry)?;
 
-                let json_data =
-                    source_map_entry.render_json(dev, ChunkKind::HmrChunk, bake::Side::Server)?;
-                break 'json Some(json_data);
-            }
+            Some(source_map_entry.render_json(ChunkKind::HmrChunk, bake::Side::Server)?)
         } else {
             None
         };

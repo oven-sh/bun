@@ -654,9 +654,8 @@ impl Drop for DevServer {
             }
         }
 
-        for value in self.source_maps.entries.values_mut() {
+        for value in self.source_maps.entries.values() {
             debug_assert!(value.ref_count > 0);
-            value.ref_count = 0;
         }
         if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
             let timer_ptr: *mut EventLoopTimer = &raw mut self.source_maps.weak_ref_sweep_timer;

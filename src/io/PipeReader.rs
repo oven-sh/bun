@@ -1335,7 +1335,8 @@ impl WindowsBufferedReader {
         unsafe { (*this.cast::<WindowsBufferedReader>()).close() };
     }
 
-    pub fn start(&mut self, fd: Fd, _: bool) -> sys::Result<()> {
+    /// Makes `fd` the source and issues no read: `start_reading()` issues the first.
+    pub fn open(&mut self, fd: Fd) -> sys::Result<()> {
         debug_assert!(self.source.is_none());
         // Use the event loop from the parent, not the global one
         // This is critical for spawnSync to use its isolated loop
@@ -1345,6 +1346,11 @@ impl WindowsBufferedReader {
             sys::Result::Ok(source) => source,
         };
         self.set_source(source);
+        sys::Result::Ok(())
+    }
+
+    pub fn start(&mut self, fd: Fd, _: bool) -> sys::Result<()> {
+        self.open(fd)?;
         self.start_with_current_pipe()
     }
 
@@ -1622,7 +1628,7 @@ impl WindowsBufferedReader {
         }
     }
 
-    fn start_reading(&mut self) -> sys::Result<()> {
+    pub fn start_reading(&mut self) -> sys::Result<()> {
         // A used-up limit stays paused: `start` has nothing to read and `unpause` reports it as EOF instead.
         if self.flags.contains(WindowsFlags::IS_DONE)
             || !self.flags.contains(WindowsFlags::IS_PAUSED)

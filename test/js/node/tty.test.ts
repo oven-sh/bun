@@ -3,7 +3,7 @@ import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
-import { ReadStream, WriteStream } from "node:tty";
+import { ReadStream, WriteStream, isatty } from "node:tty";
 
 describe("ReadStream.prototype.setRawMode", () => {
   // Regression: on Windows, the `fd === 0` branch returned early on success
@@ -480,6 +480,79 @@ describe.skipIf(isWindows)("tty.ReadStream is a net.Socket over a native TTY han
     expect(text).toContain("P2 0");
   });
 
+  // libuv's uv__tty_close() puts the terminal back when a handle is closed in raw mode.
+  test("destroy() of a stream in raw mode restores the terminal", async () => {
+    const ICANON = process.platform === "darwin" ? 0x100 : 0x2;
+    const ECHO = 0x8;
+    const isRaw = (terminal: Bun.Terminal) => (terminal.localFlags & (ICANON | ECHO)) === 0;
+    const observed: Record<string, boolean> = {};
+    const { code } = await runInPty(
+      `
+        const tty = require("node:tty");
+        const say = s => process.stdout.write(s + "\\n");
+        const ack = () => new Promise(resolve => process.stdin.once("data", () => resolve()));
+        (async () => {
+          const raw = new tty.ReadStream(0);
+          raw.setRawMode(true);
+          say("P1"); await ack();
+
+          new tty.ReadStream(0).destroy(); // never raw: nothing to put back
+          say("P2"); await ack();
+
+          raw.destroy();
+          say("P3"); await ack();
+          process.exit(0);
+        })();
+      `,
+      [
+        terminal => {
+          observed.afterSetRawMode = isRaw(terminal);
+          terminal.write("\n");
+        },
+        terminal => {
+          observed.afterOtherStreamDestroyed = isRaw(terminal);
+          terminal.write("\n");
+        },
+        terminal => {
+          observed.afterRawStreamDestroyed = isRaw(terminal);
+          terminal.write("\n");
+        },
+      ],
+      { markers: ["P1", "P2", "P3"] },
+    );
+    expect(observed).toEqual({
+      afterSetRawMode: true,
+      afterOtherStreamDestroyed: true,
+      afterRawStreamDestroyed: false,
+    });
+    expect(code).toBe(0);
+  });
+
+  // Node starts the handle from _read() alone: a read() that the buffer serves
+  // leaves it stopped, so a child spawned next gets every keystroke.
+  test("read() served from the buffer leaves the handle stopped", async () => {
+    const { code, output } = await runInPty(
+      `
+        const s = process.stdin;
+        s.once("readable", () => {
+          const before = s._handle.reading;
+          const chunk = String(s.read());
+          process.stdout.write("RESULT " + JSON.stringify({ before, chunk, after: s._handle.reading }) + "\\n");
+          process.exit(0);
+        });
+        process.stdout.write("P1\\n");
+      `,
+      [terminal => void terminal.write("line\n")],
+      { markers: ["P1", "RESULT "] },
+    );
+    expect(code).toBe(0);
+    expect(JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1])).toEqual({
+      before: false,
+      chunk: "line\n",
+      after: false,
+    });
+  });
+
   test("tty_wrap.TTY delivers reads through onread and reports EOF", async () => {
     const { code, output } = await runInPty(
       `
@@ -602,6 +675,75 @@ describe("ReadStream constructor", () => {
       );
     }
   });
+
+  test("WriteStream rejects a negative or non-integer fd like Node", () => {
+    for (const fd of [-1, 1.5, "1"]) {
+      expect(() => new WriteStream(fd as number)).toThrow(
+        expect.objectContaining({ name: "RangeError", code: "ERR_INVALID_FD" }),
+      );
+    }
+  });
+});
+
+describe("isatty", () => {
+  // Node asks the system only about an integer from 0 to 2147483647, and converts nothing.
+  test("answers false for what is no file descriptor, without coercion", () => {
+    const conversions: string[] = [];
+    const object = {
+      valueOf() {
+        conversions.push("valueOf");
+        return 0;
+      },
+    };
+    const values = ["0", 1.5, -1, 2 ** 31, null, undefined, true, object];
+    expect(values.map(value => isatty(value as number))).toEqual(values.map(() => false));
+    expect(conversions).toEqual([]);
+  });
+});
+
+describe("node:tty loads node:net only for ReadStream", () => {
+  test("ReadStream is an accessor until its first read, then the class", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const tty = require("node:tty");
+         const getter = () => typeof Object.getOwnPropertyDescriptor(tty, "ReadStream").get;
+         const atLoad = getter();
+         tty.isatty(1);
+         void tty.WriteStream.prototype;
+         const afterOtherExports = getter();
+         const ReadStream = tty.ReadStream;
+         const { value, enumerable, writable } = Object.getOwnPropertyDescriptor(tty, "ReadStream");
+         console.log(JSON.stringify({
+           atLoad,
+           afterOtherExports,
+           isClass: value === ReadStream,
+           enumerable,
+           writable,
+           extendsSocket: Object.getPrototypeOf(ReadStream) === require("node:net").Socket,
+           keys: Object.keys(tty),
+         }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: JSON.parse(stdout), stderr, exitCode }).toEqual({
+      stdout: {
+        atLoad: "function",
+        afterOtherExports: "function",
+        isClass: true,
+        enumerable: true,
+        writable: true,
+        extendsSocket: true,
+        keys: ["ReadStream", "WriteStream", "isatty"],
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });
 
 describe.skipIf(isWindows)("tty.ReadStream over the stream-wrap path of net.Socket", () => {
@@ -690,8 +832,7 @@ describe.skipIf(isWindows)("tty.ReadStream over the stream-wrap path of net.Sock
     ).toBe("abcd\n");
   });
 
-  // The handle does not count writes (they go through write(2) on the JS
-  // side), so destroy() must not reset bytesWritten from the handle.
+  // The handle counts what it writes, and destroy() keeps the count.
   test("bytesWritten survives destroy()", async () => {
     const { code, output } = await runInPty(
       `
@@ -709,6 +850,62 @@ describe.skipIf(isWindows)("tty.ReadStream over the stream-wrap path of net.Sock
     );
     expect(code).toBe(0);
     expect(JSON.parse(Bun.stripANSI(output()).match(/RESULT (\{.*\})/)![1])).toEqual({ before: 2, after: 2 });
+  });
+
+  // fd 3 of the child is a pipe, which libuv's uv_tty_init takes and cannot reopen: close() closes it.
+  async function runOverPipe(script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
+  // Node closes a handle only when the program does. The collector gives up
+  // what the handle opened for itself, and leaves the caller's fd alone.
+  test("a stream that is collected without destroy() leaves the caller's fd open", async () => {
+    const result = await runOverPipe(`
+      const fs = require("node:fs");
+      const tty = require("node:tty");
+      let collected = false;
+      const registry = new FinalizationRegistry(() => { collected = true; });
+      (() => { registry.register(new tty.ReadStream(3)._handle, 0); })();
+      (async () => {
+        for (let i = 0; i < 100 && !collected; i++) {
+          Bun.gc(true);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+        let open = true;
+        try { fs.fstatSync(3); } catch { open = false; }
+        console.log(JSON.stringify({ collected, open }));
+      })();
+    `);
+    expect(result).toEqual({ stdout: JSON.stringify({ collected: true, open: true }), stderr: "", exitCode: 0 });
+  });
+
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L801-L815
+  test("resetAndDestroy() refuses a handle that is no TCP handle", async () => {
+    const result = await runOverPipe(`
+      const fs = require("node:fs");
+      const tty = require("node:tty");
+      const stream = new tty.ReadStream(3);
+      let code;
+      try { stream.resetAndDestroy(); } catch (err) { code = err.code; }
+      const destroyed = stream.destroyed;
+      stream.on("close", () => {
+        let open = true;
+        try { fs.fstatSync(3); } catch { open = false; }
+        console.log(JSON.stringify({ code, destroyed, openAfterDestroy: open }));
+      });
+      stream.destroy();
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify({ code: "ERR_INVALID_HANDLE_TYPE", destroyed: false, openAfterDestroy: false }),
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   // A TUI run as 'app < in > out' still has a controlling terminal and opens
@@ -772,6 +969,31 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
       env: bunEnv,
     });
     expect(await writer.exited).toBe(0);
+  }
+
+  // Reads the slave until it has `size` bytes, and says how many it got.
+  async function readFromAnotherProcess(path: string, size: number) {
+    await using reader = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const fs = require("fs");
+         const fd = fs.openSync(process.argv[1], fs.constants.O_RDONLY | fs.constants.O_NOCTTY);
+         const buffer = Buffer.alloc(65536);
+         let total = 0;
+         while (total < Number(process.argv[2])) {
+           const n = fs.readSync(fd, buffer, 0, buffer.length, null);
+           if (n === 0) break;
+           total += n;
+         }
+         console.log(total);`,
+        path,
+        String(size),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+    });
+    return await reader.stdout.text();
   }
 
   // Runs the fixture, writes "one" and "two" to the slave after each READY,
@@ -845,6 +1067,52 @@ describe.skipIf(isWindows)("ReadStream on a non-blocking pty master", () => {
       "RESIZE ok",
       "CLOSE destroyed=true masterOpen=false",
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // libuv writes to a tty it could not reopen with blocking writes: it waits
+  // for a full pty, where write(2) on the nonblocking master says EAGAIN.
+  test.concurrent("a write larger than the pty holds completes once the slave is read", async () => {
+    const size = 1024 * 1024;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "tty-readstream-nonblocking.fixture.ts")],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const stderr = proc.stderr.text();
+    const lines: string[] = [];
+    let slavePath = "";
+    let buffered = "";
+    let asked = false;
+    let read: Promise<string> | undefined;
+    for await (const chunk of proc.stdout) {
+      buffered += Buffer.from(chunk).toString();
+      let newline: number;
+      while ((newline = buffered.indexOf("\n")) !== -1) {
+        const line = buffered.slice(0, newline);
+        buffered = buffered.slice(newline + 1);
+        if (line.startsWith("SLAVE ")) {
+          slavePath = line.slice("SLAVE ".length);
+        } else if (line === "READY" && !asked) {
+          asked = true;
+          proc.stdin.write("write\n");
+        } else if (line === "WRITING") {
+          // Only now does anything read the slave: the write is already waiting.
+          read = readFromAnotherProcess(slavePath, size);
+        } else {
+          lines.push(line);
+          if (line.startsWith("WRITTEN ")) {
+            proc.stdin.write("destroy\n");
+            proc.stdin.end();
+          }
+        }
+      }
+    }
+    const [, exitCode] = await Promise.all([stderr, proc.exited]);
+    expect(lines).toEqual([`WRITTEN ok bytesWritten=${size}`, "CLOSE destroyed=true masterOpen=false"]);
+    expect(await read).toBe(`${size}\n`);
     expect(exitCode).toBe(0);
   });
 });

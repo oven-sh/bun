@@ -5,7 +5,8 @@
 //! releases fd 0.
 //!
 //! Refs: the JS wrapper (released in `finalize`) and the reader (released by
-//! its terminal callback). `this_value` is strong only while reading.
+//! its terminal callback). `this_value` is strong while reading, and on Windows
+//! until `close()`: there the reader's handle is the caller's fd.
 
 use core::cell::Cell;
 use core::ffi::c_void;
@@ -77,6 +78,7 @@ pub(crate) struct TTY {
     global_this: bun_ptr::BackRef<JSGlobalObject>,
     this_value: JsCell<JsRef>,
     bytes_read: Cell<u64>,
+    bytes_written: Cell<u64>,
     flags: Cell<Flags>,
     /// The `nread` of a done/error reported while the reader was borrowed.
     parked_finish: Cell<Option<i32>>,
@@ -92,7 +94,7 @@ pub(crate) struct TTY {
 
 jsc::impl_abort_handle_owner!(TTY, abort_handle, |this, _cause| {
     // SAFETY: trait contract: `this` is live, and the wrapper's ref outlasts the close.
-    unsafe { (*this).close_internal() }
+    unsafe { (*this).close_by_owner() }
 });
 
 enum StartError {
@@ -209,6 +211,7 @@ impl TTY {
             global_this: bun_ptr::BackRef::new(global_object),
             this_value: JsCell::new(JsRef::empty()),
             bytes_read: Cell::new(0),
+            bytes_written: Cell::new(0),
             flags: Cell::new(Flags::empty()),
             parked_finish: Cell::new(None),
             #[cfg(unix)]
@@ -243,6 +246,11 @@ impl TTY {
 
         let this_value = structure.create(&cx.heap, owned);
         this.this_value.set(JsRef::init_weak(this_value.to_js()));
+        #[cfg(windows)]
+        if this.flags.get().contains(Flags::READER_STARTED) {
+            let global = this.global();
+            this.this_value.with_mut(|v| v.upgrade(global));
+        }
         if !this.flags.get().contains(Flags::CLOSED) {
             let vm = cx.global().bun_vm();
             if let Some(context) = vm.as_graph_context(vm.context_of_caller()) {
@@ -281,8 +289,8 @@ impl TTY {
         Ok(())
     }
 
-    /// Opens the reader on its own fd and parks it paused: the poll is only
-    /// registered by `readStart()`. On success the reader holds a ref.
+    /// Opens the reader on its own fd and leaves it paused: `readStart()`
+    /// starts the reads. On success the reader holds a ref.
     fn start_reader(&self) -> Result<(), StartError> {
         #[cfg(unix)]
         let (read_fd, nonblocking, owns_fd) = {
@@ -309,8 +317,13 @@ impl TTY {
             {
                 r.flags.set(PosixFlags::NONBLOCKING, nonblocking);
                 r.flags.insert(PosixFlags::POLLABLE);
+                r.start(read_fd, true)
             }
-            r.start(read_fd, true)
+            // No read before `readStart()`: libuv cancels a pending console read by typing an Enter.
+            #[cfg(windows)]
+            {
+                r.open(read_fd)
+            }
         });
         if let Err(err) = started {
             #[cfg(unix)]
@@ -330,8 +343,8 @@ impl TTY {
             f.set(Flags::OWNS_FD, owns_fd);
         });
 
+        #[cfg(unix)]
         self.with_reader(|r| {
-            #[cfg(unix)]
             if let Some(poll) = r.handle.get_poll() {
                 if nonblocking {
                     poll.set_flag(bun_io::FilePollFlag::Nonblocking);
@@ -356,13 +369,19 @@ impl TTY {
         self.update_flags(|f| f.insert(Flags::READING));
         let global = self.global();
         self.this_value.with_mut(|v| v.upgrade(global));
+        #[cfg(unix)]
         self.with_reader(|r| {
             r.unpause();
-            #[cfg(unix)]
             if !r.has_pending_read() {
                 r.watch();
             }
         });
+        // `uv_read_start()` refuses a console handle that cannot be read.
+        #[cfg(windows)]
+        if let Err(err) = self.with_reader(|r| r.start_reading()) {
+            self.update_flags(|f| f.remove(Flags::READING));
+            return uv_errno(err.errno);
+        }
         if !self.flags.get().contains(Flags::UNREFFED) {
             self.with_reader(|r| r.update_ref(true));
         }
@@ -375,6 +394,7 @@ impl TTY {
         if self.flags.get().contains(Flags::READER_STARTED) {
             self.with_reader(|r| r.pause());
         }
+        #[cfg(unix)]
         self.this_value.with_mut(|v| v.downgrade());
         0
     }
@@ -414,7 +434,7 @@ impl TTY {
         #[cfg(windows)]
         {
             // stdin's process-wide `uv_tty_t` uses VT raw mode (see source.rs).
-            if self.fd == Fd::stdin() {
+            if self.fd.uv() == 0 {
                 // It returns a positive `E` discriminant, 0 on success.
                 let rc = Source__setRawModeStdin(self.event_loop_handle.uv_loop(), raw);
                 return if rc == 0 { 0 } else { uv_errno(rc as u16) };
@@ -446,12 +466,49 @@ impl TTY {
         Ok(true)
     }
 
+    /// Writes all of `data`, as a libuv stream with blocking writes does.
+    pub(crate) fn write_buffer(&self, data: &[u8]) -> i32 {
+        if self.flags.get().contains(Flags::CLOSED) {
+            return uv_errno(sys::E::EBADF as u16);
+        }
+        let mut rest = data;
+        while !rest.is_empty() {
+            match sys::write(self.fd, rest) {
+                Ok(0) => return uv_errno(sys::E::EIO as u16),
+                Ok(n) => {
+                    self.bytes_written
+                        .set(self.bytes_written.get().wrapping_add(n as u64));
+                    rest = &rest[n..];
+                }
+                Err(err) if err.get_errno() == sys::E::EINTR => {}
+                // A nonblocking fd (a pty master whose other side is slow to read) is waited for.
+                #[cfg(unix)]
+                Err(err) if err.get_errno() == sys::E::EAGAIN => {
+                    let mut pfd = [sys::posix::PollFd {
+                        fd: self.fd.native(),
+                        events: sys::posix::POLL_OUT,
+                        revents: 0,
+                    }];
+                    if let Err(err) = sys::posix::poll(&mut pfd, -1) {
+                        return uv_errno(err.errno);
+                    }
+                }
+                Err(err) => return uv_errno(err.errno),
+            }
+        }
+        0
+    }
+
     pub(crate) fn close(&self, _: &mut JsScope<'_>) {
-        self.close_internal();
+        self.close_by_owner();
     }
 
     pub(crate) fn get_bytes_read(&self) -> f64 {
         self.bytes_read.get() as f64
+    }
+
+    pub(crate) fn get_bytes_written(&self) -> f64 {
+        self.bytes_written.get() as f64
     }
 
     pub(crate) fn get_fd(&self) -> i32 {
@@ -459,6 +516,28 @@ impl TTY {
     }
 
     // ── internals ─────────────────────────────────────────────────────────
+
+    /// As libuv's `uv__tty_close()`: restores a terminal the handle left raw and closes the fd libuv would own.
+    fn close_by_owner(&self) {
+        if self.flags.get().contains(Flags::CLOSED) {
+            return;
+        }
+        self.close_internal();
+        #[cfg(unix)]
+        {
+            let mut state = self.tty_state.get();
+            let _ = state.set_mode(
+                self.fd.native(),
+                bun_core::tty::Mode::Normal,
+                bun_core::tty::SetAttrWhen::Now,
+            );
+            self.tty_state.set(state);
+            if self.flags.get().contains(Flags::OWNS_FD) {
+                // JS may have closed it first: EBADF is not an invariant violation here.
+                let _ = self.fd.close_allowing_bad_file_descriptor(None);
+            }
+        }
+    }
 
     fn close_internal(&self) {
         if self.flags.get().contains(Flags::CLOSED) {
@@ -474,11 +553,6 @@ impl TTY {
             self.with_reader(|r| r.close());
         }
         self.read_fd.set(Fd::INVALID);
-        #[cfg(unix)]
-        if self.flags.get().contains(Flags::OWNS_FD) {
-            // JS may have closed it first: EBADF is not an invariant violation here.
-            let _ = self.fd.close_allowing_bad_file_descriptor(None);
-        }
         self.this_value.with_mut(|v| v.downgrade());
     }
 

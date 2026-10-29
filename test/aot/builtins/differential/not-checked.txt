@@ -252,5 +252,19 @@ ScopeFunctionsPrototypeSkipIf/0: it is not called: this realm does not have its 
 ScopeFunctionsPrototypeTodo/0: it is not called: this realm does not have its holder
 ScopeFunctionsPrototypeTodoIf/0: it is not called: this realm does not have its holder
 ShellInterpreterPrototypeRun/0: no set of operands selects it
+TTYPrototypeBytesRead/0: no set of operands selects it
+TTYPrototypeBytesWritten/0: no set of operands selects it
+TTYPrototypeClose/0: no set of operands selects it
+TTYPrototypeFd/0: no set of operands selects it
+TTYPrototypeGetWindowSize/0: no set of operands selects it
+TTYPrototypeOnread/0: no set of operands selects it
+TTYPrototypeOnread/1: no set of operands selects it
+TTYPrototypeReadStart/0: no set of operands selects it
+TTYPrototypeReadStop/0: no set of operands selects it
+TTYPrototypeRef/0: no set of operands selects it
+TTYPrototypeSetRawMode/0: no set of operands selects it
+TTYPrototypeSetRawMode/1: no set of operands selects it
+TTYPrototypeUnref/0: no set of operands selects it
+TTYPrototypeWriteBuffer/0: no set of operands selects it
 Worker/1: it is not called: it starts a thread or opens a connection
 Worker/2: it is not called: it starts a thread or opens a connection

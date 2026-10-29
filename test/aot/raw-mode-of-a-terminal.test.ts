@@ -28,7 +28,7 @@ async function shownInTerminal(cmd: string[], cwd: string) {
   return { shown: shown.replaceAll("\r\n", "\n"), exitCode, signal: child.signalCode };
 }
 
-// Elsewhere than on Windows the mode the terminal had before is kept in the bytes of a typed array that native code writes.
+// Elsewhere than on Windows the native handle of the stream keeps the mode the terminal had before.
 describe.skipIf(isWindows)("process.stdin.setRawMode() in a terminal", () => {
   test(
     "answers as `bun run` does, validated",

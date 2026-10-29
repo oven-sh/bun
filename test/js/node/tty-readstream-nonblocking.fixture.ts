@@ -1,11 +1,13 @@
 // Opens a pty the way node-pty does (master with O_NONBLOCK), wraps the master
 // in tty.ReadStream and reports every stream event on stdout. The test writes
-// to the slave and ends the stream with one command on stdin:
+// to the slave and drives the stream with commands on stdin:
 //   "destroy": the fixture calls stream.destroy()
 //   "hangup":  the fixture closes its slave fd. Once the test has closed its own
 //              slave, the master read fails (EIO) or ends.
+//   "write":   the fixture writes 1 MiB to the stream while nothing reads the
+//              slave, which is more than the pty holds.
 import { CString, dlopen, ptr } from "bun:ffi";
-import { closeSync, constants, fstatSync, openSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, writeSync } from "node:fs";
 import { ReadStream } from "node:tty";
 
 const arch = process.arch === "x64" ? "x86_64" : process.arch === "arm64" ? "aarch64" : process.arch;
@@ -20,6 +22,9 @@ for (const lib of candidates) {
       unlockpt: { args: ["int"], returns: "int" },
       ptsname: { args: ["int"], returns: "ptr" },
       ioctl: { args: ["int", "u64", "ptr"], returns: "int" },
+      tcgetattr: { args: ["int", "ptr"], returns: "int" },
+      cfmakeraw: { args: ["ptr"], returns: "void" },
+      tcsetattr: { args: ["int", "int", "ptr"], returns: "int" },
     }).symbols;
     break;
   } catch (err) {
@@ -81,6 +86,17 @@ process.stdin.on("data", command => {
     stream.destroy();
   } else if (String(command).includes("hangup")) {
     closeSync(slave);
+  } else if (String(command).includes("write")) {
+    // Raw, so that the line discipline neither echoes the bytes nor drops the ones past its line length.
+    const termios = new Uint8Array(256);
+    if (libc.tcgetattr(slave, ptr(termios)) !== 0) throw new Error("tcgetattr failed");
+    libc.cfmakeraw(ptr(termios));
+    if (libc.tcsetattr(slave, 0 /* TCSANOW */, ptr(termios)) !== 0) throw new Error("tcsetattr failed");
+    // The write below does not return to the loop until the test reads the slave.
+    writeSync(1, "WRITING\n");
+    stream.write(Buffer.alloc(1024 * 1024, "a"), err => {
+      say(`WRITTEN ${err ? (err as NodeJS.ErrnoException).code : "ok"} bytesWritten=${stream.bytesWritten}`);
+    });
   }
 });
 

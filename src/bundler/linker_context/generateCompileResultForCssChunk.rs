@@ -93,7 +93,7 @@ fn generate_compile_result_for_css_chunk_impl(
     };
 
     match &css_import.kind {
-        CssImportOrderKind::Layers(_) => {
+        CssImportOrderKind::Layers(_) | CssImportOrderKind::ExternalPath(_) => {
             let printer_options = PrinterOptions {
                 // TODO: make this more configurable
                 minify: c.options.minify_whitespace,
@@ -110,42 +110,7 @@ fn generate_compile_result_for_css_chunk_impl(
                     ast_unique_key_for_additional_file: unique_keys,
                 }),
                 Some(local_names),
-                // layer does not need symbols i think
-                symbols,
-            ) {
-                Ok(_) => {}
-                Err(_) => {
-                    return CompileResult::Css {
-                        result: Err(crate::Error::PrintError),
-                        source_index: Index::INVALID.get(),
-                        source_map: None,
-                    };
-                }
-            }
-            CompileResult::Css {
-                result: Ok(allocating_writer.into_boxed_slice()),
-                source_index: Index::INVALID.get(),
-                source_map: None,
-            }
-        }
-        CssImportOrderKind::ExternalPath(_) => {
-            let printer_options = PrinterOptions {
-                // TODO: make this more configurable
-                minify: c.options.minify_whitespace,
-                targets: Targets::for_bundler_target(c.options.target),
-                ..Default::default()
-            };
-            match css.to_css_with_writer(
-                arena,
-                &mut allocating_writer,
-                &printer_options,
-                Some(ImportInfo {
-                    import_records: &css_import.condition_import_records,
-                    ast_urls_for_css: parse_graph.ast.items_url_for_css(),
-                    ast_unique_key_for_additional_file: unique_keys,
-                }),
-                Some(local_names),
-                // external_path does not need symbols i think
+                // neither needs symbols i think
                 symbols,
             ) {
                 Ok(_) => {}

@@ -1,4 +1,4 @@
-//! C++ export that joins a path against the cwd. Lives in `jsc/` because
+//! C++ export that joins a path against the VM's cwd. Lives in `jsc/` because
 //! it takes a `JSGlobalObject`; `paths/` is JSC-free.
 //! Referenced from `PathInlines.h`.
 

@@ -94,6 +94,7 @@ impl<'a> Scanner<'a> {
         })
     }
 
+    /// Not from `next`: it runs under `read_dir_with_name`'s `&mut RealFS`.
     #[inline]
     pub(crate) fn fs(&self) -> &'static FileSystem {
         FileSystem::get()
@@ -141,8 +142,7 @@ impl<'a> Scanner<'a> {
             if e == bun_resolver::Error::Sys(bun_errno::SystemErrno::ENOTDIR) {
                 if self.is_test_file(path) {
                     let stored = self
-                        .fs()
-                        .filename_store
+                        .filename_store()
                         .append_slice(path)
                         .map_err(|_| ScanError::OutOfMemory)?;
                     let rel_path = Interned::from_static(stored);

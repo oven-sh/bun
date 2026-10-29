@@ -41,7 +41,7 @@ impl NextEvent {
 
 // These take `this: *mut Self` (not `&mut self`) so the returned
 // `*mut HotReloadEvent` and the `concurrent_task` node linked into the event
-// loop's queue are derived from the allocation's `heap::into_raw` pointer
+// loop's queue are derived from the allocation's `heap::alloc_nn` pointer
 // rather than from a `&mut WatcherAtomics` reborrow. The queued pointers must
 // stay valid after `Drop for DevServer` writes through the same allocation.
 impl WatcherAtomics {

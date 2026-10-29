@@ -80,6 +80,7 @@ struct SourceAlgorithmSlots {
         case SourceKind::JavaScript:
         case SourceKind::Nothing:
         case SourceKind::Transform:
+        case SourceKind::TransformErrorWhenDrained:
         case SourceKind::FromIterable:
         case SourceKind::CrossRealm:
         case SourceKind::Native:

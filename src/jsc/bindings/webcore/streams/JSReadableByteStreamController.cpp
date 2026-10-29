@@ -123,6 +123,7 @@ static JSC::JSPromise* performByteControllerPullAlgorithm(JSC::VM& vm, JSC::JSGl
     case SourceKind::ByteTeeBranch:
         RELEASE_AND_RETURN(scope, byteTeePullAlgorithm(globalObject, uncheckedDowncast<JSStreamTeeState>(controller->m_algorithms.algorithmContext.get()), controller->m_algorithms.teeBranchIndex));
     case SourceKind::Transform:
+    case SourceKind::TransformErrorWhenDrained:
     case SourceKind::TeeBranch:
     case SourceKind::FromIterable:
     case SourceKind::CrossRealm:
@@ -157,6 +158,7 @@ static JSC::JSPromise* performByteControllerCancelAlgorithm(JSC::VM& vm, JSC::JS
     case SourceKind::ByteTeeBranch:
         RELEASE_AND_RETURN(scope, byteTeeCancelAlgorithm(globalObject, uncheckedDowncast<JSStreamTeeState>(controller->m_algorithms.algorithmContext.get()), controller->m_algorithms.teeBranchIndex, reason));
     case SourceKind::Transform:
+    case SourceKind::TransformErrorWhenDrained:
     case SourceKind::TeeBranch:
     case SourceKind::FromIterable:
     case SourceKind::CrossRealm:

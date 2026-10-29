@@ -45,24 +45,6 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
         .set(blob::BlobContentType::from(mime_type));
 }
 
-// ────────────────────────────────────────────────────────────────────────────
-// Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
-// These adapt call sites in this file without editing `bun_jsc` (orphan rule).
-// ────────────────────────────────────────────────────────────────────────────
-
-#[inline]
-fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
-    // `DOMFormData` is an opaque C++ type that does not implement `JsClass`;
-    // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
-    // `value.as_::<DOMFormData>()`.
-    DOMFormData::from_js(value).map(std::ptr::from_mut::<DOMFormData>)
-}
-#[inline]
-fn as_url_search_params(value: JSValue) -> Option<*mut URLSearchParams> {
-    // See `as_dom_form_data` — opaque C++ type, hand-written `from_js`.
-    URLSearchParams::from_js(value).map(|p| p.as_ptr())
-}
-
 bun_core::declare_scope!(BodyValue, visible);
 bun_core::declare_scope!(BodyMixin, visible);
 
@@ -972,18 +954,17 @@ impl Value {
             }
         }
 
-        if let Some(form_data) = as_dom_form_data(value) {
-            // SAFETY: shim returns a live JSC heap cell.
-            return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
-                &mut *form_data
-            })));
+        if let Some(form_data) = DOMFormData::from_js(value) {
+            return Ok(Value::Blob(Blob::from_dom_form_data(
+                global_this,
+                form_data,
+            )));
         }
 
-        if let Some(search_params) = as_url_search_params(value) {
-            // SAFETY: shim returns a live JSC heap cell.
+        if let Some(search_params) = URLSearchParams::from_js(value) {
             return Ok(Value::Blob(Blob::from_url_search_params(
                 global_this,
-                unsafe { &mut *search_params },
+                search_params,
             )));
         }
 

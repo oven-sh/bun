@@ -126,7 +126,7 @@ const validRules: [css: string, expected: string][] = [
   [`a{transition-duration:round(calc(1s*sin(${secondsChain})),.1ms)}`, "a{transition-duration:.1543s}"],
 ];
 
-// Runs `script` in a process that is killed when it does not exit.
+// Runs `script`, which prints one JSON value, in a process that is killed when it does not exit.
 async function run(script: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", script],
@@ -138,20 +138,24 @@ async function run(script: string) {
   });
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode, signalCode: proc.signalCode };
+  return { output: stdout && JSON.parse(stdout), stderr, exitCode, signalCode: proc.signalCode };
 }
 
+// Each test waits longer than the 20 s of `run`, so that a process that hangs is killed and reported.
 test.concurrent(
   "deeply nested atan2() color values parse in linear time instead of hanging",
   async () => {
-    const { stdout, stderr, exitCode } = await run(`
+    const result = await run(`
       const inputs = ${JSON.stringify(cases.map(([css]) => css))};
       console.log(JSON.stringify(inputs.map(css => Bun.color(css, "css"))));
     `);
 
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(cases.map(([, expected]) => expected));
-    expect(exitCode).toBe(0);
+    expect(result).toEqual({
+      output: cases.map(([, expected]) => expected),
+      stderr: "",
+      exitCode: 0,
+      signalCode: null,
+    });
   },
   30_000,
 );
@@ -159,13 +163,13 @@ test.concurrent(
 test.concurrent(
   "a valid chain of nested atan2() parses in linear time",
   async () => {
-    const { stdout, stderr, exitCode, signalCode } = await run(`
+    const result = await run(`
       const { minifyTest } = require("bun:internal-for-testing").cssInternals;
       const [colors, rules] = ${JSON.stringify([validColors.map(([css]) => css), validRules.map(([css]) => css)])};
       console.log(JSON.stringify([colors.map(css => Bun.color(css, "css")), rules.map(css => minifyTest(css, ""))]));
     `);
 
-    expect({ output: stdout && JSON.parse(stdout), stderr, exitCode, signalCode }).toEqual({
+    expect(result).toEqual({
       output: [validColors.map(([, expected]) => expected), validRules.map(([, expected]) => expected)],
       stderr: "",
       exitCode: 0,
@@ -179,19 +183,14 @@ test.concurrent(
   "a long sum of math functions in atan2() is kept as written",
   async () => {
     // Each abs(1%) stays a function, so the sum of 21,600 of them cannot fold.
-    const { stdout, stderr, exitCode, signalCode } = await run(`
+    const result = await run(`
       const { minifyTest } = require("bun:internal-for-testing").cssInternals;
       const sum = Buffer.alloc(10 * 21599, "abs(1%) + ").toString() + "abs(1%)";
       const rule = "a{rotate:atan2(1s,(" + sum + ")*2)}";
       console.log(JSON.stringify([minifyTest(rule, "") === rule, Bun.color("hsl(atan2(1%, (" + sum + ") * 2) 50% 50%)", "css")]));
     `);
 
-    expect({ output: stdout && JSON.parse(stdout), stderr, exitCode, signalCode }).toEqual({
-      output: [true, null],
-      stderr: "",
-      exitCode: 0,
-      signalCode: null,
-    });
+    expect(result).toEqual({ output: [true, null], stderr: "", exitCode: 0, signalCode: null });
   },
   30_000,
 );

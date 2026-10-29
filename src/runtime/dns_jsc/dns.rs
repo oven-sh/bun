@@ -5474,16 +5474,7 @@ impl Resolver {
         let port: u16 = to_port_number(port_value, global_this)?;
 
         let mut sa: SockaddrStorage = bun_core::ffi::zeroed();
-        // SAFETY: sockaddr_storage is large enough to hold any sockaddr family
-        // get_sockaddr writes (in/in6); the `&mut *` reborrow yields a
-        // `&mut sockaddr` view into that storage.
-        if c_ares::get_sockaddr(addr_s, port, unsafe {
-            // Target type inferred from `get_sockaddr`'s signature: `libc::sockaddr`
-            // on POSIX, `bun_cares_sys::winsock::sockaddr` on Windows (the latter
-            // is crate-private, so it cannot be named here).
-            &mut *(&raw mut sa).cast()
-        }) != 0
-        {
+        if c_ares::get_sockaddr(addr_s, port, &mut sa) != 0 {
             return Err(global_this.throw_invalid_argument_value(
                 b"address",
                 bun_string_jsc::create_utf8_for_js(global_this, addr_s)?,
@@ -5523,17 +5514,9 @@ impl Resolver {
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
-        // SAFETY: `channel` is the live c-ares channel; `sa` is a valid
-        // sockaddr_storage reborrowed as sockaddr; `request` was just
-        // `heap::alloc`'d and is owned by c-ares until the callback fires.
-        unsafe {
-            channel.get_name_info(
-                // See `get_sockaddr` call above — inferred `sockaddr` type is
-                // platform-dependent and unnameable on Windows from this crate.
-                &mut *(&raw mut sa).cast(),
-                &mut *request,
-            );
-        }
+        // SAFETY: `request` was just `heap::alloc`'d and is owned by c-ares
+        // until the callback fires.
+        channel.get_name_info(&sa, unsafe { &mut *request });
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         resolver.request_sent(global_this.bun_vm());

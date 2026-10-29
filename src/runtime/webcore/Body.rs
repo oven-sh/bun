@@ -1088,7 +1088,7 @@ impl Value {
                     },
                     Action::GetJSON => {
                         let mut blob = new.use_as_any_blob_allow_non_utf8_string();
-                        let result = promise.wrap(cx.global(), |_| blob.to_json_share(cx));
+                        let result = promise.wrap(cx.global(), |_| blob.to_json(cx));
                         blob.detach();
                         result?;
                     }
@@ -1695,7 +1695,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         self.check_body_stream_ref(global_this);
     }
 
-    /// Shared body-clone for `clone_into` / `clone_value`: clone through the
+    /// Shared body-clone for `clone_with_url` / `clone_value`: clone through the
     /// JS-side cached stream when present, then resync this owner's
     /// `body`/`stream` cache slots with whatever the body now holds.
     fn clone_body_value_via_cached_stream(&self, cx: &bun_jsc::JsThread<'_>) -> JsResult<Value> {
@@ -1896,7 +1896,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |_| blob.to_json(&cx, Lifetime::Share));
+        let result = JSPromise::wrap(global_object, |_| blob.to_json(&cx));
         blob.detach();
         result
     }

@@ -1035,53 +1035,6 @@ impl FileSink {
         }
     }
 
-    /// # Safety
-    /// `this` is the live sink whose JS wrapper holds the +1 released here; it
-    /// must not be used after the call, which may free it.
-    pub(crate) unsafe fn finalize(this: *mut FileSink) {
-        // Called from (a) `~JSFileSink` during lazy sweep, and (b) synchronously
-        // from `${name}__doClose` (prototype `.close()`). Must satisfy both
-        // contexts: no touching live JS cells (sweep), and no tearing down
-        // state that in-flight IO still needs (close).
-
-        // SAFETY: caller contract — the wrapper's +1 is held until the trailing
-        // `deref` below, so neither release here can free `this`.
-        unsafe { FileSink::release_refs_stranded_by_shutdown(this) };
-
-        // Per-wrapper accounting is on `ref_count` directly: each path that
-        // hands `self` to C++ (`to_js` / `to_js_for_subprocess`) gives it the
-        // caller's ref, and `finalize`'s `deref()` below releases it.
-        // `pending`/`pipe` are left for `deinit` (Box drop) since in-flight IO
-        // may still need them.
-        // SAFETY: as above; the `deref` is the last use of `this`.
-        unsafe {
-            (*this).js_sink_ref.with_mut(|r| r.deinit());
-            FileSink::deref(this);
-        }
-    }
-
-    /// A `ReadableSinkController` was collected with this sink still attached. `pipe` roots that cell until
-    /// `release_pipe` detaches it, so it only dies attached in the heap's last sweep. Unlike the
-    /// wrapper in [`finalize`](Self::finalize) it holds no ref: there is none to release for it.
-    ///
-    /// # Safety
-    /// `this` is the cell's live sink; it must not be used after the call, which may free it.
-    unsafe fn controller_finalize(this: *mut FileSink) {
-        // SAFETY: caller contract; `_guard` keeps `this` live across the releases.
-        unsafe {
-            let _guard = RefPtr::init_ref(this);
-            // The root is on the cell being destroyed: dropped here, `Drop` finds no cell to detach.
-            drop((*this).pipe.replace(streams::PipeCell::default()));
-            FileSink::release_refs_stranded_by_shutdown(this);
-            if (*this).js_vm().is_some_and(|vm| vm.is_shutting_down())
-                && (*this).pump_promise_ref.replace(false)
-            {
-                // The pump promise's reactions never run.
-                FileSink::deref(this);
-            }
-        }
-    }
-
     /// Shutdown never unwinds the writer: the loop stops ticking, so the
     /// `onWrite`/`onClose`/EOF callbacks that balance these refs can no
     /// longer arrive, and a queued FlushPendingFileSinkTask never runs.
@@ -1423,8 +1376,22 @@ impl crate::webcore::sink::JsSinkType for FileSink {
     crate::impl_js_sink_forwarders!(start_takes_context);
 
     unsafe fn finalize(this: *mut Self) {
-        // SAFETY: same contract, forwarded.
-        unsafe { Self::finalize(this) }
+        // Runs in `~JSFileSink` (lazy sweep: touch no live JS cell) and in `.close()` (keep what in-flight IO needs).
+
+        // SAFETY: caller contract — the wrapper's +1 is held until the trailing
+        // `deref` below, so neither release here can free `this`.
+        unsafe { FileSink::release_refs_stranded_by_shutdown(this) };
+
+        // Per-wrapper accounting is on `ref_count` directly: each path that
+        // hands `self` to C++ (`to_js` / `to_js_for_subprocess`) gives it the
+        // caller's ref, and `finalize`'s `deref()` below releases it.
+        // `pending`/`pipe` are left for `deinit` (Box drop) since in-flight IO
+        // may still need them.
+        // SAFETY: as above; the `deref` is the last use of `this`.
+        unsafe {
+            (*this).js_sink_ref.with_mut(|r| r.deinit());
+            FileSink::deref(this);
+        }
     }
     fn end_from_js(&mut self, cx: &bun_jsc::JsThread<'_>) -> sys::Result<JSValue> {
         Self::end_from_js(self, cx)
@@ -1447,9 +1414,21 @@ impl crate::webcore::sink::ControlledSink for FileSink {
     fn to_any_sink(this: NonNull<Self>) -> AnyControlledSink {
         AnyControlledSink::FileSink(this)
     }
+    /// `pipe` roots the controller until `release_pipe`, so it only dies attached in the heap's last sweep. It holds no ref.
     unsafe fn controller_finalize(this: *mut Self) {
-        // SAFETY: same contract, forwarded.
-        unsafe { Self::controller_finalize(this) }
+        // SAFETY: caller contract; `_guard` keeps `this` live across the releases.
+        unsafe {
+            let _guard = RefPtr::init_ref(this);
+            // The root is on the cell being destroyed: dropped here, `Drop` finds no cell to detach.
+            drop((*this).pipe.replace(streams::PipeCell::default()));
+            FileSink::release_refs_stranded_by_shutdown(this);
+            if (*this).js_vm().is_some_and(|vm| vm.is_shutting_down())
+                && (*this).pump_promise_ref.replace(false)
+            {
+                // The pump promise's reactions never run.
+                FileSink::deref(this);
+            }
+        }
     }
     /// The JS pump's source failed, or `controller.close(error)`: a piped stream rejects with `reason`.
     unsafe fn close_with_error(

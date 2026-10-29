@@ -7,7 +7,7 @@
 //! Those targets live in `bun_runtime`, which depends on this crate —
 //! re-exporting them here would create a cycle. Callers reference
 //! `bun_runtime::{webcore,api,node}` directly; lower-tier consumers that
-//! constructed those types (e.g. `output_file_jsc`, `BlobArrayBuffer_deallocator`)
+//! constructed those types (e.g. `output_file_jsc`)
 //! have been moved up into `bun_runtime`, and the few that only need an opaque
 //! borrow (e.g. `DOMFormData::for_each`) are generic over the caller's `Blob`.
 
@@ -859,7 +859,7 @@ pub use self::resolved_source_tag::ResolvedSourceTag;
 // ──────────────────────────────────────────────────────────────────────────
 #[path = "FetchHeaders.rs"]
 pub mod fetch_headers;
-pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName};
+pub use self::fetch_headers::{FetchHeaders, HTTPHeaderName, HeadersRef};
 
 /// `BuiltinName` — fast-path property keys preallocated as `JSC::Identifier`s
 /// in C++ (`BunBuiltinNames.h`). Passed to `JSValue::fast_get` as a `u8` index

@@ -569,7 +569,7 @@ pub(crate) fn resolve_proxy(proxy_url: Option<&[u8]>, url: &[u8]) -> Box<[u8]> {
     }
 }
 
-/// What puts an S3 request on the HTTP thread asks first: this file's function and
+/// What puts an S3 request on the HTTP thread asks first: `execute_simple_s3_request` and
 /// `client::download_stream` before anything else, the caller of `client::list_objects` before
 /// it allocates. (A `MultiPartUpload` asks its own abort handle: see `process_buffered`.)
 pub(crate) fn nothing_new_leaves(context: &bun_jsc::ScriptExecutionContext) -> bool {
@@ -654,15 +654,39 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
+    send(
+        context,
+        options.method,
+        result,
+        headers,
+        options.proxy_url,
+        options.body,
+        callback,
+        callback_context,
+    );
+    Ok(())
+}
+
+/// Puts a signed request on the HTTP thread, for a caller that has asked `nothing_new_leaves`.
+pub(crate) fn send(
+    context: &bun_jsc::ScriptExecutionContext,
+    method: Method,
+    sign_result: SignResult,
+    headers: Headers,
+    proxy_url: Option<&[u8]>,
+    body: &[u8],
+    callback: Callback,
+    callback_context: *mut c_void,
+) {
     let mut poll_ref = KeepAlive::init();
     poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
         bun_io::AllocatorType::Js,
     ));
-    let proxy_url = resolve_proxy(options.proxy_url, &result.url);
+    let proxy_url = resolve_proxy(proxy_url, &sign_result.url);
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
         // written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
-        sign_result: result,
+        sign_result,
         callback_context,
         callback,
         headers,
@@ -671,7 +695,7 @@ pub(crate) fn execute_simple_s3_request(
         result: HTTPClientResult::default(),
         concurrent_task: ConcurrentTask::default(),
         proxy_url,
-        body: Box::<[u8]>::from(options.body),
+        body: Box::<[u8]>::from(body),
         poll_ref,
         signal_store: Default::default(),
         abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
@@ -695,7 +719,7 @@ pub(crate) fn execute_simple_s3_request(
     let verbose = vm.get_verbose_fetch();
     let reject_unauthorized = vm.get_tls_reject_unauthorized();
     let async_http = AsyncHTTP::init(
-        options.method,
+        method,
         url,
         task.headers.entries.clone().expect("OOM"),
         headers_buf,
@@ -729,5 +753,4 @@ pub(crate) fn execute_simple_s3_request(
     // SAFETY: the task is heap-allocated and drops its handle with itself.
     unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
     bun_http::HTTPThread::schedule(batch);
-    Ok(())
 }

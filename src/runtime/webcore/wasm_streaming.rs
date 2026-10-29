@@ -34,11 +34,11 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
 ) -> JsResult<JSValue> {
     // `WebAssembly.compileStreaming` / `instantiateStreaming`, C++ host functions, call this.
     let context = this.bun_vm().context_of_caller();
-    let response: &mut Response = match response::from_js(response_value) {
+    let response: &Response = match response::from_js(response_value) {
         // SAFETY: `from_js` returns a pointer to the GC-owned `Response` cell;
         // the cell stays live for the duration of this host call (rooted on the
         // C++ caller's stack).
-        Some(r) => unsafe { &mut *r },
+        Some(r) => unsafe { &*r },
         None => {
             return Err(this.throw_invalid_argument_type_value2(
                 b"source",
@@ -160,16 +160,13 @@ fn get_body_stream_or_bytes_for_wasm_streaming(
 /// shim: returns `.zero` on thrown exception.
 ///
 /// # Safety
-/// `this` must be a valid, live `JSGlobalObject` pointer for the duration of
-/// the call (guaranteed by the C++ host caller).
+/// `streaming_compiler` must point to a live `JSC::Wasm::StreamingCompiler`.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
-    this: *mut JSGlobalObject,
+    this: &JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,
 ) -> JSValue {
-    // SAFETY: C++ passes a live global object.
-    let this = unsafe { &*this };
     match get_body_stream_or_bytes_for_wasm_streaming(this, response_value, streaming_compiler) {
         Ok(v) => v,
         Err(JsError::OutOfMemory) => {

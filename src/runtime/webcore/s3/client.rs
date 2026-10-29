@@ -37,7 +37,6 @@ pub(crate) use crate::webcore::s3::list_objects::S3ListObjectsOptions;
 pub(crate) use crate::webcore::s3::list_objects::get_list_objects_options_from_js;
 pub(crate) use crate::webcore::s3::simple_request::S3DeleteResult;
 pub(crate) use crate::webcore::s3::simple_request::S3DownloadResult;
-pub(crate) use crate::webcore::s3::simple_request::S3HttpSimpleTask;
 pub(crate) use crate::webcore::s3::simple_request::S3ListObjectsResult;
 pub(crate) use crate::webcore::s3::simple_request::S3StatResult;
 pub(crate) use crate::webcore::s3::simple_request::S3UploadResult;
@@ -292,79 +291,16 @@ pub(crate) fn list_objects(
     drop(search_params);
 
     let headers = bun_http::Headers::from_pico_http_headers(result.headers());
-    let proxy_url = s3_simple_request::resolve_proxy(None, &result.url);
-
-    let task_ptr = bun_core::heap::into_raw(Box::new(S3HttpSimpleTask {
-        // Written below via `MaybeUninit::write` before any read.
-        http: core::mem::MaybeUninit::uninit(),
-        sign_result: result,
-        callback_context,
-        callback: s3_simple_request::Callback::ListObjects(callback),
-        headers,
-        http_ticket: None,
-        response_buffer: MutableString::default(),
-        result: bun_http::HTTPClientResult::default(),
-        concurrent_task: Default::default(),
-        proxy_url,
-        body: Box::default(),
-        poll_ref: bun_io::KeepAlive::init(),
-        signal_store: Default::default(),
-        abort_handle: bun_jsc::AbortHandle::for_owner::<S3HttpSimpleTask>(),
-        context: Default::default(),
-    }));
-    // SAFETY: just allocated, non-null, and `task` is not used once `task_ptr` is dereferenced.
-    // `'static`: `url`, `headers_buf` and `http_proxy` borrow heap buffers that `*task` owns and
-    // never writes again. They are stored in `task.http`, an `AsyncHTTP<'static>` that the HTTP
-    // thread reads, and remain valid until `task` is dropped in `on_response`.
-    let task: &'static mut S3HttpSimpleTask = unsafe { &mut *task_ptr };
-
-    task.poll_ref.ref_(bun_io::js_vm_ctx());
-
-    let url = bun_url::URL::parse(&task.sign_result.url);
-    let headers_buf: &'static [u8] = task.headers.buf.as_slice();
-    let http_proxy = if !task.proxy_url.is_empty() {
-        Some(bun_url::URL::parse(&task.proxy_url))
-    } else {
-        None
-    };
-    // JS thread (request setup): read options from the current VM.
-    let vm = VirtualMachine::get();
-
-    let http = task.http.write(bun_http::AsyncHTTP::init(
+    s3_simple_request::send(
+        context,
         bun_http::Method::GET,
-        url,
-        task.headers.entries.clone().expect("OOM"),
-        headers_buf,
+        result,
+        headers,
+        None,
         b"",
-        bun_http::HTTPClientResultCallback::new_with_release::<S3HttpSimpleTask>(
-            task_ptr,
-            // SAFETY: `task_ptr` is the heap-allocated task registered above; the
-            // HTTP thread invokes this with that exact pointer.
-            S3HttpSimpleTask::http_callback,
-            S3HttpSimpleTask::release_at_shutdown,
-        ),
-        bun_http::FetchRedirect::Follow,
-        bun_http::async_http::Options {
-            http_proxy,
-            verbose: Some(vm.get_verbose_fetch()),
-            reject_unauthorized: Some(vm.get_tls_reject_unauthorized()),
-            tls_props: crate::socket::http_client_defaults(vm),
-            signals: Some(task.signal_store.to()),
-            ..Default::default()
-        },
-    ));
-
-    // queue http request
-    bun_http::http_thread::init(&Default::default());
-    let mut batch = bun_threading::thread_pool::Batch::default();
-    http.schedule(&mut batch);
-    // Out on the HTTP thread until its final callback: its context aborts it
-    // when it stops, and the VM waits for it (the ticket).
-    task.http_ticket = Some(VirtualMachine::get().ticket());
-    task.context = context.id();
-    // SAFETY: the task is heap-allocated and drops its handle with itself.
-    unsafe { bun_jsc::AbortHandle::arm_owner(task_ptr, context) };
-    bun_http::HTTPThread::schedule(batch);
+        s3_simple_request::Callback::ListObjects(callback),
+        callback_context,
+    );
     Ok(())
 }
 

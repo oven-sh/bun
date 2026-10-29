@@ -2309,7 +2309,7 @@ mod tests {
         }
     }
 
-    /// Encode a header block with a standalone coder (mirrors a real peer's encoder).
+    /// Encode a header block with a standalone encoder (mirrors a real peer's encoder).
     fn encode_block(pairs: &[(&[u8], &[u8])]) -> Vec<u8> {
         let mut encoder = bun_hpack::Encoder::new();
         let mut buf = Vec::new();

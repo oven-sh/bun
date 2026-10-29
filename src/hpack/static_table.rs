@@ -135,7 +135,14 @@ pub(crate) fn find_name(name: &[u8]) -> Option<u32> {
 
 /// `name_index` is what [`find_name`] gave for `name`.
 pub(crate) fn find(name_index: u32, name: &[u8], value: &[u8]) -> Option<u32> {
-    (name_index..=LEN)
-        .map_while(|index| Some((index, get(index).filter(|entry| entry.0 == name)?.1)))
-        .find_map(|(index, entry_value)| (entry_value == value).then_some(index))
+    for index in name_index..=LEN {
+        let (entry_name, entry_value) = get(index)?;
+        if entry_name != name {
+            break;
+        }
+        if entry_value == value {
+            return Some(index);
+        }
+    }
+    None
 }

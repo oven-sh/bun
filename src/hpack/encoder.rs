@@ -72,7 +72,7 @@ impl History {
     }
 
     fn resize(&mut self, table_capacity: u32) {
-        // A third of the entries the table has room for if they are all empty.
+        // ls-hpack's `henc_hist_size`: a third of the entries the table has room for if they are all empty.
         self.max_len = table_capacity as usize / ENTRY_OVERHEAD / 3;
         self.hashes.rotate_left(self.oldest);
         self.oldest = 0;

@@ -244,7 +244,7 @@ mod tests {
                 // One that does not fit at all, which an encoder does not keep.
                 block.extend(hex("00 0161"));
                 integer::encode(&mut block, 0x00, 7, i as u32 * 400);
-                block.resize(block.len() + i * 400, b'~');
+                block.extend(vec![b'~'; i * 400]);
             }
             assert!(decode(&mut decoder, &block).is_ok());
             assert_eq!(decoder.table_size(), encoder.table_size());
@@ -698,7 +698,7 @@ mod tests {
                 out.extend(code);
             } else {
                 integer::encode(&mut out, 0x00, 7, len as u32);
-                out.resize(out.len() + len, b'a');
+                out.extend(vec![b'a'; len]);
             }
             out
         };

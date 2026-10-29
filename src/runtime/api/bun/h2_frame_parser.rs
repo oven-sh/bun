@@ -197,6 +197,8 @@ const MAX_STREAM_ID: u32 = i32::MAX as u32;
 const MAX_FRAME_SIZE: u32 = 0xFF_FFFF; // u24::MAX
 // node's kMaxALTSVC: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L241
 const MAX_ALTSVC_LENGTH: usize = 16384 - 2;
+/// The longest header name that can be sent: the size of the buffer it is put into lower case in.
+const MAX_HEADER_NAME_LENGTH: usize = 4096;
 const DEFAULT_WINDOW_SIZE: u64 = u16::MAX as u64;
 // Float versions for range validation before integer conversion
 const MAX_WINDOW_SIZE_F64: f64 = MAX_WINDOW_SIZE as f64;
@@ -5459,7 +5461,7 @@ impl H2FrameParser {
 
     /// validate header name and convert to lowecase if needed
     fn to_valid_header_name<'a>(in_: &'a [u8], out: &'a mut [u8]) -> crate::Result<&'a [u8]> {
-        if in_.len() > 4096 {
+        if in_.len() > MAX_HEADER_NAME_LENGTH {
             return Err(crate::Error::InvalidHeaderName);
         }
         debug_assert!(out.len() >= in_.len());
@@ -5561,7 +5563,7 @@ impl H2FrameParser {
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
-        let mut name_buffer = [0u8; 4096];
+        let mut name_buffer = [0u8; MAX_HEADER_NAME_LENGTH];
 
         let iter = bun_jsc::JSPropertyIterator::init(
             global_object,
@@ -6019,7 +6021,7 @@ impl H2FrameParser {
             return Err(global_object.throw(format_args!("Expected headers to be an object")));
         };
 
-        let mut name_buffer = [0u8; 4096];
+        let mut name_buffer = [0u8; MAX_HEADER_NAME_LENGTH];
         let mut encoded_headers = self.header_block();
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
@@ -6427,7 +6429,7 @@ impl H2FrameParser {
         if encoded_headers.try_reserve(16384).is_err() {
             return Err(global_object.throw(format_args!("Failed to allocate header buffer")));
         }
-        let mut name_buffer = [0u8; 4096];
+        let mut name_buffer = [0u8; MAX_HEADER_NAME_LENGTH];
         let stream_id: u32 = if stream_id.is_number() {
             stream_id.to_u32()
         } else {
@@ -7654,7 +7656,7 @@ impl H2FrameParser {
     /// dispatch (`on_native_read`), a write that re-entered JS (`_write`, `send_data`) — is never
     /// released, and neither is the cork slot's ref nor the queued auto-flush task's. `Drop`
     /// therefore never runs and the parser leaks everything it owns (LeakSanitizer sees the
-    /// refcount's own debug map, the HPACK handle, the read/write buffers).
+    /// refcount's own debug map, the HPACK encoder, the read/write buffers).
     ///
     /// Called from `finalize` only while the VM is shutting down: the event loop is dead, no JS
     /// (and no stranded frame) can run again, so releasing those refs cannot make anything

@@ -1,6 +1,8 @@
 #![allow(non_upper_case_globals, non_snake_case)]
 
-use core::ffi::{CStr, c_char, c_int};
+#[cfg(any(target_os = "macos", target_os = "freebsd"))]
+use core::ffi::c_char;
+use core::ffi::{CStr, c_int};
 use core::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use const_format::{concatcp, formatcp};
@@ -875,12 +877,10 @@ pub fn crash() -> ! {
 
 pub const user_agent: &str = concatcp!("Bun/", package_json_version);
 
-#[repr(transparent)]
-pub struct SyncCStr(pub *const c_char);
-// SAFETY: points into a `'static` string literal; the pointer is never mutated.
-unsafe impl Sync for SyncCStr {}
+const USER_AGENT_Z: &[u8] = concatcp!(user_agent, "\0").as_bytes();
+// `&[u8; N]` is a thin pointer, so the C++ side sees a single `const char*`-sized symbol.
 #[unsafe(no_mangle)]
-static Bun__userAgent: SyncCStr = SyncCStr(concatcp!(user_agent, "\0").as_ptr().cast::<c_char>());
+static Bun__userAgent: &[u8; USER_AGENT_Z.len()] = USER_AGENT_Z.first_chunk().unwrap();
 
 /// The certificate authorities that TLS trusts when a connection names none, besides those in
 /// `NODE_EXTRA_CA_CERTS`.

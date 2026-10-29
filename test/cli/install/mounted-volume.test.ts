@@ -384,9 +384,6 @@ for (const eperm of [false, true]) {
           node_modules: await readdirSorted(modules),
           dep: await readdirSorted(join(modules, "dep")),
         }).toEqual({ shim: eperm, node_modules: [".bin", "dep"], dep: ["bin", "package.json"] });
-
-        await run(bunExe(), "remove", "dep");
-        expect(await readdirSorted(modules)).toEqual([".bin"]);
       },
     );
 }

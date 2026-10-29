@@ -246,7 +246,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         if import_rule.has_conditions() {
                             let mut all_conditions =
                                 fork_conditions(wrapping_conditions, self.arena);
-                            let all_import_records = shallow_clone_records(wrapping_import_records);
+                            let all_import_records = wrapping_import_records.clone();
                             // SAFETY: never dropped (see the note at `bitwise_copy`).
                             all_conditions.append_assume_capacity(unsafe {
                                 bitwise_copy(&import_rule.conditions)
@@ -264,11 +264,7 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                                 // `bitwise_copy`), so the aliased buffer is freed once
                                 // with the arena.
                                 conditions: unsafe { bitwise_copy(wrapping_conditions) },
-                                // SAFETY: same single-free invariant as `conditions`
-                                // above; `CssImportOrder` suppresses `Drop`.
-                                condition_import_records: unsafe {
-                                    bitwise_copy(wrapping_import_records)
-                                },
+                                condition_import_records: wrapping_import_records.clone(),
                             });
                         }
                         debug!(
@@ -801,21 +797,6 @@ fn fork_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<ImportCon
             cap,
         )
     }
-}
-
-/// Shallow copy of `ImportRecord` values into a fresh allocation.
-#[inline]
-fn shallow_clone_records<'a>(list: &Vec<ImportRecord<'a>>) -> Vec<ImportRecord<'a>> {
-    let mut out = Vec::<ImportRecord>::init_capacity(list.len() as usize);
-    for r in list.slice_const() {
-        // `ImportRecord` is plain-old-data; its `Path` slices borrow
-        // resolver storage.
-        // SAFETY: `ImportRecord` is POD (borrowed slices, no owning `Drop`); a
-        // bitwise duplicate aliasing the same resolver storage is sound and
-        // neither copy frees it.
-        out.append_assume_capacity(unsafe { bitwise_copy(r) });
-    }
-    out
 }
 
 fn import_conditions_are_equal(a: &[ImportConditions], b: &[ImportConditions]) -> bool {

@@ -476,65 +476,6 @@ describe("bundler", () => {
       }
     }
 
-    // The chunks of p, pa, q and qa import the chunk of s, which has a
-    // top-level await, and print no `await` themselves. Their records have no
-    // TLA flag, so p still runs before qa.
-    itBundled("compile/SplitChunksThatImportTopLevelAwaitChunkKeepImportOrder", {
-      compile: true,
-      splitting: true,
-      bytecode: true,
-      format: "esm",
-      files: {
-        "/entry.js": /* js */ `
-          import { p } from "./p.js";
-          import { q } from "./q.js";
-          import { lazy } from "./lazy.js";
-          console.log("entry body", p, q, typeof lazy);
-        `,
-        // Never called: each import() makes its target a chunk.
-        "/lazy.js": /* js */ `
-          export const lazy = () => [import("./p.js"), import("./q.js"), import("./pa.js"), import("./qa.js"), import("./s.js")];
-        `,
-        "/p.js": /* js */ `
-          import { pa } from "./pa.js";
-          globalThis.polyfill = "ready";
-          export const p = pa + 1;
-          console.log("p body");
-        `,
-        "/pa.js": /* js */ `
-          import { base } from "./s.js";
-          export const pa = base + 1;
-          console.log("pa body");
-        `,
-        "/q.js": /* js */ `
-          import { qa } from "./qa.js";
-          export const q = qa + 1;
-          console.log("q body");
-        `,
-        "/qa.js": /* js */ `
-          import { base } from "./s.js";
-          export const qa = base + 10;
-          console.log("qa body sees polyfill:", globalThis.polyfill);
-        `,
-        "/s.js": /* js */ `
-          console.log("s start");
-          export const base = await Promise.resolve(1);
-          console.log("s end");
-        `,
-      },
-      run: {
-        stdout: `
-          s start
-          s end
-          pa body
-          p body
-          qa body sees polyfill: ready
-          q body
-          entry body 3 12 function
-        `,
-      },
-    });
-
     // A split chunk gets its own bytecode + module record. Re-exports of
     // externals in it are printed as `export * from`, or as imports plus the
     // chunk's `export { ... }` tail; the record has to describe all of them in

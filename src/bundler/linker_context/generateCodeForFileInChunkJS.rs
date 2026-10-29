@@ -34,7 +34,7 @@ pub fn generate_code_for_file_in_chunk_js(
     stmts: &mut StmtList,
     arena: &Bump,
     temp_arena: &Bump,
-    mut module_info: Option<&mut ModuleInfo>,
+    module_info: Option<&mut ModuleInfo>,
 ) -> js_printer::PrintResult {
     let source_index = part_range.source_index.get() as usize;
     let source_ref = &c.parse_graph().input_files.items_source()[source_index];
@@ -490,18 +490,16 @@ pub fn generate_code_for_file_in_chunk_js(
     // evaluated (well, except for cyclic import scenarios). We need to preserve
     // these semantics even when modules imported via ES6 import statements end
     // up being CommonJS modules.
-    let printed_await = stmts
-        .inside_wrapper_prefix
-        .finish(c.promise_ref, &mut stmts.all_stmts);
-    // In a file with no wrapper, that `await` is a top-level await of the chunk.
-    if printed_await && flags.wrap == WrapKind::None {
-        if let Some(info) = module_info.as_deref_mut() {
-            info.flags.has_tla = true;
-        }
-    }
+    stmts
+        .all_stmts
+        .reserve(stmts.inside_wrapper_prefix.stmts.len() + stmts.inside_wrapper_suffix.len());
+    stmts
+        .all_stmts
+        .extend_from_slice(stmts.inside_wrapper_prefix.stmts.as_slice());
     stmts
         .all_stmts
         .extend_from_slice(stmts.inside_wrapper_suffix.as_slice());
+    stmts.inside_wrapper_prefix.reset();
     stmts.inside_wrapper_suffix.clear();
 
     if c.options.minify_syntax {

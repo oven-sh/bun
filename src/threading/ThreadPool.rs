@@ -905,10 +905,10 @@ impl ThreadPool {
                     // Dropping JoinHandle detaches the thread.
                 }
                 Err(_) => {
-                    // SAFETY: `&self` keeps the pool live; `null` thread makes
+                    // SAFETY: `&self` keeps the pool live; `None` makes
                     // `unregister` return right after undoing the `spawned`
                     // increment CAS'd above (no per-thread wait past notify).
-                    return unsafe { Self::unregister(self, ptr::null_mut()) };
+                    return unsafe { Self::unregister(self, None) };
                 }
             }
             sync = new_sync;
@@ -987,10 +987,10 @@ impl ThreadPool {
                                     {
                                         exit_spawn_failed(&err);
                                     }
-                                    // SAFETY: `&self` keeps the pool live; `null` thread makes
+                                    // SAFETY: `&self` keeps the pool live; `None` makes
                                     // `unregister` return right after undoing the `spawned`
                                     // increment CAS'd above (no per-thread wait past notify).
-                                    return unsafe { Self::unregister(self, ptr::null_mut()) };
+                                    return unsafe { Self::unregister(self, None) };
                                 }
                             }
                             return;
@@ -1103,29 +1103,12 @@ impl ThreadPool {
         }
     }
 
-    fn register(&self, thread: &Thread) {
-        // Push the thread onto the threads stack in a lock-free manner.
-        let mut threads = self.threads.load(Ordering::Relaxed);
-        loop {
-            thread.next.set(threads);
-            match self.threads.compare_exchange_weak(
-                threads,
-                ptr::from_ref(thread).cast_mut(),
-                Ordering::Release,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => break,
-                Err(cur) => threads = cur,
-            }
-        }
-    }
-
     /// # Safety
     /// `pool` is the worker's owning pool. After `(*pool).join_event.notify()`
     /// the joiner may return and the pool may be **deallocated**, so this fn
     /// takes `*const Self` (no `&self` protector) and never touches `pool`
     /// past that point — the shutdown chain follows worker-stack `.next` links.
-    unsafe fn unregister(pool: *const Self, maybe_thread: *mut Thread) {
+    unsafe fn unregister(pool: *const Self, maybe_thread: Option<&Thread>) {
         // Un-spawn one thread, either due to a failed OS thread spawning or the thread is exiting.
         let one_spawned = {
             let mut s = Sync::zero();
@@ -1147,15 +1130,9 @@ impl ThreadPool {
         // ── `*pool` may be invalid past this point. ──
 
         // If this is a thread pool thread, wait for a shutdown signal by the thread pool join()er.
-        let Some(thread) = NonNull::new(maybe_thread) else {
+        let Some(thread) = maybe_thread else {
             return;
         };
-        // `maybe_thread` is the calling worker's own stack-local `Thread`
-        // (set in `ThreadRegistration::new`); it lives on this OS thread's
-        // stack and outlives the entire `unregister` call. BackRef invariant
-        // — pointee outlives holder — covers the `join_event.wait()` and
-        // `.next` reads below.
-        let thread = bun_ptr::BackRef::from(thread);
         thread.join_event.wait(None);
 
         // After receiving the shutdown signal, shutdown the next thread in the pool.
@@ -1210,7 +1187,9 @@ enum WaitError {
 // which profiled ~43% hotter on the steal traversal.
 #[repr(C)]
 pub struct Thread {
+    /// Its worker sets it before the CAS that publishes the `Thread`; after that it is only read.
     next: Cell<*mut Thread>,
+    /// Only its own worker reads or writes it, in `pop`.
     target: Cell<*mut Thread>,
     join_event: Event,
     run_queue: node::Queue,
@@ -1235,10 +1214,24 @@ struct ThreadRegistration<'a> {
 }
 
 impl<'a> ThreadRegistration<'a> {
-    /// SAFETY: the guard must be dropped, not leaked: until then `CURRENT` and `pool` point to `thread`.
+    /// SAFETY: `pool` counts the calling thread in `spawned`. The guard must be dropped, not
+    /// leaked: until then `CURRENT` and `pool` point to `thread`.
     unsafe fn new(pool: &ThreadPool, thread: &'a Thread) -> Self {
         CURRENT.with(|c| c.set(ptr::from_ref(thread).cast_mut()));
-        pool.register(thread);
+        // Push the thread onto the threads stack in a lock-free manner.
+        let mut threads = pool.threads.load(Ordering::Relaxed);
+        loop {
+            thread.next.set(threads);
+            match pool.threads.compare_exchange_weak(
+                threads,
+                ptr::from_ref(thread).cast_mut(),
+                Ordering::Release,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => break,
+                Err(cur) => threads = cur,
+            }
+        }
         Self {
             pool: bun_ptr::BackRef::new(pool),
             thread,
@@ -1248,11 +1241,11 @@ impl<'a> ThreadRegistration<'a> {
 
 impl Drop for ThreadRegistration<'_> {
     fn drop(&mut self) {
-        let thread = ptr::from_ref(self.thread).cast_mut();
-        // SAFETY: per `new()` contract. `unregister` takes `*const` (not the
+        // SAFETY: `pool` is the pool this worker is registered with and counted in
+        // (`new`'s contract). `unregister` takes `*const` (not the
         // `BackRef`) because the pool may be freed by the joiner before it
         // returns — see `unregister`'s doc.
-        unsafe { ThreadPool::unregister(self.pool.as_const_ptr(), thread) };
+        unsafe { ThreadPool::unregister(self.pool.as_const_ptr(), Some(self.thread)) };
         CURRENT.with(|c| c.set(ptr::null_mut()));
     }
 }
@@ -1365,7 +1358,8 @@ impl Thread {
         // `BackRef` invariant: pool's `join()` waits for every worker, so the
         // pointee outlives this fn. Hoist a single shared ref for the hot loop.
         let pool: &ThreadPool = thread_pool.get();
-        // SAFETY: a local declared after `self_`, so it is dropped first.
+        // SAFETY: `warm` and `notify_slow` count a thread in `spawned` before they start it. The
+        // guard is a local declared after `self_`, so it is dropped first.
         let _registration = unsafe { ThreadRegistration::new(pool, &self_) };
 
         let stats = stats_enabled();

@@ -917,9 +917,9 @@ impl RareData {
         let _ = self;
         let mut rounds: u8 = 0;
         while rounds < 8 {
-            // `uws_loop_mut()` is the centralised BACKREF accessor for the
+            // `uws_loop_ref()` is the centralised BACKREF accessor for the
             // per-VM uSockets loop (live for the VM lifetime).
-            if !vm.uws_loop_mut().close_all_groups() {
+            if !vm.uws_loop_ref().close_all_groups() {
                 break;
             }
             rounds += 1;
@@ -934,7 +934,7 @@ impl RareData {
         // every us_socket_t is libc-allocated and otherwise becomes an LSAN leak
         // (the only pointer into it lives in mimalloc-backed RareData, which LSAN
         // can't trace once we unregister the root region).
-        vm.uws_loop_mut().drain_closed_sockets();
+        vm.uws_loop_ref().drain_closed_sockets();
         result
     }
 }

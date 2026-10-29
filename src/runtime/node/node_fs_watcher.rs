@@ -732,19 +732,12 @@ impl<'a> Arguments<'a> {
         })
     }
 
-    pub(crate) fn create_fs_watcher(&self) -> bun_sys::Result<*mut FSWatcher> {
+    pub(crate) fn create_fs_watcher(&self) -> bun_sys::Result<JSValue> {
         FSWatcher::init(self)
     }
 }
 
 impl FSWatcher {
-    /// Read access to the JS wrapper value. Exposed for `NodeFS::watch`.
-    /// Returns `UNDEFINED` if the wrapper reference has been cleared.
-    #[inline]
-    pub(crate) fn js_this(&self) -> JSValue {
-        self.js_this.get_or_undefined()
-    }
-
     /// # Safety
     /// `this` must be the unique `heap::alloc` pointer produced by `init`;
     /// JS-thread only.
@@ -1061,7 +1054,8 @@ impl FSWatcher {
         self.close();
     }
 
-    pub(crate) fn init(args: &Arguments<'_>) -> bun_sys::Result<*mut FSWatcher> {
+    /// Returns the JS wrapper (`undefined` once `detach()` has cleared it).
+    pub(crate) fn init(args: &Arguments<'_>) -> bun_sys::Result<JSValue> {
         let mut joined_buf = bun_paths::path_buffer_pool::get();
         let slice = {
             let mut s = args.path.slice();
@@ -1167,7 +1161,7 @@ impl FSWatcher {
         };
         // SAFETY: `ctx` is heap-allocated; `detach()` disarms it before it is finalized.
         unsafe { bun_jsc::AbortHandle::arm_owner(ctx, args.context) };
-        Ok(ctx)
+        Ok(ctx_ref.js_this.get_or_undefined())
     }
 }
 

@@ -7887,12 +7887,12 @@ impl VirtualMachine {
         // The `Arc::clone` is the ref-bump; `into_raw` transfers that strong
         // ref into the table (reclaimed by `put_value`'s replace path /
         // `SavedSourceMap` teardown).
-        bun_core::handle_oom(self.source_mappings.put_value(
+        self.source_mappings.put_value(
             path,
             crate::saved_source_map::Value::init(std::sync::Arc::into_raw(std::sync::Arc::clone(
                 &map,
             ))),
-        ));
+        );
 
         let mapping = map.find_mapping(line, column)?;
 

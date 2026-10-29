@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isASAN, isLinux, isMacOS, isWindows } from "harness";
+import { bunEnv, isASAN, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { unsupported } from "../aot/harness/compiler";
@@ -75,8 +75,73 @@ async function build(without: string[]) {
 }
 
 const namesOf = (places: { name: string }[]) => [...new Set(places.map(place => place.name))].sort();
-const numbersOf = (places: { number: number }[]) =>
-  [...new Set(places.map(place => place.number))].sort((a, b) => a - b);
+const numbersOf = (places: { number: number | "unknown" }[]) =>
+  [...new Set(places.map(place => place.number))].sort((a, b) => Number(a) - Number(b));
+
+// None of this code ever runs.
+const makesSystemCalls = (() => {
+  const [clone, fork, vfork, execve, execveat, clone3] =
+    process.arch === "arm64" ? [220, 220, 220, 221, 281, 435] : [56, 57, 58, 59, 322, 435];
+  const raw = (name: string, load: string) =>
+    `void ${name}(void) { __asm__ volatile("${load}\\n\\t${process.arch === "arm64" ? "svc #0" : "syscall"}" ::: "memory"); }\n`;
+  const loads = (number: number) => (process.arch === "arm64" ? `mov w8, #${number}` : `mov $${number}, %%eax`);
+  return {
+    "starts.c": `#define _GNU_SOURCE
+#include <unistd.h>
+${raw("raw_clone", loads(clone))}${raw("raw_fork", process.arch === "arm64" ? loads(fork) : `push $${fork}\\n\\tpop %%rax`)}${raw("raw_vfork", loads(vfork))}${raw("raw_execve", loads(execve))}
+long through_libc(void) { return syscall(${execveat}, 0, 0); }
+// The number is loaded before a branch.
+long after_a_branch(long flags) {
+  register long number __asm__("${process.arch === "arm64" ? "x8" : "rax"}") = ${clone3};
+  __asm__ volatile("" : "+r"(number));
+  if (flags) __asm__ volatile("nop" : "+r"(number));
+  __asm__ volatile("${process.arch === "arm64" ? "svc #0" : "syscall"}" : "+r"(number) :: "memory");
+  return number;
+}
+`,
+    "any.c": `long any(long number) {
+  register long passed __asm__("rax") = number;
+  __asm__ volatile("syscall" : "+r"(passed) :: "rcx", "r11", "memory");
+  return passed;
+}
+`,
+    // The bytes of `syscall` inside an immediate, after a register was given the number of clone; and getpid() after that.
+    "harmless.c": `void bytes_in_an_immediate(void) { __asm__ volatile("mov $56, %%eax\\n\\tmov $0x050f, %%ecx" ::: "eax", "ecx"); }
+void another_number(void) { __asm__ volatile("mov $56, %%eax\\n\\tmov $56, %%edi\\n\\tmov $39, %%eax\\n\\tsyscall" ::: "rax", "rdi", "rcx", "r11", "memory"); }
+`,
+  };
+})();
+const systemCC = process.env.CC || Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+
+describe.skipIf(!isLinux || !systemCC)("the search for system calls", () => {
+  async function search(source: keyof typeof makesSystemCalls) {
+    using dir = tempDir("compile-trim-capabilities", makesSystemCalls);
+    const compiled = await run(
+      [systemCC!, "-O1", "-shared", "-fPIC", "-fno-plt", source, "-o", "library.so"],
+      String(dir),
+      bunEnv,
+    );
+    expect(compiled).toEqual({ stdout: "", stderr: "", exitCode: 0 });
+    return placesThatMakeSystemCalls(readFileSync(join(String(dir), "library.so")), startsAProgram.systemCalls);
+  }
+
+  test("finds each way to start a program", async () => {
+    expect(numbersOf(await search("starts.c"))).toEqual(startsAProgram.systemCalls);
+  });
+
+  test.skipIf(process.arch !== "x64")("reports a system call whose number is not a constant", async () => {
+    expect(await search("any.c")).toEqual([
+      { number: "unknown", address: expect.any(Number), bytes: expect.stringMatching(/0f05$/) },
+    ]);
+  });
+
+  test.skipIf(process.arch !== "x64")(
+    "takes no bytes inside an instruction, and no stale number, for a system call",
+    async () => {
+      expect(await search("harmless.c")).toEqual([]);
+    },
+  );
+});
 
 if (isASAN)
   console.error(

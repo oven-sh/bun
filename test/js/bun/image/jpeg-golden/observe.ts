@@ -1,6 +1,6 @@
 // What `Bun.Image` does with a JPEG file and what it makes of pixels, in a form that can be recorded and compared.
 // Shared by record.ts and the tests of the JPEG codec.
-import { deflateSync, gunzipSync } from "node:zlib";
+import { deflateSync } from "node:zlib";
 
 export type DecodeCase = {
   name: string;
@@ -13,7 +13,7 @@ export type DecodeCase = {
 };
 
 export async function load<T>(path: string): Promise<T> {
-  return JSON.parse(gunzipSync(await Bun.file(path).bytes()).toString());
+  return JSON.parse(Buffer.from(Bun.gunzipSync(await Bun.file(path).bytes())).toString());
 }
 
 export async function store(path: string, value: unknown) {
@@ -30,6 +30,9 @@ const inflate = (pieces: Uint8Array[]) => Bun.inflateSync(Buffer.concat(pieces),
 /** The pixels and the ICC profile of an 8-bit RGBA PNG, without the help of `Bun.Image`. */
 export function readPng(png: Uint8Array): { width: number; height: number; rgba: Uint8Array; icc?: Uint8Array } {
   const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  // Bit depth, color type, and at the end whether it is interlaced.
+  if (png[24] !== 8 || png[25] !== 6 || png[28] !== 0)
+    throw new Error("readPng takes 8-bit RGBA that is not interlaced");
   const width = view.getUint32(16);
   const height = view.getUint32(20);
   const idat: Uint8Array[] = [];
@@ -106,7 +109,9 @@ async function outcome(run: () => Promise<string>): Promise<string> {
   try {
     return await run();
   } catch (error: any) {
-    return String(error.code);
+    // Without a code it is not `Bun.Image` that failed.
+    if (typeof error?.code !== "string") throw error;
+    return error.code;
   }
 }
 
@@ -152,7 +157,7 @@ export async function observeDecode(file: Uint8Array, eighths: number[]): Promis
   let size: { width: number; height: number } | undefined;
   const results = [
     await outcome(async () => {
-      size = await new Bun.Image(file).metadata();
+      size = await new Bun.Image(file, { autoOrient: false }).metadata();
       return `${size.width}x${size.height}`;
     }),
   ];
@@ -218,7 +223,7 @@ export function damaged(file: Uint8Array, seed: number, count: number): Uint8Arr
   });
 }
 
-/** How a file of the decoding fixture is looked at: itself at every scale, each damaged copy at full size and one other. */
+/** How a file of the fixture is looked at: itself at every scale, each damaged copy at full size and one other. */
 export async function observeDecodeCase(file: Uint8Array, seed: number): Promise<string[]> {
   const copies = damaged(file, seed, 3);
   return Promise.all([
@@ -239,14 +244,15 @@ export type EncodeCase = {
 
 /**
  * Gray blocks of one AC coefficient each, in 15 places that come up 4, 5, 8, 13, 21, ... times. That makes the optimal
- * Huffman table of a progressive scan a chain, whose longest code has 17 bits where 16 are allowed.
+ * Huffman table of a progressive scan a chain, whose longest code has 17 bits where 16 are allowed. With 16 places that
+ * come up 2, 3, 5, 8, 13, ... times it has 18 bits: shortening them empties a length and then has to look past it.
  */
-function blocksForAChainOfCodes(): number[][] {
+function blocksForAChainOfCodes(bits: 17 | 18): number[][] {
   const blocks: number[][] = [];
   const cosine = (at: number, frequency: number) => Math.cos(((2 * at + 1) * frequency * Math.PI) / 16);
-  let [count, before] = [4, 3];
-  // Places 6 to 20 of the zigzag order.
-  for (const place of [3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40]) {
+  let [count, before] = bits === 17 ? [4, 3] : [2, 2];
+  // Places 6 to 20 or 21 of the zigzag order.
+  for (const place of [3, 10, 17, 24, 32, 25, 18, 11, 4, 5, 12, 19, 26, 33, 40, 48].slice(0, bits - 2)) {
     const [u, v] = [place % 8, place >> 3];
     // A coefficient of 6. No sample comes near a half, so the last bit of a cosine does not matter.
     const amplitude = (6 / 4) * (u ? 1 : Math.SQRT1_2) * (v ? 1 : Math.SQRT1_2);
@@ -268,7 +274,7 @@ export function picture({ kind, width, height, quality, alpha }: EncodeCase): Ui
   const rgba = new Uint8Array(width * height * 4);
   const period = 1 + below(12);
   const [red, green, blue] = [below(256), below(256), below(256)];
-  const blocks = kind === 8 ? blocksForAChainOfCodes() : [];
+  const blocks = kind === 8 ? blocksForAChainOfCodes(17) : kind === 9 ? blocksForAChainOfCodes(18) : [];
   let p = 0;
   // Nothing is allocated for a pixel, which a debug build takes long to do.
   const put = (r: number, g: number, b: number) => {
@@ -289,7 +295,8 @@ export function picture({ kind, width, height, quality, alpha }: EncodeCase): Ui
       else if (kind === 4) put(below(2) * 255, below(2) * 255, below(2) * 255);
       else if (kind === 5) put(125 + below(7), 125 + below(7), 125 + below(7));
       else if (kind === 6) put((x * period) & 255, (y * period) & 255, (x * y) & 255);
-      else if (kind === 8) putGray(blocks[(y >> 3) * (width >> 3) + (x >> 3)]?.[(y % 8) * 8 + (x % 8)] ?? 128);
+      else if (kind === 8 || kind === 9)
+        putGray(blocks[(y >> 3) * (width >> 3) + (x >> 3)]?.[(y % 8) * 8 + (x % 8)] ?? 128);
       else if (below(period * 20)) put(red, green, blue);
       else putGray(255);
     }
@@ -329,7 +336,7 @@ export function encodeCases(): EncodeCase[] {
   let n = 0;
   for (let kind = 0; kind < 8; kind++) {
     for (const [width, height] of sizes) {
-      // Every quality and both modes come up for every kind and for every size, not for every pair of them.
+      // Every quality and both modes come up for every kind, and 12 of the 13 qualities for every size.
       for (let i = 0; i < 3; i++, n++) {
         const [quality, progressive] = [qualities[n % qualities.length], n % 2 === 1];
         cases.push({ kind, width, height, quality, progressive, alpha: i === 2 });
@@ -341,5 +348,12 @@ export function encodeCases(): EncodeCase[] {
   cases.push({ kind: 2, width: 200, height: 150, quality: 85, progressive: false, alpha: false });
   cases.push({ kind: 5, width: 200, height: 150, quality: 100, progressive: true, alpha: false });
   cases.push({ kind: 8, width: 664, height: 656, quality: 100, progressive: true, alpha: false });
+  cases.push({ kind: 9, width: 664, height: 656, quality: 100, progressive: true, alpha: false });
+  // In a refinement scan the first run of empty blocks gets to 937 waiting bits, the most with which it still goes on.
+  cases.push({ kind: 7, width: 96, height: 19, quality: 100, progressive: true, alpha: false });
+  // The quantization tables of every quality: they are in the file.
+  for (let quality = 1; quality <= 100; quality++) {
+    cases.push({ kind: 1, width: 1, height: 1, quality, progressive: false, alpha: false });
+  }
   return cases;
 }

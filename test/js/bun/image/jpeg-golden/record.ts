@@ -13,7 +13,8 @@ import { encodeCases, load, observeDecodeCase, observeEncode, store, type Decode
 const withLibjpegTurbo = ["c6da4a4d3010e5553438c60f6bd76d981976867c", "38afee6c84fcf48c0edb2466aa4b27d287a59c30"];
 
 const args = process.argv.slice(2);
-if (!(withLibjpegTurbo.includes(Bun.revision) && process.arch === "x64") && !args.includes("--accept")) {
+const isLibjpegTurbo = withLibjpegTurbo.includes(Bun.revision) && process.arch === "x64";
+if (!isLibjpegTurbo && !args.includes("--accept")) {
   throw new Error(
     `Bun ${Bun.version} (${Bun.revision.slice(0, 9)}) on ${process.arch} would record the code under test. ` +
       "Run this with the release of Bun 1.4.4 for x64, or pass --accept after a change that is meant.",
@@ -34,9 +35,16 @@ while (args.length > 0) {
     cases.splice(at, 1);
     continue;
   }
+  if (!isLibjpegTurbo) throw new Error(`What is expected of ${name} has to come from Bun 1.4.4 first.`);
   const data = (await Bun.file(name).bytes()).toBase64();
   if (at < 0) cases.push({ name, seed: 1 + Math.max(...cases.map(c => c.seed)), data });
   else cases[at] = { name, seed: cases[at].seed, data };
+}
+
+const encodeFixture = join(import.meta.dir, "encoded.json.gz");
+const encodedBefore = await load<string[]>(encodeFixture);
+if (!isLibjpegTurbo && encodeCases().length > encodedBefore.length) {
+  throw new Error("What is expected of the new pictures has to come from Bun 1.4.4 first.");
 }
 
 let changed = 0;
@@ -54,8 +62,6 @@ for (const c of cases) {
 }
 await store(decodeFixture, cases);
 
-const encodeFixture = join(import.meta.dir, "encoded.json.gz");
-const encodedBefore = await load<string[]>(encodeFixture);
 const encoded: string[] = [];
 for (const c of encodeCases()) {
   const expected = await observeEncode(c);

@@ -35,8 +35,8 @@ current build has to name these and no others.
   coefficients, subsampled lossless streams, scans that are cut short. Some were then
   damaged at random and cut down to the bytes that matter. The two `arith/table_walk_*`
   lead through every state of the arithmetic decoder's table, and out of each both ways.
-- `markers/`: one file for each of 22 checks on markers and on what they say of the
-  image. Crops as above with bytes changed, or written by a script.
+- `markers/`: the checks on markers and on what they say of the image, a file or two
+  for each. Crops as above with bytes changed, or written by a script.
 - `icc/`: `c5x7_s1x1_opt` with a made-up profile in three segments that are out of
   order.
 - `wide/`: a made-up picture that is wide enough for the widest vectors, encoded by

@@ -126,8 +126,8 @@ extern "C" fn select_alpn_callback(
 ) -> c_int {
     // BoringSSL never invokes the ALPN callback with a null `SSL*`; route
     // through the const-asserted opaque-ZST accessor so the call is safe.
-    let this_ptr =
-        tls_socket_functions::ffi::SSL_get_ex_data(boringssl_sys::SSL::opaque_ref(ssl), 0);
+    let ssl = boringssl_sys::SSL::opaque_ref(ssl);
+    let this_ptr = tls_socket_functions::ffi::SSL_get_ex_data(ssl, 0);
     if this_ptr.is_null() {
         return boringssl_sys::SSL_TLSEXT_ERR_NOACK;
     }
@@ -168,7 +168,7 @@ extern "C" fn select_alpn_callback(
                 [core::ptr::null_mut(); LOOP_STATE_SLOTS];
             if matches!(this.socket.get().socket, uws::InternalSocket::Connected(_)) {
                 tls_socket_functions::ffi::us_internal_ssl_loop_state_save(
-                    boringssl_sys::SSL::opaque_ref(ssl),
+                    ssl,
                     saved_loop_state.as_mut_ptr(),
                 );
             }
@@ -199,10 +199,7 @@ extern "C" fn select_alpn_callback(
                 // and `in_` is valid for `inlen` per the callback contract.
                 unsafe { core::ptr::copy_nonoverlapping(in_, ab.ptr, wire_len) };
             }
-            // SAFETY: `ssl` is the live SSL handle passed into this ALPN
-            // callback; SSL_get_servername reads the negotiated SNI name and
-            // returns NULL or a NUL-terminated string owned by the SSL.
-            let servername_ptr = unsafe { boringssl_sys::SSL_get_servername(ssl.cast_const(), 0) };
+            let servername_ptr = tls_socket_functions::ffi::SSL_get_servername(ssl, 0);
             let servername_js = if servername_ptr.is_null() {
                 JSValue::UNDEFINED
             } else {

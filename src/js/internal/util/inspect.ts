@@ -2471,8 +2471,10 @@ function formatPromise(ctx: Context, value, recurseTimes: number) {
 }
 
 function formatExtraProperties(ctx: Context, value, recurseTimes: number, key: string, typedArray?: boolean) {
+  // Read the value before the indent: the getter throws for a detached DataView, and formatRaw() then retries.
+  const extraValue = value[key];
   ctx.indentationLvl += 2;
-  const str = formatValue(ctx, value[key], recurseTimes, typedArray);
+  const str = formatValue(ctx, extraValue, recurseTimes, typedArray);
   ctx.indentationLvl -= 2;
 
   // These entries are mainly getters. Should they be formatted like getters?

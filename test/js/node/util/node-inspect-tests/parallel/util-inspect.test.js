@@ -177,10 +177,21 @@ test("no assertion failures", () => {
 
   {
     const ab = new ArrayBuffer(42);
+    const dv = new DataView(ab);
+
     assert.strictEqual(ab.byteLength, 42);
     new MessageChannel().port1.postMessage(ab, [ab]);
     assert.strictEqual(ab.byteLength, 0);
     assert.strictEqual(util.inspect(ab), "ArrayBuffer { (detached), [byteLength]: 0 }");
+
+    assert.strictEqual(
+      util.inspect(dv),
+      "DataView {\n" +
+        "  [byteLength]: 0,\n" +
+        "  [byteOffset]: undefined,\n" +
+        "  [buffer]: ArrayBuffer { (detached), [byteLength]: 0 }\n" +
+        "}",
+    );
   }
 
   // Truncate output for ArrayBuffers using plural or singular bytes

@@ -108,6 +108,56 @@ test("util.inspect reports the non-index keys of a typed array", () => {
   );
 });
 
+// The byteLength and byteOffset getters of these views throw. util.inspect then reads both from the buffer.
+test("util.inspect keeps its indentation after a DataView that is out of the bounds of its buffer", () => {
+  const detached = () => {
+    const buffer = new ArrayBuffer(8);
+    const view = new DataView(buffer);
+    structuredClone(buffer, { transfer: [buffer] });
+    return view;
+  };
+  const detachedText =
+    "DataView {\n" +
+    "    [byteLength]: 0,\n" +
+    "    [byteOffset]: undefined,\n" +
+    "    [buffer]: ArrayBuffer { (detached), [byteLength]: 0 }\n" +
+    "  }";
+  const shrunk = new ArrayBuffer(8, { maxByteLength: 16 });
+  const viewOfShrunk = new DataView(shrunk, 4, 4);
+  shrunk.resize(2);
+  const multiLine = { [util.inspect.custom]: () => "line1\nline2" };
+
+  expect({
+    nested: util.inspect({ n: { dv: detached() }, after: { x: { y: 1 } } }),
+    twice: util.inspect([detached(), detached(), { z: { w: 1 } }], { depth: 4 }),
+    beforeCustom: util.inspect({ dv: detached(), c: multiLine }),
+    shrunk: util.inspect({ dv: viewOfShrunk, after: { x: { y: 1 } } }),
+  }).toEqual({
+    nested:
+      "{\n" +
+      "  n: {\n" +
+      "    dv: DataView {\n" +
+      "      [byteLength]: 0,\n" +
+      "      [byteOffset]: undefined,\n" +
+      "      [buffer]: [ArrayBuffer]\n" +
+      "    }\n" +
+      "  },\n" +
+      "  after: { x: { y: 1 } }\n" +
+      "}",
+    twice: `[\n  ${detachedText},\n  ${detachedText},\n  { z: { w: 1 } }\n]`,
+    beforeCustom: `{\n  dv: ${detachedText},\n  c: line1\n  line2\n}`,
+    shrunk:
+      "{\n" +
+      "  dv: DataView {\n" +
+      "    [byteLength]: 2,\n" +
+      "    [byteOffset]: undefined,\n" +
+      "    [buffer]: ArrayBuffer { [Uint8Contents]: <00 00>, [byteLength]: 2 }\n" +
+      "  },\n" +
+      "  after: { x: { y: 1 } }\n" +
+      "}",
+  });
+});
+
 function fastestOf(runs, fn) {
   let fastest = Infinity;
   for (let i = 0; i < runs; i++) {

@@ -8,9 +8,7 @@ use crate::{fs, paths};
 use bun_core::strings;
 use bun_lint::context::Severity;
 use bun_lint::linter::LintMessage;
-use bun_lint::regex::Regex;
 use std::io::Write;
-use std::sync::LazyLock;
 
 /// `util.styleText(format, text)`
 struct Style {
@@ -53,23 +51,98 @@ fn styled(out: &mut Vec<u8>, color: bool, style: &Style, text: &[u8]) {
     }
 }
 
-/// Matches what `util.stripVTControlCharacters` removes.
-static CONTROL_SEQUENCE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::literal(concat!(
-        r"/[\u001B\u009B][[\]()#;?]*",
-        r"(?:(?:(?:(?:;[-a-zA-Z\d\/\#&.:=?%@~_]+)*",
-        r"|[a-zA-Z\d]+(?:;[-a-zA-Z\d\/\#&.:=?%@~_]*)*)?",
-        r"(?:\u0007|\u001B\u005C|\u009C))",
-        r"|(?:(?:\d{1,4}(?:;\d{0,4})*)?",
-        r"[\dA-PR-TZcf-nq-uy=><~]))/g"
-    ))
-});
+/// The end of the first BEL, `ESC \` or U+009C in `text`.
+fn osc_terminator_end(text: &[u8]) -> Option<usize> {
+    let mut from = 0;
+    loop {
+        let at = from + strings::index_of_any(text.get(from..)?, b"\x07\x1B\xC2")?;
+        match text.get(at..)? {
+            [0x07, ..] => return Some(at + 1),
+            [0x1B, b'\\', ..] | [0xC2, 0x9C, ..] => return Some(at + 2),
+            _ => from = at + 1,
+        }
+    }
+}
+
+/// The length of the match of `[[\]()#;?]*(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]` at the start of `text`.
+fn csi_len(text: &[u8]) -> Option<usize> {
+    let digits = |at: usize| {
+        let rest = text.get(at..).unwrap_or_default();
+        (rest.iter().take(4))
+            .take_while(|it| it.is_ascii_digit())
+            .count()
+    };
+    let is_final = |at: usize| {
+        text.get(at).is_some_and(|it| {
+            it.is_ascii_digit()
+                || matches!(it, b'A'..=b'P' | b'R'..=b'T' | b'Z' | b'c' | b'f'..=b'n')
+                || matches!(it, b'q'..=b'u' | b'y' | b'=' | b'>' | b'<' | b'~')
+        })
+    };
+    let mut at = (text.iter())
+        .take_while(|it| matches!(it, b'[' | b']' | b'(' | b')' | b'#' | b';' | b'?'))
+        .count();
+    let first = digits(at);
+    if first == 0 {
+        return is_final(at).then_some(at + 1);
+    }
+    at += first;
+    // Without a final byte after the parameters, the regular expression backtracks until a digit is the final byte.
+    let mut last_digit_end = at;
+    while let Some(b';' | b':') = text.get(at) {
+        let count = digits(at + 1);
+        at += 1 + count;
+        if count > 0 {
+            last_digit_end = at;
+        }
+    }
+    Some(if is_final(at) { at + 1 } else { last_digit_end })
+}
+
+/// The matches of Node.js's `ansi` in `text`, in linear time: <https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L288-L293>
+fn control_sequences(text: &[u8]) -> impl Iterator<Item = (usize, usize)> {
+    let mut from = 0;
+    // False once a search has found no terminator. No later `ESC ]` has one, so the text isn't searched again.
+    let mut has_terminator = true;
+    std::iter::from_fn(move || {
+        loop {
+            let start = from + strings::index_of_any(text.get(from..)?, b"\x1B\xC2")?;
+            let rest = text.get(start..)?;
+            let ([0x1B, parameters @ ..] | [0xC2, 0x9B, parameters @ ..]) = rest else {
+                from = start + 1;
+                continue;
+            };
+            let introducer = rest.len() - parameters.len();
+            let mut len = None;
+            if has_terminator && let [0x1B, b']', payload @ ..] = rest {
+                len = osc_terminator_end(payload).map(|end| 2 + end);
+                has_terminator = len.is_some();
+            }
+            let len = len.or_else(|| Some(introducer + csi_len(parameters)?));
+            from = start + len.unwrap_or(introducer);
+            if len.is_some() {
+                return Some((start, from));
+            }
+        }
+    })
+}
+
+/// `util.stripVTControlCharacters(text).length`
+#[cold]
+#[inline(never)]
+fn len_without_control_sequences(text: &[u8]) -> usize {
+    let (mut len, mut from) = (0, 0);
+    for (start, end) in control_sequences(text) {
+        len += strings::utf8_decoded_len_utf16(text.get(from..start).unwrap_or_default()) as usize;
+        from = end;
+    }
+    len + strings::utf8_decoded_len_utf16(text.get(from..).unwrap_or_default()) as usize
+}
 
 /// `stringLength`
 fn visible_len(text: &[u8]) -> usize {
     if strings::contains_char(text, 0x1B) || strings::contains(text, "\u{9b}".as_bytes()) {
-        return bun_core::strings::utf8_decoded_len_utf16(&CONTROL_SEQUENCE.replace(text, b""))
-            as usize;
+        return len_without_control_sequences(text);
     }
     bun_core::strings::utf8_decoded_len_utf16(text) as usize
 }
@@ -180,7 +253,6 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
             widest(&|row| row.column.len()),
         );
         let (kinds, messages) = (widest(&kind_len), widest(&|row| row.message_len));
-        let rules = widest(&|row| visible_len(&row.rule));
         // Every row is padded to the widest one. If that would exceed what ESLint can print ("Invalid string length"),
         // no row is padded.
         padded = padded.saturating_add(rows.len().saturating_mul(messages));
@@ -215,7 +287,6 @@ pub(super) fn write(out: &mut Vec<u8>, results: &[FileResult], meta: &Meta) {
                     row.link.as_ref().unwrap_or(&row.rule),
                 );
             }
-            pad(&mut text, rules - visible_len(&row.rule));
             text.truncate(strings::trim_js_whitespace_end(&text).len());
             if i > 0 {
                 out.push(b'\n');

@@ -18,7 +18,7 @@ const env = {
   FORCE_COLOR: undefined,
 };
 
-type Files = Record<string, string>;
+type Files = Record<string, string | Buffer>;
 
 const withoutDirectory = (text: string, dir: { toString(): string }) =>
   text.replaceAll(String(dir) + sep, "<dir>/").replaceAll(String(dir), "<dir>");
@@ -197,7 +197,8 @@ describe.concurrent("without a config file", () => {
     expect(exitCode).toBe(1);
   });
 
-  // ESLint pads a message to the length of `util.stripVTControlCharacters(message)`. This is what ESLint 10.12.0 prints.
+  // ESLint pads a message to the length of `util.stripVTControlCharacters(message)`. This is what ESLint 10.12.0 prints
+  // on Node.js v26.12.1, the version that Bun reports.
   test("-f stylish pads a message with escape sequences like ESLint", async () => {
     const messages: [message: string, length: number][] = [
       // A link that ends with ESC \, with ST and with BEL.
@@ -208,6 +209,9 @@ describe.concurrent("without a config file", () => {
       ["\x1b]8;;https://example.com/", 19],
       ["✓ \x1b[32mdone\x1b[39m 😀", 9],
       ["a\x1bb", 3],
+      // Older versions of Node.js count these two differently: a link with parentheses, and parameters with colons.
+      ["\x1b]8;;https://example.com/(a)\x07docs\x1b]8;;\x07", 4],
+      ["\x1b[38:5:1mred\x1b[0m \x9b1mbold\x9b0m", 8],
       ["A message without a sequence", 28],
     ];
     const { stdout, exitCode } = await lint({ "a.js": withMessages(messages.map(it => it[0])) }, ["-f", "stylish"]);
@@ -224,6 +228,108 @@ describe.concurrent("without a config file", () => {
         "",
       ].join("\n"),
     );
+    expect(exitCode).toBe(1);
+  });
+
+  // Every place where a regular expression for escape sequences decides something. The expected lengths are those of
+  // Node.js v26.12.1: https://github.com/nodejs/node/blob/v26.12.1/lib/internal/util/inspect.js#L288-L293
+  test("-f stylish measures a message like util.stripVTControlCharacters", async () => {
+    const ansi = new RegExp(
+      "(?:\\u001B\\][\\s\\S]*?(?:\\u0007|\\u001B\\u005C|\\u009C))" +
+        "|[\\u001B\\u009B][[\\]()#;?]*" +
+        "(?:\\d{1,4}(?:[;:]\\d{0,4})*)?" +
+        "[\\dA-PR-TZcf-nq-uy=><~]",
+      "g",
+    );
+    const introducers = ["\x1b", "\x9b"];
+    const terminators = ["\x07", "\x1b\\", "\x9c"];
+    // BEL, ESC and the ASCII characters from the space on.
+    const characters = ["\x07", "\x1b", ...Array.from({ length: 0x60 }, (_, i) => String.fromCharCode(0x20 + i))];
+    const sequences: string[] = [];
+    for (const start of introducers) {
+      // Each character after the introducer, after a prefix, after one and two parameters, before a final byte, and
+      // between two parameters.
+      for (const c of characters) {
+        sequences.push(start + c, start + "[" + c, start + "[1" + c, start + "[1;2" + c);
+        sequences.push(start + c + "m", start + "[1" + c + "2m");
+      }
+      // One to six digits in the first parameter and in a later one.
+      for (const digits of ["1", "12", "123", "1234", "12345", "123456", "12340"]) {
+        for (const after of ["", "m", ";7m", "x", ":7x"]) {
+          sequences.push(start + "[" + digits + after, start + "[8;" + digits + after, start + "[8:" + digits + after);
+        }
+      }
+      // Parameters that no final byte follows.
+      for (const parameters of ["[1;", "[1;2;", "[1;;2;;", "[12;34;x", "[1;2:3;x", "[;1", "[;;1;;", "1;2x", "?25"]) {
+        sequences.push(start + parameters);
+      }
+    }
+    for (const end of terminators) {
+      sequences.push("\x1b]" + end, "\x1b]" + end + "x", "\x9b]8;;u" + end + "x");
+      sequences.push("\x1b]8;;http://x/(a)" + end + "link\x1b]8;;" + end);
+      for (const other of terminators) sequences.push("\x1b]a" + end + "b" + other + "c");
+      // An ESC and a byte C2 that start no terminator, right before one and a character before one.
+      sequences.push("\x1b]\x1b" + end + "x", "\x1b]a\x1bb" + end + "x", "\x1b]\xa9" + end + "x");
+      // A sequence without a terminator before one with a terminator, and after one.
+      sequences.push("\x1b]a\x1b]b" + end + "c", "x" + end + "\x1b]0;t", "\x1b]a" + end + "\x1b]8;;u");
+      sequences.push(
+        "\x1b]a" + end + "\x1b[31m\x1b]8;;u" + end,
+        "\x1b]\u2713" + end + "x",
+        "\x1b]\u{1f600}" + end + "x",
+      );
+    }
+    sequences.push("\x1b]", "\x1b]x", "\x1b]0;title", "\x1b]8;;u\x1b", "\x1b]8;;u\\", "\x1b]8;;u\x1bx\\");
+    sequences.push("\x1b]8;;u\x1b[0m", "\x1b]8;;u|\x9c|", "\x9b\x9c", "\x9c\x9b[0m", "\x9c");
+    // Characters whose UTF-8 form has the byte C2, 9B or 9C, and characters that are two UTF-16 code units.
+    for (const c of ["\xa9", "\xdb", "\u015b", "\u201b", "\u{1f6d1}", "\xdc", "\u201c", "\u2713", "\u{1f700}"]) {
+      sequences.push(c + "[0m", c + "1", "\x1b]8;;" + c, "\x1b]8;;" + c + "x\x07y");
+      sequences.push(c + "\x1b[0m" + c, c + "\x9b0m" + c);
+    }
+    const keys = [...new Set(sequences)];
+    // Keys that aren't UTF-8. ESLint measures the text that it decodes them to.
+    const bytes = ["\xe2\x9c\x1b[0m\x93", "\xc2\x1b[0mx", "\x9b0m", "\x1b]8;;u\x9cx", "\x1b]8;;u\xc2\x07x"].map(it =>
+      Buffer.from(it, "latin1"),
+    );
+    const plain = Buffer.alloc(64, "a").toString();
+    // A key is followed by a quote in its message. A custom message is the whole text, so a sequence can end it.
+    const endings = ["\x1b", "\x9b", "\x1b[", "\x1b[1", "\x1b[12", "\x1b[1;", "\x1b[1;2", "\x1b[m"];
+    endings.push("\x1b]8;;u", "\x1b]8;;u\x07", "\x1b]8;;u\x1b\\", "\x1b]8;;u\x9c", "\x1b]8;;u\x1b");
+
+    const escaped = (text: string) => text.replace(/[^]/g, c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0"));
+    const duplicate = (key: Buffer) => [`({ "`, key, `": null, "`, key, `": null });\n`].map(it => Buffer.from(it));
+    const source = [...keys.map(key => Buffer.from(escaped(key))), ...bytes, Buffer.from(plain)].flatMap(duplicate);
+    const decoder = new TextDecoder();
+    const messages = {
+      "keys.js": [...keys, ...bytes.map(it => decoder.decode(it)), plain].map(key => `Duplicate key '${key}'`),
+      "messages.js": [...endings.map(it => "x" + it), "A message without a sequence"],
+    };
+    const { stdout, exitCode } = await lint(
+      { "keys.js": Buffer.concat(source), "messages.js": withMessages(messages["messages.js"]) },
+      ["-f", "stylish"],
+    );
+
+    const lines = stdout.split("\n");
+    /** The rows of `file` that aren't as wide as Node.js makes them. The last row has no sequence. */
+    const wrong = (file: keyof typeof messages, rule: string) => {
+      const rows = lines.slice(lines.indexOf(`<dir>/${file}`) + 1).slice(0, messages[file].length);
+      const paddings = rows.map((row, i) => {
+        const cell = row.slice(row.indexOf("  error  ") + 9, -(rule.length + 2));
+        return row.endsWith("  " + rule) && cell.startsWith(messages[file][i])
+          ? cell.length - messages[file][i].length
+          : NaN;
+      });
+      const widest = messages[file].at(-1)!.length + paddings.at(-1)!;
+      return messages[file].flatMap((message, i) => {
+        const [length, expected] = [widest - paddings[i], message.replace(ansi, "").length];
+        return length === expected ? [] : [{ message: JSON.stringify(message), length, expected }];
+      });
+    };
+    expect({ keys: wrong("keys.js", "no-dupe-keys"), messages: wrong("messages.js", "no-restricted-syntax") }).toEqual({
+      keys: [],
+      messages: [],
+    });
+    const total = messages["keys.js"].length + messages["messages.js"].length;
+    expect(stdout).toEndWith(`\n\n✖ ${total} problems (${total} errors, 0 warnings)\n\n`);
     expect(exitCode).toBe(1);
   });
 

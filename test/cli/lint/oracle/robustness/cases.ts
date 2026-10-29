@@ -476,6 +476,46 @@ export const cases: Case[] = [
     matches: /line="60000" column="3"/,
     exitCode: 1,
   },
+  // `stylish` pads a message to its length without escape sequences. Each file has a long duplicate key that ends with
+  // a sequence, and the duplicate key `ab`, which is padded to the long one's length. The lengths are those of
+  // `util.stripVTControlCharacters` in Node.js v26.12.1.
+  ...(
+    [
+      // Node.js's regular expression reads the rest of the text from each `ESC ]` that has no terminator after it.
+      ["128,000 OSC introducers without a terminator", () => rep("\\x1b]", 128_000), 256_000],
+      ["a BEL, then 128,000 OSC introducers", () => "\\x07" + rep("\\x1b]", 128_000), 256_001],
+      [
+        "64,000 OSC sequences, then 64,000 introducers",
+        () => rep("\\x1b]x\\x07", 64_000) + rep("\\x1b]", 64_000),
+        128_000,
+      ],
+      // JavaScriptCore's engine gave up on these two, and then nothing was removed from the message.
+      ["an ESC and 32,000 characters that can follow it", () => "\\x1b" + rep(";?", 16_000), 32_001],
+      ["a CSI sequence with 800,000 empty parameters", () => "\\x1b[1" + rep(";", 800_000) + "m", 0],
+    ] as const
+  ).map(([name, key, length]): Case => ({
+    name: `stylish measures ${name}`,
+    eslint: true,
+    file: "a.js",
+    text: () => `({ "${key()}\\x1b[0m": 1, "${key()}\\x1b[0m": 2, ab: 1, ab: 2 });\n`,
+    rules: { "no-dupe-keys": "error" },
+    args: ["-f", "stylish"],
+    // The padding of `ab`, then the two spaces between the columns.
+    matches: new RegExp(`  error  Duplicate key 'ab' {${Math.max(length - 2, 0) + 2}}no-dupe-keys\n`),
+    exitCode: 1,
+  })),
+  // Nothing is removed from this message, so giving up on it printed the right length, after three seconds for each
+  // report.
+  {
+    name: "stylish measures 200 messages with an ESC and 32,000 characters that can follow it",
+    eslint: true,
+    file: "a.js",
+    text: () => rep("0;\n", 200),
+    rules: { "no-restricted-syntax": ["error", { selector: "Literal", message: "\x1b" + rep(";?", 16_000) + "a" }] },
+    args: ["-f", "stylish"],
+    matches: /;\?a  no-restricted-syntax\n\n✖ 200 problems \(200 errors, 0 warnings\)\n/,
+    exitCode: 1,
+  },
 
   // ══ type-aware rules ══ ── a body that's too large for control flow analysis (TS2563): every reference in it that
   // would be narrowed gets the error type ──

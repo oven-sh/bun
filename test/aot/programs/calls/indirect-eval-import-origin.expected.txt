@@ -1,0 +1,32 @@
+main / new Function: rejected
+main / Function: rejected
+main / indirect eval: rejected
+main / alias of eval: rejected
+main / Reflect.construct: rejected
+main / Reflect.apply: rejected
+main / eval as a callback: rejected
+main / created now, called later: rejected
+main / created now, called by native code: rejected
+main / text inside text: rejected
+main / async function constructor: rejected
+main / from a nested compiled call: rejected
+nested / new Function: rejected
+nested / Function: rejected
+nested / indirect eval: rejected
+nested / alias of eval: rejected
+nested / Reflect.construct: rejected
+nested / Reflect.apply: rejected
+nested / eval as a callback: rejected
+nested / created now, called later: rejected
+nested / created now, called by native code: rejected
+nested / text inside text: rejected
+nested / async function constructor: rejected
+nested / from a nested compiled call: rejected
+created in nested, called in main: rejected
+eval passed to nested: rejected
+arrow function of main passed to nested: rejected
+missing file: rejected
+built-in module: function
+compiled import in main: target beside main
+compiled import in nested: nested/target
+evaluations: main 1, target 1, nested/caller 1, nested/target 1

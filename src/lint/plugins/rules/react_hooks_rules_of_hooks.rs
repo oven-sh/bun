@@ -702,7 +702,7 @@ fn why_conditional<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<String> {
         if decides {
             let line = file.line_of(outer.span().start);
             return Some(format!(
-                "Whether it is called depends on the condition on line {line}."
+                "Depends on the condition on line {line}."
             ));
         }
         inner = outer;
@@ -713,7 +713,7 @@ fn why_conditional<'a>(hook: Expr<'a>, func: Func<'a>) -> Option<String> {
         .min_by_key(|it| it.span().start)?;
     let line = file.line_of(early.span().start);
     Some(format!(
-        "The return on line {line} can end the render before it is called."
+        "The return on line {line} can skip this hook."
     ))
 }
 

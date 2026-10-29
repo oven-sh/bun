@@ -1,0 +1,310 @@
+////: lines-22
+function «1»(«2»: «3»): string {
+  const got = «4»(«2», «5»);
+  return typeof got + ":" + got.x;
+}
+//// damage-behind-a-call-more-about-returns/a-frame-that-was-swapped-alone-stands-between-the-writer-and-the-holders.ts
+// FOR "THE WRITER PAYS": the design lets the walk of a writer stop at the first return address that is swapped already, "older frames were swapped by the walk that swapped that one".
+// That holds only if every swap on the stack was made by a walk. Two are not: the unwinder swaps the return address of whoever catches, and code generation swaps that of one activation
+// in front of a rare tail call whose callee does not keep the promised type. Behind such a frame the older frames still have their plain return addresses.
+// Here such a frame stands between the write and two holders. The nearer holder comes back at its landing either way. The farther one hears of the write only if the walk went on.
+////= Point
+
+let throws = false;
+let strikes = false;
+
+function mayThrow(n: number): number {
+  if (throws) throw new Error("nothing is damaged yet");
+  return n;
+}
+
+// It catches first, so its return address is swapped and nobody else's, and does the damage afterwards.
+function catchesThenStrikes(p: Point, n: number): number {
+  let got = 0;
+  try {
+    got = mayThrow(n);
+  } catch (error) {
+    got = -1;
+  }
+  if (strikes) delete (p as any).x;
+  return got;
+}
+
+function nearerHolder(p: Point, n: number): number {
+  const before = p.y;
+  const got = catchesThenStrikes(p, n);
+  return before + got + p.y;
+}
+
+function fartherHolder(p: Point, n: number): string {
+  const before = p.x;
+  const got = nearerHolder(p, n);
+  return before + " " + got + " " + p.x;
+}
+
+// The same with the swap that code generation makes for the sake of the type. The callee of the tail call does the damage with that one swapped address above it.
+let victim: Point | null = null;
+const strike = (): any => {
+  if (strikes && victim !== null) delete (victim as any).x;
+  return victim;
+};
+
+function rarelyEndsInCallByValue(p: Point | null, make: () => any): Point {
+  if (p === null) return make();
+  return p;
+}
+
+function nearerHolderOfType(p: Point, q: Point | null, make: () => any): number {
+  const before = p.y;
+  const got = rarelyEndsInCallByValue(q, make);
+  return before + got.y + p.y;
+}
+
+function fartherHolderOfType(p: Point, q: Point | null, make: () => any): string {
+  const before = p.x;
+  const got = nearerHolderOfType(p, q, make);
+  return before + " " + got + " " + p.x;
+}
+
+for (let round = 0; round < 400; round++) {
+  throws = round % 100 === 97 || round % 100 === 99;
+  strikes = round % 100 === 98 || round % 100 === 99;
+  const p = new Point(round, 1);
+  const first = fartherHolder(p, round);
+  const q = new Point(round, 2);
+  victim = q;
+  const second = fartherHolderOfType(q, round % 100 >= 97 ? null : q, strike);
+  if (round % 100 >= 96) console.log(round + ": " + first + " | " + second);
+}
+//// damage-behind-a-call-more-about-returns/a-test-that-tells-a-union-apart-stands-right-behind-the-call.ts
+// NOTHING IS DAMAGED HERE AND EVERY RESULT FITS ITS DECLARED TYPE. The callee returns a Leaf or a Fork, one as often as the other, and its caller asks at once which of the two it got.
+// That test stands right behind the call and names LESS than the callee declares. Code generation takes any type in the test of a call with a landing: where the callee promises no subset of it, the test is made
+// at the plain return point and what fails takes the landing edge. So if a pass ever takes such a test for the test of the form, every Fork means BecomeDirty in `weigh`, then a landing in `holder`, then one in `walk`,
+// on every second call of a program that never leaves its typed paths. PlaceLandings as staged takes only a test for the declared type or a wider one (isFollowedByTestOfPromisedType): this program keeps it so.
+// The answers are the same either way. WHAT TO LOOK AT: instructions with and without --aot-disable=CleanReturns, and how often the stub BecomeDirty is entered: it has to be 0.
+////= Leaf
+////= lines-7	Fork	left	number	right
+////= Point
+
+const leaves: Leaf[] = [];
+const forks: Fork[] = [];
+for (let index = 0; index < 8; index++) {
+  leaves.push(new Leaf(index));
+  forks.push(new Fork(index, index * 2));
+}
+
+// It calls itself, so it stays a call.
+function choose(n: number, depth: number): Leaf | Fork {
+  if (depth > 0) return choose(n + 1, depth - 1);
+  return (n & 1) === 0 ? leaves[n & 7] : forks[n & 7];
+}
+
+function weigh(n: number): number {
+  const got = choose(n, 2);
+  if (got instanceof Leaf) return got.value;
+  return got.left + got.right;
+}
+
+// The same with a result that may be missing: the use needs a Leaf, the callee declares `Leaf | undefined`, and the narrower test goes first.
+function find(n: number, depth: number): Leaf | undefined {
+  if (depth > 0) return find(n + 1, depth - 1);
+  return (n & 3) === 0 ? undefined : leaves[n & 7];
+}
+
+function valueOrZero(n: number): number {
+  const got = find(n, 2);
+  if (got === undefined) return 0;
+  return got.value;
+}
+
+function holder(p: Point, n: number): number {
+  const before = p.x;
+  const weight = weigh(n) + valueOrZero(n);
+  return before + weight + p.x + p.y;
+}
+
+function walk(p: Point, from: number, to: number): number {
+  let sum = 0;
+  for (let n = from; n < to; n++) sum = (sum + holder(p, n)) % 1000003;
+  return sum + p.x;
+}
+
+const point = new Point(3, 4);
+let total = 0;
+for (let round = 0; round < 200; round++) total = (total + walk(point, round, round + 10000)) % 1000003;
+console.log(total);
+//// damage-behind-a-call-more-about-returns/calls-without-a-landing-of-a-callee-that-promises.ts
+// `pick` declares a Point. A plain function calls it with a landing and relies on the type, so `pick` tests what it returns. The body of an async function, the body of a generator and a `try` block
+// call it too, and their calls get no landing: there the swap finds nothing, a string comes back at the plain return point, and the caller's own test has to turn it away.
+// WHAT TO LOOK AT BESIDE THE ANSWERS: on the tip the calls in the two coroutine bodies are fused with the test behind them (the callee tests, the caller does not). With clean returns on they are a call and a test again,
+// and the callee goes on testing for the plain function's sake: two tests a call on a path that nothing ever leaves. Instructions with and without --aot-disable=CleanReturns.
+////= Point
+
+const odd: any = "odd";
+let misfit = false;
+const points: Point[] = [];
+for (let index = 0; index < 8; index++) points.push(new Point(index, index * 2));
+
+// It calls itself, so it stays a call.
+function pick(n: number, depth: number): Point {
+  if (depth > 0) return pick(n + 1, depth - 1);
+  return misfit ? odd : points[n & 7];
+}
+
+////= lines-22	plain	n	number	pick	1
+
+async function asynchronous(n: number): Promise<string> {
+  const got = pick(n, 1);
+  const first = typeof got + ":" + got.x;
+  await null;
+  const again = pick(n + 1, 1);
+  return first + "," + typeof again + ":" + again.y;
+}
+
+function* generator(n: number): Generator<string> {
+  const got = pick(n, 1);
+  yield typeof got + ":" + got.x;
+  const again = pick(n + 1, 1);
+  yield typeof again + ":" + again.y;
+}
+
+function underTry(n: number): string {
+  try {
+    const got = pick(n, 1);
+    return typeof got + ":" + got.x;
+  } catch (error) {
+    return "caught";
+  }
+}
+
+async function sumInAsyncBody(from: number, to: number): Promise<number> {
+  let sum = 0;
+  for (let n = from; n < to; n++) sum = (sum + pick(n, 1).x + pick(n, 2).y) % 1000003;
+  return sum;
+}
+
+async function main(): Promise<void> {
+  for (let round = 0; round < 300; round++) {
+    misfit = round % 100 === 99;
+    const line = plain(round) + " " + (await asynchronous(round)) + " " + [...generator(round)].join(",") + " " + underTry(round);
+    if (misfit || round % 100 === 0) console.log(round + ": " + line);
+  }
+  misfit = false;
+  let total = 0;
+  for (let round = 0; round < 100; round++) total = (total + (await sumInAsyncBody(round, round + 10000))) % 1000003;
+  console.log(total);
+}
+
+main();
+//// damage-behind-a-call-more-about-returns/the-generic-version-returns-what-does-not-fit.ts
+// The first thing `nearest` does is to read a field of an object that a variable holds. Where that object is damaged the typed body begins again in its generic version, by a tail call,
+// and the generic version returns for it. `nearest` ends in a tail call itself, so its generic version holds a required one and the restart is required too: no BecomeDirty stands in the restart block.
+// In some rounds the generic version returns a string where the function declares a Point. The holder tests nothing at its plain return point and reads two raw fields of what it got.
+////= Point
+
+const odd: any = "odd";
+let anchor: Point = new Point(5, 5);
+let answer: Point = new Point(7, 8);
+
+function same(p: Point): Point {
+  return p;
+}
+
+function nearest(p: Point): Point {
+  if (anchor.x > p.x) return same(answer);
+  return p;
+}
+
+function holder(p: Point): string {
+  const before = p.y;
+  const got = nearest(p);
+  return typeof got + " " + got.x + "," + got.y + " " + (before + p.y);
+}
+
+// One frame more: what arrives at the landing of `holder` makes `holder` return to the landing of this one.
+function above(p: Point, q: Point): string {
+  const before = q.x;
+  const line = holder(p);
+  return line + " " + (before + q.x);
+}
+
+for (let round = 0; round < 400; round++) {
+  const damaged = round % 100 === 98 || round % 100 === 99;
+  const misfit = round % 100 === 97 || round % 100 === 99;
+  anchor = new Point(5, 5);
+  if (damaged) delete (anchor as any).y;
+  answer = misfit ? odd : new Point(7, 8);
+  const near = above(new Point(round % 7, 1), new Point(2, 2));
+  if (round % 100 >= 95) console.log(round + ": " + near);
+}
+//// damage-behind-a-call-more-about-returns/what-does-not-fit-leaves-by-every-way-out.ts
+// Each callee declares that it returns a Point and now and then returns a string, each by another way out: a plain return, a rare tail call by value, a rare tail call of a function that declares more,
+// a return out of a function that reads `arguments` (its return address lies below the argument registers it has spilled), a tail call with more stack words than the function was given
+// (the callee returns into the stub that drops the frame of the list), and a chain of all of them. Nothing is damaged. Each holder reads a raw field of what it got with no test of its own.
+// The wide tail call is also a fault of the tip: run it with --aot-disable=CleanReturns too.
+////= Point
+
+const odd: any = "odd";
+let misfit = false;
+const makeOdd = (): any => odd;
+
+function plainReturn(p: Point): Point {
+  return misfit ? odd : p;
+}
+
+function rareCallByValue(p: Point, make: () => any): Point {
+  if (misfit) return make();
+  return p;
+}
+
+function declaresMore(p: Point): Point | string {
+  return misfit ? odd : p;
+}
+function rareCallOfWiderType(p: Point): Point {
+  if (misfit) return declaresMore(p) as Point;
+  return p;
+}
+
+function readsArguments(p: Point, q: any): Point {
+  return arguments[misfit ? 1 : 0];
+}
+
+function wide(a: any, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number): Point {
+  if (b + c + d + e + f + g + h + i + j + k + l + m + n + o + p + q + r !== 153) return odd;
+  return a;
+}
+function narrow(a: any): Point {
+  return wide(a, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17);
+}
+
+function chain(p: Point, make: () => any): Point {
+  return narrow(readsArguments(rareCallOfWiderType(p), make()));
+}
+
+function holdsPlainReturn(p: Point): string {
+  const got = plainReturn(p);
+  return typeof got + ":" + got.x;
+}
+////= lines-22	holdsRareCallByValue	p	Point	rareCallByValue	makeOdd
+function holdsRareCallOfWiderType(p: Point): string {
+  const got = rareCallOfWiderType(p);
+  return typeof got + ":" + got.x;
+}
+////= lines-22	holdsReadsArguments	p	Point	readsArguments	odd
+function holdsNarrow(p: Point): string {
+  const got = narrow(misfit ? odd : p);
+  return typeof got + ":" + got.x;
+}
+////= lines-22	holdsChain	p	Point	chain	makeOdd
+
+function all(p: Point): string {
+  const before = p.y;
+  const line = holdsPlainReturn(p) + " " + holdsRareCallByValue(p) + " " + holdsRareCallOfWiderType(p) + " " + holdsReadsArguments(p) + " " + holdsNarrow(p) + " " + holdsChain(p);
+  return line + " " + (before + p.y);
+}
+
+for (let round = 0; round < 500; round++) {
+  misfit = round % 100 === 99;
+  const line = all(new Point(round, 1));
+  if (misfit || round % 100 === 0) console.log(round + ": " + line);
+}

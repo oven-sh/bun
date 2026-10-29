@@ -1,0 +1,4 @@
+{
+  "skipInShell": "it needs Bun's CommonJS modules",
+  "alone": "the module that the file requires is the one the executable was started as"
+}

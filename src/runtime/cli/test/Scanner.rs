@@ -10,7 +10,9 @@ use bun_output::{declare_scope, scoped_log};
 use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
 use bun_paths::{self, PathBuffer};
 use bun_ptr::Interned;
-use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
+use bun_resolver::fs::{
+    self as fs, DirEntryIterator, EntriesOption, EntryKindResolver, FileSystem,
+};
 use bun_sys::{Dir, Fd};
 
 declare_scope!(jest, hidden);
@@ -66,11 +68,11 @@ bun_core::oom_from_alloc!(ScanError);
 #[repr(transparent)]
 struct ScannerDirIter<'a>(*mut Scanner<'a>);
 impl<'a> DirEntryIterator for ScannerDirIter<'a> {
-    fn next(&self, entry: &mut fs::Entry, _fd: Fd) {
+    fn next<R: EntryKindResolver>(&self, rfs: &R, entry: &fs::Entry, _fd: Fd) {
         // SAFETY: `self.0` is `&mut Scanner` for the duration of
         // `read_directory_with_iterator`; no other live `&mut` alias exists
         // while the resolver walks entries.
-        unsafe { (*self.0).next(entry) }
+        unsafe { (*self.0).next(rfs, entry) }
     }
 }
 
@@ -225,7 +227,7 @@ impl<'a> Scanner<'a> {
         for entry_ptr in entry_ptrs {
             // SAFETY: `EntryMap` stores `*mut Entry` into the
             // process-static `EntryStore`; valid for `'static`.
-            self.next(unsafe { &mut *entry_ptr });
+            self.next(&self.fs().fs, unsafe { &*entry_ptr });
         }
     }
 
@@ -240,7 +242,7 @@ impl<'a> Scanner<'a> {
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         // SAFETY: borrows only the `fs` field; re-entrant access is serialised by `RealFS.entries_mutex`.
         let listing = unsafe { &mut (*fs_ptr).fs }
-            .read_directory_with_iterator(name, handle, 0, false, iter)?;
+            .read_directory_with_iterator(name, handle, 0, false, &iter)?;
         if !self.iterator_invoked {
             self.walk_cached_entries(listing);
         }
@@ -339,13 +341,10 @@ impl<'a> Scanner<'a> {
             && !self.matches_path_ignore_pattern(name)
     }
 
-    pub(crate) fn next(&mut self, entry: &mut fs::Entry) {
+    fn next<R: EntryKindResolver>(&mut self, rfs: &R, entry: &fs::Entry) {
         let name = entry.base_lowercase();
         self.iterator_invoked = true;
-        // SAFETY: `self.fs` is the process singleton.
-        let real_fs = unsafe { &raw mut (*self.fs).fs };
-        // SAFETY: caller holds `entries_mutex`; the direct path is single-threaded.
-        match unsafe { entry.kind(real_fs, false) } {
+        match entry.kind(rfs, false) {
             fs::EntryKind::Dir => {
                 if (!name.is_empty() && name[0] == b'.') || name == b"node_modules" {
                     return;

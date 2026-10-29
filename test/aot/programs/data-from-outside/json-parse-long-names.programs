@@ -1,0 +1,2922 @@
+////: Wide
+type Wide = {
+  a0: number; a1: string; a2: boolean; a3?: number; a4: string | null; a5: number[]; a6: Point; a7?: string; a8: number; a9: string;
+  b0: number; b1: string; b2: boolean; b3?: number; b4: string | null; b5: number[]; b6: Point; b7?: string; b8: number; b9: string;
+  c0: number; c1: string; c2: boolean; c3?: number; c4: string | null; c5: number[]; c6: Point; c7?: string; c8: number; c9: string;
+  d0: number; d1: string; d2: boolean; d3?: number; d4: string | null;
+};
+////: anything
+const anything: Make = depth => {
+  const kind = below(depth > 3 ? 5 : 8);
+  if (kind < 5) return [text, number, flag, nothing, integer][kind](depth);
+  if (kind === 5) return list(anything)(depth);
+  return dictionary(anything)(depth);
+};
+////: deepest
+function deepest(text: string): number {
+  let depth = 0;
+  let most = 0;
+  for (let at = 0; at < text.length; at++) {
+    const code = text.charCodeAt(at);
+    if (code === 91 || code === 123) most = Math.max(most, ++depth);
+    else if (code === 93 || code === 125) depth--;
+  }
+  return most;
+}
+////: dictionary
+const dictionary = (held: Make, high = 4): Make => depth => {
+  const members: string[] = [];
+  for (let count = depth > 5 ? 0 : below(high + 1); count > 0; count--) members.push((chance(0.«1») : stringOf(1 + below(5), plainCharacters)) + ":" + held(depth + 1));
+  return "{" + members.join(",") + "}";
+};
+////: freshValue
+function freshValue(at: number): string {
+  switch (at % 4) {
+    case 0:
+      return longText();
+    case 1:
+      return '{"a":' + longText() + ',"b":[' + longText() + "]}";
+    case 2:
+      return "[" + longText() + "," + ++serial + "]";
+    default:
+      return longText();
+  }
+}
+////: lines-2
+{
+  const texts: string[] = [];
+  for (let round = 0; round < 3000; round++) texts.push(textOf(«1», round, round));
+  const list = "[" + texts.join(",") + "]";
+  let different = 0;
+  for (let pass = 0; pass < 3; pass++) if (JSON.stringify(JSON.parse(list) as «2»[]) !== list || JSON.stringify(JSON.parse('[{"k":' + texts.join('},{"k":') + "}]") as Record<string, «3»>[]) !== '[{"k":' + texts.join('},{"k":') + "}]") different++;
+  console.log(«4» + different + " differ");
+}
+////: lines-7
+function «1»(limit: number): number {
+  seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+  return (seed >>> 8) % limit;
+}
+////: lines-8
+function «1»(value: «2»): string {
+  const leaf = value.a.b.c.d.e.v;
+  return typeof leaf === "string" ? "text " + leaf : "number " + (leaf + 1);
+}
+////: list
+const list = (item: Make, low = 0, high = 4): Make => depth => {
+  const items: string[] = [];
+  for (let count = depth > 5 ? low : low + below(high - low + 1); count > 0; count--) items.push(item(depth + 1));
+  return "[" + items.join(",") + "]";
+};
+////: measure
+function measure(label: string, texts: string[]) {
+  let wrong = 0;
+  for (const text of texts) {
+    const value: unknown = JSON.parse(text);
+    if (JSON.stringify(value) !== «1») wrong++;
+  }
+  console.log(label + ": " + texts.length + " texts, " + wrong + " wrong");
+}
+////: mutate
+function mutate(text: string): string {
+  switch (below(16)) {
+    case 0: {
+      const at = below(text.length + 1);
+      return text.slice(0, at) + choice(intruders) + text.slice(at + 1);
+    }
+    case 1: {
+      const at = below(text.length + 1);
+      return text.slice(0, at) + choice(intruders) + text.slice(at);
+    }
+    case 2:
+      return text.slice(0, below(text.length + 1));
+    case 3:
+      return text.slice(below(text.length + 1));
+    case 4: {
+      const at = below(text.length + 1);
+      return text.slice(0, at) + text.slice(at + 1 + below(4));
+    }
+    case 5: {
+      const found = tokens(text);
+      found.splice(below(found.length), 1 + below(3));
+      return found.join("");
+    }
+    case 6: {
+      const found = tokens(text);
+      const at = below(found.length);
+      found.splice(at, 0, ...found.slice(at, at + 1 + below(4)));
+      return found.join("");
+    }
+    case 7: {
+      const found = tokens(text);
+      const one = below(found.length);
+      const other = below(found.length);
+      const held = found[one];
+      found[one] = found[other];
+      found[other] = held;
+      return found.join("");
+    }
+    case 8:
+      return tokens(text).map(token => (chance(0.3) ? choice(spaces) + token : token)).join("") + (chance(0.3) ? choice(spaces) : "");
+    case 9:
+      return tokens(text).map(token => (token.length > 2 && token[0] === '"' && token[1] !== "\\" && token.charCodeAt(1) < 0xd800 && chance(0.4) ? '"\\u' + token.charCodeAt(1).toString(16).padStart(4, "0") + token.slice(2) : token)).join("");
+    case 10: {
+      const found = tokens(text);
+      const at = below(found.length);
+      const levels = chance(0.1) ? 200 + below(3000) : 1 + below(70);
+      found[at] = chance(0.5) ? "[".repeat(levels) + found[at] + "]".repeat(levels) : '{"n":'.repeat(levels) + found[at] + "}".repeat(levels);
+      return found.join("");
+    }
+    case 11: {
+      const found = tokens(text);
+      const at = below(found.length);
+      found[at] = choice([text, "null", "0", '""', "[]", "{}", "true", "-0", "1e999", '"' + "x".repeat(below(300)) + '"', "9".repeat(1 + below(40)), "[" + text + "," + text + "]"]);
+      return found.join("");
+    }
+    case 12: {
+      const found = tokens(text);
+      for (let at = 0; at < found.length; at++) if (/^-?[0-9]/.test(found[at]) && chance(0.5)) found[at] = choice([found[at] + ".0", found[at] + "e0", "-" + found[at], "0" + found[at], found[at] + ".", found[at] + "e", "+" + found[at], found[at] + "0".repeat(below(30)), found[at] + "." + "0".repeat(below(30)) + "1"]);
+      return found.join("");
+    }
+    case 13:
+      return choice(["﻿", " ", "\u0000", "//c\n", "[", "{", ""]) + text + choice(["\u0000", " ", "\n", ",", "]", "}", "x", "﻿", text, ""]);
+    case 14: {
+      const start = below(text.length);
+      const piece = text.slice(start, start + 1 + below(20));
+      const at = below(text.length + 1);
+      return text.slice(0, at) + piece + text.slice(at);
+    }
+    default:
+      return mutate(mutate(text));
+  }
+}
+////: record
+const record = (members: [string, Make, boolean?][], extra: Make | null = anything): Make => depth => {
+  let written: string[] = [];
+  for (const [name, make, isOptional] of members) if (!isOptional || chance(0.6)) written.push('"' + name + '":' + make(depth + 1));
+  const others = keys.filter(key => !members.some(member => member[0] === globalThis.JSON.parse(key)));
+  if (extra && chance(0.3)) for (let count = 1 + below(chance(0.1) ? 40 : 3); count > 0; count--) written.splice(below(written.length + 1), 0, (chance(0.5) ? choice(others) : '"u' + below(50) + '"') + ":" + extra(depth + 1));
+  if (chance(0.25)) written = shuffle(written);
+  if (chance(0.05) && written.length) written.splice(below(written.length + 1), 0, choice(written));
+  return "{" + written.join(",") + "}";
+};
+////: represent
+function represent(text: string): string {
+  switch (below(8)) {
+    case 0:
+      return (text + "Ā").slice(0, -1);
+    case 1: {
+      const at = below(text.length + 1);
+      return text.slice(0, at) + text.slice(at);
+    }
+    case 2: {
+      let rope = "";
+      for (let at = 0; at < text.length; at += 7) rope += text.slice(at, at + 7);
+      return rope;
+    }
+    case 3:
+      return ("padding " + text + " padding").slice(8, -8);
+    default:
+      return text;
+  }
+}
+////: say
+function say(label: string, run: (text: string) => any, text: string): void {
+  let said = "";
+  try {
+    const made = run(text);
+    said = JSON.stringify(made).replace('"m":1', '"n":1') === text && (made.n ?? made.m) + 1 === 2 ? "taken" : "DIFFERENT";
+  } catch (error: any) {
+    said = error.name;
+  }
+  console.log(label + ": " + said);
+}
+////: shuffle
+function shuffle<T>(items: T[]): T[] {
+  for (let at = items.length - 1; at > 0; at--) {
+    const other = below(at + 1);
+    const held = items[at];
+    items[at] = items[other];
+    items[other] = held;
+  }
+  return items;
+}
+////: stringOf
+function stringOf(length: number, from: readonly string[]): string {
+  let text = '"';
+  for (let at = 0; at < length; at++) text += choice(from);
+  return text + '"';
+}
+////: tokens
+function tokens(text: string): string[] {
+  const found: string[] = [];
+  for (let at = 0; at < text.length; ) {
+    let end = at + 1;
+    const first = text[at];
+    if (first === '"') {
+      while (end < text.length && text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+      end++;
+    } else if (/[-0-9a-zA-Z.+]/.test(first)) while (end < text.length && /[-0-9a-zA-Z.+]/.test(text[end])) end++;
+    found.push(text.slice(at, end));
+    at = end;
+  }
+  return found;
+}
+//// json-parse-long-names-that-differ-in-the-middle.ts
+// Keys of 15 to 48 characters that begin and end alike and differ only in the middle, in one place of a text and in the same order, so that each must be told from the one expected there.
+function show(label: string, text: string) {
+  for (let turn = 0; turn < 3; turn++) {
+    const value = JSON.parse(text) as Record<string, unknown>;
+    console.log(label, turn, Object.keys(value).join(), JSON.stringify(value) === text);
+  }
+}
+for (const length of [15, 16, 17, 18, 23, 24, 25, 32, 33, 40, 47, 48]) {
+  const name = (middle: string) => "beginning" .slice(0, 7) + middle.repeat(length - 14) + "theends";
+  show("length " + length + ", the first", '{"lead":1,"' + name("a") + '":1,"tail":2}');
+  show("length " + length + ", another middle", '{"lead":1,"' + name("b") + '":1,"tail":2}');
+  show("length " + length + ", one character more", '{"lead":1,"' + name("a") + 'x":1,"tail":2}');
+  show("length " + length + ", both", '{"lead":1,"' + name("a") + '":1,"' + name("b") + '":2,"tail":3}');
+  show("length " + length + ", the first again", '{"lead":1,"' + name("a") + '":1,"tail":2}');
+}
+//// json-parse-many-kinds-told-apart-by-the-first-value.ts
+// Ten kinds of text that begin with the same key, whose value names the kind; together they have more names than one shape holds. They are told apart by more of their beginning, and each kind is served by itself; a kind whose keys are new every time is set aside alone.
+function textOf(kind: number, at: number): string {
+  let text = '{"kind":"number' + kind + '"';
+  for (let member = 0; member < 8; member++) text += ',"k' + kind + "m" + member + '":' + (at + member);
+  return text + "}";
+}
+////= measure	text
+const many = (count: number, make: (at: number) => string) => Array.from({ length: count }, (_, at) => make(at));
+measure("ten kinds, the first 200", many(200, at => textOf(at % 10, at)));
+measure("ten kinds, the next 1,000", many(1000, at => textOf(at % 10, at)));
+measure("nine kinds and one whose keys are new every time", many(1000, at => (at % 10 ? textOf(at % 10, at) : '{"kind":"number0","new' + at + '":1}')));
+measure("the nine kinds alone", many(900, at => textOf(1 + (at % 9), at)));
+//// json-parse-records-with-array-members.ts
+// JSON.parse(text) claimed as a record with array members: the arrays have parsers of their own, and a row, an array or a member that does not fit its type is plain data. What fits is read through its types, what does not is looked at as `unknown`, and changing the arrays afterwards gives what plain Bun gives.
+// STATISTIC: ParsersCreated >= 5
+type Row = { id: number; tags: string[] };
+type Page = { items: Row[]; grid: number[][]; total: number };
+type Changed = { list: number[]; name: string };
+
+function read(page: Page): string {
+  let text = "total " + page.total;
+  const items = page.items;
+  if (!items) return text + ", items " + items;
+  text += ", " + items.length + " items";
+  for (const row of items) text += " [" + row.id + ":" + (row.tags ? row.tags.join("+") : row.tags) + "]";
+  for (let at = 0; at < items.length; at++) text += " " + items[at]!.id;
+  const grid = page.grid;
+  if (!grid) return text + ", grid " + grid;
+  let sum = 0;
+  for (const line of grid) for (const cell of line) sum += cell;
+  return text + ", grid sum " + sum + ", past the end " + items[items.length] + " " + grid[grid.length] + ", ids " + items.map(row => row.id).join();
+}
+
+////= describe
+
+for (const text of [
+  '{"items":[{"id":1,"tags":["a","b"]},{"id":2,"tags":[]}],"grid":[[1,2],[3]],"total":2}',
+  '{"items":[],"grid":[],"total":0}',
+  '{ "total": 1, "grid": [ [ ] ], "items": [ { "tags": [ "c" ], "id": 3 } ] }',
+  '{"items":[{"id":4}],"grid":[[1.5,-0,1e3]],"total":1}',
+  '{"items":null,"grid":null,"total":0}',
+  '{"grid":[[1]],"total":0}',
+  '{"items":[],"total":0}',
+  '{"items":[{"id":10,"tags":[]}],"items":[{"id":11,"tags":["g"]}],"grid":[],"total":1}',
+  '{"items":[{"id":12,"tags":[],"more":[1]}],"grid":[],"total":1,"extra":[{"id":13}]}',
+]) {
+  const page = JSON.parse(text) as Page;
+  console.log(read(page));
+  console.log(describe(page));
+}
+
+for (const text of [
+  '{"items":[1,{"id":4,"tags":["d"]},"row",null,[5],true],"grid":[[1]],"total":6}',
+  '{"items":[{"id":"six","tags":"none"},{"id":7},{}],"grid":[[1]],"total":3}',
+  '{"items":[{"id":8,"tags":[1,null,["e"],{"f":1}]}],"grid":[[1]],"total":1}',
+  '{"items":[],"grid":[[1,"two",null,[3],{"four":4}],"line",5,null,{"six":6}],"total":0}',
+  '{"items":"none","grid":[],"total":0}',
+  '{"items":{"length":1,"0":{"id":9,"tags":[]}},"grid":[],"total":0}',
+  '{"items":[],"grid":7,"total":"many"}',
+]) {
+  console.log(describe(JSON.parse(text) as Page));
+}
+
+const rows = Array.from({ length: 300 }, (_, at) => (at === 150 ? "null" : '{"id":' + at + ',"tags":["t' + at + '"]}'));
+const many = JSON.parse('{"items":[' + rows.join() + '],"grid":[],"total":300}') as Page;
+console.log(many.items.length, many.items[149]!.id, many.items[150], many.items[151]!.tags[0], many.items.reduce((sum, row) => sum + (row ? row.id : 0), 0));
+
+function change(value: Changed, step: number): string {
+  const list = value.list as any;
+  switch (step) {
+    case 0:
+      list.push(4, 5);
+      break;
+    case 1:
+      list.length = 1;
+      break;
+    case 2:
+      list[5] = 6;
+      break;
+    case 3:
+      list.named = true;
+      break;
+    case 4:
+      Object.setPrototypeOf(list, { join: () => "another prototype" });
+      break;
+    case 5:
+      Object.freeze(list);
+      break;
+    case 6:
+      Object.defineProperty(list, "0", { get: () => 100 });
+      break;
+    case 7:
+      delete list[1];
+      break;
+    case 8:
+      value.list = [9];
+      break;
+  }
+  let cells = "";
+  const after = value.list;
+  for (let at = 0; at < after.length; at++) cells += "|" + after[at];
+  return step + ": " + cells + " " + after.length + " " + after.join("-") + " " + Reflect.ownKeys(after).map(String).join() + " " + Array.isArray(after);
+}
+for (let step = 0; step < 10; step++) console.log(change(JSON.parse('{"list":[1,2,3],"name":"n"}') as Changed, step));
+
+for (const text of ['{"items":[{"id":1,"tags":[]}],"grid":[[1],"total":1}', '{"items":[{"id":1,"tags":[]},],"grid":[],"total":1}', '{"items":[', '{"items":[]]}']) {
+  try {
+    console.log("NO ERROR", describe(JSON.parse(text) as Page));
+  } catch (error) {
+    console.log((error as Error).name, (error as Error).message);
+  }
+}
+//// json-parse-several-kinds-of-object-under-one-first-key.ts
+// Texts of seven kinds that begin alike: one first key, whose value names the kind. However many of them the parser that expects keys has seen, each is parsed as written.
+const kinds = [
+  (at: number) => '{"kind":"first","at":' + at + ',"value":{"kind":"inner","text":"abc"}}',
+  (at: number) => '{"kind":"second","at":' + at + ',"block":{"kind":"inner","name":"n"}}',
+  (at: number) => '{"kind":"third","at":' + at + "}",
+  (at: number) => '{"kind":"fourth","note":{"id":"x","role":"r"}}',
+  (at: number) => '{"kind":"fifth","value":{"reason":"r","other":null},"usage":{"count":' + at + "}}",
+  (at: number) => '{"kind":"sixth"}',
+  (at: number) => '{"kind":"seventh","at":' + at + ',"usage":{"count":1},"more":true}',
+];
+let wrong = 0;
+for (let turn = 0; turn < 700; turn++) {
+  const text = kinds[turn % 7]!(turn % 10);
+  const value: unknown = JSON.parse(text);
+  if (JSON.stringify(value) !== text) wrong++;
+}
+console.log("700 texts,", wrong, "wrong");
+//// json-parse-stands-back-from-texts-it-does-not-serve-well.ts
+// The parser that expects keys keeps a credit for each beginning of a text. Texts that make it learn again and again, or that are mostly long strings, use the credit up and go straight to the former parser; after a while one more is tried, so a shape that settles late is served again.
+////= measure	JSON.stringify(JSON.parse(text, (_, held) => held))
+const many = (count: number, make: (at: number) => string) => Array.from({ length: count }, (_, at) => make(at));
+measure("one shape", many(300, at => '{"steady":' + at + ',"name":"n","ok":true}'));
+measure("a key that is new every time", many(300, at => '{"always":1,"key' + at + '":' + at + "}"));
+measure("the same again", many(300, at => '{"always":1,"key' + at + '":' + at + "}"));
+measure("mostly one long string", many(300, at => '{"prose":"' + "word ".repeat(200) + at + '","at":' + at + "}"));
+measure("new keys at first", many(100, at => '{"settles":1,"early' + at + '":' + at + "}"));
+measure("then one shape, the first 200", many(200, at => '{"settles":1,"late":' + at + "}"));
+measure("then one shape, the next 400", many(400, at => '{"settles":1,"late":' + at + "}"));
+measure("one shape, still", many(300, at => '{"steady":' + at + ',"name":"n","ok":true}'));
+//// json-parse-type-argument-a-buffer-used-again-and-odd-characters-everywhere.ts
+// Doubts from reading, each as a run against plain JSON.parse: the buffer used again for a shorter text; a NUL, 0xFF and U+0100 at every place; a parse entered from inside a parse.
+type Point = { x: number; y: number; label?: string };
+type Lists = Record<string, number[]> | Record<string, string[]>;
+const plainly: (text: string) => any = globalThis.JSON.parse;
+////= say-3	
+let different = 0;
+let compared = 0;
+function check(text: string): void {
+  compared++;
+  const [typed, plain] = [say(() => JSON.parse(text) as Point), say(() => plainly(text))];
+  if (typed !== plain && different++ < 5) console.log("DIFFERS " + JSON.stringify(text).slice(0, 120) + " | " + typed.slice(0, 60) + " | " + plain.slice(0, 60));
+}
+const whole = '{"x":1,"y":2,"label":"l","other":[1,{"a":"b"}],"last":"z"}';
+for (const size of [900, 1000, 5000, 70000]) {
+  check(`{"x":1,"y":2,"pad":"${"p".repeat(size)}","tail":${whole}}`);
+  for (let cut = 1; cut <= whole.length; cut++) check(whole.slice(0, cut));
+}
+for (const unit of ["\0", "\x01", "\x1f", "\x7f", "\xff", "Ā", "\ud800", "﻿", " "]) {
+  for (let at = 0; at <= whole.length; at++) {
+    check(whole.slice(0, at) + unit + whole.slice(at));
+    check(whole.slice(0, at) + unit + whole.slice(at + 1));
+  }
+}
+console.log(compared + " texts, " + different + " differ");
+let entered = 0;
+const keys = Object.keys;
+try {
+  (Object as any).keys = function (value: object): string[] {
+    entered++;
+    if (entered < 4) (JSON.parse('{"y":2,"o":1,"x":1}') as Point), JSON.stringify(JSON.parse('{"o":[1],"x":1,"y":2}') as Point);
+    return keys(value);
+  };
+} catch (error: any) {
+  console.log("Object.keys cannot be replaced: " + error.name);
+}
+console.log(say(() => JSON.parse('{"o":1,"a":1,"lists":{"k":["s"],"m":[]},"p":2,"z":3}') as { a: number; lists: Lists; z: number }), entered > 0 ? "entered" : "not entered");
+function addToObjectPrototype(): void {
+  (Object.prototype as any).y = 5;
+}
+function removeFromObjectPrototype(): void {
+  delete (Object.prototype as any).y;
+}
+try {
+  (Object as any).keys = keys;
+  addToObjectPrototype();
+  console.log(say(() => JSON.parse('{"x":1}') as Point), say(() => JSON.parse('{"\\u0078":1}') as Point), say(() => JSON.parse('{"x":1,"o":2}') as Point));
+  removeFromObjectPrototype();
+} catch (error: any) {
+  console.log("Object.prototype cannot be changed: " + error.name);
+}
+//// json-parse-type-argument-a-long-undeclared-key-then-a-short-text.ts
+// A long undeclared key is seen several times; then a short text has an undeclared key that begins with the same bytes, at the end of the text. Nothing behind the text may be read: an engine built with AddressSanitizer says so.
+type Point = { x: number; y: number };
+let different = 0;
+let parsed = 0;
+function check(text: string): void {
+  parsed++;
+  if (JSON.stringify(JSON.parse(text) as Point) !== JSON.stringify(globalThis.JSON.parse(text))) different++;
+}
+for (const size of [7, 8, 9, 15, 16, 17, 30, 54, 55, 56, 60, 61, 62, 63, 64, 65, 66, 70, 71, 72, 73, 100, 200, 1000, 5000, 100000]) {
+  const long = "k".repeat(size);
+  for (let round = 0; round < 4; round++) check(`{"x":1,"y":2,"${long}":1}`);
+  for (const short of [1, 6, 7, 8, 9, 10, 16, 17, size - 1, size + 1]) {
+    if (short < 1) continue;
+    for (let round = 0; round < 2; round++) {
+      check(`{"x":1,"y":2,"${"k".repeat(short)}":1}`);
+      check(`{"x":1,"y":2,"${long}":1}`);
+      check(`{"x":1,"${"k".repeat(short)}":1,"y":2}`);
+    }
+  }
+  check(`{"x":1,"y":2,"${long}":1,"${long}z":2,"${long}":3}`);
+}
+console.log(parsed + " texts, " + different + " differ");
+//// json-parse-type-argument-a-parse-that-throws-is-closed.ts
+// A source is closed where the throw passes its frame: the parses that follow a parse that ended by a throw, deeper on the stack too, are still made by the generated parser, however many have thrown.
+// The parser of Wide takes a large frame, so near the end of the stack its call throws where that of Narrow still has room.
+declare const aotOperationCount: undefined | ((name: string) => number);
+declare const aotRuntimeCounters: undefined | (() => string);
+interface Wide { m0: string; m1: string; m2: string; m3: string; m4: string; m5: string; m6: string; m7: string; m8: string; m9: string; m10: string; m11: string; m12: string; m13: string; m14: string; m15: string; m16: string; m17: string; m18: string; m19: string; m20: string; m21: string; m22: string; m23: string; m24: string; m25: string; m26: string; m27: string; m28: string; m29: string; m30: string; m31: string; m32: string; m33: string; m34: string; m35: string; m36: string; m37: string; m38: string; m39: string; m40: string; m41: string; m42: string; m43: string; m44: string; m45: string; m46: string; m47: string; m48: string; m49: string; m50: string; m51: string; m52: string; m53: string; m54: string; m55: string; m56: string; m57: string; m58: string; m59: string; }
+interface Narrow { n: number }
+const counted = typeof aotOperationCount === "function" ? aotOperationCount : null;
+const counters = typeof aotRuntimeCounters === "function" ? aotRuntimeCounters : null;
+const opened = () => (counted ? counted("operationAOTJSONSourceOpen") : 0);
+const readAgain = () => (counted ? counted("operationAOTJSONSourceAbandon") : 0);
+// How often a parse found as many sources open as may be, and so was left to the engine's parser.
+const refused = () => (counters ? Number(/^(\d+)\tlimit:MaxOpenJSONSources$/m.exec(counters())![1]) : 0);
+const wideText = '{"m0":"0","m1":"1","m2":"2","m3":"3","m4":"4","m5":"5","m6":"6","m7":"7","m8":"8","m9":"9","m10":"10","m11":"11","m12":"12","m13":"13","m14":"14","m15":"15","m16":"16","m17":"17","m18":"18","m19":"19","m20":"20","m21":"21","m22":"22","m23":"23","m24":"24","m25":"25","m26":"26","m27":"27","m28":"28","m29":"29","m30":"30","m31":"31","m32":"32","m33":"33","m34":"34","m35":"35","m36":"36","m37":"37","m38":"38","m39":"39","m40":"40","m41":"41","m42":"42","m43":"43","m44":"44","m45":"45","m46":"46","m47":"47","m48":"48","m49":"49","m50":"50","m51":"51","m52":"52","m53":"53","m54":"54","m55":"55","m56":"56","m57":"57","m58":"58","m59":"59"}';
+const narrowText = '{"n":7}';
+let thrown = 0;
+let followed = 0;
+let sum = 0;
+
+function parseNarrow(): number {
+  return (JSON.parse(narrowText) as Narrow).n;
+}
+function parseWide(): number {
+  return (JSON.parse(wideText) as Wide).m0.length;
+}
+function behindThrow(error: unknown): void {
+  if (!(error instanceof RangeError)) throw error;
+  thrown++;
+  try {
+    sum += parseNarrow();
+    followed++;
+  } catch (second) {
+    if (!(second instanceof RangeError)) throw second;
+  }
+}
+// The function that catches calls the one that parses, or parses itself.
+function catchesForCallee(): void {
+  try {
+    sum += parseWide();
+  } catch (error) {
+    behindThrow(error);
+  }
+}
+function catchesForItself(): void {
+  try {
+    sum += (JSON.parse(wideText) as Wide).m0.length;
+  } catch (error) {
+    behindThrow(error);
+  }
+}
+function descend(levels: number, attemptsFrom: number, times: number, attempt: () => void): number {
+  if (levels >= attemptsFrom) for (let i = 0; i < times; i++) attempt();
+  try {
+    return descend(levels + 1, attemptsFrom, times, attempt) + 0;
+  } catch (error) {
+    if (!(error instanceof RangeError)) throw error;
+    return levels;
+  }
+}
+
+sum += parseWide() + parseNarrow();
+const deepest = descend(0, Infinity, 0, catchesForCallee);
+for (const attempt of [catchesForCallee, catchesForItself]) {
+  for (const times of [1, 100]) {
+    const [refusedBefore, thrownBefore, followedBefore] = [refused(), thrown, followed];
+    descend(0, deepest - 200, times, attempt);
+    console.log(attempt.name, times, "no parse deeper on the stack than those that threw found too many sources open:", counted ? thrown - thrownBefore >= times && followed > followedBefore && refused() === refusedBefore : true);
+    const [openedBefore, againBefore] = [opened(), readAgain()];
+    const narrow = parseNarrow();
+    console.log(attempt.name, times, "and the next one is read once:", narrow, counted ? opened() - openedBefore === 1 && readAgain() === againBefore && refused() === refusedBefore : true);
+  }
+}
+console.log(parseWide() + parseNarrow());
+//// json-parse-type-argument-arms-that-differ-far-below.ts
+// Two arms of a union differ only some levels below. A value that satisfies the second arm is taken, however deep the difference lies, by `JSON.parse(text) as T`.
+type D1 = { a: { v: 1 }; n: number } | { a: { v: "s" }; n: number };
+type D2 = { a: { b: { v: 1 } }; n: number } | { a: { b: { v: "s" } }; n: number };
+type D3 = { a: { b: { c: { v: 1 } } }; n: number } | { a: { b: { c: { v: "s" } } }; n: number };
+type D4 = { a: { b: { c: { d: { v: 1 } } } }; n: number } | { a: { b: { c: { d: { v: "s" } } } }; n: number };
+type D5 = { a: { b: { c: { d: { e: { v: 1 } } } } }; n: number } | { a: { b: { c: { d: { e: { v: "s" } } } } }; n: number };
+type D6 = { a: { b: { c: { d: { e: { f: { v: 1 } } } } } }; n: number } | { a: { b: { c: { d: { e: { f: { v: "s" } } } } } }; n: number };
+type D7 = { a: { b: { c: { d: { e: { f: { g: { v: 1 } } } } } } }; n: number } | { a: { b: { c: { d: { e: { f: { g: { v: "s" } } } } } } }; n: number };
+type D8 = { a: { b: { c: { d: { e: { f: { g: { h: { v: 1 } } } } } } } }; n: number } | { a: { b: { c: { d: { e: { f: { g: { h: { v: "s" } } } } } } } }; n: number };
+type Kinds = { a: { b: { c: { d: { e: { v: number } } } } }; n: number } | { a: { b: { c: { d: { e: { v: string } } } } }; n: number } | { a: { b: { c: { d: { e: { w: boolean } } } } }; n: number };
+type InLists = { a: { b: { c: { list: { d: { e: { v: 1 } } }[] } } }; n: number } | { a: { b: { c: { list: { d: { e: { v: "s" } } }[] } } }; n: number };
+const names = "abcdefghij";
+function textOf(levels: number, leaf: string): string {
+  let text = leaf;
+  for (let level = levels - 1; level > 0; level--) text = `{"${names[level]}":${text}}`;
+  return `{"a":${text},"n":1}`;
+}
+////= say
+function all(label: string, parse: (text: string) => any, texts: string[]): void {
+  for (let round = 0; round < 2; round++) for (const text of texts) say(label + " " + text, parse, text);
+}
+all("1 below", text => JSON.parse(text) as D1, [textOf(1, '{"v":"s"}'), textOf(1, '{"v":1}'), textOf(1, '{"v":"s"}')]);
+say("1 below, neither", text => JSON.parse(text) as D1, textOf(1, '{"v":2}'));
+all("2 below", text => JSON.parse(text) as D2, [textOf(2, '{"v":"s"}'), textOf(2, '{"v":1}'), textOf(2, '{"v":"s"}')]);
+say("2 below, neither", text => JSON.parse(text) as D2, textOf(2, '{"v":2}'));
+all("3 below", text => JSON.parse(text) as D3, [textOf(3, '{"v":"s"}'), textOf(3, '{"v":1}'), textOf(3, '{"v":"s"}')]);
+say("3 below, neither", text => JSON.parse(text) as D3, textOf(3, '{"v":2}'));
+all("4 below", text => JSON.parse(text) as D4, [textOf(4, '{"v":"s"}'), textOf(4, '{"v":1}'), textOf(4, '{"v":"s"}')]);
+say("4 below, neither", text => JSON.parse(text) as D4, textOf(4, '{"v":2}'));
+all("5 below", text => JSON.parse(text) as D5, [textOf(5, '{"v":"s"}'), textOf(5, '{"v":1}'), textOf(5, '{"v":"s"}')]);
+say("5 below, neither", text => JSON.parse(text) as D5, textOf(5, '{"v":2}'));
+all("6 below", text => JSON.parse(text) as D6, [textOf(6, '{"v":"s"}'), textOf(6, '{"v":1}'), textOf(6, '{"v":"s"}')]);
+say("6 below, neither", text => JSON.parse(text) as D6, textOf(6, '{"v":2}'));
+all("7 below", text => JSON.parse(text) as D7, [textOf(7, '{"v":"s"}'), textOf(7, '{"v":1}'), textOf(7, '{"v":"s"}')]);
+say("7 below, neither", text => JSON.parse(text) as D7, textOf(7, '{"v":2}'));
+all("8 below", text => JSON.parse(text) as D8, [textOf(8, '{"v":"s"}'), textOf(8, '{"v":1}'), textOf(8, '{"v":"s"}')]);
+say("8 below, neither", text => JSON.parse(text) as D8, textOf(8, '{"v":2}'));
+all("three kinds", text => JSON.parse(text) as Kinds, [textOf(5, '{"w":true}'), textOf(5, '{"v":"s"}'), textOf(5, '{"v":1.5}')]);
+const list = (leaves: string[]) => textOf(3, '{"list":[' + leaves.map(leaf => '{"d":{"e":' + leaf + "}}").join(",") + "]}");
+all("within lists", text => JSON.parse(text) as InLists, [list(['{"v":"s"}']), list(['{"v":1}', '{"v":1}']), list(['{"v":"s"}', '{"v":"s"}', '{"v":"s"}']), list([])]);
+say("within lists, both kinds in one", text => JSON.parse(text) as InLists, list(['{"v":1}', '{"v":"s"}']));
+const several = "[" + [textOf(6, '{"v":"s"}'), textOf(6, '{"v":1}'), textOf(6, '{"v":"s"}'), textOf(6, '{"v":1}')].join(",") + "]";
+for (const [label, run] of [["parsed", (text: string) => JSON.parse(text) as D6[]]] as const) {
+  try {
+    console.log("both arms in turn in a list, " + label + ": " + (JSON.stringify(run(several)).replaceAll('"m":1', '"n":1') === several ? "taken" : "DIFFERENT"));
+  } catch (error: any) {
+    console.log("both arms in turn in a list, " + label + ": " + error.name);
+  }
+}
+////= lines-8	read	D5
+for (const run of [() => read(JSON.parse(textOf(5, '{"v":"s"}')) as D5), () => read(JSON.parse(textOf(5, '{"v":1}')) as D5)]) {
+  try {
+    console.log(run());
+  } catch (error: any) {
+    console.log(error.name);
+  }
+}
+//// json-parse-type-argument-constant-numbers-in-every-spelling.ts
+// Where a type names a number, every spelling of that number is taken, and the value is the one JSON.parse gives: -0 stays -0 under the type 0.
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+
+////= show
+
+////= outcome
+
+let shown = 0;
+////= differs
+
+type Constant = { n: 0 | 1 | -1 | 1.5 | 100 };
+type Zero = { n: 0 };
+
+const roads: [string, (text: string) => unknown, (number: string) => string][] = [
+  ["a member", text => JSON.parse(text) as Constant, number => '{"n":' + number + "}"],
+  ["a member that is zero", text => JSON.parse(text) as Zero, number => '{ "n" : ' + number + " }"],
+  ["the root", text => JSON.parse(text) as 0 | 1, number => number],
+  ["elements", text => JSON.parse(text) as (0 | 1.5)[], number => "[" + number + "," + number + "]"],
+  ["a tuple", text => JSON.parse(text) as [0, 0 | 100], number => "[" + number + "," + number + "]"],
+  ["a dictionary", text => JSON.parse(text) as Record<string, 0 | 1>, number => '{"a":' + number + "}"],
+  ["a tag", text => JSON.parse(text) as { k: 0; a: number } | { k: 1; b: number }, number => '{"k":' + number + ',"a":1,"b":2}'],
+];
+const spellings = ["0", "-0", "0.0", "-0.0", "-0e0", "0e5", "-0e5", "-0E-5", "-0e400", "-1e-400", "1e-400", "-0e99999999999999999999", "1", "1.0", "10e-1", "0.1e1", "-1", "-1.0", "1.5", "15e-1", "1.50", "100", "1e2", "1E+2", "100.0", "2", "-1.5", "1e400"];
+for (const [label, parse, wrap] of roads) {
+  let different = 0;
+  for (const spelling of spellings) different += differs(parse, wrap(spelling));
+  console.log(label + ": " + spellings.length + " spellings: " + different + " differ");
+}
+//// json-parse-type-argument-declared-keys-again-and-again.ts
+// Declared keys are written again and again in one object, up to a hundred times, between other declared and undeclared keys: more entries than the word that remembers the order of the keys of a small type can hold.
+type R1 = { m0: number };
+type R2 = { m0: number; m1: number };
+type R3 = { m0: number; m1: number; m2: number };
+type R5 = { m0: number; m1: number; m2: number; m3: number; m4: number };
+type R12 = { m0: number; m1: number; m2: number; m3: number; m4: number; m5: number; m6: number; m7: number; m8: number; m9: number; m10: number; m11: number };
+type R13 = { m0: number; m1: number; m2: number; m3: number; m4: number; m5: number; m6: number; m7: number; m8: number; m9: number; m10: number; m11: number; m12: number };
+type R14 = { m0: number; m1: number; m2: number; m3: number; m4: number; m5: number; m6: number; m7: number; m8: number; m9: number; m10: number; m11: number; m12: number; m13: number };
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+let seed = 3;
+////= lines-7	below
+function check(width: number, parse: (text: string) => unknown): void {
+  let different = 0;
+  let texts = 0;
+  for (const repeats of [0, 1, 2, 3, 10, 11, 12, 13, 14, 15, 16, 17, 18, 30, 31, 32, 33, 63, 64, 65, 100]) {
+    for (let turn = 0; turn < 12; turn++) {
+      const members: string[] = [];
+      for (let at = 0; at < width; at++) members.push('"m' + at + '":' + at);
+      for (let count = 0; count < repeats; count++) members.splice(below(members.length + 1), 0, '"m' + (turn % 3 ? below(width) : turn % width) + '":' + (100 + count));
+      if (turn % 4 === 1) for (let count = 0; count < 1 + below(4); count++) members.splice(below(members.length + 1), 0, '"u' + below(3) + '":' + count);
+      if (turn % 4 === 3) members.reverse();
+      const text = "{" + members.join(",") + "}";
+      for (let round = 0; round < 3; round++) {
+        texts++;
+        const typed: any = parse(text);
+        const plain = plainParse(text);
+        if (JSON.stringify(typed) !== JSON.stringify(plain) || Object.keys(typed).join() !== Object.keys(plain).join()) different++;
+      }
+    }
+  }
+  console.log(width + " members: " + texts + " texts: " + different + " differ");
+}
+check(1, text => JSON.parse(text) as R1);
+check(2, text => JSON.parse(text) as R2);
+check(3, text => JSON.parse(text) as R3);
+check(5, text => JSON.parse(text) as R5);
+check(12, text => JSON.parse(text) as R12);
+check(13, text => JSON.parse(text) as R13);
+check(14, text => JSON.parse(text) as R14);
+//// json-parse-type-argument-declared-keys-of-thousands-of-bytes.ts
+// Declared keys of 200 and 5,000 bytes: texts that end in the middle of such a key, texts of ten bytes, keys that agree up to the last byte.
+type Long = { kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk: number; kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkx: number; a: number };
+type Longest = { kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk: number; b?: number };
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+let different = 0;
+let texts = 0;
+function ask(parse: (text: string) => unknown, text: string): void {
+  texts++;
+  let typed = "";
+  let plain = "";
+  try {
+    typed = JSON.stringify(parse(text));
+  } catch (error: any) {
+    typed = error.name + ": " + error.message;
+  }
+  try {
+    plain = JSON.stringify(plainParse(text));
+  } catch (error: any) {
+    plain = error.name + ": " + error.message;
+  }
+  if (typed !== plain) different++;
+}
+const long = (text: string) => JSON.parse(text) as Long;
+const longest = (text: string) => JSON.parse(text) as Longest;
+const key = "k".repeat(200);
+const whole = '{"' + key + '":1,"' + key + 'x":2,"a":3}';
+for (let round = 0; round < 10; round++) ask(long, whole);
+for (let cut = whole.length; cut >= 0; cut--) ask(long, whole.slice(0, cut));
+for (let length = 0; length <= 210; length++) for (const tail of ['":1}', '":1,"a":3}', '"', "", "x", 'y":1}']) {
+  ask(long, '{"' + "k".repeat(length) + tail);
+  ask(long, '{"a":3,"' + "k".repeat(length) + tail);
+  ask(long, ('{"a":3,"' + "k".repeat(length) + tail + "\u0100").slice(0, -1));
+}
+console.log("a key of 200: " + texts + " texts: " + different + " differ");
+texts = 0;
+const huge = "k".repeat(5000);
+for (let round = 0; round < 10; round++) ask(longest, '{"' + huge + '":1}');
+for (let length = 0; length <= 5010; length += length < 100 || length > 4900 ? 1 : 37) for (const tail of ['":1}', '"', "", 'y":1}', '":1,"b":2}']) {
+  ask(longest, '{"' + "k".repeat(length) + tail);
+  ask(longest, '{"b":2,"' + "k".repeat(length) + tail);
+}
+console.log("a key of 5,000: " + texts + " texts: " + different + " differ");
+//// json-parse-type-argument-every-cache-past-its-cap.ts
+// Every cache with a cap is filled from below the cap to above it in the middle of a parse, a write or a conversion of an object that stands on one of its entries. Argument: the number of a road; none: all.
+interface Item { id: number }
+interface Holder { first: number; items: Item[]; last: string }
+interface Pair { left: Item; right: Item }
+interface Deep { name: string; below: Deep[]; item: Item }
+type Tagged = { kind: "a"; a: number } | { kind: "b"; b: number } | { kind: "c"; c: number };
+interface Tags { first: number; items: Tagged[]; last: string }
+
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+const counts = [10, 255, 256, 257, 4095, 4096, 4097, 16383, 16384, 16385, 20000, 33000];
+let serial = 0;
+
+function holderText(items: string[]): string {
+  return '{"a":"before","first":1,"b":[1,2],"items":[' + items.join(",") + '],"c":"behind","last":"l","d":{"e":null},"f":"' + "x".repeat(40) + '"}';
+}
+function kinds(count: number, make: (unique: number, at: number) => string): string[] {
+  const items: string[] = [];
+  for (let at = 0; at < count; at++) items.push(make(++serial, at));
+  return items;
+}
+function deepText(levels: number, width: number): string {
+  const unique = ++serial;
+  return '{"u' + unique + '":1,"name":"n","below":[' + (levels ? Array.from({ length: width }, () => deepText(levels - 1, width)).join(",") : "") + '],"item":{"id":1,"v' + unique + '":2},"w' + unique + '":3}';
+}
+
+const roads: [string, (count: number) => boolean][] = [
+  ["the writer's plans", count => {
+    const text = holderText(kinds(count, (unique, at) => '{"id":' + at + ',"k' + unique + '":' + at + "}"));
+    const holder = JSON.parse(text) as Holder;
+    return JSON.stringify(holder) === text && JSON.stringify(holder) === text && JSON.stringify([holder, holder]) === "[" + text + "," + text + "]" && JSON.stringify({ h: holder }) === '{"h":' + text + "}";
+  }],
+  ["the writer's plans, three keys in other orders", count => {
+    const text = holderText(kinds(count, (unique, at) => '{"p' + unique + '":1,"id":' + at + ',"q' + unique + '":"two","r' + unique + '":[3]}'));
+    const holder = JSON.parse(text) as Holder;
+    return JSON.stringify(holder) === text && JSON.stringify(holder.items) === text.slice(text.indexOf("[{"), text.indexOf("}]") + 2) && JSON.stringify(holder) === text;
+  }],
+  ["key orders, each text parsed three times", count => {
+    const text = holderText(kinds(count, (unique, at) => (at % 2 ? '{"k' + unique + '":1,"id":' + at + "}" : '{"id":' + at + ',"k' + unique + '":1,"m":2}')));
+    let good = true;
+    for (let round = 0; round < 3; round++) good = JSON.stringify(JSON.parse(text) as Holder) === text && good;
+    return good;
+  }],
+  ["known members, runs of three, each text parsed four times", count => {
+    const text = holderText(kinds(count, (unique, at) => '{"id":' + at + ',"a' + unique + '":1,"b' + unique + '":"two","c' + unique + '":[3]}'));
+    let good = true;
+    for (let round = 0; round < 4; round++) good = JSON.stringify(JSON.parse(text) as Holder) === text && good;
+    return good;
+  }],
+  ["known members that fall on the same places", count => {
+    const items = kinds(Math.min(count, 20000), (unique, at) => '{"id":' + at + ',"aa' + (unique % 97) + '":1,"aa' + (unique % 89) + 'x":2,"aa' + unique + '":3}');
+    const text = holderText(items);
+    let good = true;
+    for (let round = 0; round < 4; round++) good = JSON.stringify(JSON.parse(text) as Holder) === JSON.stringify(plainParse(text)) && good;
+    return good;
+  }],
+  ["conversions of plain objects: a cast", count => {
+    const text = holderText(kinds(count, (unique, at) => '{"k' + unique + '":1,"id":' + at + "}"));
+    return JSON.stringify(plainParse(text) as Holder) === text && JSON.stringify(plainParse(text) as Holder) === text;
+  }],
+  ["conversions of plain objects: the parser gives up", count => {
+    const text = holderText(kinds(count, (unique, at) => '{"k' + unique + '":1,"id":' + at + "}"));
+    return JSON.stringify(JSON.parse(text.replace('"first"', '"\\u0066irst"')) as Holder) === text;
+  }],
+  ["conversions by a tag", count => {
+    const text = holderText(kinds(count, (unique, at) => ['{"k' + unique + '":1,"kind":"a","a":1}', '{"kind":"b","k' + unique + '":1,"b":2}', '{"c":3,"kind":"c","k' + unique + '":1}'][at % 3]));
+    return JSON.stringify(plainParse(text) as Tags) === text && JSON.stringify(JSON.parse(text) as Tags) === text && JSON.stringify(JSON.parse(text.replace('"first"', '"\\u0066irst"')) as Tags) === text;
+  }],
+  ["copies of typed objects", count => {
+    const text = holderText(kinds(count, (unique, at) => '{"id":' + at + ',"k' + unique + '":' + at + "}"));
+    const holder = JSON.parse(text) as Holder;
+    const copy: Holder = { ...holder };
+    const spread = { ...holder, items: holder.items.map(item => ({ ...item })) };
+    return JSON.stringify(copy) === text && JSON.stringify(spread) === text && JSON.stringify(holder) === text;
+  }],
+  ["a tree whose every record has keys of its own", count => {
+    const levels = count < 300 ? 3 : count < 5000 ? 6 : count < 20000 ? 7 : 8;
+    const text = deepText(levels, 3);
+    const deep = JSON.parse(text) as Deep;
+    return JSON.stringify(deep) === text && JSON.stringify(plainParse(text) as Deep) === text && JSON.stringify(JSON.parse(text) as Deep) === text;
+  }],
+  ["shapes learned by JSON.parse without a type", count => {
+    const size = Math.min(count, 5000);
+    const text = holderText(kinds(size, (unique, at) => '{"id":' + at + ',"s' + (unique % (size + 3)) + '":{"t' + (unique % 19) + '":[{"u' + (unique % 301) + '":1}]}}'));
+    const written = JSON.stringify(plainParse(text));
+    let good = true;
+    for (let round = 0; round < 40; round++) good = JSON.stringify(globalThis.JSON.parse(text)) === written && good;
+    return good;
+  }],
+  ["shapes expected by an annotated variable", count => {
+    const size = Math.min(count, 5000);
+    const text = holderText(kinds(size, (unique, at) => '{"id":' + at + ',"s' + (unique % (size + 3)) + '":{"t' + (unique % 19) + '":1}}'));
+    let good = true;
+    for (let round = 0; round < 40; round++) {
+      const holder: Holder = globalThis.JSON.parse(text);
+      good = holder.items.length === size && JSON.stringify(holder) === text && good;
+    }
+    return good;
+  }],
+  ["many small texts, each of a kind of its own", count => {
+    let good = true;
+    for (let at = 0; at < count; at++) {
+      const unique = ++serial;
+      const text = '{"left":{"id":1,"l' + unique + '":1},"m' + unique + '":{"n":2},"right":{"r' + unique + '":[3],"id":2}}';
+      const pair = JSON.parse(text) as Pair;
+      good = JSON.stringify(pair) === text && Object.keys(pair).length === 3 && good;
+    }
+    return good;
+  }],
+];
+
+const only = Number((globalThis as any).arguments?.[0] ?? -1);
+roads.forEach(([label, run], at) => {
+  if (only >= 0 && only !== at) return;
+  const wrong = counts.filter(count => !run(count));
+  console.log(label + ": " + counts.length + " counts: " + wrong.length + " differ" + (wrong.length ? " (" + wrong.join() + ")" : ""));
+});
+//// json-parse-type-argument-field-without-slot.ts
+// A declared field that gets no slot comes before parsed fields, so a parsed field's number at run time is lower than its position in the type.
+type UnusedFirst = { a?: never; b: string; c?: number };
+type UnusedBetween = { b: string; a?: never; c?: number; z?: never; d?: boolean };
+type UnusedInWideType = {
+  a?: never; k0?: number; k1?: number; k2?: number; k3?: number; k4?: number; k5?: number; k6?: number;
+  z?: never; k7?: number; k8?: number; k9?: number; k10?: number; k11?: number; k12?: number; k13?: number; k14?: number;
+};
+
+function show(label: string, text: string, value: object): void {
+  const inLoop: string[] = [];
+  for (const key in value) inLoop.push(key);
+  console.log(label, text, Object.keys(value).join(), inLoop.join(), JSON.stringify(value));
+}
+
+const wideMembers = Array.from({ length: 15 }, (_, index) => '"k' + index + '":' + index);
+const wideTexts = [
+  "{" + wideMembers.join(",") + "}",
+  "{" + wideMembers.slice().reverse().join(",") + "}",
+  "{" + wideMembers.slice(7).concat(wideMembers.slice(0, 7)).join(",") + "}",
+  "{" + wideMembers[14] + "," + wideMembers[0] + "}",
+];
+
+for (let round = 0; round < 3; round++) {
+  for (const text of ['{"b":"x"}', '{"c":1,"b":"x"}', '{"b":"x","c":1}', '{"c":1,"o":2,"b":"x"}'])
+    show("unused first", text, JSON.parse(text) as UnusedFirst);
+  for (const text of ['{"b":"x"}', '{"d":true,"c":1,"b":"x"}', '{"c":1,"d":false,"b":"x"}', '{"d":true,"b":"x"}'])
+    show("unused between", text, JSON.parse(text) as UnusedBetween);
+  for (const text of wideTexts)
+    show("unused in a wide type", text, JSON.parse(text) as UnusedInWideType);
+}
+
+const parsed = JSON.parse('{"c":2,"b":"y"}') as UnusedFirst;
+console.log(parsed.b, parsed.c);
+//// json-parse-type-argument-first-object-has-many-undeclared-keys.ts
+// The first object of a type, before anything is learned about it, has 1 to 1,100 undeclared keys; the second as many, fewer or more.
+const host: any = globalThis;
+const collect: () => void = host.Bun ? () => host.Bun.gc(true) : host.gc;
+let serial = 0;
+function longText(): string {
+  return '"text number ' + ++serial + ' is too long for a cache of short strings"';
+}
+////= freshValue
+
+type F0 = { first0: number; second0: string };
+type F1 = { first1: number; second1: string };
+type F2 = { first2: number; second2: string };
+type F3 = { first3: number; second3: string };
+type F4 = { first4: number; second4: string };
+type F5 = { first5: number; second5: string };
+type F6 = { first6: number; second6: string };
+type F7 = { first7: number; second7: string };
+type F8 = { first8: number; second8: string };
+type F9 = { first9: number; second9: string };
+type F10 = { first10: number; second10: string };
+type F11 = { first11: number; second11: string };
+type F12 = { first12: number; second12: string };
+type F13 = { first13: number; second13: string };
+type F14 = { first14: number; second14: string };
+type F15 = { first15: number; second15: string };
+type F16 = { first16: number; second16: string };
+type F17 = { first17: number; second17: string };
+type F18 = { first18: number; second18: string };
+type F19 = { first19: number; second19: string };
+type F20 = { first20: number; second20: string };
+function textOf(type: number, count: number, place: number): string {
+  const others: string[] = [];
+  for (let at = 0; at < count; at++) others.push('"o' + at + '":' + freshValue(at));
+  const declared = ['"first' + type + '":' + count, '"second' + type + '":' + longText()];
+  return "{" + (place === 0 ? [...declared, ...others] : place === 1 ? [...others, ...declared] : [declared[0], ...others, declared[1]]).join(",") + "}";
+}
+function check(label: string, parse: (text: string) => unknown, type: number, count: number): void {
+  let different = 0;
+  const kept: [unknown, string][] = [];
+  for (const next of [count, count, 1, count + 1, count * 2, 0, count]) {
+    for (let place = 0; place < 3; place++) {
+      const text = textOf(type, next, place);
+      const value = parse(text);
+      if (JSON.stringify(value) !== text) different++;
+      kept.push([value, text]);
+    }
+  }
+  for (const [value, text] of kept) if (JSON.stringify(value) !== text) different++;
+  console.log(label + ": " + different + " differ");
+}
+check("the first has 1", text => JSON.parse(text) as F0, 0, 1);
+check("the first has 2", text => JSON.parse(text) as F1, 1, 2);
+check("the first has 3", text => JSON.parse(text) as F2, 2, 3);
+check("the first has 4", text => JSON.parse(text) as F3, 3, 4);
+check("the first has 5", text => JSON.parse(text) as F4, 4, 5);
+check("the first has 6", text => JSON.parse(text) as F5, 5, 6);
+check("the first has 7", text => JSON.parse(text) as F6, 6, 7);
+check("the first has 8", text => JSON.parse(text) as F7, 7, 8);
+check("the first has 9", text => JSON.parse(text) as F8, 8, 9);
+check("the first has 16", text => JSON.parse(text) as F9, 9, 16);
+check("the first has 17", text => JSON.parse(text) as F10, 10, 17);
+check("the first has 32", text => JSON.parse(text) as F11, 11, 32);
+check("the first has 33", text => JSON.parse(text) as F12, 12, 33);
+check("the first has 63", text => JSON.parse(text) as F13, 13, 63);
+check("the first has 64", text => JSON.parse(text) as F14, 14, 64);
+check("the first has 65", text => JSON.parse(text) as F15, 15, 65);
+check("the first has 100", text => JSON.parse(text) as F16, 16, 100);
+check("the first has 200", text => JSON.parse(text) as F17, 17, 200);
+check("the first has 300", text => JSON.parse(text) as F18, 18, 300);
+check("the first has 1000", text => JSON.parse(text) as F19, 19, 1000);
+check("the first has 1100", text => JSON.parse(text) as F20, 20, 1100);
+//// json-parse-type-argument-hundreds-of-orders-of-declared-keys.ts
+// Types of 1 to 65 members are given their keys in hundreds of orders, each order again and again, two types with the same members in turn, with optional members left out and undeclared keys between: what remembers an order of declared keys is filled, turned over and emptied by collections.
+const host: any = globalThis;
+const collect: () => void = host.Bun ? () => host.Bun.gc(true) : host.gc;
+type A1 = { m0: number };
+type B1 = { m0: number };
+type A2 = { m0: number; m1: string };
+type B2 = { m0: number; m1: string };
+type A3 = { m0: number; m1: string; m2: boolean };
+type B3 = { m0: number; m1: string; m2: boolean };
+type A4 = { m0: number; m1: string; m2: boolean; m3: number | null };
+type B4 = { m0: number; m1: string; m2: boolean; m3: number | null };
+type A7 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean };
+type B7 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean };
+type A8 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null };
+type B8 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null };
+type A9 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number };
+type B9 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number };
+type A11 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean };
+type B11 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean };
+type A12 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null };
+type B12 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null };
+type A13 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number };
+type B13 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number };
+type A14 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string };
+type B14 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string };
+type A15 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean };
+type B15 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean };
+type A16 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null };
+type B16 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null };
+type A17 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number };
+type B17 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number };
+type A20 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null };
+type B20 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null };
+type A30 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string };
+type B30 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string };
+type A31 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean };
+type B31 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean };
+type A32 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean; m31: number | null };
+type B32 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean; m31: number | null };
+type A33 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean; m31: number | null; m32: number };
+type B33 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean; m31: number | null; m32: number };
+type A63 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean; m31: number | null; m32: number; m33: string; m34?: boolean; m35: number | null; m36: number; m37: string; m38: boolean; m39?: number | null; m40: number; m41: string; m42: boolean; m43: number | null; m44?: number; m45: string; m46: boolean; m47: number | null; m48: number; m49?: string; m50: boolean; m51: number | null; m52: number; m53: string; m54?: boolean; m55: number | null; m56: number; m57: string; m58: boolean; m59?: number | null; m60: number; m61: string; m62: boolean };
+type B63 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean; m31: number | null; m32: number; m33: string; m34?: boolean; m35: number | null; m36: number; m37: string; m38: boolean; m39?: number | null; m40: number; m41: string; m42: boolean; m43: number | null; m44?: number; m45: string; m46: boolean; m47: number | null; m48: number; m49?: string; m50: boolean; m51: number | null; m52: number; m53: string; m54?: boolean; m55: number | null; m56: number; m57: string; m58: boolean; m59?: number | null; m60: number; m61: string; m62: boolean };
+type A64 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean; m31: number | null; m32: number; m33: string; m34?: boolean; m35: number | null; m36: number; m37: string; m38: boolean; m39?: number | null; m40: number; m41: string; m42: boolean; m43: number | null; m44?: number; m45: string; m46: boolean; m47: number | null; m48: number; m49?: string; m50: boolean; m51: number | null; m52: number; m53: string; m54?: boolean; m55: number | null; m56: number; m57: string; m58: boolean; m59?: number | null; m60: number; m61: string; m62: boolean; m63: number | null };
+type B64 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean; m31: number | null; m32: number; m33: string; m34?: boolean; m35: number | null; m36: number; m37: string; m38: boolean; m39?: number | null; m40: number; m41: string; m42: boolean; m43: number | null; m44?: number; m45: string; m46: boolean; m47: number | null; m48: number; m49?: string; m50: boolean; m51: number | null; m52: number; m53: string; m54?: boolean; m55: number | null; m56: number; m57: string; m58: boolean; m59?: number | null; m60: number; m61: string; m62: boolean; m63: number | null };
+type A65 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean; m31: number | null; m32: number; m33: string; m34?: boolean; m35: number | null; m36: number; m37: string; m38: boolean; m39?: number | null; m40: number; m41: string; m42: boolean; m43: number | null; m44?: number; m45: string; m46: boolean; m47: number | null; m48: number; m49?: string; m50: boolean; m51: number | null; m52: number; m53: string; m54?: boolean; m55: number | null; m56: number; m57: string; m58: boolean; m59?: number | null; m60: number; m61: string; m62: boolean; m63: number | null; m64?: number };
+type B65 = { m0: number; m1: string; m2: boolean; m3: number | null; m4?: number; m5: string; m6: boolean; m7: number | null; m8: number; m9?: string; m10: boolean; m11: number | null; m12: number; m13: string; m14?: boolean; m15: number | null; m16: number; m17: string; m18: boolean; m19?: number | null; m20: number; m21: string; m22: boolean; m23: number | null; m24?: number; m25: string; m26: boolean; m27: number | null; m28: number; m29?: string; m30: boolean; m31: number | null; m32: number; m33: string; m34?: boolean; m35: number | null; m36: number; m37: string; m38: boolean; m39?: number | null; m40: number; m41: string; m42: boolean; m43: number | null; m44?: number; m45: string; m46: boolean; m47: number | null; m48: number; m49?: string; m50: boolean; m51: number | null; m52: number; m53: string; m54?: boolean; m55: number | null; m56: number; m57: string; m58: boolean; m59?: number | null; m60: number; m61: string; m62: boolean; m63: number | null; m64?: number };
+let seed = 11;
+////= lines-7	below
+function member(at: number, round: number): string {
+  return '"m' + at + '":' + [String(at * 7 + round), '"text ' + at + " of round " + round + ' that is longer than a short string"', at % 8 < 4 ? "true" : "false", round % 2 ? "null" : String(at)][at % 4];
+}
+function textOf(width: number, round: number, kind: number): string {
+  const members: string[] = [];
+  for (let at = 0; at < width; at++) if (!(at % 5 === 4 && width > 4 && kind % 3 === 1 && below(2))) members.push(member(at, round));
+  for (let at = members.length - 1; at > 0; at--) {
+    const other = below(at + 1);
+    const held = members[at];
+    members[at] = members[other];
+    members[other] = held;
+  }
+  if (kind % 4 === 2) for (let count = 1 + below(3); count > 0; count--) members.splice(below(members.length + 1), 0, '"u' + count + below(3) + '":' + round);
+  return "{" + members.join(",") + "}";
+}
+function check(width: number, first: (text: string) => unknown, second: (text: string) => unknown): void {
+  let different = 0;
+  const texts: string[] = [];
+  for (let round = 0; round < 700; round++) texts.push(textOf(width, round, round));
+  const kept: [unknown, string][] = [];
+  for (let pass = 0; pass < 3; pass++) {
+    for (let at = 0; at < texts.length; at++) {
+      const value = (at + pass) % 2 ? first(texts[at]) : second(texts[at]);
+      if (JSON.stringify(value) !== texts[at]) different++;
+      if (at % 90 === pass) kept.push([value, texts[at]]);
+      if (at % 257 === 256) collect();
+    }
+  }
+  for (let at = 0; at < 300; at++) {
+    const text = texts[at % 5];
+    if (JSON.stringify(first(text)) !== text || JSON.stringify(second(text)) !== text) different++;
+  }
+  const list = "[" + texts.join(",") + "]";
+  for (const [value, text] of kept) if (JSON.stringify(value) !== text) different++;
+  console.log(width + " members: " + different + " differ");
+}
+check(1, text => JSON.parse(text) as A1, text => JSON.parse(text) as B1);
+check(2, text => JSON.parse(text) as A2, text => JSON.parse(text) as B2);
+check(3, text => JSON.parse(text) as A3, text => JSON.parse(text) as B3);
+check(4, text => JSON.parse(text) as A4, text => JSON.parse(text) as B4);
+check(7, text => JSON.parse(text) as A7, text => JSON.parse(text) as B7);
+check(8, text => JSON.parse(text) as A8, text => JSON.parse(text) as B8);
+check(9, text => JSON.parse(text) as A9, text => JSON.parse(text) as B9);
+check(11, text => JSON.parse(text) as A11, text => JSON.parse(text) as B11);
+check(12, text => JSON.parse(text) as A12, text => JSON.parse(text) as B12);
+check(13, text => JSON.parse(text) as A13, text => JSON.parse(text) as B13);
+check(14, text => JSON.parse(text) as A14, text => JSON.parse(text) as B14);
+check(15, text => JSON.parse(text) as A15, text => JSON.parse(text) as B15);
+check(16, text => JSON.parse(text) as A16, text => JSON.parse(text) as B16);
+check(17, text => JSON.parse(text) as A17, text => JSON.parse(text) as B17);
+check(20, text => JSON.parse(text) as A20, text => JSON.parse(text) as B20);
+check(30, text => JSON.parse(text) as A30, text => JSON.parse(text) as B30);
+check(31, text => JSON.parse(text) as A31, text => JSON.parse(text) as B31);
+check(32, text => JSON.parse(text) as A32, text => JSON.parse(text) as B32);
+check(33, text => JSON.parse(text) as A33, text => JSON.parse(text) as B33);
+check(63, text => JSON.parse(text) as A63, text => JSON.parse(text) as B63);
+check(64, text => JSON.parse(text) as A64, text => JSON.parse(text) as B64);
+check(65, text => JSON.parse(text) as A65, text => JSON.parse(text) as B65);
+////= lines-2	12	A12	B12	"3,000 orders of 12 members in one text: "
+////= lines-2	13	A13	B13	"3,000 orders of 13 members in one text: "
+////= lines-2	14	A14	B14	"3,000 orders of 14 members in one text: "
+////= lines-2	15	A15	B15	"3,000 orders of 15 members in one text: "
+//// json-parse-type-argument-in-workers/main.ts
+// `JSON.parse(text) as T` in four Workers at once and on the main thread: nesting to the end of each thread's own stack, and records that are compared with their texts. start.ts is the program; this file is what each Worker runs.
+import { parentPort, workerData } from "node:worker_threads";
+import { work } from "./work";
+
+parentPort!.postMessage(work(workerData));
+//// json-parse-type-argument-in-workers/start.ts
+import { Worker } from "node:worker_threads";
+import { work } from "./work";
+
+const answers: string[] = [];
+let waiting = 4;
+for (let number = 0; number < 4; number++) {
+  const worker = new Worker("./main.ts", { workerData: number + 1 });
+  worker.on("message", (message: string) => {
+    answers[number] = message;
+    if (--waiting) return;
+    for (const answer of answers) console.log("worker: " + answer);
+    console.log("main again: " + work(9));
+  });
+}
+console.log("main: " + work(0));
+//// json-parse-type-argument-in-workers/work.ts
+type Tree = { kids: Tree[] };
+type Deep = Deep[];
+type Loose = { value: unknown };
+type Item = { id: number; name: string; tags: string[]; inner: { a: number; b?: string } };
+
+const overflow = "RangeError: Maximum call stack size exceeded.";
+
+function depthOf(value: any): number {
+  let depth = 0;
+  while (typeof value === "object" && value !== null) {
+    depth++;
+    let next: any = undefined;
+    for (const key in value) if (typeof value[key] === "object") next = value[key];
+    value = next;
+  }
+  return depth;
+}
+
+function answer(parse: (text: string) => unknown, text: string): string {
+  try {
+    return "depth " + depthOf(parse(text));
+  } catch (error: any) {
+    return error.name + ": " + error.message;
+  }
+}
+
+const roads: [(text: string) => unknown, (levels: number) => string, (levels: number) => number][] = [
+  [text => JSON.parse(text) as Tree, levels => '{"kids":['.repeat(levels) + "]}".repeat(levels), levels => 2 * levels],
+  [text => JSON.parse(text) as Deep, levels => "[".repeat(levels) + "]".repeat(levels), levels => levels],
+  [text => JSON.parse(text) as Loose, levels => '{"value":' + "[".repeat(levels) + "]".repeat(levels) + "}", levels => levels + 1],
+];
+
+export function work(number: number): string {
+  let wrong = 0;
+  let values = 0;
+  for (const [parse, text, depth] of roads) {
+    for (const levels of [100, 10_000, 100_000]) {
+      const said = answer(parse, text(levels));
+      if (said === "depth " + depth(levels)) values++;
+      else if (said !== overflow) wrong++;
+    }
+    const depths = [1, 3, 8, 21, 55, 144, 377, 987, 2584];
+    const texts = depths.map(text);
+    let frames = 0;
+    const dive = (level: number): void => {
+      try {
+        dive(level + 1);
+      } catch {
+        if (frames === 0) frames = level;
+      }
+      if (frames - level > 100) return;
+      const which = level % depths.length;
+      const said = answer(parse, texts[which]);
+      if (said === "depth " + depth(depths[which])) values++;
+      else if (said !== overflow) wrong++;
+    };
+    dive(0);
+  }
+  let different = 0;
+  for (let round = 0; round < 3000; round++) {
+    const id = number * 100000 + round;
+    const members = ['"id":' + id, '"name":"name ' + id + ' that is longer than a short string would be"', '"tags":["t' + (round % 9) + '","' + id + '"]', '"inner":{"a":' + round + (round % 2 ? ',"b":"b"' : "") + (round % 5 ? "" : ',"x":[' + id + "]") + "}"];
+    if (round % 3 === 0) members.splice(round % 4, 0, '"extra' + (round % 11) + '":{"e":' + id + "}");
+    if (round % 7 === 0) members.reverse();
+    const text = "{" + members.join(",") + "}";
+    const value = JSON.parse(text) as Item;
+    if (value.id !== id || value.inner.a !== round || JSON.stringify(value) !== text) different++;
+  }
+  return wrong + " answers are neither the value nor a RangeError, " + (values > 0 ? "some" : "NO") + " values, " + different + " of 3000 records differ";
+}
+//// json-parse-type-argument-in-workers-that-are-ended/main.ts
+// Workers are ended from outside in the middle of `JSON.parse(text) as T` and JSON.stringify of large texts, forty times at other moments; the main thread goes on parsing. start.ts is the program; this file is what each Worker runs.
+import { parentPort } from "node:worker_threads";
+import { rows, work } from "./work";
+
+const text = rows(60000);
+parentPort!.postMessage("ready");
+for (;;) work(text);
+//// json-parse-type-argument-in-workers-that-are-ended/start.ts
+import { Worker } from "node:worker_threads";
+import { rows, work } from "./work";
+
+const small = rows(500);
+let ended = 0;
+let wrong = 0;
+for (let turn = 0; turn < 40; turn++) {
+  const worker = new Worker("./main.ts");
+  await new Promise<void>(resolve => worker.once("message", () => resolve()));
+  await new Promise<void>(resolve => setTimeout(resolve, (turn * 7) % 60));
+  if (work(small) !== 500) wrong++;
+  await worker.terminate();
+  ended++;
+  if (work(small) !== 500) wrong++;
+}
+console.log(ended + " Workers ended, " + wrong + " wrong answers on the main thread");
+//// json-parse-type-argument-in-workers-that-are-ended/work.ts
+type Row = { id: number; name: string; tags: string[]; inner: { a: number; b?: string } };
+
+export function rows(count: number): string {
+  const items: string[] = [];
+  for (let at = 0; at < count; at++) items.push('{"id":' + at + ',"name":"name ' + at + ' that is longer than a short string would be","u' + (at % 700) + '":[' + at + '],"tags":["t","' + at + '"],"inner":{"a":' + at + (at % 2 ? ',"b":"b"' : "") + "}}");
+  return "[" + items.join(",") + "]";
+}
+
+export function work(text: string): number {
+  const parsed = JSON.parse(text) as Row[];
+  const written = JSON.stringify(parsed);
+  return written.length === text.length ? parsed.length : -1;
+}
+//// json-parse-type-argument-keys-in-every-order.ts
+// The declared keys of an object come in every order, with and without white space, again and again. The result is what JSON.parse(text) gives.
+interface Point { x: number; y: number; label?: string }
+interface Four { a: number; b: string; c: boolean; d?: number | null }
+interface FirstThenSecond { first: number; second: number }
+interface SecondThenFirst { second: number; first: number }
+interface Thirteen { k0: number; k1: number; k2: number; k3: number; k4: number; k5: number; k6: number; k7: number; k8: number; k9: number; k10: number; k11: number; k12: number }
+interface Fourteen extends Thirteen { k13: number }
+interface Holder { id: number; points: Point[]; last: Point; four?: Four }
+interface AllOptional { p?: number; q?: number }
+
+function show(value: any): string {
+  if (Array.isArray(value)) return "[" + value.map(show).join(",") + "]";
+  if (typeof value !== "object" || value === null) return Object.is(value, -0) ? "-0" : typeof value + ":" + String(value);
+  const inLoop: string[] = [];
+  for (const key in value) inLoop.push(key);
+  return "{" + Object.getOwnPropertyNames(value).map(key => JSON.stringify(key) + "=" + show(value[key])).join(",") + "|" + inLoop.join() + "|" + Object.keys(value).join() + "|" + JSON.stringify(value) + "}";
+}
+
+////= attempt-2
+
+function check(label: string, texts: string[], parse: (text: string) => unknown, then?: (value: any) => void, plainly: (text: string) => unknown = globalThis.JSON.parse): void {
+  let different = 0;
+  for (let round = 0; round < 5; round++) {
+    for (const text of texts) {
+      const typed = attempt(parse, text, then);
+      const plain = attempt(plainly, text, then);
+      if (typed !== plain && different++ < 3) console.log(label + " DIFFERS on " + text + "\n  " + typed + "\n  " + plain);
+    }
+  }
+  console.log(label + ": " + texts.length + " texts, " + different + " differ");
+}
+
+function orders<T>(items: T[]): T[][] {
+  if (items.length < 2) return [items];
+  return items.flatMap((item, at) => orders([...items.slice(0, at), ...items.slice(at + 1)]).map(rest => [item, ...rest]));
+}
+
+const asObject = (members: string[]) => "{" + members.join(",") + "}";
+const spaced = (members: string[]) => "{ " + members.map(member => member.replace(":", ": ")).join(", ") + " }";
+const onLines = (members: string[]) => "{\n" + members.map(member => "\t" + member.replace(":", " :\r\n ")).join(" ,\n") + "\n}";
+const point = (text: string) => JSON.parse(text) as Point;
+const four = (text: string) => JSON.parse(text) as Four;
+
+const ofFour = ['"a":1', '"b":"two"', '"c":true', '"d":null'];
+check("every order of four", orders(ofFour).map(asObject), four);
+check("every order of three of four", orders(ofFour.slice(0, 3)).map(asObject), four);
+check("every order of four, spaced", orders(ofFour).map(spaced), four);
+check("every order of four, on lines", orders(ofFour).map(onLines), four);
+check("one is missing", orders(ofFour.slice(1)).map(asObject), four);
+check("one is wrong", orders(['"a":"1"', '"b":"two"', '"c":true']).map(asObject), four);
+check("one comes twice", orders(['"a":1', '"b":"two"', '"c":true', '"a":4']).map(asObject), four);
+check("the optional one comes twice", orders(['"a":1', '"b":"two"', '"c":true', '"d":4', '"d":null']).map(asObject), four);
+
+check("with and without an undeclared key, in turn", [
+  '{"x":1,"y":2}', '{"o":1,"x":1,"y":2}', '{ "x": 1, "y": 2 }', '{"y":2,"x":1}', '{"o":1,"y":2,"x":1}', '{"y":2,"o":1,"x":1}', '{"y":2,"x":1,"o":1}', '{"y":2,"x":1}',
+  '{"label":"l","y":2,"x":1}', '{"label":"l","o":1,"y":2,"x":1}', '{"label":"l","y":2,"x":1}', '{"y":2,"label":"l","x":1}', '{"0":1,"y":2,"x":1}', '{"y":2,"x":1,"__proto__":null}', '{"y":2,"x":1}',
+], point);
+
+const pairs = ['{"first":1,"second":2}', '{"second":2,"first":1}', '{ "first": 1, "second": 2 }', '{ "second": 2, "first": 1 }'];
+check("two types of the same members, the one", pairs, text => JSON.parse(text) as FirstThenSecond);
+check("two types of the same members, the other", pairs, text => JSON.parse(text) as SecondThenFirst);
+check("two types of the same members, in turn", pairs, text => [JSON.parse(text) as FirstThenSecond, JSON.parse(text) as SecondThenFirst, JSON.parse(text) as FirstThenSecond], undefined, text => [globalThis.JSON.parse(text), globalThis.JSON.parse(text), globalThis.JSON.parse(text)]);
+
+const numbered = (count: number) => Array.from({ length: count }, (_, i) => `"k${i}":${i}`);
+const turns = (members: string[]) => members.map((_, at) => [...members.slice(at), ...members.slice(0, at)]).flatMap(turned => [turned, [...turned].reverse()]);
+check("thirteen members", turns(numbered(13)).map(asObject), text => JSON.parse(text) as Thirteen);
+check("fourteen members", turns(numbered(14)).map(asObject), text => JSON.parse(text) as Fourteen);
+check("thirteen members and one more key", turns(numbered(14)).map(asObject), text => JSON.parse(text) as Thirteen);
+check("none, one or both of two optional members", ["{}", "{ }", '{"p":1}', '{"q":1}', '{"p":1,"q":2}', '{"q":2,"p":1}', '{"o":0}'], text => JSON.parse(text) as AllOptional);
+
+const inner = ['{"x":1,"y":2}', '{"y":2,"x":1}', '{"label":"l","x":1,"y":2}', '{ "y": 2, "label": "l", "x": 1 }'];
+check("objects within objects", orders(['"id":1', `"points":[${inner.join(",")}]`, `"last":${inner[1]}`, `"four":${asObject([...ofFour].reverse())}`]).flatMap(members => [asObject(members), spaced(members)]), text => JSON.parse(text) as Holder);
+
+const changes: [string, (value: any) => void][] = [
+  ["a member is deleted and written again", value => { delete value.x; value.x = 5; }],
+  ["the optional member is written", value => { value.label = "late"; }],
+  ["another key is written", value => { value.o = 1; }],
+  ["a member is written", value => { value.y = 7; }],
+  ["frozen", value => { Object.freeze(value); }],
+];
+for (const [label, change] of changes) check("afterwards: " + label, ['{"x":1,"y":2}', '{"y":2,"x":1}', '{"y":2,"label":"l","x":1}', '{ "x": 1, "y": 2 }'], point, change);
+
+const kept: Four[] = [];
+const texts: string[] = [];
+const all = orders(ofFour);
+for (let i = 0; i < 4000; i++) {
+  const text = (i % 3 ? asObject : spaced)(all[i % all.length].map(member => member.replace('"two"', '"' + "t".repeat(i % 40) + '"').replace(":1", ":" + i)));
+  texts.push(text);
+  kept.push(JSON.parse(text) as Four);
+}
+let changed = 0;
+for (let i = 0; i < kept.length; i++) changed += Number(show(kept[i]) !== show(globalThis.JSON.parse(texts[i])));
+console.log("kept for a while: " + kept.length + " objects, " + changed + " differ");
+//// json-parse-type-argument-long-runs-of-undeclared-members.ts
+// Runs of 1 to 130 undeclared members in a row, all with fresh values, in front of, between and behind the declared ones; each text is parsed five times.
+const host: any = globalThis;
+const collect: () => void = host.Bun ? () => host.Bun.gc(true) : host.gc;
+let serial = 0;
+function longText(): string {
+  return '"text number ' + ++serial + ' is too long for a cache of short strings"';
+}
+////= freshValue
+
+type Item = { id: number; name: string };
+const kept: { value: Item; text: string }[] = [];
+for (const length of [1, 2, 3, 4, 5, 8, 15, 16, 17, 30, 31, 32, 33, 34, 63, 64, 65, 66, 95, 96, 97, 128, 130]) {
+  let different = 0;
+  for (let place = 0; place < 4; place++) {
+    const run: string[] = [];
+    for (let at = 0; at < length; at++) run.push('"r' + at + '":' + (place === 3 ? String(at) : freshValue(at)));
+    const members = place === 0 ? ['"id":1', '"name":' + longText(), ...run] : place === 1 ? [...run, '"id":1', '"name":' + longText()] : ['"id":1', ...run, '"name":' + longText()];
+    const text = "{" + members.join(",") + "}";
+    for (let round = 0; round < 5; round++) {
+      const value = JSON.parse(text) as Item;
+      if (value.id !== 1 || value.name.length < 40 || JSON.stringify(value) !== text) different++;
+      if (round === 4) kept.push({ value, text });
+    }
+  }
+  for (const entry of kept) if (JSON.stringify(entry.value) !== entry.text) different++;
+  console.log("runs of " + length + ": " + different + " differ");
+}
+//// json-parse-type-argument-long-things-learned-then-short-texts.ts
+// Long keys, tags, constants and strings are learned by every table of the parsers; then short texts that begin alike, and every cut of the long ones, are parsed: nothing may be read behind the text.
+type Point = { x: number; y: number };
+type LongKeys = { aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: number; aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab: number; aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: number; aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa?: number; short: number };
+type LongConstant = { level: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll" | "lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllm" | "lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll"; n: number };
+type LongTags = { kind: "llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll"; a: number } | { kind: "lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllm"; b: number } | { kind: "lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll"; c: number };
+type Words = { words: string[] };
+
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+let different = 0;
+let texts = 0;
+function ask(parse: (text: string) => unknown, text: string): void {
+  texts++;
+  let typed = "";
+  let plain = "";
+  try {
+    typed = JSON.stringify(parse(text));
+  } catch (error: any) {
+    typed = error.name + ": " + error.message;
+  }
+  try {
+    plain = JSON.stringify(plainParse(text));
+  } catch (error: any) {
+    plain = error.name + ": " + error.message;
+  }
+  if (typed !== plain) {
+    if (different++ < 10) console.log("DIFFERENT on " + text.slice(0, 200) + "\n  " + typed.slice(0, 200) + "\n  " + plain.slice(0, 200));
+  }
+}
+function told(label: string): void {
+  console.log(label + ": " + texts + " texts: " + different + " differ");
+  texts = 0;
+  different = 0;
+}
+const lengths = [1, 2, 3, 5, 6, 7, 8, 9, 10, 14, 15, 16, 17, 22, 23, 24, 25, 30, 31, 32, 33, 34, 46, 47, 48, 49, 50, 51, 52, 54, 55, 56, 57, 58, 60, 61, 62, 63, 64, 65, 66, 70, 71, 72, 73, 100, 127, 128, 129, 200, 255, 256, 257, 300, 1000, 5000, 70000];
+const annotated = (text: string): unknown => {
+  const point: Point = globalThis.JSON.parse(text);
+  return point;
+};
+const cast = (text: string): unknown => globalThis.JSON.parse(text) as Point;
+
+const roads: [string, (text: string) => unknown, (long: string) => string][] = [
+  ["an undeclared key behind", text => JSON.parse(text) as Point, long => '{"x":1,"y":2,"' + long + '":1}'],
+  ["an undeclared key in front", text => JSON.parse(text) as Point, long => '{"' + long + '":1,"x":1,"y":2}'],
+  ["two undeclared keys", text => JSON.parse(text) as Point, long => '{"x":1,"' + long + '":1,"y":2,"' + long + 'b":"' + long + '"}'],
+  ["a key of a dictionary", text => JSON.parse(text) as Record<string, number>, long => '{"' + long + '":1,"' + long + 'b":2}'],
+  ["a string", text => JSON.parse(text) as Words, long => '{"words":["' + long + '","' + long + '"]}'],
+  ["an undeclared string", text => JSON.parse(text) as Point, long => '{"x":1,"y":2,"u":"' + long + '"}'],
+  ["under unknown", text => JSON.parse(text) as { v: unknown }, long => '{"v":{"' + long + '":"' + long + '"}}'],
+  ["no type", plainParse, long => '{"x":1,"y":2,"' + long + '":"' + long + '"}'],
+  ["an annotated variable", annotated, long => '{"x":1,"y":2,"' + long + '":"' + long + '"}'],
+  ["a cast", cast, long => '{"x":1,"' + long + '":1,"y":2}'],
+];
+const only = Number((globalThis as any).arguments?.[0] ?? -1);
+for (const [label, parse, wrap] of roads) {
+  if (only >= 0 && roads[only]?.[0] !== label) continue;
+  for (const character of ["k", "\u00e9"]) {
+    for (const length of lengths) {
+      const long = wrap(character.repeat(length));
+      for (let round = 0; round < 20; round++) parse(long);
+      for (const shorter of lengths) {
+        if (shorter >= length) break;
+        const short = wrap(character.repeat(shorter));
+        ask(parse, short);
+        ask(parse, short.slice(0, -1));
+        ask(parse, short.slice(0, short.lastIndexOf('"')));
+        ask(parse, short.slice(0, short.lastIndexOf('"') + 1));
+        ask(parse, (short + "\u0100").slice(0, -1));
+        parse(long);
+      }
+      if (length <= 300) for (let cut = long.length; cut > 0; cut--) ask(parse, long.slice(0, cut));
+    }
+  }
+  told(label);
+}
+
+if (only < 0 || only === 10) {
+const declared = ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "short"];
+const whole = "{" + declared.map((name, at) => '"' + name + '":' + at).join(",") + "}";
+for (let round = 0; round < 20; round++) (JSON.parse(whole) as LongKeys);
+for (let cut = whole.length; cut >= 0; cut--) ask(text => JSON.parse(text) as LongKeys, whole.slice(0, cut));
+for (const name of declared) for (let cut = name.length; cut >= 0; cut--) for (const tail of ['":1}', '":1', '"', "", 'x":1}']) ask(text => JSON.parse(text) as LongKeys, '{"' + name.slice(0, cut) + tail);
+for (const name of declared) for (let cut = name.length; cut >= 0; cut--) ask(text => JSON.parse(text) as LongKeys, '{"short":1,"' + name.slice(0, cut) + '":2,"' + name.slice(0, cut));
+told("long declared keys");
+}
+
+const levels = ["llllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll", "lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllm", "lllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllllll"];
+if (only < 0 || only === 11) {
+for (const level of levels) {
+  for (let round = 0; round < 20; round++) (JSON.parse('{"level":"' + level + '","n":1}') as LongConstant);
+  for (let cut = level.length; cut >= 0; cut--) for (const tail of ['","n":1}', '"', "", 'x","n":1}', "\\"]) ask(text => JSON.parse(text) as LongConstant, '{"level":"' + level.slice(0, cut) + tail);
+  for (let cut = level.length; cut >= 0; cut--) ask(text => JSON.parse(text) as LongConstant, '{"n":1,"level":"' + level.slice(0, cut));
+}
+told("long constants");
+}
+if (only < 0 || only === 12) {
+for (const [tag, member] of [[levels[0], "a"], [levels[1], "b"], [levels[2], "c"]]) {
+  for (let round = 0; round < 20; round++) (JSON.parse('{"kind":"' + tag + '","' + member + '":1}') as LongTags);
+  for (let cut = tag.length; cut >= 0; cut--) for (const tail of ['","' + member + '":1}', '"', "", "\\"]) {
+    ask(text => JSON.parse(text) as LongTags, '{"kind":"' + tag.slice(0, cut) + tail);
+    ask(text => JSON.parse(text) as LongTags, '{"' + member + '":1,"kind":"' + tag.slice(0, cut) + tail);
+  }
+}
+told("long tags");
+}
+//// json-parse-type-argument-many-sets-of-undeclared-keys.ts
+// 300 sets of ten undeclared keys come in turn, each twice, then all again: the tables that remember them grow and are emptied while they are in use.
+const host: any = globalThis;
+const collect: () => void = host.Bun ? () => host.Bun.gc(true) : host.gc;
+let serial = 0;
+function longText(): string {
+  return '"text number ' + ++serial + ' is too long for a cache of short strings"';
+}
+////= freshValue
+
+type Item = { id: number; name: string };
+const texts: string[] = [];
+for (let set = 0; set < 300; set++) {
+  const members = ['"id":' + set];
+  for (let at = 0; at < 10; at++) members.push('"s' + (set * 7 + at * 13) % 601 + "x" + at + '":' + freshValue(at + set));
+  members.push('"name":' + longText());
+  texts.push("{" + members.join(",") + "}");
+}
+const kept: Item[] = [];
+for (let pass = 0; pass < 3; pass++) {
+  let different = 0;
+  for (let set = 0; set < texts.length; set++) {
+    for (let twice = 0; twice < 2; twice++) {
+      const value = JSON.parse(texts[set]) as Item;
+      if (value.id !== set || JSON.stringify(value) !== texts[set]) different++;
+      if (pass === 0 && twice === 0) kept.push(value);
+    }
+  }
+  for (let set = 0; set < texts.length; set++) if (JSON.stringify(kept[set]) !== texts[set]) different++;
+  console.log("pass " + pass + ": " + different + " differ");
+}
+//// json-parse-type-argument-many-undeclared-keys.ts
+type Point = { x: number; y: number };
+
+function undeclaredMembers(prefix: string, count: number): string {
+  const members: string[] = [];
+  for (let at = 0; at < count; at++) members.push('"' + prefix + at + '":' + at);
+  return members.join(",");
+}
+
+function compare(label: string, text: string): string {
+  const typed = JSON.parse(text) as Point;
+  const plain = globalThis.JSON.parse(text);
+  const typedKeys = Object.keys(typed);
+  const plainKeys = Object.keys(plain);
+  let at = 0;
+  while (at < plainKeys.length && typedKeys[at] === plainKeys[at]) at++;
+  if (at !== plainKeys.length || typedKeys.length !== plainKeys.length) return label + ": keys differ from place " + at + ": " + typedKeys.slice(at, at + 3).join() + " for " + plainKeys.slice(at, at + 3).join();
+  if (JSON.stringify(typed) !== JSON.stringify(plain)) return label + ": written differently";
+  return typed.x + typed.y === 3 ? "" : label + ": wrong members";
+}
+
+const counts = [1, 2, 31, 32, 33, 63, 64, 65, 127, 128, 129, 130, 131, 132, 133, 200, 513, 1000, 4097, 30000, 32765, 32766, 32767, 32768, 32769, 40000];
+let differences = 0;
+for (const count of counts) {
+  const run = undeclaredMembers("k", count);
+  const third = Math.min(count, 20000);
+  const texts: [string, string][] = [
+    ["in front", "{" + run + ',"x":1,"y":2}'],
+    ["between", '{"x":1,' + run + ',"y":2}'],
+    ["behind", '{"x":1,"y":2,' + run + "}"],
+    ["between and one behind", '{"x":1,' + run + ',"y":2,"m0":0}'],
+    ["in front, between and behind", "{" + undeclaredMembers("k", third) + ',"x":1,' + undeclaredMembers("l", third) + ',"y":2,' + undeclaredMembers("m", third) + "}"],
+    ["one in front, between", '{"a":0,"x":1,' + run + ',"y":2}'],
+  ];
+  for (const [label, text] of texts) {
+    const difference = compare(count + " undeclared keys " + label, text);
+    if (difference) {
+      differences++;
+      console.log(difference);
+    }
+  }
+}
+console.log(differences + " of " + counts.length * 6 + " texts differ from JSON.parse without a type");
+//// json-parse-type-argument-minus-zero.ts
+// -0 under the constant type 0: the result holds what the text says, as JSON.parse(text) does.
+type Zero = { n: 0 };
+type Bit = { n: 0 | 1 };
+type Sized = { n: 0 | "none"; size?: 0 };
+type Any = { n: number };
+const sign = (value: unknown) => (Object.is(value, -0) ? "-0" : String(value));
+for (const spelled of ["-0", "-0.0", "-0e5", "-0E-5", "-1e-400", "0", "0.0", "0e5", "1e-400"]) {
+  console.log(
+    spelled,
+    sign((JSON.parse(`{"n":${spelled}}`) as Zero).n),
+    sign((JSON.parse(`{ "n" : ${spelled} }`) as Zero).n),
+    sign((JSON.parse(`{"o":1,"n":${spelled}}`) as Zero).n),
+    sign((JSON.parse(`{"\\u006e":${spelled}}`) as Zero).n),
+    sign((JSON.parse(`{"n":${spelled}}`) as Bit).n),
+    sign((JSON.parse(`{"n":${spelled},"size":${spelled}}`) as Sized).size),
+    sign((JSON.parse(`{"size":${spelled},"n":${spelled}}`) as Sized).n),
+    sign((JSON.parse(`{"n":${spelled}}`) as Any).n),
+    sign(JSON.parse(spelled) as 0),
+    sign(JSON.parse(spelled) as 0 | 1),
+    sign((JSON.parse(`[${spelled}]`) as [0 | 1])[0]),
+    sign((JSON.parse(`[${spelled}, ${spelled}]`) as [0, 0])[1]),
+    sign((JSON.parse(`[1,${spelled}]`) as (0 | 1)[])[1]),
+    sign((JSON.parse(`{"k":${spelled}}`) as Record<string, 0>).k),
+    1 / (JSON.parse(`{"n":${spelled}}`) as Zero).n,
+    JSON.stringify(JSON.parse(`{"n":${spelled}}`) as Zero),
+  );
+}
+console.log(sign((JSON.parse('{"n":1}') as Bit).n), sign((JSON.parse('{"n":-1}') as { n: -1 | 0 }).n), sign((JSON.parse('{"n":1.5}') as { n: 1.5 }).n));
+//// json-parse-type-argument-minus-zero-under-an-enum.ts
+// -0 where the type is a numeric enum member whose value is 0: the result holds what the text or the value says, and so does a number that is no member.
+enum Color { Red, Green }
+interface Painted { color: Color }
+type Tagged = { kind: Color.Red; r: number } | { kind: Color.Green; g: string };
+////= say-3	
+const signOf = (value: number): string => (Object.is(value, -0) ? "-0" : String(value));
+for (const zero of ["-0", "-0.0", "-0e1", "0", "0.0"]) {
+  console.log(zero + " under a member", say(() => (JSON.parse('{"color":' + zero + "}") as Painted).color === Color.Red));
+  console.log(zero + " behind white space", say(() => (JSON.parse('{ "color" : ' + zero + " }") as Painted).color + 1));
+  console.log(zero + " at the root", say(() => (JSON.parse(zero) as Color) + 1));
+  console.log(zero + " in a list", say(() => (JSON.parse("[1," + zero + "]") as Color[]).map(color => color + 1)));
+  console.log(zero + " as a tag", say(() => JSON.parse('{"kind":' + zero + ',"r":1}') as Tagged));
+  console.log(zero + " as a tag that comes last", say(() => JSON.parse('{"r":1,"kind":' + zero + "}") as Tagged));
+  console.log(zero + " in a text that is no JSON further on", say(() => JSON.parse('[{"kind":' + zero + ',"r":1},{"kind":1.}]') as Tagged[]));
+  console.log(zero + " keeps its sign", say(() => [(JSON.parse('{"color":' + zero + "}") as Painted).color, JSON.parse(zero) as Color, (JSON.parse("[1," + zero + "]") as Color[])[1]!, (JSON.parse('{"kind":' + zero + ',"r":1}') as Tagged).kind].map(signOf)));
+}
+console.log("a value", say(() => ({ color: -0 } as Painted).color + 1));
+console.log("a value in a list", say(() => ([-0, 1] as Color[]).map(color => color + 1)));
+console.log("a value keeps its sign", say(() => [({ color: -0 } as Painted).color, ([-0, 1] as Color[])[0]!].map(signOf)));
+console.log("no member", say(() => JSON.parse('{"color":-1}') as Painted));
+
+interface Holder { color: Color; colors: Color[]; pair: [Color, number]; byName: Record<string, Color>; maybe?: Color }
+const total = (holder: Holder) => holder.color + holder.colors[0]! + holder.pair[0] + holder.byName.a! + (holder.maybe ?? 0) + 1;
+const signsOf = (holder: Holder) => [holder.color, holder.colors[0]!, holder.pair[0], holder.byName.a!].map(signOf);
+const holders = ['{"color":-0,"colors":[-0,1],"pair":[-0,1],"byName":{"a":-0},"maybe":-0}', '{"color":-0,"colors":[-0,1],"pair":[-0,1],"byName":{"a":-0}}'];
+for (const text of holders) {
+  console.log("every kind of holder", say(() => total(JSON.parse(text) as Holder)));
+  console.log("with an escape in a key", say(() => total(JSON.parse(text.replace("colors", "\\u0063olors")) as Holder)));
+  console.log("with a reviver", say(() => total(JSON.parse(text, (_, value) => value) as Holder)));
+  console.log("the signs", say(() => [signsOf(JSON.parse(text) as Holder), signsOf(JSON.parse(text, (_, value) => value) as Holder)]));
+  console.log("written again", say(() => JSON.parse(text) as Holder));
+}
+const values: unknown[] = [{ color: -0 }, [-0, 1], [-0, 2], { a: -0 }];
+console.log("an object made elsewhere", say(() => (values[0] as Painted).color + 1));
+console.log("a list made elsewhere", say(() => (values[1] as Color[]).map(color => color + 1)));
+console.log("a tuple made elsewhere", say(() => (values[2] as [Color, number])[0] + 1));
+console.log("a dictionary made elsewhere", say(() => (values[3] as Record<string, Color>).a! + 1));
+console.log("the values are as they were", Object.is((values[0] as Painted).color, -0), Object.is((values[1] as number[])[0], -0), Object.is((values[2] as number[])[0], -0));
+//// json-parse-type-argument-mutated-texts.ts
+// A fuzzer of texts, the same for a given seed: texts are generated to fit seventeen types, then changed (characters replaced, tokens cut, swapped and doubled, white space and escapes put in, nesting multiplied, 16-bit text, ropes). `JSON.parse(text) as T` throws the SyntaxError that JSON.parse throws, or gives the value that JSON.parse gives.
+
+const seed: number = 1;
+const rounds: number = 400;
+
+type Point = { x: number; y: number };
+type User = { id: number; name: string; email?: string; tags: string[]; active: boolean; note: string | null };
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number; label?: string } | { kind: "path"; points: Point[] };
+type Mixed = string | number | boolean | null | { v: number } | number[];
+type Triple = [string, number, Point];
+type Table = Record<string, number>;
+type Points = Record<string, Point>;
+type Grid = number[][];
+type Tree = { name: string; kids: Tree[] };
+type Chain = { value: number; next: Chain | null };
+type Loose = { id: number; data: unknown; more: any; bag: Record<string, any> };
+type Indexed = { id: number; [key: string]: number | string };
+type Literals = { level: "low" | "high" | "é"; code: 1 | 2 | 3; on: true; nothing: null; either: "a" | 7 | false };
+////= Wide
+type Nested = { a: { b: { c: { d: Point[]; e: [number, string] }; f?: Shape }; g: Table }; h: User[] };
+
+let state = seed >>> 0;
+////= random
+const below = (limit: number): number => Math.floor(random() * limit);
+const chance = (probability: number): boolean => random() < probability;
+const choice = <T>(from: readonly T[]): T => from[below(from.length)];
+
+type Make = (depth: number) => string;
+const characters = ["a", "b", "z", "A", "0", "9", " ", "-", "_", ".", "/", "é", "ÿ", "Ā", "日", "😀", "\\n", "\\t", '\\"', "\\\\", "\\/", "\\u0041", "\\u00e9", "\\u65e5", "\\ud83d\\ude00", "\\ud800", "\\u0000", "\u007f", " "];
+const plainCharacters = ["a", "b", "c", "x", "y", "z", "k"];
+////= stringOf
+const text: Make = () => (chance(0.6) ? stringOf(below(6), plainCharacters) : chance(0.8) ? stringOf(below(12), characters) : stringOf(20 + below(120), chance(0.5) ? plainCharacters : characters));
+const integers = ["0", "1", "2", "3", "7", "10", "42", "255", "999", "1000", "65536", "2147483647", "2147483648", "4294967296", "9007199254740991", "-1", "-7", "-2147483648", "-2147483649"];
+const fractions = ["0.5", "-0.5", "1.25", "3.14159", "1e3", "1E3", "1e+3", "1e-3", "-1.5e10", "1.7976931348623157e308", "5e-324", "0.1", "123456789.123456789", "1e21", "12345678901234567890", "-0", "0.0", "1.0", "100e-2"];
+const integer: Make = () => (chance(0.7) ? choice(integers) : String(below(100000) - 50000));
+const number: Make = depth => (chance(0.6) ? integer(depth) : chance(0.8) ? choice(fractions) : (below(2000000) - 1000000) / 1000 + (chance(0.3) ? "e" + (below(40) - 20) : ""));
+const flag: Make = () => (chance(0.5) ? "true" : "false");
+const nothing: Make = () => "null";
+const constant = (...spellings: string[]): Make => () => choice(spellings);
+const either = (...makes: Make[]): Make => depth => choice(makes)(depth);
+////= list
+const tuple = (...items: Make[]): Make => depth => "[" + items.map(item => item(depth + 1)).join(",") + "]";
+const keys = ['"k"', '"key"', '"x"', '"y"', '"id"', '"name"', '"kind"', '""', '"0"', '"1"', '"42"', '"-1"', '"a b"', '"é"', '"日本"', '"__proto__"', '"constructor"', '"toString"', '"length"', '"\\u006b"', '"k\\n"', '"a key that is longer than the short ones by far, so that no cache takes it"'];
+////= anything
+////= dictionary	7) ? choice(keys
+////= shuffle
+////= record
+
+const point = record([["x", number], ["y", number]]);
+const user = record([["id", integer], ["name", text], ["email", text, true], ["tags", list(text)], ["active", flag], ["note", either(text, nothing)]]);
+const shape = either(record([["kind", constant('"circle"')], ["radius", number]]), record([["kind", constant('"square"')], ["side", number], ["label", text, true]]), record([["kind", constant('"path"')], ["points", list(point)]]));
+const tree: Make = depth => record([["name", text], ["kids", list(tree, 0, depth > 3 ? 0 : 3)]])(depth);
+const chain: Make = depth => record([["value", number], ["next", depth > 8 || chance(0.3) ? nothing : chain]])(depth);
+const wideMembers: [string, Make, boolean?][] = [];
+for (const row of ["a", "b", "c", "d"]) {
+  const makes: [Make, boolean?][] = [[number], [text], [flag], [number, true], [either(text, nothing)], [list(number)], [point], [text, true], [number], [text]];
+  makes.slice(0, row === "d" ? 5 : 10).forEach(([make, isOptional], at) => wideMembers.push([row + at, make, isOptional]));
+}
+
+const types: [string, (text: string) => unknown, Make][] = [
+  ["Point", text => JSON.parse(text) as Point, point],
+  ["User", text => JSON.parse(text) as User, user],
+  ["Shape", text => JSON.parse(text) as Shape, shape],
+  ["Shape[]", text => JSON.parse(text) as Shape[], list(shape, 0, 6)],
+  ["Mixed", text => JSON.parse(text) as Mixed, either(text, number, flag, nothing, record([["v", number]]), list(number))],
+  ["Mixed[]", text => JSON.parse(text) as Mixed[], list(either(text, number, flag, nothing, record([["v", number]]), list(number)), 0, 8)],
+  ["Triple", text => JSON.parse(text) as Triple, tuple(text, number, point)],
+  ["Table", text => JSON.parse(text) as Table, dictionary(number, 8)],
+  ["Points", text => JSON.parse(text) as Points, dictionary(point)],
+  ["Grid", text => JSON.parse(text) as Grid, list(list(number))],
+  ["Tree", text => JSON.parse(text) as Tree, tree],
+  ["Chain", text => JSON.parse(text) as Chain, chain],
+  ["Loose", text => JSON.parse(text) as Loose, record([["id", number], ["data", anything], ["more", anything], ["bag", dictionary(anything)]])],
+  ["Indexed", text => JSON.parse(text) as Indexed, record([["id", number]], either(number, text))],
+  ["Literals", text => JSON.parse(text) as Literals, record([["level", constant('"low"', '"high"', '"é"', '"\\u00e9"', '"lo\\u0077"')], ["code", constant("1", "2", "3", "1.0", "2e0", "30e-1")], ["on", constant("true")], ["nothing", nothing], ["either", constant('"a"', "7", "false", "7.0")]])],
+  ["Wide", text => JSON.parse(text) as Wide, record(wideMembers)],
+  ["Nested", text => JSON.parse(text) as Nested, record([["a", record([["b", record([["c", record([["d", list(point)], ["e", tuple(number, text)]])], ["f", shape, true]])], ["g", dictionary(number)]])], ["h", list(user, 0, 3)]])],
+];
+
+////= tokens
+
+const intruders = ["\u0000", '"', "\\", "{", "}", "[", "]", ",", ":", " ", "\n", "\t", "\r", "0", "1", "9", "-", "+", ".", "e", "E", "n", "t", "f", "u", "a", "/", "'", "\u001f", "\u007f", " ", "ÿ", "Ā", " ", "﻿", "\ud800", "\udc00", "null", "true", "false", "nul", "tru", "1e400", "-0", "{}", "[]", '""', '"\\u0000"', "\\u", "\\u00", "\\ud800"];
+const spaces = [" ", "\n", "\t", "\r", "  ", " \n\t\r "];
+
+////= mutate
+
+////= represent
+
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+
+////= show
+
+////= deepest
+
+let reported = 0;
+function report(what: string, type: string, text: string, typed: string, plain: string): void {
+  if (reported++ < 20) console.log(what + " " + type + " seed " + seed + " on " + JSON.stringify(text).slice(0, 600) + "\n  typed: " + typed.slice(0, 400) + "\n  plain: " + plain.slice(0, 400));
+}
+
+for (const [label, parse, make] of types) {
+  let accepted = 0;
+  let syntaxErrors = 0;
+  let different = 0;
+  let texts = 0;
+  for (let round = 0; round < rounds; round++) {
+    const valid = make(0);
+    for (let turn = 0; turn < 6; turn++) {
+      const text = represent(turn === 0 ? valid : mutate(valid));
+      if (deepest(text) > 1500) continue;
+      texts++;
+      let typed = "";
+      let plain = "";
+      let typedValue: unknown;
+      let plainValue: unknown;
+      const start = Date.now();
+      try {
+        typedValue = parse(text);
+        typed = show(typedValue);
+      } catch (error: any) {
+        typed = error.name + ": " + error.message;
+      }
+      if (Date.now() - start > 30000) report("SLOW", label, text, typed, "");
+      try {
+        plainValue = plainParse(text);
+        plain = show(plainValue);
+      } catch (error: any) {
+        plain = error.name + ": " + error.message;
+      }
+      if (typed !== plain) {
+        different++;
+        report("DIFFERENT", label, text, typed, plain);
+      } else if (plain.startsWith("SyntaxError")) syntaxErrors++;
+      else {
+        accepted++;
+        if (JSON.stringify(typedValue) !== JSON.stringify(plainValue)) {
+          different++;
+          report("WRITTEN DIFFERENTLY", label, text, String(JSON.stringify(typedValue)), String(JSON.stringify(plainValue)));
+        }
+      }
+    }
+  }
+  console.log(label + ": " + texts + " texts: " + accepted + " accepted, " + syntaxErrors + " no JSON: " + different + " differ");
+}
+//// json-parse-type-argument-mutated-texts-against-what-is-learned.ts
+// A fuzzer of texts, the same for a given seed, that is after the tables which the parser, the writer and the conversions learn: keys that are long, that share their first bytes, that come again, thousands of names, tens of thousands of orders, and now and then thousands of records with names of their own inside one text. Each text is parsed by `JSON.parse(text) as T`, written by JSON.stringify and compared with JSON.parse; values are kept and written again later.
+
+const seed: number = 1;
+const rounds: number = 20;
+
+type Point = { x: number; y: number };
+type User = { id: number; name: string; email?: string; tags: string[]; active: boolean; note: string | null };
+type Shape = { kind: "circle"; radius: number } | { kind: "square"; side: number; label?: string } | { kind: "path"; points: Point[] };
+type Mixed = string | number | boolean | null | { v: number } | number[];
+type Triple = [string, number, Point];
+type Table = Record<string, number>;
+type Points = Record<string, Point>;
+type Grid = number[][];
+type Tree = { name: string; kids: Tree[] };
+type Chain = { value: number; next: Chain | null };
+type Loose = { id: number; data: unknown; more: any; bag: Record<string, any> };
+type Indexed = { id: number; [key: string]: number | string };
+type Literals = { level: "low" | "high" | "é"; code: 1 | 2 | 3; on: true; nothing: null; either: "a" | 7 | false };
+////= Wide
+type Nested = { a: { b: { c: { d: Point[]; e: [number, string] }; f?: Shape }; g: Table }; h: User[] };
+type Item = { id: number };
+type Holder = { first: number; items: Item[]; last: string };
+type Shelf = { label: string; holders: Holder[]; byName: Record<string, Item>; pair: [Item, Point] };
+
+let state = seed >>> 0;
+////= random
+const below = (limit: number): number => Math.floor(random() * limit);
+const chance = (probability: number): boolean => random() < probability;
+const choice = <T>(from: readonly T[]): T => from[below(from.length)];
+
+type Make = (depth: number) => string;
+const characters = ["a", "b", "z", "A", "0", "9", " ", "-", "_", ".", "/", "é", "ÿ", "Ā", "日", "😀", "\\n", "\\t", '\\"', "\\\\", "\\/", "\\u0041", "\\u00e9", "\\u65e5", "\\ud83d\\ude00", "\\ud800", "\\u0000", "\u007f", " "];
+const plainCharacters = ["a", "b", "c", "x", "y", "z", "k"];
+////= stringOf
+const text: Make = () => (chance(0.6) ? stringOf(below(6), plainCharacters) : chance(0.8) ? stringOf(below(12), characters) : stringOf(20 + below(120), chance(0.5) ? plainCharacters : characters));
+const integers = ["0", "1", "2", "3", "7", "10", "42", "255", "999", "1000", "65536", "2147483647", "2147483648", "4294967296", "9007199254740991", "-1", "-7", "-2147483648", "-2147483649"];
+const fractions = ["0.5", "-0.5", "1.25", "3.14159", "1e3", "1E3", "1e+3", "1e-3", "-1.5e10", "1.7976931348623157e308", "5e-324", "0.1", "123456789.123456789", "1e21", "12345678901234567890", "-0", "0.0", "1.0", "100e-2"];
+const integer: Make = () => (chance(0.7) ? choice(integers) : String(below(100000) - 50000));
+const number: Make = depth => (chance(0.6) ? integer(depth) : chance(0.8) ? choice(fractions) : (below(2000000) - 1000000) / 1000 + (chance(0.3) ? "e" + (below(40) - 20) : ""));
+const flag: Make = () => (chance(0.5) ? "true" : "false");
+const nothing: Make = () => "null";
+const constant = (...spellings: string[]): Make => () => choice(spellings);
+const either = (...makes: Make[]): Make => depth => choice(makes)(depth);
+////= list
+const tuple = (...items: Make[]): Make => depth => "[" + items.map(item => item(depth + 1)).join(",") + "]";
+const keys = ['"k"', '"key"', '"x"', '"y"', '"id"', '"name"', '"kind"', '""', '"0"', '"1"', '"42"', '"-1"', '"a b"', '"é"', '"日本"', '"__proto__"', '"constructor"', '"toString"', '"length"', '"\\u006b"', '"k\\n"', '"a key that is longer than the short ones by far, so that no cache takes it"'];
+let names = 0;
+function otherKey(declared: readonly string[]): string {
+  for (;;) {
+    let name = "";
+    switch (below(12)) {
+      case 0:
+        return choice(keys.filter(key => !declared.includes(globalThis.JSON.parse(key))));
+      case 1:
+        name = "u" + below(50);
+        break;
+      case 2:
+        name = "k".repeat(54 + below(20));
+        break;
+      case 3:
+        name = "k".repeat(54 + below(20)) + below(10);
+        break;
+      case 4:
+        name = "k".repeat(chance(0.02) ? 100000 : chance(0.3) ? 1000 + below(100) : 200 + below(10));
+        break;
+      case 5:
+        name = "prefix00" + "abc".repeat(below(22)).slice(0, below(62));
+        break;
+      case 6:
+        name = "prefix00" + below(300);
+        break;
+      case 7:
+        name = "n" + below(5000);
+        break;
+      case 8:
+      case 9:
+        name = "q" + ++names;
+        break;
+      case 10:
+        name = "kkkkkkkk".slice(0, 1 + below(8));
+        break;
+      default:
+        name = "same";
+    }
+    if (!declared.includes(name)) return '"' + name + '"';
+  }
+}
+////= anything
+////= dictionary	5) ? otherKey([]
+////= shuffle
+const record = (members: [string, Make, boolean?][], extra: Make | null = anything): Make => depth => {
+  let written: string[] = [];
+  for (const [name, make, isOptional] of members) if (!isOptional || chance(0.6)) written.push('"' + name + '":' + make(depth + 1));
+  const declared = members.map(member => member[0]);
+  if (extra && chance(0.6)) for (let count = 1 + below(chance(0.1) ? 70 : 4); count > 0; count--) written.splice(below(written.length + 1), 0, otherKey(declared) + ":" + (chance(0.5) ? integer(depth) : extra(depth + 1)));
+  if (chance(0.5)) written = shuffle(written);
+  if (chance(0.05) && written.length) written.splice(below(written.length + 1), 0, choice(written));
+  return "{" + written.join(",") + "}";
+};
+
+const point = record([["x", number], ["y", number]]);
+const user = record([["id", integer], ["name", text], ["email", text, true], ["tags", list(text)], ["active", flag], ["note", either(text, nothing)]]);
+const shape = either(record([["kind", constant('"circle"')], ["radius", number]]), record([["kind", constant('"square"')], ["side", number], ["label", text, true]]), record([["kind", constant('"path"')], ["points", list(point)]]));
+const tree: Make = depth => record([["name", text], ["kids", list(tree, 0, depth > 3 ? 0 : 3)]])(depth);
+const chain: Make = depth => record([["value", number], ["next", depth > 8 || chance(0.3) ? nothing : chain]])(depth);
+const wideMembers: [string, Make, boolean?][] = [];
+for (const row of ["a", "b", "c", "d"]) {
+  const makes: [Make, boolean?][] = [[number], [text], [flag], [number, true], [either(text, nothing)], [list(number)], [point], [text, true], [number], [text]];
+  makes.slice(0, row === "d" ? 5 : 10).forEach(([make, isOptional], at) => wideMembers.push([row + at, make, isOptional]));
+}
+
+const item = record([["id", integer]]);
+const crowd: Make = depth => {
+  const items: string[] = [];
+  const isLarge = chance(0.03);
+  for (let count = isLarge ? 3000 + below(40000) : below(6); count > 0; count--) items.push(isLarge || chance(0.5) ? (count % 2 ? '{"id":' + count + ',"q' + ++names + '":' + count + "}" : '{"q' + ++names + '":"v","id":' + count + ',"same":1}') : item(depth + 1));
+  return "[" + items.join(",") + "]";
+};
+const holder = record([["first", number], ["items", crowd], ["last", text]]);
+const shelf = record([["label", text], ["holders", list(holder, 0, 3)], ["byName", dictionary(item)], ["pair", tuple(item, point)]]);
+
+const types: [string, (text: string) => unknown, Make][] = [
+  ["Point", text => JSON.parse(text) as Point, point],
+  ["User", text => JSON.parse(text) as User, user],
+  ["Shape", text => JSON.parse(text) as Shape, shape],
+  ["Shape[]", text => JSON.parse(text) as Shape[], list(shape, 0, 6)],
+  ["Mixed", text => JSON.parse(text) as Mixed, either(text, number, flag, nothing, record([["v", number]]), list(number))],
+  ["Mixed[]", text => JSON.parse(text) as Mixed[], list(either(text, number, flag, nothing, record([["v", number]]), list(number)), 0, 8)],
+  ["Triple", text => JSON.parse(text) as Triple, tuple(text, number, point)],
+  ["Table", text => JSON.parse(text) as Table, dictionary(number, 8)],
+  ["Points", text => JSON.parse(text) as Points, dictionary(point)],
+  ["Grid", text => JSON.parse(text) as Grid, list(list(number))],
+  ["Tree", text => JSON.parse(text) as Tree, tree],
+  ["Chain", text => JSON.parse(text) as Chain, chain],
+  ["Loose", text => JSON.parse(text) as Loose, record([["id", number], ["data", anything], ["more", anything], ["bag", dictionary(anything)]])],
+  ["Indexed", text => JSON.parse(text) as Indexed, record([["id", number]], either(number, text))],
+  ["Literals", text => JSON.parse(text) as Literals, record([["level", constant('"low"', '"high"', '"é"', '"\\u00e9"', '"lo\\u0077"')], ["code", constant("1", "2", "3", "1.0", "2e0", "30e-1")], ["on", constant("true")], ["nothing", nothing], ["either", constant('"a"', "7", "false", "7.0")]])],
+  ["Wide", text => JSON.parse(text) as Wide, record(wideMembers)],
+  ["Nested", text => JSON.parse(text) as Nested, record([["a", record([["b", record([["c", record([["d", list(point)], ["e", tuple(number, text)]])], ["f", shape, true]])], ["g", dictionary(number)]])], ["h", list(user, 0, 3)]])],
+  ["Item", text => JSON.parse(text) as Item, item],
+  ["Holder", text => JSON.parse(text) as Holder, holder],
+  ["Holder[]", text => JSON.parse(text) as Holder[], list(holder, 0, 3)],
+  ["Shelf", text => JSON.parse(text) as Shelf, shelf],
+];
+
+////= tokens
+
+const intruders = ["\u0000", '"', "\\", "{", "}", "[", "]", ",", ":", " ", "\n", "\t", "\r", "0", "1", "9", "-", "+", ".", "e", "E", "n", "t", "f", "u", "a", "/", "'", "\u001f", "\u007f", " ", "ÿ", "Ā", " ", "﻿", "\ud800", "\udc00", "null", "true", "false", "nul", "tru", "1e400", "-0", "{}", "[]", '""', '"\\u0000"', "\\u", "\\u00", "\\ud800"];
+const spaces = [" ", "\n", "\t", "\r", "  ", " \n\t\r "];
+
+////= mutate
+
+////= represent
+
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+
+////= show
+
+////= deepest
+
+let reported = 0;
+function report(what: string, type: string, text: string, typed: string, plain: string): void {
+  if (reported++ < 20) console.log(what + " " + type + " seed " + seed + " on " + JSON.stringify(text).slice(0, 600) + "\n  typed: " + typed.slice(0, 400) + "\n  plain: " + plain.slice(0, 400));
+}
+
+const kept: { label: string; value: unknown; written: string }[] = [];
+let lost = 0;
+function keep(label: string, value: unknown, written: string): void {
+  const at = below(64);
+  const before = kept[at];
+  if (before && JSON.stringify(before.value) !== before.written) {
+    lost++;
+    report("KEPT AND WRITTEN DIFFERENTLY LATER", before.label, before.written, String(JSON.stringify(before.value)), before.written);
+  }
+  kept[at] = { label, value, written };
+}
+
+for (let pass = 0; pass < 2; pass++)
+for (const [label, parse, make] of types) {
+  let accepted = 0;
+  let syntaxErrors = 0;
+  let different = 0;
+  let texts = 0;
+  for (let round = 0; round < rounds; round++) {
+    const valid = make(0);
+    for (let turn = 0; turn < 6; turn++) {
+      const text = represent(turn === 0 ? valid : mutate(valid));
+      if (deepest(text) > 1500) continue;
+      texts++;
+      let typed = "";
+      let plain = "";
+      let typedValue: unknown;
+      let plainValue: unknown;
+      const start = Date.now();
+      try {
+        typedValue = parse(text);
+        typed = show(typedValue);
+      } catch (error: any) {
+        typed = error.name + ": " + error.message;
+      }
+      if (Date.now() - start > 30000) report("SLOW", label, text, typed, "");
+      try {
+        plainValue = plainParse(text);
+        plain = show(plainValue);
+      } catch (error: any) {
+        plain = error.name + ": " + error.message;
+      }
+      if (typed !== plain) {
+        different++;
+        report("DIFFERENT", label, text, typed, plain);
+      } else if (plain.startsWith("SyntaxError")) syntaxErrors++;
+      else {
+        accepted++;
+        const written = String(JSON.stringify(plainValue));
+        if (JSON.stringify(typedValue) !== written) {
+          different++;
+          report("WRITTEN DIFFERENTLY", label, text, String(JSON.stringify(typedValue)), written);
+        }
+        if (JSON.stringify({ held: typedValue, list: [typedValue] }) !== '{"held":' + written + ',"list":[' + written + "]}") {
+          different++;
+          report("WRITTEN DIFFERENTLY UNDER A HOLDER", label, text, "", written);
+        }
+        keep(label, typedValue, written);
+      }
+    }
+  }
+  console.log(label + ", pass " + pass + ": " + texts + " texts: " + accepted + " accepted, " + syntaxErrors + " no JSON: " + different + " differ");
+}
+console.log("kept and written again: " + lost + " differ");
+//// json-parse-type-argument-mutated-texts-of-less-common-types.ts
+// Fuzzes `JSON.parse(text) as T` with a fixed seed over less common kinds of type: enums, intersections, generics, mapped and utility types, template literals, number keys, interfaces that extend others. Each text is generated to match its type and then mutated. `JSON.parse(text) as T` must throw the same SyntaxError as JSON.parse or return the same value. Texts that contain -0 are left out for the types with enums: json-parse-type-argument-minus-zero-under-an-enum has them.
+
+const seed: number = 1;
+const rounds: number = 300;
+
+type Point = { x: number; y: number };
+type User = { id: number; name: string; email?: string; tags: string[]; active: boolean; note: string | null };
+enum Color { Red, Green, Blue }
+enum Level { Low = "low", High = "high" }
+type Painted = { color: Color; level: Level; both: Color | Level };
+type ByEnum = { kind: Color.Red; r: number } | { kind: Color.Green; g: string } | { kind: Color.Blue; b: boolean };
+type Joined = { a: number } & { b: string } & { c?: boolean };
+type Box<T> = { value: T; next?: Box<T> };
+type Part = Partial<User>;
+type Picked = Pick<User, "id" | "name">;
+type Omitted = Omit<User, "tags" | "note">;
+type Whole = Required<{ a?: number; b?: string }>;
+type Fixed = Readonly<{ a: number; list: readonly string[] }>;
+type Finite = Record<"a" | "b" | "c", number>;
+type IndexKeys = { [key: string]: string };
+type Templated = { id: `id-${number}`; path: `/${string}` };
+type Undefinable = { a: number | undefined; b?: string | null; c: null | boolean };
+type Lists = number[] | string[];
+type Within = { v: (number | { w: string | number[] })[] };
+type Mapped = { [K in "k1" | "k2" | "k3"]: { [L in "x" | "y"]: number } };
+type Empty = {};
+type AnyObject = { o: object; p: {} };
+type Extended = Point & { z: number; label?: string };
+interface Base { id: number }
+interface Derived extends Base { name: string; parent?: Derived }
+
+let state = seed >>> 0;
+////= random
+const below = (limit: number): number => Math.floor(random() * limit);
+const chance = (probability: number): boolean => random() < probability;
+const choice = <T>(from: readonly T[]): T => from[below(from.length)];
+
+type Make = (depth: number) => string;
+const characters = ["a", "b", "z", "A", "0", "9", " ", "-", "_", ".", "/", "é", "ÿ", "Ā", "日", "😀", "\\n", "\\t", '\\"', "\\\\", "\\/", "\\u0041", "\\u00e9", "\\u65e5", "\\ud83d\\ude00", "\\ud800", "\\u0000", "\u007f", " "];
+const plainCharacters = ["a", "b", "c", "x", "y", "z", "k"];
+////= stringOf
+const text: Make = () => (chance(0.6) ? stringOf(below(6), plainCharacters) : chance(0.8) ? stringOf(below(12), characters) : stringOf(20 + below(120), chance(0.5) ? plainCharacters : characters));
+const integers = ["0", "1", "2", "3", "7", "10", "42", "255", "999", "1000", "65536", "2147483647", "2147483648", "4294967296", "9007199254740991", "-1", "-7", "-2147483648", "-2147483649"];
+const fractions = ["0.5", "-0.5", "1.25", "3.14159", "1e3", "1E3", "1e+3", "1e-3", "-1.5e10", "1.7976931348623157e308", "5e-324", "0.1", "123456789.123456789", "1e21", "12345678901234567890", "-0", "0.0", "1.0", "100e-2"];
+const integer: Make = () => (chance(0.7) ? choice(integers) : String(below(100000) - 50000));
+const number: Make = depth => (chance(0.6) ? integer(depth) : chance(0.8) ? choice(fractions) : (below(2000000) - 1000000) / 1000 + (chance(0.3) ? "e" + (below(40) - 20) : ""));
+const flag: Make = () => (chance(0.5) ? "true" : "false");
+const nothing: Make = () => "null";
+const constant = (...spellings: string[]): Make => () => choice(spellings);
+const either = (...makes: Make[]): Make => depth => choice(makes)(depth);
+////= list
+const tuple = (...items: Make[]): Make => depth => "[" + items.map(item => item(depth + 1)).join(",") + "]";
+const keys = ['"k"', '"key"', '"x"', '"y"', '"id"', '"name"', '"kind"', '""', '"0"', '"1"', '"42"', '"-1"', '"a b"', '"é"', '"日本"', '"__proto__"', '"constructor"', '"toString"', '"length"', '"\\u006b"', '"k\\n"', '"a key that is longer than the short ones by far, so that no cache takes it"'];
+////= anything
+////= dictionary	7) ? choice(keys
+////= shuffle
+////= record
+
+const point = record([["x", number], ["y", number]]);
+const user = record([["id", integer], ["name", text], ["email", text, true], ["tags", list(text)], ["active", flag], ["note", either(text, nothing)]]);
+const color = constant("0", "1", "2", "1.0", "2e0");
+const level = constant('"low"', '"high"', '"lo\\u0077"');
+const box = (value: Make): Make => {
+  const made: Make = depth => record(depth > 5 ? [["value", value]] : [["value", value], ["next", made, true]])(depth);
+  return made;
+};
+const derived: Make = depth => record([["id", number], ["name", text], ...(depth > 5 ? [] : ([["parent", derived, true]] as [string, Make, boolean?][]))])(depth);
+const indexKeys: Make = depth => "{" + Array.from({ length: below(5) }, (_, at) => '"' + (at * 7 + below(5)) + '":' + text(depth)).join(",") + "}";
+
+const types: [string, (text: string) => unknown, Make][] = [
+  ["Painted", text => JSON.parse(text) as Painted, record([["color", color], ["level", level], ["both", either(color, level)]])],
+  ["ByEnum", text => JSON.parse(text) as ByEnum, either(record([["kind", constant("0", "0.0")], ["r", number]]), record([["kind", constant("1", "1e0")], ["g", text]]), record([["kind", constant("2")], ["b", flag]]))],
+  ["ByEnum[]", text => JSON.parse(text) as ByEnum[], list(either(record([["kind", constant("0")], ["r", number]]), record([["kind", constant("1")], ["g", text]]), record([["kind", constant("2")], ["b", flag]])), 0, 6)],
+  ["Joined", text => JSON.parse(text) as Joined, record([["a", number], ["b", text], ["c", flag, true]])],
+  ["Box<Point>", text => JSON.parse(text) as Box<Point>, box(point)],
+  ["Box<string[]>", text => JSON.parse(text) as Box<string[]>, box(list(text))],
+  ["Part", text => JSON.parse(text) as Part, record([["id", integer, true], ["name", text, true], ["email", text, true], ["tags", list(text), true], ["active", flag, true], ["note", either(text, nothing), true]])],
+  ["Picked", text => JSON.parse(text) as Picked, record([["id", integer], ["name", text]])],
+  ["Omitted", text => JSON.parse(text) as Omitted, record([["id", integer], ["name", text], ["email", text, true], ["active", flag]])],
+  ["Whole", text => JSON.parse(text) as Whole, record([["a", number], ["b", text]])],
+  ["Fixed", text => JSON.parse(text) as Fixed, record([["a", number], ["list", list(text)]])],
+  ["Finite", text => JSON.parse(text) as Finite, record([["a", number], ["b", number], ["c", number]])],
+  ["IndexKeys", text => JSON.parse(text) as IndexKeys, indexKeys],
+  ["Templated", text => JSON.parse(text) as Templated, record([["id", () => '"id-' + below(1000) + '"'], ["path", () => '"/' + "abc".slice(below(3)) + '"']])],
+  ["Undefinable", text => JSON.parse(text) as Undefinable, record([["a", number], ["b", either(text, nothing), true], ["c", either(nothing, flag)]])],
+  ["Lists", text => JSON.parse(text) as Lists, either(list(number), list(text))],
+  ["Within", text => JSON.parse(text) as Within, record([["v", list(either(number, record([["w", either(text, list(number))]])))]])],
+  ["Mapped", text => JSON.parse(text) as Mapped, record([["k1", point], ["k2", point], ["k3", point]])],
+  ["Empty", text => JSON.parse(text) as Empty, record([])],
+  ["AnyObject", text => JSON.parse(text) as AnyObject, record([["o", either(dictionary(anything), list(anything))], ["p", dictionary(anything)]])],
+  ["Extended", text => JSON.parse(text) as Extended, record([["x", number], ["y", number], ["z", number], ["label", text, true]])],
+  ["Derived", text => JSON.parse(text) as Derived, derived],
+];
+
+////= tokens
+
+const intruders = ["\u0000", '"', "\\", "{", "}", "[", "]", ",", ":", " ", "\n", "\t", "\r", "0", "1", "9", "-", "+", ".", "e", "E", "n", "t", "f", "u", "a", "/", "'", "\u001f", "\u007f", " ", "ÿ", "Ā", " ", "﻿", "\ud800", "\udc00", "null", "true", "false", "nul", "tru", "1e400", "-0", "{}", "[]", '""', '"\\u0000"', "\\u", "\\u00", "\\ud800"];
+const spaces = [" ", "\n", "\t", "\r", "  ", " \n\t\r "];
+
+////= mutate
+
+////= represent
+
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+
+////= show
+
+////= deepest
+
+let reported = 0;
+function report(what: string, type: string, text: string, typed: string, plain: string): void {
+  if (reported++ < 20) console.log(what + " " + type + " seed " + seed + " on " + JSON.stringify(text).slice(0, 600) + "\n  typed: " + typed.slice(0, 400) + "\n  plain: " + plain.slice(0, 400));
+}
+
+const holdsEnums = new Set(["Painted", "ByEnum", "ByEnum[]"]);
+for (const [label, parse, make] of types) {
+  let accepted = 0;
+  let syntaxErrors = 0;
+  let different = 0;
+  let texts = 0;
+  for (let round = 0; round < rounds; round++) {
+    const valid = make(0);
+    for (let turn = 0; turn < 6; turn++) {
+      const text = represent(turn === 0 ? valid : mutate(valid));
+      if (deepest(text) > 1500) continue;
+      if (holdsEnums.has(label) && text.includes("-0")) continue;
+      texts++;
+      let typed = "";
+      let plain = "";
+      let typedValue: unknown;
+      let plainValue: unknown;
+      const start = Date.now();
+      try {
+        typedValue = parse(text);
+        typed = show(typedValue);
+      } catch (error: any) {
+        typed = error.name + ": " + error.message;
+      }
+      if (Date.now() - start > 30000) report("SLOW", label, text, typed, "");
+      try {
+        plainValue = plainParse(text);
+        plain = show(plainValue);
+      } catch (error: any) {
+        plain = error.name + ": " + error.message;
+      }
+      if (typed !== plain) {
+        different++;
+        report("DIFFERENT", label, text, typed, plain);
+      } else if (plain.startsWith("SyntaxError")) syntaxErrors++;
+      else {
+        accepted++;
+        if (JSON.stringify(typedValue) !== JSON.stringify(plainValue)) {
+          different++;
+          report("STRINGIFIED DIFFERENTLY", label, text, String(JSON.stringify(typedValue)), String(JSON.stringify(plainValue)));
+        }
+      }
+    }
+  }
+  console.log(label + ": " + texts + " texts: " + accepted + " accepted, " + syntaxErrors + " invalid JSON: " + different + " differ");
+}
+//// json-parse-type-argument-numbers-in-every-spelling.ts
+// Numbers in every spelling, valid and not, in every place where a type expects a number: `JSON.parse(text) as T` gives the number JSON.parse gives, bit for bit, or its error.
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+
+////= show
+
+////= outcome
+
+let shown = 0;
+////= differs
+
+type Held = { n: number };
+type Either = { n: number | string | null };
+
+const roads: [string, (text: string) => unknown, (number: string) => string][] = [
+  ["a member", text => JSON.parse(text) as Held, number => '{"n":' + number + "}"],
+  ["a member, spaced", text => JSON.parse(text) as Held, number => '{ "n" : ' + number + " }"],
+  ["a member behind an undeclared key", text => JSON.parse(text) as Held, number => '{"u":' + number + ',"n":' + number + ',"v":[' + number + "]}"],
+  ["a union", text => JSON.parse(text) as Either, number => '{"n":' + number + "}"],
+  ["the root", text => JSON.parse(text) as number, number => number],
+  ["the root, spaced", text => JSON.parse(text) as number, number => " " + number + "\n"],
+  ["elements", text => JSON.parse(text) as number[], number => "[" + number + "," + number + "]"],
+  ["a tuple", text => JSON.parse(text) as [number, number], number => "[" + number + " , " + number + "]"],
+  ["a dictionary", text => JSON.parse(text) as Record<string, number>, number => '{"a":' + number + ',"b":' + number + "}"],
+  ["16-bit text", text => JSON.parse(text) as Held, number => ('{"n":' + number + "}Ā").slice(0, -1)],
+];
+
+const spellings = [
+  "0", "-0", "0.0", "-0.0", "-0e0", "0e0", "0E+0", "0e400", "-0e400", "0e-400", "0.0e-0", "1", "-1", "1.0", "1.5", "-1.5", "1.50", "100", "1e2", "1E2", "1e+2", "1E+2", "1e02", "10e1", "1000e-1", "15e-1", "0.1", "0.2", "0.30000000000000004",
+  "1e400", "-1e400", "1E400", "1e-400", "1E-400", "-1e-400", "5e-324", "4.9e-324", "3e-324", "2.4703282292062327e-324", "2.4703282292062328e-324", "2.5e-324", "2.2250738585072014e-308", "2.2250738585072011e-308", "2.225073858507201e-308",
+  "1.7976931348623157e308", "1.7976931348623158e308", "1.7976931348623159e308", "1.797693134862315807e308", "1.797693134862315808e308", "17976931348623157e292", "1.8e308", "-1.7976931348623159e308",
+  "9007199254740991", "9007199254740992", "9007199254740993", "9007199254740994", "9007199254740995", "-9007199254740991", "-9007199254740992", "-9007199254740993", "9007199254740993.0", "9007199254740992.5", "900719925474099.3e1",
+  "2147483647", "2147483648", "-2147483648", "-2147483649", "4294967295", "4294967296", "999999999", "1000000000", "9999999999", "-999999999", "-1000000000",
+  "9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809", "18446744073709551615", "18446744073709551616", "18446744073709551617", "36893488147419103232",
+  "123456789012345", "1234567890123456", "12345678901234567", "123456789012345678", "1234567890123456789", "12345678901234567890", "123456789012345678901234567890", "1234567890123456789012345678901234567890",
+  "0.123456789012345", "0.1234567890123456", "0.12345678901234567", "0.123456789012345678", "0.1234567890123456789012345678901234567890", "123456.789012345678901234567890e-10",
+  "1e21", "1e22", "1e23", "1e-22", "1e-23", "9.5e22", "8.5e23", "123456789012345e22", "123456789012345e23", "123456789012345e-22", "123456789012345e-23", "999999999999999e22", "1e15", "1e16", "1e-5", "1e-6", "1e-7",
+  "1.00000000000000011102230246251565404236316680908203125", "1.00000000000000011102230246251565404236316680908203124", "1.00000000000000011102230246251565404236316680908203126",
+  "1e1000000000", "1e-1000000000", "1e2147483647", "1e2147483648", "1e-2147483648", "1e-2147483649", "1e4294967296", "1e4294967297", "1e99999999999999999999", "1e-99999999999999999999", "0e99999999999999999999", "0.0e-99999999999999999999", "-0e99999999999999999999",
+  "1" + "0".repeat(308), "1" + "0".repeat(309), "1" + "0".repeat(400), "0." + "0".repeat(322) + "1", "0." + "0".repeat(323) + "1", "0." + "0".repeat(323) + "3", "0." + "0".repeat(400) + "1", "1." + "9".repeat(400), "1." + "0".repeat(400) + "1",
+  "1" + "0".repeat(400) + "e-400", "0." + "0".repeat(400) + "1e401", "9".repeat(15), "9".repeat(16), "9".repeat(17), "9".repeat(18), "9".repeat(19), "9".repeat(20), "9".repeat(21), "9".repeat(5000), "0." + "9".repeat(5000), "1e" + "0".repeat(5000) + "1",
+  "01", "00", "-01", "-00", "007", "+1", "+0", "1.", "-1.", "0.", ".5", "-.5", "-", "--1", "-+1", "1e", "1E", "1e+", "1e-", "1e+-1", "1.e1", "1.5e", "1.5e+", "1..5", "1.5.5", "1e5.5", "1e5e5", "0x10", "0b1", "0o7", "1_000", "1n", "1f", "1d",
+  "Infinity", "-Infinity", "NaN", "-NaN", "infinity", "nan", "1 2", "1,", ",1", "- 1", "1 .5", "1. 5", "1 e5", "1e 5", "¹", "١", "１", "1\u0000", "\u00001", "1 ", " 1", "﻿1", "1﻿", "", " ", "-e1", "e1", "E1", ".", ".e1", "0e", "0e+", "0.e1", "-0.", "-0e",
+];
+
+for (const [label, parse, wrap] of roads) {
+  let different = 0;
+  for (const spelling of spellings) different += differs(parse, wrap(spelling));
+  console.log(label + ": " + spellings.length + " spellings: " + different + " differ");
+}
+
+let seed = 12345;
+////= lines-7	random
+function digits(count: number): string {
+  let text = "";
+  for (let at = 0; at < count; at++) text += String(random(10));
+  return text;
+}
+for (const [label, parse, wrap] of roads) {
+  let different = 0;
+  for (let round = 0; round < 4000; round++) {
+    let spelling = random(2) ? "-" : "";
+    spelling += random(4) ? String(1 + random(9)) + digits(random(round % 5 ? 8 : 24)) : "0";
+    if (random(2)) spelling += "." + digits(1 + random(round % 3 ? 6 : 24));
+    if (random(2)) spelling += (random(2) ? "e" : "E") + ["", "+", "-"][random(3)] + String(random(round % 7 ? 30 : 340));
+    different += differs(parse, wrap(spelling));
+  }
+  console.log(label + ": 4000 numbers by chance: " + different + " differ");
+}
+//// json-parse-type-argument-public-test-suite/LICENSE
+MIT License
+
+Copyright (c) 2016 Nicolas Seriot
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+//// json-parse-type-argument-public-test-suite/README.md
+`files.json` holds the files of `test_parsing/` and `test_transform/` of [nst/JSONTestSuite](https://github.com/nst/JSONTestSuite) at commit 1ef36fa01286573e846ac449e8683f8833c5b26a, each in base64, because many of them are not UTF-8; a long file that repeats a few bytes is stored as those bytes, a count and what follows. `LICENSE` is that repository's license (MIT). `generate.ts` writes `files.json` and `fitted.ts` from a clone.
+//// json-parse-type-argument-public-test-suite/files.json
+{
+"test_parsing/i_number_double_huge_neg_exp.json": "WzEyMy40NTZlLTc4OV0=",
+"test_parsing/i_number_huge_exp.json": "WzAuNGUwMDY2OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk2OTk5OTk5OTAwNl0=",
+"test_parsing/i_number_neg_int_huge_exp.json": "Wy0xZSs5OTk5XQ==",
+"test_parsing/i_number_pos_double_huge_exp.json": "WzEuNWUrOTk5OV0=",
+"test_parsing/i_number_real_neg_overflow.json": "Wy0xMjMxMjNlMTAwMDAwXQ==",
+"test_parsing/i_number_real_pos_overflow.json": "WzEyMzEyM2UxMDAwMDBd",
+"test_parsing/i_number_real_underflow.json": "WzEyM2UtMTAwMDAwMDBd",
+"test_parsing/i_number_too_big_neg_int.json": "Wy0xMjMxMjMxMjMxMjMxMjMxMjMxMjMxMjMxMjMxMjNd",
+"test_parsing/i_number_too_big_pos_int.json": "WzEwMDAwMDAwMDAwMDAwMDAwMDAwMF0=",
+"test_parsing/i_number_very_big_negative_int.json": "Wy0yMzc0NjIzNzQ2NzMyNzY4OTQyNzk4MzI3NDk4MzI0MjM0Nzk4MjMyNDYzMjc4NDZd",
+"test_parsing/i_object_key_lone_2nd_surrogate.json": "eyJcdURGQUEiOjB9",
+"test_parsing/i_string_1st_surrogate_but_2nd_missing.json": "WyJcdURBREEiXQ==",
+"test_parsing/i_string_1st_valid_surrogate_2nd_invalid.json": "WyJcdUQ4ODhcdTEyMzQiXQ==",
+"test_parsing/i_string_UTF-16LE_with_BOM.json": "//5bACIA6QAiAF0A",
+"test_parsing/i_string_UTF-8_invalid_sequence.json": "WyLml6XRiPoiXQ==",
+"test_parsing/i_string_UTF8_surrogate_U+D800.json": "WyLtoIAiXQ==",
+"test_parsing/i_string_incomplete_surrogate_and_escape_valid.json": "WyJcdUQ4MDBcbiJd",
+"test_parsing/i_string_incomplete_surrogate_pair.json": "WyJcdURkMWVhIl0=",
+"test_parsing/i_string_incomplete_surrogates_escape_valid.json": "WyJcdUQ4MDBcdUQ4MDBcbiJd",
+"test_parsing/i_string_invalid_lonely_surrogate.json": "WyJcdWQ4MDAiXQ==",
+"test_parsing/i_string_invalid_surrogate.json": "WyJcdWQ4MDBhYmMiXQ==",
+"test_parsing/i_string_invalid_utf-8.json": "WyL/Il0=",
+"test_parsing/i_string_inverted_surrogates_U+1D11E.json": "WyJcdURkMWVcdUQ4MzQiXQ==",
+"test_parsing/i_string_iso_latin_1.json": "WyLpIl0=",
+"test_parsing/i_string_lone_second_surrogate.json": "WyJcdURGQUEiXQ==",
+"test_parsing/i_string_lone_utf8_continuation_byte.json": "WyKBIl0=",
+"test_parsing/i_string_not_in_unicode_range.json": "WyL0v7+/Il0=",
+"test_parsing/i_string_overlong_sequence_2_bytes.json": "WyLAryJd",
+"test_parsing/i_string_overlong_sequence_6_bytes.json": "WyL8g7+/v78iXQ==",
+"test_parsing/i_string_overlong_sequence_6_bytes_null.json": "WyL8gICAgIAiXQ==",
+"test_parsing/i_string_truncated-utf-8.json": "WyLg/yJd",
+"test_parsing/i_string_utf16BE_no_BOM.json": "AFsAIgDpACIAXQ==",
+"test_parsing/i_string_utf16LE_no_BOM.json": "WwAiAOkAIgBdAA==",
+"test_parsing/i_structure_500_nested_arrays.json": "W1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tbW1tdXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXV1dXQ==",
+"test_parsing/i_structure_UTF-8_BOM_empty_object.json": "77u/e30=",
+"test_parsing/n_array_1_true_without_comma.json": "WzEgdHJ1ZV0=",
+"test_parsing/n_array_a_invalid_utf8.json": "W2HlXQ==",
+"test_parsing/n_array_colon_instead_of_comma.json": "WyIiOiAxXQ==",
+"test_parsing/n_array_comma_after_close.json": "WyIiXSw=",
+"test_parsing/n_array_comma_and_number.json": "WywxXQ==",
+"test_parsing/n_array_double_comma.json": "WzEsLDJd",
+"test_parsing/n_array_double_extra_comma.json": "WyJ4IiwsXQ==",
+"test_parsing/n_array_extra_close.json": "WyJ4Il1d",
+"test_parsing/n_array_extra_comma.json": "WyIiLF0=",
+"test_parsing/n_array_incomplete.json": "WyJ4Ig==",
+"test_parsing/n_array_incomplete_invalid_value.json": "W3g=",
+"test_parsing/n_array_inner_array_no_comma.json": "WzNbNF1d",
+"test_parsing/n_array_invalid_utf8.json": "W/9d",
+"test_parsing/n_array_items_separated_by_semicolon.json": "WzE6Ml0=",
+"test_parsing/n_array_just_comma.json": "Wyxd",
+"test_parsing/n_array_just_minus.json": "Wy1d",
+"test_parsing/n_array_missing_value.json": "WyAgICwgIiJd",
+"test_parsing/n_array_newlines_unclosed.json": "WyJhIiwKNAosMSw=",
+"test_parsing/n_array_number_and_comma.json": "WzEsXQ==",
+"test_parsing/n_array_number_and_several_commas.json": "WzEsLF0=",
+"test_parsing/n_array_spaces_vertical_tab_formfeed.json": "WyILYSJcZl0=",
+"test_parsing/n_array_star_inside.json": "Wypd",
+"test_parsing/n_array_unclosed.json": "WyIi",
+"test_parsing/n_array_unclosed_trailing_comma.json": "WzEs",
+"test_parsing/n_array_unclosed_with_new_lines.json": "WzEsCjEKLDE=",
+"test_parsing/n_array_unclosed_with_object_inside.json": "W3t9",
+"test_parsing/n_incomplete_false.json": "W2ZhbHNd",
+"test_parsing/n_incomplete_null.json": "W251bF0=",
+"test_parsing/n_incomplete_true.json": "W3RydV0=",
+"test_parsing/n_multidigit_number_then_00.json": "MTIzAA==",
+"test_parsing/n_number_++.json": "WysrMTIzNF0=",
+"test_parsing/n_number_+1.json": "WysxXQ==",
+"test_parsing/n_number_+Inf.json": "WytJbmZd",
+"test_parsing/n_number_-01.json": "Wy0wMV0=",
+"test_parsing/n_number_-1.0..json": "Wy0xLjAuXQ==",
+"test_parsing/n_number_-2..json": "Wy0yLl0=",
+"test_parsing/n_number_-NaN.json": "Wy1OYU5d",
+"test_parsing/n_number_.-1.json": "Wy4tMV0=",
+"test_parsing/n_number_.2e-3.json": "Wy4yZS0zXQ==",
+"test_parsing/n_number_0.1.2.json": "WzAuMS4yXQ==",
+"test_parsing/n_number_0.3e+.json": "WzAuM2UrXQ==",
+"test_parsing/n_number_0.3e.json": "WzAuM2Vd",
+"test_parsing/n_number_0.e1.json": "WzAuZTFd",
+"test_parsing/n_number_0_capital_E+.json": "WzBFK10=",
+"test_parsing/n_number_0_capital_E.json": "WzBFXQ==",
+"test_parsing/n_number_0e+.json": "WzBlK10=",
+"test_parsing/n_number_0e.json": "WzBlXQ==",
+"test_parsing/n_number_1.0e+.json": "WzEuMGUrXQ==",
+"test_parsing/n_number_1.0e-.json": "WzEuMGUtXQ==",
+"test_parsing/n_number_1.0e.json": "WzEuMGVd",
+"test_parsing/n_number_1_000.json": "WzEgMDAwLjBd",
+"test_parsing/n_number_1eE2.json": "WzFlRTJd",
+"test_parsing/n_number_2.e+3.json": "WzIuZSszXQ==",
+"test_parsing/n_number_2.e-3.json": "WzIuZS0zXQ==",
+"test_parsing/n_number_2.e3.json": "WzIuZTNd",
+"test_parsing/n_number_9.e+.json": "WzkuZStd",
+"test_parsing/n_number_Inf.json": "W0luZl0=",
+"test_parsing/n_number_NaN.json": "W05hTl0=",
+"test_parsing/n_number_U+FF11_fullwidth_digit_one.json": "W++8kV0=",
+"test_parsing/n_number_expression.json": "WzErMl0=",
+"test_parsing/n_number_hex_1_digit.json": "WzB4MV0=",
+"test_parsing/n_number_hex_2_digits.json": "WzB4NDJd",
+"test_parsing/n_number_infinity.json": "W0luZmluaXR5XQ==",
+"test_parsing/n_number_invalid+-.json": "WzBlKy0xXQ==",
+"test_parsing/n_number_invalid-negative-real.json": "Wy0xMjMuMTIzZm9vXQ==",
+"test_parsing/n_number_invalid-utf-8-in-bigger-int.json": "WzEyM+Vd",
+"test_parsing/n_number_invalid-utf-8-in-exponent.json": "WzFlMeVd",
+"test_parsing/n_number_invalid-utf-8-in-int.json": "WzDlXQo=",
+"test_parsing/n_number_minus_infinity.json": "Wy1JbmZpbml0eV0=",
+"test_parsing/n_number_minus_sign_with_trailing_garbage.json": "Wy1mb29d",
+"test_parsing/n_number_minus_space_1.json": "Wy0gMV0=",
+"test_parsing/n_number_neg_int_starting_with_zero.json": "Wy0wMTJd",
+"test_parsing/n_number_neg_real_without_int_part.json": "Wy0uMTIzXQ==",
+"test_parsing/n_number_neg_with_garbage_at_end.json": "Wy0xeF0=",
+"test_parsing/n_number_real_garbage_after_e.json": "WzFlYV0=",
+"test_parsing/n_number_real_with_invalid_utf8_after_e.json": "WzFl5V0=",
+"test_parsing/n_number_real_without_fractional_part.json": "WzEuXQ==",
+"test_parsing/n_number_starting_with_dot.json": "Wy4xMjNd",
+"test_parsing/n_number_with_alpha.json": "WzEuMmEtM10=",
+"test_parsing/n_number_with_alpha_char.json": "WzEuODAxMTY3MDAzMzM3NjUxNEgtMzA4XQ==",
+"test_parsing/n_number_with_leading_zero.json": "WzAxMl0=",
+"test_parsing/n_object_bad_value.json": "WyJ4IiwgdHJ1dGhd",
+"test_parsing/n_object_bracket_key.json": "e1s6ICJ4In0K",
+"test_parsing/n_object_comma_instead_of_colon.json": "eyJ4IiwgbnVsbH0=",
+"test_parsing/n_object_double_colon.json": "eyJ4Ijo6ImIifQ==",
+"test_parsing/n_object_emoji.json": "e/Cfh6jwn4etfQ==",
+"test_parsing/n_object_garbage_at_end.json": "eyJhIjoiYSIgMTIzfQ==",
+"test_parsing/n_object_key_with_single_quotes.json": "e2tleTogJ3ZhbHVlJ30=",
+"test_parsing/n_object_lone_continuation_byte_in_key_and_trailing_comma.json": "eyK5IjoiMCIsfQ==",
+"test_parsing/n_object_missing_colon.json": "eyJhIiBifQ==",
+"test_parsing/n_object_missing_key.json": "ezoiYiJ9",
+"test_parsing/n_object_missing_semicolon.json": "eyJhIiAiYiJ9",
+"test_parsing/n_object_missing_value.json": "eyJhIjo=",
+"test_parsing/n_object_no-colon.json": "eyJhIg==",
+"test_parsing/n_object_non_string_key.json": "ezE6MX0=",
+"test_parsing/n_object_non_string_key_but_huge_number_instead.json": "ezk5OTlFOTk5OToxfQ==",
+"test_parsing/n_object_repeated_null_null.json": "e251bGw6bnVsbCxudWxsOm51bGx9",
+"test_parsing/n_object_several_trailing_commas.json": "eyJpZCI6MCwsLCwsfQ==",
+"test_parsing/n_object_single_quote.json": "eydhJzowfQ==",
+"test_parsing/n_object_trailing_comma.json": "eyJpZCI6MCx9",
+"test_parsing/n_object_trailing_comment.json": "eyJhIjoiYiJ9LyoqLw==",
+"test_parsing/n_object_trailing_comment_open.json": "eyJhIjoiYiJ9LyoqLy8=",
+"test_parsing/n_object_trailing_comment_slash_open.json": "eyJhIjoiYiJ9Ly8=",
+"test_parsing/n_object_trailing_comment_slash_open_incomplete.json": "eyJhIjoiYiJ9Lw==",
+"test_parsing/n_object_two_commas_in_a_row.json": "eyJhIjoiYiIsLCJjIjoiZCJ9",
+"test_parsing/n_object_unquoted_key.json": "e2E6ICJiIn0=",
+"test_parsing/n_object_unterminated-value.json": "eyJhIjoiYQ==",
+"test_parsing/n_object_with_single_string.json": "eyAiZm9vIiA6ICJiYXIiLCAiYSIgfQ==",
+"test_parsing/n_object_with_trailing_garbage.json": "eyJhIjoiYiJ9Iw==",
+"test_parsing/n_single_space.json": "IA==",
+"test_parsing/n_string_1_surrogate_then_escape.json": "WyJcdUQ4MDBcIl0=",
+"test_parsing/n_string_1_surrogate_then_escape_u.json": "WyJcdUQ4MDBcdSJd",
+"test_parsing/n_string_1_surrogate_then_escape_u1.json": "WyJcdUQ4MDBcdTEiXQ==",
+"test_parsing/n_string_1_surrogate_then_escape_u1x.json": "WyJcdUQ4MDBcdTF4Il0=",
+"test_parsing/n_string_accentuated_char_no_quotes.json": "W8OpXQ==",
+"test_parsing/n_string_backslash_00.json": "WyJcACJd",
+"test_parsing/n_string_escape_x.json": "WyJceDAwIl0=",
+"test_parsing/n_string_escaped_backslash_bad.json": "WyJcXFwiXQ==",
+"test_parsing/n_string_escaped_ctrl_char_tab.json": "WyJcCSJd",
+"test_parsing/n_string_escaped_emoji.json": "WyJc8J+MgCJd",
+"test_parsing/n_string_incomplete_escape.json": "WyJcIl0=",
+"test_parsing/n_string_incomplete_escaped_character.json": "WyJcdTAwQSJd",
+"test_parsing/n_string_incomplete_surrogate.json": "WyJcdUQ4MzRcdURkIl0=",
+"test_parsing/n_string_incomplete_surrogate_escape_invalid.json": "WyJcdUQ4MDBcdUQ4MDBceCJd",
+"test_parsing/n_string_invalid-utf-8-in-escape.json": "WyJcdeUiXQ==",
+"test_parsing/n_string_invalid_backslash_esc.json": "WyJcYSJd",
+"test_parsing/n_string_invalid_unicode_escape.json": "WyJcdXFxcXEiXQ==",
+"test_parsing/n_string_invalid_utf8_after_escape.json": "WyJc5SJd",
+"test_parsing/n_string_leading_uescaped_thinspace.json": "W1x1MDAyMCJhc2QiXQ==",
+"test_parsing/n_string_no_quotes_with_bad_escape.json": "W1xuXQ==",
+"test_parsing/n_string_single_doublequote.json": "Ig==",
+"test_parsing/n_string_single_quote.json": "WydzaW5nbGUgcXVvdGUnXQ==",
+"test_parsing/n_string_single_string_no_double_quotes.json": "YWJj",
+"test_parsing/n_string_start_escape_unclosed.json": "WyJc",
+"test_parsing/n_string_unescaped_ctrl_char.json": "WyJhAGEiXQ==",
+"test_parsing/n_string_unescaped_newline.json": "WyJuZXcKbGluZSJd",
+"test_parsing/n_string_unescaped_tab.json": "WyIJIl0=",
+"test_parsing/n_string_unicode_CapitalU.json": "IlxVQTY2RCI=",
+"test_parsing/n_string_with_trailing_garbage.json": "IiJ4",
+"test_parsing/n_structure_100000_opening_arrays.json": {"repeat":"Ww==","times":100000,"then":""},
+"test_parsing/n_structure_U+2060_word_joined.json": "W+KBoF0=",
+"test_parsing/n_structure_UTF8_BOM_no_data.json": "77u/",
+"test_parsing/n_structure_angle_bracket_..json": "PC4+",
+"test_parsing/n_structure_angle_bracket_null.json": "WzxudWxsPl0=",
+"test_parsing/n_structure_array_trailing_garbage.json": "WzFdeA==",
+"test_parsing/n_structure_array_with_extra_array_close.json": "WzFdXQ==",
+"test_parsing/n_structure_array_with_unclosed_string.json": "WyJhc2Rd",
+"test_parsing/n_structure_ascii-unicode-identifier.json": "YcOl",
+"test_parsing/n_structure_capitalized_True.json": "W1RydWVd",
+"test_parsing/n_structure_close_unopened_array.json": "MV0=",
+"test_parsing/n_structure_comma_instead_of_closing_brace.json": "eyJ4IjogdHJ1ZSw=",
+"test_parsing/n_structure_double_array.json": "W11bXQ==",
+"test_parsing/n_structure_end_array.json": "XQ==",
+"test_parsing/n_structure_incomplete_UTF8_BOM.json": "77t7fQ==",
+"test_parsing/n_structure_lone-invalid-utf-8.json": "5Q==",
+"test_parsing/n_structure_lone-open-bracket.json": "Ww==",
+"test_parsing/n_structure_no_data.json": "",
+"test_parsing/n_structure_null-byte-outside-string.json": "WwBd",
+"test_parsing/n_structure_number_with_trailing_garbage.json": "MkA=",
+"test_parsing/n_structure_object_followed_by_closing_object.json": "e319",
+"test_parsing/n_structure_object_unclosed_no_value.json": "eyIiOg==",
+"test_parsing/n_structure_object_with_comment.json": "eyJhIjovKmNvbW1lbnQqLyJiIn0=",
+"test_parsing/n_structure_object_with_trailing_garbage.json": "eyJhIjogdHJ1ZX0gIngi",
+"test_parsing/n_structure_open_array_apostrophe.json": "Wyc=",
+"test_parsing/n_structure_open_array_comma.json": "Wyw=",
+"test_parsing/n_structure_open_array_object.json": {"repeat":"W3siIjo=","times":50000,"then":"Cg=="},
+"test_parsing/n_structure_open_array_open_object.json": "W3s=",
+"test_parsing/n_structure_open_array_open_string.json": "WyJh",
+"test_parsing/n_structure_open_array_string.json": "WyJhIg==",
+"test_parsing/n_structure_open_object.json": "ew==",
+"test_parsing/n_structure_open_object_close_array.json": "e10=",
+"test_parsing/n_structure_open_object_comma.json": "eyw=",
+"test_parsing/n_structure_open_object_open_array.json": "e1s=",
+"test_parsing/n_structure_open_object_open_string.json": "eyJh",
+"test_parsing/n_structure_open_object_string_with_apostrophes.json": "eydhJw==",
+"test_parsing/n_structure_open_open.json": "WyJce1siXHtbIlx7WyJcew==",
+"test_parsing/n_structure_single_eacute.json": "6Q==",
+"test_parsing/n_structure_single_star.json": "Kg==",
+"test_parsing/n_structure_trailing_#.json": "eyJhIjoiYiJ9I3t9",
+"test_parsing/n_structure_uescaped_LF_before_string.json": "W1x1MDAwQSIiXQ==",
+"test_parsing/n_structure_unclosed_array.json": "WzE=",
+"test_parsing/n_structure_unclosed_array_partial_null.json": "WyBmYWxzZSwgbnVs",
+"test_parsing/n_structure_unclosed_array_unfinished_false.json": "WyB0cnVlLCBmYWxz",
+"test_parsing/n_structure_unclosed_array_unfinished_true.json": "WyBmYWxzZSwgdHJ1",
+"test_parsing/n_structure_unclosed_object.json": "eyJhc2QiOiJhc2Qi",
+"test_parsing/n_structure_unicode-identifier.json": "w6U=",
+"test_parsing/n_structure_whitespace_U+2060_word_joiner.json": "W+KBoF0=",
+"test_parsing/n_structure_whitespace_formfeed.json": "Wwxd",
+"test_parsing/y_array_arraysWithSpaces.json": "W1tdICAgXQ==",
+"test_parsing/y_array_empty-string.json": "WyIiXQ==",
+"test_parsing/y_array_empty.json": "W10=",
+"test_parsing/y_array_ending_with_newline.json": "WyJhIl0=",
+"test_parsing/y_array_false.json": "W2ZhbHNlXQ==",
+"test_parsing/y_array_heterogeneous.json": "W251bGwsIDEsICIxIiwge31d",
+"test_parsing/y_array_null.json": "W251bGxd",
+"test_parsing/y_array_with_1_and_newline.json": "WzEKXQ==",
+"test_parsing/y_array_with_leading_space.json": "IFsxXQ==",
+"test_parsing/y_array_with_several_null.json": "WzEsbnVsbCxudWxsLG51bGwsMl0=",
+"test_parsing/y_array_with_trailing_space.json": "WzJdIA==",
+"test_parsing/y_number.json": "WzEyM2U2NV0=",
+"test_parsing/y_number_0e+1.json": "WzBlKzFd",
+"test_parsing/y_number_0e1.json": "WzBlMV0=",
+"test_parsing/y_number_after_space.json": "WyA0XQ==",
+"test_parsing/y_number_double_close_to_zero.json": "Wy0wLjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMV0K",
+"test_parsing/y_number_int_with_exp.json": "WzIwZTFd",
+"test_parsing/y_number_minus_zero.json": "Wy0wXQ==",
+"test_parsing/y_number_negative_int.json": "Wy0xMjNd",
+"test_parsing/y_number_negative_one.json": "Wy0xXQ==",
+"test_parsing/y_number_negative_zero.json": "Wy0wXQ==",
+"test_parsing/y_number_real_capital_e.json": "WzFFMjJd",
+"test_parsing/y_number_real_capital_e_neg_exp.json": "WzFFLTJd",
+"test_parsing/y_number_real_capital_e_pos_exp.json": "WzFFKzJd",
+"test_parsing/y_number_real_exponent.json": "WzEyM2U0NV0=",
+"test_parsing/y_number_real_fraction_exponent.json": "WzEyMy40NTZlNzhd",
+"test_parsing/y_number_real_neg_exp.json": "WzFlLTJd",
+"test_parsing/y_number_real_pos_exponent.json": "WzFlKzJd",
+"test_parsing/y_number_simple_int.json": "WzEyM10=",
+"test_parsing/y_number_simple_real.json": "WzEyMy40NTY3ODld",
+"test_parsing/y_object.json": "eyJhc2QiOiJzZGYiLCAiZGZnIjoiZmdoIn0=",
+"test_parsing/y_object_basic.json": "eyJhc2QiOiJzZGYifQ==",
+"test_parsing/y_object_duplicated_key.json": "eyJhIjoiYiIsImEiOiJjIn0=",
+"test_parsing/y_object_duplicated_key_and_value.json": "eyJhIjoiYiIsImEiOiJiIn0=",
+"test_parsing/y_object_empty.json": "e30=",
+"test_parsing/y_object_empty_key.json": "eyIiOjB9",
+"test_parsing/y_object_escaped_null_in_key.json": "eyJmb29cdTAwMDBiYXIiOiA0Mn0=",
+"test_parsing/y_object_extreme_numbers.json": "eyAibWluIjogLTEuMGUrMjgsICJtYXgiOiAxLjBlKzI4IH0=",
+"test_parsing/y_object_long_strings.json": "eyJ4IjpbeyJpZCI6ICJ4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4In1dLCAiaWQiOiAieHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eCJ9",
+"test_parsing/y_object_simple.json": "eyJhIjpbXX0=",
+"test_parsing/y_object_string_unicode.json": "eyJ0aXRsZSI6Ilx1MDQxZlx1MDQzZVx1MDQzYlx1MDQ0Mlx1MDQzZVx1MDQ0MFx1MDQzMCBcdTA0MTdcdTA0MzVcdTA0M2NcdTA0M2JcdTA0MzVcdTA0M2FcdTA0M2VcdTA0M2ZcdTA0MzAiIH0=",
+"test_parsing/y_object_with_newlines.json": "ewoiYSI6ICJiIgp9",
+"test_parsing/y_string_1_2_3_bytes_UTF-8_sequences.json": "WyJcdTAwNjBcdTAxMmFcdTEyQUIiXQ==",
+"test_parsing/y_string_accepted_surrogate_pair.json": "WyJcdUQ4MDFcdWRjMzciXQ==",
+"test_parsing/y_string_accepted_surrogate_pairs.json": "WyJcdWQ4M2RcdWRlMzlcdWQ4M2RcdWRjOGQiXQ==",
+"test_parsing/y_string_allowed_escapes.json": "WyJcIlxcXC9cYlxmXG5cclx0Il0=",
+"test_parsing/y_string_backslash_and_u_escaped_zero.json": "WyJcXHUwMDAwIl0=",
+"test_parsing/y_string_backslash_doublequotes.json": "WyJcIiJd",
+"test_parsing/y_string_comments.json": "WyJhLypiKi9jLypkLy9lIl0=",
+"test_parsing/y_string_double_escape_a.json": "WyJcXGEiXQ==",
+"test_parsing/y_string_double_escape_n.json": "WyJcXG4iXQ==",
+"test_parsing/y_string_escaped_control_character.json": "WyJcdTAwMTIiXQ==",
+"test_parsing/y_string_escaped_noncharacter.json": "WyJcdUZGRkYiXQ==",
+"test_parsing/y_string_in_array.json": "WyJhc2QiXQ==",
+"test_parsing/y_string_in_array_with_leading_space.json": "WyAiYXNkIl0=",
+"test_parsing/y_string_last_surrogates_1_and_2.json": "WyJcdURCRkZcdURGRkYiXQ==",
+"test_parsing/y_string_nbsp_uescaped.json": "WyJuZXdcdTAwQTBsaW5lIl0=",
+"test_parsing/y_string_nonCharacterInUTF-8_U+10FFFF.json": "WyL0j7+/Il0=",
+"test_parsing/y_string_nonCharacterInUTF-8_U+FFFF.json": "WyLvv78iXQ==",
+"test_parsing/y_string_null_escape.json": "WyJcdTAwMDAiXQ==",
+"test_parsing/y_string_one-byte-utf-8.json": "WyJcdTAwMmMiXQ==",
+"test_parsing/y_string_pi.json": "WyLPgCJd",
+"test_parsing/y_string_reservedCharacterInUTF-8_U+1BFFF.json": "WyLwm7+/Il0=",
+"test_parsing/y_string_simple_ascii.json": "WyJhc2QgIl0=",
+"test_parsing/y_string_space.json": "IiAi",
+"test_parsing/y_string_surrogates_U+1D11E_MUSICAL_SYMBOL_G_CLEF.json": "WyJcdUQ4MzRcdURkMWUiXQ==",
+"test_parsing/y_string_three-byte-utf-8.json": "WyJcdTA4MjEiXQ==",
+"test_parsing/y_string_two-byte-utf-8.json": "WyJcdTAxMjMiXQ==",
+"test_parsing/y_string_u+2028_line_sep.json": "WyLigKgiXQ==",
+"test_parsing/y_string_u+2029_par_sep.json": "WyLigKkiXQ==",
+"test_parsing/y_string_uEscape.json": "WyJcdTAwNjFcdTMwYWZcdTMwRUFcdTMwYjkiXQ==",
+"test_parsing/y_string_uescaped_newline.json": "WyJuZXdcdTAwMEFsaW5lIl0=",
+"test_parsing/y_string_unescaped_char_delete.json": "WyJ/Il0=",
+"test_parsing/y_string_unicode.json": "WyJcdUE2NkQiXQ==",
+"test_parsing/y_string_unicodeEscapedBackslash.json": "WyJcdTAwNUMiXQ==",
+"test_parsing/y_string_unicode_2.json": "WyLijYLjiLTijYIiXQ==",
+"test_parsing/y_string_unicode_U+10FFFE_nonchar.json": "WyJcdURCRkZcdURGRkUiXQ==",
+"test_parsing/y_string_unicode_U+1FFFE_nonchar.json": "WyJcdUQ4M0ZcdURGRkUiXQ==",
+"test_parsing/y_string_unicode_U+200B_ZERO_WIDTH_SPACE.json": "WyJcdTIwMEIiXQ==",
+"test_parsing/y_string_unicode_U+2064_invisible_plus.json": "WyJcdTIwNjQiXQ==",
+"test_parsing/y_string_unicode_U+FDD0_nonchar.json": "WyJcdUZERDAiXQ==",
+"test_parsing/y_string_unicode_U+FFFE_nonchar.json": "WyJcdUZGRkUiXQ==",
+"test_parsing/y_string_unicode_escaped_double_quote.json": "WyJcdTAwMjIiXQ==",
+"test_parsing/y_string_utf8.json": "WyLigqzwnYSeIl0=",
+"test_parsing/y_string_with_del_character.json": "WyJhf2EiXQ==",
+"test_parsing/y_structure_lonely_false.json": "ZmFsc2U=",
+"test_parsing/y_structure_lonely_int.json": "NDI=",
+"test_parsing/y_structure_lonely_negative_real.json": "LTAuMQ==",
+"test_parsing/y_structure_lonely_null.json": "bnVsbA==",
+"test_parsing/y_structure_lonely_string.json": "ImFzZCI=",
+"test_parsing/y_structure_lonely_true.json": "dHJ1ZQ==",
+"test_parsing/y_structure_string_empty.json": "IiI=",
+"test_parsing/y_structure_trailing_newline.json": "WyJhIl0K",
+"test_parsing/y_structure_true_in_array.json": "W3RydWVd",
+"test_parsing/y_structure_whitespace_array.json": "IFtdIA==",
+"test_transform/number_-9223372036854775808.json": "Wy05MjIzMzcyMDM2ODU0Nzc1ODA4XQo=",
+"test_transform/number_-9223372036854775809.json": "Wy05MjIzMzcyMDM2ODU0Nzc1ODA5XQo=",
+"test_transform/number_1.0.json": "WzEuMF0K",
+"test_transform/number_1.000000000000000005.json": "WzEuMDAwMDAwMDAwMDAwMDAwMDA1XQo=",
+"test_transform/number_1000000000000000.json": "WzEwMDAwMDAwMDAwMDAwMDBdCg==",
+"test_transform/number_10000000000000000999.json": "WzEwMDAwMDAwMDAwMDAwMDAwOTk5XQo=",
+"test_transform/number_1e-999.json": "WzFFLTk5OV0K",
+"test_transform/number_1e6.json": "WzFFNl0K",
+"test_transform/number_9223372036854775807.json": "WzkyMjMzNzIwMzY4NTQ3NzU4MDddCg==",
+"test_transform/number_9223372036854775808.json": "WzkyMjMzNzIwMzY4NTQ3NzU4MDhdCg==",
+"test_transform/object_key_nfc_nfd.json": "eyLDqSI6Ik5GQyIsImXMgSI6Ik5GRCJ9",
+"test_transform/object_key_nfd_nfc.json": "eyJlzIEiOiJORkQiLCLDqSI6Ik5GQyJ9",
+"test_transform/object_same_key_different_values.json": "eyJhIjoxLCJhIjoyfQ==",
+"test_transform/object_same_key_same_value.json": "eyJhIjoxLCJhIjoxfQ==",
+"test_transform/object_same_key_unclear_values.json": "eyJhIjowLCAiYSI6LTB9Cg==",
+"test_transform/string_1_escaped_invalid_codepoint.json": "WyJcdUQ4MDAiXQ==",
+"test_transform/string_1_invalid_codepoint.json": "WyLtoIAiXQ==",
+"test_transform/string_2_escaped_invalid_codepoints.json": "WyJcdUQ4MDBcdUQ4MDAiXQ==",
+"test_transform/string_2_invalid_codepoints.json": "WyLtoIDtoIAiXQ==",
+"test_transform/string_3_escaped_invalid_codepoints.json": "WyJcdUQ4MDBcdUQ4MDBcdUQ4MDAiXQ==",
+"test_transform/string_3_invalid_codepoints.json": "WyLtoIDtoIDtoIAiXQ==",
+"test_transform/string_with_escaped_NULL.json": "WyJBXHUwMDAwQiJd"
+}
+//// json-parse-type-argument-public-test-suite/fitted.ts
+// Written by generate.ts.
+export const parsers: ((text: string) => unknown)[] = [
+  text => JSON.parse(text) as [number],
+  text => JSON.parse(text) as [string],
+  text => JSON.parse(text) as [unknown[]],
+  text => JSON.parse(text) as unknown[],
+  text => JSON.parse(text) as [boolean],
+  text => JSON.parse(text) as [null, number, string, {  }],
+  text => JSON.parse(text) as [null],
+  text => JSON.parse(text) as [number, null, null, null, number],
+  text => JSON.parse(text) as { "asd": string; "dfg": string },
+  text => JSON.parse(text) as { "asd": string },
+  text => JSON.parse(text) as { "a": string },
+  text => JSON.parse(text) as {  },
+  text => JSON.parse(text) as { "": number },
+  text => JSON.parse(text) as { "foo\u0000bar": number },
+  text => JSON.parse(text) as { "min": number; "max": number },
+  text => JSON.parse(text) as { "x": [{ "id": string }]; "id": string },
+  text => JSON.parse(text) as { "a": unknown[] },
+  text => JSON.parse(text) as { "title": string },
+  text => JSON.parse(text) as string,
+  text => JSON.parse(text) as boolean,
+  text => JSON.parse(text) as number,
+  text => JSON.parse(text) as null,
+  text => JSON.parse(text) as { "é": string; "é": string },
+  text => JSON.parse(text) as { "é": string; "é": string },
+  text => JSON.parse(text) as { "a": number },
+];
+export const fits: Record<string, number> = {
+  "test_parsing/i_number_double_huge_neg_exp.json": 0,
+  "test_parsing/i_number_huge_exp.json": 0,
+  "test_parsing/i_number_neg_int_huge_exp.json": 0,
+  "test_parsing/i_number_pos_double_huge_exp.json": 0,
+  "test_parsing/i_number_real_neg_overflow.json": 0,
+  "test_parsing/i_number_real_pos_overflow.json": 0,
+  "test_parsing/i_number_real_underflow.json": 0,
+  "test_parsing/i_number_too_big_neg_int.json": 0,
+  "test_parsing/i_number_too_big_pos_int.json": 0,
+  "test_parsing/i_number_very_big_negative_int.json": 0,
+  "test_parsing/i_string_1st_surrogate_but_2nd_missing.json": 1,
+  "test_parsing/i_string_1st_valid_surrogate_2nd_invalid.json": 1,
+  "test_parsing/i_string_UTF-8_invalid_sequence.json": 1,
+  "test_parsing/i_string_UTF8_surrogate_U+D800.json": 1,
+  "test_parsing/i_string_incomplete_surrogate_and_escape_valid.json": 1,
+  "test_parsing/i_string_incomplete_surrogate_pair.json": 1,
+  "test_parsing/i_string_incomplete_surrogates_escape_valid.json": 1,
+  "test_parsing/i_string_invalid_lonely_surrogate.json": 1,
+  "test_parsing/i_string_invalid_surrogate.json": 1,
+  "test_parsing/i_string_invalid_utf-8.json": 1,
+  "test_parsing/i_string_inverted_surrogates_U+1D11E.json": 1,
+  "test_parsing/i_string_iso_latin_1.json": 1,
+  "test_parsing/i_string_lone_second_surrogate.json": 1,
+  "test_parsing/i_string_lone_utf8_continuation_byte.json": 1,
+  "test_parsing/i_string_not_in_unicode_range.json": 1,
+  "test_parsing/i_string_overlong_sequence_2_bytes.json": 1,
+  "test_parsing/i_string_overlong_sequence_6_bytes.json": 1,
+  "test_parsing/i_string_overlong_sequence_6_bytes_null.json": 1,
+  "test_parsing/i_string_truncated-utf-8.json": 1,
+  "test_parsing/y_array_arraysWithSpaces.json": 2,
+  "test_parsing/y_array_empty-string.json": 1,
+  "test_parsing/y_array_empty.json": 3,
+  "test_parsing/y_array_ending_with_newline.json": 1,
+  "test_parsing/y_array_false.json": 4,
+  "test_parsing/y_array_heterogeneous.json": 5,
+  "test_parsing/y_array_null.json": 6,
+  "test_parsing/y_array_with_1_and_newline.json": 0,
+  "test_parsing/y_array_with_leading_space.json": 0,
+  "test_parsing/y_array_with_several_null.json": 7,
+  "test_parsing/y_array_with_trailing_space.json": 0,
+  "test_parsing/y_number.json": 0,
+  "test_parsing/y_number_0e+1.json": 0,
+  "test_parsing/y_number_0e1.json": 0,
+  "test_parsing/y_number_after_space.json": 0,
+  "test_parsing/y_number_double_close_to_zero.json": 0,
+  "test_parsing/y_number_int_with_exp.json": 0,
+  "test_parsing/y_number_minus_zero.json": 0,
+  "test_parsing/y_number_negative_int.json": 0,
+  "test_parsing/y_number_negative_one.json": 0,
+  "test_parsing/y_number_negative_zero.json": 0,
+  "test_parsing/y_number_real_capital_e.json": 0,
+  "test_parsing/y_number_real_capital_e_neg_exp.json": 0,
+  "test_parsing/y_number_real_capital_e_pos_exp.json": 0,
+  "test_parsing/y_number_real_exponent.json": 0,
+  "test_parsing/y_number_real_fraction_exponent.json": 0,
+  "test_parsing/y_number_real_neg_exp.json": 0,
+  "test_parsing/y_number_real_pos_exponent.json": 0,
+  "test_parsing/y_number_simple_int.json": 0,
+  "test_parsing/y_number_simple_real.json": 0,
+  "test_parsing/y_object.json": 8,
+  "test_parsing/y_object_basic.json": 9,
+  "test_parsing/y_object_duplicated_key.json": 10,
+  "test_parsing/y_object_duplicated_key_and_value.json": 10,
+  "test_parsing/y_object_empty.json": 11,
+  "test_parsing/y_object_empty_key.json": 12,
+  "test_parsing/y_object_escaped_null_in_key.json": 13,
+  "test_parsing/y_object_extreme_numbers.json": 14,
+  "test_parsing/y_object_long_strings.json": 15,
+  "test_parsing/y_object_simple.json": 16,
+  "test_parsing/y_object_string_unicode.json": 17,
+  "test_parsing/y_object_with_newlines.json": 10,
+  "test_parsing/y_string_1_2_3_bytes_UTF-8_sequences.json": 1,
+  "test_parsing/y_string_accepted_surrogate_pair.json": 1,
+  "test_parsing/y_string_accepted_surrogate_pairs.json": 1,
+  "test_parsing/y_string_allowed_escapes.json": 1,
+  "test_parsing/y_string_backslash_and_u_escaped_zero.json": 1,
+  "test_parsing/y_string_backslash_doublequotes.json": 1,
+  "test_parsing/y_string_comments.json": 1,
+  "test_parsing/y_string_double_escape_a.json": 1,
+  "test_parsing/y_string_double_escape_n.json": 1,
+  "test_parsing/y_string_escaped_control_character.json": 1,
+  "test_parsing/y_string_escaped_noncharacter.json": 1,
+  "test_parsing/y_string_in_array.json": 1,
+  "test_parsing/y_string_in_array_with_leading_space.json": 1,
+  "test_parsing/y_string_last_surrogates_1_and_2.json": 1,
+  "test_parsing/y_string_nbsp_uescaped.json": 1,
+  "test_parsing/y_string_nonCharacterInUTF-8_U+10FFFF.json": 1,
+  "test_parsing/y_string_nonCharacterInUTF-8_U+FFFF.json": 1,
+  "test_parsing/y_string_null_escape.json": 1,
+  "test_parsing/y_string_one-byte-utf-8.json": 1,
+  "test_parsing/y_string_pi.json": 1,
+  "test_parsing/y_string_reservedCharacterInUTF-8_U+1BFFF.json": 1,
+  "test_parsing/y_string_simple_ascii.json": 1,
+  "test_parsing/y_string_space.json": 18,
+  "test_parsing/y_string_surrogates_U+1D11E_MUSICAL_SYMBOL_G_CLEF.json": 1,
+  "test_parsing/y_string_three-byte-utf-8.json": 1,
+  "test_parsing/y_string_two-byte-utf-8.json": 1,
+  "test_parsing/y_string_u+2028_line_sep.json": 1,
+  "test_parsing/y_string_u+2029_par_sep.json": 1,
+  "test_parsing/y_string_uEscape.json": 1,
+  "test_parsing/y_string_uescaped_newline.json": 1,
+  "test_parsing/y_string_unescaped_char_delete.json": 1,
+  "test_parsing/y_string_unicode.json": 1,
+  "test_parsing/y_string_unicodeEscapedBackslash.json": 1,
+  "test_parsing/y_string_unicode_2.json": 1,
+  "test_parsing/y_string_unicode_U+10FFFE_nonchar.json": 1,
+  "test_parsing/y_string_unicode_U+1FFFE_nonchar.json": 1,
+  "test_parsing/y_string_unicode_U+200B_ZERO_WIDTH_SPACE.json": 1,
+  "test_parsing/y_string_unicode_U+2064_invisible_plus.json": 1,
+  "test_parsing/y_string_unicode_U+FDD0_nonchar.json": 1,
+  "test_parsing/y_string_unicode_U+FFFE_nonchar.json": 1,
+  "test_parsing/y_string_unicode_escaped_double_quote.json": 1,
+  "test_parsing/y_string_utf8.json": 1,
+  "test_parsing/y_string_with_del_character.json": 1,
+  "test_parsing/y_structure_lonely_false.json": 19,
+  "test_parsing/y_structure_lonely_int.json": 20,
+  "test_parsing/y_structure_lonely_negative_real.json": 20,
+  "test_parsing/y_structure_lonely_null.json": 21,
+  "test_parsing/y_structure_lonely_string.json": 18,
+  "test_parsing/y_structure_lonely_true.json": 19,
+  "test_parsing/y_structure_string_empty.json": 18,
+  "test_parsing/y_structure_trailing_newline.json": 1,
+  "test_parsing/y_structure_true_in_array.json": 4,
+  "test_parsing/y_structure_whitespace_array.json": 3,
+  "test_transform/number_-9223372036854775808.json": 0,
+  "test_transform/number_-9223372036854775809.json": 0,
+  "test_transform/number_1.0.json": 0,
+  "test_transform/number_1.000000000000000005.json": 0,
+  "test_transform/number_1000000000000000.json": 0,
+  "test_transform/number_10000000000000000999.json": 0,
+  "test_transform/number_1e-999.json": 0,
+  "test_transform/number_1e6.json": 0,
+  "test_transform/number_9223372036854775807.json": 0,
+  "test_transform/number_9223372036854775808.json": 0,
+  "test_transform/object_key_nfc_nfd.json": 22,
+  "test_transform/object_key_nfd_nfc.json": 23,
+  "test_transform/object_same_key_different_values.json": 24,
+  "test_transform/object_same_key_same_value.json": 24,
+  "test_transform/object_same_key_unclear_values.json": 24,
+  "test_transform/string_1_escaped_invalid_codepoint.json": 1,
+  "test_transform/string_1_invalid_codepoint.json": 1,
+  "test_transform/string_2_escaped_invalid_codepoints.json": 1,
+  "test_transform/string_2_invalid_codepoints.json": 1,
+  "test_transform/string_3_escaped_invalid_codepoints.json": 1,
+  "test_transform/string_3_invalid_codepoints.json": 1,
+  "test_transform/string_with_escaped_NULL.json": 1
+};
+//// json-parse-type-argument-public-test-suite/generate.ts
+// bun generate.ts <a clone of github.com/nst/JSONTestSuite>: writes files.json (each file of test_parsing and test_transform in base64, because many are not UTF-8; a long file that repeats a few bytes is stored as those bytes, a count and what follows) and fitted.ts (for each file that JSON.parse accepts, a type written to fit its value). No script of that repository is run.
+import { readdirSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
+
+const clone = process.argv[2];
+const files: Record<string, Buffer> = {};
+for (const folder of ["test_parsing", "test_transform"]) for (const name of readdirSync(join(clone, folder)).sort()) files[folder + "/" + name] = readFileSync(join(clone, folder, name));
+function stored(bytes: Buffer): string | { repeat: string; times: number; then: string } {
+  for (let length = 1; length <= 16 && bytes.length >= 1000; length++) {
+    const times = Math.floor(bytes.length / length);
+    if (bytes.subarray(0, times * length).equals(Buffer.alloc(times * length, bytes.subarray(0, length)))) return { repeat: bytes.subarray(0, length).toString("base64"), times, then: bytes.subarray(times * length).toString("base64") };
+  }
+  return bytes.toString("base64");
+}
+writeFileSync(join(import.meta.dir, "files.json"), "{\n" + Object.entries(files).map(([name, bytes]) => JSON.stringify(name) + ": " + JSON.stringify(stored(bytes))).join(",\n") + "\n}\n");
+
+function typeOf(value: unknown): string {
+  if (value === null) return "null";
+  if (typeof value !== "object") return typeof value;
+  if (Array.isArray(value)) return value.length === 0 ? "unknown[]" : value.length <= 6 ? "[" + value.map(typeOf).join(", ") + "]" : "(" + [...new Set(value.map(typeOf))].join(" | ") + ")[]";
+  return "{ " + Object.getOwnPropertyNames(value).map(key => JSON.stringify(key) + ": " + typeOf((value as any)[key])).join("; ") + " }";
+}
+const types: string[] = [];
+const fits: Record<string, number> = {};
+for (const [name, bytes] of Object.entries(files)) {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes));
+  } catch {
+    continue;
+  }
+  const type = typeOf(value);
+  if (type.length > 400 || /\\ud[89a-f]/.test(type)) continue;
+  if (!types.includes(type)) types.push(type);
+  fits[name] = types.indexOf(type);
+}
+writeFileSync(
+  join(import.meta.dir, "fitted.ts"),
+  "// Written by generate.ts.\nexport const parsers: ((text: string) => unknown)[] = [\n" + types.map(type => "  text => JSON.parse(text) as " + type + ",\n").join("") + "];\nexport const fits: Record<string, number> = " + JSON.stringify(fits, null, 2) + ";\n",
+);
+//// json-parse-type-argument-public-test-suite/main.ts
+// The public JSONTestSuite (github.com/nst/JSONTestSuite, see README.md): every file goes through `JSON.parse(text) as T` for types that take anything, inside wrappers, and for the types written to fit the files that are valid: the SyntaxError of JSON.parse, or its value.
+import files from "./files.json";
+import { fits, parsers } from "./fitted";
+
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+type Point = { x: number; y: number };
+
+const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+function bytesOf(base64: string): number[] {
+  const bytes: number[] = [];
+  let bits = 0;
+  let count = 0;
+  for (let at = 0; at < base64.length && base64[at] !== "="; at++) {
+    bits = (bits << 6) | alphabet.indexOf(base64[at]);
+    count += 6;
+    if (count >= 8) {
+      count -= 8;
+      bytes.push((bits >> count) & 0xff);
+    }
+  }
+  return bytes;
+}
+function bytesOfFile(stored: string | { repeat: string; times: number; then: string }): number[] {
+  if (typeof stored === "string") return bytesOf(stored);
+  const unit = bytesOf(stored.repeat);
+  const bytes: number[] = [];
+  for (let count = 0; count < stored.times; count++) bytes.push(...unit);
+  bytes.push(...bytesOf(stored.then));
+  return bytes;
+}
+
+function textOf(units: number[]): string {
+  let text = "";
+  for (let at = 0; at < units.length; at += 4096) text += String.fromCharCode(...units.slice(at, at + 4096));
+  return text;
+}
+
+// As TextDecoder("utf-8", { ignoreBOM: true }) decodes: U+FFFD for each maximal part of an ill-formed sequence.
+function fromUTF8(bytes: number[]): string {
+  const units: number[] = [];
+  for (let at = 0; at < bytes.length; ) {
+    const first = bytes[at++];
+    if (first < 0x80) {
+      units.push(first);
+      continue;
+    }
+    let needed = first >= 0xc2 && first <= 0xdf ? 1 : first >= 0xe0 && first <= 0xef ? 2 : first >= 0xf0 && first <= 0xf4 ? 3 : 0;
+    if (!needed) {
+      units.push(0xfffd);
+      continue;
+    }
+    let low = first === 0xe0 ? 0xa0 : first === 0xf0 ? 0x90 : 0x80;
+    let high = first === 0xed ? 0x9f : first === 0xf4 ? 0x8f : 0xbf;
+    let point = first & (needed === 1 ? 0x1f : needed === 2 ? 0x0f : 0x07);
+    for (; needed > 0; needed--) {
+      const next = bytes[at];
+      if (next === undefined || next < low || next > high) break;
+      point = (point << 6) | (next & 0x3f);
+      low = 0x80;
+      high = 0xbf;
+      at++;
+    }
+    if (needed) units.push(0xfffd);
+    else if (point < 0x10000) units.push(point);
+    else units.push(0xd800 + ((point - 0x10000) >> 10), 0xdc00 + ((point - 0x10000) & 0x3ff));
+  }
+  return textOf(units);
+}
+
+const plainParse: (text: string) => any = globalThis.JSON.parse;
+
+function show(value: any, depth = 0): string {
+  if (depth > 400) return "deep";
+  if (Array.isArray(value)) return "[" + value.map(item => show(item, depth + 1)).join(",") + "]";
+  if (typeof value === "string") return JSON.stringify(value) + value.length;
+  if (typeof value !== "object" || value === null) return Object.is(value, -0) ? "-0" : typeof value + ":" + String(value);
+  return "{" + Object.getOwnPropertyNames(value).map(key => JSON.stringify(key) + ":" + show(value[key], depth + 1)).join(",") + "}";
+}
+
+////= outcome
+
+const roads: [string, (text: string) => unknown, (text: string) => string][] = [
+  ["a type for all JSON", text => JSON.parse(text) as Json, text => text],
+  ["an array of all JSON", text => JSON.parse(text) as Json[], text => "[" + text + "," + text + "]"],
+  ["a member of unknown type", text => JSON.parse(text) as { value: unknown }, text => '{"value":' + text + "}"],
+  ["a member of type any, spaced", text => JSON.parse(text) as { value: any }, text => ' { "value" : ' + text + " } "],
+  ["elements of unknown type", text => JSON.parse(text) as unknown[], text => "[" + text + "]"],
+  ["a dictionary of unknown", text => JSON.parse(text) as Record<string, unknown>, text => '{"k":' + text + "}"],
+  ["an undeclared key", text => JSON.parse(text) as Point, text => '{"x":1,"other":' + text + ',"y":2}'],
+  ["a tuple", text => JSON.parse(text) as [number, unknown, string], text => "[1," + text + ',"s"]'],
+];
+
+const names = Object.keys(files);
+const texts = new Map<string, string[]>();
+for (const name of names) {
+  const bytes = bytesOfFile((files as Record<string, string | { repeat: string; times: number; then: string }>)[name]);
+  texts.set(name, [fromUTF8(bytes), textOf(bytes)]);
+}
+
+let shown = 0;
+function compare(label: string, name: string, parse: (text: string) => unknown, text: string, counts: number[]): void {
+  const typed = outcome(parse, text);
+  const plain = outcome(plainParse, text);
+  if (typed !== plain) {
+    counts[2]++;
+    if (shown++ < 20) console.log("DIFFERENT: " + label + ", " + name + "\n  typed: " + typed.slice(0, 200) + "\n  plain: " + plain.slice(0, 200));
+  } else counts[plain.startsWith("SyntaxError") ? 1 : 0]++;
+}
+const told = (counts: number[]) => counts[0] + " values, " + counts[1] + " no JSON: " + counts[2] + " differ";
+
+for (const [label, parse, wrap] of roads) {
+  const counts = [0, 0, 0];
+  for (const name of names) for (const text of texts.get(name)!) compare(label, name, parse, wrap(text), counts);
+  console.log(label + ": " + told(counts));
+}
+{
+  const counts = [0, 0, 0];
+  for (const name in fits) compare("the type that fits", name, parsers[fits[name]], texts.get(name)![0], counts);
+  console.log("each valid file by the type that fits it: " + told(counts));
+}
+{
+  const counts = [0, 0, 0];
+  parsers.forEach((parse, at) => {
+    for (const name of names) for (const text of texts.get(name)!) compare("fitted type " + at, name, parse, text, counts);
+  });
+  console.log("every file by each of the " + parsers.length + " fitted types: " + told(counts));
+}
+//// json-parse-type-argument-recursive-unions-take-linear-time.ts
+// Recursive unions of every kind, 20 to 2,000 levels deep, in texts that fit and texts that do not, by `JSON.parse(text) as T` (also with an escape in the first key): nothing looks at a nested value once for each arm, so each answer comes within a second.
+type NumberTag = { below: NumberTag | null; k: 1 } | { below: NumberTag | null; k: 2 };
+type FlagTag = { below: FlagTag | null; k: true } | { below: FlagTag | null; k: false };
+type TextTag = { below: TextTag | null; k: "one" } | { below: TextTag | null; k: "two" };
+type Kinds = { below: Kinds | null; k: number } | { below: Kinds | null; k: string };
+type FourKinds = { below: FourKinds | null; k: number } | { below: FourKinds | null; k: string } | { below: FourKinds | null; k: boolean } | { below: FourKinds | null; k: null };
+type Below = { below: Below | null; x: { k: 1 } } | { below: Below | null; x: { k: 2 } };
+type BelowText = { below: BelowText | null; x: { k: "one" } } | { below: BelowText | null; x: { k: "two" } };
+type Lists = { below: Lists[]; k: number[] } | { below: Lists[]; k: string[] };
+type Tuples = [Tuples | null, 1] | [Tuples | null, 2];
+type Arrays = (Arrays | 1)[] | (Arrays | "a")[];
+type Table = Record<string, { below: Table; k: number } | { below: Table; k: string }>;
+type Optional = { below?: Optional; a?: number } | { below?: Optional; a?: string };
+type Names = { below: Names | null; a: number } | { below: Names | null; b: number };
+type Mixed = { below: Mixed | null; k: "one" } | { below: Mixed | null; k: 2 } | { below: Mixed | null; k: false } | { below: Mixed | null; k: null };
+type TextOrNull = { below: TextOrNull | null; k: "one" } | { below: TextOrNull | null; k: null };
+type Forked = { left: Forked | null; right: Forked | null; k: "one" } | { left: Forked | null; right: Forked | null; k: null };
+type TwoBelow = { left: TwoBelow | null; right: TwoBelow | null; k: 1 } | { left: TwoBelow | null; right: TwoBelow | null; k: 2 };
+
+const nest = (open: string, middle: string, close: string, levels: number) => open.repeat(levels) + middle + close.repeat(levels);
+const kinds: [string, (text: string) => unknown, (levels: number, bottom: string) => string, string][] = [
+  ["number tags", text => JSON.parse(text) as NumberTag, (levels, bottom) => nest('{"below":', bottom, ',"k":2}', levels), "null"],
+  ["true or false", text => JSON.parse(text) as FlagTag, (levels, bottom) => nest('{"below":', bottom, ',"k":false}', levels), "null"],
+  ["text tags", text => JSON.parse(text) as TextTag, (levels, bottom) => nest('{"below":', bottom, ',"k":"two"}', levels), "null"],
+  ["a number or a string", text => JSON.parse(text) as Kinds, (levels, bottom) => nest('{"below":', bottom, ',"k":"s"}', levels), "null"],
+  ["four kinds", text => JSON.parse(text) as FourKinds, (levels, bottom) => nest('{"below":', bottom, ',"k":null}', levels), "null"],
+  ["a number tag one level below", text => JSON.parse(text) as Below, (levels, bottom) => nest('{"below":', bottom, ',"x":{"k":2}}', levels), "null"],
+  ["a text tag one level below", text => JSON.parse(text) as BelowText, (levels, bottom) => nest('{"below":', bottom, ',"x":{"k":"two"}}', levels), "null"],
+  ["lists of numbers or of strings", text => JSON.parse(text) as Lists, (levels, bottom) => nest('{"below":[', bottom, '],"k":["s"]}', levels), ""],
+  ["tuples", text => JSON.parse(text) as Tuples, (levels, bottom) => nest("[", bottom, ",2]", levels), "null"],
+  ["arrays", text => JSON.parse(text) as Arrays, (levels, bottom) => nest("[", bottom, ',"a"]', levels), '"a"'],
+  ["a dictionary of a union", text => JSON.parse(text) as Table, (levels, bottom) => nest('{"e":{"below":', bottom, ',"k":"s"}}', levels), "{}"],
+  ["optional members only", text => JSON.parse(text) as Optional, (levels, bottom) => nest('{"below":', bottom, ',"a":"s"}', levels), "{}"],
+  ["other names", text => JSON.parse(text) as Names, (levels, bottom) => nest('{"below":', bottom, ',"b":1}', levels), "null"],
+  ["tags of four kinds, null", text => JSON.parse(text) as Mixed, (levels, bottom) => nest('{"below":', bottom, ',"k":null}', levels), "null"],
+  ["tags of four kinds, a text", text => JSON.parse(text) as Mixed, (levels, bottom) => nest('{"below":', bottom, ',"k":"one"}', levels), "null"],
+  ["tags of four kinds, a number", text => JSON.parse(text) as Mixed, (levels, bottom) => nest('{"below":', bottom, ',"k":2}', levels), "null"],
+  ["tags of four kinds, false", text => JSON.parse(text) as Mixed, (levels, bottom) => nest('{"below":', bottom, ',"k":false}', levels), "null"],
+  ["a text or null", text => JSON.parse(text) as TextOrNull, (levels, bottom) => nest('{"below":', bottom, ',"k":null}', levels), "null"],
+  ["two nested members, a text or null", text => JSON.parse(text) as Forked, (levels, bottom) => nest('{"left":null,"right":', bottom, ',"k":null}', levels), "null"],
+  ["two nested members", text => JSON.parse(text) as TwoBelow, (levels, bottom) => nest('{"left":null,"right":', bottom, ',"k":2}', levels), "null"],
+];
+
+function answer(run: () => unknown, text: string): string {
+  const start = Date.now();
+  let said = "";
+  try {
+    said = JSON.stringify(run()) === text ? "what JSON.parse gives" : "ANOTHER VALUE";
+  } catch (error: any) {
+    said = error.name + ": " + error.message;
+  }
+  return Date.now() - start > 1000 ? said + " TOO SLOWLY" : said;
+}
+
+for (const [label, parse, text, bottom] of kinds) {
+  for (const levels of [20, 40, 200, 2000]) {
+    const fits = text(levels, bottom);
+    const misfits = text(levels, "[[7]]");
+    const escaped = fits.replace(/^(\[*\{")(.)/, (_, start, first) => start + "\\u00" + first.charCodeAt(0).toString(16));
+    console.log(label + ", " + levels + " levels: " + [answer(() => parse(fits), fits), answer(() => parse(escaped), fits), answer(() => parse(misfits), misfits)].join(", "));
+  }
+}
+
+const fork = (levels: number, tail: string): string => (levels === 0 ? "null" : '{"left":' + fork(levels - 1, tail) + ',"right":' + fork(levels - 1, tail) + tail);
+for (const levels of [2, 6, 10, 14]) {
+  const forked = fork(levels, ',"k":null}');
+  const two = fork(levels, ',"k":2}');
+  console.log("a full tree of " + levels + " levels: " + [answer(() => JSON.parse(forked) as Forked, forked), answer(() => JSON.parse(forked.replace('"left"', '"\\u006ceft"')) as Forked, forked), answer(() => JSON.parse(two) as TwoBelow, two)].join(", "));
+}

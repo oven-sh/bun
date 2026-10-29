@@ -1,5 +1,4 @@
 use crate::lockfile::package::PackageColumns as _;
-use bun_ptr::detach_lifetime;
 use core::mem::ManuallyDrop;
 use core::ptr::NonNull;
 use core::sync::atomic::Ordering;
@@ -2102,7 +2101,7 @@ pub(crate) fn bind_row(
                             .then(|| version.npm().version.head.head.range.left.version);
                             if let Some(exact) = exact
                                 && (!needs_extended_manifest
-                                    || manifest.pkg.has_extended_manifest
+                                    || manifest.pkg.has_extended_manifest()
                                     || manifest.should_exclude_from_age_filter(excludes))
                                 && !picks_latest_tag(
                                     this,
@@ -3982,9 +3981,7 @@ fn get_or_put_resolved_package(
                 this.exit_or_log(&why);
                 return Err(crate::Error::MissingPackageJSON);
             }
-            // SAFETY: a slice into `PackageManager.global_link_dir_path`, set once and never freed.
-            let link_dir =
-                unsafe { detach_lifetime(package_manager_real::global_link_dir_path(this)) };
+            let link_dir = package_manager_real::global_link_dir_path(this);
             let res = FolderResolution::get_or_put(
                 GlobalOrRelative::Global(link_dir),
                 version,

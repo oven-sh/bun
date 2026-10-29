@@ -555,7 +555,7 @@ pub struct PackageManager {
 
     pub(crate) global_link_dir: Option<bun_sys::Dir>,
     pub global_dir: Option<bun_sys::Dir>,
-    pub(crate) global_link_dir_path: Box<[u8]>,
+    pub(crate) global_link_dir_path: &'static [u8],
 
     pub(crate) on_wake: WakeHandler,
 
@@ -1707,7 +1707,7 @@ fn allocate_package_manager(
         wr!(postinstall_optimizer, Default::default());
         wr!(global_link_dir, None);
         wr!(global_dir, None);
-        wr!(global_link_dir_path, Box::default());
+        wr!(global_link_dir_path, b"");
         wr!(on_wake, WakeHandler::default());
         wr!(
             peer_dependencies,
@@ -2386,6 +2386,8 @@ pub fn init(
         }
         &mut *loader_ptr
     };
+    // The `[Nms] ".env"` line is a timing trace, like the other `print_elapsed` traces of install.
+    env.quiet_loaded_files = !cli.log_level.is_verbose();
     if !cli.env_files.is_empty() {
         // Load these before the cwd changes, because their paths are relative to it.
         env.load_process()?;
@@ -3293,7 +3295,7 @@ fn parse_runtime_root(
         });
     manager.lockfile = lockfile;
     if parse_log.errors > 0 {
-        parse_log.append_to_with_recycled(log, true);
+        parse_log.append_to(log);
     }
     result
 }

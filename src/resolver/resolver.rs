@@ -3652,6 +3652,11 @@ impl<'a> Resolver<'a> {
             // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to slots
             // in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this fn and
             // are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv).
+            // A full re-read of a newer probe-only listing keeps its generation.
+            let generation = in_place.map_or(self.generation, |existing| {
+                // SAFETY: see block-wide note above.
+                self.generation.max(unsafe { &*existing }.generation)
+            });
             let mut new_entry = Fs::file_system::DirEntry::init(
                 if let Some(existing) = in_place {
                     // SAFETY: see block-wide note above.
@@ -3661,7 +3666,7 @@ impl<'a> Resolver<'a> {
                         .append_slice(dir_path)
                         .expect("unreachable")
                 },
-                self.generation,
+                generation,
             );
 
             // Pre-size `data` so the per-entry inserts below skip the
@@ -4876,6 +4881,11 @@ impl<'a> Resolver<'a> {
                 // SAFETY: (block-wide) `in_place`/`dir_entries_ptr`/`dir_entries_option` point to
                 // slots in `rfs.entries` (BSSMap singleton) or a fresh leaked Box; both outlive this
                 // fn and are accessed under `rfs.entries_mutex` (see LIFETIMES.tsv).
+                // A full re-read of a newer probe-only listing keeps its generation.
+                let generation = in_place.map_or(self.generation, |existing| {
+                    // SAFETY: see block-wide note above.
+                    self.generation.max(unsafe { &*existing }.generation)
+                });
                 let mut new_entry = Fs::file_system::DirEntry::init(
                     if let Some(existing) = in_place {
                         // SAFETY: see block-wide note above.
@@ -4885,7 +4895,7 @@ impl<'a> Resolver<'a> {
                             .append_slice(dir_path)
                             .expect("unreachable")
                     },
-                    self.generation,
+                    generation,
                 );
 
                 // A re-read (`in_place`) is always a full one.

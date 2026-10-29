@@ -253,7 +253,7 @@ The other choice is `.lingering().without_spare_threads()` for the work pool. It
 - It is faster where both threads sleep anyway: 4 to 12 CPUs for `bun_jsc::Job` calls (mean about 135 → 80 us), and jobs that outlast the wait (scrypt about 100 us: 201.5 → 148.5 us).
 - It is slower where main is fast because the spare wake makes the guest put both threads on one vCPU: every call at 2 CPUs, and crypto.subtle at 4 and 8 CPUs.
 - With fast wakes the two choices are equal (2 to 6 us).
-- I kept the spare thread because with it no row moves outside the range of its runs. Two cells flip between two states from run to run on both binaries (crypto.subtle.sign at 8 CPUs: runs of about 5 us and runs of about 95 us), so their medians can differ by chance. The other choice is a small change to this branch.
+- I kept the spare thread because with it no row moves outside the range of its runs. Two cells flip between two states from run to run on both binaries (crypto.subtle.sign at 8 CPUs: runs of about 5 us and runs of about 95 us), so their medians can differ by chance. The other choice is a small change to this branch: commit 0a5b71f96e on `robobun/2d85858d/pool-job-round-trip-wip` has it, with its test.
 
 A second question: `WorkPool::schedule` sets a thread-local flag, and the event loop of that thread reads it. The flag is not state of a VM: it says that this thread gave the pool a task. About 20 call sites give the pool a task without `bun_jsc::Job` (node:zlib, `fs.cp`, N-API async work, module transpile, shell builtins), and a flag in `Job::schedule` misses them: `zlib.gzip` of 4 KB takes 27.7 us with that flag and 12.8 us with this one (main 47.7 us, fast wakes).
 

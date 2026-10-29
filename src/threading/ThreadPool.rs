@@ -455,9 +455,9 @@ impl Default for Task {
 
 impl Task {
     #[inline]
-    unsafe fn from_node(node: *mut Node) -> *mut Task {
-        // SAFETY: caller guarantees `node` points to the `node` field of a `Task`.
-        unsafe { bun_core::from_field_ptr!(Task, node, node) }
+    fn from_node(node: *mut Node) -> *mut Task {
+        const _: () = assert!(core::mem::offset_of!(Task, node) == 0);
+        node.cast::<Task>()
     }
 
     /// Project `NonNull<Task>` → `NonNull<Node>` for the intrusive `node` field.
@@ -482,8 +482,7 @@ pub struct Batch {
 
 impl Batch {
     pub fn pop(&mut self) -> Option<NonNull<Task>> {
-        // SAFETY: `len` is only read here for the fast-path zero check.
-        let len = unsafe { (*(&raw const self.len).cast::<AtomicUsize>()).load(Ordering::Relaxed) };
+        let len = self.len;
         if len == 0 {
             return None;
         }
@@ -491,8 +490,7 @@ impl Batch {
         // SAFETY: head is non-null per the unwrap above; tasks form an intrusive list.
         let next = unsafe { (*Task::node_of(task).as_ptr()).next };
         if !next.is_null() {
-            // SAFETY: next points to the `node` field of the following Task.
-            self.head = NonNull::new(unsafe { Task::from_node(next) });
+            self.head = NonNull::new(Task::from_node(next));
         } else {
             if task != self.tail.unwrap() {
                 unreachable!();
@@ -1404,8 +1402,7 @@ impl Thread {
                 }
                 is_waking = false;
 
-                // SAFETY: result.node points to the `node` field of a Task.
-                let task = unsafe { Task::from_node(result.node.as_ptr()) };
+                let task = Task::from_node(result.node.as_ptr());
                 let task_start = if stats { now_ns() } else { 0 };
                 // SAFETY: task is a live scheduled Task; callback contract is `unsafe fn(*mut Task)`.
                 unsafe { ((*task).callback)(task) };
@@ -1430,8 +1427,7 @@ impl Thread {
         };
         let mut ran = 0;
         while let Some(node) = consumer.pop() {
-            // SAFETY: node points to the `node` field of a Task.
-            let task = unsafe { Task::from_node(node) };
+            let task = Task::from_node(node);
             // SAFETY: `task` was dequeued from this thread's idle queue; it is a
             // live scheduled `Task` whose `callback` was set by the producer.
             unsafe { ((*task).callback)(task) };

@@ -1350,7 +1350,8 @@ impl<'a> CopyFileWindows<'a> {
     ) -> JSValue {
         // destination_file_store.ref() / source_file_store.ref() — Arc clone
         let global = event_loop.global_ref();
-        let result = bun_core::heap::into_raw(CopyFileWindows::new(CopyFileWindows {
+        // `destroy` frees it.
+        let result = bun_core::heap::release(CopyFileWindows::new(CopyFileWindows {
             destination_file_store,
             source_file_store,
             promise: jsc::JSPromiseStrong::init(global),
@@ -1365,13 +1366,11 @@ impl<'a> CopyFileWindows<'a> {
             err: None,
             read_write_loop: ReadWriteLoop::default(),
         }));
-        // SAFETY: result was just allocated above
-        let result_ref = unsafe { &mut *result };
-        let promise = result_ref.promise.value();
+        let promise = result.promise.value();
 
         // On error, this function might free the CopyFileWindows struct.
         // So we can no longer reference it beyond this point.
-        result_ref.copyfile();
+        result.copyfile();
 
         promise
     }

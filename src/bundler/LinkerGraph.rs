@@ -471,19 +471,11 @@ pub(crate) fn generate_symbol_import_and_use(
     );
     let dependencies =
         &mut parts[source_index as usize].as_mut_slice()[part_index as usize].dependencies;
-    // SAFETY: every element of `new_dependencies` is overwritten in the
-    // zip-loop immediately below before any read/drop.
-    let new_dependencies = unsafe { dependencies.writable_slice(part_ids.len()) };
-    debug_assert_eq!(part_ids.len(), new_dependencies.len());
-    for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
-        *dependency = Dependency {
-            // Note: `Dependency.source_index` is the structurally
-            // identical `bun_ast::Index`; convert by value until the
-            // two `Index` newtypes unify.
-            source_index: bun_ast::Index::init(source_index_to_import_from.get()),
-            part_index: *part_id, // already u32
-        };
-    }
+    dependencies.extend(part_ids.iter().map(move |&part_id| Dependency {
+        // `bun_ast::Index` is structurally identical; convert by value until the two unify.
+        source_index: bun_ast::Index::init(source_index_to_import_from.get()),
+        part_index: part_id,
+    }));
     Ok(())
 }
 

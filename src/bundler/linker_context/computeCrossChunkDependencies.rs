@@ -556,7 +556,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
 
             let chunk = &mut chunks[chunk_index];
             // `ChunkImport.import_kind` is a `#[repr(u8)]` enum (validity
-            // invariant), so `writable_slice` would form `&mut [T]` over
+            // invariant), so `writable_slice_exact` would form `&mut [T]` over
             // invalid bit patterns. Push into reserved capacity instead.
             chunk.cross_chunk_imports.reserve(lazy_chunk_indices.len());
             for &lazy_chunk_index in lazy_chunk_indices.iter() {

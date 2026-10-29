@@ -29,44 +29,19 @@ pub trait VecExt<T>: Sized {
         T: Clone;
     fn move_from_list(list: Vec<T>) -> Self;
     fn from_owned_slice(items: Box<[T]>) -> Self;
-    /// Arena-builder → owned `Vec<T>`. The linker always calls
-    /// `transfer_ownership` afterwards (full copy), so doing the copy up-front
-    /// here is no worse and lets the arena round-trip disappear.
-    ///
-    /// # Safety
-    /// Bitwise-**moves** every element out of `items` into a fresh allocation.
-    /// `items` must be a leaked bump-arena slice (`into_bump_slice_mut` /
-    /// `alloc_slice_*`) that will *never* have its elements read or dropped
-    /// again — i.e. no live `Vec<T>`/`BumpVec<T>` may still own them. Passing
-    /// a slice borrowed from a container that runs element destructors yields
-    /// a double-drop (PTR_AUDIT.md class #1: bitwise-copy of Drop-carrying
-    /// type while source is still live).
-    unsafe fn from_bump_slice(items: &mut [T]) -> Self;
-    /// Safe sibling of [`from_bump_slice`] for `T: Copy` — the
-    /// "source must never be element-dropped again" precondition holds
-    /// vacuously (`Copy` ⇒ no `Drop`), so the bitwise move degenerates to a
-    /// plain copy and needs no `unsafe` at the call site. Takes `&[T]`
-    /// (read-only) since nothing is logically moved out.
-    ///
-    /// Covers the dominant js_parser pattern
-    /// `arena.alloc_slice_copy(&[a, b]) → unsafe { from_bump_slice(..) }`
-    /// (invariant: bump arena outlives the AST). Callers may pass the bump
+    /// Copies `items` into a fresh allocation. Callers may pass the bump
     /// slice directly, or skip the intermediate bump alloc entirely and pass
     /// the stack array — both compile to one memcpy into the global heap.
     fn from_arena_slice(items: &[T]) -> Self
     where
         T: Copy;
-    /// Safe sibling of [`from_bump_slice`]: consumes an `ArenaVec` (sole owner
+    /// Consumes an `ArenaVec` (sole owner
     /// of its elements + arena buffer), bitwise-moves every element into a
     /// fresh global-allocator `Vec<T>`, and leaks the now-logically-empty
     /// arena buffer back to the bump (reclaimed on arena reset, which never
     /// runs element destructors). Ownership of every `T` transfers exactly
     /// once, so no double-drop and no allocator-identity confusion is
     /// possible at the call site.
-    ///
-    /// Prefer this over `unsafe { from_bump_slice(v.into_bump_slice_mut()) }`
-    /// — it encodes the "source is leaked, never dropped again" contract in
-    /// the type system instead of a `// SAFETY:` comment.
     fn from_bump_vec(v: bun_alloc::ArenaVec<'_, T>) -> Self;
     /// Wrap a borrowed slice as a `Vec<T>` that **must not be dropped or
     /// grown**.  Same hazard as the original — callers wrap in `ManuallyDrop`.
@@ -114,14 +89,12 @@ pub trait VecExt<T>: Sized {
     /// Returns `&mut [T]` over `additional` uninitialized elements. Caller
     /// must fully initialize the slice before any read/drop. Prefer
     /// [`unused_capacity_slice`] + `set_len` for non-POD `T`.
-    unsafe fn writable_slice(&mut self, additional: usize) -> &mut [T];
-    /// # Safety
-    /// As [`writable_slice`] but uses `reserve_exact` so the allocation grows
+    /// Uses `reserve_exact` so the allocation grows
     /// to *exactly* `len + additional`. Use when the buffer is the final
     /// single-shot blob (sourcemap finalize, etc.).
     unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T];
     /// Reserves `additional` and returns the first `additional` slots of
-    /// spare capacity as `MaybeUninit<T>`. Safe sibling of [`writable_slice`]:
+    /// spare capacity as `MaybeUninit<T>`. Safe sibling of [`writable_slice_exact`]:
     /// caller writes some prefix then calls `set_len` (or [`uv_commit`] for
     /// `Vec<u8>`) to commit. Unlike `spare_capacity_mut()` the returned slice
     /// is exactly `additional` long, not `capacity - len`.
@@ -129,7 +102,7 @@ pub trait VecExt<T>: Sized {
     /// `reserve(additional)` then [`expand_to_capacity`], returning the
     /// freshly-exposed tail as a raw `(ptr, len)` pair — i.e.
     /// `(next_out, avail_out)` for C streaming APIs (zlib, brotli, zstd).
-    /// Unlike [`writable_slice`] this exposes the *full* over-allocated
+    /// Unlike [`writable_slice_exact`] this exposes the *full* over-allocated
     /// capacity (`cap - prev_len`), not exactly `additional`, so the FFI
     /// callee can use the allocator's slack. Pass `additional = 0` when the
     /// caller has already reserved.
@@ -204,25 +177,10 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         Self::move_from_list(items.into_vec())
     }
     #[inline]
-    unsafe fn from_bump_slice(items: &mut [T]) -> Self {
-        let mut v = Vec::with_capacity_in(items.len(), A::default());
-        // SAFETY: caller contract — `items` is a leaked bump-arena slice
-        // (`into_bump_slice_mut`); bitwise-move elements into a fresh `A`
-        // allocation, leaving the arena bytes abandoned (they were already
-        // leaked into the bump and will never be element-dropped).
-        unsafe {
-            core::ptr::copy_nonoverlapping(items.as_ptr(), v.as_mut_ptr(), items.len());
-            v.set_len(items.len());
-        }
-        v
-    }
-    #[inline]
     fn from_arena_slice(items: &[T]) -> Self
     where
         T: Copy,
     {
-        // For `T: Copy` the `from_bump_slice` bitwise-move is just a memcpy and
-        // the source carries no destructor.
         let mut v = Vec::with_capacity_in(items.len(), A::default());
         v.extend_from_slice(items);
         v
@@ -355,13 +313,6 @@ impl<T, A: Allocator + Default + 'static> VecExt<T> for Vec<T, A> {
         // SAFETY: caller contract — every element in `[len, cap)` is written
         // before being observed.
         unsafe { self.set_len(self.capacity()) };
-    }
-    unsafe fn writable_slice(&mut self, additional: usize) -> &mut [T] {
-        self.reserve(additional);
-        let prev = self.len();
-        // SAFETY: caller contract — slice is fully written before any read.
-        unsafe { self.set_len(prev + additional) };
-        &mut self[prev..]
     }
     #[inline]
     unsafe fn writable_slice_exact(&mut self, additional: usize) -> &mut [T] {

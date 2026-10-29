@@ -14,8 +14,7 @@ use std::alloc::Global;
 
 use bun_collections::array_hash_map::MapAllocator;
 
-/// The entries that [`IdMap::remove`] has moved in this process: one such remove in a loop moves the square of what
-/// the loop removes. `BUN_REACT_COMPILER_TIMING` prints it.
+/// The entries that [`IdMap::remove`] has moved in this process. `BUN_REACT_COMPILER_TIMING` prints it.
 #[cfg(any(debug_assertions, bun_asan, feature = "fixtures"))]
 pub(crate) static MOVED_BY_REMOVE: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);

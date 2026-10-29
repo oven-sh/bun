@@ -458,24 +458,13 @@ impl Cmd {
         }
 
         // ── Subprocess path ─────────────────────────────────────────────────
-        // `SpawnArgs` borrows only the local `arena` (its
-        // `interp`/`argv` fields are raw pointers), so `interp: &mut
-        // Interpreter` is freely re-borrowable at every step before
-        // `spawn_async`. Re-enter the arena via `interp.as_cmd{,_mut}(this)`
-        // for each short-lived access instead of caching raw `*mut Cmd`.
+        // Re-enter the arena via `interp.as_cmd{,_mut}(this)` for each
+        // short-lived access instead of caching raw `*mut Cmd`.
         let event_loop = interp.event_loop;
 
         let arena = bun_alloc::Arena::new();
         let mut spawn_args = SpawnArgs::default::<false>(&arena, interp.as_ctx_ptr(), event_loop);
-        // Cache the raw `*mut ShellExecEnv` and deref it directly so the
-        // `cwd: &[u8]` stored in `spawn_args` is decoupled from any borrow of
-        // `*interp` — `Base::shell()` would tie the slice's lifetime to
-        // `&interp`, blocking every `interp.as_cmd_mut(...)` below for the
-        // life of `spawn_args`. The env is a separate heap allocation that
-        // outlives this Cmd, so the slice remains valid across reborrows.
-        let shell_ptr: *mut ShellExecEnv = interp.as_cmd(this).base.shell;
-        // SAFETY: `shell_ptr` is the live env owned by this Cmd's scope chain.
-        spawn_args.cwd = unsafe { &*shell_ptr }.cwd();
+        spawn_args.cwd = interp.as_cmd(this).base.shell().cwd();
 
         // Fill env from export_env + cmd_local_env.
         {

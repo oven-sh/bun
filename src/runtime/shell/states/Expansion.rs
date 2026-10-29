@@ -164,7 +164,6 @@ impl Expansion {
                 me.word_idx = 1;
             }
 
-            let shell_ptr: *mut ShellExecEnv = me.base.shell;
             while me.word_idx < atoms_len {
                 let simple: &ast::SimpleAtom = match atom {
                     ast::Atom::Simple(s) => s,
@@ -200,9 +199,9 @@ impl Expansion {
                     stdout: OutKind::Pipe,
                     stderr: interp.root_io().stderr.clone(),
                 };
-                // SAFETY: `shell_ptr` is a live env owned by the parent state
-                // node and outlives this expansion.
-                let duped = match unsafe { &mut *shell_ptr }
+                let duped = match me
+                    .base
+                    .shell_mut()
                     .dupe_for_subshell(&io, ShellExecEnvKind::CmdSubst)
                 {
                     Ok(d) => d,

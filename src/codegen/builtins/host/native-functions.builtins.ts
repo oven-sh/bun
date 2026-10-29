@@ -256,6 +256,24 @@ export default b.declarations(
     reads: externalState,
     implementation: b.hostCall,
   }),
+  // The `abort` event that events.addAbortListener() hands the listener of an aborted signal. It keeps the signal and runs no code of it.
+  b.static(cpp("JSEventTargetNode.cpp", "jsFunctionNodeEventsArmAbortEvent"), {
+    args: { signal: b.any.optional },
+    returns: b.instance("Event"),
+    capability: "heap",
+    throws: true,
+    uses: { signal: b.handedOver },
+    implementation: b.hostCall,
+  }),
+  // The event of a signal that is no EventTarget has an own `currentTarget`, which reads null from here on.
+  b.static(cpp("JSEventTargetNode.cpp", "jsFunctionNodeEventsFinishAbortEvent"), {
+    args: { event: b.any.optional },
+    returns: b.undefined,
+    capability: "none",
+    uses: { event: [...b.inspected, b.definesName(["currentTarget"], b.null)] },
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
   b.static(cpp("NodeAsyncHooks.cpp", "jsSetAsyncHooksEnabled"), {
     args: { enabled: b.any },
     returns: b.undefined,

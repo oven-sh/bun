@@ -251,12 +251,6 @@ export default b.declarations(
     [...handedOver, b.definesName(["stack", "originalLine", "originalColumn"], b.any)],
     b.undefined,
   ),
-  // The Event of a signal that is no EventTarget has an own `currentTarget`, which becomes null.
-  binding(
-    "native:NewCppFunction:JSEventTargetNode.cpp:jsFunctionNodeEventsFinishAbortEvent",
-    [...handedOver, b.definesName(["currentTarget"], b.null)],
-    b.undefined,
-  ),
   Object.entries(bindingsChangingNothing).flatMap(([path, { taken, refused }]) =>
     bindingTakingObjects(path, [...taken, ...refused]),
   ),

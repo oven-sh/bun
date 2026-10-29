@@ -419,6 +419,4 @@ pub(crate) enum DrainResult {
 pub(crate) enum Lifetime {
     Clone,
     Transfer,
-    /// When reading from a fifo like STDIN/STDERR
-    Temporary,
 }

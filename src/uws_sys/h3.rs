@@ -211,7 +211,7 @@ impl Response {
     where
         H: Fn(*mut UD, u64, AnyResponse) -> bool + Copy + 'static,
     {
-        extern "C" fn cb<UD, H>(r: *mut Response, off: u64, p: *mut c_void) -> bool
+        extern "C" fn cb<UD, H>(r: &mut Response, off: u64, p: *mut c_void) -> bool
         where
             H: Fn(*mut UD, u64, AnyResponse) -> bool + Copy + 'static,
         {
@@ -229,7 +229,7 @@ impl Response {
     where
         H: Fn(*mut UD, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
+        extern "C" fn cb<UD, H>(r: &mut Response, p: *mut c_void)
         where
             H: Fn(*mut UD, AnyResponse) + Copy + 'static,
         {
@@ -247,7 +247,7 @@ impl Response {
     where
         H: Fn(*mut UD, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn cb<UD, H>(r: *mut Response, p: *mut c_void)
+        extern "C" fn cb<UD, H>(r: &mut Response, p: *mut c_void)
         where
             H: Fn(*mut UD, AnyResponse) + Copy + 'static,
         {
@@ -268,7 +268,7 @@ impl Response {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn cb<UD, H>(
-            r: *mut Response,
+            r: &mut Response,
             chunk_ptr: *const u8,
             len: usize,
             last: bool,
@@ -710,23 +710,23 @@ mod c {
         // itself) — no preconditions on this call. Mirrors `uws_res_on_*`.
         pub(super) safe fn uws_h3_res_on_writable(
             res: &mut Response,
-            cb: Option<unsafe extern "C" fn(*mut Response, u64, *mut c_void) -> bool>,
+            cb: Option<unsafe extern "C" fn(&mut Response, u64, *mut c_void) -> bool>,
             ud: *mut c_void,
         );
         pub(super) safe fn uws_h3_res_clear_on_writable(res: &mut Response);
         pub(super) safe fn uws_h3_res_on_aborted(
             res: &mut Response,
-            cb: Option<unsafe extern "C" fn(*mut Response, *mut c_void)>,
+            cb: Option<unsafe extern "C" fn(&mut Response, *mut c_void)>,
             ud: *mut c_void,
         );
         pub(super) safe fn uws_h3_res_on_timeout(
             res: &mut Response,
-            cb: Option<unsafe extern "C" fn(*mut Response, *mut c_void)>,
+            cb: Option<unsafe extern "C" fn(&mut Response, *mut c_void)>,
             ud: *mut c_void,
         );
         pub(super) safe fn uws_h3_res_on_data(
             res: &mut Response,
-            cb: Option<unsafe extern "C" fn(*mut Response, *const u8, usize, bool, *mut c_void)>,
+            cb: Option<unsafe extern "C" fn(&mut Response, *const u8, usize, bool, *mut c_void)>,
             ud: *mut c_void,
         );
         // safe: cork is synchronous — `ud` is passed straight back to `cb`

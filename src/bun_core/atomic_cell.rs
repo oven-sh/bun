@@ -48,7 +48,8 @@ impl<T: NoUninit + Send> AtomicCell<T> {
     /// Acquire load.
     #[inline]
     pub fn load(&self) -> T {
-        // SAFETY: `new` and `store` are the only writers, and each writes the one byte of a valid `T`.
+        // SAFETY: a cell comes only from `new`, which rejects a `T` that is not one byte. `new` and
+        // `store` are the only writers, and each writes the byte of a valid `T`.
         unsafe { core::mem::transmute_copy(&self.0.load(Ordering::Acquire)) }
     }
 

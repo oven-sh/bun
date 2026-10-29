@@ -306,9 +306,10 @@ pub(crate) mod Jest {
     pub(crate) static RUNNER: AtomicPtr<TestRunner<'static>> = AtomicPtr::new(core::ptr::null_mut());
 
     pub(crate) fn runner() -> Option<&'static mut TestRunner<'static>> {
-        // SAFETY: covers liveness only. Non-null is `reporter.jest` of `TestCommand::exec`, which clears `RUNNER`
-        // before `drop(reporter)`; an error return leaves it set and the process exits in `handle_root_error`.
-        // Exclusivity is left to the callers, as before: they overlap, and Workers get here through `console.log`.
+        // SAFETY: covers liveness only. Non-null is `reporter.jest` of `TestCommand::exec`, which
+        // clears `RUNNER` before `drop(reporter)`; an error return leaves it set and the process
+        // exits in `handle_root_error`. Exclusivity is left to the callers: they overlap, and
+        // Workers get here through `console.log`.
         NonNull::new(RUNNER.load(Ordering::Relaxed)).map(|p| unsafe { &mut *p.as_ptr() })
     }
 

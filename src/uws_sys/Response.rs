@@ -417,7 +417,7 @@ impl<const SSL: bool> Response<SSL> {
         H: Fn(*mut U, u64, AnyResponse) -> bool + Copy + 'static,
     {
         extern "C" fn handle<U, H, const SSL: bool>(
-            this: *mut c::uws_res,
+            this: &mut c::uws_res,
             amount: u64,
             data: *mut c_void,
         ) -> bool
@@ -453,7 +453,7 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn handle<U, H, const SSL: bool>(this: *mut c::uws_res, user_data: *mut c_void)
+        extern "C" fn handle<U, H, const SSL: bool>(this: &mut c::uws_res, user_data: *mut c_void)
         where
             H: Fn(*mut U, AnyResponse) + Copy + 'static,
         {
@@ -479,7 +479,7 @@ impl<const SSL: bool> Response<SSL> {
     where
         H: Fn(*mut U, AnyResponse) + Copy + 'static,
     {
-        extern "C" fn handle<U, H, const SSL: bool>(this: *mut c::uws_res, user_data: *mut c_void)
+        extern "C" fn handle<U, H, const SSL: bool>(this: &mut c::uws_res, user_data: *mut c_void)
         where
             H: Fn(*mut U, AnyResponse) + Copy + 'static,
         {
@@ -512,7 +512,7 @@ impl<const SSL: bool> Response<SSL> {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
         extern "C" fn handle<U, H, const SSL: bool>(
-            this: *mut c::uws_res,
+            this: &mut c::uws_res,
             chunk_ptr: *const u8,
             len: usize,
             last: bool,
@@ -1281,20 +1281,20 @@ pub mod c {
         pub(crate) safe fn uws_res_on_writable(
             ssl: i32,
             res: &mut uws_res,
-            handler: Option<unsafe extern "C" fn(*mut uws_res, u64, *mut c_void) -> bool>,
+            handler: Option<unsafe extern "C" fn(&mut uws_res, u64, *mut c_void) -> bool>,
             user_data: *mut c_void,
         );
         pub(crate) safe fn uws_res_clear_on_writable(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_on_aborted(
             ssl: i32,
             res: &mut uws_res,
-            handler: Option<unsafe extern "C" fn(*mut uws_res, *mut c_void)>,
+            handler: Option<unsafe extern "C" fn(&mut uws_res, *mut c_void)>,
             optional_data: *mut c_void,
         );
         pub(crate) safe fn uws_res_on_timeout(
             ssl: i32,
             res: &mut uws_res,
-            handler: Option<unsafe extern "C" fn(*mut uws_res, *mut c_void)>,
+            handler: Option<unsafe extern "C" fn(&mut uws_res, *mut c_void)>,
             optional_data: *mut c_void,
         );
         pub(crate) fn uws_res_try_end(
@@ -1312,7 +1312,7 @@ pub mod c {
             ssl: i32,
             res: &mut uws_res,
             handler: Option<
-                unsafe extern "C" fn(*mut uws_res, *const u8, usize, bool, *mut c_void),
+                unsafe extern "C" fn(&mut uws_res, *const u8, usize, bool, *mut c_void),
             >,
             optional_data: *mut c_void,
         );

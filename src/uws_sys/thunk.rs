@@ -50,7 +50,7 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 
 // ───────────────────────── safe-surface trampoline ──────────────────────────
 //
-// S005: `c_slice` above is an `unsafe fn` because each call site must
+// S005: recovering `&mut Owner` from user data is `unsafe` because each call site must
 // re-assert the uWS callback contract. For the common, *non-re-entrant*
 // dispatch path (single-threaded event loop, handler does not call back into
 // uWS on the same socket while holding `&mut Owner`) that contract is uniform

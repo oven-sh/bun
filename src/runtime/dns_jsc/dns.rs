@@ -172,7 +172,7 @@ mod lib_c {
             get_addr_info_request::LibcLookup {
                 backend: get_addr_info_request::LibcBackend::Query(query),
             },
-            get_addr_info_request::LibcRequest(NonNull::new(request).expect("request")),
+            get_addr_info_request::LibcRequest(request),
         );
         this.request_sent(this.vm());
 
@@ -259,6 +259,7 @@ pub(crate) mod lib_uv_backend {
             context,
             PendingCacheField::PendingHostCacheNative,
         );
+        let request = request.as_ptr();
 
         let hints = query.options.to_libc();
         let mut port_buf = [0u8; 128];
@@ -1128,7 +1129,7 @@ impl GetAddrInfoRequest {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
         cache_field: PendingCacheField,
-    ) -> (*mut Self, JSValue) {
+    ) -> (NonNull<Self>, JSValue) {
         bun_output::scoped_log!(GetAddrInfoRequest, "init");
         let mut poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
@@ -1147,7 +1148,8 @@ impl GetAddrInfoRequest {
             tail: ptr::null_mut(),
         });
         let promise = request.head.promise.value();
-        let request = bun_core::heap::into_raw(request);
+        let owned = bun_core::heap::into_raw_nn(request);
+        let request = owned.as_ptr();
         // SAFETY: request just allocated; head is an inline field.
         unsafe { (*request).tail = &raw mut (*request).head };
         if let CacheHit::New(new) = cache {
@@ -1161,7 +1163,7 @@ impl GetAddrInfoRequest {
                 (*new).lookup = request;
             }
         }
-        (request, promise)
+        (owned, promise)
     }
 
     /// Complete a dns_sd-backed request; `this` is the live heap request, consumed on every path.
@@ -5086,7 +5088,9 @@ impl Resolver {
         // pointer and calls `AddrInfo::callback_wrapper::<GetAddrInfoRequest>`
         // (→ `on_cares_complete`) which consumes the request, so the `&mut`
         // borrow is not held past this call.
-        unsafe { channel.get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
+        unsafe {
+            channel.get_addr_info(&query.name, query.port, &hints_buf, &mut *request.as_ptr())
+        };
 
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());

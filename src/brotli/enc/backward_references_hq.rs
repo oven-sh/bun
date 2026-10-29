@@ -574,6 +574,10 @@ fn update_nodes(
                 // That is in the static dictionary.
                 continue;
             }
+            if backward > MAX_ALLOWED_DISTANCE as usize {
+                // A decoder refuses that. The reference encoder takes it.
+                continue;
+            }
             let len = if backward <= max_distance {
                 if prev_ix >= cur_ix {
                     continue;
@@ -1158,4 +1162,59 @@ pub(crate) fn create_hq_zopfli_backward_references(
         )?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enc::EncoderMode;
+    use crate::enc::compound_dictionary::{CompoundDictionary, PreparedDictionary};
+
+    #[test]
+    fn a_short_code_stops_at_the_largest_distance_that_a_decoder_accepts() -> Fallible {
+        // But for the start they are zeros that nothing touches, so they take next to no memory.
+        let mut source = vec![0; i32::MAX as usize];
+        let start = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+        source.write_at(0, &start)?;
+        let mut params = EncoderParams {
+            mode: EncoderMode::Generic,
+            quality: 10,
+            lgwin: 16,
+            lgblock: 16,
+            stream_offset: 0,
+            size_hint: 0,
+            disable_literal_context_modeling: false,
+            large_window: true,
+            dist: DistanceParams::new(0, 0, true),
+            dictionary: CompoundDictionary::default(),
+        };
+        // The index is only looked at for `matches`, of which there are none here.
+        let dictionary = PreparedDictionary::without_index(source);
+        assert!(params.dictionary.attach(dictionary));
+        let largest = MAX_ALLOWED_DISTANCE as i32;
+        // At the start of the input, byte `i` of the dictionary is `i32::MAX - i` back.
+        for (first, found) in [(4, largest - 1), (3, largest), (2, 0), (1, 0), (0, 0)] {
+            let mut data = [0; 16];
+            data.write_at(0, start.sub(first..first + 8)?)?;
+            let mut nodes = [ZopfliNode::INIT; 9];
+            nodes[0] = ZopfliNode::FIRST;
+            let mut model = ZopfliCostModel::new(&params.dist, 8)?;
+            model.set_from_literal_costs(0, &data, 15)?;
+            update_nodes(
+                8,
+                0,
+                0,
+                &data,
+                15,
+                &params,
+                &[largest - 1, largest, 15, 16],
+                &[],
+                &model,
+                &mut StartPosQueue::default(),
+                &mut nodes,
+            )?;
+            assert_eq!(nodes[8].distance, found as u32, "from byte {first}");
+        }
+        Ok(())
+    }
 }

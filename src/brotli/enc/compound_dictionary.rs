@@ -156,20 +156,28 @@ impl CompoundDictionary {
 }
 
 #[cfg(test)]
+impl PreparedDictionary {
+    /// For a test that looks nothing up in it.
+    pub(crate) fn without_index(source: Vec<u8>) -> Self {
+        Self {
+            source: source.into(),
+            bucket_bits: 0,
+            slot_bits: 0,
+            slot_offsets: Vec::new(),
+            heads: Vec::new(),
+            items: Vec::new(),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     /// They are zeros that nothing touches, so they take next to no memory.
     #[test]
     fn refuses_dictionaries_of_2_gib_in_all() {
-        let dictionary = |size: usize| PreparedDictionary {
-            source: vec![0; size].into(),
-            bucket_bits: 0,
-            slot_bits: 0,
-            slot_offsets: Vec::new(),
-            heads: Vec::new(),
-            items: Vec::new(),
-        };
+        let dictionary = |size: usize| PreparedDictionary::without_index(vec![0; size]);
         let mut compound = CompoundDictionary::default();
         assert!(compound.attach(dictionary(1 << 30)));
         assert!(!compound.attach(dictionary(1 << 30)));

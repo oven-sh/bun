@@ -446,14 +446,8 @@ impl<'a> io_heap::HeapNode for LifecycleScriptSubprocess<'a> {
 
 impl<'a> io_heap::HeapContext<LifecycleScriptSubprocess<'a>> for StartedAtCtx {
     #[inline]
-    unsafe fn less(
-        &self,
-        a: *mut LifecycleScriptSubprocess<'a>,
-        b: *mut LifecycleScriptSubprocess<'a>,
-    ) -> bool {
-        // SAFETY: `a`/`b` are live heap nodes owned by the intrusive heap; the
-        // heap only calls `less` on nodes it has been handed via `insert`.
-        unsafe { (*a).started_at < (*b).started_at }
+    fn less(&self, a: &LifecycleScriptSubprocess<'a>, b: &LifecycleScriptSubprocess<'a>) -> bool {
+        a.started_at < b.started_at
     }
 }
 

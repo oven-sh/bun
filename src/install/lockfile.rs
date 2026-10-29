@@ -2732,7 +2732,7 @@ impl Lockfile {
             len: 0,
             cap: 0,
             off: 0,
-            ptr: None,
+            allocated: false,
             string_bytes: &mut self.buffers.string_bytes,
             string_pool: &mut self.string_pool,
         }
@@ -2756,7 +2756,7 @@ impl Lockfile {
                 len: 0,
                 cap: 0,
                 off: 0,
-                ptr: None,
+                allocated: false,
                 string_bytes,
                 string_pool: &mut self.string_pool,
             },
@@ -3021,7 +3021,7 @@ pub struct StringBuilder<'a> {
     pub len: usize,
     pub cap: usize,
     pub off: usize,
-    pub ptr: Option<*mut u8>,
+    pub allocated: bool,
     pub string_bytes: &'a mut Vec<u8>,
     pub string_pool: &'a mut StringPool,
 }
@@ -3038,7 +3038,7 @@ macro_rules! string_builder {
             len: 0,
             cap: 0,
             off: 0,
-            ptr: None,
+            allocated: false,
             string_bytes: &mut $lockfile.buffers.string_bytes,
             string_pool: &mut $lockfile.string_pool,
         }
@@ -3061,7 +3061,7 @@ impl<'a> StringBuilder<'a> {
     #[inline]
     fn assert_not_allocated(&self) {
         if cfg!(debug_assertions) {
-            if self.ptr.is_some() {
+            if self.allocated {
                 Output::panic(format_args!(
                     "StringBuilder.count called after StringBuilder.allocate. This is a bug in Bun. Please make sure to call StringBuilder.count before allocating."
                 ));
@@ -3100,9 +3100,7 @@ impl<'a> StringBuilder<'a> {
         // Zeroed: `as_slice()` callers read the full slice including the not-yet-appended tail.
         string_bytes.resize(prev_len + self.cap, 0);
         self.off = prev_len;
-        // SAFETY: `string_bytes` was just resized to `prev_len + self.cap`, so
-        // offsetting its base pointer by `prev_len` stays within the allocation.
-        self.ptr = Some(unsafe { string_bytes.as_mut_ptr().add(prev_len) });
+        self.allocated = true;
         self.len = 0;
         Ok(())
     }
@@ -3115,7 +3113,7 @@ impl<'a> StringBuilder<'a> {
         }
 
         debug_assert!(self.len <= self.cap); // didn't count everything
-        debug_assert!(self.ptr.is_some()); // must call allocate first
+        debug_assert!(self.allocated); // must call allocate first
 
         let string_entry = self.string_pool.get_or_put(hash).expect("unreachable");
         if string_entry.found_existing

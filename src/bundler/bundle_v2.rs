@@ -3545,16 +3545,6 @@ pub mod bv2_impl {
 
             debug_assert_eq!(files.set.keys().len(), files.set.values().len());
             for (abs_path, flags) in files.set.keys().iter().zip(files.set.values().iter()) {
-                // Ensure we have the proper conditions set for client-side entrypoints.
-                // SAFETY: hold the transpiler as a `*mut` across the loop body
-                // so it doesn't keep `self` borrowed through the plugin
-                // dispatch / dev_server calls below; the pointee lives for `'a`.
-                let transpiler: *mut Transpiler<'a> =
-                    if flags.client() && !flags.server() && !flags.ssr() {
-                        std::ptr::from_mut(self.transpiler_for_target(Target::Browser))
-                    } else {
-                        &raw mut *self.transpiler
-                    };
                 let server_target = self.transpiler.options.target;
                 let client_loader = flags.html().then_some(Loader::Html);
 
@@ -3600,30 +3590,34 @@ pub mod bv2_impl {
 
                 // Fall back to normal resolution if no plugins matched
                 let dot_slash = OnceCell::new();
-                // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
-                let resolved =
-                    match unsafe { &mut *transpiler }.resolve_entry_point(abs_path, &dot_slash) {
-                        Ok(r) => r,
-                        Err(err) => {
-                            let dev = self.dev_server.expect("unreachable");
-                            dev.handle_parse_task_failure(
-                                err,
-                                if flags.client() {
-                                    bake::Graph::Client
-                                } else {
-                                    bake::Graph::Server
-                                },
-                                abs_path,
-                                // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
-                                unsafe { (*transpiler).log }.cast_const(),
-                                std::ptr::from_mut(self),
-                            )
-                            .expect("oom");
-                            // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
-                            unsafe { (*(*transpiler).log).reset() };
-                            continue;
-                        }
-                    };
+                // Ensure we have the proper conditions set for client-side entrypoints.
+                let transpiler = if flags.client() && !flags.server() && !flags.ssr() {
+                    self.transpiler_for_target(Target::Browser)
+                } else {
+                    &mut *self.transpiler
+                };
+                let resolved = match transpiler.resolve_entry_point(abs_path, &dot_slash) {
+                    Ok(r) => r,
+                    Err(err) => {
+                        let log = transpiler.log;
+                        let dev = self.dev_server.expect("unreachable");
+                        dev.handle_parse_task_failure(
+                            err,
+                            if flags.client() {
+                                bake::Graph::Client
+                            } else {
+                                bake::Graph::Server
+                            },
+                            abs_path,
+                            log.cast_const(),
+                            std::ptr::from_mut(self),
+                        )
+                        .expect("oom");
+                        // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
+                        unsafe { (*log).reset() };
+                        continue;
+                    }
+                };
 
                 if flags.client() {
                     'brk: {

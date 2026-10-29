@@ -658,20 +658,15 @@ pub(crate) fn run_task(
         // ── hot-reload (early-returns from the drain loop) ───────────────
         task_tag::HotReloadTask => {
             feature_arm!([HotReload], |reload: hot_reloader::HotReloadTask| {
-                // The task was heap-allocated in `Task::enqueue`; `deinit` frees it.
-                // SAFETY: tag identifies pointee; live Box'd HotReloadTask.
-                unsafe { (*reload).run() };
-                // SAFETY: paired with heap::alloc in `Task::enqueue`.
-                unsafe { hot_reloader::HotReloadTask::deinit(reload) };
+                // SAFETY: boxed in `Task::enqueue`; the arm consumes it.
+                unsafe { bun_core::heap::take(reload) }.run();
             });
             return Ok(RunTaskResult::EarlyReturn);
         }
         task_tag::WatchReloadTask => {
             feature_arm!([HotReload], |reload: hot_reloader::WatchReloadTask| {
-                // SAFETY: tag identifies pointee; live Box'd WatchReloadTask.
-                unsafe { (*reload).run() };
-                // SAFETY: paired with heap::alloc in `Task::enqueue`.
-                unsafe { hot_reloader::WatchReloadTask::deinit(reload) };
+                // SAFETY: boxed in `Task::enqueue`; the arm consumes it.
+                unsafe { bun_core::heap::take(reload) }.run();
             });
             return Ok(RunTaskResult::EarlyReturn);
         }

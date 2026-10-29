@@ -105,13 +105,7 @@ extern "C" fn Bun__WebViewHost__ensure(
             return -1; // C++ already holds the fd
         }
 
-        // `bun_vm()` returns `&'static VirtualMachine`; `spawn` takes the raw
-        // `*mut` because it threads through C ABI / event-loop dispatch.
-        let fd = match spawn(
-            std::ptr::from_ref(global.bun_vm()).cast_mut(),
-            stdout_inherit,
-            stderr_inherit,
-        ) {
+        let fd = match spawn(global.bun_vm(), stdout_inherit, stderr_inherit) {
             Ok(fd) => fd,
             Err(err) => {
                 scoped_log!(WebViewHost, "spawn failed: {}", err.name());
@@ -148,7 +142,7 @@ bun_spawn::link_impl_ProcessExit! {
 }
 
 #[cfg(target_os = "macos")]
-fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
+fn spawn(vm: &VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) -> Result<Fd, Error> {
     // Both ends nonblocking — parent uses usockets; child sets O_NONBLOCK
     // again after dup2 (socketpair flags are per-fd, not per-pair).
     let fds: [Fd; 2] = bun_sys::socketpair(
@@ -168,7 +162,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     // Same pattern as NODE_CHANNEL_FD in js_bun_spawn_bindings.rs.
     // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
     // `transpiler.env` is set during VM init and lives for VM lifetime.
-    let base = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
+    let base = unsafe { (*vm.transpiler.env).map.create_null_delimited_env_map() }?;
     let base_slice = base.as_slice();
     // base_slice already has a trailing None sentinel; drop it, append our
     // var, then re-terminate.
@@ -204,9 +198,7 @@ fn spawn(vm: *mut VirtualMachine, stdout_inherit: bool, stderr_inherit: bool) ->
     // argv[0] non-null; valid for this call.
     let spawned = unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr()) }??;
 
-    // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
-    // per-thread `jsc::EventLoop`.
-    let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
+    let event_loop = EventLoopHandle::init(vm.event_loop().cast());
     let self_ptr = bun_core::heap::into_raw(Box::new(HostProcess {
         process: spawned.to_process_handle(event_loop),
         retired: false,

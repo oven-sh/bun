@@ -141,7 +141,7 @@ unsafe extern "C" fn Bun__Chrome__ensure(
             // SAFETY: caller guarantees extra_argv points to extra_argv_len entries.
             unsafe { core::slice::from_raw_parts(extra_argv, extra_argv_len as usize) }
         };
-        let vm = global.bun_vm_ptr();
+        let vm = global.bun_vm();
         let user_data_dir = if user_data_dir.is_null() {
             None
         } else {
@@ -478,7 +478,7 @@ fn find_playwright_shell() -> Option<ZBox> {
 
 /// Returns `Bun__Chrome__ensure`'s success value.
 fn spawn(
-    vm: *mut VirtualMachine,
+    vm: &VirtualMachine,
     user_data_dir: Option<&CStr>,
     explicit_path: Option<&CStr>,
     extra_argv: &[*const c_char],
@@ -493,9 +493,7 @@ fn spawn(
             bstr::BStr::new(chrome.as_bytes())
         );
 
-        // SAFETY: `vm` is the live thread-local VM; `event_loop()` is its
-        // per-thread `jsc::EventLoop`.
-        let event_loop = unsafe { EventLoopHandle::init((*vm).event_loop().cast()) };
+        let event_loop = EventLoopHandle::init(vm.event_loop().cast());
         let mut endpoints = Endpoints::create(event_loop)?;
 
         // Minimal flags. --remote-debugging-pipe is the one that matters;
@@ -574,7 +572,7 @@ fn spawn(
         // SAFETY: vm is the per-thread VirtualMachine (valid for the call);
         // `transpiler.env` is set during VM init and lives for VM lifetime;
         // `.map` is its `&mut Map` slot.
-        let env = unsafe { (*(*vm).transpiler.env).map.create_null_delimited_env_map() }?;
+        let env = unsafe { (*vm.transpiler.env).map.create_null_delimited_env_map() }?;
 
         let opts = SpawnOptions {
             stdin: Stdio::Ignore,

@@ -24,6 +24,12 @@ const kPendingCallbacks = Symbol("pendingCallbacks");
 const kHeaderSource = Symbol("kHeaderSource");
 const kCloseCallback = Symbol("closeCallback");
 
+// Filled by node:_http_server at module initialization. node:https builds https.Server from these.
+const httpServerParts: {
+  initHttpServer?: (this: unknown, options: unknown, callback: unknown) => unknown;
+  serverPrototypeDescriptors?: PropertyDescriptorMap;
+} = {};
+
 export const enum NodeHTTPResponseAbortEvent {
   none = 0,
   abort = 1,
@@ -459,6 +465,7 @@ export {
   eofInProgress,
   fakeSocketSymbol,
   getMaxHTTPHeaderSize,
+  httpServerParts,
   isTlsSymbol,
   kAbortController,
   kCloseCallback,

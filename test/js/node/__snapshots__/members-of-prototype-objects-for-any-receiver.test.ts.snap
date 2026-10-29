@@ -3165,6 +3165,114 @@ node:https.Agent.prototype _evictSession()
 node:https.Agent.prototype _evictSession("a", 1)
   throws TypeError: undefined is not an object <- every object, a number, a string, undefined
   throws TypeError: null is not an object <- null
+node:https.Server.prototype _requestCert, read
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype _rejectUnauthorized, read
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype _handshakeTimeout, read
+  number <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype _ALPNCallback, read
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype _SNICallback, read
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype listening, read
+  false <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype ref()
+  the receiver, stores _unref <- every object
+  throws TypeError: Attempted to assign to readonly property. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype ref("a", 1)
+  the receiver, stores _unref <- every object
+  throws TypeError: Attempted to assign to readonly property. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype unref()
+  throws TypeError: undefined is not an object, stores _unref <- every object
+  throws TypeError: Attempted to assign to readonly property. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype unref("a", 1)
+  throws TypeError: undefined is not an object, stores _unref <- every object
+  throws TypeError: Attempted to assign to readonly property. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype closeAllConnections()
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype closeAllConnections("a", 1)
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype _emitCloseIfDrained()
+  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype _emitCloseIfDrained("a", 1)
+  throws TypeError: undefined is not an object <- every object, a number, a string, undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype getConnections()
+  the receiver <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype getConnections("a", 1)
+  the receiver <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype closeIdleConnections()
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype closeIdleConnections("a", 1)
+  undefined <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype close()
+  the receiver <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype close("a", 1)
+  the receiver <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype address()
+  null <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype address("a", 1)
+  null <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype listen()
+  the receiver <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype listen("a", 1)
+  the receiver <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype setTimeout()
+  the receiver, stores timeout <- every object
+  throws TypeError: Attempted to assign to readonly property. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype setTimeout("a", 1)
+  the receiver, stores timeout <- every object
+  throws TypeError: Attempted to assign to readonly property. <- a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
 node:https.Server.prototype addContext()
   throws TypeError: undefined is not an object <- every object, a number, a string, undefined
   throws TypeError: null is not an object <- null
@@ -3187,6 +3295,48 @@ node:https.Server.prototype setTicketKeys()
 node:https.Server.prototype setTicketKeys("a", 1)
   throws TypeError: undefined is not an object <- every object, a number, a string, undefined
   throws TypeError: null is not an object <- null
+node:https.Server.prototype [nodejs.rejection]()
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws Error ERR_UNHANDLED_ERROR: Unhandled error. (undefined) <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype [nodejs.rejection]("a", 1)
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws Error ERR_UNHANDLED_ERROR: Unhandled error. ('a') <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype [Symbol.asyncDispose]()
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  object Promise, stores _events _eventsCount <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype [Symbol.asyncDispose]("a", 1)
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  object Promise, stores _events _eventsCount <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:https.Server.prototype [kLeaveHttp]()
+  throws TypeError: undefined is not an object <- every receiver
+node:https.Server.prototype [kLeaveHttp]("a", 1)
+  undefined <- every receiver
+later: throws TypeError: what is called is not a function
+later: throws TypeError: what is called is not a function
+later: throws TypeError: what is called is not a function
+later: throws TypeError: what is called is not a function
+later: throws Error ERR_INVALID_STATE: Invalid state: The server's constructor threw
+later: throws Error ERR_INVALID_STATE: Invalid state: The server's constructor threw
+later: throws Error ERR_INVALID_STATE: Invalid state: The server's constructor threw
+later: throws TypeError: what is called is not a function
+later: throws TypeError: what is called is not a function
+later: throws TypeError: what is called is not a function
+later: throws TypeError: what is called is not a function
+later: throws TypeError: what is called is not a function
+later: throws TypeError: what is called is not a function
+later: throws Error ERR_INVALID_STATE: Invalid state: The server's constructor threw
+later: throws Error ERR_INVALID_STATE: Invalid state: The server's constructor threw
+later: throws Error ERR_INVALID_STATE: Invalid state: The server's constructor threw
+later: throws TypeError: what is called is not a function
+later: throws TypeError: what is called is not a function
 "
 `;
 

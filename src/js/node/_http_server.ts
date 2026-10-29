@@ -55,6 +55,7 @@ const {
   serverSymbol,
   kHandle,
   kLeaveHttp,
+  httpServerParts,
   kRealListen,
   kUpgradeStream,
   tlsSymbol,
@@ -396,6 +397,11 @@ function hasOwnTLSIdentity(options) {
 
 function Server(options, callback): void {
   if (!(this instanceof Server)) return new Server(options, callback);
+  return initHttpServer.$call(this, options, callback);
+}
+
+// The constructor body, with no `instanceof` guard. https.Server runs it on an instance that is not an http.Server.
+function initHttpServer(options, callback) {
   EventEmitter.$call(this);
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
@@ -413,7 +419,7 @@ function Server(options, callback): void {
   this[kPendingDrainClose] = false;
   this[kPendingCloseGenerations] = new Set();
   this[kListenerGeneration] = undefined;
-  // http.Server.call() on an existing https.Server keeps its TLS configuration, like Node.
+  // A constructor that is called on an existing server keeps its TLS configuration.
   this[tlsSymbol] ??= null;
   this.noDelay = true;
   let isTLS = false;
@@ -3923,6 +3929,15 @@ function storeHTTPOptions(options) {
   }
   this[kOptimizeEmptyRequests] = optimizeEmptyRequests || false;
 }
+
+// Own properties of https.Server.prototype, captured before user code can patch them (node: lib/https.js#L115-L122).
+const serverPrototypeDescriptors: PropertyDescriptorMap = Object.create(null);
+for (const key of Reflect.ownKeys(Server.prototype)) {
+  if (key === "constructor") continue;
+  serverPrototypeDescriptors[key] = { __proto__: null, ...Object.getOwnPropertyDescriptor(Server.prototype, key) };
+}
+httpServerParts.initHttpServer = initHttpServer;
+httpServerParts.serverPrototypeDescriptors = serverPrototypeDescriptors;
 
 export default {
   Server,

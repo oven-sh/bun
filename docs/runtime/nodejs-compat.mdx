@@ -49,7 +49,7 @@ We update this page regularly. It reflects the latest version of Bun's compatibi
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. `https.Server` extends `http.Server` rather than `tls.Server`, and has `setSecureContext()`, `addContext()`, `getTicketKeys()`, `setTicketKeys()` and `SNICallback`. Client sockets and request sockets (`req.socket`) are `tls.TLSSocket`s. The server negotiates ALPN (`ALPNProtocols`, `ALPNCallback`) and emits `'secureConnection'`, `'tlsClientError'` and `'keylog'` like a `tls.Server`. What `node:tls` is missing is missing here too.
+🟡 `request`, `get`, `Agent` and `globalAgent` are implemented, including connection pooling. `https.Server` extends `tls.Server`, runs on Bun's HTTP server rather than on a `net.Server` handle, and has `setSecureContext()`, `addContext()`, `getTicketKeys()`, `setTicketKeys()` and `SNICallback`. Client sockets and request sockets (`req.socket`) are `tls.TLSSocket`s. The server negotiates ALPN (`ALPNProtocols`, `ALPNCallback`) and emits `'secureConnection'`, `'tlsClientError'` and `'keylog'` like a `tls.Server`. What `node:tls` is missing is missing here too.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 

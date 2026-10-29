@@ -19,6 +19,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/GetterSetter.h>
+#include "_NativeModule.h"
 #include <JavaScriptCore/WeakMapImpl.h>
 #include <JavaScriptCore/WeakMapImplInlines.h>
 #include <JavaScriptCore/FunctionPrototype.h>
@@ -1560,6 +1561,17 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsSpyOn, (JSC::JSGlobalObject * lexicalGlobalOb
     if (object->type() == JSC::JSType::WebAssemblyGCObjectType) {
         throwTypeError(globalObject, scope, "spyOn(target, prop) does not support WebAssembly GC objects"_s);
         return {};
+    }
+
+    // A builtin module's lazy export (fs.ReadStream) is an accessor until its first read. Read it, then spy on the value.
+    if (object->type() != JSC::JSType::ProxyObjectType) {
+        JSC::PropertySlot probe(object, JSC::PropertySlot::InternalMethodType::HasProperty);
+        bool has = object->getPropertySlot(globalObject, propertyKey, probe);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (has && probe.isAccessor() && probe.slotBase() == object && Zig::isBunDefinedGetter(probe.getterSetter()->getter())) {
+            probe.getValue(globalObject, propertyKey);
+            RETURN_IF_EXCEPTION(scope, {});
+        }
     }
 
     JSC::PropertySlot slot(object, JSC::PropertySlot::InternalMethodType::HasProperty);

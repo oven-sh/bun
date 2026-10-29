@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/node/_http_server.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 c3402ea8cfe932a2dfcde21d1c9eb12237e3ef86aed466844a10e369b11ca53d.
+// Written against that file with the SHA-256 a02f6c58699da9d67b734e02e2ff9ba8aab19d83d4487648b7e92d14662fb918.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 // Hardcoded module "node:_http_server"
@@ -784,6 +784,15 @@ function Server(
   callback?: RequestListener,
 ) {
   if (!(this instanceof Server)) return new Server(options, callback);
+  return initHttpServer.$call(this, options, callback);
+}
+
+// The constructor body, with no `instanceof` guard. https.Server runs it on an instance that is not an http.Server.
+function initHttpServer(
+  this: $Node.HttpServer,
+  options?: $Node.HttpServerOptions | RequestListener | null,
+  callback?: RequestListener,
+) {
   EventEmitter.$call(this);
   this.on("listening", setupConnectionsTracking);
   this.on("connection", connectionListener);
@@ -801,7 +810,7 @@ function Server(
   this[kPendingDrainClose] = false;
   this[kPendingCloseGenerations] = new Set();
   this[kListenerGeneration] = undefined;
-  // http.Server.call() on an existing https.Server keeps its TLS configuration, like Node.
+  // A constructor that is called on an existing server keeps its TLS configuration.
   this[tlsSymbol] ??= null;
   this.noDelay = true;
   let isTLS = false;
@@ -5691,6 +5700,15 @@ function writeHeadInFull(
 }
 
 http.requestRoad.readsDestroyedUnseen = readsDestroyedUnseen as (socket: $Node.HttpSocket) => boolean;
+
+// Own properties of https.Server.prototype, captured before user code can patch them (node: lib/https.js#L115-L122).
+const serverPrototypeDescriptors: PropertyDescriptorMap = Object.create(null);
+for (const key of Reflect.ownKeys(Server.prototype)) {
+  if (key === "constructor") continue;
+  serverPrototypeDescriptors[key] = { __proto__: null, ...Object.getOwnPropertyDescriptor(Server.prototype, key) };
+}
+http.httpServerParts.initHttpServer = initHttpServer;
+http.httpServerParts.serverPrototypeDescriptors = serverPrototypeDescriptors;
 
 export default {
   Server,

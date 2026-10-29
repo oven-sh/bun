@@ -634,18 +634,23 @@ server.listen(0, '127.0.0.1', () => {
     },
   );
 
-  test.concurrent(
-    "sending an http.Server throws ERR_INVALID_HANDLE_TYPE instead of silently dropping the handle",
-    async () => {
-      // An http.Server listens through Bun.serve and has no handle to pass.
+  // An http.Server and an https.Server listen through Bun.serve and have no handle to pass.
+  test.concurrent.each([
+    ["http", "require('node:http').createServer((req, res) => res.end('ok'))"],
+    ["https", "require('node:https').createServer({ key: fs.readFileSync('key.pem'), cert: fs.readFileSync('cert.pem') }, (req, res) => res.end('ok'))"], // prettier-ignore
+  ])(
+    "sending an %s.Server throws ERR_INVALID_HANDLE_TYPE instead of silently dropping the handle",
+    async (_label, createServer) => {
       using dir = tempDir("ipc-handle-http-server", {
+        "cert.pem": tls.cert,
+        "key.pem": tls.key,
         "parent.js": `
 const { fork } = require('node:child_process');
-const http = require('node:http');
+const fs = require('node:fs');
 const child = fork('child.js');
 const finish = out => { console.log(JSON.stringify(out)); server.close(); child.disconnect(); };
 child.on('message', m => finish({ childReceived: m }));
-const server = http.createServer((req, res) => res.end('ok'));
+const server = ${createServer};
 server.listen(0, '127.0.0.1', () => {
   try { child.send('server', server); } catch (err) { finish({ code: err.code, childReceived: null }); }
 });

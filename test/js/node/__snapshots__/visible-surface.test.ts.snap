@@ -1914,31 +1914,7 @@ https[globalAgent][_sessionCache][map]: object above=Object extensible=true
 https[globalAgent][_sessionCache][list] cew object
 https[globalAgent][Symbol(shapeMode)] cew boolean
 https[globalAgent][Symbol(kCapture)] cew boolean
-https[Server] cew function
-https[Server]: function function name="Server" length=2 above=_http_server[Server] extensible=true
-https[Server][length] c-- number
-https[Server][name] c-- string
-https[Server][prototype] c-w object
-https[Server][prototype]: object above=_http_server[Server][prototype] extensible=true
-https[Server][prototype][constructor] c-w function
-https[Server][prototype][constructor] = https[Server]
-https[Server][prototype][addContext] cew function
-https[Server][prototype][addContext]: function function name="addContext" length=2 above=Function extensible=true
-https[Server][prototype][addContext][length] c-- number
-https[Server][prototype][addContext][name] c-- string
-https[Server][prototype][setSecureContext] cew function
-https[Server][prototype][setSecureContext]: function function name="setSecureContext" length=1 above=Function extensible=true
-https[Server][prototype][setSecureContext][length] c-- number
-https[Server][prototype][setSecureContext][name] c-- string
-https[Server][prototype][getTicketKeys] cew function
-https[Server][prototype][getTicketKeys]: function function name="getTicketKeys" length=0 above=Function extensible=true
-https[Server][prototype][getTicketKeys][length] c-- number
-https[Server][prototype][getTicketKeys][name] c-- string
-https[Server][prototype][setTicketKeys] cew function
-https[Server][prototype][setTicketKeys]: function function name="setTicketKeys" length=1 above=Function extensible=true
-https[Server][prototype][setTicketKeys][length] c-- number
-https[Server][prototype][setTicketKeys][name] c-- string
-https[Server][prototype][Symbol(is_tls)] cew boolean
+https[Server] cea accessor get=function set=function
 https[createServer] cew function
 https[createServer]: function function name="createServer" length=2 above=Function extensible=true
 https[createServer][length] c-- number

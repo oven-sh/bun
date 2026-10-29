@@ -1,5 +1,5 @@
 // What the compiler reads in place of src/js/internal/http.ts, which `bun run` evaluates. The two do the same.
-// Written against that file with the SHA-256 70802a18f2d4bac2e82892954457c43c4e64c45443e3d5b10614127db5be87d9.
+// Written against that file with the SHA-256 b303ec0a03f9807d44a295ae0168bafbf6ca315553e457928a4d1ba26cceac81.
 // When that file changes, bring the change here and write the new hash: test/internal/second-texts-of-modules.test.ts.
 
 const { isIPv4 } = require("internal/net/isIP");
@@ -33,6 +33,11 @@ const kChunkedBuffer = Symbol("kChunkedBuffer");
 const kChunkedLength = Symbol("kChunkedLength");
 const kBytesWritten = Symbol("kBytesWritten");
 const kLenientValidation = Symbol("kLenientValidation");
+// Filled by node:_http_server at module initialization. node:https builds https.Server from these.
+const httpServerParts: {
+  initHttpServer?: (this: $Node.HttpServer, options?: any, callback?: any) => $Node.HttpServer;
+  serverPrototypeDescriptors?: PropertyDescriptorMap;
+} = {};
 const requestRoad: {
   endsUnseen?: (request: $Node.IncomingMessage) => boolean;
   endUnseen?: (request: $Node.IncomingMessage) => void;
@@ -662,6 +667,7 @@ export {
   eofInProgress,
   fakeSocketSymbol,
   getMaxHTTPHeaderSize,
+  httpServerParts,
   isTlsSymbol,
   kBytesWritten,
   kChunkedBuffer,

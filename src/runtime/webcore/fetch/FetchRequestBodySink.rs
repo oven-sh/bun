@@ -222,8 +222,8 @@ impl FetchRequestBodySink {
 
     pub fn memory_cost(&self) -> usize {
         if let Some(task) = self.task.as_ref() {
-            if let Some(buf) = task.stream_buffer_mut() {
-                return buf.lock().size();
+            if let Some(buf) = task.request_body_streaming_buffer.as_deref() {
+                return buf.lock().buffer.size();
             }
         }
         0

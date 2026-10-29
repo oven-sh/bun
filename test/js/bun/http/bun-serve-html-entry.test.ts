@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { routeKey } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, substDrive, tempDir } from "harness";
 import { join } from "node:path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>) {
@@ -589,6 +589,122 @@ test.concurrent("bun *.html", async () => {
   } finally {
     // The process will be automatically cleaned up by 'await using'
   }
+});
+
+// The route of a page is its path from the deepest directory that contains every page.
+// These tests are not concurrent. On a debug build, ten servers that started at the same time took 3.5 s to 5 s
+// each, and two of the tests passed the 5 s timeout. One at a time, each takes 1 s to 2 s.
+
+// The name of one directory starts with the name of the other.
+test("bun ./pub/a.html ./pubx/b.html", async () => {
+  const routes = { "/pub/a": "pub/a.html", "/pubx/b": "pubx/b.html" };
+  using dir = pagesDir(Object.values(routes));
+  await using process = serveHtml(String(dir), ["./pub/a.html", "./pubx/b.html"]);
+
+  const banner = await readBanner(process);
+  expect({ pathname: banner.pathname, routes: banner.routes }).toEqual({ pathname: "/pub/a", routes });
+
+  // `/a` and `/x/b` are the routes when the base path ends in the middle of `pubx`.
+  const paths = ["/pub/a", "/pubx/b", "/a", "/x/b"];
+  expect(await Promise.all(paths.map(path => titleAt(banner.origin, path)))).toEqual([
+    "pub/a.html",
+    "pubx/b.html",
+    "status 404",
+    "status 404",
+  ]);
+});
+
+// `url` is the path of the `url:` line. `routes` is what `Routes:` lists.
+const routeCases: { args: string[]; url: string; routes: Record<string, string> }[] = [
+  // Nine pages, and the base path is two directories above the first page.
+  {
+    args: ["./pub/x/*.html", "./pubx/*.html"],
+    url: "/pub/x/p1",
+    routes: {
+      "/pub/x/p1": "pub/x/p1.html",
+      "/pub/x/p2": "pub/x/p2.html",
+      "/pub/x/p3": "pub/x/p3.html",
+      "/pub/x/p4": "pub/x/p4.html",
+      "/pub/x/p5": "pub/x/p5.html",
+      "/pubx/q1": "pubx/q1.html",
+      "/pubx/q2": "pubx/q2.html",
+      "/pubx/q3": "pubx/q3.html",
+      "/pubx/q4": "pubx/q4.html",
+    },
+  },
+  // A page beside a directory of the same name.
+  {
+    args: ["./pub.html", "./pub/a.html"],
+    url: "/pub",
+    routes: { "/pub": "pub.html", "/pub/a": "pub/a.html" },
+  },
+  // Page names that start with the same characters.
+  {
+    args: ["./index.html", "./info.html"],
+    url: "/",
+    routes: { "/": "index.html", "/info": "info.html" },
+  },
+  // The project of `bun create ./dashboard.tsx` after `bun run build`, started as its `dev` script starts it.
+  {
+    args: ["./**/*.html"],
+    url: "/dashboard",
+    routes: { "/dashboard": "dashboard.html", "/dist/dashboard": "dist/dashboard.html" },
+  },
+  // Two names that differ in the second half of a surrogate pair.
+  {
+    args: ["./😀.html", "./😁.html"],
+    url: "/%F0%9F%98%80",
+    routes: { "/😀": "😀.html", "/😁": "😁.html" },
+  },
+  // Pages in one directory, and `index.html` at more than one depth.
+  {
+    args: ["./site/a.html", "./site/b.html"],
+    url: "/a",
+    routes: { "/a": "site/a.html", "/b": "site/b.html" },
+  },
+  {
+    args: ["./index.html", "./myindex.html", "./about/index.html", "./about/foo/index.html"],
+    url: "/",
+    routes: {
+      "/": "index.html",
+      "/myindex": "myindex.html",
+      "/about": "about/index.html",
+      "/about/foo": "about/foo/index.html",
+    },
+  },
+];
+
+test.each(routeCases.map(routeCase => [routeCase.args.join(" "), routeCase] as const))(
+  "bun %s",
+  async (_, { args, url, routes }) => {
+    using dir = pagesDir(Object.values(routes));
+    await using process = serveHtml(String(dir), args);
+
+    const banner = await readBanner(process);
+    expect({ pathname: banner.pathname, routes: banner.routes }).toEqual({ pathname: url, routes });
+  },
+);
+
+// Two drives have no directory in common: each page keeps its whole path.
+test.skipIf(!isWindows)("bun with pages on two drives", async () => {
+  using dir = pagesDir(["a.html"]);
+  using other = pagesDir(["b.html", "c.html"]);
+  using drive = substDrive(String(other));
+  await using process = serveHtml(String(dir), ["./a.html", drive.root + "b.html", drive.root + "c.html"]);
+
+  const here = "/" + String(dir).replaceAll("\\", "/");
+  const there = "/" + drive.root.replaceAll("\\", "/");
+  const banner = await readBanner(process);
+  expect({ pathname: banner.pathname, routes: banner.routes }).toEqual({
+    pathname: new URL(here + "/a", "http://localhost").pathname,
+    routes: {
+      [here + "/a"]: "a.html",
+      [there + "b"]: there.slice(1) + "b.html",
+      [there + "c"]: there.slice(1) + "c.html",
+    },
+  });
+  const paths = [here + "/a", there + "b", there + "c"];
+  expect(await Promise.all(paths.map(path => titleAt(banner.origin, path)))).toEqual(["a.html", "b.html", "c.html"]);
 });
 
 test.concurrent("bun serve svg files with correct Content-Type", async () => {

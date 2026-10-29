@@ -110,29 +110,14 @@ yourself with Bun.serve().
     return a.localeCompare(b);
   });
 
-  // Add cwd to find longest common path
-  let needsPop = false;
-  if (args.length === 1) {
-    args.push(process.cwd());
-    needsPop = true;
-  }
+  const pages = process.platform === "win32" ? args.map(arg => arg.replaceAll("\\", "/")) : args;
 
-  // Find longest common path prefix to use as the base path when there are
-  // multiple entry points
-  let longestCommonPath = args.reduce((acc, curr) => {
-    if (!acc) return curr;
-    let i = 0;
-    while (i < acc.length && i < curr.length && acc[i] === curr[i]) i++;
-    return acc.slice(0, i);
-  });
-
-  if (process.platform === "win32") {
-    longestCommonPath = longestCommonPath.replaceAll("\\", "/");
-  }
-
-  if (needsPop) {
-    // Remove cwd from args
-    args.pop();
+  // The deepest directory that contains every page, with its "/". Empty when there is none (two drives on Windows).
+  let base = pages[0].slice(0, pages[0].lastIndexOf("/") + 1);
+  for (let i = 1; i < pages.length; i++) {
+    while (!pages[i].startsWith(base)) {
+      base = base.slice(0, base.slice(0, -1).lastIndexOf("/") + 1);
+    }
   }
 
   // Transform file paths into friendly URL paths
@@ -140,29 +125,10 @@ yourself with Bun.serve().
   // - "about/index.html" -> "/about"
   // - "about/foo.html" -> "/about/foo"
   // - "foo.html" -> "/foo"
-  const servePaths = args.map(arg => {
-    if (process.platform === "win32") {
-      arg = arg.replaceAll("\\", "/");
-    }
-    const basename = path.basename(arg);
-    const isIndexHtml = basename === "index.html";
+  const servePaths = pages.map(page => {
+    let servePath = page.slice(base.length);
 
-    let servePath = arg;
-    if (servePath.startsWith(longestCommonPath)) {
-      servePath = servePath.slice(longestCommonPath.length);
-    } else {
-      let relative = path.relative(longestCommonPath, servePath);
-      if (process.platform === "win32") {
-        relative = relative.replaceAll("\\", "/");
-      }
-      if (!relative.startsWith("..")) {
-        servePath = relative;
-      }
-    }
-
-    if (isIndexHtml && servePath.length === 0) {
-      servePath = "/";
-    } else if (isIndexHtml) {
+    if (servePath === "index.html" || servePath.endsWith("/index.html")) {
       servePath = servePath.slice(0, -"index.html".length);
     }
 

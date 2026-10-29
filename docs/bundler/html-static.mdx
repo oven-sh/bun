@@ -115,7 +115,7 @@ Press h + Enter to show shortcuts
 
 ### Path normalization
 
-Bun chooses the base path from the longest common prefix among all the files.
+Bun uses the deepest directory that contains every file as the base path.
 
 ```bash terminal icon="terminal"
 bun ./index.html ./about/index.html ./about/foo/index.html

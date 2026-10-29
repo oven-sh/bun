@@ -47,14 +47,6 @@ impl CppTask {
 
 bun_opaque::opaque_ffi! { pub struct EventLoopTaskNoContext; }
 
-impl EventLoopTaskNoContext {
-    /// Deallocates `this`
-    pub unsafe fn run(this: *mut EventLoopTaskNoContext) {
-        // SAFETY: caller guarantees `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
-        unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
-    }
-}
-
 /// A task created from C++ code that runs inside the workpool (WebCrypto's
 /// `PhonyWorkQueue`). Holds the creating VM's ticket: the C++ closure captures
 /// context-affine objects and posts its result back by context id.
@@ -74,8 +66,8 @@ impl ConcurrentCppTask {
             cpp_task, ticket, ..
         } = *self;
         // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
-        // `run` consumes it here.
-        unsafe { EventLoopTaskNoContext::run(cpp_task) };
+        // `performTask` frees it.
+        unsafe { Bun__EventLoopTaskNoContext__performTask(cpp_task) };
         ticket.unref_keep_alive();
     }
 }

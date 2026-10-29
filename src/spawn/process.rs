@@ -275,7 +275,7 @@ impl Process {
     pub(crate) fn init_posix(
         posix: &PosixSpawnResult,
         event_loop: EventLoopHandle,
-    ) -> *mut Process {
+    ) -> RefPtr<Process> {
         let status = 'brk: {
             if posix.has_exited {
                 let mut rusage = rusage_zeroed();
@@ -284,8 +284,7 @@ impl Process {
             }
             Status::Running
         };
-        // bun.new → heap::alloc (pointer crosses FFI / intrusive refcount)
-        bun_core::heap::into_raw(Box::new(Process {
+        RefPtr::new(Process {
             ref_count: bun_ptr::ThreadSafeRefCount::init(),
             pid: posix.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -295,7 +294,7 @@ impl Process {
             poller: Poller::Detached,
             status,
             exit_handler: ProcessExitHandler::default(),
-        }))
+        })
     }
 
     // has_exited / has_killed live in the always-on impl above.
@@ -1799,8 +1798,7 @@ pub trait SpawnResultExt: Sized {
 #[cfg(unix)]
 impl SpawnResultExt for PosixSpawnResult {
     fn to_process(self, event_loop: EventLoopHandle) -> RefPtr<Process> {
-        // SAFETY: `init_posix` heap-allocates the `Process` with its initial ref.
-        unsafe { RefPtr::from_raw(Process::init_posix(&self, event_loop)) }
+        Process::init_posix(&self, event_loop)
     }
 }
 

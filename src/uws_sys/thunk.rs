@@ -12,14 +12,12 @@
 //!
 //! * `zst::<H>()`         — conjure a ZST handler value (handlers are
 //!   monomorphised zero-sized types, so no runtime data is needed).
-//! * `user_mut`           — null-checked `*mut c_void → Option<&mut U>`.
 //! * `handle_mut`         — `*mut Opaque → &mut Opaque` for uWS handles.
 //! * `c_slice`            — `(ptr,len) → &[u8]` (empty when len==0 / null).
 //!
 //! All functions are `unsafe fn` (callers uphold the uWS callback contract)
 //! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
 
-use core::ffi::c_void;
 use core::ptr::NonNull;
 
 /// Marker for `#[repr(C)]` zero-sized opaque FFI handles
@@ -84,22 +82,6 @@ pub unsafe trait OpaqueHandle: Sized {
 #[inline(always)]
 pub(crate) fn zst<H>() -> H {
     bun_core::ffi::conjure_zst::<H>()
-}
-
-/// Recover `&mut U` from a uWS user-data word, returning `None` for null.
-///
-/// # Safety
-/// When non-null, `p` must have been registered as `*mut U` and point to a
-/// live `U` with no other live `&mut`/`&` to it for the duration of the
-/// returned borrow (uWS callbacks fire single-threaded from the event loop).
-#[inline(always)]
-pub(crate) unsafe fn user_mut<'a, U>(p: *mut c_void) -> Option<&'a mut U> {
-    if p.is_null() {
-        None
-    } else {
-        // SAFETY: per caller contract above.
-        Some(unsafe { &mut *p.cast::<U>() })
-    }
 }
 
 /// Re-type a raw uWS handle (`uws_res`, `H3Response`, `RawWebSocket`, …) as a

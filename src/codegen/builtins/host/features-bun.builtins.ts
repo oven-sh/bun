@@ -335,6 +335,7 @@ export default b.declarations(
     ...nativeBindings(
       "NewCppFunction",
       "NodeUtilTypesModule.cpp",
+      "jsFunctionIsDeepEqual",
       "jsFunctionIsDeepStrictEqual",
       "jsFunctionPartialDeepStrictEqual",
     ),

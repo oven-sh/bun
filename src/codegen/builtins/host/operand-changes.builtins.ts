@@ -44,6 +44,7 @@ const methodTakingObjects = (path: b.BuiltinPath, taken: readonly number[]) => {
 const resultsOfBindingsChangingNothing: Readonly<Record<b.BuiltinPath, b.TableType>> = {
   "native:NewCppFunction:NodeTLS.cpp:loadExtraCACertificates": b.undefined,
   "native:NewCppFunction:NodeTLS.cpp:parseCACertificates": b.instance("Array").holding({ element: b.string }).fresh,
+  "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepEqual": b.bool,
   "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionIsDeepStrictEqual": b.bool,
   "native:NewCppFunction:NodeUtilTypesModule.cpp:jsFunctionPartialDeepStrictEqual": b.bool,
   "native:NewCppFunction:decodeURIComponentSIMD.cpp:jsFunctionDecodeURIComponentSIMD": b.union(b.string, b.undefined),

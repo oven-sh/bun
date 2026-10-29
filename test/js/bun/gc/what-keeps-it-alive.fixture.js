@@ -8,12 +8,14 @@ function cellsThatReach(className) {
   const { nodes, nodeClassNames, edges, edgeTypes, edgeNames, roots, labels } = generateHeapSnapshotForDebugging();
   const byId = new Map();
   for (let at = 0; at < nodes.length; at += 7)
-    byId.set(nodes[at], { name: nodeClassNames[nodes[at + 2]], address: nodes[at + 5], from: [] });
+    byId.set(nodes[at], { name: nodeClassNames[nodes[at + 2]], size: nodes[at + 1], address: nodes[at + 5], from: [] });
   for (let at = 0; at < edges.length; at += 4) {
     const type = edgeTypes[edges[at + 2]];
     const name =
       type === "Property" || type === "Variable" ? edgeNames[edges[at + 3]] : type === "Index" ? edges[at + 3] : "";
-    if (edges[at]) byId.get(edges[at + 1])?.from.push([edges[at], `${type} ${name}`.trim()]);
+    // A WeakRef holds nothing, and the program has one to the object.
+    if (edges[at] && byId.get(edges[at])?.name !== "WeakRef")
+      byId.get(edges[at + 1])?.from.push([edges[at], `${type} ${name}`.trim()]);
   }
   // From the objects of the class back to everything that reaches them: `next` is the first step of a shortest way.
   const next = new Map();
@@ -36,7 +38,21 @@ function cellsThatReach(className) {
     if (next.has(roots[at]))
       listed.push(`root (${labels[roots[at + 1]]}) ${byId.get(roots[at]).address}: ${wayFrom(roots[at])}`);
   // The snapshot does not list what the scan of the stack found, so each cell that reaches the class is looked for on the stack.
-  return { listed, reaching: new Map([...next.keys()].map(id => [BigInt(byId.get(id).address), wayFrom(id)])) };
+  // A word that points into a cell counts as well: the size is an estimate, so the report says how far in the word points.
+  const cells = [...next.keys()]
+    .map(id => ({ start: BigInt(byId.get(id).address), size: BigInt(byId.get(id).size), way: wayFrom(id) }))
+    .sort((a, b) => (a.start < b.start ? -1 : 1));
+  const cellOf = word => {
+    let low = 0;
+    for (let high = cells.length; low < high; ) {
+      const middle = (low + high) >> 1;
+      if (cells[middle].start <= word) low = middle + 1;
+      else high = middle;
+    }
+    const cell = cells[low - 1];
+    return cell && word < cell.start + cell.size ? cell : undefined;
+  };
+  return { listed, count: cells.length, cellOf };
 }
 
 // The words of the main thread's stack, and the place in code that a word points to.
@@ -91,8 +107,8 @@ function stackOnMacOS() {
 }
 
 function whatKeepsAlive(className) {
-  const { listed, reaching: wanted } = cellsThatReach(className);
-  const lines = [`${wanted.size} cells reach a ${className}`, ...listed];
+  const { listed, count, cellOf } = cellsThatReach(className);
+  const lines = [`${count} cells reach a ${className}`, ...listed];
   // bun:ffi requires the JIT.
   if (process.platform === "darwin" && process.env.BUN_JSC_useJIT === "0")
     return [...lines, "without the JIT the stack cannot be read"].join("\n");
@@ -106,8 +122,10 @@ function whatKeepsAlive(className) {
     words[index] > addressOf(index) && words[index] < stack.end && !(words[index] & 15n) && place(words[index + 1]);
   let shown = 0;
   for (let index = words.length - 1; index >= 0 && shown < 16; index--) {
-    if (!wanted.has(words[index])) continue;
+    const cell = cellOf(words[index]);
+    if (!cell) continue;
     shown++;
+    const into = words[index] > cell.start ? `, 0x${(words[index] - cell.start).toString(16)} into the cell` : "";
     const below = [];
     for (let at = (index - 1) & ~1; at >= 0 && below.length < 3; at -= 2)
       if (isRecord(at)) below.push(`-0x${((index - at) * 8).toString(16)} ${place(words[at + 1])}`);
@@ -117,7 +135,7 @@ function whatKeepsAlive(className) {
     for (; at < words.length - 1 && isRecord(at) && above.length < 10; at = Number((words[at] - stack.start) / 8n))
       above.push(`+0x${((at - index) * 8).toString(16)} ${place(words[at + 1])}`);
     lines.push(
-      `0x${words[index].toString(16)} (${wanted.get(words[index])}) lies at 0x${addressOf(index).toString(16)}, 0x${(stack.end - addressOf(index)).toString(16)} below the end of the stack | records below: ${below.join(", ")} | records above, each the caller of the one before: ${above.join(", ")}`,
+      `0x${words[index].toString(16)} (${cell.way}${into}) lies at 0x${addressOf(index).toString(16)}, 0x${(stack.end - addressOf(index)).toString(16)} below the end of the stack | records below: ${below.join(", ")} | records above, each the caller of the one before: ${above.join(", ")}`,
     );
   }
   return lines.join("\n");

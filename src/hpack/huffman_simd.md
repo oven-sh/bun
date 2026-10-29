@@ -120,7 +120,7 @@ more than the count and a copy.
 
 `scripts/bench-hpack-rust.sh` runs `benches/hpack.rs`: one field with a name from the static table,
 in ns, through `Encoder::encode` and `Decoder::next`. With `--scalar` it leaves the kernel out.
-Every row has 16,384 different values (4,194 of 1000 bytes): the branch predictor learns 512 of
+A row has up to 16,384 different values (4,194 of 1000 bytes): the branch predictor learns 512 of
 them, and then code with branches that depend on the text looks up to 25% faster than it is. "C" is
 ls-hpack 2.3.5, which is what Bun used before this crate, with its table of 65,536 pairs and its
 decoder that looks up 16 bits in 256 KB, put into the same benchmark. Xeon (Emerald Rapids) at 2.1

@@ -150,9 +150,6 @@ impl Version {
     }
 }
 
-// Exported C symbol — null-terminated
-// Moved out of `impl Version` — Rust impl blocks cannot hold `static` items.
-// `&[u8; N]` is a thin pointer, so the C++ side sees a single `const char*`-sized symbol.
 const GITHUB_URL_Z: &[u8] = const_format::concatcp!(
     "https://github.com/oven-sh/bun/releases/download/bun-v",
     Global::package_json_version,
@@ -161,6 +158,9 @@ const GITHUB_URL_Z: &[u8] = const_format::concatcp!(
     "\0"
 )
 .as_bytes();
+// Exported C symbol — null-terminated
+// Moved out of `impl Version` — Rust impl blocks cannot hold `static` items.
+// `&[u8; N]` is a thin pointer, so the C++ side sees a single `const char*`-sized symbol.
 #[unsafe(no_mangle)]
 static Bun__githubURL: &[u8; GITHUB_URL_Z.len()] = GITHUB_URL_Z.first_chunk().unwrap();
 

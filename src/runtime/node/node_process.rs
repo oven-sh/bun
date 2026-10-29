@@ -1,6 +1,5 @@
 //! Process information and control APIs (`globalThis.process` / `node:process`)
 
-use core::ffi::c_char;
 
 use bun_core::EncodedSlice;
 use bun_core::env_var;
@@ -133,33 +132,20 @@ pub(crate) extern "C" fn Bun__Node__getDisabledWarnings(
     disabled.len()
 }
 
-// Raw-pointer statics are `!Sync`; wrap in a
-// `#[repr(transparent)]` newtype so the C++ side still sees a single
-// `const char*`-sized symbol.
-#[repr(transparent)]
-struct CStrPtr(*const c_char);
-// SAFETY: the wrapped pointer always targets a `'static` NUL-terminated
-// rodata literal produced by `concatcp!`; it is never written through.
-unsafe impl Sync for CStrPtr {}
+const VERSION_Z: &[u8] =
+    const_format::concatcp!("v", Global::package_json_version, "\0").as_bytes();
+const VERSION_WITH_SHA_Z: &[u8] =
+    const_format::concatcp!("v", Global::package_json_version_with_sha, "\0").as_bytes();
+const VERSION_SHA_Z: &[u8] = const_format::concatcp!(Environment::GIT_SHA, "\0").as_bytes();
 
+// `&[u8; N]` is a thin pointer, so the C++ side sees a single `const char*`-sized symbol.
 #[unsafe(no_mangle)]
-static Bun__version: CStrPtr = CStrPtr(
-    const_format::concatcp!("v", Global::package_json_version, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
-);
+static Bun__version: &[u8; VERSION_Z.len()] = VERSION_Z.first_chunk().unwrap();
 #[unsafe(no_mangle)]
-static Bun__version_with_sha: CStrPtr = CStrPtr(
-    const_format::concatcp!("v", Global::package_json_version_with_sha, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
-);
+static Bun__version_with_sha: &[u8; VERSION_WITH_SHA_Z.len()] =
+    VERSION_WITH_SHA_Z.first_chunk().unwrap();
 #[unsafe(no_mangle)]
-static Bun__version_sha: CStrPtr = CStrPtr(
-    const_format::concatcp!(Environment::GIT_SHA, "\0")
-        .as_ptr()
-        .cast::<c_char>(),
-);
+static Bun__version_sha: &[u8; VERSION_SHA_Z.len()] = VERSION_SHA_Z.first_chunk().unwrap();
 
 mod _impl {
     use bun_core::env_var;

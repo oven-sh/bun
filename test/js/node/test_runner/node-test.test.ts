@@ -134,6 +134,25 @@ describe("node:test", () => {
     },
   );
 
+  test("should fail a suite whose before() or after() hook fails instead of reporting its tests as passing", async () => {
+    // Suite-level hooks hand their failure to the done callback of a bun:test beforeAll/afterAll
+    // hook. It was printed as an unhandled error between tests, and the suite's tests still ran
+    // and were reported as passing.
+    const { exitCode, stdout, stderr } = await runTests(["30-failing-suite-hooks.js"]);
+    expect(stdout).not.toContain("BODY_RAN_AFTER_FAILED_BEFORE");
+    expect(stderr).toContain("error: suite after() failed");
+    expect(stderr).toContain("error: suite before() failed");
+    expect({ ...report(stderr), exitCode }).toEqual({
+      tests: {
+        "suite whose after() fails > passes on its own": "pass",
+        "suite whose after() fails > (unnamed)": "fail",
+        "suite whose before() fails > (unnamed)": "fail",
+      },
+      summary: { pass: 1, fail: 2 },
+      exitCode: 1,
+    });
+  });
+
   test("should support done callbacks in tests and hooks", async () => {
     const { exitCode, stderr } = await runTests(["10-done-callbacks.js"]);
     expect(stderr).toContain("2 pass");

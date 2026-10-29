@@ -458,3 +458,237 @@ describe("done(err) fails the test whose done() received it", () => {
     });
   });
 });
+
+describe("done(err) fails the hook whose done() received it", () => {
+  // `suffix` is "" or ".concurrent". The beforeAll case goes last so that the tests it skips
+  // cannot include any of the other cases.
+  const fixture = (suffix: string) => `
+    import { it, describe, beforeAll, beforeEach, afterEach, afterAll } from "bun:test";
+
+    describe${suffix}("beforeEach", () => {
+      beforeEach(done => {
+        done(new Error("beforeEach boom"));
+      });
+      it("body is skipped", () => {
+        console.log("beforeEach > body ran");
+      });
+    });
+    describe${suffix}("afterEach", () => {
+      afterEach(async done => {
+        await 1;
+        done(new Error("afterEach boom"));
+      });
+      it("test fails", () => {
+        console.log("afterEach > body ran");
+      });
+    });
+    describe${suffix}("afterAll", () => {
+      afterAll(async done => {
+        await 1;
+        done(new Error("afterAll boom"));
+      });
+      it("test passes", () => {
+        console.log("afterAll > body ran");
+      });
+    });
+    describe${suffix}("beforeAll", () => {
+      beforeAll(done => {
+        done(new Error("beforeAll boom"));
+      });
+      it("body is skipped", () => {
+        console.log("beforeAll > body ran");
+      });
+    });
+  `;
+
+  test.concurrent.each([
+    { name: "serial", suffix: "", args: [] },
+    { name: "bun test --concurrent", suffix: "", args: ["--concurrent"] },
+    { name: "describe.concurrent", suffix: ".concurrent", args: [] },
+  ])("$name", async ({ suffix, args }) => {
+    expect(await runFixture(fixture(suffix), args)).toEqual({
+      exitCode: 1,
+      stdout: "bun test <version> (<revision>)\nafterEach > body ran\nafterAll > body ran",
+      results: [
+        "error: beforeEach boom",
+        "(fail) beforeEach > body is skipped",
+        "error: afterEach boom",
+        "(fail) afterEach > test fails",
+        "(pass) afterAll > test passes",
+        "error: afterAll boom",
+        "(fail) afterAll > (unnamed)",
+        "error: beforeAll boom",
+        "(fail) beforeAll > (unnamed)",
+        "1 pass",
+        "4 fail",
+      ].join("\n"),
+    });
+  });
+
+  // A hook that a test registers while it runs, and a hook of a preload file.
+  test.concurrent("a hook that a running test or a preload file registers", async () => {
+    const run = await runFixture(
+      {
+        "preload.ts": `
+          import { beforeEach } from "bun:test";
+          beforeEach(done => {
+            if (globalThis.failPreloadHook) done(new Error("preload boom"));
+            else done();
+          });
+        `,
+        "done-err.test.ts": `
+          import { it, afterEach, onTestFinished } from "bun:test";
+          it("onTestFinished, from the hook itself", () => {
+            onTestFinished(done => {
+              done(new Error("finished boom"));
+            });
+            onTestFinished(() => {
+              console.log("the hook after the failed one ran");
+            });
+          });
+          it("onTestFinished, from a macrotask", () => {
+            onTestFinished(done => {
+              setImmediate(() => done(new Error("late finished boom")));
+            });
+          });
+          it("afterEach that the test registers", () => {
+            afterEach(done => {
+              done(new Error("registered boom"));
+            });
+          });
+          it("onTestFinished that calls done()", () => {
+            onTestFinished(done => {
+              done();
+            });
+            globalThis.failPreloadHook = true;
+          });
+          it("the beforeEach of the preload file", () => {
+            console.log("body ran after the preload hook failed");
+          });
+        `,
+      },
+      ["--preload", "./preload.ts"],
+    );
+    expect(run).toEqual({
+      exitCode: 1,
+      stdout: "bun test <version> (<revision>)",
+      results: [
+        "error: finished boom",
+        "(fail) onTestFinished, from the hook itself",
+        "error: late finished boom",
+        "(fail) onTestFinished, from a macrotask",
+        "error: registered boom",
+        "(fail) afterEach that the test registers",
+        "(pass) onTestFinished that calls done()",
+        "error: preload boom",
+        "(fail) the beforeEach of the preload file",
+        "1 pass",
+        "4 fail",
+      ].join("\n"),
+    });
+  });
+
+  // As for a test: done(err) ends the hook without the promise its callback returns, and a hook
+  // that is past its timeout by then is not a timeout.
+  test.concurrent("at once, when the promise its callback returns is still pending", async () => {
+    const run = await runFixture(`
+      import { it, describe, beforeEach, afterEach } from "bun:test";
+      describe("beforeEach", () => {
+        beforeEach(done => {
+          done(new Error("beforeEach boom"));
+          Bun.sleepSync(20);
+          return new Promise(() => {});
+        }, 10);
+        it("body is skipped", () => {
+          console.log("beforeEach > body ran");
+        });
+      });
+      describe("afterEach", () => {
+        afterEach(done => {
+          done(new Error("afterEach boom"));
+          Bun.sleepSync(20);
+          return new Promise(() => {});
+        }, 10);
+        it("test fails", () => {});
+      });
+    `);
+    expect(run).toEqual({
+      exitCode: 1,
+      stdout: "bun test <version> (<revision>)",
+      results: [
+        "error: beforeEach boom",
+        "(fail) beforeEach > body is skipped",
+        "error: afterEach boom",
+        "(fail) afterEach > test fails",
+        "0 pass",
+        "2 fail",
+      ].join("\n"),
+    });
+  });
+
+  // The test is retried, and the hook fails the second attempt as well.
+  test.concurrent("in every attempt of a retried test", async () => {
+    const run = await runFixture(`
+      import { it, describe, beforeEach } from "bun:test";
+      describe("from a callback", () => {
+        beforeEach(done => {
+          setImmediate(() => done(new Error("callback boom")));
+        });
+        it("retried", () => {}, { retry: 1 });
+      });
+      describe("from an async function", () => {
+        beforeEach(async done => {
+          await new Promise(resolve => setImmediate(resolve));
+          done(new Error("async boom"));
+        });
+        it("retried", () => {}, { retry: 1 });
+      });
+    `);
+    expect(run).toEqual({
+      exitCode: 1,
+      stdout: "bun test <version> (<revision>)",
+      results: [
+        "error: callback boom",
+        "error: callback boom",
+        "(fail) from a callback > retried (attempt 2)",
+        "error: async boom",
+        "error: async boom",
+        "(fail) from an async function > retried (attempt 2)",
+        "0 pass",
+        "2 fail",
+      ].join("\n"),
+    });
+  });
+
+  // As for a test: the hook's done(err) is called inside the toThrow() wait of another test.
+  test.concurrent("when it is called while toThrow() waits on a promise", async () => {
+    const run = await runFixture(`
+      import { it, describe, expect, beforeEach } from "bun:test";
+      const fired = Promise.withResolvers();
+      describe.concurrent("group", () => {
+        describe("hooked", () => {
+          beforeEach(done => {
+            setImmediate(() => {
+              done(new Error("hook boom"));
+              fired.resolve();
+            });
+          });
+          it("fails", () => {});
+        });
+        it("waits", () => {
+          expect(async () => {
+            await fired.promise;
+            throw new Error("thrown");
+          }).toThrow("thrown");
+        });
+      });
+    `);
+    expect(run).toEqual({
+      exitCode: 1,
+      stdout: "bun test <version> (<revision>)",
+      results: ["error: hook boom", "(pass) group > waits", "(fail) group > hooked > fails", "1 pass", "1 fail"].join(
+        "\n",
+      ),
+    });
+  });
+});

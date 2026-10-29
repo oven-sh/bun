@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 
-async function testFailureSkip(failurePoints: string[]): Promise<string> {
+// `via` is how the fixture reports a failure: a throw, or the done callback of the hook or test.
+async function runFailureSkip(failurePoints: string[], via: string): Promise<string> {
   const result = await Bun.spawn({
     cmd: [bunExe(), "test", import.meta.dir + "/failure-skip.fixture.ts"],
     stdout: "pipe",
     stderr: "pipe",
-    env: { ...bunEnv, FAILURE_POINTS: failurePoints.join(",") },
+    env: { ...bunEnv, FAILURE_POINTS: failurePoints.join(","), FAILURE_VIA: via },
   });
   const exitCode = await result.exited;
   const stdout = await result.stdout.text();
@@ -16,7 +17,9 @@ async function testFailureSkip(failurePoints: string[]): Promise<string> {
   return [...messages].map(([_, msg]) => msg).join(",");
 }
 
-describe("failure-skip", async () => {
+describe.each(["throw", "done"])("failure-skip, a failure through %s", async via => {
+  const testFailureSkip = (failurePoints: string[]) => runFailureSkip(failurePoints, via);
+
   test("none", async () => {
     expect(await testFailureSkip([])).toMatchInlineSnapshot(
       `"beforeall1,beforeall2,beforeeach1,beforeeach2,test1,aftereach1,aftereach2,beforeeach1,beforeeach2,test2,aftereach1,aftereach2,afterall1,afterall2"`,

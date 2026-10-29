@@ -800,17 +800,9 @@ impl BunTest {
 
     fn on_done_error(global_this: &JSGlobalObject, entry: &RefDataValue, error: JSValue) {
         if let Some(strong) = clone_active_strong() {
-            let this = strong.get();
-            let is_running_hook = this.execution.get_current_and_valid_execution_sequence(entry).is_some_and(|(sequence, _)| {
-                // SAFETY: points into `this.execution.sequences`, which nothing else borrows here.
-                let sequence = unsafe { sequence.as_ref() };
-                sequence.active_entry != sequence.test_entry
-            });
-            if !is_running_hook {
-                // An `entry` that is over names nothing, so the error is reported between tests.
-                this.on_uncaught_exception(global_this, Some(error), false, entry);
-                return;
-            }
+            // An `entry` that is over names nothing, so the error is reported between tests.
+            strong.get().on_uncaught_exception(global_this, Some(error), false, entry);
+            return;
         }
         let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, error, false);
     }

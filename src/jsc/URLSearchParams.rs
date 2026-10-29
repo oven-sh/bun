@@ -13,11 +13,11 @@ unsafe extern "C" {
     safe fn URLSearchParams__fromJS(value: JSValue) -> Option<NonNull<URLSearchParams>>;
     // safe: `URLSearchParams` is an `opaque_ffi!` ZST handle (`&mut` is
     // ABI-identical to a non-null `*mut`); `ctx` is an opaque round-trip pointer
-    // C++ only forwards to `callback` (synchronous, never retained).
+    // C++ only forwards to `callback` with the address of a local (synchronous, never retained).
     safe fn URLSearchParams__toString(
         self_: &mut URLSearchParams,
         ctx: *mut c_void,
-        callback: extern "C" fn(ctx: *mut c_void, str: *const EncodedSlice),
+        callback: extern "C" fn(ctx: *mut c_void, str: &EncodedSlice),
     );
 }
 
@@ -40,14 +40,11 @@ impl URLSearchParams {
             callback: fn(&mut Ctx, EncodedSlice),
         }
 
-        extern "C" fn cb<Ctx>(c: *mut c_void, str: *const EncodedSlice) {
+        extern "C" fn cb<Ctx>(c: *mut c_void, str: &EncodedSlice) {
             // SAFETY: `c` is the &mut Wrap<Ctx> we passed below; the callback is
             // invoked synchronously so `w` is live for the entire call.
             let w = unsafe { bun_ptr::callback_ctx::<Wrap<'_, Ctx>>(c) };
-            // SAFETY: C++ passes a non-null pointer to a stack EncodedSlice that is
-            // valid for the duration of this synchronous callback; EncodedSlice is Copy.
-            let str = unsafe { *str };
-            (w.callback)(w.ctx, str);
+            (w.callback)(w.ctx, *str);
         }
 
         let mut w = Wrap { ctx, callback };

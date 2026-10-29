@@ -3760,7 +3760,7 @@ impl Resolver {
             sec: now.sec,
             nsec: now.nsec,
         };
-        let uws_loop = vm.uws_loop();
+        let uws_loop = vm.uws_loop_ref();
         // R-2: `&self` carries no `noalias`, and every field touched below is
         // UnsafeCell-backed, so the re-entrant `ares_process_fd` callbacks
         // (`request_completed`, `drain_pending_*`) may freely re-derive
@@ -3858,7 +3858,7 @@ impl Resolver {
                 nsec: next.nsec,
             }
         });
-        let uws_loop = self.vm().uws_loop();
+        let uws_loop = self.vm().uws_loop_ref();
         let state = crate::jsc_hooks::runtime_state();
         // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
         unsafe {
@@ -3887,7 +3887,7 @@ impl Resolver {
             // global-resolver permanent pin), so this
             // `deref` cannot reach 0 while `&self` is live.
             unsafe {
-                let uws_loop = (*this).vm().uws_loop();
+                let uws_loop = (*this).vm().uws_loop_ref();
                 let state = crate::jsc_hooks::runtime_state();
                 (*state).timer.increment_timer_ref(-1, uws_loop);
                 Self::deref(this);

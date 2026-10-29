@@ -351,6 +351,11 @@ function applyHandlers(handlers: $Node.Listener | $Node.Listener[], emitter: $No
   }
 }
 
+// For a caller whose `args` has to stay out of the heap: emitErrorApplied.$apply(emitter, args).
+function emitErrorApplied(this: $Node.EventEmitter, ...args: unknown[]) {
+  return emitError(this, args);
+}
+
 function addCatch(emitter: $Node.EventEmitter, promise: Promise<unknown>, type: $Node.EventName, args: unknown[]) {
   promise.then(undefined, function (err) {
     // The callback is called with nextTick to avoid a follow-up rejection from this promise.
@@ -384,7 +389,8 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
 
   if (type === "error") {
     ("unlikely");
-    return emitError(this, args);
+    // Compiled ahead of time, an array that goes to a function which keeps no reference to it stays out of the heap as it is.
+    return IS_COMPILED_AHEAD_OF_TIME ? emitError(this, args) : emitErrorApplied.$apply(this, args);
   }
   const { _events: events } = this;
   if (events === undefined) return false;

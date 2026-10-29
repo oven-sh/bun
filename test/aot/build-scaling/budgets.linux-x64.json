@@ -80,7 +80,8 @@
     "millionInstructions": 13394,
     "megabytes": 215,
     "growth": {
-      "instructions": 2.69
+      "instructions": 2.69,
+      "peakBytes": 2.66
     }
   },
   "one function that stores numbers into many fields": {

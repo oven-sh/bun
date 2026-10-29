@@ -6,6 +6,7 @@
 
 import { highwayJpegForTesting as jpegKernel } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isASAN } from "harness";
 import zlib from "node:zlib";
 
 // ─── plumbing (PNG build/read; same shape as image.test.ts) ─────────────────
@@ -318,13 +319,44 @@ describe("JPEG row kernels", () => {
     return state >>> 0;
   }
 
-  /** Samples in an allocation of their own (a short array without a buffer is in the GC's heap), so that ASAN sees a read past either end. */
+  /** A copy in memory from Bun's allocator. A typed array's own is from libpas, which ASAN does not watch. */
+  const watchedByASAN = (row: Buffer) => Buffer.from(row.toString("hex"), "hex");
+
+  /** Samples in an allocation of their own, so that ASAN sees a read past either end. */
   function input(length: number): Uint8Array {
-    const row = new Uint8Array(new ArrayBuffer(length));
+    const row = Buffer.alloc(length);
     const kind = random() % 4;
     for (let i = 0; i < length; i++) row[i] = kind === 0 ? (random() & 1) * 255 : kind === 1 ? 255 : random();
-    return row;
+    return watchedByASAN(row);
   }
+
+  // A kernel is told that a row begins a byte earlier, or ends a byte later, than it does.
+  test.skipIf(!isASAN).concurrent.each([
+    ["before", 1],
+    ["after", 0],
+  ])("ASAN sees a read of the byte %s a row", async (_, shift) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { highwayJpegForTesting: jpegKernel } = require("bun:internal-for-testing");
+          const { ptr, toArrayBuffer } = require("bun:ffi");
+          const row = (${watchedByASAN})(Buffer.alloc(40));
+          const longer = new Uint8Array(toArrayBuffer(ptr(row) - ${shift}, 0, 41));
+          console.log("unseen", jpegKernel("h2v1Fancy", 41, longer, new Uint8Array(82)));
+        `,
+      ],
+      // A debug build takes 8 seconds to find the names of the functions in the report.
+      env: { ...bunEnv, ASAN_OPTIONS: `${bunEnv.ASAN_OPTIONS}:symbolize=0` },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("AddressSanitizer: heap-buffer-overflow");
+    expect(stdout).toBe("");
+    expect(exitCode).not.toBe(0);
+  });
 
   /** `length` bytes for a kernel to write, at an odd address, and a check that it has written nothing around them. */
   function output(length: number): { row: Uint8Array; untouchedAround: () => boolean } {

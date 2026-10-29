@@ -910,9 +910,7 @@ pub enum ItemStatus {
 // ──────────────────────────────────────────────────────────────────────────
 // BSSList / BSSStringList / BSSMapInner — real method bodies follow below.
 // Per-monomorphization statics are emitted at the declare site via the
-// `bss_list!` / `bss_string_list!` / `bss_map_inner!` macros
-// (`SyncUnsafeCell<MaybeUninit<Self>>` + `Once` + `init_at`). `init()` is a
-// thin heap-allocating wrapper for callers that manage their own once-guard.
+// `bss_list!` / `bss_string_list!` / `bss_map_inner!` macros.
 // ──────────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -934,12 +932,8 @@ pub mod allocators {
 // generic statics, so the storage is emitted at the *declare site* instead:
 //
 //   bss_string_list! { pub dirname_store: 4096, 129 }
-//   // → static STORAGE: SyncUnsafeCell<MaybeUninit<BSSStringList<4096,129>>>
+//   // → static STORAGE: AtomicPtr<BSSStringList<4096,129>>
 //   //   pub fn dirname_store() -> *mut BSSStringList<4096,129>
-//
-// The accessor lazily field-initializes via `init_at` under `std::sync::Once`.
-// Returning `&'static mut` means callers must not hold overlapping unique
-// borrows.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Emit a process-lifetime singleton accessor for any type with an
@@ -975,11 +969,9 @@ macro_rules! bss_singleton {
             #[inline(never)]
             fn slow() -> *mut $ty {
                 let p = $crate::bss_heap_init::<$ty>(<$ty>::init_at).as_ptr();
-                // Race: two threads may both reach here. The mmap'd region is
+                // Race: two threads may both reach here. The allocation is
                 // process-lifetime and never freed, so the loser is leaked
-                // (≤ one per declare site, which in practice is single-threaded
-                // — `FileSystem::init` runs once on the main thread). The CAS
-                // is the publication barrier.
+                // (one per thread that loses). The CAS is the publication barrier.
                 match STORAGE.compare_exchange(
                     ::core::ptr::null_mut(),
                     p,
@@ -997,7 +989,7 @@ macro_rules! bss_singleton {
 
 /// Heap-allocate a fresh `T` via mimalloc and run its in-place `init_at` initializer.
 ///
-/// Shared body of the `BSSStringList`/`BSSMapInner` `init()` shims.
+/// Shared body of `bss_singleton!` and the `BSSMapInner` `init()` shim.
 /// The once-guard is the *caller's* responsibility; use the `bss_*!` macros
 /// for the canonical per-monomorphization singleton.
 #[doc(hidden)] // Public only for the `bss_singleton!` macro expansion in dependent crates.
@@ -1546,8 +1538,8 @@ impl<ValueType, const COUNT: usize> BSSList<ValueType, COUNT> {
 
     // Rust cannot define generic statics, so the per-monomorphization storage is
     // emitted at the *declare site* via `bss_list! { name: T, N }` (see macro
-    // below), which owns a `SyncUnsafeCell<MaybeUninit<Self>>` + `Once` and
-    // calls `init_at` on first access.
+    // above), which owns an `AtomicPtr<Self>` and, on first access, calls
+    // `init_at` on a fresh allocation.
 
     /// In-place field initialization into demand-zero storage.
     ///
@@ -1774,12 +1766,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
             addr_of_mut!((*slot).slice_buf_used).write(0);
             OverflowList::init_counters_at(addr_of_mut!((*slot).overflow_list));
         }
-    }
-
-    /// Heap-allocate and initialize a fresh instance. Once-guard is the caller's
-    /// responsibility — use `bss_string_list!` for the canonical singleton.
-    pub fn init() -> NonNull<Self> {
-        bss_heap_init(Self::init_at)
     }
 
     // Singleton is process-lifetime; never freed.

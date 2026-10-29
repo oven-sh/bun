@@ -1177,17 +1177,20 @@ describe.concurrent("START_REPLICATION", () => {
   });
 
   // The server is told in band, not with a CancelRequest: the walsender raises an error on a
-  // CancelRequest and drops the session's temporary slots. So no second connection is opened.
+  // CancelRequest and drops the session's temporary slots. So no second connection is opened, and the
+  // pool keeps the connection whatever its size: the rejected query leaves no transaction behind.
   test.each([
-    ["the readable alone", false],
-    ["both streams", true],
-  ])("cancel() of %s ends the session with a CopyDone", async (_, withWriter) => {
+    ["the readable alone", false, 1],
+    ["both streams", true, 1],
+    ["the readable alone, in a pool of two", false, 2],
+  ])("cancel() of %s ends the session with a CopyDone", async (_, withWriter, max) => {
     const wire: string[] = [];
     const { port, server } = await walsender(wire, [Buffer.from("k1")]);
     let connections = 0;
+    let closed = false;
     server.on("connection", () => connections++);
     try {
-      await using sql = connect(port);
+      await using sql = new SQL(`postgres://u@127.0.0.1:${port}/db`, { max, onclose: () => (closed = true) });
       const query = sql.unsafe("START_REPLICATION 0/0");
       const reader = query.readable().getReader();
       const writer = withWriter ? query.writable().getWriter() : null;
@@ -1197,7 +1200,8 @@ describe.concurrent("START_REPLICATION", () => {
       if (writer) expect(failure(await outcome(writer.closed))).toMatchObject(cancelled);
       expect(await sql`select 1 as x`.simple()).toEqual([{ x: 1 }]);
       expect(wire).toEqual(["Q START_REPLICATION 0/0", "c ", "Q select 1 as x"]);
-      expect(connections).toBe(1);
+      // A pool of two runs the select on a second connection while the first awaits its ReadyForQuery.
+      expect([connections <= max, closed]).toEqual([true, false]);
     } finally {
       server.close();
     }

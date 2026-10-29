@@ -32,7 +32,9 @@ use crate::postgres::error_jsc::{
 };
 use crate::postgres::postgres_request as PostgresRequest;
 use crate::postgres::postgres_request::MessageType;
-use crate::postgres::postgres_sql_query::{self, Cancel, RequestCounter, Status as QueryStatus};
+use crate::postgres::postgres_sql_query::{
+    self, Cancel, CopyStream, RequestCounter, Status as QueryStatus,
+};
 use crate::postgres::postgres_sql_statement::{
     Error as StatementError, StatementCache, Status as StatementStatus,
 };
@@ -456,17 +458,17 @@ impl PostgresSQLConnection {
         }
 
         let wrote = self.socket.get().write(chunk);
-        self.update_flags(|f| {
-            f.set(
-                ConnectionFlags::HAS_BACKPRESSURE,
-                wrote < 0 || (wrote as usize) < chunk.len(),
-            )
-        });
+        let backpressure = wrote < 0 || (wrote as usize) < chunk.len();
+        self.update_flags(|f| f.set(ConnectionFlags::HAS_BACKPRESSURE, backpressure));
         debug!("flushData: wrote {}/{} bytes", wrote, chunk.len());
         if wrote > 0 {
             let wrote = usize::try_from(wrote).expect("int cast");
             SocketMonitor::write(&chunk[..wrote]);
             self.write_buffer.with_mut(|b| b.consume(wrote));
+        }
+        if backpressure {
+            // A write that waits for the socket keeps the process alive.
+            self.update_poll_ref();
         }
     }
 
@@ -719,6 +721,7 @@ impl PostgresSQLConnection {
         debug!("onDrain");
         let _guard = self.ref_guard();
         self.update_flags(|f| f.remove(ConnectionFlags::HAS_BACKPRESSURE));
+        self.update_poll_ref();
         // Don't send any other messages while we're waiting for TLS.
         if let TLSStatus::MessageSent(sent) = self.tls_status.get() {
             if sent < 8 {
@@ -1281,12 +1284,14 @@ impl PostgresSQLConnection {
         self.transaction_status.get() != b'I'
     }
 
-    /// Also while a request that user code has seen rejected can still change it.
+    /// Also while a request that user code has seen rejected can still change it. A replication
+    /// session that ends in band cannot: its command ends with the server's ReadyForQuery.
     pub fn get_in_transaction(&self) -> bool {
         self.is_in_transaction()
-            || self
-                .current()
-                .is_some_and(|head| head.flags.get().discard_response)
+            || self.current().is_some_and(|head| {
+                let flags = head.flags.get();
+                flags.discard_response && flags.copy != CopyStream::BothClosing
+            })
     }
 
     /// Of the login that is under way or was refused.

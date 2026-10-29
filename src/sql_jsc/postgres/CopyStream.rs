@@ -236,12 +236,16 @@ impl PostgresSQLConnection {
         let Some(request) = self.copying(CopyStream::reads) else {
             return;
         };
-        let both = request.flags.get().copy == CopyStream::BothOpen;
-        request.update_flags(|f| f.copy = CopyStream::Readable);
-        if both {
-            // The client answers with its own CopyDone, which ends the command.
-            self.set_reading(true);
-            self.write_copy_end(None);
+        match request.flags.get().copy {
+            CopyStream::BothOpen => {
+                // The client answers with its own CopyDone, which ends the command.
+                request.update_flags(|f| f.copy = CopyStream::BothClosing);
+                self.set_reading(true);
+                self.write_copy_end(None);
+            }
+            // The server's CopyDone answers the client's: the command ends next.
+            CopyStream::BothClosing => {}
+            _ => request.update_flags(|f| f.copy = CopyStream::Readable),
         }
     }
 
@@ -325,10 +329,10 @@ impl PostgresSQLQuery {
 
     fn end_copy_in(&self, failure: Option<&[u8]>) {
         let Some(connection) = self.copy_connection(CopyStream::writes) else {
-            // `Readable`: the server ended its side and the client's CopyDone is out. Abort rejects.
+            // `BothClosing`: the client's CopyDone is out and the command is ending. Abort rejects.
             if let (Some(message), Some(connection)) = (
                 failure,
-                self.copy_connection(|copy| copy == CopyStream::Readable),
+                self.copy_connection(|copy| copy == CopyStream::BothClosing),
             ) {
                 self.reject_aborted(&connection, message);
             }

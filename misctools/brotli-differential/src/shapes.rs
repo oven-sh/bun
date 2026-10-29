@@ -1746,7 +1746,7 @@ pub fn run_nearly_random(seed0: u64, iters: u64, qualities: u64) {
                 c.literal(&mut rng);
             }
             if c.copy(length, rng.chance(1, 2)) {
-                copies.push(c.data.len() - 1);
+                copies.push(c.data.len() - length..c.data.len());
             }
         }
         // The literals at the end make one more command.
@@ -1758,18 +1758,18 @@ pub fn run_nearly_random(seed0: u64, iters: u64, qualities: u64) {
         while c.data.len() < target {
             c.literal(&mut rng);
         }
-        let params = vec![(1, q), (2, rng.range(17, 22) as u32)];
+        let params = vec![(1, q), (2, rng.range(17, 22) as u32), (3, 21)];
         check("nearly-random", seed, &mut rng, &c.data, &params, &[], &mut totals);
-        // Whether it was the number of commands that made the difference.
+        // Whether it was the copies that made the difference.
         let stored = |data: &[u8]| rust_stream(data, &params, &[], EncoderOperation::Finish).unwrap().len() > data.len();
         let mut without = c.data.clone();
-        for at in copies {
+        for at in copies.into_iter().flatten() {
             without[at] ^= 1;
         }
         decided += usize::from(!stored(&c.data) && stored(&without));
     }
     assert!(iters < 50 || decided > 0, "the copies never made a difference");
-    println!("ok: {iters} iterations, {} -> {}, {decided} not stored because of their commands", totals.0, totals.1);
+    println!("ok: {iters} iterations, {} -> {}, {decided} not stored because of their copies", totals.0, totals.1);
 }
 
 /// What `run_commands` knows of the encoder while it lays out the input.

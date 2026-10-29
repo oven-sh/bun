@@ -1835,12 +1835,10 @@ pub fn schedule_tasks(manager: &mut PackageManager) -> usize {
     count
 }
 
-pub fn get_network_task(this: &mut PackageManager) -> *mut NetworkTask {
-    // Forget the slot token so its `Drop` does not release the slot — the
-    // caller owns the slot until a later `put()`.
-    core::mem::ManuallyDrop::new(this.preallocated_network_tasks.claim())
-        .addr()
-        .as_ptr()
+pub fn get_network_task(this: &mut PackageManager, task_id: Task::Id) -> *mut NetworkTask {
+    let package_manager = bun_ptr::ParentRef::from_ref_mut(this);
+    let claim = this.preallocated_network_tasks.claim();
+    NetworkTask::write_init(claim, task_id, package_manager).as_ptr()
 }
 
 pub(crate) fn alloc_github_url_for_ref(
@@ -2123,16 +2121,10 @@ pub fn generate_network_task_for_tarball<'a>(
 
     // Take the pool slot as a raw pointer so borrowck releases `this` for the
     // streaming-setup tail. Reborrowed `&mut` per-statement below.
-    let net_ptr: *mut NetworkTask = get_network_task(this);
-    // Full struct overwrite that resets
-    // every other field (`retried`, `response`, `streaming_committed`,
-    // `tarball_stream`, `streaming_extract_task`, `next`, `url_buf`,
-    // `signal_store`) to its struct default. The slot may be uninitialized
-    // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
+    let net_ptr: *mut NetworkTask = get_network_task(this, task_id);
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it.
-    unsafe { NetworkTask::write_init(net_ptr, task_id, this_backref) };
-    // SAFETY: `write_init` populated every field with a drop-safe value;
+    // `write_init` populated every field with a drop-safe value;
     // `unsafe_http_client` is `MaybeUninit` and overwritten by `for_tarball`.
     let network_task = unsafe { &mut *net_ptr };
 
@@ -2193,7 +2185,7 @@ pub fn generate_network_task_for_tarball<'a>(
         };
         let extract_task = enqueue::create_extract_task_for_streaming(this, tarball_ref, net_ptr);
         // SAFETY: `net_ptr` is the unique handle to the freshly-vended pool slot
-        // (see `write_init` above).
+        // (see `get_network_task` above).
         unsafe {
             (*net_ptr).streaming_extract_task = extract_task;
             (*net_ptr).tarball_stream = Some(TarballStream::init(extract_task, net_ptr, this));

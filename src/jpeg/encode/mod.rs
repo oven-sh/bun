@@ -12,8 +12,8 @@ use crate::error::{Error, Result};
 use crate::tables::{self, HuffSpec, MAX_DIMENSION};
 use crate::zigzag::natural_order;
 use fdct::Divisors;
-use huff::{BitWriter, EncodeTable, Output, SequentialTable};
-use marker::TableClass;
+use huff::{BitWriter, EncodeTable, SequentialTable};
+use marker::{Output, TableClass};
 use phuff::{AcEncoder, Sink};
 use sample::{MCU_SIZE, McuRowSamples};
 

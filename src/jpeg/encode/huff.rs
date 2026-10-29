@@ -1,45 +1,9 @@
 //! Huffman coding: writing bits, the tables, and sequential scans (jchuff.c).
 
 use super::Block;
+use super::marker::Output;
 use crate::error::{Error, Result};
 use crate::tables::HuffSpec;
-
-/// The file so far. Running out of memory is remembered instead of returned, to keep it out of the inner loops.
-#[derive(Default)]
-pub(crate) struct Output {
-    bytes: Vec<u8>,
-    out_of_memory: bool,
-}
-
-impl Output {
-    #[inline(always)]
-    pub(crate) fn extend(&mut self, bytes: &[u8]) {
-        if self.bytes.try_reserve(bytes.len()).is_err() {
-            self.give_up();
-            return;
-        }
-        self.bytes.extend_from_slice(bytes);
-    }
-
-    #[cold]
-    fn give_up(&mut self) {
-        self.out_of_memory = true;
-        self.bytes = Vec::new();
-    }
-
-    /// For the outer loops, which would otherwise go on for nothing.
-    pub(crate) fn check(&self) -> Result<()> {
-        if self.out_of_memory {
-            return Err(bun_alloc::AllocError.into());
-        }
-        Ok(())
-    }
-
-    pub(crate) fn finish(self) -> Result<Vec<u8>> {
-        self.check()?;
-        Ok(self.bytes)
-    }
-}
 
 /// Writes the bits of an entropy-coded segment, where a zero byte follows every FF to tell it from a marker.
 pub(crate) struct BitWriter<'a> {

@@ -1,6 +1,5 @@
-//! Everything in the file that is not entropy-coded (jcmarker.c, jcicc.c).
+//! The file being written, and everything in it that is not entropy-coded (jcmarker.c, jcicc.c).
 
-use super::huff::Output;
 use super::{Component, PerTable, Scan, Table};
 use crate::error::{Error, Result};
 use crate::markers::{
@@ -16,7 +15,42 @@ pub(crate) enum TableClass {
     Ac = 1,
 }
 
+/// The file so far. Running out of memory is remembered instead of returned, to keep it out of the inner loops.
+#[derive(Default)]
+pub(crate) struct Output {
+    bytes: Vec<u8>,
+    out_of_memory: bool,
+}
+
 impl Output {
+    #[inline(always)]
+    pub(crate) fn extend(&mut self, bytes: &[u8]) {
+        if self.bytes.try_reserve(bytes.len()).is_err() {
+            self.give_up();
+            return;
+        }
+        self.bytes.extend_from_slice(bytes);
+    }
+
+    #[cold]
+    fn give_up(&mut self) {
+        self.out_of_memory = true;
+        self.bytes = Vec::new();
+    }
+
+    /// For the outer loops, which would otherwise go on for nothing.
+    pub(crate) fn check(&self) -> Result<()> {
+        if self.out_of_memory {
+            return Err(bun_alloc::AllocError.into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish(self) -> Result<Vec<u8>> {
+        self.check()?;
+        Ok(self.bytes)
+    }
+
     fn marker(&mut self, marker: u8) {
         self.extend(&[0xff, marker]);
     }

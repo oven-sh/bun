@@ -5104,8 +5104,7 @@ impl Resolver {
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
         let mut servers: *mut c_ares::struct_ares_addr_port_node = ptr::null_mut();
-        // SAFETY: `channel` is a live handle from `ares_init_options`; `servers` is a stack out-param.
-        let r = unsafe { c_ares::ares_get_servers_ports(channel, &raw mut servers) };
+        let r = c_ares::ares_get_servers_ports(channel, &mut servers);
         if r != c_ares::ARES_SUCCESS {
             let err = c_ares::Error::get(r).unwrap();
             return Err(
@@ -5278,8 +5277,7 @@ impl Resolver {
             )
         } == 1
         {
-            // SAFETY: `channel` is a live handle from `ares_init_options`; `addr` is the 16-byte in6_addr.
-            unsafe { c_ares::ares_set_local_ip6(channel, addr.as_ptr()) };
+            c_ares::ares_set_local_ip6(channel, &addr);
             return Ok(c_ares::AF::INET6);
         }
 

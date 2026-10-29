@@ -40,10 +40,6 @@ struct CacheState {
     entries: HashMap<u64, Entry, IdentityContext<u64>>,
 }
 
-// SAFETY: `CacheState` is only reached through the global `STATE` mutex; the
-// `sys::Dir` fd is just an integer handle.
-unsafe impl Send for CacheState {}
-
 struct Entry {
     /// `path.text` of the module (absolute file path).
     filename: Box<[u8]>,

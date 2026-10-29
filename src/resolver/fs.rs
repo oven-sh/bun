@@ -653,8 +653,6 @@ impl ModKey {
 // SAFETY: `cache` is the only `!Sync` field. It is shared under the per-entry
 // `mutex` discipline described on `Entry`.
 unsafe impl Sync for Entry {}
-// SAFETY: same invariant as the `Sync` impl above.
-unsafe impl Send for Entry {}
 
 // ══════════════════════════════════════════════════════════════════════════
 // CANONICAL: read-file-with-handle (stat → grow → pread-loop → BOM-strip)

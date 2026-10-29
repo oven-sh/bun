@@ -42,7 +42,7 @@ pub struct DecodeOptions {
 }
 
 impl Decoder<'_> {
-    /// The size of the image that `decode` makes.
+    /// The size of the image that `decode` makes at `eighths`, from 1 to 8.
     pub fn scaled_size(&self, eighths: u32) -> (u32, u32) {
         (
             (self.width * eighths).div_ceil(DCTSIZE),

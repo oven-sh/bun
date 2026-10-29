@@ -1,5 +1,7 @@
 #!/bin/bash
 # Builds tools/kernels.cpp and runs it for every target that this machine has, and under qemu for those of arm64.
+# To try a changed highway_jpeg.cpp, change it in place: foreach_target.h includes the file again by name for every target
+# but the baseline, so a copy elsewhere gets the original from -I$B/src/jsc/bindings for those.
 set -eu
 cd "$(dirname "$0")/.."
 B=../..

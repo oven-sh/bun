@@ -130,8 +130,53 @@ describe("bundler", () => {
     run: {
       exitCode: 1,
       validate({ stderr }) {
+        // Without a source map the code frame shows the bundle, each line with the number it has in the bundle.
+        expect(stderr).toStartWith(
+          `1 | // @bun
+2 | // entry.ts
+3 | if (true)
+4 |   code();
+5 | function code() {
+6 |   throw new Error("Hello World");
+            ^
+error: Hello World`,
+        );
         expect(stderr).toInclude("\nnote: missing sourcemaps for ");
         expect(stderr).toInclude("\nnote: consider bundling with '--sourcemap' to get unminified traces\n");
+      },
+    },
+  });
+  // From 1024 characters, the bytecode of a bundle carries where the lines of the bundle start.
+  itBundled("bun/TargetBunNoSourcemapMessageBytecode", {
+    target: "bun",
+    format: "cjs",
+    bytecode: true,
+    outdir: "/out",
+    files: {
+      "/entry.ts":
+        Array.from({ length: 70 }, (_, i) => `globalThis.pad${i} = ${i};\n`).join("") +
+        `function code() {\n  throw new Error("Hello World");\n}\ncode();\n`,
+    },
+    run: {
+      exitCode: 1,
+      env: { BUN_JSC_verboseDiskCache: "1" },
+      validate({ stderr }) {
+        expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+        expect(
+          stderr
+            .split("\n")
+            .filter(line => !line.startsWith("[Disk Cache]"))
+            .slice(0, 8),
+        ).toEqual([
+          "69 | globalThis.pad66 = 66;",
+          "70 | globalThis.pad67 = 67;",
+          "71 | globalThis.pad68 = 68;",
+          "72 | globalThis.pad69 = 69;",
+          "73 | function code() {",
+          '74 |   throw new Error("Hello World");',
+          "             ^",
+          "error: Hello World",
+        ]);
       },
     },
   });

@@ -12,7 +12,10 @@ Error: hello
 `;
 
 exports[`can get sourceURL inside node:vm 1`] = `
-"4 |     return Bun.inspect(new Error("hello"));
+"1 | 
+2 | 
+3 | function hello() {
+4 |     return Bun.inspect(new Error("hello"));
                            ^
 error: hello
       at hello (hellohello.js:4:24)
@@ -22,7 +25,10 @@ error: hello
 `;
 
 exports[`eval sourceURL is correct 1`] = `
-"4 |     return Bun.inspect(new Error("hello"));
+"1 | 
+2 | 
+3 | function hello() {
+4 |     return Bun.inspect(new Error("hello"));
                            ^
 error: hello
       at hello (hellohello.js:4:24)

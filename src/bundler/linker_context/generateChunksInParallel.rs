@@ -705,10 +705,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
     let bundler: &mut BundleV2 =
         unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
     let mut static_route_visitor = StaticRouteVisitor {
-        // SAFETY: launder via raw ptr so this long-lived
-        // shared borrow doesn't conflict with `c.log_disjoint()` inside
-        // the chunk loop below. `c` outlives `static_route_visitor`.
-        c: unsafe { bun_ptr::detach_lifetime_ref::<LinkerContext>(c) },
+        c: &*c,
         cache: bun_collections::ArrayHashMap::default(),
         visited: AutoBitSet::init_empty(c.graph.files.len()).expect("oom"),
         stack: Vec::new(),
@@ -1180,7 +1177,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
                             // an error
                             // logger OOM-only
                             // Split-borrow — `static_route_visitor.c` holds a
-                            // detached `&LinkerContext`; `log_disjoint` returns the
+                            // `&LinkerContext`; `log_disjoint` returns the
                             // disjoint `Transpiler.log` backref so no `&mut c` is
                             // materialized.
                             let _ = c.log_disjoint().add_error_fmt(

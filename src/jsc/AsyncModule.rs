@@ -1052,9 +1052,10 @@ impl AsyncModule {
 
         // We _must_ link because:
         // - node_modules bundle won't be properly
-        // SAFETY: per-thread VM; `linker` is a value field of `transpiler`.
+        // SAFETY: per-thread VM; `linker` and `options` are distinct value fields of `transpiler`.
         unsafe {
             (*jsc_vm).transpiler.linker.link::<false, true>(
+                &(*jsc_vm).transpiler.options,
                 &path,
                 &mut parse_result,
                 &(*jsc_vm).origin,

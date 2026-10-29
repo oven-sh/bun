@@ -52,7 +52,7 @@ pub struct Transpiler<'a> {
     pub(crate) elapsed: u64,
 
     // `ModuleLoader::transpile_source_code` (jsc_hooks.rs) calls
-    // `transpiler.linker.link()`. Back-pointers wired
+    // `transpiler.linker.link()`. `linker.log` is set
     // by `configure_linker` below; `set_log` keeps `linker.log` in sync.
     pub linker: crate::linker::Linker,
     // Raw ptr — the global `DotEnv::Loader` singleton.
@@ -227,14 +227,7 @@ impl<'a> Transpiler<'a> {
             resolve_results: Box::new(ResolveResults::default()),
             resolve_queue: ResolveQueue::default(),
             elapsed: 0,
-            // Self-referential — wired by `wire_after_move`. Null back-pointers
-            // for now (matches `Transpiler::init`; never derefed before then).
-            linker: crate::linker::Linker::init(
-                log,
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-            ),
+            linker: crate::linker::Linker::init(log),
             env: from.env,
             // `MacroContext::init(transpiler)` takes the
             // transpiler's *address*; deferred to `wire_after_move`.
@@ -242,7 +235,7 @@ impl<'a> Transpiler<'a> {
         }
     }
 
-    /// Wire the self-referential `linker` back-pointers and `macro_context`
+    /// Wire the aliases of `log` and the self-referential `macro_context`
     /// after this `Transpiler` has reached its final address (post-move into
     /// `WorkerData` / arena slot).
     pub(crate) fn wire_after_move(&mut self) {
@@ -252,12 +245,7 @@ impl<'a> Transpiler<'a> {
         let log = self.log;
         self.options.log = log;
         self.resolver.log = core::ptr::NonNull::new(log).expect("wire_after_move: log is non-null");
-        self.linker.reseat_self_refs(
-            log,
-            core::ptr::addr_of_mut!(self.resolve_queue),
-            core::ptr::addr_of_mut!(self.options).cast(),
-            core::ptr::addr_of_mut!(*self.resolve_results),
-        );
+        self.linker.log = log;
         self.macro_context = Some(js_ast::Macro::MacroContext::init(self));
     }
 
@@ -571,16 +559,10 @@ fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_imp
 }
 
 impl<'a> Transpiler<'a> {
-    /// Initialize `self.linker` with back-pointers into this `Transpiler`,
+    /// Initialize `self.linker` with the log of this `Transpiler`,
     /// optionally auto-configuring JSX from the nearest `tsconfig.json`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
-        // Raw back-pointers into `self`; the linker never outlives this `Transpiler`.
-        self.linker = crate::linker::Linker::init(
-            self.log,
-            core::ptr::addr_of_mut!(self.resolve_queue),
-            core::ptr::addr_of_mut!(self.options).cast(),
-            core::ptr::addr_of_mut!(*self.resolve_results),
-        );
+        self.linker = crate::linker::Linker::init(self.log);
 
         if auto_jsx {
             // Most of the time, this will already be cached
@@ -1196,9 +1178,7 @@ impl<'a> Transpiler<'a> {
 
         // Construct directly into the caller-owned storage instead of building a
         // stack temporary and returning it. All fallible work is done; every
-        // field below is written exactly once. `Linker::init` gets null
-        // back-pointers; `configure_linker_with_auto_jsx` overwrites the
-        // self-referential pointers before any deref.
+        // field below is written exactly once.
         let p = dst.as_mut_ptr();
         // SAFETY: `dst` is an exclusively-borrowed, currently-uninitialised
         // `MaybeUninit<Transpiler>`; each `write` initialises a distinct field
@@ -1221,12 +1201,7 @@ impl<'a> Transpiler<'a> {
             core::ptr::addr_of_mut!((*p).resolve_queue).write(ResolveQueue::default());
             core::ptr::addr_of_mut!((*p).elapsed).write(0);
             // .thread_pool = pool,
-            core::ptr::addr_of_mut!((*p).linker).write(crate::linker::Linker::init(
-                log,
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-                core::ptr::null_mut(),
-            ));
+            core::ptr::addr_of_mut!((*p).linker).write(crate::linker::Linker::init(log));
             core::ptr::addr_of_mut!((*p).env).write(env_loader);
             core::ptr::addr_of_mut!((*p).macro_context).write(None);
         }
@@ -2580,7 +2555,7 @@ impl<'a> Transpiler<'a> {
     }
 
     /// Returns only the count and lets
-    /// `linker.enqueue_resolve_result` push directly onto `resolve_queue`.
+    /// `Linker::enqueue_resolve_result` push directly onto `resolve_queue`.
     fn enqueue_entry_points(&mut self) -> usize {
         let mut entry_point_i: usize = 0;
 
@@ -2618,10 +2593,12 @@ impl<'a> Transpiler<'a> {
                 continue;
             }
 
-            if self
-                .linker
-                .enqueue_resolve_result(result)
-                .expect("unreachable")
+            if crate::linker::Linker::enqueue_resolve_result(
+                &mut self.resolve_results,
+                &mut self.resolve_queue,
+                result,
+            )
+            .expect("unreachable")
             {
                 entry_point_i += 1;
             }
@@ -2900,6 +2877,7 @@ impl<'a> Transpiler<'a> {
                     let origin = self.options.origin.url();
                     if !self.options.target.is_bun() {
                         self.linker.link::<false, false>(
+                            &self.options,
                             &file_path,
                             &mut result,
                             &origin,
@@ -2907,6 +2885,7 @@ impl<'a> Transpiler<'a> {
                         )?;
                     } else {
                         self.linker.link::<false, true>(
+                            &self.options,
                             &file_path,
                             &mut result,
                             &origin,

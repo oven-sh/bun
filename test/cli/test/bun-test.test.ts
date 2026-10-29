@@ -3499,7 +3499,11 @@ describe.concurrent("a test file that fails to load", () => {
     ],
     [
       ["--rerun-each=2", "missing", "one"],
-      ["beforeAll", "one: true", "afterAll", "one: true", "afterAll"],
+      ["beforeAll", "one: true", "one: true", "afterAll"],
+    ],
+    [
+      ["--rerun-each=2", "one", "missing"],
+      ["beforeAll", "one: true", "one: true", "afterAll"],
     ],
     [["--bail=1", "missing", "one"], ["beforeAll"]],
     [

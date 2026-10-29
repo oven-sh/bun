@@ -735,6 +735,7 @@ impl Drop for BunTestRoot {
     }
 }
 
+/// Which preload-level hooks one run of a file schedules: `first` the setup, `last` the teardown.
 #[derive(Copy, Clone)]
 pub(crate) struct FirstLast {
     pub(crate) first: bool,

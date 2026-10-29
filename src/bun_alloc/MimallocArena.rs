@@ -275,28 +275,18 @@ impl MimallocArena {
     pub fn allocated_bytes(&self) -> usize {
         extern "C" fn visit(
             _heap: *const mimalloc::Heap,
-            area: *const mimalloc::mi_heap_area_t,
+            area: &mimalloc::mi_heap_area_t,
             _block: *mut c_void,
             _block_size: usize,
-            arg: *mut c_void,
+            total: &mut usize,
         ) -> bool {
-            // SAFETY: mimalloc passes a valid `area` for each heap area when
-            // `visit_all_blocks == false`; `arg` is the `&mut usize` we passed.
-            unsafe {
-                let total = &mut *arg.cast::<usize>();
-                *total += (*area).used.saturating_mul((*area).full_block_size);
-            }
+            *total += area.used.saturating_mul(area.full_block_size);
             true
         }
         let mut total: usize = 0;
         // SAFETY: `self.heap` is live; `visit` upholds the callback contract.
         unsafe {
-            mimalloc::mi_heap_visit_blocks(
-                self.heap_ptr(),
-                false,
-                Some(visit),
-                (&raw mut total).cast(),
-            );
+            mimalloc::mi_heap_visit_blocks(self.heap_ptr(), false, Some(visit), &mut total);
         }
         total
     }

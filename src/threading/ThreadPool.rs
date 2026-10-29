@@ -541,10 +541,9 @@ impl Batch {
     }
 }
 
-/// Dispatch trait for `each_impl`: the by-value vs by-pointer branch as two impls.
+/// Dispatch trait for `each_impl`: the by-value vs by-`&mut` branch as two impls.
 trait EachCall<Ctx, V>: core::marker::Sync {
-    /// SAFETY: `value` must point to a live `V` exclusively owned by this call.
-    unsafe fn call(&self, ctx: &Ctx, value: *mut V, i: usize);
+    fn call(&self, ctx: &Ctx, value: &mut V, i: usize);
 }
 
 struct ByValue<F>(F);
@@ -553,19 +552,18 @@ where
     F: Fn(&Ctx, V, usize) + core::marker::Sync,
 {
     #[inline]
-    unsafe fn call(&self, ctx: &Ctx, value: *mut V, i: usize) {
-        // SAFETY: caller guarantees `value` is a live `V`; `V: Copy` so deref is a copy.
-        (self.0)(ctx, unsafe { *value }, i);
+    fn call(&self, ctx: &Ctx, value: &mut V, i: usize) {
+        (self.0)(ctx, *value, i);
     }
 }
 
 struct ByPtr<F>(F);
 impl<Ctx, V, F> EachCall<Ctx, V> for ByPtr<F>
 where
-    F: Fn(&Ctx, *mut V, usize) + core::marker::Sync,
+    F: Fn(&Ctx, &mut V, usize) + core::marker::Sync,
 {
     #[inline]
-    unsafe fn call(&self, ctx: &Ctx, value: *mut V, i: usize) {
+    fn call(&self, ctx: &Ctx, value: &mut V, i: usize) {
         (self.0)(ctx, value, i);
     }
 }
@@ -577,7 +575,7 @@ impl ThreadPool {
     /// This function does not shut down or deinit the thread pool.
     ///
     /// `V: Send` is required because each `values[i]` is handed (by copy or by
-    /// `*mut V`) to an arbitrary worker thread; the raw-pointer round-trip
+    /// `&mut V`) to an arbitrary worker thread; the raw-pointer round-trip
     /// through the intrusive `Task` callback would otherwise smuggle `!Send`
     /// data across threads with no compiler check.
     pub fn each<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
@@ -623,13 +621,13 @@ impl ThreadPool {
         usize::from(sync.idle()) + not_started
     }
 
-    /// Like `each`, but calls `run_fn` with a pointer to the value.
+    /// Like `each`, but calls `run_fn` with a `&mut` to the value.
     ///
-    /// `V: Send` — see [`each`](Self::each); the `*mut V` is dereferenced on a
+    /// `V: Send` — see [`each`](Self::each); the `&mut V` is used on a
     /// worker thread, which is a cross-thread move of the pointee.
     pub fn each_ptr<Ctx, V, F>(&self, ctx: Ctx, run_fn: F, values: &mut [V])
     where
-        F: Fn(&Ctx, *mut V, usize) + core::marker::Sync,
+        F: Fn(&Ctx, &mut V, usize) + core::marker::Sync,
         Ctx: core::marker::Sync,
         V: core::marker::Sync + core::marker::Send,
     {
@@ -677,9 +675,9 @@ impl ThreadPool {
             let wctx = runner_task.ctx.get();
             // SAFETY: `values` slice outlives all RunnerTasks (`group.wait()` blocks until
             // every task finishes); each task owns a distinct index `i`.
-            let value: *mut V = unsafe { &raw mut (*wctx.values)[i] };
-            // SAFETY: `value` is live and exclusively owned by this task per the index.
-            unsafe { wctx.run_fn.call(&wctx.ctx, value, i) };
+            // `each_impl` holds the exclusive borrow of `values` and does not use it between `schedule` and `wait()`.
+            let value: &mut V = unsafe { &mut (*wctx.values)[i] };
+            wctx.run_fn.call(&wctx.ctx, value, i);
         }
 
         let wait_context = WaitContext {

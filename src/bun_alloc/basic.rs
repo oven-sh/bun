@@ -45,12 +45,3 @@ mod memory_allocator_tags {
     const DEFAULT_ALLOCATOR_TAG: usize = 0xBEEFA110C; // "BEEFA110C"  beef a110c i guess
     pub(crate) const DEFAULT_ALLOCATOR_TAG_PTR: *mut c_void = DEFAULT_ALLOCATOR_TAG as *mut c_void;
 }
-
-/// mimalloc can free allocations without being given their size.
-///
-/// # Safety
-/// `ptr` must be null or have been allocated by mimalloc.
-pub unsafe fn free_without_size(ptr: *mut c_void) {
-    // SAFETY: caller contract — ptr is null or was allocated by mimalloc; mi_free accepts null
-    unsafe { mimalloc::mi_free(ptr) }
-}

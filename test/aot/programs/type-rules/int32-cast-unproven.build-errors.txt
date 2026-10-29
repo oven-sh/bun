@@ -1,0 +1,9 @@
+error: TS100031: This expression is declared 'int32', but 'n' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'n | 0'.
+error: TS100031: This expression is declared 'int32', but 'a + b' might not be an int32: it can be anything from -4294967296 to 4294967294. Write '(a + b) | 0'.
+error: TS100031: Property 'lane' of 'Update' is declared 'int32', but 'lane as Lane' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write '(lane as Lane) | 0'.
+error: TS100031: This expression is declared 'int32', but 'lane' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'lane | 0'.
+error: TS100031: This expression is declared 'int32', but 'level' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'level | 0'.
+error: TS100031: This expression is declared 'int32', but 'loose[0]' might not be an int32: its type is 'any'. Write 'loose[0] | 0'.
+error: TS100032: This expression is declared 'int32', but '1.5' is not an int32: it has a fraction.
+error: TS100031: This expression is declared 'int32', but 'numbers[0]' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'numbers[0] | 0'.
+error: TS100031: This expression is declared 'int32', but 'count' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'count | 0'.

@@ -28,7 +28,7 @@ function spawnMinify(css: string) {
       bunExe(),
       "-e",
       `const c = require("bun:internal-for-testing").cssInternals;
-       const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+       const rss = process.memoryUsage.rss;
        const css = ${JSON.stringify(css)};
        const rssBefore = rss();
        let threw = false;

@@ -1,0 +1,4 @@
+at the start 2 2 2 2
+after a store 2 2 3
+after a new name undefined added add,bump,default,n
+import() 2 true

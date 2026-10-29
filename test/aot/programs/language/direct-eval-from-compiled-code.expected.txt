@@ -1,0 +1,128 @@
+sloppy
+no argument: undefined
+second argument evaluated
+two arguments: 2
+sloppy argument 42: 42
+strict argument 42: 42
+sloppy argument null: null
+strict argument null: null
+sloppy argument undefined: undefined
+strict argument undefined: undefined
+sloppy argument true: true
+strict argument true: true
+sloppy argument 12n: 12n
+strict argument 12n: 12n
+sloppy argument Symbol(s): Symbol(s)
+strict argument Symbol(s): Symbol(s)
+sloppy object with toString is the result: true
+strict object with toString is the result: true
+sloppy String object is the result: true
+strict String object is the result: true
+sloppy "": undefined
+strict "": undefined
+sloppy "// only a comment": undefined
+strict "// only a comment": undefined
+sloppy "1;;;": 1
+strict "1;;;": 1
+sloppy "var v = 5": undefined
+strict "var v = 5": undefined
+sloppy "if (false) 1": undefined
+strict "if (false) 1": undefined
+sloppy "'é' + 'ü€'": "éü€"
+strict "'é' + 'ü€'": "éü€"
+sloppy rope: 3
+strict rope: 3
+sloppy long text: 3000
+strict long text: 3000
+sloppy "({\"a\":1,\"b\":[2,3,{\"c\":null}]})": {a:1,b:[2,3,{c:null}]}
+strict "({\"a\":1,\"b\":[2,3,{\"c\":null}]})": {a:1,b:[2,3,{c:null}]}
+sloppy "[1,2,{\"x\":\"y\"}]": [1,2,{x:"y"}]
+strict "[1,2,{\"x\":\"y\"}]": [1,2,{x:"y"}]
+sloppy "(\"text\")": "text"
+strict "(\"text\")": "text"
+sloppy "(1)": 1
+strict "(1)": 1
+sloppy "({\"a\":1,\"a\":2})": {a:2}
+strict "({\"a\":1,\"a\":2})": {a:2}
+sloppy "({a:1})": {a:1}
+strict "({a:1})": {a:1}
+sloppy "({\"a\":1,})": {a:1}
+strict "({\"a\":1,})": {a:1}
+sloppy "({\"a\":undefined})": {a:undefined}
+strict "({\"a\":undefined})": {a:undefined}
+sloppy " ( {\"a\" : 1} ) ": {a:1}
+strict " ( {\"a\" : 1} ) ": {a:1}
+sloppy __proto__ null sets the prototype: true
+strict __proto__ null sets the prototype: true
+sloppy __proto__ object: [1,[]]
+strict __proto__ object: [1,[]]
+sloppy JSON text twice creates two objects: true
+strict JSON text twice creates two objects: true
+sloppy scope: [107,10,20,30,101,10,"throws TypeError",2,"throws ReferenceError",4,"undefined","throws ReferenceError",3,"function","object",true,"object",11,12,12,[0,1],"caught value"]
+strict scope: [108,10,20,30,102,10,"throws TypeError",2,"throws ReferenceError",4,"undefined","throws ReferenceError",3,"function","number",true,"number",11,12,12,[0,1],"caught value"]
+private field: 42
+private name in: [true,false]
+static private field: 1
+new.target in a derived constructor: "function true"
+super in a method: "base"
+super and this in an arrow function: "basedeep"
+new.target when constructed: {seen:true,inArrow:"function"}
+new.target when called: {seen:false,inArrow:"undefined"}
+top level this === module.exports: false
+top level this === exports: true
+top level typeof require: "function"
+top level typeof __filename: "string"
+top level typeof new.target: "undefined"
+top level path === require('node:path'): true
+sloppy declarations, activation 1: ["undefined","undefined","number","function","undefined","undefined","function","number","function","\"called\"","5","5","true","\"undefined\"","throws SyntaxError: Can't create duplicate variable in eval: 'taken'",1]
+strict declarations, activation 1: ["undefined","undefined","undefined","undefined","undefined","undefined","undefined","undefined","undefined","throws ReferenceError","throws ReferenceError","throws ReferenceError",81 characters, "throws SyntaxError: " to "red' in strict mode.","\"undefined\"","declared",1]
+sloppy declarations, activation 2: ["undefined","undefined","number","function","undefined","undefined","function","number","function","\"called\"","5","5","true","\"undefined\"","throws SyntaxError: Can't create duplicate variable in eval: 'taken'",1]
+strict declarations, activation 2: ["undefined","undefined","undefined","undefined","undefined","undefined","undefined","undefined","undefined","throws ReferenceError","throws ReferenceError","throws ReferenceError",81 characters, "throws SyntaxError: " to "red' in strict mode.","\"undefined\"","declared",1]
+declared on the global object: undefined
+declared at the top level: ["number","undefined"]
+two counters: [1,2,3,1]
+one site, five activations: [2,4,6,8,10]
+two sites, one text: ["A","B","A"]
+nesting: [2,1,42]
+sloppy "1 +": throws SyntaxError: Unexpected end of script
+strict "1 +": throws SyntaxError: Unexpected end of script
+sloppy "let let = 1": throws SyntaxError: Unexpected keyword 'let'. Cannot use 'let' as an identifier name for a LexicalDeclaration.
+strict "let let = 1": throws SyntaxError: Cannot use 'let' as a lexical variable name in strict mode.
+sloppy "}": throws SyntaxError: Parser error
+strict "}": throws SyntaxError: Parser error
+sloppy "return 1": throws SyntaxError: Return statements are only valid inside functions.
+strict "return 1": throws SyntaxError: Return statements are only valid inside functions.
+sloppy "break": throws SyntaxError: 'break' is only valid inside a switch or loop statement.
+strict "break": throws SyntaxError: 'break' is only valid inside a switch or loop statement.
+sloppy "super.x": throws SyntaxError: super is not valid in this context.
+strict "super.x": throws SyntaxError: super is not valid in this context.
+sloppy "this.#nope": throws SyntaxError: Cannot reference undeclared private names: "#nope"
+strict "this.#nope": throws SyntaxError: Cannot reference undeclared private names: "#nope"
+sloppy "import.meta": throws SyntaxError: import.meta is only valid inside modules.
+strict "import.meta": throws SyntaxError: import.meta is only valid inside modules.
+sloppy "with ({ inWith: 1 }) inWith": 1
+strict "with ({ inWith: 1 }) inWith": throws SyntaxError: 'with' statements are not valid in strict mode.
+sloppy "throw new RangeError('own thrown in text')": throws RangeError: own thrown in text
+strict "throw new RangeError('own thrown in text')": throws RangeError: own thrown in text
+sloppy "throw 7": throws 7
+strict "throw 7": throws 7
+sloppy "null.x": throws TypeError
+strict "null.x": throws TypeError
+sloppy "nowhere()": throws ReferenceError
+strict "nowhere()": throws ReferenceError
+sloppy "1 + 1": 2
+strict "1 + 1": 2
+not direct: {comma:"undefined",alias:"undefined",optionalCall:"undefined",member:"undefined",element:"undefined",call:"undefined"}
+local named eval: compiled arrow function: 2
+local named eval: function from text: 3
+local named eval: eval: 1
+local named eval: not callable: throws TypeError
+this of an indirect eval: true
+var of an indirect eval: ["number",true]
+sloppy import of a built-in module: "function"
+sloppy import of this file: [true,"direct eval"]
+sloppy import of a missing file: rejected
+strict import of a built-in module: "function"
+strict import of this file: [true,"direct eval"]
+strict import of a missing file: rejected
+evaluations: 1

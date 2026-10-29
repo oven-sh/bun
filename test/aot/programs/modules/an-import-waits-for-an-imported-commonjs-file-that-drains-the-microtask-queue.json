@@ -1,0 +1,5 @@
+{
+  "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" },
+  "skipInShell": "it calls functions of Bun",
+  "alone": "the turn in which the importers of the file run is counted from the load of the entry point"
+}

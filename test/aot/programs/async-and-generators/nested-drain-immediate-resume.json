@@ -1,0 +1,3 @@
+{
+  "skipInShell": "it needs bun:jsc and timers, which the jsc shell does not have"
+}

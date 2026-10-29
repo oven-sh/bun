@@ -1,0 +1,1930 @@
+////: find
+function find(key: string) {
+  return table[key];
+}
+//// lists-of-constants/heirs-heir-at-module-level.js
+// Lists of constants: heirs heir at module level. It prints what plain Bun prints.
+function Meter(name) {
+  this.name = name;
+  this.count = 0;
+  this.total = 0;
+}
+Meter.prototype.add = function (n) { this.count++; this.total += n; return this; };
+function Plain(name) { Meter.call(this, name); this.plain = true; }
+Object.setPrototypeOf(Plain.prototype, Meter.prototype);
+function Other(name) { Meter.call(this, name); this.other = 1; }
+Object.setPrototypeOf(Other.prototype, Meter.prototype);
+class Lazy extends Meter { extra = 1; constructor(name) { super(name); } }
+let sum = 0;
+for (let i = 0; i < 200000; i++) {
+  const a = new Plain("a"), b = new Other("b"), c = new Meter("c");
+  sum += a.add(i).total + b.add(1).count + c.add(2).total;
+  if (process.argv[2] === "lazy" && (i & 1023) === 0) sum += new Lazy("l").add(3).total;
+}
+console.log(sum);
+//// lists-of-constants/heirs-heir-in-a-function.js
+// Lists of constants: heirs heir in a function. It prints what plain Bun prints.
+function Meter(name) {
+  this.name = name;
+  this.count = 0;
+  this.total = 0;
+}
+Meter.prototype.add = function (n) { this.count++; this.total += n; return this; };
+function Plain(name) { Meter.call(this, name); this.plain = true; }
+Object.setPrototypeOf(Plain.prototype, Meter.prototype);
+function Other(name) { Meter.call(this, name); this.other = 1; }
+Object.setPrototypeOf(Other.prototype, Meter.prototype);
+let Lazy;
+function getLazy() {
+  if (Lazy) return Lazy;
+  Lazy = class Lazy extends Meter { extra = 1; constructor(name) { super(name); } };
+  return Lazy;
+}
+let sum = 0;
+for (let i = 0; i < 200000; i++) {
+  const a = new Plain("a"), b = new Other("b"), c = new Meter("c");
+  sum += a.add(i).total + b.add(1).count + c.add(2).total;
+  if (process.argv[2] === "lazy" && (i & 1023) === 0) sum += new (getLazy())("l").add(3).total;
+}
+console.log(sum);
+//// lists-of-constants/tables-n-n1000.ts
+// Lists of constants: tables n. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const table: Record<string, number> = {
+  ubijjj: 36055,
+  yzdwxufu: 92781,
+  kyidrdxnvls: 72099,
+  vssih_puiseimp: 79026,
+  ceyyubnusigktm: 39969,
+  iovaiflq: 26000,
+  tgrigmrtkxadawau: 50334,
+  uipquacnwh: 94222,
+  fxopvnikrmhk: 38193,
+  xzorvtezugettfvb: 347,
+  nfrxgsvvlub: 99889,
+  dbeov_ivir: 91937,
+  _ldbuuaphdas: 3120,
+  cfrlect: 64462,
+  _ldlvuxlnrushbvr: 54978,
+  joyjunogao: 67088,
+  iptqfqibrelt: 98708,
+  vdzxjcotqn: 59735,
+  mvpmvplcd: 43454,
+  wmrcv: 13195,
+  oesndth: 51777,
+  oujjlmg: 53196,
+  aafpeefedxxcsveg: 48610,
+  oftbjbkwen: 32668,
+  drbukp: 47527,
+  zyg_btfppjj: 201,
+  gyucnfotfkb: 13568,
+  nzb_qherqrjhfrqk: 15024,
+  txiyhkv: 88340,
+  wxhocdqdhfh: 56562,
+  puplglcfhtt: 80842,
+  ecwqtqty: 48707,
+  zznnhulnzlduil: 74092,
+  lrizwve_jmvu: 26410,
+  imksd: 11881,
+  jsmudwe: 5051,
+  qucriyyphdclwpg: 11272,
+  nzijxpagu: 65154,
+  zykpgadncczxtr: 17786,
+  hootp: 57555,
+  kbqnolielt: 13410,
+  sdekzucfrudqcfn: 34786,
+  fjksjjcyoubpey: 19495,
+  vdfqqnzqxw: 7873,
+  ts_zy_oc_exbfyjd: 17518,
+  eofssiuytkdk: 9039,
+  aprmcgcliuy: 85435,
+  syvfnkqugnobibv: 14947,
+  dretgsrrspag: 58164,
+  mufp_vofwy_psgu: 2393,
+  lfnhca: 32081,
+  _elchjuxryln: 41022,
+  aoylzoqvwksw: 83137,
+  ebqmslb: 73009,
+  cnvh_lackhldj: 45553,
+  bsv_tmk: 10494,
+  fdkaoyy: 66955,
+  fx_zcggm: 36880,
+  pycx_jbopl: 17691,
+  pdzizc: 53739,
+  tkqdfkgzh: 16966,
+  ojoc_s: 54216,
+  kgcnzqbbjjjznmc: 31181,
+  _ncnhmxtkohpcy: 71683,
+  jnirj: 50064,
+  srjlaovbksp: 20131,
+  citbajyjfdh: 29735,
+  zptax: 49412,
+  laorq: 64444,
+  andmz_r: 78308,
+  pdlmyiqmz_wzxev: 98797,
+  ors_qq_b_: 14357,
+  rtrbtpemasfsie: 53155,
+  dxuj_nakhxmw: 27837,
+  cnwoxbswq: 37153,
+  bophkf: 37876,
+  smodzo: 95960,
+  irvqdfk: 83245,
+  nqpqnetjax_: 15172,
+  hwhgouptwlvjj: 11472,
+  aecgx_bvhdhdzci: 56716,
+  doiwspexlyqyi: 9586,
+  tvwkxueeigfhx: 20020,
+  bw_nu_: 8916,
+  svcx_x_bbm: 11680,
+  qxypb: 96065,
+  vovgvkwnlbucym: 41553,
+  wzmogeoov_rwdfam: 22311,
+  _hehn_ws: 40006,
+  vzavwtf: 30820,
+  jtflckuclvbvrbvo: 37806,
+  pzc__ooyatttuf: 50432,
+  llbau_ktppsgby: 19111,
+  goumwarklbsmki: 27778,
+  wdsjxm: 95511,
+  dctqnlzbktvgsqjh: 62714,
+  aqjnwjkpqt: 54082,
+  wrlcnlj_y: 35793,
+  tejxmblehxd__ryt: 69016,
+  _sdtoto: 31804,
+  mkqibom: 6940,
+  xvaidg: 32019,
+  jotnkvr: 13368,
+  xwi_lcts: 69975,
+  pdqweh: 20851,
+  xqsa_zeby_xpopao: 26004,
+  ibuqaovdkxfwnkxy: 27905,
+  enqq_ijwjlcyml: 69328,
+  gadcyysp: 42553,
+  pfbwt: 62148,
+  tmjihchaea: 23907,
+  psnnlrk: 29503,
+  _grndoalt: 5888,
+  qbhwehkv_zxghj: 42643,
+  qpdgrpb: 5378,
+  gcfjvbalcl: 22935,
+  gnhtv: 23387,
+  dlrjbeod: 75053,
+  io_dhsm_ziarrmrh: 43471,
+  oewphgdpjhrcqwln: 21207,
+  qdbuo: 44584,
+  mhfcxorgahepclzt: 95026,
+  nduaejeatiuz: 35315,
+  esjoempqaufvzv: 52373,
+  f_p_xz_gklgb: 96307,
+  yopoejinyjyg: 78073,
+  jtrcvsqte: 96069,
+  srclocynp_gxc: 80423,
+  oqozbzdstn_: 99464,
+  voxcedq: 39184,
+  unded_: 73803,
+  tcorvf: 87235,
+  _tsusurba: 44082,
+  lndxesci: 21838,
+  bgrlnqg: 54566,
+  gganacz_meua: 8705,
+  skhftgxqix: 77435,
+  rjiygixzvgrlfr: 94975,
+  aizubjxdybsthh: 72300,
+  dgyvey: 2129,
+  igla_u_xftsh: 63724,
+  hstkdmtsjhumfx: 30017,
+  vahldnez: 34264,
+  jqt_rbvfrzrth: 66850,
+  dsojdjasm: 91384,
+  opfztcwhvi_ga: 84664,
+  vcfqwfsu: 2245,
+  tztzpptejqoqwqg: 79635,
+  xdsjtiryy: 73676,
+  jjlynpxx: 84705,
+  fleqpqktfmocd: 85658,
+  ksywt: 18750,
+  zynxpt_u: 64775,
+  rlvricvrwbnpxpx: 90759,
+  mqtljfa: 54676,
+  fzwffsq: 47955,
+  jcuoargo: 49981,
+  uzofll: 81460,
+  jzdtrp_razst: 65288,
+  kgtvikrqsbu: 14263,
+  pljpfohg: 38415,
+  hnltiotupuzz: 17226,
+  htvrwkl: 19778,
+  nwnpvitti: 1447,
+  ommnseqrnrh: 56163,
+  xgcldaq: 14299,
+  _iazf: 77157,
+  d_oafkavbmkp: 30172,
+  _tuxhsdbvthp: 63834,
+  lpxdnnphgf: 3219,
+  yzpihsbcthbf: 30450,
+  qmwdhawsiy: 26370,
+  khpog: 74523,
+  uficxudbdcbra: 70152,
+  izysokeo: 84190,
+  rthowrgwy_nzqha: 19844,
+  ecqhft: 12371,
+  ijaln_xvoiyap: 38935,
+  idmvykwnkcq: 55076,
+  mhylazpjq_: 11689,
+  oxsimah: 60721,
+  tqnwvrnqzl: 58103,
+  wdpptiyjntpcx: 83412,
+  esudmhexae: 36994,
+  jlxayxpvfbryo: 68648,
+  ohayqy: 2562,
+  oqazstfq: 15094,
+  fhcygjqztponu: 35278,
+  ssupno__rlgc_yw: 71454,
+  qhsdcvjhutern: 5632,
+  lnhfjwaekokqoc: 78689,
+  suyayrzxsno: 15206,
+  oqujkg_inhrzqnl: 28985,
+  aziuprzec: 66918,
+  zvizau: 45694,
+  cjluvq_: 28788,
+  _fqdymhpk_xjvv: 17627,
+  oiybsts: 89525,
+  wsnpmxcssfqjxrc: 22851,
+  lvpbkohgyquetr: 28031,
+  isphoblrs: 47047,
+  exigdmauqox: 49517,
+  m_etlvkjvlxwhgnv: 33077,
+  fcxdejmlmhk: 34521,
+  lhffmvcjz: 94089,
+  iwfngdwp_i: 61473,
+  onfsocalskm: 30433,
+  laypcznapx_buc: 5292,
+  vkhvten: 96395,
+  xohiqjklkhbrxv: 9726,
+  c_kuxyp_wwvctbu: 5373,
+  mjhfnjw: 7839,
+  lavqyy: 18787,
+  vdxpcre: 31936,
+  pfjnzqqwqjljaw_: 44811,
+  mg_du: 35053,
+  qrewcoinrex: 72565,
+  tepdfuoov: 31498,
+  bajsdzympkjhz: 47886,
+  qyjkmoalbw: 3517,
+  mzjrb: 65175,
+  zvdsnztunduko: 78363,
+  vg_ppnhq_bwhxwt: 6591,
+  pytkxqy: 54716,
+  xmmmyyoawofir: 5669,
+  xecqtwocvbztzpjq: 14323,
+  nfkgz: 67121,
+  qbtw_mufpdfq: 79393,
+  ogfoipf: 61404,
+  kbubvgi: 30937,
+  vnoeduroxwxzjcjx: 47412,
+  xvtbdf: 94941,
+  jfbzvtfuyclxxsdu: 45742,
+  mndvu: 70276,
+  hicy__mwzgmypa_f: 60790,
+  _bxfmxhyoi: 9831,
+  cocids_: 22708,
+  sxxus_: 15071,
+  qoaonofuzkso: 99937,
+  ioplyaj: 84284,
+  otvrxqyhfvwogi: 2783,
+  xjrckbzvy_: 84669,
+  z_cuioa: 18783,
+  p_gualonb: 16284,
+  autttrrc: 19667,
+  roqcjehrespi: 16778,
+  psvigtnilx: 50240,
+  tqxmzuqt: 27345,
+  zklailuee: 78136,
+  dvumyqz: 76019,
+  pklkbhdmkjsan: 26040,
+  mrygocjpb: 53482,
+  jakdvtcucxcozfu: 85219,
+  lcjydqczgupsf: 75953,
+  escmnmjxtbmydd: 62739,
+  dpnhht: 16512,
+  sgmelzerwlatp_: 38156,
+  ccnulbstogmoeaxq: 18411,
+  ckemqwrsgp: 76392,
+  yjmwbp_toefmju: 37239,
+  dunhw: 29856,
+  cuoftfpfriu: 42552,
+  eshatghtarwejzw: 18553,
+  zjvtrtqu: 57479,
+  rhmhpcibj: 22776,
+  ocueieoqtsanmn: 15378,
+  fjyc_hpaao: 6382,
+  pkhxogpzolykyd: 57124,
+  exelzf_nnd: 15147,
+  waippzzbt: 63920,
+  dxlwpxawptzvr: 33037,
+  rlqjhgbqsjhw: 57417,
+  upakgftzmp: 98533,
+  xpldwmkcrtot_tf: 78953,
+  uqiwni_vpzcgb: 96840,
+  m_syhtpf: 6285,
+  hsvuccbjetaypjqj: 59214,
+  ezfqd_ujx: 42930,
+  qxyijdfji: 40478,
+  stklebcmvo_gdqb: 88279,
+  lcrvzcaxr: 60795,
+  xkepqbqczuergo: 71339,
+  zhsjv: 4743,
+  btgcskxwccbkf: 23647,
+  ksfscauc_ut: 1782,
+  qtwlgyt: 51576,
+  _evehogcrhawlu: 8058,
+  nsedi: 94066,
+  qpbdywwd: 43630,
+  mecqqcbjoqroum: 88742,
+  ylqghxzlbg: 98803,
+  glnp_: 31757,
+  ot_hpgsi_noxicx: 96112,
+  gidjakaglsmb: 85485,
+  hivfy_ev: 54595,
+  ebgak: 47753,
+  qm_f_cabakfnka: 67234,
+  lteasgnkbf: 16193,
+  kdjokhyhdewkxy: 6407,
+  csuyhqbmrd: 11519,
+  ifu_qhbatcbg: 17080,
+  zvxjvvavjkyxrpp: 25650,
+  qw_amt: 4223,
+  flxkxbzm: 20650,
+  axn_zpebiyyjdnn: 14132,
+  teqm_rkxznoiwy: 71895,
+  czirfl_sgepvl: 54075,
+  zoxssmwkl_lz: 18154,
+  _csewjge: 78608,
+  cjyiw: 72619,
+  so_zcdxnwm: 59005,
+  ykucpgenbjup: 75445,
+  yssgkxmxcxnbpyde: 8126,
+  dhcbrgklcu: 94075,
+  nfobcwk: 16536,
+  zpfqhnisbwhozz: 4003,
+  zkcnwjqydi: 14012,
+  bwkvxhlxtqdhk: 80207,
+  rmtxoub: 50851,
+  ri_grthddct: 37394,
+  oyjstxwitmcmtulu: 32155,
+  ckchtuului: 71412,
+  acgqdflfyouzvfl: 49617,
+  zjhxltu: 44603,
+  awlbq: 79352,
+  irws_wdprtl: 60947,
+  ii_jhwkcpdq: 11636,
+  ztvgxmgyqbaz: 29160,
+  zb_dodblxpcgr: 81173,
+  adahuy: 53971,
+  rgahaxe: 63896,
+  umyqkcxrkbxy: 55123,
+  zuwbnysosbahou: 80161,
+  wjppnyhywaocncda: 19361,
+  kujggu: 24906,
+  ezubwdzjmrzxxnc: 9654,
+  qpxz__qwvc_kf: 45108,
+  wx_hg: 39991,
+  _ylfxev: 45597,
+  tfpgp_uadn: 30491,
+  rrncounzhdkttb_b: 38592,
+  jxvbk: 85852,
+  suncr_ppzzk: 5425,
+  ofcha: 46660,
+  alapmdm: 47482,
+  dhhwxslnynvucd: 26107,
+  tnvoirowkmqp: 97592,
+  vmgoe: 78174,
+  igmtp: 84587,
+  wlfxmqxsqu_v: 70485,
+  _fsgnrvsygzlais: 31153,
+  iojzhfqjeolo: 25452,
+  pmaoyp: 60659,
+  krcfkfwvuqn: 7573,
+  nqvisabgpri_: 28419,
+  eoxyruxvtlqeds: 77369,
+  ogwmnsaiarrqsajo: 81760,
+  krseusoyoalr: 57135,
+  uruivhkcnrwat_mt: 4617,
+  vjfcok_krgzrk: 12893,
+  snly_yfyvplrxi: 59545,
+  nwqrumjipom: 30941,
+  wyvddr: 48262,
+  xinudfrjzieio: 56409,
+  yluburyfmmnzuc: 47595,
+  aytbxcuq: 20284,
+  wevtoljf: 2297,
+  tzrirq: 44255,
+  tpyxmws: 92720,
+  pjuidpccobvch: 13754,
+  jrpoqgelizurlf: 41637,
+  oe_voisbhu: 4731,
+  dwwscbrhk: 18702,
+  _ou_yahp: 6279,
+  lhbliflxqmg: 2269,
+  appbflqds: 96160,
+  exdodgudmj_nnf: 73373,
+  vsjrbtec: 39394,
+  gersxp_doav: 88455,
+  lsopjmcqm: 93209,
+  g_bpyiyenewwqxdl: 94294,
+  ahhyrbipjqmn: 64207,
+  dnxygvxikgohx: 38119,
+  niqdyrxikj: 88306,
+  qyausbptose: 25809,
+  pejlatdbhlx: 9177,
+  cltlfchsxrjzujrv: 79183,
+  pwxsvgpsiaukijy: 79688,
+  yvufetwa_: 19716,
+  eaxtgr: 18361,
+  qxnisyptx: 14776,
+  xokyqqjdjyuuvcfq: 94881,
+  atnjdkp_gin: 90548,
+  rknrbswrzlpoa: 60680,
+  oiycilvaz: 54410,
+  mdsjkiuryjjxbjp: 48482,
+  bhbzfwhizuylq: 96467,
+  diqrkuhcirscs: 87521,
+  cptqndmu: 62063,
+  szqtyztnqyvci: 17932,
+  mxaxf: 43026,
+  vyywdykezdmzesgx: 91325,
+  yunaqggzkrpamaxs: 1244,
+  wdatr: 80227,
+  gudyerdwh: 66908,
+  x_dzmknesutlqzg: 7289,
+  k__pforbot: 9888,
+  fdkrts: 4696,
+  iezvy: 30291,
+  kvfpqpo: 340,
+  geetmxsx: 47345,
+  rryjzuqnz_j: 92062,
+  micbtgna_nm: 40790,
+  ubzod: 37236,
+  _blkhetllxavevq: 34152,
+  vdioymk_qzinxign: 38291,
+  xoj_rqlnx: 9364,
+  uzmfpctx: 62430,
+  jpnxbzvennwxqwgq: 88389,
+  ykpkd: 61561,
+  qnysf: 59790,
+  d_xaksl_lsws: 65715,
+  vjwenyawwdveof: 94823,
+  ee_azqm: 3603,
+  thqcdpurwohsiba: 40555,
+  o__jmgbflm: 86814,
+  mzk_laz_: 5377,
+  vhd_mfxyltbzvuid: 12111,
+  fpvynbbjx: 47715,
+  ayzyibfhg: 74661,
+  tkxgyqagrs: 85846,
+  kwjyodv: 52975,
+  fntilgfuuyjxqqwx: 70627,
+  qvxyzzrwdp: 18489,
+  mo_tkzqrqrl_fy: 94233,
+  gqrmdy_xscckkjkm: 21020,
+  bmiltn: 85263,
+  ceebvrlhno: 89102,
+  lkpbfzxhhury_fr: 14014,
+  qwalr: 58697,
+  zo_avf: 73672,
+  e_wbn: 40511,
+  mfmjehtlwgiqh: 83190,
+  bccee: 8597,
+  fjjweg: 54544,
+  lipczeftqsbx: 61522,
+  smjquiqypugw: 96802,
+  muuzrvzggfgl_c: 46687,
+  raxjehiuugc: 4114,
+  szkmkrlvp: 92728,
+  qggvlfehwypewndm: 36914,
+  zflgvopqtbtind: 28740,
+  txeafbejxuzj: 65516,
+  kimrtseexumiiv: 47171,
+  dlcmnrg: 73547,
+  lldug: 77321,
+  _faqz: 93494,
+  bgsredycav_nuy: 56974,
+  bcm_q: 25970,
+  ivx_gdcat: 39004,
+  jggzpgbmbg: 33760,
+  vqlxdrdpyc: 37751,
+  wovflzuxoetot: 91791,
+  flzuyiorauxipyyo: 56952,
+  sbumhebjfqauui_: 37335,
+  lnmfivp: 67132,
+  vednfapgqfc: 51716,
+  qsawu_cyqiicwgv: 91611,
+  iwhbrww: 14993,
+  iiwbqedm: 87400,
+  nasgzgdigck: 77721,
+  fnhrbqscnkhkx: 22597,
+  ojikej: 53564,
+  fokowplnhyb: 86392,
+  zrjqiicx: 82847,
+  hcu_syaafjq_k: 79762,
+  fhtgvfmwioww: 75259,
+  jangu: 61062,
+  ad_vvvjazuktlrz: 77272,
+  rvuubtwek_youeu: 55517,
+  a_fwylwaodcxbtkg: 68068,
+  hgafclilci_g: 6479,
+  wefdoaqckbzkhozv: 97443,
+  ocdazqyhlveykme: 7435,
+  gocwllwgfpuni: 89841,
+  xsfgnz_bvftw: 8394,
+  c_pihqwq: 67596,
+  sxplhtibglknx_y: 75610,
+  fzvkamir: 50487,
+  uoxmrmufc: 60267,
+  fkozhbay_fl__zl: 21552,
+  dfggmazpaar: 17438,
+  opr__feieozpex: 21514,
+  rfpibrxi: 63316,
+  qdfcxcoeo: 51066,
+  enwamz: 49869,
+  bijmpkodw: 62470,
+  sjwcjfizpgndp: 34646,
+  brbuunw: 85557,
+  lgxtppjjpznizj: 19300,
+  buhvspexcphi: 18255,
+  laqjqqa: 18088,
+  cddplqdtzoj: 28516,
+  _qdemfbz_: 14710,
+  dcfl_fwxrcodzpey: 49182,
+  lfrnfwvmclpkhv: 9192,
+  vztuqp: 78470,
+  alpywmxk_zhqqtb: 76526,
+  hgkgkril: 55333,
+  j_sblajwp: 47803,
+  njrambvca: 55777,
+  utccwlcfnqktr: 82459,
+  rohqelh: 78214,
+  jtpsniuhex: 29507,
+  rhkjgn_bc: 25084,
+  rbhahqz: 77018,
+  pbseuzxy: 26826,
+  wdfxawdyi: 16148,
+  ekeahlzkzcqfr: 23120,
+  xdsrc_okglp: 82505,
+  wgikwsvojlm: 7767,
+  psbzvrfumjua: 23631,
+  phgul: 16925,
+  eqmmrcvksi: 44317,
+  mmalnnjg: 3774,
+  nccpqjrrbsm: 81536,
+  zoayowtfxwz: 70488,
+  ijgav: 81907,
+  nkvvmrxhr_zebpv: 67371,
+  icorrxcxzxxnutk: 46865,
+  xoetakgzorgn: 70178,
+  qlwv_a_qw: 83773,
+  hwabdcfqicpnyho: 14721,
+  mlzppin: 65873,
+  qswdejj: 1830,
+  djgihpszamvlhxfa: 2013,
+  _umhbp: 88911,
+  jvymlcmukpf: 28394,
+  wveutu: 60224,
+  bdqewrbhsuv_: 4778,
+  yyfkkbfq: 14047,
+  sivqpqhoiiq: 79207,
+  dgkabg: 26434,
+  quhmzarvicijgdz: 7765,
+  agrrbisokhggwjci: 88081,
+  cpjpu: 99230,
+  efhpfaadj: 74582,
+  mvivwrnrtxsiwx: 22912,
+  gwgrcr_zqzbbx: 0,
+  qqpnu: 72900,
+  t__yyonexohw: 33403,
+  rzrdg: 15369,
+  joiavawh_gi: 61748,
+  vljjdvrxvuwutra: 95683,
+  zslfwm_rl: 62112,
+  _cfia_bgzf_ccf_z: 26834,
+  xlpzc_m: 39735,
+  nyw_uclnhn: 44191,
+  htexhsx: 91262,
+  sqjnnatrvpurfi: 55727,
+  ntruccbsbqvspt: 822,
+  isidvgxshu: 2544,
+  muzjow: 50815,
+  apefser: 18584,
+  _awucnycbphyozwz: 30776,
+  yuqrtptzo: 68649,
+  mydubgdzdqxpyzye: 30365,
+  pafokzti: 48560,
+  fmxukwyqlup: 93957,
+  osnqpdlayydmp_ui: 76584,
+  msvw_l: 51779,
+  rommeit: 21009,
+  przu_vyrmrrkhcv: 56287,
+  ctlvpjqajeobuozp: 36106,
+  _fnsbgolrabgs: 83465,
+  oljxbmtegliwe: 52095,
+  hlnakzjo: 77830,
+  idnic_: 75993,
+  iglxcmzy: 49000,
+  dc_ljdoy: 69430,
+  mc_mychr_cfyp_: 18964,
+  _sieruipa: 35250,
+  dcznodqh: 54871,
+  yipghnkytxiobti: 49919,
+  ugzblrsxwr: 15332,
+  itzskyqfe: 71857,
+  m_gabgrpvjv: 10208,
+  xstretrbiawqgyo: 1920,
+  ybtsbfrs: 12402,
+  ujvjvgisoqk_hew: 22930,
+  novtkjtthb: 84398,
+  jdiwztyx: 67667,
+  assbx_z: 76454,
+  gsopc: 76808,
+  wwxbtftiahcmyag: 58934,
+  nncr_rkveqakjwop: 41197,
+  sucuabenoxvtrxi: 15665,
+  sgeqc_oh: 75110,
+  umjlxjmmozcto: 34253,
+  b_phch: 62563,
+  ylkil: 34774,
+  xxxhdyrykb: 45698,
+  zz_znsxduvks: 98739,
+  pylfgmuedeih: 92096,
+  nqjowcplfhm: 50520,
+  epqvada_syyj: 25147,
+  lkezzsvsd: 4433,
+  xqerfoakriumpa: 60862,
+  aurbqp: 43068,
+  ggmzhwhr: 7386,
+  rdjixxidlsn: 15353,
+  glyym_luajfymp: 4337,
+  nasjcae: 52905,
+  tuqkvjnofzbsigig: 76169,
+  crcrmoryrifni: 44256,
+  _ei_llpeiqh_ipp: 26115,
+  lxdnrjbmzi: 78168,
+  _qfls: 32573,
+  qjtakvrzmz: 63642,
+  yidaidvu: 32612,
+  orbqcebv: 65302,
+  rkkbpaculyfve: 44347,
+  muox_nhu: 56785,
+  fbjsqsrotmiheirk: 23851,
+  elmcfug: 9451,
+  voqxkyyznlggyly: 18205,
+  upjsbweiu_on: 29551,
+  iciftxdgujk: 72330,
+  jxlrye_lebqyoh_s: 46518,
+  aibem_va: 81788,
+  nkeki_yfyr_gf: 37517,
+  __eby: 94149,
+  cqensabyj_gbzj_: 29301,
+  gkeazewggeeadz: 78360,
+  qxyjfmgrtf: 26046,
+  egije: 84049,
+  lulpn: 79024,
+  __nncyqitssjq: 32149,
+  odxmivwggmsssyg: 47269,
+  iw_xkyfkgk: 74765,
+  sgoptslylemg_: 82564,
+  gqkgh_g: 74319,
+  gyqjscxhwblj: 23590,
+  kjfpkoj: 35907,
+  dkqlxel: 44739,
+  atellsildpmry: 66084,
+  catjlvxvqi: 25688,
+  yjq_ads: 35675,
+  opgeg: 74469,
+  jukekcldmcai: 39529,
+  wrvtkxx_nq: 35305,
+  ypgbw_c: 16491,
+  eynyjlo: 22493,
+  wqleqkm: 74003,
+  uppswfxkwsywgduz: 95465,
+  xgfqrea: 35814,
+  ujhrt_ksrsz: 11168,
+  eevprmqyeibqs: 89258,
+  gxugyktzraa_: 89793,
+  owje_lzxkgwfpfti: 51512,
+  fggdynf: 2004,
+  lepfbmgcyj: 78680,
+  bnxydppee_vnqwo: 44306,
+  ygfavc: 68899,
+  yvy_gnnwlzupx: 14187,
+  o_vtixn_hqnbkmnr: 60616,
+  dcv_evivkychwb: 32508,
+  vmssrionrhkifosf: 24951,
+  b_tfgyr_fryjmlkd: 33311,
+  fcbvwnpdlgw: 24637,
+  iqhpkozr: 72582,
+  cnu_es_abzyqwj: 58575,
+  uvogbvzhrrgchtud: 89548,
+  baxtzth: 96843,
+  ajyddpzyeepnw: 2749,
+  tsptr: 51339,
+  gibxfoqey: 40282,
+  jaoum: 53521,
+  yxuo_qvzlipndgc: 48651,
+  bmpowlefwsfxzlt: 20386,
+  atttre_: 84366,
+  qyutc: 98478,
+  qkgrknl_isiwfd: 85479,
+  rknrzixsgxdyvsc: 14668,
+  eaffpjeepa: 91054,
+  dvdkesml: 55264,
+  nsufcmntwxznux: 80476,
+  hajhrnsrt: 25049,
+  mtyytpauqqzix: 92849,
+  ccnzk: 65431,
+  wmgfldxjvtojle: 91065,
+  ytbwvb_ae: 4879,
+  shgvpzwzggylsff: 68978,
+  wzrrcxyosfvyxp: 77300,
+  rlglhtbbvm_ciugg: 79392,
+  vjhyvhjimxj: 54494,
+  idaesblvjutfnjs_: 71551,
+  x_zuq: 2126,
+  expyrotxtc: 38053,
+  ppdapantvqpihqg: 37483,
+  xysky_ghoe: 54267,
+  pfhlij: 97559,
+  pqhctx: 55499,
+  ovkvln: 11957,
+  tutcbv: 69114,
+  mibulwpcvehzh: 58331,
+  pewnilvidu: 50118,
+  zooduslnkzosrzb: 94429,
+  emgesolm: 18682,
+  _agosfnzg: 76930,
+  nttafnqdlm: 64641,
+  pehcuyduptggpemo: 3425,
+  vopqucn: 22107,
+  hmmezvtl: 49380,
+  c_rpvdlgkoac: 78009,
+  _vjhlwvbonp: 91097,
+  mxavntmltx: 57464,
+  rqnivzde: 77086,
+  uutyhexsudunrlq: 42923,
+  dnuqcdq_cp: 38302,
+  tbtp_a_zkuxdozon: 32666,
+  cdlpgfcoilsesmnj: 24235,
+  yrihfsc: 98138,
+  vw_tfakmyy: 52888,
+  tydllyhnph: 5969,
+  rjzizx: 64518,
+  ueyjnuslauqjnp: 99490,
+  nmwi_fbntjtdx: 62952,
+  dhynjhpvkk: 37108,
+  itsyeifhdscsci: 14913,
+  ospizshd: 63229,
+  mydvyfubbmzajve: 19719,
+  glwobkejngzusyy: 96705,
+  ounmheqzkq_yh: 13232,
+  yhuihdrxqiml: 17481,
+  l_hgiy: 22709,
+  sqnrpb_u: 78373,
+  utqmtyblrg: 18357,
+  gd_rdtjcqw_: 34448,
+  qhgefgrekrd: 73694,
+  p_kpkh: 76270,
+  ypbrf: 37429,
+  wvqb_ns: 17270,
+  hlwuondorhde: 52768,
+  uisisg: 80441,
+  hd_mlc: 50657,
+  wggwmgmtac: 97183,
+  joqquhgkqvr: 76621,
+  kv_qdxj: 99911,
+  gkqoiqgg: 148,
+  mrmikwpw: 57207,
+  lm_x_umq: 75510,
+  shfrc: 98263,
+  hmj_smz: 61553,
+  aqtxsjgfnqq: 36104,
+  huxrwebbiaeo: 25191,
+  jnqzwnjrmxyfdhpx: 39012,
+  fzkmlhc: 67797,
+  izlvi: 42150,
+  kjsxtduq: 7489,
+  da__cyjhgbyctob: 95283,
+  esdvtofooywdci: 45178,
+  pcnxtjmd_gz: 55641,
+  ac_adkjdnh: 54283,
+  eyqhzepexxszy: 592,
+  kirqyloyt: 3947,
+  w_yzpfohinoek_gj: 30042,
+  wdgstafdgdeypqow: 15811,
+  hyvfnmpp: 2441,
+  vcxawtbll__yt: 55608,
+  xshisgveioqcvwn: 1477,
+  gcwwzguajs_rc: 10503,
+  zntwiaimibqlwy: 75600,
+  ygeaumnuacdsgt: 76161,
+  sxyxxozws_igm: 6744,
+  sbwvsfbohv: 86624,
+  gtiissdjkw: 66873,
+  moeizgfymnsnula: 34976,
+  izducirvbhp: 46224,
+  fwgzqudtfn: 46252,
+  ctmeh: 68764,
+  hjepx: 11337,
+  kzbkpwl_yebnj: 76420,
+  xxkamrve: 44857,
+  zsggborlszujw: 914,
+  bszfx: 63491,
+  a_jgiai: 48116,
+  mdghxyd: 75519,
+  o_ymluhwqgx: 45212,
+  _hbulvatsg: 5415,
+  xqesulrtljdeoq: 28841,
+  ujqsy: 83424,
+  mvzmjwksfiwqxt: 18882,
+  x_auu_sac_m: 35778,
+  hz_nin_d_dygbr: 14587,
+  hamgpofjfoyc: 11762,
+  aaqtficm_adpsk: 18998,
+  _otmowl: 31270,
+  tl_ryfhhfy: 35158,
+  fpxaojnypn: 97609,
+  ddarvjeva_koe: 93164,
+  kwafikshrcz: 7264,
+  x_xkmdlq: 64801,
+  huzlkv_ow: 84407,
+  kfccqbxjbjf_: 44915,
+  ddxtu_vgbdfy: 47927,
+  dhbbgm: 68697,
+  gfqfdulecnjaj_te: 51538,
+  lhzfpcsbnl: 8171,
+  ow_lg: 81518,
+  blrzgvb: 84363,
+  depvngiw: 75099,
+  sjwpl: 42715,
+  mlkpofqp: 22818,
+  fpy_jjpc: 75120,
+  jxcvnmyyllzjb: 56164,
+  zksxcgvqizzowyb: 73863,
+  svzc_g: 14647,
+  yhtrolcksdhuv: 97734,
+  byjjz: 63969,
+  ziyze_zacoeczo: 27342,
+  jfqqxmzqbpn: 93613,
+  xpuanokwbdth: 67553,
+  orzboqyzqakiu: 30440,
+  htlfvxjtxootbias: 63573,
+  eikunyetjboj: 49284,
+  xadum: 11729,
+  zaewwiyazjnkvtci: 56349,
+  gxwbtxl: 41486,
+  konokczup: 19940,
+  rvdnogaiybmezn: 86915,
+  trxbcnnkltnx: 51461,
+  nrsoym: 11025,
+  gcokdcvjjahpgxge: 83836,
+  m_axqmuillrldany: 40286,
+  tdiqjgcylncf: 18782,
+  qwcautwy: 33790,
+  kfuvkfwvfrvozqhb: 18589,
+  qfqtuypkzwwzhm: 60376,
+  oviyrqnp: 47483,
+  xcamwfq: 98949,
+  sxdkqhrtu: 80043,
+  cy_ujeker: 2851,
+  ozrocobhcn: 87714,
+  ni_udgbbbfiq: 41694,
+  ne_dguyvaipyg: 36137,
+  mxixyeixcg_jux: 12624,
+  tfjkmv: 81077,
+  _ss_jsseu: 75972,
+  dcbqomgwnh: 51780,
+  mqguo: 45523,
+  aiqg_tdzpyol: 20428,
+  gaujdezvpptr: 21732,
+  pdgxo: 71278,
+  ggngtnedjhpxzul: 3465,
+  hdwjqpafnul: 67400,
+  ftlblduwchc_n: 65045,
+  sokxj: 59019,
+  trcpk: 71333,
+  bjcxozkajp_: 45974,
+  d_icxvzats: 78105,
+  g_h_lwmmsvnp: 51419,
+  ekvpemrprolknmdw: 38428,
+  tkpqtihycwnvqlxe: 38759,
+  gkbrgqjkrbd: 45060,
+  danrbtmwuhvzh: 44893,
+  vganwdgfmjpd: 23673,
+  cymzk: 46313,
+  fqlorup_pemlpq: 41366,
+  fdquvz_pktkv: 82298,
+  _atctecxslwvkfs: 8841,
+  cqdmejhpmmrfggo: 38246,
+  iqqhqawq: 91316,
+  fuqycnouc_c: 82590,
+  rfbxtq: 96771,
+  qgkx_o: 2566,
+  plqhpuhwp: 49289,
+  icuhehqo: 26246,
+  xhichycox: 79308,
+  x_texnrsy: 3140,
+  jkmkvd: 13506,
+  njrgr: 23903,
+  qizahr_: 54379,
+  xsgtvgokdnj: 68074,
+  kifxqiwkhora: 31787,
+  _qacey_al: 30954,
+  mnwathyl: 83030,
+  kbbwmgauea: 15253,
+  bo_cjp: 71164,
+  aufnblkicgcfgb: 88364,
+  ek_nnych: 63290,
+  fihqbe_o: 18469,
+  mszqzabzrgww: 22104,
+  _qyaak_o: 16458,
+  dbndswlki: 7861,
+  kypswqtbhy: 4286,
+  hembxv: 93236,
+  jhpiq_i: 67733,
+  rfjfagrevaoa: 80652,
+  bigvlmas: 35269,
+  jzopuz: 1116,
+  qfqkhgl: 88204,
+  hj_mkvypyt: 11921,
+  uocjfyhbdbivs: 466,
+  colrduvanqlcqjsl: 46492,
+  kozqdyv: 72342,
+  lxutrqzfq: 56571,
+  yjkpclasad: 80184,
+  cmhhkejop: 93279,
+  ujewuchla: 96836,
+  f_fj_o: 52240,
+  rudyn_tkr: 96359,
+  umcsnjdeblezvzr: 11255,
+  sksqmmxzkmogysda: 92789,
+  rsvnvchwotul: 53115,
+  dmgablj: 88792,
+  elapbwdggidp: 78952,
+  ddgfesmuv: 3356,
+  hquejjn: 97801,
+  wcc_inavt: 55136,
+  btdhmgol: 40042,
+  fjymoqwink: 94292,
+  srpcdvt_drdf: 29223,
+  klbpd: 22779,
+  qrqjcj: 66747,
+  saulvoqytz: 46458,
+  zgsbio: 84061,
+  ezjkcjorg_byly: 10776,
+  _dkpj: 50744,
+  fhlvexhoegxerh: 37327,
+  ymggqc: 83456,
+  yy_wiqrayejq: 9765,
+  qilqgiim: 30354,
+  hnexcxlzzsjh: 16124,
+  qxqiv: 58945,
+  dhmxfk: 98104,
+  kjqaptm: 6951,
+  fetxqnqrfxqrd: 18813,
+  hekvhecrob: 22897,
+  ezaqhbkbdb: 43801,
+  lzisdaguxetrt: 51896,
+  lswiscyllkervvp: 55134,
+  vak_hv_yvyvwiz: 57471,
+  zhkygibouf: 64208,
+  bqaqm_ezsaeityf: 45322,
+  wofoebtw: 37596,
+  jnynu: 5725,
+  eqwnjxf: 99902,
+  fbn_bjmngtjk: 51161,
+  clapz: 34369,
+  tv__ofb: 71360,
+  kvcpmfao: 13120,
+  fbsqhlxfsnglqcem: 91876,
+  krfz_qskxytnhi: 300,
+  rfiugjwen: 78857,
+  jrkvtdh: 53906,
+  khreodrwvpy_: 67705,
+  fw_vqpnoofe: 26932,
+  jiilsujfkxvtzf: 31305,
+  ifdejmo: 832,
+  _rgqws: 27452,
+  oreihg__: 38942,
+  vp_dujgvbesomnpf: 59425,
+  iuiyrgkas_k: 92282,
+  uatn_loacqygicxd: 41054,
+  ynbqosdewj_in: 65628,
+  rymktehtr: 98420,
+  ddbns: 79231,
+  irai_fvq_k: 3997,
+  nhakm: 67936,
+  bzwejx: 63405,
+  asouxgnloruh: 13106,
+  uhugvpncjnzjbpzn: 36796,
+  fjdirfo: 3506,
+  olylj: 2262,
+  oc_bbsp: 28018,
+  amsqghenija_ajk: 65993,
+  lrdwt: 13440,
+  mbdoaduisdol: 98264,
+  qmwtfpcnsoyabj: 16047,
+  nbtj_zrbc: 20049,
+  cfbzvdndgvwmsbud: 48990,
+  ccoefbf: 33169,
+  iyjzamrlvidw: 15691,
+  ljwudt: 31589,
+  grcaf_ny: 13775,
+  mgluln: 51610,
+  bcqexgk: 76231,
+  xeesesxinwg: 25115,
+  ygssebpbmjglm: 92319,
+  pabcocczodkd_jhn: 97552,
+  ipwhcgncnw_hwu: 96262,
+  v_y_okvlvgx: 62727,
+  hqkfdyed_lfleboe: 33280,
+  zgapavjruxagwc: 81110,
+  apahgmmnaifpoy: 56546,
+  bgpornya: 18709,
+  ebcbvwqtsad: 28360,
+  wfhnzfbsy: 74398,
+  tjpozgstqzjronhz: 18161,
+};
+////= find
+const key = process.argv[2];
+console.log(key ? find(key) : "none");
+//// lists-of-constants/tables-n-n16.ts
+// Lists of constants: tables n. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const table: Record<string, number> = {
+  ryooqsgfzqpu: 81546,
+  zfdojecrzwubtm: 59402,
+  uxtufta_qcbb: 16675,
+  htayokos: 76974,
+  qhujpavc: 63402,
+  uinr_cwikyhq: 75310,
+  acsydmdjm: 17791,
+  avaggb: 50606,
+  mwmncsugyvik: 23963,
+  jkanyd: 82214,
+  hwdaboz: 20202,
+  fvrgoqgxyenu: 40738,
+  dmngaizsjag: 29934,
+  mtusdbe: 80012,
+  oiaytk_j: 32702,
+  cccgsuhatll: 95078,
+};
+////= find
+const key = process.argv[2];
+console.log(key ? find(key) : "none");
+//// lists-of-constants/tables-n-n250.ts
+// Lists of constants: tables n. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const table: Record<string, number> = {
+  wyoncfhjdw: 67477,
+  gifxhqvjzilzvqds: 72892,
+  hjfvhieuvcoco: 40610,
+  cqbatsjrinzsc: 5099,
+  jyghfix: 37931,
+  afzebtoysmapb: 67739,
+  cryulkv: 46762,
+  zbqjq_uvqxrf: 9902,
+  yyfdtnhvoryizw: 69709,
+  hiprhstpibgtwbso: 14765,
+  ketatpz: 1754,
+  qoxizacdfsu: 19433,
+  szxhtebjnbwk_: 51054,
+  xqyiyspcu_qfmi: 93699,
+  fpwv_tzo: 83821,
+  knolw: 98410,
+  wbepyyte: 14500,
+  xoqxbah: 58675,
+  qecmrjpncbv: 73715,
+  yxthjidrhnochljk: 57083,
+  gbfmsubxkswsfo: 77533,
+  _gmmzbgnlhf: 99923,
+  zfpgmgtoyjpop: 71648,
+  vfpgrmncbwilita: 77580,
+  fxiqmsuwgidlb: 7330,
+  xyleyhx: 76335,
+  ak_moc: 93005,
+  kiyqvbjmthp: 22702,
+  geqte: 8992,
+  gjnnp: 60815,
+  weqwrikxovmeg: 97593,
+  rwomemqlh: 31753,
+  jlltge: 88366,
+  axups: 65460,
+  zyxjv: 28415,
+  cgrwlvdylhzuicz: 58585,
+  dmpbpmkjpwi: 85499,
+  fmgpyflv: 71247,
+  hqcxknzepsiwrjwa: 44140,
+  dlcmibmpsjp: 75728,
+  kicablklsji_vfup: 82781,
+  tklaswgycub: 80560,
+  rntncic_oommbz: 2339,
+  vqijplp: 1609,
+  etgih: 28837,
+  vhhqarmah: 94572,
+  puyrct_r_wzki: 86073,
+  dakzwgwmvf: 28093,
+  _ffktwpz: 79167,
+  jlnjlxvrphuhlk: 9539,
+  fqxecc_dwjdoqyvp: 31820,
+  ftnpb: 99862,
+  imqxzwmiwu: 40778,
+  lwvkfkyg_: 43761,
+  _esnuwetx_izfe: 23232,
+  mtvjhufa: 73237,
+  swzeiwiniuvm: 68571,
+  vebfwdbgjlx: 13279,
+  zdmka_rpflcjo: 83470,
+  jhmxtnyesmvwgrj: 24115,
+  of_drip: 34374,
+  dekaisseium: 24674,
+  khcpglrir: 94916,
+  ecayj: 29331,
+  cafkpezgnpbnlzr: 99397,
+  rbgrtv_tiig: 21695,
+  hzos_xbfa: 7499,
+  rdvcila: 45065,
+  jcqoagclayqiz: 4484,
+  zxpmjzr_: 95181,
+  yzydpm_wnitaase: 93798,
+  kmxlqviz: 18416,
+  uuoljicukt: 26445,
+  ikgxfg: 83144,
+  xerjv: 3921,
+  fldeellf: 97021,
+  aamqbmdkr_y: 21431,
+  afkcysds: 62075,
+  nphpnywf_i: 84536,
+  vmkfyl: 42114,
+  aexuvmubgttlo: 33990,
+  unqsdd_xwxonvon_: 97249,
+  qhmtrsbqbqu: 24174,
+  ojsbtbkeroki: 41887,
+  tkgxprmbeypdhf_u: 83246,
+  _dzdqii: 15096,
+  fbwkiq: 80632,
+  ograngpiuh: 878,
+  drozyp: 89669,
+  czpbyrcz: 5730,
+  zlfdkbl: 73816,
+  _jdnftma: 39853,
+  topccugrukxgrvn: 50180,
+  a_kwkuivtgw: 86050,
+  fyefwsob: 33068,
+  idilttl: 50812,
+  gacwgxwlj: 93713,
+  gecuinl_tni: 84915,
+  eqddlqwnhpsd: 24283,
+  djcvuohpm: 54444,
+  xnthoucl: 64894,
+  kjsovijvwav: 85840,
+  hanlesimnikd_y: 4613,
+  drvdogczlalaxs: 31448,
+  wl_avuepclfoqkp: 77448,
+  utbhazmn_hurwdb: 36555,
+  oumzug: 35448,
+  sgpl_eqmdxzca: 26212,
+  uwtzxiv: 88403,
+  pydnoeall_adlnrr: 10870,
+  dyzdjqsdcshev: 8637,
+  qqjjly: 32993,
+  hsnobgso: 24441,
+  rdoedzq: 91098,
+  esqfntt: 31087,
+  dn_ahez_dxxwmfjq: 49933,
+  amdpjruyybmnjc: 37999,
+  irdvnkpg: 87210,
+  resqdmujixtihlc: 91818,
+  zpmlunkodbj: 15742,
+  bfqmrkm_hvdwl: 83046,
+  klphq: 87776,
+  qpxalnsdawslhltw: 85347,
+  _jgtysbkfp: 82294,
+  qyylbc: 90648,
+  isizznul: 50215,
+  cjsvdcmh_ik: 94029,
+  ke_ez: 41935,
+  ujbypbmtc: 64679,
+  ekuwatvygsra_: 927,
+  pnkvu_cfzcovyemy: 7717,
+  vnzdokxxc_d_: 53788,
+  v_rwdwdmjw: 64489,
+  rdgdnkre_deipnb: 77091,
+  mgvwppnwzmq: 50339,
+  drxfyskgal_f: 15993,
+  lmszqvmoss_olys: 69594,
+  pwmkcwp: 33215,
+  uilxnsbi: 6389,
+  z_imhw: 15322,
+  ntcrfnqo: 3660,
+  pdhfytdvjqe: 47154,
+  wlsfr: 79834,
+  kpeoylzjdhze: 48660,
+  grxtldfy: 73075,
+  sflwkldz: 43256,
+  zjt_xidhlafrivjj: 51028,
+  reipciajz: 19442,
+  qemf_retc: 77659,
+  zxfryvwsyuijb: 84323,
+  yluzrhpovll: 79676,
+  guqisxlhcrdsvxcj: 23641,
+  dsdgl: 26730,
+  lebvvcean: 65566,
+  evzqrcnqvfcqwl: 1489,
+  pgwdnepgcwparr: 65496,
+  ejikhw: 86267,
+  erenzatpz: 84441,
+  vsttkfcyqfbddj: 74065,
+  anbe_fwtq: 82143,
+  yyvzcalczgm_hn: 31309,
+  khlmayhibs: 58778,
+  qxkqvlouhn: 24859,
+  gegioph: 63502,
+  fhvutitqsi: 94977,
+  afjhcjqkxxgvbz: 5619,
+  rccvyqho: 10239,
+  bnrelvlc: 71122,
+  _menzv: 4385,
+  kzgmjrsx: 17042,
+  p_abpb: 24837,
+  cnfecgfphkk: 50271,
+  eezwkbg: 61314,
+  ewvhxvol: 29542,
+  xdiecfxlvb: 57126,
+  jkfsdi: 81215,
+  qr_soyzqiccuh: 49242,
+  cjyvq: 97754,
+  fkusdjp: 21391,
+  oltpobgepvaoys: 99749,
+  rbjfbfmx_ga: 47705,
+  hnzpt: 94684,
+  coafkafjbkitrlw: 6766,
+  itxkflesstnn: 45971,
+  soikphvtvfoqr: 8794,
+  yfxkhrsmf: 19362,
+  kjuduvalprdpxzqu: 36276,
+  vavpmipsuso: 21275,
+  ckpup: 80628,
+  ueair: 4920,
+  bcizbhs_mzbi: 3721,
+  uqdnlrbc: 31657,
+  pejk_vqqkgug: 84826,
+  _ozjvevhzxwizjzf: 49935,
+  _pjwhb: 19004,
+  qvkpz: 11338,
+  tvmucvfdijmjift: 93486,
+  yyiwtuexxvbnnymz: 6116,
+  sipup: 18183,
+  mwlbafpz: 44851,
+  hutydweq: 78850,
+  koiwfauivyd: 4898,
+  kbajrstjoy: 77671,
+  kdigq: 14753,
+  cbdwrbpyxqhj: 30143,
+  slhnkmck: 37575,
+  ljqur: 23585,
+  gnhzpcdnnpv: 25035,
+  yurzuqisrna: 59022,
+  cgfybtefrizxs: 14700,
+  kiyzubwbobndpgib: 57276,
+  caiowtoenpszx: 26286,
+  m_uhvtnb: 9655,
+  wsehbs: 83933,
+  mamcxmxotdgh: 68469,
+  pskudkjah_xqsnxm: 22033,
+  ibzcwiog: 9259,
+  vngonkgtan: 22103,
+  tycoxpuro: 70192,
+  mvqzzmvcxhjhxtt: 49218,
+  vongujhtycrsxks: 53709,
+  ma_nlynictmhmjgx: 19610,
+  bpsb_g_umcs: 49567,
+  wykxlspiiwvrnrfa: 74466,
+  yyskzxq: 97918,
+  iyskq: 66578,
+  kfuzpvpjznve: 12634,
+  tbooqr: 50858,
+  sajlnybcajrw: 733,
+  wl_gmwi: 62166,
+  lsrqarl: 40294,
+  vmezju_thgf: 5210,
+  dcuza: 80617,
+  giapbwsav_jkgtwl: 3683,
+  kkzgpwkaozzsjtql: 25345,
+  rhttkeuk: 44009,
+  nf_fsvyfpltw: 1218,
+  gykhplbhpw: 55419,
+  bwxcy_vrsadkbsl: 77021,
+  trmczdnawtfr: 51403,
+  bvewvkboy: 37971,
+  hralhlahj: 71021,
+  iaaljnsfi: 37481,
+  dfdpvqg: 87122,
+  rytzvowwq: 17311,
+  n_mlqioo: 21029,
+  srzzhjajjmbuz: 50256,
+  tojqg: 92806,
+  _rvowlxocm: 48772,
+  rhsu_gcdhrkrn: 92639,
+};
+////= find
+const key = process.argv[2];
+console.log(key ? find(key) : "none");
+//// lists-of-constants/tables-n-n60.ts
+// Lists of constants: tables n. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const table: Record<string, number> = {
+  fxurgvmp: 14163,
+  cnbddbqihxwmin: 96835,
+  pjqfxcehpruttc: 31068,
+  ggxacinoh: 33637,
+  bfjlq: 58149,
+  ecleokvxwqsesb: 52632,
+  plwjb: 66160,
+  tucpc: 6613,
+  jkeccorlxbxxwezk: 99785,
+  cvpcnzapsa: 25617,
+  vmmsatcccudinx: 84935,
+  mxwsooo_rc: 49240,
+  yqajtcpahwdpy: 1412,
+  vpialjevtgqfyk: 12903,
+  ophkmvigunzzygg: 33889,
+  hskgeepl_bw: 32884,
+  i_fdop: 36135,
+  g_nmuqpvk: 44675,
+  __tokc_bitbvwisl: 72097,
+  uzsauemog: 70842,
+  y_ihy: 66560,
+  zbudodu: 54484,
+  uuzlcvgg_pifw: 68245,
+  yprwb: 74446,
+  hiylrwq: 13059,
+  tyfmzwhcnxmeo: 83625,
+  guamrsuqz_ko: 58241,
+  ugdx_zuwdg: 84496,
+  mcjrzkiw: 9987,
+  lqcbo: 72013,
+  rnyipagzcn: 78320,
+  frkvz: 87612,
+  peqxq_v: 99516,
+  opswcyhoqrj_xruf: 5913,
+  q_rijvmtgjerq: 50649,
+  spgnrdqat: 20962,
+  arbqmrzsdpc: 50581,
+  fcronzmihppekn_p: 61834,
+  kdgntaiewyabg: 22167,
+  havjkxl: 64948,
+  tpdpxsdq: 71034,
+  iwgwqnamun_qtf: 80107,
+  gurugqgrtsehx: 78192,
+  zlfktkggygdehex: 7673,
+  imdn_n: 56305,
+  zwegmuvzadgsv: 64819,
+  _ldwquykqv: 55142,
+  zcpdabyr: 37281,
+  qspegfdgf_fjvd: 69043,
+  bevocydkmonqln: 52241,
+  tlauwbgf: 78359,
+  olxlmgtfdqz: 40946,
+  kcz_w: 47916,
+  mstgqskzyiidxxy: 69521,
+  _mekrwl: 37453,
+  yfmgxfczkjp: 63339,
+  alutbh: 85866,
+  vjkgvmsfr: 35357,
+  mqpugw: 73484,
+  ymsadt: 37162,
+};
+////= find
+const key = process.argv[2];
+console.log(key ? find(key) : "none");
+//// lists-of-constants/tables-n-n70.ts
+// Lists of constants: tables n. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const table: Record<string, number> = {
+  wxjaayhsbufnyvm: 85132,
+  kxmbs: 97861,
+  kczhnxpiyhbqdzxo: 55256,
+  _htwdbt: 74292,
+  odgblqedloe: 16079,
+  notiusvnlyxq_ej: 9403,
+  ehpdqjzqtliitvxs: 12918,
+  sguiyhghqugvbuba: 68110,
+  inatbdhri: 17033,
+  ycvfrh: 16226,
+  lpplgkkpxe_czdo: 70462,
+  _yygonximzeleu: 75482,
+  kjryx_fnulsdok: 59399,
+  rcnssp: 75,
+  oj_yacjgvtcwjpx: 38811,
+  kjehlvxkldkwostv: 31972,
+  oqzjokhmx: 95444,
+  hcl_lalvmsmzg: 39225,
+  slzmre_ssffcyojz: 3135,
+  hqbrf: 42567,
+  jau_zncsrjzrck: 22546,
+  ixdkca: 8209,
+  uedx_unhwhpyqky: 57772,
+  mlkzkvepprzx: 58987,
+  wtbny_: 69528,
+  lazm_coruaqlwaz: 52068,
+  nnehxf: 18517,
+  mvfkgmnqjibpjxd: 46726,
+  ueyfbyoas: 90738,
+  zbkdgflgshtw: 76743,
+  tqhofimfyjur: 30250,
+  pipmkvrycphmb: 6014,
+  ezzmqzqy: 40137,
+  zbvhaploz: 4080,
+  wntfnfyk: 59621,
+  izqeuxt: 41128,
+  qrbesyfag: 40350,
+  _eclitw: 42513,
+  dpwocxsrqjazg: 65328,
+  gvcz_ogbrnq: 18773,
+  f_jkjmcrjovw: 61949,
+  lcvedv: 27067,
+  voxz_duoamw: 26567,
+  phjsdoyazxgtejum: 38711,
+  xjkymrvciggmx: 90770,
+  kjispx: 7728,
+  ko_mcdetdevuwff: 25625,
+  mb_oswcd: 41402,
+  bfdnnyck: 46419,
+  qeugye_wmpk: 61930,
+  taxmtwkzzhv: 2101,
+  qaikgkjuodrmgq: 22529,
+  zj_dtwfiyr: 83280,
+  rhltqqesw: 91477,
+  qww_gsau: 73378,
+  gycehpsnwkkclio: 26477,
+  oxehsr: 69874,
+  rcrifx_kted_a: 82889,
+  vlhysl_ff: 30961,
+  rzcobmfzvejyvx: 25101,
+  tsuzyafgnob: 6553,
+  qmdsmfk: 85211,
+  eihskbuzbxvze: 13906,
+  ptdplntwsyn: 40118,
+  po_wn_nds: 95129,
+  qkqqnn: 41023,
+  kbjxt: 35899,
+  xmtkyzjschd: 55097,
+  hqmbpwdqhrjv: 93473,
+  hcxvlrnszfh: 17678,
+};
+////= find
+const key = process.argv[2];
+console.log(key ? find(key) : "none");
+//// lists-of-constants/tables-small-s100-different.ts
+// Lists of constants: tables small  different. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const all: Record<string, number>[] = [];
+function fill() {
+  const t0: Record<string, number> = { ydoiogqxv: 961, dxdydlluj: 992, tebgywsti: 351, nagqxtxid: 498, ayweujkvn: 804, vkzwbmaey: 461, weeyxjhoo: 969, ppndgufsw: 754, rnhvamaxd: 721, erieooiqa: 230, dhjnzznsj: 530, nmhvcleda: 311, dhggtkfdj: 851, hvxvnlfop: 546, wupxjapzc: 767, kfrguocvo: 141, nvsvqggop: 518, erhconcou: 368, fuofbqzkg: 663, kisnbdpbr: 219, eoxbvgawm: 613, bpexgnhof: 256, jszpgcsuh: 351, ggnlyazsb: 979, mgsavvzvh: 950, uceyfhloj: 19, yvcbxixfx: 746, ekeafupzd: 404, kugvqjdph: 512, wffzrpymm: 61, ltlzssrug: 428, foiouqukm: 447, ryfemnndo: 21, vjwhcstgn: 60, tgeaqtcut: 535, llkszyznt: 251, gfkoaaoep: 720, dpbroegkc: 636, hgzblgrod: 689, ijhoptgsy: 276, hxqfyeiff: 8, vufjsdcgy: 319, whzgtgzxz: 425, phqcuruhq: 596, xuwxpasti: 837, auyrnorqc: 365, imfvtxljy: 514, tqbnwofty: 108, jrkwbpfjh: 701, bzmadhidt: 625, sjlwudyjw: 176, jnbgsgtto: 148, wopzqvzdh: 698, pvmhhenfr: 663, ucwvnbvvc: 324, xalddprpz: 518, gprdhovmp: 301, artthalfw: 583, gsujqkyxe: 427, eokysrgmn: 284, tazqzmhls: 263, akcspzvgw: 965, nwhyumyhj: 259, stlduqjgi: 724, aqhalvxer: 247, uhjlfjyci: 285, wzgfkwmmu: 585, gmctnkaqy: 474, anqiikkgu: 467, qujloxhrn: 844, rdpfglfnz: 434, iadzjwmdl: 930, jmwsgvajb: 225, vrtcioeml: 537, wgafsbvyk: 788, jqpmpuobd: 294, xxnztntbd: 954, grzxgifpy: 61, olntwnuhh: 222, ycnwaffcv: 667, gppseimpq: 508, zkpcffmja: 221, pmcfyjtju: 126, jsrpzwfro: 145, kzrnebgnh: 599, aepoubjfb: 7, mwwinpflu: 558, mlyhbaian: 478, knifjmdjh: 968, xsjvgqinw: 84, bgscpaaau: 907, itdithysa: 444, nghxgpdch: 831, unjzorech: 668, hxxihpomr: 319, eksnrtztd: 472, tdocrjafs: 149, mmqtyevai: 789, txwxrurux: 398, gtqsyronh: 270 };
+  all.push(t0);
+  const t1: Record<string, number> = { jomtdtwgq: 59, zqnsifkei: 271, pgdljaabe: 596, fcpmcdfsj: 599, mpqqmdljd: 133, iyccngzdq: 553, nfmvahkpp: 655, oytpvmrdg: 208, uvdnygsuo: 106, rpwsfjbst: 195, hsprnxawb: 989, mxywmxdak: 376, suthbzptc: 176, xknkshqxp: 776, mefoonvhg: 731, yfsbztrec: 695, mmfwiggnm: 692, iplgkttvk: 703, xcwkedxwz: 236, heyicaxsp: 230, usltyyobz: 864, yqjddwnho: 993, ucbevyiod: 193, nzqajxnda: 493, bocnhoyog: 987, ywszzbdyu: 508, omvypwjkh: 107, uwflpblmp: 984, ijqigcjaj: 614, dnzuiddni: 361, rhmoilwgg: 717, iwoxsrlhl: 886, wbcbtxiea: 231, cwstqymgd: 126, cnvokgpuz: 519, aizgqbwcy: 330, grfvbdcyq: 494, xyssezsrt: 704, svahhflnw: 531, mltxdtssb: 378, asrwvddin: 140, mqlhvhmfg: 666, uuluzkmzi: 314, pzdqqsass: 249, tgscimnsm: 278, rhgxeshbn: 688, boxpacsxm: 811, qoydobzqj: 652, unfqtggjh: 505, qlxslwepq: 267, gxtyhfwpe: 499, xurqealeq: 933, acwunlmxf: 587, auebzetvd: 169, xmxatoagm: 659, nijgismse: 507, txxyscdix: 11, vpaygbqih: 447, kremvveua: 591, cjtognpsz: 216, ebkdzgtei: 760, pnowtkeik: 98, tsduizpki: 271, paghgnghq: 197, svoilniqp: 756, ylbnyyzve: 810, xggouaacp: 475, gsympeump: 95, ltnqivuqv: 507, dblexvfqm: 40, jpzcltuow: 460, ouwrafpxp: 453, fptnbykfl: 287, qsetkhshi: 39, yerqalzrq: 522, uuadxucbz: 976, utehiheph: 729, ldpznqtil: 104, nxhizific: 208, tgzcfreru: 145, oowwxlzgv: 639, sochqejem: 71, oqqiqwbgq: 967, qkxybtmhc: 866, dkazvqmfl: 763, aqoyxvvhz: 119, hsecwuroe: 739, harfyycmr: 716, jubangbmr: 953, voosmsxwt: 603, zdcqvlgvn: 879, mqbsvxuri: 880, aodymnzdi: 271, uikefuhlu: 715, zklytpcpq: 324, wvccdpznc: 639, tkrxvzuqk: 600, zemfcgmsv: 507, gjtfkaetw: 290, ngtxnozet: 531 };
+  all.push(t1);
+  const t2: Record<string, number> = { vapqnoypl: 824, pfobfrash: 680, kygazsfhk: 710, wwjdnddrl: 576, mvmtgwfgg: 798, uptlvnalu: 563, ldjmzfzef: 370, xsbjsydqd: 802, djbkbfewz: 751, rkbfayshb: 1, copirqqyp: 280, xpwdbfeqo: 16, cmuemnpms: 560, bxkwxuduo: 983, bkxrncquv: 789, bjpkwjtgy: 433, eowgnfltd: 74, lokvwzgij: 647, onbilksxn: 627, dvvplgprq: 919, ywpyndjqo: 187, zxdsmevdz: 981, kqbharzek: 558, tmwtwwyaj: 337, fhrwysxol: 468, fwnblrqtx: 625, hfbwkayih: 949, vfswrgnee: 77, mpayhfiwo: 114, dtyeawaro: 992, bapxgpsjf: 631, bhmgntfsj: 77, yafpzvyft: 654, sqsytdczx: 475, vwygduxsr: 919, ucbgmooaw: 567, qmipkuufp: 758, ujzeusigj: 720, tcuphlxsm: 696, hwlzrorqb: 111, egfjmqwbf: 622, ppwultrqh: 86, tjkzejdpr: 758, qouyilejn: 39, jpddnhxoy: 254, uwzeeczhg: 259, gzznrtcah: 778, rdsvntdjn: 560, ttobcqwbl: 943, icnkkilgr: 431, bqiwobyvz: 791, yhanckipd: 574, ttfaoedeo: 182, hyktfdyez: 692, chlatayxp: 378, jmvoqtiva: 851, iqjblruiu: 91, dgkftirqh: 470, qmkakvihk: 67, yiwaibirs: 320, tbxkmhelc: 963, sxsytncqp: 355, qopwskbre: 143, mxazqddxd: 337, zgjvenker: 158, tmxgoduoc: 287, sxzqoxwei: 82, gxogejiuj: 427, zgvqzdovy: 149, lgfttmuog: 714, fxejtcuoo: 655, cljniczfw: 539, gncokadat: 989, vfeocauyj: 862, pqmwbdbls: 158, oejpoobnf: 612, mdlecxwea: 713, xnelgjuoc: 479, twdpcvlsp: 402, wyxwfonme: 788, oweqgezis: 254, ypsyvejjl: 106, umxmekpoq: 77, ptqrqcjlb: 49, zeexsjplz: 286, ifuxgsygz: 848, pqcrmogjz: 308, jnmgtmeyy: 622, ktmllbblm: 814, mjfzdvuba: 260, rnjcdnsfe: 568, zvfhdtnjs: 567, adejdqzbd: 382, lzpafwigv: 201, sustapcvj: 520, frggdrdnm: 319, dkizhpahx: 373, dzjguvjfg: 56, wdrvljkqm: 767, gbdmwmmqv: 404 };
+  all.push(t2);
+  const t3: Record<string, number> = { verfopxkk: 610, jsjsjpgjr: 936, wdxamcqmi: 727, aegasognd: 265, cjgxnscsy: 894, bvfbxtuqn: 759, tpirazytm: 225, ujenuqurz: 371, bhtclwvzx: 908, geaufagch: 30, jywecfgko: 526, mbcavotyb: 304, nemunmhwr: 366, iheewajtf: 56, ulkdxjbpi: 459, gdypchgwd: 933, gvmlhxgfl: 799, lkvmyydvm: 841, soaobqadh: 545, blwxmhznr: 899, rxkpzyetz: 535, soscgfgfk: 913, ohfdoeuag: 804, fbkbifstk: 227, cvoqsjugz: 96, rrtteahfi: 699, ifsmfgtsi: 593, abcxrqudk: 631, htzakfqgu: 18, smjhfydgy: 703, gboambxcy: 656, jjmwnoqhx: 892, uwtbzkoet: 540, hnmvvgfis: 173, cvhteauol: 484, iebblosob: 543, fkvjjyofc: 124, fvdaqfyro: 944, ejvwawcoj: 644, nexzyoszc: 167, ewweysujx: 718, ukotzvdwg: 362, uwwivoowi: 606, qbirdksuv: 784, zhavunqvc: 422, bpwymlzes: 51, apfxuqrmr: 3, myfvsravz: 926, iwqdggnfd: 178, mqeixkmgy: 399, qnydefmuj: 563, rprxqvjzb: 313, hlncekbml: 407, nximnnhhw: 736, tfhllwcif: 970, zgcuhanxu: 893, fxkgfubdk: 593, tvxvmstkm: 157, tmuctscll: 364, tonzkdyiw: 580, aahbvzzdv: 142, cftyhpmxj: 954, dkmvuuuhi: 465, hmletmbnk: 794, alfzkipgx: 28, wyrwkmlbs: 983, ipyjiryyc: 594, iegzrjfvg: 745, kytczrhfo: 918, dzhicmcnr: 51, bpgfsmbqo: 349, kmdcwpqba: 330, odblerqae: 661, yvwmkakki: 49, wltcdqdqc: 920, mrblodxnx: 888, ffibeckaf: 915, zncgiqdql: 372, fxdobiulf: 740, uxdvbohws: 17, sujdupypb: 524, nqvbixfeh: 127, dnbtfnckr: 23, hrhpdvnao: 18, tganycrdr: 736, ghzsyrfon: 345, nxgjkwepy: 408, aohhtbqkd: 303, gbulbivcd: 254, zkhbawndo: 208, bpigbhecm: 409, tdhvgkuxg: 239, icsdsdzbw: 642, tgvsvjmhi: 165, wocdobcuc: 83, phzurvdgi: 766, navgvbyef: 4, argjtobze: 535, bpbmswgja: 603, lqqaimczg: 712 };
+  all.push(t3);
+  const t4: Record<string, number> = { vsshyqdhl: 81, ovxuzxnic: 659, vqaaktiba: 758, sqxeibzre: 196, ltlbijsqe: 529, lotdvsplo: 413, yxcblbbcr: 194, xoxfobvfm: 376, tdvihmzqn: 389, jkyffeuhb: 329, dseohvunn: 213, fnhukeuzr: 634, zbkixuiyq: 990, mzidwqeaf: 313, xiqnvpwlk: 552, efoqjpxlk: 241, vorxmttvq: 765, lgtcyumsw: 581, uuloozssw: 711, zzqdhceoj: 207, owckvtgvn: 500, rcounlvhi: 903, ouhxqevab: 241, eyakulqqs: 964, qrreoeefg: 539, lxennljeo: 411, yfpdwtzgk: 902, mepasbkzz: 802, zigujqtkq: 358, umkgrsyuo: 238, ahiwzkdey: 387, acdgavmaf: 707, acztoaxbm: 930, vjyymtqpz: 122, dvrgxwcoe: 543, wgyysilhz: 588, etpkvdfcd: 442, oghtefiea: 588, pszddccjd: 581, suahsktxq: 754, yrbvovawk: 15, ieubzerhu: 5, vuehridvq: 605, gyznrrqmc: 570, wcctwxbbm: 548, cpyjajkza: 657, woudhojko: 620, pbmtdvujs: 696, ahacbazuu: 942, hpuwsjirk: 638, omphcpvoi: 132, rulwqsogy: 267, qrutbirnu: 517, hhgammbax: 189, uktyvhubs: 74, jqrnenqxp: 876, hzwmxnblf: 420, ebuyfyhqz: 849, bwirxewpl: 552, vlgidivdo: 567, okpvileyn: 700, xbmixixkv: 829, twkmnnpsc: 631, xosuyxsws: 533, sypihjizt: 923, eszedbpxo: 590, emcmxrpwg: 26, dkatvcmat: 144, ptypzrcvz: 813, drczgcueg: 628, xafpkvqbq: 62, mpznnixfp: 321, nmtgxgrcr: 396, asgipetlp: 775, gimodxgel: 665, kapdgutze: 999, kzylwcmns: 740, euylfbdme: 388, wcoiqexzd: 781, qudmpidbq: 446, vimoszafp: 375, ddbocwlxr: 257, txwlipaze: 964, mafgcorwy: 127, fcbfyirik: 311, tpbnvzptj: 268, lckvelxtb: 975, advpvsiyw: 869, zpgxvinwi: 490, jwaspckpp: 131, nxzljdeel: 259, rglfhgfse: 40, szopopizz: 960, aqnbnkijw: 831, rrrqqcpoo: 703, zbjyopjlu: 938, meuryyfvw: 527, dfqyqwfuu: 644, rrtewipkb: 496, rrbbpnyqn: 324 };
+  all.push(t4);
+  const t5: Record<string, number> = { zdyzpyaxi: 115, cvrmrbewk: 722, jrbmxztpb: 967, dnwitdxgv: 471, hxdspumyw: 861, ntrpnypbj: 397, anphgygzw: 493, ckzibnxum: 306, odppjmksn: 993, nwgoadjfm: 431, byytacwef: 112, uqrsbubci: 878, znnzvwcsl: 44, bsmxvxmho: 118, elsqxkubt: 402, uylhmbelg: 197, mxvbfbvcy: 363, axojwpddg: 785, mipbkjuok: 630, kassavnti: 436, mqjhrcfxw: 963, xkdlbpfgu: 500, tnqkrsakb: 374, djzkzrtqe: 676, kerutuljy: 568, cyzuifjml: 666, unflvxswp: 920, fkvccjfxm: 584, cpgpeelat: 770, bpfotcdvc: 676, cyppswchx: 457, otavpqnfg: 44, eunoluigz: 943, jvullgnzw: 406, wqwcllsmk: 931, qwdhovhoy: 175, qoxotxykc: 722, emsniuzhi: 731, abrfkrycq: 90, olhnmqput: 131, nzrollgjp: 780, cxvctwgug: 774, mrhnzugiq: 971, ryhthitvo: 95, gkbugqhbz: 580, eohvkmdqm: 984, rbqrpbrsk: 191, xadxcnfgg: 288, dflwxcpyk: 823, wahrhlzem: 223, eitbnuyeu: 4, ypdlvrfqz: 756, uhogonqms: 873, pxlumvene: 775, zovrswtxu: 298, wamleqrtj: 788, eykoqepgj: 516, clwmqnhep: 602, ophkoejfl: 104, ugtqwoxts: 714, oyicxjjbs: 129, aocdfafhq: 33, uhcsqyzyv: 449, ktlwnpqea: 429, zjmzsddmt: 513, hlqmrgois: 477, uhaqmoevz: 496, ebtyspufy: 722, mfybsqxfl: 305, edoicjtio: 687, zcluxqtrp: 531, jkraozbwa: 528, ybxmuwtiv: 184, rvlaqehpx: 979, qjfxpnyiq: 621, hbrnlzqce: 591, efswkdrtg: 780, hmolkiwjx: 428, zwttiisiv: 105, cbzyzhwrk: 303, cpsjfozwf: 162, xroeljkpa: 948, hgzxcxqdt: 835, fpkwwoeig: 714, ivbiyoebk: 798, owlwnspbm: 252, nomlujxkk: 961, fsebgmgjk: 570, cqeqzfiul: 851, dkbmnnscu: 142, eokpuhlco: 654, vcjvzrzig: 956, yesrgqyxw: 548, sackhmdbv: 175, edxszdjgr: 214, gionxwzdq: 513, xnociscnp: 968, pxdrqkngo: 547, vxoowlqmr: 39, tibtahume: 244 };
+  all.push(t5);
+  const t6: Record<string, number> = { cgihnhesi: 443, jmaxgjjvp: 395, klsfiqjov: 856, yxzkmdkfi: 822, jfcbchcxo: 281, glvzgspiz: 407, yzmznkvch: 980, buusrtwlb: 721, nhlnomnyg: 533, ksqsczidi: 874, mmndzawdx: 445, rndhrevsm: 207, rvuyphhax: 839, argrftykf: 499, jpvnylmgb: 658, qppmeguvp: 834, hixrepxgi: 41, mznkaoyfr: 727, jxgiximjg: 336, ihvmnvnwi: 365, thkuchmdh: 135, iuvoepoal: 376, jtvsbigsg: 413, intkptlmu: 628, zbjtfzdyu: 186, vmhvbcjea: 853, yngbtsckb: 449, hhuhpoogr: 449, riunzeysy: 235, ewnptncjm: 953, zukfvbesf: 495, mdbhfpqnz: 204, vxvsapvud: 225, viduprcbt: 460, yazvyqmep: 878, kwrcwnery: 141, lnqqxqjiv: 86, klrkaditg: 500, rkkwtevda: 330, ddovmdbtz: 223, rjlmgzlue: 930, odpznogay: 771, hvpqqtjqq: 891, gxmpoolvp: 654, odkuwbgtp: 230, rasusvihk: 245, gmcsjjrrf: 874, elgapdxzl: 586, tczfbvzvm: 558, lsylgifnt: 885, iyeweqecr: 165, koavvqicy: 18, nojdsbnvq: 45, xrrggesjz: 942, lhwnmcxtm: 490, nazvrrrji: 596, ptnbejofn: 769, lxdorqedf: 507, nlygmicus: 859, ehgabajvl: 670, klhviqnzx: 202, olncuinnb: 44, ewaybvazh: 182, mjsbgzlqs: 329, qdzfwoier: 381, tttfplhws: 103, qpphdqltr: 684, sisyjwfpr: 102, lfhcnkrhd: 461, wqvbspkjs: 502, msgqmrqok: 608, imuegkgft: 27, frgptpghj: 263, tkbisepeo: 433, gywfiakok: 144, orczbzxff: 995, ijjxverch: 915, ohnhrthtu: 89, whhmuqihl: 473, zeyvczfap: 9, lzsacrfbc: 541, xbbztwngm: 790, vgfbzzfct: 860, lbzuuyzkr: 754, bromuiuxp: 705, vffcotakx: 786, xtnbkfkdj: 55, oeonpswml: 852, rppofomfj: 152, iqplyhlnl: 89, eknqtqklt: 102, mzndueezf: 728, wrxderrtd: 703, zbtzbijul: 678, lbyutumgb: 369, gbowhwlcb: 947, pqepetyoi: 171, ygvsindyf: 462, duxsqgibf: 967, nskswmpdo: 532 };
+  all.push(t6);
+  const t7: Record<string, number> = { bgljmgdah: 600, onpclkcka: 929, nclfbooiw: 325, ohzaxxmcc: 203, gxgloxaen: 989, kwvadzvvr: 545, vtxiddsvu: 991, ryzzeqkxi: 544, sddbewkqp: 615, jiqnottbe: 843, rvuafthdp: 620, iybmjvnkd: 385, djdrvbtfi: 382, ohugxgflm: 405, umdgvepxp: 102, zxgozucnx: 66, ktdivfcez: 477, noujbteeh: 621, mxnmbrwif: 136, ormdcfhkb: 179, bfkycysgy: 149, spbeytnve: 952, odstigiji: 171, jzagsdzst: 950, oakbnvbvc: 519, ncsnqbxol: 883, pgosyjqic: 768, ytxnuvikl: 823, phccgfdrv: 855, nvfrmmbjz: 650, verfqnwfo: 395, enqusjzeo: 232, bvitzknpz: 237, kqhivmqdb: 695, osyasmtal: 18, ukoveyrxf: 209, sxgjnfbhs: 274, kxvucnfbr: 18, dohdruhsz: 823, ilrgurips: 818, isbiakqtj: 409, frbpxdkpo: 705, hdvchbksu: 7, elmcsarpr: 524, shbyzmlnr: 762, cbnfbhrja: 419, vxwvhdign: 783, xuicfcjmw: 195, zoibglplh: 56, brjqqksxq: 433, wogmvyghd: 191, ltasjnhbr: 876, kuxfvjfkb: 825, fulidvryl: 110, toatdpocs: 33, itpyobduy: 289, kycxemftb: 114, jpfpdxfjy: 503, wbgrahfut: 319, znfalvpsu: 86, iyrxallku: 544, zilqoevvm: 320, avdevyxyi: 814, fpsmsvzgs: 549, utggbkxao: 647, frknxgjsq: 715, znbzfiibx: 533, targglvvo: 850, szqtneziy: 303, dfutaurlm: 42, zyhlozsku: 474, jtwlbaluy: 157, dfiruvjly: 876, jyylxzyov: 564, inujunarv: 668, jvzifjtnw: 196, yguaicywu: 302, unseneogw: 633, wuentxugf: 421, eeeonzwse: 376, emkhgqozo: 546, nmfsnqfxf: 754, gmlpdflxf: 983, hcyuggmac: 313, gbwtepafd: 429, bfsaxhekv: 185, ophaagxji: 758, hcuexuujh: 719, smclbvtox: 840, fbzhpqqoi: 644, blcqoboio: 211, xmglrnjvx: 455, iwdqkphie: 111, euohwcadn: 906, obdzuceza: 362, xfhxdmulw: 58, gzawmnsod: 106, gazbyxkkh: 244, hzrkylreg: 111, wjheczyed: 487 };
+  all.push(t7);
+  const t8: Record<string, number> = { mgmogfgpi: 101, yuknkfmes: 960, iucoipbzx: 66, ekndguerp: 189, onevpeznf: 655, ycpckokiy: 253, zqetwswkv: 652, lznuaptmi: 652, btpkvikgx: 739, rxauyfyvo: 483, zpweemuoo: 745, vswzddorf: 340, fhgwkkumu: 6, stmlxqanz: 546, rxtnijkww: 799, vidlnstpz: 447, tdrcsrrje: 729, zbwogqkvc: 241, elnduhbvq: 818, jcnrgpmkn: 986, afexjlarm: 757, ojiriijzu: 88, ujntgancy: 959, pcowslhay: 950, nuywwfxbh: 806, fjbcheaat: 90, ejtvckweo: 820, oxdsybaip: 622, zrzqpfmgn: 238, ewnlwoxmg: 974, hdjdruhqs: 42, afgpjjaro: 225, zgnursjgs: 72, sbjoszifg: 656, fhvwuegwc: 271, rfqjrazss: 218, jombxrqck: 677, djrsvxulc: 411, zoghqjbot: 293, hfcipdjwd: 250, mgqcozsaa: 617, azxchssgb: 943, rgfbqsngs: 881, pffovlspk: 380, lobltigyc: 707, zfvndtceq: 959, lpctsrmpx: 382, ddjpmhvni: 857, nrvhonovn: 510, bdnqaaklt: 438, tzxgynsjo: 69, jbqdczixq: 322, uymsdytup: 487, qeeexvmwv: 317, hxickrsod: 321, rructwksz: 414, emableuwy: 56, qnmozcaqb: 67, otmixntgx: 329, skeeejcsq: 923, qjdridigb: 53, irobcvgux: 870, wvvcmozjn: 533, hrlkzczcz: 232, mngdubbeq: 563, libkmkhga: 448, tkaiopgzg: 787, rvpfooygg: 710, etolskibc: 78, sbunhutvd: 878, pppmkezuu: 217, auptjaggo: 383, dqwhnkrbr: 707, ktlmdfsrg: 503, brzkgxrbo: 850, ussnjmagq: 714, ilochhlwl: 310, pgrttkunp: 628, elesahvcg: 354, vvsxjangp: 654, jmkbxysnv: 836, fwzgxnasj: 59, tmvgmnuza: 603, wxteadqxp: 507, rbpysxvns: 690, yuegdrkyu: 602, dymsxnqoq: 882, hshbzfsdv: 600, shzfonlwu: 756, hmfwmfmus: 442, opwntotqd: 947, wcfxfpmtc: 304, osrgpdbdv: 944, mqmrkuaii: 2, vazgjpzyk: 918, ypgyebbqs: 175, nnheqgnwa: 879, leuxiuasi: 410, ntnkqlueh: 390, bokeywhmu: 459 };
+  all.push(t8);
+  const t9: Record<string, number> = { eywbroifo: 724, sveerjtkj: 351, vsdxdbdqn: 409, pehhmnggf: 318, egqrwgzys: 773, gmulkuxci: 337, uydndjfks: 889, qhrorvaly: 486, pkembrudy: 745, crwnmbqqz: 578, waolxdojk: 261, aldeqcndn: 309, nufabcoio: 599, qdvkulkwn: 859, zflsngpck: 747, ciqnppsiv: 33, riwhffiya: 56, vqbxkkcks: 283, qvoaozkkj: 5, htjqcsjnn: 398, yjxpiyffm: 254, sldotjvbp: 731, rmxynejfp: 447, hhucreekw: 157, hcbkpznwj: 16, bocubqrgr: 872, ntnvodime: 13, zskmgmwmf: 522, zbwmwvmvg: 72, jtyluuzfu: 761, skmohjwkg: 900, jhkmklumo: 348, zgmgzocay: 645, odqnubxmd: 563, vinyafegu: 757, tvyonakqd: 568, ccecryckn: 271, renxrrscx: 601, kpeelocdy: 344, cbechwhal: 167, nmdctebut: 362, faoqecklp: 614, cpipmvdxr: 763, uqovkjjrp: 965, xzmgepwoo: 917, kqohjlzmq: 528, xcoiitywi: 538, vdbmonekh: 131, muoojvdjt: 177, korsptyzy: 451, yggwpceoa: 472, dcriaobde: 207, mnxpnbjra: 5, ibtcxxyap: 112, xqbhfkwqx: 718, ccnwxnczv: 156, avqlidfib: 778, qighfaxhy: 959, smkgqzlhq: 255, sikdbimzl: 316, ndajufqym: 50, ydciajkcc: 255, lygaqrybp: 682, dnkjolswv: 890, tdbkcpbkt: 430, eykycatuy: 783, awfrfqkbx: 645, mllavngkj: 499, fcclphnhr: 329, scxwutrge: 691, nsllqvevl: 177, rifbmpfyq: 373, ixijmztkr: 467, hvddfdqdn: 602, nkpdgqrts: 77, vazqlcpii: 270, ldctwifvm: 713, pmyhiwasw: 141, sldjahcfc: 29, uuahtferp: 564, cqjjkjkzi: 19, cicdhkhla: 881, fzqeadxaf: 186, chfxudjvv: 602, kmaddwsmr: 693, hswhrogis: 264, spltmhtqp: 589, wdtiatupc: 341, yanfxdzkv: 403, jzoxsifhm: 706, gfuwwttpg: 500, fsoqbtaui: 527, rhnnzxnki: 130, amovjzycl: 537, kppmgzxtd: 905, lkaqwurwn: 139, miyepcded: 802, dggssfgmz: 568, jkknvodcg: 75, psqnwtvrq: 804 };
+  all.push(t9);
+  const t10: Record<string, number> = { bcmschmvf: 43, qxscakhsi: 457, dscbegccn: 688, dnrghyvtb: 638, swijvmusk: 909, vorydbkhh: 238, rgpvgjzrs: 849, tebfztado: 572, lokudkwxf: 833, ibonnsjhj: 654, fdlmdlwin: 169, dssfimmxr: 494, regskosdn: 246, pkmzmckeo: 540, gdptridgy: 382, sdkyjgoou: 505, gogvgslfm: 495, lexxxhecf: 778, ikmfqokfo: 371, yirmnrqub: 16, udilbuenl: 348, hfzgfqugy: 513, frgnqpshj: 800, zbuarhcxe: 134, owcuraevm: 0, ssyneoldz: 157, owmgwxqdh: 95, herhufill: 826, otwotexli: 195, lnccjydvp: 343, ztekfpwib: 149, kcnwsrwxy: 476, nulnlyovn: 176, jxdnwsdgf: 305, yeukbslwz: 783, nbjtdyktl: 849, tzwzujurl: 300, grutjknna: 425, nlbytocxr: 492, bvsymdfsh: 229, ccfwkwkyc: 266, zgmvctsyk: 770, dpmcukdvn: 681, hndwwxbir: 255, ixcnunxxv: 90, vprmjypzo: 312, fqlgtzhxv: 481, fzwxtrmhp: 903, gdombqtbg: 17, vtuyfsdxe: 752, damdjejfx: 7, odcowpyox: 645, fqgmvxzpq: 116, rydrjnftn: 333, htzkuascg: 462, ygyyhkboa: 73, ievjinmvh: 333, xbptsthqx: 37, knplupikf: 644, lxtptbqeg: 56, xqlmqpwee: 999, dotrfmvdj: 983, dqengebmh: 131, icmjcfzyw: 529, bmyiiybgm: 18, dpjrkulbg: 799, hzebwdhbd: 45, hwctipnyw: 414, trjpeshml: 183, dxupjkxxa: 805, rhkdyjooo: 296, zbtqjkexs: 927, amkwzrrbi: 697, lwpelyvcd: 299, kyojqkzps: 607, zvxmzdgsd: 428, tsnqfbqxd: 122, gtpkagfni: 400, acbghwayg: 864, uafqwnxwr: 472, jdgobrzvo: 105, tilpbaxjo: 36, hxxnqcfex: 318, mrhmypjyx: 615, ukfopsvjb: 264, gyikbumjt: 910, eqmnnikhq: 190, bzylondzq: 677, ltuopsmfg: 621, eqoflyofa: 867, qtnbgtkfb: 248, eqtskiyld: 417, cidwwlqjy: 929, koezyvfuc: 851, lehyzppqi: 82, wneczslgb: 415, ldvfhtzff: 935, vcsgjfxzg: 478, jmqprbpvv: 338, klioayswf: 559 };
+  all.push(t10);
+  const t11: Record<string, number> = { ulqtnqgaf: 276, iyqbbmmzl: 431, pfkyunidj: 226, erjotsnwn: 730, yrayfyitf: 581, qejbgmvgw: 943, sjoykjipu: 675, htdapwvbm: 375, mifxjpopb: 174, rrplsdujq: 834, oeryqbyuy: 17, mfnwtkcql: 678, oelraukje: 625, mldbfmror: 516, dlwiwbqid: 912, pynczqgpj: 547, nfppssdhn: 396, pfrombric: 807, nhawafbwm: 716, pcekbshft: 492, mgbvgfktc: 256, ylzygzqdw: 312, sgpulxsuc: 813, buznziytp: 720, qtpbulklk: 144, jbzfjclxo: 288, fxjlsduwx: 455, drcdibwvt: 38, lldrsiwjl: 402, mdfujejri: 343, gntodsdgt: 42, dlgqyotch: 827, ayfnvqpaz: 820, htriiojzr: 863, ejemwnxbz: 628, ftxfryvbs: 298, rjkxktrmi: 775, eydhczzqc: 886, mcfqntpmm: 152, rxlxfmciw: 107, ueveshnzb: 26, sghbxcung: 610, mcjvdkbxu: 588, rqxozrbqs: 814, lamzxkdxs: 75, oukzfbucu: 462, cqodmhfgh: 65, mftucsmdh: 338, khvkbsqcj: 463, baqilnytk: 203, zccivxzeo: 158, jvouuxcqw: 81, janqqoyej: 313, ygqwwtnfd: 974, iwducdxaz: 762, cetntnsst: 374, evatccldq: 876, ihsdgguqo: 722, cchudbkxc: 89, jebncqlav: 587, xncuggfiq: 40, uimylzeqv: 481, dxtwgmbwh: 980, fffjeoepc: 440, zgeirjjhj: 361, rmuzroxgn: 826, iwzhyscew: 164, slkrblyhm: 417, urofnqnhe: 601, sqpponivj: 595, vsljifzmw: 449, zmawldtya: 493, dvxfdlnwr: 464, ddzvcmedq: 867, qhfnasubr: 684, gqugvpyut: 778, wkqdxfthh: 688, bzqszqwkn: 467, nlmtyugcm: 33, chhbqkvae: 596, zqgyxrhgs: 386, zmdpjxjrl: 632, biidklfiw: 808, nlyvhwufc: 357, jtouoxpdf: 495, jnhioirzs: 586, gbvtvsqsl: 829, evwkoeclj: 682, nnkzyusya: 837, qpyjpjcaw: 150, uddrdjjgo: 630, omhboiqqa: 536, wlzkjxbxt: 657, wvdcboues: 825, pyqnehmbw: 493, pxzjjjfnd: 274, hgwxnohno: 503, qpxfvktvw: 846, mpvsqgmyx: 504, marxtpxvb: 209 };
+  all.push(t11);
+  const t12: Record<string, number> = { hnhfodsfd: 434, lhpnyuigf: 87, gpcxqklbm: 445, ogiqaqelz: 823, kljiqzurg: 68, ykhpikwkv: 13, cslaczxqd: 644, bahibzntz: 526, drvakbeoc: 165, ebqmofmvs: 522, itoofsqoq: 294, skpkrtxni: 163, ugkogzuxb: 53, aijcyqtfb: 445, ynrvvgmxw: 538, bkkpcjwfo: 542, vwgudbyzb: 15, etypzydul: 52, jeyvsijmq: 242, pxmrjdqql: 622, xomhcfdjr: 519, lustwwktn: 678, emzesmoqz: 623, dpelurjzt: 985, yopqsvqyi: 385, jrfntyszq: 869, rpgnewdxs: 979, vcyhtafcv: 420, vpvtnwsdl: 209, zxfnomwaq: 34, yuhzgkkki: 491, adlhcfbrg: 840, rffpmwooc: 19, dsapsouyh: 990, spfxoanxd: 24, obfguhvky: 956, alcheyqvy: 947, pzpfkzmig: 838, rdmvudaom: 229, ynmxtzovw: 805, jldfzvuwk: 851, lezwmdvzm: 766, cprfeeofi: 590, xwfwlkkhh: 808, hbloaxpxm: 592, xlinemhzi: 362, ixszxvtah: 155, evotravul: 320, izvtsxryc: 376, aahtzsuml: 239, lfheiannq: 603, vtjqzebuu: 988, tjawktaic: 574, pkjzgyxlc: 174, jdhpwrplc: 812, ytnpztvwg: 946, rvvpnpxkr: 147, jpujmzrrp: 126, agdiwqpbc: 778, onemcmdbv: 654, yybgglyiv: 184, qzqxiqitc: 676, yyzrtrlcj: 342, ijkjljxzj: 524, rgrjcedsm: 220, qxttfdera: 705, chgkogbgl: 299, kecopwrca: 722, uasayvswg: 83, qdhuqkuyp: 127, eoixxpfjz: 140, vjhgdqpeu: 624, uhpznsejo: 568, qovzgjtck: 153, pbrfwfien: 786, rlnfaduwr: 645, aznungitp: 543, nipocrrpt: 508, gnhimuvrz: 598, xobgogxcv: 780, qshmekgwb: 158, qshfjecfg: 275, ayztdeavq: 689, zkzizzomi: 103, ilkpntrbp: 757, azpxsoqyz: 864, paomamvhu: 511, xnfnarisf: 451, rzdluivqr: 77, jheiqzmdu: 266, nlerplauf: 316, toafhkbrs: 833, bulabfdma: 82, qskrlrsum: 161, mfcygwkwr: 552, fbdfxqrjm: 901, pbwzseadx: 691, zyzzvgjrf: 864, cdlzwxtlx: 334, hhqjwuhzg: 923 };
+  all.push(t12);
+  const t13: Record<string, number> = { ywukrfsho: 399, exlpumckp: 655, vbxxkozrm: 864, rvazqxdes: 12, qxznzwday: 959, fauimuobl: 214, rfntyecuf: 836, bgxblvwxn: 629, woiwizvnn: 442, mhfpzlarp: 756, rlyvbpxzr: 470, cvxtfpouf: 926, sruxuzpnk: 718, mbvpymdlr: 500, wgxgbfzmn: 663, hequiesxz: 90, cibsrialf: 395, rvhepuyai: 673, qmygwilxr: 399, ahchivcbv: 833, gqvsxlplm: 5, ktfoueufh: 985, uzdklwkgp: 545, buwgghjgm: 178, bckontebk: 654, bjbxczodv: 130, exvmqoftp: 174, lsumdfdsh: 939, oxaotfxqu: 159, mjqibcwlm: 152, hbldeocwu: 553, aietyltzo: 880, lsfdkuwpv: 559, cvteqlydq: 152, vqydzoxfa: 398, uxylqwidk: 165, awrymzhck: 235, looeypkdm: 329, hytadvoir: 118, lzlfduebm: 979, yqvctgotp: 103, bytdxpskv: 759, eommxfvav: 279, naordyktu: 451, pykmgucpy: 56, rtkpcrvaf: 534, nluksvywj: 516, qxvaavzwv: 706, lkhtpeosy: 548, zabwxpvgd: 821, tueusnyic: 678, wbdqvjeit: 744, ougafbwuk: 324, ijdkurbkc: 645, ufxpqkkzr: 371, flzmhgndq: 706, ntlibfsdy: 223, zbbqxljyp: 404, wdxkxldsn: 751, dusdnuowb: 621, bsfkkfpqf: 364, gzkdnuepd: 817, umturchcs: 310, cgajffyrq: 727, bbimfbzgo: 542, kwhtturrd: 76, djzhbqcuh: 683, cnytpumxr: 443, tpqpfculn: 701, rbwcgaklg: 235, gberorqms: 785, kiojyrqba: 78, xgianyuml: 723, ndvmnsfpl: 437, ijgaozztd: 114, vwqdkkyhl: 570, axxyywguf: 631, lecfbnsqz: 457, rfdjtgfil: 284, bcesghfox: 133, wmeoncemg: 332, blxcpjciu: 804, riihuxbea: 883, ankqjryyr: 390, fbzbrjool: 588, fmgpiklgd: 29, jynsloxbx: 417, uiyskkgox: 496, bdsauqrjs: 239, vekcmbxhr: 924, grvicycwf: 350, okkpdqhut: 855, bzyhobdya: 589, hngobvkze: 858, efavlfrov: 686, rmvaclqbj: 443, hwipitnbl: 474, uyqkozdwa: 780, llqpxwapb: 551, djjdpzmum: 219 };
+  all.push(t13);
+  const t14: Record<string, number> = { hdutlzheh: 585, hscofsaft: 428, ejmtjntfv: 126, bwrngyhrm: 477, hhjollqio: 554, nycijyqra: 357, gnzmgofyu: 780, zmlnggykd: 623, bqjlikkpk: 276, ulhzjhuln: 837, jhhsvyhlh: 809, qexiyabgi: 56, cxakuaeyv: 612, sqbjaycvc: 801, wwsryzzho: 3, cbsuksmtw: 730, lxuovfmlt: 584, ppdsjrfyw: 156, eyiyzbznt: 747, ucwwzdhqz: 147, jrnnnxfsr: 377, wpqjchuwh: 621, kynyzbivk: 502, sqddxksbe: 529, ndzsyvjiy: 598, vxgbdablq: 63, ihoidqlck: 389, zrnacxhuv: 414, gzleldtkc: 156, ibqnanrpy: 0, ewfwpqadz: 752, uuarojwdc: 491, mfpwlwzib: 84, ilwenjzfz: 740, wcnxsufig: 319, swchdjrhw: 165, jerhsqxwf: 278, smnusjdsj: 52, mziiglfsr: 537, hqtykxlop: 755, cdblydtdd: 787, whdmjrssg: 573, sgwxrzsnv: 395, jwyqfynsv: 483, qilkfiovi: 188, ofsriukoq: 115, tcuyalxjf: 383, hwmevtrrq: 170, hcufihkjs: 57, xgxpfwpny: 732, vilmtehye: 700, egwpiajhi: 748, agkgylxgq: 644, gldnzsosw: 255, cuididklh: 490, xbsywnspv: 76, hqjtjorjp: 343, izwzejnyy: 87, gukwvqndp: 144, zilxeyqea: 919, jjyvhrapw: 724, ettsfmlpj: 351, ykoljkeuq: 25, ixhwittwi: 189, mzesieevt: 816, sjkdgdpav: 322, svclpwqvu: 435, wbqwxdqml: 193, roxdraugk: 908, awavxvojf: 144, fqotqtqey: 434, pmckkexmi: 50, cgdznbpqo: 731, mtangzwnp: 868, wknvkrmcc: 633, gvqczeeld: 427, qrqtokktm: 636, mxryuoklr: 760, aodjmtfai: 549, cxudbkxwq: 41, qncweofcw: 258, tbalnxkxz: 344, iarlebxwy: 419, kjzszrfqu: 538, ordricomy: 821, ufcoczsgj: 573, moifxaqvk: 250, gmyndnqkt: 39, pwjalndat: 684, urijhmjty: 118, expekqzch: 256, uonkalajn: 93, oqpugowam: 691, gnkrxcpcz: 597, zqlyrcyce: 60, zcvgjiylo: 173, ucmptqyxq: 549, nnzzvppxk: 310, sokppulrw: 72, nsokeywnp: 386 };
+  all.push(t14);
+  const t15: Record<string, number> = { dhqcegtjp: 798, fnmywwesb: 538, aydrguvte: 347, mxilxthkr: 95, gmhavtbeq: 810, nfxkhlydd: 749, jodkgvttx: 378, ysiovypkq: 673, rjajncuzs: 752, prblgwmbu: 413, lulpacbzd: 98, xnjuxpgvp: 608, gtugqzaat: 760, ljuvbzyxa: 654, ocgmatvbn: 550, uxugmaxce: 616, rwbrczlwk: 273, zjyqpnpcx: 797, bkbfhhwsp: 747, oixibggul: 439, iupnqzxyv: 443, vploghbyw: 418, mcdqxkasw: 600, trttxgxda: 795, ufwpkrowu: 376, iuqzrnbbe: 300, ltzerafxs: 988, wwqeuailx: 779, jgqujndtb: 908, hwpimvleo: 822, gmlozfomu: 957, ulfuiceux: 458, clicjqidb: 987, lmmejbrfe: 792, fptotbudh: 112, osmgtemcf: 817, regtalnln: 981, wreehmreq: 163, umueepapg: 958, narjrmitg: 122, ekhrwyfnp: 866, zyeednqdh: 861, uwrujrbfx: 64, lrzggrdpx: 956, dkgazkbhb: 195, azxssnryt: 827, iyzdajymn: 985, tkayesxqs: 464, flwhfnlik: 410, wevzstyqi: 407, efkuqdxqz: 616, mpczsyqvk: 464, glvdorssj: 5, dymtwustc: 144, ttnmfezry: 350, fcfeworgt: 147, yqcpnfxex: 266, bdijdjelh: 985, xpmjmeyny: 867, xmhyvhvhp: 194, eobdgaaaq: 16, lxexchzwd: 384, xeqonhlzi: 934, vesoaikjh: 391, liuxfyhzq: 876, hysgmbpos: 840, vrgaqmtra: 963, pxhfantqh: 921, bunpujxvu: 515, xinhijcqv: 223, kofvahnmv: 764, xagfrkiuk: 644, bjfxnrapd: 958, achyjafwc: 875, nbiqtobvm: 322, jevfqgydo: 105, yczflsyqs: 33, mnqcozgob: 811, dkpfixegp: 660, fsaxdqrox: 247, cafkzzsfu: 803, rxjvznkxv: 212, dhhnwojnp: 469, crknpwrjg: 540, dvxnnxzsp: 114, xxeirrvlo: 784, xkmhnngzs: 710, yeogwzwje: 16, azralsmkf: 492, wxlgpprvq: 976, usxzzcrwg: 329, eedwxagho: 760, amekxfnzd: 918, rflortpck: 972, naualwhwq: 393, pjxysaphn: 101, zfkrgcmwz: 385, mheozikwb: 55, unroufnbf: 273, kncltfbns: 735 };
+  all.push(t15);
+  const t16: Record<string, number> = { gwlypeibu: 743, fnllyfurx: 11, ukmhfrhui: 736, kdecqdaxk: 846, zayiwsdab: 127, tnqkvqaqg: 165, soqmevrjg: 498, zwufbxlju: 617, ixkybjvcv: 391, ejxysllol: 302, ohbxbchrx: 253, dqkutwhbg: 253, fhnjqgvah: 641, yqkntspfa: 913, qrhzsuqzo: 376, arnwmhqwd: 570, tbzakgdyc: 340, nqgxsiglz: 497, fjztlnstt: 854, kryoneipm: 798, fdjsgauvc: 317, engtmgbnh: 264, vuksgqwfx: 654, upcrvnrjg: 870, zbimuwbzs: 992, bbxkvkptu: 736, ukmywleqd: 333, dmqzdcmwo: 422, iketclali: 754, rxqvjqwyt: 416, bkzxfgigm: 596, iywuhbhts: 337, tucxmxszw: 523, taldsczkj: 162, uxtrfhfql: 488, tuublluhc: 660, obribnhdt: 632, sclzejgri: 0, barzycmrz: 167, ncgxjshql: 621, btkjybwcc: 852, kbllwjthw: 573, rftfnssov: 961, ixyfnzkqt: 861, arkjdxxpo: 161, gbackytkg: 819, czvhbvoqq: 221, qouvfkglj: 222, iiovdnhce: 519, ndfjxvcch: 344, wivooiqmn: 840, pgixfxliu: 972, vdvkdlazd: 322, xvuretarz: 884, uwmkscfoa: 522, liurtbuqh: 218, rtlhvswbc: 222, hxaeqvdhr: 772, hnzoijcmx: 143, ctamfhsup: 965, musvhwvru: 853, xrrlanlqo: 699, wtslrauzj: 704, wqtcluvxl: 917, uylnrblvt: 892, njgzmbijw: 659, skavawkbw: 582, lyyphdfmz: 813, pwenpphsw: 99, degbfdqgr: 924, kiofjtvez: 549, tbymlizch: 182, luwgfizos: 271, bvtyverkx: 533, nopxbqxxg: 52, vzeyjxruo: 8, pgcxwcpkt: 1, zaypnhxsg: 891, mqqgtdcrm: 22, rgjxzglqj: 169, ldzlukenw: 705, pclvaxdbx: 220, rgiqnaylv: 826, qsjglbmgv: 85, itjisweyb: 439, sjyogxjof: 766, hkzmmawvt: 199, dclcrwygw: 627, cvhfevzjc: 527, smwfqrary: 693, qsngzizbb: 382, ccrvwhmnu: 563, pulrjmvew: 553, rgfnuimbo: 579, homxkhhaf: 442, nbszrytpt: 937, yzvkwkzfd: 325, ykszyrxmx: 240, fvxmswumo: 664, blcpaexjr: 439 };
+  all.push(t16);
+  const t17: Record<string, number> = { trqqhaysa: 938, onlluexbn: 888, ulisjhrer: 203, pzzlmctla: 87, imvrpadku: 993, knqykhrus: 417, ciiomjjkq: 811, mecxwmzta: 222, wewijwqos: 799, ooeteztpx: 374, xusarkutl: 133, qgnomdexc: 966, tkwobedoz: 334, bznvefetp: 709, yyfpvjnxi: 372, zpxmcxiwx: 224, nmnwebgug: 856, dmorksiup: 679, aiutsvobx: 177, gbtlbofkd: 600, gkurvtmwx: 430, ixcoobevd: 312, copbcheos: 219, ashvjqqyp: 104, jsxgajxrs: 414, tzqdvvzeo: 549, otgsprbwz: 723, hlgsfucvl: 296, iqmexvfhc: 52, gkhawokcq: 777, cnrsohele: 528, ltlugkahh: 104, rigmimnvl: 897, twspzgzxr: 685, bdedrqvvh: 788, ubqetiepo: 794, rocifogpd: 474, oynbpouqo: 913, jjilunkfa: 963, spthdywlv: 787, weuiafpca: 599, cmedyrbvj: 33, cgdqettmb: 77, ejvednliu: 754, kmckcaotn: 596, nywvxuzeo: 66, zoorlqtty: 656, pscoyhhck: 541, hnphbnqnf: 1, elvkmudkb: 102, wydiqpxtg: 206, piduekgwp: 593, fpffxaebg: 413, xjnpnmlkn: 915, ajrhuilih: 807, nxxfsienl: 566, ybezztwud: 427, qttgmksvz: 285, wooecaszx: 370, tnpoaasnv: 997, cuqzldlad: 154, tebaapfiq: 411, ubvypeuzx: 960, oeibdcfwh: 980, tmoicebei: 102, zjuuunysp: 359, sxwwllwvy: 524, svfqompjx: 110, mpqfaalzv: 260, lhkclirgu: 233, dxsyozgia: 736, igsrrcaif: 537, kbxkmisez: 63, tncyjegho: 623, fvzlwgonr: 783, sutkpmehk: 968, umfvccwli: 69, nkpqedyko: 762, xeekckgnj: 68, sppuulmvl: 868, khodwfsvf: 284, lrkbdnptn: 331, hidqgjtjw: 615, jmwbnfqpx: 225, hnsndfpvi: 449, drmbnfdde: 634, odjkzgjat: 227, ciyhwkcph: 662, grtlalusk: 888, pybtnzrwi: 351, lwmghwgdx: 91, xoiyrvrww: 421, aqohgpljn: 439, tvnpnorqp: 35, prbawzqtg: 786, omdjlepcp: 586, yrighyzgw: 541, ihtuexxqb: 918, mctdcailc: 82, wzpzyskbn: 364 };
+  all.push(t17);
+  const t18: Record<string, number> = { kimxwugja: 181, wpnhnlixf: 403, cbuqhxcwr: 585, faatksksz: 402, gyppobfse: 253, iusrzypzi: 390, ucjqanxox: 574, duwldqcqv: 299, njnsdaufj: 272, mwaxdojyj: 647, vpxdukpjy: 66, wyjpcrcsv: 43, zrdidefhk: 136, nekfhdiiu: 30, kggeqgpxw: 334, uqvjsmdzc: 117, fnvogyypc: 65, gjhvanssb: 535, qucdsxddj: 558, vdixvcjfh: 732, dpvbaccfz: 456, jcxalnldc: 748, rzcsncbvx: 497, ysotnayqh: 892, uzndqtpbc: 900, lfuvqtwea: 142, fdnvwahri: 721, kmpiovzit: 309, mswnboigu: 901, etwypmzqg: 691, cmhmqemqu: 562, jfozhapic: 564, uqxmdgnwo: 271, aqkmvtpzd: 317, elhtfbgbc: 515, ohpiautup: 224, vfmktusdc: 470, yamaiqwyb: 774, iihtzbslv: 966, veimyzlao: 963, mhtyjmdrm: 165, vaupezexl: 604, oeitttelu: 300, rbgmfroyu: 112, nresghovd: 408, pjyarsvvw: 439, ctwpduguo: 112, goenujalg: 81, cdlvgathf: 826, wtdtneqmk: 373, blkkxjmqr: 613, iuqxwymlx: 347, ztudzeqdr: 984, utfwfvtqk: 462, qbskwzuin: 262, wzqpjcqqf: 244, kwbhthmuy: 802, komrsdhvu: 252, tpofwpipi: 42, nyrxctxny: 401, udhbyjdar: 618, zhomrkldq: 791, thvipuwfu: 18, irxmoznqk: 137, girryrtap: 396, pieingdgv: 319, ezzivhccn: 166, wdopghrgl: 223, rbhebjzbo: 184, lhndgnqwb: 308, ryaotbdyb: 381, uehwaxpae: 762, yxxryhhpx: 152, yjzurlfqa: 546, hrtyvpbec: 948, lmuowdgwp: 890, aqjanvvhy: 838, ndssfshri: 315, gbfroqtdh: 416, ngmdlnykj: 780, dfaydujfb: 866, naoscigps: 789, zcrqzxydm: 200, mkifipfzn: 957, sgvquqazw: 263, rhkhbarmh: 322, lpnmcwpwy: 689, rjzwqttcs: 980, fegamaqpa: 260, abkrwpkny: 532, gwvbqqvro: 319, czitevfxe: 759, jtodwhyig: 422, kcwlhoisl: 709, jxhaentcc: 167, hyoaspxmk: 544, fpvvjlpca: 929, pvjfjijxz: 715, thooiznqd: 605, xqfkugzwm: 453 };
+  all.push(t18);
+  const t19: Record<string, number> = { krrwqnplu: 856, ddnnjtjso: 793, ofwgqeato: 515, almudihnc: 770, svvvnigeu: 623, kyehumilm: 135, lgfdiplba: 870, roypigghu: 909, qmaavjpwi: 274, hekxvjbtl: 563, pacdmhmps: 141, uprkmnaky: 995, xmkakpqkm: 55, cnlnblwoq: 616, bvwibprma: 789, ihephkqub: 110, rmvgrksdy: 687, qtfyerneg: 794, faygshxln: 979, djublniwr: 337, pmucngxgu: 926, lkaoihjrc: 652, pnfmyuxta: 952, cnkccqtsi: 686, iuaxfjzob: 35, ikxioeyrg: 312, onyxogosz: 602, ulekfcmld: 808, qqiwabumu: 796, wghgulbnb: 767, zmjykpswr: 932, ivnupybem: 779, bytcrkosc: 358, ypvmhdnhk: 70, whybukmeb: 120, ubxitibwc: 842, prjaqupsm: 579, ypjacrqta: 277, jwpiesxpo: 732, fynajsvol: 333, wcdojjsvp: 342, zwxnoclby: 25, reyycejwx: 977, jqlfyboxl: 453, jzobadbfl: 358, skfqeiiqx: 301, uiamcoyqn: 971, fhktewrlx: 735, gwdjelafd: 344, umkujqirv: 771, uqwnxhgfq: 3, auaporcvh: 745, aygdedibj: 211, ojxpusvsf: 315, sxyykyuqn: 808, olmckvqkn: 754, pxuoggssx: 887, mwxadbhpi: 877, tajxlyfev: 75, emrspfqjx: 528, poptdndpt: 862, tiokhoxmi: 307, fpkuabjpw: 607, qzktayabw: 665, oaodyxsks: 772, chdbasqyx: 358, hitpzlulg: 218, midklgppl: 139, fwztajhsy: 410, jssiswkht: 620, ataxennya: 291, paxoadbqw: 424, qqgvhcluy: 167, zutqivcdi: 111, pwhsguydd: 504, sgxlnmpnv: 207, gvnnjbeay: 217, fgyxkoedd: 10, qjnajrwdm: 692, pyklvetut: 155, lvgqpthds: 661, zyrrxqhjs: 282, ummahnxkc: 841, ehyyaumqq: 882, qjengtjyp: 137, ydlxxpwhv: 253, wcghnrwcu: 544, ulftqfgjx: 787, zdfehpvbq: 112, mhlybxsit: 792, xhquexegh: 651, qiflemrui: 794, gygctvlhk: 123, jefplipmo: 694, sbzznpfqz: 900, wurbajwyp: 769, cfthcpmnj: 86, mmhwyuzki: 396, ajfujxtry: 223, eakhcvhwi: 748 };
+  all.push(t19);
+}
+if (process.argv[2]) fill();
+console.log(all.length);
+//// lists-of-constants/tables-small-s100-same.ts
+// Lists of constants: tables small  same. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const all: Record<string, number>[] = [];
+function fill() {
+  const t0: Record<string, number> = { johhjeov: 140, vnzjcymd: 830, gnbnvcxi: 47, nvhoxxyy: 758, znloezkc: 3, nnsjcvna: 962, vwweddwh: 535, bquafnzs: 737, ufurgmrq: 697, udinuwpk: 428, alllvlkf: 594, unpzpuis: 355, heiixqhg: 411, auxmglsh: 937, xwpqgzqi: 946, cmagqhtm: 400, rctvzseb: 921, ucshlhrj: 510, urzswoas: 999, rhdzrnzk: 101, buypygtj: 680, opzkkljr: 628, trpkpkrd: 452, zgvdugtj: 726, wiuyzyav: 65, iexedxwu: 409, yzskyqmd: 849, jtolknyl: 613, pciidcej: 289, pkjirmxl: 539, zjcrcugz: 297, lniffauo: 708, qecmtxkx: 497, hriyswsa: 193, bnovieww: 319, lwtulwis: 22, lfwnywwx: 166, vjrxwpvi: 187, taucnytr: 58, kuwezosn: 129, dknohlqu: 484, dsnzsckr: 945, pzusereh: 517, unkstbor: 129, hupblrbc: 359, wjcycjsg: 610, iqapnoej: 674, ajnksvyk: 452, anandyfv: 61, rkiqziax: 31, qutwgnpi: 582, icxuxjdt: 458, syjphhbv: 843, emhhjlsw: 412, nvaqqaom: 65, vngoaakd: 871, qdjgqstn: 245, gouayppt: 943, iibyrtkr: 446, warxvbgo: 638, lgzinkqc: 673, jihuaczt: 747, cvhxjlqp: 84, mztokkxk: 536, kbwjavda: 997, whznnizx: 59, fnzfdatk: 369, ccjxonlp: 18, ojzwtbth: 989, btjuhkjb: 409, zxbxwlif: 91, elzbyzfi: 389, mejhwptq: 462, kklqiyiy: 485, hrpntvcv: 2, oszqziai: 569, vdijvhcv: 43, rtngivon: 746, yqltqapj: 582, rpgpfibo: 372, tftqwhea: 792, vemxarzf: 467, bdewdpnw: 680, jrczllpd: 465, ljujeral: 118, wwspkmcu: 766, qmqgsspj: 716, imxoqdpx: 703, dapbnabj: 784, lnaiitka: 913, pekebejj: 329, fagcjrvc: 767, biefozxd: 284, grcsxxdq: 668, fuomyuau: 127, chvpepei: 93, jeoefdho: 652, yhfpbdij: 531, hxkblvdk: 108, kqueliui: 896 };
+  all.push(t0);
+  const t1: Record<string, number> = { johhjeov: 434, vnzjcymd: 239, gnbnvcxi: 957, nvhoxxyy: 746, znloezkc: 939, nnsjcvna: 168, vwweddwh: 271, bquafnzs: 225, ufurgmrq: 611, udinuwpk: 916, alllvlkf: 288, unpzpuis: 680, heiixqhg: 735, auxmglsh: 153, xwpqgzqi: 128, cmagqhtm: 838, rctvzseb: 661, ucshlhrj: 452, urzswoas: 972, rhdzrnzk: 310, buypygtj: 839, opzkkljr: 267, trpkpkrd: 332, zgvdugtj: 198, wiuyzyav: 314, iexedxwu: 628, yzskyqmd: 345, jtolknyl: 943, pciidcej: 344, pkjirmxl: 528, zjcrcugz: 657, lniffauo: 435, qecmtxkx: 596, hriyswsa: 152, bnovieww: 763, lwtulwis: 954, lfwnywwx: 619, vjrxwpvi: 914, taucnytr: 130, kuwezosn: 202, dknohlqu: 832, dsnzsckr: 489, pzusereh: 565, unkstbor: 779, hupblrbc: 161, wjcycjsg: 892, iqapnoej: 937, ajnksvyk: 690, anandyfv: 26, rkiqziax: 606, qutwgnpi: 276, icxuxjdt: 490, syjphhbv: 680, emhhjlsw: 328, nvaqqaom: 25, vngoaakd: 653, qdjgqstn: 807, gouayppt: 488, iibyrtkr: 776, warxvbgo: 949, lgzinkqc: 420, jihuaczt: 38, cvhxjlqp: 105, mztokkxk: 495, kbwjavda: 838, whznnizx: 861, fnzfdatk: 445, ccjxonlp: 176, ojzwtbth: 983, btjuhkjb: 585, zxbxwlif: 404, elzbyzfi: 354, mejhwptq: 857, kklqiyiy: 686, hrpntvcv: 588, oszqziai: 11, vdijvhcv: 408, rtngivon: 281, yqltqapj: 788, rpgpfibo: 865, tftqwhea: 267, vemxarzf: 814, bdewdpnw: 872, jrczllpd: 422, ljujeral: 68, wwspkmcu: 427, qmqgsspj: 629, imxoqdpx: 687, dapbnabj: 1, lnaiitka: 303, pekebejj: 37, fagcjrvc: 751, biefozxd: 639, grcsxxdq: 57, fuomyuau: 787, chvpepei: 561, jeoefdho: 819, yhfpbdij: 523, hxkblvdk: 122, kqueliui: 663 };
+  all.push(t1);
+  const t2: Record<string, number> = { johhjeov: 451, vnzjcymd: 616, gnbnvcxi: 494, nvhoxxyy: 19, znloezkc: 1, nnsjcvna: 904, vwweddwh: 927, bquafnzs: 817, ufurgmrq: 943, udinuwpk: 616, alllvlkf: 451, unpzpuis: 78, heiixqhg: 184, auxmglsh: 557, xwpqgzqi: 616, cmagqhtm: 804, rctvzseb: 27, ucshlhrj: 586, urzswoas: 155, rhdzrnzk: 922, buypygtj: 255, opzkkljr: 183, trpkpkrd: 517, zgvdugtj: 921, wiuyzyav: 447, iexedxwu: 174, yzskyqmd: 947, jtolknyl: 86, pciidcej: 719, pkjirmxl: 17, zjcrcugz: 721, lniffauo: 279, qecmtxkx: 371, hriyswsa: 753, bnovieww: 605, lwtulwis: 678, lfwnywwx: 963, vjrxwpvi: 8, taucnytr: 271, kuwezosn: 265, dknohlqu: 633, dsnzsckr: 471, pzusereh: 24, unkstbor: 262, hupblrbc: 523, wjcycjsg: 867, iqapnoej: 461, ajnksvyk: 811, anandyfv: 531, rkiqziax: 711, qutwgnpi: 501, icxuxjdt: 923, syjphhbv: 130, emhhjlsw: 793, nvaqqaom: 642, vngoaakd: 111, qdjgqstn: 266, gouayppt: 407, iibyrtkr: 863, warxvbgo: 449, lgzinkqc: 566, jihuaczt: 94, cvhxjlqp: 618, mztokkxk: 471, kbwjavda: 740, whznnizx: 676, fnzfdatk: 73, ccjxonlp: 923, ojzwtbth: 911, btjuhkjb: 870, zxbxwlif: 322, elzbyzfi: 598, mejhwptq: 581, kklqiyiy: 272, hrpntvcv: 603, oszqziai: 262, vdijvhcv: 616, rtngivon: 356, yqltqapj: 804, rpgpfibo: 529, tftqwhea: 93, vemxarzf: 249, bdewdpnw: 377, jrczllpd: 164, ljujeral: 74, wwspkmcu: 9, qmqgsspj: 94, imxoqdpx: 525, dapbnabj: 78, lnaiitka: 836, pekebejj: 271, fagcjrvc: 477, biefozxd: 264, grcsxxdq: 133, fuomyuau: 644, chvpepei: 844, jeoefdho: 764, yhfpbdij: 412, hxkblvdk: 687, kqueliui: 936 };
+  all.push(t2);
+  const t3: Record<string, number> = { johhjeov: 375, vnzjcymd: 116, gnbnvcxi: 872, nvhoxxyy: 856, znloezkc: 445, nnsjcvna: 984, vwweddwh: 544, bquafnzs: 278, ufurgmrq: 274, udinuwpk: 637, alllvlkf: 626, unpzpuis: 227, heiixqhg: 629, auxmglsh: 323, xwpqgzqi: 688, cmagqhtm: 454, rctvzseb: 747, ucshlhrj: 412, urzswoas: 688, rhdzrnzk: 758, buypygtj: 326, opzkkljr: 821, trpkpkrd: 813, zgvdugtj: 800, wiuyzyav: 865, iexedxwu: 260, yzskyqmd: 424, jtolknyl: 987, pciidcej: 991, pkjirmxl: 824, zjcrcugz: 936, lniffauo: 283, qecmtxkx: 450, hriyswsa: 685, bnovieww: 633, lwtulwis: 373, lfwnywwx: 889, vjrxwpvi: 295, taucnytr: 470, kuwezosn: 384, dknohlqu: 761, dsnzsckr: 54, pzusereh: 386, unkstbor: 277, hupblrbc: 834, wjcycjsg: 15, iqapnoej: 894, ajnksvyk: 580, anandyfv: 974, rkiqziax: 179, qutwgnpi: 97, icxuxjdt: 590, syjphhbv: 47, emhhjlsw: 995, nvaqqaom: 106, vngoaakd: 205, qdjgqstn: 52, gouayppt: 937, iibyrtkr: 520, warxvbgo: 159, lgzinkqc: 640, jihuaczt: 167, cvhxjlqp: 147, mztokkxk: 405, kbwjavda: 717, whznnizx: 321, fnzfdatk: 870, ccjxonlp: 138, ojzwtbth: 839, btjuhkjb: 228, zxbxwlif: 140, elzbyzfi: 469, mejhwptq: 487, kklqiyiy: 396, hrpntvcv: 617, oszqziai: 750, vdijvhcv: 742, rtngivon: 426, yqltqapj: 114, rpgpfibo: 643, tftqwhea: 753, vemxarzf: 581, bdewdpnw: 517, jrczllpd: 380, ljujeral: 892, wwspkmcu: 536, qmqgsspj: 567, imxoqdpx: 359, dapbnabj: 821, lnaiitka: 234, pekebejj: 12, fagcjrvc: 474, biefozxd: 870, grcsxxdq: 85, fuomyuau: 147, chvpepei: 396, jeoefdho: 612, yhfpbdij: 889, hxkblvdk: 567, kqueliui: 758 };
+  all.push(t3);
+  const t4: Record<string, number> = { johhjeov: 516, vnzjcymd: 25, gnbnvcxi: 395, nvhoxxyy: 458, znloezkc: 780, nnsjcvna: 424, vwweddwh: 969, bquafnzs: 106, ufurgmrq: 5, udinuwpk: 149, alllvlkf: 127, unpzpuis: 782, heiixqhg: 188, auxmglsh: 177, xwpqgzqi: 666, cmagqhtm: 442, rctvzseb: 291, ucshlhrj: 908, urzswoas: 708, rhdzrnzk: 739, buypygtj: 289, opzkkljr: 28, trpkpkrd: 544, zgvdugtj: 716, wiuyzyav: 486, iexedxwu: 900, yzskyqmd: 235, jtolknyl: 852, pciidcej: 930, pkjirmxl: 935, zjcrcugz: 512, lniffauo: 793, qecmtxkx: 666, hriyswsa: 238, bnovieww: 12, lwtulwis: 76, lfwnywwx: 525, vjrxwpvi: 198, taucnytr: 401, kuwezosn: 147, dknohlqu: 550, dsnzsckr: 213, pzusereh: 826, unkstbor: 901, hupblrbc: 580, wjcycjsg: 300, iqapnoej: 898, ajnksvyk: 188, anandyfv: 547, rkiqziax: 386, qutwgnpi: 737, icxuxjdt: 875, syjphhbv: 815, emhhjlsw: 733, nvaqqaom: 721, vngoaakd: 432, qdjgqstn: 315, gouayppt: 367, iibyrtkr: 552, warxvbgo: 777, lgzinkqc: 881, jihuaczt: 321, cvhxjlqp: 524, mztokkxk: 595, kbwjavda: 947, whznnizx: 667, fnzfdatk: 131, ccjxonlp: 681, ojzwtbth: 784, btjuhkjb: 890, zxbxwlif: 639, elzbyzfi: 41, mejhwptq: 728, kklqiyiy: 52, hrpntvcv: 37, oszqziai: 339, vdijvhcv: 277, rtngivon: 868, yqltqapj: 521, rpgpfibo: 252, tftqwhea: 89, vemxarzf: 552, bdewdpnw: 919, jrczllpd: 502, ljujeral: 40, wwspkmcu: 465, qmqgsspj: 133, imxoqdpx: 354, dapbnabj: 465, lnaiitka: 401, pekebejj: 851, fagcjrvc: 852, biefozxd: 851, grcsxxdq: 77, fuomyuau: 0, chvpepei: 809, jeoefdho: 320, yhfpbdij: 240, hxkblvdk: 793, kqueliui: 140 };
+  all.push(t4);
+  const t5: Record<string, number> = { johhjeov: 579, vnzjcymd: 956, gnbnvcxi: 888, nvhoxxyy: 893, znloezkc: 412, nnsjcvna: 908, vwweddwh: 613, bquafnzs: 794, ufurgmrq: 617, udinuwpk: 971, alllvlkf: 990, unpzpuis: 144, heiixqhg: 445, auxmglsh: 803, xwpqgzqi: 891, cmagqhtm: 944, rctvzseb: 371, ucshlhrj: 680, urzswoas: 39, rhdzrnzk: 397, buypygtj: 244, opzkkljr: 805, trpkpkrd: 688, zgvdugtj: 984, wiuyzyav: 120, iexedxwu: 506, yzskyqmd: 95, jtolknyl: 938, pciidcej: 293, pkjirmxl: 74, zjcrcugz: 228, lniffauo: 786, qecmtxkx: 861, hriyswsa: 748, bnovieww: 158, lwtulwis: 621, lfwnywwx: 93, vjrxwpvi: 471, taucnytr: 564, kuwezosn: 916, dknohlqu: 179, dsnzsckr: 964, pzusereh: 905, unkstbor: 681, hupblrbc: 843, wjcycjsg: 992, iqapnoej: 477, ajnksvyk: 910, anandyfv: 22, rkiqziax: 774, qutwgnpi: 280, icxuxjdt: 326, syjphhbv: 709, emhhjlsw: 965, nvaqqaom: 404, vngoaakd: 283, qdjgqstn: 268, gouayppt: 434, iibyrtkr: 62, warxvbgo: 463, lgzinkqc: 724, jihuaczt: 395, cvhxjlqp: 449, mztokkxk: 548, kbwjavda: 572, whznnizx: 732, fnzfdatk: 745, ccjxonlp: 33, ojzwtbth: 844, btjuhkjb: 992, zxbxwlif: 893, elzbyzfi: 204, mejhwptq: 623, kklqiyiy: 689, hrpntvcv: 47, oszqziai: 549, vdijvhcv: 294, rtngivon: 481, yqltqapj: 974, rpgpfibo: 412, tftqwhea: 662, vemxarzf: 89, bdewdpnw: 54, jrczllpd: 583, ljujeral: 749, wwspkmcu: 236, qmqgsspj: 332, imxoqdpx: 195, dapbnabj: 297, lnaiitka: 696, pekebejj: 777, fagcjrvc: 345, biefozxd: 333, grcsxxdq: 592, fuomyuau: 983, chvpepei: 120, jeoefdho: 377, yhfpbdij: 670, hxkblvdk: 754, kqueliui: 647 };
+  all.push(t5);
+  const t6: Record<string, number> = { johhjeov: 344, vnzjcymd: 877, gnbnvcxi: 858, nvhoxxyy: 489, znloezkc: 524, nnsjcvna: 490, vwweddwh: 628, bquafnzs: 425, ufurgmrq: 318, udinuwpk: 712, alllvlkf: 999, unpzpuis: 25, heiixqhg: 863, auxmglsh: 525, xwpqgzqi: 676, cmagqhtm: 18, rctvzseb: 302, ucshlhrj: 633, urzswoas: 582, rhdzrnzk: 15, buypygtj: 140, opzkkljr: 284, trpkpkrd: 626, zgvdugtj: 716, wiuyzyav: 401, iexedxwu: 995, yzskyqmd: 550, jtolknyl: 170, pciidcej: 477, pkjirmxl: 323, zjcrcugz: 552, lniffauo: 757, qecmtxkx: 322, hriyswsa: 446, bnovieww: 190, lwtulwis: 952, lfwnywwx: 313, vjrxwpvi: 727, taucnytr: 734, kuwezosn: 440, dknohlqu: 397, dsnzsckr: 750, pzusereh: 502, unkstbor: 951, hupblrbc: 803, wjcycjsg: 355, iqapnoej: 61, ajnksvyk: 890, anandyfv: 144, rkiqziax: 790, qutwgnpi: 995, icxuxjdt: 794, syjphhbv: 512, emhhjlsw: 514, nvaqqaom: 302, vngoaakd: 757, qdjgqstn: 460, gouayppt: 324, iibyrtkr: 901, warxvbgo: 537, lgzinkqc: 608, jihuaczt: 104, cvhxjlqp: 422, mztokkxk: 867, kbwjavda: 987, whznnizx: 889, fnzfdatk: 424, ccjxonlp: 895, ojzwtbth: 869, btjuhkjb: 219, zxbxwlif: 431, elzbyzfi: 983, mejhwptq: 822, kklqiyiy: 695, hrpntvcv: 56, oszqziai: 792, vdijvhcv: 971, rtngivon: 666, yqltqapj: 832, rpgpfibo: 73, tftqwhea: 59, vemxarzf: 681, bdewdpnw: 706, jrczllpd: 928, ljujeral: 388, wwspkmcu: 61, qmqgsspj: 251, imxoqdpx: 969, dapbnabj: 488, lnaiitka: 951, pekebejj: 220, fagcjrvc: 228, biefozxd: 717, grcsxxdq: 955, fuomyuau: 784, chvpepei: 344, jeoefdho: 369, yhfpbdij: 615, hxkblvdk: 646, kqueliui: 804 };
+  all.push(t6);
+  const t7: Record<string, number> = { johhjeov: 162, vnzjcymd: 190, gnbnvcxi: 231, nvhoxxyy: 429, znloezkc: 64, nnsjcvna: 244, vwweddwh: 276, bquafnzs: 75, ufurgmrq: 913, udinuwpk: 395, alllvlkf: 77, unpzpuis: 917, heiixqhg: 781, auxmglsh: 23, xwpqgzqi: 217, cmagqhtm: 232, rctvzseb: 432, ucshlhrj: 737, urzswoas: 437, rhdzrnzk: 893, buypygtj: 859, opzkkljr: 312, trpkpkrd: 645, zgvdugtj: 371, wiuyzyav: 911, iexedxwu: 204, yzskyqmd: 618, jtolknyl: 332, pciidcej: 112, pkjirmxl: 291, zjcrcugz: 496, lniffauo: 923, qecmtxkx: 377, hriyswsa: 896, bnovieww: 728, lwtulwis: 24, lfwnywwx: 205, vjrxwpvi: 931, taucnytr: 667, kuwezosn: 478, dknohlqu: 463, dsnzsckr: 60, pzusereh: 78, unkstbor: 520, hupblrbc: 239, wjcycjsg: 897, iqapnoej: 912, ajnksvyk: 897, anandyfv: 566, rkiqziax: 126, qutwgnpi: 713, icxuxjdt: 885, syjphhbv: 637, emhhjlsw: 25, nvaqqaom: 473, vngoaakd: 222, qdjgqstn: 584, gouayppt: 919, iibyrtkr: 767, warxvbgo: 279, lgzinkqc: 444, jihuaczt: 792, cvhxjlqp: 275, mztokkxk: 181, kbwjavda: 746, whznnizx: 84, fnzfdatk: 980, ccjxonlp: 405, ojzwtbth: 670, btjuhkjb: 92, zxbxwlif: 583, elzbyzfi: 458, mejhwptq: 321, kklqiyiy: 987, hrpntvcv: 699, oszqziai: 466, vdijvhcv: 718, rtngivon: 985, yqltqapj: 337, rpgpfibo: 418, tftqwhea: 224, vemxarzf: 531, bdewdpnw: 966, jrczllpd: 473, ljujeral: 464, wwspkmcu: 277, qmqgsspj: 525, imxoqdpx: 754, dapbnabj: 425, lnaiitka: 26, pekebejj: 933, fagcjrvc: 60, biefozxd: 550, grcsxxdq: 432, fuomyuau: 277, chvpepei: 877, jeoefdho: 791, yhfpbdij: 470, hxkblvdk: 255, kqueliui: 534 };
+  all.push(t7);
+  const t8: Record<string, number> = { johhjeov: 32, vnzjcymd: 249, gnbnvcxi: 269, nvhoxxyy: 536, znloezkc: 190, nnsjcvna: 550, vwweddwh: 680, bquafnzs: 333, ufurgmrq: 964, udinuwpk: 402, alllvlkf: 226, unpzpuis: 228, heiixqhg: 748, auxmglsh: 530, xwpqgzqi: 271, cmagqhtm: 169, rctvzseb: 827, ucshlhrj: 153, urzswoas: 892, rhdzrnzk: 106, buypygtj: 836, opzkkljr: 158, trpkpkrd: 551, zgvdugtj: 744, wiuyzyav: 725, iexedxwu: 367, yzskyqmd: 140, jtolknyl: 893, pciidcej: 852, pkjirmxl: 474, zjcrcugz: 959, lniffauo: 217, qecmtxkx: 785, hriyswsa: 699, bnovieww: 545, lwtulwis: 650, lfwnywwx: 945, vjrxwpvi: 208, taucnytr: 42, kuwezosn: 311, dknohlqu: 734, dsnzsckr: 583, pzusereh: 709, unkstbor: 784, hupblrbc: 327, wjcycjsg: 798, iqapnoej: 892, ajnksvyk: 95, anandyfv: 518, rkiqziax: 403, qutwgnpi: 757, icxuxjdt: 953, syjphhbv: 849, emhhjlsw: 684, nvaqqaom: 705, vngoaakd: 186, qdjgqstn: 894, gouayppt: 325, iibyrtkr: 97, warxvbgo: 594, lgzinkqc: 829, jihuaczt: 26, cvhxjlqp: 222, mztokkxk: 146, kbwjavda: 245, whznnizx: 531, fnzfdatk: 522, ccjxonlp: 591, ojzwtbth: 964, btjuhkjb: 251, zxbxwlif: 944, elzbyzfi: 333, mejhwptq: 78, kklqiyiy: 132, hrpntvcv: 486, oszqziai: 999, vdijvhcv: 617, rtngivon: 5, yqltqapj: 306, rpgpfibo: 601, tftqwhea: 290, vemxarzf: 609, bdewdpnw: 644, jrczllpd: 334, ljujeral: 609, wwspkmcu: 724, qmqgsspj: 174, imxoqdpx: 434, dapbnabj: 182, lnaiitka: 499, pekebejj: 735, fagcjrvc: 561, biefozxd: 278, grcsxxdq: 821, fuomyuau: 780, chvpepei: 801, jeoefdho: 517, yhfpbdij: 164, hxkblvdk: 77, kqueliui: 43 };
+  all.push(t8);
+  const t9: Record<string, number> = { johhjeov: 229, vnzjcymd: 431, gnbnvcxi: 850, nvhoxxyy: 819, znloezkc: 198, nnsjcvna: 954, vwweddwh: 944, bquafnzs: 650, ufurgmrq: 17, udinuwpk: 338, alllvlkf: 415, unpzpuis: 477, heiixqhg: 137, auxmglsh: 489, xwpqgzqi: 43, cmagqhtm: 830, rctvzseb: 499, ucshlhrj: 759, urzswoas: 790, rhdzrnzk: 174, buypygtj: 563, opzkkljr: 753, trpkpkrd: 275, zgvdugtj: 503, wiuyzyav: 590, iexedxwu: 216, yzskyqmd: 7, jtolknyl: 779, pciidcej: 124, pkjirmxl: 448, zjcrcugz: 278, lniffauo: 413, qecmtxkx: 42, hriyswsa: 111, bnovieww: 446, lwtulwis: 973, lfwnywwx: 87, vjrxwpvi: 406, taucnytr: 361, kuwezosn: 52, dknohlqu: 121, dsnzsckr: 351, pzusereh: 39, unkstbor: 16, hupblrbc: 859, wjcycjsg: 867, iqapnoej: 342, ajnksvyk: 234, anandyfv: 918, rkiqziax: 600, qutwgnpi: 218, icxuxjdt: 970, syjphhbv: 263, emhhjlsw: 530, nvaqqaom: 609, vngoaakd: 961, qdjgqstn: 417, gouayppt: 616, iibyrtkr: 743, warxvbgo: 293, lgzinkqc: 508, jihuaczt: 628, cvhxjlqp: 912, mztokkxk: 786, kbwjavda: 727, whznnizx: 405, fnzfdatk: 752, ccjxonlp: 485, ojzwtbth: 277, btjuhkjb: 192, zxbxwlif: 349, elzbyzfi: 111, mejhwptq: 639, kklqiyiy: 295, hrpntvcv: 132, oszqziai: 983, vdijvhcv: 176, rtngivon: 438, yqltqapj: 95, rpgpfibo: 318, tftqwhea: 221, vemxarzf: 758, bdewdpnw: 547, jrczllpd: 753, ljujeral: 465, wwspkmcu: 394, qmqgsspj: 694, imxoqdpx: 680, dapbnabj: 962, lnaiitka: 465, pekebejj: 518, fagcjrvc: 687, biefozxd: 976, grcsxxdq: 809, fuomyuau: 784, chvpepei: 422, jeoefdho: 882, yhfpbdij: 324, hxkblvdk: 594, kqueliui: 256 };
+  all.push(t9);
+  const t10: Record<string, number> = { johhjeov: 473, vnzjcymd: 641, gnbnvcxi: 543, nvhoxxyy: 634, znloezkc: 921, nnsjcvna: 629, vwweddwh: 135, bquafnzs: 249, ufurgmrq: 102, udinuwpk: 690, alllvlkf: 596, unpzpuis: 430, heiixqhg: 718, auxmglsh: 632, xwpqgzqi: 285, cmagqhtm: 779, rctvzseb: 346, ucshlhrj: 317, urzswoas: 338, rhdzrnzk: 860, buypygtj: 62, opzkkljr: 200, trpkpkrd: 273, zgvdugtj: 20, wiuyzyav: 819, iexedxwu: 960, yzskyqmd: 415, jtolknyl: 322, pciidcej: 533, pkjirmxl: 411, zjcrcugz: 962, lniffauo: 238, qecmtxkx: 754, hriyswsa: 521, bnovieww: 610, lwtulwis: 457, lfwnywwx: 121, vjrxwpvi: 200, taucnytr: 517, kuwezosn: 531, dknohlqu: 311, dsnzsckr: 622, pzusereh: 202, unkstbor: 193, hupblrbc: 860, wjcycjsg: 600, iqapnoej: 348, ajnksvyk: 246, anandyfv: 237, rkiqziax: 382, qutwgnpi: 195, icxuxjdt: 513, syjphhbv: 264, emhhjlsw: 456, nvaqqaom: 808, vngoaakd: 420, qdjgqstn: 452, gouayppt: 764, iibyrtkr: 578, warxvbgo: 667, lgzinkqc: 806, jihuaczt: 532, cvhxjlqp: 858, mztokkxk: 927, kbwjavda: 597, whznnizx: 960, fnzfdatk: 779, ccjxonlp: 503, ojzwtbth: 10, btjuhkjb: 495, zxbxwlif: 753, elzbyzfi: 226, mejhwptq: 177, kklqiyiy: 676, hrpntvcv: 193, oszqziai: 320, vdijvhcv: 323, rtngivon: 904, yqltqapj: 776, rpgpfibo: 153, tftqwhea: 583, vemxarzf: 464, bdewdpnw: 901, jrczllpd: 706, ljujeral: 168, wwspkmcu: 574, qmqgsspj: 114, imxoqdpx: 746, dapbnabj: 156, lnaiitka: 968, pekebejj: 733, fagcjrvc: 806, biefozxd: 21, grcsxxdq: 65, fuomyuau: 382, chvpepei: 952, jeoefdho: 54, yhfpbdij: 250, hxkblvdk: 928, kqueliui: 56 };
+  all.push(t10);
+  const t11: Record<string, number> = { johhjeov: 188, vnzjcymd: 172, gnbnvcxi: 666, nvhoxxyy: 462, znloezkc: 854, nnsjcvna: 910, vwweddwh: 534, bquafnzs: 888, ufurgmrq: 485, udinuwpk: 965, alllvlkf: 148, unpzpuis: 477, heiixqhg: 266, auxmglsh: 208, xwpqgzqi: 915, cmagqhtm: 174, rctvzseb: 617, ucshlhrj: 750, urzswoas: 476, rhdzrnzk: 29, buypygtj: 472, opzkkljr: 0, trpkpkrd: 834, zgvdugtj: 28, wiuyzyav: 866, iexedxwu: 532, yzskyqmd: 74, jtolknyl: 458, pciidcej: 594, pkjirmxl: 153, zjcrcugz: 983, lniffauo: 675, qecmtxkx: 880, hriyswsa: 472, bnovieww: 787, lwtulwis: 66, lfwnywwx: 733, vjrxwpvi: 62, taucnytr: 533, kuwezosn: 311, dknohlqu: 96, dsnzsckr: 992, pzusereh: 695, unkstbor: 948, hupblrbc: 632, wjcycjsg: 561, iqapnoej: 579, ajnksvyk: 987, anandyfv: 76, rkiqziax: 391, qutwgnpi: 42, icxuxjdt: 368, syjphhbv: 822, emhhjlsw: 487, nvaqqaom: 567, vngoaakd: 831, qdjgqstn: 221, gouayppt: 140, iibyrtkr: 335, warxvbgo: 467, lgzinkqc: 492, jihuaczt: 67, cvhxjlqp: 567, mztokkxk: 171, kbwjavda: 821, whznnizx: 620, fnzfdatk: 109, ccjxonlp: 157, ojzwtbth: 324, btjuhkjb: 373, zxbxwlif: 522, elzbyzfi: 200, mejhwptq: 944, kklqiyiy: 25, hrpntvcv: 186, oszqziai: 318, vdijvhcv: 805, rtngivon: 121, yqltqapj: 139, rpgpfibo: 429, tftqwhea: 456, vemxarzf: 90, bdewdpnw: 770, jrczllpd: 871, ljujeral: 760, wwspkmcu: 567, qmqgsspj: 150, imxoqdpx: 428, dapbnabj: 369, lnaiitka: 461, pekebejj: 522, fagcjrvc: 249, biefozxd: 334, grcsxxdq: 74, fuomyuau: 203, chvpepei: 794, jeoefdho: 725, yhfpbdij: 655, hxkblvdk: 146, kqueliui: 741 };
+  all.push(t11);
+  const t12: Record<string, number> = { johhjeov: 413, vnzjcymd: 851, gnbnvcxi: 645, nvhoxxyy: 403, znloezkc: 544, nnsjcvna: 185, vwweddwh: 972, bquafnzs: 218, ufurgmrq: 721, udinuwpk: 876, alllvlkf: 151, unpzpuis: 687, heiixqhg: 156, auxmglsh: 590, xwpqgzqi: 963, cmagqhtm: 642, rctvzseb: 387, ucshlhrj: 707, urzswoas: 619, rhdzrnzk: 123, buypygtj: 291, opzkkljr: 845, trpkpkrd: 26, zgvdugtj: 376, wiuyzyav: 579, iexedxwu: 927, yzskyqmd: 546, jtolknyl: 161, pciidcej: 217, pkjirmxl: 765, zjcrcugz: 748, lniffauo: 976, qecmtxkx: 827, hriyswsa: 172, bnovieww: 368, lwtulwis: 639, lfwnywwx: 520, vjrxwpvi: 109, taucnytr: 288, kuwezosn: 497, dknohlqu: 457, dsnzsckr: 578, pzusereh: 983, unkstbor: 996, hupblrbc: 919, wjcycjsg: 641, iqapnoej: 133, ajnksvyk: 37, anandyfv: 974, rkiqziax: 446, qutwgnpi: 981, icxuxjdt: 540, syjphhbv: 124, emhhjlsw: 409, nvaqqaom: 719, vngoaakd: 405, qdjgqstn: 423, gouayppt: 466, iibyrtkr: 521, warxvbgo: 450, lgzinkqc: 963, jihuaczt: 237, cvhxjlqp: 89, mztokkxk: 339, kbwjavda: 521, whznnizx: 991, fnzfdatk: 299, ccjxonlp: 24, ojzwtbth: 193, btjuhkjb: 693, zxbxwlif: 245, elzbyzfi: 696, mejhwptq: 269, kklqiyiy: 512, hrpntvcv: 748, oszqziai: 307, vdijvhcv: 491, rtngivon: 494, yqltqapj: 329, rpgpfibo: 245, tftqwhea: 385, vemxarzf: 696, bdewdpnw: 938, jrczllpd: 90, ljujeral: 386, wwspkmcu: 773, qmqgsspj: 585, imxoqdpx: 974, dapbnabj: 63, lnaiitka: 557, pekebejj: 220, fagcjrvc: 544, biefozxd: 897, grcsxxdq: 64, fuomyuau: 416, chvpepei: 643, jeoefdho: 224, yhfpbdij: 914, hxkblvdk: 591, kqueliui: 738 };
+  all.push(t12);
+  const t13: Record<string, number> = { johhjeov: 2, vnzjcymd: 838, gnbnvcxi: 420, nvhoxxyy: 988, znloezkc: 251, nnsjcvna: 958, vwweddwh: 172, bquafnzs: 346, ufurgmrq: 224, udinuwpk: 815, alllvlkf: 558, unpzpuis: 419, heiixqhg: 234, auxmglsh: 83, xwpqgzqi: 758, cmagqhtm: 440, rctvzseb: 231, ucshlhrj: 185, urzswoas: 763, rhdzrnzk: 926, buypygtj: 558, opzkkljr: 741, trpkpkrd: 802, zgvdugtj: 306, wiuyzyav: 366, iexedxwu: 483, yzskyqmd: 63, jtolknyl: 850, pciidcej: 528, pkjirmxl: 447, zjcrcugz: 127, lniffauo: 642, qecmtxkx: 65, hriyswsa: 21, bnovieww: 307, lwtulwis: 801, lfwnywwx: 806, vjrxwpvi: 570, taucnytr: 577, kuwezosn: 598, dknohlqu: 277, dsnzsckr: 409, pzusereh: 704, unkstbor: 135, hupblrbc: 321, wjcycjsg: 315, iqapnoej: 992, ajnksvyk: 4, anandyfv: 81, rkiqziax: 317, qutwgnpi: 275, icxuxjdt: 143, syjphhbv: 757, emhhjlsw: 974, nvaqqaom: 96, vngoaakd: 46, qdjgqstn: 942, gouayppt: 770, iibyrtkr: 871, warxvbgo: 508, lgzinkqc: 962, jihuaczt: 392, cvhxjlqp: 217, mztokkxk: 121, kbwjavda: 634, whznnizx: 234, fnzfdatk: 93, ccjxonlp: 187, ojzwtbth: 584, btjuhkjb: 173, zxbxwlif: 399, elzbyzfi: 399, mejhwptq: 380, kklqiyiy: 213, hrpntvcv: 748, oszqziai: 651, vdijvhcv: 153, rtngivon: 654, yqltqapj: 5, rpgpfibo: 457, tftqwhea: 903, vemxarzf: 951, bdewdpnw: 114, jrczllpd: 653, ljujeral: 66, wwspkmcu: 226, qmqgsspj: 72, imxoqdpx: 377, dapbnabj: 748, lnaiitka: 735, pekebejj: 170, fagcjrvc: 776, biefozxd: 107, grcsxxdq: 674, fuomyuau: 153, chvpepei: 389, jeoefdho: 764, yhfpbdij: 347, hxkblvdk: 776, kqueliui: 69 };
+  all.push(t13);
+  const t14: Record<string, number> = { johhjeov: 184, vnzjcymd: 759, gnbnvcxi: 315, nvhoxxyy: 758, znloezkc: 109, nnsjcvna: 574, vwweddwh: 637, bquafnzs: 772, ufurgmrq: 196, udinuwpk: 163, alllvlkf: 504, unpzpuis: 326, heiixqhg: 588, auxmglsh: 779, xwpqgzqi: 524, cmagqhtm: 437, rctvzseb: 749, ucshlhrj: 29, urzswoas: 36, rhdzrnzk: 90, buypygtj: 599, opzkkljr: 812, trpkpkrd: 481, zgvdugtj: 768, wiuyzyav: 176, iexedxwu: 232, yzskyqmd: 653, jtolknyl: 531, pciidcej: 496, pkjirmxl: 630, zjcrcugz: 144, lniffauo: 820, qecmtxkx: 938, hriyswsa: 26, bnovieww: 939, lwtulwis: 38, lfwnywwx: 371, vjrxwpvi: 651, taucnytr: 137, kuwezosn: 764, dknohlqu: 709, dsnzsckr: 493, pzusereh: 394, unkstbor: 95, hupblrbc: 976, wjcycjsg: 12, iqapnoej: 637, ajnksvyk: 295, anandyfv: 992, rkiqziax: 280, qutwgnpi: 684, icxuxjdt: 958, syjphhbv: 814, emhhjlsw: 450, nvaqqaom: 593, vngoaakd: 30, qdjgqstn: 764, gouayppt: 687, iibyrtkr: 829, warxvbgo: 766, lgzinkqc: 55, jihuaczt: 821, cvhxjlqp: 667, mztokkxk: 599, kbwjavda: 875, whznnizx: 351, fnzfdatk: 873, ccjxonlp: 0, ojzwtbth: 557, btjuhkjb: 377, zxbxwlif: 534, elzbyzfi: 507, mejhwptq: 206, kklqiyiy: 91, hrpntvcv: 942, oszqziai: 338, vdijvhcv: 267, rtngivon: 984, yqltqapj: 301, rpgpfibo: 177, tftqwhea: 742, vemxarzf: 74, bdewdpnw: 615, jrczllpd: 267, ljujeral: 211, wwspkmcu: 984, qmqgsspj: 347, imxoqdpx: 668, dapbnabj: 29, lnaiitka: 199, pekebejj: 663, fagcjrvc: 656, biefozxd: 232, grcsxxdq: 49, fuomyuau: 107, chvpepei: 310, jeoefdho: 109, yhfpbdij: 287, hxkblvdk: 480, kqueliui: 610 };
+  all.push(t14);
+  const t15: Record<string, number> = { johhjeov: 657, vnzjcymd: 136, gnbnvcxi: 314, nvhoxxyy: 433, znloezkc: 379, nnsjcvna: 158, vwweddwh: 197, bquafnzs: 612, ufurgmrq: 63, udinuwpk: 740, alllvlkf: 9, unpzpuis: 299, heiixqhg: 628, auxmglsh: 568, xwpqgzqi: 474, cmagqhtm: 476, rctvzseb: 762, ucshlhrj: 821, urzswoas: 263, rhdzrnzk: 324, buypygtj: 564, opzkkljr: 868, trpkpkrd: 537, zgvdugtj: 312, wiuyzyav: 663, iexedxwu: 309, yzskyqmd: 985, jtolknyl: 150, pciidcej: 403, pkjirmxl: 970, zjcrcugz: 257, lniffauo: 456, qecmtxkx: 352, hriyswsa: 906, bnovieww: 567, lwtulwis: 815, lfwnywwx: 941, vjrxwpvi: 145, taucnytr: 725, kuwezosn: 394, dknohlqu: 13, dsnzsckr: 928, pzusereh: 442, unkstbor: 75, hupblrbc: 827, wjcycjsg: 478, iqapnoej: 486, ajnksvyk: 987, anandyfv: 287, rkiqziax: 203, qutwgnpi: 290, icxuxjdt: 671, syjphhbv: 610, emhhjlsw: 260, nvaqqaom: 455, vngoaakd: 210, qdjgqstn: 848, gouayppt: 230, iibyrtkr: 67, warxvbgo: 59, lgzinkqc: 239, jihuaczt: 810, cvhxjlqp: 964, mztokkxk: 516, kbwjavda: 654, whznnizx: 851, fnzfdatk: 86, ccjxonlp: 353, ojzwtbth: 722, btjuhkjb: 944, zxbxwlif: 862, elzbyzfi: 424, mejhwptq: 792, kklqiyiy: 407, hrpntvcv: 272, oszqziai: 673, vdijvhcv: 540, rtngivon: 997, yqltqapj: 813, rpgpfibo: 213, tftqwhea: 560, vemxarzf: 358, bdewdpnw: 45, jrczllpd: 840, ljujeral: 365, wwspkmcu: 485, qmqgsspj: 185, imxoqdpx: 327, dapbnabj: 261, lnaiitka: 551, pekebejj: 477, fagcjrvc: 569, biefozxd: 183, grcsxxdq: 465, fuomyuau: 401, chvpepei: 627, jeoefdho: 905, yhfpbdij: 301, hxkblvdk: 661, kqueliui: 973 };
+  all.push(t15);
+  const t16: Record<string, number> = { johhjeov: 894, vnzjcymd: 341, gnbnvcxi: 851, nvhoxxyy: 989, znloezkc: 790, nnsjcvna: 417, vwweddwh: 112, bquafnzs: 866, ufurgmrq: 396, udinuwpk: 541, alllvlkf: 791, unpzpuis: 394, heiixqhg: 807, auxmglsh: 540, xwpqgzqi: 240, cmagqhtm: 708, rctvzseb: 867, ucshlhrj: 563, urzswoas: 711, rhdzrnzk: 523, buypygtj: 329, opzkkljr: 192, trpkpkrd: 747, zgvdugtj: 601, wiuyzyav: 256, iexedxwu: 515, yzskyqmd: 722, jtolknyl: 604, pciidcej: 119, pkjirmxl: 677, zjcrcugz: 747, lniffauo: 108, qecmtxkx: 326, hriyswsa: 370, bnovieww: 370, lwtulwis: 348, lfwnywwx: 321, vjrxwpvi: 437, taucnytr: 153, kuwezosn: 782, dknohlqu: 580, dsnzsckr: 606, pzusereh: 546, unkstbor: 874, hupblrbc: 398, wjcycjsg: 837, iqapnoej: 549, ajnksvyk: 42, anandyfv: 337, rkiqziax: 971, qutwgnpi: 276, icxuxjdt: 838, syjphhbv: 787, emhhjlsw: 638, nvaqqaom: 114, vngoaakd: 21, qdjgqstn: 842, gouayppt: 213, iibyrtkr: 804, warxvbgo: 800, lgzinkqc: 336, jihuaczt: 510, cvhxjlqp: 508, mztokkxk: 9, kbwjavda: 250, whznnizx: 263, fnzfdatk: 769, ccjxonlp: 286, ojzwtbth: 666, btjuhkjb: 789, zxbxwlif: 778, elzbyzfi: 159, mejhwptq: 912, kklqiyiy: 518, hrpntvcv: 219, oszqziai: 355, vdijvhcv: 649, rtngivon: 497, yqltqapj: 965, rpgpfibo: 99, tftqwhea: 333, vemxarzf: 261, bdewdpnw: 1, jrczllpd: 852, ljujeral: 63, wwspkmcu: 722, qmqgsspj: 630, imxoqdpx: 199, dapbnabj: 681, lnaiitka: 781, pekebejj: 853, fagcjrvc: 784, biefozxd: 0, grcsxxdq: 95, fuomyuau: 199, chvpepei: 196, jeoefdho: 271, yhfpbdij: 257, hxkblvdk: 779, kqueliui: 53 };
+  all.push(t16);
+  const t17: Record<string, number> = { johhjeov: 150, vnzjcymd: 555, gnbnvcxi: 381, nvhoxxyy: 76, znloezkc: 728, nnsjcvna: 651, vwweddwh: 172, bquafnzs: 484, ufurgmrq: 172, udinuwpk: 113, alllvlkf: 788, unpzpuis: 80, heiixqhg: 465, auxmglsh: 547, xwpqgzqi: 597, cmagqhtm: 982, rctvzseb: 263, ucshlhrj: 673, urzswoas: 36, rhdzrnzk: 988, buypygtj: 488, opzkkljr: 542, trpkpkrd: 902, zgvdugtj: 391, wiuyzyav: 338, iexedxwu: 723, yzskyqmd: 637, jtolknyl: 835, pciidcej: 441, pkjirmxl: 824, zjcrcugz: 656, lniffauo: 638, qecmtxkx: 421, hriyswsa: 397, bnovieww: 493, lwtulwis: 7, lfwnywwx: 24, vjrxwpvi: 289, taucnytr: 837, kuwezosn: 210, dknohlqu: 395, dsnzsckr: 270, pzusereh: 821, unkstbor: 67, hupblrbc: 803, wjcycjsg: 42, iqapnoej: 511, ajnksvyk: 948, anandyfv: 676, rkiqziax: 704, qutwgnpi: 848, icxuxjdt: 468, syjphhbv: 982, emhhjlsw: 429, nvaqqaom: 594, vngoaakd: 844, qdjgqstn: 255, gouayppt: 190, iibyrtkr: 219, warxvbgo: 198, lgzinkqc: 836, jihuaczt: 117, cvhxjlqp: 140, mztokkxk: 211, kbwjavda: 463, whznnizx: 642, fnzfdatk: 798, ccjxonlp: 412, ojzwtbth: 432, btjuhkjb: 471, zxbxwlif: 250, elzbyzfi: 112, mejhwptq: 16, kklqiyiy: 211, hrpntvcv: 657, oszqziai: 100, vdijvhcv: 543, rtngivon: 94, yqltqapj: 787, rpgpfibo: 874, tftqwhea: 1, vemxarzf: 215, bdewdpnw: 858, jrczllpd: 733, ljujeral: 121, wwspkmcu: 635, qmqgsspj: 486, imxoqdpx: 899, dapbnabj: 575, lnaiitka: 356, pekebejj: 968, fagcjrvc: 60, biefozxd: 453, grcsxxdq: 278, fuomyuau: 833, chvpepei: 868, jeoefdho: 338, yhfpbdij: 413, hxkblvdk: 223, kqueliui: 627 };
+  all.push(t17);
+  const t18: Record<string, number> = { johhjeov: 289, vnzjcymd: 650, gnbnvcxi: 749, nvhoxxyy: 258, znloezkc: 258, nnsjcvna: 52, vwweddwh: 855, bquafnzs: 556, ufurgmrq: 736, udinuwpk: 610, alllvlkf: 975, unpzpuis: 486, heiixqhg: 354, auxmglsh: 271, xwpqgzqi: 887, cmagqhtm: 735, rctvzseb: 937, ucshlhrj: 654, urzswoas: 888, rhdzrnzk: 849, buypygtj: 531, opzkkljr: 347, trpkpkrd: 226, zgvdugtj: 132, wiuyzyav: 823, iexedxwu: 370, yzskyqmd: 225, jtolknyl: 566, pciidcej: 288, pkjirmxl: 519, zjcrcugz: 707, lniffauo: 693, qecmtxkx: 772, hriyswsa: 34, bnovieww: 242, lwtulwis: 992, lfwnywwx: 854, vjrxwpvi: 233, taucnytr: 548, kuwezosn: 505, dknohlqu: 827, dsnzsckr: 322, pzusereh: 825, unkstbor: 498, hupblrbc: 949, wjcycjsg: 546, iqapnoej: 996, ajnksvyk: 581, anandyfv: 180, rkiqziax: 91, qutwgnpi: 286, icxuxjdt: 523, syjphhbv: 92, emhhjlsw: 381, nvaqqaom: 720, vngoaakd: 22, qdjgqstn: 365, gouayppt: 650, iibyrtkr: 645, warxvbgo: 157, lgzinkqc: 246, jihuaczt: 437, cvhxjlqp: 142, mztokkxk: 608, kbwjavda: 333, whznnizx: 600, fnzfdatk: 152, ccjxonlp: 43, ojzwtbth: 632, btjuhkjb: 26, zxbxwlif: 333, elzbyzfi: 144, mejhwptq: 515, kklqiyiy: 992, hrpntvcv: 6, oszqziai: 773, vdijvhcv: 445, rtngivon: 907, yqltqapj: 353, rpgpfibo: 941, tftqwhea: 838, vemxarzf: 120, bdewdpnw: 408, jrczllpd: 981, ljujeral: 61, wwspkmcu: 998, qmqgsspj: 540, imxoqdpx: 133, dapbnabj: 525, lnaiitka: 88, pekebejj: 51, fagcjrvc: 193, biefozxd: 315, grcsxxdq: 766, fuomyuau: 776, chvpepei: 583, jeoefdho: 215, yhfpbdij: 665, hxkblvdk: 89, kqueliui: 428 };
+  all.push(t18);
+  const t19: Record<string, number> = { johhjeov: 358, vnzjcymd: 280, gnbnvcxi: 725, nvhoxxyy: 962, znloezkc: 294, nnsjcvna: 343, vwweddwh: 178, bquafnzs: 443, ufurgmrq: 553, udinuwpk: 575, alllvlkf: 533, unpzpuis: 763, heiixqhg: 797, auxmglsh: 28, xwpqgzqi: 681, cmagqhtm: 823, rctvzseb: 607, ucshlhrj: 302, urzswoas: 191, rhdzrnzk: 875, buypygtj: 843, opzkkljr: 762, trpkpkrd: 519, zgvdugtj: 267, wiuyzyav: 290, iexedxwu: 944, yzskyqmd: 764, jtolknyl: 425, pciidcej: 234, pkjirmxl: 731, zjcrcugz: 454, lniffauo: 31, qecmtxkx: 112, hriyswsa: 398, bnovieww: 617, lwtulwis: 96, lfwnywwx: 332, vjrxwpvi: 304, taucnytr: 330, kuwezosn: 571, dknohlqu: 698, dsnzsckr: 588, pzusereh: 286, unkstbor: 774, hupblrbc: 550, wjcycjsg: 927, iqapnoej: 871, ajnksvyk: 612, anandyfv: 487, rkiqziax: 656, qutwgnpi: 150, icxuxjdt: 562, syjphhbv: 727, emhhjlsw: 720, nvaqqaom: 309, vngoaakd: 221, qdjgqstn: 225, gouayppt: 599, iibyrtkr: 754, warxvbgo: 502, lgzinkqc: 108, jihuaczt: 507, cvhxjlqp: 355, mztokkxk: 631, kbwjavda: 267, whznnizx: 261, fnzfdatk: 919, ccjxonlp: 660, ojzwtbth: 857, btjuhkjb: 80, zxbxwlif: 519, elzbyzfi: 382, mejhwptq: 363, kklqiyiy: 231, hrpntvcv: 998, oszqziai: 718, vdijvhcv: 423, rtngivon: 280, yqltqapj: 557, rpgpfibo: 31, tftqwhea: 40, vemxarzf: 240, bdewdpnw: 924, jrczllpd: 6, ljujeral: 277, wwspkmcu: 453, qmqgsspj: 801, imxoqdpx: 896, dapbnabj: 450, lnaiitka: 485, pekebejj: 438, fagcjrvc: 519, biefozxd: 641, grcsxxdq: 620, fuomyuau: 447, chvpepei: 192, jeoefdho: 216, yhfpbdij: 128, hxkblvdk: 643, kqueliui: 480 };
+  all.push(t19);
+}
+if (process.argv[2]) fill();
+console.log(all.length);
+//// lists-of-constants/tables-small-s24-different.ts
+// Lists of constants: tables small  different. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const all: Record<string, number>[] = [];
+function fill() {
+  const t0: Record<string, number> = { qqzglmelp: 653, cystyeinu: 452, bvokonhqh: 888, unlqysscj: 427, xptwvvwby: 868, jpifipsqc: 97, hbebovbbd: 221, dhonxhogr: 700, zdrsjnyoj: 287, qnxdorpju: 649, dfmzhqwbj: 379, pgqjxswsc: 766, rrrfzugea: 781, jiscwmdyj: 744, uionemkcq: 187, wkuuktymj: 501, pjcbycino: 15, mhhuhajvv: 389, oqbdnpouq: 461, nbbcvvsjx: 224, ilftgyjeq: 416, redpaghmk: 864, yfdwxamje: 717, vmufxfszx: 267 };
+  all.push(t0);
+  const t1: Record<string, number> = { nmnwwfudx: 543, bmycgnqqh: 163, akhjxmhik: 521, ydrlnvgcn: 866, eunetqmts: 298, wnkyfbfls: 694, cxdksgeqw: 52, bcxgzthmn: 325, hmuntxiaj: 19, llwoxnwfv: 139, dgncozgao: 338, ybftxbbyo: 698, zcyosukyj: 302, zrbjueirc: 537, jlmruzrrw: 422, ezrsevamq: 533, bcxmwadzf: 855, noxeafhuq: 932, sgmijwntd: 158, icvfyzjhe: 546, vodzjynci: 228, gcqfyxwhz: 728, pjqaoxclr: 211, mnwyhgcsq: 913 };
+  all.push(t1);
+  const t2: Record<string, number> = { sbjlgebww: 205, uwbpcdgub: 949, wztdkszlf: 142, ychfslsiz: 220, jpliemqnb: 200, rzbciwbaj: 793, vxidyubyz: 146, zthfxsygh: 154, xxsbmnddi: 113, vtieopsah: 812, ldtqjvalq: 844, jfvmqvffx: 546, hkgxdxlgt: 793, gkmyldils: 278, yeoexdxla: 569, mfdanqnno: 863, zibmtredt: 428, swxezmntq: 603, pwispgemr: 578, azgzljqna: 148, wpemfekic: 11, szikpwsmh: 301, iikpdjucu: 395, abixxhqsl: 506 };
+  all.push(t2);
+  const t3: Record<string, number> = { rcknhebee: 839, vcjmzlarc: 793, nuhvrmhck: 323, sxbyogqbk: 396, awbcvdfvv: 417, ghmbkwygx: 776, htueqqpph: 42, hcfrnkxgo: 431, qbpupager: 250, ssdyavojt: 769, jjhbungvo: 609, zcbztnznb: 799, xzyvqcylm: 457, ralgqqrcb: 906, dhsvascdp: 288, arnpfblgg: 271, vwqaecvdu: 261, wrugkmlji: 604, saotahuko: 596, tnijnjuul: 514, kovgyfvkr: 824, ldvbwfqee: 377, cmomemkil: 539, grvqswlyv: 528 };
+  all.push(t3);
+  const t4: Record<string, number> = { rnbrkdpwi: 442, xyfsubrdi: 9, hojzliagw: 849, tjdytgexf: 916, svrjujepy: 623, wdynuvbdi: 138, qgovoqldg: 476, ocnaxmawx: 621, aplvxlhcf: 995, ijvnmgabn: 131, ekfzrmghw: 510, ysgigquwb: 719, lmvioqqbs: 612, wbexvuinb: 242, ipjyyuzpf: 3, domkssdax: 299, ieboozilb: 641, oumstqyvv: 394, hoibwxmdv: 619, wjprwjjhs: 196, fbmnaxvbu: 51, kyldbfjvt: 207, hmcambydg: 557, piucsreed: 53 };
+  all.push(t4);
+  const t5: Record<string, number> = { rvvxwpnoq: 75, vbzjujglf: 738, xiblozwqg: 956, zymlkdlgo: 7, mqaafrdjw: 197, ncfdoemao: 276, ikmcclous: 605, ebbqgrhgn: 935, hhkwqayst: 854, dgorwskdx: 826, ywpnyyrcd: 762, kzvwyujxk: 990, awqvzrhmr: 583, ofaqcynhs: 437, mwdlnrssv: 11, uokesfbwd: 457, lllazhxeq: 207, lfjqbdifw: 104, ncnqacvcq: 696, utcchggjm: 706, doqehmefc: 99, vfiuyvnvi: 552, ruwlakiik: 200, hggqjrpjh: 113 };
+  all.push(t5);
+  const t6: Record<string, number> = { fvjbqvccx: 516, lguteoyvy: 599, anpvrqllu: 548, etlewznwr: 380, vkidzrqev: 79, hxjnxcwyt: 652, quqlbwvxu: 944, zpcrahnyp: 157, ucdbsnbnn: 496, mrfpqifgh: 398, pceedpfdo: 664, qevzfectt: 33, xshstjqiv: 618, epgnzfzfc: 161, umewviahm: 609, mxznxcbih: 139, xibfrwruk: 420, xvcmxfsqf: 824, kmxibekkx: 345, crxbcauxd: 86, ktvwrjqzx: 997, pruesxqvd: 732, awxzsgqky: 804, dwlwjbcsk: 133 };
+  all.push(t6);
+  const t7: Record<string, number> = { oapxixilj: 475, uxjghjadn: 529, rskjlksch: 850, wxhcreiow: 706, anrbzstju: 390, mfmgcfjmn: 932, hwzsxaakh: 140, lupcgwbgk: 687, rpybtkwsd: 185, grfwomvfr: 648, jecebbykv: 92, zvnyhkcop: 652, lhgvsyyed: 108, xalljtuyu: 443, pnkhdmfog: 195, dfbrxmubp: 449, roswihwvg: 646, tnrmhrxxa: 941, jfklqjqdm: 887, xpsilysuy: 623, mcnosfgjj: 533, vogtkmuhu: 673, hrsgwqtan: 142, xwfczmuqd: 466 };
+  all.push(t7);
+  const t8: Record<string, number> = { gosyloosh: 80, kchmcszjt: 486, enhbpwnnl: 971, ktrxehpxi: 161, syxwvfewd: 864, yevrlaxdi: 871, qfvpacwxh: 573, lkgcdaqsg: 830, ljzwiqoiw: 264, blynghbql: 81, ndjcyztow: 3, ibhsibwmy: 645, emfvfxdsp: 351, odbuyzrok: 746, azpvmbgml: 282, svjtxkgqa: 437, zonkkyruc: 784, kcsoatgrv: 26, pgjqepinl: 203, vrigdbxfg: 317, nxkacsvqr: 786, vcqxhwznj: 892, pgzxnhwqw: 792, kvjsascdr: 681 };
+  all.push(t8);
+  const t9: Record<string, number> = { pjexsgyxe: 44, agdhawwvz: 847, hhhivndlj: 104, cdfbbnhsq: 409, wddvfxflb: 488, uqvsapdup: 255, qhmwfajvw: 248, uqpsaibxw: 434, slcvqyflq: 129, vpzipcnjv: 450, cieextsjy: 595, vdciauqjp: 3, ridewbbmw: 355, yxmwhyivv: 454, cpdmotfdr: 53, pxqrvojxx: 690, bjjymyuxw: 669, qkbiahcso: 175, mvvqnzqyo: 505, buqdxgqjh: 226, ceseuugab: 962, djgnfwpze: 858, prsdwpzok: 110, dddxfjkzq: 106 };
+  all.push(t9);
+  const t10: Record<string, number> = { zosmdnhuz: 907, pvldasfwt: 670, gnggnruaz: 714, hasuszecm: 338, gqnbxyetv: 16, wwojurkdd: 747, ivmwrxgse: 389, tueiatyqe: 690, kopzbkswb: 77, vzuoroynb: 578, uzwvgobwv: 935, fnacqdxxe: 434, tpkfzpxuj: 555, svpmaoqou: 691, khnkhmvcc: 636, nqngiqvdi: 830, ueloibnmc: 43, ebshzsryw: 420, qrwssvrvv: 682, cmhmrrnde: 635, rvxbulpma: 51, nphlgracl: 525, uwemiegai: 262, qxohfuhej: 545 };
+  all.push(t10);
+  const t11: Record<string, number> = { slzvlbkjn: 40, tcnchriqf: 601, kxtqvzgsc: 711, aaztkrpmq: 384, edbgalzlu: 484, qihvijnao: 802, htckavrjt: 355, xvafokrff: 999, wywjcduri: 148, inugdrsej: 977, cdhanskvi: 59, eomptocby: 270, sffjqkbtk: 155, xjglihlon: 5, wxwfphvsm: 100, fnzhrgcuq: 755, xptfwlzvs: 857, hdqqvzdpb: 87, blpyaorpo: 98, dxqxrjvng: 570, cftcgvjwx: 638, vaqkhdmkd: 86, kaekpptcs: 91, uthfevlbs: 331 };
+  all.push(t11);
+  const t12: Record<string, number> = { papmsnfda: 332, tcgpqwonn: 413, pxiiyfqqo: 6, awxcwmrti: 435, wpkdruzhk: 575, pexffycuw: 436, dxdggfbvt: 895, hfejnshce: 59, vrmrpawfj: 479, crrfflinl: 518, qqezcukcg: 805, afjecjlpe: 768, toleugsmf: 847, xjggnopdk: 704, ddnbmyxfw: 203, owjcpenpo: 904, bveuqfvin: 31, ndiqhbqtx: 508, utqmacqce: 131, aepnbfhfd: 385, ahdcvbjjc: 481, jdsouvasn: 96, nrlztqags: 504, ommbrpyad: 178 };
+  all.push(t12);
+  const t13: Record<string, number> = { lxveykriv: 709, rnrtqftfi: 131, etxeuetqd: 880, szudfrykc: 32, crtrppjxi: 457, etwujdbpz: 96, djdzyylem: 511, fwgdkmoin: 491, iegtroeha: 135, etakhbsxw: 463, xonmcgwzc: 733, vvordcjwu: 530, qapbhtnqt: 352, urlpqksbt: 209, qnkvryfyg: 77, glhxxbmwr: 220, zeuvufvuc: 172, molfefeij: 225, xtotrpezj: 997, sknsputlc: 398, kpecktuow: 272, qxmtorvhn: 755, wwczwonoz: 519, nhektkgii: 906 };
+  all.push(t13);
+  const t14: Record<string, number> = { fojgqkmot: 429, gomrrzjxk: 476, ufabuhjkg: 67, ogmaxxbqu: 392, ckumowenx: 583, hdqbwkpyo: 659, gmltsizwp: 724, fgyeknsll: 307, gzopouzbu: 415, smtjknlhi: 474, wgebxhagp: 925, lzgskonnm: 158, wjioagbdi: 696, gwcjiixzv: 50, ibfmcrrnt: 818, ztzwuwhss: 869, hprqlgzmq: 752, iyqeklyrt: 520, hprbegtuq: 202, uaqsllxxh: 517, pkujkjflx: 231, eksirusvj: 26, psksdafhz: 498, kcvshdhbq: 437 };
+  all.push(t14);
+  const t15: Record<string, number> = { oecophjgq: 659, pahfjnccx: 109, yhfuvzocj: 672, imbpouxfj: 30, qhygnwnnx: 905, gfnuqsqjw: 871, zexbqmcwz: 976, cqhlhxlop: 186, wkponwlvr: 211, mloossrys: 952, gmasegvqr: 66, gowjwsodw: 472, veynmsumf: 718, zlsiqpgix: 683, xxbfcfslp: 38, gfukbjfyd: 800, hqjzsmipk: 820, vreunmuzk: 627, wntszixoy: 771, tkdkahxte: 974, lhbbpsgwl: 525, fvwolusau: 739, anltixrch: 863, exycuykgb: 597 };
+  all.push(t15);
+  const t16: Record<string, number> = { ecokudzuh: 576, yspojvzwq: 36, nzuukdkcc: 426, bkmzvonfx: 412, ynxexhpkt: 966, pfkmoekle: 632, lidupujft: 507, fsijkfvoc: 938, jfqdngalr: 991, ahjrhttrq: 620, zgfuusjjg: 402, ooxelnjzm: 723, xipsthraw: 128, cywebaylh: 863, fiwahetzs: 288, uiuzeydpc: 205, tpgqhcmyi: 190, cnylhccfv: 98, aficbzmar: 216, ihcsrfmcq: 717, dcaphbkvm: 331, giufqbmjd: 915, ycimfcftk: 155, zfapkxwjs: 459 };
+  all.push(t16);
+  const t17: Record<string, number> = { doqercyyg: 182, dvprzjjzc: 977, xdzmqpsvb: 693, quivdmtdd: 983, yfiqdqmcn: 389, befusqgek: 768, mgsoucvgo: 451, zeppydxpn: 679, bmqajdbcy: 874, zozopyfrb: 876, bmylxxppq: 997, jzyeobqrh: 674, rknmiaatd: 892, bwsoabnnx: 885, ogrepcipu: 190, pmahngnde: 672, iiwwgdcpv: 849, megpzhdcf: 911, jobaejnsh: 549, ywyzofzuk: 253, kzliuklaj: 686, cnhouytle: 890, wvmzfhvrg: 590, owiktelgj: 142 };
+  all.push(t17);
+  const t18: Record<string, number> = { mpbkilsbi: 874, hudcdfhhy: 854, bvoxhktiz: 63, bmzryajdu: 143, hqrjhmvtj: 721, kpagfdqjm: 437, sbvpnvanl: 324, spgqxrupe: 627, arbyciwar: 48, ytkxnpzsn: 111, kqoytxjfq: 52, lfgwbfpmf: 517, imkzbjmnj: 414, mlvxmjuzq: 213, pvkhijqll: 827, ecuzknmkd: 929, bcmevrvlb: 584, oylhpofhx: 391, lprocfjdv: 228, amtctatzd: 502, mgfkfmrny: 165, xnfyfnxks: 412, ojqrvkxof: 94, zienffwwy: 81 };
+  all.push(t18);
+  const t19: Record<string, number> = { nxaqswbaw: 758, mjlxhxxiy: 189, zjbzrtjmw: 806, okakdspwu: 725, hhcetchto: 941, hqjxvmiyi: 90, nppzacwbb: 102, xhgzjemrc: 832, epjzjqryi: 221, bceqcauyp: 338, omztndkko: 583, rsbdmqkdf: 112, btbbruwtf: 604, ftbguqnyi: 994, qcpsbcprs: 416, khelaljss: 635, krbhqelxb: 361, mosfrsizi: 604, hynkxwlyp: 219, pturlzvwa: 997, xrkssurby: 80, bccmikdnz: 494, tdzecgyrs: 658, zbcalgnjl: 731 };
+  all.push(t19);
+  const t20: Record<string, number> = { pkbevoown: 253, gatrtqpot: 670, xaieirefp: 151, cilniphgk: 484, rrhlrsoxg: 838, sctnfmtab: 459, fevrqyanb: 827, uwzklhmhg: 347, lwwgdklnd: 668, uweeyfaqy: 577, ndwrbfifx: 661, iyfbbkzis: 629, yczuqhhfk: 598, ttvfcqxcc: 871, tuidukmew: 942, jenmyvhoh: 820, bbwjuochv: 137, sryuxvdhj: 303, qqemomsuj: 685, ifyshomze: 696, qhfjiedso: 190, difbgqqlj: 787, wwjpkmdhl: 444, dlafiseou: 725 };
+  all.push(t20);
+  const t21: Record<string, number> = { zqcrcdfvp: 633, nfuecdwbo: 710, jdqclzkqe: 572, batoyccnb: 281, bkhavgqje: 810, yjrtsslxz: 362, kktazscqt: 321, wpucohxuc: 684, cykgpkgfq: 657, ubzpmtmxe: 294, rhdncgypc: 459, gqzpmdghp: 960, smfctywgd: 509, nbrunsvdf: 698, dvmxnhrpi: 268, oozpamehg: 653, jzwmdgpad: 863, kpfozlisv: 633, ccstohhio: 152, jnxmkcfil: 629, jwbqkhwwh: 979, tffqvatdg: 143, rrulnkgum: 514, nrfgvhgfo: 201 };
+  all.push(t21);
+  const t22: Record<string, number> = { zjntsysya: 398, kmhpsoxoi: 757, glykwcmjb: 461, tymkibxmv: 95, grhxlvoum: 282, ijwhpitov: 41, dhfzdjryp: 395, fgsordjqg: 618, pytgkadlr: 18, xmhxbbfme: 471, kbksremdw: 466, ehmemvncw: 792, lsyebweeg: 734, zkioqukdv: 540, cyqtrrssi: 907, qvvtrfnfx: 530, obniesoma: 990, rxmrlyugz: 962, knggylbzj: 946, uidbiktbx: 902, raknduqrk: 353, ajlbpulip: 164, hkwjwaday: 106, btmjgwgqm: 621 };
+  all.push(t22);
+  const t23: Record<string, number> = { mimepdynr: 140, esrwayckg: 164, pmrxuoatk: 807, yowxykiju: 656, pqaswrude: 469, sdyqlxbgw: 127, mcvegwxto: 644, iigndxcmn: 919, anktegasg: 943, dvurccilo: 290, gsplazquf: 228, ojvyvlmhj: 874, oiksfqtes: 590, rdrsqoflo: 831, trsbtczmm: 667, fubgqtwmj: 597, bssleaypv: 288, ukzpapmnp: 831, isfimfejf: 628, adbpabxxv: 572, hbkdkcuvl: 333, hivsmptjy: 519, pivsjiqgo: 458, sandbcner: 99 };
+  all.push(t23);
+  const t24: Record<string, number> = { ljabnphnj: 654, tznrqogeq: 46, ipzqbwdub: 77, flxdzccyg: 267, scgqfwxgs: 99, xygaltszw: 725, cpkzkvdcu: 914, gbyaagbof: 623, zmalvcdyl: 84, rcbvyuaee: 784, izhyazwux: 404, kesdietkq: 173, jcjzkosuv: 442, fhmbqsucl: 260, ayqrqhiex: 89, qsnruzggw: 404, ttxanvies: 821, jhvmlsbne: 553, jarxuqett: 786, vkiidnlbh: 313, iquhuihoy: 658, rungyedyu: 819, fwlylvesw: 680, qomgarnwz: 920 };
+  all.push(t24);
+  const t25: Record<string, number> = { lbvohubeo: 327, wgjuxjmbn: 724, dxpxyiuhk: 192, taopsyygs: 747, meuftgxuj: 54, fdpyabuks: 420, dbutyeemb: 566, esooovtrt: 182, ivyxvryxa: 494, lljtdpcox: 22, vicuilxqc: 137, adtgogbca: 333, ojljpweep: 297, htzefygbf: 992, zhzglbhpo: 891, ptkqcjztj: 901, gluzyunlg: 528, nahkdktwk: 835, wthessysy: 148, arthydjcg: 898, qdsrhmlek: 11, qkbiyervy: 434, zrrwtbrvn: 618, slrebvcas: 711 };
+  all.push(t25);
+  const t26: Record<string, number> = { oyctlebla: 495, mgdrwtptu: 267, inddhsnxu: 886, busdkckfs: 549, iwjtfbyjf: 578, kzkknkzco: 95, pgrkofhla: 962, eoiscjefy: 255, qhftcbqzy: 681, nkhhdywon: 818, ucsifkwyy: 986, jzoriccft: 852, aprgornhk: 229, ndsvqitcl: 509, cvbqkhfvo: 190, fcyhfisxl: 763, bthgmubej: 305, ajpsfvics: 968, gyfnprogc: 163, bdidqudiv: 121, njhukzdys: 910, faldfsvmi: 473, igqrxbvbh: 730, vyoioqkgl: 592 };
+  all.push(t26);
+  const t27: Record<string, number> = { amfobfukp: 326, flxbimfur: 508, eqvgenhbu: 405, pkgfzcnfu: 20, vlzhrfolg: 677, ngpboptuq: 692, veqyzyssb: 257, xiuqkfwdk: 805, zikcsvspg: 841, ciocjlbkb: 769, cgegzfiyg: 32, axietrvvh: 132, ksdsuvvyv: 980, mobeemnvt: 715, iqztaugsm: 938, tekpmceti: 250, jqmbnbdld: 33, dksptgsoc: 175, yumzldeav: 663, ssxgsynpj: 46, bfttkuzcv: 14, uvxxcensi: 119, rdkameipp: 651, qzpkiglgj: 17 };
+  all.push(t27);
+  const t28: Record<string, number> = { dnroomvkg: 627, fpywntoat: 912, xcrmfdjti: 974, xbqtnpeux: 284, dtcyyqebb: 143, roqdlkrwe: 210, xadmrcwrt: 458, ahnodejfq: 287, umksptevm: 833, yqvxftlor: 743, odtpgyjww: 945, cwzmcwcgn: 831, ykyevduvu: 598, pdbnhlszt: 13, cigyrguam: 706, egfqcnlnh: 134, wsavrvzqe: 211, qlewdilmo: 91, wfmtlyipm: 161, vsreiqzvs: 100, jfmveojbt: 917, jlgvcenie: 88, njjirnyga: 26, rsfmqjnig: 978 };
+  all.push(t28);
+  const t29: Record<string, number> = { frhzpgeek: 525, hbhjwnixo: 529, mkinhygca: 184, qcofyqmno: 427, txzwbegmu: 739, sbjspcdhm: 19, elfzuecgk: 696, gfjxrdldm: 954, ahnhfjqra: 522, gddixasvf: 117, xqfswrvah: 309, sbjozptuv: 502, olqnggnms: 87, cdketylbw: 737, wtgrjkmnv: 341, bkqcjxmgr: 454, kfspiymgv: 404, tajsiznab: 579, uzvpgiltm: 222, xqlhuzcis: 721, ejciepwpw: 465, erglpqwhh: 48, tamblxmcd: 304, lqmlxkayo: 553 };
+  all.push(t29);
+  const t30: Record<string, number> = { ockrhnlau: 225, zboczudcu: 239, ycegufsog: 487, ejicfyuyn: 17, tlghiuuee: 872, nxbjchtxn: 175, qfdualjnp: 781, ylyneemld: 450, pakzaxuaj: 405, gtnfsndhb: 643, iurmfymeo: 885, ogefvkbof: 37, fcweztwao: 990, blrarsvep: 171, pfnhzhnwt: 431, gvbvxydaw: 565, ckfeihqze: 315, inisnrcxi: 598, reoskvncn: 186, rbwpyjyey: 272, togxkeggi: 625, kiwwhmoda: 516, ilcquvjmz: 64, jhbplrdlv: 456 };
+  all.push(t30);
+  const t31: Record<string, number> = { uiyjhehrf: 948, ntnzwxrxv: 61, panwtlqhz: 959, rsbmxvazu: 939, buvwwgxqc: 517, uwpvoxuvx: 554, ybiqwusah: 174, sowvsrstz: 396, cvxughmyc: 96, ukrdurqdq: 381, bjnjtwifx: 164, uyjrpqgvt: 490, frqafzvjf: 670, offthhowk: 754, gfafxzpzz: 311, zbywalsgb: 126, rpybhjebq: 741, yxqpipezf: 148, qrzoeebap: 407, ykvzdkqhs: 476, zexffdvrk: 385, lkzgsejbf: 959, qybshpnca: 213, qjosqucuy: 46 };
+  all.push(t31);
+  const t32: Record<string, number> = { oovvnhcjz: 616, zjvuqzdwy: 54, bveyiecnp: 703, cdxtmkheb: 544, behtkodar: 352, uldqdwmoz: 867, lnyefsnjx: 768, qhnhnvkra: 429, zzoodhcaj: 981, zqmrizfti: 167, ihagltfaq: 36, wbhohqdzn: 999, bspgyepoj: 249, ufxymgqsl: 230, zsiyqllix: 281, mcpjcggbq: 592, znlmagpem: 944, xsjozenhr: 618, fpghalbjn: 347, velirthkc: 580, gcqkqzlcy: 75, geleeibig: 15, ttfwvkxxa: 493, svzcurkpe: 681 };
+  all.push(t32);
+  const t33: Record<string, number> = { fftgirjrz: 861, uxjpvbehv: 447, cgoqsheeo: 950, ffimtbyub: 122, lbtccupko: 26, fzzmgnkch: 38, ytqjnldur: 940, aqhlghxrr: 899, xpepfmzni: 935, pgkbbfkyh: 421, ojojvzxah: 963, fjgeotdvz: 93, dxsdrpixy: 538, vkaoplmpo: 525, ckzmnzemk: 445, yipgwaoss: 666, hytsnwbgp: 530, iaceitsug: 998, tdadmxdah: 242, gdjmkebxt: 727, cxfwcdwid: 972, mlzdiutjy: 426, spnngzxyj: 676, vhmbvzpwc: 263 };
+  all.push(t33);
+  const t34: Record<string, number> = { zjvxufmck: 231, stbdfdybi: 389, qgmmqsjnl: 877, wzjabtzjt: 246, wcobbbuci: 996, bgqqqqgsp: 960, ltqsnqqtn: 485, feumsvpag: 892, tiokuhefg: 223, djqbycqes: 668, ixbbmgewo: 35, oawivxqsj: 499, fhncibjcv: 402, awyazblow: 12, vhlmbngct: 507, pbfqqslhq: 779, dufzarekg: 381, aphpfkqkm: 706, mnrttjqqp: 144, bicfuuvkl: 318, iyrevweqf: 835, zgmifueni: 289, xoinuivii: 657, gthxqktwe: 12 };
+  all.push(t34);
+  const t35: Record<string, number> = { jbjrpmdsg: 359, etoxppuzl: 505, glllgimsc: 362, sqzkdckyc: 976, dldaijrsz: 138, whhmoetxg: 323, aarxnitza: 199, aevwgwiqh: 564, grmfcwadl: 284, rddpgbagd: 164, vxrzttojz: 531, hfucivqia: 745, qilvwzoww: 965, kisgehias: 441, keqdmbppj: 246, vkzpvvzoo: 453, walossuqq: 234, eaxwsafvo: 239, nxyykaawe: 250, jjozuaaas: 338, ylxwbmqkz: 798, jiuvkfytd: 949, vysffxfpi: 581, bcpikldry: 255 };
+  all.push(t35);
+  const t36: Record<string, number> = { vtaojmoiv: 403, zfgxgnvzf: 848, eizknwtil: 898, kiuupugrt: 715, jzlkcooys: 164, xjjelikzz: 355, nhagututt: 149, qghchwxlf: 191, prxjcsark: 617, rzuaieemq: 636, hpdyhndxz: 482, voyszbcrt: 945, dleuyzlzd: 817, zxlranpzg: 263, ksbagsvbo: 340, ajwqzhrgg: 401, vpxjnsmwk: 57, gydjvjvex: 31, xitzrdcsa: 516, eseqdskox: 898, gpmupqxgu: 43, biytkyypy: 973, lmjqzzkdo: 477, ewncdzgrp: 868 };
+  all.push(t36);
+  const t37: Record<string, number> = { vynxfrzgb: 141, mnfzkwmgz: 286, ralwyfelg: 477, ykiezabkx: 817, lfanwicxl: 938, bzdvgkslm: 750, lyqzllnwk: 966, mxpaqcrbi: 385, glijhowxg: 995, fgyxvnkhf: 425, hmelyguqm: 127, msvhnrxvr: 13, gxairxtia: 181, uevmxaley: 740, zydrdxlhk: 814, gjaewzdih: 874, cdkoviinp: 815, gnsivjqdc: 951, qzmjezwpf: 483, txmqefnwt: 693, ntihenwyc: 462, srhlvvpmx: 970, afsqsuyll: 461, dlacccyeb: 619 };
+  all.push(t37);
+  const t38: Record<string, number> = { uohuccxwz: 773, ycbtordoj: 518, nwaamrolp: 447, evqsheimy: 404, adewvgbun: 543, lhzxsesin: 858, jxhjlniev: 268, fyxxxansn: 270, vuerjykhz: 835, lsnwmjrdh: 715, yfeqqamwh: 511, upwasylky: 511, nbmfmdnzj: 626, gsouizxcw: 973, gddmfbfvg: 870, lkevvmazl: 987, mwhufaoqt: 893, titxvipes: 159, mboxclpnt: 444, oevzwkpfp: 262, rdwmtwrab: 559, lmozcvymj: 326, cnnkuieco: 155, ldbpdrxiw: 593 };
+  all.push(t38);
+  const t39: Record<string, number> = { bfujlcahf: 754, jocbtaymj: 468, xtcmosgsl: 658, sigpagqxq: 635, pzhewquxz: 432, gweheejkn: 55, kcnieexzt: 344, byzhvcmqg: 413, ggpnlzdaz: 139, csphbpdtu: 590, qpnyyivji: 411, uwowemvxk: 675, mvgmewfez: 65, mspzzelxy: 336, nrjjuazuy: 93, xkqrdikzx: 886, wemggajuf: 400, qpthqsucg: 599, rbonyvwzz: 14, eijdjfsbt: 297, xxoatrnqs: 999, cyfsrtyzl: 818, tqywkjizd: 874, xznotiuxc: 579 };
+  all.push(t39);
+  const t40: Record<string, number> = { esdntjhzf: 506, xzdldbpth: 853, cvypxbiog: 264, nzeuicawe: 987, qkduvlkkg: 402, rqghxhfit: 208, njejfzaip: 390, rzmwudelj: 174, pdvwuhxjv: 65, lhbgwgucw: 761, waoayvpvn: 971, jqwabwfzf: 366, xlgkkuotj: 709, lotjokvmd: 863, ohwfnwwth: 923, xgxgznwhj: 631, tqxbzxwiw: 724, exezkudkl: 19, nojdfztkg: 203, dkgxlwbks: 763, vvcnvdypu: 637, xdromeohu: 323, bxnottdrk: 339, pltzddgsm: 367 };
+  all.push(t40);
+  const t41: Record<string, number> = { jtbkkubxr: 501, wnsrpiaju: 589, sxwhckchd: 722, lqxnnwoct: 312, wtkbtdarb: 360, tqfilztfo: 643, krppacexv: 590, djoeznoqd: 368, yyqjopjnp: 796, vtyxpzbla: 833, tqdynoglh: 772, gazlqlgvc: 961, szcwyklyc: 627, eupbyfhxd: 690, rosalksaz: 600, wjkrpgufa: 886, giyrneqcu: 197, gpziqnqrk: 862, qwgktdkli: 61, pdsgwqsed: 615, rexahcfix: 762, muevexevx: 953, bfwdlulrj: 521, slustttaz: 570 };
+  all.push(t41);
+  const t42: Record<string, number> = { ukxlnttqc: 723, sxatcphcj: 733, qmzlfqepz: 217, ebcgpddlx: 507, syyhfzthj: 399, ajyxutoku: 652, vliqoefyr: 741, rznwswxws: 396, dncopgvay: 653, qbncsxfcn: 363, lvnqrfefz: 244, pxnsolqoc: 666, aawuxmyll: 18, pvzjzbujx: 307, ipffqhfzx: 250, dlqgnxpcx: 272, tyyikupyt: 936, tqqbmrnzx: 818, kygrhdcgr: 769, voyhayxqt: 413, yecfsmqzo: 387, ogqbldbgi: 818, ucnknccvt: 263, snmigwsxg: 132 };
+  all.push(t42);
+  const t43: Record<string, number> = { nfazktypm: 82, olapkeoij: 426, mzarvmdfh: 382, cyxsbvwqw: 965, xmwxllggj: 226, yyaihjtqe: 505, smjnaosik: 583, yftzvyjby: 874, dosaubaol: 139, hstvovmqj: 143, dhstqzehb: 905, cgssrfdos: 868, spxzwggta: 242, senfneoue: 700, uuyqaqrup: 749, sisgkidvl: 652, rgkcfkdcs: 836, xvgseqwjp: 986, jngxjxrly: 652, hbssscgwh: 626, qdprfvpyx: 96, qtktetxse: 484, knbxarixo: 813, glypjpqcz: 898 };
+  all.push(t43);
+  const t44: Record<string, number> = { ndqsrzagx: 927, ummrcpoin: 965, dwerwclpm: 811, jjfjwveyt: 365, rhnqyhzmu: 820, mnhygdffj: 929, qdapyikkj: 964, hfrsooogu: 353, taikguctj: 734, pkokiulef: 188, tykstrpzz: 269, bbojryskb: 328, clfareevp: 85, rwraxppiw: 274, wepdjzrkm: 45, rycsoskbn: 531, fkusclrjk: 73, pvilcxswm: 617, hdngfrwec: 569, nunqexkis: 439, ykvtdbtdd: 96, bvtclbchb: 912, ejdplymxb: 662, xoekplnzt: 637 };
+  all.push(t44);
+  const t45: Record<string, number> = { fuvlxmtmt: 94, yeopwxdms: 666, ezgqvwfcn: 591, jmsfzppok: 840, dqibnzfbn: 883, ezayapnsj: 360, zswytrhfd: 249, pjgerjzut: 712, lklwjmhhg: 31, hvkltmdfy: 261, efqnnpkek: 296, omrxjniso: 318, ifssvcgox: 26, pvsvwubym: 255, didfilwfw: 570, seootgoek: 547, czxqwjtum: 531, yvfuveorq: 445, vghfejzhc: 22, bgcjpofwr: 623, zlfpdipxh: 618, pfrkijifh: 362, znqsolbrq: 386, oitismizq: 997 };
+  all.push(t45);
+  const t46: Record<string, number> = { tasnebnwl: 463, bxivulnve: 364, wuhvpkffk: 43, iqjbainau: 178, ikflgkcof: 9, lacfgcpfl: 283, lobhkdglt: 708, ifzjifwaf: 701, itqdxkdbk: 295, mgywtbbya: 820, bwaikakwq: 246, ujwrxnhbs: 218, qtfvdctxh: 649, eztcxhhun: 110, edxfgkldz: 706, jjdowmaan: 27, okrnlijpc: 255, wyvmssljm: 317, tjcwbupov: 969, gzriizwsr: 297, alhbknuvd: 110, opwzxwmew: 668, mxeopksuf: 136, wiuudqkdj: 418 };
+  all.push(t46);
+  const t47: Record<string, number> = { xmlbipdlw: 401, buaerqpko: 269, xnasrdfsr: 804, llrxbyqvi: 978, hvhhkfptg: 281, elrfmpkgt: 242, xkiuwlvdk: 875, xmgbxzbue: 632, teagvfjna: 165, fhcfaegij: 20, liniurakl: 773, ewavrqbct: 599, mecqultzz: 603, jhteftpyt: 119, eymtmojuh: 435, ncyojtvln: 393, utjrudmvv: 960, ziasexbyn: 208, pzsdniekr: 306, pplcmrohv: 570, axltgbeyq: 951, xetekagwf: 642, cqmnmqfdk: 803, gseuyuutv: 132 };
+  all.push(t47);
+  const t48: Record<string, number> = { gqlhacpbn: 80, pnitrercb: 361, blnupczmw: 351, ufudowmoj: 261, wceoqgmvd: 374, fwjxahnqb: 214, krzcipnyp: 879, bfjdhxtkm: 617, aqxtcvont: 43, vfeynhjax: 96, zzhoxllyb: 163, sjgbxiedj: 960, gjvffzuyw: 250, zochhbrra: 453, lnklzjqum: 225, txhatoovu: 523, heuxpnslg: 164, iagwvgygp: 41, abqajryiy: 587, hxbkgcwun: 673, mimlzbaqz: 682, drkupdzjb: 436, crgknbqdn: 23, vckwsyvlw: 88 };
+  all.push(t48);
+  const t49: Record<string, number> = { whvyxdnce: 319, ortcoixxv: 78, guvvpsmtt: 104, axslxhvps: 455, pqnsdwrtb: 720, fcrzustpp: 68, kwqcepvfg: 58, dvhlmiwuc: 801, cntaytees: 878, tbngfgqzv: 969, rspxtgdoh: 883, mzrvtvinh: 595, lzwjhlgen: 669, ppsztemce: 465, spglisvdl: 449, nilsvxsau: 482, eaoswtuyc: 252, bhrvzidwa: 492, rjaoenzrq: 9, nnqcnjbme: 939, omrubdcdl: 224, kbinrmkcb: 49, rfoksmdkn: 325, llilqxhcv: 609 };
+  all.push(t49);
+}
+if (process.argv[2]) fill();
+console.log(all.length);
+//// lists-of-constants/tables-small-s24-same.ts
+// Lists of constants: tables small  same. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const all: Record<string, number>[] = [];
+function fill() {
+  const t0: Record<string, number> = { mklpxadx: 351, cdpycyex: 419, dfbluexq: 79, iniexsel: 20, sabzqlod: 748, skhatlyp: 461, sjxnjxun: 232, ujxrhmvz: 467, vtjukpwp: 632, vqbapnqo: 733, bvsasioo: 322, gflkzywn: 455, kcbcpfoo: 407, rwpzznfx: 185, aibuxkov: 357, esjzqbgw: 372, gaeyacee: 124, syzjfmmc: 369, pvzbtayk: 230, kcrahfgn: 467, qfqphezk: 242, kagvjxpf: 101, txbzpltk: 0, tcnaokkm: 629 };
+  all.push(t0);
+  const t1: Record<string, number> = { mklpxadx: 828, cdpycyex: 892, dfbluexq: 108, iniexsel: 355, sabzqlod: 245, skhatlyp: 226, sjxnjxun: 311, ujxrhmvz: 33, vtjukpwp: 613, vqbapnqo: 91, bvsasioo: 292, gflkzywn: 385, kcbcpfoo: 896, rwpzznfx: 906, aibuxkov: 180, esjzqbgw: 250, gaeyacee: 393, syzjfmmc: 271, pvzbtayk: 559, kcrahfgn: 376, qfqphezk: 111, kagvjxpf: 818, txbzpltk: 969, tcnaokkm: 557 };
+  all.push(t1);
+  const t2: Record<string, number> = { mklpxadx: 754, cdpycyex: 630, dfbluexq: 402, iniexsel: 652, sabzqlod: 242, skhatlyp: 393, sjxnjxun: 289, ujxrhmvz: 253, vtjukpwp: 714, vqbapnqo: 335, bvsasioo: 5, gflkzywn: 973, kcbcpfoo: 776, rwpzznfx: 347, aibuxkov: 502, esjzqbgw: 937, gaeyacee: 819, syzjfmmc: 572, pvzbtayk: 194, kcrahfgn: 304, qfqphezk: 498, kagvjxpf: 764, txbzpltk: 118, tcnaokkm: 825 };
+  all.push(t2);
+  const t3: Record<string, number> = { mklpxadx: 841, cdpycyex: 249, dfbluexq: 169, iniexsel: 227, sabzqlod: 251, skhatlyp: 869, sjxnjxun: 780, ujxrhmvz: 838, vtjukpwp: 885, vqbapnqo: 457, bvsasioo: 359, gflkzywn: 686, kcbcpfoo: 493, rwpzznfx: 693, aibuxkov: 860, esjzqbgw: 51, gaeyacee: 806, syzjfmmc: 385, pvzbtayk: 480, kcrahfgn: 863, qfqphezk: 874, kagvjxpf: 945, txbzpltk: 247, tcnaokkm: 318 };
+  all.push(t3);
+  const t4: Record<string, number> = { mklpxadx: 886, cdpycyex: 598, dfbluexq: 587, iniexsel: 281, sabzqlod: 964, skhatlyp: 80, sjxnjxun: 159, ujxrhmvz: 477, vtjukpwp: 709, vqbapnqo: 782, bvsasioo: 839, gflkzywn: 429, kcbcpfoo: 645, rwpzznfx: 460, aibuxkov: 816, esjzqbgw: 903, gaeyacee: 999, syzjfmmc: 770, pvzbtayk: 240, kcrahfgn: 932, qfqphezk: 830, kagvjxpf: 37, txbzpltk: 654, tcnaokkm: 303 };
+  all.push(t4);
+  const t5: Record<string, number> = { mklpxadx: 207, cdpycyex: 420, dfbluexq: 259, iniexsel: 436, sabzqlod: 27, skhatlyp: 137, sjxnjxun: 99, ujxrhmvz: 668, vtjukpwp: 27, vqbapnqo: 564, bvsasioo: 852, gflkzywn: 397, kcbcpfoo: 296, rwpzznfx: 525, aibuxkov: 89, esjzqbgw: 550, gaeyacee: 457, syzjfmmc: 627, pvzbtayk: 780, kcrahfgn: 189, qfqphezk: 838, kagvjxpf: 419, txbzpltk: 16, tcnaokkm: 880 };
+  all.push(t5);
+  const t6: Record<string, number> = { mklpxadx: 238, cdpycyex: 22, dfbluexq: 919, iniexsel: 824, sabzqlod: 167, skhatlyp: 552, sjxnjxun: 767, ujxrhmvz: 225, vtjukpwp: 2, vqbapnqo: 239, bvsasioo: 216, gflkzywn: 864, kcbcpfoo: 0, rwpzznfx: 128, aibuxkov: 987, esjzqbgw: 91, gaeyacee: 359, syzjfmmc: 820, pvzbtayk: 356, kcrahfgn: 211, qfqphezk: 981, kagvjxpf: 959, txbzpltk: 601, tcnaokkm: 918 };
+  all.push(t6);
+  const t7: Record<string, number> = { mklpxadx: 465, cdpycyex: 337, dfbluexq: 960, iniexsel: 944, sabzqlod: 153, skhatlyp: 909, sjxnjxun: 149, ujxrhmvz: 51, vtjukpwp: 250, vqbapnqo: 590, bvsasioo: 503, gflkzywn: 678, kcbcpfoo: 929, rwpzznfx: 878, aibuxkov: 544, esjzqbgw: 208, gaeyacee: 374, syzjfmmc: 902, pvzbtayk: 854, kcrahfgn: 348, qfqphezk: 487, kagvjxpf: 202, txbzpltk: 406, tcnaokkm: 715 };
+  all.push(t7);
+  const t8: Record<string, number> = { mklpxadx: 643, cdpycyex: 734, dfbluexq: 998, iniexsel: 119, sabzqlod: 718, skhatlyp: 806, sjxnjxun: 387, ujxrhmvz: 92, vtjukpwp: 302, vqbapnqo: 114, bvsasioo: 793, gflkzywn: 405, kcbcpfoo: 356, rwpzznfx: 337, aibuxkov: 186, esjzqbgw: 391, gaeyacee: 905, syzjfmmc: 592, pvzbtayk: 104, kcrahfgn: 452, qfqphezk: 299, kagvjxpf: 688, txbzpltk: 30, tcnaokkm: 261 };
+  all.push(t8);
+  const t9: Record<string, number> = { mklpxadx: 988, cdpycyex: 678, dfbluexq: 388, iniexsel: 700, sabzqlod: 635, skhatlyp: 236, sjxnjxun: 119, ujxrhmvz: 754, vtjukpwp: 247, vqbapnqo: 639, bvsasioo: 408, gflkzywn: 302, kcbcpfoo: 422, rwpzznfx: 882, aibuxkov: 867, esjzqbgw: 459, gaeyacee: 522, syzjfmmc: 996, pvzbtayk: 747, kcrahfgn: 665, qfqphezk: 658, kagvjxpf: 231, txbzpltk: 60, tcnaokkm: 169 };
+  all.push(t9);
+  const t10: Record<string, number> = { mklpxadx: 677, cdpycyex: 991, dfbluexq: 527, iniexsel: 871, sabzqlod: 513, skhatlyp: 294, sjxnjxun: 308, ujxrhmvz: 402, vtjukpwp: 579, vqbapnqo: 855, bvsasioo: 743, gflkzywn: 291, kcbcpfoo: 893, rwpzznfx: 704, aibuxkov: 689, esjzqbgw: 396, gaeyacee: 480, syzjfmmc: 535, pvzbtayk: 60, kcrahfgn: 140, qfqphezk: 525, kagvjxpf: 170, txbzpltk: 46, tcnaokkm: 630 };
+  all.push(t10);
+  const t11: Record<string, number> = { mklpxadx: 156, cdpycyex: 813, dfbluexq: 670, iniexsel: 907, sabzqlod: 900, skhatlyp: 311, sjxnjxun: 750, ujxrhmvz: 454, vtjukpwp: 724, vqbapnqo: 20, bvsasioo: 539, gflkzywn: 757, kcbcpfoo: 671, rwpzznfx: 334, aibuxkov: 641, esjzqbgw: 57, gaeyacee: 306, syzjfmmc: 249, pvzbtayk: 170, kcrahfgn: 790, qfqphezk: 497, kagvjxpf: 461, txbzpltk: 918, tcnaokkm: 183 };
+  all.push(t11);
+  const t12: Record<string, number> = { mklpxadx: 843, cdpycyex: 755, dfbluexq: 951, iniexsel: 690, sabzqlod: 732, skhatlyp: 855, sjxnjxun: 248, ujxrhmvz: 258, vtjukpwp: 78, vqbapnqo: 832, bvsasioo: 273, gflkzywn: 951, kcbcpfoo: 41, rwpzznfx: 120, aibuxkov: 648, esjzqbgw: 588, gaeyacee: 98, syzjfmmc: 615, pvzbtayk: 10, kcrahfgn: 433, qfqphezk: 753, kagvjxpf: 784, txbzpltk: 797, tcnaokkm: 576 };
+  all.push(t12);
+  const t13: Record<string, number> = { mklpxadx: 130, cdpycyex: 649, dfbluexq: 486, iniexsel: 804, sabzqlod: 981, skhatlyp: 194, sjxnjxun: 437, ujxrhmvz: 270, vtjukpwp: 535, vqbapnqo: 62, bvsasioo: 11, gflkzywn: 617, kcbcpfoo: 629, rwpzznfx: 547, aibuxkov: 311, esjzqbgw: 425, gaeyacee: 314, syzjfmmc: 95, pvzbtayk: 949, kcrahfgn: 256, qfqphezk: 26, kagvjxpf: 463, txbzpltk: 115, tcnaokkm: 740 };
+  all.push(t13);
+  const t14: Record<string, number> = { mklpxadx: 211, cdpycyex: 502, dfbluexq: 646, iniexsel: 804, sabzqlod: 277, skhatlyp: 319, sjxnjxun: 105, ujxrhmvz: 41, vtjukpwp: 586, vqbapnqo: 383, bvsasioo: 263, gflkzywn: 411, kcbcpfoo: 496, rwpzznfx: 142, aibuxkov: 195, esjzqbgw: 156, gaeyacee: 542, syzjfmmc: 749, pvzbtayk: 844, kcrahfgn: 767, qfqphezk: 9, kagvjxpf: 922, txbzpltk: 827, tcnaokkm: 774 };
+  all.push(t14);
+  const t15: Record<string, number> = { mklpxadx: 955, cdpycyex: 312, dfbluexq: 92, iniexsel: 682, sabzqlod: 256, skhatlyp: 136, sjxnjxun: 130, ujxrhmvz: 984, vtjukpwp: 522, vqbapnqo: 647, bvsasioo: 934, gflkzywn: 225, kcbcpfoo: 778, rwpzznfx: 353, aibuxkov: 323, esjzqbgw: 618, gaeyacee: 648, syzjfmmc: 872, pvzbtayk: 588, kcrahfgn: 35, qfqphezk: 993, kagvjxpf: 813, txbzpltk: 479, tcnaokkm: 416 };
+  all.push(t15);
+  const t16: Record<string, number> = { mklpxadx: 159, cdpycyex: 763, dfbluexq: 270, iniexsel: 566, sabzqlod: 338, skhatlyp: 517, sjxnjxun: 111, ujxrhmvz: 946, vtjukpwp: 570, vqbapnqo: 289, bvsasioo: 148, gflkzywn: 604, kcbcpfoo: 697, rwpzznfx: 845, aibuxkov: 349, esjzqbgw: 433, gaeyacee: 831, syzjfmmc: 841, pvzbtayk: 50, kcrahfgn: 385, qfqphezk: 318, kagvjxpf: 575, txbzpltk: 603, tcnaokkm: 149 };
+  all.push(t16);
+  const t17: Record<string, number> = { mklpxadx: 86, cdpycyex: 566, dfbluexq: 679, iniexsel: 488, sabzqlod: 868, skhatlyp: 599, sjxnjxun: 317, ujxrhmvz: 447, vtjukpwp: 181, vqbapnqo: 595, bvsasioo: 183, gflkzywn: 813, kcbcpfoo: 551, rwpzznfx: 18, aibuxkov: 34, esjzqbgw: 75, gaeyacee: 622, syzjfmmc: 593, pvzbtayk: 955, kcrahfgn: 739, qfqphezk: 503, kagvjxpf: 497, txbzpltk: 48, tcnaokkm: 849 };
+  all.push(t17);
+  const t18: Record<string, number> = { mklpxadx: 39, cdpycyex: 790, dfbluexq: 72, iniexsel: 266, sabzqlod: 11, skhatlyp: 417, sjxnjxun: 298, ujxrhmvz: 968, vtjukpwp: 339, vqbapnqo: 256, bvsasioo: 668, gflkzywn: 416, kcbcpfoo: 85, rwpzznfx: 465, aibuxkov: 493, esjzqbgw: 953, gaeyacee: 372, syzjfmmc: 632, pvzbtayk: 514, kcrahfgn: 695, qfqphezk: 344, kagvjxpf: 303, txbzpltk: 398, tcnaokkm: 198 };
+  all.push(t18);
+  const t19: Record<string, number> = { mklpxadx: 15, cdpycyex: 858, dfbluexq: 375, iniexsel: 18, sabzqlod: 522, skhatlyp: 383, sjxnjxun: 680, ujxrhmvz: 610, vtjukpwp: 296, vqbapnqo: 852, bvsasioo: 568, gflkzywn: 81, kcbcpfoo: 738, rwpzznfx: 595, aibuxkov: 833, esjzqbgw: 600, gaeyacee: 532, syzjfmmc: 581, pvzbtayk: 656, kcrahfgn: 162, qfqphezk: 593, kagvjxpf: 962, txbzpltk: 946, tcnaokkm: 595 };
+  all.push(t19);
+  const t20: Record<string, number> = { mklpxadx: 237, cdpycyex: 744, dfbluexq: 179, iniexsel: 100, sabzqlod: 986, skhatlyp: 850, sjxnjxun: 733, ujxrhmvz: 332, vtjukpwp: 442, vqbapnqo: 756, bvsasioo: 950, gflkzywn: 393, kcbcpfoo: 599, rwpzznfx: 652, aibuxkov: 697, esjzqbgw: 703, gaeyacee: 834, syzjfmmc: 555, pvzbtayk: 172, kcrahfgn: 489, qfqphezk: 638, kagvjxpf: 399, txbzpltk: 218, tcnaokkm: 112 };
+  all.push(t20);
+  const t21: Record<string, number> = { mklpxadx: 5, cdpycyex: 857, dfbluexq: 27, iniexsel: 269, sabzqlod: 217, skhatlyp: 389, sjxnjxun: 277, ujxrhmvz: 566, vtjukpwp: 644, vqbapnqo: 144, bvsasioo: 374, gflkzywn: 224, kcbcpfoo: 494, rwpzznfx: 670, aibuxkov: 309, esjzqbgw: 775, gaeyacee: 310, syzjfmmc: 876, pvzbtayk: 258, kcrahfgn: 342, qfqphezk: 195, kagvjxpf: 928, txbzpltk: 521, tcnaokkm: 364 };
+  all.push(t21);
+  const t22: Record<string, number> = { mklpxadx: 736, cdpycyex: 72, dfbluexq: 832, iniexsel: 189, sabzqlod: 636, skhatlyp: 942, sjxnjxun: 375, ujxrhmvz: 590, vtjukpwp: 205, vqbapnqo: 225, bvsasioo: 842, gflkzywn: 956, kcbcpfoo: 254, rwpzznfx: 574, aibuxkov: 717, esjzqbgw: 600, gaeyacee: 381, syzjfmmc: 263, pvzbtayk: 814, kcrahfgn: 787, qfqphezk: 438, kagvjxpf: 816, txbzpltk: 363, tcnaokkm: 706 };
+  all.push(t22);
+  const t23: Record<string, number> = { mklpxadx: 925, cdpycyex: 483, dfbluexq: 427, iniexsel: 534, sabzqlod: 179, skhatlyp: 784, sjxnjxun: 915, ujxrhmvz: 212, vtjukpwp: 216, vqbapnqo: 662, bvsasioo: 621, gflkzywn: 687, kcbcpfoo: 616, rwpzznfx: 903, aibuxkov: 854, esjzqbgw: 739, gaeyacee: 788, syzjfmmc: 984, pvzbtayk: 82, kcrahfgn: 37, qfqphezk: 60, kagvjxpf: 895, txbzpltk: 121, tcnaokkm: 316 };
+  all.push(t23);
+  const t24: Record<string, number> = { mklpxadx: 51, cdpycyex: 171, dfbluexq: 182, iniexsel: 980, sabzqlod: 993, skhatlyp: 566, sjxnjxun: 797, ujxrhmvz: 372, vtjukpwp: 858, vqbapnqo: 782, bvsasioo: 880, gflkzywn: 636, kcbcpfoo: 925, rwpzznfx: 665, aibuxkov: 415, esjzqbgw: 826, gaeyacee: 149, syzjfmmc: 898, pvzbtayk: 79, kcrahfgn: 749, qfqphezk: 537, kagvjxpf: 657, txbzpltk: 822, tcnaokkm: 733 };
+  all.push(t24);
+  const t25: Record<string, number> = { mklpxadx: 432, cdpycyex: 91, dfbluexq: 329, iniexsel: 406, sabzqlod: 858, skhatlyp: 120, sjxnjxun: 275, ujxrhmvz: 757, vtjukpwp: 561, vqbapnqo: 680, bvsasioo: 851, gflkzywn: 838, kcbcpfoo: 886, rwpzznfx: 952, aibuxkov: 54, esjzqbgw: 724, gaeyacee: 383, syzjfmmc: 163, pvzbtayk: 987, kcrahfgn: 243, qfqphezk: 681, kagvjxpf: 588, txbzpltk: 610, tcnaokkm: 281 };
+  all.push(t25);
+  const t26: Record<string, number> = { mklpxadx: 786, cdpycyex: 512, dfbluexq: 791, iniexsel: 866, sabzqlod: 438, skhatlyp: 260, sjxnjxun: 944, ujxrhmvz: 850, vtjukpwp: 787, vqbapnqo: 109, bvsasioo: 914, gflkzywn: 938, kcbcpfoo: 608, rwpzznfx: 870, aibuxkov: 941, esjzqbgw: 621, gaeyacee: 220, syzjfmmc: 367, pvzbtayk: 133, kcrahfgn: 824, qfqphezk: 983, kagvjxpf: 696, txbzpltk: 172, tcnaokkm: 539 };
+  all.push(t26);
+  const t27: Record<string, number> = { mklpxadx: 954, cdpycyex: 760, dfbluexq: 577, iniexsel: 103, sabzqlod: 764, skhatlyp: 67, sjxnjxun: 892, ujxrhmvz: 18, vtjukpwp: 8, vqbapnqo: 733, bvsasioo: 187, gflkzywn: 104, kcbcpfoo: 337, rwpzznfx: 255, aibuxkov: 365, esjzqbgw: 453, gaeyacee: 47, syzjfmmc: 30, pvzbtayk: 74, kcrahfgn: 822, qfqphezk: 980, kagvjxpf: 603, txbzpltk: 505, tcnaokkm: 712 };
+  all.push(t27);
+  const t28: Record<string, number> = { mklpxadx: 264, cdpycyex: 784, dfbluexq: 934, iniexsel: 463, sabzqlod: 213, skhatlyp: 41, sjxnjxun: 121, ujxrhmvz: 487, vtjukpwp: 90, vqbapnqo: 339, bvsasioo: 24, gflkzywn: 831, kcbcpfoo: 756, rwpzznfx: 137, aibuxkov: 624, esjzqbgw: 880, gaeyacee: 245, syzjfmmc: 751, pvzbtayk: 153, kcrahfgn: 994, qfqphezk: 154, kagvjxpf: 202, txbzpltk: 159, tcnaokkm: 3 };
+  all.push(t28);
+  const t29: Record<string, number> = { mklpxadx: 721, cdpycyex: 413, dfbluexq: 647, iniexsel: 403, sabzqlod: 488, skhatlyp: 966, sjxnjxun: 128, ujxrhmvz: 147, vtjukpwp: 297, vqbapnqo: 630, bvsasioo: 358, gflkzywn: 311, kcbcpfoo: 256, rwpzznfx: 346, aibuxkov: 696, esjzqbgw: 268, gaeyacee: 265, syzjfmmc: 445, pvzbtayk: 526, kcrahfgn: 379, qfqphezk: 984, kagvjxpf: 663, txbzpltk: 825, tcnaokkm: 437 };
+  all.push(t29);
+  const t30: Record<string, number> = { mklpxadx: 537, cdpycyex: 254, dfbluexq: 812, iniexsel: 13, sabzqlod: 766, skhatlyp: 221, sjxnjxun: 698, ujxrhmvz: 664, vtjukpwp: 352, vqbapnqo: 733, bvsasioo: 160, gflkzywn: 233, kcbcpfoo: 774, rwpzznfx: 766, aibuxkov: 708, esjzqbgw: 739, gaeyacee: 955, syzjfmmc: 818, pvzbtayk: 426, kcrahfgn: 1, qfqphezk: 945, kagvjxpf: 352, txbzpltk: 430, tcnaokkm: 874 };
+  all.push(t30);
+  const t31: Record<string, number> = { mklpxadx: 921, cdpycyex: 701, dfbluexq: 179, iniexsel: 326, sabzqlod: 127, skhatlyp: 657, sjxnjxun: 93, ujxrhmvz: 432, vtjukpwp: 987, vqbapnqo: 816, bvsasioo: 393, gflkzywn: 241, kcbcpfoo: 130, rwpzznfx: 99, aibuxkov: 907, esjzqbgw: 222, gaeyacee: 50, syzjfmmc: 653, pvzbtayk: 484, kcrahfgn: 482, qfqphezk: 561, kagvjxpf: 818, txbzpltk: 473, tcnaokkm: 201 };
+  all.push(t31);
+  const t32: Record<string, number> = { mklpxadx: 495, cdpycyex: 6, dfbluexq: 133, iniexsel: 543, sabzqlod: 175, skhatlyp: 352, sjxnjxun: 262, ujxrhmvz: 284, vtjukpwp: 503, vqbapnqo: 851, bvsasioo: 878, gflkzywn: 605, kcbcpfoo: 150, rwpzznfx: 581, aibuxkov: 375, esjzqbgw: 727, gaeyacee: 314, syzjfmmc: 854, pvzbtayk: 658, kcrahfgn: 413, qfqphezk: 680, kagvjxpf: 981, txbzpltk: 136, tcnaokkm: 575 };
+  all.push(t32);
+  const t33: Record<string, number> = { mklpxadx: 380, cdpycyex: 246, dfbluexq: 402, iniexsel: 651, sabzqlod: 296, skhatlyp: 523, sjxnjxun: 163, ujxrhmvz: 881, vtjukpwp: 964, vqbapnqo: 788, bvsasioo: 856, gflkzywn: 577, kcbcpfoo: 307, rwpzznfx: 433, aibuxkov: 488, esjzqbgw: 271, gaeyacee: 900, syzjfmmc: 69, pvzbtayk: 282, kcrahfgn: 829, qfqphezk: 959, kagvjxpf: 601, txbzpltk: 482, tcnaokkm: 184 };
+  all.push(t33);
+  const t34: Record<string, number> = { mklpxadx: 129, cdpycyex: 754, dfbluexq: 230, iniexsel: 694, sabzqlod: 440, skhatlyp: 32, sjxnjxun: 487, ujxrhmvz: 377, vtjukpwp: 335, vqbapnqo: 276, bvsasioo: 795, gflkzywn: 552, kcbcpfoo: 580, rwpzznfx: 158, aibuxkov: 251, esjzqbgw: 845, gaeyacee: 351, syzjfmmc: 952, pvzbtayk: 277, kcrahfgn: 465, qfqphezk: 431, kagvjxpf: 399, txbzpltk: 945, tcnaokkm: 218 };
+  all.push(t34);
+  const t35: Record<string, number> = { mklpxadx: 369, cdpycyex: 562, dfbluexq: 699, iniexsel: 443, sabzqlod: 520, skhatlyp: 36, sjxnjxun: 616, ujxrhmvz: 664, vtjukpwp: 435, vqbapnqo: 960, bvsasioo: 276, gflkzywn: 985, kcbcpfoo: 505, rwpzznfx: 695, aibuxkov: 138, esjzqbgw: 304, gaeyacee: 588, syzjfmmc: 674, pvzbtayk: 89, kcrahfgn: 368, qfqphezk: 416, kagvjxpf: 376, txbzpltk: 850, tcnaokkm: 41 };
+  all.push(t35);
+  const t36: Record<string, number> = { mklpxadx: 748, cdpycyex: 329, dfbluexq: 442, iniexsel: 146, sabzqlod: 809, skhatlyp: 311, sjxnjxun: 371, ujxrhmvz: 590, vtjukpwp: 673, vqbapnqo: 214, bvsasioo: 648, gflkzywn: 80, kcbcpfoo: 368, rwpzznfx: 925, aibuxkov: 146, esjzqbgw: 887, gaeyacee: 443, syzjfmmc: 456, pvzbtayk: 559, kcrahfgn: 873, qfqphezk: 349, kagvjxpf: 265, txbzpltk: 73, tcnaokkm: 446 };
+  all.push(t36);
+  const t37: Record<string, number> = { mklpxadx: 103, cdpycyex: 228, dfbluexq: 425, iniexsel: 822, sabzqlod: 311, skhatlyp: 151, sjxnjxun: 577, ujxrhmvz: 134, vtjukpwp: 725, vqbapnqo: 899, bvsasioo: 853, gflkzywn: 942, kcbcpfoo: 650, rwpzznfx: 4, aibuxkov: 463, esjzqbgw: 678, gaeyacee: 365, syzjfmmc: 876, pvzbtayk: 139, kcrahfgn: 337, qfqphezk: 890, kagvjxpf: 632, txbzpltk: 388, tcnaokkm: 603 };
+  all.push(t37);
+  const t38: Record<string, number> = { mklpxadx: 911, cdpycyex: 828, dfbluexq: 39, iniexsel: 753, sabzqlod: 179, skhatlyp: 65, sjxnjxun: 991, ujxrhmvz: 818, vtjukpwp: 443, vqbapnqo: 282, bvsasioo: 756, gflkzywn: 220, kcbcpfoo: 218, rwpzznfx: 44, aibuxkov: 73, esjzqbgw: 551, gaeyacee: 981, syzjfmmc: 667, pvzbtayk: 685, kcrahfgn: 407, qfqphezk: 127, kagvjxpf: 300, txbzpltk: 362, tcnaokkm: 700 };
+  all.push(t38);
+  const t39: Record<string, number> = { mklpxadx: 252, cdpycyex: 718, dfbluexq: 664, iniexsel: 848, sabzqlod: 557, skhatlyp: 766, sjxnjxun: 963, ujxrhmvz: 617, vtjukpwp: 596, vqbapnqo: 771, bvsasioo: 437, gflkzywn: 552, kcbcpfoo: 355, rwpzznfx: 316, aibuxkov: 934, esjzqbgw: 969, gaeyacee: 207, syzjfmmc: 332, pvzbtayk: 790, kcrahfgn: 397, qfqphezk: 308, kagvjxpf: 87, txbzpltk: 244, tcnaokkm: 329 };
+  all.push(t39);
+  const t40: Record<string, number> = { mklpxadx: 577, cdpycyex: 755, dfbluexq: 765, iniexsel: 234, sabzqlod: 474, skhatlyp: 486, sjxnjxun: 618, ujxrhmvz: 690, vtjukpwp: 709, vqbapnqo: 583, bvsasioo: 305, gflkzywn: 549, kcbcpfoo: 45, rwpzznfx: 713, aibuxkov: 491, esjzqbgw: 597, gaeyacee: 821, syzjfmmc: 852, pvzbtayk: 101, kcrahfgn: 89, qfqphezk: 749, kagvjxpf: 787, txbzpltk: 87, tcnaokkm: 929 };
+  all.push(t40);
+  const t41: Record<string, number> = { mklpxadx: 354, cdpycyex: 614, dfbluexq: 637, iniexsel: 557, sabzqlod: 435, skhatlyp: 611, sjxnjxun: 246, ujxrhmvz: 228, vtjukpwp: 310, vqbapnqo: 515, bvsasioo: 265, gflkzywn: 272, kcbcpfoo: 619, rwpzznfx: 127, aibuxkov: 754, esjzqbgw: 229, gaeyacee: 40, syzjfmmc: 325, pvzbtayk: 250, kcrahfgn: 652, qfqphezk: 967, kagvjxpf: 890, txbzpltk: 771, tcnaokkm: 488 };
+  all.push(t41);
+  const t42: Record<string, number> = { mklpxadx: 946, cdpycyex: 369, dfbluexq: 636, iniexsel: 547, sabzqlod: 667, skhatlyp: 613, sjxnjxun: 980, ujxrhmvz: 790, vtjukpwp: 869, vqbapnqo: 257, bvsasioo: 220, gflkzywn: 506, kcbcpfoo: 29, rwpzznfx: 846, aibuxkov: 819, esjzqbgw: 815, gaeyacee: 538, syzjfmmc: 107, pvzbtayk: 164, kcrahfgn: 440, qfqphezk: 513, kagvjxpf: 317, txbzpltk: 245, tcnaokkm: 610 };
+  all.push(t42);
+  const t43: Record<string, number> = { mklpxadx: 391, cdpycyex: 159, dfbluexq: 347, iniexsel: 999, sabzqlod: 463, skhatlyp: 912, sjxnjxun: 257, ujxrhmvz: 844, vtjukpwp: 285, vqbapnqo: 429, bvsasioo: 810, gflkzywn: 630, kcbcpfoo: 552, rwpzznfx: 321, aibuxkov: 737, esjzqbgw: 527, gaeyacee: 946, syzjfmmc: 122, pvzbtayk: 795, kcrahfgn: 964, qfqphezk: 541, kagvjxpf: 788, txbzpltk: 207, tcnaokkm: 768 };
+  all.push(t43);
+  const t44: Record<string, number> = { mklpxadx: 974, cdpycyex: 145, dfbluexq: 897, iniexsel: 623, sabzqlod: 34, skhatlyp: 759, sjxnjxun: 865, ujxrhmvz: 502, vtjukpwp: 39, vqbapnqo: 92, bvsasioo: 273, gflkzywn: 444, kcbcpfoo: 466, rwpzznfx: 363, aibuxkov: 689, esjzqbgw: 786, gaeyacee: 645, syzjfmmc: 795, pvzbtayk: 52, kcrahfgn: 741, qfqphezk: 396, kagvjxpf: 685, txbzpltk: 948, tcnaokkm: 77 };
+  all.push(t44);
+  const t45: Record<string, number> = { mklpxadx: 884, cdpycyex: 155, dfbluexq: 587, iniexsel: 441, sabzqlod: 902, skhatlyp: 582, sjxnjxun: 363, ujxrhmvz: 749, vtjukpwp: 57, vqbapnqo: 269, bvsasioo: 583, gflkzywn: 221, kcbcpfoo: 50, rwpzznfx: 688, aibuxkov: 844, esjzqbgw: 434, gaeyacee: 171, syzjfmmc: 285, pvzbtayk: 687, kcrahfgn: 259, qfqphezk: 49, kagvjxpf: 946, txbzpltk: 947, tcnaokkm: 414 };
+  all.push(t45);
+  const t46: Record<string, number> = { mklpxadx: 531, cdpycyex: 133, dfbluexq: 606, iniexsel: 950, sabzqlod: 292, skhatlyp: 461, sjxnjxun: 32, ujxrhmvz: 220, vtjukpwp: 760, vqbapnqo: 229, bvsasioo: 592, gflkzywn: 417, kcbcpfoo: 207, rwpzznfx: 385, aibuxkov: 916, esjzqbgw: 946, gaeyacee: 489, syzjfmmc: 778, pvzbtayk: 513, kcrahfgn: 71, qfqphezk: 353, kagvjxpf: 88, txbzpltk: 682, tcnaokkm: 705 };
+  all.push(t46);
+  const t47: Record<string, number> = { mklpxadx: 935, cdpycyex: 35, dfbluexq: 971, iniexsel: 683, sabzqlod: 681, skhatlyp: 611, sjxnjxun: 52, ujxrhmvz: 31, vtjukpwp: 679, vqbapnqo: 728, bvsasioo: 869, gflkzywn: 807, kcbcpfoo: 73, rwpzznfx: 7, aibuxkov: 564, esjzqbgw: 507, gaeyacee: 287, syzjfmmc: 992, pvzbtayk: 402, kcrahfgn: 25, qfqphezk: 522, kagvjxpf: 650, txbzpltk: 957, tcnaokkm: 956 };
+  all.push(t47);
+  const t48: Record<string, number> = { mklpxadx: 682, cdpycyex: 614, dfbluexq: 334, iniexsel: 211, sabzqlod: 702, skhatlyp: 548, sjxnjxun: 539, ujxrhmvz: 493, vtjukpwp: 110, vqbapnqo: 661, bvsasioo: 474, gflkzywn: 118, kcbcpfoo: 863, rwpzznfx: 203, aibuxkov: 156, esjzqbgw: 492, gaeyacee: 297, syzjfmmc: 18, pvzbtayk: 822, kcrahfgn: 824, qfqphezk: 435, kagvjxpf: 191, txbzpltk: 784, tcnaokkm: 399 };
+  all.push(t48);
+  const t49: Record<string, number> = { mklpxadx: 280, cdpycyex: 701, dfbluexq: 600, iniexsel: 589, sabzqlod: 469, skhatlyp: 271, sjxnjxun: 404, ujxrhmvz: 48, vtjukpwp: 370, vqbapnqo: 382, bvsasioo: 62, gflkzywn: 49, kcbcpfoo: 983, rwpzznfx: 178, aibuxkov: 585, esjzqbgw: 477, gaeyacee: 696, syzjfmmc: 551, pvzbtayk: 95, kcrahfgn: 458, qfqphezk: 499, kagvjxpf: 686, txbzpltk: 825, tcnaokkm: 34 };
+  all.push(t49);
+}
+if (process.argv[2]) fill();
+console.log(all.length);
+//// lists-of-constants/tables-small-s48-different.ts
+// Lists of constants: tables small  different. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const all: Record<string, number>[] = [];
+function fill() {
+  const t0: Record<string, number> = { zzmpqnuse: 6, rwiqngjco: 838, vxnwpilgt: 333, ltydvkpgh: 658, dytezznnp: 640, lcgtetyfr: 419, ugnlyvxrl: 114, wxahymsyd: 98, exlinlgie: 244, xdlukkyxa: 394, ujwcwkvec: 379, lykbvafmp: 10, dwtlhalef: 548, svxiowusz: 607, oztxavckj: 960, gfmfmojvi: 419, fjldcixjn: 264, umolxykie: 508, ncavgstdp: 430, nivvjjbtp: 367, hhxndvpxo: 550, bdrfempno: 383, zyyrbkpku: 516, dwxlxbzbv: 221, cozefwjik: 196, ngqbgulji: 696, fytqmleuo: 438, bptnoevif: 725, vxjubmchx: 349, uxmwvpima: 476, appubfdhm: 379, zfzgpddku: 127, atgucgsgx: 816, bviqdcjxn: 537, cbzzxrszu: 328, teoavrwot: 254, qtmwmvljl: 516, iblcwiubn: 636, yjxphmija: 341, vgahuusya: 516, pfqevrksg: 870, ehcmomkwx: 843, leuxobxrv: 701, egmjwdnyb: 846, vtschkelx: 940, igyhjqxzs: 145, ugewbxfky: 909, hcisfvqvd: 909 };
+  all.push(t0);
+  const t1: Record<string, number> = { fxeturmby: 971, vqdkfylmo: 950, siiiuabht: 10, hygjdxnfi: 362, oiunkczne: 872, jrepizcbv: 549, qtircmegi: 94, ktfukauxz: 465, uioblxxtt: 225, tqekivoir: 259, sffapqwuo: 946, tstaisrnm: 502, mbutkqbwb: 534, lhlkxildu: 645, nrslqvqur: 792, vvaarrdjb: 889, brafkcjpg: 380, rkikiawls: 295, yctxsiguv: 162, zmszjmmmd: 709, msgytcdxi: 522, efkpecrog: 744, vlmkwrsxe: 99, zgjjnugyd: 528, sjqjunmmm: 156, urgemojem: 465, vjxhskccw: 7, cgmoegofu: 276, qxovodojh: 795, dxdkmhyzd: 373, nlgvucogv: 715, fpbfjtrvh: 115, rqxxwlwqq: 652, pquwjqknc: 383, qishzfjrq: 598, sppwlkrkn: 837, vhelsqkko: 700, vdmvtzayl: 481, zdgdyxcio: 133, jabwegusu: 46, sxnbdgywb: 498, zphkpcndm: 134, fegqkidzh: 467, vqwbokjbk: 329, nbyhckthe: 982, jeaqdixzl: 674, opgjuvqlu: 719, zaejpwwqm: 491 };
+  all.push(t1);
+  const t2: Record<string, number> = { zzuujrulo: 569, rltwyrefz: 23, dnvyzcboi: 172, cusfqespa: 165, qqdebrccu: 539, syidaixom: 727, xryrztbhb: 445, wngqmkwqg: 691, qlqwgmyii: 733, ninohmzyz: 304, dyyknqmrj: 146, hasfhjtbl: 589, mnkluxvcz: 732, zoibrpkwf: 854, hxzpcepod: 953, dfxrcslnw: 378, vpouayxhr: 309, jylxwcyrv: 394, xjahqswit: 715, ymsjxkluh: 21, degpwjxiu: 83, hmtgjnhas: 230, ddifaoaao: 212, pslefeyxt: 979, hxtgaaamo: 782, cgwzwemvu: 452, mbdvvqqod: 915, vvchfgdst: 547, kkiudoyov: 607, fsiuktaip: 587, rontqgory: 349, uqwxuhdjt: 793, plrxdavyb: 559, zsimudhbr: 571, vhunchyvg: 429, gdshuowqm: 591, lcjkkjgch: 528, ibotopfdk: 396, fmgruxuss: 404, atnxzjtfa: 310, vevnihheb: 823, aelfgehsx: 567, mnmdxnlhs: 144, iodhwojzh: 87, tasvpawjl: 505, pcdyqtyow: 172, rhfridnvk: 676, rgxtxdsia: 158 };
+  all.push(t2);
+  const t3: Record<string, number> = { tciwolgvb: 185, mjtyffetp: 956, yzcxubdrr: 406, pynhyaobv: 47, pletckauw: 190, gbqmmsdma: 660, wxrfxzgll: 578, slywjkxcm: 651, gqfrrdvts: 779, iynldyrvh: 92, vrsfqiggp: 45, lcadmgflc: 826, qcrzfyqdl: 815, zypositfw: 700, qfohtpnya: 639, nvxfshcyh: 826, wnzgxkqqf: 11, ukmdhlzkz: 281, ksztqxwhk: 452, clfhjqduu: 781, ujycbgzhb: 934, xgzfhozyg: 551, zusfobdtg: 117, vargafjoe: 196, zlholirsc: 372, dgtjeqasj: 996, xjlwgiwez: 595, lpxpdrmbh: 718, pwimyqdsu: 793, gmpccmovc: 773, qrlkaawbh: 917, vjpyqyiqb: 954, cmrfknacs: 265, oyzvrwyqt: 64, oscnbqhpc: 524, ohuiqytgp: 476, umceedwqz: 611, xhyulowtl: 508, dccxogmiy: 968, fukskfxyo: 367, qxmjztmct: 460, ugpkienwu: 429, vgnwhceig: 973, splxsirbx: 124, lwukqxwon: 553, wkichgekx: 41, rhalumgdj: 427, diungcpos: 917 };
+  all.push(t3);
+  const t4: Record<string, number> = { teguumjiv: 991, jgwzlxxjl: 738, rfqwthpjj: 56, hsugsoxra: 691, uuvewmefj: 116, cotsuwbvo: 47, ehlsecrek: 535, fabicalth: 77, tqgxylobm: 907, cfczxbrdb: 526, aqnhxtkbl: 537, kkarwixsa: 994, pgzqxhptq: 453, avaelflpj: 644, ionwydqhx: 629, izmgtmdzz: 650, cmgidnblz: 774, qqnsxnsbw: 40, ukhewsdtr: 494, nnntiuccz: 773, esgzuumwc: 596, zbjoducgs: 332, dkuhowgok: 173, rupwbnigr: 865, nwzuepauy: 83, tsezemjcy: 849, fblfflyzm: 935, ozwtridfu: 759, eyswpdmne: 791, biqudeenf: 179, auirjfhss: 981, fchggrjou: 297, nqpwmhrwk: 794, xmmtjzhso: 5, qyaomsuoh: 712, xbgvutmga: 621, sadwgtscb: 226, kfvxcahkq: 568, auvtnvctg: 306, xgdufmgry: 631, kajrwtmns: 663, gntzfsqsp: 218, znieqhrxa: 337, ftoqkzkhd: 608, bhrgpddqj: 455, oyflwtaqb: 186, jcetznwis: 873, vkbwpavvg: 630 };
+  all.push(t4);
+  const t5: Record<string, number> = { ksavgwgfd: 479, kmdlvmkvq: 533, qcoepredo: 953, afrpcysmk: 406, hbkfpkrlt: 385, rsmnwdiqi: 918, zjnrqctei: 895, ctgbnqysc: 792, tnzrgzojw: 515, klyopmyua: 751, ovulybivr: 965, cknutdczc: 520, pxuitvgng: 328, ylespyhdf: 810, jadspwkyd: 248, qcnwigevy: 419, ijohpxkgw: 264, sdvdzobkb: 45, erwyaandh: 202, vewgvaovy: 785, uywsfnylb: 402, iwmwynrwu: 283, wswppplxe: 768, jkbpyugbc: 827, qdqvjwdop: 244, zqudpdknb: 96, pqehrnulj: 320, xbzyfprfl: 474, ampqtuqbl: 771, qlbnknrai: 71, lhlptvwtj: 357, kmgjynlwd: 245, dycrmndnh: 564, qdsqnrwvz: 678, hawddanbu: 812, cazslgszk: 898, lbcnhyaqt: 864, goecbtill: 640, blwuqjonj: 807, sjqfhrqwb: 173, arkfjzvoh: 427, bggdeygjs: 657, auxltlpxi: 241, jkcdmrsde: 264, nrirfwmcy: 629, huftepyyi: 383, rqzoixeje: 680, okhpeexva: 989 };
+  all.push(t5);
+  const t6: Record<string, number> = { hvkjubaqo: 98, sfqslagpt: 974, jqolkjjuj: 246, wrrmkqsoq: 89, awljlovxi: 875, vytsivide: 559, pnelnesik: 681, vmtpucvdu: 770, pvicgeyzb: 146, obvtcgpki: 818, yxynnhfln: 135, atiiqiwgy: 76, bzoprrikv: 36, fnvasmsfd: 406, cokcpphxi: 660, rupbrfizf: 165, drejjfdhn: 123, jrmqeevnx: 26, uglsolzlt: 829, qptyfcmve: 738, xdgrclzts: 149, tvkcjgckw: 55, onqntgugx: 478, oeobonroq: 885, ofpbkaudv: 880, fwixmrnpr: 199, yjjxyfelq: 780, jkpnmznvn: 429, yiyylisrv: 550, pzjgvizqe: 619, kvrkqwzpn: 295, szvzocejt: 312, ogxukzpop: 248, ilshsvmhw: 910, vdmbtghhs: 167, irywtggrg: 980, yfkjlgfqs: 523, jzlwiziyt: 548, ajtruldil: 798, ojbfghhjl: 497, wvdnkunnt: 875, eujcytfvx: 829, hmpeooswr: 739, wdfetpjfo: 772, mjgsygrmx: 625, tdglbizdx: 799, ozbswkwcs: 52, dynbzmntp: 898 };
+  all.push(t6);
+  const t7: Record<string, number> = { nznukvwze: 177, kltnvrrtr: 108, gaudesivr: 724, hysdsnnxi: 645, mntnybhmg: 59, ttpxpcscs: 831, omtaxbdip: 374, clvtahtjy: 8, uhxwdqyxk: 107, nzkczljty: 919, xxoyigfqh: 583, ifmfnxjfz: 664, owostpsph: 452, tdcgheetv: 902, kaumyjhax: 622, hypjihaoo: 522, qmnushgcq: 439, aetuosgry: 49, vnyistkqw: 510, datbdhmxf: 490, vkjelqunk: 357, dxoaxkgtk: 65, elbhsbjxc: 529, uvravehdz: 217, apmhujeth: 968, rthmmugje: 745, bvqjkudho: 457, uufcwxvqf: 739, wxgyvbwdx: 593, symmfgupp: 73, adgrpcmyq: 699, callgmdhq: 71, pvraaqvdo: 249, cqfspryfn: 80, fgipvkuqk: 216, qdpdjvrsa: 566, ykjxyojqw: 156, xggloqoeu: 57, iuqvbaujy: 381, iifsxsmqn: 765, wgwsmnjej: 502, pryxfgiyi: 201, zhrquudvq: 477, ibljkhrxd: 809, wyziylbcj: 247, bfzjhyuqg: 100, gbumuaygg: 43, cekoxyiqf: 38 };
+  all.push(t7);
+  const t8: Record<string, number> = { lfcpuolxq: 399, flybgqxro: 352, jfnfmksjr: 899, nqoeoajey: 100, hyfesisqx: 91, jiyktqrag: 545, ofafpnmkr: 875, zmllaxcyj: 23, muhwqjjud: 519, vokosrabp: 386, xuljdkdou: 712, ianmnjykl: 836, gadftcayj: 478, msznrfksx: 139, rtawopspj: 638, zbeyvykxt: 186, hdhhinxss: 684, ukjyvlsdb: 753, qarqmmwts: 48, nmodthjcu: 201, iwambtjgg: 190, sdkrgvzpm: 905, cvepblrca: 37, btwmywhcl: 49, ccuwrkxvi: 485, pfskwhgvk: 789, msxzqesxu: 844, jnvruvhnl: 744, tcccilxpx: 738, ardnfbcci: 810, snmuttdwy: 589, taaysxsmm: 86, wtprmlhwr: 614, iqgkenrmp: 163, cnvfrsqhi: 279, idmpovpmx: 493, bwtslsvko: 657, tssgnalxn: 864, kqzmjjtdk: 974, wmfvwkoro: 911, havkkaope: 812, avxepgaiy: 369, paalgrgeg: 998, prnjlnvsh: 416, wxnrjncfr: 469, uzsvluytm: 580, zkqtbbhoa: 631, xjypezriw: 694 };
+  all.push(t8);
+  const t9: Record<string, number> = { hevahdyyf: 743, utxazixjx: 569, oxibzdcku: 202, bzfhjuypb: 81, nvnfounuu: 597, lxxgugamh: 434, rxukhcwdx: 813, jjkhfqdxi: 541, sjlqaacsx: 89, evhfmqkei: 122, gohbemhty: 389, iynuebwuc: 982, nixhcwalk: 631, uaqsbqugo: 315, dimzochjm: 762, bvkzbzktj: 885, chktaansy: 366, bsjjqkhbu: 570, mxzeawzyk: 127, dtbevmsxk: 671, jnbrduhvm: 611, papdjhwht: 911, eefqmdhjj: 550, amgyywojg: 679, uxnuntlbw: 702, khwmchebv: 221, ekjldcvsa: 326, hqilwwnlb: 869, mbzamiqyf: 838, tjhuqcflw: 125, tlfgwuwwd: 804, atpybpvvf: 135, igsjcnpjo: 674, rvrupogqi: 16, etobpnkyl: 868, ugmgzcejn: 921, cvlhegpyh: 608, obykmxrhc: 217, loiyuelsf: 904, yvnfnbyng: 98, vtwqzatte: 329, prhwruhje: 115, youcbgevs: 243, titjhgyow: 199, fswmfmfwt: 865, tdkdcjlfi: 517, uyekvtgui: 760, rsfyhwvyh: 258 };
+  all.push(t9);
+  const t10: Record<string, number> = { vcvkzzzcn: 600, yrqyappmj: 901, klgzrqpse: 491, hbijedafw: 705, qvknihsps: 578, qmznzjnha: 337, ntazjacla: 721, yaakzdzhp: 658, puaqdmhya: 552, mqydyngsz: 911, vlcvoepsb: 924, ocfbthuiv: 505, elyizuyec: 270, dueajatdh: 422, vnhfwdrak: 114, nsxhciwsj: 632, atrickizf: 725, atzpvrqgq: 43, yseialdhc: 316, hkzednqqp: 241, lkbfckffu: 727, qyhnmoazg: 548, odoiphuem: 926, ucgapmofl: 101, npohfxynt: 188, jtltebnwk: 665, ovocxuqzl: 554, srvmzqoct: 722, isglbbiha: 115, dsxxxsflr: 748, cdfrkzfon: 496, ngktbsynf: 36, neibmqhpl: 472, evwovrnny: 297, tjzquckic: 531, moibknwlq: 15, brmmcrtna: 388, ayncpggpb: 104, xeybaepyx: 237, dvvvfyeoy: 470, lgguesjww: 84, thtvnhczg: 807, qjhpxhira: 52, xqyfqyfgl: 458, vfckoobfr: 961, kstcfmcbk: 196, xmgmbaihe: 203, bwujvnjmd: 265 };
+  all.push(t10);
+  const t11: Record<string, number> = { qzyznkgxq: 934, jkysjyink: 958, rgwwmkotc: 925, ugkhhgzmd: 188, imxnwuiyi: 288, sipzkzolf: 936, lswrbguec: 171, pyammjkfr: 508, ziuhdpxpf: 764, uoucqgzgy: 36, vctazouxd: 706, ftzvdmgiq: 932, qdlxdtawv: 659, iigiqyusj: 83, altzcxjuv: 541, zlmgpnzsx: 298, mdzmzdqii: 331, wsmprgkfa: 181, rxiemhojj: 585, ynxthfrsh: 720, mfsijyxva: 509, rnjdbmhzx: 420, jejwntzhj: 499, hoxsxrcrd: 199, rndyccbvm: 281, idrapalwv: 936, ihogfqblo: 750, ejcmxrpxj: 668, byzefngcu: 93, uzosaoklf: 327, nwecnsmrq: 303, ysklixegq: 143, ljzfrygfh: 716, jedfuibdv: 469, nyqtanjfl: 55, tezurbixw: 557, gsbbyjcom: 864, tcfkccepf: 910, ulqwlksks: 943, vcwzmuvkv: 281, snvzoijja: 271, zuhzgfwgv: 928, qxjgevkod: 82, gaujmjrka: 611, jmjuqbjmm: 713, mfwnmghcp: 407, szqtkhyop: 941, qrdpcqcyt: 481 };
+  all.push(t11);
+  const t12: Record<string, number> = { edlylwjyp: 850, ghdexzbzi: 319, xcloqhyan: 457, xbqnjtxig: 788, rghjdgdzt: 61, yfncsfbhy: 742, wqawvcybk: 6, lklkxzyja: 177, vueqpvrjh: 647, kefysjuaa: 836, dmowrxkbt: 413, riycmewqa: 21, lvodagzmh: 920, xysvmjshg: 229, fkxzxdiwc: 302, jynfsoxcs: 34, oreyosspd: 872, tarchlgus: 711, dtcbefers: 875, kmlxhgcdn: 414, iiovftkwg: 593, yghwijzzj: 133, kuwnmajoa: 881, sibyqvmdg: 256, nablqgmha: 482, gvfexfiyu: 973, acdjimvmp: 900, gconlkrzq: 475, gcwrmymog: 637, gzcrjuxdx: 2, zlblsmfrl: 661, iycbwwdso: 6, lnrzvtdzz: 124, tijlgbhzh: 376, ckjmwtgca: 572, mpthtrspg: 675, pjwmqqvti: 350, muowinhqi: 301, rimitxsff: 998, dufmusnpy: 987, jcwunuaxs: 364, mgengdccy: 272, clvutzqqu: 156, savonxmmg: 23, njibmxhil: 575, msokwuqql: 752, ztivuovfw: 293, gatgdtndq: 334 };
+  all.push(t12);
+  const t13: Record<string, number> = { dtbjvbixb: 382, pzserpjzn: 784, jbrygxsxc: 234, wlswojmvf: 377, eyxubocog: 892, sauuhpmwp: 80, mfilfjyjp: 778, kmhljmamm: 7, dsncthgoy: 410, absnaxhyn: 963, ehmiztmbr: 543, cflwywxql: 608, yjcpceppg: 876, yticlqmek: 285, bbcdsvbed: 595, yifryehke: 540, cduprxjxj: 435, lctfkxsmb: 459, igtwqbuqj: 450, cekqsupka: 981, wnmcpuhxp: 636, kligjxbeg: 817, sqdwqrwru: 35, vkikptmhe: 140, usmkbdavt: 398, pxvpzzoyp: 967, rzahwwnmv: 557, kzqoapavs: 178, atofkcpqj: 661, snpbiwfsw: 609, hmaafobkp: 674, vdfczihvp: 300, zeswypqhl: 838, ckkcgzolh: 699, abimnsmzw: 364, cmtwwjzdf: 291, cqxfbklly: 38, rewnglaiy: 983, xbgrrjcok: 480, fgwqzblxs: 573, sdvcvqhbu: 189, ruxenedcq: 421, hysjvbwid: 252, haucbawzc: 495, yzoqqvrap: 115, gzdbjjsbh: 368, ocuevioef: 334, svyozxwsl: 957 };
+  all.push(t13);
+  const t14: Record<string, number> = { vitkfxntx: 164, erolqxpuc: 931, yiykwxypr: 488, jprclzxqf: 266, wvbbzteru: 464, fgpoqmjcg: 2, mjwahisyl: 114, ujhudvnho: 213, peukauykv: 591, jecpkuwcn: 287, qifcjnywm: 763, fnuwszeyy: 831, phyaedziy: 48, ypnihkpsu: 182, yfltnxucg: 614, jgzmuixlx: 979, qfltrvqnc: 781, qwaxgbhdg: 629, vtmuioanr: 97, deatohqeq: 506, faazqvvbj: 933, npngrlxbw: 921, bbpfglsnf: 395, wkkqkvemd: 624, ewxkyzzzr: 50, tqgzyygis: 398, avwzhejvm: 265, hfsroceij: 500, jekuzlifc: 246, bqeesoloi: 616, fvpctdfpp: 724, mxgtkrcqi: 550, ahhayyulq: 655, trcbgbdbz: 703, bthtbnjzg: 817, nvcthtghj: 778, qompgaozx: 101, exeakenbb: 943, dhzpavtls: 879, dlwzhujws: 908, yelofgegi: 606, vrkvicllr: 145, ubmyievob: 689, mvovzipus: 486, zonxnzadp: 643, etcvfibjf: 919, gkpxwloqx: 185, zhnexlkhn: 827 };
+  all.push(t14);
+  const t15: Record<string, number> = { dnpdyfard: 629, piiqyrmad: 741, dwgigjjdt: 812, qrpjikihz: 379, oxnpekomx: 761, npovigawe: 631, lscaldogl: 581, ynehoijta: 961, izggtpacu: 613, kyrquemcu: 994, yzwwuudfc: 830, ocetoplhe: 575, lsaseorjl: 413, cretcahvy: 551, gmpgjiihw: 277, xjpbwzupr: 643, uyflkzntr: 270, mmlxuenfn: 349, hjgpscseh: 522, qpizfuhkl: 907, nopkhnfsw: 988, blvbiwmei: 97, tawflwabs: 341, ahmamlnoc: 473, wtjxcaucu: 209, lsjembpgk: 616, psrslfigb: 281, kntwomwsy: 243, nhogoofpx: 149, pbdelcsrh: 868, fzhguxguu: 128, zhmadksaz: 930, dxapdensi: 341, jkyunljfw: 231, kvqqytard: 268, copfwttkr: 419, vrygutcdf: 877, wmrgltpiq: 543, fsexyuvgy: 503, cepgttdqn: 115, fnasbkkvo: 36, tfiupqhaq: 158, yporbxclm: 311, sasgmcmmc: 802, mhnhyhprl: 397, tpgazmmrv: 345, jwgumlcyq: 255, ivbyqoepv: 812 };
+  all.push(t15);
+  const t16: Record<string, number> = { evzqgcbjg: 117, tzycvzmft: 361, wyuwomnho: 468, rncivaxbh: 549, vpelnprst: 136, wgqjowxln: 588, amocwjtvf: 855, dgsdyatwk: 209, ywgfiycux: 940, wyepwdwkb: 750, mivmwckpl: 207, ehvztaoyr: 46, gvjlhkejt: 531, nqmnneksi: 187, xuqedwnwg: 973, zoifgcyns: 235, trzzjvuau: 615, nyynfupdy: 663, yjihnnjpz: 261, knucokynt: 257, zyrgscbpb: 36, wkqmlqlsq: 610, vxbfupqqx: 895, ggznqvhxw: 840, ndvwjaxid: 807, wdrvivaiy: 40, esjkvwybi: 630, yarlcsqro: 320, vlaebgqoe: 211, usfzioiju: 344, kaxrxasjt: 987, ntlkmnglg: 593, ifvhaszlc: 904, hettfdnxh: 703, tykaukthd: 875, scbchczjq: 999, ntexcsucb: 363, hxlaqfwix: 417, rsctcpcds: 612, lzctrvuzh: 223, qguzcyxsh: 875, ettghgkpk: 308, eefcpmevu: 409, tpfkheuaj: 979, qrxcxszmk: 276, kyfswpose: 486, gbweorvjc: 640, emyvxzhgq: 795 };
+  all.push(t16);
+  const t17: Record<string, number> = { hnudmmdpd: 98, xoppzvmqq: 503, rtkqzlkps: 874, aihdwrphm: 200, tqxquvihp: 888, cgbabhdsr: 199, vhccxsuzr: 664, pkpajgqya: 649, khbhbgrsj: 830, gwxqkgvtg: 665, asfkshwmc: 643, sclucyczc: 79, qjuuafvab: 282, slbxyusrj: 814, vefrodwsm: 574, wkqecukwe: 422, rrzidcvop: 298, tszfvlvqs: 698, brizrmxym: 840, eqghqcbgt: 972, bcricgciu: 592, cexhdikcs: 497, ptthcccfm: 392, aodyfvxkp: 335, ysyzotnzd: 136, wjstntqud: 756, uzyxktcfz: 223, amhjkurpd: 193, vhwxsmnzp: 337, ldgqmwhqd: 523, bzuxlqywd: 788, onlwiajql: 470, sebqqokjo: 31, zosbweoaz: 518, zpsnvxbya: 497, xpoysoyju: 900, bssecprmf: 428, xsvrifdny: 943, fwspjbpks: 486, tnnpnmscx: 534, fhguadsnd: 24, ppppcssko: 189, mdobcmwkd: 354, zskfehhnm: 777, rnwkkdsxf: 436, kyqogfcmv: 701, uhyghyssi: 751, nssmlcajb: 96 };
+  all.push(t17);
+  const t18: Record<string, number> = { rolusohzi: 56, uexbmrgla: 489, gdlegibaw: 848, tlpuytwsg: 270, qcoupbkba: 92, owkqguoex: 12, yrtxfnkzv: 356, juxgaafkl: 548, zaqusxpyd: 750, nphedtnod: 544, ytwpsvihq: 617, tprnktsgw: 1, jrcuspxwb: 664, znubjqxvv: 916, mbvsbtkpq: 129, eerifneya: 262, poksjtonw: 368, ihovtppcj: 771, xahfulvbu: 599, bsvsqjxei: 949, flikjelms: 952, lstoqrjvn: 178, otdagnkwg: 331, ojtggcmlf: 472, miaybmnna: 302, wrbkxlmdb: 827, zeucwwmnd: 600, vbwmttuvl: 820, rijlbnhtd: 682, axhqggvmn: 360, aribbvfxu: 63, eoubkhoiq: 13, yxpgwbhyj: 651, wibhezugw: 630, pxcobmefi: 990, eftsgoxpx: 314, qemzrhjsb: 751, gdggzpkja: 61, ejrjjmlhl: 668, djfxevmnl: 50, mripseppq: 511, jwjzelrel: 280, avgjqqors: 44, mpfdlreeo: 510, qgcfnnhkd: 761, winqhstaq: 893, ytsplblbm: 525, hbvwmvfes: 377 };
+  all.push(t18);
+  const t19: Record<string, number> = { gxepoyiwe: 596, wgcfbnwys: 819, gzgmtsysu: 341, whwvanfcr: 176, qbegadgpu: 952, bcctlkcyh: 647, aicjtjcki: 108, gqyuumyqt: 575, gdwmcbqsg: 585, uzqxygcre: 154, idlazqqxo: 767, jgavjedco: 961, tnjipowmg: 323, fckcwxnen: 136, jonyjfxhe: 468, buttvxjsq: 523, hyspelmwq: 557, hjpvnucyv: 725, ezmykpgab: 353, lyugxgvje: 408, tuyuygjge: 317, omrrdsoot: 650, nouwmhsxo: 343, wiptrwvjs: 86, nmaqvxhmr: 2, ifmbhleyk: 359, giaqrceks: 685, luhvrjcdc: 38, exnmidavm: 451, fqgbrlspe: 51, ingxnbqax: 105, azjclvtln: 235, vhlqnzpky: 423, wzaidinqg: 878, drjtoptnv: 164, igxneahkg: 865, tpjzreyrf: 536, lgcuzzbhc: 500, rlvgghlgk: 538, kjamotpov: 724, anaeiqcrb: 932, lnktwcquu: 617, iquilhjqt: 26, puwfmnfwv: 378, ojlanmmnr: 970, krjsnxnyn: 398, bqkinblgc: 820, rjhjnxclc: 981 };
+  all.push(t19);
+  const t20: Record<string, number> = { hteeiszev: 830, uojpozlws: 580, ondirxnnj: 419, cozlrocfr: 77, ulhvcjfij: 245, ghkziwxns: 608, wyzeyyuog: 193, ofrpgcrzv: 825, nbytkrsbb: 835, efwooqlqu: 33, ppdrqwhii: 917, erxpecpze: 45, ibdrwkgff: 844, nfxsgxgvg: 954, hhqlinlkx: 41, uqvdyrsll: 175, wmgnltbny: 653, tdfcmhtwl: 918, opsruslqq: 88, nzhzbaono: 752, bydlhiqnr: 159, mjpqfueta: 460, sedyyrrjm: 603, iqsdvtziz: 389, nrmfptcax: 480, nydwqkfss: 733, jmdxagopm: 997, aokhsapuc: 659, xfegeanbp: 764, ixlqiglyz: 638, stxtrtzci: 660, rpgztdklf: 745, rlwrjybog: 995, mcudylwpt: 251, jvaobeirp: 384, mntbtqsqt: 919, vizwvhnxz: 985, neidxlyhs: 157, ndbfzhgrs: 763, satyutipi: 478, izydixbth: 544, qitsyxeow: 381, etuzzwyrr: 980, vdjusyqhj: 554, zocjqiqmh: 840, ftqgmxuwa: 428, dtteopcfz: 708, ivasejjjv: 568 };
+  all.push(t20);
+  const t21: Record<string, number> = { zcludlgtj: 688, fzmzgebyt: 565, wgntcyxkq: 114, ykgnllpdj: 16, fedlikzyd: 365, vxpkinxep: 724, xqxoanjiy: 883, eyybcgvyg: 377, kqfyezsqe: 917, tgacimooe: 798, vsugunttf: 372, ohkhlnljs: 915, hlxujpxsy: 678, kcaiboeqi: 869, hgchqemcg: 56, cpiharqoa: 462, irfakmyhm: 29, jsadvdxun: 12, pvgnzreev: 588, uatltqyln: 447, wnpiedxds: 96, wfbphaeyv: 780, fldwthzxa: 954, hlfnquuep: 249, dhfgwzhwf: 931, tddjdzzux: 271, gwcdlqeqc: 165, mmwsvdgjm: 121, phtswcylx: 954, bwkgmddjj: 144, vvbzvejes: 566, xspzilzvf: 183, mrpfkdssz: 492, lsrjquilq: 251, nuvgjoiul: 299, aqsqzuowg: 900, dybclkxmr: 516, swsuulfdb: 792, ezkqefwki: 819, fdpusqcfy: 700, cvvtoqiww: 455, svvfpxboq: 253, aqmgwbdgc: 570, docootjma: 425, tiglxtcyt: 118, rjweaiman: 20, gstawizwf: 283, lxkggexhs: 232 };
+  all.push(t21);
+  const t22: Record<string, number> = { xyeaaqkbs: 574, asjeammge: 664, wuadscadq: 751, ytrhidhrw: 593, khnqlfjpx: 995, yauhbswjl: 388, cdgaibtil: 608, ubmuzrakj: 577, cdujpyywa: 26, vupkvyfqf: 848, xbkohxtig: 333, ylzsrgyyj: 222, tmpxjqkmo: 386, cowvwmorm: 199, pvhmvwyjs: 939, usruykphi: 792, ynxwomhpg: 467, mryqsqcwo: 417, smyatouyc: 518, qfexxezsl: 302, liwquummb: 211, smewinmwq: 379, fnohwbguo: 450, ftqrzmnpq: 280, ppaaipyom: 132, bvgibwjex: 454, acnoetvwo: 447, duwiwsosd: 756, hrjzjmzxn: 468, egdtpkhmr: 486, lrkmorffj: 108, ilhibgudg: 26, xljfauvvn: 803, fgnqwsbfj: 452, dyltszewk: 840, toxunrlou: 862, qdbnfivym: 511, wetademim: 396, fvuwdwtcs: 551, lbwlfdgsg: 961, icyeyhwen: 151, svdahnsqd: 107, lmxrwbsfo: 399, cfwubfame: 663, maruzsfxb: 85, fjowrauhs: 122, npdzulpgi: 951, syanbheqj: 939 };
+  all.push(t22);
+  const t23: Record<string, number> = { fuuhicriw: 310, bncxdzfwn: 219, xvikeslmo: 456, dfwiogpzl: 470, rssqdaucw: 247, zfbcplpog: 240, pyhezpnir: 130, vitxkvblk: 430, iwxuorhgz: 79, tbboleuwo: 861, tfocbbwox: 481, fomnaojrq: 853, jbrwdlebz: 939, uwfpjwisc: 589, fhfjomvrj: 55, rxqamfysi: 121, aorqnrmqg: 55, jiopsgqgs: 693, wvabewmqd: 896, flxgoqdhw: 114, cvdmtfeon: 93, lryxvjtfw: 140, vwpczotlu: 501, vabutdnpf: 393, zdsjzhgws: 584, bxsgdhpkt: 563, xbzozrotw: 541, axqgswptr: 754, clgxndtas: 424, bnobskpvc: 791, otcvxfzms: 822, xvetkvois: 152, kthszkfxc: 830, xtaxlmjfg: 723, rvbgepbza: 629, yeyqonpng: 234, uqiazuncy: 538, paxkfaisf: 881, txqhaxglx: 765, ozlwbeqch: 654, kuixiygzo: 255, gmirecdwz: 371, woiiouqwp: 981, ziqxbnxsj: 42, onrebbyam: 403, trqxpmkhv: 166, vgdnktqxd: 941, jhtqissca: 320 };
+  all.push(t23);
+  const t24: Record<string, number> = { gyhxojlgo: 663, jziwsdcfa: 825, hybrmiveu: 998, qjobtyuop: 717, marwlpwvk: 865, ztukssyjf: 572, fwgjqxcbk: 829, evmgloute: 794, ubezhsjlo: 206, zpbddtiip: 935, nrvtbsjqq: 608, kputjklkg: 167, qhnoqweys: 15, vopgamjpv: 18, qkghthzuj: 338, ansjtatgh: 987, siksbhqyw: 457, czfjrsabs: 317, nvxfpswdd: 104, wmqzwebvs: 563, saihdouea: 7, bnykzkmnc: 102, ueucnmluh: 117, tdpsomvle: 730, qjchrswas: 203, qndwkwnnf: 425, mjunososy: 590, vtrncxsri: 662, bcheuwaai: 476, buaixxcfi: 888, grjrefoxy: 469, abxnqavwj: 757, jiuzotxne: 346, qjtvsdtcl: 101, cvlnildsq: 722, ockouvafy: 923, uzrmwwhdi: 874, vnjghcspn: 137, jtjmfwkzc: 134, yrbmftwsg: 689, tctatxnse: 941, fwmxexkwm: 941, pacssstiy: 74, icailulhe: 275, gkqnltesp: 584, nkwbenyba: 430, rycwzuahx: 629, vgoaspuup: 96 };
+  all.push(t24);
+}
+if (process.argv[2]) fill();
+console.log(all.length);
+//// lists-of-constants/tables-small-s48-same.ts
+// Lists of constants: tables small  same. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const all: Record<string, number>[] = [];
+function fill() {
+  const t0: Record<string, number> = { dputyqdq: 274, rwxcneol: 653, whaomtzg: 914, ewetbzhw: 62, espujoof: 827, hdxamiun: 590, mkjbtjsw: 732, xuddpevv: 89, udiupqnl: 819, eehlbeyl: 286, hxonhltj: 620, ddtntclg: 595, gkduvndr: 315, zpbakliv: 375, oeazkdrx: 945, ijxojbhj: 526, nuiyxqjj: 895, pupumivd: 914, lqywlbux: 694, apswdcnt: 463, bhbzopix: 379, pbkapmgl: 813, crbovzcw: 74, vfynxktk: 116, gychrisc: 500, izsvwrzb: 862, noqecojw: 203, sdzqdhby: 863, itfgqowt: 421, ajucliyn: 618, rwkkyzqj: 773, kxcpgvkp: 153, xpifmsxc: 397, jinuxisp: 651, bqkrbrmk: 701, auxouxqr: 557, zpnkmlcq: 561, ysnsexsq: 836, riocctww: 510, ybswtono: 560, cjxshida: 630, elzxnymr: 929, tzpdolvj: 335, lbygmqkp: 988, homjoqxs: 864, vhzhmfnb: 482, samicjaf: 185, ksybiiko: 676 };
+  all.push(t0);
+  const t1: Record<string, number> = { dputyqdq: 823, rwxcneol: 749, whaomtzg: 84, ewetbzhw: 538, espujoof: 624, hdxamiun: 148, mkjbtjsw: 438, xuddpevv: 877, udiupqnl: 812, eehlbeyl: 43, hxonhltj: 34, ddtntclg: 998, gkduvndr: 663, zpbakliv: 871, oeazkdrx: 292, ijxojbhj: 537, nuiyxqjj: 895, pupumivd: 816, lqywlbux: 220, apswdcnt: 896, bhbzopix: 216, pbkapmgl: 547, crbovzcw: 244, vfynxktk: 47, gychrisc: 779, izsvwrzb: 327, noqecojw: 489, sdzqdhby: 157, itfgqowt: 995, ajucliyn: 366, rwkkyzqj: 530, kxcpgvkp: 946, xpifmsxc: 922, jinuxisp: 271, bqkrbrmk: 56, auxouxqr: 745, zpnkmlcq: 436, ysnsexsq: 830, riocctww: 958, ybswtono: 892, cjxshida: 492, elzxnymr: 519, tzpdolvj: 661, lbygmqkp: 281, homjoqxs: 996, vhzhmfnb: 756, samicjaf: 586, ksybiiko: 822 };
+  all.push(t1);
+  const t2: Record<string, number> = { dputyqdq: 738, rwxcneol: 678, whaomtzg: 73, ewetbzhw: 274, espujoof: 476, hdxamiun: 555, mkjbtjsw: 960, xuddpevv: 863, udiupqnl: 855, eehlbeyl: 4, hxonhltj: 991, ddtntclg: 432, gkduvndr: 660, zpbakliv: 797, oeazkdrx: 560, ijxojbhj: 379, nuiyxqjj: 881, pupumivd: 574, lqywlbux: 833, apswdcnt: 324, bhbzopix: 732, pbkapmgl: 9, crbovzcw: 988, vfynxktk: 451, gychrisc: 402, izsvwrzb: 783, noqecojw: 739, sdzqdhby: 483, itfgqowt: 57, ajucliyn: 78, rwkkyzqj: 806, kxcpgvkp: 860, xpifmsxc: 53, jinuxisp: 883, bqkrbrmk: 52, auxouxqr: 478, zpnkmlcq: 808, ysnsexsq: 794, riocctww: 835, ybswtono: 854, cjxshida: 384, elzxnymr: 791, tzpdolvj: 19, lbygmqkp: 209, homjoqxs: 634, vhzhmfnb: 893, samicjaf: 969, ksybiiko: 444 };
+  all.push(t2);
+  const t3: Record<string, number> = { dputyqdq: 686, rwxcneol: 280, whaomtzg: 898, ewetbzhw: 841, espujoof: 535, hdxamiun: 851, mkjbtjsw: 67, xuddpevv: 929, udiupqnl: 18, eehlbeyl: 885, hxonhltj: 728, ddtntclg: 87, gkduvndr: 836, zpbakliv: 615, oeazkdrx: 222, ijxojbhj: 231, nuiyxqjj: 491, pupumivd: 43, lqywlbux: 12, apswdcnt: 107, bhbzopix: 370, pbkapmgl: 310, crbovzcw: 921, vfynxktk: 476, gychrisc: 922, izsvwrzb: 524, noqecojw: 394, sdzqdhby: 894, itfgqowt: 993, ajucliyn: 889, rwkkyzqj: 451, kxcpgvkp: 160, xpifmsxc: 785, jinuxisp: 361, bqkrbrmk: 66, auxouxqr: 756, zpnkmlcq: 519, ysnsexsq: 755, riocctww: 378, ybswtono: 495, cjxshida: 982, elzxnymr: 228, tzpdolvj: 199, lbygmqkp: 91, homjoqxs: 38, vhzhmfnb: 821, samicjaf: 843, ksybiiko: 124 };
+  all.push(t3);
+  const t4: Record<string, number> = { dputyqdq: 845, rwxcneol: 507, whaomtzg: 552, ewetbzhw: 721, espujoof: 49, hdxamiun: 143, mkjbtjsw: 396, xuddpevv: 816, udiupqnl: 903, eehlbeyl: 642, hxonhltj: 896, ddtntclg: 569, gkduvndr: 441, zpbakliv: 248, oeazkdrx: 533, ijxojbhj: 488, nuiyxqjj: 717, pupumivd: 802, lqywlbux: 117, apswdcnt: 178, bhbzopix: 633, pbkapmgl: 427, crbovzcw: 49, vfynxktk: 343, gychrisc: 56, izsvwrzb: 246, noqecojw: 180, sdzqdhby: 530, itfgqowt: 852, ajucliyn: 310, rwkkyzqj: 299, kxcpgvkp: 132, xpifmsxc: 832, jinuxisp: 228, bqkrbrmk: 53, auxouxqr: 692, zpnkmlcq: 82, ysnsexsq: 280, riocctww: 793, ybswtono: 739, cjxshida: 820, elzxnymr: 390, tzpdolvj: 339, lbygmqkp: 226, homjoqxs: 940, vhzhmfnb: 328, samicjaf: 120, ksybiiko: 48 };
+  all.push(t4);
+  const t5: Record<string, number> = { dputyqdq: 426, rwxcneol: 311, whaomtzg: 271, ewetbzhw: 622, espujoof: 487, hdxamiun: 327, mkjbtjsw: 20, xuddpevv: 475, udiupqnl: 768, eehlbeyl: 496, hxonhltj: 249, ddtntclg: 755, gkduvndr: 232, zpbakliv: 586, oeazkdrx: 557, ijxojbhj: 292, nuiyxqjj: 4, pupumivd: 356, lqywlbux: 572, apswdcnt: 115, bhbzopix: 909, pbkapmgl: 215, crbovzcw: 179, vfynxktk: 905, gychrisc: 851, izsvwrzb: 577, noqecojw: 489, sdzqdhby: 750, itfgqowt: 942, ajucliyn: 724, rwkkyzqj: 837, kxcpgvkp: 352, xpifmsxc: 717, jinuxisp: 4, bqkrbrmk: 384, auxouxqr: 684, zpnkmlcq: 455, ysnsexsq: 414, riocctww: 74, ybswtono: 465, cjxshida: 935, elzxnymr: 379, tzpdolvj: 616, lbygmqkp: 353, homjoqxs: 319, vhzhmfnb: 506, samicjaf: 797, ksybiiko: 601 };
+  all.push(t5);
+  const t6: Record<string, number> = { dputyqdq: 542, rwxcneol: 589, whaomtzg: 871, ewetbzhw: 730, espujoof: 762, hdxamiun: 489, mkjbtjsw: 400, xuddpevv: 323, udiupqnl: 928, eehlbeyl: 593, hxonhltj: 93, ddtntclg: 998, gkduvndr: 576, zpbakliv: 946, oeazkdrx: 117, ijxojbhj: 445, nuiyxqjj: 574, pupumivd: 351, lqywlbux: 968, apswdcnt: 466, bhbzopix: 213, pbkapmgl: 653, crbovzcw: 253, vfynxktk: 214, gychrisc: 174, izsvwrzb: 139, noqecojw: 221, sdzqdhby: 697, itfgqowt: 885, ajucliyn: 590, rwkkyzqj: 349, kxcpgvkp: 856, xpifmsxc: 669, jinuxisp: 177, bqkrbrmk: 407, auxouxqr: 683, zpnkmlcq: 92, ysnsexsq: 55, riocctww: 231, ybswtono: 239, cjxshida: 949, elzxnymr: 425, tzpdolvj: 72, lbygmqkp: 335, homjoqxs: 27, vhzhmfnb: 146, samicjaf: 333, ksybiiko: 912 };
+  all.push(t6);
+  const t7: Record<string, number> = { dputyqdq: 511, rwxcneol: 665, whaomtzg: 376, ewetbzhw: 914, espujoof: 526, hdxamiun: 750, mkjbtjsw: 582, xuddpevv: 336, udiupqnl: 339, eehlbeyl: 423, hxonhltj: 980, ddtntclg: 753, gkduvndr: 237, zpbakliv: 600, oeazkdrx: 223, ijxojbhj: 272, nuiyxqjj: 403, pupumivd: 332, lqywlbux: 999, apswdcnt: 478, bhbzopix: 944, pbkapmgl: 508, crbovzcw: 963, vfynxktk: 967, gychrisc: 807, izsvwrzb: 317, noqecojw: 266, sdzqdhby: 500, itfgqowt: 605, ajucliyn: 191, rwkkyzqj: 550, kxcpgvkp: 418, xpifmsxc: 692, jinuxisp: 617, bqkrbrmk: 583, auxouxqr: 78, zpnkmlcq: 185, ysnsexsq: 450, riocctww: 102, ybswtono: 395, cjxshida: 718, elzxnymr: 463, tzpdolvj: 363, lbygmqkp: 220, homjoqxs: 642, vhzhmfnb: 800, samicjaf: 699, ksybiiko: 797 };
+  all.push(t7);
+  const t8: Record<string, number> = { dputyqdq: 971, rwxcneol: 654, whaomtzg: 280, ewetbzhw: 42, espujoof: 364, hdxamiun: 570, mkjbtjsw: 366, xuddpevv: 387, udiupqnl: 543, eehlbeyl: 468, hxonhltj: 768, ddtntclg: 632, gkduvndr: 703, zpbakliv: 363, oeazkdrx: 273, ijxojbhj: 560, nuiyxqjj: 206, pupumivd: 671, lqywlbux: 753, apswdcnt: 811, bhbzopix: 145, pbkapmgl: 607, crbovzcw: 746, vfynxktk: 6, gychrisc: 203, izsvwrzb: 268, noqecojw: 170, sdzqdhby: 651, itfgqowt: 266, ajucliyn: 246, rwkkyzqj: 490, kxcpgvkp: 242, xpifmsxc: 379, jinuxisp: 548, bqkrbrmk: 48, auxouxqr: 861, zpnkmlcq: 996, ysnsexsq: 404, riocctww: 951, ybswtono: 428, cjxshida: 412, elzxnymr: 252, tzpdolvj: 129, lbygmqkp: 371, homjoqxs: 947, vhzhmfnb: 719, samicjaf: 349, ksybiiko: 609 };
+  all.push(t8);
+  const t9: Record<string, number> = { dputyqdq: 256, rwxcneol: 398, whaomtzg: 716, ewetbzhw: 883, espujoof: 637, hdxamiun: 406, mkjbtjsw: 120, xuddpevv: 126, udiupqnl: 797, eehlbeyl: 464, hxonhltj: 610, ddtntclg: 795, gkduvndr: 183, zpbakliv: 186, oeazkdrx: 514, ijxojbhj: 549, nuiyxqjj: 319, pupumivd: 206, lqywlbux: 897, apswdcnt: 273, bhbzopix: 692, pbkapmgl: 553, crbovzcw: 311, vfynxktk: 995, gychrisc: 841, izsvwrzb: 877, noqecojw: 987, sdzqdhby: 832, itfgqowt: 267, ajucliyn: 843, rwkkyzqj: 487, kxcpgvkp: 738, xpifmsxc: 63, jinuxisp: 497, bqkrbrmk: 911, auxouxqr: 93, zpnkmlcq: 490, ysnsexsq: 146, riocctww: 383, ybswtono: 608, cjxshida: 343, elzxnymr: 627, tzpdolvj: 120, lbygmqkp: 688, homjoqxs: 287, vhzhmfnb: 236, samicjaf: 692, ksybiiko: 982 };
+  all.push(t9);
+  const t10: Record<string, number> = { dputyqdq: 288, rwxcneol: 276, whaomtzg: 620, ewetbzhw: 46, espujoof: 781, hdxamiun: 354, mkjbtjsw: 460, xuddpevv: 586, udiupqnl: 856, eehlbeyl: 269, hxonhltj: 676, ddtntclg: 866, gkduvndr: 433, zpbakliv: 320, oeazkdrx: 972, ijxojbhj: 933, nuiyxqjj: 434, pupumivd: 405, lqywlbux: 488, apswdcnt: 721, bhbzopix: 192, pbkapmgl: 887, crbovzcw: 615, vfynxktk: 977, gychrisc: 796, izsvwrzb: 964, noqecojw: 476, sdzqdhby: 618, itfgqowt: 771, ajucliyn: 206, rwkkyzqj: 942, kxcpgvkp: 863, xpifmsxc: 81, jinuxisp: 778, bqkrbrmk: 817, auxouxqr: 273, zpnkmlcq: 841, ysnsexsq: 567, riocctww: 414, ybswtono: 751, cjxshida: 227, elzxnymr: 359, tzpdolvj: 728, lbygmqkp: 106, homjoqxs: 91, vhzhmfnb: 629, samicjaf: 0, ksybiiko: 155 };
+  all.push(t10);
+  const t11: Record<string, number> = { dputyqdq: 709, rwxcneol: 616, whaomtzg: 259, ewetbzhw: 535, espujoof: 988, hdxamiun: 367, mkjbtjsw: 958, xuddpevv: 943, udiupqnl: 831, eehlbeyl: 689, hxonhltj: 317, ddtntclg: 493, gkduvndr: 656, zpbakliv: 228, oeazkdrx: 272, ijxojbhj: 714, nuiyxqjj: 122, pupumivd: 121, lqywlbux: 739, apswdcnt: 105, bhbzopix: 32, pbkapmgl: 89, crbovzcw: 86, vfynxktk: 546, gychrisc: 460, izsvwrzb: 644, noqecojw: 823, sdzqdhby: 543, itfgqowt: 174, ajucliyn: 919, rwkkyzqj: 854, kxcpgvkp: 338, xpifmsxc: 84, jinuxisp: 437, bqkrbrmk: 339, auxouxqr: 317, zpnkmlcq: 25, ysnsexsq: 418, riocctww: 725, ybswtono: 270, cjxshida: 53, elzxnymr: 669, tzpdolvj: 283, lbygmqkp: 754, homjoqxs: 107, vhzhmfnb: 970, samicjaf: 30, ksybiiko: 196 };
+  all.push(t11);
+  const t12: Record<string, number> = { dputyqdq: 428, rwxcneol: 91, whaomtzg: 525, ewetbzhw: 390, espujoof: 369, hdxamiun: 300, mkjbtjsw: 11, xuddpevv: 655, udiupqnl: 992, eehlbeyl: 344, hxonhltj: 809, ddtntclg: 682, gkduvndr: 438, zpbakliv: 878, oeazkdrx: 561, ijxojbhj: 808, nuiyxqjj: 462, pupumivd: 676, lqywlbux: 665, apswdcnt: 344, bhbzopix: 312, pbkapmgl: 164, crbovzcw: 520, vfynxktk: 140, gychrisc: 802, izsvwrzb: 91, noqecojw: 858, sdzqdhby: 989, itfgqowt: 538, ajucliyn: 415, rwkkyzqj: 434, kxcpgvkp: 628, xpifmsxc: 186, jinuxisp: 424, bqkrbrmk: 613, auxouxqr: 3, zpnkmlcq: 444, ysnsexsq: 356, riocctww: 361, ybswtono: 12, cjxshida: 27, elzxnymr: 897, tzpdolvj: 547, lbygmqkp: 870, homjoqxs: 489, vhzhmfnb: 968, samicjaf: 630, ksybiiko: 79 };
+  all.push(t12);
+  const t13: Record<string, number> = { dputyqdq: 341, rwxcneol: 857, whaomtzg: 534, ewetbzhw: 484, espujoof: 688, hdxamiun: 974, mkjbtjsw: 379, xuddpevv: 290, udiupqnl: 737, eehlbeyl: 80, hxonhltj: 853, ddtntclg: 110, gkduvndr: 957, zpbakliv: 370, oeazkdrx: 222, ijxojbhj: 81, nuiyxqjj: 503, pupumivd: 992, lqywlbux: 849, apswdcnt: 354, bhbzopix: 602, pbkapmgl: 221, crbovzcw: 520, vfynxktk: 141, gychrisc: 307, izsvwrzb: 980, noqecojw: 608, sdzqdhby: 4, itfgqowt: 380, ajucliyn: 612, rwkkyzqj: 737, kxcpgvkp: 22, xpifmsxc: 138, jinuxisp: 55, bqkrbrmk: 38, auxouxqr: 590, zpnkmlcq: 663, ysnsexsq: 913, riocctww: 565, ybswtono: 154, cjxshida: 527, elzxnymr: 135, tzpdolvj: 337, lbygmqkp: 130, homjoqxs: 867, vhzhmfnb: 961, samicjaf: 628, ksybiiko: 285 };
+  all.push(t13);
+  const t14: Record<string, number> = { dputyqdq: 558, rwxcneol: 869, whaomtzg: 355, ewetbzhw: 53, espujoof: 960, hdxamiun: 65, mkjbtjsw: 73, xuddpevv: 81, udiupqnl: 156, eehlbeyl: 780, hxonhltj: 180, ddtntclg: 446, gkduvndr: 99, zpbakliv: 532, oeazkdrx: 975, ijxojbhj: 504, nuiyxqjj: 315, pupumivd: 627, lqywlbux: 393, apswdcnt: 322, bhbzopix: 365, pbkapmgl: 882, crbovzcw: 698, vfynxktk: 450, gychrisc: 234, izsvwrzb: 148, noqecojw: 420, sdzqdhby: 795, itfgqowt: 41, ajucliyn: 765, rwkkyzqj: 53, kxcpgvkp: 890, xpifmsxc: 284, jinuxisp: 558, bqkrbrmk: 215, auxouxqr: 374, zpnkmlcq: 685, ysnsexsq: 354, riocctww: 596, ybswtono: 241, cjxshida: 987, elzxnymr: 714, tzpdolvj: 742, lbygmqkp: 703, homjoqxs: 405, vhzhmfnb: 348, samicjaf: 610, ksybiiko: 366 };
+  all.push(t14);
+  const t15: Record<string, number> = { dputyqdq: 564, rwxcneol: 318, whaomtzg: 85, ewetbzhw: 779, espujoof: 529, hdxamiun: 410, mkjbtjsw: 49, xuddpevv: 134, udiupqnl: 54, eehlbeyl: 419, hxonhltj: 473, ddtntclg: 373, gkduvndr: 263, zpbakliv: 303, oeazkdrx: 144, ijxojbhj: 140, nuiyxqjj: 155, pupumivd: 204, lqywlbux: 897, apswdcnt: 597, bhbzopix: 259, pbkapmgl: 300, crbovzcw: 829, vfynxktk: 737, gychrisc: 390, izsvwrzb: 343, noqecojw: 820, sdzqdhby: 695, itfgqowt: 740, ajucliyn: 905, rwkkyzqj: 647, kxcpgvkp: 947, xpifmsxc: 258, jinuxisp: 891, bqkrbrmk: 610, auxouxqr: 921, zpnkmlcq: 409, ysnsexsq: 665, riocctww: 341, ybswtono: 694, cjxshida: 192, elzxnymr: 449, tzpdolvj: 942, lbygmqkp: 569, homjoqxs: 557, vhzhmfnb: 349, samicjaf: 265, ksybiiko: 129 };
+  all.push(t15);
+  const t16: Record<string, number> = { dputyqdq: 383, rwxcneol: 802, whaomtzg: 30, ewetbzhw: 578, espujoof: 596, hdxamiun: 181, mkjbtjsw: 986, xuddpevv: 401, udiupqnl: 787, eehlbeyl: 487, hxonhltj: 625, ddtntclg: 826, gkduvndr: 621, zpbakliv: 43, oeazkdrx: 842, ijxojbhj: 568, nuiyxqjj: 70, pupumivd: 545, lqywlbux: 807, apswdcnt: 315, bhbzopix: 434, pbkapmgl: 752, crbovzcw: 830, vfynxktk: 322, gychrisc: 236, izsvwrzb: 981, noqecojw: 467, sdzqdhby: 36, itfgqowt: 497, ajucliyn: 546, rwkkyzqj: 888, kxcpgvkp: 113, xpifmsxc: 295, jinuxisp: 245, bqkrbrmk: 531, auxouxqr: 361, zpnkmlcq: 508, ysnsexsq: 10, riocctww: 177, ybswtono: 7, cjxshida: 521, elzxnymr: 245, tzpdolvj: 213, lbygmqkp: 895, homjoqxs: 80, vhzhmfnb: 612, samicjaf: 214, ksybiiko: 354 };
+  all.push(t16);
+  const t17: Record<string, number> = { dputyqdq: 165, rwxcneol: 195, whaomtzg: 849, ewetbzhw: 552, espujoof: 932, hdxamiun: 631, mkjbtjsw: 815, xuddpevv: 58, udiupqnl: 777, eehlbeyl: 587, hxonhltj: 142, ddtntclg: 556, gkduvndr: 968, zpbakliv: 589, oeazkdrx: 701, ijxojbhj: 295, nuiyxqjj: 416, pupumivd: 153, lqywlbux: 267, apswdcnt: 122, bhbzopix: 678, pbkapmgl: 520, crbovzcw: 344, vfynxktk: 505, gychrisc: 979, izsvwrzb: 448, noqecojw: 661, sdzqdhby: 140, itfgqowt: 259, ajucliyn: 784, rwkkyzqj: 173, kxcpgvkp: 552, xpifmsxc: 874, jinuxisp: 210, bqkrbrmk: 673, auxouxqr: 579, zpnkmlcq: 283, ysnsexsq: 789, riocctww: 822, ybswtono: 45, cjxshida: 139, elzxnymr: 522, tzpdolvj: 425, lbygmqkp: 552, homjoqxs: 591, vhzhmfnb: 905, samicjaf: 41, ksybiiko: 993 };
+  all.push(t17);
+  const t18: Record<string, number> = { dputyqdq: 989, rwxcneol: 738, whaomtzg: 597, ewetbzhw: 908, espujoof: 208, hdxamiun: 292, mkjbtjsw: 614, xuddpevv: 903, udiupqnl: 169, eehlbeyl: 121, hxonhltj: 86, ddtntclg: 967, gkduvndr: 974, zpbakliv: 335, oeazkdrx: 261, ijxojbhj: 420, nuiyxqjj: 616, pupumivd: 496, lqywlbux: 704, apswdcnt: 231, bhbzopix: 753, pbkapmgl: 795, crbovzcw: 495, vfynxktk: 71, gychrisc: 307, izsvwrzb: 76, noqecojw: 156, sdzqdhby: 955, itfgqowt: 314, ajucliyn: 533, rwkkyzqj: 367, kxcpgvkp: 636, xpifmsxc: 15, jinuxisp: 881, bqkrbrmk: 674, auxouxqr: 320, zpnkmlcq: 108, ysnsexsq: 667, riocctww: 234, ybswtono: 601, cjxshida: 701, elzxnymr: 335, tzpdolvj: 685, lbygmqkp: 0, homjoqxs: 764, vhzhmfnb: 844, samicjaf: 845, ksybiiko: 753 };
+  all.push(t18);
+  const t19: Record<string, number> = { dputyqdq: 848, rwxcneol: 1, whaomtzg: 305, ewetbzhw: 235, espujoof: 935, hdxamiun: 148, mkjbtjsw: 454, xuddpevv: 337, udiupqnl: 80, eehlbeyl: 400, hxonhltj: 593, ddtntclg: 82, gkduvndr: 645, zpbakliv: 574, oeazkdrx: 761, ijxojbhj: 50, nuiyxqjj: 547, pupumivd: 22, lqywlbux: 55, apswdcnt: 457, bhbzopix: 676, pbkapmgl: 365, crbovzcw: 202, vfynxktk: 680, gychrisc: 521, izsvwrzb: 469, noqecojw: 725, sdzqdhby: 432, itfgqowt: 935, ajucliyn: 57, rwkkyzqj: 205, kxcpgvkp: 912, xpifmsxc: 298, jinuxisp: 711, bqkrbrmk: 266, auxouxqr: 296, zpnkmlcq: 587, ysnsexsq: 678, riocctww: 672, ybswtono: 239, cjxshida: 267, elzxnymr: 844, tzpdolvj: 396, lbygmqkp: 812, homjoqxs: 828, vhzhmfnb: 128, samicjaf: 467, ksybiiko: 711 };
+  all.push(t19);
+  const t20: Record<string, number> = { dputyqdq: 799, rwxcneol: 460, whaomtzg: 918, ewetbzhw: 624, espujoof: 173, hdxamiun: 640, mkjbtjsw: 630, xuddpevv: 101, udiupqnl: 156, eehlbeyl: 21, hxonhltj: 754, ddtntclg: 14, gkduvndr: 11, zpbakliv: 671, oeazkdrx: 360, ijxojbhj: 409, nuiyxqjj: 818, pupumivd: 204, lqywlbux: 428, apswdcnt: 249, bhbzopix: 747, pbkapmgl: 362, crbovzcw: 707, vfynxktk: 237, gychrisc: 520, izsvwrzb: 63, noqecojw: 958, sdzqdhby: 564, itfgqowt: 935, ajucliyn: 49, rwkkyzqj: 572, kxcpgvkp: 282, xpifmsxc: 478, jinuxisp: 983, bqkrbrmk: 389, auxouxqr: 59, zpnkmlcq: 120, ysnsexsq: 624, riocctww: 851, ybswtono: 996, cjxshida: 819, elzxnymr: 774, tzpdolvj: 261, lbygmqkp: 256, homjoqxs: 829, vhzhmfnb: 878, samicjaf: 913, ksybiiko: 238 };
+  all.push(t20);
+  const t21: Record<string, number> = { dputyqdq: 455, rwxcneol: 776, whaomtzg: 610, ewetbzhw: 289, espujoof: 23, hdxamiun: 332, mkjbtjsw: 527, xuddpevv: 386, udiupqnl: 212, eehlbeyl: 964, hxonhltj: 832, ddtntclg: 426, gkduvndr: 704, zpbakliv: 568, oeazkdrx: 719, ijxojbhj: 288, nuiyxqjj: 222, pupumivd: 184, lqywlbux: 809, apswdcnt: 856, bhbzopix: 841, pbkapmgl: 238, crbovzcw: 7, vfynxktk: 230, gychrisc: 118, izsvwrzb: 928, noqecojw: 170, sdzqdhby: 586, itfgqowt: 856, ajucliyn: 290, rwkkyzqj: 549, kxcpgvkp: 125, xpifmsxc: 58, jinuxisp: 932, bqkrbrmk: 26, auxouxqr: 944, zpnkmlcq: 414, ysnsexsq: 741, riocctww: 523, ybswtono: 390, cjxshida: 497, elzxnymr: 231, tzpdolvj: 812, lbygmqkp: 993, homjoqxs: 423, vhzhmfnb: 712, samicjaf: 436, ksybiiko: 329 };
+  all.push(t21);
+  const t22: Record<string, number> = { dputyqdq: 793, rwxcneol: 375, whaomtzg: 645, ewetbzhw: 643, espujoof: 347, hdxamiun: 753, mkjbtjsw: 390, xuddpevv: 161, udiupqnl: 253, eehlbeyl: 241, hxonhltj: 425, ddtntclg: 121, gkduvndr: 429, zpbakliv: 382, oeazkdrx: 67, ijxojbhj: 798, nuiyxqjj: 956, pupumivd: 114, lqywlbux: 781, apswdcnt: 124, bhbzopix: 326, pbkapmgl: 743, crbovzcw: 389, vfynxktk: 33, gychrisc: 697, izsvwrzb: 369, noqecojw: 66, sdzqdhby: 49, itfgqowt: 442, ajucliyn: 4, rwkkyzqj: 376, kxcpgvkp: 99, xpifmsxc: 485, jinuxisp: 58, bqkrbrmk: 583, auxouxqr: 979, zpnkmlcq: 889, ysnsexsq: 833, riocctww: 73, ybswtono: 898, cjxshida: 219, elzxnymr: 859, tzpdolvj: 535, lbygmqkp: 633, homjoqxs: 851, vhzhmfnb: 909, samicjaf: 545, ksybiiko: 568 };
+  all.push(t22);
+  const t23: Record<string, number> = { dputyqdq: 795, rwxcneol: 162, whaomtzg: 117, ewetbzhw: 493, espujoof: 496, hdxamiun: 519, mkjbtjsw: 592, xuddpevv: 205, udiupqnl: 509, eehlbeyl: 837, hxonhltj: 742, ddtntclg: 273, gkduvndr: 664, zpbakliv: 258, oeazkdrx: 293, ijxojbhj: 103, nuiyxqjj: 709, pupumivd: 416, lqywlbux: 756, apswdcnt: 348, bhbzopix: 715, pbkapmgl: 834, crbovzcw: 788, vfynxktk: 649, gychrisc: 762, izsvwrzb: 941, noqecojw: 771, sdzqdhby: 938, itfgqowt: 943, ajucliyn: 872, rwkkyzqj: 574, kxcpgvkp: 119, xpifmsxc: 865, jinuxisp: 220, bqkrbrmk: 575, auxouxqr: 441, zpnkmlcq: 535, ysnsexsq: 581, riocctww: 341, ybswtono: 460, cjxshida: 703, elzxnymr: 166, tzpdolvj: 111, lbygmqkp: 396, homjoqxs: 385, vhzhmfnb: 146, samicjaf: 854, ksybiiko: 771 };
+  all.push(t23);
+  const t24: Record<string, number> = { dputyqdq: 800, rwxcneol: 488, whaomtzg: 269, ewetbzhw: 6, espujoof: 638, hdxamiun: 644, mkjbtjsw: 967, xuddpevv: 657, udiupqnl: 904, eehlbeyl: 644, hxonhltj: 56, ddtntclg: 283, gkduvndr: 562, zpbakliv: 620, oeazkdrx: 0, ijxojbhj: 31, nuiyxqjj: 755, pupumivd: 798, lqywlbux: 46, apswdcnt: 392, bhbzopix: 716, pbkapmgl: 547, crbovzcw: 913, vfynxktk: 960, gychrisc: 841, izsvwrzb: 346, noqecojw: 216, sdzqdhby: 194, itfgqowt: 740, ajucliyn: 568, rwkkyzqj: 572, kxcpgvkp: 21, xpifmsxc: 567, jinuxisp: 754, bqkrbrmk: 742, auxouxqr: 871, zpnkmlcq: 441, ysnsexsq: 926, riocctww: 432, ybswtono: 764, cjxshida: 848, elzxnymr: 671, tzpdolvj: 596, lbygmqkp: 245, homjoqxs: 24, vhzhmfnb: 5, samicjaf: 395, ksybiiko: 187 };
+  all.push(t24);
+}
+if (process.argv[2]) fill();
+console.log(all.length);
+//// lists-of-constants/tables-use-nothing.ts
+// Lists of constants: tables use nothing. It prints what plain Bun prints.
+declare const process: { argv: string[] };
+declare const console: { log(...values: unknown[]): void };
+const key = process.argv[2];
+console.log(key ? "x" : "none", 0);

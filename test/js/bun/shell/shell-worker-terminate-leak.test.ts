@@ -165,6 +165,24 @@ test.skipIf(!isASAN || isWindows)(
   LEAK_TEST_TIMEOUT,
 );
 
+test.skipIf(!isASAN || isWindows)(
+  "worker.terminate() while a failed Bun.$ pipeline winds down does not leak or crash",
+  async () => {
+    // The second member throws a JS error as soon as it starts. The shell
+    // kills the first member and rejects the promise before the child's exit
+    // reaches the event loop, so the terminate races the wind-down: the
+    // finalizer either finds the pipeline still in flight or already finished.
+    await runTerminateScenario(`
+      const running = Bun.$\`sh -c "exec sleep 100" | sh -c "true" > \${new Response("r")}\`.nothrow();
+      running.then(
+        () => postMessage("resolved"),
+        () => postMessage("ok"),
+      );
+    `);
+  },
+  LEAK_TEST_TIMEOUT,
+);
+
 test.skipIf(!isLinux)(
   "worker.terminate() kills a live Bun.$ subprocess",
   async () => {

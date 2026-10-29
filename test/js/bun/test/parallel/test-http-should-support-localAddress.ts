@@ -1,8 +1,9 @@
 import { createTest } from "node-harness";
 import http from "node:http";
+import type { AddressInfo } from "node:net";
 const { expect } = createTest(import.meta.path);
 
-await new Promise(resolve => {
+await new Promise<void>(resolve => {
   const server = http.createServer((req, res) => {
     const { localAddress, localFamily, localPort } = req.socket;
     res.end();
@@ -13,11 +14,11 @@ await new Promise(resolve => {
     resolve();
   });
   server.listen(0, "127.0.0.1", () => {
-    http.request(`http://localhost:${server.address().port}`).end();
+    http.request(`http://localhost:${(server.address() as AddressInfo).port}`).end();
   });
 });
 
-await new Promise(resolve => {
+await new Promise<void>(resolve => {
   const server = http.createServer((req, res) => {
     const { localAddress, localFamily, localPort } = req.socket;
     res.end();
@@ -28,6 +29,6 @@ await new Promise(resolve => {
     resolve();
   });
   server.listen(0, "::1", () => {
-    http.request(`http://[::1]:${server.address().port}`).end();
+    http.request(`http://[::1]:${(server.address() as AddressInfo).port}`).end();
   });
 });

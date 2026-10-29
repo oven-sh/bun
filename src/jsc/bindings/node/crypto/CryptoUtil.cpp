@@ -3,7 +3,6 @@
 #include <openssl/err.h>
 #include "ErrorCode.h"
 #include "ncrypto.h"
-#include "BunString.h"
 #include "JSBuffer.h"
 #include "JSDOMConvertEnumeration.h"
 #include "JSBufferEncodingType.h"
@@ -88,8 +87,11 @@ struct Hasher;
 extern "C" Hasher* Bun__CryptoHasherExtern__getByName(Zig::GlobalObject* globalObject, const char* name, size_t nameLen);
 Hasher* getByName(Zig::GlobalObject* globalObject, const StringView& name)
 {
-    auto utf8 = name.utf8();
-    return Bun__CryptoHasherExtern__getByName(globalObject, utf8.data(), utf8.length());
+    auto utf8 = name.tryGetUTF8();
+    if (!utf8) [[unlikely]]
+        return nullptr;
+    auto bytes = byteCast<char>(utf8->span());
+    return Bun__CryptoHasherExtern__getByName(globalObject, bytes.data(), bytes.size());
 }
 
 extern "C" Hasher* Bun__CryptoHasherExtern__getFromOther(Zig::GlobalObject* global, Hasher* hasher);
@@ -211,39 +213,6 @@ WebCore::BufferEncodingType getEncodingDefaultBuffer(JSGlobalObject* globalObjec
     return parseEnumerationFromView<BufferEncodingType>(encodingString).value_or(BufferEncodingType::buffer);
 }
 
-std::optional<ncrypto::EVPKeyPointer> keyFromString(JSGlobalObject* lexicalGlobalObject, JSC::ThrowScope& scope, const WTF::StringView& keyView, JSValue passphraseValue)
-{
-    ncrypto::EVPKeyPointer::PrivateKeyEncodingConfig config;
-    config.format = ncrypto::EVPKeyPointer::PKFormatType::PEM;
-
-    config.passphrase = passphraseFromBufferSource(lexicalGlobalObject, scope, passphraseValue);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-    UTF8View keyUtf8(keyView);
-
-    auto keySpan = keyUtf8.span();
-
-    ncrypto::Buffer<const unsigned char> ncryptoBuf {
-        .data = reinterpret_cast<const unsigned char*>(keySpan.data()),
-        .len = keySpan.size(),
-    };
-    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
-
-    auto res = ncrypto::EVPKeyPointer::TryParsePrivateKey(config, ncryptoBuf);
-    if (res) {
-        ncrypto::EVPKeyPointer keyPtr(WTF::move(res.value));
-        return keyPtr;
-    }
-
-    if (res.error.value() == ncrypto::EVPKeyPointer::PKParseError::NEED_PASSPHRASE) {
-        Bun::ERR::MISSING_PASSPHRASE(scope, lexicalGlobalObject, "Passphrase required for encrypted key"_s);
-        return std::nullopt;
-    }
-
-    throwCryptoError(lexicalGlobalObject, scope, res.openssl_error.value_or(0), "Failed to read private key"_s);
-    return std::nullopt;
-}
-
 ncrypto::EVPKeyPointer::PKFormatType parseKeyFormat(JSC::JSGlobalObject* globalObject, JSValue formatValue, WTF::ASCIILiteral optionName, std::optional<ncrypto::EVPKeyPointer::PKFormatType> defaultFormat)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -323,48 +292,6 @@ std::optional<ncrypto::EVPKeyPointer::PKEncodingType> parseKeyType(JSC::JSGlobal
     }
 
     Bun::ERR::INVALID_ARG_VALUE(scope, globalObject, optionName, typeValue);
-    return std::nullopt;
-}
-
-std::optional<ncrypto::DataPointer> passphraseFromBufferSource(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue input)
-{
-    if (input.isUndefinedOrNull()) {
-        return std::nullopt;
-    }
-
-    if (input.isString()) {
-        WTF::String passphraseStr = input.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-        UTF8View utf8(passphraseStr);
-
-        auto span = utf8.span();
-        if (auto ptr = ncrypto::DataPointer::Alloc(span.size())) {
-            memcpy(ptr.get(), span.data(), span.size());
-            return WTF::move(ptr);
-        }
-
-        throwOutOfMemoryError(globalObject, scope);
-        return std::nullopt;
-    }
-
-    if (auto* array = dynamicDowncast<JSC::JSUint8Array>(input)) {
-        if (array->isDetached()) {
-            throwTypeError(globalObject, scope, "passphrase must not be detached"_s);
-            return std::nullopt;
-        }
-
-        auto length = array->byteLength();
-        if (auto ptr = ncrypto::DataPointer::Alloc(length)) {
-            memcpy(ptr.get(), array->vector(), length);
-            return WTF::move(ptr);
-        }
-
-        throwOutOfMemoryError(globalObject, scope);
-        return std::nullopt;
-    }
-
-    throwTypeError(globalObject, scope, "passphrase must be a Buffer or string"_s);
     return std::nullopt;
 }
 
@@ -547,7 +474,7 @@ std::optional<int32_t> getSaltLength(JSC::JSGlobalObject* globalObject, JSC::Thr
 
 DSASigEnc getDSASigEnc(JSC::JSGlobalObject* globalObject, ThrowScope& scope, JSValue options)
 {
-    if (!options.isObject() || options.asCell()->type() != JSC::JSType::FinalObjectType) {
+    if (!options.isObject() || (options.asCell()->type() != JSC::JSType::FinalObjectType && options.asCell()->type() != JSC::JSType::CompiledObjectType)) {
         return DSASigEnc::DER;
     }
 
@@ -787,6 +714,16 @@ std::optional<std::span<const uint8_t>> getBuffer(JSC::JSValue maybeBuffer)
     return std::nullopt;
 }
 
+std::optional<Vector<uint8_t>> copyArgumentBytes(JSGlobalObject* globalObject, ThrowScope& scope, std::span<const uint8_t> bytes, ASCIILiteral argName)
+{
+    static_assert(WTF::isValidCapacityForVector<uint8_t>(INT32_MAX));
+    if (bytes.size() > INT32_MAX) [[unlikely]] {
+        throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE, makeString(argName, " is too big"_s));
+        return std::nullopt;
+    }
+    return Vector<uint8_t>(bytes);
+}
+
 bool isStringOrBuffer(JSValue value)
 {
     if (value.isString()) {
@@ -994,6 +931,11 @@ void parseKeyEncoding(JSGlobalObject* globalObject, ThrowScope& scope, JSObject*
     if (!passphraseValue.isUndefined()) {
         JSArrayBufferView* passphraseView = getArrayBufferOrView(globalObject, scope, passphraseValue, "key.passphrase"_s, encodingValue);
         RETURN_IF_EXCEPTION(scope, );
+        // BoringSSL's length parameter is an `int`.
+        if (passphraseView->byteLength() > INT_MAX) {
+            ERR::OUT_OF_RANGE(scope, globalObject, "passphrase is too big"_s);
+            return;
+        }
         config.passphrase = DataPointer::FromSpan(passphraseView->span());
     }
 

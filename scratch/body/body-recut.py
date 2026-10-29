@@ -45,7 +45,7 @@ visible = f"""### Problem
 
 ### Downsides
 - Cost: {P["text_bytes"]} bytes of `.text`, {P["bss_bytes"]} of `.bss`, and {P["instructions"]}. The counter ships in release builds.
-- With a used-up window, 100 responses take 523 STREAM frames, not 430.
+- With a used-up window, 100 responses take 499 STREAM frames, not 439.
 - Open: a node:quic response with no body keeps its FIN until MAX_DATA.
 
 """
@@ -92,7 +92,7 @@ notes = f"""<details><summary>Notes</summary>
 - With the third patch alone: the three 100 Continue rows that need no small window pass.
 - `lsquic_stream.o`, release flags without LTO: `.text` 38,912 to 39,294 bytes. The counter is 117 of the 382. No patch adds an allocation, a system call or a pass over the streams.
 - Instructions that `lsquic_stream.o` executes per stream, counted by single-stepping a driver in the scaffolding of lsquic's `tests/test_h3_framing.c`, mean of 10 streams: a header block with a 49,500-byte body 29,430 to 29,463, a header block alone 2,137 to 2,140, a 103 in front 30,754 to 30,790, trailers behind 30,738 to 30,778. Of the 33, the credit check is 11, the flush 2, the write check 16, the counter 3.
-- STREAM frames end to end, measured on main before #46528: 100 small responses into a 1 MiB window give 210 with and without the patches. 100 responses with 3,000-byte bodies into a 30,000-byte window give 430 without and 523 with, in 296 and 295 packets.
+- STREAM frames end to end, on debug builds with `Bun.serve` and the client in one process: 100 responses with 100-byte bodies into a 1 MiB window give 220 with and without the patches. 100 responses with 3,000-byte bodies into a 120,000-byte window give 439 without and 499 with (5 runs each), in 287 to 295 packets both ways. Into a 30,000-byte window both give 433.
 - Four unit cases for the first two patches fail on lsquic at the pin with this tree's other patches, and on v4.11.1 (2f4cd42f) as it is. They pass with the two patches. Upstream's `tests/test_h3_framing.c` passes with all four. The cases are in {REFERENCE}.
 - Earlier heads of these patches ran through unit sweeps on main's patch stack and on an earlier head of #46528: 74,368 cases at the window edges (0 change from right to wrong), 72,000 configurations of the stall (0 stalled), 3,246 of a flush that ends with a packet (0 stop), 4,056 at the edge of both windows (0 pass a limit, where lsquic at the pin passes one in 548). The sweeps did not run again on this tree.
 

@@ -5779,7 +5779,7 @@ impl read_file::ReadFileToJs for ToUint8ArrayWithBytesFn {
 }
 impl read_file::ReadFileToJs for ToFormDataWithBytesFn {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], l: Lifetime) -> JsResult<JSValue> {
-        let _ = l; // FormData ignores lifetime — bytes are read-only.
+        let _free = (l == Lifetime::Temporary).then(|| TemporaryBytes(by));
         // SAFETY: `by` is valid for reads per the `ReadFileToJs::call` contract.
         Ok(b.to_form_data_with_bytes(g, unsafe { &*by }))
     }

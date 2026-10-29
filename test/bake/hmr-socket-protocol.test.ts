@@ -22,7 +22,7 @@
 import type { Subprocess } from "bun";
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, tempDir } from "harness";
-import { writeFileSync } from "node:fs";
+import { statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const indexHtml = /* html */ `<!DOCTYPE html>
@@ -559,7 +559,8 @@ test.concurrent("a hot update names the route of an html file that a file change
     const stylesheetLists: number[] = [];
     for (let route = i32(); route !== -1; route = i32()) {
       stylesheetLists.push(route);
-      offset += 16 * Math.max(0, i32());
+      const count = i32();
+      offset += 16 * Math.max(0, count);
     }
     return { reload, stylesheetLists };
   }
@@ -607,12 +608,15 @@ test.concurrent("a hot update names the route of an html file that a file change
    * place, with the length of the text that it replaces: no build reads a half-written file.
    */
   async function save(file: string, text: string) {
+    const path = join(String(dir), file);
+    // "r+" keeps the end of a longer file.
+    expect(Buffer.byteLength(text)).toBe(statSync(path).size);
     let done = sync(0);
     hmr.ws.send("H");
     await done;
     frames = [];
     done = sync(1);
-    writeFileSync(join(String(dir), file), text, { flag: "r+" });
+    writeFileSync(path, text, { flag: "r+" });
     await done;
     done = sync(3, 4);
     hmr.ws.send("H");

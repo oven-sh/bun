@@ -818,15 +818,6 @@ where
     ) {
         let slice = watchlist.slice();
         let file_paths = slice.items_file_path();
-        // Note: `WatchItemColumns` doesn't expose a `count` accessor; reach
-        // through the generic SoA column directly. The loop below mutates the
-        // column in place — build the &mut from the raw column pointer rather
-        // than ref-casting `&[u32]` (which is UB).
-        // SAFETY: column `Count` is `u32`; `items_raw` yields a pointer valid
-        // for `slice.len()` elements; the watcher thread is the sole writer of
-        // this column for the loop's duration and no other `&` to it is live.
-        let counts: &mut [u32] =
-            unsafe { bun_core::ffi::slice_mut(slice.items_raw::<"count", u32>(), slice.len()) };
         let kinds = slice.items_kind();
         let hashes = slice.items_hash();
         let parents = slice.items_parent_hash();
@@ -871,8 +862,6 @@ where
                 continue;
             }
             let file_path: &[u8] = &file_paths[event.index as usize];
-            let update_count = counts[event.index as usize] + 1;
-            counts[event.index as usize] = update_count;
             let kind = kinds[event.index as usize];
 
             // so it's consistent with the rest

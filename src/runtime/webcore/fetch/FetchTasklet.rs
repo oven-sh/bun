@@ -2062,35 +2062,17 @@ impl FetchTasklet {
         }
 
         let fetch_tasklet_ptr = bun_core::heap::into_raw(fetch_tasklet);
-        // SAFETY: just allocated; exclusive access until returned
-        let fetch_tasklet = unsafe { &mut *fetch_tasklet_ptr };
+        // SAFETY: just allocated, and `fetch_tasklet` is not used once `fetch_tasklet_ptr` is
+        // dereferenced. `'static`: `http` is an `AsyncHTTP<'static>` that borrows (headers_buf,
+        // request_body, unix_socket_path) FetchTasklet-owned storage. NOT process-lifetime:
+        // `request_headers.buf`, `request_body` and `unix_socket_path` are not reallocated for the
+        // lifetime of the request, and `clear_data` drops the `AsyncHTTP` before it drops them.
+        let fetch_tasklet: &'static mut FetchTasklet = unsafe { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.
-        // `AsyncHTTP::init` takes several `&'static [u8]` borrows
-        // (headers_buf, request_body, unix_socket_path) that point into
-        // FetchTasklet-owned storage. The tasklet is heap-pinned via
-        // `heap::alloc`, so erase the borrow lifetimes through raw pointers.
-        // SAFETY: `fetch_tasklet_ptr` is a stable heap allocation that outlives
-        // the AsyncHTTP (dropped together in `deinit`); the slices below borrow
-        // its `request_headers.buf`, `request_body`, and `unix_socket_path`
-        // fields which are not reallocated for the lifetime of the request.
-        // SAFETY (`Interned::assume` — Population B, holder-backed):
-        // `fetch_tasklet_ptr` is a `heap::alloc`'d `FetchTasklet` whose
-        // `request_headers.buf` / `request_body` /
-        // `unix_socket_path` fields are not reallocated for the request's
-        // lifetime, and the tasklet is freed in `deinit` only after the owned
-        // `AsyncHTTP` is dropped. NOT process-lifetime — these should become
-        // `RawSlice<u8>` once `AsyncHTTP::init` accepts holder-lifetime slices;
-        // `assume` names the owner so the widen is grep-able until then.
-        let headers_buf: &'static [u8] =
-            unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_headers.buf.as_slice()) }
-                .as_bytes();
-        // SAFETY: see `Interned::assume` note above — same heap-pinned `FetchTasklet` owner.
-        let request_body_slice: &'static [u8] =
-            unsafe { bun_ptr::Interned::assume(fetch_tasklet.request_body.slice()) }.as_bytes();
-        // SAFETY: see block note above — same `FetchTasklet` owner.
-        let unix_socket_path: &'static [u8] =
-            unsafe { bun_ptr::Interned::assume(&fetch_tasklet.unix_socket_path) }.as_bytes();
+        let headers_buf: &'static [u8] = fetch_tasklet.request_headers.buf.as_slice();
+        let request_body_slice: &'static [u8] = fetch_tasklet.request_body.slice();
+        let unix_socket_path: &'static [u8] = &fetch_tasklet.unix_socket_path;
         // `MultiArrayList` owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
         let header_entries = bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());

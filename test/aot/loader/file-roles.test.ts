@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { test } from "../supported";
+import { test } from "../with-compiler";
 import { describeTree, type TreeFile, type TreeGraph } from "./describe";
 
 type Role = TreeFile["role"];

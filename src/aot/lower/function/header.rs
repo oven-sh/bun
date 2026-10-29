@@ -151,7 +151,10 @@ pub(crate) fn create_header(
         Some(enclosing) => {
             let enclosing = file.reference_function(enclosing);
             let header = file.function_header(enclosing);
-            let hidden = header.flags & FunctionFlags::IS_HIDDEN_IN_STACK_TRACES;
+            let hidden = match file.fragment.lists_functions_inside(enclosing) {
+                true => FunctionFlags::default(),
+                false => header.flags & FunctionFlags::IS_HIDDEN_IN_STACK_TRACES,
+            };
             (header.enclosing_runtime_function, hidden)
         }
         None => (None, FunctionFlags::default()),

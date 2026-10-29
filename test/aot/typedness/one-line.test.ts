@@ -1,14 +1,17 @@
 // No ordinary line of a typed program may cost more than its own property accesses. ./one-line/base.ts is a small program in which every type is
 // closed: each object has a fixed layout and each property access through those types is a load. ./one-line/lines.txt holds ordinary lines of
-// TypeScript, one to a row: `title | code`. Each is added alone to the end of the base program: the types of the base must stay closed, and no
+// TypeScript, one to a row: `title | code`. They are added to the end of the base program: the types of the base must stay closed, and no
 // fewer accesses may be typed than before. See ./typedness.ts for how a program is measured.
 //
+// More code never closes a type, so ten lines are added at once, each in a block of its own. Where that opens a type, each of the ten is
+// added alone: the test names the lines that do it, and passes if none does.
+//
 // A row that ends in ` | opens` is a line that is known to break this. It is not judged. Whoever fixes one takes the mark off its row.
-import { describe, expect, test } from "bun:test";
+import { expect } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { tempDir } from "harness";
 import { join } from "path";
-import { inShareOfList, slot, unsupported, wanted } from "../run-programs";
+import { describe, test } from "../supported";
 import { typednessOf, type Typedness } from "./typedness";
 
 const base = readFileSync(join(import.meta.dir, "one-line", "base.ts"), "utf8");
@@ -23,6 +26,7 @@ const rows = readFileSync(join(import.meta.dir, "one-line", "lines.txt"), "utf8"
       opens,
     };
   });
+type Row = (typeof rows)[number];
 
 const tsconfig = {
   files: [],
@@ -45,7 +49,7 @@ const tsconfig = {
 const baseTypes = ["Row", "Order", "Point", "Circle", "Square"];
 const typedAccessCount = (typedness: Typedness) => Number(/accesses (\d+) of/.exec(typedness.line)?.[1] ?? -1);
 
-/** What the line did to the types of the base program: "" if nothing. */
+/** What the lines did to the types of the base program: "" if nothing. */
 function findRegression(before: Typedness, after: Typedness): string {
   if (!/ open, /.test(after.line)) return after.line;
   const found = baseTypes.filter(name => after.types.includes(name)).map(name => `${name} is open`);
@@ -54,27 +58,40 @@ function findRegression(before: Typedness, after: Typedness): string {
   return found.join(", ");
 }
 
-describe.skipIf(!!unsupported)("compile/aot/typedness/one-line", () => {
+const standsAtTopLevel = ({ code }: Row) => /^\s*(import|export|namespace)\b/m.test(code);
+const linesAtOnce = 10;
+const judged = rows.filter(row => !row.opens);
+const inBlocks = judged.filter(row => !standsAtTopLevel(row));
+const numberOfGroups = Math.ceil(inBlocks.length / linesAtOnce);
+// Neighbors in the list are alike, and go to different groups.
+const groups = [
+  ...Array.from({ length: numberOfGroups }, (_, group) =>
+    inBlocks.filter((_, index) => index % numberOfGroups === group),
+  ),
+  ...judged.filter(standsAtTopLevel).map(row => [row]),
+];
+
+describe("compile/aot/typedness/one-line", () => {
   test("a line costs no more than its own accesses", async () => {
     using dir = tempDir("aot-one-line", { "tsconfig.json": JSON.stringify(tsconfig), "base.ts": base });
     const before = await typednessOf(join(String(dir), "base.ts"));
     expect(before.types).toEqual([]);
     expect(before.line).toStartWith("0 open, ");
     expect(typedAccessCount(before)).toBeGreaterThan(10);
-    const mine = rows
-      .filter(row => !row.opens)
-      .filter(({ title }, index) => wanted !== "quick" || inShareOfList(`one line ${title}`, index));
-    const found = await Promise.all(
-      mine.map(({ title, code }, index) =>
-        slot(async () => {
-          const path = join(String(dir), `line-${index}.ts`);
-          writeFileSync(path, base + code + "\n");
-          const regression = findRegression(before, await typednessOf(path));
-          return regression ? [`${title}: ${regression}`] : [];
-        }),
-      ),
-    );
-    expect(found.flat()).toEqual([]);
+    let files = 0;
+    async function judge(lines: Row[]): Promise<string[]> {
+      const path = join(String(dir), `lines-${files++}.ts`);
+      const [first] = lines;
+      writeFileSync(
+        path,
+        base + (lines.length === 1 ? first.code : lines.map(({ code }) => `{\n${code}\n}`).join("\n")) + "\n",
+      );
+      const regression = findRegression(before, await typednessOf(path));
+      if (!regression) return [];
+      if (lines.length === 1) return [`${first.title}: ${regression}`];
+      return (await Promise.all(lines.map(line => judge([line])))).flat();
+    }
+    expect((await Promise.all(groups.map(judge))).flat()).toEqual([]);
   }, 600_000);
 
   test("reports a regression when JSON.parse data is pushed into a typed array", async () => {

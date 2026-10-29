@@ -1,3 +1,0 @@
-error: TS2304: Cannot find name 'shared'.
-error: TS2304: Cannot find name 'counted'.
-error: TS2304: Cannot find name 'helper'.

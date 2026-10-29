@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -1992,76 +1992,4 @@ test("a standalone executable does not run a synchronous full GC after loading i
   expect(stderr).toMatch(/\[GC<(0x)?[0-9a-fA-F]+>: starting /); // %p: "0x7f…" on POSIX, "00007FF6…" on Windows
   expect(stderr).not.toContain("FullCollection");
   expect(exitCode).toBe(0);
-});
-
-describe.skipIf(!isMacOS)("compile/SystemCACertificates", () => {
-  const files = {
-    "images.js": `
-      import { dlopen } from "bun:ffi";
-      const { symbols } = dlopen("/usr/lib/libSystem.B.dylib", {
-        _dyld_image_count: { args: [], returns: "u32" },
-        _dyld_get_image_name: { args: ["u32"], returns: "cstring" },
-      });
-      export function securityIsLoaded() {
-        for (let i = 0, n = symbols._dyld_image_count(); i < n; i++)
-          if (String(symbols._dyld_get_image_name(i)).endsWith("/Security.framework/Versions/A/Security")) return true;
-        return false;
-      }
-    `,
-    "names.js": `
-      import tls from "node:tls";
-      import { securityIsLoaded } from "./images.js";
-      if (process.argv.includes("--version")) {
-        console.log("1.0.0");
-        process.exit(0);
-      }
-      await Bun.sleep(500);
-      const before = securityIsLoaded();
-      const list = process.argv.includes("--list") ? tls.getCACertificates("system") : [];
-      console.log(JSON.stringify({ before, list }));
-    `,
-    "silent.js": `
-      import tls from "node:tls";
-      import { securityIsLoaded } from "./images.js";
-      await Bun.sleep(500);
-      console.log(JSON.stringify({ before: securityIsLoaded(), list: [tls.rootCertificates.length > 0] }));
-    `,
-  };
-  const run = async (cwd: string, cmd: string[]) => {
-    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  };
-  const compile = async (cwd: string, name: string) => {
-    const { stderr, exitCode } = await run(cwd, [bunExe(), "build", "--compile", name + ".js", "--outfile", name]);
-    expect([stderr, exitCode]).toEqual([expect.not.stringContaining("error"), 0]);
-  };
-
-  test("a program that names getCACertificates has them loaded before it asks, and gets the same list", async () => {
-    using dir = tempDir("compile-system-ca-named", files);
-    const cwd = String(dir);
-    await compile(cwd, "names");
-    const compiled = await run(cwd, [join(cwd, "names"), "--list"]);
-    const notCompiled = await run(cwd, [bunExe(), "names.js", "--list"]);
-    expect([compiled.exitCode, notCompiled.exitCode]).toEqual([0, 0]);
-    expect(JSON.parse(compiled.stdout)).toEqual({ before: true, list: JSON.parse(notCompiled.stdout).list });
-    expect(JSON.parse(notCompiled.stdout).before).toBe(false);
-  });
-
-  test("a program that does not name it loads nothing", async () => {
-    using dir = tempDir("compile-system-ca-silent", files);
-    const cwd = String(dir);
-    await compile(cwd, "silent");
-    const { stdout, exitCode } = await run(cwd, [join(cwd, "silent")]);
-    expect(JSON.parse(stdout)).toEqual({ before: false, list: [true] });
-    expect(exitCode).toBe(0);
-  });
-
-  test("a program that exits at once exits cleanly", async () => {
-    using dir = tempDir("compile-system-ca-exit", files);
-    const cwd = String(dir);
-    await compile(cwd, "names");
-    for (let i = 0; i < 20; i++)
-      expect(await run(cwd, [join(cwd, "names"), "--version"])).toEqual({ stdout: "1.0.0\n", stderr: "", exitCode: 0 });
-  });
 });

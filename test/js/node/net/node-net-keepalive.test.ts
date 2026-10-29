@@ -455,8 +455,7 @@ describe.skipIf(!canReadKeepAlive)("socket.setKeepAlive()", () => {
 
   // Bun.Socket, fetch and Bun.sql share the writer of these values with node:net. They give it no interval and no count.
   test("Bun.Socket#setKeepAlive(true, 4000) still gives one probe a second and 10 probes", async () => {
-    using listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
-    const socket = await Bun.connect({ hostname: "127.0.0.1", port: listener.port, socket: { data() {} } });
+    const socket = await Bun.connect({ hostname: "127.0.0.1", port, socket: { data() {} } });
     try {
       const returned = socket.setKeepAlive(true, 4000);
       // Windows is not told the interval and the count: its own are one second and 10 probes.

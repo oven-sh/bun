@@ -2958,11 +2958,8 @@ mod _async_tasks {
                     next: bun_threading::Link::new(),
                     value: ResultListEntryValue::from_vec(clone),
                 });
-                // SAFETY: freshly boxed node; `into_raw` yields a valid owned non-null pointer.
-                unsafe {
-                    self.result_list_queue
-                        .push(NonNull::new_unchecked(bun_core::heap::into_raw(list)))
-                };
+                self.result_list_queue
+                    .push(bun_core::heap::into_raw_nn(list));
             }
 
             self.on_subtask_done();
@@ -8173,35 +8170,48 @@ impl NodeFS {
                 }
             };
 
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            let flags = sys::O::PATH; // O_PATH is faster
-            #[cfg(not(any(target_os = "linux", target_os = "android")))]
-            let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
+            let is_only_in_the_executable = |err: &sys::Error| {
+                err.get_errno() == E::ENOENT
+                    && (is_source_path(path.as_bytes())
+                        || is_embedded_in_compiled_program(path.as_bytes()))
+            };
 
-            let fd = match sys::open(path, flags, 0) {
-                Err(err)
-                    if err.get_errno() == E::ENOENT
-                        && (is_source_path(path.as_bytes())
-                            || is_embedded_in_compiled_program(path.as_bytes())) =>
-                {
+            #[cfg(target_os = "macos")]
+            let buf = match Syscall::get_full_path(path, &mut outbuf) {
+                Err(err) if is_only_in_the_executable(&err) => {
                     return Ok(encode_path_result(path.as_bytes(), args.encoding));
                 }
-                Err(err) => return Err(err.with_path(path)),
-                Ok(fd_) => fd_,
-            };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
-
-            let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
-                Err(err) => return Err(err.with_path(path)),
+                Err(err) => return Err(err),
                 Ok(buf_) => buf_,
             };
+            #[cfg(not(target_os = "macos"))]
+            let buf = {
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                let flags = sys::O::PATH; // O_PATH is faster
+                #[cfg(not(any(target_os = "linux", target_os = "android")))]
+                let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
-            // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can
-            // end like that too.
-            #[cfg(any(target_os = "linux", target_os = "android"))]
-            if buf.ends_with(b" (deleted)") && Syscall::fstat(fd)?.st_nlink == 0 {
-                return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
-            }
+                let fd = match sys::open(path, flags, 0) {
+                    Err(err) if is_only_in_the_executable(&err) => {
+                        return Ok(encode_path_result(path.as_bytes(), args.encoding));
+                    }
+                    Err(err) => return Err(err.with_path(path)),
+                    Ok(fd_) => fd_,
+                };
+                let _close = scopeguard::guard(fd, |fd| fd.close());
+
+                let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
+                    Err(err) => return Err(err.with_path(path)),
+                    Ok(buf_) => buf_,
+                };
+
+                // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can end like that too.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                if buf.ends_with(b" (deleted)") && Syscall::fstat(fd)?.st_nlink == 0 {
+                    return Err(sys::Error::from_code(E::ENOENT, sys::Tag::realpath));
+                }
+                buf
+            };
 
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::String(s) = &args.path {

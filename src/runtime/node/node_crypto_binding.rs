@@ -196,7 +196,7 @@ enum RandomFillJob {
     /// `randomBytes`: the ArrayBuffer was allocated by us and nothing else
     /// can observe it yet, so fill its bytes directly (under the job's ticket,
     /// which keeps its VM alive).
-    InPlace { bytes: JsPtr<u8>, length: usize },
+    InPlace { bytes: JsPtr<[u8]> },
     /// `randomFill`: the caller's buffer stays untouched until completion;
     /// `scratch` (empty, `size` bytes reserved) is filled off-thread and copied in at `offset` on the JS thread.
     /// `offset` counts from the start of `memory` if the job has one.
@@ -238,17 +238,10 @@ impl JobContext for RandomFillJob {
                     })
                 }
             }
-            RandomFillJob::InPlace { bytes, length } => {
-                // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
-                // the ticket keeps the VM (and so that buffer) alive; `length` is
-                // the buffer's own allocation size.
-                let slice = unsafe {
-                    core::slice::from_raw_parts_mut(
-                        core::ptr::from_mut(bytes.under_ticket(done.ticket())),
-                        *length,
-                    )
-                };
-                boringssl::rand_bytes(slice);
+            RandomFillJob::InPlace { bytes } => {
+                // SAFETY: `bytes` is the ArrayBuffer `value` keeps alive;
+                // the ticket keeps the VM (and so that buffer) alive.
+                boringssl::rand_bytes(unsafe { bytes.under_ticket(done.ticket()) });
             }
         }
         Some(done)
@@ -363,26 +356,7 @@ fn random_int<'a>(
     }
 
     if max - min > MAX_RANGE {
-        // Node's ERR_OUT_OF_RANGE adds "_" numerical separators to integer
-        // "Received" values whose magnitude exceeds 2^32
-        // (lib/internal/errors.js, addNumericalSeparator).
-        let received = {
-            let digits = (max - min).to_string();
-            let (sign, digits) = match digits.strip_prefix('-') {
-                Some(rest) => ("-", rest),
-                None => ("", digits.as_str()),
-            };
-            let mut out = String::with_capacity(digits.len() + digits.len() / 3 + 1);
-            out.push_str(sign);
-            let lead = digits.len() % 3;
-            for (i, ch) in digits.chars().enumerate() {
-                if i != 0 && (i + 3 - lead) % 3 == 0 {
-                    out.push('_');
-                }
-                out.push(ch);
-            }
-            out
-        };
+        let received = bun_core::fmt::NodeNumber((max - min) as f64);
         if min_specified {
             return Err(global
                 .err(
@@ -568,9 +542,8 @@ pub(crate) fn random_bytes<'a>(
         callback.to_js(),
         RandomFillJob::InPlace {
             // SAFETY: `bytes` is `result`'s backing store, kept alive by the job's
-            // Js side; a slice's data pointer is non-null even when empty.
-            bytes: unsafe { JsPtr::new(core::ptr::NonNull::new_unchecked(bytes.as_mut_ptr())) },
-            length: size as usize,
+            // Js side.
+            bytes: unsafe { JsPtr::new(core::ptr::NonNull::from_mut(bytes)) },
         },
         result,
         None,

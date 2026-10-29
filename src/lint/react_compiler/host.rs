@@ -31,7 +31,7 @@ impl Host for LintHost<'_> {
     fn module_scope(&self) -> &Scope {
         &self.module_scope
     }
-    fn import_records(&self) -> &[ImportRecord] {
+    fn import_records(&self) -> &[ImportRecord<'_>] {
         &[]
     }
     fn type_casts(&self) -> &[(Loc, Loc)] {

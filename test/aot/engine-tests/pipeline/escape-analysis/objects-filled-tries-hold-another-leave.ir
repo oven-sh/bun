@@ -1,0 +1,367 @@
+# -- source: objects-filled-tries-hold-another-leave.js
+# // Objects filled under tries hold one another and leave on one way.
+# function make(first, leaves) {
+#   function Pair(head, ...rest) {
+#     try {
+#       this.rest = rest;
+#     } catch (e) {}
+#     try {
+#       this.head = head;
+#     } catch (e) {}
+#   }
+#   let inner;
+#   try {
+#     inner = new Pair(first, 1);
+#   } catch (e) {}
+#   let outer;
+#   try {
+#     outer = new Pair(inner, 2);
+#   } catch (e) {}
+#   function read() {
+#     return outer;
+#   }
+#   if (leaves) return { read };
+# }
+#
+# for (let turn = 0; turn < 4; turn++) {
+#   const made = make(turn, turn % 2 === 1);
+#   console.log(turn, made ? JSON.stringify(made.read()) : "nothing");
+# }
+# -- end of source
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="objects-filled-tries-hold-another-leave.js" displayPath="objects-filled-tries-hold-another-leave.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=anything|absent}}] ownFieldCount=1
+layout L1 kind=Instance name="Pair" module=m0 position=102 constructor=f2 fields=[{key="rest" declared={type=undefined|null|Array flags=[IsExpected]}}, {key="head" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=2
+layout L2 module=m0 position=446 fields=[{key="read" declared={type=undefined|null|function|f3 flags=[IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v3)
+  b2(v4):
+    LoopHint
+    v6 = Integer integer=4
+    v7 = Less v4, v6
+    Branch v7 -> taken b3(| 0), notTaken b11(| 0)
+  b3(v8):
+    Jump -> next b4()
+  b4():
+    v9 = Integer integer=2
+    v10 = Mod v8, v9
+    v11 = Integer integer=1
+    v12 = StrictEq v10, v11
+    v13 = Call v1, -, v8, v12 calleeName="make"
+    v14 = Convert v13 declared={type=undefined|null|L2 flags=[IsExpected]}
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="console" [isFreeName]
+    v17 = Convert v16 declared={type=builtin(Console) flags=[IsExpected]}
+    v18 = PropGet v17 key="log"
+    v19 = Convert v18 declared={type=builtin(ConsoleLog) flags=[IsExpected]}
+    v20 = ToBoolean v14
+    Branch v20 -> taken b5(| 0), notTaken b7(| 0)
+  b5(v21):
+    Jump -> next b6()
+  b6():
+    v22 = Builtin builtin=JSON
+    v23 = PropGet v22 key="stringify"
+    v24 = Convert v23 declared={type=builtin(JSONStringify) flags=[IsExpected]}
+    v25 = PropGet v21 key="read"
+    v26 = Convert v25 declared={type=undefined|null|function|f3 flags=[IsExpected]}
+    v27 = Call v26, v21 calleeKey="read" calleeName="made.read"
+    v28 = Call v24, v22, v27 calleeKey="stringify" calleeName="JSON.stringify"
+    v29 = Convert v28 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b9(v29)
+  b7(v30):
+    Jump -> next b8()
+  b8():
+    v31 = String string="nothing"
+    Jump -> next b9(v31)
+  b9(v32):
+    v33 = Call v19, v17, v8, v32 calleeKey="log" calleeName="console.log"
+    Jump -> next b10()
+  b10():
+    v34 = Increment v8
+    v35 = Convert v34 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v35)
+  b11(v36):
+    Jump -> next b12()
+  b12():
+    v37 = Undefined
+    Return v37
+}
+function f1 name="make" module=m0 position=69 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=boolean flags=[IsExpected]}] results=[{type=undefined|null|L2 flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: boolean):
+    Jump -> next b1()
+  b1():
+    v2 = NewObject layout=L0
+    v3 = NewClosure function=f2
+    v4 = Convert v3 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v5 = NewClosure v2 function=f3
+    v6 = Convert v5 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v7 = Undefined
+    Jump -> next b2()
+  b2() handler=b6(v7):
+    v8 = Convert v0 declared={type=number flags=[IsExpected]}
+    Jump -> next b3()
+  b3() handler=b6(v7):
+    v9 = Integer integer=1
+    v10 = Construct v4, -, v8, v9 calleeName="Pair"
+    Jump -> next b4()
+  b4() handler=b6(v10):
+    Jump -> next b5()
+  b5():
+    Jump -> next b7(v10)
+  b6(v11) role=CatchHandler:
+    v12 = CatchValue
+    Jump -> next b7(v11)
+  b7(v13):
+    v14 = Undefined
+    PutEnvironmentField v2, v14 layout=L0
+    Jump -> next b8()
+  b8() handler=b10():
+    v16 = GetEnvironmentField v2 layout=L0
+    v17 = CheckInitialized v16 name="outer"
+    v18 = Integer integer=2
+    v19 = Construct v4, -, v13, v18 calleeName="Pair"
+    PutEnvironmentField v2, v19 layout=L0
+    Jump -> next b9()
+  b9():
+    Jump -> next b11()
+  b10() role=CatchHandler:
+    v21 = CatchValue
+    Jump -> next b11()
+  b11():
+    v22 = ToBoolean v1
+    Branch v22 -> taken b12(| 0), notTaken b14(| 0)
+  b12(v23):
+    Jump -> next b13()
+  b13():
+    v24 = Convert v6 declared={type=undefined|null|function|f3 flags=[IsExpected]}
+    v25 = NewObject layout=L2
+    PropDefine v25, v24 key="read"
+    v27 = FinishObject v25
+    v28 = Convert v27 declared={type=undefined|null|L2 flags=[IsExpected]}
+    Return v28
+  b14(v29):
+    Jump -> next b15()
+  b15():
+    v30 = Undefined
+    v31 = Convert v30 declared={type=undefined|null|L2 flags=[IsExpected]}
+    Return v31
+}
+function f2 name="Pair" module=m0 position=102 flags=[HasRestParameter, HasThis, HasExplicitName] length=1 thisType={type=L1 flags=[IsExpected]} parameters=[{type=anything}, {type=Array flags=[IsFromCompiler]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: L1, v1: anything, v2: Array):
+    Jump -> next b1()
+  b1():
+    Jump -> next b2()
+  b2() handler=b4():
+    v3 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v3, v2 key="rest"
+    Jump -> next b3()
+  b3():
+    Jump -> next b5()
+  b4() role=CatchHandler:
+    v5 = CatchValue
+    Jump -> next b5()
+  b5():
+    Jump -> next b6()
+  b6() handler=b8():
+    v6 = Convert v0 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    PropSet v6, v1 key="head"
+    Jump -> next b7()
+  b7():
+    Jump -> next b9()
+  b8() role=CatchHandler:
+    v8 = CatchValue
+    Jump -> next b9()
+  b9():
+    v9 = Undefined
+    Return v9
+}
+function f3 name="read" module=m0 position=385 flags=[HasExplicitName] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f4] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0):
+    Jump -> next b1()
+  b1():
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="outer"
+    Return v2
+}
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 module=
+# CHECK: m0 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] inlineFrames=[{}, {callee=f3 callPosition=4294967295 module=m0}, {callee=f1 callPosition=4294967295 module=m0}, {callee=f9 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=2 isConstruction=true module=m0}, {callee=f9 callPosition=4294967295 parent=2 isConstruction=true module=m0}] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: 0 = Integer
+# CHECK-NEXT: v1: "nothing" = String string="nothing"
+# CHECK-NEXT: v2: undefined = CallBuiltin -, v0, v1 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v3: 1 = Integer integer=1
+# CHECK-NEXT: v4: 2 = Integer integer=2
+# CHECK-NEXT: v5: int[0, 1] = Mod v3, v4
+# CHECK-NEXT: v6: 1 = Integer integer=1
+# CHECK-NEXT: v7: boolean = StrictEq v5, v6
+# CHECK-NEXT: v8: f2 = NewClosure function=f2 allocationSite=2
+# CHECK-NEXT: v9: undefined = Undefined
+# CHECK-NEXT: v10: 1 = Integer integer=1
+# CHECK-NEXT: v11: Array<undefined|int> = NewArray v10 contents=undefined|int
+# CHECK-NEXT: v12: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v11 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v13: object = GetConstructPrototype v8 layout=L1
+# CHECK-NEXT: v14: L1 = NewObject v13, v12, v3 layout=L1 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b3(v14)
+# CHECK-NEXT: b2() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b3(v9)
+# CHECK-NEXT: b3(v15: undefined|L1) handler=b4():
+# CHECK-NEXT: v16: 2 = Integer integer=2
+# CHECK-NEXT: v17: object = GetConstructPrototype v8 layout=L1
+# CHECK-NEXT: v18: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b5(v16, v18, v17, v15)
+# CHECK-NEXT: b4() role=CatchHandler:
+# CHECK-NEXT: v19: undefined|int|unspecified = Unspecified valueType=undefined|int
+# CHECK-NEXT: v20: 2 = Integer integer=2
+# CHECK-NEXT: v21: object|unspecified = Unspecified valueType=object
+# CHECK-NEXT: v22: undefined|int|unspecified|L1 = Unspecified valueType=undefined|int|L1
+# CHECK-NEXT: Jump -> next b5(v19, v20, v21, v22)
+# CHECK-NEXT: b5(v23: undefined|int|unspecified, v24: int[1, 2], v25: object|unspecified, v26: undefined|int|unspecified|L1):
+# CHECK-NEXT: Branch v7 -> taken b6(), notTaken b10()
+# CHECK-NEXT: b6():
+# CHECK-NEXT: Switch v24 cases=[1] -> case b7(), otherwise b8()
+# CHECK-NEXT: b7():
+# CHECK-NEXT: v27: fact = Specified
+# CHECK-NEXT: v28: undefined|int = AssumeType v23, v27 provenType=undefined|int
+# CHECK-NEXT: v29: Array<undefined|int> = NewArray v28 contents=undefined|int
+# CHECK-NEXT: v30: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v29 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v31: object = AssumeType v25, v27 provenType=object
+# CHECK-NEXT: v32: undefined|int|L1 = AssumeType v26, v27 provenType=undefined|int|L1
+# CHECK-NEXT: v33: L1 = NewObject v31, v30, v32 layout=L1 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b9(v33)
+# CHECK-NEXT: b8():
+# CHECK-NEXT: v34: undefined = Undefined
+# CHECK-NEXT: Jump -> next b9(v34)
+# CHECK-NEXT: b9(v35: undefined|L1):
+# CHECK-NEXT: v36: undefined = Undefined
+# CHECK-NEXT: v37: undefined|string = CallBuiltin -, v35, v36 overload=JSONStringify/0 accessSite=6
+# CHECK-NEXT: Jump -> next b11(v37)
+# CHECK-NEXT: b10():
+# CHECK-NEXT: v38: "nothing" = String string="nothing"
+# CHECK-NEXT: Jump -> next b11(v38)
+# CHECK-NEXT: b11(v39: undefined|string):
+# CHECK-NEXT: v40: undefined = CallBuiltin -, v3, v39 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v41: 2 = Integer integer=2
+# CHECK-NEXT: v42: 2 = Integer integer=2
+# CHECK-NEXT: v43: int[0, 1] = Mod v41, v42
+# CHECK-NEXT: v44: 1 = Integer integer=1
+# CHECK-NEXT: v45: boolean = StrictEq v43, v44
+# CHECK-NEXT: v46: f2 = NewClosure function=f2 allocationSite=2
+# CHECK-NEXT: v47: undefined = Undefined
+# CHECK-NEXT: v48: 1 = Integer integer=1
+# CHECK-NEXT: v49: Array<undefined|int> = NewArray v48 contents=undefined|int
+# CHECK-NEXT: v50: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v49 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b12()
+# CHECK-NEXT: b12() handler=b13():
+# CHECK-NEXT: v51: object = GetConstructPrototype v46 layout=L1
+# CHECK-NEXT: v52: L1 = NewObject v51, v50, v41 layout=L1 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b14(v52)
+# CHECK-NEXT: b13() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b14(v47)
+# CHECK-NEXT: b14(v53: undefined|L1) handler=b15():
+# CHECK-NEXT: v54: 2 = Integer integer=2
+# CHECK-NEXT: v55: object = GetConstructPrototype v46 layout=L1
+# CHECK-NEXT: v56: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b16(v54, v56, v55, v53)
+# CHECK-NEXT: b15() role=CatchHandler:
+# CHECK-NEXT: v57: undefined|int|unspecified = Unspecified valueType=undefined|int
+# CHECK-NEXT: v58: 2 = Integer integer=2
+# CHECK-NEXT: v59: object|unspecified = Unspecified valueType=object
+# CHECK-NEXT: v60: undefined|int|unspecified|L1 = Unspecified valueType=undefined|int|L1
+# CHECK-NEXT: Jump -> next b16(v57, v58, v59, v60)
+# CHECK-NEXT: b16(v61: undefined|int|unspecified, v62: int[1, 2], v63: object|unspecified, v64: undefined|int|unspecified|L1):
+# CHECK-NEXT: Branch v45 -> taken b17(), notTaken b21()
+# CHECK-NEXT: b17():
+# CHECK-NEXT: Switch v62 cases=[1] -> case b18(), otherwise b19()
+# CHECK-NEXT: b18():
+# CHECK-NEXT: v65: fact = Specified
+# CHECK-NEXT: v66: undefined|int = AssumeType v61, v65 provenType=undefined|int
+# CHECK-NEXT: v67: Array<undefined|int> = NewArray v66 contents=undefined|int
+# CHECK-NEXT: v68: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v67 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v69: object = AssumeType v63, v65 provenType=object
+# CHECK-NEXT: v70: undefined|int|L1 = AssumeType v64, v65 provenType=undefined|int|L1
+# CHECK-NEXT: v71: L1 = NewObject v69, v68, v70 layout=L1 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b20(v71)
+# CHECK-NEXT: b19():
+# CHECK-NEXT: v72: undefined = Undefined
+# CHECK-NEXT: Jump -> next b20(v72)
+# CHECK-NEXT: b20(v73: undefined|L1):
+# CHECK-NEXT: v74: undefined = Undefined
+# CHECK-NEXT: v75: undefined|string = CallBuiltin -, v73, v74 overload=JSONStringify/0 accessSite=6
+# CHECK-NEXT: Jump -> next b22(v75)
+# CHECK-NEXT: b21():
+# CHECK-NEXT: v76: "nothing" = String string="nothing"
+# CHECK-NEXT: Jump -> next b22(v76)
+# CHECK-NEXT: b22(v77: undefined|string):
+# CHECK-NEXT: v78: undefined = CallBuiltin -, v41, v77 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v79: 3 = Integer integer=3
+# CHECK-NEXT: v80: 2 = Integer integer=2
+# CHECK-NEXT: v81: int[0, 1] = Mod v79, v80
+# CHECK-NEXT: v82: 1 = Integer integer=1
+# CHECK-NEXT: v83: boolean = StrictEq v81, v82
+# CHECK-NEXT: v84: f2 = NewClosure function=f2 allocationSite=2
+# CHECK-NEXT: v85: undefined = Undefined
+# CHECK-NEXT: v86: 1 = Integer integer=1
+# CHECK-NEXT: v87: Array<undefined|int> = NewArray v86 contents=undefined|int
+# CHECK-NEXT: v88: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v87 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: Jump -> next b23()
+# CHECK-NEXT: b23() handler=b24():
+# CHECK-NEXT: v89: object = GetConstructPrototype v84 layout=L1
+# CHECK-NEXT: v90: L1 = NewObject v89, v88, v79 layout=L1 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b25(v90)
+# CHECK-NEXT: b24() role=CatchHandler:
+# CHECK-NEXT: Jump -> next b25(v85)
+# CHECK-NEXT: b25(v91: undefined|L1) handler=b26():
+# CHECK-NEXT: v92: 2 = Integer integer=2
+# CHECK-NEXT: v93: object = GetConstructPrototype v84 layout=L1
+# CHECK-NEXT: v94: 1 = Integer integer=1
+# CHECK-NEXT: Jump -> next b27(v92, v94, v93, v91)
+# CHECK-NEXT: b26() role=CatchHandler:
+# CHECK-NEXT: v95: undefined|int|unspecified = Unspecified valueType=undefined|int
+# CHECK-NEXT: v96: 2 = Integer integer=2
+# CHECK-NEXT: v97: object|unspecified = Unspecified valueType=object
+# CHECK-NEXT: v98: undefined|int|unspecified|L1 = Unspecified valueType=undefined|int|L1
+# CHECK-NEXT: Jump -> next b27(v95, v96, v97, v98)
+# CHECK-NEXT: b27(v99: undefined|int|unspecified, v100: int[1, 2], v101: object|unspecified, v102: undefined|int|unspecified|L1):
+# CHECK-NEXT: Branch v83 -> taken b28(), notTaken b32()
+# CHECK-NEXT: b28():
+# CHECK-NEXT: Switch v100 cases=[1] -> case b29(), otherwise b30()
+# CHECK-NEXT: b29():
+# CHECK-NEXT: v103: fact = Specified
+# CHECK-NEXT: v104: undefined|int = AssumeType v99, v103 provenType=undefined|int
+# CHECK-NEXT: v105: Array<undefined|int> = NewArray v104 contents=undefined|int
+# CHECK-NEXT: v106: Array<undefined|int, proven, pristine[Storage, Names, Dense]> = AssumeType v105 provenType=Array<undefined|int, proven, pristine[Storage, Names, Dense]>
+# CHECK-NEXT: v107: object = AssumeType v101, v103 provenType=object
+# CHECK-NEXT: v108: undefined|int|L1 = AssumeType v102, v103 provenType=undefined|int|L1
+# CHECK-NEXT: v109: L1 = NewObject v107, v106, v108 layout=L1 fields=[0, 1] allocationClass=0 [listsOnlyStoredValues]
+# CHECK-NEXT: Jump -> next b31(v109)
+# CHECK-NEXT: b30():
+# CHECK-NEXT: v110: undefined = Undefined
+# CHECK-NEXT: Jump -> next b31(v110)
+# CHECK-NEXT: b31(v111: undefined|L1):
+# CHECK-NEXT: v112: undefined = Undefined
+# CHECK-NEXT: v113: undefined|string = CallBuiltin -, v111, v112 overload=JSONStringify/0 accessSite=6
+# CHECK-NEXT: Jump -> next b33(v113)
+# CHECK-NEXT: b32():
+# CHECK-NEXT: v114: "nothing" = String string="nothing"
+# CHECK-NEXT: Jump -> next b33(v114)
+# CHECK-NEXT: b33(v115: undefined|string):
+# CHECK-NEXT: v116: undefined = CallBuiltin -, v79, v115 overload=ConsoleLog/0 accessSite=7
+# CHECK-NEXT: v117: undefined = Undefined
+# CHECK-NEXT: Return v117
+# CHECK-NEXT: }

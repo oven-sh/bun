@@ -91,6 +91,8 @@ unsafe extern "C" {
 
 // ─── Local extern thin-wrappers (codegen / `bun_jsc` surface not yet wired) ──
 unsafe extern "C" {
+    /// `BunSignalActions.cpp`.
+    safe fn Bun__FFI__replaceSignalFunction(function: *mut c_void) -> *mut c_void;
     /// `host_fn::NewRuntimeFunction` — `Bun__CreateFFIFunctionValue`.
     fn Bun__CreateFFIFunctionValue(
         global: *const JSGlobalObject,
@@ -368,6 +370,26 @@ mod stdarg {
         pub(super) fn inject(_: &mut TCC::State) {}
     }
 
+    /// Compiled C code allocates with the allocator of the libraries it calls, so either may release the other's
+    /// blocks. The `malloc` linked into the executable can be the executable's alone.
+    #[cfg(unix)]
+    fn find_shared_allocator_function(
+        name: &core::ffi::CStr,
+        linked: *const c_void,
+    ) -> *const c_void {
+        // SAFETY: `name` is NUL-terminated.
+        let shared = unsafe { libc::dlsym(libc::RTLD_DEFAULT, name.as_ptr()) };
+        if shared.is_null() {
+            linked
+        } else {
+            shared.cast_const()
+        }
+    }
+    #[cfg(not(unix))]
+    fn find_shared_allocator_function(_: &core::ffi::CStr, linked: *const c_void) -> *const c_void {
+        linked
+    }
+
     pub(super) fn inject(state: &mut TCC::State) {
         state
             .add_symbols(&[
@@ -394,10 +416,22 @@ mod stdarg {
                 ("fflush", ffi_fflush as *const c_void),
                 ("fread", libc::fread as *const c_void),
                 // memory
-                ("malloc", libc::malloc as *const c_void),
-                ("realloc", libc::realloc as *const c_void),
-                ("calloc", calloc as *const c_void),
-                ("free", libc::free as *const c_void),
+                (
+                    "malloc",
+                    find_shared_allocator_function(c"malloc", libc::malloc as *const c_void),
+                ),
+                (
+                    "realloc",
+                    find_shared_allocator_function(c"realloc", libc::realloc as *const c_void),
+                ),
+                (
+                    "calloc",
+                    find_shared_allocator_function(c"calloc", calloc as *const c_void),
+                ),
+                (
+                    "free",
+                    find_shared_allocator_function(c"free", libc::free as *const c_void),
+                ),
                 // error
                 ("perror", perror as *const c_void),
             ])
@@ -407,7 +441,13 @@ mod stdarg {
         {
             state
                 .add_symbols(&[
-                    ("posix_memalign", libc::posix_memalign as *const c_void),
+                    (
+                        "posix_memalign",
+                        find_shared_allocator_function(
+                            c"posix_memalign",
+                            libc::posix_memalign as *const c_void,
+                        ),
+                    ),
                     ("dlopen", libc::dlopen as *const c_void),
                     ("dlclose", libc::dlclose as *const c_void),
                     ("dlsym", libc::dlsym as *const c_void),
@@ -984,6 +1024,16 @@ impl FFI {
                 "bun:ffi cc() is not available in this build (TinyCC is disabled)"
             )));
         }
+        if bun_jsc::compiled_program::is_write_execute_memory_denied() {
+            return Err(global_this
+                .err(
+                    ErrorCode::FFI_CC_DISABLED,
+                    format_args!(
+                        "Cannot compile C code because this process can't create executable memory (PR_SET_MDWE). An executable built with bun compile turns that on when it starts."
+                    ),
+                )
+                .throw());
+        }
         let object = options.to_js();
         if !object.is_object() {
             return Err(global_this.throw_invalid_arguments(format_args!("Expected object")));
@@ -994,7 +1044,7 @@ impl FFI {
         let mut compile_c = CompileC::default();
 
         let symbols_object: JSValue = object
-            .get_own(global_this, &bun_core::String::borrow_utf8(b"symbols"))?
+            .get_own(global_this, &bun_core::StringView::borrow_utf8(b"symbols"))?
             .unwrap_or(JSValue::UNDEFINED);
         if symbols_object.is_empty() || !symbols_object.is_object() {
             return Err(global_this.throw_invalid_argument_type_value(
@@ -1022,7 +1072,7 @@ impl FFI {
         }
 
         if let Some(library_value) =
-            object.get_own(global_this, &bun_core::String::borrow_utf8(b"library"))?
+            object.get_own(global_this, &bun_core::StringView::borrow_utf8(b"library"))?
         {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
         }
@@ -1099,7 +1149,7 @@ impl FFI {
         }
 
         if let Some(source_value) =
-            object.get_own(global_this, &bun_core::String::borrow_utf8(b"source"))?
+            object.get_own(global_this, &bun_core::StringView::borrow_utf8(b"source"))?
         {
             if source_value.is_array() {
                 let mut files = Vec::new();
@@ -1232,10 +1282,10 @@ impl FFI {
 
     pub(crate) fn close_callback(callback: JsLocal<'_>) {
         unsafe extern "C" {
-            fn Bun__JSCFFICallbackClose(callback: JSValue);
+            /// Type-checks the cell (`dynamicDowncast`) before use.
+            safe fn Bun__JSCFFICallbackClose(callback: JSValue);
         }
-        // SAFETY: thin FFI wrapper; the C++ side type-checks the cell (jsDynamicCast) before use.
-        unsafe { Bun__JSCFFICallbackClose(callback.to_js()) };
+        Bun__JSCFFICallbackClose(callback.to_js());
     }
 
     pub(crate) fn callback<'a>(
@@ -1299,11 +1349,11 @@ impl FFI {
 
     pub(crate) fn close<'a>(&self, this_value: JsWrapper<'a, Self>, cx: &mut JsScope<'a>) {
         unsafe extern "C" {
-            fn Bun__FFI__closeFunctions(global: *const JSGlobalObject, library: JSValue) -> bool;
+            /// Type-checks `library` (`dynamicDowncast`) before use.
+            safe fn Bun__FFI__closeFunctions(global: &JSGlobalObject, library: JSValue) -> bool;
         }
         jsc::mark_binding();
-        // SAFETY: thin FFI wrapper. The C++ side type-checks the cell (dynamicDowncast) before use.
-        let is_running = unsafe { Bun__FFI__closeFunctions(cx.global(), this_value.to_js()) };
+        let is_running = Bun__FFI__closeFunctions(cx.global(), this_value.to_js());
         if is_running {
             // The running call returns into the compiled code, so leak it instead of letting `do_close` free it.
             self.shared_state.set(None);
@@ -1485,11 +1535,13 @@ impl FFI {
             match bun_sys::DynLib::open(name) {
                 Ok(d) => break 'brk d,
                 Err(_) => {
-                    let backup_name = Fs::FileSystem::instance().abs(&[name]);
                     // if that fails, try resolving the filepath relative to the current working directory
-                    match bun_sys::DynLib::open(backup_name) {
-                        Ok(d) => break 'brk d,
-                        Err(_) => {
+                    let mut backup_buf = bun_paths::path_buffer_pool::get();
+                    let backup_name =
+                        Fs::FileSystem::get().abs_buf_checked(&[name], &mut backup_buf[..]);
+                    match backup_name.map(bun_sys::DynLib::open) {
+                        Some(Ok(d)) => break 'brk d,
+                        Some(Err(_)) | None => {
                             // Then, if that fails, report an error with the library name and system error
                             let dlerror_msg = get_dl_error();
 
@@ -1543,7 +1595,8 @@ impl FFI {
                     return Ok(ret);
                 };
 
-                function.symbol_from_dynamic_library = Some(resolved_symbol);
+                function.symbol_from_dynamic_library =
+                    Some(Bun__FFI__replaceSignalFunction(resolved_symbol));
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {
@@ -1573,7 +1626,7 @@ impl FFI {
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
-            let key = bun_core::String::borrow_utf8(function_name.as_bytes());
+            let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
             if let Err(err) = obj.put_may_be_index(global, &key, cb) {
                 dylib.close();
                 lib.do_close();
@@ -1656,7 +1709,7 @@ impl FFI {
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
-            let key = bun_core::String::borrow_utf8(function_name.as_bytes());
+            let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
             if let Err(err) = obj.put_may_be_index(global, &key, cb) {
                 lib.do_close();
                 return Err(err);
@@ -1719,7 +1772,7 @@ pub(super) fn generate_symbol_for_function(
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
-    if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
+    if let Some(args) = value.get_own(global, &bun_core::StringView::borrow_utf8(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(global.create_error_instance(format_args!(
                 "Expected an object with \"args\" as an array"
@@ -2336,7 +2389,7 @@ impl CompilerRT {
         // yet expose an inherent `tmpdir()`; reuse the crate-local
         // `FileSystemTmpdirExt` shim already in service for `jsc_hooks`.
         use crate::cli::upgrade_command::FileSystemTmpdirExt as _;
-        let Ok(tmpdir) = Fs::FileSystem::instance().tmpdir() else {
+        let Ok(tmpdir) = Fs::FileSystem::get().tmpdir() else {
             return;
         };
 

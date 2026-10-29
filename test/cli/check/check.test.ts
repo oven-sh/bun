@@ -898,6 +898,29 @@ export const api = { f1 };
     });
   });
 
+  // The message about `load.nope` prints the type of `load`, whose return type is being inferred, and then the call asks for
+  // its argument once more. Nothing of that evaluation is stored, so the walk evaluates the argument again.
+  test.each([
+    ["a function", "function load() { return [api.nope, cached]; }", ["a.ts(3,10)", "a.ts(3,31)", "a.ts(4,28)"]],
+    [
+      "an async function",
+      "async function load() { return [api.nope, cached]; }",
+      ["a.ts(3,16)", "a.ts(3,37)", "a.ts(4,28)"],
+    ],
+  ])("reports a missing property once if its message prints the type of %s in a ring", async (_, load, places) => {
+    using dir = project({
+      "a.ts": `declare function same<T>(value: T): T;
+declare const api: { load: typeof load };
+${load}
+var cached = same(api.load.nope);
+export {};
+`,
+    });
+    const { stdout, exitCode } = await check(dir, ["--threads", "1"]);
+    expect(stdout.split("\n").map(line => line.slice(0, line.indexOf(":")))).toEqual(places);
+    expect(exitCode).toBe(1);
+  });
+
   // `f1` and `f2` report errors whose messages print a type, so `f3`'s return type is inferred two messages deep, where
   // TypeScript discards errors. It caches the expression of a `return` statement without its parentheses, so the walk checks
   // a parenthesized one again and reports. An expression body is checked again too.
@@ -4114,6 +4137,39 @@ export { n, area, u };
   });
 
   describe("cases not covered by TypeScript's test suite", () => {
+    // From ten levels of one conditional type on, tsc takes the source for a type that expands without an end and says maybe.
+    test.each([
+      [1, 1],
+      [9, 1],
+      [10, 0],
+      [11, 0],
+      [30, 0],
+    ])("a source of %i conditional types inside each other has %i errors", async (levels, errors) => {
+      const call = Array.from({ length: levels }).reduce<string>(
+        (inner, _, i) => `provide<A${i}>()(${inner})`,
+        "input",
+      );
+      using dir = tempDir("bun-check", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { strict: true, noEmit: true, types: [] } }),
+        "main.ts": `interface E<R> { readonly r: () => R }
+declare function provide<S>(): <R>(self: E<R>) => E<Exclude<R, S>>;
+interface Scope { readonly scope: 1 }
+declare function take(e: E<Scope>): void;
+${Array.from({ length: levels }, (_, i) => `interface A${i} { readonly a${i}: 1 }\n`).join("")}export function add<R>(input: E<R | Scope>) {
+  take(${call});
+}
+`,
+      });
+      const { stdout, exitCode } = await check(dir);
+      expect(
+        stdout
+          .split("\n")
+          .filter(line => line.includes("error TS"))
+          .map(line => /TS\d+/.exec(line)![0]),
+      ).toEqual(Array.from({ length: errors }, () => "TS2345"));
+      expect(exitCode).toBe(errors);
+    });
+
     // `sortByBestName` orders two modules by their specifiers, and a module and a namespace by their positions. With
     // modules on both sides of the namespace, that ordering is cyclic.
     test.each([9, 11, 40])(
@@ -6759,26 +6815,46 @@ export const wrong: number = "";
       expect(exitCode).toBe(1);
     });
 
-    test("still reports the error when a type is nested too deeply to print in full", async () => {
-      // An optimized build prints about 700 levels, and the check itself runs out of stack at about 3,000. Other builds
-      // have larger frames, by a platform-dependent amount, so they use a depth at which the whole type may be printed.
-      const isOptimized = !isDebug && !isASAN;
-      const depth = isOptimized ? 1500 : 100;
-      using dir = project({
-        "a.ts": `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};
-export const wrong: number = x;
-`,
-      });
+    // The printer writes `any` for what is nested deeper than the stack that it may use. An optimized build prints about
+    // 5,000 levels. Other builds have larger frames, by a platform-dependent amount, so they use a depth at which the
+    // whole type may be printed.
+    const isOptimized = !isDebug && !isASAN;
+    const writtenAsOneType = (depth: number) =>
+      `declare const x: ${repeat("{ a: ", depth)}1${repeat(" }", depth)};\nexport const wrong: number = x;\n`;
+    /** `source` assigns a type of `depth` levels to a number in its last line. Returns how many levels are printed. */
+    async function printedLevels(source: string, depth: number) {
+      using dir = project({ "a.ts": source });
       const { stdout, stderr, exitCode } = await check(dir, ["--noErrorTruncation"]);
+      expect(stderr).not.toContain("ran out of stack");
       const levels = stdout.split("{ a: ").length - 1;
       expect(levels).toBeGreaterThanOrEqual(50);
-      if (isOptimized) expect(levels).toBeLessThan(depth);
       const innermost = levels < depth ? "any" : "1";
       expect(stdout).toBe(
-        `a.ts(2,14): error TS2322: Type '${repeat("{ a: ", levels)}${innermost}${repeat("; }", levels)}' is not assignable to type 'number'.`,
+        `a.ts(${source.split("\n").length - 1},14): error TS2322: Type '${repeat("{ a: ", levels)}${innermost}${repeat("; }", levels)}' is not assignable to type 'number'.`,
       );
       expect(stderr.split("\n")[0]).toBe("Found 1 error in 1 file, checked 1 file [time]");
       expect(exitCode).toBe(1);
+      return levels;
+    }
+
+    test("still reports the error when a type is nested too deeply to print in full", async () => {
+      // Each level has a declaration of its own, because the parser takes fewer levels in one type than the printer prints.
+      const depth = isOptimized ? 20_000 : 100;
+      const outer = Array.from({ length: depth - 1 }, (_, i) => `declare const x${i + 2}: { a: typeof x${i + 1} };\n`);
+      const levels = await printedLevels(
+        `declare const x1: { a: 1 };\n${outer.join("")}export const wrong: number = x${depth};\n`,
+        depth,
+      );
+      if (isOptimized) expect(levels).toBeLessThan(depth);
+    });
+
+    test("reports the error when a type is written 1,500 levels deep", async () => {
+      const depth = isOptimized ? 1500 : 100;
+      await printedLevels(writtenAsOneType(depth), depth);
+    });
+
+    test.skipIf(!isOptimized)("prints a type that is written 3,500 levels deep in full", async () => {
+      expect(await printedLevels(writtenAsOneType(3_500), 3_500)).toBe(3_500);
     });
 
     // How deep an expression can nest depends on how much stack is left, not on a count. A build that isn't optimized has
@@ -6890,6 +6966,47 @@ const wrong: number = "";
       },
       // Longer than the child's own timeout, so the child never outlives the test.
       20_000,
+    );
+
+    // The return type of each function is found through the next. Up to some length the ring closes on the stack, and every
+    // member is reported. A longer one is resolved piece by piece from lower on the stack, and closes at the member that
+    // waits for the pieces. Where that length is depends on the platform and the build, so this tries many.
+    //
+    // What is unwound is asked for again, so a function of a long ring takes up to two and a half times the queries that
+    // one of a short ring takes. A ring that doesn't close is followed anew from each of its members. The queries are
+    // counted, so nothing here depends on how busy the machine is.
+    async function checkRing(length: number) {
+      const ring = Array.from(
+        { length },
+        (_, index) => `function f${index}(x: number) { return x > 0 ? f${(index + 1) % length}(x - 1) + 1 : 0; }\n`,
+      );
+      using dir = project({
+        "a.ts": `${ring.join("")}export const wrong: number = "";\nexport const any: string = f0(1);\n`,
+      });
+      const { stdout, stderr, exitCode } = await check(dir, ["--all", "--timing"]);
+      const queriesForEachFunction = Number(/ (\d+) queries,/.exec(stderr)?.[1]) / length;
+      return { lines: stdout.split("\n"), stderr, exitCode, queriesForEachFunction };
+    }
+    let shortRing: ReturnType<typeof checkRing> | undefined;
+    test.skipIf(isDebug || isASAN).each([3_000, 3_600, 3_800, 4_000, 5_000, 8_000, 20_000])(
+      "a function in a ring of %d that don't say what they return takes at most 3 times the queries of one in a ring of 100",
+      async length => {
+        const [short, { lines, stderr, exitCode, queriesForEachFunction }] = await Promise.all([
+          (shortRing ??= checkRing(100)),
+          checkRing(length),
+        ]);
+        const circular = lines.filter(line => line.includes("error TS7023:"));
+        expect(lines.filter(line => !line.includes("error TS7023:"))).toEqual([
+          `a.ts(${length + 1},14): error TS2322: Type 'string' is not assignable to type 'number'.`,
+        ]);
+        const isWhole = !stderr.startsWith("error: ran out of stack in a.ts.");
+        expect(circular.length).toBeGreaterThan(0);
+        if (isWhole) expect(circular).toHaveLength(length);
+        expect(exitCode).toBe(1);
+        expect(queriesForEachFunction / short.queriesForEachFunction).toBeLessThan(3);
+      },
+      // Longer than the child's own timeout, so the child never outlives the test.
+      90_000,
     );
 
     // The `include` pattern matcher used to recurse for each `**` and try every number of directories for each one.
@@ -7025,6 +7142,23 @@ const wrong: number = "";
       expect(stdout).toBe(`b.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.`);
       expect(stderr.split("\n")[0]).toBe(
         "error: the code in a.ts is nested too deeply: errors in this file may be missing.",
+      );
+      expect(exitCode).toBe(1);
+    });
+
+    // Which part of the parser finds that too little stack is left depends on where the nesting starts.
+    test("reports that classes in the methods of classes are nested too deeply", async () => {
+      const names = Array.from({ length: 16 }, (_, blocks) => `a${blocks}.ts`);
+      using dir = project(
+        Object.fromEntries(
+          names.map((name, blocks) => [name, `${repeat("{", blocks)}${repeat("class C{m(){", 20_000)}\n`]),
+        ),
+      );
+      const { stderr, exitCode } = await check(dir);
+      expect(stderr.split("\n").slice(0, names.length).sort()).toEqual(
+        names
+          .map(name => `error: the code in ${name} is nested too deeply: errors in this file may be missing.`)
+          .sort(),
       );
       expect(exitCode).toBe(1);
     });
@@ -24914,6 +25048,9 @@ describe.concurrent("--check", () => {
       "():{(",
       "declare function f<T>(): void; f<{ a b: any }>();",
       "type T = { m(: string): any };",
+      "namespace N { a b }",
+      "namespace N { interface I {} namespace M { type T = 1; static x } }",
+      "function f() { namespace N { a b } }",
     ];
     const files: Record<string, string> = {};
     const add = (name: string, text: string) => (files[`${name}.ts`] = `${text}\nconst canary_${name}: string = 1;\n`);
@@ -24999,6 +25136,30 @@ describe.concurrent("--check", () => {
     expect(parsed.length).toBeLessThan(names.length / 2);
     writeFileSync(join(String(dir), "tsconfig.json"), JSON.stringify({ ...JSON.parse(tsconfig), files: parsed }));
     expect(await withoutErrors(parsed)).toEqual([]);
+  });
+
+  test("a program is checked with a stray token anywhere in it, and up to any character", async () => {
+    // Declarations that come first in a file, a namespace and a function.
+    const programs = [
+      `namespace A { interface I { a: string } type T = I; namespace B { type U = T; interface V {} } }\n"use strict";`,
+      `namespace C { export class D<T> extends Object { static x = 1; m(a: T) { "use strict"; return a; } } enum E { a, b = 2 } }`,
+      `function f() { namespace G { type H = 1 } "use strict"; abstract class J { abstract k(): void } }`,
+      `declare class K { l: number } declare enum M { n } declare function o(): void; import type { P } from "./q"; export type { P }; "use strict";`,
+      `interface R {} type S = R; declare namespace T { const u: S } declare var v: S, w: S; function x(): void; function x() {}`,
+    ];
+    const stray = ["q", "static q", "@", "(", ")", "{", "}", "=>", "export", "declare", "class", "namespace", "<", "`"];
+    const files: Record<string, string> = {};
+    programs.forEach((text, index) => {
+      for (let length = 1; length <= text.length; length++) {
+        files[`p${index}_${length}.ts`] = text.slice(0, length);
+        if (text[length] !== " ") continue;
+        stray.forEach((token, nth) => {
+          files[`p${index}_${length}_${nth}.ts`] = `${text.slice(0, length)} ${token}${text.slice(length)}`;
+        });
+      }
+    });
+    using dir = project(files);
+    expect((await check(dir)).exitCode).toBe(1);
   });
 
   // Nothing here is slow or deep unless the cost of a construct grows faster than its size. An exponential walk doesn't

@@ -125,10 +125,8 @@ pub(crate) struct TestRunner<'a> {
     /// shuffle PRNG from hash(seed, file_path) so within-file test order is
     /// independent of which worker (and which prior files) ran it.
     pub(crate) randomize_seed: Option<u32>,
-    /// Borrowed view over `ctx.test_options.concurrent_test_glob` (owned
-    /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
-    /// `test_command.rs` where this is populated.
-    pub(crate) concurrent_test_glob: Option<&'a [bun_glob::Prepared<&'a [u8]>]>,
+    /// `concurrentTestGlob` in bunfig: files that match one of these run their tests concurrently.
+    pub(crate) concurrent_test_glob: Option<Vec<bun_glob::Prepared<Box<[u8]>>>>,
     pub(crate) bail: u32,
     pub(crate) max_concurrency: u32,
 
@@ -222,7 +220,7 @@ impl<'a> TestRunner<'a> {
         }
 
         // If no glob patterns are set, don't run concurrently
-        let Some(glob_patterns) = self.concurrent_test_glob else {
+        let Some(glob_patterns) = &self.concurrent_test_glob else {
             return false;
         };
 
@@ -286,7 +284,7 @@ pub(crate) struct GetOrPutFileResult {
 }
 
 pub(crate) struct File {
-    pub source: bun_ast::Source,
+    pub source: bun_ast::Source<'static>,
 }
 
 pub(crate) type FileList = MultiArrayList<File>;
@@ -294,7 +292,7 @@ pub(crate) type FileId = u32;
 
 bun_collections::multi_array_columns! {
     pub trait FileColumns for File {
-        source: bun_ast::Source,
+        source: bun_ast::Source<'static>,
     }
 }
 // Keyed by the interned `&'static [u8]` path from `FilenameStore`, so no

@@ -153,7 +153,6 @@ pub(crate) fn run_as_coordinator(
         reporter,
         files: sorted,
         costs,
-        // SAFETY: FileSystem singleton is initialized before any test runner code runs.
         cwd: FileSystem::get().top_level_dir(),
         argv,
         envps,
@@ -364,6 +363,9 @@ fn build_worker_argv(ctx: &Command::ContextData) -> crate::Result<Box<[bun_spawn
     }
     if ctx.args.preserve_symlinks.unwrap_or(false) {
         argv.push(lit(b"--preserve-symlinks\0"));
+    }
+    if crate::cli::run_compiled::is_checked() {
+        argv.push(lit(b"--aot-checked=-\0"));
     }
     if ctx.runtime_options.smol {
         argv.push(lit(b"--smol\0"));

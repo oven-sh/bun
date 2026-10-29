@@ -285,7 +285,19 @@ impl<V: CalcValue> Calc<V> {
     }
 
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        Self::parse_with(input, &|_| None)
+        // The range of the property clamps the result, not the arguments.
+        let non_negative = input.flags.non_negative();
+        let calc = input.parse_with_non_negative(false, |i| Self::parse_with(i, &|_| None))?;
+        Ok(match calc {
+            Calc::Value(v) if non_negative && v.try_sign().is_some_and(|sign| sign < 0.0) => {
+                // `try_map` refuses a percentage, which is +0 when multiplied by -0.
+                let zero = v.try_map(|_| 0.0);
+                Calc::Value(Box::new(
+                    zero.unwrap_or_else(|| Self::mul_value_f32(*v, -0.0)),
+                ))
+            }
+            calc => calc,
+        })
     }
 
     pub(crate) fn parse_with(
@@ -324,7 +336,7 @@ impl<V: CalcValue> Calc<V> {
                 // can we use stack fallback here if the common case is that there will be 1 argument?
                 Self::reduce_args(&mut reduced, Ordering::Less);
                 if reduced.len() == 1 {
-                    return Ok(reduced.swap_remove(0));
+                    return Ok(Self::single_argument(reduced.swap_remove(0)));
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Min(reduced))))
             }
@@ -335,7 +347,7 @@ impl<V: CalcValue> Calc<V> {
                 // PERF: i don't like this additional allocation
                 Self::reduce_args(&mut reduced, Ordering::Greater);
                 if reduced.len() == 1 {
-                    return Ok(reduced.remove(0));
+                    return Ok(Self::single_argument(reduced.remove(0)));
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Max(reduced))))
             }
@@ -377,7 +389,7 @@ impl<V: CalcValue> Calc<V> {
                 Self::parse_math_fn(
                     i,
                     strategy,
-                    |s, a, b| round((), a, b, s),
+                    round,
                     |s, a, b| MathFunction::Round {
                         strategy: s,
                         value: a,
@@ -391,11 +403,8 @@ impl<V: CalcValue> Calc<V> {
                     i,
                     (),
                     |_, a, b| {
-                        // Floored modulo: result takes the sign of the divisor.
-                        // Equivalent to `a - b * floor(a / b)`. Rust `%` is truncated (sign of
-                        // dividend) and `rem_euclid` is non-negative, so neither matches for
-                        // negative `b` — use the explicit floor formula.
-                        a - b * (a / b).floor()
+                        // Not `a % b`: the f32 operands are rounded, so `rem(25%, 5%)` would be 5%.
+                        a - b * (a / b).trunc()
                     },
                     |_, a, b| MathFunction::Rem {
                         dividend: a,
@@ -488,6 +497,16 @@ impl<V: CalcValue> Calc<V> {
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Sign(v))))
             }),
+        }
+    }
+
+    /// A sum or a product is only valid inside a math function.
+    fn single_argument(arg: Self) -> Self {
+        match arg {
+            Calc::Sum { .. } | Calc::Product { .. } => {
+                Calc::Function(Box::new(MathFunction::Calc(arg)))
+            }
+            _ => arg,
         }
     }
 
@@ -699,10 +718,21 @@ impl<V: CalcValue> Calc<V> {
 
             let rad: f32 = 'rad: {
                 match &v {
-                    Calc::Value(angle) => {
-                        if !to_angle {
+                    Calc::Value(angle) if !to_angle => {
+                        let quarter_turns = angle.to_degrees() / 90.0;
+                        if quarter_turns.fract() != 0.0 {
                             break 'rad trig_fn(angle.to_radians());
                         }
+                        // The results are exact at a multiple of 90deg, which no f32 radian is.
+                        const SIN_COS: [(f32, f32); 4] =
+                            [(0.0, 1.0), (1.0, 0.0), (0.0, -1.0), (-1.0, 0.0)];
+                        let (sin, cos) = SIN_COS[quarter_turns.rem_euclid(4.0) as usize];
+                        break 'rad match trig_fn_kind {
+                            TrigFnKind::Sin => sin,
+                            TrigFnKind::Cos => cos,
+                            // `+ 0.0` turns the -0 of tan(180deg) into 0.
+                            _ => sin / cos + 0.0,
+                        };
                     }
                     Calc::Number(n) => break 'rad trig_fn(*n),
                     _ => {}
@@ -781,14 +811,15 @@ impl<V: CalcValue> Calc<V> {
             }
         }
 
-        if let Ok(v) = try_parse_atan2_args::<Length>(input) {
-            return Ok(v);
-        }
-        if let Ok(v) = try_parse_atan2_args::<Percentage>(input) {
-            return Ok(v);
-        }
-        if let Ok(v) = try_parse_atan2_args::<Time>(input) {
-            return Ok(v);
+        for try_parse_args in [
+            try_parse_atan2_args::<Length>,
+            try_parse_atan2_args::<Percentage>,
+            try_parse_atan2_args::<Time>,
+        ] {
+            let result = try_parse_args(input);
+            if result.is_ok() || hit_unrecoverable(input) {
+                return result;
+            }
         }
 
         Calc::<CSSNumber>::parse_atan2_args(input, &Self::number_ident(parse_ident))
@@ -996,10 +1027,11 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    /// Orders two values when their units allow it.
+    /// Orders two values with compatible units or two numbers, never a number and a value.
     fn partial_cmp_args(a: &Self, b: &Self) -> Option<Ordering> {
         match (a, b) {
             (Calc::Value(a), Calc::Value(b)) => protocol::PartialCmp::partial_cmp(&**a, &**b),
+            (Calc::Number(a), Calc::Number(b)) => protocol::PartialCmp::partial_cmp(a, b),
             _ => None,
         }
     }
@@ -1009,44 +1041,23 @@ impl<V: CalcValue> Calc<V> {
     /// I am pretty sure we could do this reduction in place, or do it as the
     /// arguments are being parsed.
     fn reduce_args(args: &mut Vec<Self>, order: Ordering) {
-        // Reduces the arguments of a min() or max() expression, combining compatible values.
-        // e.g. min(1px, 1em, 2px, 3in) => min(1px, 1em)
+        // Keeps one argument per comparable group: min(1px, 1em, 2px, 3in) => min(1px, 1em).
         let mut reduced: Vec<Self> = Vec::new();
 
-        for arg in args.iter_mut() {
-            let mut found: Option<Option<usize>> = None;
-            if let Calc::Value(val) = &*arg {
-                for (idx, b) in reduced.iter().enumerate() {
-                    if let Calc::Value(v) = b {
-                        let result = protocol::PartialCmp::partial_cmp(&**val, &**v);
-                        if result.is_some() {
-                            if result == Some(order) {
-                                found = Some(Some(idx));
-                                break;
-                            } else {
-                                found = Some(None);
-                                break;
-                            }
-                        }
+        'args: for arg in args.drain(..) {
+            for kept in reduced.iter_mut() {
+                match Self::partial_cmp_args(&arg, kept) {
+                    Some(ord) if ord == order => {
+                        *kept = arg;
+                        continue 'args;
                     }
+                    Some(_) => continue 'args,
+                    None => {}
                 }
             }
-
-            // For borrowck, `found` stores an index rather than a pointer.
-            if let Some(maybe_idx) = found {
-                if let Some(idx) = maybe_idx {
-                    reduced[idx] = core::mem::replace(arg, Calc::Number(420.0));
-                    continue;
-                }
-            } else {
-                reduced.push(core::mem::replace(arg, Calc::Number(420.0)));
-                continue;
-            }
-            // arg dropped here
-            *arg = Calc::Number(420.0);
+            reduced.push(arg);
         }
 
-        // Drop on replace frees the old args.
         *args = reduced;
     }
 
@@ -1367,13 +1378,15 @@ fn arr2<T>(a: T, b: T) -> Vec<T> {
     vec![a, b]
 }
 
-fn round(_: (), value: f32, to: f32, strategy: RoundingStrategy) -> f32 {
-    let v = value / to;
+/// The sign of the step is ignored, and a tie goes up.
+fn round(strategy: RoundingStrategy, value: f32, to: f32) -> f32 {
+    let step = to.abs();
+    let v = value / step;
     match strategy {
-        RoundingStrategy::Down => v.floor() * to,
-        RoundingStrategy::Up => v.ceil() * to,
-        RoundingStrategy::Nearest => v.round() * to,
-        RoundingStrategy::ToZero => v.trunc() * to,
+        RoundingStrategy::Down => v.floor() * step,
+        RoundingStrategy::Up => v.ceil() * step,
+        RoundingStrategy::Nearest => (v + 0.5).floor() * step,
+        RoundingStrategy::ToZero => v.trunc() * step,
     }
 }
 
@@ -1609,10 +1622,10 @@ impl CalcValue for Percentage {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
-    fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
+    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
-            _ => Ok(Percentage { v: f32::NAN }),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
 }
@@ -1665,10 +1678,6 @@ calc_protocol_forwarders!(Length {
     try_sign: forward,
     try_map: forward,
     try_op: |this, rhs, ctx, f| {
-        // Delegate to `protocol::TryOp for LengthValue` (which inlines the
-        // same-unit/px-convert dispatch) rather than the inherent `Length::try_op`
-        // — the inherent takes a 2-arg `Fn` closure, and adapting our 3-arg `f`
-        // to that without `C: Copy` would only yield `FnOnce`.
         if let (Length::Value(a), Length::Value(b)) = (this, rhs) {
             return <LengthValue as protocol::TryOp>::try_op(a, b, ctx, f).map(Length::Value);
         }

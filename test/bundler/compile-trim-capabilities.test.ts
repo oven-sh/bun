@@ -14,7 +14,7 @@ import {
   trimFeatureNamed,
   withoutFeatures,
 } from "./compile-trim-features";
-import { describePlace, placesThatCall, placesThatMakeSystemCalls } from "./what-an-executable-can-call";
+import { placesThatCall, placesThatMakeSystemCalls } from "./what-an-executable-can-call";
 
 const featuresOf = (...names: string[]) => names.flatMap(name => trimFeatureNamed(name).features);
 
@@ -94,13 +94,7 @@ if (isASAN)
       if (isLinux) expect(numbersOf(placesThatMakeSystemCalls(whole.file, startsAProgram.systemCalls))).toContain(435);
 
       const cut = await build(startsAProgram.features);
-      expect(
-        placesThatCall(cut.file, startsAProgram.functions).map(place => ({
-          ...place,
-          keptBy: featuresThatKeep(place.address, startsAProgram.features),
-          holds: describePlace(cut.file, place),
-        })),
-      ).toEqual([]);
+      expect(placesThatCall(cut.file, startsAProgram.functions)).toEqual([]);
       expect(placesThatMakeSystemCalls(cut.file, startsAProgram.systemCalls)).toEqual([]);
       expect(await run([cut.executable], folder)).toEqual(saysHello);
     });

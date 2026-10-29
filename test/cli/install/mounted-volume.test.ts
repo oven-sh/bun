@@ -188,6 +188,7 @@ for (const row of volumeRows) {
           "merged/.keep": "",
         });
         const root = String(dir);
+        const modules = join(root, "project", "node_modules");
         await registry.writeBunfig(join(root, "project"), { linker: row.linker, globalStore: row.globalStore });
         const env = {
           ...bunEnv,
@@ -219,7 +220,6 @@ if [ -n "$THEN" ]; then echo "$THEN" > package.json; fi
 "$@" >&2
 code=$?
 if [ -n "$AGAIN" ]; then echo "a second install:" >&2; "$BUN" install >&2 || code=125; fi
-if [ -n "$REFUSED" ]; then find node_modules -name "$REFUSED" -exec chmod 755 {} \\;; fi
 cat "node_modules/$PACKAGE/package.json" 2>/dev/null
 exit $code`,
             "sh",
@@ -235,6 +235,11 @@ exit $code`,
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         if (existsSync(join(root, "work", "work"))) chmodSync(join(root, "work", "work"), 0o700);
+        if (row.refused) {
+          // It is in the package folder, or in the one that the package folder was renamed to.
+          const refused = new Bun.Glob(`*/${dirname(where)}`).scanSync({ cwd: modules, dot: true, onlyFiles: false });
+          for (const folder of refused) chmodSync(join(modules, folder), 0o755);
+        }
         const [said, saidAgain = []] = stderr
           .split("a second install:\n")
           .map(output => output.split("\n").filter(line => /^(error:|warn:|E[A-Z]+:|Failed )/.test(line)));

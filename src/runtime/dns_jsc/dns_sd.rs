@@ -815,10 +815,10 @@ pub(crate) fn lookup(
 
     if let CacheHit::Inflight(inflight) = cache {
         let dns_lookup = DNSLookup::init(this, global_this, context);
+        let promise = dns_lookup.promise.value();
         // SAFETY: inflight points into resolver's HiveArray buffer
         unsafe { (*inflight).append(dns_lookup) };
-        // SAFETY: `dns_lookup` was just heap-allocated by `DNSLookup::init`.
-        return unsafe { (*dns_lookup).promise.value() };
+        return promise;
     }
 
     let Some(shared) = SharedConnection::get(js_event_loop_ctx()) else {
@@ -851,7 +851,6 @@ pub(crate) fn lookup(
                 // SAFETY: `pos` was alloc'd; no other token outstanding.
                 c.put(slot);
             }
-            DNSLookup::destroy(&raw mut (*request).head);
             drop(bun_core::heap::take(request));
         }
         return lib_c::lookup(this, query, global_this, context);

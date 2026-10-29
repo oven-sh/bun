@@ -1557,6 +1557,7 @@ interface $BunModules {
   "internal/streams/utils": $ModuleValue<typeof import("./internal/streams/utils")>;
   "internal/streams/writable": $ModuleValue<typeof import("./internal/streams/writable")>;
   "internal/test/binding": $ModuleValue<typeof import("./internal/test/binding")>;
+  "internal/test_runner/mock_slots": $ModuleValue<typeof import("./internal/test_runner/mock_slots")>;
   "internal/test_runner/mock_timers": $ModuleValue<typeof import("./internal/test_runner/mock_timers")>;
   "internal/timers": $ModuleValue<typeof import("./internal/timers")>;
   "internal/tls": $ModuleValue<typeof import("./internal/tls")>;

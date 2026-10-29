@@ -6243,6 +6243,8 @@ impl VirtualMachine {
                     hook.global_this = new_global;
                 }
             }
+            // It is the old global's `node:test`. The new global's registers its own.
+            rare.node_test_file_boundary.deinit();
         }
 
         self.undo_process_env_side_effects();

@@ -428,9 +428,8 @@ pub(crate) struct BunTestRoot {
     /// so a never-settled promise's `+1` stays reachable; do not free orphans —
     /// a queued reaction may still consume them.
     pub(crate) pending_then_refs: std::cell::RefCell<Vec<*const RefData>>,
-    /// Monotonic per-`enter_file` counter. Exposed to JS so per-file module
-    /// state (node:test root) resets on `--rerun-each` where `Bun.main` is
-    /// unchanged across iterations.
+    /// Monotonic per-`enter_file` counter: each file, and each `--rerun-each`
+    /// iteration of one (where `Bun.main` does not change), has its own value.
     pub(crate) file_generation: u32,
 }
 

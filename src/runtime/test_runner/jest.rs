@@ -5,7 +5,7 @@ use crate::cli::command::TestOptions;
 use crate::cli::test_command::CommandLineReporter;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_core::Output;
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{Callable, JsHeap, JsLocal, JsScope};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
@@ -506,19 +506,36 @@ pub(crate) fn set_default_timeout(milliseconds: f64) {
     }
 }
 
-/// Reached only from `node:test`, through `$bindgen` rather than the
-/// public `bun:test` module object, whenever a node:test API registers something. Returns 0 outside `bun test`.
-pub(crate) fn file_generation() -> u32 {
-    // `runner_ptr()` rather than `runner()`: node:test calls this on every test
-    // registration, and an exclusive `&mut TestRunner` would invalidate the
+/// Reached only from `node:test`, through `$bindgen` rather than the public `bun:test` module object,
+/// the first time one of its APIs registers something in a realm. `TestCommand::run` calls
+/// `on_file_boundary` before it loads each later test file. Returns false where no runner loads
+/// files: outside `bun test`, in a Worker, and in a realm that is not the one the files run in.
+pub(crate) fn node_test_arm_file_boundary(
+    heap: &JsHeap<'_>,
+    on_file_boundary: JsLocal<'_, Callable>,
+) -> bool {
+    let vm = VirtualMachine::get();
+    // A Worker has its own VM, and the runner lives on the main thread.
+    if vm.worker_ref().is_some() {
+        return false;
+    }
+    // `runner_ptr()` rather than `runner()`: an exclusive `&mut TestRunner` would invalidate the
     // `bun_test_root` pointer `test_command.rs` keeps live across the file run.
-    // SAFETY: same invariant as `runner()` — RUNNER is only read on the JS thread.
-    Jest::runner_ptr().map_or(0, |p| unsafe {
-        if VirtualMachine::get().worker_ref().is_none() {
-            (*p.as_ptr()).node_test_used = true;
-        }
-        (*p.as_ptr()).bun_test_root.file_generation
-    })
+    let Some(runner) = Jest::runner_ptr() else {
+        return false;
+    };
+    // SAFETY: RUNNER is only accessed from the JS thread of the main VM, which this is.
+    unsafe { (*runner.as_ptr()).node_test_used = true };
+    // SAFETY: a comparison of addresses and the allocation of a handle. Neither runs JavaScript.
+    let global = unsafe { heap.global() };
+    if !core::ptr::eq(global, vm.global()) {
+        return false;
+    }
+    vm.as_mut()
+        .rare_data()
+        .node_test_file_boundary
+        .set(global, on_file_boundary.to_js());
+    true
 }
 
 /// Reached only from `node:test` (`t.skip()` / `t.todo()` at runtime): overrides

@@ -2,7 +2,12 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::test_runner::jest" });
 
-export const fileGeneration = b.fn({ returns: b.u32 });
+/** `node:test` hands over the function that `bun test` calls before it loads each later test file. False: nothing will call it. */
+export const nodeTestArmFileBoundary = b.fn({
+  args: { onFileBoundary: b.callable },
+  returns: b.bool,
+  capability: "heap",
+});
 export const nodeTestMarkResult = b.fn({ args: { todo: b.bool, done: b.any } });
 
 const js = { capability: "js", throws: true } as const;

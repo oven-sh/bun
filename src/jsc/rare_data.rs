@@ -268,6 +268,9 @@ pub struct RareData {
     pub s3_default_client: Strong,
     /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
     pub node_quic_callbacks: Strong,
+    /// `node:test`'s function that drops what the last test file left in the realm. `bun test` calls it
+    /// before it loads the next file. Empty until a `node:test` API registers something.
+    pub node_test_file_boundary: Strong,
     pub(crate) default_csrf_secret: Box<[u8]>,
 
     /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
@@ -312,6 +315,7 @@ impl Default for RareData {
             libdeflate_decompressor: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
+            node_test_file_boundary: Strong::empty(),
             default_csrf_secret: Box::default(),
             tls_default_ciphers: None,
             spawn_sync_event_loop_: None,
@@ -694,6 +698,7 @@ impl RareData {
     pub(crate) fn release_js_handles(&mut self) {
         self.s3_default_client.deinit();
         self.node_quic_callbacks.deinit();
+        self.node_test_file_boundary.deinit();
     }
 
     // ── trivial field accessors ────────────────────────────────────────────

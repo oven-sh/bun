@@ -136,7 +136,7 @@ export default b.declarations(
   extendAll(["InternalForTesting", "Buffer"], ...nativeBindings("Bindgen", "memory_pressure.bind.ts", "psiTrigger")),
 
   extendAll(["Test", ...runtimeTranspilerFeatures, "DeepEquals"], "Bun.jest", "bun:test", "%Expect%"),
-  extendAll(["Test"], ...nativeBindings("Bindgen", "jest.bind.ts", "fileGeneration", "nodeTestMarkResult")),
+  extendAll(["Test"], ...nativeBindings("Bindgen", "jest.bind.ts", "nodeTestArmFileBoundary", "nodeTestMarkResult")),
   extendAll(
     bundlerFeatures,
     ...nativeBindings(

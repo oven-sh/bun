@@ -6,9 +6,10 @@ import assert from "node:assert";
 globalThis.__rerunTarget ??= { greet: () => "real" };
 const target = globalThis.__rerunTarget;
 
-// Module-scope mock.method() must run the file-boundary reset before
-// snapshotting the original. Under --rerun-each Bun.main is unchanged, so a
-// generation-counter comparison is what makes the reset fire on iterations 2+.
+// The file-boundary reset must run before a module-scope mock.method()
+// snapshots the original. Under --rerun-each Bun.main is unchanged, so the
+// runner, which resets before it loads the file again, is what tells
+// iterations 2+ apart.
 mock.method(target, "greet", () => "mocked");
 
 test("module-scope mock.method captured the real original across reruns", () => {

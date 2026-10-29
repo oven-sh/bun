@@ -984,6 +984,14 @@ pub(super) struct Repl<'a> {
     // POSIX: the REPL's own stdin raw-mode state
     #[cfg(unix)]
     tty_state: tty::State,
+
+    // POSIX: what SIGINT did when the REPL started
+    #[cfg(unix)]
+    sigint_at_start: bun_sys::posix::Sigaction,
+
+    // POSIX: `sigint_handler` stays installed for the raw prompt, until `restore_terminal`
+    #[cfg(unix)]
+    keeps_sigint: bool,
 }
 
 impl<'a> Repl<'a> {
@@ -1012,6 +1020,17 @@ impl<'a> Repl<'a> {
             original_windows_mode: None,
             #[cfg(unix)]
             tty_state: tty::State::new(),
+            #[cfg(unix)]
+            sigint_at_start: {
+                let mut action: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
+                // SAFETY: a query. `action` outlives the call.
+                unsafe {
+                    bun_sys::posix::sigaction(libc::SIGINT, core::ptr::null(), &raw mut action)
+                };
+                action
+            },
+            #[cfg(unix)]
+            keeps_sigint: false,
         }
     }
 
@@ -1067,6 +1086,10 @@ impl<'a> Repl<'a> {
             let _ = self
                 .tty_state
                 .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
+
+            if core::mem::take(&mut self.keeps_sigint) {
+                self.release_sigint();
+            }
         }
         #[cfg(windows)]
         {
@@ -1080,37 +1103,61 @@ impl<'a> Repl<'a> {
         }
     }
 
-    /// Temporarily enable SIGINT delivery during blocking promise waits
-    fn enable_signals_during_wait(&mut self) {
-        SIGINT_ARMED.store(true, core::sync::atomic::Ordering::Release);
-
-        #[cfg(unix)]
-        {
-            // Switch to normal terminal mode (has ISIG) so Ctrl+C generates SIGINT
-            let _ = self
-                .tty_state
-                .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
-
-            // Install SIGINT handler
-            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; we set
-            // sa_sigaction/sa_flags below. `act` is valid for the duration of the call.
-            unsafe {
-                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = sigint_handler as *const () as usize;
-                act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
+    /// Gives SIGINT the action it had when the REPL started, unless something replaced `sigint_handler` since.
+    #[cfg(unix)]
+    fn release_sigint(&self) {
+        let mut current: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
+        // SAFETY: a query, then a write of an action that `sigaction` returned. Both outlive the calls.
+        unsafe {
+            bun_sys::posix::sigaction(libc::SIGINT, core::ptr::null(), &raw mut current);
+            if current.sa_sigaction == sigint_handler_address() {
+                bun_sys::posix::sigaction(
+                    libc::SIGINT,
+                    &raw const self.sigint_at_start,
+                    core::ptr::null_mut(),
+                );
             }
         }
-        // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
     }
 
     /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
-    fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
+    fn wait_for_promise_or_sigint(
+        &mut self,
+        vm: &VirtualMachine,
+        promise: *mut jsc::JSPromise,
+    ) -> bool {
         use core::sync::atomic::Ordering;
         SIGINT_DURING_WAIT.store(false, Ordering::Release);
+        SIGINT_ARMED.store(true, Ordering::Release);
+
+        // With a terminal of its own (raw mode at the prompt), Ctrl+C is a SIGINT for the wait only.
+        #[cfg(unix)]
+        let owns_terminal = self.drawing.is_some();
+        #[cfg(unix)]
+        {
+            // SAFETY: the main thread's loop lives for the rest of the process.
+            unsafe { SIGINT_WAKES.set(bun_uws::Loop::get()) };
+
+            let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
+            act.sa_sigaction = sigint_handler_address();
+            // SAFETY: a zeroed `sigaction` is an empty mask and no flags; it outlives the call.
+            unsafe {
+                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut())
+            };
+
+            // The handler is in before the terminal sends SIGINT. Windows: ENABLE_PROCESSED_INPUT is set.
+            if owns_terminal {
+                let _ = self
+                    .tty_state
+                    .set_mode(0, tty::Mode::Normal, tty::SetAttrWhen::Drain);
+            }
+        }
+
+        let mut interrupted = false;
         while jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending {
             if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
-                return true;
+                interrupted = true;
+                break;
             }
             vm.as_mut().event_loop_mut().tick();
             if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
@@ -1119,30 +1166,20 @@ impl<'a> Repl<'a> {
                 vm.as_mut().event_loop_mut().auto_tick();
             }
         }
-        false
-    }
-
-    /// Restore raw terminal mode after promise wait
-    fn disable_signals_during_wait(&mut self) {
-        SIGINT_ARMED.store(false, core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
-        {
-            // Back to raw mode
+        if owns_terminal {
+            // Raw mode is back before the handler is disarmed: a Ctrl+C between the two is a key.
             let _ = self
                 .tty_state
                 .set_mode(0, tty::Mode::Raw, tty::SetAttrWhen::Drain);
-
-            // Restore default SIGINT handling
-            // SAFETY: zeroed `sigaction` is a valid empty mask + null restorer; SIG_DFL
-            // restores the default disposition. `act` is valid for the duration of the call.
-            unsafe {
-                let mut act: bun_sys::posix::Sigaction = bun_core::ffi::zeroed();
-                act.sa_sigaction = libc::SIG_DFL;
-                act.sa_flags = 0;
-                bun_sys::posix::sigaction(libc::SIGINT, &raw const act, core::ptr::null_mut());
-            }
+            // Ctrl+C is a key at a raw prompt, so a SIGINT there is not the user's: the handler stays.
+            self.keeps_sigint = true;
+        } else {
+            self.release_sigint();
         }
+        SIGINT_ARMED.store(false, Ordering::Release);
+        interrupted
     }
 
     fn write(&self, data: &[u8]) {
@@ -1656,15 +1693,9 @@ impl<'a> Repl<'a> {
             // Mark as handled BEFORE waiting to prevent unhandled rejection output
             jsc::JSPromise::opaque_mut(promise).set_handled();
 
-            // Temporarily re-enable signal delivery so Ctrl+C can interrupt
-            // the blocking waitForPromise call
-            self.enable_signals_during_wait();
-            // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
-
             // Wait for the promise to settle, or for a SIGINT.
-            if Self::wait_for_promise_or_sigint(vm, promise) {
+            if self.wait_for_promise_or_sigint(vm, promise) {
                 self.print(format_args!("\n"));
-                self.disable_signals_during_wait();
                 return;
             }
 
@@ -1682,17 +1713,14 @@ impl<'a> Repl<'a> {
                     let global_this = global.to_js_value();
                     global_this.put(global, b"_error", rejection);
                     self.print_js_error(rejection);
-                    self.disable_signals_during_wait();
                     return;
                 }
                 PromiseStatus::Pending => {
                     // Interrupted by signal or timed out
                     self.print(format_args!("\n"));
-                    self.disable_signals_during_wait();
                     return;
                 }
             }
-            self.disable_signals_during_wait();
         }
 
         // Extract the value from the result wrapper { value: expr }
@@ -1957,11 +1985,9 @@ impl<'a> Repl<'a> {
             // SAFETY: `promise` is a live JSC heap cell; `vm.jsc_vm` is the
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
-            self.enable_signals_during_wait();
             // Wait for the promise to settle, or for a SIGINT.
-            if Self::wait_for_promise_or_sigint(vm, promise) {
+            if self.wait_for_promise_or_sigint(vm, promise) {
                 self.print(format_args!("\n"));
-                self.disable_signals_during_wait();
                 return;
             }
             let jsc_vm_ref = vm.jsc_vm();
@@ -1973,15 +1999,10 @@ impl<'a> Repl<'a> {
                     let rejection = jsc::JSPromise::opaque_mut(promise).result(jsc_vm_ref);
                     self.set_last_error(rejection);
                     self.print_js_error(rejection);
-                    self.disable_signals_during_wait();
                     return;
                 }
-                PromiseStatus::Pending => {
-                    self.disable_signals_during_wait();
-                    return;
-                }
+                PromiseStatus::Pending => return,
             }
-            self.disable_signals_during_wait();
         }
 
         let mut actual_result = resolved_result;
@@ -2846,18 +2867,28 @@ impl<'a> Drop for Repl<'a> {
     }
 }
 
-/// The REPL is waiting on a promise and wants SIGINT to cut the wait short (async-signal-safe: atomics only).
+/// The REPL is waiting on a promise and wants SIGINT to cut the wait short.
 static SIGINT_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
-/// A SIGINT arrived during such a wait: stop waiting (the signal itself interrupts the loop's poll). Not a
-/// VM stop — the VM stays usable.
+/// A SIGINT arrived during such a wait: stop waiting. Not a VM stop — the VM stays usable.
 static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
+/// The loop that wait parks in, for `sigint_handler` to wake.
+#[cfg(unix)]
+static SIGINT_WAKES: bun_uws::LoopWaker = bun_uws::LoopWaker::unset();
 
+/// Async-signal-safe: atomics and the loop's wakeup. Outside a wait it drops the signal.
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
-    if SIGINT_ARMED.load(core::sync::atomic::Ordering::Acquire) {
-        SIGINT_DURING_WAIT.store(true, core::sync::atomic::Ordering::Release);
+    use core::sync::atomic::Ordering;
+    if SIGINT_ARMED.load(Ordering::Acquire) {
+        SIGINT_DURING_WAIT.store(true, Ordering::Release);
+        SIGINT_WAKES.wake();
     }
+}
+
+#[cfg(unix)]
+fn sigint_handler_address() -> libc::sighandler_t {
+    sigint_handler as *const () as libc::sighandler_t
 }
 
 // ============================================================================

@@ -1679,6 +1679,7 @@ describe("printing a Map or Set iterator does not run it", () => {
     const entries = pairs.entries();
     pairs.add(entries);
     expect(Bun.inspect(entries, { compact: true })).toBe("SetIterator { [ [Circular], [Circular] ] }");
+    expect(entries.next()).toEqual({ value: [entries, entries], done: false });
   });
 
   it("without a depth limit the print of such an iterator still ends", () => {
@@ -1686,11 +1687,13 @@ describe("printing a Map or Set iterator does not run it", () => {
     const values = holder.values();
     holder.set("self", values);
     expect(Bun.inspect(values, { compact: true, depth: Infinity })).toBe("MapIterator { [Circular] }");
+    expect(values.next()).toEqual({ value: values, done: false });
 
     const set = new Set();
     const members = set.values();
     set.add(members);
     expect(Bun.inspect(members, { compact: true, depth: Infinity })).toBe("SetIterator { [Circular] }");
+    expect(members.next()).toEqual({ value: members, done: false });
   });
 
   it("the entries are read before the first one is formatted", () => {
@@ -1738,10 +1741,11 @@ describe("printing a Map or Set iterator does not run it", () => {
           });
         }
         sinks[sink](iterator);
-        formatted[`${sink}, ${drop}`] = seen.length;
+        formatted[`${sink}, ${drop}`] = seen;
       }
     }
-    expect(formatted).toEqual(Object.fromEntries(Object.keys(formatted).map(key => [key, count])));
+    const each = Array.from({ length: count }, (_, index) => index);
+    expect(formatted).toEqual(Object.fromEntries(Object.keys(formatted).map(key => [key, each])));
   });
 
   it("an entry that throws when it is formatted leaves the iterator where it is", () => {
@@ -1789,7 +1793,8 @@ describe("printing a Map or Set iterator does not run it", () => {
     const left = {};
     for (const matcher of ["toBeNull", "toBeUndefined", "toBeFalsy", "toBeInstanceOf"]) {
       const iterator = new Map([[1, 2]]).entries();
-      expect(() => expect(iterator)[matcher](Array)).toThrow();
+      // The message of the failure shows the value that the matcher received.
+      expect(() => expect(iterator)[matcher](Array)).toThrow("MapIterator { \n  [ 1, 2 ],\n}");
       left[matcher] = [...iterator];
     }
     const kept = [[1, 2]];
@@ -1853,6 +1858,16 @@ describe("printing a Map or Set iterator does not run it", () => {
         "set.values()": () => new Set([1, 3, 5]).values(),
         "set.entries()": () => new Set([1, 3, 5]).entries(),
       };
+      // No print in the program: native code formats the value for the message of an error.
+      const messages = [];
+      const rejected = call => {
+        try {
+          call();
+          messages.push("no error");
+        } catch (error) {
+          messages.push(error.code + ": " + error.message);
+        }
+      };
       const sinks = {
         "console.log": it => console.log(it),
         "console.log nested": it => console.log({ a: [it] }),
@@ -1865,17 +1880,8 @@ describe("printing a Map or Set iterator does not run it", () => {
         "Bun.inspect.table": it => Bun.inspect.table(it),
         "AggregateError.errors": it => Bun.inspect(Object.assign(new AggregateError([]), { errors: it })),
         "console.error of an error that holds it": it => console.error(Object.assign(new Error("holder"), { held: it })),
-        // No print in the program: native code formats the value for the message of an error.
-        "a rejected argument": it => {
-          try {
-            require("node:fs").openSync("/", it);
-          } catch {}
-        },
-        "a rejected encoding": it => {
-          try {
-            require("node:crypto").createHash("sha1").setDefaultEncoding(it);
-          } catch {}
-        },
+        "a rejected argument": it => rejected(() => require("node:fs").openSync("/", it)),
+        "a rejected encoding": it => rejected(() => require("node:crypto").createHash("sha1").setDefaultEncoding(it)),
       };
       const usedUp = [];
       for (const sink in sinks) {
@@ -1892,7 +1898,7 @@ describe("printing a Map or Set iterator does not run it", () => {
           if (left !== 3) usedUp.push(sink + " of " + kind);
         }
       }
-      process.stdout.write("\\nRESULT " + JSON.stringify({ calls, usedUp }) + "\\n");
+      process.stdout.write("\\nRESULT " + JSON.stringify({ calls, usedUp, messages }) + "\\n");
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
@@ -1902,9 +1908,20 @@ describe("printing a Map or Set iterator does not run it", () => {
     });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     const result = stdout.split("\n").findLast(line => line.startsWith("RESULT "));
+    const shown = [
+      "MapIterator { 1, 3, 5 }",
+      "MapIterator { 2, 4, 6 }",
+      "MapIterator { [ 1, 2 ], [ 3, 4 ], [ 5, 6 ] }",
+      "SetIterator { 1, 3, 5 }",
+      "SetIterator { [ 1, 1 ], [ 3, 3 ], [ 5, 5 ] }",
+    ];
     expect(JSON.parse(result?.slice("RESULT ".length) ?? "null")).toEqual({
       calls: { next: 0, "Symbol.iterator": 0, return: 0 },
       usedUp: [],
+      messages: [
+        ...shown.map(iterator => `ERR_INVALID_ARG_VALUE: The argument 'flags' is invalid. Received ${iterator}`),
+        ...shown.map(iterator => `ERR_UNKNOWN_ENCODING: Unknown encoding: ${iterator}`),
+      ],
     });
     expect(exitCode).toBe(0);
   });

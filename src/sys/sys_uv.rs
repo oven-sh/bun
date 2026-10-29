@@ -209,8 +209,7 @@ pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
         // so read it by value via `read_unaligned`. The value is copied out
         // *before* `FsReq::drop` runs `uv_fs_req_cleanup` and frees the
         // backing allocation.
-        let p = unsafe { req.ptr_as::<StatFS>() };
-        Result::Ok(unsafe { core::ptr::read_unaligned(p) })
+        Result::Ok(unsafe { core::ptr::read_unaligned(req.ptr_as::<StatFS>()) })
     }
 }
 
@@ -339,7 +338,7 @@ pub(crate) fn readlink<'a>(file_path: &ZStr, buf: &'a mut [u8]) -> Result<&'a mu
     } else {
         // Seems like `rc` does not contain the size?
         debug_assert!(rc.int() == 0);
-        let result_ptr: *mut c_char = unsafe { req.ptr_as::<c_char>() } as *mut c_char;
+        let result_ptr: *mut c_char = req.ptr_as::<c_char>() as *mut c_char;
         let Some(result_ptr) = (!result_ptr.is_null()).then_some(result_ptr) else {
             return Result::Err(
                 Error::new(E::NOENT, Tag::readlink).with_path(file_path.as_bytes()),

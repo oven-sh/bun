@@ -101,7 +101,8 @@ try {
 // the registration that reports a child's exit. FAIL_EPOLL_CTL_SKIP=n lets the
 // first n of them through, and FAIL_EPOLL_CTL_COUNT=m fails only the m that
 // follow those. FAIL_EPOLL_CTL_LOG=path appends to that file an R for each one
-// that is failed and an A for each one that is let through.
+// that is failed, an A for each one that is let through, and an M for each
+// EPOLL_CTL_MOD of a pidfd, which registers it again.
 // FAIL_EPOLL_CTL=pidfd-and-writer-add fails those and what no mode fails,
 // which is nearer to what running out of watches does.
 //
@@ -143,6 +144,14 @@ static int is_pidfd(int fd) {
   return strstr(target, "pidfd") != NULL;
 }
 
+static void log_pidfd(const char *what) {
+  const char *log = getenv("FAIL_EPOLL_CTL_LOG");
+  int log_fd = log ? open(log, O_WRONLY | O_CREAT | O_APPEND, 0600) : -1;
+  if (log_fd < 0) return;
+  if (write(log_fd, what, 1) < 0) {}
+  close(log_fd);
+}
+
 static int should_fail(long op, int fd, struct epoll_event *event) {
   if (!event) return 0;
   const char *mode = getenv("FAIL_EPOLL_CTL");
@@ -150,17 +159,13 @@ static int should_fail(long op, int fd, struct epoll_event *event) {
   int writers_too = strcmp(mode, "pidfd-and-writer-add") == 0;
   if (writers_too && op == EPOLL_CTL_ADD && (event->events & EPOLLOUT)) return 1;
   if (writers_too || strcmp(mode, "pidfd-add") == 0) {
+    if (op == EPOLL_CTL_MOD && is_pidfd(fd)) log_pidfd("M");
     if (op != EPOLL_CTL_ADD || !is_pidfd(fd)) return 0;
     const char *skip = getenv("FAIL_EPOLL_CTL_SKIP");
     const char *count = getenv("FAIL_EPOLL_CTL_COUNT");
-    const char *log = getenv("FAIL_EPOLL_CTL_LOG");
     int nth = pidfd_adds++ - (skip ? atoi(skip) : 0);
     int fail = nth >= 0 && (!count || nth < atoi(count));
-    int log_fd = log ? open(log, O_WRONLY | O_CREAT | O_APPEND, 0600) : -1;
-    if (log_fd >= 0) {
-      if (write(log_fd, fail ? "R" : "A", 1) < 0) {}
-      close(log_fd);
-    }
+    log_pidfd(fail ? "R" : "A");
     return fail;
   }
   // TIOCGPTN succeeds on a pty master only.
@@ -471,13 +476,14 @@ async function runFixture(kind: string, env: Record<string, string> = {}) {
 
 let aliveRuns = 0;
 
-// `pidfdAdds` is what the shim did to each registration of a pidfd, in order: without it, a run in which nothing was
-// refused would look like one in which the second attempt worked.
+// `registrations` is what the shim saw of each registration of a pidfd, in order: R for one that it refused, A for one
+// that it let through, M for one that registers the pidfd again. Without it, a run in which nothing was refused would
+// look like one in which the second attempt worked.
 async function runAliveFixture(kind: string, env: Record<string, string>) {
   // Inside `dir`: whatever a failed run leaves running ends when afterAll removes its gate.
   const cwd = join(String(dir), `alive-${aliveRuns++}`);
   const gate = join(cwd, "gate");
-  const log = join(cwd, "pidfd-adds");
+  const log = join(cwd, "registrations");
   mkdirSync(cwd);
   writeFileSync(gate, "");
   await using proc = Bun.spawn({
@@ -490,7 +496,7 @@ async function runAliveFixture(kind: string, env: Record<string, string>) {
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // For the child of a parent that did not wait for it.
   rmSync(gate, { force: true });
-  return { stdout, stderr, exitCode, pidfdAdds: existsSync(log) ? readFileSync(log, "utf8") : "" };
+  return { stdout, stderr, exitCode, registrations: existsSync(log) ? readFileSync(log, "utf8") : "" };
 }
 
 describe.skipIf(!isLinux || !cc)(
@@ -624,7 +630,7 @@ describe.skipIf(!isLinux || !cc)("a child whose pidfd registers at the second at
       stdout: "spawned\nexit 7\n",
       stderr: "",
       exitCode: 0,
-      pidfdAdds: "RA",
+      registrations: "RA",
     });
   });
 
@@ -636,10 +642,11 @@ describe.skipIf(!isLinux || !cc)("a child whose pidfd registers at the second at
       "after unref(), when its pidfd is registered again",
       "rearm-unref",
       { FAIL_EPOLL_CTL: "pidfd-add", FAIL_EPOLL_CTL_COUNT: "0", FAKE_RUNNING: "asked" },
-      "A",
+      // Registered once, and then again for as many turns of the loop as the process lived.
+      expect.stringMatching(/^AM+$/),
     ],
-  ])("does not keep the process running %s", async (_, kind, env, pidfdAdds) => {
-    expect(await runAliveFixture(kind, env)).toEqual({ stdout: "spawned\n", stderr: "", exitCode: 0, pidfdAdds });
+  ])("does not keep the process running %s", async (_, kind, env, registrations) => {
+    expect(await runAliveFixture(kind, env)).toEqual({ stdout: "spawned\n", stderr: "", exitCode: 0, registrations });
   });
 });
 

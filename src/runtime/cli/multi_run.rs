@@ -152,19 +152,16 @@ impl<'a> ProcessHandle<'a> {
 
         let start_time = Instant::now();
         let envp;
-        let env_ptr = state.env;
         let spawned: SpawnProcessResult = {
-            // SAFETY: state.env points at the process-lifetime DotEnv loader.
-            let env = unsafe { &mut *env_ptr };
+            // SAFETY: state.env points at the process-lifetime DotEnv loader; nothing else reaches it before the guard drops.
+            let env = unsafe { &mut *state.env };
             let original_path: Box<[u8]> = env.map.get(b"PATH").map(Box::from).unwrap_or_default();
             let _ = env.map.put(b"PATH", &self.config.path);
-            let _restore = scopeguard::guard(original_path, move |original_path| {
-                // SAFETY: env_ptr is the process-lifetime loader; outlives this scope.
-                let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
+            let mut env = scopeguard::guard(env, move |env| {
+                let _ = env.map.put(b"PATH", &original_path);
             });
-            // SAFETY: same loader; the `_restore` guard's closure has not fired yet.
             envp = crate::cli::script_or_command::with_package_script(
-                unsafe { &mut *env_ptr },
+                &mut env,
                 &self.config.name,
                 &self.config.cwd,
                 |env| env.map.create_null_delimited_env_map(),

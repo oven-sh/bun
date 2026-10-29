@@ -12,10 +12,9 @@
 //!
 //! * `zst::<H>()`         — conjure a ZST handler value (handlers are
 //!   monomorphised zero-sized types, so no runtime data is needed).
-//! * `handle_mut`         — `*mut Opaque → &mut Opaque` for uWS handles.
 //! * `c_slice`            — `(ptr,len) → &[u8]` (empty when len==0 / null).
 //!
-//! All functions are `unsafe fn` (callers uphold the uWS callback contract)
+//! `c_slice` is an `unsafe fn` (callers uphold the uWS callback contract)
 //! and `#[inline(always)]` so codegen is identical to the hand-rolled thunks.
 
 use core::ptr::NonNull;
@@ -31,20 +30,6 @@ use core::ptr::NonNull;
 #[inline(always)]
 pub(crate) fn zst<H>() -> H {
     bun_core::ffi::conjure_zst::<H>()
-}
-
-/// Re-type a raw uWS handle (`uws_res`, `H3Response`, `RawWebSocket`, …) as a
-/// mutable Rust reference. These are zero-sized opaque markers, so the borrow
-/// covers no Rust-owned bytes — it exists purely to hang methods off.
-///
-/// # Safety
-/// `p` must be non-null and live for the duration of the callback (guaranteed
-/// by uWS for every handle it passes into a callback).
-#[inline(always)]
-pub(crate) unsafe fn handle_mut<'a, T>(p: *mut T) -> &'a mut T {
-    debug_assert!(!p.is_null());
-    // SAFETY: per caller contract above.
-    unsafe { &mut *p }
 }
 
 /// Lift a C `(ptr,len)` pair into a borrowed slice, mapping `len == 0` (and
@@ -65,7 +50,7 @@ pub(crate) unsafe fn c_slice<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
 
 // ───────────────────────── safe-surface trampoline ──────────────────────────
 //
-// S005: the primitives above are `unsafe fn` because each call site must
+// S005: recovering `&mut Owner` from user data is `unsafe` because each call site must
 // re-assert the uWS callback contract. For the common, *non-re-entrant*
 // dispatch path (single-threaded event loop, handler does not call back into
 // uWS on the same socket while holding `&mut Owner`) that contract is uniform

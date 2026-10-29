@@ -36,7 +36,7 @@ impl<'a> Input<'a> {
     }
 
     #[cold]
-    fn byte_past_end(&mut self) -> u8 {
+    fn byte_past_end(&self) -> u8 {
         if (self.pos - self.data.len()) & 1 == 0 {
             0xff
         } else {
@@ -87,12 +87,17 @@ impl<'a> Input<'a> {
         if self.unread_marker == M_RST0 + self.next_restart_num {
             self.unread_marker = 0;
         } else {
-            self.resync_to_restart(self.next_restart_num);
+            self.resync_to_restart();
         }
         self.next_restart_num = (self.next_restart_num + 1) & 7;
+        // Up against a marker, the next segment is empty: leaving the flag set keeps it gray instead of garbage.
+        if self.unread_marker == 0 {
+            self.insufficient_data = false;
+        }
     }
 
-    fn resync_to_restart(&mut self, desired: u8) {
+    fn resync_to_restart(&mut self) {
+        let desired = self.next_restart_num;
         loop {
             let marker = self.unread_marker;
             let rst = |n: u8| M_RST0 + (n & 7);

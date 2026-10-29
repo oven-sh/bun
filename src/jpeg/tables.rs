@@ -12,9 +12,8 @@ pub(crate) struct HuffSpec {
     pub(crate) huffval: [u8; 256],
 }
 
-/// `NATURAL_ORDER[i]` is the row-major position of the `i`th coefficient in zigzag order. A run length in damaged data
-/// can go up to 15 past the end of the block, and those land on 63.
-pub(crate) const NATURAL_ORDER: [u8; 64 + 16] = [
+/// `NATURAL_ORDER[i]` is the row-major position of the `i`th coefficient in zigzag order.
+pub(crate) const NATURAL_ORDER: [u8; 64] = [
     0, 1, 8, 16, 9, 2, 3, 10, //
     17, 24, 32, 25, 18, 11, 4, 5, //
     12, 19, 26, 33, 40, 48, 41, 34, //
@@ -23,10 +22,9 @@ pub(crate) const NATURAL_ORDER: [u8; 64 + 16] = [
     29, 22, 15, 23, 30, 37, 44, 51, //
     58, 59, 52, 45, 38, 31, 39, 46, //
     53, 60, 61, 54, 47, 55, 62, 63, //
-    63, 63, 63, 63, 63, 63, 63, 63, //
-    63, 63, 63, 63, 63, 63, 63, 63,
 ];
 
+/// A run length in damaged data can go past the end of the block, and lands on 63.
 #[inline(always)]
 pub(crate) fn natural_order(k: usize) -> usize {
     usize::from(NATURAL_ORDER.get(k).copied().unwrap_or(63))

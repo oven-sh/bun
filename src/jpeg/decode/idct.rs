@@ -8,7 +8,7 @@
 //! - The other sizes are C with a 64-bit `long`.
 
 use super::Block;
-use crate::lanes::{column, descale, from_columns, map, transpose};
+use crate::lanes::{column, descale, from_columns, madd, map, transpose};
 use crate::tables::dct::*;
 use core::ops::{Add, Mul, Shl, Sub};
 
@@ -72,8 +72,6 @@ const fn rows_mask(rows: u64) -> u64 {
 #[inline(always)]
 fn idct8([in0, in1, in2, in3, in4, in5, in6, in7]: [i16; 8], shift: u32) -> [i16; 8] {
     let wide = i32::from;
-    // pmaddwd. With these constants the sum of the two products cannot overflow.
-    let madd = |a: i16, ca: i32, b: i16, cb: i32| wide(a) * ca + wide(b) * cb;
     let round = 1 << (shift - 1);
 
     let tmp3 = madd(in2, F_0_541 + F_0_765, in6, F_0_541);
@@ -177,7 +175,6 @@ fn idct4([in0, in1, in2, in3, in5, in6, in7]: [i16; 7], shift: u32) -> [i16; 4] 
     const F_2_172: i32 = 17799;
 
     let wide = i32::from;
-    let madd = |a: i16, ca: i32, b: i16, cb: i32| wide(a) * ca + wide(b) * cb;
 
     let tmp2 = madd(in5, -F_0_601, in7, -F_0_509).wrapping_add(madd(in1, F_2_562, in3, F_0_899));
     let tmp0 = madd(in5, F_1_451, in7, -F_0_211).wrapping_add(madd(in1, F_1_061, in3, -F_2_172));

@@ -152,7 +152,6 @@ impl Core {
     }
 }
 
-#[derive(Clone, Copy)]
 enum Pass {
     Sequential,
     DcFirst,
@@ -287,21 +286,17 @@ impl ArithDecoder {
             self.restarts_to_go -= 1;
         }
 
-        if let Pass::DcRefine = self.pass {
-            let plus_one = 1i16 << self.al;
-            for index in 0..self.blocks_in_mcu {
-                if self.core.decode(input, &mut self.fixed_bin) {
-                    let [dc, ..] = mcu.block(index).ok_or(Error::Internal)?;
-                    *dc |= plus_one;
+        match self.pass {
+            Pass::DcRefine => {
+                let plus_one = 1i16 << self.al;
+                for index in 0..self.blocks_in_mcu {
+                    if self.core.decode(input, &mut self.fixed_bin) {
+                        let [dc, ..] = mcu.block(index).ok_or(Error::Internal)?;
+                        *dc |= plus_one;
+                    }
                 }
             }
-            return Ok(());
-        }
-        if self.core.ct == -1 {
-            return Ok(());
-        }
-
-        match self.pass {
+            _ if self.core.ct == -1 => {}
             Pass::Sequential | Pass::DcFirst => {
                 for index in 0..self.blocks_in_mcu {
                     let info = *self.blocks.get(index).ok_or(Error::Internal)?;
@@ -332,7 +327,6 @@ impl ArithDecoder {
                     mcu.block(0).ok_or(Error::Internal)?,
                 )?;
             }
-            Pass::DcRefine => {}
         }
         Ok(())
     }

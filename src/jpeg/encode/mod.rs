@@ -18,8 +18,7 @@ use sample::{MCU_SIZE, McuRowSamples};
 /// The quantized coefficients of a block.
 #[derive(Clone, Copy)]
 struct Block {
-    /// In row-major order.
-    coefs: [i16; 64],
+    coefs: [[i16; 8]; 8],
     /// Bit `k` is set if the `k`th coefficient in zigzag order is not zero. Most are, and nothing looks at those.
     nonzero: u64,
 }
@@ -27,8 +26,8 @@ struct Block {
 impl Block {
     /// A block outside of the image.
     const fn flat(dc: i16) -> Self {
-        let mut coefs = [0; 64];
-        let [first, ..] = &mut coefs;
+        let mut coefs = [[0; 8]; 8];
+        let [[first, ..], ..] = &mut coefs;
         *first = dc;
         Block {
             coefs,
@@ -38,7 +37,7 @@ impl Block {
 
     #[inline(always)]
     fn dc(&self) -> i16 {
-        let [dc, ..] = self.coefs;
+        let [[dc, ..], ..] = self.coefs;
         dc
     }
 
@@ -46,6 +45,7 @@ impl Block {
     #[inline(always)]
     fn zigzag(&self, k: u32) -> i16 {
         self.coefs
+            .as_flattened()
             .get(natural_order(k as usize))
             .copied()
             .unwrap_or(0)
@@ -350,10 +350,10 @@ impl Encoder<'_> {
         out.huff_table(Table::Chroma, TableClass::Ac, &tables::STD_AC_CHROMINANCE);
         out.scan_header(&SEQUENTIAL_SCAN);
 
-        let luma_dc = SequentialTable::new(&tables::STD_DC_LUMINANCE)?;
-        let luma_ac = SequentialTable::new(&tables::STD_AC_LUMINANCE)?;
-        let chroma_dc = SequentialTable::new(&tables::STD_DC_CHROMINANCE)?;
-        let chroma_ac = SequentialTable::new(&tables::STD_AC_CHROMINANCE)?;
+        let luma_dc = SequentialTable::new(&tables::STD_DC_LUMINANCE);
+        let luma_ac = SequentialTable::new(&tables::STD_AC_LUMINANCE);
+        let chroma_dc = SequentialTable::new(&tables::STD_DC_CHROMINANCE);
+        let chroma_ac = SequentialTable::new(&tables::STD_AC_CHROMINANCE);
 
         let mut y = BlockRows::new(self.mcus_per_row * 2, 2)?;
         let mut cb = BlockRows::new(self.mcus_per_row, 1)?;
@@ -383,7 +383,8 @@ impl Encoder<'_> {
         let mut cr = BlockRows::new(self.mcus_per_row, self.mcu_rows)?;
         self.transform(0, &mut y, &mut cb, &mut cr)?;
 
-        for (index, scan) in PROGRESSIVE_SCANS.iter().enumerate() {
+        out.frame_header(self.width, self.height, true, &self.quant);
+        for scan in &PROGRESSIVE_SCANS {
             let al = u32::from(scan.al);
             let class = if scan.ss == 0 {
                 TableClass::Dc
@@ -440,8 +441,8 @@ impl Encoder<'_> {
             let mut specs: PerTable<Option<HuffSpec>> = PerTable::default();
             if matches!(class, TableClass::Ac) || scan.ah == 0 {
                 let mut counts = PerTable {
-                    luma: [0; 257],
-                    chroma: [0; 257],
+                    luma: [0; 256],
+                    chroma: [0; 256],
                 };
                 run(&mut Sink::Count(&mut counts))?;
                 for component in scan.components {
@@ -453,9 +454,6 @@ impl Encoder<'_> {
                 }
             }
 
-            if index == 0 {
-                out.frame_header(self.width, self.height, true, &self.quant);
-            }
             let mut tables = PerTable {
                 luma: EncodeTable::empty(),
                 chroma: EncodeTable::empty(),
@@ -463,7 +461,7 @@ impl Encoder<'_> {
             for table in [Table::Luma, Table::Chroma] {
                 if let Some(spec) = specs.get(table) {
                     out.huff_table(table, class, spec);
-                    *tables.get_mut(table) = EncodeTable::new(spec)?;
+                    *tables.get_mut(table) = EncodeTable::new(spec);
                 }
             }
             out.scan_header(scan);

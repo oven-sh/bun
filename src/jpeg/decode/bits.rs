@@ -19,11 +19,10 @@ const SHORT_BITS: u32 = 11;
 const MIN_GET_BITS: u32 = 64 - 7;
 
 pub(crate) struct DerivedTable {
-    /// The largest code of length `k`, or -1 if there is none. `maxcode[17]` ends the search for a code that does not
-    /// exist.
-    maxcode: [i32; 18],
+    /// The largest code of length `k`, or -1 if there is none.
+    maxcode: [i32; 17],
     /// `huffval[code + valoffset[k]]` is the symbol of a code of length `k`.
-    valoffset: [i32; 18],
+    valoffset: [i32; 17],
     huffval: [u8; 256],
     /// By the next 8 bits: the length of the code they begin with in the high byte and its symbol in the low byte. The
     /// length is 9 if the code is longer than 8 bits.
@@ -56,8 +55,8 @@ pub(crate) enum TableKind {
 impl DerivedTable {
     pub(crate) fn new(spec: &HuffSpec, kind: TableKind) -> Result<Box<Self>> {
         let mut table = try_box(DerivedTable {
-            maxcode: [-1; 18],
-            valoffset: [0; 18],
+            maxcode: [-1; 17],
+            valoffset: [0; 17],
             huffval: spec.huffval,
             lookup: [((LOOKAHEAD + 1) << LOOKAHEAD) as u16; 1 << LOOKAHEAD],
             long_limits: [0; 8],
@@ -72,20 +71,16 @@ impl DerivedTable {
             .zip(table.maxcode.iter_mut().zip(table.valoffset.iter_mut()));
         for (length, (&count, (maxcode, valoffset))) in lengths.enumerate().skip(1) {
             let count = usize::from(count);
-            if first + count > 256 {
-                return Err(Error::BadHuffTable);
-            }
             if count != 0 {
                 *valoffset = first as i32 - code as i32;
                 if length as u32 <= LOOKAHEAD {
                     // Every byte that begins with one of these codes.
                     let shift = LOOKAHEAD - length as u32;
                     let symbols = spec.huffval.iter().skip(first).take(count);
-                    let entries = table.lookup.iter_mut().skip((code as usize) << shift);
-                    for (entry, &symbol) in
-                        entries.zip(symbols.flat_map(|s| core::iter::repeat_n(s, 1 << shift)))
-                    {
-                        *entry = ((length as u16) << LOOKAHEAD) | u16::from(symbol);
+                    let entries = table.lookup.get_mut((code as usize) << shift..);
+                    let entries = entries.ok_or(Error::Internal)?.chunks_mut(1 << shift);
+                    for (entries, &symbol) in entries.zip(symbols) {
+                        entries.fill(((length as u16) << LOOKAHEAD) | u16::from(symbol));
                     }
                 }
                 if kind == TableKind::Ac {
@@ -108,9 +103,6 @@ impl DerivedTable {
                 *limit = (code << (16 - length)) as u16;
             }
             code <<= 1;
-        }
-        if let Some(sentinel) = table.maxcode.last_mut() {
-            *sentinel = 0xfffff;
         }
 
         // The symbol of a difference is a number of bits to read.
@@ -144,15 +136,15 @@ fn add_short_coefficients(
         return;
     }
     let unused = SHORT_BITS - length;
-    let mut entries = short.iter_mut().skip((code << (size + unused)) as usize);
-    for bits in 0..1 << size {
-        for entry in entries.by_ref().take(1 << unused) {
-            *entry = ShortCoefficient {
-                value: huff_extend(bits, size) as i16,
-                run: symbol >> 4,
-                length: length as u8,
-            };
-        }
+    let Some(entries) = short.get_mut((code << (size + unused)) as usize..) else {
+        return;
+    };
+    for (bits, entries) in (0..1 << size).zip(entries.chunks_mut(1 << unused)) {
+        entries.fill(ShortCoefficient {
+            value: huff_extend(bits, size) as i16,
+            run: symbol >> 4,
+            length: length as u8,
+        });
     }
 }
 
@@ -416,7 +408,7 @@ struct Filled {
     saw_marker: bool,
 }
 
-/// Six more bytes for `buf`, from `data[at..]`.
+/// Six more bytes for `buf`, from `data[at..]`, where one of them is FF or fewer than eight are left.
 #[inline(never)]
 fn fill_bytewise(data: &[u8], mut at: usize, mut buf: u64) -> Filled {
     // Most often what is in the way is a single FF 00.
@@ -425,17 +417,15 @@ fn fill_bytewise(data: &[u8], mut at: usize, mut buf: u64) -> Filled {
         // The top bit of every byte that is FF.
         let ff = ((w & 0x7f7f_7f7f_7f7f_7f7f) + 0x0101_0101_0101_0101) & w & 0x8080_8080_8080_8080;
         let before = ff.leading_zeros();
-        if before <= 40 {
-            let after = u64::MAX >> (before + 8);
-            let only_ff = (ff ^ (1 << 63 >> before)) >> 8 == 0;
-            if only_ff && (w & after) >> (48 - before) == 0 {
-                let without_zero = (w & !after) | ((w << 8) & after);
-                return Filled {
-                    buf: (buf << 48) | (without_zero >> 16),
-                    at: at + 7,
-                    saw_marker: false,
-                };
-            }
+        let after = u64::MAX >> (before + 8);
+        let only_ff = (ff ^ (1 << 63 >> before)) >> 8 == 0;
+        if only_ff && (w & after) >> (48 - before) == 0 {
+            let without_zero = (w & !after) | ((w << 8) & after);
+            return Filled {
+                buf: (buf << 48) | (without_zero >> 16),
+                at: at + 7,
+                saw_marker: false,
+            };
         }
     }
     let mut saw_marker = false;

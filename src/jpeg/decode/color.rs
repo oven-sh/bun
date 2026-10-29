@@ -3,7 +3,7 @@
 use crate::error::{Error, Result};
 use crate::tables::color::{ONE_HALF, SCALEBITS, fix};
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy)]
 pub(crate) enum Conversion {
     GrayToRgba,
     RgbToRgba,

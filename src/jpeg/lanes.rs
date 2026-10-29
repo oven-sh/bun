@@ -14,6 +14,12 @@ pub(crate) fn descale(sum: i32, shift: u32) -> i16 {
     (sum >> shift).clamp(-32768, 32767) as i16
 }
 
+/// pmaddwd. With the constants of the DCTs the sum of the two products cannot overflow.
+#[inline(always)]
+pub(crate) fn madd(a: i16, ca: i32, b: i16, cb: i32) -> i32 {
+    i32::from(a) * ca + i32::from(b) * cb
+}
+
 /// A matrix whose column `lane` is `column(lane)`.
 #[inline(always)]
 pub(crate) fn from_columns<T: Copy + Default, const R: usize, const C: usize>(
@@ -43,13 +49,13 @@ pub(crate) fn map<A: Copy, B: Copy + Default, const N: usize>(
     out
 }
 
-/// The first `N` numbers of column `lane`.
+/// Column `lane`.
 #[inline(always)]
-pub(crate) fn column<T: Copy + Default, const N: usize, const R: usize, const C: usize>(
+pub(crate) fn column<T: Copy + Default, const R: usize, const C: usize>(
     m: &[[T; C]; R],
     lane: usize,
-) -> [T; N] {
-    let mut out = [T::default(); N];
+) -> [T; R] {
+    let mut out = [T::default(); R];
     for (out, row) in out.iter_mut().zip(m) {
         *out = row.get(lane).copied().unwrap_or_default();
     }

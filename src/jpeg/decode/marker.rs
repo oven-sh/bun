@@ -8,8 +8,9 @@ use std::borrow::Cow;
 
 /// How much of an APP0 or APP14 segment is looked at.
 const APPN_DATA_LEN: usize = 14;
+const APP0_DATA_LEN: usize = 14;
+const APP14_DATA_LEN: usize = 12;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reached {
     Sos,
     Eoi,
@@ -55,7 +56,7 @@ impl Decoder<'_> {
                 M_DQT => self.read_dqt()?,
                 M_DRI => self.read_dri()?,
                 M_APP0 | M_APP14 => self.read_app0_or_app14(marker),
-                M_APP2 if self.in_header => self.save_app2()?,
+                M_APP2 if self.input_scan_number == 0 => self.save_app2()?,
                 M_APP0..=M_APP15 | M_COM | M_DNL => self.skip_segment(),
                 M_RST0..=M_RST7 | M_TEM => {}
                 _ => return Err(Error::UnknownMarker(marker)),
@@ -94,7 +95,6 @@ impl Decoder<'_> {
             return Err(Error::BadLength);
         }
 
-        self.components.clear();
         self.components.try_reserve(usize::from(num_components))?;
         for _ in 0..num_components {
             let id = self.input.byte();
@@ -276,10 +276,10 @@ impl Decoder<'_> {
             *byte = self.input.byte();
         }
         if marker == M_APP0 {
-            if read >= 14 && data.starts_with(b"JFIF\0") {
+            if read >= APP0_DATA_LEN && data.starts_with(b"JFIF\0") {
                 self.saw_jfif = true;
             }
-        } else if read >= 12 && data.starts_with(b"Adobe") {
+        } else if read >= APP14_DATA_LEN && data.starts_with(b"Adobe") {
             let [.., transform, _, _] = data;
             self.adobe_transform = Some(transform);
         }

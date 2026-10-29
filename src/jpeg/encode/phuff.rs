@@ -7,6 +7,9 @@ use crate::error::{Result, try_vec_with_capacity};
 /// The most correction bits that wait for the end of a run of blocks. How long such a run gets depends on it.
 const MAX_CORR_BITS: usize = 1000;
 
+/// The longest run of blocks that an end-of-block symbol can stand for.
+const MAX_EOB_RUN: u32 = 0x7fff;
+
 /// Every scan is gone through twice: once to count the symbols, for the table, and once to write them.
 pub(crate) enum Sink<'a, 'b> {
     Count(&'a mut PerTable<Counts>),
@@ -40,7 +43,6 @@ impl Sink<'_, '_> {
     fn symbol(&mut self, table: Table, symbol: u8) {
         match self {
             Sink::Count(counts) => {
-                // There are more counts than values of a `u8`.
                 if let Some(count) = counts.get_mut(table).get_mut(usize::from(symbol)) {
                     *count += 1;
                 }
@@ -162,7 +164,7 @@ impl AcEncoder {
         }
         if next <= self.se {
             self.eob_run += 1;
-            if self.eob_run == 0x7fff {
+            if self.eob_run == MAX_EOB_RUN {
                 self.emit_eob_run(sink);
             }
         }
@@ -179,7 +181,7 @@ impl AcEncoder {
         let mut eob = None;
         let mut left = nonzero;
         while left != 0 && eob.is_none() {
-            let k = 63 - left.leading_zeros();
+            let k = left.ilog2();
             left &= !(1 << k);
             if magnitude(k) == 1 {
                 eob = Some(k);
@@ -231,7 +233,7 @@ impl AcEncoder {
                 self.waiting_bits += correction.len as usize;
             }
             // Before the counter overflows, or the bits of another block could go over the limit.
-            if self.eob_run == 0x7fff || self.waiting_bits > MAX_CORR_BITS - 64 + 1 {
+            if self.eob_run == MAX_EOB_RUN || self.waiting_bits > MAX_CORR_BITS - 64 + 1 {
                 self.emit_eob_run(sink);
             }
         }

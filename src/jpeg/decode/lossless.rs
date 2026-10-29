@@ -3,7 +3,8 @@
 use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
 use super::coef::Plane;
 use super::{Decoder, MAX_BLOCKS_IN_MCU};
-use crate::error::{Error, Result, try_collect, try_vec, try_vec_with_capacity};
+use crate::error::{Error, Result, try_vec, try_vec_with_capacity};
+use core::cell::Cell;
 
 /// The rows of one component for one iMCU row, as numbers wider than a sample.
 struct Rows {
@@ -47,8 +48,8 @@ pub(crate) struct DiffController {
     restart_rows_to_go: u32,
     diff_buf: Vec<Rows>,
     undiff_buf: Vec<Rows>,
-    /// The samples of the whole image, if the stream has several scans. The flag says whether a scan has filled them in.
-    whole_image: Vec<(Plane, bool)>,
+    /// The samples of the whole image, if the stream has several scans. Empty until the component's first scan.
+    whole_image: Vec<Plane>,
 }
 
 impl DiffController {
@@ -74,21 +75,6 @@ impl DiffController {
         })
     }
 
-    /// Ss selects the predictor and Al is the point transform.
-    fn start_undifferencing(&mut self, decoder: &Decoder) -> Result<()> {
-        if !(1..=7).contains(&decoder.ss)
-            || decoder.se != 0
-            || decoder.ah != 0
-            || decoder.al >= decoder.precision
-        {
-            return Err(Error::BadProgression(
-                decoder.ss, decoder.se, decoder.ah, decoder.al,
-            ));
-        }
-        self.first_row.fill(true);
-        Ok(())
-    }
-
     pub(crate) fn start_input_pass(&mut self, decoder: &mut Decoder) -> Result<()> {
         for i in 0..decoder.components_in_scan {
             let selector = decoder.scan_component(i)?.dc_selector;
@@ -112,7 +98,17 @@ impl DiffController {
         self.bits.reset();
         decoder.input.insufficient_data = false;
 
-        self.start_undifferencing(decoder)?;
+        // Ss selects the predictor and Al is the point transform.
+        if !(1..=7).contains(&decoder.ss)
+            || decoder.se != 0
+            || decoder.ah != 0
+            || decoder.al >= decoder.precision
+        {
+            return Err(Error::BadProgression(
+                decoder.ss, decoder.se, decoder.ah, decoder.al,
+            ));
+        }
+        self.first_row.fill(true);
         if !decoder
             .restart_interval
             .is_multiple_of(decoder.mcus_per_row)
@@ -137,15 +133,13 @@ impl DiffController {
                     .diff_buf
                     .get_mut(run.component)
                     .ok_or(Error::Internal)?;
-                for diff in rows
-                    .row_mut(mcu_row_num + run.yoffset)?
-                    .iter_mut()
-                    .take(mcus_per_row * run.width)
-                {
-                    *diff = 0;
-                }
+                rows.row_mut(mcu_row_num + run.yoffset)?
+                    .get_mut(..mcus_per_row * run.width)
+                    .ok_or(Error::Internal)?
+                    .fill(0);
             }
-            return self.start_undifferencing(decoder);
+            self.first_row.fill(true);
+            return Ok(());
         }
 
         let input = &mut decoder.input;
@@ -173,21 +167,17 @@ impl DiffController {
         Ok(())
     }
 
-    /// Decodes the next iMCU row of the scan. `output` finds the row of samples to write for a component and a row
-    /// within the iMCU row.
-    fn decompress_row<'p>(
+    /// Decodes the next iMCU row of the scan into `planes`, or else into its place in `whole_image`.
+    fn decompress_row(
         &mut self,
         decoder: &mut Decoder,
-        mut output: impl FnMut(usize, usize) -> Option<&'p mut [u8]>,
+        planes: Option<&mut [Plane]>,
     ) -> Result<()> {
         for yoffset in 0..decoder.mcu_rows_in_imcu_row(self.input_imcu_row)? {
             if decoder.restart_interval != 0 && self.restart_rows_to_go == 0 {
                 self.bits.reset();
                 decoder.input.read_restart_marker();
-                if decoder.input.unread_marker == 0 {
-                    decoder.input.insufficient_data = false;
-                }
-                self.start_undifferencing(decoder)?;
+                self.first_row.fill(true);
                 self.restart_rows_to_go = decoder.restart_interval / decoder.mcus_per_row;
             }
             self.decode_mcus(decoder, yoffset as usize)?;
@@ -196,9 +186,17 @@ impl DiffController {
             }
         }
 
+        let (planes, first_imcu_row) = match planes {
+            Some(planes) => (planes, 0),
+            None => (
+                self.whole_image.as_mut_slice(),
+                self.input_imcu_row as usize,
+            ),
+        };
         for i in 0..decoder.components_in_scan {
             let ci = decoder.scan_component_index(i)?;
             let comp = decoder.component(ci)?;
+            let plane = planes.get_mut(ci).ok_or(Error::Internal)?;
             let width = comp.width_in_blocks as usize;
             let rows = decoder.rows_in_imcu_row(comp, self.input_imcu_row) as usize;
             let diff_buf = self.diff_buf.get_mut(ci).ok_or(Error::Internal)?;
@@ -209,28 +207,19 @@ impl DiffController {
             let mut prev_row = comp.v_samp as usize - 1;
             for row in 0..rows {
                 let diffs = diff_buf.row_mut(row)?.get(..width).ok_or(Error::Internal)?;
-                let stride = undiff_buf.stride;
                 if *first_row {
                     let initial = 1 << (decoder.precision - decoder.al - 1);
                     undifference_1d(diffs, initial, undiff_buf.row_mut(row)?);
                     *first_row = false;
-                } else if prev_row == row {
-                    // A component with one row in an iMCU row is predicted from the row that is being replaced.
-                    undifference_in_place(decoder.ss, diffs, undiff_buf.row_mut(row)?);
                 } else {
-                    let split = undiff_buf
-                        .data
-                        .split_at_mut_checked(prev_row.max(row) * stride);
-                    let (above, below) = split.ok_or(Error::Internal)?;
-                    let (prev, this) = if prev_row < row {
-                        (above.get(prev_row * stride..), Some(below))
-                    } else {
-                        (Some(&*below), above.get_mut(row * stride..))
-                    };
-                    let (prev, this) = prev.zip(this).ok_or(Error::Internal)?;
+                    // A component with one row in an iMCU row is predicted from the row that is being replaced.
+                    let stride = undiff_buf.stride;
+                    let cells = Cell::from_mut(undiff_buf.data.as_mut_slice()).as_slice_of_cells();
+                    let prev = cells.get(prev_row * stride..).ok_or(Error::Internal)?;
+                    let this = cells.get(row * stride..).ok_or(Error::Internal)?;
                     undifference(decoder.ss, diffs, prev, this);
                 }
-                let samples = output(ci, row).ok_or(Error::Internal)?;
+                let samples = plane.row_mut(first_imcu_row * comp.v_samp as usize + row)?;
                 for (sample, &v) in samples
                     .iter_mut()
                     .zip(undiff_buf.row_mut(row)?.iter())
@@ -252,11 +241,7 @@ impl DiffController {
         decoder: &mut Decoder,
         planes: &mut [Plane],
     ) -> Result<()> {
-        // One row is handed out at a time, so the planes are taken apart row by row as the rows are asked for.
-        let planes = planes.iter_mut();
-        let mut rest =
-            try_collect(planes.map(|plane| (plane.stride, 0, plane.data.as_mut_slice())))?;
-        self.decompress_row(decoder, |ci, row| take_row(rest.get_mut(ci)?, row))
+        self.decompress_row(decoder, Some(planes))
     }
 
     /// Decodes a whole scan into the samples of the whole image.
@@ -268,34 +253,21 @@ impl DiffController {
                 let stride = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
                 let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
                 let data = try_vec_with_capacity(stride * rows)?;
-                self.whole_image.push((Plane { data, stride }, false));
+                self.whole_image.push(Plane { data, stride });
             }
         }
-        let mut whole_image = core::mem::take(&mut self.whole_image);
-        let result = (|| {
-            for i in 0..decoder.components_in_scan {
-                let ci = decoder.scan_component_index(i)?;
-                let comp = decoder.component(ci)?;
-                let (plane, in_a_scan) = whole_image.get_mut(ci).ok_or(Error::Internal)?;
-                // Memory that no one has written to costs nothing, so not before the component's first scan.
-                let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
-                plane.data.resize(plane.stride * rows, 0);
-                *in_a_scan = true;
-            }
-            let planes = whole_image.iter_mut();
-            let mut rest =
-                try_collect(planes.map(|(plane, _)| (plane.stride, 0, plane.data.as_mut_slice())))?;
-            let v_samp = try_collect(decoder.components.iter().map(|comp| comp.v_samp as usize))?;
-            while self.input_imcu_row < decoder.total_imcu_rows {
-                let imcu_row = self.input_imcu_row as usize;
-                self.decompress_row(decoder, |ci, row| {
-                    take_row(rest.get_mut(ci)?, imcu_row * v_samp.get(ci)? + row)
-                })?;
-            }
-            Ok(())
-        })();
-        self.whole_image = whole_image;
-        result
+        for i in 0..decoder.components_in_scan {
+            let ci = decoder.scan_component_index(i)?;
+            let comp = decoder.component(ci)?;
+            let plane = self.whole_image.get_mut(ci).ok_or(Error::Internal)?;
+            // Memory that no one has written to costs nothing, so not before the component's first scan.
+            let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
+            plane.data.resize(plane.stride * rows, 0);
+        }
+        while self.input_imcu_row < decoder.total_imcu_rows {
+            self.decompress_row(decoder, None)?;
+        }
+        Ok(())
     }
 
     /// Copies iMCU row `output_imcu_row` out of the samples of the whole image.
@@ -305,11 +277,9 @@ impl DiffController {
         output_imcu_row: u32,
         planes: &mut [Plane],
     ) -> Result<()> {
-        for ((comp, (image, defined)), plane) in
-            decoder.components.iter().zip(&self.whole_image).zip(planes)
-        {
+        for ((comp, image), plane) in decoder.components.iter().zip(&self.whole_image).zip(planes) {
             // libjpeg refuses to read from an array that nothing was written to.
-            if !defined {
+            if image.data.is_empty() {
                 return Err(Error::BadVirtualAccess);
             }
             let rows = decoder.rows_in_imcu_row(comp, output_imcu_row) as usize;
@@ -323,18 +293,6 @@ impl DiffController {
         }
         Ok(())
     }
-}
-
-/// Splits row `row` off `rest`, which is `(stride, rows already split off, what is left)`. Rows are asked for in
-/// increasing order.
-fn take_row<'p>(rest: &mut (usize, usize, &'p mut [u8]), row: usize) -> Option<&'p mut [u8]> {
-    let (stride, taken, data) = rest;
-    let skip = row.checked_sub(*taken)?.checked_mul(*stride)?;
-    let (_, tail) = core::mem::take(data).split_at_mut_checked(skip)?;
-    let (out, tail) = tail.split_at_mut_checked(*stride)?;
-    *data = tail;
-    *taken = row + 1;
-    Some(out)
 }
 
 /// Each sample is predicted by the one to its left, and the first one by `initial`.
@@ -360,35 +318,19 @@ fn predict(predictor: u8, ra: i32, rb: i32, rc: i32) -> i32 {
     }
 }
 
-/// The first sample of a row is predicted by the one above it.
-fn undifference(predictor: u8, diffs: &[i32], prev: &[i32], out: &mut [i32]) {
+/// The first sample of a row is predicted by the one above it. `prev` and `out` may be the same row.
+fn undifference(predictor: u8, diffs: &[i32], prev: &[Cell<i32>], out: &[Cell<i32>]) {
     let mut ra = 0;
     let mut rc = 0;
-    for (i, ((out, &diff), &rb)) in out.iter_mut().zip(diffs).zip(prev).enumerate() {
+    for (i, ((out, &diff), prev)) in out.iter().zip(diffs).zip(prev).enumerate() {
+        let rb = prev.get();
         let prediction = if i == 0 {
             rb
         } else {
             predict(predictor, ra, rb, rc)
         };
         ra = diff.wrapping_add(prediction) & 0xffff;
-        *out = ra;
-        rc = rb;
-    }
-}
-
-/// `undifference` where `row` holds the row above and receives the result.
-fn undifference_in_place(predictor: u8, diffs: &[i32], row: &mut [i32]) {
-    let mut ra = 0;
-    let mut rc = 0;
-    for (i, (out, &diff)) in row.iter_mut().zip(diffs).enumerate() {
-        let rb = *out;
-        let prediction = if i == 0 {
-            rb
-        } else {
-            predict(predictor, ra, rb, rc)
-        };
-        ra = diff.wrapping_add(prediction) & 0xffff;
-        *out = ra;
+        out.set(ra);
         rc = rb;
     }
 }

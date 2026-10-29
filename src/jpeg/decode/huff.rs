@@ -30,13 +30,13 @@ impl HuffDecoder {
         let [dc0, dc1, ..] = &mut decoder.dc_huff;
         let [ac0, ac1, ..] = &mut decoder.ac_huff;
         for (table, standard) in [
-            (dc0, tables::STD_DC_LUMINANCE),
-            (ac0, tables::STD_AC_LUMINANCE),
-            (dc1, tables::STD_DC_CHROMINANCE),
-            (ac1, tables::STD_AC_CHROMINANCE),
+            (dc0, &tables::STD_DC_LUMINANCE),
+            (ac0, &tables::STD_AC_LUMINANCE),
+            (dc1, &tables::STD_DC_CHROMINANCE),
+            (ac1, &tables::STD_AC_CHROMINANCE),
         ] {
             if table.is_none() {
-                *table = Some(try_box(standard)?);
+                *table = Some(try_box(standard.clone())?);
             }
         }
         Ok(Self::default())
@@ -67,10 +67,6 @@ impl HuffDecoder {
         input.read_restart_marker();
         self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
         self.restarts_to_go = self.restart_interval;
-        // Up against a marker, the next segment is empty: leaving the flag set keeps it gray instead of garbage.
-        if input.unread_marker == 0 {
-            input.insufficient_data = false;
-        }
     }
 
     /// Decodes one MCU into blocks that the caller has zeroed.
@@ -86,8 +82,11 @@ impl HuffDecoder {
         let use_fast = self.start_mcu(input);
 
         // Out of data, the rest of the segment stays zero.
-        if !input.insufficient_data && !(use_fast && self.decode_mcu_fast(input, mcu)?) {
-            self.decode_mcu_slow(input, mcu)?;
+        if !input.insufficient_data {
+            let done = use_fast && self.decode_mcu_fast(input, mcu)?;
+            if !done {
+                self.decode_mcu_slow(input, mcu)?;
+            }
         }
 
         if self.restart_interval != 0 {

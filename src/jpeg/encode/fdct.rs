@@ -1,7 +1,7 @@
 //! The forward DCT and quantization (jcdctmgr.c, jfdctint.c).
 
 use super::Block;
-use crate::lanes::{column, descale, from_columns, nonzero, transpose};
+use crate::lanes::{column, descale, from_columns, madd, nonzero, transpose};
 use crate::tables::dct::*;
 
 /// Division by the steps of a quantization table, done as multiplication. In row-major order.
@@ -57,7 +57,6 @@ fn fdct8<const FIRST: bool>([d0, d1, d2, d3, d4, d5, d6, d7]: [i16; 8]) -> [i16;
     } else {
         CONST_BITS + PASS1_BITS
     };
-    let madd = |a: i16, ca: i32, b: i16, cb: i32| i32::from(a) * ca + i32::from(b) * cb;
     let rounded = |sum: i32| descale(sum + (1 << (shift - 1)), shift);
 
     let (tmp0, tmp7) = (d0 + d7, d0 - d7);
@@ -139,11 +138,9 @@ pub(crate) fn forward(samples: &[[u8; 8]; 8], divisors: &Divisors) -> Block {
     // Rows first: the two passes round differently.
     let samples = center(&transpose(samples));
     let coefs = pass::<false>(&transpose(&pass::<true>(&samples)));
-    let quantized = quantize(&coefs, divisors);
-    let mut coefs = [0; 64];
-    coefs.copy_from_slice(quantized.as_flattened());
+    let coefs = quantize(&coefs, divisors);
     Block {
         coefs,
-        nonzero: nonzero(&quantized),
+        nonzero: nonzero(&coefs),
     }
 }

@@ -128,27 +128,20 @@ impl EncodeTable {
         EncodeTable { entries: [0; 256] }
     }
 
-    pub(crate) fn new(spec: &HuffSpec) -> Result<Self> {
+    pub(crate) fn new(spec: &HuffSpec) -> Self {
         let mut table = Self::empty();
         let mut symbols = spec.huffval.iter();
         let mut code: u32 = 0;
         for (length, &count) in spec.bits.iter().enumerate().skip(1) {
-            for _ in 0..count {
-                let symbol = usize::from(*symbols.next().ok_or(Error::BadHuffTable)?);
-                let entry = table.entries.get_mut(symbol).ok_or(Error::Internal)?;
-                if *entry != 0 {
-                    return Err(Error::BadHuffTable);
+            for &symbol in symbols.by_ref().take(usize::from(count)) {
+                if let Some(entry) = table.entries.get_mut(usize::from(symbol)) {
+                    *entry = code << 8 | length as u32;
                 }
-                *entry = code << 8 | length as u32;
                 code += 1;
-            }
-            // No code is all ones, so one more than the last code still fits in `length` bits.
-            if code >= 1 << length {
-                return Err(Error::BadHuffTable);
             }
             code <<= 1;
         }
-        Ok(table)
+        table
     }
 
     #[inline(always)]
@@ -190,8 +183,8 @@ struct SequentialEntry {
 }
 
 impl SequentialTable {
-    pub(crate) fn new(spec: &HuffSpec) -> Result<Self> {
-        let table = EncodeTable::new(spec)?;
+    pub(crate) fn new(spec: &HuffSpec) -> Self {
+        let table = EncodeTable::new(spec);
         let mut entries = [SequentialEntry::default(); 256];
         for (symbol, entry) in (0..=255u8).zip(&mut entries) {
             let Code { code, size } = table.get(symbol);
@@ -202,7 +195,7 @@ impl SequentialTable {
                 size: (size + nbits) as u16,
             };
         }
-        Ok(SequentialTable { entries })
+        SequentialTable { entries }
     }
 
     /// Writes `symbol` and the value that it announces: itself if positive, one less if negative.
@@ -249,14 +242,16 @@ pub(crate) fn encode_block(
     }
 }
 
-/// How often each symbol occurs. The last entry is for a symbol that does not exist.
-pub(crate) type Counts = [i64; 257];
+/// How often each symbol occurs.
+pub(crate) type Counts = [i64; 256];
 
 /// The table that takes the fewest bits for symbols that occur this often (section K.2 of the standard). Ties are
 /// resolved as libjpeg-turbo does.
 pub(crate) fn optimal_table(counts: &Counts) -> Result<HuffSpec> {
     const MAX_CODE_LENGTH: usize = 32;
-    const MERGED: i64 = 1_000_000_001;
+    /// The search below does not see what occurs more often, as in libjpeg.
+    const MAX_FREQ: i64 = 1_000_000_000;
+    const MERGED: i64 = MAX_FREQ + 1;
 
     #[derive(Clone, Copy, Default)]
     struct Node {
@@ -285,7 +280,6 @@ pub(crate) fn optimal_table(counts: &Counts) -> Result<HuffSpec> {
     let reserved = core::iter::once(&1);
     for ((symbol, &freq), node) in counts
         .iter()
-        .take(256)
         .chain(reserved)
         .enumerate()
         .filter(|&(_, &freq)| freq != 0)
@@ -297,10 +291,11 @@ pub(crate) fn optimal_table(counts: &Counts) -> Result<HuffSpec> {
     }
     let nodes = nodes.get_mut(..len).ok_or(Error::Internal)?;
 
-    loop {
+    // Each time, two trees become one.
+    for _ in 1..nodes.len() {
         // The two least frequent, the later one in case of a tie.
         let (mut c1, mut c2) = (None, None);
-        let (mut v1, mut v2) = (1_000_000_000i64, 1_000_000_000i64);
+        let (mut v1, mut v2) = (MAX_FREQ, MAX_FREQ);
         for (i, node) in nodes.iter().enumerate() {
             if node.freq <= v2 {
                 if node.freq <= v1 {
@@ -312,7 +307,8 @@ pub(crate) fn optimal_table(counts: &Counts) -> Result<HuffSpec> {
             }
         }
         let (Some(c1), Some(c2)) = (c1, c2) else {
-            break;
+            // libjpeg stops here and fails later, over a code that is missing or one that does not fit.
+            return Err(Error::BadHuffTable);
         };
 
         nodes.get_mut(c1).ok_or(Error::Internal)?.freq = v1 + v2;
@@ -364,10 +360,6 @@ pub(crate) fn optimal_table(counts: &Counts) -> Result<HuffSpec> {
     let mut huffval = [0u8; 256];
     let (_, real) = nodes.split_last().ok_or(Error::Internal)?;
     for node in real {
-        // Too frequent for the search above to have seen it.
-        if node.code_size == 0 {
-            return Err(Error::HuffMissingCode);
-        }
         let position = position.get_mut(node.code_size).ok_or(Error::Internal)?;
         *huffval.get_mut(*position).ok_or(Error::Internal)? = node.symbol as u8;
         *position += 1;

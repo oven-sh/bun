@@ -7,7 +7,7 @@ use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock,
 use crate::error::{Error, Result};
 use crate::lanes::nonzero;
 
-#[derive(Clone, Copy, Default)]
+#[derive(Default)]
 enum Pass {
     #[default]
     DcFirst,
@@ -37,32 +37,21 @@ pub(crate) struct PHuffDecoder {
 }
 
 /// Records the scan in `coef_bits`. The arithmetic decoder does the same.
-pub(crate) fn update_progression(decoder: &mut Decoder, coef_bits: &mut CoefBits) -> Result<()> {
+pub(crate) fn update_progression(decoder: &Decoder, coef_bits: &mut CoefBits) -> Result<()> {
     let (ss, se) = (usize::from(decoder.ss), usize::from(decoder.se));
     for i in 0..decoder.components_in_scan {
         let ci = decoder.scan_component_index(i)?;
         let current = coef_bits.current.get_mut(ci).ok_or(Error::Internal)?;
         let previous = coef_bits.previous.get_mut(ci).ok_or(Error::Internal)?;
         let saved = ss.min(1)..=se.max(9);
-        for (previous, &current) in previous
-            .iter_mut()
-            .zip(current.iter())
-            .skip(*saved.start())
-            .take(saved.count())
-        {
-            *previous = if decoder.input_scan_number > 1 {
-                current
-            } else {
-                0
-            };
+        let previous = previous.get_mut(saved.clone()).ok_or(Error::Internal)?;
+        if decoder.input_scan_number > 1 {
+            previous.copy_from_slice(current.get(saved).ok_or(Error::Internal)?);
+        } else {
+            previous.fill(0);
         }
-        for bits in current
-            .iter_mut()
-            .skip(ss)
-            .take((se + 1).saturating_sub(ss))
-        {
-            *bits = i32::from(decoder.al);
-        }
+        let band = current.get_mut(ss..=se).ok_or(Error::Internal)?;
+        band.fill(i32::from(decoder.al));
     }
     Ok(())
 }
@@ -143,9 +132,6 @@ impl PHuffDecoder {
         self.last_dc_val = [0; MAX_COMPONENTS_IN_SCAN];
         self.eobrun = 0;
         self.restarts_to_go = self.restart_interval;
-        if input.unread_marker == 0 {
-            input.insufficient_data = false;
-        }
     }
 
     pub(crate) fn decode_mcu(&mut self, input: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
@@ -326,9 +312,7 @@ impl PHuffDecoder {
 
         if self.eobrun > 0 {
             // What is left of the band only gets correction bits.
-            if k <= se {
-                correct(&mut bits, input, block, nonzero & (u64::MAX << k))?;
-            }
+            correct(&mut bits, input, block, nonzero & (u64::MAX << k))?;
             self.eobrun -= 1;
         }
         self.bits = bits;

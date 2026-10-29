@@ -48,65 +48,65 @@ pub enum ColorSpace {
     Ycck,
 }
 
-#[derive(Default, Clone)]
+#[derive(Default)]
 pub(crate) struct Component {
-    pub(crate) id: u8,
-    pub(crate) h_samp: u32,
-    pub(crate) v_samp: u32,
-    pub(crate) quant_selector: u8,
-    pub(crate) dc_selector: u8,
-    pub(crate) ac_selector: u8,
+    id: u8,
+    h_samp: u32,
+    v_samp: u32,
+    quant_selector: u8,
+    dc_selector: u8,
+    ac_selector: u8,
 
     /// In data units: 8x8 blocks, or single samples in a lossless stream.
-    pub(crate) width_in_blocks: u32,
-    pub(crate) height_in_blocks: u32,
+    width_in_blocks: u32,
+    height_in_blocks: u32,
     /// Rows of data units in the last iMCU row. The others have `v_samp`.
-    pub(crate) last_row_height: u32,
+    last_row_height: u32,
     /// The side of the square of samples that the inverse DCT makes of a block.
-    pub(crate) dct_scaled_size: u32,
+    dct_scaled_size: u32,
     /// In samples, after the inverse DCT.
-    pub(crate) downsampled_width: u32,
-    pub(crate) downsampled_height: u32,
+    downsampled_width: u32,
+    downsampled_height: u32,
     /// The table that was current when the first scan with this component began.
-    pub(crate) quant_table: Option<[u16; 64]>,
+    quant_table: Option<[u16; 64]>,
 
     // These depend on the scan.
-    pub(crate) mcu_width: u32,
-    pub(crate) mcu_height: u32,
-    pub(crate) last_col_width: u32,
+    mcu_width: u32,
+    mcu_height: u32,
+    last_col_width: u32,
 }
 
 /// What a block of an MCU is decoded with.
 #[derive(Default, Clone, Copy)]
 pub(crate) struct McuBlock {
     /// Index into `scan_components`.
-    pub(crate) scan_component: u8,
-    pub(crate) dc_selector: u8,
-    pub(crate) ac_selector: u8,
+    scan_component: u8,
+    dc_selector: u8,
+    ac_selector: u8,
     /// An image scaled to 1/8 is made of the DC coefficients alone.
-    pub(crate) ac_needed: bool,
+    ac_needed: bool,
 }
 
 pub struct Decoder<'a> {
-    pub(crate) input: Input<'a>,
+    input: Input<'a>,
     saw_soi: bool,
     saw_sof: bool,
 
     quant_tables: [Option<[u16; 64]>; NUM_QUANT_TABLES],
-    pub(crate) dc_huff: [Option<Box<HuffSpec>>; NUM_HUFF_TABLES],
-    pub(crate) ac_huff: [Option<Box<HuffSpec>>; NUM_HUFF_TABLES],
-    pub(crate) arith_dc_l: [u8; NUM_ARITH_TABLES],
-    pub(crate) arith_dc_u: [u8; NUM_ARITH_TABLES],
-    pub(crate) arith_ac_k: [u8; NUM_ARITH_TABLES],
-    pub(crate) restart_interval: u32,
+    dc_huff: [Option<Box<HuffSpec>>; NUM_HUFF_TABLES],
+    ac_huff: [Option<Box<HuffSpec>>; NUM_HUFF_TABLES],
+    arith_dc_l: [u8; NUM_ARITH_TABLES],
+    arith_dc_u: [u8; NUM_ARITH_TABLES],
+    arith_ac_k: [u8; NUM_ARITH_TABLES],
+    restart_interval: u32,
 
-    pub(crate) progressive: bool,
-    pub(crate) lossless: bool,
-    pub(crate) arith_code: bool,
-    pub(crate) precision: u8,
-    pub(crate) width: u32,
-    pub(crate) height: u32,
-    pub(crate) components: Vec<Component>,
+    progressive: bool,
+    lossless: bool,
+    arith_code: bool,
+    precision: u8,
+    width: u32,
+    height: u32,
+    components: Vec<Component>,
 
     saw_jfif: bool,
     /// From the Adobe APP14 segment, if there is one.
@@ -114,26 +114,25 @@ pub struct Decoder<'a> {
     color_space: ColorSpace,
     /// The APP2 segments before the first scan.
     app2: Vec<Cow<'a, [u8]>>,
-    in_header: bool,
 
-    pub(crate) components_in_scan: usize,
+    components_in_scan: usize,
     /// Indexes into `components`.
-    pub(crate) scan_components: [Option<usize>; MAX_COMPONENTS_IN_SCAN],
-    pub(crate) ss: u8,
-    pub(crate) se: u8,
-    pub(crate) ah: u8,
-    pub(crate) al: u8,
-    pub(crate) input_scan_number: u32,
+    scan_components: [Option<usize>; MAX_COMPONENTS_IN_SCAN],
+    ss: u8,
+    se: u8,
+    ah: u8,
+    al: u8,
+    input_scan_number: u32,
 
-    pub(crate) has_multiple_scans: bool,
-    pub(crate) max_h_samp: u32,
-    pub(crate) max_v_samp: u32,
+    has_multiple_scans: bool,
+    max_h_samp: u32,
+    max_v_samp: u32,
     /// An iMCU row is what a row of MCUs of a scan with all the components covers.
-    pub(crate) total_imcu_rows: u32,
+    total_imcu_rows: u32,
 
-    pub(crate) mcus_per_row: u32,
-    pub(crate) blocks_in_mcu: usize,
-    pub(crate) mcu_blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
+    mcus_per_row: u32,
+    blocks_in_mcu: usize,
+    mcu_blocks: [McuBlock; MAX_BLOCKS_IN_MCU],
 }
 
 /// How many are in the last group when `total` are put in groups of `size`.
@@ -172,7 +171,6 @@ impl<'a> Decoder<'a> {
             adobe_transform: None,
             color_space: ColorSpace::Grayscale,
             app2: Vec::new(),
-            in_header: true,
             components_in_scan: 0,
             scan_components: [None; MAX_COMPONENTS_IN_SCAN],
             ss: 0,
@@ -194,7 +192,6 @@ impl<'a> Decoder<'a> {
             // Only tables.
             Reached::Eoi => return Err(Error::NoImage),
         }
-        this.in_header = false;
         this.color_space = this.guess_color_space()?;
         Ok(this)
     }
@@ -382,16 +379,13 @@ impl<'a> Decoder<'a> {
     /// its first scan began with.
     pub(crate) fn latch_quant_tables(&mut self) -> Result<()> {
         for i in 0..self.components_in_scan {
-            let quant_tables = self.quant_tables;
-            let comp = self.scan_component_mut(i)?;
-            if comp.quant_table.is_some() {
-                continue;
+            let ci = self.scan_component_index(i)?;
+            let comp = self.components.get_mut(ci).ok_or(Error::Internal)?;
+            if comp.quant_table.is_none() {
+                let table = self.quant_tables.get(usize::from(comp.quant_selector));
+                let table = table.copied().flatten();
+                comp.quant_table = Some(table.ok_or(Error::NoQuantTable(comp.quant_selector))?);
             }
-            let table = quant_tables
-                .get(usize::from(comp.quant_selector))
-                .copied()
-                .flatten();
-            comp.quant_table = Some(table.ok_or(Error::NoQuantTable(comp.quant_selector))?);
         }
         Ok(())
     }

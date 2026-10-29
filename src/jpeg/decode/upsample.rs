@@ -1,7 +1,7 @@
 //! Bringing a subsampled component up to the size of the image (jdsample.c).
 
 /// How the rows of a component become rows of the image.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Method {
     /// The component has the size of the image already.
     FullSize,

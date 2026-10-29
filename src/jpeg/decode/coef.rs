@@ -6,7 +6,7 @@ use super::huff::HuffDecoder;
 use super::idct::{self, DctTable};
 use super::input::Input;
 use super::phuff::PHuffDecoder;
-use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, coef_at};
+use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS, coef_at};
 use crate::error::{Error, Result, try_box, try_vec, try_vec_with_capacity};
 use crate::tables::natural_order;
 
@@ -94,6 +94,12 @@ impl Plane {
             .ok_or(Error::Internal)
     }
 
+    pub(crate) fn row_mut(&mut self, y: usize) -> Result<&mut [u8]> {
+        self.data
+            .get_mut(y * self.stride..(y + 1) * self.stride)
+            .ok_or(Error::Internal)
+    }
+
     #[inline(always)]
     fn put<const N: usize>(&mut self, y: usize, x: usize, samples: &[[u8; N]; N]) -> Result<()> {
         let mut start = y * self.stride + x;
@@ -110,7 +116,6 @@ impl Plane {
 }
 
 /// The inverse DCT of one component.
-#[derive(Clone)]
 pub(crate) struct Idct {
     /// The side of the result.
     size: u32,
@@ -187,6 +192,9 @@ impl McuBlocks for McuInImage<'_> {
 /// How many of `CoefBits`'s entries block smoothing looks at.
 const SAVED_COEFS: usize = 10;
 
+/// The current and the previous precision of a component's first coefficients.
+type Latch = [[i32; SAVED_COEFS]; 2];
+
 /// The first `SAVED_COEFS` in zigzag order of 64 in row-major order.
 fn low_frequencies<T: Copy + Default>(block: &[T; 64]) -> [T; SAVED_COEFS] {
     core::array::from_fn(|k| block.get(natural_order(k)).copied().unwrap_or_default())
@@ -201,7 +209,7 @@ pub(crate) struct CoefController {
     /// The last iMCU row of the current scan that began with data left to decode.
     last_good_imcu_row: u32,
     /// `Some` while the output pass smooths. Per component, the current and the previous precision.
-    smoothing: Option<Vec<[[i32; SAVED_COEFS]; 2]>>,
+    smoothing: Option<Box<[Latch; MAX_COMPONENTS]>>,
 }
 
 impl CoefController {
@@ -333,27 +341,20 @@ impl CoefController {
     /// happens if it breaks off early.
     pub(crate) fn start_output_pass(&mut self, decoder: &Decoder) -> Result<()> {
         self.whole_image.iter_mut().for_each(CoefArray::zero);
-        let latch = try_vec_with_capacity(decoder.components.len())?;
-        self.smoothing = self.smoothing_latch(decoder, latch);
+        self.smoothing = self.smoothing_latch(decoder).map(try_box).transpose()?;
         Ok(())
     }
 
-    /// `latch` is empty and has room for every component.
-    fn smoothing_latch(
-        &self,
-        decoder: &Decoder,
-        mut latch: Vec<[[i32; SAVED_COEFS]; 2]>,
-    ) -> Option<Vec<[[i32; SAVED_COEFS]; 2]>> {
-        if self.whole_image.is_empty() || !decoder.progressive {
-            return None;
-        }
+    fn smoothing_latch(&self, decoder: &Decoder) -> Option<[Latch; MAX_COMPONENTS]> {
         let coef_bits = self.entropy.coef_bits()?;
+        let mut latches = [Latch::default(); MAX_COMPONENTS];
         let mut useful = false;
-        for ((comp, current), previous) in decoder
+        for (((comp, current), previous), latch) in decoder
             .components
             .iter()
             .zip(&coef_bits.current)
             .zip(&coef_bits.previous)
+            .zip(&mut latches)
         {
             // These divide.
             if low_frequencies(&comp.quant_table?).contains(&0u16) {
@@ -369,14 +370,14 @@ impl CoefController {
                 previous = [-1; SAVED_COEFS];
             }
             useful |= ac.iter().any(|&bits| bits != 0);
-            latch.push([current, previous]);
+            *latch = [current, previous];
         }
-        useful.then_some(latch)
+        useful.then_some(latches)
     }
 
     /// Turns the coefficients of iMCU row `output_imcu_row` into samples.
     pub(crate) fn decompress_data(
-        &mut self,
+        &self,
         decoder: &Decoder,
         output_imcu_row: u32,
         idcts: &[Idct],
@@ -616,19 +617,19 @@ impl Smoother {
             *c02 = Self::predict(num, q02, al02);
         }
         if change_dc {
-            if al03 != 0 && *c03 == 0 {
+            if *c03 == 0 {
                 let num = q00 * i64::from(dc07 - dc09 + 2 * dc12 - 2 * dc14 + dc17 - dc19);
                 *c03 = Self::predict(num, q03, al03);
             }
-            if al12 != 0 && *c12 == 0 {
+            if *c12 == 0 {
                 let num = q00 * i64::from(dc07 - 3 * dc08 + dc09 - dc17 + 3 * dc18 - dc19);
                 *c12 = Self::predict(num, q12, al12);
             }
-            if al21 != 0 && *c21 == 0 {
+            if *c21 == 0 {
                 let num = q00 * i64::from(dc07 - dc09 - 3 * dc12 + 3 * dc14 + dc17 - dc19);
                 *c21 = Self::predict(num, q21, al21);
             }
-            if al30 != 0 && *c30 == 0 {
+            if *c30 == 0 {
                 let num = q00 * i64::from(dc07 + 2 * dc08 + dc09 - dc17 - 2 * dc18 - dc19);
                 *c30 = Self::predict(num, q30, al30);
             }

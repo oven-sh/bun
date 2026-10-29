@@ -1012,7 +1012,8 @@ mod holder {
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.abs_ca_file_name`.
     /// `OnceLock` per PORTING.md §Forbidden — never `Box::leak` to mint `&'static`.
-    pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<Box<[u8]>> = std::sync::OnceLock::new();
+    pub(super) static ABS_CA_FILE_NAME: std::sync::OnceLock<bun_core::ZBox> =
+        std::sync::OnceLock::new();
 
     /// Process-lifetime storage for `http::http_thread::InitOpts.ca` C-strings
     /// (never freed). The HTTP thread
@@ -1509,18 +1510,7 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 }
 
 fn http_thread_on_init_error(err: http::InitError, opts: &http::http_thread::InitOpts) -> ! {
-    // `opts.abs_ca_file_name` is NUL-terminated by contract —
-    // populated in `init()` from a `ZBox` via `into_vec_with_nul()`, so the
-    // stored slice length INCLUDES the trailing NUL. Re-derive the `&ZStr`
-    // (NUL-stripped) once and use it for both the path resolver and the error
-    // message so we don't print a literal `\0`.
-    // SAFETY: trailing-NUL invariant established by `init()` for any non-empty
-    // value; the empty default (`b""`) maps to `ZStr::EMPTY`.
-    let abs_ca_z: &ZStr = if opts.abs_ca_file_name.is_empty() {
-        ZStr::EMPTY
-    } else {
-        ZStr::from_slice_with_nul(opts.abs_ca_file_name)
-    };
+    let abs_ca_z: &ZStr = opts.abs_ca_file_name;
     match err {
         http::InitError::LoadCAFile => {
             let mut normalizer = PosixToWinNormalizer::default();
@@ -2928,18 +2918,15 @@ pub fn init(
             .map(|v| v.iter().map(|z| z.as_ptr().cast::<c_void>()).collect())
             .unwrap_or_default()
     };
-    // `InitOpts.abs_ca_file_name: &'static [u8]` — process-lifetime config
+    // `InitOpts.abs_ca_file_name: &'static ZStr` — process-lifetime config
     // string. Park it in
-    // `holder::ABS_CA_FILE_NAME: OnceLock<Box<[u8]>>` per PORTING.md §Forbidden
-    // (never `Box::leak` to mint `&'static`). `init()` runs once on
-    // the main thread, so `.set()` cannot race; ignore the already-set case for
-    // hot-reload re-entry (the existing CA path stays valid for the process).
-    let abs_ca_file_name_static: &'static [u8] = if abs_ca_file_name.is_empty() {
-        b""
+    // `holder::ABS_CA_FILE_NAME: OnceLock<ZBox>` per PORTING.md §Forbidden
+    // (never `Box::leak` to mint `&'static`). If it is already set
+    // (hot-reload re-entry), the existing CA path stays.
+    let abs_ca_file_name_static: &'static ZStr = if abs_ca_file_name.is_empty() {
+        ZStr::EMPTY
     } else {
-        let _ =
-            holder::ABS_CA_FILE_NAME.set(abs_ca_file_name.into_vec_with_nul().into_boxed_slice());
-        holder::ABS_CA_FILE_NAME.get().map(|b| &**b).unwrap_or(b"")
+        holder::ABS_CA_FILE_NAME.get_or_init(|| abs_ca_file_name)
     };
     http::http_thread::init(&http::http_thread::InitOpts {
         ca: ca_ptrs,

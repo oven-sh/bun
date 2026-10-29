@@ -262,7 +262,7 @@ pub struct InitOpts {
     // NUL-terminated C strings borrowed from caller config; the pointers are
     // copied into the spawned thread and only read there (see the Send SAFETY note).
     pub ca: Vec<*const c_void>, // *const [*:0]const u8
-    pub abs_ca_file_name: &'static [u8],
+    pub abs_ca_file_name: &'static bun_core::ZStr,
 
     pub on_init_error: fn(err: InitError, opts: &InitOpts) -> !,
 }
@@ -276,7 +276,7 @@ impl Default for InitOpts {
     fn default() -> Self {
         Self {
             ca: Vec::new(),
-            abs_ca_file_name: b"",
+            abs_ca_file_name: bun_core::ZStr::EMPTY,
             on_init_error: on_init_error_noop,
         }
     }
@@ -285,16 +285,7 @@ impl Default for InitOpts {
 fn on_init_error_noop(err: InitError, opts: &InitOpts) -> ! {
     match err {
         InitError::LoadCAFile => {
-            // SAFETY: `abs_ca_file_name` is NUL-terminated by
-            // contract — already passed as a C string to BoringSSL via
-            // `init_with_thread_opts`, so `ptr[len] == 0` holds.
-            let path = unsafe {
-                bun_core::ZStr::from_raw(
-                    opts.abs_ca_file_name.as_ptr(),
-                    opts.abs_ca_file_name.len(),
-                )
-            };
-            if !bun_sys::exists_z(path) {
+            if !bun_sys::exists_z(opts.abs_ca_file_name) {
                 Output::err(
                     "HTTPThread",
                     "failed to find CA file: '{}'",

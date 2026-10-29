@@ -605,7 +605,7 @@ describe("malformed JPEG", () => {
         ...[0xff, 0xd9],
       ]);
     expect(await new Bun.Image(withScans([1], [2], [3])).png().bytes()).toBeInstanceOf(Uint8Array);
-    for (const jpeg of [withScans([1], [1]), withScans([1], [2, 3], [3]), withScans([1, 2], [3], [2])]) {
+    for (const jpeg of [withScans([1], [2], [3], [1]), withScans([1], [2, 3], [3]), withScans([1, 2], [3], [2])]) {
       await expect(new Bun.Image(jpeg).png().bytes()).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
     }
   });
@@ -1418,13 +1418,11 @@ describe("concurrent terminals on one Image", () => {
       return b;
     };
     const webp = async (w, h, c) => Buffer.from(await new Bun.Image(bmp(w, h, c)).webp({ lossless: true }).bytes());
-    let options;
     ${setup}
     let settled = 0;
     for (let round = 0; round < 8; round++) {
       const jobs = [];
-      for (let i = 0; i < 32; i++)
-        jobs.push(new Bun.Image(input, options).png().bytes().catch(() => {}).then(() => settled++));
+      for (let i = 0; i < 32; i++) jobs.push(new Bun.Image(input).png().bytes().catch(() => {}).then(() => settled++));
       let done = false;
       const all = Promise.all(jobs).then(() => (done = true));
       while (!done) {
@@ -1504,8 +1502,6 @@ describe("concurrent terminals on one Image", () => {
       let next = 0;
       const rewrite = () => { input.set(padded[next++ % padded.length]); };
       rewrite();
-      // exif.rs searches the bytes with a function that asserts, in a debug build, that they hold still.
-      options = { autoOrient: false };
       `,
     ],
   ])("doesn't crash when the %s input is rewritten while a pipeline is pending", async (_, setup) => {

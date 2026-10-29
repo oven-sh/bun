@@ -23,7 +23,9 @@ WebP, dlopen miss) and the static path takes over.
 
 The PNG and WebP codecs are vendored via `scripts/build/deps/{libspng,libwebp}.ts`. The JPEG codec is
 `src/jpeg` (`bun_jpeg`), safe Rust derived from libjpeg-turbo 3.2.0. It keeps libjpeg's line between a
-warning and an error: a JPEG with junk before EOI, no EOI, or truncated scan data decodes. Its kernels that work
+warning and an error: a JPEG with junk before EOI, no EOI, or truncated scan data decodes. On purpose it refuses
+two things that libjpeg-turbo decodes, because each scan costs a pass over the image: more than 500 scans, and a scan
+of what an earlier scan has coded. Its kernels that work
 on a row of samples are Highway C++ (`src/jsc/bindings/highway_jpeg.cpp`, behind the safe wrappers in
 `src/highway/jpeg.rs`). `src/jpeg/NOTICE.md` lists the files it derives from, and says up to which commit
 libjpeg-turbo's history was checked for fixes.

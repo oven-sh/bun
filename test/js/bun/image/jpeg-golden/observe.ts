@@ -131,6 +131,7 @@ function scalable(file: Uint8Array): boolean {
       const all = (chroma: number) => others.every((sampling, i) => sampling === (i === 2 ? first : chroma));
       return (
         marker !== 0xc3 &&
+        marker !== 0xcb &&
         file[at + 4] === 8 &&
         (others.length === 0 ||
           ([0x11, 0x21, 0x22, 0x12, 0x41, 0x14].includes(first) && all(0x11)) ||

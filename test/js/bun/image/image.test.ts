@@ -927,27 +927,31 @@ describe("Bun.Image", () => {
     describe.each([
       [
         "baseline 4:4:4",
-        "../../node/test/fixtures/person.jpg",
+        "person.jpg",
+        undefined,
         "cf4c831d6d",
         ["180x240:4d3e722b02", "113x150:56af6d7254", "90x120:17880e3fa5", "23x30:b9dc4c25aa"],
       ],
       [
         "baseline 4:2:0",
-        "../../node/test/fixtures/person-large.jpg",
+        "person-large.jpg",
+        undefined,
         "b8298542af",
         ["1000x1333:f7169dfcc7", "625x834:9ed7838469", "500x667:a634d054a2", "125x167:7444229888"],
       ],
       [
-        "progressive 4:2:0",
-        "../../../../docs/images/cat.jpg",
-        "7e2fb9e2bc",
-        ["1194x1143:af70c6ad17", "747x715:5605aae187", "597x572:cf52e23e13", "150x143:196a7ff7e8"],
+        "encoded again as progressive 4:2:0",
+        "person-large.jpg",
+        { quality: 85, progressive: true },
+        "32309de0ab",
+        ["1000x1333:7d536f11be", "625x834:08b8b6e7c1", "500x667:a416e5a286", "125x167:a72df1c848"],
       ],
-    ])("a photograph, %s", (_, path, file, pixels) => {
+    ])("a photograph, %s", (_, name, again, file, pixels) => {
       test.each([8, 5, 4, 1].map((eighths, i) => [eighths, pixels[i]] as const))(
         "at %d/8",
         async (eighths, expected) => {
-          const jpeg = await Bun.file(join(import.meta.dir, path)).bytes();
+          let jpeg = await Bun.file(join(import.meta.dir, "../../node/test/fixtures", name)).bytes();
+          if (again) jpeg = await new Bun.Image(jpeg).jpeg(again).bytes();
           const { width, height } = await new Bun.Image(jpeg).metadata();
           // A resize to exactly what the decoder gives at this scale is left to the decoder alone.
           const { w, h, data } = decodePngRaw(

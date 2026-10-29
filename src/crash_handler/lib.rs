@@ -2493,19 +2493,16 @@ mod draft {
             let mut current_commit: usize = 0;
             let mut peak_commit: usize = 0;
             let mut page_faults: usize = 0;
-            // SAFETY: all out-pointers are valid
-            unsafe {
-                bun_alloc::mimalloc::mi_process_info(
-                    &raw mut elapsed_msecs,
-                    &raw mut user_msecs,
-                    &raw mut system_msecs,
-                    &raw mut current_rss,
-                    &raw mut peak_rss,
-                    &raw mut current_commit,
-                    &raw mut peak_commit,
-                    &raw mut page_faults,
-                );
-            }
+            bun_alloc::mimalloc::mi_process_info(
+                Some(&mut elapsed_msecs),
+                Some(&mut user_msecs),
+                Some(&mut system_msecs),
+                Some(&mut current_rss),
+                Some(&mut peak_rss),
+                Some(&mut current_commit),
+                Some(&mut peak_commit),
+                Some(&mut page_faults),
+            );
             writeln!(
                 writer,
                 "Elapsed: {}ms | User: {}ms | Sys: {}ms",

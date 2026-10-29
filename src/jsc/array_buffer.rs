@@ -151,6 +151,7 @@ unsafe extern "C" {
 
 impl JSValue {
     /// Releases a pin on this value's backing `JSC::ArrayBuffer`. Only for a value whose pin actually pinned a buffer; prefer [`ArrayBuffer::unpin`], which knows.
+    #[inline]
     pub fn unpin_array_buffer(self) {
         JSC__JSValue__unpinArrayBuffer(self);
     }

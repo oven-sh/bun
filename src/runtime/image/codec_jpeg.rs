@@ -38,7 +38,7 @@ unsafe extern "C" {
     ) -> c_int;
     fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) -> c_int;
     fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
-    fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor;
+    safe fn tj3GetScalingFactors(n: &mut c_int) -> *const ScalingFactor;
     pub(crate) fn tj3Free(ptr: *mut c_void);
     // ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
     // colour space (sRGB implicit when absent; Display-P3 / Adobe RGB / Jpegli
@@ -183,9 +183,7 @@ pub(crate) fn decode(
     if hint.target_w != 0 && hint.target_h != 0 && (hint.target_w < src_w || hint.target_h < src_h)
     {
         let mut n: c_int = 0;
-        // SAFETY: FFI — writes a count into `n` and returns a pointer to a
-        // static const table inside libjpeg-turbo; no handle required.
-        let sfs = unsafe { tj3GetScalingFactors(&raw mut n) };
+        let sfs = tj3GetScalingFactors(&mut n);
         if !sfs.is_null() {
             let mut best = ScalingFactor { num: 1, denom: 1 };
             // SAFETY: tj3GetScalingFactors returned `n` valid ScalingFactor entries at `sfs`.

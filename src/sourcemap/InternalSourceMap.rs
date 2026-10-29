@@ -422,10 +422,9 @@ mod win_hdr {
 
 /// Parses a window header and steps through its deltas in order. Exception
 /// streams are consumed in order, so a reader is forward-only.
-// `bytes` is a raw pointer into the blob, like `InternalSourceMap` itself. It's valid while the blob is live.
 #[derive(Copy, Clone)]
-struct WindowReader {
-    bytes: *const [u8],
+struct WindowReader<'a> {
+    bytes: &'a [u8],
     gen_col_pos: usize,
     orig_line_exc_pos: usize,
     orig_col_exc_pos: usize,
@@ -441,38 +440,30 @@ struct WindowReader {
     delta_idx: u8,
 }
 
-impl WindowReader {
-    /// An empty window. `done()` is true, so nothing reads `bytes`.
-    const DANGLING: WindowReader = WindowReader {
-        bytes: ptr::slice_from_raw_parts(ptr::null(), 0),
-        gen_col_pos: 0,
-        orig_line_exc_pos: 0,
-        orig_col_exc_pos: 0,
-        gen_line_exc_pos: 0,
-        src_idx_exc_pos: 0,
-        gen_line_mask: 0,
-        orig_line_eq_mask: 0,
-        orig_col_eq_mask: 0,
-        src_idx_eq_mask: 0,
-        count: 0,
-        flags: 0,
-        gen_line_exc_next_idx: 0,
-        delta_idx: 0,
-    };
-
-    #[inline]
-    fn bytes<'a>(&self) -> &'a [u8] {
-        // returns an unbound lifetime so callers can mutate other
-        // `self` fields while holding the slice — `self.bytes` is a raw `*const [u8]`
-        // pointing into the blob, not into `self`, so this is sound.
-        // SAFETY: `bytes` was set from `InternalSourceMap.stream()` which is
-        // valid for the lifetime of the blob; readers are only used while the
-        // blob is live.
-        unsafe { &*self.bytes }
+impl<'a> WindowReader<'a> {
+    /// A reader of `bytes` with an empty window.
+    fn new(bytes: &'a [u8]) -> WindowReader<'a> {
+        WindowReader {
+            bytes,
+            gen_col_pos: 0,
+            orig_line_exc_pos: 0,
+            orig_col_exc_pos: 0,
+            gen_line_exc_pos: 0,
+            src_idx_exc_pos: 0,
+            gen_line_mask: 0,
+            orig_line_eq_mask: 0,
+            orig_col_eq_mask: 0,
+            src_idx_eq_mask: 0,
+            count: 0,
+            flags: 0,
+            gen_line_exc_next_idx: 0,
+            delta_idx: 0,
+        }
     }
 
     /// Returns `None` if the window at `start` extends past the end of `bytes`. The reader is then `done()`.
-    fn parse(&mut self, bytes: &[u8], start: usize) -> Option<()> {
+    fn parse(&mut self, start: usize) -> Option<()> {
+        let bytes = self.bytes;
         // Keep the reader empty until the whole window is validated.
         self.count = 0;
         self.delta_idx = 0;
@@ -482,7 +473,6 @@ impl WindowReader {
         let len_at = |off: usize| ((fixed >> (8 * off)) & 0xffff) as usize;
         let flags = (fixed >> (8 * win_hdr::FLAGS_OFF)) as u8;
 
-        self.bytes = std::ptr::from_ref::<[u8]>(bytes);
         self.gen_col_pos = start + win_hdr::GEN_COL_LANE_OFF;
         self.orig_line_exc_pos = self.gen_col_pos + len_at(win_hdr::GEN_COL_LEN_OFF);
         self.orig_col_exc_pos = self.orig_line_exc_pos + len_at(win_hdr::ORIG_LINE_LEN_OFF);
@@ -540,7 +530,7 @@ impl WindowReader {
     fn apply_next(&mut self, state: &mut State) -> Option<()> {
         let delta_idx = self.delta_idx;
         self.delta_idx = delta_idx + 1;
-        let bytes = self.bytes();
+        let bytes = self.bytes;
 
         let mut d_gen_line: i32 = test_bit(self.gen_line_mask, delta_idx) as i32;
         let d_gen_col = read_varint(bytes, &mut self.gen_col_pos)?;
@@ -579,7 +569,7 @@ impl WindowReader {
         d_orig_line: &mut i32,
         state: &mut State,
     ) -> Option<()> {
-        let bytes = self.bytes();
+        let bytes = self.bytes;
         if self.gen_line_exc_next_idx == delta_idx {
             let mut p = self.gen_line_exc_pos + 1;
             *d_gen_line = read_varint(bytes, &mut p)?;
@@ -624,11 +614,11 @@ impl InternalSourceMap {
         self,
         sync_idx: u32,
         state: &mut State,
-        reader: &mut WindowReader,
+        reader: &mut WindowReader<'_>,
     ) -> Option<()> {
         let se = self.sync_entry(sync_idx as usize);
         *state = se.to_state();
-        reader.parse(self.stream(), se.byte_offset as usize)
+        reader.parse(se.byte_offset as usize)
     }
 
     /// Matches the semantics of `Mapping.List.find`: returns the last mapping with
@@ -640,7 +630,7 @@ impl InternalSourceMap {
         let sync_idx = self.locate_window(target_line, target_col)?;
 
         let mut state = State::default();
-        let mut reader = WindowReader::DANGLING;
+        let mut reader = WindowReader::new(self.stream());
         self.seed_window(sync_idx, &mut state, &mut reader)?;
 
         let mut best = state;
@@ -665,9 +655,10 @@ impl InternalSourceMap {
 impl InternalSourceMap {
     /// Every mapping, in generated order.
     pub(crate) fn for_each(self, mut each: impl FnMut(Mapping)) {
+        let stream = self.stream();
         for idx in 0..self.sync_count() {
             let mut state = State::default();
-            let mut reader = WindowReader::DANGLING;
+            let mut reader = WindowReader::new(stream);
             if self.seed_window(idx, &mut state, &mut reader).is_none() {
                 return;
             }
@@ -701,10 +692,11 @@ impl InternalSourceMap {
         let mut prev = SourceMapState::default();
         let mut generated_line: i32 = 0;
 
+        let stream = self.stream();
         let mut idx: u32 = 0;
         while idx < n_sync {
             let mut state = State::default();
-            let mut reader = WindowReader::DANGLING;
+            let mut reader = WindowReader::new(stream);
             if self.seed_window(idx, &mut state, &mut reader).is_none() {
                 return;
             }

@@ -693,8 +693,6 @@ impl ServerConfig {
             };
             args.had_routes_object = true;
 
-            // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
-            let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
             let iter = JSPropertyIterator::init(
                 global,
                 static_obj,

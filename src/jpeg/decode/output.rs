@@ -358,7 +358,7 @@ impl Emitter<'_> {
                 let mut out_row = || out_rows.next().ok_or(Error::Internal);
 
                 match upsampler.method {
-                    Method::FullSize => {}
+                    Method::FullSize => return Err(Error::Internal),
                     Method::H2V1Fancy => {
                         for y in first..first + upsampler.rowgroup_height {
                             upsample::h2v1_fancy(row(y)?, out_row()?);

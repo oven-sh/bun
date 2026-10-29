@@ -91,15 +91,17 @@ impl<T: Clone> Rows<T> {
         Ok(Rows { data, stride })
     }
 
-    /// All of `comp`, padded to whole MCUs. Empty until `fill`: memory that no one has written to costs nothing.
+    /// All of `comp`, padded to whole MCUs. Empty until `zero_if_empty`: memory that no one has written costs nothing.
     fn with_room_for(comp: &Component) -> Result<Self> {
         let stride = comp.padded_width();
         let data = try_vec_with_capacity(stride * comp.padded_height())?;
         Ok(Rows { data, stride })
     }
 
-    fn fill(&mut self, comp: &Component, zero: T) {
-        self.data.resize(self.stride * comp.padded_height(), zero);
+    fn zero_if_empty(&mut self, comp: &Component, zero: T) {
+        if self.data.is_empty() {
+            self.data.resize(self.stride * comp.padded_height(), zero);
+        }
     }
 
     #[inline(always)]
@@ -116,7 +118,7 @@ impl<T: Clone> Rows<T> {
     }
 }
 
-/// Before each scan of a stream with several: room for every component, and zeros for the components of the scan.
+/// Before each scan of several: room for every component, and zeros for those that this scan is the first to have.
 pub(crate) fn start_scan_into<T: Clone>(
     whole_image: &mut Vec<Rows<T>>,
     decoder: &Decoder,
@@ -132,7 +134,7 @@ pub(crate) fn start_scan_into<T: Clone>(
     for i in 0..decoder.components_in_scan {
         let ci = decoder.scan_component_index(i)?;
         let rows = whole_image.get_mut(ci).ok_or(Error::Internal)?;
-        rows.fill(decoder.component(ci)?, zero.clone());
+        rows.zero_if_empty(decoder.component(ci)?, zero.clone());
     }
     Ok(())
 }
@@ -334,7 +336,7 @@ impl CoefController {
             .map(|comp| comp.quant_table.as_ref());
         self.dct_tables = try_collect(tables.map(|quant| quant.map_or([0; 64], idct::dct_table)))?;
         for (comp, array) in decoder.components.iter().zip(&mut self.whole_image) {
-            array.fill(comp, [0; 64]);
+            array.zero_if_empty(comp, [0; 64]);
         }
         self.smoothing = self.smoothing_latch(decoder).map(try_box).transpose()?;
         Ok(())

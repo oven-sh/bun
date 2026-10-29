@@ -983,11 +983,12 @@ impl BuildCommand {
                     }
                     flags
                 };
+                // SAFETY: `env` is a process-lifetime singleton.
+                let env = unsafe { &mut *env_ptr };
                 let trim_plan = match plan_bundle_trimming(
                     compile_target,
                     output_files,
-                    // SAFETY: `env` is a process-lifetime singleton.
-                    unsafe { &mut *env_ptr },
+                    env,
                     ctx.bundler_options.compile_executable_path.as_deref(),
                     ctx.bundler_options
                         .compile_exec_argv
@@ -1016,8 +1017,7 @@ impl BuildCommand {
                     root_dir.fd,
                     &opt_public_path,
                     outfile,
-                    // SAFETY: `env` is a process-lifetime singleton.
-                    unsafe { &mut *env_ptr },
+                    env,
                     opt_output_format,
                     &ctx.bundler_options.windows,
                     ctx.bundler_options

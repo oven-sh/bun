@@ -1473,6 +1473,8 @@ pub use formatter::{Formatter, Tag, TagOptions, TagPayload, TagResult, visited};
 pub mod formatter {
     use super::*;
 
+    mod reader;
+
     /// RAII: write `prev` back through `place` on drop. Holds a raw `*mut` so the body of the
     /// scope can freely take `&mut self` without aliasing the borrow.
     ///
@@ -4227,7 +4229,7 @@ pub mod formatter {
             value: JSValue,
             js_type: jsc::JSType,
         ) -> JsResult<()> {
-            let len = value.get_length(self.global_this)?;
+            let len = reader::array_length(self.global_this, value);
             if len != 0 && self.depth > self.max_depth {
                 return self.print_depth_exceeded_marker::<C>(writer_, "Array");
             }
@@ -5230,7 +5232,11 @@ pub mod formatter {
                                             .expect("unreachable");
                                     }
                                     Tag::Array => {
-                                        let length = children.get_length(self.global_this)?;
+                                        // An arguments object's `length` can exceed the index space.
+                                        let length =
+                                            reader::array_length(self.global_this, children)
+                                                .min(u64::from(u32::MAX))
+                                                as u32;
                                         if length == 0 {
                                             break 'print_children;
                                         }
@@ -5247,37 +5253,63 @@ pub mod formatter {
                                             );
                                             let _ind = defer_decrement!(self.indent);
 
-                                            let mut j: usize = 0;
-                                            while (j as u64) < length {
-                                                let child = children.get_index(
-                                                    self.global_this,
-                                                    u32::try_from(j).expect("int cast"),
-                                                )?;
+                                            let mut present = reader::PresentIndexes::default();
+                                            let mut j: u32 = 0;
+                                            while j < length {
+                                                let child = children
+                                                    .get_direct_index(self.global_this, j)?;
                                                 if writer.failed {
                                                     self.failed = true;
                                                 }
-                                                self.format::<C>(
-                                                    Tag::get_advanced(
+                                                let holes_end = if child.is_empty() {
+                                                    present.next(children, j + 1, length)
+                                                } else {
+                                                    j
+                                                };
+                                                let holes = holes_end - j;
+                                                if holes > reader::MAX_EXPANDED_HOLE_RUN {
+                                                    writer.add_for_new_line(
+                                                        bun_core::fmt::digit_count(holes),
+                                                    );
+                                                    writer.pretty::<C>(
+                                                        " x empty items".len(),
+                                                        format_args!(
+                                                            "{}{} x empty items{}",
+                                                            pf!("<r><d>"),
+                                                            holes,
+                                                            pf!("<r>")
+                                                        ),
+                                                    );
+                                                    j = holes_end;
+                                                } else {
+                                                    let child = if child.is_empty() {
+                                                        JSValue::UNDEFINED
+                                                    } else {
+                                                        child
+                                                    };
+                                                    self.format::<C>(
+                                                        Tag::get_advanced(
+                                                            child,
+                                                            self.global_this,
+                                                            self.tag_opts(),
+                                                        )?,
+                                                        writer_,
                                                         child,
                                                         self.global_this,
-                                                        self.tag_opts(),
-                                                    )?,
-                                                    writer_,
-                                                    child,
-                                                    self.global_this,
-                                                )?;
-                                                writer = WrappedWriter {
-                                                    ctx: writer_,
-                                                    failed: false,
-                                                    estimated_line_length: &mut self
-                                                        .estimated_line_length,
-                                                };
-                                                if (j as u64) + 1 < length {
+                                                    )?;
+                                                    writer = WrappedWriter {
+                                                        ctx: writer_,
+                                                        failed: false,
+                                                        estimated_line_length: &mut self
+                                                            .estimated_line_length,
+                                                    };
+                                                    j += 1;
+                                                }
+                                                if j < length {
                                                     writer.write_all(b"\n");
                                                     write_indent_n(self.indent, writer.ctx)
                                                         .expect("unreachable");
                                                 }
-                                                j += 1;
                                             }
                                         }
                                         writer.write_all(b"\n");

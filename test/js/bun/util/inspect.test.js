@@ -1428,21 +1428,41 @@ it.each(argumentsObjectKinds)("Bun.inspect %s arguments object with holes and ex
   expect(Bun.inspect(a)).toBe('[\n  1, 2, 3 x empty items, 6, 999994 x empty items, "far", empty item\n]');
 });
 
-// Unlike an array's, an arguments object's `length` is an ordinary writable property: it can be
-// any number at all (past 2^32 - 1) with only a handful of elements behind it, so it must not
-// drive an index-by-index probe either. In a child so a regression times this test out instead
-// of hanging the runner.
-it("Bun.inspect arguments object with a huge length summarizes holes without iterating them", async () => {
-  // Code given to -e without a require() is a module as well, so the same three definitions.
-  const code = `
-    const direct = new Function("return arguments");
-    const scoped = new Function("a", "const f = () => a; return arguments");
-    class K { static cloned() { return arguments; } }
+// Runs `code` in a child after the same three definitions. Code given to -e without a require()
+// is a module as well. A regression that never returns then fails the test instead of hanging
+// the runner.
+async function inspectArgumentsInChild(code) {
+  const preamble = `
+    const kinds = {
+      direct: new Function("return arguments"),
+      scoped: new Function("a", "const f = () => a; return arguments"),
+      cloned: class { static cloned() { return arguments; } }.cloned,
+    };
     const isSloppyArguments = ${isSloppyArguments};
-    for (const args of [direct, scoped, K.cloned]) {
+    const element = children =>
+      ({ $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { children } });
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", preamble + code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// Unlike an array's, an arguments object's `length` is an ordinary writable property: it can be
+// any number at all (past 2^32 - 1, Infinity) with only a handful of elements behind it, so it
+// must not drive an index-by-index probe either.
+it("Bun.inspect arguments object with a huge length summarizes holes without iterating them", async () => {
+  const result = await inspectArgumentsInChild(`
+    for (const args of Object.values(kinds)) {
       const a = args(1, 2, 3);
       console.log(isSloppyArguments(a));
       a.length = 2 ** 32;
+      console.log(a);
+      a.length = Infinity;
       console.log(a);
       const b = args(1, 2, 3);
       delete b[1];
@@ -1451,23 +1471,184 @@ it("Bun.inspect arguments object with a huge length summarizes holes without ite
       b.length = 2 ** 50;
       console.log(Bun.inspect({ b }));
     }
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", code],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  `);
   const formatted =
     "[\n  1, 2, 3, 4294967293 x empty items\n]\n" +
+    "[\n  1, 2, 3, 9007199254740988 x empty items\n]\n" +
     '{\n  b: [\n    1, empty item, 3, 67 x empty items, 70, 4294967223 x empty items, "max", 1125895611875329 x empty items\n  ],\n}\n';
-  expect({ stdout, stderr, exitCode }).toEqual({
+  expect(result).toEqual({
     stdout: "true\n" + formatted + "true\n" + formatted + "false\n" + formatted,
     stderr: "",
     exitCode: 0,
   });
 });
+
+// A program can make `length` an accessor, a value that is not a number, or nothing at all. The
+// formatter reads it only as an own data number and runs no program code for it: no getter, no
+// valueOf, no trap of a Proxy prototype. Without such a number the list ends at its last element.
+it("printing an arguments object runs no program code for its length", async () => {
+  const { stdout, stderr, exitCode } = await inspectArgumentsInChild(`
+    const ran = [];
+    const hook = name => () => (ran.push(name), 2);
+    const lengths = {
+      "accessor": a => Object.defineProperty(a, "length", { get: hook("get") }),
+      "enumerable accessor": a => Object.defineProperty(a, "length", { get: hook("get"), enumerable: true }),
+      "throwing accessor": a => Object.defineProperty(a, "length", { get() { ran.push("get"); throw new Error("length"); } }),
+      "{ valueOf }": a => { a.length = { valueOf: hook("valueOf") }; },
+      '"7"': a => { a.length = "7"; },
+      "true": a => { a.length = true; },
+      "null": a => { a.length = null; },
+      "undefined": a => { a.length = undefined; },
+      "10n": a => { a.length = 10n; },
+      "Symbol()": a => { a.length = Symbol(); },
+      "deleted": a => { delete a.length; },
+      "deleted, inherited accessor": a => {
+        delete a.length;
+        Object.setPrototypeOf(a, Object.create(Object.prototype, { length: { get: hook("inherited get") } }));
+      },
+      "deleted, Proxy prototype": a => {
+        delete a.length;
+        const trap = name => (target, key, ...rest) => {
+          if (key === "length") ran.push(name);
+          return Reflect[name](target, key, ...rest);
+        };
+        const handler = { has: trap("has"), get: trap("get"), getOwnPropertyDescriptor: trap("getOwnPropertyDescriptor") };
+        Object.setPrototypeOf(a, new Proxy({}, handler));
+      },
+    };
+    const sinks = {
+      "Bun.inspect": a => Bun.inspect(a),
+      "nested": a => Bun.inspect({ a }),
+      "depth: 0": a => Bun.inspect({ a }, { depth: 0 }),
+      "Map value": a => Bun.inspect(new Map([["a", a]])),
+      "Error property": a => Bun.inspect(Object.assign(new Error("e"), { a })).match(/^ *a: .*$/m)[0],
+      "table cell": a => Bun.inspect.table([{ a }]),
+      "JSX children": a => Bun.inspect(element(a)),
+      "console.log": a => console.log(a),
+      "%o": a => console.log("%o", a),
+    };
+    const texts = {};
+    for (const [kind, args] of Object.entries(kinds)) {
+      for (const [length, change] of Object.entries(lengths)) {
+        for (const [sink, print] of Object.entries(sinks)) {
+          const a = args(1, 2);
+          change(a);
+          ran.length = 0;
+          let text;
+          try {
+            text = print(a);
+          } catch (e) {
+            text = "threw " + e;
+          }
+          if (text !== undefined) (texts[sink] ??= new Set()).add(text);
+          if (ran.length) console.log("ran", kind, length, sink, ran.join());
+        }
+      }
+    }
+    for (const sink in texts) texts[sink] = [...texts[sink]];
+    console.log(JSON.stringify(texts, null, 2));
+  `);
+  // Each sink prints one text, whatever the kind and the length.
+  const texts = {
+    "Bun.inspect": ["[ 1, 2 ]"],
+    "nested": ["{\n  a: [ 1, 2 ],\n}"],
+    "depth: 0": ["{\n  a: [Array ...],\n}"],
+    "Map value": ['Map(1) {\n  "a": [ 1, 2 ],\n}'],
+    "Error property": [" a: [ 1, 2 ],"],
+    "table cell": ["┌───┬──────────┐\n│   │ a        │\n├───┼──────────┤\n│ 0 │ [ 1, 2 ] │\n└───┴──────────┘\n"],
+    "JSX children": ["<div>\n  1\n  2\n</div>"],
+  };
+  expect({ stdout, stderr, exitCode }).toEqual({
+    // Three kinds and thirteen lengths, through console.log and through %o.
+    stdout: "[ 1, 2 ]\n".repeat(3 * 13 * 2) + JSON.stringify(texts, null, 2) + "\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+it("Bun.inspect arguments object without a length ends at its last element, in time linear in what it holds", async () => {
+  const result = await inspectArgumentsInChild(`
+    const a = kinds.cloned(1);
+    delete a.length;
+    // Enough that asking the sparse map once per element does not finish before the timeout.
+    for (let i = 0; i < 50_000; i++) a[1e6 + i * 3] = i;
+    const text = Bun.inspect(a);
+    console.log(text.slice(0, text.indexOf(", 2,")));
+    // 1e6 + 49_999 * 3 + 1 indexes, less the 1e6 + 99 * 3 before the hundredth sparse element.
+    console.log(text.match(/\\.\\.\\. \\d+ more items/)[0]);
+  `);
+  expect(result).toEqual({
+    stdout: "[\n  1, 999999 x empty items, 0, 2 x empty items, 1, 2 x empty items\n... 149701 more items\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// The children of a React element print one per line, all of them. A list that is mostly holes
+// is walked by the indexes it holds, and a run of more than 8 holes is one line.
+it("Bun.inspect JSX children that are a sparse list walk the indexes the list holds", async () => {
+  const result = await inspectArgumentsInChild(`
+    for (const args of Object.values(kinds)) {
+      const a = args(1, 2, 3);
+      a.length = 2 ** 32;
+      console.log(Bun.inspect(element(a)));
+      const b = args(1, 2, 3);
+      b[4294967294] = "max";
+      Object.defineProperty(b, "length", { get: () => 2 ** 50 });
+      console.log(Bun.inspect(element(b)));
+      // An index in the sparse map (8) below arguments that are still in their slots (12 to 14).
+      const c = args(...Array(15).keys());
+      c[1e6] = "far";
+      for (let i = 1; i < 12; i++) delete c[i];
+      c[8] = "x";
+      console.log(Bun.inspect(element(c)));
+    }
+    console.log(Bun.inspect(element(new Array(2 ** 32 - 1))));
+    const short = [1, , , , , , , , , 2];
+    console.log(Bun.inspect(element(short)));
+    short.length = 2;
+    short[10] = 2;
+    console.log(Bun.inspect(element(short)));
+  `);
+  const perKind =
+    "<div>\n  1\n  2\n  3\n  4294967292 x empty items\n</div>\n" +
+    "<div>\n  1\n  2\n  3\n  4294967291 x empty items\n  max\n</div>\n" +
+    "<div>\n  0\n" +
+    "  undefined\n".repeat(7) +
+    "  x\n" +
+    "  undefined\n".repeat(3) +
+    "  12\n  13\n  14\n</div>\n";
+  expect(result).toEqual({
+    stdout:
+      perKind.repeat(3) +
+      "<div>\n  4294967295 x empty items\n</div>\n" +
+      "<div>\n  1\n" +
+      "  undefined\n".repeat(8) +
+      "  2\n</div>\n" +
+      "<div>\n  1\n  9 x empty items\n  2\n</div>\n",
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
+// An accessor on an index is asked for its value, as it is when an array prints. Once per print.
+it.each([["array", (...items) => items], ...argumentsObjectKinds])(
+  "Bun.inspect JSX children read an index accessor of %s children once",
+  (kind, list) => {
+    let reads = 0;
+    const children = list(1, 2);
+    Object.defineProperty(children, 0, {
+      get() {
+        reads++;
+        return "got";
+      },
+      enumerable: true,
+      configurable: true,
+    });
+    const element = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { children } };
+    expect({ text: Bun.inspect(element), reads }).toEqual({ text: "<div>\n  got\n  2\n</div>", reads: 1 });
+  },
+);
 
 // https://github.com/oven-sh/bun/issues/25309
 it("object property enumeration scales linearly with property count", () => {

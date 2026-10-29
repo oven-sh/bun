@@ -405,13 +405,19 @@ test("options.paths: which package a parent is in", () => {
       ["{ filename: a directory }", "caller-pkg", fromParent({ filename: join(dir, "caller") + sep }), main],
       ["{ filename: a directory }", "#dep", fromParent({ filename: join(dir, "caller") + sep }), dep],
       // Only the separator of the platform does that. On Windows a "/" at the end is dropped,
-      // and the filename names a file in the directory above.
-      [
-        "{ filename: a directory and a slash }",
-        "caller-pkg",
-        fromParent({ filename: join(dir, "caller") + "/" }),
-        sep === "/" ? main : missing,
-      ],
+      // and the filename names a file in the directory above. Node's lookup does that too, but
+      // Node v26.12 keeps an answer under the name of the directory: what it gives on Windows
+      // depends on what it looked up before.
+      ...(sep === "/" || isBun
+        ? [
+            [
+              "{ filename: a directory and a slash }",
+              "caller-pkg",
+              fromParent({ filename: join(dir, "caller") + "/" }),
+              sep === "/" ? main : missing,
+            ],
+          ]
+        : []),
       [
         "{ filename: the directory of a package in the package }",
         "caller-pkg",

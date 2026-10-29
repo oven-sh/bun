@@ -2402,10 +2402,8 @@ impl<'a> Resolver<'a> {
                     ResultUnion::NotFound => {}
                     found => break 'entries found,
                 }
-                // Before entries were searched as in Node, the package of an entry answered
-                // `#imports` and its own name first, and the search ended there. So when the
-                // package of this entry has the request, the later entries are searched as in
-                // Node: no install starts at one, and its package does not answer.
+                // The search ended at an entry whose package has the request, before entries
+                // were searched as in Node. So no install starts at a later entry.
                 if installs_at_some_entries
                     && !entries.as_slice().is_empty()
                     && Self::entry_package_answers(start, import_path)
@@ -3041,12 +3039,9 @@ impl<'a> Resolver<'a> {
         self.custom_dir_paths.is_none()
     }
 
-    /// An install would start for the search from the `options.paths` entry at `current`.
-    /// Before entries were searched as in Node, the package of the entry answered `#imports`
-    /// and its own name first. So that no install starts where it did not start then, that
-    /// package answers now, in the search that it had. When the package of an earlier entry
-    /// has the request, this entry is searched as in Node: nothing is installed and its
-    /// package does not answer.
+    /// Where the search from the `options.paths` entry at `current` would start an install, the
+    /// package of the entry answers first, as before entries were searched as in Node: no
+    /// install starts where none started then.
     #[cold]
     #[inline(never)]
     fn load_from_package_of_custom_dir(

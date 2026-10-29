@@ -1,0 +1,6 @@
+# sabotage=PromotedEnvironmentsAreMadeOften: the program answers something else
+# FORM: AsRead
+# RUN: run-in-shell globalThis.argumentCount = 2;
+# OPTIONS: sabotage=PromotedEnvironmentsAreMadeOften
+# CHECK-NOT: module 71;,71;2;,71;2;3;,2;3;4;,2;3;4;1
+# PROGRAM-OF: promoted-environments-are-made-often-left-alone.ir

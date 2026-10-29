@@ -1,0 +1,66 @@
+# A loop costs the same wherever it stands: at the top level of a module, the way a first benchmark is written, and in a function that is called once.
+# What a turn takes: calls into the run time, and instructions by the counter of the hardware, where that can be read. The file beside this one has the other place.
+# -- source: main.ts
+# // Flags: --aot-erase-types
+# declare const turns: string, given: string | undefined, report: (...values: unknown[]) => void;
+# const count = Number(turns);
+# let sum = 0;
+# for (let i = 0; i < count; i++) {
+#   sum += i * 0.5;
+# }
+# report(sum);
+# -- end of source
+# FORM: AsRead
+# REPEAT: run = L0; loop = the_loop; most = 10.9
+# RUN(%(run)): run-in-shell --aotCountsPath=/dev/null --useConcurrentGC=0 --numberOfGCMarkers=1 const calls = () => aotRuntimeCounters().split("\n").reduce((sum, line) => sum + (/\toperation:/.test(line) ? parseInt(line) : 0), 0); let callsBefore, instructionsBefore; globalThis.loop = "%(loop)".replaceAll("_", " "); globalThis.isLoud = false; Object.defineProperty(globalThis, "turns", { get() { callsBefore = calls(); instructionsBefore = aotInstructionCount(); return 100000; } }); globalThis.given = undefined; globalThis.apply = Reflect.apply; globalThis.report = (...values) => { const instructions = aotInstructionCount(); print(values.join(" ")); if (callsBefore === undefined) return; const taken = instructions === null ? 0 : Math.round((instructions - instructionsBefore) / 10000) / 10; print("a turn:", Math.round((calls() - callsBefore) / 10000) / 10, "calls into the run time,", taken <= %(most) ? "at most %(most) instructions" : taken + " instructions"); callsBefore = undefined; };
+# REQUIRES(%(run)): x86_64 unsanitized-code not-windows
+# END REPEAT
+# the loop
+# L0: 2499975000
+# L0-NEXT: a turn: 0 calls into the run time, at most 10.9 instructions
+# L0-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = Builtin builtin=Number
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="turns" [isFreeName]
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    v4 = Call v0, -, v3 calleeName="Number"
+    v5 = Convert v4 declared={type=number flags=[IsExpected]}
+    v6 = Integer
+    v7 = Convert v6 declared={type=number flags=[IsExpected]}
+    v8 = Integer
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v7, v9)
+  b2(v10, v11):
+    LoopHint
+    v13 = Less v11, v5
+    Branch v13 -> taken b3(| 0, 1), notTaken b6(| 0, 1)
+  b3(v14, v15):
+    Jump -> next b4()
+  b4():
+    v16 = Double number=0.5
+    v17 = Mul v14, v16
+    v18 = Add v10, v17
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    Jump -> next b5()
+  b5():
+    v20 = Increment v14
+    v21 = Convert v20 declared={type=number flags=[IsExpected]}
+    Jump -> next b2(v19, v21)
+  b6(v22, v23):
+    Jump -> next b7()
+  b7():
+    v24 = Builtin builtin=GlobalThis
+    v25 = PropGet v24 key="report" [isFreeName]
+    v26 = Convert v25 declared={type=undefined|null|function flags=[IsExpected]}
+    v27 = Call v26, -, v10 calleeName="report"
+    v28 = Undefined
+    Return v28
+}
+function f1 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

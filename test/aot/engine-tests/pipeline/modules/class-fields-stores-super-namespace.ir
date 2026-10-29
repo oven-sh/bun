@@ -1,0 +1,337 @@
+# Each module here has exports that nothing reads. A class field and a store through super define a property on their receiver. A namespace object accepts the definition that changes nothing and refuses every other one.
+# FORM: AsRead
+# RUN: pipeline FinishBirths
+# RUN(WHOLE): compile
+# WHOLE: image not empty
+
+module m0 path="sloppy.cjs" displayPath="sloppy.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f0 exportsVariable=g0
+module m1 path="#1" displayPath="sloppy.cjs" exportRule=CommonJs body=f1 requests=[{target=m0 kind=Require completes=true}] syntheticExports=[{name="default" variable=g66}] namespaceLayout=L(m1)
+module m2 path="given-to-named-fields.mjs" displayPath="given-to-named-fields.mjs" body=f2 exports=[{name="a1" variable=g1}, {name="a2" variable=g2}, {name="a3" variable=g3}, {name="a4" variable=g4}, {name="a5" variable=g5}, {name="a6" variable=g6}, {name="a7" variable=g7}, {name="used" variable=g8}] namespaceLayout=L(m2)
+module m3 path="given-to-computed-fields.mjs" displayPath="given-to-computed-fields.mjs" body=f4 exports=[{name="a1" variable=g9}, {name="a2" variable=g10}, {name="a3" variable=g11}, {name="a4" variable=g12}, {name="a5" variable=g13}, {name="a6" variable=g14}, {name="a7" variable=g15}, {name="used" variable=g16}] namespaceLayout=L(m3)
+module m4 path="given-to-fields-under-keys-made-at-run-time.mjs" displayPath="given-to-fields-under-keys-made-at-run-time.mjs" body=f6 exports=[{name="a1" variable=g17}, {name="a2" variable=g18}, {name="a3" variable=g19}, {name="a4" variable=g20}, {name="a5" variable=g21}, {name="a6" variable=g22}, {name="a7" variable=g23}, {name="used" variable=g24}] namespaceLayout=L(m4)
+module m5 path="stored-through-super.mjs" displayPath="stored-through-super.mjs" body=f8 exports=[{name="a1" variable=g25}, {name="a2" variable=g26}, {name="a3" variable=g27}, {name="a4" variable=g28}, {name="a5" variable=g29}, {name="a6" variable=g30}, {name="a7" variable=g31}, {name="used" variable=g32}] namespaceLayout=L(m5)
+module m6 path="stored-through-super-under-keys.mjs" displayPath="stored-through-super-under-keys.mjs" body=f10 exports=[{name="a1" variable=g33}, {name="a2" variable=g34}, {name="a3" variable=g35}, {name="a4" variable=g36}, {name="a5" variable=g37}, {name="a6" variable=g38}, {name="a7" variable=g39}, {name="used" variable=g40}] namespaceLayout=L(m6)
+module m7 path="stored-through-super-by-sloppy-code.mjs" displayPath="stored-through-super-by-sloppy-code.mjs" body=f12 exports=[{name="a1" variable=g41}, {name="a2" variable=g42}, {name="a3" variable=g43}, {name="a4" variable=g44}, {name="a5" variable=g45}, {name="a6" variable=g46}, {name="a7" variable=g47}, {name="used" variable=g48}] namespaceLayout=L(m7)
+module m8 path="assigned.mjs" displayPath="assigned.mjs" body=f14 exports=[{name="a1" variable=g49}, {name="a2" variable=g50}, {name="a3" variable=g51}, {name="a4" variable=g52}, {name="a5" variable=g53}, {name="a6" variable=g54}, {name="a7" variable=g55}, {name="used" variable=g56}] namespaceLayout=L(m8)
+module m9 path="exports-under-indexes.mjs" displayPath="exports-under-indexes.mjs" body=f16 exports=[{name="0" variable=g57}, {name="1" variable=g58}, {name="2" variable=g59}, {name="named" variable=g60}] namespaceLayout=L(m9)
+module m10 path="main.mjs" displayPath="main.mjs" body=f17 requests=[{target=m1 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}, {target=m7 completes=true}, {target=m8 completes=true}, {target=m9 completes=true}] namespaceLayout=L(m10)
+entry module=m10
+layout L0 kind=Instance name="Returns" module=m10 position=914 constructor=f18
+layout L1 module=m10 position=2823 fields=[{key="storesANewName" declared={type=undefined|null|function|f40 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="storesAnotherValue" declared={type=undefined|null|function|f39 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="storesTheSameValue" declared={type=undefined|null|function|f38 flags=[IsExpected]} flags=[IsRequired, IsMethod]}, {key="storesUnder" declared={type=undefined|null|function|f41 flags=[IsExpected]} flags=[IsRequired, IsMethod]}] declaredOrder=[2, 1, 0, 3] ownFieldCount=4
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="a1" module=m2 declared={type=undefined|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g2 name="a2" module=m2 declared={type=2|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g3 name="a3" module=m2 declared={type=3|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g4 name="a4" module=m2 declared={type=4|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g5 name="a5" module=m2 declared={type=5|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g6 name="a6" module=m2 declared={type=6|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g7 name="a7" module=m2 declared={type=7|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g8 name="used" module=m2 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+variable g9 name="a1" module=m3 declared={type=undefined|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g10 name="a2" module=m3 declared={type=2|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g11 name="a3" module=m3 declared={type=3|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g12 name="a4" module=m3 declared={type=4|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g13 name="a5" module=m3 declared={type=5|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g14 name="a6" module=m3 declared={type=6|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g15 name="a7" module=m3 declared={type=7|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g16 name="used" module=m3 declared={type=f5 flags=[IsFromCompiler]} initialization=Function function=f5 flags=[IsImmutable]
+variable g17 name="a1" module=m4 declared={type=undefined|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g18 name="a2" module=m4 declared={type=2|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g19 name="a3" module=m4 declared={type=3|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g20 name="a4" module=m4 declared={type=4|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g21 name="a5" module=m4 declared={type=5|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g22 name="a6" module=m4 declared={type=6|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g23 name="a7" module=m4 declared={type=7|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g24 name="used" module=m4 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+variable g25 name="a1" module=m5 declared={type=undefined|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g26 name="a2" module=m5 declared={type=2|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g27 name="a3" module=m5 declared={type=3|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g28 name="a4" module=m5 declared={type=4|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g29 name="a5" module=m5 declared={type=5|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g30 name="a6" module=m5 declared={type=6|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g31 name="a7" module=m5 declared={type=7|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g32 name="used" module=m5 declared={type=f9 flags=[IsFromCompiler]} initialization=Function function=f9 flags=[IsImmutable]
+variable g33 name="a1" module=m6 declared={type=undefined|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g34 name="a2" module=m6 declared={type=2|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g35 name="a3" module=m6 declared={type=3|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g36 name="a4" module=m6 declared={type=4|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g37 name="a5" module=m6 declared={type=5|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g38 name="a6" module=m6 declared={type=6|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g39 name="a7" module=m6 declared={type=7|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g40 name="used" module=m6 declared={type=f11 flags=[IsFromCompiler]} initialization=Function function=f11 flags=[IsImmutable]
+variable g41 name="a1" module=m7 declared={type=undefined|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g42 name="a2" module=m7 declared={type=2|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g43 name="a3" module=m7 declared={type=3|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g44 name="a4" module=m7 declared={type=4|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g45 name="a5" module=m7 declared={type=5|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g46 name="a6" module=m7 declared={type=6|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g47 name="a7" module=m7 declared={type=7|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g48 name="used" module=m7 declared={type=f13 flags=[IsFromCompiler]} initialization=Function function=f13 flags=[IsImmutable]
+variable g49 name="a1" module=m8 declared={type=undefined|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g50 name="a2" module=m8 declared={type=2|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g51 name="a3" module=m8 declared={type=3|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g52 name="a4" module=m8 declared={type=4|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g53 name="a5" module=m8 declared={type=5|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g54 name="a6" module=m8 declared={type=6|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g55 name="a7" module=m8 declared={type=7|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g56 name="used" module=m8 declared={type=f15 flags=[IsFromCompiler]} initialization=Function function=f15 flags=[IsImmutable]
+variable g57 name="zero" module=m9 declared={type=undefined|null|absent|"zero" flags=[IsExpected]} flags=[IsImmutable]
+variable g58 name="one" module=m9 declared={type=undefined|null|absent|"one" flags=[IsExpected]} flags=[IsImmutable]
+variable g59 name="two" module=m9 declared={type=undefined|null|absent|"two" flags=[IsExpected]} flags=[IsImmutable]
+variable g60 name="named" module=m9 declared={type=1|absent flags=[IsExpected]} flags=[IsImmutable]
+variable g61 name="join" module=m10 declared={type=undefined|null|function|absent|f20 flags=[IsExpected]} flags=[IsImmutable]
+variable g62 name="Returns" module=m10 declared={type=absent|f18 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g63 name="home" module=m10 declared={type=undefined|null|absent|L1 flags=[IsExpected]} flags=[IsImmutable]
+variable g64 name="anyAssigned" module=m10 declared={type=anything|absent} flags=[IsImmutable]
+variable g65 module=m10 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g66 name="default" module=m1 declared={type=anything|absent}
+function f0 module=m0 kind=CommonJsModule flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f1 module=m0 kind=Module flags=[IsHiddenInStackTraces] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="used" module=m2 position=155 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f4 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f5 name="used" module=m3 position=155 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f6 module=m4 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f7 name="used" module=m4 position=155 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f8 module=m5 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f9 name="used" module=m5 position=155 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f10 module=m6 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f11 name="used" module=m6 position=155 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f12 module=m7 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f13 name="used" module=m7 position=155 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f14 module=m8 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f15 name="used" module=m8 position=155 flags=[HasExplicitName] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f16 module=m9 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f17 module=m10 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L1
+    v1 = NewClosure v0 function=f38
+    v2 = Convert v1 declared={type=undefined|null|function|f38 flags=[IsExpected]}
+    PropDefine v0, v2 key="storesTheSameValue"
+    v4 = NewClosure v0 function=f39
+    v5 = Convert v4 declared={type=undefined|null|function|f39 flags=[IsExpected]}
+    PropDefine v0, v5 key="storesAnotherValue"
+    v7 = NewClosure v0 function=f40
+    v8 = Convert v7 declared={type=undefined|null|function|f40 flags=[IsExpected]}
+    PropDefine v0, v8 key="storesANewName"
+    v10 = NewClosure v0 function=f41
+    v11 = Convert v10 declared={type=undefined|null|function|f41 flags=[IsExpected]}
+    PropDefine v0, v11 key="storesUnder"
+    v13 = Undefined
+    Return v13
+}
+function f18 name="Returns" module=m10 position=937 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] functionTypes=[f70] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0
+function f19 name="attempt" module=m10 position=771 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] functionTypes=[f68] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f20 name="join" module=m10 position=877 kind=Arrow flags=[HasRestParameter] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f69] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f21 module=m10 position=1019 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f71] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f22 module=m10 position=1131 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f72] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f23 module=m10 position=1243 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f73] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f24 module=m10 position=1347 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f74] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f25 module=m10 position=1451 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f75] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f26 module=m10 position=1560 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f76] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f27 module=m10 position=1655 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f77] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f28 module=m10 position=1730 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f78] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f29 module=m10 position=1844 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f79] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f30 module=m10 position=1958 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f80] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f31 module=m10 position=2077 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f81] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f32 module=m10 position=2212 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f82] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f33 module=m10 position=2341 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f83] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f34 module=m10 position=2438 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f84] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f35 module=m10 position=2554 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f85] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f36 module=m10 position=2670 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f86] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f37 module=m10 position=2786 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f87] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f38 name="storesTheSameValue" module=m10 position=2827 kind=Method flags=[HasThis, HasExplicitName] captures=[{type=object flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f88] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f39 name="storesAnotherValue" module=m10 position=2896 kind=Method flags=[HasThis, HasExplicitName] captures=[{type=object flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f89] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f40 name="storesANewName" module=m10 position=2965 kind=Method flags=[HasThis, HasExplicitName] captures=[{type=object flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f90] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f41 name="storesUnder" module=m10 position=3035 kind=Method flags=[HasThis, HasExplicitName] length=2 captures=[{type=object flags=[IsFromCompiler]}] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f91] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f42 module=m10 position=3164 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f92] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f43 module=m10 position=3219 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f93] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f44 module=m10 position=3274 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f94] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f45 module=m10 position=3325 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f95] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f46 module=m10 position=3411 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f96] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f47 module=m10 position=3477 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f97] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f48 module=m10 position=3543 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f98] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f49 module=m10 position=3619 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f99] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f50 module=m10 position=3695 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f100] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f51 module=m10 position=3766 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f101] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f52 module=m10 position=3865 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f102] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f53 module=m10 position=3934 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f103] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f54 module=m10 position=4003 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f104] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f55 module=m10 position=4068 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f105] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f56 module=m10 position=4197 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f106] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f57 module=m10 position=4236 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f107] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g64
+    v1 = CheckInitialized v0 name="anyAssigned"
+    v2 = Convert v1 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v3 = Integer integer=7
+    PropSet v2, v3 key="a6"
+    v5 = Convert v3 declared={type=number flags=[IsExpected]}
+    Return v5
+}
+function f58 module=m10 position=4275 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f108] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g64
+    v1 = CheckInitialized v0 name="anyAssigned"
+    v2 = Convert v1 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v3 = Integer integer=4
+    PropSet v2, v3 key="a4"
+    v5 = Convert v3 declared={type=number flags=[IsExpected]}
+    Return v5
+}
+function f59 module=m10 position=4317 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f109] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f60 module=m10 position=4369 kind=Arrow thisType={type=anything} results=[{type=number flags=[IsExpected]}] functionTypes=[f110] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f61 module=m10 position=4413 kind=Arrow thisType={type=anything} results=[{type=anything}] functionTypes=[f111] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f62 module=m10 position=4500 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f112] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f63 module=m10 position=4612 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f113] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f64 module=m10 position=4725 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f114] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f65 module=m10 position=4835 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f115] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f66 module=m10 position=4894 kind=Arrow thisType={type=anything} results=[{type=undefined|null|string flags=[IsExpected]}] functionTypes=[f116] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f67 module=m10 position=4962 kind=Arrow thisType={type=anything} results=[{type=boolean flags=[IsExpected]}] functionTypes=[f117] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f68 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f69 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f70 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f71 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f72 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f73 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f74 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f75 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f76 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f77 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f78 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f79 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f80 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f81 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f82 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f83 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f84 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f85 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f86 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f87 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f88 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f89 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f90 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f91 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f92 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f93 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f94 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f95 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f96 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f97 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f98 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f99 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f100 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f101 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f102 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f103 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f104 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f105 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f106 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f107 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f108 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f109 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f110 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f111 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f112 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f113 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f114 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f115 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f116 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+function f117 module=m10 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f1 f2 f4 f6 f8 f10 f12 f14 f16 f17
+# CHECK-LABEL: function f1 module=
+# CHECK: m0 kind=Module flags=[IsHiddenInStackTraces] thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f2 module=
+# CHECK: m2 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f4 module=
+# CHECK: m3 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f6 module=
+# CHECK: m4 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f8 module=
+# CHECK: m5 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f10 module=
+# CHECK: m6 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f12 module=
+# CHECK: m7 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f14 module=
+# CHECK: m8 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f16 module=
+# CHECK: m9 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }
+# CHECK-LABEL: function f17 module=
+# CHECK: m10 kind=Module thisType={type=anything} results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+# CHECK-NEXT: b0():
+# CHECK-NEXT: v0: undefined = Undefined
+# CHECK-NEXT: Return v0
+# CHECK-NEXT: }

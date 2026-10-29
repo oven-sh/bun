@@ -357,7 +357,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
                 continue;
             }
             // SAFETY: each entry is a NUL-terminated WTF-8 string into the
-            // leaked `WTF8_ENV_BUF` allocation.
+            // buffer that `convert_env_to_wtf8` leaked.
             let line = unsafe {
                 let mut len = 0usize;
                 while *entry.add(len) != 0 {

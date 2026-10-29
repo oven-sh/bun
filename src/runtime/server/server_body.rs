@@ -2228,7 +2228,7 @@ where
             let listener = bun_opaque::opaque_deref_mut(listener);
             port = listener.get_local_port().unwrap_or(port);
 
-            let mut buf = [0u8; 64];
+            let mut buf = [0u8; 16];
             let Some(address_bytes) = listener.socket().local_address(&mut buf) else {
                 return Ok(JSValue::NULL);
             };
@@ -2246,7 +2246,7 @@ where
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 let h3l = bun_opaque::opaque_deref_mut(h3l);
                 port = h3l.get_local_port().unwrap_or(port);
-                let mut buf = [0u8; 64];
+                let mut buf = [0u8; 16];
                 let Some(address_bytes) = h3l.get_local_address(&mut buf) else {
                     return Ok(JSValue::NULL);
                 };
@@ -2278,11 +2278,11 @@ where
             server_config::Address::Tcp { hostname, .. } => hostname,
         };
         if let Some(listener) = self.listener.get() {
-            let mut buf = [0u8; 1024];
+            let mut buf = [0u8; 16];
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             if let Some(addr) = bun_opaque::opaque_deref_mut(listener)
                 .socket()
-                .remote_address(&mut buf[..1024])
+                .remote_address(&mut buf)
             {
                 if !addr.is_empty() {
                     return bun_string_jsc::create_utf8_for_js(global, addr);

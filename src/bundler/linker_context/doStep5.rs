@@ -39,32 +39,32 @@ impl LinkerContext<'_> {
     /// # Safety
     ///
     /// Runs concurrently on worker-pool threads (one task per `source_index`).
-    /// The body never materializes `&mut LinkerContext` — it derefs `this` to a
+    /// The body never materializes `&mut LinkerContext` — it uses `self`, a
     /// shared `&LinkerContext` for read-only access (`symbols`, `ts_enums`,
     /// `top_level_symbols_to_parts`, options) and writes only to its own
     /// `source_index` row of the `graph.{ast,meta}` SoA columns via raw
     /// per-row pointers obtained from `split_raw()` (root provenance, no
     /// `&mut [T]` intermediate). Disjoint rows ⇒ no overlapping `&mut`.
-    pub(crate) unsafe fn do_step5(this: *mut LinkerContext<'_>, source_index_: Index, _: usize) {
+    pub(crate) unsafe fn do_step5(&self, source_index_: Index, _: usize) {
         let source_index = source_index_.get();
         let _trace = perf::trace("Bundler.CreateNamespaceExports");
 
-        // SAFETY: shared-ref view for all read-only access. Multiple worker threads may
+        // Shared-ref view for all read-only access. Multiple worker threads may
         // hold `&LinkerContext` simultaneously; the SoA buffers live behind raw
         // pointers inside `MultiArrayList`, so this borrow does not assert
         // immutability over the heap cells we write below.
-        let c: &LinkerContext<'_> = unsafe { &*this };
+        let c: &LinkerContext<'_> = self;
 
         let id = source_index;
         if id as usize >= c.graph.meta.len() {
             return;
         }
 
-        // SAFETY: `this` points to `BundleV2.linker` (caller is the worker-pool
+        // SAFETY: `c` is `BundleV2.linker` (caller is the worker-pool
         // dispatch from `scan_imports_and_exports`); `container_of` shape.
         // `Worker::get` only needs `&BundleV2`, so derive a shared ref — never
         // form `&mut BundleV2` here (concurrent tasks would alias it).
-        let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_ptr(this) };
+        let bundle_v2: &BundleV2<'_> = unsafe { &*LinkerContext::bundle_v2_const_ptr(c) };
         let worker = ThreadPool::Worker::get(bundle_v2);
         // `Worker::get` returns the thread-local worker
         // (not RAII), so balance with `unget` explicitly via scopeguard.

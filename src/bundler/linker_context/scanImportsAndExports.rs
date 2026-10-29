@@ -655,22 +655,12 @@ pub(crate) fn scan_imports_and_exports(
         //
         // `do_step5` only touches distinct SoA rows per `source_index` (the
         // columns are pre-sized and never reallocate during this step).
-        // We pass `*mut LinkerContext` through a
-        // `Sync` wrapper; the callee derefs it to `&LinkerContext` (shared)
+        // The callee uses `&LinkerContext` (shared)
         // for reads and writes per-row cells via raw `split_raw()` pointers —
         // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
         // forms `&mut LinkerContext`).
         {
-            #[repr(transparent)]
-            struct Step5Ctx<'a>(*mut LinkerContext<'a>);
-            // SAFETY: the pointer is only dereferenced to `&LinkerContext` for
-            // reads plus raw `*mut` per-row SoA cells for disjoint-row writes
-            // (see `do_step5` doc); lifetime is bounded by the blocking
-            // `each()` call below. The `ThreadPool::Worker` it acquires is
-            // per-OS-thread.
-            unsafe impl core::marker::Sync for Step5Ctx<'_> {}
-
-            let ctx = Step5Ctx(core::ptr::from_mut::<LinkerContext<'_>>(this));
+            let ctx: &LinkerContext<'_> = this;
             // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for
             // the link step); `pool` is the arena-allocated bundler ThreadPool
             // set in `BundleV2::init`.
@@ -680,9 +670,9 @@ pub(crate) fn scan_imports_and_exports(
             // variant). Step 6 reuses it afterwards.
             worker_pool.each(
                 ctx,
-                |ctx: &Step5Ctx<'_>, source_index: Index, i: usize| {
-                    // SAFETY: see `Step5Ctx` Sync justification above.
-                    unsafe { LinkerContext::do_step5(ctx.0, source_index, i) };
+                |ctx: &&LinkerContext<'_>, source_index: Index, i: usize| {
+                    // SAFETY: `reachable` names each file once, so each call has its own rows.
+                    unsafe { ctx.do_step5(source_index, i) };
                 },
                 &mut reachable[..],
             );

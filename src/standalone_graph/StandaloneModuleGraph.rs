@@ -629,7 +629,7 @@ mod elf {
     // Declared inline rather than in a dedicated `*_sys` crate: this crate is
     // the symbol's only consumer.
     unsafe extern "C" {
-        pub(super) safe fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
+        pub(super) safe fn Bun__getStandaloneModuleGraphELFVaddr() -> &'static u64;
     }
 
     /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
@@ -638,11 +638,7 @@ mod elf {
     /// `from_bytes` writable subslices UB under Stacked Borrows.
     pub(super) fn get_data() -> Option<(*mut u8, usize)> {
         let vaddr_ptr = Bun__getStandaloneModuleGraphELFVaddr();
-        if vaddr_ptr.is_null() {
-            return None;
-        }
-        // SAFETY: read unaligned u64 vaddr.
-        let vaddr = unsafe { core::ptr::read_unaligned(vaddr_ptr) };
+        let vaddr = *vaddr_ptr;
         if vaddr == 0 {
             return None;
         }
@@ -652,8 +648,8 @@ mod elf {
         // `dlpi_addr` of the object containing BUN_COMPILED itself; for
         // non-PIE it is 0.
         // Format at target: [u64 payload_len][payload bytes]
-        let load_bias =
-            bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
+        let load_bias = bun_sys::elf::find_loaded_module(core::ptr::from_ref(vaddr_ptr).addr())
+            .map_or(0, |m| m.base_address);
         let target = (vaddr as usize).wrapping_add(load_bias);
         // A corrupt file can contain any vaddr and length, so check both against what is mapped from `target` on.
         let mapped_end = end_of_adjacent_segments(&bun_sys::elf::find_loaded_module(target)?);
@@ -681,16 +677,13 @@ mod elf {
     #[unsafe(no_mangle)]
     extern "C" fn Bun__sizeOfPayloadWithCompiledProgram() -> usize {
         use super::{Flags, Offsets, TRAILER};
+        unsafe extern "C" {
+            safe fn getauxval(type_: core::ffi::c_ulong) -> core::ffi::c_ulong;
+        }
 
-        // SAFETY: it returns the address of a static.
-        let vaddr = unsafe { core::ptr::read_unaligned(Bun__getStandaloneModuleGraphELFVaddr()) };
-        // SAFETY: `getauxval` only reads the vector the kernel gave the process.
-        let (first_header, header_count) = unsafe {
-            (
-                libc::getauxval(libc::AT_PHDR) as *const libc::Elf64_Phdr,
-                libc::getauxval(libc::AT_PHNUM) as usize,
-            )
-        };
+        let vaddr = *Bun__getStandaloneModuleGraphELFVaddr();
+        let first_header = getauxval(libc::AT_PHDR) as *const libc::Elf64_Phdr;
+        let header_count = getauxval(libc::AT_PHNUM) as usize;
         if vaddr == 0 || first_header.is_null() {
             return 0;
         }

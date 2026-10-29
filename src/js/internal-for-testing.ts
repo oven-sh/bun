@@ -89,6 +89,17 @@ export const sslCtxLiveCount = $bindgen("SecureContext.bind.ts", "liveCount");
 
 export const napiThreadsafeFunctionLiveCount = $bindgen("napi_body.bind.ts", "threadsafeFunctionLiveCount");
 
+/**
+ * How often lsquic held back the header of an HTTP/3 frame that had no flow-control credit, in this process. Only a
+ * header block that waits in lsquic has such a frame.
+ */
+export const lsquicFrameHeaderWaits = {
+  /** The connection had no credit for the frame header. */
+  connection: $bindgen("quic.bind.ts", "frameHeaderConnectionWaits"),
+  /** The stream had no credit for it. */
+  stream: $bindgen("quic.bind.ts", "frameHeaderStreamWaits"),
+};
+
 export const bundlerWorkerLiveCount = $bindgen("JSBundler.bind.ts", "workerLiveCount");
 
 export const semverIntersects = $bindgen("SemverObjectInternals.bind.ts", "intersects") as (

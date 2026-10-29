@@ -1,0 +1,53 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -100,6 +100,9 @@
+ static int
+ stream_flush_nocheck (lsquic_stream_t *stream);
+ 
++static int
++maybe_flush_stream (struct lsquic_stream *stream);
++
+ static void
+ maybe_remove_from_write_q (lsquic_stream_t *stream, enum stream_q_flags flag);
+ 
+@@ -2522,6 +2525,14 @@
+             TAILQ_INSERT_TAIL(&stream->conn_pub->write_streams, stream,
+                                                             next_write_stream);
+         }
++        /* bun: upstream runs maybe_flush_stream() only for the stream whose
++         * own write uses up the credit.  A stream that buffered its bytes
++         * before that took their connection credit too.  It is not writeable
++         * now, so it gets no write event, nothing sends its bytes, and the
++         * peer never sends the MAX_DATA that they stand in front of.
++         */
++        else if (!(stream->sm_qflags & SMQF_WANT_FLUSH))
++            (void) maybe_flush_stream(stream);
+     }
+ }
+ 
+@@ -2570,11 +2581,22 @@
+ static int
+ stream_flush_nocheck (lsquic_stream_t *stream)
+ {
+-    size_t frames;
++    const struct stream_hq_frame *shf;
+ 
+-    frames = active_hq_frame_sizes(stream);
+-    stream->sm_flush_to = stream->tosend_off + stream->sm_n_buffered + frames;
+     stream->sm_flush_to_payload = stream->sm_payload + stream->sm_n_buffered;
++    stream->sm_flush_to = stream->tosend_off + stream->sm_n_buffered;
++    /* bun: upstream added the header of every frame that is not written yet.
++     * A header block that waits outside of the buffer has such a frame, and
++     * the flush does not have to write it.  When it did not, the stream kept
++     * SMQF_WANT_FLUSH with an empty buffer.  Count the frames that have bytes
++     * in the buffer.
++     */
++    if ((stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
++                                        == (SMBF_IETF|SMBF_USE_HEADERS))
++        STAILQ_FOREACH(shf, &stream->sm_hq_frames, shf_next)
++            if (!(shf->shf_flags & SHF_WRITTEN)
++                            && shf->shf_off < stream->sm_flush_to_payload)
++                stream->sm_flush_to += stream_hq_frame_size(shf);
+     maybe_put_onto_write_q(stream, SMQF_WANT_FLUSH);
+     LSQ_DEBUG("will flush up to offset %"PRIu64, stream->sm_flush_to);
+ 

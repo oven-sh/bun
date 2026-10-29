@@ -5300,14 +5300,14 @@ impl VirtualMachine {
         // Note: the §Dispatch shim takes path/loader/module_type/printer/
         // promise_ptr bundled as `TranspileExtra` behind `args.extra` (see
         // ModuleLoader.rs `TranspileArgs`).
-        let mut extra = ModuleLoader::TranspileExtra {
+        let extra = ModuleLoader::TranspileExtra {
             path: lr.path,
-            loader: lr.loader.unwrap_or(if lr.is_main {
+            loader: Cell::new(lr.loader.unwrap_or(if lr.is_main {
                 bun_ast::Loader::Js
             } else {
                 bun_ast::Loader::File
-            }),
-            module_type,
+            })),
+            module_type: Cell::new(module_type),
             source_code_printer: printer.as_ptr(),
             // `fetchWithoutOnLoadPlugins` forbids the async path.
             promise_ptr: core::ptr::null_mut(),
@@ -5320,10 +5320,9 @@ impl VirtualMachine {
             virtual_source: lr.virtual_source,
             global_object,
             flags,
-            extra: &raw mut extra,
+            extra: &extra,
         };
-        // SAFETY: `guard.0` is the live per-thread VM; `args.extra` points at
-        // the live `extra` above.
+        // SAFETY: `guard.0` is the live per-thread VM.
         let result = unsafe { ModuleLoader::__bun_transpile_source_code(guard.0, &args) };
         if result.is_err() && flags == FetchFlags::PrintSource {
             guard.1 = true; // errdefer

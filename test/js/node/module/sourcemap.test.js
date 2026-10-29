@@ -248,8 +248,8 @@ test("error.stack of // @bun code with a truncated VLQ in sourceMappingURL warns
 });
 
 // A `// @bun` file is not transpiled again. Bun takes its inline map from the last `//# sourceMappingURL=` line, and
-// only when the file can end there (ECMA-426 draft, JavaScriptExtractSourceMapURL without parsing): no quote and no
-// `*/` from the URL on, and only blank lines and `//` comments after the line.
+// only when no quote and no `*/` follows the URL. Such a line in a string or in a block comment has the closing quote
+// or `*/` after it. This is the quote test of the ECMA-426 draft (JavaScriptExtractSourceMapURL without parsing).
 // ";;EAIE" maps generated 3:3 to original 5:3 of source 0.
 describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
   const throwsOnLine3 = `// @bun\nexport function t() {\n  throw new Error("SC");\n}\n`;
@@ -334,12 +334,20 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the comment of the file is read when only blank lines and // comments follow it", async () => {
+  test("the comment of the file is read when no quote and no */ follows it", async () => {
     const files = {
       "own.js": throwsOnLine3 + own + "\n",
       "own-without-newline.js": throwsOnLine3 + own,
       "own-then-comments.js": throwsOnLine3 + own + "\n\n  \t\n// the end\n  // indented\n",
       "own-crlf.js": (throwsOnLine3 + own + "\n// the end\n").replaceAll("\n", "\r\n"),
+      "own-then-code.js": throwsOnLine3 + own + "\nexport const after = 1;\n",
+      "own-in-cjs-wrapper.js":
+        "// @bun @bun-cjs\n" +
+        "(function(exports, require, module, __filename, __dirname) {exports.t = function t() {\n" +
+        '  throw new Error("SC");\n' +
+        "};\n" +
+        own +
+        "\n})",
       // The last such line is the one that counts.
       "string-then-own.js": throwsOnLine3 + "export const text = `\n" + inString + "\n`;\n" + own + "\n",
     };
@@ -354,11 +362,11 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("the comment of the file is not read when code, a block comment or a quote follows it", async () => {
+  test("the comment of the file is not read when a quote or a block comment follows it", async () => {
     const tails = {
-      "own-then-code.js": own + "\nexport const after = 1;\n",
+      "own-then-string.js": own + '\nexport const after = "x";\n',
       "own-then-block-comment.js": own + "\n/* the end */\n",
-      "own-then-quote.js": own + "\n// it's the end\n",
+      "own-then-quote-in-comment.js": own + "\n// it's the end\n",
       "own-literal-json.js": "//# sourceMappingURL=data:application/json," + JSON.stringify(map) + "\n",
     };
     const files = {};
@@ -388,16 +396,14 @@ describe.concurrent("sourceMappingURL comment of a // @bun file", () => {
         t();
       } catch (e) {
         const text = Bun.inspect(e);
-        console.log(JSON.stringify({
-          frame: text.split("\\n").find(line => line.includes(" at t ")).trim(),
-          showsOtherFile: text.includes("OTHER"),
-        }));
+        console.log(text.split("\\n").find(line => line.includes(" at t ")).trim());
+        console.log("shows the other file: " + text.includes("OTHER"));
       }
     `;
 
     const { stdout, stderr, exitCode } = await run(files, printCodeFrame, []);
-    expect({ stdout: JSON.parse(stdout), stderr }).toEqual({
-      stdout: { frame: "at t (<dir>/bundle.js:3:9)", showsOtherFile: false },
+    expect({ stdout, stderr }).toEqual({
+      stdout: "at t (<dir>/bundle.js:3:9)\nshows the other file: false\n",
       stderr: "",
     });
     expect(exitCode).toBe(0);

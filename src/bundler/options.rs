@@ -950,6 +950,7 @@ pub(crate) fn defines_from_transform_options(
     }
 
     let mut resolved_defines = defines::DefineData::from_input(&user_defines, drop, log, bump)?;
+    let mut plain_path_keys: Vec<&'static [u8]> = Vec::new();
     // A server has the real `process` where it runs, and a program reads it there with `process.env["NODE_ENV"]` or `process?.platform`
     if target.is_server_side() {
         for key in own_defaults {
@@ -958,6 +959,7 @@ pub(crate) fn defines_from_transform_options(
                 && !data.valueless()
             {
                 data.set_plain_path_only();
+                plain_path_keys.push(key);
             }
         }
     }
@@ -979,6 +981,7 @@ pub(crate) fn defines_from_transform_options(
                 _ => None,
             }),
         drop.iter().copied(),
+        plain_path_keys.iter().copied(),
     );
 
     let mut define = defines::Define::init(

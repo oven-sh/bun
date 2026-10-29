@@ -644,11 +644,12 @@ pub mod defines {
             self.dots.get(name)
         }
 
-        /// Order-independent, length-prefixed hash of the three inputs. `None` when all are empty.
+        /// Order-independent, length-prefixed hash of the inputs. `None` when all are empty. `plain_path_only`: the keys of `defines` with that flag, which replace less for the same pair.
         pub fn hash_user_inputs<'i>(
             defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
             env_defines: impl IntoIterator<Item = (&'i [u8], &'i [u8])>,
             drop: impl IntoIterator<Item = &'i [u8]>,
+            plain_path_only: impl IntoIterator<Item = &'i [u8]>,
         ) -> Option<u64> {
             let mut defines: Vec<(&[u8], &[u8])> = defines.into_iter().collect();
             let mut env_defines: Vec<(&[u8], &[u8])> = env_defines.into_iter().collect();
@@ -656,10 +657,12 @@ pub mod defines {
             if defines.is_empty() && env_defines.is_empty() && drop.is_empty() {
                 return None;
             }
+            let mut plain_path_only: Vec<&[u8]> = plain_path_only.into_iter().collect();
             defines.sort_unstable();
             env_defines.sort_unstable();
             drop.sort_unstable();
             drop.dedup();
+            plain_path_only.sort_unstable();
 
             let mut hasher = bun_wyhash::Wyhash::init(0);
             let mut update = |bytes: &[u8]| {
@@ -674,9 +677,11 @@ pub mod defines {
                     update(value);
                 }
             }
-            update(&(drop.len() as u64).to_le_bytes());
-            for item in drop {
-                update(item);
+            for items in [drop, plain_path_only] {
+                update(&(items.len() as u64).to_le_bytes());
+                for item in items {
+                    update(item);
+                }
             }
             Some(hasher.final_())
         }

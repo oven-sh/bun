@@ -447,6 +447,18 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
+    fn a_default_and_the_same_define_of_the_user_hash_differently() {
+        with_ast_scope(|scratch| {
+            let default = create_table(&[], &[], scratch);
+            let given = [("process.env.NODE_ENV", "\"development\"")];
+            let of_user = create_table(&given, &[], scratch);
+            assert!(default.user_hash.is_some());
+            assert_ne!(default.user_hash, of_user.user_hash);
+        });
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn quoted_part_of_a_key_is_a_member() {
         let session = Session::new();
         let atoms = Interner::new_in(&session);

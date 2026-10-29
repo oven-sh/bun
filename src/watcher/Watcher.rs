@@ -1515,4 +1515,77 @@ mod tests {
         assert_eq!(files_named(&list, 2, b"b.ts"), [1]);
         assert_eq!(files_named(&list, 2, b"d.ts"), [0]);
     }
+
+    /// The table grows several times and loses items: each answer must be what a walk of the list gives.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    #[test]
+    fn files_named_agrees_with_a_walk_of_the_list_as_the_table_grows_and_shrinks() {
+        const FOLDERS: usize = 6;
+        let owned = |path: String, kind: WatchItemKind, watch_descriptor: i32, folder: i32| {
+            let path = path.into_bytes();
+            WatchItem {
+                hash: Watcher::get_hash(&path),
+                parent_hash: 0,
+                file_path: Cow::Owned(path),
+                fd: Fd::INVALID,
+                count: 0,
+                kind,
+                package_json: None,
+                eventlist_index: watch_descriptor,
+                folder_watch_descriptor: folder,
+            }
+        };
+        let check = |list: &WatchList| {
+            let kinds = list.items_kind();
+            let watch_descriptors = list.items_eventlist_index();
+            let folders = list.items::<"folder_watch_descriptor", platform::EventListIndex>();
+            let paths = list.items_file_path();
+            for folder in (0..list.len()).filter(|&item| kinds[item] == WatchItemKind::Directory) {
+                for name in [&b"m0.ts"[..], b"M3.TS", b"m8.ts"] {
+                    let walked: Vec<WatchItemIndex> = (0..list.len())
+                        .filter(|&file| {
+                            folders[file] == watch_descriptors[folder]
+                                && last_path_component(&paths[file]).eq_ignore_ascii_case(name)
+                        })
+                        .map(|file| file as WatchItemIndex)
+                        .collect();
+                    assert_eq!(files_named(list, folder as WatchItemIndex, name), walked);
+                }
+            }
+        };
+        let mut list = WatchList::default();
+        for number in 0..FOLDERS {
+            list.ensure_unused_capacity(1);
+            list.append_assume_capacity(owned(
+                format!("/p/d{number}/"),
+                WatchItemKind::Directory,
+                1 + number as i32,
+                NO_FOLDER,
+            ));
+        }
+        // Each folder gets m0.ts to m7.ts in both letter cases.
+        for number in 0..FOLDERS * 16 {
+            let letter = if number % 2 == 0 { "m" } else { "M" };
+            let name = (number / (2 * FOLDERS)) % 8;
+            list.ensure_unused_capacity(1);
+            list.append_assume_capacity(owned(
+                format!("/p/d{}/{letter}{name}.ts", number % FOLDERS),
+                WatchItemKind::File,
+                1000 + number as i32,
+                1 + (number % FOLDERS) as i32,
+            ));
+            if number % 29 == 28 {
+                drop(list.swap_remove((number * 31) % list.len()));
+                check(&list);
+            }
+        }
+        check(&list);
+        // The list does not drop its items: each owned path goes with its `swap_remove`.
+        while list.len() > 0 {
+            drop(list.swap_remove(list.len() / 2));
+            if list.len() % 32 == 0 {
+                check(&list);
+            }
+        }
+    }
 }

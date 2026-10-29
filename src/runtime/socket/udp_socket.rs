@@ -890,42 +890,9 @@ impl UDPSocket {
             return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         }
 
-        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
-        if !self.parse_addr(global_this, 0, multicast_address, &mut addr)? {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EINVAL as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
-        }
-
-        let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
-        let iface = if !interface_address.is_undefined()
-            && self.parse_addr(global_this, 0, interface_address, &mut interface)?
-        {
-            if addr.ss_family != interface.ss_family {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Family mismatch between address and interface"
-                )));
-            }
-            Some(&interface)
-        } else {
-            None
-        };
-
-        // After the last `parse_addr`: its user `toString` may have closed this socket.
-        let Some(socket) = self.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_membership(&addr, iface, drop);
-
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
-
+        let request =
+            MulticastRequest::membership(global_this, multicast_address, interface_address, drop)?;
+        self.set_multicast(global_this, &request)?;
         Ok(true)
     }
 
@@ -969,67 +936,14 @@ impl UDPSocket {
             return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         }
 
-        // See `set_multicast_interface`: zero-init instead of `MaybeUninit` —
-        // `parse_addr` only writes the sockaddr_in/in6 prefix, so
-        // `assume_init()` on the full 128-byte storage would be UB.
-        let mut source_addr: sockaddr_storage = bun_core::ffi::zeroed();
-        if !self.parse_addr(global_this, 0, source_address, &mut source_addr)? {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EINVAL as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
-        }
-
-        let mut group_addr: sockaddr_storage = bun_core::ffi::zeroed();
-        if !self.parse_addr(global_this, 0, group_address, &mut group_addr)? {
-            return Err(global_this.throw_value(
-                bun_sys::Error::from_code_int(
-                    SystemErrno::EINVAL as c_int,
-                    bun_sys::Tag::setsockopt,
-                )
-                .to_js(global_this),
-            ));
-        }
-
-        if source_addr.ss_family != group_addr.ss_family {
-            return Err(global_this.throw_invalid_arguments(format_args!(
-                "Family mismatch between source and group addresses"
-            )));
-        }
-
-        let mut interface: sockaddr_storage = bun_core::ffi::zeroed();
-        let iface = if !interface_address.is_undefined()
-            && self.parse_addr(global_this, 0, interface_address, &mut interface)?
-        {
-            if source_addr.ss_family != interface.ss_family {
-                return Err(global_this.throw_invalid_arguments(format_args!(
-                    "Family mismatch among source, group and interface addresses"
-                )));
-            }
-            Some(&interface)
-        } else {
-            None
-        };
-
-        // After the last `parse_addr`: its user `toString` may have closed this socket.
-        let Some(socket) = self.socket.get() else {
-            return Err(global_this.throw(format_args!("Socket is closed")));
-        };
-        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_source_specific_membership(
-            &source_addr,
-            &group_addr,
-            iface,
+        let request = MulticastRequest::source_membership(
+            global_this,
+            source_address,
+            group_address,
+            interface_address,
             drop,
-        );
-
-        if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
-            return Err(global_this.throw_value(err.to_js(global_this)));
-        }
-
+        )?;
+        self.set_multicast(global_this, &request)?;
         Ok(true)
     }
 
@@ -1065,6 +979,7 @@ impl UDPSocket {
         )
     }
 
+    /// `false`: `interface_address` is not an address, and no setsockopt ran.
     pub(crate) fn set_multicast_interface(
         &self,
         cx: &mut JsScope<'_>,
@@ -1075,31 +990,50 @@ impl UDPSocket {
             return Err(global_this.throw_value(bad_fd().to_js(global_this)));
         }
 
-        // `parse_addr` only writes the leading sockaddr_in/in6 prefix (≤28
-        // bytes), leaving the remaining 100+ bytes uninitialized; producing a
-        // `sockaddr_storage` value via `assume_init()` from a
-        // partially-initialized `MaybeUninit`
-        // is UB. Zero-initialize instead — matches `set_membership` and is
-        // semantically equivalent (the C side reads only `ss_family` + the
-        // address-family-specific fields `parse_addr` populated).
-        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
-
-        if !self.parse_addr(global_this, 0, interface_address.to_js(), &mut addr)? {
+        let text = interface_address.to_js().to_utf8(global_this)?;
+        let Some(interface) = MulticastAddress::read(&text) else {
             return Ok(false);
-        }
+        };
+        self.set_multicast(global_this, &MulticastRequest::Interface(interface))?;
+        Ok(true)
+    }
 
+    /// The only caller of the multicast setsockopt wrappers. `request` holds no JS value, so no user `toString` can close the socket between the fetch of it here and the call.
+    fn set_multicast(
+        &self,
+        global_this: &JSGlobalObject,
+        request: &MulticastRequest,
+    ) -> JsResult<()> {
         let Some(socket) = self.socket.get() else {
             return Err(global_this.throw(format_args!("Socket is closed")));
         };
-
         // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
-        let res = uws::udp::Socket::opaque_mut(socket).set_multicast_interface(&addr);
+        let socket = uws::udp::Socket::opaque_mut(socket);
+        let res = match request {
+            MulticastRequest::Interface(interface) => socket.set_multicast_interface(&interface.0),
+            MulticastRequest::Membership {
+                group,
+                interface,
+                drop,
+            } => socket.set_membership(&group.0, interface.as_ref().map(|it| &it.0), *drop),
+            MulticastRequest::SourceMembership {
+                source,
+                group,
+                interface,
+                drop,
+            } => socket.set_source_specific_membership(
+                &source.0,
+                &group.0,
+                interface.as_ref().map(|it| &it.0),
+                *drop,
+            ),
+        };
 
         if let Some(err) = get_us_error::<true>(res, bun_sys::Tag::setsockopt) {
             return Err(global_this.throw_value(err.to_js(global_this)));
         }
 
-        Ok(true)
+        Ok(())
     }
 
     pub(crate) fn set_ttl(&self, cx: &mut JsScope<'_>, ttl: JsLocal<'_>) -> JsResult<i32> {
@@ -1423,6 +1357,7 @@ impl UDPSocket {
         Ok(number as u16)
     }
 
+    /// Reads the destination of a datagram as a resolver reads a numeric host: `to_ip_address` also takes the `inet_aton` shorthand. A multicast call reads its addresses with `MulticastAddress`.
     fn parse_addr(
         &self,
         global_this: &JSGlobalObject,
@@ -1431,74 +1366,15 @@ impl UDPSocket {
         storage: &mut sockaddr_storage,
     ) -> JsResult<bool> {
         let _ = self;
-        let str = address_val.to_bun_string(global_this)?;
-        let address_slice: Vec<u8> = str.to_owned_slice_z().into_vec_with_nul();
-        let bytes_len = address_slice.len() - 1; // exclude trailing NUL
+        let address = address_val.to_utf8(global_this)?;
 
-        let Some(ip) = ip_address::to_ip_address(&address_slice[..bytes_len]) else {
+        let Some(ip) = ip_address::to_ip_address(&address) else {
             return Ok(false);
         };
         let mut addr = Address::from_ip(ip, port);
         if ip.is_ipv6() {
-            if let Some(percent) =
-                bun_core::strings::index_of_char_usize(&address_slice[..bytes_len], b'%')
-            {
-                if percent + 1 < bytes_len {
-                    let iface_id: u32 = 'blk: {
-                        #[cfg(windows)]
-                        {
-                            // Windows: zone identifier is a numeric scope id, not an
-                            // interface name (`fe80::1%5`).
-                            // Same rules as WTF::parseIntegerAllowingTrailingJunk<int32_t>:
-                            // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
-                            // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
-                            let zone = &address_slice[percent + 1..bytes_len];
-                            let mut i = 0usize;
-                            while i < zone.len()
-                                && matches!(zone[i], b' ' | b'\t' | b'\n' | b'\r' | b'\x0c')
-                            {
-                                i += 1;
-                            }
-                            let neg = i < zone.len() && zone[i] == b'-';
-                            if neg {
-                                i += 1;
-                            }
-                            let digits_start = i;
-                            let mut acc: i64 = 0;
-                            while i < zone.len() && zone[i].is_ascii_digit() {
-                                acc = acc
-                                    .saturating_mul(10)
-                                    .saturating_add(i64::from(zone[i] - b'0'));
-                                i += 1;
-                            }
-                            if i > digits_start {
-                                let signed = if neg { acc.saturating_neg() } else { acc };
-                                if let Ok(signed) = i32::try_from(signed) {
-                                    if let Ok(id) = u32::try_from(signed) {
-                                        break 'blk id;
-                                    }
-                                }
-                            }
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            // SAFETY: address_slice is NUL-terminated; offset is in-bounds.
-                            let index = unsafe {
-                                if_nametoindex(
-                                    address_slice.as_ptr().add(percent + 1).cast::<c_char>(),
-                                )
-                            };
-                            if index > 0 {
-                                break 'blk index;
-                            }
-                        }
-                        // "an invalid Scope gets turned into #0 (default selection)"
-                        // (test-dgram-multicast-set-interface.js)
-                        break 'blk 0;
-                    };
-
-                    addr.set_scope_id(iface_id);
-                }
+            if let Some(percent) = bun_core::strings::index_of_char_usize(&address, b'%') {
+                addr.set_scope_id(zone_scope_id(&address[percent + 1..]));
             }
         }
         *storage = addr.into_storage();
@@ -2220,6 +2096,182 @@ pub(crate) fn dgram_close_fd(fd: i32) -> bun_sys::Result<()> {
 struct Destination {
     port: JSValue,
     address: JSValue,
+}
+
+/// An address argument of a multicast call, as the sockaddr that setsockopt takes. Only `read` makes one: it takes an IP address written in full, which is what libuv's `uv_ip4_addr` and `uv_ip6_addr` read for Node.js.
+struct MulticastAddress(sockaddr_storage);
+
+impl MulticastAddress {
+    /// `None`: `text` is not an IP address written in full.
+    fn read(text: &[u8]) -> Option<Self> {
+        let address = match ip_address::parse_zoned_ipv6(text) {
+            Some((ip, zone)) => {
+                // The name of an interface goes to `if_nametoindex` as a C string.
+                if bun_core::strings::contains_char(zone, 0) {
+                    return None;
+                }
+                let mut address = Address::from_ip(ip.into(), 0);
+                address.set_scope_id(zone_scope_id(zone));
+                address
+            }
+            None => Address::from_ip(ip_address::parse_strict(text)?, 0),
+        };
+        Some(Self(address.into_storage()))
+    }
+
+    /// An address argument of a membership call. Text that is not an address throws `EINVAL`, and no setsockopt runs: the error keeps the syscall that these calls always named, and its message names `argument`. ToString of `value` can run user JS.
+    fn from_js(
+        global_this: &JSGlobalObject,
+        value: JSValue,
+        argument: &'static str,
+    ) -> JsResult<Self> {
+        let text = value.to_utf8(global_this)?;
+        if let Some(address) = Self::read(&text) {
+            return Ok(address);
+        }
+        let mut err = SysErrorJsc::to_system_error(&bun_sys::Error::from_code_int(
+            SystemErrno::EINVAL as c_int,
+            bun_sys::Tag::setsockopt,
+        ));
+        err.message = BunString::create_format(format_args!(
+            "EINVAL: {argument} {} is not an IP address",
+            bun_core::fmt::quote(&text),
+        ));
+        Err(global_this.throw_value(err.to_error_instance(global_this)))
+    }
+
+    /// The interface of a membership. `None`: the caller gave none, which is `undefined` or `null`. One that is not an address throws, and is never the default interface.
+    fn interface_from_js(global_this: &JSGlobalObject, value: JSValue) -> JsResult<Option<Self>> {
+        if value.is_undefined_or_null() {
+            return Ok(None);
+        }
+        Self::from_js(global_this, value, "interfaceAddress").map(Some)
+    }
+
+    /// libuv reads the source and the interface of a membership in the family of its group. No text is an address of both families, so that is `read` and this check.
+    fn is_family_of(&self, group: &Self) -> bool {
+        self.0.ss_family == group.0.ss_family
+    }
+}
+
+/// What one multicast call asks of the socket, with each address argument read.
+enum MulticastRequest {
+    Interface(MulticastAddress),
+    Membership {
+        group: MulticastAddress,
+        interface: Option<MulticastAddress>,
+        drop: bool,
+    },
+    SourceMembership {
+        source: MulticastAddress,
+        group: MulticastAddress,
+        interface: Option<MulticastAddress>,
+        drop: bool,
+    },
+}
+
+impl MulticastRequest {
+    fn membership(
+        global_this: &JSGlobalObject,
+        group: JSValue,
+        interface: JSValue,
+        drop: bool,
+    ) -> JsResult<Self> {
+        let group = MulticastAddress::from_js(global_this, group, "multicastAddress")?;
+        let interface = MulticastAddress::interface_from_js(global_this, interface)?;
+        if interface
+            .as_ref()
+            .is_some_and(|it| !it.is_family_of(&group))
+        {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Family mismatch between address and interface"
+            )));
+        }
+        Ok(Self::Membership {
+            group,
+            interface,
+            drop,
+        })
+    }
+
+    fn source_membership(
+        global_this: &JSGlobalObject,
+        source: JSValue,
+        group: JSValue,
+        interface: JSValue,
+        drop: bool,
+    ) -> JsResult<Self> {
+        let source = MulticastAddress::from_js(global_this, source, "sourceAddress")?;
+        let group = MulticastAddress::from_js(global_this, group, "groupAddress")?;
+        if !source.is_family_of(&group) {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Family mismatch between source and group addresses"
+            )));
+        }
+        let interface = MulticastAddress::interface_from_js(global_this, interface)?;
+        if interface
+            .as_ref()
+            .is_some_and(|it| !it.is_family_of(&group))
+        {
+            return Err(global_this.throw_invalid_arguments(format_args!(
+                "Family mismatch among source, group and interface addresses"
+            )));
+        }
+        Ok(Self::SourceMembership {
+            source,
+            group,
+            interface,
+            drop,
+        })
+    }
+}
+
+/// The scope id that the `%zone` of an IPv6 address names: the index of the interface of that name, or on Windows the number that the zone is. A zone that names no interface is 0, the default interface (test-dgram-multicast-set-interface.js).
+fn zone_scope_id(zone: &[u8]) -> u32 {
+    #[cfg(windows)]
+    {
+        // Windows: zone identifier is a numeric scope id, not an
+        // interface name (`fe80::1%5`).
+        // Same rules as WTF::parseIntegerAllowingTrailingJunk<int32_t>:
+        // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
+        // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
+        let mut i = 0usize;
+        while i < zone.len() && matches!(zone[i], b' ' | b'\t' | b'\n' | b'\r' | b'\x0c') {
+            i += 1;
+        }
+        let neg = i < zone.len() && zone[i] == b'-';
+        if neg {
+            i += 1;
+        }
+        let digits_start = i;
+        let mut acc: i64 = 0;
+        while i < zone.len() && zone[i].is_ascii_digit() {
+            acc = acc
+                .saturating_mul(10)
+                .saturating_add(i64::from(zone[i] - b'0'));
+            i += 1;
+        }
+        if i > digits_start {
+            let signed = if neg { acc.saturating_neg() } else { acc };
+            if let Ok(signed) = i32::try_from(signed) {
+                if let Ok(id) = u32::try_from(signed) {
+                    return id;
+                }
+            }
+        }
+        0
+    }
+    #[cfg(not(windows))]
+    {
+        // The name of an interface and its NUL fit in `IF_NAMESIZE` bytes.
+        let mut name = [0u8; IF_NAMESIZE];
+        if zone.is_empty() || zone.len() >= name.len() {
+            return 0;
+        }
+        name[..zone.len()].copy_from_slice(zone);
+        // SAFETY: `name` ends with a NUL, because `zone` is shorter than it.
+        unsafe { if_nametoindex(name.as_ptr().cast::<c_char>()) }
+    }
 }
 
 pub(crate) fn get_us_error<const USE_WSA: bool>(

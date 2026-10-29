@@ -7,13 +7,21 @@ import {
   disableAggressiveGCScope,
   expectRssDeltaBelow,
   isIPv6,
+  isLinux,
   isWindows,
   randomPort,
   tempDir,
 } from "harness";
-import { closeSync, openSync } from "node:fs";
+import { closeSync, openSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
+
+// harness's isIPv6() is about the addresses of the interfaces, and is false on
+// the Linux hosts of CI. A bind to ::1 is all that the rows below need.
+const canBindIPv6Loopback = await udpSocket({ hostname: "::1" }).then(
+  socket => (socket.close(), true),
+  () => false,
+);
 
 describe("udpSocket()", () => {
   test.each(["setTTL", "setMulticastTTL"])(
@@ -60,6 +68,7 @@ describe("udpSocket()", () => {
   // which the canary files opened from toString() have taken over by then
   // (ENOTSOCK; a socket that reused it would have its membership changed).
   test.each([
+    ["setMulticastInterface", (s: Bun.udp.Socket<"buffer">, iface: string) => s.setMulticastInterface(iface)],
     ["addMembership", (s: Bun.udp.Socket<"buffer">, iface: string) => s.addMembership("239.1.2.3", iface)],
     ["dropMembership", (s: Bun.udp.Socket<"buffer">, iface: string) => s.dropMembership("239.1.2.3", iface)],
     [
@@ -199,6 +208,222 @@ describe("udpSocket()", () => {
       }
     },
   );
+
+  // The multicast methods read an IP address written in full, and nothing
+  // else: not the shorthand that send() takes above, and not the name of a
+  // host or of an interface. A socket that is told to join "239.255.65530"
+  // must not end up in 239.255.255.250, and one that is told to join on "eth0"
+  // must not end up on the default interface.
+  describe("multicast address arguments", () => {
+    const H = "127.0.0.1";
+    const G = "239.255.255.250";
+    const S = "232.255.255.250";
+    type Socket = Bun.udp.Socket<"buffer">;
+
+    // Each address argument of the five methods, under the name that the
+    // types give it, with the other arguments written in full. A drop comes
+    // after the join that it undoes.
+    const positions: [name: string, argument: string, full: string, call: (socket: Socket, x: string) => boolean][] = [
+      ["setMulticastInterface(X)", "interfaceAddress", H, (s, x) => s.setMulticastInterface(x)],
+      ["addMembership(X, interface)", "multicastAddress", G, (s, x) => s.addMembership(x, H)],
+      ["addMembership(group, X)", "interfaceAddress", H, (s, x) => s.addMembership(G, x)],
+      [
+        "dropMembership(X, interface)",
+        "multicastAddress",
+        G,
+        (s, x) => s.addMembership(G, H) && s.dropMembership(x, H),
+      ],
+      ["dropMembership(group, X)", "interfaceAddress", H, (s, x) => s.addMembership(G, H) && s.dropMembership(G, x)],
+      [
+        "addSourceSpecificMembership(X, group, interface)",
+        "sourceAddress",
+        H,
+        (s, x) => s.addSourceSpecificMembership(x, S, H),
+      ],
+      [
+        "addSourceSpecificMembership(source, X, interface)",
+        "groupAddress",
+        S,
+        (s, x) => s.addSourceSpecificMembership(H, x, H),
+      ],
+      [
+        "addSourceSpecificMembership(source, group, X)",
+        "interfaceAddress",
+        H,
+        (s, x) => s.addSourceSpecificMembership(H, S, x),
+      ],
+      [
+        "dropSourceSpecificMembership(X, group, interface)",
+        "sourceAddress",
+        H,
+        (s, x) => s.addSourceSpecificMembership(H, S, H) && s.dropSourceSpecificMembership(x, S, H),
+      ],
+      [
+        "dropSourceSpecificMembership(source, X, interface)",
+        "groupAddress",
+        S,
+        (s, x) => s.addSourceSpecificMembership(H, S, H) && s.dropSourceSpecificMembership(H, x, H),
+      ],
+      [
+        "dropSourceSpecificMembership(source, group, X)",
+        "interfaceAddress",
+        H,
+        (s, x) => s.addSourceSpecificMembership(H, S, H) && s.dropSourceSpecificMembership(H, S, x),
+      ],
+    ];
+
+    // What inet_aton() also reads as `full`: a last part of 16, 24 or 32 bits
+    // (the 32 bits also as a number), hexadecimal, and octal.
+    function shorthand(full: string) {
+      const [a, b, c, d] = full.split(".").map(Number);
+      const bits = a * 2 ** 24 + (b << 16) + (c << 8) + d;
+      return [
+        `${a}.${b}.${(c << 8) + d}`,
+        `${a}.${(b << 16) + (c << 8) + d}`,
+        `${bits}`,
+        bits,
+        `0x${bits.toString(16)}`,
+        `0${a.toString(8)}.${b}.${c}.${d}`,
+      ];
+    }
+
+    // What `call` returns on a socket of its own, or what it throws.
+    async function outcome(call: (socket: Socket) => unknown, hostname = H) {
+      const socket = await udpSocket({ hostname });
+      try {
+        return call(socket);
+      } catch (e: any) {
+        const { name, code, syscall, message } = e;
+        return { name, code, syscall, message };
+      } finally {
+        socket.close();
+      }
+    }
+
+    // No setsockopt runs for text that is not an address. The error keeps the
+    // code and the syscall that the group always had, and names the argument.
+    const notAnAddress = (argument: string, text: unknown) => ({
+      name: "Error",
+      code: "EINVAL",
+      syscall: "setsockopt",
+      message: `EINVAL: ${argument} ${JSON.stringify(String(text))} is not an IP address`,
+    });
+    describe.each(positions)("%s", (name, argument, full, call) => {
+      test("takes an address written in full", async () => {
+        expect(await outcome(socket => call(socket, full))).toBe(true);
+      });
+
+      test("does not take a shorthand, or text that is not an address", async () => {
+        const texts = [...shorthand(full), `${full} `, `${full}\0`, `${full}\0junk`, `${full}%lo`, "eth0", ""];
+        const outcomes: [unknown, unknown][] = [];
+        for (const text of texts) outcomes.push([text, await outcome(socket => call(socket, text as string))]);
+        expect(outcomes).toEqual(
+          texts.map(text => [text, name.startsWith("setMulticastInterface") ? false : notAnAddress(argument, text)]),
+        );
+      });
+    });
+
+    // Whether a join without an interface works depends on the routes of the
+    // host, so each call is compared with the call that has no such argument.
+    test("undefined and null are no interface", async () => {
+      const membership = await outcome(s => s.addMembership(G));
+      const sourceMembership = await outcome(s => s.addSourceSpecificMembership(H, S));
+      expect({
+        "addMembership(group, undefined)": await outcome(s => s.addMembership(G, undefined)),
+        "addMembership(group, null)": await outcome(s => s.addMembership(G, null as any)),
+        "addSourceSpecificMembership(source, group, undefined)": await outcome(s =>
+          s.addSourceSpecificMembership(H, S, undefined),
+        ),
+        "addSourceSpecificMembership(source, group, null)": await outcome(s =>
+          s.addSourceSpecificMembership(H, S, null as any),
+        ),
+      }).toEqual({
+        "addMembership(group, undefined)": membership,
+        "addMembership(group, null)": membership,
+        "addSourceSpecificMembership(source, group, undefined)": sourceMembership,
+        "addSourceSpecificMembership(source, group, null)": sourceMembership,
+      });
+    });
+
+    // No setsockopt runs for these either, so the socket can be an IPv4 one.
+    test("the source and the interface are of the family of the group", async () => {
+      const mismatch = (message: string) => ({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        syscall: undefined,
+        message,
+      });
+      expect({
+        "IPv4 group, IPv6 interface": await outcome(s => s.addMembership(G, "::1")),
+        "IPv6 group, IPv4 interface": await outcome(s => s.dropMembership("ff02::7777", H)),
+        "IPv4 group, IPv6 source": await outcome(s => s.addSourceSpecificMembership("::1", S, H)),
+        "IPv6 group, IPv4 source": await outcome(s => s.dropSourceSpecificMembership(H, "ff3e::7777", "::")),
+        "IPv4 source and group, IPv6 interface": await outcome(s => s.addSourceSpecificMembership(H, S, "::1")),
+        "IPv6 source and group, IPv4 interface": await outcome(s =>
+          s.dropSourceSpecificMembership("::1", "ff3e::7777", H),
+        ),
+      }).toEqual({
+        "IPv4 group, IPv6 interface": mismatch("Family mismatch between address and interface"),
+        "IPv6 group, IPv4 interface": mismatch("Family mismatch between address and interface"),
+        "IPv4 group, IPv6 source": mismatch("Family mismatch between source and group addresses"),
+        "IPv6 group, IPv4 source": mismatch("Family mismatch between source and group addresses"),
+        "IPv4 source and group, IPv6 interface": mismatch(
+          "Family mismatch among source, group and interface addresses",
+        ),
+        "IPv6 source and group, IPv4 interface": mismatch(
+          "Family mismatch among source, group and interface addresses",
+        ),
+      });
+    });
+
+    // The reader refuses these before any setsockopt, so an IPv4 socket shows
+    // it on a host that has no IPv6.
+    test("an IPv6 address is written in full too, and its zone has no NUL", async () => {
+      expect({
+        "a zone with a NUL": await outcome(s => s.setMulticastInterface("::%nosuchzone0\0junk")),
+        "an address with a prefix length": await outcome(s => s.setMulticastInterface("::/64%nosuchzone0")),
+        "an address that is too long": await outcome(s =>
+          s.setMulticastInterface("0000:0000:0000:0000:0000:0000:0000:00001"),
+        ),
+        "an interface that is not an address": await outcome(s => s.addMembership("ff02::7777", "eth0")),
+        "a group with a NUL": await outcome(s => s.addMembership("ff02::7777\0junk", "::%nosuchzone0")),
+      }).toEqual({
+        "a zone with a NUL": false,
+        "an address with a prefix length": false,
+        "an address that is too long": false,
+        "an interface that is not an address": notAnAddress("interfaceAddress", "eth0"),
+        "a group with a NUL": notAnAddress("multicastAddress", "ff02::7777\0junk"),
+      });
+      // "::%nosuchzone0" is an address: whether an IPv4 socket takes the
+      // IPv6 option for it is up to the system.
+      expect(await outcome(s => s.setMulticastInterface("::%nosuchzone0"))).not.toBe(false);
+    });
+
+    // "an invalid Scope gets turned into #0 (default selection)":
+    // test-dgram-multicast-set-interface.js
+    test.skipIf(!canBindIPv6Loopback)("a zone that names no interface is the default interface", async () => {
+      expect(await outcome(s => s.setMulticastInterface("::%nosuchzone0"), "::1")).toBe(true);
+    });
+
+    // The zone is all that an IPv6 interface argument gives. /proc/net/igmp6
+    // has a line for each group that an interface is a member of.
+    test.skipIf(!isLinux || !canBindIPv6Loopback)(
+      "a zone that names an interface joins on that interface",
+      async () => {
+        const socket = await udpSocket({ hostname: "::1" });
+        try {
+          expect(socket.addMembership("ff02::7777", "::%lo")).toBe(true);
+          const members = readFileSync("/proc/net/igmp6", "utf8")
+            .split("\n")
+            .map(line => line.split(/\s+/).slice(1, 3))
+            .filter(([, group]) => group === "ff020000000000000000000000007777");
+          expect(members).toEqual([["lo", "ff020000000000000000000000007777"]]);
+        } finally {
+          socket.close();
+        }
+      },
+    );
+  });
 
   test("connect with invalid hostname rejects", async () => {
     expect(async () =>

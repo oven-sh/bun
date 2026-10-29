@@ -1448,15 +1448,49 @@ Socket.prototype.setMulticastLoopback = function (this: $Node.DgramSocket, arg: 
   return handle.socket.setMulticastLoopback(arg);
 };
 
+type MulticastMethod =
+  | "setMulticastInterface"
+  | "addMembership"
+  | "dropMembership"
+  | "addSourceSpecificMembership"
+  | "dropSourceSpecificMembership";
+type NativeMulticastMethod = (address: string, second?: string, third?: string) => boolean;
+
+// Calls a multicast method of the native socket, which is the socket of
+// Bun.udpSocket() too, and reports a failure the way Node's ErrnoException
+// would: "addMembership EINVAL".
+function callMulticast(
+  socket: $Node.UDPSocketHandle,
+  method: MulticastMethod,
+  address: string,
+  second?: string,
+  third?: string,
+) {
+  try {
+    // `false`: setMulticastInterface got text that is not an address.
+    if ((socket[method] as NativeMulticastMethod)(address, second, third) !== false) return;
+  } catch (err: any) {
+    const code = err?.code;
+    // ERR_INVALID_ARG_TYPE: the source or the interface is not of the family
+    // of the group. libuv answers UV_EINVAL for that too.
+    if (code !== "EINVAL" && code !== "ERR_INVALID_ARG_TYPE") {
+      if (err?.syscall === "setsockopt") {
+        err.syscall = method;
+        err.message = `${method} ${code}`;
+      }
+      throw err;
+    }
+  }
+  throw new ErrnoException(UV_EINVAL, method);
+}
+
 Socket.prototype.setMulticastInterface = function (this: $Node.DgramSocket, interfaceAddress: string) {
   validateString(interfaceAddress, "interfaceAddress");
   const handle = this[kStateSymbol].handle;
   if (!handle?.socket) {
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
-  if (!handle.socket.setMulticastInterface(interfaceAddress)) {
-    throw new ErrnoException(UV_EINVAL, "setMulticastInterface");
-  }
+  callMulticast(handle.socket, "setMulticastInterface", interfaceAddress);
 };
 
 Socket.prototype.addMembership = function (
@@ -1481,7 +1515,7 @@ Socket.prototype.addMembership = function (
   if (bindState === BIND_STATE_UNBOUND) {
     this.bind({ port: 0, exclusive: true }, null);
   }
-  return handle.socket.addMembership(multicastAddress, interfaceAddress);
+  callMulticast(handle.socket, "addMembership", multicastAddress, interfaceAddress);
 };
 
 Socket.prototype.dropMembership = function (
@@ -1503,7 +1537,7 @@ Socket.prototype.dropMembership = function (
     }
     throw $ERR_SOCKET_DGRAM_NOT_RUNNING();
   }
-  return handle.socket.dropMembership(multicastAddress, interfaceAddress);
+  callMulticast(handle.socket, "dropMembership", multicastAddress, interfaceAddress);
 };
 
 Socket.prototype.addSourceSpecificMembership = function (
@@ -1528,7 +1562,7 @@ Socket.prototype.addSourceSpecificMembership = function (
   if (bindState === BIND_STATE_UNBOUND) {
     this.bind(0);
   }
-  return handle.socket.addSourceSpecificMembership(sourceAddress, groupAddress, interfaceAddress);
+  callMulticast(handle.socket, "addSourceSpecificMembership", sourceAddress, groupAddress, interfaceAddress);
 };
 
 Socket.prototype.dropSourceSpecificMembership = function (
@@ -1553,7 +1587,7 @@ Socket.prototype.dropSourceSpecificMembership = function (
   if (bindState === BIND_STATE_UNBOUND) {
     this.bind(0);
   }
-  return handle.socket.dropSourceSpecificMembership(sourceAddress, groupAddress, interfaceAddress);
+  callMulticast(handle.socket, "dropSourceSpecificMembership", sourceAddress, groupAddress, interfaceAddress);
 };
 
 Socket.prototype.ref = function (this: $Node.DgramSocket) {

@@ -7946,38 +7946,48 @@ declare module "bun" {
       /**
        * Set the IP_MULTICAST_IF socket option to specify the outgoing interface
        * for multicast packets.
-       * @param interfaceAddress The address of the interface to use
-       * @returns true on success
+       *
+       * An IPv4 interface is its address, written in full: `"192.168.1.100"`.
+       * An IPv6 interface is the zone after the `%`: its name, as in
+       * `"::%eth0"`, or on Windows its number, as in `"::%12"`. A zone that
+       * names no interface selects the default interface of the system, with no
+       * error.
+       * @param interfaceAddress The IP address of the interface to use. A host name, the name of an interface or a shorthand such as `"192.168.1"` is not an address.
+       * @returns true on success, false if `interfaceAddress` is not an IP address
        */
       setMulticastInterface(interfaceAddress: string): boolean;
       /**
        * Join a multicast group.
-       * @param multicastAddress The multicast group address
-       * @param interfaceAddress Optional interface address to use
+       * @param multicastAddress The multicast group address: an IP address written in full, such as `"224.0.0.1"`
+       * @param interfaceAddress The interface to use, written as for `setMulticastInterface`, of the same family as the group. Without it, the system picks the interface.
        * @returns true on success
+       * @throws `EINVAL` if an argument is not an IP address, and a `TypeError` if the interface is not of the family of the group
        */
       addMembership(multicastAddress: string, interfaceAddress?: string): boolean;
       /**
        * Leave a multicast group.
-       * @param multicastAddress The multicast group address
-       * @param interfaceAddress Optional interface address to use
+       * @param multicastAddress The multicast group address: an IP address written in full, such as `"224.0.0.1"`
+       * @param interfaceAddress The interface that joined, written as for `setMulticastInterface`, of the same family as the group. Without it, the system picks the interface.
        * @returns true on success
+       * @throws `EINVAL` if an argument is not an IP address, and a `TypeError` if the interface is not of the family of the group
        */
       dropMembership(multicastAddress: string, interfaceAddress?: string): boolean;
       /**
        * Join a source-specific multicast group.
-       * @param sourceAddress The source address
-       * @param groupAddress The multicast group address
-       * @param interfaceAddress Optional interface address to use
+       * @param sourceAddress The source address: an IP address written in full, of the same family as the group
+       * @param groupAddress The multicast group address: an IP address written in full, such as `"232.0.0.1"`
+       * @param interfaceAddress The interface to use, written as for `setMulticastInterface`, of the same family as the group. Without it, the system picks the interface.
        * @returns true on success
+       * @throws `EINVAL` if an argument is not an IP address, and a `TypeError` if the source or the interface is not of the family of the group
        */
       addSourceSpecificMembership(sourceAddress: string, groupAddress: string, interfaceAddress?: string): boolean;
       /**
        * Leave a source-specific multicast group.
-       * @param sourceAddress The source address
-       * @param groupAddress The multicast group address
-       * @param interfaceAddress Optional interface address to use
+       * @param sourceAddress The source address: an IP address written in full, of the same family as the group
+       * @param groupAddress The multicast group address: an IP address written in full, such as `"232.0.0.1"`
+       * @param interfaceAddress The interface that joined, written as for `setMulticastInterface`, of the same family as the group. Without it, the system picks the interface.
        * @returns true on success
+       * @throws `EINVAL` if an argument is not an IP address, and a `TypeError` if the source or the interface is not of the family of the group
        */
       dropSourceSpecificMembership(sourceAddress: string, groupAddress: string, interfaceAddress?: string): boolean;
     }

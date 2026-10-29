@@ -30,22 +30,13 @@ pub(crate) struct PrepareCssAstTask {
     pub(crate) linker: *mut LinkerContext<'static>,
 }
 
-// SAFETY: scheduled on the worker pool via raw `*mut Task` (bypassing the
-// `OwnedTask: Send` route). Both raw-ptr fields point at `Send` types
-// (`Chunk: Send`, `LinkerContext: Send`); the callback writes only the
-// per-chunk `chunk.content.css` cell (see `prepare_css_asts_for_chunk`
-// CONCURRENCY note).
-unsafe impl Send for PrepareCssAstTask {}
-
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // CSS chunk. Writes: `chunk.content.css.{asts, ordered_import_records}`
 // (per-chunk disjoint via `*mut Chunk`). Reads `linker.parse_graph`
 // SoA columns + `linker.graph.ast.css` shared. Every CSS chunk gets exactly
 // one task, so `&mut *chunk` is unique; `linker` is shared across all tasks
 // and is therefore borrowed as `&LinkerContext` (the impl only reads `c` and
-// only ever writes `chunk`). `PrepareCssAstTask` is `Send` by virtue of
-// `LinkerContext: Send` + `Chunk: Send` (both raw-ptr fields point at types
-// with `unsafe impl Send`).
+// only ever writes `chunk`).
 /// # Safety
 ///
 /// `task` must be the intrusive `task` field of a live [`PrepareCssAstTask`]

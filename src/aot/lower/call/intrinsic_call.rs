@@ -290,3 +290,24 @@ pub(super) fn lower_if_abrupt_close_iterator(
     lowering.continue_in(after);
     Ok(lowering.builder.undefined())
 }
+
+// The engine emits these two in line. In line, the call belongs to the built-in that makes it,
+// so flow analysis judges it by the records of that built-in.
+pub(super) fn lower_iterator_generic_close(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    site: IntrinsicCall<'_>,
+) -> Lowered<ValueId> {
+    let [iterator] = lower_named_arguments(lowering, site)?;
+    lowering.emit_iterator_object_close(iterator, CleanupPath::Normal);
+    Ok(lowering.builder.undefined())
+}
+
+pub(super) fn lower_iterator_generic_next(
+    lowering: &mut FunctionLowering<'_, '_, '_, '_, '_>,
+    site: IntrinsicCall<'_>,
+) -> Lowered<ValueId> {
+    let [next_method, iterator] = lower_named_arguments(lowering, site)?;
+    let result = emit_call(lowering, next_method, Some(iterator), &[]);
+    let error = RuntimeErrorKind::IteratorResultNotObject;
+    Ok(lowering.builder.require_object(result, error))
+}

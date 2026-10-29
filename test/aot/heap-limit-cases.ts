@@ -1961,6 +1961,35 @@ console.log("kept", buffers.reduce((sum, buffer) => sum + buffer.byteLength, 0) 
       120_000,
     );
 
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "a program that catches every failed allocation goes on",
+      async () => {
+        using folder = tempDir("aot-heap-limit", {
+          "program.ts": `const taken: unknown[] = [];
+for (let size = 64 * 1024 * 1024; size >= 64 * 1024; size /= 2) {
+  try { for (;;) taken.push(new ArrayBuffer(size)); } catch {}
+}
+for (let size = 16 * 1024 * 1024; size >= 512; size /= 2) {
+  for (const eighths of [14, 12, 10, 8]) {
+    try { for (;;) taken.push("x".repeat((size / 8) * eighths)); } catch {}
+  }
+}
+taken.fill(null);
+console.log("went on");
+`,
+        });
+        await build(String(folder));
+        const results = await Promise.all(
+          [1048576, 2097152, 4194304].map(limit =>
+            run(["sh", "-c", `ulimit -c 0 && ulimit -v ${limit} && exec ./program`], String(folder)),
+          ),
+        );
+        for (const { stdout, stderr, exitCode } of results)
+          expect({ stdout, stderr, exitCode }).toEqual({ stdout: "went on\n", stderr: "", exitCode: 0 });
+      },
+      120_000,
+    );
+
     // The tables that the run time makes at their first use have their pages from the start, or are done without. The program uses up the blocks of their sizes too.
     inPart(test.skipIf(!isLinux || isASAN))(
       "with its address space used up a program reads, stores and copies properties for the first time",

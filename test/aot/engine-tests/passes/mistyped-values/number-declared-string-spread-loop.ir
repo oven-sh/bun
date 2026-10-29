@@ -603,20 +603,20 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f7 visibility=Private
 # CHECK-NEXT: v6: true = Boolean boolean=true
 # CHECK-NEXT: v7: true = Boolean boolean=true
 # CHECK-NEXT: ValidateSameValue v6, v7
-# CHECK-NEXT: v9: 3 = Integer integer=3
-# CHECK-NEXT: Jump -> next b1(v9)
-# CHECK-NEXT: b1(v10: 3) handler=b2():
-# CHECK-NEXT: v11: fractional = Double number=2.5
-# CHECK-NEXT: v12: never = ThrowNotIterable v11 [isSpread]
+# CHECK-NEXT: Jump -> next b1()
+# CHECK-NEXT: b1() handler=b2():
+# CHECK-NEXT: v9: fractional = Double number=2.5
+# CHECK-NEXT: v10: never = ThrowNotIterable v9 [isSpread]
 # CHECK-NEXT: Unreachable cutBy=ExpandIteration
 # CHECK-NEXT: b2() role=CatchHandler:
-# CHECK-NEXT: v13: anything = CatchValue
-# CHECK-NEXT: v14: "behind a loop" = String string="behind a loop"
-# CHECK-NEXT: v15: string = CallBuiltin -, v13 overload=String/0 builtinCallForm=AnyReceiver accessSite=15
-# CHECK-NEXT: ValidateType v15 validatedType=string
-# CHECK-NEXT: v17: undefined = CallBuiltin -, v14, v10, v15 overload=ConsoleLog/0 accessSite=16
-# CHECK-NEXT: v18: undefined = Undefined
-# CHECK-NEXT: Return v18
+# CHECK-NEXT: v11: anything = CatchValue
+# CHECK-NEXT: v12: "behind a loop" = String string="behind a loop"
+# CHECK-NEXT: v13: string = CallBuiltin -, v11 overload=String/0 builtinCallForm=AnyReceiver accessSite=15
+# CHECK-NEXT: ValidateType v13 validatedType=string
+# CHECK-NEXT: v15: 3 = Integer integer=3
+# CHECK-NEXT: v16: undefined = CallBuiltin -, v12, v15, v13 overload=ConsoleLog/0 accessSite=16
+# CHECK-NEXT: v17: undefined = Undefined
+# CHECK-NEXT: Return v17
 # CHECK-NEXT: }
 # CHECK-LABEL: function {{*}}name="spreadsWhatIsStored"
 # CHECK: module=m0 position=700 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|int|fractional|""|"ab"|"a\u{1f600}b" site=w4 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost, ClosuresAreReadWithoutCode] inlineFrames=[{}, {callee=f1 callPosition=968 module=m0}, {callee=f2 callPosition=826 module=m0}] {

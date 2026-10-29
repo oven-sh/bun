@@ -412,7 +412,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f2 visibility=Private
 # CHECK-NEXT: v60: Array<undefined|null|boolean|number|string|object, Contiguous> = NewArray contents=undefined|null|boolean|number|string|object allocationSite=1 arrayStorage=Contiguous [contentsAreProven]
 # CHECK-NEXT: v61: Array<undefined|null|boolean|number|string|object, proven, Contiguous, pristine[Storage, Names, Dense]> = AssumeType v60 provenType=Array<undefined|null|boolean|number|string|object, proven, Contiguous, pristine[Storage, Names, Dense]>
 # CHECK-NEXT: Jump -> next b19(v56, v58)
-# CHECK-NEXT: b19(v62: boolean, v63: int[0, 2147483648]) frequency=Unlikely:
+# CHECK-NEXT: b19(v62: boolean, v63: int[0, 2147483648]) frequency=Unlikely handler=b32(v62):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: Branch v62 -> taken b20(), notTaken b21()
 # CHECK-NEXT: b20() frequency=Unlikely:

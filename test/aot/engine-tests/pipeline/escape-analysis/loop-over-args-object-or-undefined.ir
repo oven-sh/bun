@@ -547,7 +547,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f5 visibility=Private
 # CHECK-NEXT: Jump -> next b3(v17, v18, v14)
 # CHECK-NEXT: b3(v19: int|whole ~ 0, v20: int[0, 2147483647] ~ 0, v21: int[1, 2]):
 # CHECK-NEXT: Jump -> next b4(v19, v20, v21)
-# CHECK-NEXT: b4(v22: int|whole, v23: int[0, 2147483648] ~ int[0, 2147483647], v24: int[1, 2]):
+# CHECK-NEXT: b4(v22: int|whole, v23: int[0, 2147483648] ~ int[0, 2147483647], v24: int[1, 2]) handler=b34():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v26: 2 = Integer integer=2
 # CHECK-NEXT: v27: int[0, 2] = BitAnd v24, v26

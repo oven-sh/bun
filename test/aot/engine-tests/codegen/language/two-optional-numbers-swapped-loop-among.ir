@@ -1815,7 +1815,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: Jump -> next b21(v145, v146, v147, v148, v149, v150)
 # CHECK-NEXT: b36():
 # CHECK-NEXT: Jump -> next b37()
-# CHECK-NEXT: b37():
+# CHECK-NEXT: b37() handler=b205(v104, v147, v146, v148, v149, v74, v75):
 # CHECK-NEXT: v155: 1 = Integer integer=1
 # CHECK-NEXT: v156: 3 = Integer integer=3
 # CHECK-NEXT: v157: int[-6442450944, 6442450941] = Mul v110, v156
@@ -1933,7 +1933,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: Jump -> next b52(v230, v231, v232, v233, v234, v235)
 # CHECK-NEXT: b67() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b68()
-# CHECK-NEXT: b68() frequency=Unlikely:
+# CHECK-NEXT: b68() frequency=Unlikely handler=b205(v195, v232, v231, v233, v234, v74, v75):
 # CHECK-NEXT: v240: 1 = Integer integer=1
 # CHECK-NEXT: v241: 3 = Integer integer=3
 # CHECK-NEXT: v242: int[-6442450944, 6442450941] = Mul v198, v241
@@ -1978,7 +1978,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: Switch v268 cases=[0] -> case b126(v230, v231, v232, v233, v234, v257, v262), otherwise b76()
 # CHECK-NEXT: b76() frequency=Unlikely:
 # CHECK-NEXT: Jump -> next b128(v200, v230, v231, v232, v233, v234, v257, v262)
-# CHECK-NEXT: b77(v269: i32 ~ int[-1, 1], v270: null|number, v271: undefined|i32, v272: number, v273: number, v274: int|whole ~ 2) frequency=Rare:
+# CHECK-NEXT: b77(v269: i32 ~ int[-1, 1], v270: null|number, v271: undefined|i32, v272: number, v273: number, v274: int|whole ~ 2) frequency=Rare handler=b205(v270, v271, v195, v272, v273, v74, v75):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v276: boolean = Less v2, v197
 # CHECK-NEXT: Branch v276 -> taken b78(), notTaken b109()
@@ -2050,7 +2050,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: Jump -> next b96()
 # CHECK-NEXT: b95() frequency=Rare:
 # CHECK-NEXT: Jump -> next b96()
-# CHECK-NEXT: b96() frequency=Rare:
+# CHECK-NEXT: b96() frequency=Rare handler=b205(v309, v313, v310, v323, v321, v74, v75):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v335: boolean = Less v2, v312
 # CHECK-NEXT: Branch v335 -> taken b97(), notTaken b98()
@@ -2072,7 +2072,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b103() frequency=Rare:
 # CHECK-NEXT: v340: 0 = Integer
 # CHECK-NEXT: Jump -> next b104(v309, v310, v340, v313)
-# CHECK-NEXT: b104(v341: undefined|null|number ~ null|number, v342: undefined|null|number ~ null|number, v343: int[0, 3], v344: i32) frequency=Rare:
+# CHECK-NEXT: b104(v341: undefined|null|number ~ null|number, v342: undefined|null|number ~ null|number, v343: int[0, 3], v344: i32) frequency=Rare handler=b205(v341, v313, v342, v323, v321, v74, v75):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v346: 3 = Integer integer=3
 # CHECK-NEXT: v347: boolean = Less v343, v346
@@ -2117,7 +2117,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: Jump -> next b77(v361, v362, v363, v364, v365, v366)
 # CHECK-NEXT: b117() frequency=Rare:
 # CHECK-NEXT: Jump -> next b118()
-# CHECK-NEXT: b118() frequency=Rare:
+# CHECK-NEXT: b118() frequency=Rare handler=b205(v195, v363, v362, v364, v365, v74, v75):
 # CHECK-NEXT: v371: 1 = Integer integer=1
 # CHECK-NEXT: v372: 3 = Integer integer=3
 # CHECK-NEXT: v373: int[-6442450944, 6442450941] = Mul v198, v372
@@ -2279,7 +2279,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: Jump -> next b162()
 # CHECK-NEXT: b161() frequency=Rare:
 # CHECK-NEXT: Jump -> next b162()
-# CHECK-NEXT: b162() frequency=Rare:
+# CHECK-NEXT: b162() frequency=Rare handler=b205(v514, v475, v476, v524, v522, v480, v481):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v536: boolean = Less v2, v479
 # CHECK-NEXT: Branch v536 -> taken b163(), notTaken b164()
@@ -2301,7 +2301,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: b169() frequency=Rare:
 # CHECK-NEXT: v541: 0 = Integer
 # CHECK-NEXT: Jump -> next b170(v514, v476, v541, v475)
-# CHECK-NEXT: b170(v542: undefined|null|number ~ null|number, v543: undefined|null|number ~ null|number, v544: int[0, 3], v545: i32) frequency=Rare:
+# CHECK-NEXT: b170(v542: undefined|null|number ~ null|number, v543: undefined|null|number ~ null|number, v544: int[0, 3], v545: i32) frequency=Rare handler=b205(v542, v475, v543, v524, v522, v480, v481):
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v547: 3 = Integer integer=3
 # CHECK-NEXT: v548: boolean = Less v544, v547
@@ -2346,7 +2346,7 @@ runtimefunction id=ArrayIteratorPrototypeNext function=f11 visibility=Private
 # CHECK-NEXT: Jump -> next b143(v586, v587, v588, v589, v590, v601, v591, v592, v593, v594, v600, v591, v596, v597, v598, v599)
 # CHECK-NEXT: b183() frequency=Rare:
 # CHECK-NEXT: Jump -> next b184()
-# CHECK-NEXT: b184() frequency=Rare:
+# CHECK-NEXT: b184() frequency=Rare handler=b205(v593, v588, v587, v589, v590, v596, v597):
 # CHECK-NEXT: v606: 1 = Integer integer=1
 # CHECK-NEXT: v607: 3 = Integer integer=3
 # CHECK-NEXT: v608: int[-6442450944, 6442450941] = Mul v592, v607

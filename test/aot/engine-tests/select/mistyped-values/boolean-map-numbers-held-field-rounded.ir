@@ -942,7 +942,7 @@ runtimefunction id=GeneratorPrototypeNext function=f16 visibility=Private
 # CHECK-NEXT: v60: int[0, 4294967295] = CallBuiltin v59 overload=ArrayPrototypeLength/0 accessSite=55
 # CHECK-NEXT: v61: 0 = Integer
 # CHECK-NEXT: Jump -> next b13(v61, v55)
-# CHECK-NEXT: b13(v62: int[0, 4294967295], v63: int|whole):
+# CHECK-NEXT: b13(v62: int[0, 4294967295], v63: int|whole) handler=b19():
 # CHECK-NEXT: LoopHint
 # CHECK-NEXT: v65: boolean = Less v62, v60
 # CHECK-NEXT: Branch v65 -> taken b14(| 0), notTaken b18()

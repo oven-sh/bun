@@ -1036,9 +1036,15 @@ console.log("About manifest:", aboutHtml);
       write(String(dir), logs(others, "after"));
       const after = await build(String(dir), options);
 
+      // Both manifests list the page's own files and no chunk of `other.js`, so only the paths can differ.
+      const manifest = (outputs: Output[]) => parseManifests(printers(outputs)[0].text)[0];
+      const inputs = (outputs: Output[]) => manifest(outputs).files.map(file => `${file.loader} ${file.input}`);
+      const pageFiles = ["js index.html", "html index.html", ...lazy.map(name => `js ${name}`)].sort();
+      expect(inputs(before).sort()).toEqual(pageFiles);
+      expect(inputs(after).sort()).toEqual(pageFiles);
+
       // The widths follow the hashes of each run, so no single listed path is sure to change.
-      const listed = (outputs: Output[]) => parseManifests(printers(outputs)[0].text).map(listedPaths);
-      const listedChanged = !Bun.deepEquals(listed(after), listed(before));
+      const listedChanged = !Bun.deepEquals(listedPaths(manifest(after)), listedPaths(manifest(before)));
       expect(changes(before, after)).toEqual({ "server.js": listedChanged ? renamed : kept });
     });
 

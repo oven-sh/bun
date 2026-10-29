@@ -91,7 +91,7 @@ fn parse_impl(
     opts: JSONOptions,
     check_len: bool,
 ) -> crate::Result<ParseOutput> {
-    parse_impl_in(source, log, opts, check_len, E::TapeAlloc::Global)
+    parse_impl_in(source, log, opts, check_len, None)
 }
 
 fn parse_impl_in(
@@ -99,7 +99,7 @@ fn parse_impl_in(
     log: &mut bun_ast::Log,
     opts: JSONOptions,
     check_len: bool,
-    tape_alloc: E::TapeAlloc,
+    arena: Option<&Bump>,
 ) -> crate::Result<ParseOutput> {
     let contents: &[u8] = &source.contents;
 
@@ -113,7 +113,7 @@ fn parse_impl_in(
         return Err(report_index_error(e, source, log));
     }
     let log_mark = (log.errors, log.msgs.len());
-    let result = run_stage2(source, log, &mut sidx, opts, check_len, tape_alloc);
+    let result = run_stage2(source, log, &mut sidx, opts, check_len, arena);
 
     let drop_stage2_errors = |log: &mut bun_ast::Log| {
         let mut i = log_mark.1;
@@ -187,9 +187,9 @@ fn run_stage2<'s>(
     sidx: &mut StructuralIndex<'s>,
     opts: JSONOptions,
     check_len: bool,
-    tape_alloc: E::TapeAlloc,
+    arena: Option<&Bump>,
 ) -> crate::Result<ParseOutput> {
-    let mut parser = Parser::new(source, log, sidx, opts, tape_alloc);
+    let mut parser = Parser::new(source, log, sidx, opts, arena);
     let root = parser.parse_value()?;
     if check_len && !parser.at_trailing_end() {
         return Err(parser.unexpected_here());
@@ -471,8 +471,8 @@ fn parse_to_rows_in(
     opts: JSONOptions,
     arena: &Bump,
 ) -> crate::Result<Expr> {
-    let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena));
     if source.contents.is_empty() {
+        let tape_alloc = E::TapeAlloc::Arena(core::ptr::NonNull::from(arena));
         let tape = arena.alloc(E::JsonTape::empty_in(tape_alloc));
         return Ok(Expr::init(
             // SAFETY: the arena-allocated tape's own pointer; it lives until the
@@ -481,7 +481,7 @@ fn parse_to_rows_in(
             bun_ast::Loc { start: 0 },
         ));
     }
-    Ok(parse_impl_in(source, log, opts, false, tape_alloc)?.root)
+    Ok(parse_impl_in(source, log, opts, false, Some(arena))?.root)
 }
 
 /// Parse package.json (comments & trailing commas allowed) into the classic `E::Object` AST.

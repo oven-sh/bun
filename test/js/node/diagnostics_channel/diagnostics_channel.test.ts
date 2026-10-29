@@ -1160,10 +1160,11 @@ describe("TracingChannel", () => {
     const replacedArrayFrom = mock(() => {
       throw new Error("the Array.from of the program was called");
     });
-    const withArrayFromReplaced = (fn: () => void) => {
+    // The replacement stays until what fn returns has settled: tracePromise() enters the stores of asyncStart then.
+    const withArrayFromReplaced = async (fn: () => unknown) => {
       Array.from = replacedArrayFrom as unknown as typeof Array.from;
       try {
-        fn();
+        await fn();
       } finally {
         Array.from = arrayFrom;
       }
@@ -1174,14 +1175,14 @@ describe("TracingChannel", () => {
       const stores = three();
       const dc = channel("tc-store-order-channel");
       bindAll(dc, stores, log);
-      withArrayFromReplaced(() => dc.runStores({}, () => void log.push(`function in ${entered(stores)}`)));
+      await withArrayFromReplaced(() => dc.runStores({}, () => void log.push(`function in ${entered(stores)}`)));
     }
     {
       const log: string[] = (seen.traceSync = []);
       const stores = three();
       const tc = tracingChannel("tc-store-order-sync");
       bindAll(tc.start, stores, log);
-      withArrayFromReplaced(() => tc.traceSync(() => void log.push(`function in ${entered(stores)}`)));
+      await withArrayFromReplaced(() => tc.traceSync(() => void log.push(`function in ${entered(stores)}`)));
     }
     {
       const log: string[] = (seen.tracePromise = []);
@@ -1189,14 +1190,14 @@ describe("TracingChannel", () => {
       const tc = tracingChannel("tc-store-order-promise");
       bindAll(tc.asyncStart, stores, log);
       on(tc.asyncStart, () => void log.push(`asyncStart in ${entered(stores)}`));
-      await tc.tracePromise(() => Promise.resolve(1));
+      await withArrayFromReplaced(() => tc.tracePromise(() => Promise.resolve(1)));
     }
     {
       const log: string[] = (seen.traceCallback = []);
       const stores = three();
       const tc = tracingChannel("tc-store-order-callback");
       bindAll(tc.asyncStart, stores, log);
-      withArrayFromReplaced(() =>
+      await withArrayFromReplaced(() =>
         tc.traceCallback(
           (cb: () => void) => cb(),
           0,

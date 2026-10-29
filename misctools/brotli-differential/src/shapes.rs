@@ -1712,6 +1712,66 @@ pub fn run_lazy_end(seed0: u64, iters: u64, qualities: u64) {
     println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
 }
 
+/// Qualities 5 to 9. A meta-block is stored as it is if a sample of its bytes looks random, but the encoder only takes the
+/// sample if more than 99 % of the bytes are literals and there is less than about a command for every 256 bytes. Here the
+/// bytes look just random enough or just not, and short copies from one of the last two distances come about that often, or
+/// make it exactly as many commands or literals as the limit, or one more or less.
+pub fn run_nearly_random(seed0: u64, iters: u64, qualities: u64) {
+    let qs = crate::args::qualities(qualities, 5..10);
+    let mut totals = (0usize, 0usize);
+    let mut decided = 0;
+    for it in 0..iters {
+        let seed = seed0.wrapping_add(it);
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let spree = if q < 9 { 64 } else { 512 };
+        // The limit is 7.92 bits, which are 242 values.
+        let symbols = rng.range(236, 256);
+        let mut c = Commands { data: Vec::new(), last: [4, 11], sparse_after: spree, spree, seen: Default::default(), symbols };
+        let kind = rng.below(3);
+        let most = if rng.chance(1, 4) { 400_000 } else { 60_000 };
+        // A short sample does not look random.
+        let len = rng.range(if kind == 0 { 3000 } else { 40_000 }, most);
+        let length = if kind == 2 { rng.range(3, 6) } else { 2 };
+        let gap = match kind {
+            0 => rng.range(180, 280),
+            1 => rng.range(205, 235),
+            _ => 99 * length - 30,
+        };
+        let mut copies = Vec::new();
+        while c.data.len() < len {
+            let start = c.data.len();
+            let literals = (gap..).find(|n| c.looks_at(start + n)).unwrap();
+            for _ in 0..literals {
+                c.literal(&mut rng);
+            }
+            if c.copy(length, rng.chance(1, 2)) {
+                copies.push(c.data.len() - 1);
+            }
+        }
+        // The literals at the end make one more command.
+        let target = match kind {
+            0 => 0,
+            1 => ((copies.len() + rng.below(3) - 2) << 8) + rng.below(256),
+            _ => 100 * length * copies.len() + rng.below(3) - 1,
+        };
+        while c.data.len() < target {
+            c.literal(&mut rng);
+        }
+        let params = vec![(1, q), (2, rng.range(17, 22) as u32)];
+        check("nearly-random", seed, &mut rng, &c.data, &params, &[], &mut totals);
+        // Whether it was the number of commands that made the difference.
+        let stored = |data: &[u8]| rust_stream(data, &params, &[], EncoderOperation::Finish).unwrap().len() > data.len();
+        let mut without = c.data.clone();
+        for at in copies {
+            without[at] ^= 1;
+        }
+        decided += usize::from(!stored(&c.data) && stored(&without));
+    }
+    assert!(iters < 50 || decided > 0, "the copies never made a difference");
+    println!("ok: {iters} iterations, {} -> {}, {decided} not stored because of their commands", totals.0, totals.1);
+}
+
 /// What `run_commands` knows of the encoder while it lays out the input.
 struct Commands {
     data: Vec<u8>,
@@ -1723,6 +1783,8 @@ struct Commands {
     spree: usize,
     /// Every 4 bytes in a row so far. Only a copy repeats any, so the table of the encoder finds nothing else.
     seen: std::collections::HashSet<[u8; 4]>,
+    /// How many values a literal can have.
+    symbols: usize,
 }
 
 impl Commands {
@@ -1764,7 +1826,7 @@ impl Commands {
     /// A byte with which no copy from one of the last distances, or from up to 3 more or less, starts or goes on.
     fn literal(&mut self, rng: &mut Rng) {
         loop {
-            let byte = rng.next() as u8;
+            let byte = rng.below(self.symbols) as u8;
             if !self.data.iter().rev().take(14).any(|&b| b == byte) && self.push(byte, true) {
                 return;
             }
@@ -1816,7 +1878,7 @@ pub fn run_commands(seed0: u64, iters: u64, qualities: u64) {
         let mut rng = Rng(seed);
         let q = *rng.pick(&qs);
         let spree = if q < 9 { 64 } else { 512 };
-        let mut c = Commands { data: Vec::new(), last: [4, 11], sparse_after: spree, spree, seen: Default::default() };
+        let mut c = Commands { data: Vec::new(), last: [4, 11], sparse_after: spree, spree, seen: Default::default(), symbols: 256 };
         // The codes of the insert and the copy length, and whether the distance is the last one. That only makes another
         // symbol of it if both lengths are short.
         let mut plan: Vec<(usize, usize, bool)> = (0..24 * 24).map(|i| (i / 24, i % 24, false)).collect();

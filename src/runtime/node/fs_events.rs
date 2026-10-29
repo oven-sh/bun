@@ -285,35 +285,25 @@ struct FSEventsLoopState {
 
 // SAFETY: cross-thread pointers are `AtomicPtr`; the pointers in `FSEventsLoopState` are only used under `mutex`; `thread` is only touched by `init()`/`shutdown()` on the JS thread.
 unsafe impl Sync for FSEventsLoop {}
-// SAFETY: no thread-affine data; the loop is a leaked `&'static` singleton and all shared access is synchronized per the `Sync` impl above.
-unsafe impl Send for FSEventsLoop {}
 
 pub(crate) struct Task {
-    pub ctx: *mut (),
-    pub callback: fn(*mut ()),
+    pub ctx: &'static FSEventsLoop,
+    pub callback: fn(&FSEventsLoop),
 }
 
 impl Task {
     pub(crate) fn run(&mut self) {
-        let callback = self.callback;
-        let ctx = self.ctx;
-        debug_assert!(!ctx.is_null());
-        callback(ctx);
+        (self.callback)(self.ctx);
     }
 
-    pub(crate) fn new<T>(ctx: &'static T, callback: fn(&T)) -> Task {
-        Task {
-            // SAFETY: `fn(&T)` and `fn(*mut ())` have identical single-pointer ABI, and `ctx` is a valid `&T` at call time.
-            callback: unsafe { bun_ptr::cast_fn_ptr::<fn(&T), fn(*mut ())>(callback) },
-            ctx: core::ptr::from_ref::<T>(ctx).cast_mut().cast::<()>(),
-        }
+    pub(crate) fn new(ctx: &'static FSEventsLoop, callback: fn(&FSEventsLoop)) -> Task {
+        Task { ctx, callback }
     }
 }
 
 pub(crate) struct ConcurrentTask {
     pub task: Task,
     pub(crate) next: bun_threading::Link<ConcurrentTask>,
-    pub(crate) auto_delete: bool,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<ConcurrentTask>`.
@@ -369,18 +359,9 @@ impl FSEventsLoop {
             if task.is_null() {
                 break;
             }
-            // SAFETY: task is a valid *mut ConcurrentTask from the queue; this
-            // thread owns it exclusively once popped. Scoped accesses so no
-            // reference is live when the node is freed below.
-            let auto_delete = unsafe {
-                (*task).task.run();
-                (*task).auto_delete
-            };
-            if auto_delete {
-                // SAFETY: was heap-allocated in enqueue_task_concurrent; freed
-                // through the queue pointer (allocation provenance).
-                drop(unsafe { bun_core::heap::take(task) });
-            }
+            // SAFETY: heap-allocated in `enqueue_task_concurrent`; this thread
+            // owns it exclusively once popped.
+            unsafe { bun_core::heap::take(task) }.task.run();
         }
     }
 
@@ -462,7 +443,6 @@ impl FSEventsLoop {
         self.tasks.push(bun_core::heap::alloc_nn(ConcurrentTask {
             task,
             next: bun_threading::Link::new(),
-            auto_delete: true,
         }));
         let signal_source = self.signal_source.load(Ordering::Relaxed);
         let loop_ = self.loop_.load(Ordering::Acquire);

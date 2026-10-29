@@ -912,11 +912,7 @@ impl<'p> Checker<'p, '_> {
             return;
         }
         self.reporting_nonexistent.push((file, e, self.stack.len()));
-        let dropped: Vec<bool> = self
-            .frames
-            .iter()
-            .map(|frame| frame.drops_reported)
-            .collect();
+        let dropped = self.save_drops_reported();
         // In tsgo printing a type can close a cycle, so the first time this message is built `with_printer` isn't a
         // barrier for cycle detection. If the message was dropped along with a result that wasn't cached, it's built
         // again here, which tsgo never has to do. That second time (`reprinting`) its types are printed behind the
@@ -991,9 +987,7 @@ impl<'p> Checker<'p, '_> {
         self.reporting_nonexistent.pop();
         self.reprinting = reprinting;
         // A query re-entered while building the message is no reason to roll back the message.
-        for (frame, dropped) in self.frames.iter_mut().zip(dropped) {
-            frame.drops_reported = dropped;
-        }
+        self.restore_drops_reported(dropped);
         let reported = self.reported.len();
         self.add_error_or_suggestion(!is_unchecked_js || diagnostic.code != 2568, diagnostic);
         // `NodeCheckFlagsTypeChecked`: tsgo reports once per node. If it reports while analyzing a loop, with the types

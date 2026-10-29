@@ -134,7 +134,6 @@ fn write_decline_line(
                 out.extend_from_slice(b" over the inlining budget");
             }
             DeclineKind::StringBuilderNotCreated => write_counted(out, count, "append", "appends"),
-            DeclineKind::GenericVersionNotCreated => write_counted(out, count, "check", "checks"),
             _ => {
                 out.extend_from_slice(b"count ");
                 write_count(out, count);

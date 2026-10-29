@@ -5,7 +5,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "path";
-import { built, slot, spawned, told, unsupported } from "./run-programs";
+import { built, slot, spawned, told, unsupported } from "./harness/commands";
 
 const programs = join(import.meta.dir, "react-compiler");
 

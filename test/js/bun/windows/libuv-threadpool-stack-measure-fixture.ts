@@ -1,7 +1,7 @@
 // Temporary measurement, removed before this change is ready. Windows only.
 // Runs one operation and prints what it added to this process: threads, commit charge, reserved address space.
 // Usage: bun libuv-threadpool-stack-measure-fixture.ts <operation> <directory with data.txt and module.mjs>
-import { dlopen } from "bun:ffi";
+import { CFunction, dlopen } from "bun:ffi";
 import dns from "node:dns";
 import fs from "node:fs";
 import path from "node:path";
@@ -12,6 +12,8 @@ const { symbols: kernel32 } = dlopen("kernel32.dll", {
   Thread32Next: { args: ["u64", "ptr"], returns: "i32" },
   CloseHandle: { args: ["u64"], returns: "i32" },
   GlobalMemoryStatusEx: { args: ["ptr"], returns: "i32" },
+  GetModuleHandleA: { args: ["ptr"], returns: "ptr" },
+  GetProcAddress: { args: ["ptr", "ptr"], returns: "ptr" },
 });
 
 function threadCount() {
@@ -80,6 +82,33 @@ const operations: Record<string, () => PromiseLike<unknown>> = {
   "import-file": () => import(path.join(dir, "module.mjs")),
 };
 
+// "uv_thread_create_ex:<bytes>": what a native addon gets from the function bun.exe exports. 8 threads that sleep.
+const direct = /^uv_thread_create_ex:(\d+)$/.exec(name);
+const parked: Buffer[] = [];
+if (direct) {
+  const stackSize = Number(direct[1]);
+  const sleep = kernel32.GetProcAddress(
+    kernel32.GetModuleHandleA(Buffer.from("kernel32.dll\0")),
+    Buffer.from("Sleep\0"),
+  );
+  const address = kernel32.GetProcAddress(kernel32.GetModuleHandleA(null), Buffer.from("uv_thread_create_ex\0"));
+  if (!sleep || !address) throw new Error("GetProcAddress failed");
+  const uv_thread_create_ex = CFunction({ ptr: address, args: ["ptr", "ptr", "ptr", "ptr"], returns: "i32" });
+  // uv_thread_options_t: unsigned int flags, then size_t stack_size. UV_THREAD_HAS_STACK_SIZE is 1.
+  const options = Buffer.alloc(16);
+  options.writeUInt32LE(stackSize ? 1 : 0, 0);
+  options.writeBigUInt64LE(BigInt(stackSize), 8);
+  const INFINITE = 0xffffffff;
+  operations[name] = async () => {
+    for (let i = 0; i < 8; i++) {
+      const tid = Buffer.alloc(8);
+      parked.push(tid);
+      const rc = uv_thread_create_ex(tid, options, sleep, INFINITE);
+      if (rc !== 0) throw new Error(`uv_thread_create_ex returned ${rc}`);
+    }
+  };
+}
+
 const operation = operations[name];
 if (!operation) throw new Error(`unknown operation ${name}`);
 
@@ -111,3 +140,5 @@ const { commitLimit, availCommit, totalPhys, availPhys } = memoryStatus();
 console.log(
   JSON.stringify({ name, atReturn, atEnd, msToReturn, msToEnd, commitLimit, availCommit, totalPhys, availPhys }),
 );
+// The parked threads never return.
+if (direct) process.exit(0);

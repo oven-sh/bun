@@ -2,7 +2,7 @@
 // Each test prints one "MEASURE" line to the log: what one operation added to a fresh bun process.
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, preadExact, tempDirWithFiles } from "harness";
-import { closeSync, copyFileSync, openSync, writeSync } from "node:fs";
+import { closeSync, copyFileSync, openSync, statSync, writeSync } from "node:fs";
 import { basename, join } from "node:path";
 
 const fixture = join(import.meta.dir, "libuv-threadpool-stack-measure-fixture.ts");
@@ -63,7 +63,10 @@ async function measure(exe: string, name: string, poolSize: number | undefined) 
 
 describe.skipIf(!isWindows)("libuv pool measurements (temporary)", () => {
   test("stack sizes in the header of bun.exe", () => {
-    console.log("MEASURE header", JSON.stringify({ exe: basename(bunExe()), ...stackSizes(bunExe()) }));
+    console.log(
+      "MEASURE header",
+      JSON.stringify({ exe: basename(bunExe()), bytes: statSync(bunExe()).size, ...stackSizes(bunExe()) }),
+    );
     console.log(
       "MEASURE header",
       JSON.stringify({ exe: "one page copy", ...stackSizes(copyWithOnePageStackCommit()) }),
@@ -101,6 +104,18 @@ describe.skipIf(!isWindows)("libuv pool measurements (temporary)", () => {
       console.log("MEASURE pool-1024", JSON.stringify({ header, ...measured }));
       expect(measured.exitCode).toBe(0);
     }, 120_000);
+  }
+
+  // What a native addon gets from the uv_thread_create_ex that bun.exe exports, for each stack size it asks for.
+  for (const header of ["as built", "one page"] as const) {
+    for (const stackSize of [0, 64 * 1024, 1024 * 1024, 8 * 1024 * 1024, 32 * 1024 * 1024]) {
+      test(`uv_thread_create_ex: header ${header}, stack size ${stackSize}`, async () => {
+        const exe = header === "one page" ? copyWithOnePageStackCommit() : bunExe();
+        const measured = await measure(exe, `uv_thread_create_ex:${stackSize}`, undefined);
+        console.log("MEASURE direct", JSON.stringify({ header, stackSize, ...measured }));
+        expect(measured.exitCode).toBe(0);
+      }, 60_000);
+    }
   }
 
   // Which calls start the pool. With 24 threads in it, a call that starts it adds at least 24 threads.

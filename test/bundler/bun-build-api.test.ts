@@ -783,7 +783,7 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
-  test("the default root does not depend on how the entry points are spelled", async () => {
+  test.concurrent("the default root does not depend on how the entry points are spelled", async () => {
     using dir = tempDir("build-root-spelling", {
       "src/main.ts": `console.log("main");`,
       "src/w/worker.ts": `console.log("worker");`,
@@ -815,7 +815,7 @@ describe("Bun.build", () => {
   });
 
   // `ab` does not hold `abc/y.ts`, and `cli` does not hold `cli.ts`.
-  test("the default root ends at a path separator, not inside a name", async () => {
+  test.concurrent("the default root ends at a path separator, not inside a name", async () => {
     using dir = tempDir("build-root-name-prefix", {
       "ab/x.ts": `console.log("x");`,
       "abc/y.ts": `console.log("y");`,
@@ -845,7 +845,7 @@ describe("Bun.build", () => {
   });
 
   // No directory holds names that a plugin resolves.
-  test("the default root is the working directory for names that a plugin resolves", async () => {
+  test.concurrent("the default root is the working directory for names that a plugin resolves", async () => {
     using dir = tempDir("build-root-plugin-names", {
       "src/a.ts": `console.log("a");`,
       "build.ts": `

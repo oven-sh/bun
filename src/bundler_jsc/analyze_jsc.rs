@@ -16,7 +16,7 @@ use bun_bundler::analyze_transpiled_module as analyze;
 extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     global_object: &JSGlobalObject,
     vm: &VM,
-    module_loader: *mut JSModuleLoader,
+    module_loader: &JSModuleLoader,
     module_key: &IdentifierArray,
     source_code: &SourceCode,
     res: &ModuleInfoDeserialized,
@@ -43,7 +43,7 @@ extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 fn to_js_module_record(
     global_object: &JSGlobalObject,
     vm: &VM,
-    module_loader: *mut JSModuleLoader,
+    module_loader: &JSModuleLoader,
     module_key: &IdentifierArray,
     source_code: &SourceCode,
     res: &ModuleInfoDeserialized,
@@ -250,7 +250,7 @@ fn to_js_module_record(
 
 bun_opaque::opaque_ffi! { pub struct IdentifierArray; }
 unsafe extern "C" {
-    fn Bun__VM__sharedModuleInfoIdentifiers(vm: *const VM, count: usize) -> *mut IdentifierArray;
+    safe fn Bun__VM__sharedModuleInfoIdentifiers(vm: &VM, count: usize) -> *mut IdentifierArray;
     safe fn JSC__IdentifierArray__create(count: usize) -> *mut IdentifierArray;
     fn JSC__IdentifierArray__destroy(identifiers: *mut IdentifierArray, count: usize);
     fn JSC__IdentifierArray__isNull(identifier_array: *mut IdentifierArray, n: usize) -> bool;
@@ -274,8 +274,7 @@ impl IdentifierArray {
     /// grown to at least `count`; null until filled.
     #[inline]
     pub(crate) fn shared(vm: &VM, count: usize) -> *mut IdentifierArray {
-        // SAFETY: FFI call; the vector lives on the VM's client data.
-        unsafe { Bun__VM__sharedModuleInfoIdentifiers(vm, count) }
+        Bun__VM__sharedModuleInfoIdentifiers(vm, count)
     }
 }
 /// `count` identifier slots owned by this value (fastMalloc'd on the C++ side).
@@ -454,7 +453,7 @@ impl JSModuleRecord {
     fn create(
         global_object: &JSGlobalObject,
         vm: &VM,
-        module_loader: *mut JSModuleLoader,
+        module_loader: &JSModuleLoader,
         module_key: &IdentifierArray,
         source_code: &SourceCode,
         has_import_meta: bool,
@@ -469,7 +468,7 @@ impl JSModuleRecord {
             JSC_JSModuleRecord__create(
                 global_object,
                 vm,
-                module_loader,
+                module_loader.as_mut_ptr(),
                 module_key,
                 source_code,
                 has_import_meta,

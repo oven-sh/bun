@@ -1347,7 +1347,7 @@ static JSValue fetchESMSourceCode(
     }
 
     const bool useIsolationCache = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
-    // An entry point is transpiled differently from an import of the same file, and the VM only learns that it has loaded from transpiling it.
+    // The VM only learns that the entry point has loaded from transpiling it.
     if (useIsolationCache && !Bun__VM__isMainModule(bunVM, specifier)) {
         if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString(BunString::ZeroCopy), pluginContents)) {
             // didFulfillPendingVirtualModule checks this to tell a source from an error, so set it on a cache hit too.

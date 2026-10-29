@@ -2824,7 +2824,7 @@ test.concurrent("--isolate: two concurrent import()s of a file both add it to th
   expect(exitCode).toBe(0);
 });
 
-describe.concurrent("a test file that an earlier test file imported is not taken from the SourceProvider cache", () => {
+describe.concurrent("the SourceProvider cache tells a test file that is the entry point from an import of it", () => {
   const flags = [...isolateFlags, "--parallel=1"];
 
   test.each(flags)("%s: it imports a file of an unknown type as a file", async flag => {
@@ -2854,6 +2854,29 @@ describe.concurrent("a test file that an earlier test file imported is not taken
     });
     const { stderr, exitCode } = await runTests(String(dir), [flag], ["./a.test.cjs", "./b.test.cjs"]);
     expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  test.each(flags)("%s: a later test file can require() it", async flag => {
+    using dir = tempDir("isolate-entry-is-imported-later", {
+      "a.test.js": `
+        import { expect, test } from "vitest";
+        import { one } from "./one.js";
+        import { two } from "./two.js";
+        export const sum = one + two;
+        test("a", () => expect(sum).toBe(3));
+      `,
+      "b.test.js": `
+        import { expect, test } from "vitest";
+        const { sum } = require("./a.test.js");
+        test("b", () => expect(sum).toBe(3));
+      `,
+      "one.js": `export const one = 1;`,
+      "two.js": `export const two = 2;`,
+    });
+    const { stderr, exitCode } = await runTests(String(dir), [flag], ["./a.test.js", "./b.test.js"]);
+    expect(stderr).toContain(" 3 pass");
     expect(stderr).toContain(" 0 fail");
     expect(exitCode).toBe(0);
   });

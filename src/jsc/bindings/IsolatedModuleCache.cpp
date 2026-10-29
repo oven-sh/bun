@@ -24,10 +24,15 @@ bool IsolatedModuleCache::canUse(JSC::VM&, void* bunVM, const BunString* typeAtt
 extern "C" uint64_t Bun__hashPluginContents(const EncodedSlice* contents, BunLoaderType loader);
 extern "C" bool Bun__VM__hasGlobalsOfVitest(void* bunVM);
 
-static uint64_t madeFromHash(JSC::VM& vm, const CodeString* pluginContents)
+static uint64_t madeFromHash(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
 {
+    void* bunVM = WebCore::clientData(vm)->bunVM;
     uint64_t hash = pluginContents ? Bun__hashPluginContents(&pluginContents->string, pluginContents->loader) : 0;
-    return Bun__VM__hasGlobalsOfVitest(WebCore::clientData(vm)->bunVM) ? ~hash : hash;
+    // An entry point is transpiled differently from an import of the same file.
+    BunString borrowedKey = Bun::toString(key);
+    if (Bun__VM__isMainModule(bunVM, &borrowedKey))
+        hash ^= 0x9e3779b97f4a7c15ULL;
+    return Bun__VM__hasGlobalsOfVitest(bunVM) ? ~hash : hash;
 }
 
 Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String& key, const CodeString* pluginContents)
@@ -38,14 +43,14 @@ Zig::SourceProvider* IsolatedModuleCache::lookup(JSC::VM& vm, const WTF::String&
         return nullptr;
     ASSERT(it->value);
     auto* provider = static_cast<Zig::SourceProvider*>(it->value.get());
-    return provider->m_madeFromHash == madeFromHash(vm, pluginContents) ? provider : nullptr;
+    return provider->m_madeFromHash == madeFromHash(vm, key, pluginContents) ? provider : nullptr;
 }
 
 void IsolatedModuleCache::insert(JSC::VM& vm, const WTF::String& key, Zig::SourceProvider& provider, const CodeString* pluginContents)
 {
     if (!isTagCacheable(static_cast<SyntheticModuleType>(provider.m_tag)) || provider.m_dependsOnMoreThanSource)
         return;
-    provider.m_madeFromHash = madeFromHash(vm, pluginContents);
+    provider.m_madeFromHash = madeFromHash(vm, key, pluginContents);
     WebCore::clientData(vm)->isolationSourceProviderCache.set(key, &provider);
 }
 

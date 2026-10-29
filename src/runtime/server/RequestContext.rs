@@ -1546,7 +1546,7 @@ where
         // If we called into JavaScript, we must drain the microtask queue.
         scopeguard::defer! {
             if any_js_calls.get() {
-                vm.as_mut().drain_microtasks();
+                vm.drain_microtasks();
             }
         }
 

@@ -367,19 +367,6 @@ describe("FileHandle", () => {
     reader.releaseLock();
   });
 
-  // Node does not release the handle here. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L374-L377
-  it("FileHandle#readableWebStream releases the handle when the file ends inside an element of a BYOB view", async () => {
-    using dir = tempDir("fh-readablewebstream-byob", { "three.bin": "ABC" });
-    await using fh = await fs.promises.open(join(String(dir), "three.bin"));
-    const reader = fh.readableWebStream({ autoClose: true }).getReader({ mode: "byob" });
-
-    const first = await reader.read(new Uint16Array(4));
-    expect({ done: first.done, byteLength: first.value!.byteLength }).toEqual({ done: false, byteLength: 2 });
-    // The third byte is half of an element, so the stream cannot close when the next read finds the end.
-    await expect(reader.read(new Uint16Array(first.value!.buffer))).rejects.toBeInstanceOf(TypeError);
-    expect(fh.fd).toBe(-1);
-  });
-
   it("FileHandle#createReadStream", async () => {
     await using fd = await fs.promises.open(__filename);
     const readable = fd.createReadStream();

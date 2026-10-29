@@ -9,7 +9,7 @@
  * This file uses node:test/node:assert so the identical file also runs under
  * `node --test`, which is where the expected values come from. It cannot
  * import from "harness" for the same reason, so it manages its own temporary
- * directory.
+ * directory. The last case is for Bun only and says why.
  */
 import assert from "node:assert";
 import fs from "node:fs";
@@ -17,6 +17,8 @@ import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { after, describe, test } from "node:test";
+
+const isBun = typeof Bun !== "undefined";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fh-byob-"));
 const file = path.join(dir, "data.txt");
@@ -91,4 +93,22 @@ describe("FileHandle.readableWebStream() BYOB reads", () => {
       await handle.close();
     }
   });
+
+  test(
+    "the handle is released when the file ends inside an element of the view",
+    // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L374-L377
+    { skip: !isBun && "Node.js leaves the handle referenced and open when close() throws in its pull" },
+    async () => {
+      const three = path.join(dir, "three.bin");
+      fs.writeFileSync(three, "ABC");
+      await using handle = await fsp.open(three);
+      const reader = handle.readableWebStream({ autoClose: true }).getReader({ mode: "byob" });
+
+      const first = await reader.read(new Uint16Array(4));
+      assert.deepStrictEqual({ done: first.done, byteLength: first.value!.byteLength }, { done: false, byteLength: 2 });
+      // The third byte is half of an element, so the stream cannot close when the next read finds the end.
+      await assert.rejects(reader.read(new Uint16Array(first.value!.buffer)), TypeError);
+      assert.strictEqual(handle.fd, -1);
+    },
+  );
 });

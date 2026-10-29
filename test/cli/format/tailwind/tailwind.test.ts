@@ -290,6 +290,7 @@ exports.__unstable__loadDesignSystem = async (css, { base, loadStylesheet }) => 
     [{ "#theme": "./theme.css" }, "#"],
     [{ "#theme/": "./theme.css" }, "#theme/"],
     [{ "#theme": "#theme" }, "#theme"],
+    [{ "#theme": "" }, "#theme"],
     // The most specific pattern, even when it has nothing for a style sheet.
     [{ "#k/*": "./theme.css", "#k/x/*": { import: "./x/*.js" } }, "#k/x/a"],
     [{ "#k/*": "./theme.css", "#k/x/*": null }, "#k/x/a"],

@@ -66,14 +66,15 @@ function resolveStylesheet(id, base) {
           if (file) return file;
           throw cannot();
         }
-        // A package. `#...`, `../...` and an absolute path are not valid targets.
-        if (target.startsWith("#") || target.startsWith(".") || isAbsolute(target)) throw cannot();
+        // A package. `#...`, `../...`, an absolute path and nothing are not valid targets.
+        if (!target || target.startsWith("#") || target.startsWith(".") || isAbsolute(target)) throw cannot();
         return resolveStylesheet(target, directory);
       }
       if (directory === dirname(directory)) throw cannot();
     }
   }
-  const [, name, rest = ""] = /^((?:@[^/]+\/)?[^/]+)(?:\/(.*))?$/.exec(id);
+  const [, name, rest = ""] = /^((?:@[^/]+\/)?[^/]+)(?:\/(.*))?$/.exec(id) ?? [];
+  if (name === undefined) throw cannot();
   for (let directory = base; ; directory = dirname(directory)) {
     const root = join(directory, "node_modules", name);
     if (fs.existsSync(join(root, "package.json"))) {

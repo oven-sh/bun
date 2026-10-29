@@ -331,9 +331,10 @@ pub(crate) fn has_clipboard_image() -> bool {
 }
 
 unsafe extern "C" {
+    /// Not `safe fn`: it messages `NSPasteboard`, so it is JS-thread only, like the rest of this section.
     fn bun_coregraphics_clipboard_change_count() -> i64;
 }
 pub(crate) fn clipboard_change_count() -> i64 {
-    // SAFETY: pure getter, no preconditions.
+    // SAFETY: only reads `changeCount`, on the JS thread that called the static accessor.
     unsafe { bun_coregraphics_clipboard_change_count() }
 }

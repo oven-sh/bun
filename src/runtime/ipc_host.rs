@@ -363,7 +363,7 @@ pub(crate) fn send<'a>(
         if from_pipe != 0 {
             from_pipe
         } else {
-            // SAFETY: trivial libuv accessor, no preconditions.
+            // SAFETY: the VM's uv loop exists, so `uv__winapi_init` has run.
             unsafe { bun_libuv_sys::uv_os_getppid() as u32 }
         }
     };

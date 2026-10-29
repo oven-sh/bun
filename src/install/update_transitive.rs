@@ -14,7 +14,6 @@ use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{Lockfile, PackageIndexEntry};
 use crate::npm::PackageManifest;
 use crate::package_manager::Options::LogLevel;
-use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::package_manager_real::{
     PackageUpdateInfo, WorkspacePackageJSONCache, enqueue_dependency_with_main,
@@ -742,10 +741,10 @@ pub(crate) fn warn_unchecked_sources(manager: &PackageManager) {
 fn root_patched_dependencies<'a>(
     cache: &'a mut WorkspacePackageJSONCache,
     log: &mut bun_ast::Log,
+    root_package_json_path: &[u8],
     root_dir: &[u8],
 ) -> Option<(&'a bun_ast::Source<'a>, bun_ast::Expr)> {
-    // SAFETY: written once inside `PackageManager::init` on this thread; only read afterwards.
-    let mut path: &[u8] = unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes();
+    let mut path: &[u8] = root_package_json_path;
     let mut path_buf = bun_paths::path_buffer_pool::get();
     // Auto-install does not call `init`, so the path is empty. It uses the package.json next to the
     // lockfile that it loaded.
@@ -771,10 +770,14 @@ fn root_patched_dependencies<'a>(
 /// their hashes.
 pub(crate) fn patched_dependency_keys(manager: &mut PackageManager) -> Vec<Box<[u8]>> {
     let log = manager.log_mut();
+    let path = manager.root_package_json_path.as_bytes();
     let root_dir = manager.root_dir.dir;
-    let Some((_, patched)) =
-        root_patched_dependencies(&mut manager.workspace_package_json_cache, log, root_dir)
-    else {
+    let Some((_, patched)) = root_patched_dependencies(
+        &mut manager.workspace_package_json_cache,
+        log,
+        path,
+        root_dir,
+    ) else {
         return Vec::new();
     };
     let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(patched.property_count());
@@ -829,10 +832,14 @@ pub(crate) fn warn_orphaned_patches(manager: &mut PackageManager) {
         return;
     }
     let log = manager.log_mut();
+    let path = manager.root_package_json_path.as_bytes();
     let root_dir = manager.root_dir.dir;
-    let Some((source, patched)) =
-        root_patched_dependencies(&mut manager.workspace_package_json_cache, log, root_dir)
-    else {
+    let Some((source, patched)) = root_patched_dependencies(
+        &mut manager.workspace_package_json_cache,
+        log,
+        path,
+        root_dir,
+    ) else {
         return;
     };
     let mut keys: Vec<(Box<[u8]>, bun_ast::Loc)> = Vec::with_capacity(patched.property_count());

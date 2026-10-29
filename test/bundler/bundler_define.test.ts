@@ -932,21 +932,25 @@ describe.concurrent("the defines that Bun adds by itself", () => {
 });
 
 describe("bundler", () => {
-  // The executable reads the real `process` through the other spellings. `process.arch` is here the program's own define.
-  itBundled("define/CompileTargetDefinesReplaceDottedSpellingAlone", {
-    compile: true,
-    backend: "cli",
-    files: {
-      "/entry.js": /* js */ `
-        Object.defineProperty(process, "platform", { value: "made up" });
-        Object.defineProperty(process, "arch", { value: "made up" });
-        console.log(process.platform === "made up", process["platform"], process?.platform);
-        console.log(process.arch, process["arch"], process?.arch);
-      `,
-    },
-    define: { "process.arch": '"mine"' },
-    run: { stdout: "false made up made up\nmine mine mine" },
-  });
+  // The executable reads the real `process` through the other spellings of `process.platform`.
+  // `process.arch` and `process.versions.bun` are here the program's own defines: they win, in every spelling.
+  for (const backend of ["cli", "api"] as const) {
+    itBundled(`define/CompileTargetDefinesReplaceDottedSpellingAlone/${backend}`, {
+      compile: true,
+      backend,
+      files: {
+        "/entry.js": /* js */ `
+          Object.defineProperty(process, "platform", { value: "made up" });
+          Object.defineProperty(process, "arch", { value: "made up" });
+          console.log(process.platform === "made up", process["platform"], process?.platform);
+          console.log(process.arch, process["arch"], process?.arch);
+          console.log(process.versions.bun, process.versions["bun"], process?.versions?.bun);
+        `,
+      },
+      define: { "process.arch": '"mine"', 'process.versions["bun"]': '"mine too"' },
+      run: { stdout: "false made up made up\nmine mine mine\nmine too mine too mine too" },
+    });
+  }
 });
 
 describe.concurrent("define key errors", () => {

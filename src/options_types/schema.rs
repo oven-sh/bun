@@ -67,6 +67,8 @@ pub mod api {
         pub absolute_working_dir: Option<Box<[u8]>>,
         /// define
         pub define: Option<StringMap>,
+        /// `CompileTarget::prepend_defines` has put the defines of the `--compile` target in front of `define`.
+        pub has_compile_target_defines: bool,
         /// drop
         pub drop: Vec<Box<[u8]>>,
         /// feature_flags — DCE via `import { feature } from "bun:bundle"`

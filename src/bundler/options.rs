@@ -817,7 +817,7 @@ pub(crate) fn defines_from_transform_options(
     node_env: Option<&[u8]>,
     drop: &[&[u8]],
     omit_unused_global_calls: bool,
-    // `--compile` has put `CompileTarget::DEFINE_KEYS` among the input
+    // `CompileTarget::prepend_defines` has put `CompileTarget::DEFINE_KEYS` in front of the input
     has_compile_target_defines: bool,
     bump: &bun_alloc::Arena,
 ) -> Result<Box<defines::Define>, crate::Error> {
@@ -1724,7 +1724,7 @@ impl<'a> BundleOptions<'a> {
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
             self.dead_code_elimination && self.minify_syntax,
-            self.compile_mode.is_executable(),
+            self.transform_options.has_compile_target_defines,
             arena,
         )?;
         self.defines_loaded = true;

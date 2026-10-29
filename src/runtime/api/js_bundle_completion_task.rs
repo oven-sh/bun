@@ -1413,7 +1413,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         bump: &'a Arena,
     ) -> bun_bundler::Result<&'a mut Transpiler<'a>> {
         let config = &self.config;
-        let opts = api::TransformOptions {
+        let mut opts = api::TransformOptions {
             define: if config.define.count() > 0 {
                 Some(api::StringMap {
                     keys: config.define.keys().to_vec(),
@@ -1456,6 +1456,11 @@ impl CompletionStruct for JSBundleCompletionTask {
             }),
             ..Default::default()
         };
+        // An executable has the target `bun` by now. A standalone HTML page keeps `browser`.
+        let executable = config.compile.as_ref();
+        if let Some(compile) = executable.filter(|_| config.target == bun_ast::Target::Bun) {
+            compile.compile_target.prepend_defines(&mut opts);
+        }
 
         let log: *mut bun_ast::Log = &raw mut self.log;
         let env: *mut bun_dotenv::Loader = &raw mut *self.env;

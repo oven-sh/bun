@@ -14,6 +14,8 @@ use bun_paths::{self as path, PathBuffer};
 use bun_semver::{SlicedString, Version};
 use bun_sys::Fd;
 
+use crate::schema::api;
+
 /// Used for `bun build --compile`
 #[derive(Clone, Copy)]
 pub struct CompileTarget {
@@ -424,11 +426,21 @@ impl CompileTarget {
         b"process.versions.bun",
     ];
 
-    pub fn define_keys(&self) -> [&'static [u8]; 3] {
-        Self::DEFINE_KEYS
+    /// Puts the defines of the target in front of the user's: a define of the user for the same key comes later and wins.
+    pub fn prepend_defines(&self, options: &mut api::TransformOptions) {
+        let user = options.define.take().unwrap_or_default();
+        let count = Self::DEFINE_KEYS.len() + user.keys.len();
+        let mut keys: Vec<Box<[u8]>> = Vec::with_capacity(count);
+        keys.extend(Self::DEFINE_KEYS.map(Box::<[u8]>::from));
+        keys.extend(user.keys);
+        let mut values: Vec<Box<[u8]>> = Vec::with_capacity(count);
+        values.extend(self.define_values().map(Box::<[u8]>::from));
+        values.extend(user.values);
+        options.define = Some(api::StringMap { keys, values });
+        options.has_compile_target_defines = true;
     }
 
-    pub fn define_values(&self) -> [&'static [u8]; 3] {
+    fn define_values(&self) -> [&'static [u8]; 3] {
         // Each axis gets its own exhaustive match so that adding a variant to
         // `OperatingSystem` / `Architecture` / `Libc` is a compile error here,
         // not a runtime panic behind a wildcard arm.

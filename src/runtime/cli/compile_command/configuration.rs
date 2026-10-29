@@ -16,7 +16,6 @@ use bun_event_loop::AnyEventLoop;
 use bun_js_parser::parser::Runtime;
 use bun_options_types::compile_target::CompileTarget;
 use bun_options_types::context::{ContextData, MacroOptions};
-use bun_options_types::schema::api;
 use bun_resolver::fs::FileSystem;
 use bun_standalone_graph::StandaloneModuleGraph::{Flags, RuntimeOptions, target_base_public_path};
 use bun_sys::Fd;
@@ -80,39 +79,10 @@ pub(super) fn exit_without_entry_point(message: &[u8]) -> ! {
     Global::exit(1);
 }
 
-fn add_target_defines(ctx: &mut ContextData) {
-    let compile_target = &ctx.bundler_options.compile_target;
-    let compile_define_keys = compile_target.define_keys();
-    let compile_define_values = compile_target.define_values();
-
-    if let Some(define) = ctx.args.define.as_mut() {
-        let mut keys: Vec<Box<[u8]>> =
-            Vec::with_capacity(compile_define_keys.len() + define.keys.len());
-        keys.extend(compile_define_keys.iter().map(|s| Box::<[u8]>::from(*s)));
-        keys.append(&mut define.keys);
-        let mut values: Vec<Box<[u8]>> =
-            Vec::with_capacity(compile_define_values.len() + define.values.len());
-        values.extend(compile_define_values.iter().map(|s| Box::<[u8]>::from(*s)));
-        values.append(&mut define.values);
-
-        define.keys = keys;
-        define.values = values;
-    } else {
-        ctx.args.define = Some(api::StringMap {
-            keys: compile_define_keys
-                .iter()
-                .map(|s| Box::<[u8]>::from(*s))
-                .collect(),
-            values: compile_define_values
-                .iter()
-                .map(|s| Box::<[u8]>::from(*s))
-                .collect(),
-        });
-    }
-}
-
 pub(super) fn configure(ctx: Context<'_>) -> Result<Configuration, crate::Error> {
-    add_target_defines(ctx);
+    ctx.bundler_options
+        .compile_target
+        .prepend_defines(&mut ctx.args);
 
     let arena: &'static bun_alloc::Arena = crate::cli::cli_arena();
     // In the arena: the build takes `&'a mut Transpiler<'a>`, which no stack local satisfies.

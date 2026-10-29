@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
+import { join } from "node:path";
 import v8 from "node:v8";
 
 // Buffer identity through v8.serialize/deserialize, matching node v26.3.0's
@@ -122,6 +123,71 @@ describe("v8 serialize/deserialize Buffer identity", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("true true\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Node's v8.serialize() returns a Buffer that owns a plain ArrayBuffer. A view
+// on a SharedArrayBuffer is refused by WebCrypto, cannot be transferred, and
+// is shared where a clone is expected.
+describe("v8.serialize() returns a Buffer that owns a plain ArrayBuffer", () => {
+  test.each([
+    ["an object", { a: 1 }],
+    ["a string", "text"],
+    ["a number", 1],
+    ["an array", [1, 2, 3]],
+    ["undefined", undefined],
+    ["a value with a Buffer inside", { b: Buffer.from("hi") }],
+  ])("for %s", (_name, value) => {
+    const bytes = v8.serialize(value);
+    expect(Buffer.isBuffer(bytes)).toBe(true);
+    expect(bytes.buffer).toBeInstanceOf(ArrayBuffer);
+    expect({ byteOffset: bytes.byteOffset, byteLength: bytes.byteLength }).toEqual({
+      byteOffset: 0,
+      byteLength: bytes.buffer.byteLength,
+    });
+    expect(v8.serialize(value).buffer).not.toBe(bytes.buffer);
+    expect(v8.deserialize(bytes)).toEqual(value);
+  });
+
+  describe.each([
+    ["without a Buffer inside", { a: 1 }],
+    ["with a Buffer inside", { a: 1, b: Buffer.from("hi") }],
+  ])("of a value %s", (_name, value) => {
+    test("WebCrypto accepts it", async () => {
+      const digest = await crypto.subtle.digest("SHA-256", v8.serialize(value));
+      expect(digest.byteLength).toBe(32);
+    });
+
+    test("structuredClone() copies it", () => {
+      const bytes = v8.serialize(value);
+      structuredClone(bytes).fill(0);
+      expect(v8.deserialize(bytes)).toEqual(value);
+    });
+
+    test("its ArrayBuffer can be transferred", () => {
+      const bytes = v8.serialize(value);
+      const byteLength = bytes.byteLength;
+      const moved = structuredClone(bytes.buffer, { transfer: [bytes.buffer] });
+      expect(bytes.byteLength).toBe(0);
+      expect(moved.byteLength).toBe(byteLength);
+      expect(v8.deserialize(Buffer.from(moved))).toEqual(value);
+    });
+  });
+
+  // The Buffer adopts the bytes that the serializer allocated, and the last
+  // owner frees them, here on the Worker's thread. Malloc=1 makes
+  // AddressSanitizer see that allocation (bmalloc has no system heap on Windows).
+  test("a Worker takes the ArrayBuffer by transfer and frees it", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(import.meta.dir, "v8-serialize-transfer-fixture.js")],
+      env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const rounds = [0, 1, 2, 3, 4, 5, 6, 7];
+    expect(JSON.parse(stdout)).toEqual({ detached: true, moved: rounds, shared: rounds });
     expect(exitCode).toBe(0);
   });
 });

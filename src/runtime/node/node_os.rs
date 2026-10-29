@@ -804,23 +804,9 @@ mod _impl {
         // The list currently contains entries for link-layer interfaces
         //  and the IPv4, IPv6 interfaces.  We only want to return the latter two
         //  but need the link-layer entries to determine MAC address.
-        // So, on our first pass through the linked list we'll count the number of
-        //  INET interfaces only.
-        let mut num_inet_interfaces: usize = 0;
-        let mut it = interface_start;
-        while !it.is_null() {
-            // SAFETY: it is a valid pointer in the linked list
-            let iface = unsafe { &*it };
-            if !(skip(iface) || is_link_layer(iface)) {
-                num_inet_interfaces += 1;
-            }
-            it = iface.ifa_next;
-        }
-        let _ = num_inet_interfaces;
-
         let ret = JSValue::create_empty_object(global_this, 0);
 
-        // Second pass through, populate each interface object
+        // Populate each interface object
         let mut it = interface_start;
         while !it.is_null() {
             // SAFETY: it is a valid pointer in the linked list

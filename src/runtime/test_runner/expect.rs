@@ -1125,7 +1125,7 @@ impl Expect {
         this.match_and_fmt_snapshot(global_this, value, property_matchers, &mut pretty_value, fn_name)?;
 
         let runner = Jest::runner().expect("unreachable");
-        let existing_value = match runner.snapshots.get_or_put(this, &pretty_value, hint) {
+        let existing_value = match runner.snapshots.get_or_put(&runner.files, this, &pretty_value, hint) {
             Ok(v) => v,
             Err(err) => {
                 let Some(buntest_strong) = this.bun_test() else {

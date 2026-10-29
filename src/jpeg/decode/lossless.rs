@@ -1,31 +1,12 @@
 //! Lossless streams: Huffman-coded differences from a prediction (jdlhuff.c, jdlossls.c, jddiffct.c).
 
 use super::bits::{BitReader, DerivedTable, TableKind, Tables, huff_extend};
-use super::coef::Plane;
+use super::coef::{Plane, Rows, start_scan_into};
 use super::input::Restarts;
 use super::{Decoder, MAX_BLOCKS_IN_MCU};
 use crate::alloc::{try_vec, try_vec_with_capacity};
 use crate::error::{Error, Result};
 use core::cell::Cell;
-
-/// The rows of one component for one iMCU row, as numbers wider than a sample.
-struct Rows {
-    data: Vec<i32>,
-    stride: usize,
-}
-
-impl Rows {
-    fn new(stride: usize, rows: usize) -> Result<Self> {
-        let data = try_vec(0, stride * rows)?;
-        Ok(Rows { data, stride })
-    }
-
-    fn row_mut(&mut self, y: usize) -> Result<&mut [i32]> {
-        self.data
-            .get_mut(y * self.stride..(y + 1) * self.stride)
-            .ok_or(Error::Internal)
-    }
-}
 
 /// Where a run of samples of an MCU goes: `width` samples in a row of a component.
 #[derive(Default, Clone, Copy)]
@@ -47,8 +28,9 @@ pub(crate) struct DiffController {
 
     input_imcu_row: u32,
     restarts: Restarts,
-    diff_buf: Vec<Rows>,
-    undiff_buf: Vec<Rows>,
+    /// Per component, an iMCU row.
+    diff_buf: Vec<Rows<i32>>,
+    undiff_buf: Vec<Rows<i32>>,
     /// The samples of the whole image, if the stream has several scans. Empty until the component's first scan.
     whole_image: Vec<Plane>,
 }
@@ -253,22 +235,7 @@ impl DiffController {
 
     /// Decodes a whole scan into the samples of the whole image.
     pub(crate) fn consume_scan(&mut self, decoder: &mut Decoder) -> Result<()> {
-        // Only now that the first scan has turned out to be valid: a few bytes can ask for gigabytes of zeros.
-        if self.whole_image.is_empty() {
-            self.whole_image.try_reserve(decoder.components.len())?;
-            for comp in &decoder.components {
-                let stride = comp.padded_width();
-                let data = try_vec_with_capacity(stride * comp.padded_height())?;
-                self.whole_image.push(Plane { data, stride });
-            }
-        }
-        for i in 0..decoder.components_in_scan {
-            let ci = decoder.scan_component_index(i)?;
-            let comp = decoder.component(ci)?;
-            let plane = self.whole_image.get_mut(ci).ok_or(Error::Internal)?;
-            // Memory that no one has written to costs nothing, so not before the component's first scan.
-            plane.data.resize(plane.stride * comp.padded_height(), 0);
-        }
+        start_scan_into(&mut self.whole_image, decoder, 0)?;
         while self.input_imcu_row < decoder.total_imcu_rows {
             self.decompress_row(decoder, None)?;
         }

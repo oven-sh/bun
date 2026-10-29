@@ -6,7 +6,7 @@ use super::huff::HuffDecoder;
 use super::idct::{self, DctTable};
 use super::input::Input;
 use super::phuff::PHuffDecoder;
-use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS, coef_at};
+use super::{Block, Component, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS, coef_at};
 use crate::alloc::{try_box, try_collect, try_vec, try_vec_with_capacity};
 use crate::error::{Error, Result};
 use crate::zigzag::natural_order;
@@ -75,31 +75,70 @@ impl CoefBits {
     }
 }
 
-/// The samples of one component for one iMCU row.
-pub(crate) struct Plane {
-    pub(crate) data: Vec<u8>,
+/// Rows of samples, differences or blocks of one component.
+pub(crate) struct Rows<T> {
+    pub(crate) data: Vec<T>,
     pub(crate) stride: usize,
 }
 
-impl Plane {
-    pub(crate) fn new(stride: usize, rows: usize) -> Result<Self> {
-        let data = try_vec(0, stride * rows)?;
-        Ok(Plane { data, stride })
+pub(crate) type Plane = Rows<u8>;
+
+impl<T: Clone> Rows<T> {
+    pub(crate) fn new(stride: usize, rows: usize) -> Result<Self>
+    where
+        T: Default,
+    {
+        let data = try_vec(T::default(), stride * rows)?;
+        Ok(Rows { data, stride })
+    }
+
+    /// All of `comp`, padded to whole MCUs. Empty until `fill`: memory that no one has written to costs nothing.
+    fn with_room_for(comp: &Component) -> Result<Self> {
+        let stride = comp.padded_width();
+        let data = try_vec_with_capacity(stride * comp.padded_height())?;
+        Ok(Rows { data, stride })
+    }
+
+    fn fill(&mut self, comp: &Component, zero: T) {
+        self.data.resize(self.stride * comp.padded_height(), zero);
     }
 
     #[inline(always)]
-    pub(crate) fn row(&self, y: usize) -> Result<&[u8]> {
+    pub(crate) fn row(&self, y: usize) -> Result<&[T]> {
         self.data
             .get(y * self.stride..(y + 1) * self.stride)
             .ok_or(Error::Internal)
     }
 
-    pub(crate) fn row_mut(&mut self, y: usize) -> Result<&mut [u8]> {
+    pub(crate) fn row_mut(&mut self, y: usize) -> Result<&mut [T]> {
         self.data
             .get_mut(y * self.stride..(y + 1) * self.stride)
             .ok_or(Error::Internal)
     }
+}
 
+/// Before each scan of a stream with several: room for every component, and zeros for the components of the scan.
+pub(crate) fn start_scan_into<T: Clone>(
+    whole_image: &mut Vec<Rows<T>>,
+    decoder: &Decoder,
+    zero: T,
+) -> Result<()> {
+    // Only now that the first scan has turned out to be valid: a few bytes can ask for gigabytes of zeros.
+    if whole_image.is_empty() {
+        whole_image.try_reserve(decoder.components.len())?;
+        for comp in &decoder.components {
+            whole_image.push(Rows::with_room_for(comp)?);
+        }
+    }
+    for i in 0..decoder.components_in_scan {
+        let ci = decoder.scan_component_index(i)?;
+        let rows = whole_image.get_mut(ci).ok_or(Error::Internal)?;
+        rows.fill(decoder.component(ci)?, zero.clone());
+    }
+    Ok(())
+}
+
+impl Plane {
     #[inline(always)]
     fn put<const N: usize>(&mut self, y: usize, x: usize, samples: &[[u8; N]; N]) -> Result<()> {
         let mut start = y * self.stride + x;
@@ -141,32 +180,9 @@ fn inverse_dct(
     }
 }
 
-/// The coefficients of one component, padded to whole MCUs.
-struct CoefArray {
-    /// Has the room from the start. Empty until `zero`.
-    blocks: Vec<Block>,
-    blocks_per_row: usize,
-    rows: usize,
-}
-
-impl CoefArray {
-    /// For the first scan with the component, or else the output: memory that no one has written to costs nothing.
-    fn zero(&mut self) {
-        if self.blocks.is_empty() {
-            self.blocks.resize(self.blocks_per_row * self.rows, [0; 64]);
-        }
-    }
-
-    fn row(&self, y: usize) -> Result<&[Block]> {
-        self.blocks
-            .get(y * self.blocks_per_row..(y + 1) * self.blocks_per_row)
-            .ok_or(Error::Internal)
-    }
-}
-
 /// The blocks of one MCU inside the arrays of the whole image.
 struct McuInImage<'a> {
-    arrays: &'a mut [CoefArray],
+    arrays: &'a mut [Rows<Block>],
     /// For each block, its component and its index in that component's array.
     at: [(usize, usize); MAX_BLOCKS_IN_MCU],
 }
@@ -175,7 +191,7 @@ impl McuBlocks for McuInImage<'_> {
     #[inline(always)]
     fn block(&mut self, index: usize) -> Option<&mut Block> {
         let &(ci, position) = self.at.get(index)?;
-        self.arrays.get_mut(ci)?.blocks.get_mut(position)
+        self.arrays.get_mut(ci)?.data.get_mut(position)
     }
 }
 
@@ -197,7 +213,7 @@ pub(crate) struct CoefController {
     /// Per component, from `start_output_pass` on.
     dct_tables: Vec<DctTable>,
     /// Empty if the stream has a single scan.
-    whole_image: Vec<CoefArray>,
+    whole_image: Vec<Rows<Block>>,
     /// The last iMCU row of the current scan that began with data left to decode.
     last_good_imcu_row: u32,
     /// `Some` while the output pass smooths. Per component, the current and the previous precision.
@@ -276,24 +292,7 @@ impl CoefController {
 
     /// Decodes a whole scan into the coefficient arrays.
     pub(crate) fn consume_scan(&mut self, decoder: &mut Decoder) -> Result<()> {
-        // Only now that the first scan has turned out to be valid: a few bytes can ask for gigabytes of zeros.
-        if self.whole_image.is_empty() {
-            self.whole_image.try_reserve(decoder.components.len())?;
-            for comp in &decoder.components {
-                let (blocks_per_row, rows) = (comp.padded_width(), comp.padded_height());
-                self.whole_image.push(CoefArray {
-                    blocks: try_vec_with_capacity(blocks_per_row * rows)?,
-                    blocks_per_row,
-                    rows,
-                });
-            }
-        }
-        for i in 0..decoder.components_in_scan {
-            self.whole_image
-                .get_mut(decoder.scan_component_index(i)?)
-                .ok_or(Error::Internal)?
-                .zero();
-        }
+        start_scan_into(&mut self.whole_image, decoder, [0; 64])?;
         while self.input_imcu_row < decoder.total_imcu_rows {
             let mut mcu = McuInImage {
                 arrays: &mut self.whole_image,
@@ -305,8 +304,7 @@ impl CoefController {
                     for i in 0..decoder.components_in_scan {
                         let ci = decoder.scan_component_index(i)?;
                         let comp = decoder.component(ci)?;
-                        let blocks_per_row =
-                            mcu.arrays.get(ci).ok_or(Error::Internal)?.blocks_per_row;
+                        let blocks_per_row = mcu.arrays.get(ci).ok_or(Error::Internal)?.stride;
                         let start_col = (mcu_col_num * comp.mcu_width) as usize;
                         for yindex in 0..comp.mcu_height {
                             let row =
@@ -337,7 +335,9 @@ impl CoefController {
             .iter()
             .map(|comp| comp.quant_table.as_ref());
         self.dct_tables = try_collect(tables.map(|quant| quant.map_or([0; 64], idct::dct_table)))?;
-        self.whole_image.iter_mut().for_each(CoefArray::zero);
+        for (comp, array) in decoder.components.iter().zip(&mut self.whole_image) {
+            array.fill(comp, [0; 64]);
+        }
         self.smoothing = self.smoothing_latch(decoder).map(try_box).transpose()?;
         Ok(())
     }

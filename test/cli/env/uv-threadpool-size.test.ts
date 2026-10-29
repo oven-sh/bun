@@ -66,6 +66,7 @@ describe("UV_THREADPOOL_SIZE and GOMAXPROCS", () => {
     // Above the range: the high end.
     [{ GOMAXPROCS: "1025" }, 1024],
     [{ GOMAXPROCS: "65536" }, 1024],
+    // libuv ignores a value of 16 bytes or more, so this one starts no extra threads on Windows.
     [{ UV_THREADPOOL_SIZE: "99999999999999999999" }, 1024],
     // UV_THREADPOOL_SIZE comes first.
     [{ UV_THREADPOOL_SIZE: "8", GOMAXPROCS: "3" }, 8],

@@ -167,7 +167,7 @@ unsafe extern "C" {
     fn lsquic_conn_get_server_cert_chain(c: *mut lsquic_conn) -> *mut c_void;
     pub fn lsquic_conn_get_ssl(c: *const lsquic_conn) -> *mut c_void;
     pub fn lsquic_ssl_to_conn(ssl: *const c_void) -> *mut lsquic_conn;
-    pub fn lsquic_conn_abort_error(
+    fn lsquic_conn_abort_error(
         c: *mut lsquic_conn,
         is_app: c_int,
         code: c_uint,
@@ -401,6 +401,7 @@ impl Conn {
         // SAFETY: as above.
         unsafe { lsquic_conn_abort_silent(self.0) }
     }
+    #[inline]
     pub fn abort_error(&self, is_app: bool, code: c_uint, reason: &core::ffi::CStr) {
         // SAFETY: as above; `reason` is NUL-terminated by construction.
         unsafe { lsquic_conn_abort_error(self.0, is_app as c_int, code, reason.as_ptr()) }

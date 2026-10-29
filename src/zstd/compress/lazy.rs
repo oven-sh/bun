@@ -2001,11 +2001,12 @@ impl Start {
     }
 }
 
-/// `ZSTD_compressBlock_lazy_generic` and `ZSTD_compressBlock_lazy_extDict_generic`. `DEPTH` is how many positions
-/// further a better match is looked for, once there is one.
+/// `ZSTD_compressBlock_lazy_generic` and `ZSTD_compressBlock_lazy_extDict_generic`. `depth` is how many positions
+/// further a better match is looked for, once there is one, and `LAZY` whether that is any.
 #[inline(never)]
-fn compress_block_lazy_generic<'a, F: Finder<'a>, const DEPTH: u32, const DICT_MODE: u8>(
+fn compress_block_lazy_generic<'a, F: Finder<'a>, const LAZY: bool, const DICT_MODE: u8>(
     args: LazyArgs<'a>,
+    depth: u32,
 ) -> Result<usize> {
     let LazyArgs {
         ms,
@@ -2050,14 +2051,14 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const DEPTH: u32, const DICT_M
         }
 
         // Check the repeat offset.
-        let mut best = Found::repeat(if DEPTH == 0 && no_repeat {
+        let mut best = Found::repeat(if !LAZY && no_repeat {
             0
         } else {
             rep_length::<DICT_MODE>(block, ip + 1, offset_1)?
         });
         let mut start = ip + 1;
 
-        if DEPTH > 0 || best.len == 0 {
+        if LAZY || best.len == 0 {
             // How many positions were searched since the last match that was taken, that one included.
             let mut since_best = 0;
             let mut wanted = Wanted {
@@ -2067,13 +2068,13 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const DEPTH: u32, const DICT_M
 
             loop {
                 since_best += 1;
-                let found = if DEPTH > 0 {
+                let found = if LAZY {
                     finder.find::<true>(ip, wanted, skipping)?
                 } else {
                     finder.find::<false>(ip, wanted, skipping)?
                 };
                 if let Some(found) = found
-                    && (DEPTH == 0 || found.gain() > wanted.gain)
+                    && (!LAZY || found.gain() > wanted.gain)
                 {
                     best = found;
                     start = ip;
@@ -2095,7 +2096,7 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const DEPTH: u32, const DICT_M
                 }
 
                 // Look for something better at the next positions.
-                if since_best > DEPTH || ip >= ilimit {
+                if !LAZY || since_best > depth || ip >= ilimit {
                     break;
                 }
                 ip += 1;
@@ -2189,16 +2190,19 @@ struct LazyArgs<'a> {
 
 /// [`compress_block_lazy_generic`], with the hash chains or the rows.
 #[inline(always)]
-fn compress_block_lazy_hashed<const DEPTH: u32, const DICT_MODE: u8>(
+fn compress_block_lazy_hashed<const LAZY: bool, const DICT_MODE: u8>(
     args: LazyArgs<'_>,
+    depth: u32,
     use_row: bool,
 ) -> Result<usize> {
     if !use_row {
         if DICT_MODE == NO_DICT && chains_are_simple(args.ms, &args.block) {
-            return compress_block_lazy_generic::<ChainFinder<NO_DICT, true>, DEPTH, NO_DICT>(args);
+            return compress_block_lazy_generic::<ChainFinder<NO_DICT, true>, LAZY, NO_DICT>(
+                args, depth,
+            );
         }
-        return compress_block_lazy_generic::<ChainFinder<DICT_MODE, false>, DEPTH, DICT_MODE>(
-            args,
+        return compress_block_lazy_generic::<ChainFinder<DICT_MODE, false>, LAZY, DICT_MODE>(
+            args, depth,
         );
     }
     // With a dictionary, the second tags are given up: how many candidates there are matters if it is searched next.
@@ -2206,17 +2210,19 @@ fn compress_block_lazy_hashed<const DEPTH: u32, const DICT_MODE: u8>(
         row_flatten_tags(&mut args.ms.row_tags, &mut args.ms.tag_table)?;
     }
     match (args.ms.c_params.search_log.clamp(4, 6), args.ms.row_tags) {
-        (4, _) => {
-            compress_block_lazy_generic::<RowFinder<16, false, DICT_MODE>, DEPTH, DICT_MODE>(args)
-        }
-        (5, _) => {
-            compress_block_lazy_generic::<RowFinder<32, false, DICT_MODE>, DEPTH, DICT_MODE>(args)
-        }
+        (4, _) => compress_block_lazy_generic::<RowFinder<16, false, DICT_MODE>, LAZY, DICT_MODE>(
+            args, depth,
+        ),
+        (5, _) => compress_block_lazy_generic::<RowFinder<32, false, DICT_MODE>, LAZY, DICT_MODE>(
+            args, depth,
+        ),
         (_, RowTags::Flat) => {
-            compress_block_lazy_generic::<RowFinder<64, false, DICT_MODE>, DEPTH, DICT_MODE>(args)
+            compress_block_lazy_generic::<RowFinder<64, false, DICT_MODE>, LAZY, DICT_MODE>(
+                args, depth,
+            )
         }
         (_, RowTags::Second(_)) => {
-            compress_block_lazy_generic::<RowFinder<64, true, NO_DICT>, DEPTH, NO_DICT>(args)
+            compress_block_lazy_generic::<RowFinder<64, true, NO_DICT>, LAZY, NO_DICT>(args, depth)
         }
     }
 }
@@ -2229,14 +2235,14 @@ fn compress_block_lazy_any_strategy<const DICT_MODE: u8>(
     use_row: bool,
 ) -> Result<usize> {
     match strategy {
-        Strategy::Greedy => compress_block_lazy_hashed::<0, DICT_MODE>(args, use_row),
-        Strategy::Lazy => compress_block_lazy_hashed::<1, DICT_MODE>(args, use_row),
-        Strategy::Lazy2 => compress_block_lazy_hashed::<2, DICT_MODE>(args, use_row),
+        Strategy::Greedy => compress_block_lazy_hashed::<false, DICT_MODE>(args, 0, use_row),
+        Strategy::Lazy => compress_block_lazy_hashed::<true, DICT_MODE>(args, 1, use_row),
+        Strategy::Lazy2 => compress_block_lazy_hashed::<true, DICT_MODE>(args, 2, use_row),
         Strategy::BtLazy2 if !use_row && TreeInput::is_far(args.block.near) => {
-            compress_block_lazy_generic::<TreeFinder<DICT_MODE, true>, 2, DICT_MODE>(args)
+            compress_block_lazy_generic::<TreeFinder<DICT_MODE, true>, true, DICT_MODE>(args, 2)
         }
         Strategy::BtLazy2 if !use_row => {
-            compress_block_lazy_generic::<TreeFinder<DICT_MODE, false>, 2, DICT_MODE>(args)
+            compress_block_lazy_generic::<TreeFinder<DICT_MODE, false>, true, DICT_MODE>(args, 2)
         }
         _ => Err(BUG),
     }

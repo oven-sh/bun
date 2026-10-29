@@ -62,19 +62,19 @@ pub(crate) trait ReadFileToJs {
     fn call(b: &Blob, g: &JSGlobalObject, by: *mut [u8], lifetime: Lifetime) -> JsResult<JSValue>;
 }
 
-pub(crate) struct NewReadFileHandler<'a, F: ReadFileToJs> {
+pub(crate) struct NewReadFileHandler<F: ReadFileToJs> {
     pub(crate) context: Blob,
     pub(crate) promise: JSPromiseStrong,
-    pub global_this: &'a JSGlobalObject,
+    pub global_this: bun_ptr::BackRef<JSGlobalObject>,
     _f: PhantomData<F>,
 }
 
-impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
-    pub(crate) fn new(context: Blob, global_this: &'a JSGlobalObject) -> Self {
+impl<F: ReadFileToJs> NewReadFileHandler<F> {
+    pub(crate) fn new(context: Blob, global_this: &JSGlobalObject) -> Self {
         Self {
             context,
             promise: JSPromiseStrong::default(),
-            global_this,
+            global_this: bun_ptr::BackRef::new(global_this),
             _f: PhantomData,
         }
     }
@@ -82,33 +82,24 @@ impl<'a, F: ReadFileToJs> NewReadFileHandler<'a, F> {
 
 /// A typed receiver for a file read's bytes. [`ReadFileCompletionFns::of`] erases it to the
 /// `(ctx, run, cancel)` a `ReadFile` job carries as its JS side (or a `ReadFileUV` as a field): the
-/// shims call `C::run` / `C::cancel` directly and `ctx` is the raw `*mut C`, no extra heap wrapper.
+/// shims call `C::run` / `C::cancel` directly and `ctx` is the `Box<C>` itself, no extra heap wrapper.
 pub(crate) trait ReadFileCompletion {
-    /// # Safety
-    /// `ctx` must be a heap-allocated `Self` whose ownership is transferred to
-    /// this call (it is reclaimed via `bun_core::heap::take`).
-    unsafe fn run(ctx: *mut Self, bytes: ReadFileResultType) -> JsResult<()>;
-    /// The read will never complete (its VM stopped before it did): release `ctx`.
-    ///
-    /// # Safety
-    /// Same ownership transfer as `run`; exactly one of the two is called.
-    unsafe fn cancel(ctx: *mut Self) {
-        // SAFETY: per the trait contract `ctx` is the heap-allocated `Self` we now own.
-        drop(unsafe { bun_core::heap::take(ctx) });
-    }
+    fn run(self: Box<Self>, bytes: ReadFileResultType) -> JsResult<()>;
+    /// The read will never complete (its VM stopped before it did). Exactly one of the two is called.
+    fn cancel(self: Box<Self>) {}
 }
 
-impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
-    unsafe fn run(handler: *mut Self, maybe_bytes: ReadFileResultType) -> JsResult<()> {
-        // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
-        let mut handler = unsafe { bun_core::heap::take(handler) };
-        // `Strong::swap()` ties the returned `&mut JSPromise` to
-        // `&mut self`, but the promise is GC-heap-owned and outlives `handler`.
-        // Decay to a raw pointer so `handler` can be dropped before resolution.
-        let promise: *mut jsc::JSPromise = handler.promise.swap();
-        let blob = core::mem::take(&mut handler.context);
-        let global_this = handler.global_this;
-        drop(handler);
+impl<F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<F> {
+    fn run(self: Box<Self>, maybe_bytes: ReadFileResultType) -> JsResult<()> {
+        // The braces move the box: it is freed at the end of the `let`.
+        let Self {
+            context: blob,
+            mut promise,
+            global_this,
+            ..
+        } = *{ self };
+        let global_this = global_this.get();
+        let promise = promise.swap();
         match maybe_bytes {
             ReadFileResultType::Result(result) => {
                 let bytes = result.buf;
@@ -116,27 +107,19 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
                     blob.size
                         .set((bytes.len() as SizeType).min(blob.size.get()));
                 }
-                // Owned until `F::call` takes it: `wrap` does not call this for a graph that was
-                // disposed, and a raw buffer would be left behind.
-                // SAFETY: `result.buf` is the `heap::into_raw` of a boxed slice (see the producers).
-                let bytes = unsafe { bun_core::heap::take(bytes) };
                 // The `#[track_caller]` `to_js_host_call` inside `AnyPromise::wrap`
                 // provides the source-location/exception-scope behaviour.
                 AnyPromise::Normal(promise).wrap(global_this, move |g| {
                     F::call(
                         &blob,
                         g,
+                        // Leaked only here: `wrap` does not call this for a graph that was disposed.
                         bun_core::heap::into_raw(bytes),
                         Lifetime::Temporary,
                     )
                 })?;
             }
             ReadFileResultType::Err(err) => {
-                // SAFETY: `promise` was just swapped out of `handler.promise`,
-                // the `JSPromiseStrong` that rooted it across the async read;
-                // from here to `reject` it is a JS-thread stack local, kept
-                // alive by JSC's conservative stack scan.
-                let promise = unsafe { &mut *promise };
                 let val = err.to_error_instance_with_async_stack(global_this, promise);
                 promise.reject(global_this, Ok(val))?;
             }
@@ -157,24 +140,25 @@ type ReadFileOnCancelCallback = fn(ctx: *mut c_void);
 /// `cancel` if it is dropped before completing. Exactly one of the two is invoked, once, on the JS
 /// thread — the ctx typically owns a promise and a Blob, so this is the job's JS side.
 pub(crate) struct ReadFileCompletionFns {
-    pub(crate) ctx: *mut c_void,
-    pub(crate) run: ReadFileOnReadFileCallback,
-    pub(crate) cancel: ReadFileOnCancelCallback,
+    ctx: *mut c_void,
+    run: ReadFileOnReadFileCallback,
+    cancel: ReadFileOnCancelCallback,
 }
 
 impl ReadFileCompletionFns {
     /// Erase a typed `ReadFileCompletion`.
-    pub(crate) fn of<C: ReadFileCompletion>(ctx: *mut C) -> Self {
+    pub(crate) fn of<C: ReadFileCompletion + 'static>(ctx: Box<C>) -> Self {
         fn run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) -> JsResult<()> {
-            // SAFETY: `ctx` is the `*mut C` erased below; ownership transfers per the trait.
-            unsafe { C::run(ctx.cast::<C>(), bytes) }
+            // SAFETY: `ctx` is the `Box<C>` erased below, and only one of `run` and `cancel` is
+            // called, once.
+            C::run(unsafe { bun_core::heap::take(ctx.cast::<C>()) }, bytes)
         }
         fn cancel<C: ReadFileCompletion>(ctx: *mut c_void) {
             // SAFETY: as for `run`.
-            unsafe { C::cancel(ctx.cast::<C>()) }
+            C::cancel(unsafe { bun_core::heap::take(ctx.cast::<C>()) })
         }
         Self {
-            ctx: ctx.cast::<c_void>(),
+            ctx: bun_core::heap::into_raw(ctx).cast::<c_void>(),
             run: run::<C>,
             cancel: cancel::<C>,
         }
@@ -197,16 +181,8 @@ impl Drop for ReadFileCompletionFns {
 unsafe impl bun_jsc::job::JsAffine for ReadFileCompletionFns {}
 
 pub(crate) struct ReadFileRead {
-    /// Always a `Box::<[u8]>::into_raw` from the producer's read buffer
-    /// (`Vec::into_boxed_slice()` so layout is exactly `(ptr, len)`). Every
-    /// consumer reclaims via `heap::take` — there is no borrow case left
-    /// (only the two finishers below construct this type and both hand off
-    /// owned bytes).
-    /// Stored as a raw pointer rather than `Box<[u8]>` because the
-    /// `NewReadFileHandler` consumer forwards it straight into
-    /// `to_*_with_bytes::<Temporary>(*mut [u8])`, which itself decides whether
-    /// the bytes are freed locally or transferred to a JSC external string.
-    pub(crate) buf: *mut [u8],
+    /// Not a `Vec`: `to_*_with_bytes::<Temporary>` reclaims it from `(ptr, len)` alone.
+    pub(crate) buf: Box<[u8]>,
 }
 
 /// Result-or-error union for a completed read.
@@ -644,10 +620,8 @@ impl ReadFile {
             return completion.complete(ReadFileResultType::Err(err));
         }
 
-        // The receiver takes ownership. Normalize to `Box<[u8]>` so every
-        // consumer can reclaim via `heap::take` with a matching layout.
         completion.complete(ReadFileResultType::Result(ReadFileRead {
-            buf: bun_core::heap::into_raw(buf.into_boxed_slice()),
+            buf: buf.into_boxed_slice(),
         }))
     }
 
@@ -1039,13 +1013,13 @@ impl<'a> FileCloser for ReadFileUV<'a> {
 #[cfg(windows)]
 impl<'a> ReadFileUV<'a> {
     /// Typed entry: `C` supplies run/cancel for the erased completion.
-    pub(crate) fn start<C: ReadFileCompletion>(
+    pub(crate) fn start<C: ReadFileCompletion + 'static>(
         event_loop: *mut EventLoop,
         context: &bun_jsc::ScriptExecutionContext,
         store: RefPtr<Store>,
         off: SizeType,
         max_len: SizeType,
-        handler: *mut C,
+        handler: Box<C>,
     ) {
         Self::start_with_ctx(
             event_loop,
@@ -1132,9 +1106,7 @@ impl<'a> ReadFileUV<'a> {
             // via `heap::take` — handing out `(ptr, len)` from a ByteStore
             // whose `cap > len` would be a layout-mismatched dealloc.
             let boxed = core::mem::take(&mut this_box.byte_store).into_boxed_slice();
-            ReadFileResultType::Result(ReadFileRead {
-                buf: bun_core::heap::into_raw(boxed),
-            })
+            ReadFileResultType::Result(ReadFileRead { buf: boxed })
         };
 
         // The completion must run BEFORE the cleanup below (store deref / req.deinit /

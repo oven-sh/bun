@@ -356,7 +356,7 @@ impl FetchTasklet {
 
     // ───── raw-ptr field accessors (centralised unsafe) ───────────────────
     //
-    // `signal` / `sink` / `native_response` are intrusive-refcounted heap
+    // `signal` / `sink` are intrusive-refcounted heap
     // objects that this tasklet holds one strong ref on while the field is
     // `Some`. They are never reborrowed through any other path on the JS
     // thread, so a single `&` / `&mut` derived here is the sole live borrow.
@@ -601,37 +601,6 @@ impl FetchTasklet {
         drop(ticket);
     }
 
-    fn get_current_response(&self) -> Option<*mut Response> {
-        // we need a body to resolve the promise when buffering
-        if let Some(response) = self.native_response.get().as_ref() {
-            return Some(response.as_ptr());
-        }
-
-        // if we did not have a direct reference we check if the Weak ref is still alive
-        if let Some(response_js) = self.response.get() {
-            if let Some(response) = response_js.as_::<Response>() {
-                return Some(response);
-            }
-        }
-
-        None
-    }
-
-    /// `&mut`-yielding form of [`get_current_response`].
-    ///
-    /// INVARIANT: when `Some`, the pointer is either `native_response` (one
-    /// strong native ref held by the tasklet until `unref` in cleanup) or the
-    /// `JSValue::as_::<Response>()` deref of a live JS handle pinned by
-    /// `self.response`. The `Response` is a separate JSC-cell allocation
-    /// disjoint from `FetchTasklet`, so the returned `&mut` does not overlap
-    /// any `&mut self` the caller may take afterwards (hence the unbounded
-    /// `'a`). JS-thread-only; no concurrent `&mut` exists.
-    #[inline]
-    fn current_response_mut<'a>(&self) -> Option<&'a mut Response> {
-        // SAFETY: see INVARIANT above.
-        self.get_current_response().map(|r| unsafe { &mut *r })
-    }
-
     fn start_request_stream(&mut self) -> JsResult<()> {
         self.is_waiting_request_stream_start = false;
         debug_assert!(matches!(
@@ -757,32 +726,31 @@ impl FetchTasklet {
     }
 
     fn on_body_received(&mut self) -> JsResult<()> {
+        // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
+        let mut buffer_reset = true;
+        // The reset must run on `?` failure paths too.
+        let result = self.deliver_body(&mut buffer_reset);
+        if buffer_reset {
+            let list = &mut self.scheduled_response_buffer.list;
+            if list.capacity() > http::DECODED_BODY_RETAIN_CAP {
+                *list = Vec::new();
+            } else {
+                list.clear();
+            }
+        }
+        result
+    }
+
+    /// Clears `buffer_reset` where `scheduled_response_buffer` must keep its bytes.
+    fn deliver_body(&mut self, buffer_reset: &mut bool) -> JsResult<()> {
         let success = self.result.is_success();
         let global_this = self.global_this;
-        // reset the buffer if we are streaming or if we are not waiting for bufferig anymore
-        let buffer_reset = core::cell::Cell::new(true);
         bun_output::scoped_log!(
             FetchTasklet,
             "onBodyReceived success={} has_more={}",
             success,
             self.result.has_more
         );
-        // The reset must run on `?` failure paths too.
-        // Capture a raw ptr so the defer can reset on every exit (incl. `?`) without holding a
-        // long-lived &mut borrow of self.
-        let scheduled_buf: *mut MutableString = &raw mut self.scheduled_response_buffer;
-        scopeguard::defer! {
-            if buffer_reset.get() {
-                // SAFETY: `self` outlives this defer (it's a local in this fn) and no other
-                // borrow of scheduled_response_buffer is live at scope exit / `?` unwind.
-                let list = unsafe { &mut (*scheduled_buf).list };
-                if list.capacity() > http::DECODED_BODY_RETAIN_CAP {
-                    *list = Vec::new();
-                } else {
-                    list.clear();
-                }
-            }
-        }
 
         if !success {
             // `ValueError`
@@ -812,7 +780,7 @@ impl FetchTasklet {
                 js_err.ensure_still_alive();
             }
             // if we are buffering resolve the promise
-            if let Some(response) = self.current_response_mut() {
+            if let Some(response) = self.native_response.get().as_deref() {
                 // body value now owns the error
                 let err = scopeguard::ScopeGuard::into_inner(err);
                 let body = response.get_body_value();
@@ -834,7 +802,7 @@ impl FetchTasklet {
             if let Some(bytes) = self.response_stream.take() {
                 bun_output::scoped_log!(FetchTasklet, "onBodyReceived response_stream done");
                 bytes.size_hint.set(self.get_size_hint());
-                buffer_reset.set(false);
+                *buffer_reset = false;
                 let chunk = self.scheduled_response_buffer.list.as_slice();
                 bytes.on_data(Self::temporary_chunk(chunk, true));
                 return Ok(());
@@ -850,7 +818,7 @@ impl FetchTasklet {
             return Ok(());
         }
 
-        if let Some(response) = self.current_response_mut() {
+        if let Some(response) = self.native_response.get().as_deref() {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived Current Response");
             let size_hint = self.get_size_hint();
             response.set_size_hint(size_hint);
@@ -874,24 +842,21 @@ impl FetchTasklet {
                 }
             }
 
-            // raw ptr: `body` and `get_fetch_headers()` are disjoint fields but borrowck can't see through the accessors.
-            let body: *mut BodyValue = response.get_body_value();
+            let body = response.get_body_value();
             // `BodyAbortListener::on_abort` may have set `Error` while this
-            // callback was queued; checked before `buffer_reset.set(false)` so
-            // the defer still drops the bytes.
-            // SAFETY: just obtained from live `response`.
-            if !matches!(unsafe { &*body }, BodyValue::Locked(_)) {
+            // callback was queued; checked before `buffer_reset` is cleared so
+            // the caller still drops the bytes.
+            if !matches!(body, BodyValue::Locked(_)) {
                 return Ok(());
             }
             // we will reach here when not streaming, this is also the only case we dont wanna to reset the buffer
-            buffer_reset.set(false);
+            *buffer_reset = false;
             if !self.result.has_more {
                 let scheduled_response_buffer =
                     core::mem::take(&mut self.scheduled_response_buffer.list);
                 // done resolve body
                 let old = core::mem::replace(
-                    // SAFETY: just obtained from live `response`; uniquely accessed here.
-                    unsafe { &mut *body },
+                    body,
                     BodyValue::InternalBlob(InternalBlob {
                         bytes: scheduled_response_buffer,
                         was_string: false,
@@ -900,8 +865,7 @@ impl FetchTasklet {
                 bun_output::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived body_value length={}",
-                    // SAFETY: see above.
-                    match unsafe { &*body } {
+                    match body {
                         BodyValue::InternalBlob(b) => b.bytes.len(),
                         _ => 0,
                     }
@@ -917,9 +881,6 @@ impl FetchTasklet {
                     // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
                     // response.body) and outlives this block.
                     let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
-                    // SAFETY: `body` points into `response.body`, disjoint from `headers`
-                    // (response.init); both live for this block.
-                    let body = unsafe { &mut *body };
                     let context = self.global_this.bun_vm().context_of(self.context);
                     BodyValue::resolve(
                         &mut old,

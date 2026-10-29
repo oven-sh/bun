@@ -3288,14 +3288,11 @@ impl<'a> LinkerContext<'a> {
     pub(crate) fn scan_css_imports(
         file_source_index: u32,
         file_import_records: &[ImportRecord],
-        css_asts: *const [crate::bundled_ast::CssCol],
+        css_asts: &[crate::bundled_ast::CssCol],
         sources: &[Source],
         loaders: &[Loader],
         log: &mut Log,
     ) -> ScanCssImportsResult {
-        // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
-        // the duration of `scan_imports_and_exports`; we only test `is_none()`.
-        let css_asts = unsafe { &*css_asts };
         for record in file_import_records.iter() {
             if record.source_index.is_valid() {
                 // Other file is not CSS

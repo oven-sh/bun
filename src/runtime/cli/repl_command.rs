@@ -245,10 +245,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
                 // (matches bun -e / Node.js semantics).
                 vm.on_before_exit();
             }
-            // An unhandled rejection was printed: that is a failed run, as it is for `bun -e`.
-            if vm.unhandled_error_counter > 0 {
-                vm.exit_handler.exit_code = 1;
-            }
+            report_unhandled_rejections(vm);
         } else {
             // Interactive: run the REPL loop
             if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
@@ -279,6 +276,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
                     // An `uncaughtException` listener took it: what it left behind still runs.
                     drain_event_loop(vm);
                     vm.on_before_exit();
+                    report_unhandled_rejections(vm);
                     return false;
                 }
             }
@@ -315,6 +313,14 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         }
 
         Ok(())
+    }
+}
+
+/// Reports the rejections still queued. One that nothing handled fails the run, as for `bun -e`.
+fn report_unhandled_rejections(vm: &mut VirtualMachine) {
+    let _ = vm.global().handle_rejected_promises();
+    if vm.unhandled_error_counter > 0 {
+        vm.exit_handler.exit_code = 1;
     }
 }
 

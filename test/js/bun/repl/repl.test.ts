@@ -1188,6 +1188,22 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(1);
     });
 
+    const beforeExitRejects = `process.on("beforeExit", async () => { throw new Error("flush failed"); });`;
+    const exits: [string, string][] = [
+      ["the script", beforeExitRejects],
+      [
+        "a preload whose error a listener took",
+        `${beforeExitRejects} process.on("uncaughtException", () => {}); ${throws}`,
+      ],
+    ];
+    test.each(exits)("a rejection from a beforeExit listener fails the run, after %s", async (_, preload) => {
+      using dir = tempDir("repl-preload", { "pre.ts": preload });
+      const { stdout, stderr, exitCode } = await replAndRun(String(dir), ["--preload", "./pre.ts", "-e", "1"]);
+      expect(stdout).toBe("");
+      expect(stderr).toMatch(/^error: flush failed\n +at /m);
+      expect(exitCode).toBe(1);
+    });
+
     test("an uncaughtException listener takes a preload's error, and the REPL does not start", async () => {
       using dir = tempDir("repl-preload", {
         "throws.ts": `

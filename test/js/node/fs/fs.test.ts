@@ -7635,6 +7635,135 @@ describe("fs.close on stdio descriptors", () => {
     expect(stdout.trim()).toBe("EBADF");
     expect(exitCode).toBe(0);
   });
+
+  // The kernel gives a new descriptor the lowest free number, which is N once fd N is closed. A
+  // descriptor that bun keeps for a while must not sit there: writes to stdout or stderr would reach it.
+  it.concurrent.skipIf(isWindows)("a write to the closed fd 1 does not reach the next connection", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          let logWrite;
+          const server = Bun.listen({
+            hostname: "127.0.0.1",
+            port: 0,
+            socket: {
+              open(socket) {
+                try {
+                  fs.writeSync(1, "a log line.");
+                  logWrite = "written";
+                } catch (e) {
+                  logWrite = e.code;
+                }
+                socket.end("the response");
+              },
+              data() {},
+            },
+          });
+          let received = "";
+          const { promise: closed, resolve } = Promise.withResolvers();
+          // The socket of the client exists before fd 1 is closed. The next descriptor is the accepted one.
+          const connecting = Bun.connect({
+            hostname: "127.0.0.1",
+            port: server.port,
+            socket: {
+              data(socket, chunk) {
+                received += chunk.toString();
+              },
+              close: resolve,
+            },
+          });
+          fs.closeSync(1);
+          await connecting;
+          await closed;
+          server.stop(true);
+          fs.writeSync(2, JSON.stringify({ received, logWrite }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: JSON.stringify({ received: "the response", logWrite: "EBADF" }),
+      exitCode: 0,
+    });
+  });
+
+  it.concurrent.skipIf(isWindows)(
+    "a socket or a duplicate does not take the number of a closed fd 0, 1 or 2",
+    async () => {
+      using dir = tempDir("fs-closed-stdio-long-lived", {});
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(import.meta.dir, "fs-closed-stdio-long-lived-fixture.js"), String(dir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const written = join(String(dir), "result.json");
+      const result = existsSync(written) ? readFileSync(written, "utf8") : "";
+      // Without a result that is only JSON the fixture did not reach its end: show what it wrote and printed.
+      expect(
+        exitCode === 0 && result ? { ...JSON.parse(result), exitCode } : { result, stdout, stderr, exitCode },
+      ).toEqual({
+        "fd 0": {},
+        "fd 1": {},
+        "fd 2": {},
+        exitCode: 0,
+      });
+    },
+  );
+
+  // These descriptors are made once for the process, so each case has its own process.
+  describe.each([0, 1, 2])("with fd %d closed", slot => {
+    it.concurrent.skipIf(isWindows).each([
+      [
+        "the event loop of the first Bun.spawnSync",
+        `Bun.spawnSync({ cmd: ["true"], stdio: ["ignore", "ignore", "ignore"] });`,
+      ],
+      ["the watcher of the first fs.watch", `globalThis.watcher = fs.watch(".", () => {});`],
+    ])("%s does not take that number", async (_, create) => {
+      using dir = tempDir("fs-closed-stdio-once", {});
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const fs = require("node:fs");
+            const out = fs.openSync("result.txt", "w");
+            fs.closeSync(${slot});
+            ${create}
+            let state;
+            try {
+              fs.fstatSync(${slot});
+              state = "open";
+            } catch (e) {
+              state = e.code;
+            }
+            fs.writeSync(out, state);
+            process.exit(0);
+          `,
+        ],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const written = join(String(dir), "result.txt");
+      expect({ state: existsSync(written) ? readFileSync(written, "utf8") : "", stdout, stderr, exitCode }).toEqual({
+        state: "EBADF",
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
 });
 
 // A throw inside a node-style async callback must surface as an

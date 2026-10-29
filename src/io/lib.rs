@@ -874,7 +874,7 @@ impl IoRequestLoop {
                 waker_fd.close();
                 return Err(err);
             }
-            loop_.epoll_fd = Fd::from_native(raw);
+            loop_.epoll_fd = sys::move_above_stdio(Fd::from_native(raw));
 
             {
                 // SAFETY: all-zero is a valid epoll_event (POD).
@@ -910,7 +910,7 @@ impl IoRequestLoop {
                 waker_fd.close();
                 return Err(err);
             }
-            loop_.kqueue_fd = Fd::from_native(kq);
+            loop_.kqueue_fd = sys::move_above_stdio(Fd::from_native(kq));
             // Register the eventfd waker. udata = 0 → Pollable.tag() == .empty,
             // which onUpdateKQueue treats as a no-op (the wakeup just unblocks
             // the kevent() wait so the pending queue gets drained). EV_CLEAR
@@ -2170,7 +2170,9 @@ pub mod waker {
                         .unwrap_or(crate::Error::Unexpected),
                 );
             }
-            Self::init_with_file_descriptor(kq)
+            Self::init_with_file_descriptor(
+                bun_sys::move_above_stdio(bun_sys::Fd::from_native(kq)).native(),
+            )
         }
 
         pub(crate) fn init_with_file_descriptor(kq: i32) -> crate::error::Result<Self> {

@@ -695,6 +695,20 @@ void bsd_socket_flush(LIBUS_SOCKET_DESCRIPTOR fd) {
 #endif
 }
 
+LIBUS_SOCKET_DESCRIPTOR bsd_move_above_stdio(LIBUS_SOCKET_DESCRIPTOR fd) {
+#ifndef _WIN32
+    if (UNLIKELY((unsigned int) fd <= 2)) {
+        const int flags = fcntl(fd, F_GETFD);
+        const int moved = fcntl(fd, flags != -1 && (flags & FD_CLOEXEC) ? F_DUPFD_CLOEXEC : F_DUPFD, 3);
+        if (moved != -1) {
+            close(fd);
+            return moved;
+        }
+    }
+#endif
+    return fd;
+}
+
 LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, int *err) {
     bsd_winsock_ensure();
     if (err != NULL) {
@@ -715,7 +729,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
-    return apple_no_sigpipe(created_fd);
+    return apple_no_sigpipe(bsd_move_above_stdio(created_fd));
 #elif defined(_WIN32)
     /* Plain socket() returns an inheritable handle, so any child spawned with
      * bInheritHandles=TRUE (e.g. node:child_process stdio) would duplicate it
@@ -743,7 +757,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_socket(int domain, int type, int protocol, in
         return LIBUS_SOCKET_ERROR;
     }
 
-    return bsd_set_nonblocking(apple_no_sigpipe(created_fd));
+    return bsd_set_nonblocking(apple_no_sigpipe(bsd_move_above_stdio(created_fd)));
 #endif
 }
 
@@ -873,6 +887,7 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
     SetHandleInformation((HANDLE) accepted_fd, HANDLE_FLAG_INHERIT, 0);
 #endif
 
+    accepted_fd = bsd_move_above_stdio(accepted_fd);
     internal_finalize_bsd_addr(addr);
 
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)

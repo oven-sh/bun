@@ -229,7 +229,7 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     loop->bun_polls = 0;
 
 #ifdef LIBUS_USE_EPOLL
-    loop->fd = epoll_create1(EPOLL_CLOEXEC);
+    loop->fd = bsd_move_above_stdio(epoll_create1(EPOLL_CLOEXEC));
 
     if (has_epoll_pwait2 == -1) {
         if (Bun__isEpollPwait2SupportedOnLinuxKernel() == 0) {
@@ -238,7 +238,7 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
     }
 
 #else
-    loop->fd = kqueue();
+    loop->fd = bsd_move_above_stdio(kqueue());
 #endif
     /* EMFILE/ENFILE: the caller decides whether this is fatal. */
     if (loop->fd == -1) {
@@ -811,7 +811,7 @@ struct us_internal_async *us_internal_create_async(struct us_loop_t *loop, int f
     struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_internal_callback_t) + ext_size);
     memset(p, 0, sizeof(struct us_internal_callback_t) + ext_size);
 
-    int efd = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
+    int efd = bsd_move_above_stdio(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC));
     if (efd == -1) {
         /* EMFILE/ENFILE: us_create_loop unwinds and returns NULL. */
         if (!fallthrough) {

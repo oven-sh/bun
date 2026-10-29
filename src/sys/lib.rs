@@ -2606,17 +2606,21 @@ mod posix_impl {
         buf[n] = 0;
         Ok(n)
     }
-    /// `fcntl(F_DUPFD_CLOEXEC, 0)` so the dup'd fd doesn't leak
-    /// to children. NOT `dup(2)` (which lacks CLOEXEC).
+    /// `fcntl(F_DUPFD_CLOEXEC, 3)` so the dup'd fd doesn't leak
+    /// to children and does not take a closed fd 0, 1 or 2. NOT `dup(2)` (which lacks CLOEXEC).
     pub fn dup(fd: Fd) -> Maybe<Fd> {
-        dup_at_least(fd, 0)
+        match dup_at_least(fd, 3) {
+            // No number above stdio is free (EINVAL: the limit itself is 3 or lower).
+            Err(err) if matches!(err.get_errno(), E::EMFILE | E::EINVAL) => dup_at_least(fd, 0),
+            result => result,
+        }
     }
     /// `fcntl(F_DUPFD_CLOEXEC, min)`: the new descriptor is the lowest free one >= `min`.
     pub fn dup_at_least(fd: Fd, min: i32) -> Maybe<Fd> {
         fcntl(fd, libc::F_DUPFD_CLOEXEC, min as isize).map(|rc| Fd::from_native(rc as i32))
     }
     /// A descriptor created while fd 0, 1 or 2 is closed gets that number, where [`FdExt::close`] skips it and a spawned child inherits it as stdio. Returns its duplicate at 3 or higher (same `FD_CLOEXEC` state) with `fd` closed, or `fd` itself when it is above stdio already or no higher number is free.
-    pub(crate) fn move_above_stdio(fd: Fd) -> Fd {
+    pub fn move_above_stdio(fd: Fd) -> Fd {
         if fd.stdio_tag().is_none() {
             return fd;
         }
@@ -5629,7 +5633,11 @@ pub mod linux {
 
     #[inline]
     pub fn inotify_init1(flags: c_int) -> c_int {
-        crate::safe_libc::inotify_init1(flags)
+        let fd = crate::safe_libc::inotify_init1(flags);
+        if fd < 0 {
+            return fd;
+        }
+        crate::move_above_stdio(crate::Fd::from_native(fd)).native()
     }
     #[inline]
     pub unsafe fn inotify_add_watch(fd: c_int, path: *const c_char, mask: u32) -> c_int {
@@ -7577,7 +7585,7 @@ pub fn kqueue() -> Maybe<Fd> {
     if rc < 0 {
         return Err(err_with(Tag::kqueue));
     }
-    Ok(Fd::from_native(rc))
+    Ok(move_above_stdio(Fd::from_native(rc)))
 }
 
 /// `kevent()` — slice-wrapped Maybe form. Retries on EINTR.

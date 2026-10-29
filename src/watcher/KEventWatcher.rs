@@ -13,11 +13,9 @@ const CHANGELIST_COUNT: usize = 128;
 
 impl KEventWatcher {
     pub(crate) fn new(_root: &[u8]) -> crate::Result<Self> {
-        let fd = bun_sys::kqueue()?;
-        if fd.native() == 0 {
-            return Err(crate::Error::KQueueError);
-        }
-        Ok(Self { fd })
+        Ok(Self {
+            fd: bun_sys::kqueue()?,
+        })
     }
 
     pub(crate) fn stop(&mut self) {

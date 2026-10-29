@@ -169,6 +169,8 @@ char *bsd_udp_packet_buffer_peer(struct udp_recvbuf *msgvec, int index);
 int bsd_udp_packet_buffer_truncated(struct udp_recvbuf *msgvec, int index);
 
 LIBUS_SOCKET_DESCRIPTOR apple_no_sigpipe(LIBUS_SOCKET_DESCRIPTOR fd);
+/* A descriptor created while fd 0, 1 or 2 is closed gets that number. Returns its duplicate at 3 or higher (same FD_CLOEXEC state) with `fd` closed, or `fd` when it is above stdio already or no higher number is free. */
+LIBUS_SOCKET_DESCRIPTOR bsd_move_above_stdio(LIBUS_SOCKET_DESCRIPTOR fd);
 LIBUS_SOCKET_DESCRIPTOR bsd_set_nonblocking(LIBUS_SOCKET_DESCRIPTOR fd);
 void bsd_socket_nodelay(LIBUS_SOCKET_DESCRIPTOR fd, int enabled);
 int bsd_set_defer_accept(LIBUS_SOCKET_DESCRIPTOR listenFd);

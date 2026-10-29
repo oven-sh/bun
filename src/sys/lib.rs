@@ -1556,7 +1556,7 @@ mod safe_libc {
         pub(crate) safe fn fsync(fd: c_int) -> c_int;
         pub(crate) safe fn fchdir(fd: c_int) -> c_int;
         pub(crate) safe fn umask(mode: libc::mode_t) -> libc::mode_t;
-        pub(crate) safe fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int;
+        pub safe fn fchmod(fd: c_int, mode: libc::mode_t) -> c_int;
         pub(crate) safe fn fchown(fd: c_int, uid: libc::uid_t, gid: libc::gid_t) -> c_int;
         pub(crate) safe fn ftruncate(fd: c_int, len: libc::off_t) -> c_int;
         pub(crate) safe fn lseek(fd: c_int, offset: libc::off_t, whence: c_int) -> libc::off_t;
@@ -5093,12 +5093,12 @@ macro_rules! syslog {
 
 // ── `bun.c` — raw libc surface (no `Maybe` wrapping). ──
 pub mod c {
+    #[cfg(unix)]
+    pub use super::safe_libc::fchmod;
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     use core::ffi::c_int;
     #[cfg(unix)]
     use core::ffi::{c_char, c_void};
-    #[cfg(unix)]
-    pub use libc::fchmod;
     // `getuid`/`getgid` take no args and read kernel
     // process state — no preconditions, never fail. Declared locally as
     // `safe fn` (instead of re-exporting the `libc` crate's raw decls) so

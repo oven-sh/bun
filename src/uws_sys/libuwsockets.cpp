@@ -1482,6 +1482,17 @@ __attribute__((callback (corker, ctx)))
     }
   }
 
+  static_assert(sizeof(uWS::HttpResponseData<false>::state) == sizeof(uint32_t)
+      && uWS::HttpResponseData<false>::HTTP_STATUS_CALLED == 1
+      && uWS::HttpResponseData<false>::HTTP_WRITE_CALLED == 2
+      && uWS::HttpResponseData<false>::HTTP_END_CALLED == 4
+      && uWS::HttpResponseData<false>::HTTP_RESPONSE_PENDING == 8
+      && uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE == 16
+      && uWS::HttpResponseData<false>::HTTP_REQUEST_BODY_TOO_LARGE == 128
+      && uWS::HttpResponseData<false>::HTTP_NODE_RECEIVED_FIN == 1 << 15
+      && uWS::HttpResponseData<false>::HTTP_NODE_CLOSE_AFTER_MESSAGE == 1 << 20,
+      "State in src/uws_sys/Response.rs repeats these values and reads the word as a u32");
+
   void uws_res_flush_headers(int ssl, uws_res_r res, bool flushImmediately) {
     if (ssl) {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;

@@ -97,6 +97,16 @@ void uws_h3_listen_socket_close(us_quic_udp_t* ls) { us_quic_listen_socket_close
 
 int uws_h3_res_state(uws_h3_res_t* res) { return ((Http3Response*)res)->getHttpResponseData()->state; }
 
+static_assert(+Http3ResponseData::HTTP_STATUS_CALLED == +uWS::HttpResponseData<false>::HTTP_STATUS_CALLED
+        && +Http3ResponseData::HTTP_WRITE_CALLED == +uWS::HttpResponseData<false>::HTTP_WRITE_CALLED
+        && +Http3ResponseData::HTTP_END_CALLED == +uWS::HttpResponseData<false>::HTTP_END_CALLED
+        && +Http3ResponseData::HTTP_RESPONSE_PENDING == +uWS::HttpResponseData<false>::HTTP_RESPONSE_PENDING
+        && +Http3ResponseData::HTTP_CONNECTION_CLOSE == +uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE
+        && +Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER == +uWS::HttpResponseData<false>::HTTP_WROTE_CONTENT_LENGTH_HEADER
+        && +Http3ResponseData::HTTP_WROTE_DATE_HEADER == +uWS::HttpResponseData<false>::HTTP_WROTE_DATE_HEADER
+        && +Http3ResponseData::HTTP_REQUEST_BODY_TOO_LARGE == +uWS::HttpResponseData<false>::HTTP_REQUEST_BODY_TOO_LARGE,
+    "Rust reads this word and the word of HttpResponseData as one State (src/uws_sys/Response.rs)");
+
 void uws_h3_res_end(uws_h3_res_t* res, const char* data, size_t length, bool close_connection)
 {
     Http3Response* r = (Http3Response*)res;

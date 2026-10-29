@@ -1549,7 +1549,7 @@ mod rule_parsers {
                         let position = input.position();
                         let keyframes_name =
                             input.try_parse(css_rules::keyframes::KeyframesName::parse)?;
-                        if input.flags.css_modules()
+                        if input.flags.local_scope()
                             && let KeyframesName::Ident(ident) = &keyframes_name
                         {
                             // The symbol exports the name. The printer hashes it as the linker does.
@@ -1624,6 +1624,7 @@ mod rule_parsers {
                     b"scope" => {
                         let mut selector_parser = selector_parser::SelectorParser {
                             is_nesting_allowed: true,
+                            block_scope: None,
                             options: this.options,
                         };
                         let scope_start = if input.try_parse(|p| p.expect_parenthesis_block()).is_ok() {
@@ -1657,6 +1658,7 @@ mod rule_parsers {
                         this.options.warn(&input.new_custom_error(ParserError::deprecated_nest_rule));
                         let mut selector_parser = selector_parser::SelectorParser {
                             is_nesting_allowed: true,
+                            block_scope: None,
                             options: this.options,
                         };
                         let selectors = SelectorList::parse(
@@ -1799,6 +1801,7 @@ mod rule_parsers {
                         .v
                         .push(CssRule::Keyframes(css_rules::keyframes::KeyframesRule {
                             name,
+                            global: input.flags.global_scope(),
                             keyframes,
                             vendor_prefix: prefix,
                             loc,
@@ -1979,12 +1982,16 @@ mod rule_parsers {
         type Prelude = SelectorList;
         type QualifiedRule = ();
 
+        #[inline]
         fn parse_prelude(this: &mut Self, input: &mut Parser) -> CssResult<SelectorList> {
+            // A prelude whose block never starts does not scope the block of a later rule.
+            input.flags.remove(ParserOpts::NEXT_BLOCK_SCOPE);
             let mut selector_parser = selector_parser::SelectorParser {
                 is_nesting_allowed: true,
+                block_scope: input.flags.css_modules().then(Default::default),
                 options: this.options,
             };
-            if this.is_in_style_rule || this.is_in_scope_rule {
+            let selectors = if this.is_in_style_rule || this.is_in_scope_rule {
                 SelectorList::parse_relative(
                     &mut selector_parser,
                     input,
@@ -1998,10 +2005,28 @@ mod rule_parsers {
                     selector_parser::ParseErrorRecovery::DiscardList,
                     selector_parser::NestingRequirement::None,
                 )
+            };
+            match selector_parser.block_scope {
+                Some(scope) if scope.selectors > 0 => scope.end_prelude(selectors?, input),
+                _ => selectors,
             }
         }
 
         fn parse_block(
+            this: &mut Self,
+            selectors: SelectorList,
+            start: &ParserState,
+            input: &mut Parser,
+        ) -> CssResult<()> {
+            if input.flags.intersects(ParserOpts::NEXT_BLOCK_SCOPE) {
+                return this.parse_scoped_block(selectors, start, input);
+            }
+            Self::parse_style_rule(this, selectors, start, input)
+        }
+    }
+
+    impl<'a, T: CustomAtRuleParser> NestedRuleParser<'a, T> {
+        fn parse_style_rule(
             this: &mut Self,
             selectors: SelectorList,
             start: &ParserState,
@@ -2070,6 +2095,53 @@ mod rule_parsers {
             }));
 
             Ok(())
+        }
+
+        /// The block of a style rule whose selectors ended with a bare `:global` / `:local`.
+        #[cold]
+        fn parse_scoped_block(
+            &mut self,
+            selectors: SelectorList,
+            start: &ParserState,
+            input: &mut Parser,
+        ) -> CssResult<()> {
+            let global = input.flags.contains(ParserOpts::NEXT_BLOCK_GLOBAL);
+            input.flags.remove(ParserOpts::NEXT_BLOCK_SCOPE);
+            input.parse_with_global_scope(global, |input| {
+                if !selectors.v.is_empty() {
+                    return Self::parse_style_rule(self, selectors, start, input);
+                }
+                // A rule that is only the switch has no selector: its items go into the block that holds it.
+                let declarations_allowed = self.allow_declarations;
+                let mut iter = RuleBodyParser::new(input, self);
+                loop {
+                    let item = iter.input.state();
+                    let Some(result) = iter.next() else {
+                        return Ok(());
+                    };
+                    let Err(e) = result else {
+                        continue;
+                    };
+                    // `:global { color: red }` outside of a style rule: a declaration with no selector.
+                    let input = &mut *iter.input;
+                    input.reset(&item);
+                    if !declarations_allowed
+                        && input.expect_ident().is_ok()
+                        && input.expect_colon().is_ok()
+                    {
+                        let _ = input.parse_until_before(
+                            Delimiters::SEMICOLON | Delimiters::CURLY_BRACKET,
+                            Parser::parse_empty,
+                        );
+                        if input.next_byte() != Some(b'{') {
+                            return Err(start.source_location().new_custom_error(
+                                selector_parser::SelectorParseErrorKind::EmptySelector,
+                            ));
+                        }
+                    }
+                    return Err(e);
+                }
+            })
         }
     }
 
@@ -3041,12 +3113,17 @@ bitflags::bitflags! {
         const CSS_MODULES = 0b1;
         /// Makes `TokenList::parse` keep `url()` as a raw token instead of creating an import record.
         const RAW_URL_TOKENS = 0b10;
-        /// Inside `:global(...)` of a CSS module.
+        /// The names parsed now are global to the CSS module.
         const GLOBAL_SCOPE = 0b100;
         /// For `Bun.color`: clips a relative color or `color-mix()` that a style sheet keeps as written.
         const CLIP_COLORS = 0b1000;
         /// Lengths and percentages have the range `[0,∞]`: a math function below zero means zero, a literal is invalid.
         const NON_NEGATIVE = 0b10000;
+        /// The prelude just parsed ended with a bare `:global` of a CSS module: `.a :global {`.
+        const NEXT_BLOCK_GLOBAL = 0b100000;
+        /// The same for a bare `:local`.
+        const NEXT_BLOCK_LOCAL = 0b1000000;
+        const NEXT_BLOCK_SCOPE = Self::NEXT_BLOCK_GLOBAL.bits() | Self::NEXT_BLOCK_LOCAL.bits();
     }
 }
 impl ParserOpts {
@@ -3059,6 +3136,12 @@ impl ParserOpts {
     #[inline]
     pub(crate) fn local_scope(self) -> bool {
         self.css_modules() && !self.contains(Self::GLOBAL_SCOPE)
+    }
+
+    /// Whether a keyframes name or a view transition class parsed now is global to the CSS module.
+    #[inline]
+    pub(crate) fn global_scope(self) -> bool {
+        self.contains(Self::GLOBAL_SCOPE)
     }
 
     #[inline]
@@ -3327,7 +3410,7 @@ impl<'a> Parser<'a> {
         result
     }
 
-    /// Parses the argument of `:global(...)` or `:local(...)`.
+    /// Runs `func` in the global or the local scope of a CSS module, then restores the scope.
     pub(crate) fn parse_with_global_scope<R>(
         &mut self,
         global: bool,

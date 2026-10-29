@@ -959,3 +959,61 @@ When composing classes from separate files, make sure they do not contain the sa
 The CSS module spec says that composing classes from separate files with conflicting properties is undefined behavior: the output may differ and be unreliable.
 
 </Warning>
+
+### Global names
+
+A CSS module scopes every class name, id and `@keyframes` name to its file. To keep a name as written, wrap the selector in `:global(...)`. Inside it, `:local(...)` scopes a selector again.
+
+```css title="styles.module.css" icon="file-code"
+/* `.button` is scoped, `.is-active` is not */
+.button:global(.is-active) {
+  color: red;
+}
+```
+
+A bare `:global` or `:local` with white space on both sides sets the scope of the names after it, up to the end of the selector:
+
+```css title="styles.module.css" icon="file-code"
+/* `.card` is scoped, `.title` and `.icon` are not */
+.card :global .title .icon {
+  color: red;
+}
+```
+
+A `:global` or `:local` that ends a selector sets the scope of the block of that rule. In a global block, the class names and ids of nested rules are not scoped, and neither are the `@keyframes` names in `animation` and `animation-name`:
+
+```css title="styles.module.css" icon="file-code"
+.spinner:global {
+  /* `spin` is a @keyframes rule of another stylesheet */
+  animation: spin 1s linear infinite;
+}
+
+.menu :global {
+  /* `.menu` is scoped, `.ant-menu-item` is not */
+  .ant-menu-item {
+    padding: 0;
+  }
+}
+```
+
+A rule whose selector is only `:global` or `:local` is not a rule of its own. Its block belongs to the place where it is written:
+
+```css title="styles.module.css" icon="file-code"
+:global {
+  /* The same as `.ant-btn { ... }` in a plain stylesheet */
+  .ant-btn {
+    border-radius: 4px;
+  }
+
+  /* `fade` is not scoped. Rules inside a global block can use it. */
+  @keyframes fade {
+    to {
+      opacity: 0;
+    }
+  }
+}
+```
+
+In a list of selectors, every selector must end with the same `:global` or `:local`.
+
+A global block also keeps the class names of `view-transition-class` as written. It does not change the names in `composes`, `view-transition-name` and `view-transition-group`, or the name in `::view-transition-old(name)`. To compose a global class, write `composes: name from global`.

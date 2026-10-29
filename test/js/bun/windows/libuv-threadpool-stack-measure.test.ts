@@ -84,6 +84,25 @@ describe.skipIf(!isWindows)("libuv pool measurements (temporary)", () => {
     }
   }
 
+  // The largest pool libuv allows. Not started when a thread still commits its whole 8 MB: that is 8.7 GB.
+  for (const header of ["as built", "one page"] as const) {
+    test(`pool start: header ${header}, UV_THREADPOOL_SIZE 1024`, async () => {
+      const exe = header === "one page" ? copyWithOnePageStackCommit() : bunExe();
+      const probe = await measure(exe, "fs.statfs-callback", 16);
+      const { threads, commit } = (probe.result as any).atReturn;
+      if (commit / threads > 4 * 1024 * 1024) {
+        console.log(
+          "MEASURE pool-1024",
+          JSON.stringify({ header, skipped: "a thread commits its whole stack", probe }),
+        );
+        return;
+      }
+      const measured = await measure(exe, "fs.statfs-callback", 1024);
+      console.log("MEASURE pool-1024", JSON.stringify({ header, ...measured }));
+      expect(measured.exitCode).toBe(0);
+    }, 120_000);
+  }
+
   // Which calls start the pool. With 24 threads in it, a call that starts it adds at least 24 threads.
   for (const name of [
     "nothing",

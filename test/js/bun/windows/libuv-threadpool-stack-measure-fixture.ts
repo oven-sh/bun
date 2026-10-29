@@ -100,9 +100,14 @@ function added() {
   return { threads, commit, reserve };
 }
 
+const startedAt = performance.now();
 const pending = operation();
+const msToReturn = performance.now() - startedAt;
 const atReturn = added();
 await pending;
+const msToEnd = performance.now() - startedAt;
 const atEnd = added();
 const { commitLimit, availCommit, totalPhys, availPhys } = memoryStatus();
-console.log(JSON.stringify({ name, atReturn, atEnd, commitLimit, availCommit, totalPhys, availPhys }));
+console.log(
+  JSON.stringify({ name, atReturn, atEnd, msToReturn, msToEnd, commitLimit, availCommit, totalPhys, availPhys }),
+);

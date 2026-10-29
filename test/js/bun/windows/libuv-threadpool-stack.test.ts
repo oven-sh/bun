@@ -34,6 +34,8 @@ test.skipIf(!isWindows)("a libuv pool thread reserves its stack and commits it a
           return count;
         }
 
+        // Once before the baseline, so that a thread the first count itself starts is not taken for one of the pool.
+        threadCount();
         const threadsBefore = threadCount();
         // Bun.unsafe.memoryFootprint() is the process's commit charge on Windows (PrivateUsage).
         const commitBefore = Bun.unsafe.memoryFootprint();

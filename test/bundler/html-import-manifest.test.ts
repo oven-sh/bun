@@ -1014,29 +1014,30 @@ console.log("About manifest:", aboutHtml);
     });
 
     // With `[hash1]` a hash prints one character, and more when two chunks
-    // would print the same one. The page reaches none of the 128 chunks that
-    // the second build adds, so they change the names of its 32 lazy chunks
-    // only through the widths of their hashes.
-    test("when other chunks make the hashes of listed chunks wider", async () => {
-      const lazy = Array.from({ length: 32 }, (_, i) => `lazy${i}.js`);
-      const others = Array.from({ length: 128 }, (_, i) => `x${i}.js`);
+    // would print the same one. The page reaches none of the 32 chunks of
+    // `other.js`. Their new contents give them new hashes, so the 64 lazy
+    // chunks of the page keep their hashes and print them at other widths.
+    test("when only the widths of the listed hashes change", async () => {
+      const lazy = Array.from({ length: 64 }, (_, i) => `lazy${i}.js`);
+      const others = Array.from({ length: 32 }, (_, i) => `x${i}.js`);
+      const logs = (names: string[], tag: string) =>
+        Object.fromEntries(names.map(name => [name, `console.log("${tag}", "${name}");`]));
       using dir = tempDir("html-import-hash-width", {
         "server.js": files["server.js"],
         "index.html": `<!doctype html><html><body><script type="module" src="./client.js"></script></body></html>`,
-        "client.js": lazy.map(file => `import("./${file}");`).join(""),
-        "other.js": `console.log("other");`,
-        ...Object.fromEntries([...lazy, ...others].map(file => [file, `console.log("${file}");`])),
+        "client.js": lazy.map(name => `import("./${name}");`).join(""),
+        "other.js": others.map(name => `import("./${name}");`).join(""),
+        ...logs(lazy, "lazy"),
+        ...logs(others, "before"),
       });
       const options = { entrypoints: ["server.js", "other.js"], splitting: true, chunkNaming: "c[hash1].[ext]" };
-      const narrow = await build(String(dir), options);
-      write(String(dir), { "other.js": others.map(file => `import("./${file}");`).join("") });
-      const wide = await build(String(dir), options);
+      const before = await build(String(dir), options);
+      write(String(dir), logs(others, "after"));
+      const after = await build(String(dir), options);
 
-      const manifest = (outputs: Output[]) => parseManifests(printers(outputs)[0].text)[0];
-      const inputs = (outputs: Output[]) => manifest(outputs).files.map(file => [file.loader, file.input]);
-      expect(inputs(wide)).toEqual(inputs(narrow));
-      expect(listedPaths(manifest(wide))).not.toEqual(listedPaths(manifest(narrow)));
-      expect(changes(narrow, wide)).toEqual({ "server.js": renamed });
+      const listed = (outputs: Output[]) => parseManifests(printers(outputs)[0].text).map(listedPaths);
+      expect(listed(after)).not.toEqual(listed(before));
+      expect(changes(before, after)).toEqual({ "server.js": renamed });
     });
 
     // Not by chunk index, which follows the scan order. Not by a native path

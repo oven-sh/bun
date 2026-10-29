@@ -4,6 +4,7 @@ import type {} from "fs";
 type DirentType = $Node.Dirent;
 type PathLike = $Node.PathLike;
 type StatsType = $Node.Stats;
+type AnyStats = $Node.Stats | $Node.BigIntStats;
 /** A callback of the program's, or one that `guardCallback` made of it. */
 type Callback<Results extends unknown[] = []> = (error: Error | null, ...results: Partial<Results>) => unknown;
 const types = require("node:util/types");
@@ -11,6 +12,7 @@ const {
   validateFunction,
   validateInteger,
   validateEncoding,
+  validateAbortSignal,
   getValidatedPath,
   throwIfNullBytesInFileName,
 } = require("internal/validators");
@@ -24,7 +26,7 @@ const fs = require("internal/fs/binding");
 
 const constants = $processBindingConstants.fs;
 
-const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
+const { guardCallback, kCustomPromisifyArgsSymbol, resistStopPropagation } = require("internal/shared");
 
 // Captured at load: a process.nextTick that user code replaces later (fake timers) must not hold back fs callbacks.
 const nextTick = process.nextTick;
@@ -57,6 +59,47 @@ function settleCallbackWithNull(promise: Promise<unknown>, callback: Callback) {
     () => nextTick(callback, null),
     err => nextTick(callback, err),
   );
+}
+
+// fs.stat, fs.lstat and fs.fstat with `options.signal`: node's checkAborted and bindSignalToReq. https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L380-L406
+function statWithSignal(
+  op: (callback: (error: Error | null, stats?: AnyStats) => unknown, target: any, options: any) => void,
+  callback: ((...args: any[]) => unknown) | undefined,
+  target: unknown,
+  targetKind: "path" | "fd",
+  options: unknown,
+  signal: AbortSignal,
+) {
+  // Node checks the signal before the callback in stat and lstat (getOptions), and after it in fstat.
+  if (targetKind === "path") validateAbortSignal(signal, "options.signal");
+  if (!$isCallable(callback)) throw $ERR_INVALID_ARG_TYPE("cb", "function", callback);
+  if (targetKind === "fd") validateAbortSignal(signal, "options.signal");
+
+  if (signal.aborted) {
+    // Node calls back before it returns, so a throw from the callback reaches the caller.
+    callback($makeAbortError(undefined, { cause: signal.reason }));
+    return;
+  }
+
+  const guarded = wrapFsCallback(callback);
+  let bound = false;
+  let aborted = false;
+  function onAbort() {
+    aborted = true;
+    // Since v26.9.0 node also cancels the request here (nodejs/node#63142). This stat runs and nothing reads its result.
+    guarded($makeAbortError(undefined, { cause: signal.reason }));
+  }
+  function onComplete(err: Error | null, stats?: AnyStats) {
+    if (!bound) return;
+    signal.removeEventListener("abort", onAbort);
+    if (aborted) return;
+    if (err) guarded(err);
+    else guarded(null, stats);
+  }
+  // Throws for a bad path or fd. Node adds the listener before that check, and leaves it on when fstat throws. https://github.com/nodejs/node/blob/v26.12.1/lib/fs.js#L1992-L1994
+  op.$call(fs, onComplete, target, options);
+  signal.addEventListener("abort", onAbort, resistStopPropagation({ __proto__: null }));
+  bound = true;
 }
 
 function openAsBlob(path, options?) {
@@ -163,6 +206,9 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       callback = options;
       options = undefined;
     }
+
+    const signal = $isObject(options) ? options.signal : undefined;
+    if (signal !== undefined) return statWithSignal(fs.fstatCb, callback, fd, "fd", options, signal);
 
     callback = wrapFsCallback(callback);
     fs.fstatCb(callback, fd, options);
@@ -395,6 +441,9 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       options = undefined;
     }
 
+    const signal = $isObject(options) ? options.signal : undefined;
+    if (signal !== undefined) return statWithSignal(fs.lstatCb, callback, path, "path", options, signal);
+
     callback = ensureCallback(callback);
 
     fs.lstatCb(callback, path, options);
@@ -405,13 +454,10 @@ var access = function access(path: PathLike, mode?: number | Callback, callback?
       options = undefined;
     }
 
-    callback = ensureCallback(callback);
+    const signal = $isObject(options) ? options.signal : undefined;
+    if (signal !== undefined) return statWithSignal(fs.statCb, callback, path, "path", options, signal);
 
-    const signal = options?.signal;
-    if (signal?.aborted) {
-      nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
-      return;
-    }
+    callback = ensureCallback(callback);
 
     fs.statCb(callback, path, options);
   },

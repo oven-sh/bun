@@ -327,7 +327,7 @@ const exports = {
   chmod: asyncWrap(fs.chmod, "chmod"),
   fchmod: asyncWrap(fs.fchmod, "fchmod"),
   fchown: asyncWrap(fs.fchown, "fchown"),
-  fstat: asyncWrap(fs.fstat, "fstat"),
+  fstat: statWrap(fs.fstat, "fstat"),
   fsync: asyncWrap(fs.fsync, "fsync"),
   fdatasync: asyncWrap(fs.fdatasync, "fdatasync"),
   ftruncate: asyncWrap(fs.ftruncate, "ftruncate"),
@@ -341,7 +341,7 @@ const exports = {
         },
   lchown: asyncWrap(fs.lchown, "lchown"),
   link: asyncWrap(fs.link, "link"),
-  lstat: asyncWrap(fs.lstat, "lstat"),
+  lstat: statWrap(fs.lstat, "lstat"),
   mkdir: asyncWrap(fs.mkdir, "mkdir"),
   mkdtemp: asyncWrap(fs.mkdtemp, "mkdtemp"),
   mkdtempDisposable: async function mkdtempDisposable(prefix, options) {
@@ -386,7 +386,7 @@ const exports = {
   readlink: asyncWrap(fs.readlink, "readlink"),
   realpath: asyncWrap(fs.realpathNative, "realpath"),
   rename: asyncWrap(fs.rename, "rename"),
-  stat: asyncWrap(fs.stat, "stat"),
+  stat: statWrap(fs.stat, "stat"),
   symlink: asyncWrap(fs.symlink, "symlink"),
   truncate: asyncWrap(fs.truncate, "truncate"),
   unlink: asyncWrap(fs.unlink, "unlink"),
@@ -458,6 +458,57 @@ function asyncWrap(fn: (...args: any[]) => Promise<unknown>, name: string) {
   };
   Object.defineProperty(wrapped, "name", { value: name });
   Object.defineProperty(wrapped, "length", { value: fn.length });
+  return wrapped;
+}
+
+type StatOperation = (target: any, options?: any) => Promise<unknown>;
+const PromiseRace = Promise.race;
+let addAbortListener: ((signal: AbortSignal, listener: () => void) => Disposable) | undefined;
+function noop() {}
+
+// Node's checks on `options`, in node's order, before the path or the fd. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L1855-L1921
+function statOptionsSignal(options: any): AbortSignal | undefined {
+  if (options === null || typeof options !== "object" || $isArray(options)) validateObject(options, "options");
+  const signal = options.signal;
+  if (signal !== undefined) {
+    validateAbortSignal(signal, "options.signal");
+    if (signal.aborted) throw $makeAbortError(undefined, { cause: signal.reason });
+  }
+  return signal;
+}
+
+// Node's raceWithSignal. https://github.com/nodejs/node/blob/v26.12.1/lib/internal/fs/promises.js#L1221-L1228
+async function raceWithSignal(operation: Promise<unknown>, signal: AbortSignal) {
+  const { promise: aborted, reject } = Promise.withResolvers();
+  function onAbort() {
+    reject($makeAbortError(undefined, { cause: signal.reason }));
+  }
+  let listener: Disposable;
+  try {
+    listener = (addAbortListener ??= require("internal/abort_listener").addAbortListener)!(signal, onAbort);
+  } catch (error) {
+    // Node leaves the started operation with no handler here, so its later error is an unhandled rejection.
+    operation.$then(noop, noop);
+    throw error;
+  }
+  try {
+    return await PromiseRace.$call(Promise, [operation, aborted]);
+  } finally {
+    listener[Symbol.dispose]();
+  }
+}
+
+function statWrap<F extends StatOperation>(op: F, name: string): F;
+function statWrap(op: StatOperation, name: string) {
+  const wrapped = async function (target: unknown, options: unknown) {
+    if (options !== undefined) {
+      const signal = statOptionsSignal(options);
+      if (signal !== undefined) return raceWithSignal(op.$call(fs, target, options), signal);
+    }
+    return op.$call(fs, target, options);
+  };
+  Object.defineProperty(wrapped, "name", { value: name });
+  Object.defineProperty(wrapped, "length", { value: 1 });
   return wrapped;
 }
 

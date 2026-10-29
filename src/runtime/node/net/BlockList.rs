@@ -1,5 +1,3 @@
-use core::ffi::c_void;
-
 use core::cmp::Ordering;
 use core::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
@@ -69,18 +67,11 @@ pub(crate) struct BlockList {
 
 impl BlockList {
     // Trait impl + default destructor (drops the `Box`) provided by
-    // `#[derive(ThreadSafeRefCounted)]`; inherent forwarders below.
+    // `#[derive(ThreadSafeRefCounted)]`; inherent forwarder below.
     #[inline]
     pub(crate) fn ref_(&self) {
         // SAFETY: `self` is live; `ref_` only touches the atomic `ref_count` field.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
-    }
-    /// # Safety
-    /// `this` must point to a live `Self` and the caller must own one ref.
-    #[inline]
-    pub(crate) unsafe fn deref(this: *mut Self) {
-        // SAFETY: caller contract.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
     }
 
     pub(crate) fn constructor() -> *mut Self {
@@ -413,16 +404,15 @@ pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDeserialize(
 
 /// `~SerializedScriptValue` releases the ref that [`BlockList__onStructuredCloneSerialize`] took.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn BlockList__onStructuredCloneDestroy(ptr: *mut c_void) {
-    let addr = ptr as usize;
+pub(crate) extern "C" fn BlockList__onStructuredCloneDestroy(this: bun_ptr::RefPtr<BlockList>) {
+    let addr = this.as_ptr() as usize;
     {
         let mut refs = SERIALIZED_REFS.lock();
         if let Some(i) = refs.iter().position(|&(_, a)| a == addr) {
             refs.swap_remove(i);
         }
     }
-    // SAFETY: `ptr` is the `&BlockList` serialize was given, kept alive by the ref it took.
-    unsafe { BlockList::deref(ptr.cast::<BlockList>()) };
+    drop(this);
 }
 
 pub(crate) enum Rule {

@@ -554,8 +554,7 @@ impl Process {
         }
 
         if let Some(fd) = self.poller.fd_poll_mut() {
-            // Never registered: `watch()` was refused, so this is the first watch, which keeps the event loop alive.
-            // A poll that is registered is only armed again, and stays as `unref()` may have left it.
+            // Never registered: `watch()` was refused, so this is the first watch. A re-arm leaves `unref()` alone.
             if !fd.is_registered() {
                 return self.watch();
             }

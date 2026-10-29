@@ -224,8 +224,6 @@ pub(crate) fn idct2x2(coefs: &Block, table: &DctTable) -> [[u8; 2]; 2] {
     const F_0_850: i32 = fix(0.850430095);
     const F_1_272: i32 = fix(1.272758580);
     const F_3_624: i32 = fix(3.624509785);
-    const DESCALE_P1: u32 = PASS1_SHIFT + 2;
-    const DESCALE_P2: u32 = PASS2_SHIFT + 2;
 
     let round_shift = |v: i32, n: u32| v.wrapping_add(1 << (n - 1)) >> n;
 
@@ -235,8 +233,8 @@ pub(crate) fn idct2x2(coefs: &Block, table: &DctTable) -> [[u8; 2]; 2] {
         let [in0, in1, _, in3, _, in5, _, in7] = dequantize(coefs, table, lane).map(i32::from);
         let tmp0 = (in1 * F_3_624 - in3 * F_1_272).wrapping_add(in5 * F_0_850 - in7 * F_0_720);
         let tmp10 = in0 << (CONST_BITS + 2);
-        *upper = round_shift(tmp10.wrapping_add(tmp0), DESCALE_P1);
-        *lower = round_shift(tmp10.wrapping_sub(tmp0), DESCALE_P1);
+        *upper = round_shift(tmp10.wrapping_add(tmp0), PASS1_SHIFT + 2);
+        *lower = round_shift(tmp10.wrapping_sub(tmp0), PASS1_SHIFT + 2);
     }
 
     workspace.map(|[c0, c1, _, c3, _, c5, _, c7]| {
@@ -245,7 +243,7 @@ pub(crate) fn idct2x2(coefs: &Block, table: &DctTable) -> [[u8; 2]; 2] {
         let tmp0 = (c1 * F_3_624 - c3 * F_1_272).wrapping_add(c5 * F_0_850 - c7 * F_0_720);
         let tmp10 = c0.wrapping_shl(CONST_BITS + 2);
         [tmp10.wrapping_add(tmp0), tmp10.wrapping_sub(tmp0)]
-            .map(|v| to_sample(round_shift(v, DESCALE_P2) as i16))
+            .map(|v| to_sample(round_shift(v, PASS2_SHIFT + 2) as i16))
     })
 }
 
@@ -261,9 +259,7 @@ fn range_limit(x: i32) -> u8 {
 
 pub(crate) fn idct1x1(coefs: &Block, table: &DctTable) -> [[u8; 1]; 1] {
     let ([dc, ..], [q, ..]) = (coefs, table);
-    let dc = i32::from(*dc) * i32::from(*q);
-    // The sum is computed in a `long`.
-    [[range_limit(((i64::from(dc) + 4) >> 3) as i32)]]
+    [[range_limit((i32::from(*dc) * i32::from(*q) + 4) >> 3)]]
 }
 
 /// An integer that wraps around.

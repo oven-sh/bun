@@ -118,7 +118,8 @@ impl AcEncoder {
             se: u32::from(scan.se),
             al: u32::from(scan.al),
             eob_run: 0,
-            waiting: try_vec_with_capacity(MAX_CORR_BITS)?,
+            // Only a later scan has correction bits.
+            waiting: try_vec_with_capacity(if scan.ah != 0 { MAX_CORR_BITS } else { 0 })?,
             waiting_bits: 0,
         })
     }

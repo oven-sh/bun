@@ -458,11 +458,7 @@ unsafe fn init_runtime_state(
                 // field is zero-init'd uninhabited memory (never dropped).
                 unsafe { ptr::write(ptr::addr_of_mut!((*vm).transpiler), transpiler) };
                 // Post-`Transpiler.init` wiring that must run BEFORE
-                // `JSGlobalObject.create`. `configure_linker` MUST run
-                // after the `ptr::write` above so the self-referential
-                // `addr_of_mut!(self.options)` etc. captured by `Linker::init`
-                // point at the final `(*vm).transpiler` storage, not the moved-
-                // from stack temporary.
+                // `JSGlobalObject.create`.
                 // SAFETY: `vm` unique on this thread; `transpiler` just written.
                 unsafe {
                     let t = &mut (*vm).transpiler;
@@ -2925,9 +2921,10 @@ fn transpile_source_code_of_any_provenance<const DATA_ONLY: bool>(
 
                 // Link import records.
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM;
-                // `origin` is read-only and `linker` is JS-thread-exclusive.
+                // `origin` and `options` are only read and `linker` is JS-thread-exclusive.
                 unsafe {
                     (*jsc_vm).transpiler.linker.link::<false, true>(
+                        &(*jsc_vm).transpiler.options,
                         path,
                         &mut parse_result,
                         &(*jsc_vm).origin,

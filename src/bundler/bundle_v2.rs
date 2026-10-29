@@ -1824,17 +1824,6 @@ pub mod bv2_impl {
             pub owner: core::ptr::NonNull<super::JSBundleCompletionTask>,
             pub vtable: &'static CompletionDispatch,
         }
-        // SAFETY: erased `*mut JSBundleCompletionTask` backref — set by the JS
-        // thread, read by the bundle thread; `enqueue_task_concurrent` is the only
-        // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
-        unsafe impl Send for CompletionHandle {}
-        // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
-        // is modeled as `!Sync`, and this wrapper exposes `is_cancelled(&self)`
-        // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
-        // sharing across threads is not justified. The handle only needs to *move*
-        // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
-        // becomes necessary, split out an enqueue-only wrapper and make only that
-        // type `Sync`.
         impl CompletionHandle {
             #[inline]
             pub(crate) fn is_cancelled(&self) -> bool {

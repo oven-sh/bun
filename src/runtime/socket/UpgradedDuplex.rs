@@ -69,8 +69,6 @@ pub(crate) struct UpgradedDuplex {
     paused_origin: Cell<bool>,
 }
 
-bun_event_loop::impl_timer_owner!(UpgradedDuplex; from_timer_ptr => event_loop_timer);
-
 #[derive(Default)]
 pub(crate) struct CertError {
     pub(crate) error_no: i32,

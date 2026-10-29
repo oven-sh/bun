@@ -492,17 +492,13 @@ impl DevServer {
         &mut self,
         route: route_bundle::UnresolvedIndex,
     ) -> crate::Result<route_bundle::Index> {
-        let index_location: *mut route_bundle::IndexOptional = match route {
+        let index_location: &::core::cell::Cell<route_bundle::IndexOptional> = match &route {
             route_bundle::UnresolvedIndex::Framework(route_index) => {
-                &raw mut self.router.route_ptr_mut(route_index).bundle
+                ::core::cell::Cell::from_mut(&mut self.router.route_ptr_mut(*route_index).bundle)
             }
-            // R-2: `dev_server_id` is `Cell<Option<Index>>`; `Cell::as_ptr`
-            // yields the inner `*mut Option<Index>` so the `*index_location`
-            // read/write below stays raw and matches the framework arm's type.
-            route_bundle::UnresolvedIndex::Html(html) => html.dev_server_id.as_ptr(),
+            route_bundle::UnresolvedIndex::Html(html) => &html.dev_server_id,
         };
-        // SAFETY: index_location points into self/html which outlive this fn
-        if let Some(bundle_index) = unsafe { *index_location } {
+        if let Some(bundle_index) = index_location.get() {
             return Ok(bundle_index);
         }
 
@@ -564,8 +560,7 @@ impl DevServer {
             client_bundle: None,
             active_viewers: 0,
         });
-        // SAFETY: index_location still valid (route_bundles is a separate field)
-        unsafe { *index_location = Some(bundle_index) };
+        index_location.set(Some(bundle_index));
         Ok(bundle_index)
     }
 }

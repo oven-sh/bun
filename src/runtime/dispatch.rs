@@ -697,8 +697,8 @@ pub(crate) fn run_task(
             macro_rules! __fs_run {
                 ($($tag:ident $ty:ident;)*) => { match task.tag {
                     $(task_tag::$tag => feature_arm!([NodeFs], |request: fs_async::$ty| -> JsResult<()> {
-                        // SAFETY: §Dispatch — tag identifies pointee. The task frees itself, so it takes the raw pointer.
-                        unsafe { fs_async::$ty::run_from_js_thread(request) }?;
+                        // SAFETY: §Dispatch — tag identifies pointee, `Box::leak`'d in `UVFSRequest::create`; the arm consumes it.
+                        unsafe { bun_core::heap::take(request) }.run_from_js_thread()?;
                         Ok(())
                     })?,)*
                     // SAFETY: outer arm guard proves one of the table tags matched.

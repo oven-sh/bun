@@ -215,33 +215,37 @@ impl DevServer {
         relative_path_buf: &'a mut PathBuffer,
         path: &'a [u8],
     ) -> &'a [u8] {
-        if !paths::is_absolute(path) {
-            return path;
-        }
-
-        if path.len() > self.root.len()
-            && path[self.root.len()] == b'/'
-            && path.starts_with(&self.root)
-        {
-            return &path[self.root.len() + 1..];
-        }
-
-        if path.len() + self.root.len() * 2 >= paths::MAX_PATH_BYTES {
-            return path;
-        }
-
-        // `relative_platform_buf` with ALWAYS_COPY=true writes into
-        // `relative_path_buf[..len]` (same invariant `relative_buf_z` relies
-        // on); capture the length, drop the shared borrow, then re-slice
-        // mutably to convert separators in place.
-        let rel_len = bun_paths::resolve_path::relative_platform_buf::<
-            bun_paths::resolve_path::platform::Auto,
-            true,
-        >(&mut relative_path_buf[..], &self.root, path)
-        .len();
-        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
-            &mut relative_path_buf[..rel_len],
-        );
-        &relative_path_buf[..rel_len]
+        relative_path(&self.root, relative_path_buf, path)
     }
+}
+
+/// `DevServer::relative_path`, given `DevServer::root`.
+pub(super) fn relative_path<'a>(
+    root: &[u8],
+    relative_path_buf: &'a mut PathBuffer,
+    path: &'a [u8],
+) -> &'a [u8] {
+    if !paths::is_absolute(path) {
+        return path;
+    }
+
+    if path.len() > root.len() && path[root.len()] == b'/' && path.starts_with(root) {
+        return &path[root.len() + 1..];
+    }
+
+    if path.len() + root.len() * 2 >= paths::MAX_PATH_BYTES {
+        return path;
+    }
+
+    // `relative_platform_buf` with ALWAYS_COPY=true writes into
+    // `relative_path_buf[..len]` (same invariant `relative_buf_z` relies
+    // on); capture the length, drop the shared borrow, then re-slice
+    // mutably to convert separators in place.
+    let rel_len = bun_paths::resolve_path::relative_platform_buf::<
+        bun_paths::resolve_path::platform::Auto,
+        true,
+    >(&mut relative_path_buf[..], root, path)
+    .len();
+    bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut relative_path_buf[..rel_len]);
+    &relative_path_buf[..rel_len]
 }

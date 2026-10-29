@@ -444,7 +444,7 @@ pub(crate) trait CompressionStreamImpl:
             }
             Some(())
         })?;
-        // Nothing replaces or frees the copy while a write is in progress, so the job can read these bytes.
+        // Nothing replaces or frees the copy while a write is in progress, so the job can read it.
         self.input_copy().get().bytes.get(in_off..in_off + in_len)
     }
 

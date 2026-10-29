@@ -567,14 +567,9 @@ pub struct Resolver<'a> {
     pub prefer_module_field: bool,
 
     /// Node's `options.paths` of `require.resolve(id, { paths })`, set while that call resolves.
-    /// A relative request is joined to each entry. For a bare request an entry is where the
-    /// search of `node_modules` directories starts, as `Module._nodeModulePaths(entry)`:
-    /// `#imports` and a self-reference are answered by the package of the calling module.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1448-L1504
     pub custom_dir_paths: Option<CustomDirPaths<'a>>,
 
-    /// The package.json of directories that are not in the directory cache, by the hash of the
-    /// directory. See `scope_package_json`.
+    /// What `scope_package_json` read by path, by the hash of the directory.
     custom_dir_scopes: bun_collections::HashMap<
         u64,
         Option<&'static PackageJSON>,
@@ -589,15 +584,11 @@ pub struct Resolver<'a> {
 pub struct CustomDirPaths<'a> {
     pub entries: &'a [bun_core::String],
     pub package_scope: PackageScope<'a>,
-    /// Whether a search from an entry can still end in an install, or in the answer of the
-    /// entry's package that stands for one. See `check_package_path_in_custom_dirs`.
+    /// Whether a search from an entry can still end in an install.
     pub installs: bool,
 }
 
 /// Where the package of the calling module is looked up, for a request with `options.paths`.
-/// That package answers `#imports` and a self-reference. Node reads it from the filename of
-/// the parent, so a parent without one has none.
-/// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L634-L647
 #[derive(Clone, Copy)]
 pub enum PackageScope<'a> {
     None,
@@ -607,8 +598,7 @@ pub enum PackageScope<'a> {
     Of(&'a [u8]),
 }
 
-/// The parent of a request with `options.paths`, as its caller in C++ has it. Kept in sync with
-/// `BunResolvePathsParent` in src/jsc/bindings/ImportMetaObject.h.
+/// Kept in sync with `BunResolvePathsParent` in src/jsc/bindings/ImportMetaObject.h.
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PathsParent {
@@ -623,12 +613,10 @@ pub enum PathsParent {
 }
 
 impl PathsParent {
-    /// Where Node reads the package of this parent from.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L634-L647
+    /// Where Node's `trySelfParentPath()` reads the package of this parent from.
     pub fn package_scope<'a>(self, source: &'a [u8], request: &[u8]) -> PackageScope<'a> {
         let has_nul = |path: &[u8]| strings::contains_char(path, 0);
-        // A module that is loaded from a `blob:` or `data:` URL, such as a worker that is made
-        // from a string, has that URL for a name. An ES module has it as a path in the root.
+        // A worker from a string is named by its `blob:` or `data:` URL, an ES module after a `/`.
         let is_url_name = |name: &[u8]| {
             let name = match name.split_first() {
                 Some((&first, rest)) if bun_paths::is_sep_any(first) => rest,
@@ -646,8 +634,7 @@ impl PathsParent {
             PathsParent::Filename if is_url_name(source) => PackageScope::OfImporter,
             // A `file://` URL or a relative path names no directory.
             PathsParent::Filename if !bun_paths::is_absolute(source) => PackageScope::None,
-            // To Node, a filename that ends in the path separator is a directory.
-            // https://github.com/nodejs/node/blob/v26.3.0/src/node_modules.cc#L336-L351
+            // To Node's `NormalizePath`, a filename that ends in the path separator is a directory.
             PathsParent::Filename if source.last() == Some(&bun_paths::SEP) => {
                 if has_nul(source) {
                     PackageScope::None
@@ -656,8 +643,7 @@ impl PathsParent {
                 }
             }
             PathsParent::Filename => match bun_paths::dirname(source) {
-                // Node reads no package.json in the root of the filesystem, and the resolver
-                // searches from the cwd for a file there.
+                // Node reads no package.json in the root. The resolver searches from the cwd there.
                 Some(directory) if !is_filesystem_root(directory) && !has_nul(directory) => {
                     PackageScope::OfImporter
                 }
@@ -669,8 +655,7 @@ impl PathsParent {
 
 const PACKAGE_JSON: &[u8] = b"package.json";
 
-/// Whether `dir` is the root of its filesystem. On Windows the root of a UNC path is its share,
-/// and `\\server` names no directory.
+/// On Windows the root of a UNC path is its share, and `\\server` names no directory.
 fn is_filesystem_root(dir: &[u8]) -> bool {
     bun_paths::dirname(dir).is_none()
         || (cfg!(windows)
@@ -2354,9 +2339,7 @@ impl<'a> Resolver<'a> {
         rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
     }
 
-    /// A bare request with `options.paths`. Node asks the package of the calling module first
-    /// (`#imports`, its own name), then searches `Module._nodeModulePaths(entry)` per entry.
-    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L1473-L1504
+    /// Node asks the package of the calling module first, then searches from each entry.
     #[cold]
     #[inline(never)]
     fn check_package_path_in_custom_dirs<'r>(
@@ -2385,16 +2368,14 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        // Whether a search from an entry below a `node_modules` directory cannot install, and
-        // one from another entry can.
+        // Auto-install is on only where no `node_modules` directory is above the search.
         let installs_at_some_entries = global_cache.can_use(false)
             && !global_cache.can_use(true)
             && self.use_package_manager();
         let found = 'entries: {
             let mut entries = custom_paths.entries.iter();
             while let Some(custom_path) = entries.next() {
-                // One lookup of the entry for each search, as a missing directory is marked as
-                // such on its second one.
+                // One lookup for each search: a second one marks a missing directory as such.
                 let Some(start) = self.nearest_dir_info(custom_path.to_utf8().slice()) else {
                     continue;
                 };
@@ -2402,8 +2383,7 @@ impl<'a> Resolver<'a> {
                     ResultUnion::NotFound => {}
                     found => break 'entries found,
                 }
-                // The search ended at an entry whose package has the request, before entries
-                // were searched as in Node. So no install starts at a later entry.
+                // An entry whose package has the request keeps the later entries from an install.
                 if installs_at_some_entries
                     && !entries.as_slice().is_empty()
                     && Self::entry_package_answers(start, import_path)
@@ -2431,8 +2411,7 @@ impl<'a> Resolver<'a> {
         found
     }
 
-    /// Whether the package of an `options.paths` entry answered the request before entries
-    /// were searched as in Node: a `#` request with its "imports", its own name with "exports".
+    /// Whether the package of an entry has the request: a `#` one in "imports", or its own name.
     fn entry_package_answers(start: DirInfoRef, import_path: &[u8]) -> bool {
         start
             .package_json_for_module_type
@@ -2460,14 +2439,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// The package.json of the package that a file in `dir` is in, as Node finds it: the nearest
-    /// one at or above `dir`, and none above a `node_modules` directory or in the root.
-    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_modules.cc#L294-L334
-    ///
-    /// This reads the directory cache and does not write it. A search from the entries reads
-    /// none of these directories, and what a later request finds in them must not depend on
-    /// this lookup. A directory that is in the cache answers from there. Any other is asked
-    /// for its package.json by path.
+    /// Node's `TraverseParent` from `dir`. It reads the directory cache and never writes it.
     fn scope_package_json(&mut self, dir: &[u8]) -> Option<&'static PackageJSON> {
         // The directory cache has the normalized spelling on Windows.
         let mut normalized = cfg!(windows).then(bun_paths::path_buffer_pool::get);
@@ -2505,9 +2477,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// `scope_package_json` for a directory that is in the directory cache: `None` when it is
-    /// not. `dir_info_cached_maybe_log` puts a directory in the cache before it fills it, and
-    /// holds the lock that this takes for both.
+    /// `None` when the cache has no `dir`. Locked, as a directory is cached before it is filled.
     fn cached_scope_package_json(&mut self, dir: &[u8]) -> Option<Option<&'static PackageJSON>> {
         let _unlock = self.mutex.lock_guard();
         let mut dir_info = self.dir_cache_mut().get(dir).map(DirInfoRef::from_slot)?;
@@ -2530,12 +2500,9 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// The package.json of a directory that is not in the directory cache, read by path. The
-    /// answer is kept, as Node keeps the package.json that it read first, until the directory
-    /// cache has the directory.
+    /// Read by path, and kept until the directory cache has `dir`: Node keeps its first read too.
     fn package_json_of_unread_dir(&mut self, dir: &[u8]) -> Option<&'static PackageJSON> {
-        // A search that reads the directory reads no package.json without this option, and a
-        // longer path names no file.
+        // Without the option no search reads a package.json. A longer path names no file.
         if !self.opts.load_package_json || dir.len() + 1 + PACKAGE_JSON.len() >= MAX_PATH_BYTES {
             return None;
         }
@@ -3031,17 +2998,13 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
-    /// Whether `load_node_modules` starts from the importing directory. With `options.paths` it
-    /// starts from an entry, as Node's search of `Module._nodeModulePaths(entry)` does: the
-    /// package of the entry does not answer `#imports` or its own name first.
+    /// False from an `options.paths` entry: its package does not answer `#imports` or its own name.
     #[inline]
     fn starts_from_importer(&self) -> bool {
         self.custom_dir_paths.is_none()
     }
 
-    /// Where the search from the `options.paths` entry at `current` would start an install, the
-    /// package of the entry answers first, as before entries were searched as in Node: no
-    /// install starts where none started then.
+    /// Before an install starts from the `options.paths` entry at `current`, its package answers.
     #[cold]
     #[inline(never)]
     fn load_from_package_of_custom_dir(

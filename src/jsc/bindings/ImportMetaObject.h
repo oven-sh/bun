@@ -11,9 +11,7 @@
 extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSync);
 extern "C" JSC_DECLARE_HOST_FUNCTION(functionImportMeta__resolveSyncPrivate);
 extern "C" JSC::EncodedJSValue Bun__resolveSync(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, JSC::EncodedJSValue from, bool is_esm, bool isUserRequireResolve);
-// The parent of a request with `options.paths`. Node reads the package that answers `#imports`
-// and a self-reference from it. Kept in sync with `PathsParent` in src/resolver/resolver.rs.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L634-L647
+// Kept in sync with `PathsParent` in src/resolver/resolver.rs.
 enum class BunResolvePathsParent : uint8_t {
     // A string, an `{ id }`, or nothing.
     None = 0,

@@ -197,7 +197,6 @@ impl PackageJSON {
         import_path.starts_with(b"#") && self.imports.is_some()
     }
 
-    /// Whether `import_path` names this package, which has "exports".
     /// https://nodejs.org/api/packages.html#packages_self_referencing_a_package_using_its_name
     #[inline]
     pub(crate) fn is_self_reference(&self, import_path: &[u8]) -> bool {
@@ -205,9 +204,7 @@ impl PackageJSON {
             && self.exports.is_some()
     }
 
-    /// Whether Node takes `import_path` from this package when it is the package of the parent
-    /// module. Node does not read an "imports" or "exports" that is a number or a boolean.
-    /// https://github.com/nodejs/node/blob/v26.3.0/src/node_modules.cc#L178-L221
+    /// Node reads no "imports" or "exports" of a parent's package that is a number or a boolean.
     pub(crate) fn claims_as_parent(&self, import_path: &[u8]) -> bool {
         let read_by_node = |map: &Option<ExportsMap>| {
             map.as_ref()

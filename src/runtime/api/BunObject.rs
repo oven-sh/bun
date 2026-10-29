@@ -950,8 +950,7 @@ pub(crate) fn bun_resolve_sync_with_paths(
     };
 
     let source_utf8 = source_str.to_utf8();
-    // SAFETY: `source_utf8` is valid for the duration of this synchronous resolve call, as
-    // `paths` is; lifetime is erased for the resolver slot.
+    // SAFETY: `source_utf8` outlives this synchronous resolve call, as `paths` does.
     let package_scope = parent.package_scope(
         unsafe { bun_ptr::detach_lifetime(&source_utf8[..]) },
         &specifier_str.to_utf8(),

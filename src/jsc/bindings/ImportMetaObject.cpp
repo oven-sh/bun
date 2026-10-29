@@ -221,9 +221,7 @@ static void throwIfResolvedFileIsRefused(JSC::JSGlobalObject* globalObject, JSC:
         JSC::throwException(globalObject, scope, error);
 }
 
-// Node's trySelfParentPath(): `parent.filename` when it is truthy, else the cwd for the ids
-// `<repl>` and `internal/preload`.
-// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L634-L647
+// Node's trySelfParentPath(): a truthy `parent.filename`, or the id `<repl>` or `internal/preload`.
 BunResolvePathsParent pathsParentOf(JSC::JSGlobalObject* globalObject, JSC::JSValue parent, JSC::JSValue filename, JSC::JSValue id)
 {
     auto& vm = JSC::getVM(globalObject);

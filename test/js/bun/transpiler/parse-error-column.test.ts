@@ -202,7 +202,11 @@ async function diagnostics(file: string, source: string) {
   }));
 }
 
-async function diagnosticsPerLineBreak(ext: string, lines: string[], names = Object.keys(lineBreaks)) {
+async function diagnosticsPerLineBreak(
+  ext: string,
+  lines: readonly string[],
+  names: readonly string[] = Object.keys(lineBreaks),
+) {
   using dir = tempDir("parse-col-line-breaks", {});
   const found: Record<string, unknown> = {};
   for (const name of names) {
@@ -298,23 +302,39 @@ const braceLeftOpenCRLF = "const port = 3000;\r\nfunction start() {\r\n";
 
 test.concurrent("Bun.Transpiler and import() locate the end of a CR LF source on its last line", async () => {
   using dir = tempDir("parse-col-crlf-import", { "crlf.js": braceLeftOpenCRLF });
-  const position = (thrown: any) => {
-    const { line, column, lineText } = (thrown.errors?.[0] ?? thrown).position;
-    return { line, column, lineText };
-  };
-  let transformed, imported;
-  try {
-    new Bun.Transpiler({ loader: "js" }).transformSync(braceLeftOpenCRLF);
-  } catch (thrown) {
-    transformed = position(thrown);
-  }
-  try {
-    await import(join(String(dir), "crlf.js"));
-  } catch (thrown) {
-    imported = position(thrown);
-  }
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const file = ${JSON.stringify(join(String(dir), "crlf.js"))};
+       const position = thrown => {
+         const { line, column, lineText } = (thrown.errors?.[0] ?? thrown).position;
+         return { line, column, lineText };
+       };
+       const located = {};
+       try {
+         new Bun.Transpiler({ loader: "js" }).transformSync(await Bun.file(file).text());
+       } catch (thrown) {
+         located.transformed = position(thrown);
+       }
+       try {
+         await import(file);
+       } catch (thrown) {
+         located.imported = position(thrown);
+       }
+       console.log(JSON.stringify(located));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   const onLastLine = { line: 2, column: 19, lineText: "function start() {" };
-  expect({ transformed, imported }).toEqual({ transformed: onLastLine, imported: onLastLine });
+  expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
+    stdout: JSON.stringify({ transformed: onLastLine, imported: onLastLine }),
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 test.concurrent.each(["build", "run"])(

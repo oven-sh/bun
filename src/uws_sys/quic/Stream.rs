@@ -39,7 +39,7 @@ unsafe extern "C" {
 
 impl Stream {
     pub fn socket(&mut self) -> Option<NonNull<Socket>> {
-        // A pointer, not a `&mut` tied to `self`: callers use the stream and its connection together.
+        // The parent connection, which every stream on it shares.
         NonNull::new(us_quic_stream_socket(self))
     }
 

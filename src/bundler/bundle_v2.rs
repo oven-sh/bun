@@ -6167,10 +6167,7 @@ pub mod bv2_impl {
             for (entry_point, order) in css_orders {
                 let order_len = order.len() as usize;
                 chunks.push(Chunk {
-                    entry_point: chunk::EntryPoint::non_entry_point(
-                        entry_point.get(),
-                        entry_point.get(),
-                    ),
+                    entry_point: chunk::EntryPoint::non_entry_point(entry_point.get()),
                     content: chunk::Content::Css(chunk::CssChunk {
                         imports_in_chunk_in_order: order,
                         asts: (0..order_len)
@@ -6186,10 +6183,7 @@ pub mod bv2_impl {
             // Then all HTML files
             for source_index in html_files.keys() {
                 chunks.push(Chunk {
-                    entry_point: chunk::EntryPoint::non_entry_point(
-                        source_index.get(),
-                        source_index.get(),
-                    ),
+                    entry_point: chunk::EntryPoint::non_entry_point(source_index.get()),
                     content: chunk::Content::Html,
                     output_source_map: SourceMap::SourceMapPieces::init(),
                     ..Chunk::default()

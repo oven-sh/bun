@@ -485,10 +485,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             // Note: `bun_resolver::options::BundleOptions` carries no naming
             // templates; the canonical fields live on `transpiler.options`
             // (bun_bundler::options::BundleOptions).
-            transpiler.options.entry_naming =
-                Box::from(b"_bun/[dir]/[name].[hash].[ext]".as_slice());
+            // One directory: a client component's id in the React manifests is its path from the chunk that prints it.
+            transpiler.options.entry_naming = Box::from(b"_bun/[name].[hash].[ext]".as_slice());
             transpiler.options.chunk_naming =
-                Box::from(b"_bun/[dir]/[name].[hash].chunk.[ext]".as_slice());
+                Box::from(b"_bun/[name].[hash].chunk.[ext]".as_slice());
             transpiler.options.asset_naming =
                 Box::from(b"_bun/[dir]/[name].[hash].asset.[ext]".as_slice());
         }

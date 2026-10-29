@@ -301,7 +301,7 @@ impl WalkPlan {
                 }
                 owner
             } else {
-                chunk.entry_point.entry_point_id()
+                chunk.entry_point.entry_point_id().unwrap_or(u32::MAX)
             };
         }
         plan

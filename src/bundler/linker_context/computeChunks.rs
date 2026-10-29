@@ -358,10 +358,7 @@ pub(crate) fn compute_chunks<'a>(
                                     && ast_targets[source_index.get() as usize] == Target::Browser;
                             *js_chunk_entry.value_ptr = Chunk {
                                 entry_bits: entry_bits.clone()?,
-                                entry_point: chunk::EntryPoint::non_entry_point(
-                                    source_index.get(),
-                                    0,
-                                ),
+                                entry_point: chunk::EntryPoint::non_entry_point(source_index.get()),
                                 content: chunk::Content::Javascript(
                                     chunk::JavaScriptChunk::default(),
                                 ),
@@ -437,53 +434,27 @@ pub(crate) fn compute_chunks<'a>(
             js_chunks.count() + css_chunks.count() + html_chunks.count(),
         );
 
-        let mut sorted_keys = Vec::<&[u8]>::init_capacity(js_chunks.count());
-
-        sorted_keys.append_slice_assume_capacity(js_chunks.keys());
-
-        // sort by entry_point_id to ensure the main entry point (id=0) comes first,
-        // then by key for determinism among the rest.
-        struct ChunkSortContext<'a> {
-            chunks: &'a ArrayHashMap<&'a [u8], Chunk<'a>>,
-        }
-
-        impl<'a> ChunkSortContext<'a> {
-            fn less_than(&self, a_key: &[u8], b_key: &[u8]) -> bool {
-                let Some(a_chunk) = self.chunks.get(&a_key) else {
-                    return true;
-                };
-                let Some(b_chunk) = self.chunks.get(&b_key) else {
-                    return false;
-                };
-                let a_id = a_chunk.entry_point.entry_point_id();
-                let b_id = b_chunk.entry_point.entry_point_id();
-
-                // Main entry point (id=0) always comes first
-                if a_id == 0 && b_id != 0 {
-                    return true;
-                }
-                if b_id == 0 && a_id != 0 {
-                    return false;
-                }
-
-                // Otherwise sort alphabetically by key for determinism
-                strings::order(a_key, b_key) == core::cmp::Ordering::Less
-            }
-        }
-
-        let ctx = ChunkSortContext { chunks: &js_chunks };
-        index_sort::sort_slice_by(&mut sorted_keys, |a, b| {
-            if ctx.less_than(a, b) {
-                core::cmp::Ordering::Less
-            } else if ctx.less_than(b, a) {
-                core::cmp::Ordering::Greater
-            } else {
-                core::cmp::Ordering::Equal
-            }
+        // The main entry point (id=0) and the chunks without an entry point come first: chunk order feeds `[hash]`.
+        let mut order: Vec<(bool, u32)> = js_chunks
+            .values()
+            .iter()
+            .enumerate()
+            .map(|(idx, chunk)| {
+                let is_other_entry_point =
+                    chunk.entry_point.entry_point_id().is_some_and(|id| id != 0);
+                (is_other_entry_point, idx as u32)
+            })
+            .collect();
+        let keys = js_chunks.keys();
+        index_sort::sort_slice_by(&mut order, |a, b| {
+            a.0.cmp(&b.0)
+                .then_with(|| strings::order(keys[a.1 as usize], keys[b.1 as usize]))
         });
         let mut js_chunk_indices_with_css = Vec::<u32>::init_capacity(js_chunks_with_css);
-        for &key in sorted_keys.slice() {
-            let chunk = js_chunks.get(&key).expect("unreachable");
+        for &(_, idx) in order.iter() {
+            let idx = idx as usize;
+            let key = js_chunks.keys()[idx];
+            let chunk = &js_chunks.values()[idx];
 
             if let chunk::Content::Javascript(js) = &chunk.content {
                 if js.css_chunks.len() > 0 {
@@ -492,7 +463,6 @@ pub(crate) fn compute_chunks<'a>(
             }
 
             // `Chunk` is not `Clone`; take by index.
-            let idx = js_chunks.get_index(&key).expect("unreachable");
             let owned = core::mem::take(&mut js_chunks.values_mut()[idx]);
             let has_html = owned.flags.contains(chunk::Flags::HAS_HTML_CHUNK);
             sorted_chunks.append_assume_capacity(owned);
@@ -695,10 +665,6 @@ pub(crate) fn compute_chunks<'a>(
             }
         }
 
-        let pathname = bun_fs::PathName::init(
-            output_paths[chunk.entry_point.entry_point_id() as usize].slice(),
-        );
-        chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
         chunk.template.placeholder.ext = chunk.content.ext().to_vec().into_boxed_slice();
 
         if chunk.template.needs(PlaceholderField::Target) {
@@ -707,57 +673,15 @@ pub(crate) fn compute_chunks<'a>(
             chunk.template.placeholder.target = chunk_target.naming_placeholder().into();
         }
 
+        // `name_chunks_without_entry_point` fills `[name]` and `[dir]` of the other chunks.
+        let Some(entry_point_id) = chunk.entry_point.entry_point_id() else {
+            continue;
+        };
+        let pathname = bun_fs::PathName::init(output_paths[entry_point_id as usize].slice());
+        chunk.template.placeholder.name = pathname.base.to_vec().into_boxed_slice();
+
         if chunk.template.needs(PlaceholderField::Dir) {
-            // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
-            let dir_path: &[u8] = if !pathname.dir.is_empty() {
-                pathname.dir
-            } else {
-                b"."
-            };
-            let mut real_path_buf = bun_paths::path_buffer_pool::get();
-            let dir: &[u8] = 'dir: {
-                let Ok(dir_file) = bun_sys::File::openat(
-                    bun_sys::Fd::cwd(),
-                    dir_path,
-                    bun_sys::O::PATH | bun_sys::O::DIRECTORY,
-                    0,
-                ) else {
-                    let Some(normalized) = resolve_path::normalize_buf_checked::<
-                        bun_paths::platform::Auto,
-                    >(dir_path, &mut real_path_buf.0) else {
-                        this.log_disjoint().add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "ENAMETOOLONG: Failed to get full path for directory '{}'",
-                                bstr::BStr::new(dir_path)
-                            ),
-                        );
-                        return Err(crate::Error::BuildFailed);
-                    };
-                    break 'dir &*normalized;
-                };
-
-                match dir_file.get_path(&mut real_path_buf) {
-                    Ok(p) => break 'dir p,
-                    Err(err) => {
-                        // Split-borrow — see `LinkerContext::log_disjoint`.
-                        this.log_disjoint().add_error_fmt(
-                            None,
-                            bun_ast::Loc::EMPTY,
-                            format_args!(
-                                "{}: Failed to get full path for directory '{}'",
-                                bstr::BStr::new(err.name()),
-                                bstr::BStr::new(dir_path)
-                            ),
-                        );
-                        return Err(crate::Error::BuildFailed);
-                    }
-                }
-            };
-
-            let root_dir = &this.resolver().opts.root_dir;
-            chunk.template.placeholder.dir = resolve_path::relative_alloc(root_dir, dir)?;
+            chunk.template.placeholder.dir = placeholder_dir(this, pathname.dir)?;
         }
     }
 
@@ -769,6 +693,164 @@ pub(crate) fn compute_chunks<'a>(
     // The caller-owned
     // `Box<[Chunk]>` transfers the `sorted_chunks` Vec backing storage.
     Ok(sorted_chunks.to_owned_slice())
+}
+
+/// What `[dir]` prints for the chunk of an entry point whose output path is in `dir`.
+fn placeholder_dir(this: &LinkerContext, dir: &[u8]) -> crate::Result<Box<[u8]>> {
+    // this if check is a specific fix for `bun build hi.ts --external '*'`, without leading `./`
+    let dir_path: &[u8] = if !dir.is_empty() { dir } else { b"." };
+    let mut real_path_buf = bun_paths::path_buffer_pool::get();
+    let dir: &[u8] = 'dir: {
+        let Ok(dir_file) = bun_sys::File::openat(
+            bun_sys::Fd::cwd(),
+            dir_path,
+            bun_sys::O::PATH | bun_sys::O::DIRECTORY,
+            0,
+        ) else {
+            let Some(normalized) = resolve_path::normalize_buf_checked::<bun_paths::platform::Auto>(
+                dir_path,
+                &mut real_path_buf.0,
+            ) else {
+                this.log_disjoint().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "ENAMETOOLONG: Failed to get full path for directory '{}'",
+                        bstr::BStr::new(dir_path)
+                    ),
+                );
+                return Err(crate::Error::BuildFailed);
+            };
+            break 'dir &*normalized;
+        };
+
+        match dir_file.get_path(&mut real_path_buf) {
+            Ok(p) => break 'dir p,
+            Err(err) => {
+                // Split-borrow: see `LinkerContext::log_disjoint`.
+                this.log_disjoint().add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "{}: Failed to get full path for directory '{}'",
+                        bstr::BStr::new(err.name()),
+                        bstr::BStr::new(dir_path)
+                    ),
+                );
+                return Err(crate::Error::BuildFailed);
+            }
+        }
+    };
+
+    let root_dir = &this.resolver().opts.root_dir;
+    Ok(resolve_path::relative_alloc(root_dir, dir)?)
+}
+
+/// The deepest directory that holds both `a` and `b`.
+fn common_dir<'a>(a: &'a [u8], b: &[u8]) -> &'a [u8] {
+    let is_end = |path: &[u8], i: usize| i == path.len() || path[i] == b'/' || path[i] == b'\\';
+    let mut common = 0;
+    for i in 0..=a.len().min(b.len()) {
+        match (is_end(a, i), is_end(b, i)) {
+            (true, true) => common = i,
+            (false, false) if a[i] == b[i] => {}
+            _ => break,
+        }
+    }
+    &a[..common]
+}
+
+/// Fills `[name]` and `[dir]` of each chunk without an entry point from its roots: the user's entry points whose chunks reach it.
+pub(crate) fn name_chunks_without_entry_point(
+    this: &LinkerContext,
+    chunks: &mut [Chunk],
+) -> crate::Result<()> {
+    let prints = |chunk: &Chunk, field: PlaceholderField| {
+        chunk.entry_point.entry_point_id().is_none() && chunk.template.needs(field)
+    };
+    if !chunks
+        .iter()
+        .any(|chunk| prints(chunk, PlaceholderField::Name) || prints(chunk, PlaceholderField::Dir))
+    {
+        return Ok(());
+    }
+
+    let entry_points_len = this.graph.entry_points.len();
+    let kinds = this.graph.files.items_entry_point_kind();
+    let mut roots: Vec<AutoBitSet> = Vec::with_capacity(chunks.len());
+    for chunk in chunks.iter() {
+        let mut own = AutoBitSet::init_empty(entry_points_len)?;
+        if let Some(entry_point_id) = chunk.entry_point.entry_point_id()
+            && kinds[chunk.entry_point.source_index() as usize]
+                == crate::EntryPoint::Kind::UserSpecified
+        {
+            own.set(entry_point_id as usize);
+        }
+        roots.push(own);
+    }
+    // Chunks can import each other in a cycle.
+    loop {
+        let mut changed = false;
+        for (importer, chunk) in chunks.iter().enumerate() {
+            for import in chunk.cross_chunk_imports.iter() {
+                let Ok([from, to]) =
+                    roots.get_disjoint_mut([importer, import.chunk_index as usize])
+                else {
+                    continue;
+                };
+                if !from.subset_of(to) {
+                    to.set_union(from);
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let output_paths = this.graph.entry_points.items_output_path();
+    let entry_source_indices = this.graph.entry_points.items_source_index();
+    let chunk_of_entry_point = this.graph.files.items_entry_point_chunk_index();
+    let mut dirs: Vec<Option<Box<[u8]>>> = Vec::new();
+    for index in 0..chunks.len() {
+        if prints(&chunks[index], PlaceholderField::Name) {
+            let mut entry_point_ids = roots[index].iterator::<true, true>();
+            let name = match (entry_point_ids.next(), entry_point_ids.next()) {
+                (Some(only), None) => {
+                    let base = bun_fs::PathName::init(output_paths[only].slice()).base;
+                    [base, b"-chunk"].concat().into_boxed_slice()
+                }
+                _ => Box::from(&b"shared"[..]),
+            };
+            chunks[index].template.placeholder.name = name;
+        }
+        if prints(&chunks[index], PlaceholderField::Dir) {
+            dirs.resize_with(entry_points_len, || None);
+            let mut entry_point_ids = roots[index].iterator::<true, true>();
+            while let Some(id) = entry_point_ids.next() {
+                if dirs[id].is_some() {
+                    continue;
+                }
+                let own = &chunks[chunk_of_entry_point[entry_source_indices[id] as usize] as usize];
+                let has_dir = own.entry_point.entry_point_id() == Some(id as chunk::EntryPointId)
+                    && own.template.needs(PlaceholderField::Dir);
+                dirs[id] = Some(if has_dir {
+                    own.template.placeholder.dir.clone()
+                } else {
+                    placeholder_dir(this, bun_fs::PathName::init(output_paths[id].slice()).dir)?
+                });
+            }
+            let mut common: Option<&[u8]> = None;
+            let mut entry_point_ids = roots[index].iterator::<true, true>();
+            while let Some(id) = entry_point_ids.next() {
+                let dir = dirs[id].as_deref().unwrap_or_default();
+                common = Some(common.map_or(dir, |common| common_dir(common, dir)));
+            }
+            chunks[index].template.placeholder.dir = Box::from(common.unwrap_or_default());
+        }
+    }
+    Ok(())
 }
 
 // Local type aliases referenced above.

@@ -662,7 +662,7 @@ describe.concurrent("a package from bun compile --library --splitting", () => {
     expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
     await add(dir, await pack(dir, join(library, "dist")));
     const installed = join(dir, "app/node_modules/@acme/shapes");
-    const [chunk] = filesIn(installed).filter(path => /^index-\w+\.js$/.test(path));
+    const [chunk] = filesIn(installed).filter(path => /^shared-\w+\.js$/.test(path));
     return { app: join(dir, "app"), installed, chunk: chunk.slice(0, -".js".length) };
   }
   const installed = once("library-split", installSplit);
@@ -685,7 +685,7 @@ describe.concurrent("a package from bun compile --library --splitting", () => {
     async () => {
       const { app, chunk } = await installed();
       expect(await compileAheadOfTime(app, "app.ts")).toEqual({
-        read: [chunk, "index", "version"].map(stem => `node_modules/@acme/shapes/${stem}.aot.ts`),
+        read: ["index", chunk, "version"].map(stem => `node_modules/@acme/shapes/${stem}.aot.ts`),
         accessesOfPackages: "3 free, 0 tested, 0 by name",
         ran: { stdout: printed, stderr: "", exitCode: 0 },
       });

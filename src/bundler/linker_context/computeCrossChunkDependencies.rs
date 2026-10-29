@@ -496,8 +496,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         // If this is an entry point, make sure we import all chunks belonging to
         // this entry point, even if there are no imports. We need to make sure
         // these chunks are evaluated for their side effects too.
-        if chunks[chunk_index].entry_point.is_entry_point() {
-            let entry_point_id = chunks[chunk_index].entry_point.entry_point_id();
+        if let Some(entry_point_id) = chunks[chunk_index].entry_point.entry_point_id() {
             for other_chunk_index in 0..chunks.len() {
                 if other_chunk_index == chunk_index
                     || !matches!(

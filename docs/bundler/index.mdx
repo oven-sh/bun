@@ -556,7 +556,7 @@ Running this build with the JavaScript API results in the following files:
     └── chunk-dqmx6gc8.js
 ```
 
-The generated `chunk-dqmx6gc8.js` file contains the shared code. To avoid collisions, the file name includes a content hash by default. The `bun build` CLI names this chunk `entry-a-t268ez5g.js` instead of `chunk-<hash>.js`. Customize this with [`naming`](#naming).
+The generated `chunk-dqmx6gc8.js` file contains the shared code. To avoid collisions, the file name includes a content hash by default. The `bun build` CLI names this chunk `shared-<hash>.js` instead of `chunk-<hash>.js`. Customize this with [`naming`](#naming).
 
 Each `import()` of a bundled JavaScript module also becomes its own chunk. Tree shaking applies to these chunks too: if every `import()` of a module lives in code that tree shaking removes — for example inside a function that is only called behind a [`define`](#define) or [`features`](#features) gate that evaluates to `false` — and nothing else in the live output imports the module, its chunk is not written and the module is absent from the [metafile](#metafile)'s `inputs` and `outputs`. Setting `treeShaking: false` keeps every `import()` chunk. This differs from esbuild, which emits a chunk for every reachable `import()` target.
 
@@ -1013,7 +1013,7 @@ When you provide a string for the `naming` field, Bun uses it only for bundles t
       naming: {
         // default values
         entry: '[dir]/[name].[ext]',
-        chunk: '[name]-[hash].[ext]',
+        chunk: 'chunk-[hash].[ext]',
         asset: '[name]-[hash].[ext]',
       },
     })
@@ -1028,6 +1028,16 @@ When you provide a string for the `naming` field, Bun uses it only for bundles t
     ```
   </Tab>
 </Tabs>
+
+In the `chunk` template, Bun fills `[name]` and `[dir]` from the files that load the chunk:
+
+- **A chunk for an `import()`**, or for a `require()` that becomes its own chunk: `[name]` and `[dir]` are those of the imported file.
+- **A chunk of shared JavaScript that one entrypoint loads**, directly or through its `import()` calls: `[name]` is the name of the entrypoint followed by `-chunk`.
+- **Every other chunk of shared JavaScript**: `[name]` is `shared`.
+
+For a chunk of shared JavaScript, `[dir]` is the deepest directory that contains every entrypoint that loads the chunk. For example, with `[dir]/[name]-[hash].[ext]`, a chunk that `pages/home.tsx` shares with the modules it loads through `import()` is `pages/home-chunk-<hash>.js`. A chunk that `pages/home.tsx` and `pages/about.tsx` share is `pages/shared-<hash>.js`.
+
+The name `shared` is the same in every build. Keep `[hash]` in the `chunk` template. Without it, two such chunks in one directory have the same path and the build fails, and two builds that write to one `outdir` replace each other's chunk.
 
 ### root
 

@@ -561,7 +561,7 @@ describe("bundler", () => {
       outdir: "/out",
       format: "esm",
       onAfterBundle(api) {
-        expect(jsOutputs(api)).toEqual(["index.js", "index.js", "route.js"]);
+        expect(jsOutputs(api)).toEqual(["index-chunk.js", "index.js", "route.js"]);
         api.expectFile("/out/index.js").not.toMatch(/^\s*export\b/m);
         expect(jsOutput(api, "route")).not.toContain(`"./index.js"`);
       },
@@ -607,7 +607,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "lazy.js"]);
+      expect(jsOutputs(api)).toEqual(["entry-chunk.js", "entry.js", "lazy.js"]);
     },
     folded(api) {
       // Keyed by importers alone this is entry.js importing everything from
@@ -652,7 +652,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "lazy.js"]);
+      expect(jsOutputs(api)).toEqual(["entry-chunk.js", "entry.js", "lazy.js"]);
     },
     folded(api) {
       expect(jsOutputs(api)).toEqual(["entry.entry.js", "lazy.js"]);
@@ -683,7 +683,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "shared.js"]);
+      expect(jsOutputs(api)).toEqual(["entry-chunk.js", "entry.js", "shared.js"]);
     },
     folded(api) {
       expect(jsOutputs(api)).toEqual(["entry.entry.js", "shared.js"]);
@@ -1080,7 +1080,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "lazy.js"]);
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js", "shared.js"]);
     },
     folded(api) {
       expect(jsOutputs(api)).toEqual(["entry.entry.js", "lazy.js"]);
@@ -1111,7 +1111,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "lazy.js"]);
+      expect(jsOutputs(api)).toEqual(["entry.js", "lazy.js", "shared.js"]);
     },
     folded(api) {
       expect(jsOutputs(api)).toEqual(["entry.entry.js", "lazy.js"]);
@@ -1181,7 +1181,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "lazy.js"]);
+      expect(jsOutputs(api)).toEqual(["entry-chunk.js", "entry.js", "lazy.js"]);
     },
     folded(api) {
       expect(jsOutputs(api)).toEqual(["entry.entry.js", "lazy.js"]);
@@ -2439,7 +2439,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["entry.js", "entry.js", "page.js"]);
+      expect(jsOutputs(api)).toEqual(["entry-chunk.js", "entry.js", "page.js"]);
     },
     folded(api) {
       expect(jsFilesIn(api)).toHaveLength(2);
@@ -2797,7 +2797,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["a.js", "b.js", "entry.js", "entry.js", "entry.js"]);
+      expect(jsOutputs(api)).toEqual(["a.js", "b.js", "entry-chunk.js", "entry-chunk.js", "entry.js"]);
     },
     folded(api) {
       expect(jsFilesIn(api)).toHaveLength(4);
@@ -2968,7 +2968,7 @@ describe("bundler", () => {
     onAfterBundle(api) {
       // main, b, d, the {main, d} chunk holding shared.js, and the {main, b} modulepreload runtime.
       expect(jsFilesIn(api)).toHaveLength(5);
-      api.expectFile("/out/main.js").not.toContain("41");
+      api.expectFile("/out/main.js").not.toContain("return 41");
       expect(jsOutput(api, "d")).not.toContain('from "./main.js"');
     },
     run: { file: "/out/b.js", stdout: "b\nd 42" },
@@ -3057,7 +3057,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["d.js", "main.js", "main.js", "x.js", "y.js"]);
+      expect(jsOutputs(api)).toEqual(["d.js", "main-chunk.js", "main.js", "x.js", "y.js"]);
     },
     folded(api) {
       expect(jsOutputs(api)).toEqual(["d.js", "main.entry.js", "x.js", "y.js"]);
@@ -3168,7 +3168,15 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["a.js", "b.js", "c.js", "main.js", "main.js", "main.js", "main.js"]);
+      expect(jsOutputs(api)).toEqual([
+        "a.js",
+        "b.js",
+        "c.js",
+        "main-chunk.js",
+        "main-chunk.js",
+        "main-chunk.js",
+        "main.js",
+      ]);
     },
     folded(api) {
       // main, a, b, c and g.js's chunk, now holding f.js.
@@ -3234,10 +3242,10 @@ describe("bundler", () => {
     format: "esm",
     pinned(api) {
       expect(jsOutputs(api)).toEqual([
-        "main.js",
-        "main.js",
-        "main.js",
-        "main.js",
+        "main-chunk.js",
+        "main-chunk.js",
+        "main-chunk.js",
+        "main-chunk.js",
         "main.js",
         "r1.js",
         "r2.js",
@@ -3288,7 +3296,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["a.js", "b.js", "main.js", "main.js", "main.js"]);
+      expect(jsOutputs(api)).toEqual(["a.js", "b.js", "main-chunk.js", "main-chunk.js", "main.js"]);
     },
     folded(api) {
       expect(jsFilesIn(api)).toHaveLength(4);
@@ -3397,10 +3405,10 @@ describe("bundler", () => {
     format: "esm",
     pinned(api) {
       expect(jsOutputs(api)).toEqual([
-        "entry.js",
-        "entry.js",
-        "entry.js",
-        "entry.js",
+        "entry-chunk.js",
+        "entry-chunk.js",
+        "entry-chunk.js",
+        "entry-chunk.js",
         "entry.js",
         "r1.js",
         "r2.js",
@@ -3512,7 +3520,7 @@ describe("bundler", () => {
     outdir: "/out",
     format: "esm",
     pinned(api) {
-      expect(jsOutputs(api)).toEqual(["main.js", "main.js", "main.js", "w.js", "x.js", "y.js", "z.js"]);
+      expect(jsOutputs(api)).toEqual(["main-chunk.js", "main-chunk.js", "main.js", "w.js", "x.js", "y.js", "z.js"]);
     },
     folded(api) {
       // main (with mxy.js), x, y, z, w and the q.js chunk holding c0, c and d.

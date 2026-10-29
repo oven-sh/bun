@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
 
@@ -576,6 +576,91 @@ export default function Client() {
     expect(htmlContent).toContain("<title>LMAO</title>");
     expect(htmlContent).toContain("Hello World");
   });
+
+  // Only canary and debug builds have `--debug-no-minify`. It names each file after its source.
+  describe.skipIf(!isDebug && !Bun.version_with_sha.includes("-canary"))(
+    "--debug-no-minify renders a client component",
+    () => {
+      const usesClient = (name: string, component: string) => `import Client from "${component}";
+
+export default function ${name}() {
+  return (
+    <div>
+      <Client />
+    </div>
+  );
+}`;
+      test.each([
+        [
+          "of a page in a nested directory",
+          {
+            "pages/index.tsx": `export default function IndexPage() {
+  return <h1>home</h1>;
+}`,
+            "pages/blog/post.tsx": usesClient("PostPage", "../../components/Client"),
+          },
+          ["blog/post/index.html"],
+        ],
+        [
+          "that two pages share",
+          {
+            "pages/index.tsx": usesClient("IndexPage", "../components/Client"),
+            "pages/about.tsx": usesClient("AboutPage", "../components/Client"),
+          },
+          ["index.html", "about/index.html"],
+        ],
+        [
+          "that a page shares with a module it loads with import()",
+          {
+            "pages/index.tsx": `export default function IndexPage() {
+  return <h1>home</h1>;
+}`,
+            "pages/blog/post.tsx": `import Client from "../../components/Client";
+
+export default async function PostPage() {
+  const { Extra } = await import("../../lib/extra");
+  return (
+    <div>
+      <Client />
+      <Extra />
+    </div>
+  );
+}`,
+            "lib/extra.tsx": usesClient("Extra", "../components/Client").replace("export default", "export"),
+          },
+          ["blog/post/index.html"],
+        ],
+      ])("%s", async (_, pages, rendered) => {
+        const dir = await tempDirWithBakeDeps("bake-production-debug-no-minify", {
+          "src/index.tsx": `export default { app: { framework: "react" } };`,
+          ...pages,
+          "components/Client.tsx": `"use client";
+
+export default function Client() {
+  return <button>client component</button>;
+}`,
+          "package.json": JSON.stringify({
+            "name": "test-app",
+            "version": "1.0.0",
+            "devDependencies": {
+              "react": "^18.0.0",
+              "react-dom": "^18.0.0",
+            },
+          }),
+        });
+
+        const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --debug-no-minify`
+          .cwd(dir)
+          .throws(false);
+
+        expect(stderr.toString()).not.toContain("React Client Manifest");
+        for (const html of rendered) {
+          expect(await Bun.file(path.join(dir, "dist", html)).text()).toContain("client component");
+        }
+        expect(exitCode).toBe(0);
+      });
+    },
+  );
 
   test("importing useState server-side", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-react-import", {

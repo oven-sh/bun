@@ -220,9 +220,10 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
     let mut input_buffer: Vec<u8> = Vec::new();
 
     for (chunk_index, ch) in chunks.iter().enumerate() {
-        if ch.entry_point.source_index() == browser_source_index && ch.entry_point.is_entry_point()
+        if ch.entry_point.source_index() == browser_source_index
+            && let Some(entry_point_id) = ch.entry_point.entry_point_id()
         {
-            entry_point_bits.set(ch.entry_point.entry_point_id() as usize);
+            entry_point_bits.set(entry_point_id as usize);
             chunks_to_visit.push(chunk_index as u32);
 
             if matches!(ch.content, Content::Html) {
@@ -257,9 +258,9 @@ pub(crate) fn write_with_assets<W: Write + ?Sized>(
         let ch = &chunks[chunk_index as usize];
         for import in ch.cross_chunk_imports.iter() {
             let imported = &chunks[import.chunk_index as usize];
-            if imported.entry_point.is_entry_point() {
+            if let Some(entry_point_id) = imported.entry_point.entry_point_id() {
                 // A dynamic import's entry point: its bit is what the assets only it reaches carry.
-                entry_point_bits.set(imported.entry_point.entry_point_id() as usize);
+                entry_point_bits.set(entry_point_id as usize);
             }
             chunks_to_visit.push(import.chunk_index);
         }

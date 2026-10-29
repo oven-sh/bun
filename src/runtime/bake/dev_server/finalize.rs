@@ -574,10 +574,6 @@ pub(super) fn finalize_bundle(
         // boxed slice behind in the chunk — nothing reads it after this.
         html.bundled_html_text = Some(std::mem::take(compile_result_code));
         html.script_injection_offset = Some(route_bundle::ByteOffset::init(compile_result_offset));
-
-        chunk
-            .entry_point
-            .set_entry_point_id(route_bundle_index.get());
     }
 
     // Sized AFTER

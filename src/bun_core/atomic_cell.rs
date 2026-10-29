@@ -293,9 +293,8 @@ macro_rules! size_dispatch {
                 let $a = unsafe { &*($p as *const $A) };
                 $body
             }
-            // SAFETY: `unsafe_impl_atom!`'s `const _` assert rejected every
-            // other width at compile time.
-            _ => unsafe { ::core::hint::unreachable_unchecked() },
+            // `unsafe_impl_atom!`'s `const _` assert rejects every other width.
+            _ => unreachable!(),
         }
     };
 }

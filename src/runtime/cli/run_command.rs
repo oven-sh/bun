@@ -2084,11 +2084,11 @@ impl RunCommand {
         let mut new_path: Vec<u8> = Vec::with_capacity(new_path_len);
 
         if needs_to_force_bun {
-            match Self::create_fake_temporary_node_executable(
+            let has_alias_target = match Self::create_fake_temporary_node_executable(
                 &mut new_path,
                 &mut optional_bun_self_path,
             ) {
-                Ok(()) => {}
+                Ok(()) => true,
                 Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
                 Err(_) => {
                     let alias_dir = bstr::BStr::new(if cfg!(windows) {
@@ -2110,10 +2110,11 @@ impl RunCommand {
                             alias_dir,
                         );
                     }}
+                    false
                 }
-            }
+            };
 
-            if !force_using_bun {
+            if !force_using_bun && has_alias_target {
                 let env_mut = &mut *env_loader;
                 env_mut
                     .map

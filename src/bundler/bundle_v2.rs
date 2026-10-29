@@ -2208,7 +2208,12 @@ pub mod bv2_impl {
         }
 
         /// Whether the import reads the same from an ES module `x` as from `require(x)`: names only.
-        fn links_past(&self, importer: Index, record_index: usize) -> bool {
+        fn links_past(
+            &self,
+            importer: Index,
+            record_index: usize,
+            star_imports: &mut Option<Vec<bool>>,
+        ) -> bool {
             let importer = importer.get() as usize;
             let record = &self.all_import_records[importer].as_slice()[record_index];
             use bun_ast::ImportRecordFlags as Flags;
@@ -2216,8 +2221,9 @@ pub mod bv2_impl {
                 ImportKind::Stmt => {
                     !record.flags.contains(Flags::CONTAINS_DEFAULT_ALIAS)
                         && (!record.flags.contains(Flags::CONTAINS_IMPORT_STAR)
-                            || self.is_unwrapped_require(importer, record_index)
-                            || self.reads_names_off_namespace(importer, record_index))
+                            || star_imports
+                                .get_or_insert_with(|| self.star_imports_that_link_past(importer))
+                                [record_index])
                 }
                 // Only an `import()` whose every use reads a name off it has an entry.
                 ImportKind::Dynamic => self.all_dynamic_import_aliases[importer]
@@ -2234,38 +2240,43 @@ pub mod bv2_impl {
             }
         }
 
-        /// A `require()` that the parser turned into `import * as`.
-        fn is_unwrapped_require(&self, importer: usize, record_index: usize) -> bool {
-            self.all_parts[importer].as_slice().iter().any(|part| {
-                part.tag == bun_ast::PartTag::ImportToConvertFromRequire
-                    && part.stmts.slice().iter().any(|stmt| {
-                        stmt.data.s_import().is_some_and(|import| {
-                            import.import_record_index as usize == record_index
-                        })
-                    })
-            })
-        }
-
-        /// `import * as ns` where `ns` is never a value itself and no read is `ns.default`.
-        fn reads_names_off_namespace(&self, importer: usize, record_index: usize) -> bool {
+        /// By import record of `importer`: only the entry of an `import * as` record is an answer.
+        fn star_imports_that_link_past(&self, importer: usize) -> Vec<bool> {
+            let mut links_past = vec![true; self.all_import_records[importer].len()];
             let named_imports = &self.all_named_imports[importer];
-            named_imports
-                .keys()
-                .iter()
-                .zip(named_imports.values())
-                .filter(|(_, import)| import.import_record_index as usize == record_index)
-                .all(|(ref_, import)| {
-                    if import.alias_is_star {
-                        !import.is_exported
-                            && self.all_symbols[importer].as_slice()[ref_.inner_index() as usize]
-                                .use_count_estimate
-                                == 0
-                    } else {
-                        !import
-                            .alias
-                            .is_some_and(|alias| alias.slice() == b"default")
+            for (ref_, import) in named_imports.keys().iter().zip(named_imports.values()) {
+                // `ns` is a value itself, or a read is `ns.default`.
+                let reads_the_file = if import.alias_is_star {
+                    import.is_exported
+                        || self.all_symbols[importer].as_slice()[ref_.inner_index() as usize]
+                            .use_count_estimate
+                            != 0
+                } else {
+                    import
+                        .alias
+                        .is_some_and(|alias| alias.slice() == b"default")
+                };
+                if reads_the_file
+                    && let Some(record) = links_past.get_mut(import.import_record_index as usize)
+                {
+                    *record = false;
+                }
+            }
+            // A `require()` that the parser turned into `import * as` returns the same object either way.
+            for part in self.all_parts[importer].as_slice() {
+                if part.tag != bun_ast::PartTag::ImportToConvertFromRequire {
+                    continue;
+                }
+                for stmt in part.stmts.slice() {
+                    if let Some(import) = stmt.data.s_import()
+                        && let Some(record) =
+                            links_past.get_mut(import.import_record_index as usize)
+                    {
+                        *record = true;
                     }
-                })
+                }
+            }
+            links_past
         }
 
         // Find all files reachable from all entry points. This order should be
@@ -2354,6 +2365,7 @@ pub mod bv2_impl {
                     let import_records_len = self.all_import_records
                         [import_record_list_id.get() as usize]
                         .len() as usize;
+                    let mut star_imports = None;
                     for ir_idx in 0..import_records_len {
                         let import_record = &mut self.all_import_records
                             [import_record_list_id.get() as usize]
@@ -2361,7 +2373,8 @@ pub mod bv2_impl {
                         let other_source = import_record.source_index;
                         if other_source.is_valid() {
                             if let Some(end) = self.redirect_end(other_source)
-                                && (!end.is_es_module || self.links_past(source_index, ir_idx))
+                                && (!end.is_es_module
+                                    || self.links_past(source_index, ir_idx, &mut star_imports))
                             {
                                 let import_record = &mut self.all_import_records
                                     [import_record_list_id.get() as usize]

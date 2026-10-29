@@ -2383,8 +2383,8 @@ impl QuicEndpoint {
             );
             // SAFETY: lsquic returns a live conn or null. The session's copy is cleared as in
             // `on_new_conn`. The local copy is used after `apply_options`, which reads
-            // `datagramDropPolicy`, `qlog`, `verifyPeer` and `application`: quic.ts passes an object
-            // it builds, with these as own data properties, so no script runs there.
+            // `datagramDropPolicy`, `qlog`, `verifyPeer` and `application`: quic.ts passes an
+            // object it builds, with these as own data properties, so no script runs there.
             lsquic::Conn::from_raw(conn)
         };
         self.send_scope_depth.set(self.send_scope_depth.get() - 1);

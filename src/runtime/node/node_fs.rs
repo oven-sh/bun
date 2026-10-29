@@ -9995,16 +9995,10 @@ fn map_rm_errno_narrow(e: E) -> E {
 /// # Safety
 /// `path` must point to a valid NUL-terminated C string.
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__mkdirp(
-    global_this: &JSGlobalObject,
-    path: *const c_char,
-) -> bool {
+pub(crate) unsafe extern "C" fn Bun__mkdirp(path: *const c_char) -> bool {
     // SAFETY: caller passes a NUL-terminated C string
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
-    // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached
-    // `*NodeFS` (type-erased to `*mut c_void` in `bun_jsc` to break the dep cycle).
-    let node_fs: &mut NodeFS =
-        unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
+    let mut node_fs = NodeFS::default();
     node_fs
         .mkdir_recursive(&args::Mkdir {
             path: PathLike::borrowed(path_bytes),

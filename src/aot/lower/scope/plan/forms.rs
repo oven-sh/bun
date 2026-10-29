@@ -9,7 +9,7 @@ use crate::lower::scope::analysis::{ArgumentsObjects, sort_unique};
 use crate::lower::scope::lexical_owners::find_container_binding;
 use crate::lower::scope::walk::EvalUse;
 use crate::lower::scope::{ArgumentsObject, BindingForm, BindingRef, ScopeSlot, WalkedFunctionId};
-use crate::modules::ImportBinding;
+use crate::modules::{ExportBinding, ImportBinding, ModuleKind};
 
 pub(super) fn compute_arguments_objects(context: &Context<'_, '_>) -> ArgumentsObjects {
     let (hir, bound) = (context.input.hir, context.input.bound);
@@ -67,6 +67,47 @@ pub(super) fn compute_forms(
         }
     }
     forms
+}
+
+// `import { a } from "bun"` runs as `var { a } = Bun` where the statement stands, and `a` is stored like that `var`: in a variable of the module only where something else than the body of the file finds it.
+pub(super) fn find_imported_copies_of_body(context: &Context<'_, '_>) -> Vec<SymbolId> {
+    let (input, bound, walk) = (context.input, context.input.bound, context.walk);
+    if input.modules.kind(input.file) != ModuleKind::SourceText {
+        return Vec::new();
+    }
+    let symbols = (0..bound.symbols.len() as u32).map(SymbolId);
+    let copies = symbols.filter(|&symbol| {
+        let is_import = bound.binding_kind(symbol) == BindingKind::Import;
+        is_import
+            && !bound.is_visible_to_eval(symbol)
+            && matches!(
+                input.modules.import_binding(input.file, symbol),
+                ImportBinding::BuiltinMember { .. }
+            )
+    });
+    let mut copies: Vec<SymbolId> = copies.collect();
+    if copies.is_empty() {
+        return copies;
+    }
+    let users = walk.uses.iter().copied();
+    let eval_users = walk.eval_uses.iter();
+    let users = users.chain(eval_users.map(|eval_use| (eval_use.function, eval_use.binding)));
+    let found_elsewhere = users.filter_map(|(user, used)| match used {
+        BindingRef::Symbol(symbol) if user != WalkedFunctionId::MODULE_BODY => Some(symbol),
+        BindingRef::Symbol(_) | BindingRef::Slot(..) => None,
+    });
+    let exports = input.modules.exports(input.file).iter();
+    let exported = exports.filter_map(|export| match export.binding {
+        ExportBinding::Variable(variable) if variable.file == input.file => Some(variable.id),
+        _ => None,
+    });
+    // Another file that imports a name of an `export { .. }` list is bound to the variable, whether or not the object of the module shows it.
+    let listed = walk.symbols_in_export_lists.iter().copied();
+    let mut found_elsewhere: Vec<SymbolId> =
+        found_elsewhere.chain(exported).chain(listed).collect();
+    sort_unique(&mut found_elsewhere);
+    copies.retain(|symbol| found_elsewhere.binary_search(symbol).is_err());
+    copies
 }
 
 pub(super) fn normalize_uses(

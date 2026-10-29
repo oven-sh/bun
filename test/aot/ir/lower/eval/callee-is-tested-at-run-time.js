@@ -1,5 +1,5 @@
 // RUN: link
-// CHECK: module [[entry]] path="{{*}}callee-is-tested-at-run-time"
+// CHECK: module [[entry]] path="{{*}}callee-is-tested-at-run-time.js"
 // CHECK: evalscope [[scope]] flags=
 // CHECK: function [[f]] name="f" module=[[entry]]
 // CHECK: [[eval]] = Builtin builtin=Eval

@@ -1,0 +1,17 @@
+export const values = {
+  number: 5,
+  fraction: 2.5,
+  minusZero: -0,
+  text: "7",
+  word: "word",
+  emptyText: "",
+  yes: true,
+  none: null,
+  list: [1, 2],
+  emptyList: [],
+  object: { width: "wide", height: 2, length: "long", push: () => "own push", toUpperCase: () => "own toUpperCase" },
+  big: 5n,
+  aFunction: () => "answered",
+  symbol: Symbol("s"),
+  valueOf: { valueOf: () => 9 },
+};

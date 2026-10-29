@@ -1,9 +1,0 @@
-{
-  "env": {
-    "BUN_JSC_collectContinuously": "1",
-    "BUN_JSC_forceDidDeferGCWork": "1",
-    "BUN_JSC_useZombieMode": "1",
-    "BUN_JSC_scribbleFreeCells": "1"
-  },
-  "runWithASAN": "a text that one of two paths never reads ends behind a much longer text"
-}

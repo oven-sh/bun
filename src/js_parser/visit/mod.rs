@@ -1285,6 +1285,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 Some(ExprData::EString(_) | ExprData::ENumber(_))
                             )
                     });
+                class.assigns_fields_in_constructor = lower_fields;
 
                 let fields_to_lower = if lower_fields {
                     class

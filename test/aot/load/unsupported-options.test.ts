@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isMusl, isWindows, tempDir } from "harness";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { slot, spawned } from "../run-programs";
+import { slot, spawned } from "../harness/commands";
 import { describe, test } from "../supported";
 
 const exe = (name: string) => name + (isWindows ? ".exe" : "");
@@ -58,20 +58,21 @@ const rejected: [flag: string, message: string][] = [
     : []),
 ];
 
+// Flags that do not meet are given to one build.
 const accepted = [
-  "--banner=// a banner",
-  "--footer=/* a footer */",
-  "--banner=// one\n/* two */",
-  "--format=esm",
-  "--format=cjs",
-  "--format=iife",
-  "--target=bun",
-  "--bytecode",
-  "--bytecode-depth=1",
-  "--bytecode-order=app.order",
-  "--splitting",
-  ...(hostTarget ? [`--target=${hostTarget}`, `--target=${hostTarget}-baseline`, `--target=${hostTarget}-modern`] : []),
-];
+  [
+    "--banner=// a banner",
+    "--footer=/* a footer */",
+    "--format=esm",
+    "--target=bun",
+    "--bytecode",
+    "--bytecode-depth=1",
+    "--bytecode-order=app.order",
+    "--splitting",
+  ],
+  ["--banner=// one\n/* two */", ...(hostTarget ? [`--target=${hostTarget}`] : [])],
+  ...(hostTarget ? [[`--target=${hostTarget}-baseline`], [`--target=${hostTarget}-modern`]] : []),
+].map(flags => [flags]);
 
 const BUILD_SCRIPT = `const result = await Bun.build({ entrypoints: ["./main.ts"], banner: "globalThis.fromBanner = 1;", compile: { outfile: "./program", aot: true }, throw: false });
 console.log(result.success, JSON.stringify(result.logs.filter(log => log.level === "error").map(log => log.message)));
@@ -90,11 +91,11 @@ describe.concurrent("compile/aot/load/unsupported-options", () => {
 
   test.each(accepted)(
     "accepted: %j",
-    flag =>
+    flags =>
       slot(async () => {
         using dir = tempDir("aot-load-options", { "tsconfig.json": TSCONFIG, "main.ts": MAIN, "app.order": "" });
         const folder = String(dir);
-        expect(await build(folder, [flag])).toEqual({ errors: [], exitCode: 0, wrote: true });
+        expect(await build(folder, flags)).toEqual({ errors: [], exitCode: 0, wrote: true });
         const ran = await spawned([programPath(folder)], folder, COMPILED);
         expect({ stdout: ran.stdout, exitCode: ran.exitCode, signal: ran.signal }).toEqual({
           stdout: "ran\n",

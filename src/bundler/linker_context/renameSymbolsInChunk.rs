@@ -534,12 +534,10 @@ pub(crate) fn nested_rename_tasks(chunks: &[Chunk]) -> Vec<NestedRenameTask> {
 // `task.names`.
 pub(crate) fn run_nested_rename_task(
     ctx: &crate::linker_context_mod::GenerateChunkCtx,
-    task: *mut NestedRenameTask,
+    task: &mut NestedRenameTask,
     _task_index: usize,
 ) {
-    // SAFETY: `each_ptr` hands us a unique `*mut NestedRenameTask`; nothing
-    // below re-enters it.
-    let (chunk_index, scope_range) = unsafe { ((*task).chunk_index, (*task).scopes.clone()) };
+    let (chunk_index, scope_range) = (task.chunk_index, task.scopes.clone());
     let c: &LinkerContext<'_> = &ctx.c;
     let chunk = &ctx.chunks[chunk_index as usize];
     let ChunkRenamer::Number(root) = &chunk.renamer else {
@@ -576,6 +574,5 @@ pub(crate) fn run_nested_rename_task(
     }
     let names = nested.into_names();
     drop(worker);
-    // SAFETY: as above.
-    unsafe { (*task).names = Some(names) };
+    task.names = Some(names);
 }

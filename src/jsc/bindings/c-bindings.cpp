@@ -4,6 +4,7 @@
 #include <cstdlib>
 
 #if !OS(WINDOWS)
+#include <wtf/Threading.h>
 #include <wtf/WTFConfig.h>
 #include <sys/resource.h>
 #include <fcntl.h>
@@ -665,6 +666,8 @@ extern "C" int __wrap_execve(const char* path, char* const argv[], char* const e
 {
     if (getpid() != execve_counting_pid)
         return __real_execve(path, argv, envp);
+    // The suspension lock is held over execve.
+    WTF::ThreadSuspendLocker suspendLocker;
     threads_in_execve.fetch_add(1, std::memory_order_seq_cst);
     execve_generation.fetch_add(1, std::memory_order_seq_cst);
     int rc = __real_execve(path, argv, envp);

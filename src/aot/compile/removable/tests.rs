@@ -191,7 +191,7 @@ fn every_difference_from_the_bundler_has_its_reason() {
         let expected: &[&str] = match (row.is_removable, row.plain) {
             (true, Bundler::Drops) | (false, Bundler::Keeps) | (_, Bundler::NotAsked) => &["-"],
             (true, Bundler::Keeps) => &["folded", "table", "inert", "minified"],
-            (false, Bundler::Drops) => &["missed"],
+            (false, Bundler::Drops) => &["missed", "read"],
         };
         let (line, difference) = (row.line, row.difference);
         assert!(expected.contains(&difference), "line {line}: {difference}");

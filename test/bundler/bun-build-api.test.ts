@@ -15,7 +15,7 @@ import {
 } from "harness";
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
-import { unsupported } from "../aot/run-programs";
+import { unsupported } from "../aot/harness/commands";
 import { buildNoThrow } from "./buildNoThrow";
 
 describe("Bun.build", () => {

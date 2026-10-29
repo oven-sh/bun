@@ -153,6 +153,7 @@ use crate::test_runner::bun_test::{BunTest, BunTestPtr};
 use crate::timer::{DateHeaderTimer, EventLoopDelayMonitor};
 use bun_jsc::abort_signal::Timeout as AbortSignalTimeout;
 use bun_jsc::garbage_collection_controller::GarbageCollectionController;
+use bun_jsc::web_worker::WebWorker;
 
 #[cfg(not(windows))]
 use bun_io::pipe_writer::PosixPipeWriter; // brings `on_poll` into scope for FileSinkPoll/StaticPipeWriterPoll/etc.
@@ -1351,6 +1352,14 @@ pub(crate) unsafe fn __bun_fire_timer(
                 AbortSignalTimeout,
                 event_loop_timer,
                 |c, _now, vm| AbortSignalTimeout::run(c, vm)
+            )
+        }
+        EventLoopTimerTag::WorkerWaitsForRoom => {
+            feature_timer_arm!(
+                [WorkerConstructor],
+                WebWorker,
+                room_timer,
+                |c, _now, _vm| WebWorker::on_room_timer(c)
             )
         }
         EventLoopTimerTag::GcRepeating => {

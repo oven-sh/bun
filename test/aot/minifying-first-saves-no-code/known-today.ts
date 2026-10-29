@@ -3,14 +3,6 @@
 export const knownToday: Record<string, string> = {
   "--define: typeof of a name [js]":
     'written: "server\\n\\nexit 0", bun run "server\\nerror: BuildMessage: define key \\"typeof window\\" mus; each file: the bundler: error: define key "typeof window" must be a valid identifier; bundled: the bundler: error: define key "typeof window" must be a valid identifier',
-  "built-in constructors and calls on constants: a member of a constant object [js, two files]":
-    "bundled: code bytes 235 -> 126, operations 15 -> 7, run-time operations 241 -> 239",
-  "built-in constructors and calls on constants: a member of a constant object [ts, two files]":
-    "bundled: code bytes 235 -> 126, operations 15 -> 7, run-time operations 241 -> 239",
-  "built-in constructors and calls on constants: a member of a frozen object [js, two files]":
-    "bundled: code bytes 221 -> 186, operations 10 -> 7",
-  "built-in constructors and calls on constants: a member of an object as const [js, two files]":
-    "bundled: code bytes 165 -> 102, operations 9 -> 5, run-time operations 239 -> 238",
   "built-in constructors and calls on constants: an element of a constant list [js, two files]":
     "bundled: code bytes 202 -> 106, operations 10 -> 6, run-time operations 239 -> 238",
   "built-in constructors and calls on constants: an element of a constant list [ts, two files]":
@@ -72,8 +64,6 @@ export const knownToday: Record<string, string> = {
     "bundled: code bytes 204 -> 172, operations 11 -> 8",
   "classes: a class used for its static method alone [ts, two files]":
     "bundled: code bytes 204 -> 172, operations 11 -> 8",
-  "classes: a static block that assigns [ts]":
-    "each file: code bytes 186 -> 131, operations 12 -> 7, run-time operations 242 -> 238; bundled: code bytes 186 -> 131, operations 12 -> 7, run-time operations 242 -> 238",
   "classes: a static constant field [js, two files]": "bundled: operations 10 -> 8",
   "classes: a static constant field [ts, two files]": "bundled: operations 10 -> 8",
   "classes: a static readonly field [js, two files]": "bundled: operations 8 -> 6",
@@ -92,10 +82,8 @@ export const knownToday: Record<string, string> = {
     "each file: code bytes 2388 -> 2296, operations 86 -> 74; bundled: code bytes 2388 -> 2296, operations 86 -> 74",
   "enums: a declared const enum [ts]":
     'written: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c000/entry.ts:2:13\\n; each file: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c000/entry.js:1:13\\n; bundled: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c000/entry.js:3:20\\n',
-  "enums: a member as a case label [ts, two files]":
-    "bundled: code bytes 513 -> 339, operations 24 -> 10, run-time operations 245 -> 241",
-  "enums: a member as a case label [ts]":
-    "bundled: code bytes 466 -> 339, operations 17 -> 10, run-time operations 245 -> 241",
+  "enums: a member as a case label [ts, two files]": "bundled: code bytes 472 -> 416 on arm64",
+  "enums: a member as a case label [ts]": "bundled: code bytes 472 -> 416 on arm64",
   "enums: an enum handed out whole [ts, two files]": "bundled: operations 15 -> 13",
   "enums: members are computed [ts]":
     "each file: code bytes 447 -> 375, run-time operations 251 -> 244; bundled: code bytes 447 -> 149, operations 24 -> 7, run-time operations 251 -> 238",
@@ -489,8 +477,6 @@ export const knownToday: Record<string, string> = {
     'each file: the build: 2 | import"some-ts"; |     ^ | error: TS100151: Could not resolve: "some-ts". Maybe you need to "bun ; |     ^; bundled: code bytes 150 -> 12, operations 8 -> 0',
   "esbuild/ts: ts/TypeScriptDecorators":
     "written: the build: 3 |         @new y?.[_ + 'x']() |                   ^ | error: TS1209: Invalid ",
-  "esbuild/ts: ts/TypeScriptDecoratorsKeepNames":
-    "each file: code bytes 16993 -> 3093, operations 984 -> 178; bundled: code bytes 16993 -> 2857, operations 984 -> 131",
   "files are linked: a constant read before its file has run [js]": "bundled: code bytes 162 -> 129, operations 9 -> 5",
   "files are linked: a constant read before its file has run [ts]": "bundled: code bytes 162 -> 129, operations 9 -> 5",
   "files are linked: a namespace of another file [ts]": "bundled: operations 15 -> 11",

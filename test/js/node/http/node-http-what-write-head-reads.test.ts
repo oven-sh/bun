@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 test("writeHead() calls hasHeader(), wherever a program has replaced it, and does not read headersSent", async () => {
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(import.meta.dir, "../../../aot/programs/node-http-probes/what-write-head-reads.ts")],
+    cmd: [bunExe(), join(import.meta.dir, "../../../aot/parallel/node-http/what-write-head-reads.ts")],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

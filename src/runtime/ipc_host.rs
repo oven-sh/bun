@@ -407,8 +407,8 @@ static CHANNEL: core::cell::Cell<Option<core::ptr::NonNull<IPCInstance>>> =
     core::cell::Cell::new(None);
 
 impl IPCInstance {
-    pub(crate) fn new(v: IPCInstance) -> *mut IPCInstance {
-        bun_core::heap::into_raw(Box::new(v))
+    pub(crate) fn new(v: IPCInstance) -> core::ptr::NonNull<IPCInstance> {
+        bun_core::heap::alloc_nn(v)
     }
 
     #[inline]
@@ -523,15 +523,10 @@ pub(crate) fn get_ipc_instance(
             data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
         });
         // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
-        let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
+        let send_queue: *mut SendQueue = unsafe { (*instance.as_ptr()).data.as_ptr() };
         // SAFETY: as above.
-        unsafe {
-            (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
-                core::ptr::NonNull::new_unchecked(instance),
-            ))
-        };
-        // SAFETY: `instance` was just boxed above and is non-null.
-        CHANNEL.set(Some(unsafe { core::ptr::NonNull::new_unchecked(instance) }));
+        unsafe { (*send_queue).set_owner(IPC::SendQueueOwner::Instance(instance)) };
+        CHANNEL.set(Some(instance));
 
         // SAFETY: `group` is the live per-VM SocketGroup; `send_queue` is
         // the freshly-allocated SendQueue (root raw pointer, stored in the
@@ -548,7 +543,7 @@ pub(crate) fn get_ipc_instance(
         let Some(socket) = socket else {
             // SAFETY: `instance` was produced by `IPCInstance::new`
             // (heap::alloc) above and is not yet aliased.
-            unsafe { IPCInstance::deinit(instance) };
+            unsafe { IPCInstance::deinit(instance.as_ptr()) };
             CHANNEL.set(None);
             bun_core::warn!("Unable to start IPC socket");
             return None;
@@ -558,7 +553,7 @@ pub(crate) fn get_ipc_instance(
         // SAFETY: `send_queue` is live (owned by `instance`).
         unsafe { (*send_queue).socket.set(IPC::SocketUnion::Open(socket)) };
 
-        instance
+        instance.as_ptr()
     };
 
     #[cfg(windows)]
@@ -567,15 +562,10 @@ pub(crate) fn get_ipc_instance(
             data: SendQueue::new(mode, None, IPC::SocketUnion::Uninitialized),
         });
         // SAFETY: `instance` was just boxed; `send_queue` is its live SendQueue.
-        let send_queue: *mut SendQueue = unsafe { (*instance).data.as_ptr() };
+        let send_queue: *mut SendQueue = unsafe { (*instance.as_ptr()).data.as_ptr() };
         // SAFETY: as above.
-        unsafe {
-            (*send_queue).set_owner(IPC::SendQueueOwner::Instance(
-                core::ptr::NonNull::new_unchecked(instance),
-            ))
-        };
-        // SAFETY: `instance` was just boxed above and is non-null.
-        CHANNEL.set(Some(unsafe { core::ptr::NonNull::new_unchecked(instance) }));
+        unsafe { (*send_queue).set_owner(IPC::SendQueueOwner::Instance(instance)) };
+        CHANNEL.set(Some(instance));
 
         // `windows_configure_client` STORES the `*mut SendQueue` in
         // `uv_handle_t.data` for the pipe's lifetime; `send_queue` is the
@@ -584,13 +574,13 @@ pub(crate) fn get_ipc_instance(
         if let Err(_) = unsafe { SendQueue::windows_configure_client(send_queue, fd) } {
             // SAFETY: `instance` was produced by `IPCInstance::new`
             // (heap::alloc) above and is not yet aliased.
-            unsafe { IPCInstance::deinit(instance) };
+            unsafe { IPCInstance::deinit(instance.as_ptr()) };
             CHANNEL.set(None);
             bun_core::output::warn(&format_args!("Unable to start IPC pipe '{:?}'", fd));
             return None;
         }
 
-        instance
+        instance.as_ptr()
     };
 
     // SAFETY: `instance` is the live boxed IPCInstance.

@@ -1,5 +1,5 @@
 import { types } from "node:util";
-import { Unavailable } from "./instances";
+import { Unavailable, type Candidate } from "./instances";
 import { Log } from "./log";
 import type { Invocation, Realm } from "./members";
 import type { Completion, OperandSet, Run } from "./runs";
@@ -7,7 +7,6 @@ import { retakeSnapshot, takeSnapshot } from "./snapshots";
 import { isObject, unreachable } from "./table-description";
 
 const maxIteratorSteps = 8;
-const regExpStateKeys = "input lastMatch lastParen leftContext rightContext $1 $2 $3 $4 $5 $6 $7 $8 $9".split(" ");
 const promiseThen = Promise.prototype.then;
 const noop = () => {};
 
@@ -37,8 +36,20 @@ function complete(invocation: Invocation, receiver: unknown, args: unknown[]): C
   }
 }
 
-function readRegExpState(): string {
-  return regExpStateKeys.map(key => String(Reflect.get(RegExp, key))).join("\0");
+// A match that no call makes: while it is the last one, no call has made any.
+const markOfNoMatch = "no built-in has matched anything since";
+const matchingTheMark = new RegExp(`^${markOfNoMatch}$`);
+const execute = RegExp.prototype.exec;
+const lastInput = Reflect.getOwnPropertyDescriptor(RegExp, "input")!.get!;
+const lastMatch = Reflect.getOwnPropertyDescriptor(RegExp, "lastMatch")!.get!;
+
+function markRegExpState(): void {
+  matchingTheMark.lastIndex = 0;
+  Reflect.apply(execute, matchingTheMark, [markOfNoMatch]);
+}
+
+function hasMarkedRegExpState(): boolean {
+  return Reflect.apply(lastInput, RegExp, []) === markOfNoMatch && Reflect.apply(lastMatch, RegExp, []) === markOfNoMatch;
 }
 
 function withoutRecording<T>(log: Log, action: () => T): T {
@@ -68,10 +79,8 @@ function nextMethodOf(log: Log, value: unknown): Function | undefined {
   return typeof next === "function" && log.originOf(next) === undefined ? next : undefined;
 }
 
-async function stepIterator(log: Log, iterator: unknown): Promise<unknown[]> {
-  const next = nextMethodOf(log, iterator);
+async function stepIterator(log: Log, iterator: unknown, next: Function): Promise<unknown[]> {
   const yielded: unknown[] = [];
-  if (!next) return yielded;
   try {
     for (let step = 0; step < maxIteratorSteps; step++) {
       let result: any = Reflect.apply(next, iterator, []);
@@ -86,8 +95,8 @@ async function stepIterator(log: Log, iterator: unknown): Promise<unknown[]> {
 }
 
 // Only code of an operand shows that something runs later, and only a job or a task can run it.
-async function waitForTasks(set: OperandSet, delay: number): Promise<void> {
-  const hasCode = [set.receiver, ...set.arguments].some(candidate => candidate.kind === "Instrumented");
+async function waitForTasks(sets: readonly OperandSet[], delay: number): Promise<void> {
+  const hasCode = sets.some(set => [set.receiver, ...set.arguments].some(candidate => candidate.kind === "Instrumented"));
   if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
   else if (hasCode) await new Promise(resolve => setImmediate(resolve));
   else for (let turn = 0; turn < 4; turn++) await undefined;
@@ -102,7 +111,8 @@ function release(value: unknown): void {
   } catch {}
 }
 
-export type RunOptions = { lateDelay?: number };
+// `leavesOperandsAsMade`: whether the next call may have the operands of this one that take time to make.
+export type RunOptions = { lateDelay?: number; leavesOperandsAsMade?(run: Run): boolean };
 
 function isRepeatable({ mode }: Invocation, { receiver, arguments: candidates }: OperandSet): boolean {
   if (mode === "Get") return true;
@@ -131,17 +141,16 @@ function saveMember({ mode, key }: Invocation, realm: Realm, receiver: unknown):
   }
 }
 
-export async function runSet(
-  realm: Realm,
-  invocation: Invocation,
-  set: OperandSet,
-  { lateDelay = 0 }: RunOptions = {},
-): Promise<Run | undefined> {
+// There is one such value at a time.
+const isHeldByCandidate = ({ prepare, release }: Candidate) => prepare !== undefined || release !== undefined;
+const isMadeAhead = ({ receiver, arguments: candidates }: OperandSet) => isHeldByCandidate(receiver) || candidates.some(isHeldByCandidate);
+
+type Begun = Omit<Run, "after" | "repeated" | "yielded"> & { restoreMember: (() => void) | undefined };
+
+function begin(realm: Realm, invocation: Invocation, set: OperandSet): Begun | undefined {
   const log = new Log();
-  const candidates = [set.receiver, ...set.arguments];
   let receiver: unknown;
   let args: unknown[];
-  for (const candidate of candidates) await candidate.prepare?.();
   try {
     receiver = set.receiver.create(log, "this", { receiver: undefined });
     args = set.arguments.map((candidate, index) => candidate.create(log, index, { receiver }));
@@ -150,18 +159,30 @@ export async function runSet(
     throw error;
   }
   const before = takeSnapshot(log, [receiver, ...args], value => realm.isKnownObject(value));
-  const regExpStateBefore = readRegExpState();
   const restoreMember = saveMember(invocation, realm, receiver);
+  markRegExpState();
 
   log.isRecording = true;
   const completion = complete(invocation, receiver, args);
-  const hasChangedRegExpState = readRegExpState() !== regExpStateBefore;
+  const hasChangedRegExpState = !hasMarkedRegExpState();
   log.isLate = true;
+  if (completion.kind === "Returned") handleRejection(log, completion.value);
+  return { set, log, receiver, args, completion, before, hasChangedRegExpState, restoreMember };
+}
+
+const nothingYielded: unknown[] = [];
+
+function end(invocation: Invocation, begun: Begun, options: RunOptions): Run | Promise<Run> {
+  const { log, completion } = begun;
   const result = completion.kind === "Returned" ? completion.value : undefined;
-  handleRejection(log, result);
-  await waitForTasks(set, lateDelay);
   log.isStepping = true;
-  const yielded = await stepIterator(log, result);
+  const next = nextMethodOf(log, result);
+  return next ? stepIterator(log, result, next).then(yielded => finish(invocation, begun, yielded, options)) : finish(invocation, begun, nothingYielded, options);
+}
+
+function finish(invocation: Invocation, { restoreMember, ...begun }: Begun, yielded: unknown[], { leavesOperandsAsMade }: RunOptions): Run {
+  const { set, log, receiver, args, completion, before } = begun;
+  const result = completion.kind === "Returned" ? completion.value : undefined;
   log.isRecording = false;
 
   const after = retakeSnapshot(log, before);
@@ -171,20 +192,41 @@ export async function runSet(
     release(repeated.value);
   }
   release(result);
-  for (const candidate of candidates) candidate.release?.();
   try {
     restoreMember?.();
   } catch {}
-  return {
-    set,
-    log,
-    receiver,
-    args,
-    completion,
-    repeated,
-    before,
-    after,
-    yielded,
-    hasChangedRegExpState,
-  };
+  const run: Run = { ...begun, repeated, after, yielded };
+  if (isMadeAhead(set)) {
+    const isAsMade = leavesOperandsAsMade?.(run) ?? false;
+    for (const candidate of [set.receiver, ...set.arguments]) candidate.release?.(isAsMade);
+  }
+  return run;
+}
+
+/** One call with each set. The calls are made one behind the other, and what they leave for later has one wait to run in. */
+export async function runSets(
+  realm: Realm,
+  invocation: Invocation,
+  sets: readonly OperandSet[],
+  options: RunOptions = {},
+): Promise<(Run | undefined)[]> {
+  // A store to a member of a built-in object is taken back before the next one.
+  if (sets.length > 1 && (invocation.mode === "Set" || sets.some(isMadeAhead))) {
+    const runs: (Run | undefined)[] = [];
+    for (const set of sets) runs.push(...(await runSets(realm, invocation, [set], options)));
+    return runs;
+  }
+  for (const set of sets) for (const candidate of [set.receiver, ...set.arguments]) await candidate.prepare?.();
+  const begun = sets.map(set => begin(realm, invocation, set));
+  await waitForTasks(sets, options.lateDelay ?? 0);
+  const runs: (Run | undefined)[] = [];
+  for (const one of begun) {
+    const ended = one && end(invocation, one, options);
+    runs.push(ended instanceof Promise ? await ended : ended);
+  }
+  return runs;
+}
+
+export async function runSet(realm: Realm, invocation: Invocation, set: OperandSet, options: RunOptions = {}): Promise<Run | undefined> {
+  return (await runSets(realm, invocation, [set], options))[0];
 }

@@ -140,6 +140,8 @@ pub enum MainEntryPoint {
     /// The user's file, through the `bun:main` wrapper.
     File,
     Compiled,
+    /// A file that is not compiled into an executable that runs only what is. The loader gets its path and answers for it.
+    OutsideExecutable,
     /// `bun ./index.html`: `src/js/internal/html.ts` serves the pages.
     Html,
     /// `bun bake`: `src/js/internal/bake.ts` serves the app in the working directory. There is no
@@ -1620,20 +1622,13 @@ impl VirtualMachine {
         unsafe { self.transpiler.env.as_ref() }
     }
 
-    /// Safe accessor for the process-lifetime resolver `FileSystem` singleton
-    /// (`vm.transpiler.fs`). Allocated once during VM init and never freed;
-    /// callers previously open-coded `unsafe { &*vm.transpiler.fs }`.
+    /// The process-lifetime resolver `FileSystem` singleton.
     #[inline]
     pub fn fs(&self) -> &'static bun_resolver::fs::FileSystem {
-        // SAFETY: `transpiler.fs` is set during `Transpiler::init` to the
-        // process-lifetime `Fs::FileSystem` singleton; never null while a VM
-        // is installed.
-        unsafe { &*self.transpiler.fs }
+        bun_resolver::fs::FileSystem::get()
     }
 
-    /// Safe accessor for the process-lifetime cwd string
-    /// (`vm.transpiler.fs.top_level_dir`). The `FileSystem` singleton is
-    /// allocated once during VM init and never freed.
+    /// The process cwd string.
     #[inline]
     pub fn top_level_dir(&self) -> &'static [u8] {
         self.fs().top_level_dir()
@@ -3235,7 +3230,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         entry_point: BuiltinEntryPoint,
     ) -> *mut JSInternalPromise;
-    fn Bun__lookForServerAfterEvaluation(global: &JSGlobalObject, promise: *mut JSInternalPromise);
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `callback`
     // (never dereferenced as Rust data).
     safe fn JSC__VM__holdAPILock(
@@ -3657,13 +3651,16 @@ impl VirtualMachine {
 
         if matches!(
             self.main_entry_point,
-            MainEntryPoint::File | MainEntryPoint::Compiled
+            MainEntryPoint::File | MainEntryPoint::Compiled | MainEntryPoint::OutsideExecutable
         ) {
-            let is_compiled = entry_path.is_some_and(crate::compiled_program::is_compiled_module);
-            self.main_entry_point = if is_compiled {
-                MainEntryPoint::Compiled
-            } else {
-                MainEntryPoint::File
+            self.main_entry_point = match entry_path {
+                Some(path) if crate::compiled_program::is_compiled_module(path) => {
+                    MainEntryPoint::Compiled
+                }
+                Some(path) if crate::compiled_program::refuses_code_at(self.global(), path) => {
+                    MainEntryPoint::OutsideExecutable
+                }
+                _ => MainEntryPoint::File,
             };
         }
         self.has_loaded = self.main_entry_point == MainEntryPoint::Compiled
@@ -3694,15 +3691,17 @@ impl VirtualMachine {
                 if self.has_patched_run_main
                     && matches!(
                         self.main_entry_point,
-                        MainEntryPoint::File | MainEntryPoint::Compiled
+                        MainEntryPoint::File
+                            | MainEntryPoint::Compiled
+                            | MainEntryPoint::OutsideExecutable
                     )
                 {
                     bun_core::hint::cold();
                     self.set_pending_internal_promise(None);
                     let global_ref = self.global();
                     let run_main_path = match (self.main_entry_point, self.main()) {
-                        (MainEntryPoint::Compiled, Some(main)) => main,
-                        _ => MAIN_FILE_NAME,
+                        (MainEntryPoint::File, _) | (_, None) => MAIN_FILE_NAME,
+                        (_, Some(main)) => main,
                     };
                     let argv1 = bun_string_jsc::create_utf8_for_js(global_ref, run_main_path)?;
                     let promise: *mut JSInternalPromise =
@@ -3747,7 +3746,9 @@ impl VirtualMachine {
         // module evaluations from here on mark the entry graph as executing.
         self.entry_evaluation_started = false;
         let builtin = match self.main_entry_point {
-            MainEntryPoint::File | MainEntryPoint::Compiled => None,
+            MainEntryPoint::File | MainEntryPoint::Compiled | MainEntryPoint::OutsideExecutable => {
+                None
+            }
             MainEntryPoint::Html => Some(BuiltinEntryPoint::Html),
             MainEntryPoint::Bake => Some(BuiltinEntryPoint::Bake),
         };
@@ -3767,18 +3768,15 @@ impl VirtualMachine {
                 return Err(crate::CrateError::JSError);
             }
             p
-        } else if self.main_entry_point == MainEntryPoint::Compiled
+        } else if self.main_entry_point != MainEntryPoint::File
             && !self.transpiler.options.disable_transpilation
         {
-            // The path is the key of the module in the image: there is nothing to resolve.
-            let main = (self.main()).expect("a compiled entry point has a path");
+            // The path is the key of the module: there is nothing to resolve.
+            let main = (self.main()).expect("the entry point has a path");
             let main_str = bun_core::StringView::from_bytes(main);
-            let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
+            jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &main_str)
                 .map(NonNull::as_ptr)
-                .ok_or(crate::CrateError::JSError)?;
-            // SAFETY: `promise` is a live JSC heap cell.
-            unsafe { Bun__lookForServerAfterEvaluation(self.global(), promise) };
-            promise
+                .ok_or(crate::CrateError::JSError)?
         } else if !self.transpiler.options.disable_transpilation {
             let name = bun_core::StringView::borrow_utf8(MAIN_FILE_NAME);
             jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, &name)
@@ -4368,6 +4366,13 @@ impl VirtualMachine {
     #[unsafe(export_name = "Bun__codeGenerationFromStrings")]
     pub(crate) extern "C" fn code_generation_from_strings_for_cpp() -> u8 {
         bun_core::code_generation_from_strings() as u8
+    }
+
+    #[cfg(not(bun_disallow_code_generation_from_strings))]
+    #[unsafe(export_name = "Bun__isCodeGenerationDisallowedByFlags")]
+    pub(crate) extern "C" fn is_code_generation_disallowed_by_flags_for_cpp() -> bool {
+        bun_core::code_generation_from_strings_by_flags()
+            != bun_core::CodeGenerationFromStrings::Allowed
     }
 
     #[cfg(not(bun_disallow_code_generation_from_strings))]
@@ -6367,13 +6372,10 @@ impl VirtualMachine {
             }
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
-            // The C trampoline erases lifetimes via `*mut c_void`; round-trip
-            // the caller's `&mut ExceptionList` as a raw pointer so child
-            // errors append to the same list.
-            struct AggCtx<'a> {
-                formatter: *mut crate::console_object::Formatter<'a>,
-                writer: *mut bun_core::io::Writer,
-                exception_list: *mut ExceptionList,
+            struct AggCtx<'c, 'a> {
+                formatter: &'c mut crate::console_object::Formatter<'a>,
+                writer: &'c mut bun_core::io::Writer,
+                exception_list: Option<&'c mut ExceptionList>,
                 allow_ansi_color: bool,
                 allow_side_effects: bool,
                 printed_member: bool,
@@ -6385,22 +6387,10 @@ impl VirtualMachine {
                 next_value: JSValue,
             ) {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
-                // SAFETY: per-thread VM.
+                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_, '_>>(ctx) };
                 let vm = VirtualMachine::get().as_mut();
-                let exception_list = if ctx.exception_list.is_null() {
-                    None
-                } else {
-                    // SAFETY: non-null branch; borrows the caller's stack
-                    // `ExceptionList`, live for the synchronous `for_each`.
-                    Some(unsafe { &mut *ctx.exception_list })
-                };
-                // SAFETY: `ctx.formatter` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let formatter = unsafe { &mut *ctx.formatter };
-                // SAFETY: `ctx.writer` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let writer = unsafe { &mut *ctx.writer };
+                let formatter = &mut *ctx.formatter;
+                let writer = &mut *ctx.writer;
                 ctx.printed_member = true;
                 formatter.depth = formatter.depth.saturating_add(1);
                 if next_value.is_cell()
@@ -6432,7 +6422,7 @@ impl VirtualMachine {
                     vm.print_errorlike_object(
                         next_value,
                         None,
-                        exception_list,
+                        ctx.exception_list.as_deref_mut(),
                         formatter,
                         writer,
                         ctx.allow_ansi_color,
@@ -6442,11 +6432,9 @@ impl VirtualMachine {
                 formatter.depth = formatter.depth.saturating_sub(1);
             }
             let mut ctx = AggCtx {
-                formatter: std::ptr::from_mut(&mut *formatter),
-                writer: std::ptr::from_mut(&mut *writer),
-                exception_list: exception_list
-                    .as_deref_mut()
-                    .map_or(core::ptr::null_mut(), std::ptr::from_mut::<ExceptionList>),
+                formatter: &mut *formatter,
+                writer: &mut *writer,
+                exception_list: exception_list.as_deref_mut(),
                 allow_ansi_color,
                 allow_side_effects,
                 printed_member: false,

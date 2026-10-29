@@ -5,7 +5,7 @@ use super::{CheckerTypeId, FileLowering, FunctionLowering};
 use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, BuiltinName, MemberLookup};
 use crate::builtins::{builtin_class_of, builtin_value_of};
-use crate::ir::generated::{ExpectedResult, LimitId};
+use crate::ir::generated::{ExpectedResult, ExpectedResultFlags, LimitId};
 use crate::ir::{ExpectedResultId, Primitives, TypeId, TypeTable, ValueId};
 
 impl FileLowering<'_, '_, '_, '_> {
@@ -102,7 +102,10 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         };
         let site = hir[id];
-        if hir.list_at(site.type_args).is_empty() {
+        let has_type_arguments = !hir.list_at(site.type_args).is_empty();
+        let may_be_query =
+            matches!(hir[call].kind, ExprKind::TaggedTemplate(_)) && self.is_checked();
+        if !has_type_arguments && !may_be_query {
             let callee = self.skip_type_syntax(site.callee);
             if self.builtins.builtin_of_expression(callee) == Some(BuiltinId::JSONParse) {
                 self.note_what_a_parse_may_build(call);
@@ -110,7 +113,38 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let target = self.queries.resolved_call(call).ok()??;
+        if !has_type_arguments && !self.answers_query(&target) {
+            return None;
+        }
         self.find_written_result(call, &target)
+    }
+
+    // The signature is the same whatever holds the function: `sql` of "bun", what `new SQL(..)` made, a parameter of that type.
+    fn find_builtin_of_signature(&self, target: &CallTarget) -> Option<BuiltinId> {
+        let types = self.inputs.builtin_types;
+        let index = types.value_of_call_signature(target.declaration?)?;
+        builtin_value_of(index).map(table::canonical_id)
+    }
+
+    fn answers_query(&self, target: &CallTarget) -> bool {
+        let builtin = self.find_builtin_of_signature(target);
+        builtin.is_some_and(table::answers_query)
+    }
+
+    // ``await sql<Row[]>`..` ``, ``const rows: Row[] = await sql`..` ``: a query settles to its rows.
+    fn type_of_rows(&mut self, call: ExprId, query: CheckerTypeId) -> TypeId {
+        let position = self.hir[call].pos;
+        let settled = match self.queries.awaited_type(query) {
+            Ok(settled) => self.result_type(settled, position),
+            Err(_) => TypeTable::ANYTHING,
+        };
+        if settled != TypeTable::ANYTHING {
+            return settled;
+        }
+        match self.queries.contextual_type_of_settled_value(call) {
+            Ok(Some(written)) => self.result_type(written, position),
+            Ok(None) | Err(_) => TypeTable::ANYTHING,
+        }
     }
 
     fn result_type(&mut self, ty: CheckerTypeId, position: u32) -> TypeId {
@@ -133,10 +167,6 @@ impl FileLowering<'_, '_, '_, '_> {
         call: ExprId,
         target: &CallTarget,
     ) -> Option<ExpectedResultId> {
-        let written = match target.result.written {
-            WrittenType::Written(written) => written,
-            WrittenType::Unwritten | WrittenType::GaveUp(_) => return None,
-        };
         // The record says what code that the engine cannot see creates. It sees a body.
         if target
             .declaration
@@ -145,7 +175,13 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         }
         let position = self.hir[call].pos;
-        let ty = self.result_type(written, position);
+        let builtin = self.find_builtin_of_signature(target);
+        let answers_query = self.answers_query(target);
+        let ty = match (answers_query, target.result.written) {
+            (true, _) => self.type_of_rows(call, target.result.checked.ok()?),
+            (false, WrittenType::Written(written)) => self.result_type(written, position),
+            (false, WrittenType::Unwritten | WrittenType::GaveUp(_)) => return None,
+        };
         if ty == TypeTable::ANYTHING {
             return None;
         }
@@ -154,18 +190,19 @@ impl FileLowering<'_, '_, '_, '_> {
             self.gave_up(limit, position);
             return None;
         };
-        let expected = ExpectedResult { ty, layouts };
+        let flags = match answers_query {
+            true => ExpectedResultFlags::IS_ROWS_OF_QUERY,
+            false => ExpectedResultFlags::default(),
+        };
+        let expected = ExpectedResult { ty, layouts, flags };
         // A built-in may build what its type argument says: `response.json<T>()`.
-        let builtin_types = self.inputs.builtin_types;
-        let is_builtin = target
-            .declaration
-            .and_then(|declaration| builtin_types.value_of_call_signature(declaration))
-            .and_then(builtin_value_of)
-            .is_some();
-        Some(match is_builtin {
-            true => self.fragment.add_expected_result(expected),
-            false => self.fragment.add_described_result(expected),
-        })
+        if builtin.is_none() {
+            return Some(self.fragment.add_described_result(expected));
+        }
+        if builtin.is_some_and(table::is_parser) {
+            self.note_what_is_built(ty, limit);
+        }
+        Some(self.fragment.add_expected_result(expected))
     }
 }
 

@@ -68,7 +68,7 @@ impl PropertyKey {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct PropertyKeyTable {
     list: Vec<PropertyKey>,
     ids: HashTable<PropertyKeyId>,

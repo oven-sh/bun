@@ -26,7 +26,12 @@ const kMaxLength = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModul
 
 const { Transform, finished } = require("node:stream");
 const owner_symbol = Symbol("owner_symbol");
-const { checkRangesOrGetDefault, validateFunction, validateFiniteNumber } = require("internal/validators");
+const {
+  checkRangesOrGetDefault,
+  validateBoolean,
+  validateFunction,
+  validateFiniteNumber,
+} = require("internal/validators");
 
 const kFlushFlag = Symbol("kFlushFlag");
 const kAfterFlush = Symbol("kAfterFlush");
@@ -173,7 +178,7 @@ interface ZlibHandle extends $Bindgen.CompressionStream {
   [owner_symbol]: $Node.ZlibBase;
   /** Set only while a write is on the threadpool. */
   buffer: (View & { [kAfterFlush]?: () => void }) | null;
-  cb: () => void;
+  cb: (error?: Error) => void;
   afterWrite?: (() => void) | null;
   availOutBefore: number;
   availInBefore: number;
@@ -199,6 +204,7 @@ interface ZlibOptions extends Omit<$Node.TransformOptions, "flush" | "encoding">
   dictionary?: View | ArrayBuffer | SharedArrayBuffer;
   info?: boolean;
   maxOutputLength?: number;
+  rejectGarbageAfterEnd?: boolean;
   params?: Record<string, number | boolean>;
   pledgedSrcSize?: number;
 }
@@ -219,6 +225,7 @@ declare global {
       _defaultFullFlushFlag: number;
       _info: boolean | undefined;
       _maxOutputLength: number;
+      _rejectGarbageAfterEnd: boolean;
       reset(): void;
       flush(kind?: number | (() => void), callback?: () => void): void;
       close(callback?: () => void): void;
@@ -280,6 +287,10 @@ function ZlibBase(
     // prettier-ignore
     maxOutputLength = checkRangesOrGetDefault(opts.maxOutputLength, "options.maxOutputLength", 1, kMaxLength, kMaxLength);
 
+    if (opts.rejectGarbageAfterEnd !== undefined) {
+      validateBoolean(opts.rejectGarbageAfterEnd, "options.rejectGarbageAfterEnd");
+    }
+
     if (opts.encoding || opts.objectMode || opts.writableObjectMode) {
       opts = { ...opts };
       opts.encoding = null;
@@ -304,6 +315,8 @@ function ZlibBase(
   this._defaultFullFlushFlag = fullFlush;
   this._info = opts && opts.info;
   this._maxOutputLength = maxOutputLength;
+
+  this._rejectGarbageAfterEnd = opts?.rejectGarbageAfterEnd === true;
 }
 $toClass(ZlibBase, "ZlibBase", Transform);
 ZlibBase.prototype[kFlushBound] = FLUSH_BOUND[FLUSH_BOUND_IDX_NORMAL];
@@ -518,6 +531,11 @@ function processChunkSync(self: $Node.ZlibBase, chunk: View, flushFlag: number):
     }
   }
 
+  if (availInAfter > 0 && self._rejectGarbageAfterEnd) {
+    _close(self);
+    throw $ERR_TRAILING_JUNK_AFTER_STREAM_END();
+  }
+
   self.bytesWritten = inputRead;
   _close(self);
 
@@ -647,6 +665,15 @@ function processCallback(this: ZlibHandle) {
     // This applies to streams where we don't check data past the end of
     // what was consumed; that is, everything except Gunzip/Unzip.
 
+    if (self._rejectGarbageAfterEnd) {
+      const err = $ERR_TRAILING_JUNK_AFTER_STREAM_END();
+      self.destroy(err);
+      // Node.js leaves the chunk on the handle here.
+      this.buffer = null;
+      this.cb(err);
+      return;
+    }
+
     self.push(null);
   }
 
@@ -718,7 +745,16 @@ function Zlib(this: $Node.Zlib, opts: ZlibOptions | undefined, mode: number) {
 
   const handle = new NativeZlib(mode);
   this._writeState = new Uint32Array(2);
-  handle.init(windowBits, level, memLevel, strategy, this._writeState, processCallback, dictionary);
+  handle.init(
+    windowBits,
+    level,
+    memLevel,
+    strategy,
+    this._writeState,
+    processCallback,
+    dictionary,
+    opts?.rejectGarbageAfterEnd === true,
+  );
 
   ZlibBase.$apply(this, [opts, mode, handle, zlibDefaultOpts]);
 

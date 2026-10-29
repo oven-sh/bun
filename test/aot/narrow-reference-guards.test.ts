@@ -8,7 +8,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned, unsupported, withoutCoreDump } from "./run-programs";
+import { slot, spawned, unsupported, withoutCoreDump } from "./harness/commands";
 
 const program = `
 class Link {
@@ -188,7 +188,7 @@ describe.concurrent("compile/aot/narrow references and the collector", () => {
     "the fields of an object in a frame keep objects alive: %s",
     flag =>
       slot(async () => {
-        const source = join(import.meta.dir, "programs", "collector", "a-field-stored-on-two-paths-behind-a-call.ts");
+        const source = join(import.meta.dir, "parallel", "gc", "field-stored-on-two-paths-behind-call.ts");
         using dir = tempDir("aot-narrow-references-in-a-frame", { "main.ts": await Bun.file(source).text() });
         const built = await build(String(dir), "in-a-frame", ["--aot-check=validate-reference-guards", flag]);
         expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });

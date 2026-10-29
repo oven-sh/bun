@@ -4,7 +4,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { built, spawned } from "./run-programs";
+import { built, spawned } from "./harness/commands";
 import { describe, test } from "./supported";
 
 const rounds = 20;

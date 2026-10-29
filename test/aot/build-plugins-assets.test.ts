@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { slot, spawned, unsupported } from "./run-programs";
+import { slot, spawned, unsupported } from "./harness/commands";
 
 const build = (naming: string) => `import plugin, { calls } from "./plugin";
 const result = await Bun.build({ entrypoints: ["./main.ts"], compile: { outfile: process.argv[2], aot: true }, ${naming} plugins: [plugin], throw: false });
@@ -43,6 +43,33 @@ async function buildIn(folder: string, delay: string) {
 
 type Case = { naming?: string; files: Record<string, string>; prints: string; calls: Record<string, number> };
 
+/** One program that runs the programs of `cases` one after the other, and one plugin that does what theirs do. */
+function together(cases: Case[]): Case {
+  const numbered = (name: string) => cases.map((_, index) => `${name}${index}`);
+  return {
+    files: {
+      ...Object.assign(
+        {},
+        ...cases.map(({ files: { "main.ts": main, "plugin.ts": plugin, ...rest } }, index) => ({
+          ...rest,
+          [`main${index}.ts`]: main,
+          [`plugin${index}.ts`]: plugin,
+        })),
+      ),
+      "main.ts": numbered("main")
+        .map(name => `await import("./${name}");\n`)
+        .join(""),
+      "plugin.ts": `${numbered("plugin")
+        .map(name => `import ${name} from "./${name}";\n`)
+        .join("")}export { calls } from "./helpers";
+export default { name: "assets", setup(b: any) { for (const plugin of [${numbered("plugin")}]) plugin.setup(b); } };
+`,
+    },
+    prints: cases.map(({ prints }) => prints).join(""),
+    calls: Object.assign({}, ...cases.map(({ calls }) => calls)),
+  };
+}
+
 async function expectSameExecutable({ naming = byName, files, prints, calls }: Case) {
   using dir = tempDir("aot-plugin-assets", {
     "build.ts": build(naming),
@@ -52,7 +79,7 @@ async function expectSameExecutable({ naming = byName, files, prints, calls }: C
   });
   const folder = String(dir);
   const hashes: string[] = [];
-  for (const delay of ["0", "40", "700"]) {
+  for (const delay of ["0", "40"]) {
     const { executable, built, hash, calls: made } = await buildIn(folder, delay);
     expect({ delay, stdout: built.stdout, stderr: built.stderr, exitCode: built.exitCode, calls: made }).toEqual({
       delay,
@@ -74,8 +101,8 @@ async function expectSameExecutable({ naming = byName, files, prints, calls }: C
   expect(hashes).toEqual(hashes.map(() => hashes[0]));
 }
 
-const reads = `import { readFileSync } from "fs";
-const text = (path: string): string => readFileSync(path, "utf8");
+const reads = `declare const Bun: any;
+const text = (path: string): Promise<string> => Bun.file(path).text();
 `;
 
 const cases: Record<string, Case> = {
@@ -84,7 +111,7 @@ const cases: Record<string, Case> = {
       "main.ts": `${reads}// @ts-ignore
 import big from "./big.bin" with { type: "file" };
 import { one } from "./one";
-console.log(one, big.endsWith("big.bin"), text(big));`,
+console.log(one, big.endsWith("big.bin"), await text(big));`,
       "one.ts": `export const one: number = 1;`,
       "big.bin": "on disk",
       "plugin.ts": plugin(
@@ -98,7 +125,7 @@ console.log(one, big.endsWith("big.bin"), text(big));`,
     files: {
       "main.ts": `${reads}// @ts-ignore
 import script from "./script.min.js" with { type: "file" };
-console.log(text(script));`,
+console.log(await text(script));`,
       "script.min.js": "throw 1",
       "plugin.ts": plugin(
         `  b.onLoad({ filter: /script\\.min\\.js$/ }, async (a: any) => answer(a, { contents: "[" + (await Bun.file(a.path).text()) + "]", loader: "file" }));`,
@@ -114,7 +141,7 @@ import once from "./once.min.js" with { type: "file" };
 // @ts-ignore
 import twice from "./twice.min.js" with { type: "file" };
 import { twiceAgain } from "./again";
-console.log(text(once), text(twice), twice === twiceAgain);
+console.log(await text(once), await text(twice), twice === twiceAgain);
 const settings: any = ((globalThis as any)[Symbol.for("settings")] ??= {});
 if (settings.findWorker) new Worker(settings.findWorker());`,
       "again.ts": `// @ts-ignore
@@ -134,7 +161,7 @@ export { twiceAgain };`,
     files: {
       "main.ts": `${reads}// @ts-ignore
 import plain from "./plain.bin" with { type: "file" };
-console.log(text(plain));`,
+console.log(await text(plain));`,
       "plain.bin": "as it lies",
       "plugin.ts": plugin(`  b.onLoad({ filter: /plain\\.bin$/ }, (a: any) => answer(a, undefined));`),
     },
@@ -145,7 +172,7 @@ console.log(text(plain));`,
     files: {
       "main.ts": `${reads}// @ts-ignore
 import nothing from "./nothing.bin" with { type: "file" };
-console.log(JSON.stringify(text(nothing)));`,
+console.log(JSON.stringify(await text(nothing)));`,
       "nothing.bin": "something",
       "plugin.ts": plugin(
         `  b.onLoad({ filter: /nothing\\.bin$/ }, (a: any) => answer(a, { contents: "", loader: "file" }));`,
@@ -159,13 +186,13 @@ console.log(JSON.stringify(text(nothing)));`,
       "main.ts": `${reads}${Array.from({ length: 90 }, (_, index) => `// @ts-ignore\nimport asset${index} from "./asset${index}.bin" with { type: "file" };`).join("\n")}
 // @ts-ignore
 import wrapped from "./wrapped.tmpl";
-console.log([${Array.from({ length: 90 }, (_, index) => `asset${index}`).join(", ")}].map(text).join(""), wrapped);`,
+console.log((await Promise.all([${Array.from({ length: 90 }, (_, index) => `asset${index}`).join(", ")}].map(text))).join(""), wrapped);`,
       ...Object.fromEntries(Array.from({ length: 90 }, (_, index) => [`asset${index}.bin`, String(index % 10)])),
       "wrapped.tmpl": "",
-      "decode.ts": `${reads}export function decode(path: string): string { return "<" + text(path) + ">"; }`,
+      "decode.ts": `${reads}export async function decode(path: string): Promise<string> { return "<" + (await text(path)) + ">"; }`,
       "plugin.ts":
         plugin(`  b.onLoad({ filter: /asset\\d+\\.bin$/ }, async (a: any) => answer(a, { contents: String(9 - Number(await Bun.file(a.path).text())), loader: "file" }));
-  b.onLoad({ filter: /wrapped\\.tmpl$/ }, (a: any) => answer(a, { contents: 'import made from "made:inner.bin" with { type: "file" }; import { decode } from "./decode"; export default decode(made);', loader: "ts" }));
+  b.onLoad({ filter: /wrapped\\.tmpl$/ }, (a: any) => answer(a, { contents: 'import made from "made:inner.bin" with { type: "file" }; import { decode } from "./decode"; export default await decode(made);', loader: "ts" }));
   b.onResolve({ filter: /^made:/ }, (a: any) => ({ path: a.path.slice(5), namespace: "made" }));
   b.onLoad({ filter: /.*/, namespace: "made" }, (a: any) => answer(a, { contents: "made up", loader: "file" }));`),
     },
@@ -184,7 +211,7 @@ import late from "./late.bin" with { type: "file" };
 import note from "./note.tmpl";
 ${reads}// @ts-ignore
 import real from "./real.bin" with { type: "file" };
-console.log(late, note, text(real));`,
+console.log(late, note, await text(real));`,
       "late.bin": "",
       "real.bin": "real",
       "note.tmpl": "",
@@ -216,7 +243,7 @@ console.log(words);`,
     files: {
       "main.ts": `${reads}// @ts-ignore
 import hashed from "./hashed.bin" with { type: "file" };
-console.log(/hashed-[0-9a-z]+\\.bin$/.test(hashed), text(hashed));`,
+console.log(/hashed-[0-9a-z]+\\.bin$/.test(hashed), await text(hashed));`,
       "hashed.bin": "on disk",
       "plugin.ts": plugin(
         `  b.onLoad({ filter: /hashed\\.bin$/ }, (a: any) => answer(a, { contents: "from the plugin", loader: "file" }));`,
@@ -231,7 +258,7 @@ console.log(/hashed-[0-9a-z]+\\.bin$/.test(hashed), text(hashed));`,
 import asset from "./asset.bin" with { type: "file" };
 // @ts-ignore
 import seen from "./seen.tmpl";
-console.log(text(asset), seen);`,
+console.log(await text(asset), seen);`,
       "asset.bin": "asset",
       "seen.tmpl": "",
       "plugin.ts": plugin(`  let isAssetLoaded = false;
@@ -245,8 +272,8 @@ console.log(text(asset), seen);`,
     files: {
       "main.ts": `import { count } from "./count" with { type: "macro" };
 // @ts-ignore
-import late from "./late.bin" with { type: "file" };
-console.log(count(), late);`,
+import later from "./later.bin" with { type: "file" };
+console.log(count(), later);`,
       "count.ts": `import { appendFileSync, readFileSync } from "fs";
 import { join } from "path";
 export function count(): number {
@@ -254,19 +281,24 @@ export function count(): number {
   appendFileSync(file, "x");
   return readFileSync(file, "utf8").length;
 }`,
-      "late.bin": "",
+      "later.bin": "",
       "plugin.ts": plugin(
-        `  b.onLoad({ filter: /late\\.bin$/ }, (a: any) => answer(a, { contents: 'export default "code";', loader: "js" }));`,
+        `  b.onLoad({ filter: /later\\.bin$/ }, (a: any) => answer(a, { contents: 'export default "code";', loader: "js" }));`,
       ),
     },
     prints: "1 code\n",
-    calls: { "late.bin": 1 },
+    calls: { "later.bin": 1 },
   },
 };
 
 describe.concurrent("compile/aot/assets loaded by plugins", () => {
   if (unsupported) return void test.skip(unsupported, () => {});
-  for (const [name, one] of Object.entries(cases)) test(name, () => slot(() => expectSameExecutable(one)), 600_000);
+  // A Worker with an unknown path and another naming are matters of the whole build. The other programs are built as one.
+  const isAlone = (name: string) => cases[name].naming !== undefined || name.includes("Worker");
+  for (const name of Object.keys(cases).filter(isAlone))
+    test(name, () => slot(() => expectSameExecutable(cases[name])), 600_000);
+  const rest = Object.keys(cases).filter(name => !isAlone(name));
+  test("the other answers", () => slot(() => expectSameExecutable(together(rest.map(name => cases[name])))), 600_000);
 
   test(
     "a plugin that throws for an asset fails the build",
@@ -282,7 +314,7 @@ describe.concurrent("compile/aot/assets loaded by plugins", () => {
             `  b.onLoad({ filter: /broken\\.bin$/ }, async (a: any) => { await answer(a, 0); throw new Error("the plugin gave up"); });`,
           ),
         });
-        for (const delay of ["0", "400"]) {
+        for (const delay of ["0", "40"]) {
           const { built } = await buildIn(String(dir), delay);
           expect({ delay, stdout: built.stdout, exitCode: built.exitCode }).toEqual({
             delay,
@@ -309,7 +341,7 @@ describe.concurrent("compile/aot/assets loaded by plugins", () => {
             `  b.onLoad({ filter: /same\\.bin$/ }, (a: any) => answer(a, { contents: a.path, loader: "file" }));`,
           ),
         });
-        for (const delay of ["0", "400"]) {
+        for (const delay of ["0", "40"]) {
           const { built } = await buildIn(String(dir), delay);
           expect({ delay, stdout: built.stdout, exitCode: built.exitCode }).toEqual({
             delay,

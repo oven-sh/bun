@@ -1,11 +1,11 @@
 use super::main_module::find_main_module_comparison;
 use super::this_of_file::has_live_this_of_file;
 use super::{
-    CommonJsEvidence, DeclaredModuleType, EsmSyntax, FormatDecision, ModuleFormat, file_esm_syntax,
-    statement_esm_syntax,
+    CommonJsEvidence, EsmSyntax, FormatByDeclaredType, FormatDecision, ModuleFormat,
+    file_esm_syntax, statement_esm_syntax,
 };
 use crate::bind::{Binding, Bound, CommonJsVariable, Parent};
-use crate::file_analysis::has_live_top_level_await;
+use crate::file_analysis::has_written_top_level_await;
 use crate::fold::{Decisions, FoldError, FoldErrorKind};
 use crate::hir::{
     ExprId, File, FnBody, NodeData, StmtId, StmtKind, find_transpiled_mark, is_marked_as_commonjs,
@@ -32,19 +32,17 @@ pub(crate) fn decide_module_format(
     bound: &Bound<'_>,
     decisions: &Decisions<'_>,
     scan: &ImportScan<'_>,
-    declared: DeclaredModuleType,
 ) -> FormatDecision {
     if let Some(format) = find_marked_format(&hir.text) {
         return FormatDecision {
-            format,
+            formats: FormatByDeclaredType::decided_by_text(format),
             error: None,
         };
     }
     let is_export = |stmt| statement_esm_syntax(hir, stmt) == EsmSyntax::ExportOrTopLevelAwait;
-    let has_top_level_await = has_live_top_level_await(hir, &Decisions::default());
-    if has_top_level_await || hir.ids(hir.body).any(is_export) {
+    if has_written_top_level_await(hir) || hir.ids(hir.body).any(is_export) {
         return FormatDecision {
-            format: ModuleFormat::Esm,
+            formats: FormatByDeclaredType::decided_by_text(ModuleFormat::Esm),
             error: None,
         };
     }
@@ -58,25 +56,26 @@ pub(crate) fn decide_module_format(
             node: NodeData::Stmt(hir[import].stmt),
         });
         return FormatDecision {
-            format: ModuleFormat::CommonJs,
+            formats: FormatByDeclaredType::decided_by_text(ModuleFormat::CommonJs),
             error,
         };
     }
     let has_weak_evidence = uses.uses_require_or_path
         || scan.has_import_equals_require
         || hir.has_use_strict_directive(FnBody::Block(hir.body));
-    let format = match declared {
-        DeclaredModuleType::Esm => ModuleFormat::Esm,
-        DeclaredModuleType::CommonJs if file_esm_syntax(hir) != EsmSyntax::None => {
-            ModuleFormat::Esm
-        }
-        DeclaredModuleType::CommonJs => ModuleFormat::CommonJs,
-        DeclaredModuleType::Unknown if has_runtime_import_statement(hir) => ModuleFormat::Esm,
-        DeclaredModuleType::Unknown if has_weak_evidence => ModuleFormat::CommonJs,
-        DeclaredModuleType::Unknown => ModuleFormat::Esm,
+    let formats = FormatByDeclaredType {
+        esm: ModuleFormat::Esm,
+        commonjs: match file_esm_syntax(hir) {
+            EsmSyntax::None => ModuleFormat::CommonJs,
+            _ => ModuleFormat::Esm,
+        },
+        unknown: match has_weak_evidence && !has_runtime_import_statement(hir) {
+            true => ModuleFormat::CommonJs,
+            false => ModuleFormat::Esm,
+        },
     };
     FormatDecision {
-        format,
+        formats,
         error: None,
     }
 }

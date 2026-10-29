@@ -1,4 +1,4 @@
-// Programs that are written by a rule and have a size: so many modules, wrappers, calls, layouts, statements. ./build-scaling.test.ts builds each at
+// Programs that are written by a rule and have a size: so many modules, wrappers, calls, layouts, statements. ./build-scaling-cases.ts builds each at
 // a size and at twice that size.
 //
 //   bun test/aot/build-scaling/shapes.ts <name of a shape, or a part of it> <size> <folder>     writes the program there
@@ -22,6 +22,8 @@ export type Shape = {
   flags?: string[];
   /** Not an entry point of the build of all shapes. */
   isExcludedFromCombinedBuild?: true;
+  /** Statistics of the build's report that count steps of work. Their growth is held as that of the instructions is, also where instructions cannot be counted. */
+  counts?: string[];
   write(size: number): Record<string, string>;
 };
 
@@ -277,6 +279,30 @@ export const shapes: Shape[] = [
     write: size => ({
       "tsconfig.json": withoutLibraryTypes,
       "main.ts": `${declaredConsole}function fill(x: number, all: { a: number }[]) {\n${lines(size, () => "  all.push({ a: x });")}}\nconst all: { a: number }[] = [];\nfill(all.length + 3, all);\nconsole.log(all.length);\n`,
+    }),
+  },
+  // The type of the list at a push follows from the pushes before it: pushes x pushes, and each step made a union of the objects so far.
+  // A branch after every tenth push, so that the way back from a push to the declaration is no straight line.
+  // TypeScript checks no body in which that way nests 2,000 deep, so a list takes 1,500.
+  {
+    name: "objects that statements push onto a list without a type",
+    counted: "objects",
+    size: 750,
+    entry: "main.ts",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "tsconfig.json": withoutLibraryTypes,
+      "main.ts":
+        declaredConsole +
+        lines(size, index => {
+          const list = `all${Math.floor(index / 1500)}`;
+          return (
+            (index % 1500 ? "" : `const ${list} = [];\n`) +
+            (index % 10 ? "" : `if (${list}.length > ${index}) console.log(${index});\n`) +
+            `${list}.push({ a: ${index}, b: "x" });`
+          );
+        }) +
+        `console.log(${size ? "all0.length" : 0});\n`,
     }),
   },
   {
@@ -892,6 +918,50 @@ export const shapes: Shape[] = [
     }),
   },
   packagesWithOwnCompilerOptions,
+  // In the three shapes below each of so many places has so many callees or classes: what looks at each pair once costs four times as much for twice the size.
+  {
+    name: "functions in one array that each call whichever the array answers with, with their own arguments",
+    counted: "functions",
+    size: 300,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    counts: ["HandedOnReferencesRead", "FunctionsBelowEntrancesInCyclesVisited"],
+    write: size => ({
+      "main.js":
+        `let kept = null;\n` +
+        lines(size, index => `function step${index}(state, other, key) { ${index ? "" : "kept = state; "}return key < 1 ? ${index} : table[key % table.length](state, other, key - 1) + ${index}; }`) +
+        `const table = [${upTo(size, index => `step${index}`).join(", ")}];\n` +
+        `console.log(${size ? "table[0]({ a: 1 }, { b: 2 }, 3)" : 0}, kept !== null);\n`,
+    }),
+  },
+  {
+    name: "classes with a method of one name that each call it on an instance of any of them",
+    counted: "classes",
+    size: 300,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    counts: ["HandedOnReferencesRead", "FunctionsBelowEntrancesInCyclesVisited"],
+    write: size => ({
+      "main.js":
+        `let kept = null;\nconst all = [];\n` +
+        lines(size, index => `class Node${index} { visit(state, other, key) { ${index ? "" : "kept = state; "}return key < 1 ? ${index} : all[key % all.length].visit(state, other, key - 1) + ${index}; } }\nall.push(new Node${index}());`) +
+        `console.log(${size ? "all[0].visit({ a: 1 }, { b: 2 }, 3)" : 0}, kept !== null);\n`,
+    }),
+  },
+  {
+    name: "instances of classes of their own that statements assign to one variable, a method called on it after each",
+    counted: "classes",
+    size: 200,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    counts: ["UnionMembersCompared", "CallOperandsSummarizedForFrames"],
+    write: size => ({
+      "main.js":
+        `let sum = 0;\nlet current = null;\n` +
+        lines(size, index => `class Kind${index} { weigh() { return ${index}; } }\nif ((sum & ${index}) == 0) current = new Kind${index}();\nsum += current.weigh();`) +
+        `console.log(sum);\n`,
+    }),
+  },
 ];
 
 if (import.meta.main) {

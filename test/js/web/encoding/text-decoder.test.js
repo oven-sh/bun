@@ -825,6 +825,90 @@ it("should not crash with a getter that throws", () => {
   ).toThrowErrorMatchingInlineSnapshot(`"stream get error"`);
 });
 
+it.concurrent("throws for more characters than a string can hold, and decodes the same chunk once it can", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+      const limit = 1024 * 1024;
+      const ascii = new Uint8Array(limit + 1).fill(97);
+      const notAscii = ascii.with(0, 0xe9);
+      const afterBOM = new Uint8Array(limit + 4).fill(97);
+      afterBOM.set([0xef, 0xbb, 0xbf]);
+      // A BOM, one unit more than the limit, and half of a unit.
+      const utf16 = new Uint8Array(2 + 2 * (limit + 1) + 1);
+      utf16.set([0xff, 0xfe]);
+      for (let i = 2; i < utf16.length; i += 2) utf16[i] = 97;
+      // One character more than the limit, and half of a character.
+      const eucKr = new Uint8Array(limit + 2).fill(97).with(limit + 1, 0xb0);
+      const outcome = fn => {
+        try {
+          const text = fn();
+          return { length: text.length, first: text.charCodeAt(0) };
+        } catch (e) {
+          return e.code;
+        }
+      };
+      const whole = new TextDecoder();
+      const split = new TextDecoder();
+      split.decode(afterBOM.subarray(0, 2), { stream: true });
+      const flushed = new TextDecoder();
+      flushed.decode(afterBOM.subarray(0, 2), { stream: true });
+      const units = new TextDecoder("utf-16le");
+      const legacy = new TextDecoder("euc-kr");
+
+      const previousLimit = setSyntheticAllocationLimitForTesting(limit);
+      const results = {
+        "utf-8": outcome(() => new TextDecoder().decode(ascii)),
+        "utf-8, stream": outcome(() => new TextDecoder().decode(ascii, { stream: true })),
+        "latin1": outcome(() => new TextDecoder("latin1").decode(ascii)),
+        "latin1, not ASCII": outcome(() => new TextDecoder("latin1").decode(notAscii)),
+        "at the limit": outcome(() => new TextDecoder().decode(ascii.subarray(1))),
+        "after a BOM": outcome(() => whole.decode(afterBOM, { stream: true })),
+        "after a BOM in two chunks": outcome(() => split.decode(afterBOM.subarray(2), { stream: true })),
+        "after a BOM in two chunks, flushed": outcome(() => flushed.decode(afterBOM.subarray(2))),
+        "utf-16le": outcome(() => units.decode(utf16, { stream: true })),
+        "euc-kr": outcome(() => legacy.decode(eucKr, { stream: true })),
+      };
+      setSyntheticAllocationLimitForTesting(previousLimit);
+      results["after a BOM, again"] = outcome(() => whole.decode(afterBOM, { stream: true }));
+      results["after a BOM in two chunks, again"] = outcome(() => split.decode(afterBOM.subarray(2), { stream: true }));
+      // A flush ends the stream though it throws: nothing of that stream is in front of this one, whose BOM is its own.
+      results["after a flush that threw"] = outcome(() => flushed.decode(afterBOM));
+      results["utf-16le, again"] = outcome(() => units.decode(utf16, { stream: true }));
+      // This decoder has read the chunk and cannot go back: the stream goes on behind it.
+      results["euc-kr, the next chunk"] = legacy.decode(new Uint8Array([0xa1]), { stream: true });
+      console.log(JSON.stringify(results));
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const limit = 1024 * 1024;
+  expect(JSON.parse(stdout.trim() || JSON.stringify({ stderr }))).toEqual({
+    "utf-8": "ERR_STRING_TOO_LONG",
+    "utf-8, stream": "ERR_STRING_TOO_LONG",
+    "latin1": "ERR_STRING_TOO_LONG",
+    "latin1, not ASCII": "ERR_STRING_TOO_LONG",
+    "at the limit": { length: limit, first: 97 },
+    "after a BOM": "ERR_STRING_TOO_LONG",
+    "after a BOM in two chunks": "ERR_STRING_TOO_LONG",
+    "after a BOM in two chunks, flushed": "ERR_STRING_TOO_LONG",
+    "utf-16le": "ERR_STRING_TOO_LONG",
+    "euc-kr": "ERR_STRING_TOO_LONG",
+    "after a BOM, again": { length: limit + 1, first: 97 },
+    "after a BOM in two chunks, again": { length: limit + 1, first: 97 },
+    "after a flush that threw": { length: limit + 1, first: 97 },
+    "utf-16le, again": { length: limit + 1, first: 97 },
+    "euc-kr, the next chunk": "\uac00",
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("reads the input after the options.stream getter runs", () => {
   // The Encoding spec processes options before pushing a copy of the input to
   // the I/O queue, and Node.js matches that: a `stream` getter that detaches

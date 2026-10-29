@@ -96,10 +96,7 @@ pub(crate) fn abort() {
         );
     }
     #[cfg(unix)]
-    // SAFETY: libc::abort has no preconditions; never returns.
-    unsafe {
-        libc::abort();
-    }
+    std::process::abort();
 }
 
 /// Dies like foreign native code, with Bun's crash handler provably out

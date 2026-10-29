@@ -199,7 +199,10 @@ extern "C" fn select_alpn_callback(
                 // and `in_` is valid for `inlen` per the callback contract.
                 unsafe { core::ptr::copy_nonoverlapping(in_, ab.ptr, wire_len) };
             }
-            let servername_ptr = tls_socket_functions::ffi::SSL_get_servername(ssl, 0);
+            let servername_ptr = tls_socket_functions::ffi::SSL_get_servername(
+                ssl,
+                tls_socket_functions::ffi::TLSEXT_NAMETYPE_host_name,
+            );
             let servername_js = if servername_ptr.is_null() {
                 JSValue::UNDEFINED
             } else {

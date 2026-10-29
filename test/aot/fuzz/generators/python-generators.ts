@@ -77,8 +77,7 @@ export const generators: [name: string, extension: "ts" | "js", options?: Option
       modeFailsToday: Object.fromEntries([10, 25, 34, 35, 40, 41, 42, 44, 291, 314, 337, 349, 350, 351, 377, 388].map(seed => [seed, "the executable throws and bun run --aot goes on as plain Bun does"])),
     },
   ],
-  // CET and WET are time zones of some ICU data only.
-  ["intl-constant-arguments", "ts", { seeds: upTo(121), leftOut: [50, 51] }],
+  ["intl-constant-arguments", "ts", { seeds: upTo(121) }],
   ["collections-mutated-during-iteration", "ts"],
   ["mostly-integer-members", "ts"],
   ["reference-holding-members", "ts", { leftOut: [4, 10, 18] }],

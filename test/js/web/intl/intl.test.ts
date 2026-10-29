@@ -9,8 +9,10 @@
 // When WEBKIT_VERSION bumps ICU/CLDR, regenerate with `-u` against a build that
 // links the unmodified libicudata.a.
 
+import { CString, dlopen, ptr } from "bun:ffi";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, libcPathForDlopen } from "harness";
+import { join } from "node:path";
 
 // Snapshots are CLDR-version-specific. Only check them where Bun bundles the
 // ICU they were generated against; macOS uses Apple's libicucore, so snapshot
@@ -228,6 +230,131 @@ describe.skipIf(isWindows).concurrent("locale variables in the environment", () 
     expect(stdout).toBe(
       JSON.stringify(["Thu Jan 01 1970 00:00:00 GMT+0000 (Coordinated Universal Time)", -1, "1,234.5", "en-US"]) + "\n",
     );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CET, EET, MET and WET — aliases of city zones, with every tz data
+// ---------------------------------------------------------------------------
+
+// tz data before 2024b has these four names as zones of their own, and ICU then holds each name canonical.
+// JavaScriptCore has no zone for a canonical zone ID with no '/': as the zone of the process the name gave UTC, and as
+// a time zone ID it was a RangeError. From tz 2024b on each name is a link to a city zone, and an alias of that zone
+// is what it is here with every tz data. The bundled ICU has the links. The system ICU of a Mac can have older data.
+describe.concurrent("CET, EET, MET and WET", () => {
+  // getTimezoneOffset() for 09:00 local time on 15 January and on 15 July 2026, and the city zone.
+  const names: [name: string, january: number, july: number, city: string][] = [
+    ["CET", -60, -120, "Europe/Brussels"],
+    ["EET", -120, -180, "Europe/Athens"],
+    ["MET", -60, -120, "Europe/Brussels"],
+    ["WET", 0, -60, "Europe/Lisbon"],
+  ];
+
+  // probe() is what each way to name a zone gives for one of the names.
+  const prelude = `
+    import { setTimeZone } from "bun:jsc";
+    const zone = () => [
+      new Date(2026, 0, 15, 9).getTimezoneOffset(),
+      new Date(2026, 6, 15, 9).getTimezoneOffset(),
+      Intl.DateTimeFormat().resolvedOptions().timeZone,
+    ];
+    const attempt = fn => { try { return fn(); } catch (error) { return String(error); } };
+    const january = new Date(Date.UTC(2026, 0, 15));
+    const probe = ([name, , , city]) => ({
+      assigned: (process.env.TZ = "Asia/Tokyo", process.env.TZ = name, zone()),
+      option: attempt(() => new Intl.DateTimeFormat("en-US", { timeZone: name.toLowerCase() }).resolvedOptions().timeZone),
+      temporal: attempt(() => Temporal.Now.zonedDateTimeISO(name).timeZoneId),
+      isCity: attempt(() => new Temporal.ZonedDateTime(0n, name).equals(new Temporal.ZonedDateTime(0n, city))),
+      cron: attempt(() => Bun.cron.parse("0 9 * * *", january, { tz: name }).toISOString()),
+    });
+    const listed = () => Intl.supportedValuesOf("timeZone").filter(name => !name.includes("/"));`;
+  const expected = ([name, january, july, city]: (typeof names)[number]) => ({
+    assigned: [january, july, city],
+    // An alias keeps its name.
+    option: name,
+    temporal: name,
+    isCity: true,
+    cron: new Date(Date.UTC(2026, 0, 15, 9, january)).toISOString(),
+  });
+
+  async function run(env: Record<string, string>, script: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", prelude + script],
+      env: { ...bunEnv, ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { result: JSON.parse(stdout || "null"), stderr, exitCode };
+  }
+
+  // The version of the tz data that the system ICU of macOS has.
+  function systemTimeZoneDataVersion() {
+    const { symbols } = dlopen("/usr/lib/libicucore.A.dylib", {
+      ucal_getTZDataVersion: { args: ["ptr"], returns: "ptr" },
+    });
+    return new CString(symbols.ucal_getTZDataVersion(ptr(new Int32Array(1)))!).toString();
+  }
+
+  // ICU reads the time zone files in ICU_TIMEZONE_FILES_DIR in place of its own. icu-tz-2024a has zoneinfo64.res and
+  // timezoneTypes.res of tz 2024a (tzdata/icunew/2024a/44/le of unicode-org/icu-data): with them ICU holds the four
+  // names canonical. macOS has the ICU of the system, which has its own files.
+  test.skipIf(isMacOS)("with tz data that has each name as a zone of its own", async () => {
+    const { result, stderr, exitCode } = await run(
+      { TZ: "CET", ICU_TIMEZONE_FILES_DIR: join(import.meta.dir, "icu-tz-2024a") },
+      `
+      // The minutes west of UTC at 12:00 UTC on 1925-01-15, 1975-07-15 and 1994-01-15.
+      const times = [Date.UTC(1925, 0, 15, 12), Date.UTC(1975, 6, 15, 12), Date.UTC(1994, 0, 15, 12)];
+      const old = name => attempt(() => times.map(time => -new Temporal.ZonedDateTime(BigInt(time) * 1000000n, name).offsetNanoseconds / 6e10));
+      console.log(JSON.stringify({
+        start: zone(),
+        names: ${JSON.stringify(names)}.map(probe),
+        old: ${JSON.stringify(names)}.map(([name]) => old(name)),
+        // setTimeZone() returns the name that ICU holds canonical: this shows that ICU read the files.
+        setTimeZone: [attempt(() => setTimeZone("EET")), ...zone()],
+        listed: listed(),
+      }));`,
+    );
+    expect(result).toEqual({
+      start: [-60, -120, "Europe/Brussels"],
+      names: names.map(expected),
+      // ICU is asked for the city zone, so these are the times of Brussels, Athens, Brussels and Lisbon. The zones of
+      // their own in these files are on [-60, -60, -60], [-120, -120, -120], [-60, -60, -60] and [0, 0, 0].
+      old: [
+        [0, -60, -60],
+        [-120, -180, -120],
+        [0, -60, -60],
+        [0, -60, -60],
+      ],
+      setTimeZone: ["EET", -120, -180, "Europe/Athens"],
+      listed: ["UTC"],
+    });
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // With the tz data that ICU has on this machine: the links where ICU is bundled, and what the system has on macOS.
+  test("with the tz data of the machine", async () => {
+    const { result, stderr, exitCode } = await run(
+      { TZ: "CET" },
+      `
+      console.log(JSON.stringify({
+        start: zone(),
+        names: ${JSON.stringify(names)}.map(probe),
+        listed: listed(),
+        // setTimeZone() returns the name that ICU holds canonical: the name itself where it is a zone of its own.
+        ownZones: ${JSON.stringify(names)}.map(([name]) => name).filter(name => attempt(() => setTimeZone(name)) === name),
+      }));`,
+    );
+    const { ownZones, ...zones } = result ?? {};
+    // A run that passes on macOS says which tz data it went through.
+    if (isMacOS) {
+      const data = { icu: process.versions.icu, tz: systemTimeZoneDataVersion(), ownZones };
+      console.log("system ICU:", JSON.stringify(data));
+    }
+    expect(zones).toEqual({ start: [-60, -120, "Europe/Brussels"], names: names.map(expected), listed: ["UTC"] });
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });

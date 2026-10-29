@@ -2,9 +2,11 @@
 // the compiler sees `app`, the world is open, and the server answers as in the whole executable. Where it does not see the options
 // the call throws an EvalError, whole or trimmed: a server whose options nobody follows would open the world of every such program.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
-import { slot, unsupported } from "./run-programs";
+import { canTrim } from "../bundler/compile-trim-features";
+import { slot, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const framework = `{
   fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: entry }],
@@ -38,15 +40,7 @@ async function run(cmd: string[], cwd: string) {
   return { stdout, stderr, exitCode };
 }
 
-using probe = tempDir("development-server-probe", { "hello.ts": "console.log(1);" });
-const probed = Bun.spawnSync({
-  cmd: [bunExe(), "build", "--compile", "--trim", "hello.ts", "--outfile", "hello"],
-  cwd: String(probe),
-  env: bunEnv,
-  stderr: "pipe",
-});
-
-(probed.exitCode !== 0 || unsupported || isWindows ? describe.skip : describe.concurrent)(
+(!canTrim || unsupported ? describe.skip : describe.concurrent)(
   "the development server in a trimmed executable answers as in the whole one",
   () => {
     for (const [name, source] of Object.entries(programs)) {
@@ -61,7 +55,17 @@ const probed = Bun.spawnSync({
               ["trimmed", ["--trim"]],
             ] as const) {
               const build = await run(
-                [bunExe(), "build", "--compile", "--aot", ...flags, "program.mjs", "--outfile", kind],
+                [
+                  bunExe(),
+                  "build",
+                  "--compile",
+                  ...withoutDebugInformation,
+                  "--aot",
+                  ...flags,
+                  "program.mjs",
+                  "--outfile",
+                  kind,
+                ],
                 String(dir),
               );
               expect({ stderr: build.stderr, exitCode: build.exitCode }).toEqual({

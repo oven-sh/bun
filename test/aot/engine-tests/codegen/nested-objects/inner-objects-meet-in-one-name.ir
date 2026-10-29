@@ -1,0 +1,364 @@
+# One name stands for the inner object of this outer object or of that one, for an inner object or an object that has a cell, for an inner object or nothing: `flag ? x.a : y.a`, a name that a loop carries round, `x.a ?? other`.
+# Behind such a meeting nobody knows the outer object any more, and the name still reads, stores, and is held.
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f3
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="inner-objects-meet-in-one-name.ts" displayPath="inner-objects-meet-in-one-name.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 name="Inner" module=m0 position=351 fields=[{key="b" declared={type=number} flags=[IsRequired]}, {key="r" declared={type=undefined|null|L3 flags=[OmitsUndefined]} flags=[IsRequired]}, {key="s" declared={type=undefined|null|string flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired]}] declaredOrder=[0, 2, 1] ownFieldCount=3
+layout L1 name="Outer" module=m0 position=417 fields=[{key="a" declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} flags=[IsRequired]}, {key="n" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+layout L2 name="Loose" module=m0 position=457 fields=[{key="n" declared={type=number} flags=[IsRequired]}, {key="o" declared={type=undefined|null|L0}}] declaredOrder=[1, 0] ownFieldCount=2
+layout L3 module=m0 position=384 fields=[{key="v" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+data d0 root=Array{contents=undefined|null|L0} module=m0
+data d1 root=Array{contents=undefined|null|L1} module=m0
+data d2 root=Array{contents=undefined|null|L1|L2} module=m0
+variable g0 name="held" module=m0 declared={type=undefined|null|absent|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = NewClosure function=f3
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v6 = NewClosure function=f4
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v8 = NewClosure function=f5
+    v9 = Convert v8 declared={type=f5 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v10 = Data data=d0
+    v11 = Convert v10 declared={type=undefined|null|Array<undefined|null|L0> flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v11 variable=g0
+    v13 = Data data=d1
+    v14 = Convert v13 declared={type=undefined|null|Array<undefined|null|L1> flags=[OmitsNull, OmitsUndefined]}
+    v15 = Integer
+    v16 = Convert v15 declared={type=number}
+    Jump -> next b1(v16)
+  b1(v17: number):
+    v18 = Integer integer=4
+    v19 = Less v17, v18
+    Branch v19 -> taken b2(| 0), notTaken b9(| 0)
+  b2(v20):
+    v21 = Integer
+    v22 = Convert v21 declared={type=number}
+    Jump -> next b3(v22)
+  b3(v23: number):
+    LoopHint
+    v25 = Integer integer=4
+    v26 = Less v23, v25
+    Branch v26 -> taken b4(| 0), notTaken b8(| 0)
+  b4(v27):
+    v28 = Integer
+    v29 = Convert v28 declared={type=number}
+    Jump -> next b5(v29)
+  b5(v30: number):
+    LoopHint
+    v32 = Integer integer=250
+    v33 = Less v30, v32
+    Branch v33 -> taken b6(| 0), notTaken b7(| 0)
+  b6(v34):
+    v35 = PropGet v14 key="push"
+    v36 = PropGet v14 key="length"
+    v37 = Convert v36 declared={type=number} illTypedCause=Assertion
+    v38 = Call v1, -, v37 calleeName="make"
+    v39 = Convert v38 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    v40 = Call v35, v14, v39 calleeKey="push" calleeName="all.push"
+    v41 = Increment v34
+    v42 = Convert v41 declared={type=number}
+    Jump -> next b5(v42)
+  b7(v43):
+    v44 = Increment v27
+    v45 = Convert v44 declared={type=number}
+    Jump -> next b3(v45)
+  b8(v46):
+    v47 = Increment v20
+    v48 = Convert v47 declared={type=number}
+    Jump -> next b1(v48)
+  b9(v49):
+    v50 = Data data=d2
+    v51 = Convert v50 declared={type=undefined|null|Array<undefined|null|L1|L2> flags=[OmitsNull, OmitsUndefined]}
+    v52 = Integer
+    v53 = Convert v52 declared={type=number}
+    v54 = Call v3, -, v14 calleeName="carriedRound"
+    v55 = PropGet v14 key="slice"
+    v56 = Integer
+    v57 = Integer integer=3
+    v58 = Call v55, v14, v56, v57 calleeKey="slice" calleeName="all.slice"
+    v59 = Convert v58 declared={type=undefined|null|Array<undefined|null|L1> flags=[OmitsNull, OmitsUndefined]} illTypedCause=FromLooseType
+    v60 = Call v3, -, v59 calleeName="carriedRound"
+    v61 = Integer integer=40
+    v62 = Call v5, -, v14, v61 calleeName="carriedRoundAndHeld"
+    v63 = Integer integer=41
+    v64 = Call v5, -, v14, v63 calleeName="carriedRoundAndHeld"
+    v65 = Integer
+    v66 = Convert v65 declared={type=number}
+    v67 = Integer
+    v68 = Convert v67 declared={type=number}
+    Jump -> next b10(v66, v68)
+  b10(v69: number, v70: number):
+    LoopHint
+    v72 = Convert v70 declared={type=i32 flags=[IsExpected]}
+    v73 = Convert v72 declared={type=i32 flags=[IsExpected]}
+    v74 = ElemGet v51, v73
+    v75 = Convert v74 declared={type=undefined|null|L1|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v76 = Call v7, -, v75 calleeName="orOther"
+    v77 = Convert v76 declared={type=number}
+    v78 = Integer integer=3
+    v79 = Mul v77, v78
+    v80 = ElemGet v51, v73
+    v81 = Convert v80 declared={type=undefined|null|L1|L2 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v82 = Call v9, -, v81 calleeName="maybe"
+    v83 = Convert v82 declared={type=number}
+    v84 = Add v79, v83
+    v85 = Add v69, v84
+    v86 = Convert v85 declared={type=number}
+    v87 = Increment v73
+    v88 = Convert v87 declared={type=number}
+    Jump -> next b10(v86, v88)
+}
+function f1 name="make" module=m0 position=627 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Convert v0 declared={type=number}
+    v2 = String string="s"
+    v3 = Add v2, v0
+    v4 = Convert v3 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}
+    v5 = Integer integer=1
+    v6 = BitAnd v0, v5
+    v7 = Convert v0 declared={type=number}
+    v8 = NewObject -, v7 layout=L3 fields=[0]
+    v9 = FinishObject v8
+    v10 = Convert v9 declared={type=undefined|null|L3 flags=[OmitsUndefined]}
+    v11 = NewObject -, v1, v4, v10 layout=L0 fields=[0, 2, 1]
+    v12 = FinishObject v11
+    v13 = Convert v12 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v14 = Convert v0 declared={type=number}
+    v15 = NewObject -, v13, v14 layout=L1 fields=[0, 1]
+    v16 = FinishObject v15
+    v17 = Convert v16 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}
+    Return v17
+}
+function f2 name="carriedRound" module=m0 position=1742 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L1> flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f3 name="carriedRoundAndHeld" module=m0 position=1916 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L1> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|L1>, v1: number):
+    v2 = Integer
+    v3 = ElemGet v0, v2
+    v4 = Convert v3 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v5 = PropGet v4 key="a"
+    v6 = Convert v5 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v7 = Integer
+    v8 = Convert v7 declared={type=number}
+    v9 = Integer integer=1
+    v10 = Convert v9 declared={type=number}
+    Jump -> next b1(v6, v8, v10)
+  b1(v11: undefined|null|L0, v12: number, v13: number):
+    LoopHint
+    v15 = Convert v13 declared={type=i32 flags=[IsExpected]}
+    v16 = PropGet v11 key="b"
+    v17 = Add v12, v16
+    v18 = Convert v17 declared={type=number}
+    v19 = Convert v15 declared={type=i32 flags=[IsExpected]}
+    v20 = Convert v19 declared={type=i32 flags=[IsExpected]}
+    v21 = ElemGet v0, v20
+    v22 = Convert v21 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v23 = PropGet v22 key="a"
+    v24 = Convert v23 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]}
+    v25 = Increment v20
+    v26 = Convert v25 declared={type=number}
+    Jump -> next b1(v24, v18, v26)
+}
+function f4 name="orOther" module=m0 position=2147 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f5 name="maybe" module=m0 position=2233 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1|L2 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+# -- generated: carriedRoundAndHeld
+# CHECK-LABEL: function {{*}}name="carriedRoundAndHeld"
+# CHECK: role=Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@18 = ArgumentReg(%rdi)
+# CHECK-NEXT: Int64 b@30 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v3:IsInBounds)
+# CHECK-NEXT: Int32 b@31 = Load(b@30, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v3:IsInBounds)
+# CHECK-NEXT: Void b@34 = Branch(b@31, Terminal, v3:IsInBounds)
+# CHECK-NEXT: Successors: Then:#1, Else:Rare:#2
+# CHECK-NEXT: BB#1: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Int64 b@35 = Const64(1, v4:Integer)
+# CHECK-NEXT: Void b@36 = Upsilon($1(b@35), ^21, WritesLocalState)
+# CHECK-NEXT: Void b@37 = Jump(Terminal)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#4: ; frequency = 0.999023
+# CHECK-NEXT: Predecessors: #1, #11
+# CHECK-NEXT: Int64 b@21 = Phi(ReadsLocalState, v11:Parameter)
+# CHECK-NEXT: Int64 b@79 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v15:IsElementPresent)
+# CHECK-NEXT: Int32 b@80 = Load(b@79, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v15:IsElementPresent)
+# CHECK-NEXT: Int64 b@81 = ZExt32(b@80, v15:IsElementPresent)
+# CHECK-NEXT: Int64 b@66 = Const64(1048576, v15:IsElementPresent)
+# CHECK-NEXT: Int32 b@10 = BelowEqual(b@81, $1048576(b@66), v15:IsElementPresent)
+# CHECK-NEXT: Int64 b@89 = Const64(-2147483648, v16:TypeTest)
+# CHECK-NEXT: Void b@9 = Branch(b@10, Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Successors: Then:#5, Else:Rare:#30
+# CHECK-NEXT: BB#5: ; frequency = 0.998048
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Void b@56 = Upsilon(b@21, ^124, WritesLocalState, v12:Parameter)
+# CHECK-NEXT: Void b@4 = Jump(Terminal, v12:Parameter)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: BB#7: ; frequency = 9.990225
+# CHECK-NEXT: Predecessors: #6, #18, #5
+# CHECK-NEXT: Int64 b@124 = Phi(ReadsLocalState, v12:Parameter)
+# CHECK-NEXT: Int32 b@22 = Above(b@81, b@124, v15:IsElementPresent)
+# CHECK-NEXT: Void b@83 = Branch(b@22, Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Successors: Then:#8, Else:Rare:#15
+# CHECK-NEXT: BB#8: ; frequency = 9.989249
+# CHECK-NEXT: Predecessors: #7
+# CHECK-NEXT: Int64 b@90 = BitAnd(b@124, $-2147483648(b@89), v16:TypeTest)
+# CHECK-NEXT: Void b@92 = Branch(b@90, Terminal, v16:TypeTest)
+# CHECK-NEXT: Successors: Then:Rare:#19, Else:#18
+# CHECK-NEXT: BB#18: ; frequency = 9.988274
+# CHECK-NEXT: Predecessors: #8
+# CHECK-NEXT: Int64 b@93 = Add(b@124, $1(b@35), v18:Increment)
+# CHECK-NEXT: Void b@2 = Upsilon(b@93, ^124, WritesLocalState)
+# CHECK-NEXT: Void b@95 = Jump(Terminal)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: BB#19: ; frequency = 0.000976
+# CHECK-NEXT: Predecessors: #8
+# CHECK-NEXT: Void b@38 = Upsilon(b@124, ^69, WritesLocalState)
+# CHECK-NEXT: Void b@1 = Jump(Terminal)
+# CHECK-NEXT: Successors: #21
+# CHECK-NEXT: BB#21: ; frequency = 0.000976
+# CHECK-NEXT: Predecessors: #20, #19
+# CHECK-NEXT: Int64 b@69 = Phi(ReadsLocalState, v12:Parameter)
+# CHECK-NEXT: Double b@86 = IToD(b@69)
+# CHECK-NEXT: Void b@87 = Upsilon(b@86, ^26, WritesLocalState)
+# CHECK-NEXT: Void b@88 = Jump(Terminal)
+# CHECK-NEXT: Successors: #10
+# CHECK-NEXT: BB#10: ; frequency = 0.001953
+# CHECK-NEXT: Predecessors: #23, #21
+# CHECK-NEXT: Double b@26 = Phi(ReadsLocalState, v25:Parameter)
+# CHECK-NEXT: Int64 b@120 = ArgumentReg(%r13)
+# CHECK-NEXT: Double b@55 = Load(b@120, offset = -56, ReadsImmutable, v26:Increment)
+# CHECK-NEXT: Double b@119 = Add(b@26, b@55, v26:Increment)
+# CHECK-NEXT: Double b@19 = Identity(b@119, v8:Parameter)
+# CHECK-NEXT: Int64 b@61 = Patchpoint(b@19:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v9:TypeTest)
+# CHECK-NEXT: Double b@62 = IToD(b@61, v9:TypeTest)
+# CHECK-NEXT: Int64 b@63 = BitwiseCast(b@62, v9:TypeTest)
+# CHECK-NEXT: Int64 b@64 = BitwiseCast(b@19, v9:TypeTest)
+# CHECK-NEXT: Int32 b@65 = Equal(b@63, b@64, v9:TypeTest)
+# CHECK-NEXT: Void b@70 = Branch(b@65, Terminal, v9:TypeTest)
+# CHECK-NEXT: Successors: Then:Rare:#25, Else:Rare:#14
+# CHECK-NEXT: BB#25: ; frequency = 0.000002
+# CHECK-NEXT: Predecessors: #10
+# CHECK-NEXT: Int64 b@106 = Const64(-1, v4:Integer)
+# CHECK-NEXT: Int64 b@29 = Add(b@61, $-1(b@106), v9:TypeTest)
+# CHECK-NEXT: Int64 b@67 = Const64(2147483647, v9:TypeTest)
+# CHECK-NEXT: Int32 b@68 = BelowEqual(b@29, $2147483647(b@67), v9:TypeTest)
+# CHECK-NEXT: Void b@122 = Branch(b@68, Terminal, v9:TypeTest)
+# CHECK-NEXT: Successors: Then:Rare:#11, Else:Rare:#14
+# CHECK-NEXT: BB#11: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #25
+# CHECK-NEXT: Void b@71 = Upsilon(b@61, ^21, WritesLocalState)
+# CHECK-NEXT: Void b@72 = Jump(Terminal)
+# CHECK-NEXT: Successors: #4
+# CHECK-NEXT: BB#14: ; frequency = 0.001953
+# CHECK-NEXT: Predecessors: #10, #25
+# CHECK-NEXT: Void b@96 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v20:LoopHint)
+# CHECK-NEXT: Void b@97 = Upsilon(b@19, ^25, WritesLocalState)
+# CHECK-NEXT: Void b@98 = Jump(Terminal)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#9: ; frequency = 0.001953
+# CHECK-NEXT: Predecessors: #17, #14
+# CHECK-NEXT: Double b@25 = Phi(ReadsLocalState, v22:Parameter)
+# CHECK-NEXT: Int64 b@99 = Patchpoint(b@25:SomeRegister, runsWithoutFrame, resultConstraints = SomeRegister, pureFunction = 0x500000000(children), v23:GetArrayElement)
+# CHECK-NEXT: Int64 b@100 = Load(b@18, offset = 8, ControlDependent|Reads:JSObject_butterfly, v23:GetArrayElement)
+# CHECK-NEXT: Int32 b@101 = Load(b@100, offset = -8, ControlDependent|Reads:Butterfly_publicLength, v23:GetArrayElement)
+# CHECK-NEXT: Int64 b@102 = ZExt32(b@101, v23:GetArrayElement)
+# CHECK-NEXT: Int32 b@103 = Below(b@99, b@102, v23:GetArrayElement)
+# CHECK-NEXT: Void b@104 = Branch(b@103, Terminal, v23:GetArrayElement)
+# CHECK-NEXT: Successors: Then:#24, Else:Rare:#22
+# CHECK-NEXT: BB#24: ; frequency = 0.001951
+# CHECK-NEXT: Predecessors: #9
+# CHECK-NEXT: Int32 b@73 = Const32(3, v23:GetArrayElement)
+# CHECK-NEXT: Int64 b@16 = Shl(b@99, $3(b@73), v23:GetArrayElement)
+# CHECK-NEXT: Int64 b@107 = Add(b@16, b@100, v23:GetArrayElement)
+# CHECK-NEXT: Int64 b@108 = Load(b@107, ControlDependent|Reads:indexedContiguousProperties, v23:GetArrayElement)
+# CHECK-NEXT: Void b@109 = Patchpoint(b@18:ColdAny, runsWithoutFrame, resultConstraints = WarmAny, WritesLocalState|Reads:Top, v23:GetArrayElement)
+# CHECK-NEXT: Void b@110 = Upsilon(b@108, ^115, WritesLocalState, v23:GetArrayElement)
+# CHECK-NEXT: Void b@111 = Jump(Terminal, v23:GetArrayElement)
+# CHECK-NEXT: Successors: #23
+# CHECK-NEXT: BB#23: ; frequency = 0.001953
+# CHECK-NEXT: Predecessors: #22, #24
+# CHECK-NEXT: Int64 b@115 = Phi(ReadsLocalState, v23:GetArrayElement)
+# CHECK-NEXT: Int32 b@116 = Load8Z<Traps>(b@115, offset = 5, range = JSCell_typeInfoType, ExitsSideways|ControlDependent|ReadsImmutable|Reads:Top, v24:RequireObjectCoercible)
+# CHECK-NEXT: Void b@117 = Upsilon(b@25, ^26, WritesLocalState)
+# CHECK-NEXT: Void b@118 = Jump(Terminal)
+# CHECK-NEXT: Successors: #10
+# CHECK-NEXT: BB#22: ; frequency = 0.000002
+# CHECK-NEXT: Predecessors: #9
+# CHECK-NEXT: Int64 b@112 = Patchpoint(b@18:Register(%rsi), b@25:Register(%xmm0), resultConstraints = Register(%rax), ExitsSideways|ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, StringStorage, AllocatorState, RuntimeState}|Reads:Top, v23:GetArrayElement)
+# CHECK-NEXT: Void b@113 = Upsilon(b@112, ^115, WritesLocalState, v23:GetArrayElement)
+# CHECK-NEXT: Void b@114 = Jump(Terminal, v23:GetArrayElement)
+# CHECK-NEXT: Successors: #23
+# CHECK-NEXT: BB#15: ; frequency = 0.000976
+# CHECK-NEXT: Predecessors: #7
+# CHECK-NEXT: Void b@51 = Upsilon(b@124, ^27, WritesLocalState)
+# CHECK-NEXT: Void b@3 = Jump(Terminal)
+# CHECK-NEXT: Successors: #17
+# CHECK-NEXT: BB#17: ; frequency = 0.000976
+# CHECK-NEXT: Predecessors: #16, #15
+# CHECK-NEXT: Int64 b@27 = Phi(ReadsLocalState, v12:Parameter)
+# CHECK-NEXT: Double b@76 = IToD(b@27)
+# CHECK-NEXT: Void b@77 = Upsilon(b@76, ^25, WritesLocalState)
+# CHECK-NEXT: Void b@78 = Jump(Terminal)
+# CHECK-NEXT: Successors: #9
+# CHECK-NEXT: BB#30: ; frequency = 0.000976
+# CHECK-NEXT: Predecessors: #4
+# CHECK-NEXT: Int64 b@8 = Sub(b@81, b@21, v15:IsElementPresent)
+# CHECK-NEXT: Int32 b@6 = BelowEqual(b@8, $1048576(b@66), v15:IsElementPresent)
+# CHECK-NEXT: Void b@5 = Branch(b@6, Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Successors: Then:#6, Else:Rare:#26
+# CHECK-NEXT: BB#6: ; frequency = 0.000975
+# CHECK-NEXT: Predecessors: #30
+# CHECK-NEXT: Void b@50 = Upsilon(b@21, ^124, WritesLocalState, v12:Parameter)
+# CHECK-NEXT: Void b@85 = Jump(Terminal, v12:Parameter)
+# CHECK-NEXT: Successors: #7
+# CHECK-NEXT: BB#26: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #30
+# CHECK-NEXT: Void b@125 = Upsilon(b@21, ^123, WritesLocalState, v12:Parameter)
+# CHECK-NEXT: Void b@58 = Jump(Terminal, v12:Parameter)
+# CHECK-NEXT: Successors: #27
+# CHECK-NEXT: BB#27: ; frequency = 0.000010
+# CHECK-NEXT: Predecessors: #26, #29
+# CHECK-NEXT: Int64 b@123 = Phi(ReadsLocalState, v12:Parameter)
+# CHECK-NEXT: Void b@42 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v13:LoopHint)
+# CHECK-NEXT: Int32 b@39 = Above(b@81, b@123, v15:IsElementPresent)
+# CHECK-NEXT: Void b@47 = Branch(b@39, Terminal, v15:IsElementPresent)
+# CHECK-NEXT: Successors: Then:#28, Else:Rare:#16
+# CHECK-NEXT: BB#28: ; frequency = 0.000010
+# CHECK-NEXT: Predecessors: #27
+# CHECK-NEXT: Int64 b@45 = BitAnd(b@123, $-2147483648(b@89), v16:TypeTest)
+# CHECK-NEXT: Void b@44 = Branch(b@45, Terminal, v16:TypeTest)
+# CHECK-NEXT: Successors: Then:Rare:#20, Else:#29
+# CHECK-NEXT: BB#29: ; frequency = 0.000010
+# CHECK-NEXT: Predecessors: #28
+# CHECK-NEXT: Int64 b@14 = Add(b@123, $1(b@35), v18:Increment)
+# CHECK-NEXT: Void b@126 = Upsilon(b@14, ^123, WritesLocalState)
+# CHECK-NEXT: Void b@11 = Jump(Terminal)
+# CHECK-NEXT: Successors: #27
+# CHECK-NEXT: BB#20: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #28
+# CHECK-NEXT: Void b@12 = Upsilon(b@123, ^69, WritesLocalState)
+# CHECK-NEXT: Void b@60 = Jump(Terminal)
+# CHECK-NEXT: Successors: #21
+# CHECK-NEXT: BB#16: ; frequency = 0.000001
+# CHECK-NEXT: Predecessors: #27
+# CHECK-NEXT: Void b@46 = Upsilon(b@123, ^27, WritesLocalState)
+# CHECK-NEXT: Void b@0 = Jump(Terminal)
+# CHECK-NEXT: Successors: #17
+# CHECK-NEXT: BB#2: ; frequency = 0.000977
+# CHECK-NEXT: Predecessors: #0
+# CHECK-NEXT: Void b@17 = Patchpoint(resultConstraints = WarmAny, ExitsSideways|Reads:Top, v6:RequireObjectCoercible)
+# CHECK-NEXT: Void b@74 = Oops(Terminal, v6:RequireObjectCoercible)
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@18: dereferenceableBytes = 8
+# CHECK-NEXT: b@21: range = [1,2147483648]
+# CHECK-NEXT: b@27: range = [1,2147483648]
+# CHECK-NEXT: b@69: range = [1,2147483648]
+# CHECK-NEXT: b@123: range = [1,2147483648]
+# CHECK-NEXT: b@124: range = [1,2147483648]
+# CHECK-NEXT: end of function f13

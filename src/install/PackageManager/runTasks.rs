@@ -1965,7 +1965,7 @@ pub fn is_bunx_tree(dir: &[u8]) -> bool {
 }
 
 fn is_bunx_install() -> bool {
-    is_bunx_tree(crate::bun_fs::FileSystem::instance().top_level_dir())
+    is_bunx_tree(crate::bun_fs::FileSystem::get().top_level_dir())
 }
 
 /// The error that a command returns when a request failed before it linked or saved anything.

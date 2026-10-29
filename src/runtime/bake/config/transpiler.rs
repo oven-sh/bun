@@ -87,11 +87,9 @@ impl Framework {
         // The bundler crate (lower tier) carries a TYPE_ONLY projection
         // (`bake_types::Framework`); construct it here and give it arena
         // lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        let framework_view: *mut bun_bundler::bake_types::Framework =
-            arena.alloc(self.as_bundler_view());
-        // SAFETY: `arena.alloc` returns a non-null, initialized pointer backed by `arena: &'a Arena`,
-        // which outlives `out: &mut Transpiler<'a>`, so borrowing it as `&'a Framework` is sound.
-        out.options.framework = Some(unsafe { &*framework_view });
+        let framework = arena.alloc(self.as_bundler_view());
+        let framework_view: *mut bun_bundler::bake_types::Framework = &raw mut *framework;
+        out.options.framework = Some(framework);
         out.options.inline_entrypoint_import_meta_main = true;
 
         out.options.source_map = match mode {

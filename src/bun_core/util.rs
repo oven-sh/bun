@@ -148,22 +148,6 @@ impl ZStr {
         // SAFETY: `p[len] == 0` (strlen postcondition) and `p[..len]` readable.
         unsafe { Self::from_raw(p.cast::<u8>(), len) }
     }
-    // NOTE: prefer `ZBox` for owned NUL-terminated strings. `Box<ZStr>` is
-    // supported only as a transitional shim for ported fields that were typed
-    // `Box<ZStr>` before `ZBox` existed (e.g. `PackageManager.cache_directory_path`).
-    // The slice metadata of the returned `Box<ZStr>` covers `bytes.len() + 1`
-    // (i.e. INCLUDES the trailing NUL) so `Drop` deallocates the full
-    // allocation; `as_bytes()` will therefore include the trailing NUL.
-    // Retire once all `Box<ZStr>` fields are migrated to `ZBox`.
-    pub fn boxed(bytes: &[u8]) -> Box<ZStr> {
-        let mut v = Vec::with_capacity(bytes.len() + 1);
-        v.extend_from_slice(bytes);
-        v.push(0);
-        let b: Box<[u8]> = v.into_boxed_slice();
-        // SAFETY: `ZStr` is a transparent newtype over `[u8]`; the fat-pointer
-        // metadata (len = bytes.len()+1) is preserved by the `as *mut ZStr` cast.
-        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
-    }
 }
 
 /// Owned, heap-allocated, NUL-terminated byte string. `.len()` / `Deref`
@@ -3800,8 +3784,6 @@ pub(crate) fn set_bun_options_argc(n: usize) {
 }
 
 /// Trait for arg types accepted by [`append_options_env`].
-/// Impl'd for `bun_core::String`
-/// and `Box<ZStr>` in their owning crates.
 pub trait OptionsEnvArg {
     fn from_slice(s: &[u8]) -> Self;
     fn from_buf(buf: Vec<u8>) -> Self;
@@ -3822,22 +3804,6 @@ impl OptionsEnvArg for &'static ZStr {
         buf.push(0);
         let z: &'static [u8] = buf.leak();
         ZStr::from_slice_with_nul(z)
-    }
-}
-
-/// Owned `Box<ZStr>` arm of `appendOptionsEnv` — used by `bun::init_argv`'s
-/// BUN_OPTIONS splice path, which stores argv entries as `Box<ZStr>`.
-impl OptionsEnvArg for Box<ZStr> {
-    fn from_slice(s: &[u8]) -> Self {
-        ZStr::boxed(s)
-    }
-    fn from_buf(mut buf: Vec<u8>) -> Self {
-        buf.push(0);
-        let b: Box<[u8]> = buf.into_boxed_slice();
-        // SAFETY: `ZStr` is `#[repr(transparent)]` over `[u8]`; the fat-pointer
-        // metadata (len includes the trailing NUL) is preserved by the cast —
-        // identical to `ZStr::boxed` but consuming the Vec without re-copying.
-        unsafe { crate::heap::take(crate::heap::into_raw(b) as *mut ZStr) }
     }
 }
 

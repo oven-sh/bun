@@ -467,8 +467,7 @@ enum DeferredError {
 }
 
 // Process-lifetime singletons — PORTING.md §Forbidden: use OnceLock, never
-// `static mut` + leak. `ZBox` is the sanctioned owned-ZStr type
-// (util.rs forbids `Box<ZStr>` because of DST dealloc-length mismatch).
+// `static mut` + leak. `ZBox` is the sanctioned owned-ZStr type.
 #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
 static CACHED_DEFAULT_SYSTEM_INCLUDE_DIR: OnceLock<bun_core::ZBox> = OnceLock::new();
 #[cfg(any(target_os = "linux", target_os = "android"))]

@@ -33,21 +33,17 @@ use bun_sourcemap_jsc::code_coverage;
 const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
 /// Returns true if files were actually run via the worker pool, false if it
-/// fell back to the sequential path (≤1 effective worker). The caller uses
+/// left them to the caller to run sequentially (≤1 effective worker). The caller uses
 /// this to decide whether to run the serial coverage/JUnit reporters.
 pub(crate) fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
-    vm: *mut VirtualMachine,
+    vm: &VirtualMachine,
     files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
 ) -> crate::Result<bool> {
-    // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
-    // Kept as a raw pointer; dereferenced at each use site to sidestep borrowck
-    // around the self-referential Coordinator/Worker graph.
-    let vm_ptr = vm;
     // SAFETY: env loader is initialized before the test runner runs.
-    let env = unsafe { &mut *(*vm_ptr).transpiler.env };
+    let env = unsafe { &mut *vm.transpiler.env };
     let n: u32 = u32::try_from(files.len()).unwrap();
     let k: u32 = ctx.test_options.parallel.min(n);
     if k <= 1 {
@@ -55,8 +51,6 @@ pub(crate) fn run_as_coordinator(
         // tests can rely on the var whenever --parallel is passed.
         let _ = env.map.put(b"JEST_WORKER_ID", b"1");
         let _ = env.map.put(b"BUN_TEST_WORKER_ID", b"1");
-        // SAFETY: see vm_ptr note above.
-        TestCommand::run_all_tests(reporter, unsafe { &mut *vm_ptr }, files);
         return Ok(false);
     }
 
@@ -138,12 +132,8 @@ pub(crate) fn run_as_coordinator(
     }
 
     let mut coord = Coordinator {
-        // SAFETY: see vm_ptr note above.
-        vm: unsafe { &*vm_ptr },
-        // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
-        event_loop_handle: unsafe {
-            bun_jsc::EventLoopHandle::init((*vm_ptr).event_loop().cast::<()>())
-        },
+        vm,
+        event_loop_handle: bun_jsc::EventLoopHandle::init(vm.event_loop().cast::<()>()),
         reporter,
         files: sorted,
         costs,
@@ -204,9 +194,8 @@ pub(crate) fn run_as_coordinator(
     }
 
     // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*(*vm_ptr).event_loop()).ensure_waker() };
-    // SAFETY: see vm_ptr note above.
-    unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
+    unsafe { (*vm.event_loop()).ensure_waker() };
+    vm.run_with_api_lock(|| coord.drive());
     coord.end_group();
 
     aggregate::replay_test_records(&mut coord);

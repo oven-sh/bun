@@ -2345,7 +2345,8 @@ impl TestCommand {
                     &mut *ctx,
                     &mut coverage_options,
                 )?;
-            } else {
+            }
+            if !ran_parallel {
                 Self::run_all_tests(&mut reporter, vm, test_files);
             }
         }

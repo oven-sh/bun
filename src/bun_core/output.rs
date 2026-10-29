@@ -2566,7 +2566,7 @@ pub fn disable_scoped_debug_writer() {
 
 unsafe extern "C" {
     /// No preconditions; returns the calling process's PID.
-    safe fn getpid() -> c_int;
+    pub(crate) safe fn getpid() -> c_int;
 }
 
 fn init_scoped_debug_writer_at_startup() {

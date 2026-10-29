@@ -119,7 +119,12 @@ pub(crate) struct InputCopy {
 }
 
 pub(crate) trait CompressionStreamImpl:
-    Sized + Taskable + bun_ptr::CellRefCounted + bun_ptr::AnyRefCounted + 'static
+    Sized
+    + Taskable
+    + bun_ptr::CellRefCounted
+    + bun_ptr::AnyRefCounted
+    + bun_core::IntrusiveField<JsCell<WorkPoolTask>>
+    + 'static
 {
     type Stream: CompressionContext;
 
@@ -169,9 +174,6 @@ pub(crate) trait CompressionStreamImpl:
     fn input_copy(&self) -> &JsCell<InputCopy>;
     fn pending_close(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
-
-    /// Byte offset of the embedded `WorkPoolTask`.
-    const TASK_OFFSET: usize;
 
     // Per-class codegen (`T.js.*` cached-property accessors).
     fn write_result_get_cached(this_value: JSValue) -> Option<JSValue>;
@@ -691,11 +693,9 @@ pub(crate) trait CompressionStreamImpl:
 fn async_job_run_task<T: CompressionStreamImpl>(task: *mut WorkPoolTask) {
     // SAFETY: `task` points to `T.task` — only ever invoked by the thread
     // pool against a `T` scheduled in `write`, so provenance covers the
-    // full `T` allocation. Recover *mut T via container_of
-    // (`CompressionStreamImpl::TASK_OFFSET`). The task field is a
-    // `JsCell<WorkPoolTask>` — `#[repr(transparent)]` over the value, so
-    // `offset_of!(T, task)` is the value's offset.
-    let this: *mut T = unsafe { bun_core::container_of(task, T::TASK_OFFSET) };
+    // full `T` allocation. The task field is a `JsCell<WorkPoolTask>` —
+    // `#[repr(transparent)]` over the value, so the cast keeps the address.
+    let this: *mut T = unsafe { T::from_field_ptr(task.cast()) };
     async_job_run(this);
 }
 
@@ -856,6 +856,8 @@ macro_rules! __impl_compression_stream {
             }
         }
 
+        ::bun_core::intrusive_field!($native, task: ::bun_jsc::JsCell<::bun_jsc::WorkPoolTask>);
+
         impl $crate::node::node_zlib_binding::CompressionStreamImpl for $native {
             type Stream = $ctx;
 
@@ -905,8 +907,6 @@ macro_rules! __impl_compression_stream {
             fn closed(&self) -> &::core::cell::Cell<bool> {
                 &self.closed
             }
-
-            const TASK_OFFSET: usize = ::core::mem::offset_of!(Self, task);
 
             #[inline]
             fn write_result_get_cached(

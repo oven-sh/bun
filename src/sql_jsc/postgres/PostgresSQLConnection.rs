@@ -1284,8 +1284,7 @@ impl PostgresSQLConnection {
         self.transaction_status.get() != b'I'
     }
 
-    /// Also while a request that user code has seen rejected can still change it. A replication
-    /// session that ends in band cannot: its command ends with the server's ReadyForQuery.
+    /// Also while a rejected request can still change it. A replication session ending in band cannot.
     pub fn get_in_transaction(&self) -> bool {
         self.is_in_transaction()
             || self.current().is_some_and(|head| {

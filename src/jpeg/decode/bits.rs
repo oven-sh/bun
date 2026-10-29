@@ -291,6 +291,40 @@ impl BitReader {
     }
 }
 
+/// Where a sequential scan gets the bits of an MCU from.
+pub(crate) trait Bits {
+    /// The next symbol.
+    fn symbol(&mut self, table: &DerivedTable) -> u8;
+    /// The next `n` bits, from 1 to 15.
+    fn bits(&mut self, n: u32) -> i32;
+    /// The next AC coefficient, if there is a shortcut to it.
+    #[inline(always)]
+    fn short_coefficient(&mut self, _table: &DerivedTable) -> Option<ShortCoefficient> {
+        None
+    }
+    /// After the last coefficient of a block came from `short_coefficient`.
+    #[inline(always)]
+    fn catch_up(&mut self, _last: ShortCoefficient) {}
+}
+
+pub(crate) struct SlowBits<'a, 'b> {
+    pub(crate) bits: BitReader,
+    pub(crate) input: &'a mut Input<'b>,
+}
+
+impl Bits for SlowBits<'_, '_> {
+    #[inline(always)]
+    fn symbol(&mut self, table: &DerivedTable) -> u8 {
+        self.bits.decode(self.input, table)
+    }
+
+    #[inline(always)]
+    fn bits(&mut self, n: u32) -> i32 {
+        self.bits.ensure(self.input, n);
+        self.bits.get(n)
+    }
+}
+
 /// libjpeg-turbo's faster way to read bits, for where the data cannot run out. It stops at nothing: once it has seen an
 /// FF that is not followed by 00 it supplies zeros.
 pub(crate) struct FastBitReader<'a> {
@@ -319,7 +353,7 @@ impl<'a> FastBitReader<'a> {
 
     /// Afterwards there are more than 16 bits.
     #[inline(always)]
-    pub(crate) fn fill(&mut self) {
+    fn fill(&mut self) {
         if self.bits.bits_left <= 16 {
             self.fill_6_bytes();
         }
@@ -348,19 +382,19 @@ impl<'a> FastBitReader<'a> {
         self.at = filled.at;
         self.saw_marker |= filled.saw_marker;
     }
+}
 
-    /// After `fill`, at most 16 bits.
+impl Bits for FastBitReader<'_> {
     #[inline(always)]
-    pub(crate) fn get(&mut self, nbits: u32) -> i32 {
-        self.bits.get(nbits)
+    fn bits(&mut self, n: u32) -> i32 {
+        self.fill();
+        self.bits.get(n)
     }
 
-    /// The next AC coefficient, if it is a short one.
-    ///
     /// libjpeg-turbo looks whether to fill once more, between the code and the value. The next look makes up for that,
     /// and `catch_up` does where there may be none.
     #[inline(always)]
-    pub(crate) fn short_coefficient(&mut self, table: &DerivedTable) -> Option<ShortCoefficient> {
+    fn short_coefficient(&mut self, table: &DerivedTable) -> Option<ShortCoefficient> {
         self.fill();
         let next = (self.bits.buf >> (self.bits.bits_left - SHORT_BITS)) as usize;
         let short = *table.short.get(next % (1 << SHORT_BITS))?;
@@ -369,16 +403,15 @@ impl<'a> FastBitReader<'a> {
     }
 
     #[inline(always)]
-    pub(crate) fn catch_up(&mut self, last: ShortCoefficient) {
+    fn catch_up(&mut self, last: ShortCoefficient) {
         let size = u16::BITS - last.value.unsigned_abs().leading_zeros();
         if self.bits.bits_left + size <= 16 {
             self.fill_6_bytes();
         }
     }
 
-    /// The next symbol.
     #[inline(always)]
-    pub(crate) fn decode(&mut self, table: &DerivedTable) -> u8 {
+    fn symbol(&mut self, table: &DerivedTable) -> u8 {
         self.fill();
         let (length, symbol) = self.bits.lookup(table);
         if length <= LOOKAHEAD {

@@ -1,8 +1,7 @@
 //! Huffman decoding of sequential scans (jdhuff.c).
 
 use super::bits::{
-    self, BitReader, DerivedTable, DerivedTables, FastBitReader, ShortCoefficient, TableKind,
-    huff_extend,
+    self, BitReader, Bits, DerivedTables, FastBitReader, SlowBits, TableKind, huff_extend,
 };
 use super::coef::McuBlocks;
 use super::input::{Input, Restarts};
@@ -180,62 +179,5 @@ impl HuffDecoder {
         self.bits = bits;
         self.last_dc_val = last_dc_val;
         Ok(true)
-    }
-}
-
-/// Where the bits of an MCU come from.
-trait Bits {
-    /// The next symbol.
-    fn symbol(&mut self, table: &DerivedTable) -> u8;
-    /// The next `n` bits, from 1 to 15.
-    fn bits(&mut self, n: u32) -> i32;
-    /// The next AC coefficient, if there is a shortcut to it.
-    #[inline(always)]
-    fn short_coefficient(&mut self, _table: &DerivedTable) -> Option<ShortCoefficient> {
-        None
-    }
-    /// After the last coefficient of a block came from `short_coefficient`.
-    #[inline(always)]
-    fn catch_up(&mut self, _last: ShortCoefficient) {}
-}
-
-struct SlowBits<'a, 'b> {
-    bits: BitReader,
-    input: &'a mut Input<'b>,
-}
-
-impl Bits for SlowBits<'_, '_> {
-    #[inline(always)]
-    fn symbol(&mut self, table: &DerivedTable) -> u8 {
-        self.bits.decode(self.input, table)
-    }
-
-    #[inline(always)]
-    fn bits(&mut self, n: u32) -> i32 {
-        self.bits.ensure(self.input, n);
-        self.bits.get(n)
-    }
-}
-
-impl Bits for FastBitReader<'_> {
-    #[inline(always)]
-    fn symbol(&mut self, table: &DerivedTable) -> u8 {
-        self.decode(table)
-    }
-
-    #[inline(always)]
-    fn bits(&mut self, n: u32) -> i32 {
-        self.fill();
-        self.get(n)
-    }
-
-    #[inline(always)]
-    fn short_coefficient(&mut self, table: &DerivedTable) -> Option<ShortCoefficient> {
-        self.short_coefficient(table)
-    }
-
-    #[inline(always)]
-    fn catch_up(&mut self, last: ShortCoefficient) {
-        self.catch_up(last);
     }
 }

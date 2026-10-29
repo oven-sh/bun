@@ -110,14 +110,12 @@ impl Socket {
         us_udp_socket_bound_port(self)
     }
 
-    pub fn bound_ip(&mut self, buf: *mut u8, length: &mut i32) {
-        // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
-        unsafe { us_udp_socket_bound_ip(self, buf, length) }
+    pub fn bound_ip(&mut self, buf: &mut [u8; 16], length: &mut i32) {
+        us_udp_socket_bound_ip(self, buf, length)
     }
 
-    pub fn remote_ip(&mut self, buf: *mut u8, length: &mut i32) {
-        // SAFETY: buf must point to at least *length bytes; thin FFI passthrough.
-        unsafe { us_udp_socket_remote_ip(self, buf, length) }
+    pub fn remote_ip(&mut self, buf: &mut [u8; 16], length: &mut i32) {
+        us_udp_socket_remote_ip(self, buf, length)
     }
 
     pub fn close(&mut self) {
@@ -219,8 +217,9 @@ unsafe extern "C" {
     ) -> c_int;
     safe fn us_udp_socket_user(socket: &mut Socket) -> *mut c_void;
     safe fn us_udp_socket_bound_port(socket: &mut Socket) -> c_int;
-    fn us_udp_socket_bound_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
-    fn us_udp_socket_remote_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
+    // Both write 0, 4 or 16 bytes to `buf`, whatever `*length` holds.
+    safe fn us_udp_socket_bound_ip(socket: &mut Socket, buf: &mut [u8; 16], length: &mut i32);
+    safe fn us_udp_socket_remote_ip(socket: &mut Socket, buf: &mut [u8; 16], length: &mut i32);
     safe fn us_udp_socket_close(socket: &mut Socket);
     safe fn us_udp_socket_set_broadcast(socket: &mut Socket, enabled: c_int) -> c_int;
     safe fn us_udp_socket_buffer_size(

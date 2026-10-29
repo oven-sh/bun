@@ -468,7 +468,7 @@ pub struct Resolver<'a> {
     // aliased unique refs across threads (instant UB). Model as `*mut` /
     // `NonNull` (never-null but raw-aliasing) and deref through the `fs()` /
     // `log()` accessors below.
-    pub fs: *mut Fs::FileSystem,
+    pub(crate) fs: *mut Fs::FileSystem,
     pub log: NonNull<bun_ast::Log>,
     // allocator dropped — global mimalloc
     /// NOTE: saved/restored across nested resolves.
@@ -661,7 +661,7 @@ impl<'a> Resolver<'a> {
     /// aliased unique refs to the same singleton (PORTING.md §Forbidden:
     /// aliased-&mut), and any later `&mut *self.fs` retag would pop a previously
     /// returned `&'a mut`'s SB tag while it's still nominally live for `'a`.
-    /// Callers must `unsafe { &mut *r.fs() }` at the narrowest use site and let
+    /// Callers dereference it at the narrowest use site and let
     /// the projection die at end-of-expression.
     #[inline(always)]
     pub fn fs(&self) -> *mut Fs::FileSystem {
@@ -691,11 +691,7 @@ impl<'a> Resolver<'a> {
 
     /// Unique-borrow of the `FileSystem` singleton. Centralizes the
     /// `unsafe { &mut *self.fs() }` retag for call sites that hold no other
-    /// borrow of `self` across the call. Sites that need `&mut FileSystem`
-    /// while also borrowing a disjoint `self.<field>` (e.g.
-    /// `self.caches.fs.read_file_with_allocator`) cannot route through
-    /// `&mut self` and continue to narrow-retag via the raw [`fs()`](Self::fs)
-    /// accessor — same caveat as [`log_mut`](Self::log_mut).
+    /// borrow of `self` across the call.
     #[inline(always)]
     pub(crate) fn fs_mut(&mut self) -> &mut Fs::FileSystem {
         // SAFETY: BACKREF — `self.fs` is the never-null process-global
@@ -4245,16 +4241,10 @@ impl<'a> Resolver<'a> {
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
         // Since tsconfig.json is cached permanently, in our DirEntries cache
         // we must use the global allocator
-        let mut entry = self.caches.fs.read_file_with_allocator(
-            // SAFETY: process-global `FileSystem` singleton (see `fs()` NOTE); narrow `&mut`
-            // for this call only — `self.caches` is a field of `self` (disjoint allocation).
-            unsafe { &mut *self.fs() },
-            file,
-            dirname_fd,
-            false,
-            None,
-            None,
-        )?;
+        let mut entry = self
+            .caches
+            .fs
+            .read_file_with_allocator(file, dirname_fd, false, None, None)?;
         // NOTE: reshaped for borrowck — `mem::take` the contents (leaving
         // `Contents::Empty` behind) so `entry` stays whole for the close-guard.
         let entry_contents = core::mem::take(&mut entry.contents);

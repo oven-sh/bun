@@ -1617,20 +1617,13 @@ impl VirtualMachine {
         unsafe { self.transpiler.env.as_ref() }
     }
 
-    /// Safe accessor for the process-lifetime resolver `FileSystem` singleton
-    /// (`vm.transpiler.fs`). Allocated once during VM init and never freed;
-    /// callers previously open-coded `unsafe { &*vm.transpiler.fs }`.
+    /// The process-lifetime resolver `FileSystem` singleton.
     #[inline]
     pub fn fs(&self) -> &'static bun_resolver::fs::FileSystem {
-        // SAFETY: `transpiler.fs` is set during `Transpiler::init` to the
-        // process-lifetime `Fs::FileSystem` singleton; never null while a VM
-        // is installed.
-        unsafe { &*self.transpiler.fs }
+        bun_resolver::fs::FileSystem::get()
     }
 
-    /// Safe accessor for the process-lifetime cwd string
-    /// (`vm.transpiler.fs.top_level_dir`). The `FileSystem` singleton is
-    /// allocated once during VM init and never freed.
+    /// The process cwd string.
     #[inline]
     pub fn top_level_dir(&self) -> &'static [u8] {
         self.fs().top_level_dir()
@@ -6333,13 +6326,10 @@ impl VirtualMachine {
             }
             // Note: `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
-            // The C trampoline erases lifetimes via `*mut c_void`; round-trip
-            // the caller's `&mut ExceptionList` as a raw pointer so child
-            // errors append to the same list.
-            struct AggCtx<'a> {
-                formatter: *mut crate::console_object::Formatter<'a>,
-                writer: *mut bun_core::io::Writer,
-                exception_list: *mut ExceptionList,
+            struct AggCtx<'c, 'a> {
+                formatter: &'c mut crate::console_object::Formatter<'a>,
+                writer: &'c mut bun_core::io::Writer,
+                exception_list: Option<&'c mut ExceptionList>,
                 allow_ansi_color: bool,
                 allow_side_effects: bool,
                 printed_member: bool,
@@ -6351,22 +6341,10 @@ impl VirtualMachine {
                 next_value: JSValue,
             ) {
                 // SAFETY: `ctx` is `&mut AggCtx` for the duration of `for_each`.
-                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_>>(ctx) };
-                // SAFETY: per-thread VM.
+                let ctx = unsafe { bun_ptr::callback_ctx::<AggCtx<'_, '_>>(ctx) };
                 let vm = VirtualMachine::get().as_mut();
-                let exception_list = if ctx.exception_list.is_null() {
-                    None
-                } else {
-                    // SAFETY: non-null branch; borrows the caller's stack
-                    // `ExceptionList`, live for the synchronous `for_each`.
-                    Some(unsafe { &mut *ctx.exception_list })
-                };
-                // SAFETY: `ctx.formatter` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let formatter = unsafe { &mut *ctx.formatter };
-                // SAFETY: `ctx.writer` borrows the caller's stack local,
-                // live across the synchronous `for_each` call.
-                let writer = unsafe { &mut *ctx.writer };
+                let formatter = &mut *ctx.formatter;
+                let writer = &mut *ctx.writer;
                 ctx.printed_member = true;
                 formatter.depth = formatter.depth.saturating_add(1);
                 if next_value.is_cell()
@@ -6398,7 +6376,7 @@ impl VirtualMachine {
                     vm.print_errorlike_object(
                         next_value,
                         None,
-                        exception_list,
+                        ctx.exception_list.as_deref_mut(),
                         formatter,
                         writer,
                         ctx.allow_ansi_color,
@@ -6408,11 +6386,9 @@ impl VirtualMachine {
                 formatter.depth = formatter.depth.saturating_sub(1);
             }
             let mut ctx = AggCtx {
-                formatter: std::ptr::from_mut(&mut *formatter),
-                writer: std::ptr::from_mut(&mut *writer),
-                exception_list: exception_list
-                    .as_deref_mut()
-                    .map_or(core::ptr::null_mut(), std::ptr::from_mut::<ExceptionList>),
+                formatter: &mut *formatter,
+                writer: &mut *writer,
+                exception_list: exception_list.as_deref_mut(),
                 allow_ansi_color,
                 allow_side_effects,
                 printed_member: false,

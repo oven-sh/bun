@@ -415,12 +415,10 @@ impl BlobExt for Blob {
         fn wrapped<F: read_file::ReadFileToJs>(
             b: &Blob,
             g: bun_ptr::BackRef<JSGlobalObject>,
-            by: &mut [u8],
+            by: *mut [u8],
         ) -> JSValue {
             let g = g.get();
-            jsc::host_fn::to_js_host_call(g, || {
-                F::call(b, g, std::ptr::from_mut::<[u8]>(by), Lifetime::Clone)
-            })
+            jsc::host_fn::to_js_host_call(g, || F::call(b, g, by, Lifetime::Clone))
         }
         S3BlobDownloadTask::init(cx, self, wrapped::<F>)
     }
@@ -561,25 +559,11 @@ impl BlobExt for Blob {
                 poll: bun_io::KeepAlive::default(),
             });
             t.poll.ref_(bun_io::js_vm_ctx());
-            // reshaped for borrowck — `heap::alloc(t)` moves `t`, so clone the
-            // credentials ref out and stash `path` as a raw `*const [u8]`
-            // whose backing store is kept alive by the same `t.blob` now
-            // owned by the heap task.
-            let (cred, path, payer);
-            {
-                let s3 = t
-                    .blob
-                    .store()
-                    .expect("infallible: store present")
-                    .data
-                    .as_s3();
-                cred = s3.get_credentials().clone();
-                path = std::ptr::from_ref::<[u8]>(s3.path());
-                payer = s3.request_payer;
-            }
-            // SAFETY: `path` borrows the store held by `t.blob` (a fresh +1 ref);
-            // it stays valid until `Task::done` deinits the blob in the callback.
-            let path = unsafe { &*path };
+            let s3 = self
+                .store()
+                .expect("infallible: store present")
+                .data
+                .as_s3();
             let t_ptr = bun_core::heap::into_raw(t).cast::<c_void>();
             if self.offset.get() > 0 || self.size.get() != MAX_SIZE {
                 let len: Option<usize> = if self.size.get() != MAX_SIZE {
@@ -588,23 +572,23 @@ impl BlobExt for Blob {
                     None
                 };
                 crate::webcore::__s3_client::download_slice(
-                    &cred,
+                    s3.get_credentials(),
                     cx.context(),
-                    path,
+                    s3.path(),
                     self.offset.get() as usize,
                     len,
                     Task::<H>::cb,
                     t_ptr,
-                    payer,
+                    s3.request_payer,
                 )?;
             } else {
                 crate::webcore::__s3_client::download(
-                    &cred,
+                    s3.get_credentials(),
                     cx.context(),
-                    path,
+                    s3.path(),
                     Task::<H>::cb,
                     t_ptr,
-                    payer,
+                    s3.request_payer,
                 )?;
             }
             return Ok(());
@@ -5393,13 +5377,10 @@ struct S3BlobDownloadTask {
     pub(crate) handler: S3ReadHandler,
 }
 
-type S3ReadHandler = fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, &mut [u8]) -> JSValue;
+/// The bytes are `by` of [`read_file::ReadFileToJs::call`] for `Lifetime::Clone`.
+type S3ReadHandler = fn(&Blob, bun_ptr::BackRef<JSGlobalObject>, *mut [u8]) -> JSValue;
 
 impl S3BlobDownloadTask {
-    pub(crate) fn call_handler(&mut self, raw_bytes: &mut [u8]) -> JSValue {
-        (self.handler)(&self.blob, self.global_this, raw_bytes)
-    }
-
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn on_s3_download_resolved(
         result: crate::webcore::__s3_client::S3DownloadResult,
@@ -5422,10 +5403,9 @@ impl S3BlobDownloadTask {
                 if this.blob.size.get() == MAX_SIZE {
                     this.blob.size.set(bytes.len() as SizeType);
                 }
-                // SAFETY: `bytes` points into the byte store just installed on
-                // `this.blob.store`; the store outlives this call.
-                let value =
-                    JSPromise::wrap(global, |_g| Ok(this.call_handler(unsafe { &mut *bytes })))?;
+                let value = JSPromise::wrap(global, |_g| {
+                    Ok((this.handler)(&this.blob, global_ref, bytes))
+                })?;
                 this.promise.resolve(global, value)?;
             }
             crate::webcore::__s3_client::S3DownloadResult::NotFound(err)
@@ -5449,24 +5429,17 @@ impl S3BlobDownloadTask {
         // The callback may read this.blob.content_type, which is heap-owned by the
         // source JS Blob and freed on finalize(). Take an owning dupe so the task
         // outliving the source can't dangle.
-        let this = bun_core::heap::into_raw(Box::new(S3BlobDownloadTask {
+        let mut this = Box::new(S3BlobDownloadTask {
             global_this: bun_ptr::BackRef::new(cx.global()),
             blob: Blob::dupe(blob),
             promise: jsc::JSPromiseStrong::init(cx.global()),
             poll_ref: bun_io::KeepAlive::default(),
             handler,
-        }));
-        // SAFETY: just allocated; sole pointer until handed to the s3 callback
-        // below. Exclusive access scoped to the call.
-        unsafe { (*this).poll_ref.ref_(bun_io::js_vm_ctx()) };
-        // SAFETY: as above; shared access only from here on.
-        let this_ref = unsafe { &*this };
-        let promise = this_ref.promise.value();
-        let store::Data::S3(s3_store) = &this_ref
-            .blob
-            .store()
-            .expect("infallible: store present")
-            .data
+        });
+        this.poll_ref.ref_(bun_io::js_vm_ctx());
+        let promise = this.promise.value();
+        let this = bun_core::heap::into_raw(this);
+        let store::Data::S3(s3_store) = &blob.store().expect("infallible: store present").data
         else {
             unreachable!("S3BlobDownloadTask::init on non-S3 blob")
         };

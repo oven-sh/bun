@@ -7090,8 +7090,7 @@ impl H2FrameParser {
                 // Grow before any frame byte is written: failing after the header went out
                 // would abandon the frame mid-serialization (the JS-transport tracker would
                 // hold the stream mid-frame and the wire would owe a payload).
-                let additional = encoded_size + padding_overhead - encoded_headers.len();
-                if encoded_headers.try_reserve(additional).is_err() {
+                if encoded_headers.try_reserve(padding_overhead).is_err() {
                     return Err(
                         global_object.throw(format_args!("Failed to allocate padding buffer"))
                     );

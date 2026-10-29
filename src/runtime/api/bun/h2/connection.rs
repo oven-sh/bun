@@ -299,7 +299,7 @@ pub(crate) trait Sink {
         false
     }
     /// Highest stream id the embedder has ever registered, in either direction. Monotonic across
-    /// stream eviction: the embedder's own ids at or below it have existed (never idle), which the
+    /// stream eviction: the embedder's own ids at or below it count as used (never idle), which the
     /// engine cannot tell on its own for locally-initiated streams whose HEADERS it never sent
     /// (nghttp2's session_detect_idle_stream uses the same allocation high-water marks).
     fn highest_started_stream_id(&self) -> u32 {

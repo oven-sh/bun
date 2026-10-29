@@ -836,9 +836,7 @@ impl FakeTimers {
     }
 
     fn pop_due(&mut self, until: &Timespec) -> Option<*mut EventLoopTimer> {
-        let next = self.timers.peek()?;
-        // SAFETY: `next` is the heap root; live while linked.
-        if unsafe { (*next).next }.greater(until) {
+        if self.timers.peek_next()?.greater(until) {
             return None;
         }
         self.timers.delete_min()
@@ -1123,9 +1121,8 @@ impl FakeTimers {
     /// sinon's `runToLast()`.
     fn run_only_pending(global: &JSGlobalObject) -> Result<JSValue, Stop> {
         // SAFETY: per-thread `timer::All`.
-        match unsafe { (*timer_all()).fake_timers.timers.find_max() } {
-            // SAFETY: `last` is reachable in the heap and live while linked.
-            Some(last) => Self::run_until(global, unsafe { (*last).next }),
+        match unsafe { (*timer_all()).fake_timers.timers.find_max_next() } {
+            Some(&last) => Self::run_until(global, last),
             None => Self::run_ticks(global).map(|()| JSValue::ZERO),
         }
     }
@@ -1237,10 +1234,10 @@ impl FakeTimers {
     /// Must run before the drive's first `run_ticks`, to match `run_only_pending`.
     fn aim_at_last_timer(&mut self, id: u32) {
         let now = self.now;
-        let to_last = self.timers.find_max().map_or(Timespec::EPOCH, |last| {
-            // SAFETY: `last` is reachable in the heap and live while linked.
-            unsafe { (*last).next }.duration(&now)
-        });
+        let to_last = self
+            .timers
+            .find_max_next()
+            .map_or(Timespec::EPOCH, |last| last.duration(&now));
         if let Some(drive) = self.drive_mut(id) {
             drive.drive = Drive::Tick(Some(to_last));
         }

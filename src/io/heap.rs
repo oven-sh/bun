@@ -33,10 +33,7 @@ pub struct Intrusive<T: HeapNode, Context: HeapContext<T>> {
 /// Trait providing the ordering relation for `Intrusive`.
 /// Implement this on your `Context` type (or a ZST if no context is needed).
 pub trait HeapContext<T> {
-    /// # Safety
-    /// `a` and `b` must be non-null, aligned, and point to live nodes currently
-    /// owned by the intrusive heap. Only called from `Intrusive` internals.
-    unsafe fn less(&self, a: *mut T, b: *mut T) -> bool;
+    fn less(&self, a: &T, b: &T) -> bool;
 }
 
 /// Trait giving generic access to the embedded `IntrusiveField` on `T`.
@@ -89,7 +86,7 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
         let mut max_so_far = self.root;
         // SAFETY: all reachable nodes from `self.root` are valid for the heap's lifetime.
         self.for_each(|node| {
-            if self.context.less(max_so_far, node) {
+            if self.context.less(&*max_so_far, &*node) {
                 max_so_far = node;
             }
         });
@@ -211,7 +208,7 @@ impl<T: HeapNode, Context: HeapContext<T>> Intrusive<T, Context> {
         // SAFETY: `a` and `b` are distinct valid nodes (caller invariant).
         debug_assert!((*a).heap().next.is_null());
 
-        if self.context.less(a, b) {
+        if self.context.less(&*a, &*b) {
             // B points back to A
             (*b).heap().prev = a;
 

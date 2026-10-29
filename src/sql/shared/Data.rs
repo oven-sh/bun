@@ -55,9 +55,7 @@ impl Data {
         match self {
             Data::Owned(owned) => {
                 // Zero bytes before freeing.
-                let s = owned.slice_mut();
-                // SAFETY: `s` is an exclusive `&mut [u8]`; `len` bytes valid for writes.
-                unsafe { bun_alloc::secure_zero(s.as_mut_ptr(), s.len()) };
+                bun_alloc::secure_zero(owned.slice_mut());
                 owned.clear_and_free();
             }
             Data::Temporary(_) => {}

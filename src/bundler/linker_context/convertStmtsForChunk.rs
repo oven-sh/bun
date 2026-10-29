@@ -46,11 +46,11 @@ use crate::options::Format;
 /// namespace object (foo) because we cannot know what they are going to
 /// attempt to access statically
 pub(crate) fn convert_stmts_for_chunk(
-    c: &mut LinkerContext<'_>,
+    c: &LinkerContext<'_>,
     source_index: u32,
     stmts: &mut StmtList,
     part_stmts: &[bun_ast::Stmt],
-    chunk: &mut Chunk,
+    chunk: &Chunk,
     bump: &Bump,
     wrap: WrapKind,
     ast: &JSAst<'_>,
@@ -577,7 +577,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                                     core::ptr::read(&raw const s2.func)
                                                 },
                                             },
-                                            stmt.loc,
+                                            stmt2.loc,
                                         );
                                         stmt.data.s_function_mut().unwrap().func.name =
                                             Some(s.default_name);
@@ -596,7 +596,7 @@ pub(crate) fn convert_stmts_for_chunk(
                                                 },
                                                 is_export: false,
                                             },
-                                            stmt.loc,
+                                            stmt2.loc,
                                         );
                                         stmt.data.s_class_mut().unwrap().class.class_name =
                                             Some(s.default_name);

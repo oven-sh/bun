@@ -1,0 +1,111 @@
+# type Point = { x: number; y: number };
+# function names(point: Point): string[] {
+#   return Object.keys(point);
+# }
+# declare const input: any;
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = names({ x: +input, y: +input });
+# FORM: AsRead
+# OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:PromoteAggregateParameters
+# RUN: lower-to-b3 optimized f1
+# REQUIRES: unsanitized-code
+# RUN(CALLS): lower-to-b3 optimized f1
+# REQUIRES(CALLS): unsanitized-code
+# RUN(X64): lower-to-air size f1
+# REQUIRES(X64): x86_64 not-windows unsanitized-code
+# RUN(ARM64): lower-to-air size f1
+# REQUIRES(ARM64): arm64 not-windows unsanitized-code
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+typesite w0 module=m0 position=54 kind=Parameter function=f1
+typesite w1 module=m0 position=39 kind=Result
+typesite w2 module=m0 position=146 kind=Variable
+typesite w3 module=m0 position=207 kind=CallResult
+typesite w4 module=m0 position=89 kind=CallResult
+layout L0 name="Point" module=m0 position=5 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    Jump -> next b1()
+  b1():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w2}
+    Jump -> next b2(v3)
+  b2(v4: number):
+    LoopHint
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="input" [isFreeName]
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    v9 = Less v4, v8
+    Branch v9 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v10):
+    Jump -> next b4()
+  b4():
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="globalThis" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="input" [isFreeName]
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = ToNumber v17
+    v19 = Convert v18 declared={type=number}
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="input" [isFreeName]
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    v23 = ToNumber v22
+    v24 = Convert v23 declared={type=number}
+    v25 = NewObject -, v19, v24 layout=L0 fields=[0, 1]
+    v26 = FinishObject v25
+    v27 = Call v1, -, v26 calleeName="names"
+    v28 = Convert v27 declared={type=undefined|null|Array<undefined|null|string> site=w3 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v14, v28 key="answer"
+    Jump -> next b5()
+  b5():
+    v30 = Increment v10
+    v31 = Convert v30 declared={type=number site=w2}
+    Jump -> next b2(v31)
+  b6(v32):
+    Jump -> next b7()
+  b7():
+    v33 = Undefined
+    Return v33
+}
+function f1 name="names" module=m0 position=39 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L0):
+    Jump -> next b1()
+  b1():
+    v1 = Builtin builtin=Object
+    v2 = Builtin builtin=ObjectKeys
+    v3 = Call v2, v1, v0 calleeName="Object.keys"
+    ReturnCall v3 casts=[{declared={type=undefined|null|Array<undefined|null|string> site=w4 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|Array<undefined|null|string> site=w1 flags=[OmitsNull, OmitsUndefined]}}]
+}
+
+# Object.keys of an object with a layout looks the list of names up in a table of the run time, under the sum of the two words that say which fields the object has and in which order.
+# CHECK-LABEL: name="names" role=Source
+# CHECK-NEXT: BB#0:
+# CHECK-NEXT: Int64 b@[[point]] = ArgumentReg(
+# CHECK-NEXT: Int32 b@[[shape]] = Load(b@[[point]], offset = 12, ControlDependent|ReadsImmutable|Reads:AOTObject_shapeWord)
+# CHECK-NEXT: Int32 b@[[order]] = Load(b@[[point]], offset = 8, ControlDependent|Reads:OrderWords)
+# CHECK-NEXT: Int32 b@[[sum]] = Add(b@[[shape]], b@[[order]])
+# CHECK: Int32 b@{{*}} = BitAnd(b@[[sum]], $1023(b@{{*}}))
+# CHECK: Int32 b@[[sameShape]] = Equal(b@[[shape]], b@{{*}})
+# CHECK-NEXT: Branch(b@[[sameShape]], Terminal)
+# CHECK: Int32 b@[[sameOrder]] = Equal(b@[[order]], b@{{*}})
+# CHECK-NEXT: Branch(b@[[sameOrder]], Terminal)
+# A hit makes the array in place: the cell is allocated and gets its header and the shared storage that holds the names. No name is copied.
+# CHECK: Int64 b@[[array]] = Patchpoint(b@{{*}}:SomeRegister, runsWithoutFrame, resultConstraints = SomeEarlyRegister, numGPScratchRegisters = 1, Terminal|Writes:{collectorState, AllocatorState}|Reads:{collectorState, AllocatorState})
+# CHECK-NEXT: Successors: #{{*}}, Rare:#
+# CHECK: Store(b@{{*}}, b@[[array]], ControlDependent|Writes:JSCell_header)
+# CHECK-NEXT: Store(b@{{*}}, b@[[array]], offset = 8, ControlDependent|Writes:JSObject_butterfly)
+# CHECK-LABEL: end of function
+# One call into the run time serves every miss. Object.keys cannot be replaced: nothing makes its function object or tests which function the member holds.
+# CALLS-LABEL: name="names" role=Source
+# CALLS-NOT: :CallBuiltin
+# CALLS-COUNT-1: ExitsSideways
+# CALLS-NOT: ExitsSideways
+# CALLS-LABEL: end of function
+# The counts hold a call, whose moves follow the calling convention: not for Windows.
+# X64: instructions: 33, patchpoints: 1, rare instructions: 4
+# ARM64: instructions: 33, patchpoints: 1, rare instructions: 6

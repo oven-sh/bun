@@ -1,0 +1,178 @@
+# Iterator.prototype.some walks an array's iterator before two closures that count are declared. An iterator of the program, made below the declaration, has the same members and calls them in next().
+# FORM: AsRead
+# RUN: lower-to-b3 optimized f0
+# REQUIRES: x86_64 unsanitized-code not-windows faulting-loop-polls
+
+module m0 path="iterator-helper-runs-two-counting.ts" displayPath="iterator-helper-runs-two-counting.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent}}] ownFieldCount=1
+layout L1 kind=Environment module=m0 fields=[{key=@"binding.0" declared={type=number|absent}}] ownFieldCount=1
+layout L2 module=m0 position=423 fields=[{key="next" declared={type=undefined|null|function|f5 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}, {key="return" declared={type=undefined|null|function|f6 flags=[IsExpected, OmitsNull, OmitsUndefined]} flags=[IsRequired, IsMethod]}] ownFieldCount=2
+layout L3 module=m0 position=543 fields=[{key="done" declared={type=boolean} flags=[IsRequired]}, {key="value" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
+variable g0 name="first" module=m0 declared={type=undefined|null|function|absent|f3 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g1 name="second" module=m0 declared={type=undefined|null|function|absent|f3 flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable]
+variable g2 name="total" module=m0 declared={type=number|absent}
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} illTypedCause=FromLooseType
+    v4 = Call v1 calleeName="counter"
+    v5 = Convert v4 declared={type=undefined|null|function|f3 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v5 variable=g0
+    v7 = Call v1 calleeName="counter"
+    v8 = Convert v7 declared={type=undefined|null|function|f3 flags=[OmitsNull, OmitsUndefined]}
+    PutModuleVariable v8 variable=g1
+    v10 = Integer
+    v11 = Convert v10 declared={type=number}
+    PutModuleVariable v11 variable=g2
+    v13 = Call v3 calleeName="make"
+    v14 = Convert v13 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v15 = IteratorOpen v14
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v17 = IteratorResume v15
+    v18 = ResultAt v17
+    Branch v18 -> taken b2(), notTaken b3()
+  b2():
+    v19 = Undefined
+    Return v19
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    Jump -> next b1()
+  b5() role=IterationCleanup subject=v15:
+    v20 = CatchException
+    Rethrow v20
+}
+function f1 name="counter" module=m0 position=242 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|function|f3 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L0
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    PutEnvironmentField v0, v2 layout=L0
+    v4 = NewClosure v0 function=f3
+    v5 = Convert v4 declared={type=undefined|null|function|f3 flags=[OmitsNull, OmitsUndefined]}
+    Return v5
+}
+function f2 name="make" module=m0 position=382 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L1
+    v1 = Integer
+    v2 = Convert v1 declared={type=number}
+    PutEnvironmentField v0, v2 layout=L1
+    v4 = NewClosure function=f4
+    v5 = NewObject layout=L2
+    PropDefine v5, v4 key=@@iterator
+    v7 = NewClosure v0 function=f5
+    v8 = Convert v7 declared={type=undefined|null|function|f5 flags=[OmitsNull, OmitsUndefined]}
+    PropDefine v5, v8 key="next"
+    v10 = FinishObject v5
+    Return v10
+}
+function f3 module=m0 position=299 kind=Arrow flags=[IsChecked] captures=[{type=env L0 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=number}] functionTypes=[f8] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L0):
+    v1 = GetEnvironmentField v0 layout=L0
+    v2 = CheckInitialized v1 name="count"
+    v3 = Increment v2
+    v4 = Convert v3 declared={type=number}
+    PutEnvironmentField v0, v4 layout=L0
+    v6 = Convert v3 declared={type=number}
+    Return v6
+}
+function f4 name="[Symbol.iterator]" module=m0 position=425 kind=Method flags=[HasThis, IsChecked, IsNamedByComputedKey] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Return v0
+}
+function f5 name="next" module=m0 position=468 kind=Method flags=[IsChecked, HasExplicitName] captures=[{type=env L1 flags=[IsFromCompiler]}] thisType={type=anything} results=[{type=anything}] functionTypes=[f9] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: env L1):
+    v1 = GetModuleVariable variable=g0
+    v2 = CheckInitialized v1 name="first"
+    v3 = Call v2 calleeName="first"
+    v4 = GetModuleVariable variable=g1
+    v5 = CheckInitialized v4 name="second"
+    v6 = Call v5 calleeName="second"
+    v7 = GetModuleVariable variable=g0
+    v8 = CheckInitialized v7 name="first"
+    v9 = Call v8 calleeName="first"
+    v10 = GetEnvironmentField v0 layout=L1
+    v11 = CheckInitialized v10 name="i"
+    v12 = ToNumeric v11
+    v13 = Increment v12
+    v14 = Convert v13 declared={type=number}
+    PutEnvironmentField v0, v14 layout=L1
+    v16 = Convert v12 declared={type=number}
+    v17 = Integer integer=2
+    v18 = GreaterEq v16, v17
+    v19 = Convert v18 declared={type=boolean}
+    v20 = NewObject -, v19, v16 layout=L3 fields=[0, 1]
+    v21 = FinishObject v20
+    Return v21
+}
+function f6 name="return" module=m0 position=574 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] functionTypes=[f10] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost]
+function f7 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f8 module=m0 role=Signature thisType={type=anything} results=[{type=anything}] functionTypes=[f7]
+function f9 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f10 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+# -- generated: f0
+# CHECK-LABEL: function f0 role=
+# CHECK: Source
+# CHECK-NEXT: BB#0: ; frequency = 1.000000
+# CHECK-NEXT: Int64 b@20 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{frameSlots, AllocatorState}, v0:CallDirect)
+# CHECK-NEXT: Int64 b@22 = Const64(15, v1:NewClosure)
+# CHECK-NEXT: Int64 b@23 = Patchpoint($15(b@22):Register(%r10), b@20:Register(%rdx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v1:NewClosure)
+# CHECK-NEXT: Int64 b@10 = ArgumentReg(%r13)
+# CHECK-NEXT: Void b@24 = Store(b@23, b@10, offset = -1114112, ControlDependent|Writes:ModuleVariables.0, v2:PutModuleVariable)
+# CHECK-NEXT: Int32 b@25 = Const32(1, v2:PutModuleVariable)
+# CHECK-NEXT: Void b@26 = Store8($1(b@25), b@10, offset = -1114368, ControlDependent|Writes:cards, v2:PutModuleVariable)
+# CHECK-NEXT: Int64 b@27 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{frameSlots, AllocatorState}, v3:CallDirect)
+# CHECK-NEXT: Int64 b@28 = Patchpoint($15(b@22):Register(%r10), b@27:Register(%rdx), resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{argumentBuffer, frameSlots, AllocatorState}, v4:NewClosure)
+# CHECK-NEXT: Void b@29 = Store(b@28, b@10, offset = -1114104, ControlDependent|Writes:ModuleVariables.37, v5:PutModuleVariable)
+# CHECK-NEXT: Void b@30 = Store8($1(b@25), b@10, offset = -1114368, ControlDependent|Writes:cards, v5:PutModuleVariable)
+# CHECK-NEXT: Int64 b@31 = Patchpoint(resultConstraints = Register(%rax), ControlDependent|Writes:{collectorState, ModuleVariables.49, AOTSlimClosure_word, JSCell_header, JSObject_butterfly, weakTableStorage, CollectionEntries, AllocatorState}|Reads:{frameSlots, AllocatorState}, v6:CallDirect)
+# CHECK-NEXT: Double b@32 = Load(b@10, offset = -1114096, ControlDependent|Reads:ModuleVariables.49, v7:GetModuleVariable)
+# CHECK-NEXT: Void b@33 = Upsilon(b@32, ^18, WritesLocalState)
+# CHECK-NEXT: Void b@34 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
+# CHECK-NEXT: BB#2: ; frequency = 10.000000
+# CHECK-NEXT: Predecessors: #0, #4
+# CHECK-NEXT: Double b@18 = Phi(ReadsLocalState, v8:Parameter)
+# CHECK-NEXT: Void b@35 = Patchpoint(runsWithoutFrame, resultConstraints = WarmAny, turnsAreShort, isLoopPoll, ExitsSideways|ControlDependent|Writes:{collectorState, weakTableStorage, CollectionEntries}|Reads:Top, v9:LoopHint)
+# CHECK-NEXT: Double b@36 = Load(b@20, offset = 8, ControlDependent|Reads:EnvironmentFields.0, v12:GetEnvironmentField)
+# CHECK-NEXT: Double b@17 = Load(b@10, offset = -56, ReadsImmutable, v14:Increment)
+# CHECK-NEXT: Double b@38 = Add(b@36, b@17, v14:Increment)
+# CHECK-NEXT: Void b@39 = Store(b@38, b@20, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v15:PutEnvironmentField)
+# CHECK-NEXT: Double b@40 = Load(b@27, offset = 8, ControlDependent|Reads:EnvironmentFields.0, v17:GetEnvironmentField)
+# CHECK-NEXT: Double b@16 = Load(b@10, offset = -56, ReadsImmutable, v19:Increment)
+# CHECK-NEXT: Double b@41 = Add(b@40, b@16, v19:Increment)
+# CHECK-NEXT: Void b@42 = Store(b@41, b@27, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v20:PutEnvironmentField)
+# CHECK-NEXT: Double b@43 = Load(b@20, offset = 8, ControlDependent|Reads:EnvironmentFields.0, v22:GetEnvironmentField)
+# CHECK-NEXT: Double b@48 = Load(b@10, offset = -56, ReadsImmutable, v24:Increment)
+# CHECK-NEXT: Double b@44 = Add(b@43, b@48, v24:Increment)
+# CHECK-NEXT: Void b@45 = Store(b@44, b@20, offset = 8, ControlDependent|Writes:EnvironmentFields.0, v25:PutEnvironmentField)
+# CHECK-NEXT: Double b@47 = Load(b@10, offset = -56, ReadsImmutable, v28:Increment)
+# CHECK-NEXT: Double b@46 = Add(b@18, b@47, v28:Increment)
+# CHECK-NEXT: Double b@15 = Load(b@10, offset = -104, ReadsImmutable, v30:GreaterEq)
+# CHECK-NEXT: Int32 b@49 = GreaterEqual(b@18, b@15, v30:GreaterEq)
+# CHECK-NEXT: Void b@50 = Branch(b@49, Terminal, v30:GreaterEq)
+# CHECK-NEXT: Successors: Then:#3, Else:#4
+# CHECK-NEXT: BB#3: ; frequency = 1.000000
+# CHECK-NEXT: Predecessors: #2
+# CHECK-NEXT: Void b@51 = Store(b@46, b@10, offset = -1114096, ControlDependent|Writes:ModuleVariables.49, v31:PutModuleVariable)
+# CHECK-NEXT: Int64 b@52 = Const64(10, v32:Undefined)
+# CHECK-NEXT: Void b@53 = Return($10(b@52), Terminal)
+# CHECK-NEXT: BB#4: ; frequency = 9.000000
+# CHECK-NEXT: Predecessors: #2
+# CHECK-NEXT: Void b@54 = Upsilon(b@46, ^18, WritesLocalState)
+# CHECK-NEXT: Void b@55 = Jump(Terminal)
+# CHECK-NEXT: Successors: #2
+# CHECK-NEXT: Known properties:
+# CHECK-NEXT: b@10: dereferenceableBytes = 393216
+# CHECK-NEXT: b@20: dereferenceableBytes = 16
+# CHECK-NEXT: b@23: dereferenceableBytes = 8
+# CHECK-NEXT: b@27: dereferenceableBytes = 16
+# CHECK-NEXT: b@28: dereferenceableBytes = 8
+# CHECK-NEXT: b@31: dereferenceableBytes = 32
+# CHECK-NEXT: end of function f0

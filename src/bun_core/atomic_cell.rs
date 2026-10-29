@@ -159,7 +159,7 @@ impl<T: Atom + core::fmt::Debug> core::fmt::Debug for AtomicCell<T> {
 ///   reinterpreting as `uN` reads only initialized bits).
 /// - Round-tripping `Self → uN → Self` (where every `uN` value observed was
 ///   produced from a valid `Self`) yields the original value. This is weaker
-///   than `bytemuck::AnyBitPattern` — `#[repr(u8)]` enums qualify because the
+///   than [`AnyBitPattern`](crate::AnyBitPattern) — `#[repr(u8)]` enums qualify because the
 ///   cell only ever stores valid discriminants.
 /// - `Self` is safe to transport across threads when stored in an
 ///   `AtomicCell` — i.e. it has no thread affinity beyond what the atomic op
@@ -461,9 +461,6 @@ pub struct ThreadCell<T: ?Sized> {
 // SAFETY: same lie as `RacyCell` (caller promises thread-affinity), now
 // *checked* in debug via `owner`.
 unsafe impl<T: ?Sized> Sync for ThreadCell<T> {}
-// SAFETY: `UnsafeCell<T>: Send` when `T: Send`, and `owner: AtomicU64` is
-// `Send`; sending the cell just moves the (still thread-affine) `T`.
-unsafe impl<T: ?Sized + Send> Send for ThreadCell<T> {}
 
 #[cfg(debug_assertions)]
 const UNCLAIMED: u64 = 0;

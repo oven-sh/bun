@@ -41,7 +41,7 @@ pub use paste::paste as __mal_paste;
 pub use vec_ext::{ByteVecExt, OffsetByteList, VecExt, prepend_from};
 
 pub use bit_set::{
-    AutoBitSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
+    AutoBitSet, ByteSet, DynamicBitSet, DynamicBitSetList, DynamicBitSetUnmanaged, IntegerBitSet,
 };
 
 // `multi_array_list` imports from here; canonical impl lives in
@@ -155,7 +155,7 @@ pub use string_map::StringMap;
 pub use bun_ptr::tagged_pointer::{TaggedPtr, TaggedPtrUnion};
 // Lifetime-erasure helpers (RUST_PATTERNS.md §6/§18) — re-exported here so
 // crates that already depend on `bun_collections` (logger, css, js_parser,
-// crash_handler, watcher, http_types) can route the borrowck-dodge through
+// watcher, http_types) can route the borrowck-dodge through
 // one centralised `unsafe fn` instead of open-coding the lifetime cast.
 pub use bun_ptr::{RawSlice, detach_lifetime, detach_ref};
 
@@ -388,10 +388,6 @@ impl<T, const N: usize> SmallList<T, N> {
         self.0.pop()
     }
     #[inline]
-    pub fn ordered_remove(&mut self, idx: u32) -> T {
-        self.0.remove(idx as usize)
-    }
-    #[inline]
     pub fn swap_remove(&mut self, idx: u32) -> T {
         self.0.swap_remove(idx as usize)
     }
@@ -467,6 +463,3 @@ pub mod hash_map {
     /// re-exported from `array_hash_map` rather than duplicated.
     pub use crate::array_hash_map::KV;
 }
-
-pub mod array_list;
-pub use array_list::ArrayListDefault;

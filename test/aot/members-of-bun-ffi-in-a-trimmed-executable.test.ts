@@ -1,9 +1,10 @@
 // Bun.FFI is the object behind bun:ffi. Each program names one member of it and nothing else of bun:ffi, so that member alone has to keep the feature in a trimmed executable.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 import { canTrim } from "../bundler/compile-trim-features";
-import { built, slot, spawned, unsupported } from "./run-programs";
+import { built, slot, spawned, unsupported } from "./harness/commands";
+import { withoutDebugInformation } from "./harness/without-debug-information";
 
 const calls = {
   toBuffer: "Bun.FFI.toBuffer(-1)",
@@ -26,7 +27,7 @@ if (!canTrim)
     "SKIPPED: members-of-bun-ffi-in-a-trimmed-executable.test.ts: this build of Bun doesn't support --trim",
   );
 
-(canTrim && !unsupported && !isWindows ? describe.concurrent : describe.skip)(
+(canTrim && !unsupported ? describe.concurrent : describe.skip)(
   "a trimmed executable calls the member of Bun.FFI that it names",
   () => {
     test.each(Object.entries(calls))(
@@ -38,7 +39,17 @@ if (!canTrim)
           const plain = await spawned([bunExe(), "program.js"], folder, bunEnv);
           built(
             await spawned(
-              [bunExe(), "build", "--compile", "--aot", "--trim", "program.js", "--outfile", "trimmed"],
+              [
+                bunExe(),
+                "build",
+                "--compile",
+                ...withoutDebugInformation,
+                "--aot",
+                "--trim",
+                "program.js",
+                "--outfile",
+                "trimmed",
+              ],
               folder,
               bunEnv,
             ),

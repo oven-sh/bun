@@ -1,5 +1,7 @@
-use super::runtime_reach::{ReachInput, find_reached_runtime_code};
-use super::{BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject};
+use super::runtime_reach::{Application, LoadedLibrary, ReachInput, find_reached_runtime_code};
+use super::{
+    BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject, library_code_of,
+};
 use crate::builtins::BuiltinNames;
 use crate::diagnostics::{DiagnosticBuffer, Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::ir::generated::FunctionRole;
@@ -7,11 +9,9 @@ use crate::ir::{FunctionId, FunctionKey, Id};
 use crate::link::{KeyContext, LinkUnit, Rehoming};
 use crate::load::sources::parsed_source;
 use crate::load::{PerProject, ProjectId, Sources};
-#[cfg(bun_fuzzilli)]
-use crate::lower::LeftOutDeclarations;
 use crate::lower::{
-    DefinedObjectTypes, FileInputs, LibraryFunctions, LoweredFile, LoweringInputs, LoweringOptions,
-    RuntimeTranspiler, lower_file,
+    DefinedObjectTypes, FileInputs, LeftOutDeclarations, LibraryFunctions, LoweredFile,
+    LoweringInputs, LoweringOptions, RuntimeTranspiler, lower_file,
 };
 use crate::modules::{ApplicationGraph, Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
 use crate::package_diagnostics::report_package_errors;
@@ -24,12 +24,12 @@ use bun_sema::check::aot::{
 };
 use bun_sema::config;
 use bun_sema::hir::DiagnosticKind;
-use bun_sema::program::{FileId, FileRole, Files, Run};
+use bun_sema::program::{FileId, FileRole, Files, HostLoader, Run};
 use bun_sema::resolve::Options as CompilerOptions;
 use bun_sema::session::Session;
 use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, EntryPoints,
-    Incomplete, RoleDecision, decide_roles, keep_verified_roles, load_program_with_parsed_files,
+    Incomplete, RoleDecision, decide_roles, keep_verified_roles, load_program_of_loaded_files,
     run_on_one_thread_while,
 };
 use bun_threading::Guarded;
@@ -38,6 +38,7 @@ use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 
+#[derive(Clone)]
 pub(crate) struct LoweredUnit {
     // A unit is a large record, and the list of what was lowered is copied and put in order on one thread.
     pub unit: Box<LinkUnit>,
@@ -46,17 +47,45 @@ pub(crate) struct LoweredUnit {
     pub queries: QueryStatistics,
 }
 
-/// What a build with `Preload` makes of Bun's own code for the placeholder. A program that leaves out the same takes it.
-#[cfg(bun_fuzzilli)]
 struct LoweredRuntime {
     key: RuntimeLoweringKey,
     checked: CheckedProgram<Option<LoweredUnit>>,
 }
 
+/// What a build with `Preload` makes of Bun's own code for the placeholder. A program that leaves out the same takes it.
 #[cfg(bun_fuzzilli)]
 static LOWERED_RUNTIME: Guarded<Option<LoweredRuntime>> = Guarded::new(None);
 
-#[cfg(bun_fuzzilli)]
+/// What the programs that share one load of Bun's own code have made of it. A program that leaves out the same takes a copy.
+#[derive(Default)]
+pub(crate) struct LoweredRuntimes(Guarded<Vec<LoweredRuntime>>);
+
+impl LoweredRuntimes {
+    /// A file has its number in one load.
+    pub(super) fn begin_load(&self) {
+        self.0.lock().clear();
+    }
+
+    fn find(&self, key: &RuntimeLoweringKey) -> Option<CheckedProgram<Option<LoweredUnit>>> {
+        let kept = self.0.lock();
+        let found = kept.iter().find(|it| it.key == *key)?;
+        Some(copy_of(&found.checked))
+    }
+
+    fn keep(&self, key: RuntimeLoweringKey, checked: &CheckedProgram<Option<LoweredUnit>>) {
+        let checked = copy_of(checked);
+        self.0.lock().push(LoweredRuntime { key, checked });
+    }
+}
+
+fn copy_of(checked: &CheckedProgram<Option<LoweredUnit>>) -> CheckedProgram<Option<LoweredUnit>> {
+    CheckedProgram {
+        lowered: checked.lowered.clone(),
+        diagnostics: checked.diagnostics.clone(),
+        incomplete: checked.incomplete.clone(),
+    }
+}
+
 #[derive(PartialEq, Eq)]
 struct RuntimeLoweringKey {
     /// `Interner::number`: one for each build.
@@ -304,12 +333,18 @@ impl Build<'_> {
             }
         });
         self.count_aot_sources(loaded, &decided.application.roles);
-        let reach_input = ReachInput {
-            application: loaded.project(ProjectId::Application).loaded.files(),
-            application_graph: &bound.projects.application.graph,
-            runtime: loaded.project(ProjectId::Runtime).loaded.files(),
+        let library = LoadedLibrary {
+            files: loaded.project(ProjectId::Runtime).loaded.files(),
             sources: &loaded.project(ProjectId::Runtime).sources,
             graph: &bound.projects.runtime.graph,
+        };
+        let lacked_before = library_code_of(&self.options.load.library_code_lacked);
+        let reach_input = ReachInput {
+            application: Application::Bound {
+                files: loaded.project(ProjectId::Application).loaded.files(),
+                graph: &bound.projects.application.graph,
+            },
+            library: &library,
             names: loaded.builtin_names,
             platform: self.platform,
             can_load_code_at_run_time: loaded.can_load_code_at_run_time
@@ -319,8 +354,12 @@ impl Build<'_> {
                         .application
                         .left_out
                         .holds_every_load_by_unknown_name),
+            further: &lacked_before,
+            keeps_code_without_names: loaded.keeps_library_code_without_names,
+            holds_guessed_code: loaded.holds_guessed_library_code,
         };
-        let reached = find_reached_runtime_code(&reach_input, &self.parallel_runner());
+        let known = (loaded.known_library_regions)();
+        let reached = find_reached_runtime_code(&reach_input, known, &self.parallel_runner());
         let files_to_lower = &mut decided.runtime.files_to_lower;
         let unreached = files_to_lower
             .iter()
@@ -329,6 +368,7 @@ impl Build<'_> {
         self.unreached_runtime_files = unreached.collect();
         self.unreached_runtime_files.sort_unstable();
         files_to_lower.retain(|&file| reached.is_file_reached(file));
+        self.held_library_code = reached.held;
 
         self.clock.start(Stage::Lower);
         let left_out = PerProject {
@@ -514,7 +554,7 @@ impl Build<'_> {
         // The application's program goes on with the files of a program that does not load.
         let parsed = loaded.parsed_declarations;
         let program =
-            load_program_with_parsed_files(world.session, application.host, &request, parsed);
+            load_program_of_loaded_files(world.session, application.host, &request, parsed, files);
         let Ok(program) = program else {
             return;
         };
@@ -525,11 +565,24 @@ impl Build<'_> {
         {
             return;
         }
+        let loader_of = |files: &Files<'_>, file: FileId| {
+            let loader = files.compiled(file).map(|compiled| compiled.loader);
+            loader.filter(|&loader| loader != HostLoader::default())
+        };
+        let mut read_with_loaders: FxHashMap<(&[u8], HostLoader), FileId> = FxHashMap::default();
+        for &file in files.compiled_files() {
+            if let Some(loader) = loader_of(files, file) {
+                read_with_loaders.insert((files.module(file).file_name(), loader), file);
+            }
+        }
         let to_application: Vec<Option<FileId>> = (0..world_files.modules.len())
             .map(|index| {
-                files
-                    .by_path
-                    .get(world_files.module(FileId(index as u32)).file_name())
+                let file = FileId(index as u32);
+                let path = world_files.module(file).file_name();
+                match loader_of(world_files, file) {
+                    Some(loader) => read_with_loaders.get(&(path, loader)).copied(),
+                    None => files.by_path.get(path),
+                }
             })
             .collect();
         let mut to_world: FxHashMap<FileId, FileId> = FxHashMap::default();
@@ -567,7 +620,10 @@ impl Build<'_> {
             builtin_names: loaded.builtin_names,
             can_load_code_at_run_time: loaded.can_load_code_at_run_time,
             loads_code_by_unknown_names_alone: loaded.loads_code_by_unknown_names_alone,
+            keeps_library_code_without_names: true,
+            holds_guessed_library_code: true,
             finish_asset_reads: &|| true,
+            known_library_regions: &|| None,
         };
         let Ok(bound) = self.bind_modules(&world_build) else {
             return;
@@ -689,13 +745,15 @@ impl Build<'_> {
         let has_one_thread = self.threads == NonZeroUsize::MIN;
         #[cfg(bun_fuzzilli)]
         let keeps_runtime = self.is_preloading || LOWERED_RUNTIME.lock().is_some();
-        #[cfg(bun_fuzzilli)]
-        let runtime_key = keeps_runtime.then(|| RuntimeLoweringKey {
+        let create_key = || RuntimeLoweringKey {
             build: loaded.atoms.number(),
             files_to_lower: decided.runtime.files_to_lower.clone(),
             left_out_functions: left_out.runtime.clone(),
             left_out_declarations: bound.projects.runtime.left_out.declarations.clone(),
-        });
+        };
+        #[cfg(bun_fuzzilli)]
+        let runtime_key = keeps_runtime.then(create_key);
+        let key_among_programs = self.programs.is_some().then(create_key);
         self.with_inputs_for_reached_code(
             loaded,
             bound,
@@ -742,17 +800,29 @@ impl Build<'_> {
                                 },
                             };
                         }
-                        if has_one_thread {
+                        let kept = key_among_programs
+                            .as_ref()
+                            .and_then(|key| self.lowered_runtimes.find(key));
+                        if let Some(runtime) = kept {
                             return PerProject {
                                 application: of_application.lower(),
-                                runtime: of_runtime.lower(),
+                                runtime,
                             };
                         }
-                        let (runtime, application) = run_on_one_thread_while(
-                            self.caches,
-                            || of_runtime.lower(),
-                            || of_application.lower(),
-                        );
+                        let (runtime, application) = match has_one_thread {
+                            true => {
+                                let application = of_application.lower();
+                                (of_runtime.lower(), application)
+                            }
+                            false => run_on_one_thread_while(
+                                self.caches,
+                                || of_runtime.lower(),
+                                || of_application.lower(),
+                            ),
+                        };
+                        if let Some(key) = key_among_programs {
+                            self.lowered_runtimes.keep(key, &runtime);
+                        }
                         PerProject {
                             application,
                             runtime,
@@ -911,7 +981,9 @@ impl Build<'_> {
             }
             (ProjectId::Application | ProjectId::Runtime, _) => DefinedObjectTypes::default(),
         };
-        let lowering_roles = roles_for_lowering(&roles.roles, files, self.options.aot.erases_types);
+        // Bun's own modules keep their types: no build of a user's is without them.
+        let erases_types = self.options.aot.erases_types && project == ProjectId::Application;
+        let lowering_roles = roles_for_lowering(&roles.roles, files, erases_types);
         let library = Library {
             project: LinkedProject {
                 files: loaded.project(ProjectId::Runtime).loaded.files(),
@@ -945,10 +1017,14 @@ impl Build<'_> {
         let compiled = files.compiled_files().iter().copied();
         let mut files_of_dependencies: Vec<FileId> = compiled.filter(is_in_dependency).collect();
         files_of_dependencies.sort_unstable();
-        let transpiler = RuntimeTranspiler::new(&match project {
-            ProjectId::Application => self.provider.enabled_features(),
-            ProjectId::Runtime => Vec::new(),
-        });
+        let default_define = RuntimeTranspiler::create_default_define();
+        let transpiler = match project {
+            ProjectId::Application => RuntimeTranspiler::new(
+                self.provider.define().unwrap_or(&default_define),
+                &self.provider.enabled_features(),
+            ),
+            ProjectId::Runtime => RuntimeTranspiler::new(&default_define, &[]),
+        };
         then(&LoweringInputs {
             roles: &lowering_roles,
             checked_elsewhere: match project {

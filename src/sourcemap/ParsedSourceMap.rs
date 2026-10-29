@@ -8,7 +8,6 @@ use crate::mapping;
 use crate::vlq::VLQ;
 use crate::{
     InternalSourceMap, Mapping, ParseUrl, ParseUrlResultHint, SourceMapLoadHint, SourceProvider,
-    SourceProviderMap,
 };
 
 /// ParsedSourceMap can be acquired by different threads via the thread-safe
@@ -17,7 +16,7 @@ pub struct ParsedSourceMap {
     pub mappings: mapping::List,
     /// Set when this map's mappings are backed by an InternalSourceMap blob
     /// instead of a materialized `Mapping.List`. The blob is *owned* (freed in
-    /// `Drop`) unless [`Self::is_standalone_module_graph`] — in that case the
+    /// `Drop`) unless [`Self::standalone_module_graph`] is set — in that case the
     /// bytes live in the embedded `bun build --compile` section and are
     /// borrowed.
     pub(crate) internal: Option<InternalSourceMap>,
@@ -37,7 +36,8 @@ pub struct ParsedSourceMap {
     /// rely on source contents)
     pub underlying_provider: SourceContentPtr,
 
-    pub is_standalone_module_graph: bool,
+    /// Set for a map of the standalone module graph: what its source code is read from.
+    pub standalone_module_graph: Option<&'static crate::SerializedSourceMap::Loaded>,
 }
 
 impl Drop for ParsedSourceMap {
@@ -53,7 +53,7 @@ impl Drop for ParsedSourceMap {
         //
         // `mappings`/`external_source_names` free via their own `Drop`.
         if let Some(ism) = self.internal.take() {
-            if !self.is_standalone_module_graph {
+            if self.standalone_module_graph.is_none() {
                 ism.free_owned();
             }
         }
@@ -67,7 +67,7 @@ impl Default for ParsedSourceMap {
             internal: None,
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
-            is_standalone_module_graph: false,
+            standalone_module_graph: None,
         }
     }
 }
@@ -164,11 +164,6 @@ impl SourceContentPtr {
         self.load_hint = hint;
     }
 
-    #[inline]
-    pub(crate) fn data(self) -> u64 {
-        self.data
-    }
-
     /// Pack a provider handle. [`Self::provider`] recovers it together with
     /// the `get_source_map` dispatch for `P`.
     pub fn from_source_provider<P: SourceProvider>(p: *const P) -> SourceContentPtr {
@@ -177,14 +172,6 @@ impl SourceContentPtr {
             load_hint: SourceMapLoadHint::None,
             get_source_map: Some(erased_get_source_map::<P>),
         }
-    }
-
-    /// `SourceProviderMap` packing helper. Also used by the standalone module
-    /// graph, which stores a `*mut SerializedSourceMap::Loaded` here (guarded
-    /// by [`ParsedSourceMap::is_standalone_module_graph`], so the provider
-    /// dispatch is never invoked for it).
-    pub fn from_provider(p: *const SourceProviderMap) -> SourceContentPtr {
-        Self::from_source_provider(p)
     }
 
     pub fn provider(self) -> Option<AnySourceProvider> {
@@ -223,14 +210,14 @@ impl ParsedSourceMap {
     /// executable's standalone module graph) instead of a materialized
     /// `mapping::List`. Ownership of the blob transfers to the returned value
     /// (freed in `Drop`) unless the caller subsequently sets
-    /// [`Self::is_standalone_module_graph`].
+    /// [`Self::standalone_module_graph`].
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
             mappings: mapping::List::default(),
             internal: Some(internal),
             external_source_names: Vec::new(),
             underlying_provider: SourceContentPtr::NONE,
-            is_standalone_module_graph: false,
+            standalone_module_graph: None,
         }
     }
 
@@ -270,11 +257,6 @@ impl ParsedSourceMap {
         if let Some(ism) = &self.internal {
             ism.for_each_object_brace(each);
         }
-    }
-
-    pub(crate) fn standalone_module_graph_data(&self) -> *mut crate::SerializedSourceMap::Loaded {
-        debug_assert!(self.is_standalone_module_graph);
-        self.underlying_provider.data() as usize as *mut crate::SerializedSourceMap::Loaded
     }
 
     pub fn memory_cost(&self) -> usize {

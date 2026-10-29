@@ -1053,22 +1053,16 @@ impl LazySourceMap {
                     }));
                 }
 
-                let data = Box::new(SerializedSourceMapLoaded {
-                    map: SerializedSourceMap {
+                let data = Box::new(SourceMap::SerializedSourceMap::Loaded {
+                    map: SourceMap::SerializedSourceMap::SerializedSourceMap {
                         bytes: serialized.bytes,
                     },
                     decompressed_files: decompressed_contents_slice.into_boxed_slice(),
                 });
 
                 stored.external_source_names = file_names;
-                // `from_provider` stores the pointer as a raw address in
-                // `SourceContentPtr.data`; the provider dispatch is never
-                // invoked for this type-punned pointer (guarded by
-                // `is_standalone_module_graph`).
-                stored.underlying_provider = SourceMap::SourceContentPtr::from_provider(
-                    bun_core::heap::into_raw(data).cast::<SourceMap::SourceProviderMap>(),
-                );
-                stored.is_standalone_module_graph = true;
+                // Never freed, like the graph that holds `stored`.
+                stored.standalone_module_graph = Some(Box::leak(data));
 
                 let parsed = Arc::new(stored);
                 // The Arc clone held in self keeps the parsed map alive.
@@ -3807,16 +3801,6 @@ impl SerializedSourceMap {
         // SAFETY: index bounds-checked; layout per Header doc; pointer may be misaligned.
         unsafe { core::ptr::read_unaligned(self.string_pointers_base().add(index)) }
     }
-}
-
-/// Once loaded, this map stores additional data for keeping track of source code.
-pub struct SerializedSourceMapLoaded {
-    pub map: SerializedSourceMap,
-
-    /// Only decompress source code once! Once a file is decompressed,
-    /// it is stored here. Decompression failures are stored as an empty
-    /// string, which will be treated as "no contents".
-    pub decompressed_files: Box<[std::sync::OnceLock<Vec<u8>>]>,
 }
 
 pub(crate) fn serialize_json_source_map_for_standalone(

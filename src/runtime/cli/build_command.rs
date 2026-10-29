@@ -486,6 +486,7 @@ impl BuildCommand {
         }
 
         let mut src_root_dir_buf = bun_paths::path_buffer_pool::get();
+        let common_entry_directory: Vec<u8>;
         let src_root_dir: &[u8] = 'brk1: {
             let path: &[u8] = 'brk2: {
                 if !ctx.bundler_options.root_dir.is_empty() {
@@ -503,7 +504,11 @@ impl BuildCommand {
                     .iter()
                     .map(|s| &**s)
                     .collect();
-                resolve_path::get_if_exists_longest_common_path(&entries).unwrap_or(b".")
+                common_entry_directory = options::common_entry_directory(
+                    bun_resolver::fs::FileSystem::get().top_level_dir(),
+                    &entries,
+                );
+                &common_entry_directory
             };
 
             // `bun_sys::Dir` is the owning RAII

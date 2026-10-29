@@ -2,7 +2,7 @@ use bun_ast::{Loc, Log};
 use bun_paths::resolve_path::{self, platform::Auto};
 use bun_paths::{MAX_PATH_BYTES, is_sep_native};
 
-pub(super) fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
+pub(crate) fn absolute_path(working_directory: &[u8], path: &[u8]) -> Vec<u8> {
     let mut spill = Vec::new();
     resolve_path::join_abs_string_spill::<Auto>(working_directory, &mut spill, &[path]).to_vec()
 }

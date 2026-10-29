@@ -636,6 +636,31 @@ describe("bundler", () => {
       setCwd: true,
     },
   });
+  // The embedded root is the directory that holds every entry point, however each one is spelled on the command
+  // line, so a Worker path resolves the same as in the executable that `--aot` builds.
+  itBundled("compile/EmbeddedRootIgnoresEntryPointSpelling", {
+    backend: "cli",
+    compile: true,
+    files: {
+      "/src/entry.ts": /* js */ `
+        import { rmSync } from "fs";
+        rmSync("./src", { recursive: true, force: true });
+        for (const spec of ["./w/worker.ts", "./src/w/worker.ts"]) {
+          const w = new Worker(spec);
+          console.log(spec, "->", await new Promise(r => { w.onmessage = e => r(e.data); w.onerror = () => r("not found"); }));
+          w.terminate();
+        }
+      `,
+      "/src/w/worker.ts": `postMessage("worker ok");`,
+    },
+    entryPointsRaw: ["src/entry.ts", "./src/w/worker.ts"],
+    outfile: "dist/out",
+    run: {
+      stdout: "./w/worker.ts -> worker ok\n./src/w/worker.ts -> not found\n",
+      file: "dist/out",
+      setCwd: true,
+    },
+  });
   itBundled("compile/WorkerRelativePathTSExtension", {
     backend: "cli",
     compile: true,

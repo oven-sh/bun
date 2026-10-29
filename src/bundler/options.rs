@@ -19,6 +19,7 @@ pub use defines::Define;
 // B-3: `Define::init` / `DefineData::{from_input,parse}` are extension-trait
 // methods (the canonical types live in `bun_js_parser::defines`); bring the
 // traits into scope so the associated-fn call syntax below resolves.
+use crate::aot::paths::absolute_path;
 use crate::defines::{DefineDataExt as _, DefineExt as _};
 pub use bun_options_types::global_cache::GlobalCache;
 pub use bun_options_types::offline_mode::OfflineMode;
@@ -67,6 +68,38 @@ pub(crate) fn validate_path(
         return Box::default();
     }
     Box::from(out)
+}
+
+/// The default `root` of a build: the directory that holds every entry point.
+///
+/// Each entry point is made absolute against `working_directory` first, so the answer is the same
+/// for `src/a.ts src/w/b.ts`, `./src/a.ts ./src/w/b.ts` and `src/a.ts ./src/w/b.ts`. `bun build`,
+/// `Bun.build()` and the ahead-of-time compiler all take their default root from here, so one
+/// build command names the same files under `/$bunfs/root/` whichever of them runs it.
+pub fn common_entry_directory(working_directory: &[u8], entry_points: &[&[u8]]) -> Vec<u8> {
+    let paths: Vec<Vec<u8>> = entry_points
+        .iter()
+        .map(|entry| absolute_path(working_directory, entry))
+        .collect();
+    let first_directory = paths
+        .first()
+        .map(|first| bun_core::dirname(first).unwrap_or(&first[..]));
+    let all: Vec<&[u8]> = first_directory
+        .into_iter()
+        .chain(paths.iter().map(|path| &path[..]))
+        .collect();
+    let common = absolute_path(working_directory, longest_common_path_of(&all));
+    bun_paths::string_paths::without_trailing_slash_windows_path(&common).to_vec()
+}
+
+/// `resolve_path::longest_common_path` has a second rule for more than eight paths, which can answer a folder that does not hold all of them.
+pub(crate) fn longest_common_path_of<'a>(paths: &[&'a [u8]]) -> &'a [u8] {
+    let Some((&first, rest)) = paths.split_first() else {
+        return b"";
+    };
+    rest.iter().fold(first, |common, &path| {
+        bun_paths::resolve_path::longest_common_path(&[common, path])
+    })
 }
 
 // `AllowUnresolved` is defined canonically in

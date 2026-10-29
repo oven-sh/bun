@@ -782,6 +782,38 @@ describe("Bun.build", () => {
     Bun.gc(true);
   });
 
+  // The default root is the directory that holds every entry point, however each one is spelled.
+  test("the default root does not depend on how the entry points are spelled", async () => {
+    using dir = tempDir("build-root-spelling", {
+      "src/main.ts": `console.log("main");`,
+      "src/w/worker.ts": `console.log("worker");`,
+      "build.ts": `
+        const spellings = [
+          ["src/main.ts", "./src/w/worker.ts"],
+          ["./src/main.ts", "src/w/worker.ts"],
+          ["src/main.ts", "src/w/worker.ts"],
+        ];
+        for (const entrypoints of spellings) {
+          const outdir = "dist" + spellings.indexOf(entrypoints);
+          const result = await Bun.build({ entrypoints, outdir });
+          const names = result.outputs.map(output => output.path.slice(output.path.indexOf(outdir) + outdir.length + 1));
+          console.log(JSON.stringify(names.map(name => name.replaceAll("\\\\", "/")).sort()));
+        }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe('["main.js","w/worker.js"]\n'.repeat(3));
+    expect(exitCode).toBe(0);
+  });
+
   test("BuildArtifact properties", async () => {
     Bun.gc(true);
     const outdir = tempDirWithFiles("build-artifact-properties", {

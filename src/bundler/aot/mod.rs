@@ -10,7 +10,7 @@ mod native_plugins;
 mod options;
 mod output;
 mod page_bundles;
-mod paths;
+pub(crate) mod paths;
 mod services;
 
 use crate::bundle_v2::{BundleV2, FileMap, JSBundlerPlugin, dispatch};

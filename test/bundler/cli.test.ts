@@ -486,6 +486,55 @@ test("multi-entry build writes each entry point into the output directory", asyn
   expect(b).toContain('"B"');
 });
 
+// The default root is the directory that holds every entry point, however each one is spelled.
+describe.concurrent("the default root of a multi-entry build", () => {
+  const files = {
+    "src/main.ts": `console.log("main");`,
+    "src/w/worker.ts": `console.log("worker");`,
+  };
+
+  async function outputs(dir: string, entryPoints: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", ...entryPoints, "--outdir", "dist"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return Array.from(new Bun.Glob("**/*.js").scanSync({ cwd: path.join(dir, "dist") }))
+      .map(file => file.replaceAll("\\", "/"))
+      .sort();
+  }
+
+  test("does not depend on how the entry points are spelled", async () => {
+    using dir = tempDir("build-root-spelling", files);
+    expect(await outputs(String(dir), ["src/main.ts", "./src/w/worker.ts"])).toEqual(["main.js", "w/worker.js"]);
+  });
+
+  test("is the same for `./src/a.ts` and `src/a.ts`", async () => {
+    using dir = tempDir("build-root-dot-slash", files);
+    expect(await outputs(String(dir), ["./src/main.ts", "src/w/worker.ts"])).toEqual(["main.js", "w/worker.js"]);
+  });
+
+  test("is the same for an absolute and a relative entry point", async () => {
+    using dir = tempDir("build-root-absolute", files);
+    const main = path.join(String(dir), "src", "main.ts");
+    expect(await outputs(String(dir), [main, "src/w/worker.ts"])).toEqual(["main.js", "w/worker.js"]);
+  });
+
+  test("is the directory that holds nine or more entry points", async () => {
+    const names = Array.from({ length: 9 }, (_, i) => `pages/page${i}.ts`);
+    using dir = tempDir(
+      "build-root-nine-entries",
+      Object.fromEntries(names.map((name, i) => [name, `console.log(${i});`])),
+    );
+    expect(await outputs(String(dir), names)).toEqual(names.map(name => name.slice("pages/".length, -3) + ".js"));
+  });
+});
+
 // macOS and Windows read files on the IO pool by default.
 test("exits with the build error when a build fails while the IO pool is still reading entry points", async () => {
   const files: Record<string, string> = {};

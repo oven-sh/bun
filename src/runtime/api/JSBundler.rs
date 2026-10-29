@@ -1364,14 +1364,11 @@ pub(crate) mod js_bundler {
                         break 'brk Utf8Bytes::Borrowed(if d.is_empty() { b"." } else { d });
                     }
 
-                    // NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
-                    // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
-                    // adapter on the stack.
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
-                    break 'brk Utf8Bytes::Borrowed(
-                        bun_paths::resolve_path::get_if_exists_longest_common_path(&borrowed)
-                            .unwrap_or(b"."),
-                    );
+                    break 'brk Utf8Bytes::Owned(bun_bundler::options::common_entry_directory(
+                        bun_resolver::fs::FileSystem::get().top_level_dir(),
+                        &borrowed,
+                    ));
                 };
 
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {

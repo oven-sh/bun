@@ -72,6 +72,8 @@ exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"zaa2wmv
 
 exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"00000000"`;
 
+exports[`Bun.build BuildArtifact properties sourcemap: hash in memory 1`] = `"8q8sck9q"`;
+
 exports[`Bun.build new Response(BuildArtifact) sets content type: response text 1`] = `
 "var __defProp = Object.defineProperty;
 var __returnValue = (v) => v;

@@ -876,17 +876,17 @@ describe("Bun.build", () => {
     const outdir = tempDirWithFiles("build-artifact-properties-sourcemap", {
       "package.json": `{}`,
     });
-    const x = await Bun.build({
-      entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")],
-      sourcemap: "external",
-      outdir,
-    });
+    const build = (options: { sourcemap: "none" | "external"; outdir?: string }) =>
+      Bun.build({ entrypoints: [join(import.meta.dir, "./fixtures/trivial/index.js")], ...options });
+    const x = await build({ sourcemap: "external", outdir });
     const [blob, map] = x.outputs;
     expect(blob.type).toBe("text/javascript;charset=utf-8");
     expect(blob.size).toBeGreaterThan(1);
     expect(path.relative(outdir, blob.path)).toBe("index.js");
     // The hash covers the source map, and the `sources` of the map depend on where the temp outdir is.
+    // So no value is pinned here. An output without a hash prints zeros.
     expect(blob.hash).toMatch(/^[0-9a-z]{8}$/);
+    expect(blob.hash).not.toBe("00000000");
     expect(blob.kind).toBe("entry-point");
     expect(blob.loader).toBe("jsx");
     expect(blob.sourcemap).toBe(map);
@@ -899,6 +899,12 @@ describe("Bun.build", () => {
     expect(map.kind).toBe("sourcemap");
     expect(map.loader).toBe("file");
     expect(map.sourcemap).toBe(null);
+
+    // The same build gives the same hash, and a build without a source map gives another one.
+    expect((await build({ sourcemap: "external", outdir })).outputs[0].hash).toBe(blob.hash);
+    expect((await build({ sourcemap: "none", outdir })).outputs[0].hash).not.toBe(blob.hash);
+    // An in-memory build has no temp path in its `sources`, so its hash has a snapshot.
+    expect((await build({ sourcemap: "external" })).outputs[0].hash).toMatchSnapshot("hash in memory");
     Bun.gc(true);
   });
 

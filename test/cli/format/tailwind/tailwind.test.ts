@@ -301,6 +301,7 @@ exports.__unstable__loadDesignSystem = async (css, { base, loadStylesheet }) => 
     [{ "#theme": "./node_modules/theme.css" }, "#theme"],
     [{ "#theme": "./NODE_MODULES/theme.css" }, "#theme"],
     [{ "#theme": "./x\\..\\theme.css" }, "#theme"],
+    [{ "#k/*": "other/*" }, "#k/../theme.css"],
     // Only one `*` makes a pattern.
     [{ "#k/*/*": "./theme.css" }, "#k/x/y"],
     [{ "#theme": "./missing.css" }, "#theme"],
@@ -312,6 +313,8 @@ exports.__unstable__loadDesignSystem = async (css, { base, loadStylesheet }) => 
       "node_modules/pkg/index.css": `@import "${id}";\n`,
       "node_modules/pkg/theme.css": "/* reversed */\n",
       "node_modules/pkg/node_modules/theme.css": "/* reversed */\n",
+      "node_modules/other/package.json": JSON.stringify({ name: "other" }),
+      "node_modules/theme.css": "/* reversed */\n",
     };
     const result = await format(files, ["src/a.jsx"]);
     expect(result.stderr).toContain(`Can't resolve '${id}' in '`);

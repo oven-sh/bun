@@ -26,6 +26,8 @@ function withConditions(target) {
 
 /** What `key` is in the `exports` or `imports` of a package, for a style sheet. The most specific pattern is final, as in Node. */
 function lookup(map, key) {
+  // A `.`, `..` or `node_modules` segment is not allowed in a `./` target, nor in what `*` stands for, as in Node.
+  const isPlain = path => !/(^|[\\/])(\.\.?|node_modules)([\\/]|$)/i.test(path);
   let target;
   if (Object.hasOwn(map, key) && !key.includes("*")) target = withConditions(map[key]);
   else {
@@ -35,12 +37,13 @@ function lookup(map, key) {
     for (const pattern of patterns) {
       const [before, behind] = pattern.split("*");
       if (key.length < pattern.length || !key.startsWith(before) || !key.endsWith(behind)) continue;
-      target = withConditions(map[pattern])?.replaceAll("*", key.slice(before.length, key.length - behind.length));
+      const middle = key.slice(before.length, key.length - behind.length);
+      if (!isPlain(middle)) return;
+      target = withConditions(map[pattern])?.replaceAll("*", middle);
       break;
     }
   }
-  // A `./` target stays in the package, as in Node: no `.`, `..` or `node_modules` segment, also not through `*`.
-  if (target?.startsWith("./") && /(^|[\\/])(\.\.?|node_modules)([\\/]|$)/i.test(target.slice(2))) return;
+  if (target?.startsWith("./") && !isPlain(target.slice(2))) return;
   return target;
 }
 

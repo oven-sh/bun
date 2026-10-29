@@ -4728,9 +4728,7 @@ pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
     #[cfg(not(windows))]
     {
         let mut fds_: [libc::c_int; 2] = [0, 0];
-        // SAFETY: libc FFI.
-        let rc =
-            unsafe { libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, fds_.as_mut_ptr()) };
+        let rc = sys::c::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, &mut fds_);
         if rc != 0 {
             let err = sys::Error::from_code(sys::get_errno(rc), sys::Tag::socketpair);
             return Err(global.throw_value(err.to_js(global)));

@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 import { createSecretKey, type webcrypto } from "node:crypto";
 import { totalmem } from "node:os";
 
@@ -380,10 +380,10 @@ describe("oversized inputs", () => {
   });
 
   // WTF::String::fromUTF8 aborts on 2^30 bytes or more that are not ASCII. The text is 2^30 + 2 bytes
-  // of U+20AC: it has to be valid UTF-8 to get to the conversion. The child holds 4 GiB and takes 5
-  // seconds in a release build (two AES-CTR passes over 1 GiB) and 145 in a debug build, so small
-  // machines and debug builds skip, and the test carries its own ceiling.
-  it.skipIf(isDebug || Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
+  // of U+20AC: it has to be valid UTF-8 to get to the conversion. The child holds 4 GiB and makes two
+  // AES-CTR passes over 1 GiB: 5 seconds in a release build, over 20 with ASAN, 145 in a debug build.
+  // So small machines, ASAN builds and debug builds skip, and the test carries its own ceiling.
+  it.skipIf(isASAN || isDebug || Math.min(totalmem(), process.constrainedMemory() || Infinity) < 10 * 1024 ** 3)(
     'unwrapKey("jwk") rejects 1 GiB of UTF-8 that is not ASCII instead of aborting',
     async () => {
       const script = `

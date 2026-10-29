@@ -30,12 +30,10 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayJpegForTesting, (JSC::JSGlobalObject * glob
     size_t n = callFrame->argument(1).toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    // The row that is argument `index`, which has `n * bytesPerSample` bytes. Null after a throw, or for no row.
-    auto row = [&](unsigned index, size_t bytesPerSample, bool optional = false) -> uint8_t* {
+    // The row that is argument `index`, which has `n * bytesPerSample` bytes. Null after a throw.
+    auto row = [&](unsigned index, size_t bytesPerSample) -> uint8_t* {
         if (scope.exception()) return nullptr;
-        JSC::JSValue value = callFrame->argument(2 + index);
-        if (optional && value.isUndefinedOrNull()) return nullptr;
-        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value);
+        auto* view = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->argument(2 + index));
         if (!view || view->isDetached() || view->byteLength() < n * bytesPerSample) {
             throwTypeError(globalObject, scope, "each row must be an attached ArrayBufferView that is long enough"_s);
             return nullptr;
@@ -45,7 +43,8 @@ BUN_DEFINE_HOST_FUNCTION(Bun__highwayJpegForTesting, (JSC::JSGlobalObject * glob
 
     bool result;
     if (op == "fromYcc"_s) {
-        uint8_t *y = row(0, 1), *cb = row(1, 1), *cr = row(2, 1), *k = row(3, 1, true), *out = row(4, 4);
+        uint8_t *y = row(0, 1), *cb = row(1, 1), *cr = row(2, 1), *out = row(4, 4);
+        uint8_t* k = callFrame->argument(2 + 3).isUndefinedOrNull() ? nullptr : row(3, 1);
         RETURN_IF_EXCEPTION(scope, {});
         result = highway_jpeg_from_ycc(y, cb, cr, k, out, n);
     } else if (op == "toYcc"_s) {

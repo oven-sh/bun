@@ -693,22 +693,18 @@ impl<'a> LinkerContext<'a> {
     }
 
     fn process_html_import_files(&mut self) {
-        // SAFETY: `parse_graph` is a backref to `BundleV2.graph`, a sibling
-        // field of `BundleV2.linker` (= `*self`), so these three fields of it are
-        // disjoint from `*self` and from each other. Nothing else uses `html_imports`
-        // during this call; the source map workers that may be running only read the graph.
-        let (html_imports, input_files, build_graphs) = unsafe {
+        // SAFETY: `parse_graph` points to `BundleV2.graph`, a sibling of `BundleV2.linker` (= `*self`), so these four
+        // fields are disjoint from `*self` and from each other. The source map workers that may be running hold
+        // `&Graph` and `&BundleV2`; of the graph they read only `input_files` and `pool`.
+        let (html_source_indices, server_source_indices, input_files, build_graphs) = unsafe {
             let parse_graph: *mut Graph<'a> = self.parse_graph;
             (
-                &mut (*parse_graph).html_imports,
+                &mut (*parse_graph).html_imports.html_source_indices,
+                &(*parse_graph).html_imports.server_source_indices,
                 &(*parse_graph).input_files,
                 &(*parse_graph).build_graphs,
             )
         };
-        let crate::Graph::HtmlImports {
-            server_source_indices,
-            html_source_indices,
-        } = html_imports;
         if !server_source_indices.is_empty() {
             let actual_ref = self.graph.runtime_function(b"__jsonParse");
             let sources = input_files.items_source();
@@ -738,12 +734,7 @@ impl<'a> LinkerContext<'a> {
                 .ref_;
 
                 // Make the __jsonParse in that file point to the __jsonParse in the runtime chunk.
-                self.graph
-                    .symbols
-                    .get_const(original_ref)
-                    .expect("infallible: ref in symbol table")
-                    .link
-                    .set(actual_ref);
+                self.graph.symbol(original_ref).link.set(actual_ref);
 
                 // When --splitting is enabled, we have to make sure we import the __jsonParse function.
                 self.graph

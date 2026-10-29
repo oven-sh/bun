@@ -4082,6 +4082,8 @@ pub struct Options {
     // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
     // outlives the VM, so the inner lifetime is erased to `'static`.
     pub env_loader: Option<NonNull<bun_dotenv::Loader>>,
+    /// See [`InitOptions::owned_env_loader`].
+    pub owned_env_loader: Option<Box<bun_dotenv::Loader>>,
     pub smol: bool,
     // LAYERING: real type is `bun_runtime::dns_jsc::Order` (forward
     // dep); stored as its `u8` repr.
@@ -4985,6 +4987,7 @@ impl VirtualMachine {
             graph: Some(graph),
             log: opts.log,
             env_loader: opts.env_loader,
+            owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
             eval_mode: false,
@@ -5015,6 +5018,7 @@ impl VirtualMachine {
             graph: opts.graph,
             log: opts.log,
             env_loader: opts.env_loader,
+            owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             eval_mode: opts.eval,
             is_main_thread: false,
@@ -5056,6 +5060,7 @@ impl VirtualMachine {
             transform_options: opts.args,
             log: opts.log,
             env_loader: opts.env_loader,
+            owned_env_loader: opts.owned_env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
             eval_mode: false,
